@@ -158,6 +158,8 @@ interface PipeMapProps {
   previewPoints?: PipeVertex[]
   showZones?: boolean           // 区域表示
   showCoordinates?: boolean     // 座標管理の点表示
+  onPointClick?: (pointId: string) => void  // 点クリック時のコールバック
+  selectablePoints?: boolean    // 点を選択可能にするか
 }
 
 // 測点ラベルアイコンを生成
@@ -238,6 +240,8 @@ export function PipeMap({
   previewPoints = [],
   showZones = false,
   showCoordinates = false,
+  onPointClick,
+  selectablePoints = false,
 }: PipeMapProps) {
   const { pipes } = useUnderdrainStore()
   const { zone, zones, coordinates } = useCoordinateStore()
@@ -498,6 +502,9 @@ export function PipeMap({
             key={`survey-${point.id}`}
             position={[lat, lng]}
             icon={createSurveyPointIcon(point.name)}
+            eventHandlers={selectablePoints && onPointClick ? {
+              click: () => onPointClick(point.id),
+            } : {}}
           >
             <Popup>
               <div className="text-xs font-mono">
@@ -508,6 +515,11 @@ export function PipeMap({
                 {point.isMerged && point.originalCount && (
                   <div className="mt-1 text-yellow-600">
                     {point.originalCount}点を集約
+                  </div>
+                )}
+                {selectablePoints && (
+                  <div className="mt-1 text-green-600 font-bold">
+                    クリックで選択
                   </div>
                 )}
               </div>
@@ -560,6 +572,9 @@ export function PipeMap({
             key={`coord-${coord.id}`}
             position={[lat, lng]}
             icon={createCoordinateIcon(coord.pointNumber, coord.type)}
+            eventHandlers={selectablePoints && onPointClick ? {
+              click: () => onPointClick(coord.id),
+            } : {}}
           >
             <Popup>
               <div className="text-xs font-mono">
@@ -568,6 +583,11 @@ export function PipeMap({
                 <div>X: {coord.x.toFixed(3)}</div>
                 <div>Y: {coord.y.toFixed(3)}</div>
                 {coord.z !== null && <div>Z: {coord.z.toFixed(3)}</div>}
+                {selectablePoints && (
+                  <div className="mt-1 text-green-600 font-bold">
+                    クリックで選択
+                  </div>
+                )}
               </div>
             </Popup>
           </Marker>

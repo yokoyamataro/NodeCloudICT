@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Upload, Download, Plus, Trash2, FileText } from 'lucide-react'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 import { useCoordinateStore } from '@/stores/coordinateStore'
+import { useProjectStore } from '@/stores/projectStore'
 import { ZoneRegistration } from './ZoneRegistration'
 import { AreaCalculationSheet } from './AreaCalculationSheet'
 import { CoordinateMap } from '@/components/map/CoordinateMap'
@@ -16,10 +17,13 @@ export function CoordinatesPage() {
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
   const [editingZoneId, setEditingZoneId] = useState<string | null>(null)
 
+  const { currentProject } = useProjectStore()
   const {
     zone,
     setZone,
     coordinates,
+    fetchCoordinates,
+    fetchZones,
     addCoordinate,
     updateCoordinate,
     deleteCoordinate,
@@ -29,6 +33,17 @@ export function CoordinatesPage() {
     calculateZoneArea,
     addPointToZone,
   } = useCoordinateStore()
+
+  // プロジェクト選択時にデータを読み込む
+  useEffect(() => {
+    if (currentProject) {
+      // プロジェクトの座標系を設定
+      setZone(currentProject.coordinate_zone)
+      // Supabaseからデータを読み込む
+      fetchCoordinates(currentProject.id)
+      fetchZones(currentProject.id)
+    }
+  }, [currentProject, setZone, fetchCoordinates, fetchZones])
 
   const handleAddCoordinate = () => {
     addCoordinate(selectedType)

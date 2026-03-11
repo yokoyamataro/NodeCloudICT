@@ -8,6 +8,7 @@ import {
   PIPE_DIAMETERS,
   type PipeRow,
 } from '@/stores/underdrainStore'
+import { useProjectStore } from '@/stores/projectStore'
 import { PipeMap, type SurveyPointData } from '@/components/map/PipeMap'
 import type { PipeType, PipeVertex } from '@/types/database'
 
@@ -88,8 +89,10 @@ export function CadAnalysisPage() {
   })
   const [currentSequentialNumber, setCurrentSequentialNumber] = useState(1)
 
+  const { currentProject } = useProjectStore()
   const {
     pipes,
+    fetchPipes,
     addPipes,
     updatePipe,
     deletePipe,
@@ -107,6 +110,13 @@ export function CadAnalysisPage() {
     autoInsertMidpoints,
     previewMidpoints,
   } = useUnderdrainStore()
+
+  // プロジェクト選択時にデータを読み込む
+  useEffect(() => {
+    if (currentProject) {
+      fetchPipes(currentProject.id)
+    }
+  }, [currentProject, fetchPipes])
 
   // 自動中間点設置モーダル
   const [showMidpointModal, setShowMidpointModal] = useState(false)
