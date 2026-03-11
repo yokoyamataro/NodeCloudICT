@@ -1,56 +1,195 @@
-import { Outlet, Link, useLocation } from 'react-router-dom'
-import { Map, Database, Calculator, Layers, Settings } from 'lucide-react'
+import { useState } from 'react'
+import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
+import {
+  Map,
+  Database,
+  Calculator,
+  GitBranch,
+  Settings,
+  ChevronDown,
+  ChevronRight,
+  FileSearch,
+  MapPin,
+  Upload,
+  Ruler,
+  Droplets,
+  PenTool,
+  FileOutput,
+  Eye,
+  FileText,
+  Square,
+  LogOut,
+  User,
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useAuth } from '@/contexts/AuthContext'
 
-const navigation = [
+interface NavItem {
+  name: string
+  href: string
+  icon: React.ComponentType<{ className?: string }>
+}
+
+interface NavGroup {
+  name: string
+  href: string
+  icon: React.ComponentType<{ className?: string }>
+  children?: NavItem[]
+}
+
+const navigation: NavGroup[] = [
   { name: 'プロジェクト', href: '/', icon: Database },
   { name: '座標管理', href: '/coordinates', icon: Map },
-  { name: '作業区域', href: '/work-zones', icon: Layers },
+  {
+    name: '暗渠工事',
+    href: '/underdrain',
+    icon: GitBranch,
+    children: [
+      { name: '工事区域', href: '/underdrain/work-area', icon: Square },
+      { name: 'CAD解析', href: '/underdrain/cad-analysis', icon: FileSearch },
+      { name: '座標計算', href: '/underdrain/coordinate-calc', icon: MapPin },
+      { name: '測量データ', href: '/underdrain/survey-import', icon: Upload },
+      { name: '切深計算', href: '/underdrain/depth-calc', icon: Ruler },
+      { name: '水理計算', href: '/underdrain/hydraulics', icon: Droplets },
+      { name: 'CAD転記', href: '/underdrain/cad-export', icon: PenTool },
+      { name: 'LandXML出力', href: '/underdrain/landxml', icon: FileOutput },
+      { name: '現場データ', href: '/underdrain/field-data', icon: Eye },
+      { name: '帳票作成', href: '/underdrain/reports', icon: FileText },
+    ],
+  },
   { name: '水理計算', href: '/hydraulics', icon: Calculator },
   { name: '設定', href: '/settings', icon: Settings },
 ]
 
 export function AppLayout() {
   const location = useLocation()
+  const navigate = useNavigate()
+  const { user, signOut } = useAuth()
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
+    new Set(['暗渠工事']) // デフォルトで暗渠工事を展開
+  )
+
+  const handleSignOut = async () => {
+    await signOut()
+    navigate('/login')
+  }
+
+  const toggleGroup = (name: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev)
+      if (next.has(name)) {
+        next.delete(name)
+      } else {
+        next.add(name)
+      }
+      return next
+    })
+  }
+
+  const isActiveLink = (href: string) => {
+    return location.pathname === href || location.pathname.startsWith(href + '/')
+  }
 
   return (
-    <div className="min-h-screen flex">
+    <div className="h-screen flex overflow-hidden">
       {/* サイドバー */}
-      <aside className="w-64 bg-slate-900 text-white flex flex-col">
+      <aside className="w-64 bg-slate-900 text-white flex flex-col flex-shrink-0">
         <div className="p-4 border-b border-slate-700">
           <h1 className="text-xl font-bold">NodeCloud Design</h1>
           <p className="text-sm text-slate-400">ICT設計システム</p>
         </div>
-        <nav className="flex-1 p-4">
+        <nav className="flex-1 p-4 overflow-y-auto">
           <ul className="space-y-1">
             {navigation.map((item) => {
-              const isActive = location.pathname === item.href
+              const hasChildren = item.children && item.children.length > 0
+              const isExpanded = expandedGroups.has(item.name)
+              const isActive = isActiveLink(item.href)
+              const isChildActive = item.children?.some((child) =>
+                isActiveLink(child.href)
+              )
+
               return (
                 <li key={item.name}>
-                  <Link
-                    to={item.href}
-                    className={cn(
-                      'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-                      isActive
-                        ? 'bg-slate-800 text-white'
-                        : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                    )}
-                  >
-                    <item.icon className="h-5 w-5" />
-                    {item.name}
-                  </Link>
+                  {hasChildren ? (
+                    <>
+                      <button
+                        onClick={() => toggleGroup(item.name)}
+                        className={cn(
+                          'w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                          isActive || isChildActive
+                            ? 'bg-slate-800 text-white'
+                            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                        )}
+                      >
+                        <item.icon className="h-5 w-5" />
+                        <span className="flex-1 text-left">{item.name}</span>
+                        {isExpanded ? (
+                          <ChevronDown className="h-4 w-4" />
+                        ) : (
+                          <ChevronRight className="h-4 w-4" />
+                        )}
+                      </button>
+                      {isExpanded && item.children && (
+                        <ul className="mt-1 ml-4 space-y-1">
+                          {item.children.map((child) => {
+                            const isChildItemActive = isActiveLink(child.href)
+                            return (
+                              <li key={child.name}>
+                                <Link
+                                  to={child.href}
+                                  className={cn(
+                                    'flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
+                                    isChildItemActive
+                                      ? 'bg-slate-700 text-white'
+                                      : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                                  )}
+                                >
+                                  <child.icon className="h-4 w-4" />
+                                  {child.name}
+                                </Link>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      )}
+                    </>
+                  ) : (
+                    <Link
+                      to={item.href}
+                      className={cn(
+                        'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                        isActive
+                          ? 'bg-slate-800 text-white'
+                          : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                      )}
+                    >
+                      <item.icon className="h-5 w-5" />
+                      {item.name}
+                    </Link>
+                  )}
                 </li>
               )
             })}
           </ul>
         </nav>
-        <div className="p-4 border-t border-slate-700 text-xs text-slate-400">
-          v0.1.0
+        <div className="p-4 border-t border-slate-700">
+          <div className="flex items-center gap-2 mb-2">
+            <User className="h-4 w-4 text-slate-400" />
+            <span className="text-xs text-slate-300 truncate">{user?.email}</span>
+          </div>
+          <button
+            onClick={handleSignOut}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors"
+          >
+            <LogOut className="h-4 w-4" />
+            ログアウト
+          </button>
+          <div className="mt-2 text-xs text-slate-500">v0.1.0</div>
         </div>
       </aside>
 
       {/* メインコンテンツ */}
-      <main className="flex-1 bg-slate-50">
+      <main className="flex-1 bg-slate-50 overflow-hidden">
         <Outlet />
       </main>
     </div>

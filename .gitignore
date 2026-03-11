@@ -32,3 +32,6 @@ dist-ssr
 
 # TypeScript
 *.tsbuildinfo
+
+# Sample data
+sample/

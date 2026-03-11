@@ -12,6 +12,14 @@ export type Json =
 // 座標の種類
 export type CoordinateType = 'control' | 'boundary' | 'underdrain' | 'soil_import'
 
+// 点種（座標の用途）
+export type PointType =
+  | 'reference'      // 基準点
+  | 'outer_boundary' // 外周点
+  | 'inner_boundary' // 内周点（島部分）
+  | 'zone_vertex'    // 区域頂点
+  | 'construction'   // 施工点
+
 // 座標データ
 export interface Coordinate {
   id: string
@@ -28,6 +36,44 @@ export interface Coordinate {
   notes: string | null
   created_at: string
   updated_at: string
+}
+
+// 区域座標登録（面積計算用）
+export interface AreaZone {
+  id: string
+  project_id: string
+  zone_number: string        // 区域番号
+  name: string               // 区域名
+  point_ids: string[]        // 構成点IDリスト（順序付き）
+  area_sqm: number | null    // 面積(m²) - 計算結果
+  area_ha: number | null     // 面積(ha) - 計算結果
+  perimeter_m: number | null // 周長(m) - 計算結果
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+// 面積計算簿の行データ
+export interface AreaCalculationRow {
+  point_number: string  // 点番号
+  x: number             // X座標
+  y: number             // Y座標
+  xi_yi1: number        // Xi × Yi+1
+  xi1_yi: number        // Xi+1 × Yi
+  double_area: number   // 倍面積 (Xi × Yi+1 - Xi+1 × Yi)
+}
+
+// 面積計算簿
+export interface AreaCalculationSheet {
+  zone_id: string
+  zone_number: string
+  zone_name: string
+  rows: AreaCalculationRow[]
+  total_double_area: number  // 倍面積合計
+  area_sqm: number           // 面積(m²)
+  area_ha: number            // 面積(ha)
+  perimeter_m: number        // 周長(m)
+  calculated_at: string      // 計算日時
 }
 
 // 作業区域（工事区域を分割した作業単位）
@@ -94,6 +140,40 @@ export interface HydraulicCalculation {
   created_at: string
 }
 
+// 管種
+export type PipeType =
+  | 'main'           // 集水
+  | 'branch'         // 吸水
+  | 'outlet'         // 落口
+  | 'connection'     // 連絡渠
+  | 'spring'         // 湧水処理
+  | 'auxiliary'      // 補助暗渠
+  | 'self_funded'    // 自費施工
+
+// 管路の構成点
+export interface PipeVertex {
+  x: number
+  y: number
+  z: number | null
+}
+
+// 管路データ（暗渠配管）
+export interface Pipe {
+  id: string
+  project_id: string
+  number: string              // 管路番号
+  layer_name: string          // CADレイヤ名
+  pipe_type: PipeType | null  // 管種
+  diameter: number | null     // 管径(mm)
+  design_length: number | null   // 設計延長(m)
+  measured_length: number | null // 実測延長(m)
+  vertices: PipeVertex[]      // 構成点リスト
+  connection_to: string | null   // 接続先（管路ID）
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
 // オルソ画像レイヤー
 export interface OrthoLayer {
   id: string
@@ -107,10 +187,91 @@ export interface OrthoLayer {
   created_at: string
 }
 
+// NodeCloud-Design用プロジェクト
+export interface DesignProject {
+  id: string
+  user_id: string
+  name: string
+  description: string | null
+  coordinate_zone: number
+  created_at: string
+  updated_at: string
+}
+
+// NodeCloud-Design用座標
+export interface DesignCoordinate {
+  id: string
+  project_id: string
+  point_number: string
+  x: number
+  y: number
+  z: number | null
+  latitude: number | null
+  longitude: number | null
+  coordinate_type: string
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+// NodeCloud-Design用区域
+export interface DesignZone {
+  id: string
+  project_id: string
+  zone_number: string
+  name: string
+  point_ids: string[]
+  area_sqm: number | null
+  area_ha: number | null
+  perimeter_m: number | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+// NodeCloud-Design用管路
+export interface DesignPipe {
+  id: string
+  project_id: string
+  number: string
+  layer_name: string | null
+  pipe_type: string | null
+  diameter: number | null
+  design_length: number | null
+  measured_length: number | null
+  vertices: PipeVertex[]
+  connection_to: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
 // Database型定義
 export interface Database {
   public: {
     Tables: {
+      // NodeCloud-Design テーブル
+      design_projects: {
+        Row: DesignProject
+        Insert: Omit<DesignProject, 'id' | 'created_at' | 'updated_at'>
+        Update: Partial<Omit<DesignProject, 'id' | 'created_at' | 'updated_at'>>
+      }
+      design_coordinates: {
+        Row: DesignCoordinate
+        Insert: Omit<DesignCoordinate, 'id' | 'created_at' | 'updated_at'>
+        Update: Partial<Omit<DesignCoordinate, 'id' | 'created_at' | 'updated_at'>>
+      }
+      design_zones: {
+        Row: DesignZone
+        Insert: Omit<DesignZone, 'id' | 'created_at' | 'updated_at'>
+        Update: Partial<Omit<DesignZone, 'id' | 'created_at' | 'updated_at'>>
+      }
+      design_pipes: {
+        Row: DesignPipe
+        Insert: Omit<DesignPipe, 'id' | 'created_at' | 'updated_at'>
+        Update: Partial<Omit<DesignPipe, 'id' | 'created_at' | 'updated_at'>>
+      }
+      // 既存テーブル（後方互換性）
       coordinates: {
         Row: Coordinate
         Insert: Omit<Coordinate, 'id' | 'created_at' | 'updated_at'>

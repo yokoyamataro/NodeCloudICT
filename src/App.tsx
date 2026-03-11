@@ -1,20 +1,73 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { AuthProvider, useAuth } from '@/contexts/AuthContext'
 import { AppLayout } from '@/components/layout/AppLayout'
+import { LoginPage } from '@/features/auth/LoginPage'
 import { ProjectListPage } from '@/features/projects/ProjectListPage'
 import { CoordinatesPage } from '@/features/coordinates/CoordinatesPage'
+import { WorkAreaPage } from '@/features/underdrain/WorkAreaPage'
+import { CadAnalysisPage } from '@/features/underdrain/CadAnalysisPage'
+import { PipeCoordinateCalcPage } from '@/features/underdrain/PipeCoordinateCalcPage'
+import { Loader2 } from 'lucide-react'
+
+// 認証が必要なルートのラッパー
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth()
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+      </div>
+    )
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace />
+  }
+
+  return <>{children}</>
+}
+
+function AppRoutes() {
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <AppLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<ProjectListPage />} />
+        <Route path="coordinates" element={<CoordinatesPage />} />
+        {/* 暗渠工事 */}
+        <Route path="underdrain">
+          <Route path="work-area" element={<WorkAreaPage />} />
+          <Route path="cad-analysis" element={<CadAnalysisPage />} />
+          <Route path="coordinate-calc" element={<PipeCoordinateCalcPage />} />
+          <Route path="survey-import" element={<PlaceholderPage title="測量データ" />} />
+          <Route path="depth-calc" element={<PlaceholderPage title="切深計算" />} />
+          <Route path="hydraulics" element={<PlaceholderPage title="水理計算" />} />
+          <Route path="cad-export" element={<PlaceholderPage title="CAD転記" />} />
+          <Route path="landxml" element={<PlaceholderPage title="LandXML出力" />} />
+          <Route path="field-data" element={<PlaceholderPage title="現場データ" />} />
+          <Route path="reports" element={<PlaceholderPage title="帳票作成" />} />
+        </Route>
+        <Route path="hydraulics" element={<PlaceholderPage title="水理計算" />} />
+        <Route path="settings" element={<PlaceholderPage title="設定" />} />
+      </Route>
+    </Routes>
+  )
+}
 
 function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<AppLayout />}>
-          <Route index element={<ProjectListPage />} />
-          <Route path="coordinates" element={<CoordinatesPage />} />
-          <Route path="work-zones" element={<PlaceholderPage title="作業区域" />} />
-          <Route path="hydraulics" element={<PlaceholderPage title="水理計算" />} />
-          <Route path="settings" element={<PlaceholderPage title="設定" />} />
-        </Route>
-      </Routes>
+      <AuthProvider>
+        <AppRoutes />
+      </AuthProvider>
     </BrowserRouter>
   )
 }

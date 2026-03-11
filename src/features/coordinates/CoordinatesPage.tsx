@@ -1,63 +1,37 @@
 import { useState } from 'react'
-import { Upload, Download, Plus, Trash2 } from 'lucide-react'
-import { CoordinateConverter, JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
-import type { CoordinateType } from '@/types/database'
+import { Upload, Download, Plus, Trash2, FileText } from 'lucide-react'
+import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
+import { useCoordinateStore } from '@/stores/coordinateStore'
+import { ZoneRegistration } from './ZoneRegistration'
+import { AreaCalculationSheet } from './AreaCalculationSheet'
+import { CoordinateMap } from '@/components/map/CoordinateMap'
+import { loadSimaFile } from '@/lib/sima-parser'
+import type { CoordinateType, AreaCalculationSheet as AreaCalculationSheetType } from '@/types/database'
 
-interface CoordinateRow {
-  id: string
-  pointNumber: string
-  x: number
-  y: number
-  z: number | null
-  lat: number | null
-  lng: number | null
-  type: CoordinateType
-}
+type TabType = 'coordinates' | 'zones'
 
 export function CoordinatesPage() {
-  const [zone, setZone] = useState<number>(9) // デフォルト: 第9系（関東）
-  const [coordinates, setCoordinates] = useState<CoordinateRow[]>([])
-  const [selectedType, setSelectedType] = useState<CoordinateType>('control')
+  const [activeTab, setActiveTab] = useState<TabType>('coordinates')
+  const [calculationSheet, setCalculationSheet] = useState<AreaCalculationSheetType | null>(null)
+  const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
+  const [editingZoneId, setEditingZoneId] = useState<string | null>(null)
 
-  const converter = new CoordinateConverter(zone)
+  const {
+    zone,
+    setZone,
+    coordinates,
+    addCoordinate,
+    updateCoordinate,
+    deleteCoordinate,
+    importCoordinates,
+    selectedType,
+    setSelectedType,
+    calculateZoneArea,
+    addPointToZone,
+  } = useCoordinateStore()
 
   const handleAddCoordinate = () => {
-    const newCoord: CoordinateRow = {
-      id: crypto.randomUUID(),
-      pointNumber: `P${coordinates.length + 1}`,
-      x: 0,
-      y: 0,
-      z: null,
-      lat: null,
-      lng: null,
-      type: selectedType,
-    }
-    setCoordinates([...coordinates, newCoord])
-  }
-
-  const handleUpdateCoordinate = (id: string, field: keyof CoordinateRow, value: string | number) => {
-    setCoordinates(coords =>
-      coords.map(coord => {
-        if (coord.id !== id) return coord
-
-        const updated = { ...coord, [field]: value }
-
-        // X, Y が更新されたら緯度経度を再計算
-        if (field === 'x' || field === 'y') {
-          if (updated.x && updated.y) {
-            const { lat, lng } = converter.toLatLng(updated.x, updated.y)
-            updated.lat = lat
-            updated.lng = lng
-          }
-        }
-
-        return updated
-      })
-    )
-  }
-
-  const handleDeleteCoordinate = (id: string) => {
-    setCoordinates(coords => coords.filter(c => c.id !== id))
+    addCoordinate(selectedType)
   }
 
   const handleImportCSV = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -69,36 +43,49 @@ export function CoordinatesPage() {
       const text = e.target?.result as string
       const lines = text.split('\n').filter(line => line.trim())
 
-      // ヘッダーをスキップして座標データをパース
-      const newCoords: CoordinateRow[] = lines.slice(1).map((line, idx) => {
+      const newCoords = lines.slice(1).map((line, idx) => {
         const [pointNumber, x, y, z] = line.split(',').map(s => s.trim())
-        const xNum = parseFloat(x)
-        const yNum = parseFloat(y)
-        const zNum = z ? parseFloat(z) : null
-
-        let lat: number | null = null
-        let lng: number | null = null
-        if (!isNaN(xNum) && !isNaN(yNum)) {
-          const result = converter.toLatLng(xNum, yNum)
-          lat = result.lat
-          lng = result.lng
-        }
-
         return {
-          id: crypto.randomUUID(),
           pointNumber: pointNumber || `P${idx + 1}`,
-          x: xNum || 0,
-          y: yNum || 0,
-          z: zNum,
-          lat,
-          lng,
+          x: parseFloat(x) || 0,
+          y: parseFloat(y) || 0,
+          z: z ? parseFloat(z) : null,
           type: selectedType,
         }
       })
 
-      setCoordinates([...coordinates, ...newCoords])
+      importCoordinates(newCoords)
     }
     reader.readAsText(file)
+    event.target.value = ''
+  }
+
+  const handleImportSIMA = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    try {
+      const result = await loadSimaFile(file)
+
+      const newCoords = result.coordinates.map((coord) => ({
+        pointNumber: coord.pointNumber,
+        x: coord.x,
+        y: coord.y,
+        z: coord.z,
+        type: selectedType,
+      }))
+
+      importCoordinates(newCoords)
+
+      // SIMAファイルに座標系情報があれば設定
+      if (result.system !== null) {
+        setZone(result.system)
+      }
+    } catch (error) {
+      console.error('SIMAファイルの読み込みに失敗しました:', error)
+      alert('SIMAファイルの読み込みに失敗しました')
+    }
+
     event.target.value = ''
   }
 
@@ -117,175 +104,298 @@ export function CoordinatesPage() {
     URL.revokeObjectURL(url)
   }
 
+  const handleCalculateArea = (zoneId: string) => {
+    const sheet = calculateZoneArea(zoneId)
+    if (sheet) {
+      setCalculationSheet(sheet)
+    }
+  }
+
+  // 点がクリックされたとき
+  const handlePointClick = (id: string) => {
+    setSelectedPointId(id)
+
+    // 区域編集中なら、その区域に点を追加
+    if (editingZoneId) {
+      addPointToZone(editingZoneId, id)
+    }
+  }
+
   return (
-    <div className="p-8">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">座標管理</h1>
-        <p className="text-muted-foreground">平面直角座標の登録と変換</p>
+    <div className="h-full flex flex-col">
+      <div className="p-4 border-b bg-white">
+        <h1 className="text-xl font-bold">座標管理</h1>
+        <p className="text-sm text-muted-foreground">平面直角座標の登録・区域設定・面積計算</p>
       </div>
 
-      {/* 設定パネル */}
-      <div className="bg-white rounded-lg border p-4 mb-6">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-sm font-medium mb-1">座標系</label>
-            <select
-              value={zone}
-              onChange={(e) => setZone(parseInt(e.target.value))}
-              className="w-full px-3 py-2 border rounded-lg"
-            >
-              {Object.entries(JGD2011_ZONES).map(([num, info]) => (
-                <option key={num} value={num}>
-                  {info.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">座標種類</label>
-            <select
-              value={selectedType}
-              onChange={(e) => setSelectedType(e.target.value as CoordinateType)}
-              className="w-full px-3 py-2 border rounded-lg"
-            >
-              {Object.entries(COORDINATE_TYPE_NAMES).map(([type, name]) => (
-                <option key={type} value={type}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex items-end gap-2">
-            <label className="flex-1">
-              <span className="block text-sm font-medium mb-1">CSVインポート</span>
-              <div className="relative">
-                <input
-                  type="file"
-                  accept=".csv"
-                  onChange={handleImportCSV}
-                  className="absolute inset-0 opacity-0 cursor-pointer"
-                />
-                <button className="w-full flex items-center justify-center gap-2 px-4 py-2 border rounded-lg hover:bg-slate-50">
-                  <Upload className="h-4 w-4" />
-                  インポート
-                </button>
-              </div>
-            </label>
-            <button
-              onClick={handleExportCSV}
-              className="flex items-center gap-2 px-4 py-2 border rounded-lg hover:bg-slate-50"
-              disabled={coordinates.length === 0}
-            >
-              <Download className="h-4 w-4" />
-              エクスポート
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* 座標テーブル */}
-      <div className="bg-white rounded-lg border">
-        <div className="p-4 border-b flex items-center justify-between">
-          <h2 className="font-semibold">座標一覧</h2>
+      {/* タブナビゲーション */}
+      <div className="border-b bg-white px-4">
+        <nav className="flex gap-4">
           <button
-            onClick={handleAddCoordinate}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90"
+            onClick={() => setActiveTab('coordinates')}
+            className={`px-4 py-2 border-b-2 font-medium transition-colors ${
+              activeTab === 'coordinates'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
           >
-            <Plus className="h-4 w-4" />
-            追加
+            座標登録
+          </button>
+          <button
+            onClick={() => setActiveTab('zones')}
+            className={`px-4 py-2 border-b-2 font-medium transition-colors ${
+              activeTab === 'zones'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            区域・面積計算
+          </button>
+        </nav>
+      </div>
+
+      {/* 区域編集中の案内 */}
+      {editingZoneId && (
+        <div className="px-4 py-2 bg-blue-50 border-b text-sm text-blue-700 flex items-center justify-between">
+          <span>区域編集中: 座標一覧または地図上の点をクリックして追加</span>
+          <button
+            onClick={() => setEditingZoneId(null)}
+            className="px-2 py-1 text-xs bg-blue-100 hover:bg-blue-200 rounded"
+          >
+            編集終了
           </button>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-slate-50 text-sm">
-              <tr>
-                <th className="px-4 py-3 text-left font-medium">点番号</th>
-                <th className="px-4 py-3 text-left font-medium">種類</th>
-                <th className="px-4 py-3 text-right font-medium">X (m)</th>
-                <th className="px-4 py-3 text-right font-medium">Y (m)</th>
-                <th className="px-4 py-3 text-right font-medium">Z (m)</th>
-                <th className="px-4 py-3 text-right font-medium">緯度</th>
-                <th className="px-4 py-3 text-right font-medium">経度</th>
-                <th className="px-4 py-3 text-center font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {coordinates.map((coord) => (
-                <tr key={coord.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-2">
-                    <input
-                      type="text"
-                      value={coord.pointNumber}
-                      onChange={(e) => handleUpdateCoordinate(coord.id, 'pointNumber', e.target.value)}
-                      className="w-20 px-2 py-1 border rounded"
-                    />
-                  </td>
-                  <td className="px-4 py-2">
+      )}
+
+      {/* メインコンテンツ */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* 左側: テーブル/フォーム */}
+        <div className="w-1/2 flex flex-col overflow-hidden border-r">
+          {/* 座標登録タブ */}
+          {activeTab === 'coordinates' && (
+            <div className="flex-1 flex flex-col overflow-hidden">
+              {/* 設定パネル */}
+              <div className="p-4 border-b bg-slate-50">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium mb-1">座標系</label>
                     <select
-                      value={coord.type}
-                      onChange={(e) => handleUpdateCoordinate(coord.id, 'type', e.target.value)}
-                      className="px-2 py-1 border rounded text-sm"
+                      value={zone}
+                      onChange={(e) => setZone(parseInt(e.target.value))}
+                      className="w-full px-2 py-1.5 text-sm border rounded"
                     >
-                      {Object.entries(COORDINATE_TYPE_NAMES).map(([type, name]) => (
-                        <option key={type} value={type}>{name}</option>
+                      {Object.entries(JGD2011_ZONES).map(([num, info]) => (
+                        <option key={num} value={num}>
+                          {info.name}
+                        </option>
                       ))}
                     </select>
-                  </td>
-                  <td className="px-4 py-2">
-                    <input
-                      type="number"
-                      value={coord.x}
-                      onChange={(e) => handleUpdateCoordinate(coord.id, 'x', parseFloat(e.target.value) || 0)}
-                      className="w-28 px-2 py-1 border rounded text-right"
-                      step="0.001"
-                    />
-                  </td>
-                  <td className="px-4 py-2">
-                    <input
-                      type="number"
-                      value={coord.y}
-                      onChange={(e) => handleUpdateCoordinate(coord.id, 'y', parseFloat(e.target.value) || 0)}
-                      className="w-28 px-2 py-1 border rounded text-right"
-                      step="0.001"
-                    />
-                  </td>
-                  <td className="px-4 py-2">
-                    <input
-                      type="number"
-                      value={coord.z ?? ''}
-                      onChange={(e) => handleUpdateCoordinate(coord.id, 'z', parseFloat(e.target.value) || 0)}
-                      className="w-24 px-2 py-1 border rounded text-right"
-                      step="0.01"
-                      placeholder="-"
-                    />
-                  </td>
-                  <td className="px-4 py-2 text-right text-sm text-muted-foreground">
-                    {coord.lat?.toFixed(6) ?? '-'}
-                  </td>
-                  <td className="px-4 py-2 text-right text-sm text-muted-foreground">
-                    {coord.lng?.toFixed(6) ?? '-'}
-                  </td>
-                  <td className="px-4 py-2 text-center">
-                    <button
-                      onClick={() => handleDeleteCoordinate(coord.id)}
-                      className="p-1 text-red-500 hover:bg-red-50 rounded"
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium mb-1">座標種類</label>
+                    <select
+                      value={selectedType}
+                      onChange={(e) => setSelectedType(e.target.value as CoordinateType)}
+                      className="w-full px-2 py-1.5 text-sm border rounded"
                     >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {coordinates.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
-                    座標データがありません。「追加」ボタンまたはCSVインポートで追加してください。
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                      {Object.entries(COORDINATE_TYPE_NAMES).map(([type, name]) => (
+                        <option key={type} value={type}>
+                          {name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="flex gap-2 mt-3">
+                  <label className="flex-1">
+                    <div className="relative">
+                      <input
+                        type="file"
+                        accept=".sim,.SIM"
+                        onChange={handleImportSIMA}
+                        className="absolute inset-0 opacity-0 cursor-pointer"
+                      />
+                      <button className="w-full flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white">
+                        <FileText className="h-3.5 w-3.5" />
+                        SIMA読込
+                      </button>
+                    </div>
+                  </label>
+                  <label className="flex-1">
+                    <div className="relative">
+                      <input
+                        type="file"
+                        accept=".csv"
+                        onChange={handleImportCSV}
+                        className="absolute inset-0 opacity-0 cursor-pointer"
+                      />
+                      <button className="w-full flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white">
+                        <Upload className="h-3.5 w-3.5" />
+                        CSV読込
+                      </button>
+                    </div>
+                  </label>
+                  <button
+                    onClick={handleExportCSV}
+                    className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white"
+                    disabled={coordinates.length === 0}
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    CSV出力
+                  </button>
+                  <button
+                    onClick={handleAddCoordinate}
+                    className="flex items-center gap-1 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    追加
+                  </button>
+                </div>
+              </div>
+
+              {/* 座標テーブル */}
+              <div className="flex-1 overflow-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-100 sticky top-0">
+                    <tr>
+                      <th className="px-2 py-2 text-left font-medium">点番号</th>
+                      <th className="px-2 py-2 text-right font-medium">X (m)</th>
+                      <th className="px-2 py-2 text-right font-medium">Y (m)</th>
+                      <th className="px-2 py-2 text-right font-medium">Z (m)</th>
+                      <th className="px-2 py-2 text-right font-medium">緯度</th>
+                      <th className="px-2 py-2 text-right font-medium">経度</th>
+                      <th className="px-2 py-2 text-left font-medium">種類</th>
+                      <th className="px-2 py-2 w-8"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {coordinates.map((coord) => (
+                      <tr
+                        key={coord.id}
+                        className={`hover:bg-slate-50 cursor-pointer ${
+                          selectedPointId === coord.id ? 'bg-blue-50' : ''
+                        }`}
+                        onClick={() => handlePointClick(coord.id)}
+                      >
+                        <td className="px-2 py-1">
+                          <input
+                            type="text"
+                            value={coord.pointNumber}
+                            onChange={(e) => updateCoordinate(coord.id, 'pointNumber', e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-16 px-1 py-0.5 border rounded text-sm"
+                          />
+                        </td>
+                        <td className="px-2 py-1">
+                          <input
+                            type="number"
+                            value={coord.x.toFixed(3)}
+                            onChange={(e) => updateCoordinate(coord.id, 'x', parseFloat(e.target.value) || 0)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-24 px-1 py-0.5 border rounded text-right text-sm"
+                            step="0.001"
+                          />
+                        </td>
+                        <td className="px-2 py-1">
+                          <input
+                            type="number"
+                            value={coord.y.toFixed(3)}
+                            onChange={(e) => updateCoordinate(coord.id, 'y', parseFloat(e.target.value) || 0)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-24 px-1 py-0.5 border rounded text-right text-sm"
+                            step="0.001"
+                          />
+                        </td>
+                        <td className="px-2 py-1">
+                          <input
+                            type="number"
+                            value={coord.z?.toFixed(3) ?? ''}
+                            onChange={(e) => updateCoordinate(coord.id, 'z', parseFloat(e.target.value) || null)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-20 px-1 py-0.5 border rounded text-right text-sm"
+                            step="0.001"
+                            placeholder="-"
+                          />
+                        </td>
+                        <td className="px-2 py-1 text-right text-xs text-muted-foreground font-mono">
+                          {coord.lat?.toFixed(6) ?? '-'}
+                        </td>
+                        <td className="px-2 py-1 text-right text-xs text-muted-foreground font-mono">
+                          {coord.lng?.toFixed(6) ?? '-'}
+                        </td>
+                        <td className="px-2 py-1">
+                          <select
+                            value={coord.type}
+                            onChange={(e) => updateCoordinate(coord.id, 'type', e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="px-1 py-0.5 border rounded text-xs"
+                          >
+                            {Object.entries(COORDINATE_TYPE_NAMES).map(([type, name]) => (
+                              <option key={type} value={type}>{name}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-2 py-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              deleteCoordinate(coord.id)
+                            }}
+                            className="p-1 text-red-500 hover:bg-red-50 rounded"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {coordinates.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
+                          座標データがありません
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* ステータスバー */}
+              <div className="px-4 py-2 bg-slate-50 border-t text-xs text-muted-foreground">
+                {coordinates.length} 点登録済み
+              </div>
+            </div>
+          )}
+
+          {/* 区域・面積計算タブ */}
+          {activeTab === 'zones' && (
+            <div className="flex-1 overflow-auto p-4">
+              <ZoneRegistration
+                onCalculateArea={handleCalculateArea}
+                editingZoneId={editingZoneId}
+                onEditZone={setEditingZoneId}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* 右側: 地図 */}
+        <div className="w-1/2 bg-slate-100">
+          <CoordinateMap
+            selectedPointId={selectedPointId}
+            onPointSelect={handlePointClick}
+            showZonePolygons={true}
+            editingZoneId={editingZoneId}
+          />
         </div>
       </div>
+
+      {/* 面積計算簿モーダル */}
+      {calculationSheet && (
+        <AreaCalculationSheet
+          sheet={calculationSheet}
+          onClose={() => setCalculationSheet(null)}
+        />
+      )}
     </div>
   )
 }
