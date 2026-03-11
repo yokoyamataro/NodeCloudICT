@@ -116,18 +116,18 @@ export function CadAnalysisPage() {
   const [isPreviewMode, setIsPreviewMode] = useState(false) // プレビューモード
 
   // テーブルの行へのref（選択時の自動スクロール用）
-  const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map())
-  const tableContainerRef = useRef<HTMLDivElement>(null)
+  const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({})
+  const tableContainerRef = useRef<HTMLDivElement | null>(null)
 
   // セルへのref（カーソルキー移動用）
   // key: `${pipeId}-${colIndex}` (colIndex: 0=番号, 1=管種, 2=管径, 3=設計延長, 4=接続先)
-  const cellRefs = useRef<Map<string, HTMLInputElement | HTMLSelectElement>>(new Map())
+  const cellRefs = useRef<Record<string, HTMLInputElement | HTMLSelectElement | null>>({})
   const EDITABLE_COLUMNS = 5 // 編集可能な列数
 
   // 選択された管路が変わったときにスクロール
   useEffect(() => {
-    if (selectedPipeId && rowRefs.current.has(selectedPipeId)) {
-      const row = rowRefs.current.get(selectedPipeId)
+    if (selectedPipeId && rowRefs.current[selectedPipeId]) {
+      const row = rowRefs.current[selectedPipeId]
       row?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
     }
   }, [selectedPipeId])
@@ -298,7 +298,7 @@ export function CadAnalysisPage() {
 
     const nextPipeId = sortedPipes[nextRowIndex].id
     const cellKey = `${nextPipeId}-${nextColIndex}`
-    const nextCell = cellRefs.current.get(cellKey)
+    const nextCell = cellRefs.current[cellKey]
     if (nextCell) {
       nextCell.focus()
       // 行が変わった場合は管路を選択
@@ -939,8 +939,7 @@ export function CadAnalysisPage() {
                       <tr
                         key={pipe.id}
                         ref={(el) => {
-                          if (el) rowRefs.current.set(pipe.id, el)
-                          else rowRefs.current.delete(pipe.id)
+                          rowRefs.current[pipe.id] = el
                         }}
                         className={`hover:bg-slate-50 cursor-pointer ${
                           selectedPipeId === pipe.id ? 'bg-pink-100 ring-2 ring-pink-400 ring-inset' : ''
@@ -950,8 +949,7 @@ export function CadAnalysisPage() {
                         <td className="px-2 py-1">
                           <input
                             ref={(el) => {
-                              if (el) cellRefs.current.set(`${pipe.id}-0`, el)
-                              else cellRefs.current.delete(`${pipe.id}-0`)
+                              cellRefs.current[`${pipe.id}-0`] = el
                             }}
                             type="text"
                             value={pipe.number}
@@ -964,8 +962,7 @@ export function CadAnalysisPage() {
                         <td className="px-2 py-1">
                           <select
                             ref={(el) => {
-                              if (el) cellRefs.current.set(`${pipe.id}-1`, el)
-                              else cellRefs.current.delete(`${pipe.id}-1`)
+                              cellRefs.current[`${pipe.id}-1`] = el
                             }}
                             value={pipe.pipeType || ''}
                             onChange={(e) =>
@@ -990,8 +987,7 @@ export function CadAnalysisPage() {
                         <td className="px-2 py-1">
                           <select
                             ref={(el) => {
-                              if (el) cellRefs.current.set(`${pipe.id}-2`, el)
-                              else cellRefs.current.delete(`${pipe.id}-2`)
+                              cellRefs.current[`${pipe.id}-2`] = el
                             }}
                             value={pipe.diameter ?? ''}
                             onChange={(e) =>
@@ -1016,8 +1012,7 @@ export function CadAnalysisPage() {
                         <td className="px-2 py-1">
                           <input
                             ref={(el) => {
-                              if (el) cellRefs.current.set(`${pipe.id}-3`, el)
-                              else cellRefs.current.delete(`${pipe.id}-3`)
+                              cellRefs.current[`${pipe.id}-3`] = el
                             }}
                             type="number"
                             value={pipe.designLength ?? ''}
@@ -1041,8 +1036,7 @@ export function CadAnalysisPage() {
                         <td className="px-2 py-1">
                           <select
                             ref={(el) => {
-                              if (el) cellRefs.current.set(`${pipe.id}-4`, el)
-                              else cellRefs.current.delete(`${pipe.id}-4`)
+                              cellRefs.current[`${pipe.id}-4`] = el
                             }}
                             value={pipe.connectionTo || ''}
                             onChange={(e) =>

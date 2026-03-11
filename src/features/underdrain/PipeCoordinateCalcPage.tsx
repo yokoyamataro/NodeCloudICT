@@ -206,26 +206,6 @@ export function PipeCoordinateCalcPage() {
     URL.revokeObjectURL(url)
   }
 
-  // SIMA形式エクスポート
-  const handleExportSIMA = () => {
-    // SIMA形式: 簡易版（実際のSIMAフォーマットに合わせて調整）
-    const lines: string[] = []
-    lines.push('A') // ヘッダー
-
-    for (const point of mergedPoints) {
-      // SIMA形式: 点名,X,Y,Z (実際のフォーマットは要確認)
-      lines.push(`${point.mergedName},${point.x.toFixed(3)},${point.y.toFixed(3)},${point.z?.toFixed(3) ?? '0.000'}`)
-    }
-
-    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=shift_jis;' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'pipe_coordinates.sim'
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-
   return (
     <div className="h-full flex flex-col">
       {/* ヘッダー */}

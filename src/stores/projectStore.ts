@@ -28,7 +28,7 @@ interface ProjectState {
   deleteProject: (id: string) => Promise<void>
 }
 
-export const useProjectStore = create<ProjectState>((set, get) => ({
+export const useProjectStore = create<ProjectState>((set) => ({
   projects: [],
   loading: false,
   error: null,
@@ -57,14 +57,16 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('ログインが必要です')
 
+      const insertData = {
+        user_id: user.id,
+        name,
+        description: description || null,
+        coordinate_zone: coordinateZone,
+      }
+
       const { data, error } = await supabase
         .from('design_projects')
-        .insert({
-          user_id: user.id,
-          name,
-          description: description || null,
-          coordinate_zone: coordinateZone,
-        })
+        .insert(insertData as never)
         .select()
         .single()
 
@@ -87,7 +89,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     try {
       const { error } = await supabase
         .from('design_projects')
-        .update(updates)
+        .update(updates as never)
         .eq('id', id)
 
       if (error) throw error
