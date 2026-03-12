@@ -41,6 +41,9 @@ interface SequentialNumberSettings {
   suffix: string    // 末尾文字
 }
 
+// 自動接続モード
+type AutoConnectMode = 'idle' | 'selecting-outlet'
+
 export function CadAnalysisPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [parsedEntities, setParsedEntities] = useState<ParsedEntity[]>([])
@@ -88,6 +91,9 @@ export function CadAnalysisPage() {
     suffix: '',
   })
   const [currentSequentialNumber, setCurrentSequentialNumber] = useState(1)
+
+  // 自動接続モード
+  const [autoConnectMode, setAutoConnectMode] = useState<AutoConnectMode>('idle')
 
   const { currentProject } = useProjectStore()
   const {
@@ -398,6 +404,12 @@ export function CadAnalysisPage() {
 
   // 地図上の管路クリック処理
   const handlePipeClick = (id: string) => {
+    // 自動接続モード: 落口選択
+    if (autoConnectMode === 'selecting-outlet') {
+      executeAutoConnect(id)
+      return
+    }
+
     // 結合モード: 複数選択
     if (editMode === 'merge') {
       togglePipeSelection(id)
@@ -511,21 +523,37 @@ export function CadAnalysisPage() {
     setBulkEditSettings({ pipeType: null, diameter: null })
   }
 
-  // 自動接続処理
-  const handleAutoConnect = () => {
-    if (!selectedPipeId) {
-      alert('落口となる管路を選択してください')
+  // 自動接続モード開始
+  const startAutoConnect = () => {
+    setAutoConnectMode('selecting-outlet')
+    setSelectedPipeId(null)
+  }
+
+  // 自動接続モード終了
+  const cancelAutoConnect = () => {
+    setAutoConnectMode('idle')
+  }
+
+  // 自動接続実行（落口を選択した後に呼ばれる）
+  const executeAutoConnect = (outletPipeId: string) => {
+    // 最新のpipes状態を取得（分割・結合後の管路も含む）
+    // ストアから直接取得することで、最新の状態を反映
+    const currentPipes = useUnderdrainStore.getState().pipes
+
+    // 落口管路も最新の状態から取得
+    const outletPipe = currentPipes.find((p) => p.id === outletPipeId)
+    if (!outletPipe) {
+      setAutoConnectMode('idle')
+      alert('選択した管路が見つかりません')
       return
     }
 
-    const outletPipe = pipes.find((p) => p.id === selectedPipeId)
-    if (!outletPipe) return
-
     // 選択中の管路を落口として設定
-    updatePipe(selectedPipeId, { pipeType: 'outlet' })
+    updatePipe(outletPipeId, { pipeType: 'outlet' })
+    setSelectedPipeId(outletPipeId)
 
     // 落口の終点（現在の下流方向）を基準に自動接続
-    const results = autoConnectFromOutlet(outletPipe, 'end', pipes)
+    const results = autoConnectFromOutlet(outletPipe, 'end', currentPipes)
 
     // 結果を適用
     for (const result of results) {
@@ -537,6 +565,7 @@ export function CadAnalysisPage() {
       }
     }
 
+    setAutoConnectMode('idle')
     alert(`${results.length} 件の管路の接続関係を設定しました`)
   }
 
@@ -569,15 +598,12 @@ export function CadAnalysisPage() {
                 <Upload className="h-4 w-4" />
                 DXFインポート
               </button>
-              {pipes.length > 0 && !isBulkEditMode && editMode === 'normal' && !isSequentialMode && (
+              {pipes.length > 0 && !isBulkEditMode && editMode === 'normal' && !isSequentialMode && autoConnectMode === 'idle' && (
                 <>
                   <button
-                    onClick={handleAutoConnect}
-                    disabled={!selectedPipeId}
-                    className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white ${
-                      !selectedPipeId ? 'opacity-50 cursor-not-allowed' : 'bg-green-50 border-green-400 text-green-700 hover:bg-green-100'
-                    }`}
-                    title="選択中の管路を落口として、接続関係を自動設定"
+                    onClick={startAutoConnect}
+                    className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white bg-green-50 border-green-400 text-green-700 hover:bg-green-100"
+                    title="落口を選択して接続関係を自動設定"
                   >
                     <Link2 className="h-3.5 w-3.5" />
                     自動接続
@@ -647,6 +673,26 @@ export function CadAnalysisPage() {
               )}
             </div>
           </div>
+
+          {/* 自動接続モードパネル */}
+          {autoConnectMode === 'selecting-outlet' && (
+            <div className="p-3 bg-green-50 border-b flex-shrink-0">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-green-800">
+                  自動接続モード: 落口となる管路をクリックして選択してください
+                </span>
+                <button
+                  onClick={cancelAutoConnect}
+                  className="p-1 text-green-600 hover:bg-green-100 rounded"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <p className="text-xs text-green-600 mt-1">
+                選択した管路を落口として、接続関係と上下流方向を自動設定します
+              </p>
+            </div>
+          )}
 
           {/* 結合モードパネル */}
           {editMode === 'merge' && (
@@ -1173,7 +1219,7 @@ export function CadAnalysisPage() {
               selectedPipeIds={selectedPipeIds}
               onPipeSelect={handlePipeClick}
               onVertexClick={handleVertexClick}
-              isBulkEditMode={isBulkEditMode || isSequentialMode}
+              isBulkEditMode={isBulkEditMode || isSequentialMode || autoConnectMode === 'selecting-outlet'}
               showDirection={showDirection}
               showLabels={showLabels}
               showSurveyPoints={showSurveyPoints}
