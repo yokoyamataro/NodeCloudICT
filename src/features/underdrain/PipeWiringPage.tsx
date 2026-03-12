@@ -37,7 +37,7 @@ interface WiringRow {
 
 export function PipeWiringPage() {
   const { pipes, fetchPipes } = useUnderdrainStore()
-  const { coordinates, fetchCoordinates } = useCoordinateStore()
+  const { fetchCoordinates } = useCoordinateStore()
   const { currentProject } = useProjectStore()
 
   // プロジェクト選択時にデータを読み込む
@@ -283,7 +283,7 @@ export function PipeWiringPage() {
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {currentRows.map((row, rowIndex) => (
+                {currentRows.map((row) => (
                   <tr key={row.id} className="hover:bg-slate-50">
                     <td className="px-1 py-1 border-r">
                       <select
