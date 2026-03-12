@@ -10,17 +10,18 @@ import {
   Link2,
   X,
   FileText,
+  Save,
+  Loader2,
 } from 'lucide-react'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useProjectStore } from '@/stores/projectStore'
+import { useSurveyStore, type SurveyDataRow } from '@/stores/surveyStore'
 import { loadSimaFile, type SimaCoordinate } from '@/lib/sima-parser'
-
-// マッチング閾値（メートル）
-const DEFAULT_MATCHING_THRESHOLD = 0.2 // 20cm
+import type { SurveyCategory } from '@/types/database'
 
 // タブの種類
-type TabType = 'control' | 'boundary' | 'underdrain' | 'other'
+type TabType = SurveyCategory
 
 const TAB_LABELS: Record<TabType, string> = {
   control: '基準点',
@@ -40,65 +41,65 @@ interface DesignPoint {
   source: 'pipe' | 'coordinate'
 }
 
-// 測量座標（SIMから取得）
-interface SurveyPoint {
-  id: string
-  pointNumber: string
-  x: number
-  y: number
-  z: number | null
-}
-
 // マッチング結果
 interface MatchResult {
   designPoint: DesignPoint
-  surveyPoint: SurveyPoint | null
-  matchCandidates: SurveyPoint[]
+  surveyData: SurveyDataRow | null
+  matchCandidates: SurveyDataRow[]
   distance: number | null
-  manualCategory?: TabType
-  dzRaw: number | null    // 生の標高差（測量Z - 設計Z）
-  dzCalibrated: number | null  // 補正後の標高差
-}
-
-// 補正情報
-interface CalibrationInfo {
-  controlPointId: string | null
-  dzOffset: number  // 補正量（基準点の測量Z - 設計Z の平均）
-  isEnabled: boolean
+  dzRaw: number | null
+  dzCalibrated: number | null
 }
 
 export function SurveyImportPage() {
   const { pipes, fetchPipes } = useUnderdrainStore()
   const { coordinates, fetchCoordinates } = useCoordinateStore()
   const { currentProject } = useProjectStore()
+  const {
+    surveyData,
+    calibration,
+    loading,
+    fetchSurveyData,
+    fetchCalibration,
+    importSurveyData,
+    updateCalibration,
+    saveAllMatches,
+  } = useSurveyStore()
 
   // プロジェクト選択時にデータを読み込む
   useEffect(() => {
     if (currentProject) {
       fetchPipes(currentProject.id)
       fetchCoordinates(currentProject.id)
+      fetchSurveyData(currentProject.id)
+      fetchCalibration(currentProject.id)
     }
-  }, [currentProject, fetchPipes, fetchCoordinates])
+  }, [currentProject, fetchPipes, fetchCoordinates, fetchSurveyData, fetchCalibration])
 
   // 状態
   const [activeTab, setActiveTab] = useState<TabType>('control')
-  const [matchingThreshold, setMatchingThreshold] = useState(DEFAULT_MATCHING_THRESHOLD)
   const [showSettings, setShowSettings] = useState(false)
-  const [surveyPoints, setSurveyPoints] = useState<SurveyPoint[]>([])
   const [isImportModalOpen, setIsImportModalOpen] = useState(false)
   const [importedData, setImportedData] = useState<SimaCoordinate[]>([])
   const [isSelectionModalOpen, setIsSelectionModalOpen] = useState(false)
   const [selectionTarget, setSelectionTarget] = useState<{
     designPointId: string
-    candidates: SurveyPoint[]
+    candidates: SurveyDataRow[]
   } | null>(null)
-  const [selectedSurveyPoints, setSelectedSurveyPoints] = useState<Map<string, string>>(new Map())
-  const [manualCategories, setManualCategories] = useState<Map<string, TabType>>(new Map())
-  const [calibration, setCalibration] = useState<CalibrationInfo>({
-    controlPointId: null,
-    dzOffset: 0,
-    isEnabled: false,
-  })
+  const [saving, setSaving] = useState(false)
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+
+  // ローカル状態（保存前のマッチング変更を追跡）
+  const [localMatches, setLocalMatches] = useState<Map<string, {
+    surveyId: string
+    matchedPointId: string | null
+    matchedPointType: 'pipe' | 'coordinate' | null
+    matchDistance: number | null
+    category: TabType
+    dzRaw: number | null
+    dzCalibrated: number | null
+  }>>(new Map())
+
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // 設計点を生成（座標計算と同じロジック）
@@ -183,60 +184,70 @@ export function SurveyImportPage() {
   // マッチング結果を計算
   const matchResults = useMemo(() => {
     const results: MatchResult[] = []
+    const threshold = calibration.matchingThreshold
 
     for (const dp of designPoints) {
-      // 手動選択があればそれを使用
-      const manualSurveyId = selectedSurveyPoints.get(dp.id)
-      const manualCategory = manualCategories.get(dp.id)
+      // ローカル変更があればそれを使用
+      const localMatch = localMatches.get(dp.id)
 
-      if (manualSurveyId) {
-        const sp = surveyPoints.find((s) => s.id === manualSurveyId)
-        if (sp) {
-          const distance = calcDistance(dp, sp)
-          const dzRaw = sp.z !== null && dp.z !== null ? sp.z - dp.z : null
-          const dzCalibrated = dzRaw !== null && calibration.isEnabled ? dzRaw - calibration.dzOffset : dzRaw
-          results.push({
-            designPoint: { ...dp, type: manualCategory || dp.type },
-            surveyPoint: sp,
-            matchCandidates: [],
-            distance,
-            manualCategory,
-            dzRaw,
-            dzCalibrated,
-          })
-          continue
-        }
+      if (localMatch) {
+        const sd = surveyData.find((s) => s.id === localMatch.surveyId)
+        results.push({
+          designPoint: { ...dp, type: localMatch.category },
+          surveyData: sd || null,
+          matchCandidates: [],
+          distance: localMatch.matchDistance,
+          dzRaw: localMatch.dzRaw,
+          dzCalibrated: localMatch.dzCalibrated,
+        })
+        continue
+      }
+
+      // DBに保存されているマッチを使用
+      const savedMatch = surveyData.find((s) => s.matchedPointId === dp.id)
+      if (savedMatch) {
+        results.push({
+          designPoint: { ...dp, type: savedMatch.category },
+          surveyData: savedMatch,
+          matchCandidates: [],
+          distance: savedMatch.matchDistance,
+          dzRaw: savedMatch.dzRaw,
+          dzCalibrated: savedMatch.dzCalibrated,
+        })
+        continue
       }
 
       // 自動マッチング
-      const candidates: { sp: SurveyPoint; distance: number }[] = []
-      for (const sp of surveyPoints) {
-        const distance = calcDistance(dp, sp)
-        if (distance <= matchingThreshold) {
-          candidates.push({ sp, distance })
+      const candidates: { sd: SurveyDataRow; distance: number }[] = []
+      for (const sd of surveyData) {
+        // 既にマッチ済みのものはスキップ
+        if (sd.matchedPointId) continue
+
+        const distance = calcDistance(dp, sd)
+        if (distance <= threshold) {
+          candidates.push({ sd, distance })
         }
       }
       candidates.sort((a, b) => a.distance - b.distance)
 
       const bestMatch = candidates.length > 0 ? candidates[0] : null
-      const dzRaw = bestMatch?.sp.z !== null && dp.z !== null && bestMatch
-        ? bestMatch.sp.z! - dp.z
+      const dzRaw = bestMatch?.sd.z !== null && dp.z !== null && bestMatch
+        ? bestMatch.sd.z! - dp.z
         : null
       const dzCalibrated = dzRaw !== null && calibration.isEnabled ? dzRaw - calibration.dzOffset : dzRaw
 
       results.push({
-        designPoint: { ...dp, type: manualCategory || dp.type },
-        surveyPoint: bestMatch?.sp || null,
-        matchCandidates: candidates.map((c) => c.sp),
+        designPoint: dp,
+        surveyData: bestMatch?.sd || null,
+        matchCandidates: candidates.map((c) => c.sd),
         distance: bestMatch?.distance || null,
-        manualCategory,
         dzRaw,
         dzCalibrated,
       })
     }
 
     return results
-  }, [designPoints, surveyPoints, matchingThreshold, selectedSurveyPoints, manualCategories, calibration, calcDistance])
+  }, [designPoints, surveyData, calibration, localMatches, calcDistance])
 
   // タブ別にフィルタリング
   const filteredResults = useMemo(() => {
@@ -254,7 +265,7 @@ export function SurveyImportPage() {
 
     for (const r of matchResults) {
       stats[r.designPoint.type].total++
-      if (r.surveyPoint) stats[r.designPoint.type].matched++
+      if (r.surveyData) stats[r.designPoint.type].matched++
     }
 
     return stats
@@ -263,11 +274,11 @@ export function SurveyImportPage() {
   // 基準点の標高差から補正量を計算
   const recalculateCalibration = useCallback(() => {
     const controlResults = matchResults.filter(
-      (r) => r.designPoint.type === 'control' && r.surveyPoint && r.dzRaw !== null
+      (r) => r.designPoint.type === 'control' && r.surveyData && r.dzRaw !== null
     )
 
     if (controlResults.length === 0) {
-      setCalibration((prev) => ({ ...prev, dzOffset: 0 }))
+      updateCalibration({ dzOffset: 0 })
       return
     }
 
@@ -275,8 +286,8 @@ export function SurveyImportPage() {
     const sum = controlResults.reduce((acc, r) => acc + (r.dzRaw || 0), 0)
     const avg = sum / controlResults.length
 
-    setCalibration((prev) => ({ ...prev, dzOffset: avg }))
-  }, [matchResults])
+    updateCalibration({ dzOffset: avg })
+  }, [matchResults, updateCalibration])
 
   // SIMファイルをインポート
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -290,59 +301,162 @@ export function SurveyImportPage() {
     } catch (err) {
       console.error('SIMファイルの読み込みに失敗:', err)
     }
+
+    // ファイル入力をリセット（同じファイルを再選択できるように）
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
   }
 
-  // インポートを確定
-  const confirmImport = () => {
-    const newPoints: SurveyPoint[] = importedData.map((c, i) => ({
-      id: `survey-${Date.now()}-${i}`,
+  // インポートを確定（Supabaseに保存）
+  const confirmImport = async () => {
+    const newData: Omit<SurveyDataRow, 'id'>[] = importedData.map((c) => ({
       pointNumber: c.pointNumber,
       x: c.x,
       y: c.y,
       z: c.z,
+      matchedPointId: null,
+      matchedPointType: null,
+      matchDistance: null,
+      category: 'other' as TabType,
+      dzRaw: null,
+      dzCalibrated: null,
+      notes: null,
     }))
-    setSurveyPoints(newPoints)
+
+    await importSurveyData(newData)
     setIsImportModalOpen(false)
     setImportedData([])
-    // マッチング状態をリセット
-    setSelectedSurveyPoints(new Map())
-    setManualCategories(new Map())
+    setLocalMatches(new Map())
+    setHasUnsavedChanges(false)
   }
 
   // 選択モーダルを開く
-  const openSelectionModal = (designPointId: string, candidates: SurveyPoint[]) => {
+  const openSelectionModal = (designPointId: string, candidates: SurveyDataRow[]) => {
     setSelectionTarget({ designPointId, candidates })
     setIsSelectionModalOpen(true)
   }
 
   // 測量点を手動選択
-  const selectSurveyPoint = (surveyPointId: string) => {
+  const selectSurveyPoint = (surveyId: string) => {
     if (!selectionTarget) return
-    setSelectedSurveyPoints((prev) => {
+
+    const dp = designPoints.find((d) => d.id === selectionTarget.designPointId)
+    const sd = surveyData.find((s) => s.id === surveyId)
+    if (!dp || !sd) return
+
+    const distance = calcDistance(dp, sd)
+    const dzRaw = sd.z !== null && dp.z !== null ? sd.z - dp.z : null
+    const dzCalibrated = dzRaw !== null && calibration.isEnabled ? dzRaw - calibration.dzOffset : dzRaw
+
+    setLocalMatches((prev) => {
       const next = new Map(prev)
-      next.set(selectionTarget.designPointId, surveyPointId)
+      next.set(selectionTarget.designPointId, {
+        surveyId,
+        matchedPointId: dp.id,
+        matchedPointType: dp.source,
+        matchDistance: distance,
+        category: dp.type,
+        dzRaw,
+        dzCalibrated,
+      })
       return next
     })
+
+    setHasUnsavedChanges(true)
     setIsSelectionModalOpen(false)
     setSelectionTarget(null)
   }
 
   // マッチング解除
   const clearMatch = (designPointId: string) => {
-    setSelectedSurveyPoints((prev) => {
+    setLocalMatches((prev) => {
       const next = new Map(prev)
-      next.delete(designPointId)
+      // 解除を示すために null を設定
+      next.set(designPointId, {
+        surveyId: '',
+        matchedPointId: null,
+        matchedPointType: null,
+        matchDistance: null,
+        category: 'other',
+        dzRaw: null,
+        dzCalibrated: null,
+      })
       return next
     })
+    setHasUnsavedChanges(true)
   }
 
   // カテゴリ変更（その他からの振り分け）
-  const changeCategory = (designPointId: string, newType: TabType) => {
-    setManualCategories((prev) => {
+  const changeCategory = (designPointId: string, newCategory: TabType) => {
+    const result = matchResults.find((r) => r.designPoint.id === designPointId)
+    if (!result || !result.surveyData) return
+
+    setLocalMatches((prev) => {
       const next = new Map(prev)
-      next.set(designPointId, newType)
+      next.set(designPointId, {
+        surveyId: result.surveyData!.id,
+        matchedPointId: designPointId,
+        matchedPointType: result.designPoint.source,
+        matchDistance: result.distance,
+        category: newCategory,
+        dzRaw: result.dzRaw,
+        dzCalibrated: result.dzCalibrated,
+      })
       return next
     })
+    setHasUnsavedChanges(true)
+  }
+
+  // マッチング結果を保存
+  const handleSaveMatches = async () => {
+    setSaving(true)
+    try {
+      // マッチング結果を収集
+      const matches: Array<{
+        surveyId: string
+        matchedPointId: string | null
+        matchedPointType: 'pipe' | 'coordinate' | null
+        matchDistance: number | null
+        category: SurveyCategory
+        dzRaw: number | null
+        dzCalibrated: number | null
+      }> = []
+
+      for (const result of matchResults) {
+        if (result.surveyData) {
+          const localMatch = localMatches.get(result.designPoint.id)
+          if (localMatch && localMatch.surveyId) {
+            matches.push({
+              surveyId: localMatch.surveyId,
+              matchedPointId: localMatch.matchedPointId,
+              matchedPointType: localMatch.matchedPointType,
+              matchDistance: localMatch.matchDistance,
+              category: localMatch.category,
+              dzRaw: localMatch.dzRaw,
+              dzCalibrated: localMatch.dzCalibrated,
+            })
+          } else if (!localMatch) {
+            // 自動マッチング結果を保存
+            matches.push({
+              surveyId: result.surveyData.id,
+              matchedPointId: result.designPoint.id,
+              matchedPointType: result.designPoint.source,
+              matchDistance: result.distance,
+              category: result.designPoint.type,
+              dzRaw: result.dzRaw,
+              dzCalibrated: result.dzCalibrated,
+            })
+          }
+        }
+      }
+
+      await saveAllMatches(matches)
+      setLocalMatches(new Map())
+      setHasUnsavedChanges(false)
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -381,6 +495,24 @@ export function SurveyImportPage() {
             <FileText className="h-4 w-4" />
             LANDXML
           </button>
+          {surveyData.length > 0 && (
+            <button
+              onClick={handleSaveMatches}
+              disabled={saving || !hasUnsavedChanges}
+              className={`flex items-center gap-2 px-4 py-2 rounded ${
+                hasUnsavedChanges
+                  ? 'bg-green-600 text-white hover:bg-green-500'
+                  : 'bg-slate-200 text-slate-500 cursor-not-allowed'
+              }`}
+            >
+              {saving ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
+              保存
+            </button>
+          )}
           <button
             onClick={() => setShowSettings(!showSettings)}
             className={`flex items-center gap-1 px-3 py-2 border rounded hover:bg-slate-50 ${
@@ -393,6 +525,14 @@ export function SurveyImportPage() {
         </div>
       </div>
 
+      {/* 未保存の変更インジケーター */}
+      {hasUnsavedChanges && (
+        <div className="px-4 py-2 bg-yellow-50 border-b text-sm text-yellow-800 flex items-center gap-2">
+          <span className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" />
+          マッチング結果に未保存の変更があります
+        </div>
+      )}
+
       {/* 設定パネル */}
       {showSettings && (
         <div className="p-4 bg-blue-50 border-b">
@@ -403,8 +543,8 @@ export function SurveyImportPage() {
               </label>
               <input
                 type="number"
-                value={matchingThreshold}
-                onChange={(e) => setMatchingThreshold(parseFloat(e.target.value) || 0.2)}
+                value={calibration.matchingThreshold}
+                onChange={(e) => updateCalibration({ matchingThreshold: parseFloat(e.target.value) || 0.2 })}
                 step="0.01"
                 min="0.01"
                 max="1.0"
@@ -420,9 +560,7 @@ export function SurveyImportPage() {
                 <input
                   type="checkbox"
                   checked={calibration.isEnabled}
-                  onChange={(e) =>
-                    setCalibration((prev) => ({ ...prev, isEnabled: e.target.checked }))
-                  }
+                  onChange={(e) => updateCalibration({ isEnabled: e.target.checked })}
                   className="h-4 w-4"
                 />
                 <Mountain className="h-4 w-4" />
@@ -473,180 +611,190 @@ export function SurveyImportPage() {
         </div>
       </div>
 
+      {/* ローディング */}
+      {loading && (
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+        </div>
+      )}
+
       {/* メインコンテンツ */}
-      <div className="flex-1 overflow-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-slate-100 sticky top-0 z-10">
-            <tr>
-              <th className="px-3 py-2 text-left font-medium w-8"></th>
-              <th className="px-3 py-2 text-left font-medium">点名</th>
-              <th className="px-3 py-2 text-right font-medium">設計X</th>
-              <th className="px-3 py-2 text-right font-medium">設計Y</th>
-              <th className="px-3 py-2 text-right font-medium">設計Z</th>
-              <th className="px-3 py-2 text-center font-medium w-8">
-                <Link2 className="h-4 w-4 mx-auto" />
-              </th>
-              <th className="px-3 py-2 text-left font-medium">測量点名</th>
-              <th className="px-3 py-2 text-right font-medium">測量X</th>
-              <th className="px-3 py-2 text-right font-medium">測量Y</th>
-              <th className="px-3 py-2 text-right font-medium">測量Z</th>
-              <th className="px-3 py-2 text-right font-medium">距離</th>
-              <th className="px-3 py-2 text-right font-medium">dZ</th>
-              {activeTab === 'other' && (
-                <th className="px-3 py-2 text-center font-medium">振り分け</th>
-              )}
-              <th className="px-3 py-2 text-center font-medium w-16">操作</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {filteredResults.map((result) => {
-              const hasMatch = result.surveyPoint !== null
-              const hasMultipleCandidates = result.matchCandidates.length > 1
-              return (
-                <tr
-                  key={result.designPoint.id}
-                  className={`hover:bg-slate-50 ${
-                    hasMatch ? 'bg-green-50' : surveyPoints.length > 0 ? 'bg-red-50' : ''
-                  }`}
-                >
-                  <td className="px-3 py-2 text-center">
-                    {hasMatch ? (
-                      <CheckCircle2 className="h-4 w-4 text-green-600" />
-                    ) : surveyPoints.length > 0 ? (
-                      <AlertCircle className="h-4 w-4 text-red-500" />
-                    ) : (
-                      <span className="h-4 w-4 block" />
-                    )}
-                  </td>
-                  <td className="px-3 py-2 font-mono font-medium">
-                    {result.designPoint.name}
-                    {result.designPoint.source === 'coordinate' && (
-                      <span className="ml-1 text-xs text-orange-600">(座標)</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono">
-                    {result.designPoint.x.toFixed(3)}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono">
-                    {result.designPoint.y.toFixed(3)}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono">
-                    {result.designPoint.z?.toFixed(3) ?? '-'}
-                  </td>
-                  <td className="px-3 py-2 text-center">
-                    {hasMatch && <Link2 className="h-4 w-4 mx-auto text-green-600" />}
-                  </td>
-                  <td className="px-3 py-2 font-mono">
-                    {result.surveyPoint?.pointNumber ?? '-'}
-                    {hasMultipleCandidates && (
-                      <span className="ml-1 text-xs text-orange-600">
-                        (+{result.matchCandidates.length - 1})
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono">
-                    {result.surveyPoint?.x.toFixed(3) ?? '-'}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono">
-                    {result.surveyPoint?.y.toFixed(3) ?? '-'}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono">
-                    {result.surveyPoint?.z?.toFixed(3) ?? '-'}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono">
-                    {result.distance !== null ? (
-                      <span
-                        className={`${
-                          result.distance <= 0.1
-                            ? 'text-green-600'
-                            : result.distance <= 0.2
-                            ? 'text-yellow-600'
-                            : 'text-red-600'
-                        }`}
-                      >
-                        {(result.distance * 100).toFixed(1)}cm
-                      </span>
-                    ) : (
-                      '-'
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono">
-                    {result.dzCalibrated !== null ? (
-                      <span
-                        className={`${
-                          Math.abs(result.dzCalibrated) <= 0.05
-                            ? 'text-green-600'
-                            : Math.abs(result.dzCalibrated) <= 0.1
-                            ? 'text-yellow-600'
-                            : 'text-red-600'
-                        }`}
-                      >
-                        {result.dzCalibrated >= 0 ? '+' : ''}
-                        {result.dzCalibrated.toFixed(3)}
-                      </span>
-                    ) : (
-                      '-'
-                    )}
-                    {calibration.isEnabled && result.dzRaw !== null && result.dzRaw !== result.dzCalibrated && (
-                      <span className="text-xs text-slate-400 ml-1">
-                        (生:{result.dzRaw >= 0 ? '+' : ''}{result.dzRaw.toFixed(3)})
-                      </span>
-                    )}
-                  </td>
-                  {activeTab === 'other' && (
+      {!loading && (
+        <div className="flex-1 overflow-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-100 sticky top-0 z-10">
+              <tr>
+                <th className="px-3 py-2 text-left font-medium w-8"></th>
+                <th className="px-3 py-2 text-left font-medium">点名</th>
+                <th className="px-3 py-2 text-right font-medium">設計X</th>
+                <th className="px-3 py-2 text-right font-medium">設計Y</th>
+                <th className="px-3 py-2 text-right font-medium">設計Z</th>
+                <th className="px-3 py-2 text-center font-medium w-8">
+                  <Link2 className="h-4 w-4 mx-auto" />
+                </th>
+                <th className="px-3 py-2 text-left font-medium">測量点名</th>
+                <th className="px-3 py-2 text-right font-medium">測量X</th>
+                <th className="px-3 py-2 text-right font-medium">測量Y</th>
+                <th className="px-3 py-2 text-right font-medium">測量Z</th>
+                <th className="px-3 py-2 text-right font-medium">距離</th>
+                <th className="px-3 py-2 text-right font-medium">dZ</th>
+                {activeTab === 'other' && (
+                  <th className="px-3 py-2 text-center font-medium">振り分け</th>
+                )}
+                <th className="px-3 py-2 text-center font-medium w-16">操作</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {filteredResults.map((result) => {
+                const hasMatch = result.surveyData !== null
+                const hasMultipleCandidates = result.matchCandidates.length > 1
+                return (
+                  <tr
+                    key={result.designPoint.id}
+                    className={`hover:bg-slate-50 ${
+                      hasMatch ? 'bg-green-50' : surveyData.length > 0 ? 'bg-red-50' : ''
+                    }`}
+                  >
                     <td className="px-3 py-2 text-center">
-                      <select
-                        value={result.manualCategory || 'other'}
-                        onChange={(e) =>
-                          changeCategory(result.designPoint.id, e.target.value as TabType)
-                        }
-                        className="text-xs border rounded px-1 py-0.5"
-                      >
-                        <option value="other">その他</option>
-                        <option value="control">基準点</option>
-                        <option value="boundary">外周点</option>
-                        <option value="underdrain">暗渠構成点</option>
-                      </select>
+                      {hasMatch ? (
+                        <CheckCircle2 className="h-4 w-4 text-green-600" />
+                      ) : surveyData.length > 0 ? (
+                        <AlertCircle className="h-4 w-4 text-red-500" />
+                      ) : (
+                        <span className="h-4 w-4 block" />
+                      )}
                     </td>
-                  )}
-                  <td className="px-3 py-2 text-center">
-                    <div className="flex items-center justify-center gap-1">
+                    <td className="px-3 py-2 font-mono font-medium">
+                      {result.designPoint.name}
+                      {result.designPoint.source === 'coordinate' && (
+                        <span className="ml-1 text-xs text-orange-600">(座標)</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {result.designPoint.x.toFixed(3)}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {result.designPoint.y.toFixed(3)}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {result.designPoint.z?.toFixed(3) ?? '-'}
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      {hasMatch && <Link2 className="h-4 w-4 mx-auto text-green-600" />}
+                    </td>
+                    <td className="px-3 py-2 font-mono">
+                      {result.surveyData?.pointNumber ?? '-'}
                       {hasMultipleCandidates && (
-                        <button
-                          onClick={() =>
-                            openSelectionModal(result.designPoint.id, result.matchCandidates)
+                        <span className="ml-1 text-xs text-orange-600">
+                          (+{result.matchCandidates.length - 1})
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {result.surveyData?.x.toFixed(3) ?? '-'}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {result.surveyData?.y.toFixed(3) ?? '-'}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {result.surveyData?.z?.toFixed(3) ?? '-'}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {result.distance !== null ? (
+                        <span
+                          className={`${
+                            result.distance <= 0.1
+                              ? 'text-green-600'
+                              : result.distance <= 0.2
+                              ? 'text-yellow-600'
+                              : 'text-red-600'
+                          }`}
+                        >
+                          {(result.distance * 100).toFixed(1)}cm
+                        </span>
+                      ) : (
+                        '-'
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {result.dzCalibrated !== null ? (
+                        <span
+                          className={`${
+                            Math.abs(result.dzCalibrated) <= 0.05
+                              ? 'text-green-600'
+                              : Math.abs(result.dzCalibrated) <= 0.1
+                              ? 'text-yellow-600'
+                              : 'text-red-600'
+                          }`}
+                        >
+                          {result.dzCalibrated >= 0 ? '+' : ''}
+                          {result.dzCalibrated.toFixed(3)}
+                        </span>
+                      ) : (
+                        '-'
+                      )}
+                      {calibration.isEnabled && result.dzRaw !== null && result.dzRaw !== result.dzCalibrated && (
+                        <span className="text-xs text-slate-400 ml-1">
+                          (生:{result.dzRaw >= 0 ? '+' : ''}{result.dzRaw.toFixed(3)})
+                        </span>
+                      )}
+                    </td>
+                    {activeTab === 'other' && (
+                      <td className="px-3 py-2 text-center">
+                        <select
+                          value={result.designPoint.type}
+                          onChange={(e) =>
+                            changeCategory(result.designPoint.id, e.target.value as TabType)
                           }
-                          className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+                          className="text-xs border rounded px-1 py-0.5"
+                          disabled={!hasMatch}
                         >
-                          選択
-                        </button>
-                      )}
-                      {hasMatch && (
-                        <button
-                          onClick={() => clearMatch(result.designPoint.id)}
-                          className="p-1 text-red-500 hover:bg-red-100 rounded"
-                          title="マッチング解除"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      )}
-                    </div>
+                          <option value="other">その他</option>
+                          <option value="control">基準点</option>
+                          <option value="boundary">外周点</option>
+                          <option value="underdrain">暗渠構成点</option>
+                        </select>
+                      </td>
+                    )}
+                    <td className="px-3 py-2 text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        {hasMultipleCandidates && (
+                          <button
+                            onClick={() =>
+                              openSelectionModal(result.designPoint.id, result.matchCandidates)
+                            }
+                            className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+                          >
+                            選択
+                          </button>
+                        )}
+                        {hasMatch && (
+                          <button
+                            onClick={() => clearMatch(result.designPoint.id)}
+                            className="p-1 text-red-500 hover:bg-red-100 rounded"
+                            title="マッチング解除"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+              {filteredResults.length === 0 && (
+                <tr>
+                  <td colSpan={activeTab === 'other' ? 14 : 13} className="px-4 py-8 text-center text-muted-foreground">
+                    {surveyData.length === 0
+                      ? 'SIMファイルをインポートしてください'
+                      : 'このカテゴリには該当する点がありません'}
                   </td>
                 </tr>
-              )
-            })}
-            {filteredResults.length === 0 && (
-              <tr>
-                <td colSpan={activeTab === 'other' ? 14 : 13} className="px-4 py-8 text-center text-muted-foreground">
-                  {surveyPoints.length === 0
-                    ? 'SIMファイルをインポートしてください'
-                    : 'このカテゴリには該当する点がありません'}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* SIMインポートモーダル */}
       {isImportModalOpen && (
@@ -670,6 +818,8 @@ export function SurveyImportPage() {
             <div className="p-4 flex-1 overflow-auto">
               <p className="text-sm text-muted-foreground mb-4">
                 {importedData.length}件の座標データが見つかりました。インポートしますか？
+                <br />
+                <span className="text-orange-600">既存の測量データは上書きされます。</span>
               </p>
               <table className="w-full text-sm border">
                 <thead className="bg-slate-100 sticky top-0">
@@ -752,23 +902,23 @@ export function SurveyImportPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {selectionTarget.candidates.map((sp) => {
+                  {selectionTarget.candidates.map((sd) => {
                     const dp = designPoints.find((d) => d.id === selectionTarget.designPointId)
-                    const dist = dp ? calcDistance(dp, sp) : 0
+                    const dist = dp ? calcDistance(dp, sd) : 0
                     return (
-                      <tr key={sp.id} className="hover:bg-slate-50">
-                        <td className="px-3 py-2 font-mono">{sp.pointNumber}</td>
-                        <td className="px-3 py-2 text-right font-mono">{sp.x.toFixed(3)}</td>
-                        <td className="px-3 py-2 text-right font-mono">{sp.y.toFixed(3)}</td>
+                      <tr key={sd.id} className="hover:bg-slate-50">
+                        <td className="px-3 py-2 font-mono">{sd.pointNumber}</td>
+                        <td className="px-3 py-2 text-right font-mono">{sd.x.toFixed(3)}</td>
+                        <td className="px-3 py-2 text-right font-mono">{sd.y.toFixed(3)}</td>
                         <td className="px-3 py-2 text-right font-mono">
-                          {sp.z?.toFixed(3) ?? '-'}
+                          {sd.z?.toFixed(3) ?? '-'}
                         </td>
                         <td className="px-3 py-2 text-right font-mono">
                           {(dist * 100).toFixed(1)}cm
                         </td>
                         <td className="px-3 py-2 text-center">
                           <button
-                            onClick={() => selectSurveyPoint(sp.id)}
+                            onClick={() => selectSurveyPoint(sd.id)}
                             className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-500"
                           >
                             選択

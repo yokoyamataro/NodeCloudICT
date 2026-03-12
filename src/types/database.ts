@@ -246,6 +246,39 @@ export interface DesignPipe {
   updated_at: string
 }
 
+// 測量データカテゴリ
+export type SurveyCategory = 'control' | 'boundary' | 'underdrain' | 'other'
+
+// NodeCloud-Design用測量データ
+export interface DesignSurveyData {
+  id: string
+  project_id: string
+  point_number: string
+  x: number
+  y: number
+  z: number | null
+  matched_point_id: string | null
+  matched_point_type: 'pipe' | 'coordinate' | null
+  match_distance: number | null
+  category: SurveyCategory
+  dz_raw: number | null
+  dz_calibrated: number | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+// NodeCloud-Design用測量補正設定
+export interface DesignSurveyCalibration {
+  id: string
+  project_id: string
+  is_enabled: boolean
+  dz_offset: number
+  matching_threshold: number
+  created_at: string
+  updated_at: string
+}
+
 // Database型定義
 export interface Database {
   public: {
@@ -270,6 +303,16 @@ export interface Database {
         Row: DesignPipe
         Insert: Omit<DesignPipe, 'id' | 'created_at' | 'updated_at'>
         Update: Partial<Omit<DesignPipe, 'id' | 'created_at' | 'updated_at'>>
+      }
+      design_survey_data: {
+        Row: DesignSurveyData
+        Insert: Omit<DesignSurveyData, 'id' | 'created_at' | 'updated_at'>
+        Update: Partial<Omit<DesignSurveyData, 'id' | 'created_at' | 'updated_at'>>
+      }
+      design_survey_calibration: {
+        Row: DesignSurveyCalibration
+        Insert: Omit<DesignSurveyCalibration, 'id' | 'created_at' | 'updated_at'>
+        Update: Partial<Omit<DesignSurveyCalibration, 'id' | 'created_at' | 'updated_at'>>
       }
       // 既存テーブル（後方互換性）
       coordinates: {
