@@ -406,7 +406,7 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
       notes: firstPipe.notes,
     }
 
-    // 古い管路を削除し、新しい管路を追加（ローカルのみ、後でSupabaseに同期）
+    // 古い管路を削除し、新しい管路を追加
     set((state) => ({
       pipes: [
         ...state.pipes
@@ -423,7 +423,63 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
       selectedPipeIds: new Set(),
     }))
 
-    // TODO: Supabaseに同期（複数操作のトランザクション）
+    // Supabaseに同期
+    const projectId = getCurrentProjectId()
+    if (projectId) {
+      // 古い管路を削除し、新しい管路を挿入
+      ;(async () => {
+        try {
+          // 古い管路を削除
+          const { error: deleteError } = await supabase
+            .from('design_pipes')
+            .delete()
+            .in('id', ids)
+
+          if (deleteError) {
+            console.error('管路削除エラー:', deleteError)
+            set({ error: deleteError.message })
+            return
+          }
+
+          // 新しい管路を挿入
+          const { error: insertError } = await supabase
+            .from('design_pipes')
+            .insert({
+              id: newId,
+              project_id: projectId,
+              number: newPipe.number,
+              layer_name: newPipe.layerName,
+              pipe_type: newPipe.pipeType,
+              diameter: newPipe.diameter,
+              design_length: newPipe.designLength,
+              measured_length: newPipe.measuredLength,
+              vertices: newPipe.vertices,
+              connection_to: newPipe.connectionTo,
+              notes: newPipe.notes,
+            } as never)
+
+          if (insertError) {
+            console.error('管路挿入エラー:', insertError)
+            set({ error: insertError.message })
+            return
+          }
+
+          // 接続先を更新した他の管路も同期
+          const pipesToUpdate = state.pipes.filter(
+            p => p.connectionTo && ids.includes(p.connectionTo) && !ids.includes(p.id)
+          )
+          for (const pipe of pipesToUpdate) {
+            await supabase
+              .from('design_pipes')
+              .update({ connection_to: newId } as never)
+              .eq('id', pipe.id)
+          }
+        } catch (err) {
+          console.error('管路結合の同期エラー:', err)
+          set({ error: err instanceof Error ? err.message : '管路結合の同期に失敗しました' })
+        }
+      })()
+    }
 
     return newId
   },
@@ -476,6 +532,9 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
       notes: null,
     }
 
+    // 接続先を更新する必要がある他の管路
+    const pipesToUpdateConnection = state.pipes.filter(p => p.connectionTo === id && p.id !== id)
+
     set((state) => ({
       pipes: [
         ...state.pipes
@@ -493,7 +552,74 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
       selectedPipeIds: new Set(),
     }))
 
-    // TODO: Supabaseに同期
+    // Supabaseに同期
+    const projectId = getCurrentProjectId()
+    if (projectId) {
+      ;(async () => {
+        try {
+          // 元の管路を削除
+          const { error: deleteError } = await supabase
+            .from('design_pipes')
+            .delete()
+            .eq('id', id)
+
+          if (deleteError) {
+            console.error('管路削除エラー:', deleteError)
+            set({ error: deleteError.message })
+            return
+          }
+
+          // 2つの新しい管路を挿入
+          const { error: insertError } = await supabase
+            .from('design_pipes')
+            .insert([
+              {
+                id: id1,
+                project_id: projectId,
+                number: pipe1.number,
+                layer_name: pipe1.layerName,
+                pipe_type: pipe1.pipeType,
+                diameter: pipe1.diameter,
+                design_length: pipe1.designLength,
+                measured_length: pipe1.measuredLength,
+                vertices: pipe1.vertices,
+                connection_to: pipe1.connectionTo,
+                notes: pipe1.notes,
+              },
+              {
+                id: id2,
+                project_id: projectId,
+                number: pipe2.number,
+                layer_name: pipe2.layerName,
+                pipe_type: pipe2.pipeType,
+                diameter: pipe2.diameter,
+                design_length: pipe2.designLength,
+                measured_length: pipe2.measuredLength,
+                vertices: pipe2.vertices,
+                connection_to: pipe2.connectionTo,
+                notes: pipe2.notes,
+              },
+            ] as never)
+
+          if (insertError) {
+            console.error('管路挿入エラー:', insertError)
+            set({ error: insertError.message })
+            return
+          }
+
+          // 接続先を更新した他の管路も同期
+          for (const p of pipesToUpdateConnection) {
+            await supabase
+              .from('design_pipes')
+              .update({ connection_to: id1 } as never)
+              .eq('id', p.id)
+          }
+        } catch (err) {
+          console.error('管路分割の同期エラー:', err)
+          set({ error: err instanceof Error ? err.message : '管路分割の同期に失敗しました' })
+        }
+      })()
+    }
 
     return [id1, id2]
   },
@@ -554,7 +680,33 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
 
     if (totalInserted > 0) {
       set({ pipes: updatedPipes })
-      // TODO: Supabaseに同期
+
+      // Supabaseに同期（頂点が更新された管路のみ）
+      const pipesWithUpdatedVertices = updatedPipes.filter((pipe, index) => {
+        const original = state.pipes[index]
+        return original && pipe.vertices.length !== original.vertices.length
+      })
+
+      if (pipesWithUpdatedVertices.length > 0) {
+        ;(async () => {
+          try {
+            for (const pipe of pipesWithUpdatedVertices) {
+              const { error } = await supabase
+                .from('design_pipes')
+                .update({ vertices: pipe.vertices } as never)
+                .eq('id', pipe.id)
+
+              if (error) {
+                console.error('管路更新エラー:', error)
+                set({ error: error.message })
+              }
+            }
+          } catch (err) {
+            console.error('中間点挿入の同期エラー:', err)
+            set({ error: err instanceof Error ? err.message : '中間点挿入の同期に失敗しました' })
+          }
+        })()
+      }
     }
 
     return totalInserted
