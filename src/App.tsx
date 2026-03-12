@@ -7,6 +7,7 @@ import { CoordinatesPage } from '@/features/coordinates/CoordinatesPage'
 import { WorkAreaPage } from '@/features/underdrain/WorkAreaPage'
 import { CadAnalysisPage } from '@/features/underdrain/CadAnalysisPage'
 import { PipeCoordinateCalcPage } from '@/features/underdrain/PipeCoordinateCalcPage'
+import { SurveyImportPage } from '@/features/underdrain/SurveyImportPage'
 import { Loader2 } from 'lucide-react'
 
 // 認証が必要なルートのラッパー
@@ -47,7 +48,7 @@ function AppRoutes() {
           <Route path="work-area" element={<WorkAreaPage />} />
           <Route path="cad-analysis" element={<CadAnalysisPage />} />
           <Route path="coordinate-calc" element={<PipeCoordinateCalcPage />} />
-          <Route path="survey-import" element={<PlaceholderPage title="測量データ" />} />
+          <Route path="survey-import" element={<SurveyImportPage />} />
           <Route path="depth-calc" element={<PlaceholderPage title="切深計算" />} />
           <Route path="hydraulics" element={<PlaceholderPage title="水理計算" />} />
           <Route path="cad-export" element={<PlaceholderPage title="CAD転記" />} />
