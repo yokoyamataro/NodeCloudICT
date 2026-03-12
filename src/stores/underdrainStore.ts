@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
 import type { PipeType, PipeVertex, DesignPipe } from '@/types/database'
 import { useProjectStore } from './projectStore'
+import { useSettingsStore } from './settingsStore'
 
 // ローカル状態用の管路型
 export interface PipeRow {
@@ -81,6 +82,11 @@ interface UnderdrainState {
   // インポート履歴
   lastImportFile: string | null
   setLastImportFile: (filename: string | null) => void
+
+  // 手動保存モード用
+  pendingPipeChanges: Map<string, PipeRow>
+  saveAllPipes: () => Promise<void>
+  resetPipeChanges: () => void
 }
 
 export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
@@ -216,34 +222,47 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
   },
 
   updatePipe: async (id, updates) => {
+    const state = get()
+    const pipe = state.pipes.find((p) => p.id === id)
+    if (!pipe) return
+
+    const updated = { ...pipe, ...updates }
+
     // ローカル状態を即座に更新
-    set((state) => ({
-      pipes: state.pipes.map((pipe) =>
-        pipe.id === id ? { ...pipe, ...updates } : pipe
-      ),
-    }))
+    set({
+      pipes: state.pipes.map((p) => (p.id === id ? updated : p)),
+    })
 
-    // Supabaseに保存
-    const dbUpdates: Record<string, unknown> = {}
-    if (updates.number !== undefined) dbUpdates.number = updates.number
-    if (updates.layerName !== undefined) dbUpdates.layer_name = updates.layerName
-    if (updates.pipeType !== undefined) dbUpdates.pipe_type = updates.pipeType
-    if (updates.diameter !== undefined) dbUpdates.diameter = updates.diameter
-    if (updates.designLength !== undefined) dbUpdates.design_length = updates.designLength
-    if (updates.measuredLength !== undefined) dbUpdates.measured_length = updates.measuredLength
-    if (updates.vertices !== undefined) dbUpdates.vertices = updates.vertices
-    if (updates.connectionTo !== undefined) dbUpdates.connection_to = updates.connectionTo
-    if (updates.notes !== undefined) dbUpdates.notes = updates.notes
+    // 保存モードをチェック
+    const saveMode = useSettingsStore.getState().saveMode
+    if (saveMode === 'manual') {
+      // 手動保存モード: 変更を記録
+      const newPendingPipeChanges = new Map(state.pendingPipeChanges)
+      newPendingPipeChanges.set(id, updated)
+      set({ pendingPipeChanges: newPendingPipeChanges })
+      useSettingsStore.getState().setHasUnsavedChanges(true)
+    } else {
+      // 自動保存モード: 即座にSupabaseに保存
+      const dbUpdates: Record<string, unknown> = {}
+      if (updates.number !== undefined) dbUpdates.number = updates.number
+      if (updates.layerName !== undefined) dbUpdates.layer_name = updates.layerName
+      if (updates.pipeType !== undefined) dbUpdates.pipe_type = updates.pipeType
+      if (updates.diameter !== undefined) dbUpdates.diameter = updates.diameter
+      if (updates.designLength !== undefined) dbUpdates.design_length = updates.designLength
+      if (updates.measuredLength !== undefined) dbUpdates.measured_length = updates.measuredLength
+      if (updates.vertices !== undefined) dbUpdates.vertices = updates.vertices
+      if (updates.connectionTo !== undefined) dbUpdates.connection_to = updates.connectionTo
+      if (updates.notes !== undefined) dbUpdates.notes = updates.notes
 
-    try {
-      const { error } = await supabase
+      supabase
         .from('design_pipes')
         .update(dbUpdates as never)
         .eq('id', id)
-
-      if (error) throw error
-    } catch (err) {
-      set({ error: err instanceof Error ? err.message : '管路の更新に失敗しました' })
+        .then(({ error }) => {
+          if (error) {
+            set({ error: error.message })
+          }
+        })
     }
   },
 
@@ -610,4 +629,52 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
   // インポート履歴
   lastImportFile: null,
   setLastImportFile: (filename) => set({ lastImportFile: filename }),
+
+  // 手動保存モード用
+  pendingPipeChanges: new Map(),
+
+  saveAllPipes: async () => {
+    const state = get()
+    const projectId = getCurrentProjectId()
+    if (!projectId) return
+
+    try {
+      for (const [id, pipe] of state.pendingPipeChanges) {
+        const { error } = await supabase
+          .from('design_pipes')
+          .update({
+            number: pipe.number,
+            layer_name: pipe.layerName,
+            pipe_type: pipe.pipeType,
+            diameter: pipe.diameter,
+            design_length: pipe.designLength,
+            measured_length: pipe.measuredLength,
+            vertices: pipe.vertices,
+            connection_to: pipe.connectionTo,
+            notes: pipe.notes,
+          } as never)
+          .eq('id', id)
+
+        if (error) throw error
+      }
+
+      // 変更をクリア
+      set({ pendingPipeChanges: new Map() })
+      useSettingsStore.getState().setHasUnsavedChanges(false)
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : '保存に失敗しました' })
+    }
+  },
+
+  resetPipeChanges: () => {
+    const projectId = getCurrentProjectId()
+    if (!projectId) return
+
+    // Supabaseから再読み込み
+    get().fetchPipes(projectId)
+
+    // 変更をクリア
+    set({ pendingPipeChanges: new Map() })
+    useSettingsStore.getState().setHasUnsavedChanges(false)
+  },
 }))

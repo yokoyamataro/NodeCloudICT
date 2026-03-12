@@ -20,9 +20,17 @@ import {
   Square,
   LogOut,
   User,
+  Save,
+  RotateCcw,
+  CloudOff,
+  Cloud,
+  Loader2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
+import { useSettingsStore } from '@/stores/settingsStore'
+import { useCoordinateStore } from '@/stores/coordinateStore'
+import { useUnderdrainStore } from '@/stores/underdrainStore'
 
 interface NavItem {
   name: string
@@ -69,9 +77,41 @@ export function AppLayout() {
     new Set(['暗渠工事']) // デフォルトで暗渠工事を展開
   )
 
+  // 設定ストア
+  const { saveMode, setSaveMode, hasUnsavedChanges } = useSettingsStore()
+  const { saveAllCoordinates, resetCoordinateChanges } = useCoordinateStore()
+  const { saveAllPipes, resetPipeChanges } = useUnderdrainStore()
+  const [saving, setSaving] = useState(false)
+
   const handleSignOut = async () => {
+    if (hasUnsavedChanges) {
+      if (!confirm('未保存の変更があります。保存せずにログアウトしますか？')) {
+        return
+      }
+    }
     await signOut()
     navigate('/login')
+  }
+
+  // 全データを保存
+  const handleSaveAll = async () => {
+    setSaving(true)
+    try {
+      await Promise.all([
+        saveAllCoordinates(),
+        saveAllPipes(),
+      ])
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // 変更をリセット
+  const handleResetAll = () => {
+    if (confirm('未保存の変更を破棄しますか？')) {
+      resetCoordinateChanges()
+      resetPipeChanges()
+    }
   }
 
   const toggleGroup = (name: string) => {
@@ -97,6 +137,86 @@ export function AppLayout() {
         <div className="p-4 border-b border-slate-700">
           <h1 className="text-xl font-bold">NodeCloud Design</h1>
           <p className="text-sm text-slate-400">ICT設計システム</p>
+
+          {/* 保存モード切替 */}
+          <div className="mt-3 p-2 bg-slate-800 rounded-lg">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-slate-400">保存モード</span>
+              {saveMode === 'auto' ? (
+                <Cloud className="h-3.5 w-3.5 text-green-400" />
+              ) : (
+                <CloudOff className="h-3.5 w-3.5 text-yellow-400" />
+              )}
+            </div>
+            <div className="flex gap-1">
+              <button
+                onClick={() => setSaveMode('auto')}
+                className={cn(
+                  'flex-1 px-2 py-1 text-xs rounded transition-colors',
+                  saveMode === 'auto'
+                    ? 'bg-green-600 text-white'
+                    : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                )}
+              >
+                自動
+              </button>
+              <button
+                onClick={() => setSaveMode('manual')}
+                className={cn(
+                  'flex-1 px-2 py-1 text-xs rounded transition-colors',
+                  saveMode === 'manual'
+                    ? 'bg-yellow-600 text-white'
+                    : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                )}
+              >
+                手動
+              </button>
+            </div>
+
+            {/* 手動モード時の保存・リセットボタン */}
+            {saveMode === 'manual' && (
+              <div className="mt-2 flex gap-1">
+                <button
+                  onClick={handleSaveAll}
+                  disabled={!hasUnsavedChanges || saving}
+                  className={cn(
+                    'flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs rounded transition-colors',
+                    hasUnsavedChanges
+                      ? 'bg-blue-600 text-white hover:bg-blue-500'
+                      : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                  )}
+                >
+                  {saving ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Save className="h-3 w-3" />
+                  )}
+                  保存
+                </button>
+                <button
+                  onClick={handleResetAll}
+                  disabled={!hasUnsavedChanges}
+                  className={cn(
+                    'flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs rounded transition-colors',
+                    hasUnsavedChanges
+                      ? 'bg-slate-600 text-white hover:bg-slate-500'
+                      : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                  )}
+                >
+                  <RotateCcw className="h-3 w-3" />
+                  リセット
+                </button>
+              </div>
+            )}
+
+            {/* 未保存の変更インジケーター */}
+            {hasUnsavedChanges && (
+              <div className="mt-2 text-xs text-yellow-400 flex items-center gap-1">
+                <span className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse" />
+                未保存の変更があります
+              </div>
+            )}
+          </div>
         </div>
         <nav className="flex-1 p-4 overflow-y-auto">
           <ul className="space-y-1">
