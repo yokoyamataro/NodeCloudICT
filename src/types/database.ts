@@ -249,6 +249,29 @@ export interface DesignPipe {
 // 測量データカテゴリ
 export type SurveyCategory = 'control' | 'boundary' | 'underdrain' | 'other'
 
+// 管路設定グループ
+export interface PipeWiringGroup {
+  id: string
+  project_id: string
+  group_type: 'collector' | 'direct'
+  name: string
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+// 管路設定行
+export interface PipeWiringRow {
+  id: string
+  group_id: string
+  absorption_pipe_ids: string[]
+  collector_pipe_id: string | null
+  is_merge_pipe: boolean
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
 // NodeCloud-Design用測量データ
 export interface DesignSurveyData {
   id: string

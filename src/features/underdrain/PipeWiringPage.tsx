@@ -11,10 +11,14 @@ import {
   MousePointer,
   Zap,
   GitMerge,
+  Save,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react'
 import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useProjectStore } from '@/stores/projectStore'
+import { usePipeWiringStore, type CollectorTab, type WiringRow } from '@/stores/pipeWiringStore'
 import { PipeMap, type SurveyPointData } from '@/components/map/PipeMap'
 import type { PipeVertex } from '@/types/database'
 
@@ -24,49 +28,34 @@ type TabType = 'collector' | 'direct'
 // 選択モード
 type SelectionMode = 'none' | 'absorption' | 'collector' | 'bulk-start'
 
-// 集水暗渠タブ
-interface CollectorTab {
-  id: string
-  name: string
-  rows: WiringRow[]
-}
-
-// 配線行（吸水1列＋集水1列）
-interface WiringRow {
-  id: string
-  absorptionPipes: string[]  // 吸水（複数選択可能）
-  collectorPipe: string | null    // 集水（または落口）
-  isMergePipe?: boolean  // 集水合流管かどうか
-}
-
 export function PipeWiringPage() {
   const { pipes, fetchPipes } = useUnderdrainStore()
   const { fetchCoordinates } = useCoordinateStore()
   const { currentProject } = useProjectStore()
+  const {
+    collectorTabs,
+    directRows,
+    setCollectorTabs,
+    setDirectRows,
+    fetchWiring,
+    saveWiring,
+    loading: wiringLoading,
+    saving: wiringSaving,
+    hasChanges,
+  } = usePipeWiringStore()
 
   // プロジェクト選択時にデータを読み込む
   useEffect(() => {
     if (currentProject) {
       fetchPipes(currentProject.id)
       fetchCoordinates(currentProject.id)
+      fetchWiring(currentProject.id)
     }
-  }, [currentProject, fetchPipes, fetchCoordinates])
+  }, [currentProject, fetchPipes, fetchCoordinates, fetchWiring])
 
   // タブ管理
   const [activeTabType, setActiveTabType] = useState<TabType>('collector')
   const [activeCollectorIndex, setActiveCollectorIndex] = useState(0)
-
-  // 集水暗渠タブ（複数追加可能）
-  const [collectorTabs, setCollectorTabs] = useState<CollectorTab[]>([
-    {
-      id: 'collector-1',
-      name: '集水暗渠1',
-      rows: [createEmptyRow()],
-    },
-  ])
-
-  // 直落暗渠（1つのみ）
-  const [directRows, setDirectRows] = useState<WiringRow[]>([createEmptyRow()])
 
   // 地図表示設定
   const [showLabels, setShowLabels] = useState(true)
@@ -186,6 +175,7 @@ export function PipeWiringPage() {
             id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
             absorptionPipes: [pipe.id],
             collectorPipe: collectorPipeId,
+            isMergePipe: false,
           }
           currentTab.rows.push(newRow)
         }
@@ -200,6 +190,7 @@ export function PipeWiringPage() {
             id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
             absorptionPipes: [pipe.id],
             collectorPipe: collectorPipeId,
+            isMergePipe: false,
           }
           newRows.push(newRow)
         }
@@ -318,6 +309,7 @@ export function PipeWiringPage() {
       id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
       absorptionPipes: [],
       collectorPipe: null,
+      isMergePipe: false,
     }
   }
 
@@ -427,6 +419,7 @@ export function PipeWiringPage() {
             id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
             absorptionPipes: [pipeId],
             collectorPipe: collectorPipeId,
+            isMergePipe: false,
           }
           currentTab.rows.push(firstRow)
 
@@ -439,6 +432,7 @@ export function PipeWiringPage() {
             id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
             absorptionPipes: [pipeId],
             collectorPipe: collectorPipeId,
+            isMergePipe: false,
           }
           newRows.push(firstRow)
           return newRows
@@ -645,8 +639,47 @@ export function PipeWiringPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {/* 一括設定ボタン */}
+          {/* 保存ボタン */}
           {selectionMode === 'none' && (
+            <>
+              {wiringLoading ? (
+                <div className="flex items-center gap-2 px-4 py-2 text-slate-400">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  読み込み中...
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={() => currentProject && fetchWiring(currentProject.id)}
+                    disabled={wiringSaving}
+                    className="flex items-center gap-2 px-3 py-2 text-slate-600 border rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50"
+                    title="データを再読み込み"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={saveWiring}
+                    disabled={wiringSaving || !hasChanges}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                      hasChanges
+                        ? 'bg-blue-600 text-white hover:bg-blue-700'
+                        : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                    }`}
+                  >
+                    {wiringSaving ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4" />
+                    )}
+                    {wiringSaving ? '保存中...' : '保存'}
+                  </button>
+                </>
+              )}
+            </>
+          )}
+
+          {/* 一括設定ボタン */}
+          {selectionMode === 'none' && !wiringLoading && (
             <button
               onClick={startBulkSetting}
               className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
