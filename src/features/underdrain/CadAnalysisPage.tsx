@@ -31,7 +31,7 @@ interface BulkEditSettings {
 }
 
 // ソートの設定
-type SortKey = 'number' | 'pipeType' | 'diameter' | null
+type SortKey = 'number' | 'pipeType' | 'diameter' | 'designLength' | 'connectionTo' | null
 type SortDirection = 'asc' | 'desc'
 
 // 連番設定
@@ -124,6 +124,80 @@ export function CadAnalysisPage() {
     }
   }, [currentProject, fetchPipes])
 
+  // 2点間の距離を計算
+  const calcDistance = (p1: PipeVertex, p2: PipeVertex): number => {
+    const dx = p2.x - p1.x
+    const dy = p2.y - p1.y
+    return Math.sqrt(dx * dx + dy * dy)
+  }
+
+  // 管路の下流端点から指定した点までの累積距離を計算
+  const calcDistanceAlongPipe = (pipe: PipeRow, point: PipeVertex): number => {
+    const vertices = pipe.vertices
+    if (vertices.length < 2) return 0
+
+    // 下流端点は配列の最後
+    let totalDistance = 0
+
+    // 最後の頂点から順に遡って、点が属するセグメントを見つける
+    for (let i = vertices.length - 1; i > 0; i--) {
+      const segStart = vertices[i]
+      const segEnd = vertices[i - 1]
+      const segLength = calcDistance(segStart, segEnd)
+
+      // 点とセグメントの最短距離を計算
+      const dx = segEnd.x - segStart.x
+      const dy = segEnd.y - segStart.y
+      const lengthSq = dx * dx + dy * dy
+
+      if (lengthSq === 0) {
+        totalDistance += segLength
+        continue
+      }
+
+      // 線分上の最近点のパラメータ t を計算
+      let t = ((point.x - segStart.x) * dx + (point.y - segStart.y) * dy) / lengthSq
+      t = Math.max(0, Math.min(1, t))
+
+      // 最近点の座標
+      const nearestX = segStart.x + t * dx
+      const nearestY = segStart.y + t * dy
+
+      // 距離を計算
+      const distX = point.x - nearestX
+      const distY = point.y - nearestY
+      const dist = Math.sqrt(distX * distX + distY * distY)
+
+      // 閾値内なら、この点がこのセグメントに接続している
+      if (dist <= 0.1) { // 10cm閾値
+        // 下流端点（segStart）からの距離を追加
+        totalDistance += t * segLength
+        return totalDistance
+      }
+
+      totalDistance += segLength
+    }
+
+    return totalDistance
+  }
+
+  // 接続距離を計算（mm単位）
+  const getConnectionDistance = useCallback((pipe: PipeRow): number | null => {
+    if (!pipe.connectionTo) return null
+
+    const targetPipe = pipes.find(p => p.id === pipe.connectionTo)
+    if (!targetPipe || targetPipe.vertices.length < 2) return null
+
+    // 現在の管路の下流端点（配列の最後）
+    const downstreamVertex = pipe.vertices[pipe.vertices.length - 1]
+
+    // 接続先管路の下流端点からの距離を計算
+    const distanceM = calcDistanceAlongPipe(targetPipe, downstreamVertex)
+
+    // mmに変換
+    return Math.round(distanceM * 1000)
+  }, [pipes])
+
   // 自動中間点設置モーダル
   const [showMidpointModal, setShowMidpointModal] = useState(false)
   const [midpointMaxLength, setMidpointMaxLength] = useState(50) // デフォルト50m
@@ -185,6 +259,16 @@ export function CadAnalysisPage() {
           const aDiam = a.diameter ?? -1
           const bDiam = b.diameter ?? -1
           return multiplier * (aDiam - bDiam)
+        }
+        case 'designLength': {
+          const aLen = a.designLength ?? -1
+          const bLen = b.designLength ?? -1
+          return multiplier * (aLen - bLen)
+        }
+        case 'connectionTo': {
+          const aConn = a.connectionTo ? pipes.find(p => p.id === a.connectionTo)?.number ?? '' : ''
+          const bConn = b.connectionTo ? pipes.find(p => p.id === b.connectionTo)?.number ?? '' : ''
+          return multiplier * aConn.localeCompare(bConn, 'ja', { numeric: true })
         }
         default:
           return 0
@@ -984,9 +1068,29 @@ export function CadAnalysisPage() {
                           )}
                         </div>
                       </th>
-                      <th className="px-2 py-2 text-right font-medium">設計延長</th>
+                      <th
+                        className="px-2 py-2 text-right font-medium cursor-pointer hover:bg-slate-200 select-none"
+                        onClick={() => handleSort('designLength')}
+                      >
+                        <div className="flex items-center justify-end gap-1">
+                          設計延長
+                          {sortKey === 'designLength' && (
+                            sortDirection === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+                          )}
+                        </div>
+                      </th>
                       <th className="px-2 py-2 text-right font-medium">実測延長</th>
-                      <th className="px-2 py-2 text-left font-medium">接続先</th>
+                      <th
+                        className="px-2 py-2 text-left font-medium cursor-pointer hover:bg-slate-200 select-none"
+                        onClick={() => handleSort('connectionTo')}
+                      >
+                        <div className="flex items-center gap-1">
+                          接続先
+                          {sortKey === 'connectionTo' && (
+                            sortDirection === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+                          )}
+                        </div>
+                      </th>
                       <th className="px-2 py-2 w-16"></th>
                     </tr>
                   </thead>
@@ -1090,27 +1194,37 @@ export function CadAnalysisPage() {
                           {pipe.measuredLength?.toFixed(3) ?? '-'}
                         </td>
                         <td className="px-2 py-1">
-                          <select
-                            ref={(el) => {
-                              cellRefs.current[`${pipe.id}-4`] = el
-                            }}
-                            value={pipe.connectionTo || ''}
-                            onChange={(e) =>
-                              handlePipeUpdate(pipe.id, 'connectionTo', e.target.value || null)
-                            }
-                            onClick={(e) => e.stopPropagation()}
-                            onKeyDown={(e) => handleCellKeyDown(e, pipe.id, 4)}
-                            className="w-20 px-1 py-0.5 border rounded text-xs"
-                          >
-                            <option value="">-</option>
-                            {pipes
-                              .filter((p) => p.id !== pipe.id)
-                              .map((p) => (
-                                <option key={p.id} value={p.id}>
-                                  {p.number}
-                                </option>
-                              ))}
-                          </select>
+                          <div className="flex items-center gap-1">
+                            <select
+                              ref={(el) => {
+                                cellRefs.current[`${pipe.id}-4`] = el
+                              }}
+                              value={pipe.connectionTo || ''}
+                              onChange={(e) =>
+                                handlePipeUpdate(pipe.id, 'connectionTo', e.target.value || null)
+                              }
+                              onClick={(e) => e.stopPropagation()}
+                              onKeyDown={(e) => handleCellKeyDown(e, pipe.id, 4)}
+                              className="w-20 px-1 py-0.5 border rounded text-xs"
+                            >
+                              <option value="">-</option>
+                              {pipes
+                                .filter((p) => p.id !== pipe.id)
+                                .map((p) => (
+                                  <option key={p.id} value={p.id}>
+                                    {p.number}
+                                  </option>
+                                ))}
+                            </select>
+                            {pipe.connectionTo && (() => {
+                              const dist = getConnectionDistance(pipe)
+                              return dist !== null ? (
+                                <span className="text-xs text-muted-foreground font-mono whitespace-nowrap">
+                                  @{dist.toLocaleString()}mm
+                                </span>
+                              ) : null
+                            })()}
+                          </div>
                         </td>
                         <td className="px-2 py-1 flex gap-1">
                           <button
