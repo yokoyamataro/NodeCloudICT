@@ -159,22 +159,43 @@ export function PipeWiringPage() {
     }
   }
 
+  // 次の行に移動する
+  const moveToNextRow = useCallback(() => {
+    if (activeTabType === 'collector') {
+      const rows = collectorTabs[activeCollectorIndex]?.rows || []
+      const currentIndex = rows.findIndex(r => r.id === selectedRowId)
+      if (currentIndex >= 0 && currentIndex < rows.length - 1) {
+        // 次の行がある場合は移動
+        setSelectedRowId(rows[currentIndex + 1].id)
+      } else {
+        // 最後の行の場合は選択モード解除
+        setSelectionMode('none')
+        setSelectedRowId(null)
+      }
+    } else {
+      const currentIndex = directRows.findIndex(r => r.id === selectedRowId)
+      if (currentIndex >= 0 && currentIndex < directRows.length - 1) {
+        setSelectedRowId(directRows[currentIndex + 1].id)
+      } else {
+        setSelectionMode('none')
+        setSelectedRowId(null)
+      }
+    }
+  }, [activeTabType, activeCollectorIndex, collectorTabs, directRows, selectedRowId])
+
   // 地図上の管路がクリックされた時
   const handlePipeSelect = useCallback((pipeId: string) => {
     if (selectionMode === 'none' || !selectedRowId) return
 
     if (selectionMode === 'absorption') {
-      // 吸水に追加（複数選択可能）
+      // 吸水に追加して次の行に移動
       if (activeTabType === 'collector') {
         setCollectorTabs(prev => {
           const newTabs = [...prev]
           const row = newTabs[activeCollectorIndex].rows.find(r => r.id === selectedRowId)
           if (row) {
-            if (row.absorptionPipes.includes(pipeId)) {
-              // すでに選択済みなら削除
-              row.absorptionPipes = row.absorptionPipes.filter(id => id !== pipeId)
-            } else {
-              // 未選択なら追加
+            // 未選択なら追加
+            if (!row.absorptionPipes.includes(pipeId)) {
               row.absorptionPipes = [...row.absorptionPipes, pipeId]
             }
           }
@@ -185,15 +206,15 @@ export function PipeWiringPage() {
           const newRows = [...prev]
           const row = newRows.find(r => r.id === selectedRowId)
           if (row) {
-            if (row.absorptionPipes.includes(pipeId)) {
-              row.absorptionPipes = row.absorptionPipes.filter(id => id !== pipeId)
-            } else {
+            if (!row.absorptionPipes.includes(pipeId)) {
               row.absorptionPipes = [...row.absorptionPipes, pipeId]
             }
           }
           return newRows
         })
       }
+      // 次の行に移動
+      moveToNextRow()
     } else if (selectionMode === 'collector') {
       // 集水に設定（1つのみ）
       if (activeTabType === 'collector') {
