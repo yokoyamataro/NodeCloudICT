@@ -242,7 +242,7 @@ export function PipeWiringPage() {
       setSelectionMode('none')
       setSelectedRowId(null)
     }
-  }, [selectionMode, selectedRowId, activeTabType, activeCollectorIndex])
+  }, [selectionMode, selectedRowId, activeTabType, activeCollectorIndex, moveToNextRow])
 
   // 吸水から管を削除
   const removeAbsorptionPipe = (rowId: string, pipeId: string, tabIndex?: number) => {
