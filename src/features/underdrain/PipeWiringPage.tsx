@@ -199,9 +199,18 @@ export function PipeWiringPage() {
         if (nextRowId) {
           setSelectedRowId(nextRowId)
         } else {
-          // 最後の行の場合は選択モード解除
-          setSelectionMode('none')
-          setSelectedRowId(null)
+          // 最後の行の場合は新しい行を作成してそこに移動
+          const newRow = createEmptyRow()
+          if (activeTabType === 'collector') {
+            setCollectorTabs(prev => {
+              const newTabs = [...prev]
+              newTabs[activeCollectorIndex].rows.push(newRow)
+              return newTabs
+            })
+          } else {
+            setDirectRows(prev => [...prev, newRow])
+          }
+          setSelectedRowId(newRow.id)
         }
       }
     } else if (selectionMode === 'collector') {
