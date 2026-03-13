@@ -9,17 +9,19 @@ import {
   Square,
   Map,
   MousePointer,
+  Zap,
 } from 'lucide-react'
-import { useUnderdrainStore } from '@/stores/underdrainStore'
+import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useProjectStore } from '@/stores/projectStore'
 import { PipeMap, type SurveyPointData } from '@/components/map/PipeMap'
+import type { PipeVertex } from '@/types/database'
 
 // タブの種類
 type TabType = 'collector' | 'direct'
 
 // 選択モード
-type SelectionMode = 'none' | 'absorption' | 'collector'
+type SelectionMode = 'none' | 'absorption' | 'collector' | 'bulk-start'
 
 // 集水暗渠タブ
 interface CollectorTab {
@@ -74,6 +76,165 @@ export function PipeWiringPage() {
   // 選択モード
   const [selectionMode, setSelectionMode] = useState<SelectionMode>('none')
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null)
+
+  // 一括設定モード用の状態
+  const [pendingCollectorPipeId, setPendingCollectorPipeId] = useState<string | null>(null) // 次に処理する集水管
+  const [showContinueDialog, setShowContinueDialog] = useState(false) // 続けるか確認ダイアログ
+
+  // 2点間の距離を計算
+  const calcDistance = useCallback((p1: PipeVertex, p2: PipeVertex): number => {
+    const dx = p2.x - p1.x
+    const dy = p2.y - p1.y
+    return Math.sqrt(dx * dx + dy * dy)
+  }, [])
+
+  // 管路の下流端点から指定した点までの累積距離を計算
+  const calcDistanceAlongPipe = useCallback((pipe: PipeRow, point: PipeVertex): number => {
+    const vertices = pipe.vertices
+    if (vertices.length < 2) return 0
+
+    let totalDistance = 0
+
+    for (let i = vertices.length - 1; i > 0; i--) {
+      const segStart = vertices[i]
+      const segEnd = vertices[i - 1]
+      const segLength = calcDistance(segStart, segEnd)
+
+      const dx = segEnd.x - segStart.x
+      const dy = segEnd.y - segStart.y
+      const lengthSq = dx * dx + dy * dy
+
+      if (lengthSq === 0) {
+        totalDistance += segLength
+        continue
+      }
+
+      let t = ((point.x - segStart.x) * dx + (point.y - segStart.y) * dy) / lengthSq
+      t = Math.max(0, Math.min(1, t))
+
+      const nearestX = segStart.x + t * dx
+      const nearestY = segStart.y + t * dy
+
+      const distX = point.x - nearestX
+      const distY = point.y - nearestY
+      const dist = Math.sqrt(distX * distX + distY * distY)
+
+      if (dist <= 0.1) {
+        totalDistance += t * segLength
+        return totalDistance
+      }
+
+      totalDistance += segLength
+    }
+
+    return totalDistance
+  }, [calcDistance])
+
+  // 接続距離を計算（mm単位）
+  const getConnectionDistance = useCallback((absorptionPipe: PipeRow, collectorPipe: PipeRow): number => {
+    const downstreamVertex = absorptionPipe.vertices[absorptionPipe.vertices.length - 1]
+    return Math.round(calcDistanceAlongPipe(collectorPipe, downstreamVertex) * 1000)
+  }, [calcDistanceAlongPipe])
+
+  // 一括設定を開始（末端吸水を選択するモードに入る）
+  const startBulkSetting = () => {
+    setSelectionMode('bulk-start')
+    setSelectedRowId(null)
+  }
+
+  // 一括設定をキャンセル
+  const cancelBulkSetting = () => {
+    setSelectionMode('none')
+    setSelectedRowId(null)
+    setPendingCollectorPipeId(null)
+    setShowContinueDialog(false)
+  }
+
+  // 一括設定を実行（集水管に対して吸水を追加）
+  const executeBulkSetting = useCallback((collectorPipeId: string) => {
+    const collectorPipe = pipes.find(p => p.id === collectorPipeId)
+    if (!collectorPipe) return
+
+    // この集水管を接続先としている吸水管を検索
+    const connectedAbsorptionPipes = pipes.filter(p => p.connectionTo === collectorPipeId)
+
+    if (connectedAbsorptionPipes.length === 0) {
+      // 接続している管がない場合は終了
+      cancelBulkSetting()
+      return
+    }
+
+    // 接続距離を計算して降順（遠い方から）にソート
+    const sortedAbsorptionPipes = connectedAbsorptionPipes
+      .map(pipe => ({
+        pipe,
+        distance: getConnectionDistance(pipe, collectorPipe)
+      }))
+      .sort((a, b) => b.distance - a.distance)
+
+    // 現在のタブに行を追加
+    if (activeTabType === 'collector') {
+      setCollectorTabs(prev => {
+        const newTabs = [...prev]
+        const currentTab = newTabs[activeCollectorIndex]
+
+        // 各吸水管を距離の大きい順に新しい行として追加
+        for (const { pipe } of sortedAbsorptionPipes) {
+          const newRow: WiringRow = {
+            id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+            absorptionPipes: [pipe.id],
+            collectorPipe: collectorPipeId,
+          }
+          currentTab.rows.push(newRow)
+        }
+
+        return newTabs
+      })
+    } else {
+      setDirectRows(prev => {
+        const newRows = [...prev]
+        for (const { pipe } of sortedAbsorptionPipes) {
+          const newRow: WiringRow = {
+            id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+            absorptionPipes: [pipe.id],
+            collectorPipe: collectorPipeId,
+          }
+          newRows.push(newRow)
+        }
+        return newRows
+      })
+    }
+
+    // 集水管の接続先を調べる
+    const nextCollectorId = collectorPipe.connectionTo
+    if (nextCollectorId) {
+      const nextCollector = pipes.find(p => p.id === nextCollectorId)
+      if (nextCollector) {
+        // 次の集水管がある場合は確認ダイアログを表示
+        setPendingCollectorPipeId(nextCollectorId)
+        setShowContinueDialog(true)
+        return
+      }
+    }
+
+    // 次の集水管がない場合は終了
+    cancelBulkSetting()
+  }, [pipes, activeTabType, activeCollectorIndex, getConnectionDistance])
+
+  // 一括設定を続行
+  const continueBulkSetting = () => {
+    setShowContinueDialog(false)
+    if (pendingCollectorPipeId) {
+      executeBulkSetting(pendingCollectorPipeId)
+    }
+  }
+
+  // 一括設定を終了（続けない）
+  const finishBulkSetting = () => {
+    setShowContinueDialog(false)
+    setPendingCollectorPipeId(null)
+    setSelectionMode('none')
+  }
 
   // 空の行を作成
   function createEmptyRow(): WiringRow {
@@ -161,6 +322,59 @@ export function PipeWiringPage() {
 
   // 地図上の管路がクリックされた時
   const handlePipeSelect = useCallback((pipeId: string, ctrlKey?: boolean) => {
+    // 一括設定モード: 末端吸水を選択
+    if (selectionMode === 'bulk-start') {
+      const selectedPipe = pipes.find(p => p.id === pipeId)
+      if (!selectedPipe) return
+
+      // 選択した管の接続先を取得
+      const collectorPipeId = selectedPipe.connectionTo
+      if (!collectorPipeId) {
+        alert('選択した管路に接続先が設定されていません')
+        return
+      }
+
+      const collectorPipe = pipes.find(p => p.id === collectorPipeId)
+      if (!collectorPipe) {
+        alert('接続先の管路が見つかりません')
+        return
+      }
+
+      // 最初の行を追加（選択した末端吸水 + その接続先）
+      if (activeTabType === 'collector') {
+        setCollectorTabs(prev => {
+          const newTabs = [...prev]
+          const currentTab = newTabs[activeCollectorIndex]
+
+          // 最初の行：選択した末端吸水とその接続先
+          const firstRow: WiringRow = {
+            id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+            absorptionPipes: [pipeId],
+            collectorPipe: collectorPipeId,
+          }
+          currentTab.rows.push(firstRow)
+
+          return newTabs
+        })
+      } else {
+        setDirectRows(prev => {
+          const newRows = [...prev]
+          const firstRow: WiringRow = {
+            id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+            absorptionPipes: [pipeId],
+            collectorPipe: collectorPipeId,
+          }
+          newRows.push(firstRow)
+          return newRows
+        })
+      }
+
+      // 同じ接続先を持つ他の管路を追加
+      setSelectionMode('none')
+      executeBulkSetting(collectorPipeId)
+      return
+    }
+
     if (selectionMode === 'none' || !selectedRowId) return
 
     if (selectionMode === 'absorption') {
@@ -238,7 +452,7 @@ export function PipeWiringPage() {
       setSelectionMode('none')
       setSelectedRowId(null)
     }
-  }, [selectionMode, selectedRowId, activeTabType, activeCollectorIndex, collectorTabs, directRows])
+  }, [selectionMode, selectedRowId, activeTabType, activeCollectorIndex, collectorTabs, directRows, pipes, executeBulkSetting])
 
   // 吸水から管を削除
   const removeAbsorptionPipe = (rowId: string, pipeId: string, tabIndex?: number) => {
@@ -336,28 +550,51 @@ export function PipeWiringPage() {
             管路の配線パターンを設定（地図上の管路をクリックして選択）
           </p>
         </div>
-        {/* 選択モード表示 */}
-        {selectionMode !== 'none' && (
-          <div className={`px-4 py-2 rounded-lg flex items-center gap-2 ${
-            selectionMode === 'absorption'
-              ? 'bg-blue-100 text-blue-700 border border-blue-300'
-              : 'bg-green-100 text-green-700 border border-green-300'
-          }`}>
-            <MousePointer className="h-4 w-4" />
-            <span className="font-medium">
-              {selectionMode === 'absorption' ? '吸水を選択中（Ctrl+クリックで複数追加）' : '集水/落口を選択中'}
-            </span>
+        <div className="flex items-center gap-2">
+          {/* 一括設定ボタン */}
+          {selectionMode === 'none' && (
             <button
-              onClick={() => {
-                setSelectionMode('none')
-                setSelectedRowId(null)
-              }}
-              className="ml-2 p-1 hover:bg-white/50 rounded"
+              onClick={startBulkSetting}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
             >
-              <X className="h-4 w-4" />
+              <Zap className="h-4 w-4" />
+              一括設定
             </button>
-          </div>
-        )}
+          )}
+
+          {/* 選択モード表示 */}
+          {selectionMode !== 'none' && (
+            <div className={`px-4 py-2 rounded-lg flex items-center gap-2 ${
+              selectionMode === 'absorption'
+                ? 'bg-blue-100 text-blue-700 border border-blue-300'
+                : selectionMode === 'bulk-start'
+                  ? 'bg-purple-100 text-purple-700 border border-purple-300'
+                  : 'bg-green-100 text-green-700 border border-green-300'
+            }`}>
+              <MousePointer className="h-4 w-4" />
+              <span className="font-medium">
+                {selectionMode === 'absorption'
+                  ? '吸水を選択中（Ctrl+クリックで複数追加）'
+                  : selectionMode === 'bulk-start'
+                    ? '末端の吸水管を選択してください'
+                    : '集水/落口を選択中'}
+              </span>
+              <button
+                onClick={() => {
+                  if (selectionMode === 'bulk-start') {
+                    cancelBulkSetting()
+                  } else {
+                    setSelectionMode('none')
+                    setSelectedRowId(null)
+                  }
+                }}
+                className="ml-2 p-1 hover:bg-white/50 rounded"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* メインコンテンツ */}
@@ -634,6 +871,33 @@ export function PipeWiringPage() {
           </div>
         </div>
       </div>
+
+      {/* 続けるか確認ダイアログ */}
+      {showContinueDialog && pendingCollectorPipeId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-96">
+            <h3 className="text-lg font-bold mb-4">接続先の処理を続けますか？</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              次の接続先「{getPipeNumber(pendingCollectorPipeId)}」について、
+              同様の処理を続けますか？
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={finishBulkSetting}
+                className="px-4 py-2 text-sm border rounded hover:bg-gray-50"
+              >
+                終了する
+              </button>
+              <button
+                onClick={continueBulkSetting}
+                className="px-4 py-2 text-sm bg-purple-600 text-white rounded hover:bg-purple-700"
+              >
+                続ける
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
