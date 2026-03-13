@@ -147,7 +147,7 @@ export interface SurveyPointData {
 interface PipeMapProps {
   selectedPipeId?: string | null
   selectedPipeIds?: Set<string>
-  onPipeSelect?: (id: string) => void
+  onPipeSelect?: (id: string, ctrlKey?: boolean) => void
   onVertexClick?: (pipeId: string, vertexIndex: number) => void
   isBulkEditMode?: boolean
   showDirection?: boolean
@@ -324,7 +324,7 @@ export function PipeMap({
               opacity: isSelected || isMultiSelected ? 1 : 0.8,
             }}
             eventHandlers={{
-              click: () => onPipeSelect?.(pipe.id),
+              click: (e) => onPipeSelect?.(pipe.id, e.originalEvent.ctrlKey || e.originalEvent.metaKey),
               mouseover: (e) => {
                 // 通常モードでもホバー時に太くする
                 if (!isSelected && !isMultiSelected) {
@@ -488,7 +488,7 @@ export function PipeMap({
             position={midPos}
             icon={createLabelIcon(pipe.number, pipe.color)}
             eventHandlers={{
-              click: () => onPipeSelect?.(pipe.id),
+              click: (e) => onPipeSelect?.(pipe.id, e.originalEvent.ctrlKey || e.originalEvent.metaKey),
             }}
           />
         )

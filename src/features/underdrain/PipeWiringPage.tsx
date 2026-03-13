@@ -184,11 +184,11 @@ export function PipeWiringPage() {
   }, [activeTabType, activeCollectorIndex, collectorTabs, directRows, selectedRowId])
 
   // 地図上の管路がクリックされた時
-  const handlePipeSelect = useCallback((pipeId: string) => {
+  const handlePipeSelect = useCallback((pipeId: string, ctrlKey?: boolean) => {
     if (selectionMode === 'none' || !selectedRowId) return
 
     if (selectionMode === 'absorption') {
-      // 吸水に追加して次の行に移動
+      // 吸水に追加
       if (activeTabType === 'collector') {
         setCollectorTabs(prev => {
           const newTabs = [...prev]
@@ -213,8 +213,10 @@ export function PipeWiringPage() {
           return newRows
         })
       }
-      // 次の行に移動
-      moveToNextRow()
+      // Ctrlキーが押されていなければ次の行に移動
+      if (!ctrlKey) {
+        moveToNextRow()
+      }
     } else if (selectionMode === 'collector') {
       // 集水に設定（1つのみ）
       if (activeTabType === 'collector') {
@@ -347,7 +349,7 @@ export function PipeWiringPage() {
           }`}>
             <MousePointer className="h-4 w-4" />
             <span className="font-medium">
-              {selectionMode === 'absorption' ? '吸水を選択中（複数可）' : '集水/落口を選択中'}
+              {selectionMode === 'absorption' ? '吸水を選択中（Ctrl+クリックで複数追加）' : '集水/落口を選択中'}
             </span>
             <button
               onClick={() => {
