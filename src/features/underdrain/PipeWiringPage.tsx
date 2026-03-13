@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import {
   Cable,
   Plus,
@@ -8,6 +8,7 @@ import {
   Target,
   Square,
   Map,
+  MousePointer,
 } from 'lucide-react'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
@@ -17,22 +18,21 @@ import { PipeMap, type SurveyPointData } from '@/components/map/PipeMap'
 // タブの種類
 type TabType = 'collector' | 'direct'
 
+// 選択モード
+type SelectionMode = 'none' | 'absorption' | 'collector'
+
 // 集水暗渠タブ
 interface CollectorTab {
   id: string
   name: string
-  // 5列: 吸水4列 + 集水1列
   rows: WiringRow[]
 }
 
-// 配線行
+// 配線行（吸水1列＋集水1列）
 interface WiringRow {
   id: string
-  absorption1: string | null  // 吸水1
-  absorption2: string | null  // 吸水2
-  absorption3: string | null  // 吸水3
-  absorption4: string | null  // 吸水4
-  collector: string | null    // 集水（または落口）
+  absorptionPipes: string[]  // 吸水（複数選択可能）
+  collectorPipe: string | null    // 集水（または落口）
 }
 
 export function PipeWiringPage() {
@@ -71,15 +71,16 @@ export function PipeWiringPage() {
   const [showZones, setShowZones] = useState(false)
   const [showCoordinates, setShowCoordinates] = useState(true)
 
+  // 選択モード
+  const [selectionMode, setSelectionMode] = useState<SelectionMode>('none')
+  const [selectedRowId, setSelectedRowId] = useState<string | null>(null)
+
   // 空の行を作成
   function createEmptyRow(): WiringRow {
     return {
-      id: `row-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      absorption1: null,
-      absorption2: null,
-      absorption3: null,
-      absorption4: null,
-      collector: null,
+      id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+      absorptionPipes: [],
+      collectorPipe: null,
     }
   }
 
@@ -127,35 +128,150 @@ export function PipeWiringPage() {
       if (directRows.length <= 1) return
       setDirectRows(directRows.filter((r) => r.id !== rowId))
     }
-  }
-
-  // セル値を更新
-  const updateCell = (
-    tabType: TabType,
-    rowId: string,
-    field: keyof WiringRow,
-    value: string | null,
-    tabIndex?: number
-  ) => {
-    if (tabType === 'collector' && tabIndex !== undefined) {
-      const newTabs = [...collectorTabs]
-      const rowIndex = newTabs[tabIndex].rows.findIndex((r) => r.id === rowId)
-      if (rowIndex >= 0) {
-        newTabs[tabIndex].rows[rowIndex] = {
-          ...newTabs[tabIndex].rows[rowIndex],
-          [field]: value,
-        }
-        setCollectorTabs(newTabs)
-      }
-    } else if (tabType === 'direct') {
-      const rowIndex = directRows.findIndex((r) => r.id === rowId)
-      if (rowIndex >= 0) {
-        const newRows = [...directRows]
-        newRows[rowIndex] = { ...newRows[rowIndex], [field]: value }
-        setDirectRows(newRows)
-      }
+    // 削除した行が選択中だった場合は選択解除
+    if (selectedRowId === rowId) {
+      setSelectionMode('none')
+      setSelectedRowId(null)
     }
   }
+
+  // 吸水の選択を開始
+  const startAbsorptionSelection = (rowId: string) => {
+    if (selectionMode === 'absorption' && selectedRowId === rowId) {
+      // すでに選択中なら解除
+      setSelectionMode('none')
+      setSelectedRowId(null)
+    } else {
+      setSelectionMode('absorption')
+      setSelectedRowId(rowId)
+    }
+  }
+
+  // 集水の選択を開始
+  const startCollectorSelection = (rowId: string) => {
+    if (selectionMode === 'collector' && selectedRowId === rowId) {
+      // すでに選択中なら解除
+      setSelectionMode('none')
+      setSelectedRowId(null)
+    } else {
+      setSelectionMode('collector')
+      setSelectedRowId(rowId)
+    }
+  }
+
+  // 地図上の管路がクリックされた時
+  const handlePipeSelect = useCallback((pipeId: string) => {
+    if (selectionMode === 'none' || !selectedRowId) return
+
+    if (selectionMode === 'absorption') {
+      // 吸水に追加（複数選択可能）
+      if (activeTabType === 'collector') {
+        setCollectorTabs(prev => {
+          const newTabs = [...prev]
+          const row = newTabs[activeCollectorIndex].rows.find(r => r.id === selectedRowId)
+          if (row) {
+            if (row.absorptionPipes.includes(pipeId)) {
+              // すでに選択済みなら削除
+              row.absorptionPipes = row.absorptionPipes.filter(id => id !== pipeId)
+            } else {
+              // 未選択なら追加
+              row.absorptionPipes = [...row.absorptionPipes, pipeId]
+            }
+          }
+          return newTabs
+        })
+      } else {
+        setDirectRows(prev => {
+          const newRows = [...prev]
+          const row = newRows.find(r => r.id === selectedRowId)
+          if (row) {
+            if (row.absorptionPipes.includes(pipeId)) {
+              row.absorptionPipes = row.absorptionPipes.filter(id => id !== pipeId)
+            } else {
+              row.absorptionPipes = [...row.absorptionPipes, pipeId]
+            }
+          }
+          return newRows
+        })
+      }
+    } else if (selectionMode === 'collector') {
+      // 集水に設定（1つのみ）
+      if (activeTabType === 'collector') {
+        setCollectorTabs(prev => {
+          const newTabs = [...prev]
+          const row = newTabs[activeCollectorIndex].rows.find(r => r.id === selectedRowId)
+          if (row) {
+            row.collectorPipe = row.collectorPipe === pipeId ? null : pipeId
+          }
+          return newTabs
+        })
+      } else {
+        setDirectRows(prev => {
+          const newRows = [...prev]
+          const row = newRows.find(r => r.id === selectedRowId)
+          if (row) {
+            row.collectorPipe = row.collectorPipe === pipeId ? null : pipeId
+          }
+          return newRows
+        })
+      }
+      // 集水選択後は選択モード解除
+      setSelectionMode('none')
+      setSelectedRowId(null)
+    }
+  }, [selectionMode, selectedRowId, activeTabType, activeCollectorIndex])
+
+  // 吸水から管を削除
+  const removeAbsorptionPipe = (rowId: string, pipeId: string, tabIndex?: number) => {
+    if (activeTabType === 'collector' && tabIndex !== undefined) {
+      setCollectorTabs(prev => {
+        const newTabs = [...prev]
+        const row = newTabs[tabIndex].rows.find(r => r.id === rowId)
+        if (row) {
+          row.absorptionPipes = row.absorptionPipes.filter(id => id !== pipeId)
+        }
+        return newTabs
+      })
+    } else {
+      setDirectRows(prev => {
+        const newRows = [...prev]
+        const row = newRows.find(r => r.id === rowId)
+        if (row) {
+          row.absorptionPipes = row.absorptionPipes.filter(id => id !== pipeId)
+        }
+        return newRows
+      })
+    }
+  }
+
+  // 集水を削除
+  const clearCollectorPipe = (rowId: string, tabIndex?: number) => {
+    if (activeTabType === 'collector' && tabIndex !== undefined) {
+      setCollectorTabs(prev => {
+        const newTabs = [...prev]
+        const row = newTabs[tabIndex].rows.find(r => r.id === rowId)
+        if (row) {
+          row.collectorPipe = null
+        }
+        return newTabs
+      })
+    } else {
+      setDirectRows(prev => {
+        const newRows = [...prev]
+        const row = newRows.find(r => r.id === rowId)
+        if (row) {
+          row.collectorPipe = null
+        }
+        return newRows
+      })
+    }
+  }
+
+  // 管路番号を取得
+  const getPipeNumber = useCallback((pipeId: string) => {
+    const pipe = pipes.find(p => p.id === pipeId)
+    return pipe?.number || pipeId
+  }, [pipes])
 
   // 現在のタブのデータ
   const currentRows = useMemo(() => {
@@ -168,19 +284,25 @@ export function PipeWiringPage() {
   // 右列のラベル
   const rightColumnLabel = activeTabType === 'collector' ? '集水' : '落口'
 
-  // 管路選択肢
-  const pipeOptions = useMemo(() => {
-    return pipes.map((p) => ({
-      value: p.id,
-      label: p.number,
-    }))
-  }, [pipes])
-
   // 地図用の測点データ
   const mapSurveyPoints: SurveyPointData[] = useMemo(() => {
-    // TODO: 配線に応じた測点を表示
     return []
   }, [])
+
+  // 現在選択中の行の吸水管路IDs（地図上でハイライト用）
+  const selectedAbsorptionPipes = useMemo(() => {
+    if (!selectedRowId) return new Set<string>()
+    const row = currentRows.find(r => r.id === selectedRowId)
+    if (!row) return new Set<string>()
+    return new Set(row.absorptionPipes)
+  }, [selectedRowId, currentRows])
+
+  // 現在選択中の行の集水管路ID
+  const selectedCollectorPipe = useMemo(() => {
+    if (!selectedRowId) return null
+    const row = currentRows.find(r => r.id === selectedRowId)
+    return row?.collectorPipe || null
+  }, [selectedRowId, currentRows])
 
   return (
     <div className="h-full flex flex-col">
@@ -189,12 +311,34 @@ export function PipeWiringPage() {
         <div>
           <h1 className="text-xl font-bold flex items-center gap-2">
             <Cable className="h-5 w-5" />
-            配線設定
+            管路設定
           </h1>
           <p className="text-sm text-muted-foreground">
-            管路の配線パターンを設定
+            管路の配線パターンを設定（地図上の管路をクリックして選択）
           </p>
         </div>
+        {/* 選択モード表示 */}
+        {selectionMode !== 'none' && (
+          <div className={`px-4 py-2 rounded-lg flex items-center gap-2 ${
+            selectionMode === 'absorption'
+              ? 'bg-blue-100 text-blue-700 border border-blue-300'
+              : 'bg-green-100 text-green-700 border border-green-300'
+          }`}>
+            <MousePointer className="h-4 w-4" />
+            <span className="font-medium">
+              {selectionMode === 'absorption' ? '吸水を選択中（複数可）' : '集水/落口を選択中'}
+            </span>
+            <button
+              onClick={() => {
+                setSelectionMode('none')
+                setSelectedRowId(null)
+              }}
+              className="ml-2 p-1 hover:bg-white/50 rounded"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* メインコンテンツ */}
@@ -217,6 +361,8 @@ export function PipeWiringPage() {
                   onClick={() => {
                     setActiveTabType('collector')
                     setActiveCollectorIndex(index)
+                    setSelectionMode('none')
+                    setSelectedRowId(null)
                   }}
                   className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
                     activeTabType === 'collector' && activeCollectorIndex === index
@@ -249,7 +395,11 @@ export function PipeWiringPage() {
             <div className="border-l h-8 mx-2" />
             {/* 直落暗渠タブ */}
             <button
-              onClick={() => setActiveTabType('direct')}
+              onClick={() => {
+                setActiveTabType('direct')
+                setSelectionMode('none')
+                setSelectedRowId(null)
+              }}
               className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
                 activeTabType === 'direct'
                   ? 'border-orange-600 text-orange-600'
@@ -265,156 +415,117 @@ export function PipeWiringPage() {
             <table className="w-full text-sm">
               <thead className="bg-slate-100 sticky top-0 z-10">
                 <tr>
-                  <th className="px-3 py-2 text-center font-medium text-blue-700 border-r" colSpan={4}>
+                  <th className="px-3 py-2 text-center font-medium text-blue-700 border-r w-1/2">
                     吸水
                   </th>
-                  <th className="px-3 py-2 text-center font-medium text-green-700">
+                  <th className={`px-3 py-2 text-center font-medium w-1/2 ${
+                    activeTabType === 'collector' ? 'text-green-700' : 'text-orange-700'
+                  }`}>
                     {rightColumnLabel}
                   </th>
                   <th className="px-3 py-2 w-10"></th>
                 </tr>
-                <tr className="bg-slate-50">
-                  <th className="px-2 py-1 text-center text-xs font-normal text-slate-500 border-r">1</th>
-                  <th className="px-2 py-1 text-center text-xs font-normal text-slate-500 border-r">2</th>
-                  <th className="px-2 py-1 text-center text-xs font-normal text-slate-500 border-r">3</th>
-                  <th className="px-2 py-1 text-center text-xs font-normal text-slate-500 border-r">4</th>
-                  <th className="px-2 py-1 text-center text-xs font-normal text-slate-500"></th>
-                  <th className="px-2 py-1"></th>
-                </tr>
               </thead>
               <tbody className="divide-y">
-                {currentRows.map((row) => (
-                  <tr key={row.id} className="hover:bg-slate-50">
-                    <td className="px-1 py-1 border-r">
-                      <select
-                        value={row.absorption1 || ''}
-                        onChange={(e) =>
-                          updateCell(
-                            activeTabType,
-                            row.id,
-                            'absorption1',
-                            e.target.value || null,
-                            activeTabType === 'collector' ? activeCollectorIndex : undefined
-                          )
-                        }
-                        className="w-full px-2 py-1.5 border rounded text-sm bg-blue-50"
-                      >
-                        <option value="">-</option>
-                        {pipeOptions.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="px-1 py-1 border-r">
-                      <select
-                        value={row.absorption2 || ''}
-                        onChange={(e) =>
-                          updateCell(
-                            activeTabType,
-                            row.id,
-                            'absorption2',
-                            e.target.value || null,
-                            activeTabType === 'collector' ? activeCollectorIndex : undefined
-                          )
-                        }
-                        className="w-full px-2 py-1.5 border rounded text-sm bg-blue-50"
-                      >
-                        <option value="">-</option>
-                        {pipeOptions.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="px-1 py-1 border-r">
-                      <select
-                        value={row.absorption3 || ''}
-                        onChange={(e) =>
-                          updateCell(
-                            activeTabType,
-                            row.id,
-                            'absorption3',
-                            e.target.value || null,
-                            activeTabType === 'collector' ? activeCollectorIndex : undefined
-                          )
-                        }
-                        className="w-full px-2 py-1.5 border rounded text-sm bg-blue-50"
-                      >
-                        <option value="">-</option>
-                        {pipeOptions.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="px-1 py-1 border-r">
-                      <select
-                        value={row.absorption4 || ''}
-                        onChange={(e) =>
-                          updateCell(
-                            activeTabType,
-                            row.id,
-                            'absorption4',
-                            e.target.value || null,
-                            activeTabType === 'collector' ? activeCollectorIndex : undefined
-                          )
-                        }
-                        className="w-full px-2 py-1.5 border rounded text-sm bg-blue-50"
-                      >
-                        <option value="">-</option>
-                        {pipeOptions.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="px-1 py-1">
-                      <select
-                        value={row.collector || ''}
-                        onChange={(e) =>
-                          updateCell(
-                            activeTabType,
-                            row.id,
-                            'collector',
-                            e.target.value || null,
-                            activeTabType === 'collector' ? activeCollectorIndex : undefined
-                          )
-                        }
-                        className={`w-full px-2 py-1.5 border rounded text-sm ${
-                          activeTabType === 'collector' ? 'bg-green-50' : 'bg-orange-50'
-                        }`}
-                      >
-                        <option value="">-</option>
-                        {pipeOptions.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="px-1 py-1 text-center">
-                      <button
-                        onClick={() =>
-                          removeRow(
-                            activeTabType,
-                            row.id,
-                            activeTabType === 'collector' ? activeCollectorIndex : undefined
-                          )
-                        }
-                        className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
-                        title="行を削除"
-                        disabled={currentRows.length <= 1}
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {currentRows.map((row) => {
+                  const isAbsorptionSelecting = selectionMode === 'absorption' && selectedRowId === row.id
+                  const isCollectorSelecting = selectionMode === 'collector' && selectedRowId === row.id
+
+                  return (
+                    <tr key={row.id} className={`hover:bg-slate-50 ${
+                      selectedRowId === row.id ? 'bg-yellow-50' : ''
+                    }`}>
+                      {/* 吸水列 */}
+                      <td className="px-2 py-2 border-r">
+                        <div className="flex flex-wrap gap-1 min-h-[32px] items-center">
+                          {row.absorptionPipes.map(pipeId => (
+                            <span
+                              key={pipeId}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-800 rounded text-xs"
+                            >
+                              {getPipeNumber(pipeId)}
+                              <button
+                                onClick={() => removeAbsorptionPipe(
+                                  row.id,
+                                  pipeId,
+                                  activeTabType === 'collector' ? activeCollectorIndex : undefined
+                                )}
+                                className="hover:text-red-600"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </span>
+                          ))}
+                          <button
+                            onClick={() => startAbsorptionSelection(row.id)}
+                            className={`px-2 py-1 text-xs rounded border transition-colors ${
+                              isAbsorptionSelecting
+                                ? 'bg-blue-600 text-white border-blue-600'
+                                : 'border-blue-300 text-blue-600 hover:bg-blue-50'
+                            }`}
+                          >
+                            {isAbsorptionSelecting ? '選択中...' : '+ 追加'}
+                          </button>
+                        </div>
+                      </td>
+                      {/* 集水列 */}
+                      <td className="px-2 py-2">
+                        <div className="flex items-center gap-1 min-h-[32px]">
+                          {row.collectorPipe ? (
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
+                              activeTabType === 'collector'
+                                ? 'bg-green-100 text-green-800'
+                                : 'bg-orange-100 text-orange-800'
+                            }`}>
+                              {getPipeNumber(row.collectorPipe)}
+                              <button
+                                onClick={() => clearCollectorPipe(
+                                  row.id,
+                                  activeTabType === 'collector' ? activeCollectorIndex : undefined
+                                )}
+                                className="hover:text-red-600"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => startCollectorSelection(row.id)}
+                              className={`px-2 py-1 text-xs rounded border transition-colors ${
+                                isCollectorSelecting
+                                  ? (activeTabType === 'collector'
+                                      ? 'bg-green-600 text-white border-green-600'
+                                      : 'bg-orange-600 text-white border-orange-600')
+                                  : (activeTabType === 'collector'
+                                      ? 'border-green-300 text-green-600 hover:bg-green-50'
+                                      : 'border-orange-300 text-orange-600 hover:bg-orange-50')
+                              }`}
+                            >
+                              {isCollectorSelecting ? '選択中...' : '選択'}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                      {/* 削除ボタン */}
+                      <td className="px-1 py-2 text-center">
+                        <button
+                          onClick={() =>
+                            removeRow(
+                              activeTabType,
+                              row.id,
+                              activeTabType === 'collector' ? activeCollectorIndex : undefined
+                            )
+                          }
+                          className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
+                          title="行を削除"
+                          disabled={currentRows.length <= 1}
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -496,6 +607,10 @@ export function PipeWiringPage() {
               surveyPoints={mapSurveyPoints}
               showZones={showZones}
               showCoordinates={showCoordinates}
+              onPipeSelect={handlePipeSelect}
+              selectedPipeId={selectedCollectorPipe}
+              selectedPipeIds={selectedAbsorptionPipes}
+              isBulkEditMode={selectionMode !== 'none'}
             />
           </div>
         </div>
