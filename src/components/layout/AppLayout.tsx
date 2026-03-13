@@ -138,7 +138,10 @@ export function AppLayout() {
       <aside className="w-64 bg-slate-900 text-white flex flex-col flex-shrink-0">
         <div className="p-4 border-b border-slate-700">
           <h1 className="text-xl font-bold">NodeCloud Design</h1>
-          <p className="text-sm text-slate-400">ICT設計システム</p>
+          <div className="flex items-center gap-2">
+            <p className="text-sm text-slate-400">ICT設計システム</p>
+            <span className="text-xs text-slate-500">{__BUILD_TIME__}</span>
+          </div>
 
           {/* 保存モード切替 */}
           <div className="mt-3 p-2 bg-slate-800 rounded-lg">
