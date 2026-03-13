@@ -10,6 +10,7 @@ import {
   Map,
   MousePointer,
   Zap,
+  GitMerge,
 } from 'lucide-react'
 import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
@@ -35,6 +36,7 @@ interface WiringRow {
   id: string
   absorptionPipes: string[]  // 吸水（複数選択可能）
   collectorPipe: string | null    // 集水（または落口）
+  isMergePipe?: boolean  // 集水合流管かどうか
 }
 
 export function PipeWiringPage() {
@@ -234,6 +236,80 @@ export function PipeWiringPage() {
     setShowContinueDialog(false)
     setPendingCollectorPipeId(null)
     setSelectionMode('none')
+  }
+
+  // 集水合流管として指定して終了
+  const setAsMergePipe = () => {
+    if (!pendingCollectorPipeId) return
+
+    // 現在のタブに区切り行（合流管）を追加
+    if (activeTabType === 'collector') {
+      setCollectorTabs(prev => {
+        const newTabs = [...prev]
+        const currentTab = newTabs[activeCollectorIndex]
+
+        // 合流管行を追加
+        const mergeRow: WiringRow = {
+          id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+          absorptionPipes: [],
+          collectorPipe: pendingCollectorPipeId,
+          isMergePipe: true,
+        }
+        currentTab.rows.push(mergeRow)
+
+        // 新しい空行を追加（次のセクションの開始）
+        currentTab.rows.push(createEmptyRow())
+
+        return newTabs
+      })
+    } else {
+      setDirectRows(prev => {
+        const newRows = [...prev]
+        const mergeRow: WiringRow = {
+          id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+          absorptionPipes: [],
+          collectorPipe: pendingCollectorPipeId,
+          isMergePipe: true,
+        }
+        newRows.push(mergeRow)
+        newRows.push(createEmptyRow())
+        return newRows
+      })
+    }
+
+    setShowContinueDialog(false)
+    setPendingCollectorPipeId(null)
+    setSelectionMode('none')
+  }
+
+  // 手動で集水合流管を追加
+  const addMergePipeRow = () => {
+    if (activeTabType === 'collector') {
+      const mergeRowId = `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
+
+      setCollectorTabs(prev => {
+        const newTabs = [...prev]
+        const currentTab = newTabs[activeCollectorIndex]
+
+        // 合流管行を追加（集水管は後で選択）
+        const mergeRow: WiringRow = {
+          id: mergeRowId,
+          absorptionPipes: [],
+          collectorPipe: null,
+          isMergePipe: true,
+        }
+        currentTab.rows.push(mergeRow)
+
+        // 新しい空行を追加
+        currentTab.rows.push(createEmptyRow())
+
+        return newTabs
+      })
+
+      // 合流管の選択モードに入る
+      setSelectionMode('collector')
+      setSelectedRowId(mergeRowId)
+    }
   }
 
   // 空の行を作成
@@ -537,6 +613,24 @@ export function PipeWiringPage() {
     return row?.collectorPipe || null
   }, [selectedRowId, currentRows])
 
+  // 全タブの全行から選択済みの管路IDを収集（地図上で黄色表示用）
+  const allAssignedPipeIds = useMemo(() => {
+    const ids = new Set<string>()
+    // 全ての集水暗渠タブ
+    for (const tab of collectorTabs) {
+      for (const row of tab.rows) {
+        row.absorptionPipes.forEach(id => ids.add(id))
+        if (row.collectorPipe) ids.add(row.collectorPipe)
+      }
+    }
+    // 直落暗渠
+    for (const row of directRows) {
+      row.absorptionPipes.forEach(id => ids.add(id))
+      if (row.collectorPipe) ids.add(row.collectorPipe)
+    }
+    return ids
+  }, [collectorTabs, directRows])
+
   return (
     <div className="h-full flex flex-col">
       {/* ヘッダー */}
@@ -683,14 +777,70 @@ export function PipeWiringPage() {
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {currentRows.map((row) => {
+                {currentRows.map((row, rowIndex) => {
                   const isAbsorptionSelecting = selectionMode === 'absorption' && selectedRowId === row.id
                   const isCollectorSelecting = selectionMode === 'collector' && selectedRowId === row.id
+                  const prevRow = rowIndex > 0 ? currentRows[rowIndex - 1] : null
+                  const showDivider = prevRow?.isMergePipe
+
+                  // 合流管行の場合は特別な表示
+                  if (row.isMergePipe) {
+                    return (
+                      <tr key={row.id} className="bg-purple-50 border-b-4 border-purple-400">
+                        <td colSpan={2} className="px-2 py-3 text-center">
+                          <div className="flex items-center justify-center gap-2">
+                            <GitMerge className="h-4 w-4 text-purple-600" />
+                            <span className="font-medium text-purple-700">集水合流管：</span>
+                            {row.collectorPipe ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-200 text-purple-800 rounded text-xs">
+                                {getPipeNumber(row.collectorPipe)}
+                                <button
+                                  onClick={() => clearCollectorPipe(
+                                    row.id,
+                                    activeTabType === 'collector' ? activeCollectorIndex : undefined
+                                  )}
+                                  className="hover:text-red-600"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => startCollectorSelection(row.id)}
+                                className={`px-2 py-1 text-xs rounded border transition-colors ${
+                                  isCollectorSelecting
+                                    ? 'bg-purple-600 text-white border-purple-600'
+                                    : 'border-purple-300 text-purple-600 hover:bg-purple-100'
+                                }`}
+                              >
+                                {isCollectorSelecting ? '選択中...' : '選択'}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-1 py-2 text-center">
+                          <button
+                            onClick={() =>
+                              removeRow(
+                                activeTabType,
+                                row.id,
+                                activeTabType === 'collector' ? activeCollectorIndex : undefined
+                              )
+                            }
+                            className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
+                            title="行を削除"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  }
 
                   return (
                     <tr key={row.id} className={`hover:bg-slate-50 ${
                       selectedRowId === row.id ? 'bg-yellow-50' : ''
-                    }`}>
+                    } ${showDivider ? 'border-t-4 border-purple-200' : ''}`}>
                       {/* 吸水列 */}
                       <td className="px-2 py-2 border-r">
                         <div className="flex flex-wrap gap-1 min-h-[32px] items-center">
@@ -787,7 +937,7 @@ export function PipeWiringPage() {
           </div>
 
           {/* 行追加ボタン */}
-          <div className="p-2 border-t bg-white">
+          <div className="p-2 border-t bg-white flex items-center gap-2">
             <button
               onClick={() =>
                 addRow(
@@ -800,6 +950,15 @@ export function PipeWiringPage() {
               <Plus className="h-4 w-4" />
               行を追加
             </button>
+            {activeTabType === 'collector' && (
+              <button
+                onClick={addMergePipeRow}
+                className="flex items-center gap-1 px-3 py-1.5 text-sm text-purple-600 hover:bg-purple-50 rounded border border-purple-200"
+              >
+                <GitMerge className="h-4 w-4" />
+                集水合流管に接続
+              </button>
+            )}
           </div>
         </div>
 
@@ -866,6 +1025,7 @@ export function PipeWiringPage() {
               onPipeSelect={handlePipeSelect}
               selectedPipeId={selectedCollectorPipe}
               selectedPipeIds={selectedAbsorptionPipes}
+              assignedPipeIds={allAssignedPipeIds}
               isBulkEditMode={selectionMode !== 'none'}
             />
           </div>
@@ -875,24 +1035,32 @@ export function PipeWiringPage() {
       {/* 続けるか確認ダイアログ */}
       {showContinueDialog && pendingCollectorPipeId && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 w-96">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-[420px]">
             <h3 className="text-lg font-bold mb-4">接続先の処理を続けますか？</h3>
             <p className="text-sm text-muted-foreground mb-4">
-              次の接続先「{getPipeNumber(pendingCollectorPipeId)}」について、
-              同様の処理を続けますか？
+              次の接続先「<span className="font-medium text-purple-700">{getPipeNumber(pendingCollectorPipeId)}</span>」について、
+              どのように処理しますか？
             </p>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={finishBulkSetting}
-                className="px-4 py-2 text-sm border rounded hover:bg-gray-50"
-              >
-                終了する
-              </button>
+            <div className="flex flex-col gap-2">
               <button
                 onClick={continueBulkSetting}
-                className="px-4 py-2 text-sm bg-purple-600 text-white rounded hover:bg-purple-700"
+                className="w-full px-4 py-2.5 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 flex items-center justify-center gap-2"
               >
-                続ける
+                <Zap className="h-4 w-4" />
+                続ける（同様の処理を実行）
+              </button>
+              <button
+                onClick={setAsMergePipe}
+                className="w-full px-4 py-2.5 text-sm bg-purple-100 text-purple-700 border border-purple-300 rounded hover:bg-purple-200 flex items-center justify-center gap-2"
+              >
+                <GitMerge className="h-4 w-4" />
+                集水合流管として指定
+              </button>
+              <button
+                onClick={finishBulkSetting}
+                className="w-full px-4 py-2 text-sm border rounded hover:bg-gray-50"
+              >
+                終了する
               </button>
             </div>
           </div>

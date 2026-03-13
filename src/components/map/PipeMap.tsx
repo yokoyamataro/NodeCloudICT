@@ -147,6 +147,7 @@ export interface SurveyPointData {
 interface PipeMapProps {
   selectedPipeId?: string | null
   selectedPipeIds?: Set<string>
+  assignedPipeIds?: Set<string>  // 設定済み管路（黄色表示用）
   onPipeSelect?: (id: string, ctrlKey?: boolean) => void
   onVertexClick?: (pipeId: string, vertexIndex: number) => void
   isBulkEditMode?: boolean
@@ -229,6 +230,7 @@ const ZONE_COLORS = [
 export function PipeMap({
   selectedPipeId,
   selectedPipeIds = new Set(),
+  assignedPipeIds = new Set(),
   onPipeSelect,
   onVertexClick,
   isBulkEditMode = false,
@@ -298,12 +300,15 @@ export function PipeMap({
       {pipeLines.map((pipe) => {
         const isSelected = pipe.id === selectedPipeId
         const isMultiSelected = selectedPipeIds.has(pipe.id)
+        const isAssigned = assignedPipeIds.has(pipe.id)
         const MERGE_SELECTED_COLOR = '#a855f7' // 紫色（結合選択用）
+        const ASSIGNED_COLOR = '#eab308' // 黄色（設定済み管路用）
 
         // 色の決定
         const getColor = () => {
           if (isSelected) return SELECTED_COLOR
           if (editMode === 'merge' && isMultiSelected) return MERGE_SELECTED_COLOR
+          if (isAssigned) return ASSIGNED_COLOR
           return pipe.color
         }
 
