@@ -164,16 +164,22 @@ export function PipeWiringPage() {
     if (selectionMode === 'none' || !selectedRowId) return
 
     if (selectionMode === 'absorption') {
+      // 現在の行のインデックスと次の行IDを先に計算
+      const rows = activeTabType === 'collector'
+        ? collectorTabs[activeCollectorIndex]?.rows || []
+        : directRows
+      const currentIndex = rows.findIndex(r => r.id === selectedRowId)
+      const nextRowId = currentIndex >= 0 && currentIndex < rows.length - 1
+        ? rows[currentIndex + 1].id
+        : null
+
       // 吸水に追加
       if (activeTabType === 'collector') {
         setCollectorTabs(prev => {
           const newTabs = [...prev]
           const row = newTabs[activeCollectorIndex].rows.find(r => r.id === selectedRowId)
-          if (row) {
-            // 未選択なら追加
-            if (!row.absorptionPipes.includes(pipeId)) {
-              row.absorptionPipes = [...row.absorptionPipes, pipeId]
-            }
+          if (row && !row.absorptionPipes.includes(pipeId)) {
+            row.absorptionPipes = [...row.absorptionPipes, pipeId]
           }
           return newTabs
         })
@@ -181,23 +187,17 @@ export function PipeWiringPage() {
         setDirectRows(prev => {
           const newRows = [...prev]
           const row = newRows.find(r => r.id === selectedRowId)
-          if (row) {
-            if (!row.absorptionPipes.includes(pipeId)) {
-              row.absorptionPipes = [...row.absorptionPipes, pipeId]
-            }
+          if (row && !row.absorptionPipes.includes(pipeId)) {
+            row.absorptionPipes = [...row.absorptionPipes, pipeId]
           }
           return newRows
         })
       }
+
       // Ctrlキーが押されていなければ次の行に移動
       if (!ctrlKey) {
-        // 次の行に移動する処理をインラインで実行
-        const rows = activeTabType === 'collector'
-          ? collectorTabs[activeCollectorIndex]?.rows || []
-          : directRows
-        const currentIndex = rows.findIndex(r => r.id === selectedRowId)
-        if (currentIndex >= 0 && currentIndex < rows.length - 1) {
-          setSelectedRowId(rows[currentIndex + 1].id)
+        if (nextRowId) {
+          setSelectedRowId(nextRowId)
         } else {
           // 最後の行の場合は選択モード解除
           setSelectionMode('none')
