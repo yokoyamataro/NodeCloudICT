@@ -159,30 +159,6 @@ export function PipeWiringPage() {
     }
   }
 
-  // 次の行に移動する
-  const moveToNextRow = useCallback(() => {
-    if (activeTabType === 'collector') {
-      const rows = collectorTabs[activeCollectorIndex]?.rows || []
-      const currentIndex = rows.findIndex(r => r.id === selectedRowId)
-      if (currentIndex >= 0 && currentIndex < rows.length - 1) {
-        // 次の行がある場合は移動
-        setSelectedRowId(rows[currentIndex + 1].id)
-      } else {
-        // 最後の行の場合は選択モード解除
-        setSelectionMode('none')
-        setSelectedRowId(null)
-      }
-    } else {
-      const currentIndex = directRows.findIndex(r => r.id === selectedRowId)
-      if (currentIndex >= 0 && currentIndex < directRows.length - 1) {
-        setSelectedRowId(directRows[currentIndex + 1].id)
-      } else {
-        setSelectionMode('none')
-        setSelectedRowId(null)
-      }
-    }
-  }, [activeTabType, activeCollectorIndex, collectorTabs, directRows, selectedRowId])
-
   // 地図上の管路がクリックされた時
   const handlePipeSelect = useCallback((pipeId: string, ctrlKey?: boolean) => {
     if (selectionMode === 'none' || !selectedRowId) return
@@ -215,7 +191,18 @@ export function PipeWiringPage() {
       }
       // Ctrlキーが押されていなければ次の行に移動
       if (!ctrlKey) {
-        moveToNextRow()
+        // 次の行に移動する処理をインラインで実行
+        const rows = activeTabType === 'collector'
+          ? collectorTabs[activeCollectorIndex]?.rows || []
+          : directRows
+        const currentIndex = rows.findIndex(r => r.id === selectedRowId)
+        if (currentIndex >= 0 && currentIndex < rows.length - 1) {
+          setSelectedRowId(rows[currentIndex + 1].id)
+        } else {
+          // 最後の行の場合は選択モード解除
+          setSelectionMode('none')
+          setSelectedRowId(null)
+        }
       }
     } else if (selectionMode === 'collector') {
       // 集水に設定（1つのみ）
@@ -242,7 +229,7 @@ export function PipeWiringPage() {
       setSelectionMode('none')
       setSelectedRowId(null)
     }
-  }, [selectionMode, selectedRowId, activeTabType, activeCollectorIndex, moveToNextRow])
+  }, [selectionMode, selectedRowId, activeTabType, activeCollectorIndex, collectorTabs, directRows])
 
   // 吸水から管を削除
   const removeAbsorptionPipe = (rowId: string, pipeId: string, tabIndex?: number) => {
