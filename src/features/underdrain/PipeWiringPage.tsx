@@ -603,6 +603,60 @@ export function PipeWiringPage() {
     return pipe?.number || pipeId
   }, [pipes])
 
+  // 管路の頂点から測点名を生成するヘルパー
+  const generatePointName = useCallback((pipeNumber: string, vertexIndex: number, totalVertices: number): string => {
+    if (vertexIndex === 0) {
+      return `${pipeNumber}C` // 最上流
+    } else if (vertexIndex === totalVertices - 1) {
+      return `${pipeNumber}A` // 最下流
+    } else {
+      return `${pipeNumber}B${vertexIndex}` // 中間点
+    }
+  }, [])
+
+  // 吸水管と集水管の接続測点名を取得
+  const getConnectionPointName = useCallback((absorptionPipeIds: string[], collectorPipeId: string | null): string | null => {
+    if (!collectorPipeId || absorptionPipeIds.length === 0) return null
+
+    const collectorPipe = pipes.find(p => p.id === collectorPipeId)
+    if (!collectorPipe || collectorPipe.vertices.length === 0) return null
+
+    // 最初の吸水管の下流点を使用
+    const absorptionPipe = pipes.find(p => p.id === absorptionPipeIds[0])
+    if (!absorptionPipe || absorptionPipe.vertices.length === 0) return null
+
+    const downstreamVertex = absorptionPipe.vertices[absorptionPipe.vertices.length - 1]
+
+    // 集水管の構成点と一致するか確認（距離閾値: 0.01m）
+    const MATCH_THRESHOLD = 0.01
+    let matchedCollectorVertexIndex = -1
+
+    for (let i = 0; i < collectorPipe.vertices.length; i++) {
+      const vertex = collectorPipe.vertices[i]
+      const dist = calcDistance(downstreamVertex, vertex)
+      if (dist < MATCH_THRESHOLD) {
+        matchedCollectorVertexIndex = i
+        break
+      }
+    }
+
+    if (matchedCollectorVertexIndex >= 0) {
+      // 集水管の構成点と一致 → 集水管の測点名を使用
+      return generatePointName(
+        collectorPipe.number,
+        matchedCollectorVertexIndex,
+        collectorPipe.vertices.length
+      )
+    } else {
+      // 集水管の線上（構成点でない）に接続 → 吸水の下流測点名を使用
+      return generatePointName(
+        absorptionPipe.number,
+        absorptionPipe.vertices.length - 1,
+        absorptionPipe.vertices.length
+      )
+    }
+  }, [pipes, calcDistance, generatePointName])
+
   // 現在のタブのデータ
   const currentRows = useMemo(() => {
     if (activeTabType === 'collector') {
@@ -938,22 +992,30 @@ export function PipeWiringPage() {
                       <td className="px-2 py-2">
                         <div className="flex items-center gap-1 min-h-[32px]">
                           {row.collectorPipe ? (
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
-                              activeTabType === 'collector'
-                                ? 'bg-green-100 text-green-800'
-                                : 'bg-orange-100 text-orange-800'
-                            }`}>
-                              {getPipeNumber(row.collectorPipe)}
-                              <button
-                                onClick={() => clearCollectorPipe(
-                                  row.id,
-                                  activeTabType === 'collector' ? activeCollectorIndex : undefined
-                                )}
-                                className="hover:text-red-600"
-                              >
-                                <X className="h-3 w-3" />
-                              </button>
-                            </span>
+                            <div className="flex flex-col gap-0.5">
+                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
+                                activeTabType === 'collector'
+                                  ? 'bg-green-100 text-green-800'
+                                  : 'bg-orange-100 text-orange-800'
+                              }`}>
+                                {getPipeNumber(row.collectorPipe)}
+                                <button
+                                  onClick={() => clearCollectorPipe(
+                                    row.id,
+                                    activeTabType === 'collector' ? activeCollectorIndex : undefined
+                                  )}
+                                  className="hover:text-red-600"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </span>
+                              {/* 接続測点名を表示 */}
+                              {row.absorptionPipes.length > 0 && (
+                                <span className="text-xs text-slate-500 pl-1">
+                                  → {getConnectionPointName(row.absorptionPipes, row.collectorPipe) || '-'}
+                                </span>
+                              )}
+                            </div>
                           ) : (
                             <button
                               onClick={() => startCollectorSelection(row.id)}
