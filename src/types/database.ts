@@ -272,6 +272,38 @@ export interface PipeWiringRow {
   updated_at: string
 }
 
+// 施工計画行
+export interface ConstructionPlanRow {
+  id: string
+  project_id: string
+  wiring_row_id: string
+  group_type: 'collector' | 'direct'
+  group_index: number
+  row_index: number
+  absorption_pipe_id: string | null
+  collector_pipe_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+// 施工計画点
+export interface ConstructionPlanPoint {
+  id: string
+  row_id: string
+  point_type: 'absorption' | 'collector'
+  point_index: number
+  point_name: string
+  x: number
+  y: number
+  ground_height: number | null
+  planned_height: number | null
+  cut_depth: number | null
+  segment_distance: number | null
+  segment_slope: string | null
+  created_at: string
+  updated_at: string
+}
+
 // NodeCloud-Design用測量データ
 export interface DesignSurveyData {
   id: string

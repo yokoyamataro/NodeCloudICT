@@ -4,7 +4,7 @@ import { useProjectStore } from './projectStore'
 import { usePipeWiringStore } from './pipeWiringStore'
 import { useUnderdrainStore } from './underdrainStore'
 import { useSurveyStore } from './surveyStore'
-import type { PipeVertex } from '@/types/database'
+import type { PipeVertex, ConstructionPlanRow, ConstructionPlanPoint } from '@/types/database'
 
 // 施工計画の測点データ
 export interface PlanPoint {
@@ -114,8 +114,11 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
         return
       }
 
+      // 型キャスト
+      const typedRows = rows as ConstructionPlanRow[]
+
       // 各行の測点を取得
-      const rowIds = rows.map(r => r.id)
+      const rowIds = typedRows.map(r => r.id)
       const { data: points, error: pointError } = await supabase
         .from('construction_plan_points')
         .select('*')
@@ -125,13 +128,16 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
 
       if (pointError) throw pointError
 
+      // 型キャスト
+      const typedPoints = (points || []) as ConstructionPlanPoint[]
+
       // 管路情報を取得
       const pipes = useUnderdrainStore.getState().pipes
 
       // データを整形
       const groupMap = new Map<string, PlanGroup>()
 
-      for (const row of rows) {
+      for (const row of typedRows) {
         const groupKey = `${row.group_type}-${row.group_index}`
 
         if (!groupMap.has(groupKey)) {
@@ -150,7 +156,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
           ? pipes.find(p => p.id === row.absorption_pipe_id)
           : null
 
-        const rowPoints = (points || []).filter(p => p.row_id === row.id)
+        const rowPoints = typedPoints.filter(p => p.row_id === row.id)
         const absorptionPoints: PlanPoint[] = rowPoints
           .filter(p => p.point_type === 'absorption')
           .map(p => ({

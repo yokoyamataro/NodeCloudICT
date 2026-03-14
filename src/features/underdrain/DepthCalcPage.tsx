@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Ruler,
   RefreshCw,
@@ -17,14 +17,13 @@ import {
   useConstructionPlanStore,
   type PlanGroup,
   type PlanRow,
-  type PlanPoint,
 } from '@/stores/constructionPlanStore'
 
 export function DepthCalcPage() {
   const { currentProject } = useProjectStore()
-  const { pipes, fetchPipes } = useUnderdrainStore()
+  const { fetchPipes } = useUnderdrainStore()
   const { fetchSurveyData } = useSurveyStore()
-  const { fetchWiring, hasChanges: wiringHasChanges } = usePipeWiringStore()
+  const { fetchWiring } = usePipeWiringStore()
   const {
     planGroups,
     loading,
@@ -113,7 +112,7 @@ export function DepthCalcPage() {
   }
 
   // 行のレンダリング
-  const renderRow = (row: PlanRow, groupId: string) => {
+  const renderRow = (row: PlanRow, _groupId: string) => {
     const isExpanded = expandedRows.has(row.id)
 
     return (
