@@ -14,11 +14,14 @@ import {
   Save,
   Loader2,
   RefreshCw,
+  PlusCircle,
+  AlertTriangle,
 } from 'lucide-react'
 import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useProjectStore } from '@/stores/projectStore'
 import { usePipeWiringStore, type CollectorTab, type WiringRow } from '@/stores/pipeWiringStore'
+import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import { PipeMap, type SurveyPointData } from '@/components/map/PipeMap'
 import type { PipeVertex } from '@/types/database'
 
@@ -43,6 +46,10 @@ export function PipeWiringPage() {
     saving: wiringSaving,
     hasChanges,
   } = usePipeWiringStore()
+  const { hasData: hasPlanData, fetchPlan, deletePlan } = useConstructionPlanStore()
+
+  // 施工計画存在警告ダイアログ
+  const [showPlanWarning, setShowPlanWarning] = useState(false)
 
   // プロジェクト選択時にデータを読み込む
   useEffect(() => {
@@ -50,8 +57,9 @@ export function PipeWiringPage() {
       fetchPipes(currentProject.id)
       fetchCoordinates(currentProject.id)
       fetchWiring(currentProject.id)
+      fetchPlan(currentProject.id)
     }
-  }, [currentProject, fetchPipes, fetchCoordinates, fetchWiring])
+  }, [currentProject, fetchPipes, fetchCoordinates, fetchWiring, fetchPlan])
 
   // タブ管理
   const [activeTabType, setActiveTabType] = useState<TabType>('collector')
@@ -343,6 +351,25 @@ export function PipeWiringPage() {
       setCollectorTabs(newTabs)
     } else if (tabType === 'direct') {
       setDirectRows([...directRows, createEmptyRow()])
+    }
+  }
+
+  // 行を挿入（指定した行の前に挿入）
+  const insertRowBefore = (tabType: TabType, rowId: string, tabIndex?: number) => {
+    if (tabType === 'collector' && tabIndex !== undefined) {
+      const newTabs = [...collectorTabs]
+      const rowIndex = newTabs[tabIndex].rows.findIndex(r => r.id === rowId)
+      if (rowIndex >= 0) {
+        newTabs[tabIndex].rows.splice(rowIndex, 0, createEmptyRow())
+        setCollectorTabs(newTabs)
+      }
+    } else if (tabType === 'direct') {
+      const rowIndex = directRows.findIndex(r => r.id === rowId)
+      if (rowIndex >= 0) {
+        const newRows = [...directRows]
+        newRows.splice(rowIndex, 0, createEmptyRow())
+        setDirectRows(newRows)
+      }
     }
   }
 
@@ -945,22 +972,37 @@ export function PipeWiringPage() {
                           )}
                         </div>
                       </td>
-                      {/* 削除ボタン */}
+                      {/* 行操作ボタン */}
                       <td className="px-1 py-2 text-center">
-                        <button
-                          onClick={() =>
-                            removeRow(
-                              activeTabType,
-                              row.id,
-                              activeTabType === 'collector' ? activeCollectorIndex : undefined
-                            )
-                          }
-                          className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
-                          title="行を削除"
-                          disabled={currentRows.length <= 1}
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
+                        <div className="flex flex-col gap-0.5">
+                          <button
+                            onClick={() =>
+                              insertRowBefore(
+                                activeTabType,
+                                row.id,
+                                activeTabType === 'collector' ? activeCollectorIndex : undefined
+                              )
+                            }
+                            className="p-1 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded"
+                            title="この行の前に挿入"
+                          >
+                            <PlusCircle className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() =>
+                              removeRow(
+                                activeTabType,
+                                row.id,
+                                activeTabType === 'collector' ? activeCollectorIndex : undefined
+                              )
+                            }
+                            className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
+                            title="行を削除"
+                            disabled={currentRows.length <= 1}
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   )
@@ -1097,6 +1139,49 @@ export function PipeWiringPage() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* 施工計画存在警告ダイアログ */}
+      {showPlanWarning && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-[420px]">
+            <div className="flex items-center gap-3 mb-4">
+              <AlertTriangle className="h-6 w-6 text-yellow-500" />
+              <h3 className="text-lg font-bold">施工計画が存在します</h3>
+            </div>
+            <p className="text-sm text-slate-600 mb-4">
+              配管系統を変更すると、施工計画データは削除されます。
+              変更してもよろしいですか？
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowPlanWarning(false)}
+                className="px-4 py-2 border rounded-lg hover:bg-slate-50"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={async () => {
+                  await deletePlan()
+                  setShowPlanWarning(false)
+                }}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+              >
+                削除して変更
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 施工計画存在バナー */}
+      {hasPlanData && !showPlanWarning && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-yellow-100 border border-yellow-300 rounded-lg px-4 py-2 flex items-center gap-2 shadow-lg z-40">
+          <AlertTriangle className="h-4 w-4 text-yellow-600" />
+          <span className="text-sm text-yellow-800">
+            施工計画が存在します。配管系統を変更すると施工計画は削除されます。
+          </span>
         </div>
       )}
     </div>
