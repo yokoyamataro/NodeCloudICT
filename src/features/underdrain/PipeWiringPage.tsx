@@ -79,6 +79,7 @@ export function PipeWiringPage() {
   // 一括設定モード用の状態
   const [pendingCollectorPipeId, setPendingCollectorPipeId] = useState<string | null>(null) // 次に処理する集水管
   const [showContinueDialog, setShowContinueDialog] = useState(false) // 続けるか確認ダイアログ
+  const [isOutletDialog, setIsOutletDialog] = useState(false) // 落口確認ダイアログかどうか
 
   // 2点間の距離を計算
   const calcDistance = useCallback((p1: PipeVertex, p2: PipeVertex): number => {
@@ -147,19 +148,38 @@ export function PipeWiringPage() {
     setSelectedRowId(null)
     setPendingCollectorPipeId(null)
     setShowContinueDialog(false)
+    setIsOutletDialog(false)
   }
 
   // 一括設定を実行（集水管に対して吸水を追加）
-  const executeBulkSetting = useCallback((collectorPipeId: string) => {
+  // excludePipeId: 既に追加済みの管路ID（二重登録防止用）
+  const executeBulkSetting = useCallback((collectorPipeId: string, excludePipeId?: string) => {
     const collectorPipe = pipes.find(p => p.id === collectorPipeId)
     if (!collectorPipe) return
 
-    // この集水管を接続先としている吸水管を検索
-    const connectedAbsorptionPipes = pipes.filter(p => p.connectionTo === collectorPipeId)
+    // この集水管を接続先としている吸水管を検索（既に追加済みの管路は除外）
+    const connectedAbsorptionPipes = pipes.filter(p =>
+      p.connectionTo === collectorPipeId && p.id !== excludePipeId
+    )
 
+    // 接続している管がない場合
     if (connectedAbsorptionPipes.length === 0) {
-      // 接続している管がない場合は終了
-      cancelBulkSetting()
+      // 集水管の接続先を調べる
+      const nextCollectorId = collectorPipe.connectionTo
+      if (nextCollectorId) {
+        const nextCollector = pipes.find(p => p.id === nextCollectorId)
+        if (nextCollector) {
+          // 次の集水管がある場合は確認ダイアログを表示
+          setPendingCollectorPipeId(nextCollectorId)
+          setIsOutletDialog(false)
+          setShowContinueDialog(true)
+          return
+        }
+      }
+      // 次の集水管がない場合は落口確認ダイアログを表示
+      setPendingCollectorPipeId(collectorPipeId)
+      setIsOutletDialog(true)
+      setShowContinueDialog(true)
       return
     }
 
@@ -213,13 +233,16 @@ export function PipeWiringPage() {
       if (nextCollector) {
         // 次の集水管がある場合は確認ダイアログを表示
         setPendingCollectorPipeId(nextCollectorId)
+        setIsOutletDialog(false)
         setShowContinueDialog(true)
         return
       }
     }
 
-    // 次の集水管がない場合は終了
-    cancelBulkSetting()
+    // 次の集水管がない場合は落口確認ダイアログを表示
+    setPendingCollectorPipeId(collectorPipeId)
+    setIsOutletDialog(true)
+    setShowContinueDialog(true)
   }, [pipes, activeTabType, activeCollectorIndex, getConnectionDistance])
 
   // 一括設定を続行
@@ -234,6 +257,50 @@ export function PipeWiringPage() {
   const finishBulkSetting = () => {
     setShowContinueDialog(false)
     setPendingCollectorPipeId(null)
+    setIsOutletDialog(false)
+    setSelectionMode('none')
+  }
+
+  // 落口として設定
+  const setAsOutlet = () => {
+    if (!pendingCollectorPipeId) return
+
+    const collectorPipe = pipes.find(p => p.id === pendingCollectorPipeId)
+    if (!collectorPipe) return
+
+    // 落口行を追加（吸水は空、集水に最後の管路番号と下流測点を表示）
+    if (activeTabType === 'collector') {
+      setCollectorTabs(prev => {
+        const newTabs = [...prev]
+        const currentTab = newTabs[activeCollectorIndex]
+
+        const outletRow: WiringRow = {
+          id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+          absorptionPipes: [],
+          collectorPipe: pendingCollectorPipeId,
+          isMergePipe: false, // 通常行として表示（ただし吸水は空）
+        }
+        currentTab.rows.push(outletRow)
+
+        return newTabs
+      })
+    } else {
+      setDirectRows(prev => {
+        const newRows = [...prev]
+        const outletRow: WiringRow = {
+          id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+          absorptionPipes: [],
+          collectorPipe: pendingCollectorPipeId,
+          isMergePipe: false,
+        }
+        newRows.push(outletRow)
+        return newRows
+      })
+    }
+
+    setShowContinueDialog(false)
+    setPendingCollectorPipeId(null)
+    setIsOutletDialog(false)
     setSelectionMode('none')
   }
 
@@ -466,9 +533,9 @@ export function PipeWiringPage() {
         })
       }
 
-      // 同じ接続先を持つ他の管路を追加
+      // 同じ接続先を持つ他の管路を追加（最初に追加した管路は除外）
       setSelectionMode('none')
-      executeBulkSetting(collectorPipeId)
+      executeBulkSetting(collectorPipeId, pipeId)
       return
     }
 
@@ -656,6 +723,21 @@ export function PipeWiringPage() {
       )
     }
   }, [pipes, calcDistance, generatePointName])
+
+  // 集水合流管の接続測点名を取得（集水管の下流点）
+  const getMergePointName = useCallback((collectorPipeId: string | null): string | null => {
+    if (!collectorPipeId) return null
+
+    const collectorPipe = pipes.find(p => p.id === collectorPipeId)
+    if (!collectorPipe || collectorPipe.vertices.length === 0) return null
+
+    // 集水管の下流点（最後の構成点）の測点名を返す
+    return generatePointName(
+      collectorPipe.number,
+      collectorPipe.vertices.length - 1,
+      collectorPipe.vertices.length
+    )
+  }, [pipes, generatePointName])
 
   // 現在のタブのデータ
   const currentRows = useMemo(() => {
@@ -906,18 +988,24 @@ export function PipeWiringPage() {
                             <GitMerge className="h-4 w-4 text-purple-600" />
                             <span className="font-medium text-purple-700">集水合流管：</span>
                             {row.collectorPipe ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-200 text-purple-800 rounded text-xs">
-                                {getPipeNumber(row.collectorPipe)}
-                                <button
-                                  onClick={() => clearCollectorPipe(
-                                    row.id,
-                                    activeTabType === 'collector' ? activeCollectorIndex : undefined
-                                  )}
-                                  className="hover:text-red-600"
-                                >
-                                  <X className="h-3 w-3" />
-                                </button>
-                              </span>
+                              <div className="flex flex-col items-start gap-0.5">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-200 text-purple-800 rounded text-xs">
+                                  {getPipeNumber(row.collectorPipe)}
+                                  <button
+                                    onClick={() => clearCollectorPipe(
+                                      row.id,
+                                      activeTabType === 'collector' ? activeCollectorIndex : undefined
+                                    )}
+                                    className="hover:text-red-600"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </span>
+                                {/* 合流測点名を表示 */}
+                                <span className="text-xs text-purple-600 pl-1">
+                                  → {getMergePointName(row.collectorPipe) || '-'}
+                                </span>
+                              </div>
                             ) : (
                               <button
                                 onClick={() => startCollectorSelection(row.id)}
@@ -1010,9 +1098,14 @@ export function PipeWiringPage() {
                                 </button>
                               </span>
                               {/* 接続測点名を表示 */}
-                              {row.absorptionPipes.length > 0 && (
+                              {row.absorptionPipes.length > 0 ? (
                                 <span className="text-xs text-slate-500 pl-1">
                                   → {getConnectionPointName(row.absorptionPipes, row.collectorPipe) || '-'}
+                                </span>
+                              ) : (
+                                // 落口行（吸水が空）の場合は下流測点を表示
+                                <span className="text-xs text-orange-500 pl-1">
+                                  → {getMergePointName(row.collectorPipe)} (落口)
                                 </span>
                               )}
                             </div>
@@ -1169,37 +1262,65 @@ export function PipeWiringPage() {
         </div>
       </div>
 
-      {/* 続けるか確認ダイアログ */}
+      {/* 続けるか確認ダイアログ / 落口確認ダイアログ */}
       {showContinueDialog && pendingCollectorPipeId && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl p-6 w-[420px]">
-            <h3 className="text-lg font-bold mb-4">接続先の処理を続けますか？</h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              次の接続先「<span className="font-medium text-purple-700">{getPipeNumber(pendingCollectorPipeId)}</span>」について、
-              どのように処理しますか？
-            </p>
-            <div className="flex flex-col gap-2">
-              <button
-                onClick={continueBulkSetting}
-                className="w-full px-4 py-2.5 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 flex items-center justify-center gap-2"
-              >
-                <Zap className="h-4 w-4" />
-                続ける（同様の処理を実行）
-              </button>
-              <button
-                onClick={setAsMergePipe}
-                className="w-full px-4 py-2.5 text-sm bg-purple-100 text-purple-700 border border-purple-300 rounded hover:bg-purple-200 flex items-center justify-center gap-2"
-              >
-                <GitMerge className="h-4 w-4" />
-                集水合流管として指定
-              </button>
-              <button
-                onClick={finishBulkSetting}
-                className="w-full px-4 py-2 text-sm border rounded hover:bg-gray-50"
-              >
-                終了する
-              </button>
-            </div>
+            {isOutletDialog ? (
+              <>
+                <h3 className="text-lg font-bold mb-4">落口を設定しますか？</h3>
+                <p className="text-sm text-muted-foreground mb-4">
+                  管路「<span className="font-medium text-orange-700">{getPipeNumber(pendingCollectorPipeId)}</span>」の
+                  下流端（<span className="font-medium">{getMergePointName(pendingCollectorPipeId)}</span>）を
+                  落口として設定しますか？
+                </p>
+                <div className="flex flex-col gap-2">
+                  <button
+                    onClick={setAsOutlet}
+                    className="w-full px-4 py-2.5 text-sm bg-orange-600 text-white rounded hover:bg-orange-700 flex items-center justify-center gap-2"
+                  >
+                    <Target className="h-4 w-4" />
+                    落口として設定
+                  </button>
+                  <button
+                    onClick={finishBulkSetting}
+                    className="w-full px-4 py-2 text-sm border rounded hover:bg-gray-50"
+                  >
+                    設定せずに終了
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3 className="text-lg font-bold mb-4">接続先の処理を続けますか？</h3>
+                <p className="text-sm text-muted-foreground mb-4">
+                  次の接続先「<span className="font-medium text-purple-700">{getPipeNumber(pendingCollectorPipeId)}</span>」について、
+                  どのように処理しますか？
+                </p>
+                <div className="flex flex-col gap-2">
+                  <button
+                    onClick={continueBulkSetting}
+                    className="w-full px-4 py-2.5 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 flex items-center justify-center gap-2"
+                  >
+                    <Zap className="h-4 w-4" />
+                    続ける（同様の処理を実行）
+                  </button>
+                  <button
+                    onClick={setAsMergePipe}
+                    className="w-full px-4 py-2.5 text-sm bg-purple-100 text-purple-700 border border-purple-300 rounded hover:bg-purple-200 flex items-center justify-center gap-2"
+                  >
+                    <GitMerge className="h-4 w-4" />
+                    集水合流管として指定
+                  </button>
+                  <button
+                    onClick={finishBulkSetting}
+                    className="w-full px-4 py-2 text-sm border rounded hover:bg-gray-50"
+                  >
+                    終了する
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
