@@ -65,6 +65,9 @@ interface ConstructionPlanState {
   // 計画高の更新
   updatePlannedHeight: (rowId: string, pointId: string, plannedHeight: number | null) => void
 
+  // 地盤高の更新
+  updateGroundHeight: (rowId: string, pointId: string, groundHeight: number | null) => void
+
   // 自動計算
   recalculateCutDepthAndSlope: () => void
 }
@@ -661,6 +664,39 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
 
     // 勾配を再計算
     get().recalculateCutDepthAndSlope()
+  },
+
+  updateGroundHeight: (rowId: string, pointId: string, groundHeight: number | null) => {
+    set(state => {
+      const newGroups = state.planGroups.map(group => ({
+        ...group,
+        rows: group.rows.map(row => {
+          if (row.id !== rowId) return row
+
+          return {
+            ...row,
+            absorptionPoints: row.absorptionPoints.map(p => {
+              if (p.id !== pointId) return p
+              const cutDepth = groundHeight !== null && p.plannedHeight !== null
+                ? groundHeight - p.plannedHeight
+                : null
+              return { ...p, groundHeight, cutDepth }
+            }),
+            collectorPoint: row.collectorPoint?.id === pointId
+              ? {
+                  ...row.collectorPoint,
+                  groundHeight,
+                  cutDepth: groundHeight !== null && row.collectorPoint.plannedHeight !== null
+                    ? groundHeight - row.collectorPoint.plannedHeight
+                    : null,
+                }
+              : row.collectorPoint,
+          }
+        }),
+      }))
+
+      return { planGroups: newGroups }
+    })
   },
 
   recalculateCutDepthAndSlope: () => {

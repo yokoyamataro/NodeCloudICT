@@ -38,6 +38,7 @@ export function DepthCalcPage() {
     savePlan,
     deletePlan,
     updatePlannedHeight,
+    updateGroundHeight,
   } = useConstructionPlanStore()
 
   // 展開状態
@@ -110,6 +111,17 @@ export function DepthCalcPage() {
     updatePlannedHeight(rowId, pointId, numValue)
   }
 
+  // 地盤高の変更ハンドラ
+  const handleGroundHeightChange = (
+    rowId: string,
+    pointId: string,
+    value: string
+  ) => {
+    const numValue = value === '' ? null : parseFloat(value)
+    if (value !== '' && isNaN(numValue!)) return
+    updateGroundHeight(rowId, pointId, numValue)
+  }
+
   // 施工計画を生成
   const handleGenerate = async () => {
     setShowGenerateConfirm(false)
@@ -170,12 +182,16 @@ export function DepthCalcPage() {
                     </th>
                   ))}
                   {row.collectorPoint && (
-                    <th className="px-2 py-1.5 text-center font-medium border min-w-[80px] bg-green-50">
-                      {row.collectorPoint.pointName}
-                      <div className="text-xs text-green-600 font-normal">
-                        (集水)
-                      </div>
-                    </th>
+                    <>
+                      {/* 吸水と集水の間のスペーサー */}
+                      <th className="w-4 border-0 bg-transparent"></th>
+                      <th className="px-2 py-1.5 text-center font-medium border min-w-[80px] bg-green-50">
+                        {row.collectorPoint.pointName}
+                        <div className="text-xs text-green-600 font-normal">
+                          (集水)
+                        </div>
+                      </th>
+                    </>
                   )}
                 </tr>
               </thead>
@@ -186,17 +202,39 @@ export function DepthCalcPage() {
                     地盤高
                   </td>
                   {row.absorptionPoints.map(p => (
-                    <td
-                      key={p.id}
-                      className="px-2 py-1.5 text-center border font-mono"
-                    >
-                      {p.groundHeight?.toFixed(3) ?? '-'}
+                    <td key={p.id} className="px-1 py-1 border">
+                      <input
+                        type="number"
+                        step="0.001"
+                        value={p.groundHeight ?? ''}
+                        onChange={e =>
+                          handleGroundHeightChange(row.id, p.id, e.target.value)
+                        }
+                        className="w-full px-1 py-0.5 text-center font-mono text-sm border rounded bg-amber-50"
+                        placeholder="-"
+                      />
                     </td>
                   ))}
                   {row.collectorPoint && (
-                    <td className="px-2 py-1.5 text-center border font-mono bg-green-50">
-                      {row.collectorPoint.groundHeight?.toFixed(3) ?? '-'}
-                    </td>
+                    <>
+                      <td className="border-0 bg-transparent"></td>
+                      <td className="px-1 py-1 border bg-green-50">
+                        <input
+                          type="number"
+                          step="0.001"
+                          value={row.collectorPoint.groundHeight ?? ''}
+                          onChange={e =>
+                            handleGroundHeightChange(
+                              row.id,
+                              row.collectorPoint!.id,
+                              e.target.value
+                            )
+                          }
+                          className="w-full px-1 py-0.5 text-center font-mono text-sm border rounded bg-amber-50"
+                          placeholder="-"
+                        />
+                      </td>
+                    </>
                   )}
                 </tr>
 
@@ -220,22 +258,25 @@ export function DepthCalcPage() {
                     </td>
                   ))}
                   {row.collectorPoint && (
-                    <td className="px-1 py-1 border bg-green-50">
-                      <input
-                        type="number"
-                        step="0.001"
-                        value={row.collectorPoint.plannedHeight ?? ''}
-                        onChange={e =>
-                          handlePlannedHeightChange(
-                            row.id,
-                            row.collectorPoint!.id,
-                            e.target.value
-                          )
-                        }
-                        className="w-full px-1 py-0.5 text-center font-mono text-sm border rounded"
-                        placeholder="-"
-                      />
-                    </td>
+                    <>
+                      <td className="border-0 bg-transparent"></td>
+                      <td className="px-1 py-1 border bg-green-50">
+                        <input
+                          type="number"
+                          step="0.001"
+                          value={row.collectorPoint.plannedHeight ?? ''}
+                          onChange={e =>
+                            handlePlannedHeightChange(
+                              row.id,
+                              row.collectorPoint!.id,
+                              e.target.value
+                            )
+                          }
+                          className="w-full px-1 py-0.5 text-center font-mono text-sm border rounded"
+                          placeholder="-"
+                        />
+                      </td>
+                    </>
                   )}
                 </tr>
 
@@ -259,16 +300,19 @@ export function DepthCalcPage() {
                     </td>
                   ))}
                   {row.collectorPoint && (
-                    <td
-                      className={`px-2 py-1.5 text-center border font-mono bg-green-50 ${
-                        row.collectorPoint.cutDepth !== null &&
-                        row.collectorPoint.cutDepth < 0
-                          ? 'text-red-600'
-                          : ''
-                      }`}
-                    >
-                      {row.collectorPoint.cutDepth?.toFixed(3) ?? '-'}
-                    </td>
+                    <>
+                      <td className="border-0 bg-transparent"></td>
+                      <td
+                        className={`px-2 py-1.5 text-center border font-mono bg-green-50 ${
+                          row.collectorPoint.cutDepth !== null &&
+                          row.collectorPoint.cutDepth < 0
+                            ? 'text-red-600'
+                            : ''
+                        }`}
+                      >
+                        {row.collectorPoint.cutDepth?.toFixed(3) ?? '-'}
+                      </td>
+                    </>
                   )}
                 </tr>
 
@@ -286,9 +330,12 @@ export function DepthCalcPage() {
                     </td>
                   ))}
                   {row.collectorPoint && (
-                    <td className="px-2 py-1.5 text-center border font-mono text-slate-600 bg-green-50">
-                      {row.collectorPoint.segmentDistance?.toFixed(2) ?? '-'}
-                    </td>
+                    <>
+                      <td className="border-0 bg-transparent"></td>
+                      <td className="px-2 py-1.5 text-center border font-mono text-slate-600 bg-green-50">
+                        {row.collectorPoint.segmentDistance?.toFixed(2) ?? '-'}
+                      </td>
+                    </>
                   )}
                 </tr>
 
@@ -306,9 +353,12 @@ export function DepthCalcPage() {
                     </td>
                   ))}
                   {row.collectorPoint && (
-                    <td className="px-2 py-1.5 text-center border font-mono text-slate-600 bg-green-50">
-                      {row.collectorPoint.segmentSlope ?? '-'}
-                    </td>
+                    <>
+                      <td className="border-0 bg-transparent"></td>
+                      <td className="px-2 py-1.5 text-center border font-mono text-slate-600 bg-green-50">
+                        {row.collectorPoint.segmentSlope ?? '-'}
+                      </td>
+                    </>
                   )}
                 </tr>
               </tbody>
