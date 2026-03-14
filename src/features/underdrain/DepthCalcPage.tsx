@@ -8,6 +8,8 @@ import {
   Trash2,
   ChevronDown,
   ChevronRight,
+  Map,
+  LineChart,
 } from 'lucide-react'
 import { useProjectStore } from '@/stores/projectStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
@@ -18,6 +20,7 @@ import {
   type PlanGroup,
   type PlanRow,
 } from '@/stores/constructionPlanStore'
+import { PipeMap } from '@/components/map/PipeMap'
 
 export function DepthCalcPage() {
   const { currentProject } = useProjectStore()
@@ -40,6 +43,9 @@ export function DepthCalcPage() {
   // 展開状態
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
+
+  // 選択中の管路ID（地図フォーカス用）
+  const [focusedPipeId, setFocusedPipeId] = useState<string | null>(null)
 
   // 確認ダイアログ
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
@@ -76,13 +82,18 @@ export function DepthCalcPage() {
   }
 
   // 行の展開/折りたたみ
-  const toggleRow = (rowId: string) => {
+  const toggleRow = (rowId: string, pipeId: string | null) => {
     setExpandedRows(prev => {
       const newSet = new Set(prev)
       if (newSet.has(rowId)) {
         newSet.delete(rowId)
+        setFocusedPipeId(null)
       } else {
         newSet.add(rowId)
+        // 展開時に地図を管路にフォーカス
+        if (pipeId) {
+          setFocusedPipeId(pipeId)
+        }
       }
       return newSet
     })
@@ -120,7 +131,7 @@ export function DepthCalcPage() {
         {/* 行ヘッダー */}
         <div
           className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50"
-          onClick={() => toggleRow(row.id)}
+          onClick={() => toggleRow(row.id, row.absorptionPipeId)}
         >
           {isExpanded ? (
             <ChevronDown className="h-4 w-4 text-slate-400" />
@@ -417,28 +428,57 @@ export function DepthCalcPage() {
         </div>
       )}
 
-      {/* メインコンテンツ */}
-      <div className="flex-1 overflow-auto p-4">
-        {!hasData ? (
-          <div className="flex flex-col items-center justify-center h-full text-slate-500">
-            <Ruler className="h-16 w-16 mb-4 text-slate-300" />
-            <p className="text-lg font-medium mb-2">施工計画がありません</p>
-            <p className="text-sm mb-4">
-              配管系統で設定したデータから施工計画を生成します
-            </p>
-            <button
-              onClick={() => setShowGenerateConfirm(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-            >
-              <RefreshCw className="h-4 w-4" />
-              配管系統から生成
-            </button>
+      {/* メインコンテンツ - 3分割レイアウト */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* 上部3/4: 表と地図 */}
+        <div className="flex-[3] flex overflow-hidden">
+          {/* 左側: 表 */}
+          <div className="flex-1 overflow-auto p-4 border-r">
+            {!hasData ? (
+              <div className="flex flex-col items-center justify-center h-full text-slate-500">
+                <Ruler className="h-16 w-16 mb-4 text-slate-300" />
+                <p className="text-lg font-medium mb-2">施工計画がありません</p>
+                <p className="text-sm mb-4">
+                  配管系統で設定したデータから施工計画を生成します
+                </p>
+                <button
+                  onClick={() => setShowGenerateConfirm(true)}
+                  className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  配管系統から生成
+                </button>
+              </div>
+            ) : (
+              <div>
+                {planGroups.map(group => renderGroup(group))}
+              </div>
+            )}
           </div>
-        ) : (
-          <div>
-            {planGroups.map(group => renderGroup(group))}
+
+          {/* 右側: 地図 */}
+          <div className="flex-1 relative">
+            <div className="absolute top-2 left-2 z-10 bg-white/90 px-2 py-1 rounded shadow text-sm font-medium flex items-center gap-1">
+              <Map className="h-4 w-4" />
+              管路マップ
+            </div>
+            <PipeMap
+              selectedPipeId={focusedPipeId}
+              focusedPipeId={focusedPipeId}
+              showLabels={true}
+              showDirection={true}
+            />
           </div>
-        )}
+        </div>
+
+        {/* 下部1/4: 断面図エリア（プレースホルダー） */}
+        <div className="flex-1 border-t bg-slate-100 flex items-center justify-center">
+          <div className="text-center text-slate-400">
+            <LineChart className="h-12 w-12 mx-auto mb-2" />
+            <p className="font-medium">断面図エリア</p>
+            <p className="text-sm">（実装予定）</p>
+          </div>
+        </div>
       </div>
 
       {/* 生成確認ダイアログ */}

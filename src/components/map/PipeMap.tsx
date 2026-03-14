@@ -133,6 +133,25 @@ function MapBoundsUpdater({ pipeLines }: { pipeLines: PipeLineData[] }) {
   return null
 }
 
+// 特定の管路にフォーカスする
+function FocusPipe({ pipeLines, focusedPipeId }: { pipeLines: PipeLineData[], focusedPipeId: string | null }) {
+  const map = useMap()
+  const prevFocusedIdRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!focusedPipeId || focusedPipeId === prevFocusedIdRef.current) return
+    prevFocusedIdRef.current = focusedPipeId
+
+    const focusedPipe = pipeLines.find(p => p.id === focusedPipeId)
+    if (!focusedPipe || focusedPipe.positions.length === 0) return
+
+    const bounds = L.latLngBounds(focusedPipe.positions)
+    map.fitBounds(bounds, { padding: [50, 50], maxZoom: 19 })
+  }, [focusedPipeId, pipeLines, map])
+
+  return null
+}
+
 // 測点データの型
 export interface SurveyPointData {
   id: string
@@ -148,6 +167,7 @@ interface PipeMapProps {
   selectedPipeId?: string | null
   selectedPipeIds?: Set<string>
   assignedPipeIds?: Set<string>  // 設定済み管路（黄色表示用）
+  focusedPipeId?: string | null  // フォーカス対象の管路（中央拡大表示）
   onPipeSelect?: (id: string, ctrlKey?: boolean) => void
   onVertexClick?: (pipeId: string, vertexIndex: number) => void
   isBulkEditMode?: boolean
@@ -231,6 +251,7 @@ export function PipeMap({
   selectedPipeId,
   selectedPipeIds = new Set(),
   assignedPipeIds = new Set(),
+  focusedPipeId = null,
   onPipeSelect,
   onVertexClick,
   isBulkEditMode = false,
@@ -294,7 +315,11 @@ export function PipeMap({
         maxNativeZoom={19}
       />
 
-      <MapBoundsUpdater pipeLines={pipeLines} />
+      {focusedPipeId ? (
+        <FocusPipe pipeLines={pipeLines} focusedPipeId={focusedPipeId} />
+      ) : (
+        <MapBoundsUpdater pipeLines={pipeLines} />
+      )}
 
       {/* 管路ポリライン */}
       {pipeLines.map((pipe) => {
