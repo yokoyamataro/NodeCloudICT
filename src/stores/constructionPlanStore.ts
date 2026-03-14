@@ -254,9 +254,6 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
         pointNumber: row.point_number,
       }))
 
-      console.log('[generatePlanFromWiring] Survey data loaded:', surveyData.length, 'records')
-      console.log('[generatePlanFromWiring] Survey data sample:', surveyData.slice(0, 5))
-
       // 既存の施工計画を削除
       await supabase
         .from('construction_plan_rows')
@@ -266,10 +263,9 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       const planGroups: PlanGroup[] = []
 
       // 座標から最も近い測量データの地盤高を取得するヘルパー
-      // z値を持つ測量データのみ対象（カテゴリは問わない）
+      // z値を持つ測量データのみ対象
       const getGroundHeightByCoordinate = (x: number, y: number, threshold: number = 0.5): number | null => {
         const validSurvey = surveyData.filter(s => s.z !== null)
-        console.log(`[getGroundHeightByCoordinate] Total survey data: ${surveyData.length}, with z: ${validSurvey.length}`)
         if (validSurvey.length === 0) return null
 
         let nearestSurvey: typeof validSurvey[0] | null = null
@@ -283,12 +279,6 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
             nearestDistance = distance
             nearestSurvey = survey
           }
-        }
-
-        if (nearestSurvey) {
-          console.log(`[getGroundHeightByCoordinate] Found match for (${x}, ${y}): survey z=${nearestSurvey.z}, distance=${nearestDistance.toFixed(3)}m`)
-        } else {
-          console.log(`[getGroundHeightByCoordinate] No match for (${x}, ${y}) within ${threshold}m`)
         }
 
         return nearestSurvey?.z ?? null
@@ -339,8 +329,6 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                 idx,
                 absorptionPipe.vertices.length
               )
-              const surveyZ = getGroundHeightByCoordinate(vertex.x, vertex.y)
-              console.log(`[absorptionPoint] ${pointName}: vertex(${vertex.x}, ${vertex.y}, ${vertex.z}), surveyZ=${surveyZ}`)
               return {
                 id: `point-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
                 pointType: 'absorption' as const,
@@ -348,7 +336,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                 pointName,
                 x: vertex.x,
                 y: vertex.y,
-                groundHeight: surveyZ ?? vertex.z,
+                groundHeight: getGroundHeightByCoordinate(vertex.x, vertex.y) ?? vertex.z,
                 plannedHeight: null,
                 cutDepth: null,
                 segmentDistance: null,
