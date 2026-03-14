@@ -9,7 +9,6 @@ import {
   ChevronDown,
   ChevronRight,
   Map,
-  LineChart,
 } from 'lucide-react'
 import { useProjectStore } from '@/stores/projectStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
@@ -21,6 +20,7 @@ import {
   type PlanRow,
 } from '@/stores/constructionPlanStore'
 import { PipeMap } from '@/components/map/PipeMap'
+import { CrossSectionChart } from '@/components/charts/CrossSectionChart'
 
 export function DepthCalcPage() {
   const { currentProject } = useProjectStore()
@@ -51,6 +51,12 @@ export function DepthCalcPage() {
   // 確認ダイアログ
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showGenerateConfirm, setShowGenerateConfirm] = useState(false)
+
+  // 選択中の系統（断面図表示用）
+  const [selectedSystem, setSelectedSystem] = useState<{
+    groupIndex: number
+    systemIndex: number
+  } | null>(null)
 
   // プロジェクト選択時にデータを読み込む
   useEffect(() => {
@@ -590,12 +596,61 @@ export function DepthCalcPage() {
           </div>
         </div>
 
-        {/* 下部1/4: 断面図エリア（プレースホルダー） */}
-        <div className="flex-1 border-t bg-slate-100 flex items-center justify-center">
-          <div className="text-center text-slate-400">
-            <LineChart className="h-12 w-12 mx-auto mb-2" />
-            <p className="font-medium">断面図エリア</p>
-            <p className="text-sm">（実装予定）</p>
+        {/* 下部1/4: 断面図エリア */}
+        <div className="flex-1 border-t bg-slate-50 flex flex-col min-h-[250px]">
+          {/* 系統選択タブ */}
+          <div className="flex items-center gap-1 px-2 py-1 bg-slate-100 border-b overflow-x-auto">
+            <span className="text-xs text-slate-500 mr-2 whitespace-nowrap">断面図:</span>
+            {groupedBySystem.map((group, groupIdx) => (
+              group.systems.map(system => (
+                <button
+                  key={`${groupIdx}-${system.systemIndex}`}
+                  onClick={() => setSelectedSystem({ groupIndex: groupIdx, systemIndex: system.systemIndex })}
+                  className={`px-2 py-1 text-xs rounded whitespace-nowrap transition-colors ${
+                    selectedSystem?.groupIndex === groupIdx && selectedSystem?.systemIndex === system.systemIndex
+                      ? system.endType === 'outlet'
+                        ? 'bg-orange-500 text-white'
+                        : system.endType === 'merge'
+                          ? 'bg-purple-500 text-white'
+                          : 'bg-blue-500 text-white'
+                      : system.endType === 'outlet'
+                        ? 'bg-orange-100 text-orange-700 hover:bg-orange-200'
+                        : system.endType === 'merge'
+                          ? 'bg-purple-100 text-purple-700 hover:bg-purple-200'
+                          : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                  }`}
+                >
+                  {group.name} 系統{system.systemIndex}
+                  {system.endType === 'outlet' && '(落口)'}
+                  {system.endType === 'merge' && '(合流)'}
+                </button>
+              ))
+            ))}
+            {groupedBySystem.length === 0 && (
+              <span className="text-xs text-slate-400">系統データがありません</span>
+            )}
+          </div>
+
+          {/* 断面図表示 */}
+          <div className="flex-1 overflow-hidden">
+            {selectedSystem ? (
+              (() => {
+                const groupData = groupedBySystem[selectedSystem.groupIndex]
+                const systemData = groupData?.systems.find(s => s.systemIndex === selectedSystem.systemIndex)
+                if (!systemData) return <div className="flex items-center justify-center h-full text-slate-400">系統が見つかりません</div>
+                return (
+                  <CrossSectionChart
+                    systemRows={systemData.rows}
+                    systemIndex={systemData.systemIndex}
+                    endType={systemData.endType}
+                  />
+                )
+              })()
+            ) : (
+              <div className="flex items-center justify-center h-full text-slate-400 text-sm">
+                上のタブから系統を選択して断面図を表示
+              </div>
+            )}
           </div>
         </div>
       </div>
