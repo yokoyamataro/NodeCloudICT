@@ -242,10 +242,26 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
 
       const planGroups: PlanGroup[] = []
 
-      // 測点名から地盤高を取得するヘルパー
-      const getGroundHeightByPointName = (pointName: string): number | null => {
-        const survey = surveyData.find(s => s.pointNumber === pointName)
-        return survey?.z ?? null
+      // 座標から最も近い測量データの地盤高を取得するヘルパー
+      // category === 'underdrain' の測量データのみ対象
+      const getGroundHeightByCoordinate = (x: number, y: number, threshold: number = 0.5): number | null => {
+        const underdrainSurvey = surveyData.filter(s => s.category === 'underdrain' && s.z !== null)
+        if (underdrainSurvey.length === 0) return null
+
+        let nearestSurvey: typeof underdrainSurvey[0] | null = null
+        let nearestDistance = Infinity
+
+        for (const survey of underdrainSurvey) {
+          const dx = survey.x - x
+          const dy = survey.y - y
+          const distance = Math.sqrt(dx * dx + dy * dy)
+          if (distance < nearestDistance && distance < threshold) {
+            nearestDistance = distance
+            nearestSurvey = survey
+          }
+        }
+
+        return nearestSurvey?.z ?? null
       }
 
       // 管路の頂点から測点名を生成するヘルパー
@@ -300,7 +316,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                 pointName,
                 x: vertex.x,
                 y: vertex.y,
-                groundHeight: getGroundHeightByPointName(pointName) ?? vertex.z,
+                groundHeight: getGroundHeightByCoordinate(vertex.x, vertex.y) ?? vertex.z,
                 plannedHeight: null,
                 cutDepth: null,
                 segmentDistance: null,
@@ -425,7 +441,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
               pointName,
               x: vertex.x,
               y: vertex.y,
-              groundHeight: getGroundHeightByPointName(pointName) ?? vertex.z,
+              groundHeight: getGroundHeightByCoordinate(vertex.x, vertex.y) ?? vertex.z,
               plannedHeight: null,
               cutDepth: null,
               segmentDistance: null,
