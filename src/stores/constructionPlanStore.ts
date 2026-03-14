@@ -357,48 +357,60 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
             if (collectorPipe && absorptionPipe.vertices.length > 0) {
               const downstreamVertex = absorptionPipe.vertices[absorptionPipe.vertices.length - 1]
 
-              // 集水管上の最近点を探す
-              let nearestCollectorPoint: PipeVertex | null = null
-              let nearestDistance = Infinity
+              // 集水管の構成点と一致するか確認（距離閾値: 0.01m）
+              const MATCH_THRESHOLD = 0.01
+              let matchedCollectorVertexIndex = -1
 
-              for (const vertex of collectorPipe.vertices) {
+              for (let i = 0; i < collectorPipe.vertices.length; i++) {
+                const vertex = collectorPipe.vertices[i]
                 const dist = calcDistance(downstreamVertex, vertex)
-                if (dist < nearestDistance) {
-                  nearestDistance = dist
-                  nearestCollectorPoint = vertex
+                if (dist < MATCH_THRESHOLD) {
+                  matchedCollectorVertexIndex = i
+                  break
                 }
               }
 
-              if (nearestCollectorPoint) {
-                // 集水管上の測点名を探す
-                let collectorPointName = ''
-                for (let i = 0; i < collectorPipe.vertices.length; i++) {
-                  const v = collectorPipe.vertices[i]
-                  if (v.x === nearestCollectorPoint.x && v.y === nearestCollectorPoint.y) {
-                    collectorPointName = generatePointName(
-                      collectorPipe.number,
-                      i,
-                      collectorPipe.vertices.length
-                    )
-                    break
-                  }
-                }
+              // 測点名を決定
+              let collectorPointName: string
+              let collectorX: number
+              let collectorY: number
+              let collectorZ: number | null
 
-                collectorPoint = {
-                  id: `point-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-                  pointType: 'collector',
-                  pointIndex: 0,
-                  pointName: collectorPointName || collectorPipe.number,
-                  x: nearestCollectorPoint.x,
-                  y: nearestCollectorPoint.y,
-                  groundHeight: absorptionPoints.length > 0
-                    ? absorptionPoints[absorptionPoints.length - 1].groundHeight
-                    : nearestCollectorPoint.z,
-                  plannedHeight: null,
-                  cutDepth: null,
-                  segmentDistance: null,
-                  segmentSlope: null,
-                }
+              if (matchedCollectorVertexIndex >= 0) {
+                // 集水管の構成点と一致 → 集水管の測点名を使用
+                const matchedVertex = collectorPipe.vertices[matchedCollectorVertexIndex]
+                collectorPointName = generatePointName(
+                  collectorPipe.number,
+                  matchedCollectorVertexIndex,
+                  collectorPipe.vertices.length
+                )
+                collectorX = matchedVertex.x
+                collectorY = matchedVertex.y
+                collectorZ = matchedVertex.z
+              } else {
+                // 集水管の線上（構成点でない）に接続 → 吸水の下流測点名を使用
+                collectorPointName = generatePointName(
+                  absorptionPipe.number,
+                  absorptionPipe.vertices.length - 1,
+                  absorptionPipe.vertices.length
+                )
+                collectorX = downstreamVertex.x
+                collectorY = downstreamVertex.y
+                collectorZ = downstreamVertex.z
+              }
+
+              collectorPoint = {
+                id: `point-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+                pointType: 'collector',
+                pointIndex: 0,
+                pointName: collectorPointName,
+                x: collectorX,
+                y: collectorY,
+                groundHeight: getGroundHeightByCoordinate(collectorX, collectorY) ?? collectorZ,
+                plannedHeight: null,
+                cutDepth: null,
+                segmentDistance: null,
+                segmentSlope: null,
               }
             }
 
