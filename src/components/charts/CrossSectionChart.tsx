@@ -7,21 +7,21 @@ interface CrossSectionChartProps {
   endType: 'outlet' | 'merge' | null
 }
 
-// 断面図の点データ
+// 断面図の点データ（集水管の点のみ）
 interface SectionPoint {
   distance: number // 累積距離（左からの位置）
   groundHeight: number | null // 現況高（地盤高）
   plannedHeight: number | null // 計画高
   pointName: string // 測点名
-  pipeNumber: string | null // 管番号
-  isCollectorPoint: boolean // 集水接続点かどうか
-  absorptionPlannedHeight: number | null // 接続している吸水下流部の計画高
+  rowIndex: number // 元の行インデックス
+  // 吸水接続情報
+  absorptionPipeNumber: string | null // 接続している吸水管番号
+  absorptionPlannedHeight: number | null // 吸水下流部の計画高
 }
 
 export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSectionChartProps) {
-  // 系統の全測点を累積距離で配置
-  // 集水渠断面図: 最上流（左）→ 最下流（右）
-  // 系統の行は rowIndex 順で、最上流行が最初
+  // 集水管の断面を構成
+  // 系統内の各行の集水点を累積距離で配置（上流から下流へ）
   const sectionData = useMemo(() => {
     const points: SectionPoint[] = []
     let cumulativeDistance = 0
@@ -29,61 +29,33 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
     // 行を順に処理（最上流から最下流へ）
     for (let rowIdx = 0; rowIdx < systemRows.length; rowIdx++) {
       const row = systemRows[rowIdx]
-      const prevRow = rowIdx > 0 ? systemRows[rowIdx - 1] : null
 
-      // 前の行の集水点から現在の行の最初の吸水点までの距離を加算
-      // （同じ系統内で連続する行の間の距離）
-      if (rowIdx > 0 && prevRow?.collectorPoint && row.absorptionPoints.length > 0) {
-        // 前の集水点と現在の吸水上流点の間は、集水管上の距離
-        // 実際には設計データから計算すべきだが、ここでは簡略化
-        cumulativeDistance += 2 // 仮の接続距離
-      }
+      // 集水点がない場合はスキップ
+      if (!row.collectorPoint) continue
 
-      // 吸水測点を追加（上流から下流の順）
-      for (let pIdx = 0; pIdx < row.absorptionPoints.length; pIdx++) {
-        const point = row.absorptionPoints[pIdx]
-
-        // 最初の点以外は区間距離を加算
-        if (pIdx > 0 && point.segmentDistance !== null) {
-          cumulativeDistance += point.segmentDistance
+      // 最初の点以外は、前の行の集水点から現在の行の集水点までの距離を加算
+      // これは前の行のcollectorPoint.segmentDistanceに格納されている
+      if (rowIdx > 0) {
+        const prevRow = systemRows[rowIdx - 1]
+        if (prevRow.collectorPoint?.segmentDistance !== null && prevRow.collectorPoint?.segmentDistance !== undefined) {
+          cumulativeDistance += prevRow.collectorPoint.segmentDistance
         }
-
-        points.push({
-          distance: cumulativeDistance,
-          groundHeight: point.groundHeight,
-          plannedHeight: point.plannedHeight,
-          pointName: point.pointName,
-          pipeNumber: row.pipeNumber,
-          isCollectorPoint: false,
-          absorptionPlannedHeight: null,
-        })
       }
 
-      // 集水接続点を追加
-      if (row.collectorPoint) {
-        // 吸水下流点から集水接続点への距離
-        if (row.collectorPoint.segmentDistance !== null) {
-          cumulativeDistance += row.collectorPoint.segmentDistance
-        } else if (row.absorptionPoints.length > 0) {
-          // 区間距離がない場合は、最後の吸水点から少し離す
-          cumulativeDistance += 1
-        }
+      // 吸水下流部の計画高を取得
+      const absorptionDownstreamHeight = row.absorptionPoints.length > 0
+        ? row.absorptionPoints[row.absorptionPoints.length - 1].plannedHeight
+        : null
 
-        // 吸水下流部の計画高を取得
-        const absorptionDownstreamHeight = row.absorptionPoints.length > 0
-          ? row.absorptionPoints[row.absorptionPoints.length - 1].plannedHeight
-          : null
-
-        points.push({
-          distance: cumulativeDistance,
-          groundHeight: row.collectorPoint.groundHeight,
-          plannedHeight: row.collectorPoint.plannedHeight,
-          pointName: row.collectorPoint.pointName,
-          pipeNumber: row.pipeNumber,
-          isCollectorPoint: true,
-          absorptionPlannedHeight: absorptionDownstreamHeight,
-        })
-      }
+      points.push({
+        distance: cumulativeDistance,
+        groundHeight: row.collectorPoint.groundHeight,
+        plannedHeight: row.collectorPoint.plannedHeight,
+        pointName: row.collectorPoint.pointName,
+        rowIndex: rowIdx,
+        absorptionPipeNumber: row.pipeNumber,
+        absorptionPlannedHeight: absorptionDownstreamHeight,
+      })
     }
 
     return points
@@ -100,9 +72,9 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
         minHeight: 0,
         maxHeight: 10,
         totalDistance: 100,
-        padding: { top: 30, right: 50, bottom: 50, left: 60 },
+        padding: { top: 30, right: 50, bottom: 60, left: 60 },
         chartWidth: 600,
-        chartHeight: 200,
+        chartHeight: 220,
       }
     }
 
@@ -117,19 +89,21 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
       minHeight: min - heightPadding,
       maxHeight: max + heightPadding,
       totalDistance: dist || 100,
-      padding: { top: 30, right: 50, bottom: 50, left: 60 },
-      chartWidth: Math.max(600, dist * 4 + 120), // 距離に応じて幅を調整
-      chartHeight: 200,
+      padding: { top: 30, right: 50, bottom: 60, left: 60 },
+      chartWidth: Math.max(600, dist * 5 + 120), // 距離に応じて幅を調整
+      chartHeight: 220,
     }
   }, [sectionData])
 
   // 座標変換関数
   const xScale = (distance: number) => {
+    if (totalDistance === 0) return padding.left
     return padding.left + (distance / totalDistance) * (chartWidth - padding.left - padding.right)
   }
 
   const yScale = (height: number) => {
     const range = maxHeight - minHeight
+    if (range === 0) return chartHeight / 2
     return padding.top + (1 - (height - minHeight) / range) * (chartHeight - padding.top - padding.bottom)
   }
 
@@ -177,7 +151,7 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
   if (sectionData.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-slate-400 text-sm">
-        データがありません
+        集水点データがありません
       </div>
     )
   }
@@ -196,7 +170,7 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
           {systemIndex}
         </span>
         <span>
-          系統 {systemIndex} 断面図
+          系統 {systemIndex} 集水渠断面図
           {endType === 'outlet' && ' （落口）'}
           {endType === 'merge' && ' （合流）'}
         </span>
@@ -317,10 +291,10 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
                   <circle
                     cx={x}
                     cy={yScale(point.groundHeight)}
-                    r={4}
+                    r={5}
                     fill="#92400e"
                     stroke="white"
-                    strokeWidth="1"
+                    strokeWidth="1.5"
                   />
                 )}
 
@@ -329,18 +303,18 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
                   <circle
                     cx={x}
                     cy={yScale(point.plannedHeight)}
-                    r={4}
+                    r={5}
                     fill="#2563eb"
                     stroke="white"
-                    strokeWidth="1"
+                    strokeWidth="1.5"
                   />
                 )}
 
-                {/* 吸水接続マーク（三角形） - 集水接続点に吸水下流部の計画高を表示 */}
-                {point.isCollectorPoint && point.absorptionPlannedHeight !== null && (
+                {/* 吸水接続マーク（三角形） */}
+                {point.absorptionPlannedHeight !== null && (
                   <g>
                     <polygon
-                      points={`${x},${yScale(point.absorptionPlannedHeight) - 10} ${x - 7},${yScale(point.absorptionPlannedHeight) + 2} ${x + 7},${yScale(point.absorptionPlannedHeight) + 2}`}
+                      points={`${x},${yScale(point.absorptionPlannedHeight) - 12} ${x - 8},${yScale(point.absorptionPlannedHeight) + 2} ${x + 8},${yScale(point.absorptionPlannedHeight) + 2}`}
                       fill="#16a34a"
                       stroke="white"
                       strokeWidth="1.5"
@@ -353,8 +327,8 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
                         x2={x}
                         y2={yScale(point.plannedHeight)}
                         stroke="#16a34a"
-                        strokeWidth="1"
-                        strokeDasharray="3,2"
+                        strokeWidth="1.5"
+                        strokeDasharray="4,3"
                       />
                     )}
                   </g>
@@ -365,20 +339,32 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
                   x={x}
                   y={chartHeight - padding.bottom + 14}
                   textAnchor="middle"
-                  className={`text-[9px] ${point.isCollectorPoint ? 'fill-green-700 font-medium' : 'fill-slate-600'}`}
+                  className="fill-slate-700 text-[10px] font-medium"
                 >
                   {point.pointName}
                 </text>
 
-                {/* 管番号（集水点の場合） */}
-                {point.isCollectorPoint && point.pipeNumber && (
+                {/* 吸水管番号 */}
+                {point.absorptionPipeNumber && (
                   <text
                     x={x}
-                    y={chartHeight - padding.bottom + 26}
+                    y={chartHeight - padding.bottom + 28}
                     textAnchor="middle"
-                    className="fill-slate-400 text-[8px]"
+                    className="fill-blue-600 text-[9px]"
                   >
-                    (集水)
+                    吸水{point.absorptionPipeNumber}
+                  </text>
+                )}
+
+                {/* 区間距離（最初の点以外） */}
+                {idx > 0 && (
+                  <text
+                    x={(xScale(sectionData[idx - 1].distance) + x) / 2}
+                    y={chartHeight - padding.bottom + 44}
+                    textAnchor="middle"
+                    className="fill-slate-500 text-[9px]"
+                  >
+                    {(point.distance - sectionData[idx - 1].distance).toFixed(2)}m
                   </text>
                 )}
 
@@ -396,26 +382,26 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
           })}
 
           {/* 凡例 */}
-          <g transform={`translate(${chartWidth - padding.right - 140}, ${padding.top})`}>
-            <rect x="0" y="0" width="130" height="72" fill="white" stroke="#e2e8f0" rx="4" />
+          <g transform={`translate(${chartWidth - padding.right - 145}, ${padding.top})`}>
+            <rect x="0" y="0" width="135" height="72" fill="white" stroke="#e2e8f0" rx="4" />
 
             {/* 現況線 */}
             <line x1="10" y1="14" x2="28" y2="14" stroke="#92400e" strokeWidth="2" />
-            <circle cx="19" cy="14" r="3" fill="#92400e" />
+            <circle cx="19" cy="14" r="4" fill="#92400e" />
             <text x="35" y="14" dominantBaseline="middle" className="fill-slate-700 text-[10px]">現況高</text>
 
             {/* 計画線 */}
             <line x1="10" y1="30" x2="28" y2="30" stroke="#2563eb" strokeWidth="2" />
-            <circle cx="19" cy="30" r="3" fill="#2563eb" />
-            <text x="35" y="30" dominantBaseline="middle" className="fill-slate-700 text-[10px]">計画高</text>
+            <circle cx="19" cy="30" r="4" fill="#2563eb" />
+            <text x="35" y="30" dominantBaseline="middle" className="fill-slate-700 text-[10px]">計画高（集水）</text>
 
             {/* 吸水接続 */}
-            <polygon points="19,40 13,50 25,50" fill="#16a34a" />
+            <polygon points="19,40 12,52 26,52" fill="#16a34a" />
             <text x="35" y="46" dominantBaseline="middle" className="fill-slate-700 text-[10px]">吸水下流部</text>
 
             {/* 接続線 */}
-            <line x1="10" y1="60" x2="28" y2="60" stroke="#16a34a" strokeWidth="1" strokeDasharray="3,2" />
-            <text x="35" y="60" dominantBaseline="middle" className="fill-slate-700 text-[10px]">接続</text>
+            <line x1="10" y1="62" x2="28" y2="62" stroke="#16a34a" strokeWidth="1.5" strokeDasharray="4,3" />
+            <text x="35" y="62" dominantBaseline="middle" className="fill-slate-700 text-[10px]">吸水接続</text>
           </g>
         </svg>
       </div>

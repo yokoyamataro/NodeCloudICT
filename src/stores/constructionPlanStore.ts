@@ -587,6 +587,34 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
         planGroups.push(directGroup)
       }
 
+      // 系統内の集水点の区間距離を計算（現在の行と次の行の集水点間の距離）
+      for (const group of planGroups) {
+        // 系統ごとにグループ化
+        const systemMap: Record<number, PlanRow[]> = {}
+        for (const row of group.rows) {
+          const sysIdx = row.systemIndex || 1
+          if (!systemMap[sysIdx]) systemMap[sysIdx] = []
+          systemMap[sysIdx].push(row)
+        }
+
+        // 各系統内で集水点の区間距離を計算
+        for (const sysIdx in systemMap) {
+          const rows = systemMap[sysIdx]
+          for (let i = 0; i < rows.length; i++) {
+            const currentRow = rows[i]
+            const nextRow = i < rows.length - 1 ? rows[i + 1] : null
+
+            if (currentRow.collectorPoint && nextRow?.collectorPoint) {
+              // 次の行の集水点との距離を計算
+              currentRow.collectorPoint.segmentDistance = calcDistance(
+                currentRow.collectorPoint,
+                nextRow.collectorPoint
+              )
+            }
+          }
+        }
+      }
+
       set({ planGroups, hasData: planGroups.length > 0, loading: false })
 
       // DBに保存
