@@ -27,6 +27,9 @@ export interface PlanRow {
   groupType: 'collector' | 'direct'
   groupIndex: number
   rowIndex: number
+  systemIndex: number // 系統インデックス（1から開始）
+  isSystemEnd: boolean // 系統の終端かどうか（落口/合流）
+  systemEndType: 'outlet' | 'merge' | null // 系統終端タイプ
   absorptionPipeId: string | null
   collectorPipeId: string | null
   // 吸水管の情報
@@ -196,6 +199,9 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
           groupType: row.group_type,
           groupIndex: row.group_index,
           rowIndex: row.row_index,
+          systemIndex: (row as { system_index?: number }).system_index ?? 1,
+          isSystemEnd: (row as { is_system_end?: boolean }).is_system_end ?? false,
+          systemEndType: (row as { system_end_type?: 'outlet' | 'merge' | null }).system_end_type ?? null,
           absorptionPipeId: row.absorption_pipe_id,
           collectorPipeId: row.collector_pipe_id,
           pipeNumber: pipe?.number || null,
@@ -296,6 +302,49 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
         }
       }
 
+      // 系統情報を計算するヘルパー（行ごとの系統インデックスと終端情報を返す）
+      const calculateSystemInfo = (rows: typeof collectorTabs[0]['rows']) => {
+        const systemInfo: Map<string, { systemIndex: number; isSystemEnd: boolean; systemEndType: 'outlet' | 'merge' | null }> = new Map()
+        let currentSystemIndex = 1
+
+        for (let i = 0; i < rows.length; i++) {
+          const row = rows[i]
+
+          // 落口行（吸水が空で集水がある行）の場合
+          if (row.absorptionPipes.length === 0 && row.collectorPipe && !row.isMergePipe) {
+            // 前の行があれば、それを系統終端としてマーク
+            if (i > 0) {
+              const prevRow = rows[i - 1]
+              if (!prevRow.isMergePipe && prevRow.absorptionPipes.length > 0) {
+                systemInfo.set(prevRow.id, { systemIndex: currentSystemIndex, isSystemEnd: true, systemEndType: 'outlet' })
+              }
+            }
+            currentSystemIndex++
+            continue
+          }
+
+          // 合流管行の場合
+          if (row.isMergePipe) {
+            // 前の行があれば、それを系統終端としてマーク
+            if (i > 0) {
+              const prevRow = rows[i - 1]
+              if (!prevRow.isMergePipe && prevRow.absorptionPipes.length > 0) {
+                systemInfo.set(prevRow.id, { systemIndex: currentSystemIndex, isSystemEnd: true, systemEndType: 'merge' })
+              }
+            }
+            currentSystemIndex++
+            continue
+          }
+
+          // 通常の行（まだ終端でない）
+          if (!systemInfo.has(row.id)) {
+            systemInfo.set(row.id, { systemIndex: currentSystemIndex, isSystemEnd: false, systemEndType: null })
+          }
+        }
+
+        return systemInfo
+      }
+
       // 集水暗渠タブを処理
       for (let tabIndex = 0; tabIndex < collectorTabs.length; tabIndex++) {
         const tab = collectorTabs[tabIndex]
@@ -307,11 +356,17 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
           rows: [],
         }
 
+        // 系統情報を計算
+        const systemInfo = calculateSystemInfo(tab.rows)
+
         for (let rowIndex = 0; rowIndex < tab.rows.length; rowIndex++) {
           const wiringRow = tab.rows[rowIndex]
 
           // 合流管行はスキップ
           if (wiringRow.isMergePipe) continue
+
+          // 落口行（吸水が空）はスキップ
+          if (wiringRow.absorptionPipes.length === 0) continue
 
           // 吸水管が設定されている行のみ処理
           for (const absorptionPipeId of wiringRow.absorptionPipes) {
@@ -352,61 +407,26 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
               )
             }
 
-            // 集水との合流点
+            // 集水との合流点（常に接続元の下流端末番号を使用）
             let collectorPoint: PlanPoint | null = null
             if (collectorPipe && absorptionPipe.vertices.length > 0) {
               const downstreamVertex = absorptionPipe.vertices[absorptionPipe.vertices.length - 1]
 
-              // 集水管の構成点と一致するか確認（距離閾値: 0.01m）
-              const MATCH_THRESHOLD = 0.01
-              let matchedCollectorVertexIndex = -1
-
-              for (let i = 0; i < collectorPipe.vertices.length; i++) {
-                const vertex = collectorPipe.vertices[i]
-                const dist = calcDistance(downstreamVertex, vertex)
-                if (dist < MATCH_THRESHOLD) {
-                  matchedCollectorVertexIndex = i
-                  break
-                }
-              }
-
-              // 測点名を決定
-              let collectorPointName: string
-              let collectorX: number
-              let collectorY: number
-              let collectorZ: number | null
-
-              if (matchedCollectorVertexIndex >= 0) {
-                // 集水管の構成点と一致 → 集水管の測点名を使用
-                const matchedVertex = collectorPipe.vertices[matchedCollectorVertexIndex]
-                collectorPointName = generatePointName(
-                  collectorPipe.number,
-                  matchedCollectorVertexIndex,
-                  collectorPipe.vertices.length
-                )
-                collectorX = matchedVertex.x
-                collectorY = matchedVertex.y
-                collectorZ = matchedVertex.z
-              } else {
-                // 集水管の線上（構成点でない）に接続 → 吸水の下流測点名を使用
-                collectorPointName = generatePointName(
-                  absorptionPipe.number,
-                  absorptionPipe.vertices.length - 1,
-                  absorptionPipe.vertices.length
-                )
-                collectorX = downstreamVertex.x
-                collectorY = downstreamVertex.y
-                collectorZ = downstreamVertex.z
-              }
+              // 測点名は常に吸水管の下流端末番号を使用
+              const collectorPointName = generatePointName(
+                absorptionPipe.number,
+                absorptionPipe.vertices.length - 1,
+                absorptionPipe.vertices.length
+              )
 
               collectorPoint = {
                 id: `point-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
                 pointType: 'collector',
                 pointIndex: 0,
                 pointName: collectorPointName,
-                x: collectorX,
-                y: collectorY,
-                groundHeight: getGroundHeightByCoordinate(collectorX, collectorY) ?? collectorZ,
+                x: downstreamVertex.x,
+                y: downstreamVertex.y,
+                groundHeight: getGroundHeightByCoordinate(downstreamVertex.x, downstreamVertex.y) ?? downstreamVertex.z,
                 plannedHeight: null,
                 cutDepth: null,
                 segmentDistance: null,
@@ -414,12 +434,18 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
               }
             }
 
+            // 系統情報を取得
+            const rowSystemInfo = systemInfo.get(wiringRow.id) || { systemIndex: 1, isSystemEnd: false, systemEndType: null }
+
             const planRow: PlanRow = {
               id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
               wiringRowId: wiringRow.id,
               groupType: 'collector',
               groupIndex: tabIndex,
               rowIndex: group.rows.length,
+              systemIndex: rowSystemInfo.systemIndex,
+              isSystemEnd: rowSystemInfo.isSystemEnd,
+              systemEndType: rowSystemInfo.systemEndType,
               absorptionPipeId,
               collectorPipeId: wiringRow.collectorPipe,
               pipeNumber: absorptionPipe.number,
@@ -541,6 +567,9 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
             groupType: 'direct',
             groupIndex: 0,
             rowIndex: directGroup.rows.length,
+            systemIndex: 1, // 直落暗渠は系統分けしない
+            isSystemEnd: false,
+            systemEndType: null,
             absorptionPipeId,
             collectorPipeId: wiringRow.collectorPipe,
             pipeNumber: absorptionPipe.number,
@@ -598,6 +627,9 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
               group_type: row.groupType,
               group_index: row.groupIndex,
               row_index: row.rowIndex,
+              system_index: row.systemIndex,
+              is_system_end: row.isSystemEnd,
+              system_end_type: row.systemEndType,
               absorption_pipe_id: row.absorptionPipeId,
               collector_pipe_id: row.collectorPipeId,
             } as never)

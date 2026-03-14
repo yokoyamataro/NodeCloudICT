@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
   Ruler,
   RefreshCw,
@@ -369,9 +369,47 @@ export function DepthCalcPage() {
     )
   }
 
+  // 系統データ型
+  interface SystemData {
+    systemIndex: number
+    rows: PlanRow[]
+    endType: 'outlet' | 'merge' | null
+  }
+
+  // 系統ごとにグループ化されたデータを計算
+  const groupedBySystem = useMemo(() => {
+    return planGroups.map(group => {
+      // 系統インデックスごとに行をグループ化
+      const systemMap: Record<number, { rows: PlanRow[]; endType: 'outlet' | 'merge' | null }> = {}
+
+      for (const row of group.rows) {
+        const systemIndex = row.systemIndex || 1
+        if (!systemMap[systemIndex]) {
+          systemMap[systemIndex] = { rows: [], endType: null }
+        }
+        systemMap[systemIndex].rows.push(row)
+        if (row.isSystemEnd && row.systemEndType) {
+          systemMap[systemIndex].endType = row.systemEndType
+        }
+      }
+
+      const systems: SystemData[] = Object.entries(systemMap).map(([index, data]) => ({
+        systemIndex: parseInt(index),
+        rows: data.rows,
+        endType: data.endType,
+      }))
+
+      return {
+        ...group,
+        systems,
+      }
+    })
+  }, [planGroups])
+
   // グループのレンダリング
-  const renderGroup = (group: PlanGroup) => {
+  const renderGroup = (group: PlanGroup, groupIndex: number) => {
     const isExpanded = expandedGroups.has(group.id)
+    const groupData = groupedBySystem[groupIndex]
 
     return (
       <div key={group.id} className="mb-4">
@@ -391,14 +429,45 @@ export function DepthCalcPage() {
           )}
           <span className="font-bold text-lg">{group.name}</span>
           <span className="text-sm text-slate-600">
-            ({group.rows.length}本)
+            ({group.rows.length}本 / {groupData?.systems.length || 0}系統)
           </span>
         </div>
 
-        {/* グループの内容 */}
-        {isExpanded && (
-          <div className="mt-2 pl-4">
-            {group.rows.map(row => renderRow(row, group.id))}
+        {/* グループの内容（系統ごとにブロック分け） */}
+        {isExpanded && groupData && (
+          <div className="mt-2 pl-4 space-y-4">
+            {groupData.systems.map(system => (
+              <div
+                key={`system-${system.systemIndex}`}
+                className="border rounded-lg overflow-hidden bg-white shadow-sm"
+              >
+                {/* 系統ヘッダー */}
+                <div className={`px-3 py-2 font-medium text-sm flex items-center gap-2 ${
+                  system.endType === 'outlet'
+                    ? 'bg-orange-100 text-orange-800 border-b border-orange-200'
+                    : system.endType === 'merge'
+                      ? 'bg-purple-100 text-purple-800 border-b border-purple-200'
+                      : 'bg-slate-100 text-slate-700 border-b border-slate-200'
+                }`}>
+                  <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-white text-xs font-bold">
+                    {system.systemIndex}
+                  </span>
+                  <span>
+                    系統 {system.systemIndex}
+                    {system.endType === 'outlet' && ' （落口）'}
+                    {system.endType === 'merge' && ' （合流）'}
+                  </span>
+                  <span className="text-xs text-slate-500">
+                    ({system.rows.length}本)
+                  </span>
+                </div>
+
+                {/* 系統内の行 */}
+                <div className="p-2">
+                  {system.rows.map(row => renderRow(row, group.id))}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -501,7 +570,7 @@ export function DepthCalcPage() {
               </div>
             ) : (
               <div>
-                {planGroups.map(group => renderGroup(group))}
+                {planGroups.map((group, index) => renderGroup(group, index))}
               </div>
             )}
           </div>

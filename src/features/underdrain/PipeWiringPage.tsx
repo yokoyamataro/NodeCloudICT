@@ -681,48 +681,21 @@ export function PipeWiringPage() {
     }
   }, [])
 
-  // 吸水管と集水管の接続測点名を取得
+  // 吸水管と集水管の接続測点名を取得（常に接続元の下流端末番号）
   const getConnectionPointName = useCallback((absorptionPipeIds: string[], collectorPipeId: string | null): string | null => {
     if (!collectorPipeId || absorptionPipeIds.length === 0) return null
 
-    const collectorPipe = pipes.find(p => p.id === collectorPipeId)
-    if (!collectorPipe || collectorPipe.vertices.length === 0) return null
-
-    // 最初の吸水管の下流点を使用
+    // 最初の吸水管の下流点を使用（接続元の下流端末番号）
     const absorptionPipe = pipes.find(p => p.id === absorptionPipeIds[0])
     if (!absorptionPipe || absorptionPipe.vertices.length === 0) return null
 
-    const downstreamVertex = absorptionPipe.vertices[absorptionPipe.vertices.length - 1]
-
-    // 集水管の構成点と一致するか確認（距離閾値: 0.01m）
-    const MATCH_THRESHOLD = 0.01
-    let matchedCollectorVertexIndex = -1
-
-    for (let i = 0; i < collectorPipe.vertices.length; i++) {
-      const vertex = collectorPipe.vertices[i]
-      const dist = calcDistance(downstreamVertex, vertex)
-      if (dist < MATCH_THRESHOLD) {
-        matchedCollectorVertexIndex = i
-        break
-      }
-    }
-
-    if (matchedCollectorVertexIndex >= 0) {
-      // 集水管の構成点と一致 → 集水管の測点名を使用
-      return generatePointName(
-        collectorPipe.number,
-        matchedCollectorVertexIndex,
-        collectorPipe.vertices.length
-      )
-    } else {
-      // 集水管の線上（構成点でない）に接続 → 吸水の下流測点名を使用
-      return generatePointName(
-        absorptionPipe.number,
-        absorptionPipe.vertices.length - 1,
-        absorptionPipe.vertices.length
-      )
-    }
-  }, [pipes, calcDistance, generatePointName])
+    // 常に吸水管の下流測点名を返す
+    return generatePointName(
+      absorptionPipe.number,
+      absorptionPipe.vertices.length - 1,
+      absorptionPipe.vertices.length
+    )
+  }, [pipes, generatePointName])
 
   // 集水合流管の接続測点名を取得（集水管の下流点）
   const getMergePointName = useCallback((collectorPipeId: string | null): string | null => {
@@ -746,6 +719,65 @@ export function PipeWiringPage() {
     }
     return directRows
   }, [activeTabType, activeCollectorIndex, collectorTabs, directRows])
+
+  // 系統ごとにグループ化（吸水から始まり、落口or合流管で終わる）
+  interface SystemGroup {
+    id: string
+    systemIndex: number
+    rows: WiringRow[]
+    endType: 'outlet' | 'merge' | 'open' // 落口、合流管、未完（設定中）
+  }
+
+  const systemGroups = useMemo((): SystemGroup[] => {
+    const groups: SystemGroup[] = []
+    let currentGroup: WiringRow[] = []
+    let systemIndex = 1
+
+    for (const row of currentRows) {
+      // 落口行（吸水が空で集水がある行）の場合
+      if (row.absorptionPipes.length === 0 && row.collectorPipe && !row.isMergePipe) {
+        currentGroup.push(row)
+        groups.push({
+          id: `system-${systemIndex}`,
+          systemIndex,
+          rows: [...currentGroup],
+          endType: 'outlet'
+        })
+        currentGroup = []
+        systemIndex++
+        continue
+      }
+
+      // 合流管行の場合
+      if (row.isMergePipe) {
+        currentGroup.push(row)
+        groups.push({
+          id: `system-${systemIndex}`,
+          systemIndex,
+          rows: [...currentGroup],
+          endType: 'merge'
+        })
+        currentGroup = []
+        systemIndex++
+        continue
+      }
+
+      // 通常の行
+      currentGroup.push(row)
+    }
+
+    // 残りの行があれば未完系統として追加
+    if (currentGroup.length > 0) {
+      groups.push({
+        id: `system-${systemIndex}`,
+        systemIndex,
+        rows: currentGroup,
+        endType: 'open'
+      })
+    }
+
+    return groups
+  }, [currentRows])
 
   // 右列のラベル
   const rightColumnLabel = activeTabType === 'collector' ? '集水' : '落口'
@@ -795,10 +827,10 @@ export function PipeWiringPage() {
         <div>
           <h1 className="text-xl font-bold flex items-center gap-2">
             <Cable className="h-5 w-5" />
-            管路設定
+            配管系統
           </h1>
           <p className="text-sm text-muted-foreground">
-            管路の配線パターンを設定（地図上の管路をクリックして選択）
+            吸水から集水管接続・落口までの系統を設定（地図上の管路をクリックして選択）
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -956,44 +988,126 @@ export function PipeWiringPage() {
             </button>
           </div>
 
-          {/* テーブル */}
-          <div className="flex-1 overflow-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-100 sticky top-0 z-10">
-                <tr>
-                  <th className="px-3 py-2 text-center font-medium text-blue-700 border-r w-1/2">
-                    吸水
-                  </th>
-                  <th className={`px-3 py-2 text-center font-medium w-1/2 ${
-                    activeTabType === 'collector' ? 'text-green-700' : 'text-orange-700'
-                  }`}>
-                    {rightColumnLabel}
-                  </th>
-                  <th className="px-3 py-2 w-10"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {currentRows.map((row, rowIndex) => {
-                  const isAbsorptionSelecting = selectionMode === 'absorption' && selectedRowId === row.id
-                  const isCollectorSelecting = selectionMode === 'collector' && selectedRowId === row.id
-                  const prevRow = rowIndex > 0 ? currentRows[rowIndex - 1] : null
-                  const showDivider = prevRow?.isMergePipe
+          {/* テーブル（系統ごとにブロック分け） */}
+          <div className="flex-1 overflow-auto p-2 space-y-4">
+            {systemGroups.map((group) => (
+              <div key={group.id} className="border rounded-lg overflow-hidden bg-white shadow-sm">
+                {/* 系統ヘッダー */}
+                <div className={`px-3 py-2 font-medium text-sm flex items-center gap-2 ${
+                  group.endType === 'outlet'
+                    ? 'bg-orange-100 text-orange-800 border-b border-orange-200'
+                    : group.endType === 'merge'
+                      ? 'bg-purple-100 text-purple-800 border-b border-purple-200'
+                      : 'bg-slate-100 text-slate-700 border-b border-slate-200'
+                }`}>
+                  <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-white text-xs font-bold">
+                    {group.systemIndex}
+                  </span>
+                  <span>
+                    系統 {group.systemIndex}
+                    {group.endType === 'outlet' && ' （落口）'}
+                    {group.endType === 'merge' && ' （合流）'}
+                    {group.endType === 'open' && ' （設定中）'}
+                  </span>
+                </div>
 
-                  // 合流管行の場合は特別な表示
-                  if (row.isMergePipe) {
-                    return (
-                      <tr key={row.id} className="bg-purple-50 border-b-4 border-purple-400">
-                        <td colSpan={2} className="px-2 py-3 text-center">
-                          <div className="flex items-center justify-center gap-2">
-                            <GitMerge className="h-4 w-4 text-purple-600" />
-                            <span className="font-medium text-purple-700">集水合流管：</span>
-                            {row.collectorPipe ? (
-                              <div className="flex flex-col items-start gap-0.5">
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-200 text-purple-800 rounded text-xs">
-                                  {getPipeNumber(row.collectorPipe)}
+                {/* 系統内テーブル */}
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-3 py-1.5 text-center font-medium text-blue-700 border-r w-1/2 text-xs">
+                        吸水
+                      </th>
+                      <th className={`px-3 py-1.5 text-center font-medium w-1/2 text-xs ${
+                        activeTabType === 'collector' ? 'text-green-700' : 'text-orange-700'
+                      }`}>
+                        {rightColumnLabel}
+                      </th>
+                      <th className="px-3 py-1.5 w-10"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {group.rows.map((row) => {
+                      const isAbsorptionSelecting = selectionMode === 'absorption' && selectedRowId === row.id
+                      const isCollectorSelecting = selectionMode === 'collector' && selectedRowId === row.id
+
+                      // 合流管行の場合は特別な表示
+                      if (row.isMergePipe) {
+                        return (
+                          <tr key={row.id} className="bg-purple-50">
+                            <td colSpan={2} className="px-2 py-3 text-center">
+                              <div className="flex items-center justify-center gap-2">
+                                <GitMerge className="h-4 w-4 text-purple-600" />
+                                <span className="font-medium text-purple-700">集水合流管：</span>
+                                {row.collectorPipe ? (
+                                  <div className="flex flex-col items-start gap-0.5">
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-200 text-purple-800 rounded text-xs">
+                                      {getPipeNumber(row.collectorPipe)}
+                                      <button
+                                        onClick={() => clearCollectorPipe(
+                                          row.id,
+                                          activeTabType === 'collector' ? activeCollectorIndex : undefined
+                                        )}
+                                        className="hover:text-red-600"
+                                      >
+                                        <X className="h-3 w-3" />
+                                      </button>
+                                    </span>
+                                    {/* 合流測点名を表示 */}
+                                    <span className="text-xs text-purple-600 pl-1">
+                                      → {getMergePointName(row.collectorPipe) || '-'}
+                                    </span>
+                                  </div>
+                                ) : (
                                   <button
-                                    onClick={() => clearCollectorPipe(
+                                    onClick={() => startCollectorSelection(row.id)}
+                                    className={`px-2 py-1 text-xs rounded border transition-colors ${
+                                      isCollectorSelecting
+                                        ? 'bg-purple-600 text-white border-purple-600'
+                                        : 'border-purple-300 text-purple-600 hover:bg-purple-100'
+                                    }`}
+                                  >
+                                    {isCollectorSelecting ? '選択中...' : '選択'}
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-1 py-2 text-center">
+                              <button
+                                onClick={() =>
+                                  removeRow(
+                                    activeTabType,
+                                    row.id,
+                                    activeTabType === 'collector' ? activeCollectorIndex : undefined
+                                  )
+                                }
+                                className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
+                                title="行を削除"
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      }
+
+                      return (
+                        <tr key={row.id} className={`hover:bg-slate-50 ${
+                          selectedRowId === row.id ? 'bg-yellow-50' : ''
+                        }`}>
+                          {/* 吸水列 */}
+                          <td className="px-2 py-2 border-r">
+                            <div className="flex flex-wrap gap-1 min-h-[32px] items-center">
+                              {row.absorptionPipes.map(pipeId => (
+                                <span
+                                  key={pipeId}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-800 rounded text-xs"
+                                >
+                                  {getPipeNumber(pipeId)}
+                                  <button
+                                    onClick={() => removeAbsorptionPipe(
                                       row.id,
+                                      pipeId,
                                       activeTabType === 'collector' ? activeCollectorIndex : undefined
                                     )}
                                     className="hover:text-red-600"
@@ -1001,169 +1115,109 @@ export function PipeWiringPage() {
                                     <X className="h-3 w-3" />
                                   </button>
                                 </span>
-                                {/* 合流測点名を表示 */}
-                                <span className="text-xs text-purple-600 pl-1">
-                                  → {getMergePointName(row.collectorPipe) || '-'}
-                                </span>
-                              </div>
-                            ) : (
+                              ))}
                               <button
-                                onClick={() => startCollectorSelection(row.id)}
+                                onClick={() => startAbsorptionSelection(row.id)}
                                 className={`px-2 py-1 text-xs rounded border transition-colors ${
-                                  isCollectorSelecting
-                                    ? 'bg-purple-600 text-white border-purple-600'
-                                    : 'border-purple-300 text-purple-600 hover:bg-purple-100'
+                                  isAbsorptionSelecting
+                                    ? 'bg-blue-600 text-white border-blue-600'
+                                    : 'border-blue-300 text-blue-600 hover:bg-blue-50'
                                 }`}
                               >
-                                {isCollectorSelecting ? '選択中...' : '選択'}
+                                {isAbsorptionSelecting ? '選択中...' : '+ 追加'}
                               </button>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-1 py-2 text-center">
-                          <button
-                            onClick={() =>
-                              removeRow(
-                                activeTabType,
-                                row.id,
-                                activeTabType === 'collector' ? activeCollectorIndex : undefined
-                              )
-                            }
-                            className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
-                            title="行を削除"
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    )
-                  }
-
-                  return (
-                    <tr key={row.id} className={`hover:bg-slate-50 ${
-                      selectedRowId === row.id ? 'bg-yellow-50' : ''
-                    } ${showDivider ? 'border-t-4 border-purple-200' : ''}`}>
-                      {/* 吸水列 */}
-                      <td className="px-2 py-2 border-r">
-                        <div className="flex flex-wrap gap-1 min-h-[32px] items-center">
-                          {row.absorptionPipes.map(pipeId => (
-                            <span
-                              key={pipeId}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-800 rounded text-xs"
-                            >
-                              {getPipeNumber(pipeId)}
-                              <button
-                                onClick={() => removeAbsorptionPipe(
-                                  row.id,
-                                  pipeId,
-                                  activeTabType === 'collector' ? activeCollectorIndex : undefined
-                                )}
-                                className="hover:text-red-600"
-                              >
-                                <X className="h-3 w-3" />
-                              </button>
-                            </span>
-                          ))}
-                          <button
-                            onClick={() => startAbsorptionSelection(row.id)}
-                            className={`px-2 py-1 text-xs rounded border transition-colors ${
-                              isAbsorptionSelecting
-                                ? 'bg-blue-600 text-white border-blue-600'
-                                : 'border-blue-300 text-blue-600 hover:bg-blue-50'
-                            }`}
-                          >
-                            {isAbsorptionSelecting ? '選択中...' : '+ 追加'}
-                          </button>
-                        </div>
-                      </td>
-                      {/* 集水列 */}
-                      <td className="px-2 py-2">
-                        <div className="flex items-center gap-1 min-h-[32px]">
-                          {row.collectorPipe ? (
-                            <div className="flex flex-col gap-0.5">
-                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
-                                activeTabType === 'collector'
-                                  ? 'bg-green-100 text-green-800'
-                                  : 'bg-orange-100 text-orange-800'
-                              }`}>
-                                {getPipeNumber(row.collectorPipe)}
-                                <button
-                                  onClick={() => clearCollectorPipe(
-                                    row.id,
-                                    activeTabType === 'collector' ? activeCollectorIndex : undefined
+                            </div>
+                          </td>
+                          {/* 集水列 */}
+                          <td className="px-2 py-2">
+                            <div className="flex items-center gap-1 min-h-[32px]">
+                              {row.collectorPipe ? (
+                                <div className="flex flex-col gap-0.5">
+                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
+                                    activeTabType === 'collector'
+                                      ? 'bg-green-100 text-green-800'
+                                      : 'bg-orange-100 text-orange-800'
+                                  }`}>
+                                    {getPipeNumber(row.collectorPipe)}
+                                    <button
+                                      onClick={() => clearCollectorPipe(
+                                        row.id,
+                                        activeTabType === 'collector' ? activeCollectorIndex : undefined
+                                      )}
+                                      className="hover:text-red-600"
+                                    >
+                                      <X className="h-3 w-3" />
+                                    </button>
+                                  </span>
+                                  {/* 接続測点名を表示 */}
+                                  {row.absorptionPipes.length > 0 ? (
+                                    <span className="text-xs text-slate-500 pl-1">
+                                      → {getConnectionPointName(row.absorptionPipes, row.collectorPipe) || '-'}
+                                    </span>
+                                  ) : (
+                                    // 落口行（吸水が空）の場合は下流測点を表示
+                                    <span className="text-xs text-orange-500 pl-1">
+                                      → {getMergePointName(row.collectorPipe)} (落口)
+                                    </span>
                                   )}
-                                  className="hover:text-red-600"
-                                >
-                                  <X className="h-3 w-3" />
-                                </button>
-                              </span>
-                              {/* 接続測点名を表示 */}
-                              {row.absorptionPipes.length > 0 ? (
-                                <span className="text-xs text-slate-500 pl-1">
-                                  → {getConnectionPointName(row.absorptionPipes, row.collectorPipe) || '-'}
-                                </span>
+                                </div>
                               ) : (
-                                // 落口行（吸水が空）の場合は下流測点を表示
-                                <span className="text-xs text-orange-500 pl-1">
-                                  → {getMergePointName(row.collectorPipe)} (落口)
-                                </span>
+                                <button
+                                  onClick={() => startCollectorSelection(row.id)}
+                                  className={`px-2 py-1 text-xs rounded border transition-colors ${
+                                    isCollectorSelecting
+                                      ? (activeTabType === 'collector'
+                                          ? 'bg-green-600 text-white border-green-600'
+                                          : 'bg-orange-600 text-white border-orange-600')
+                                      : (activeTabType === 'collector'
+                                          ? 'border-green-300 text-green-600 hover:bg-green-50'
+                                          : 'border-orange-300 text-orange-600 hover:bg-orange-50')
+                                  }`}
+                                >
+                                  {isCollectorSelecting ? '選択中...' : '選択'}
+                                </button>
                               )}
                             </div>
-                          ) : (
-                            <button
-                              onClick={() => startCollectorSelection(row.id)}
-                              className={`px-2 py-1 text-xs rounded border transition-colors ${
-                                isCollectorSelecting
-                                  ? (activeTabType === 'collector'
-                                      ? 'bg-green-600 text-white border-green-600'
-                                      : 'bg-orange-600 text-white border-orange-600')
-                                  : (activeTabType === 'collector'
-                                      ? 'border-green-300 text-green-600 hover:bg-green-50'
-                                      : 'border-orange-300 text-orange-600 hover:bg-orange-50')
-                              }`}
-                            >
-                              {isCollectorSelecting ? '選択中...' : '選択'}
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                      {/* 行操作ボタン */}
-                      <td className="px-1 py-2 text-center">
-                        <div className="flex flex-col gap-0.5">
-                          <button
-                            onClick={() =>
-                              insertRowBefore(
-                                activeTabType,
-                                row.id,
-                                activeTabType === 'collector' ? activeCollectorIndex : undefined
-                              )
-                            }
-                            className="p-1 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded"
-                            title="この行の前に挿入"
-                          >
-                            <PlusCircle className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() =>
-                              removeRow(
-                                activeTabType,
-                                row.id,
-                                activeTabType === 'collector' ? activeCollectorIndex : undefined
-                              )
-                            }
-                            className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
-                            title="行を削除"
-                            disabled={currentRows.length <= 1}
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+                          </td>
+                          {/* 行操作ボタン */}
+                          <td className="px-1 py-2 text-center">
+                            <div className="flex flex-col gap-0.5">
+                              <button
+                                onClick={() =>
+                                  insertRowBefore(
+                                    activeTabType,
+                                    row.id,
+                                    activeTabType === 'collector' ? activeCollectorIndex : undefined
+                                  )
+                                }
+                                className="p-1 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded"
+                                title="この行の前に挿入"
+                              >
+                                <PlusCircle className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={() =>
+                                  removeRow(
+                                    activeTabType,
+                                    row.id,
+                                    activeTabType === 'collector' ? activeCollectorIndex : undefined
+                                  )
+                                }
+                                className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
+                                title="行を削除"
+                                disabled={currentRows.length <= 1}
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ))}
           </div>
 
           {/* 行追加ボタン */}
