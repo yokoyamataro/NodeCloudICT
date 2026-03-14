@@ -3,7 +3,6 @@ import { supabase } from '@/lib/supabase'
 import { useProjectStore } from './projectStore'
 import { usePipeWiringStore } from './pipeWiringStore'
 import { useUnderdrainStore } from './underdrainStore'
-import { useSurveyStore } from './surveyStore'
 import type { PipeVertex, ConstructionPlanRow, ConstructionPlanPoint } from '@/types/database'
 
 // 施工計画の測点データ
@@ -232,7 +231,26 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       // 配管系統データを取得
       const { collectorTabs, directRows } = usePipeWiringStore.getState()
       const pipes = useUnderdrainStore.getState().pipes
-      const surveyData = useSurveyStore.getState().surveyData
+
+      // 測量データを直接Supabaseから取得（ストアのデータが古い可能性があるため）
+      const { data: surveyDataRaw } = await supabase
+        .from('design_survey_data')
+        .select('*')
+        .eq('project_id', projectId)
+
+      const surveyData = (surveyDataRaw || []).map((row: {
+        id: string
+        x: number
+        y: number
+        z: number | null
+        category: string
+      }) => ({
+        id: row.id,
+        x: row.x,
+        y: row.y,
+        z: row.z,
+        category: row.category,
+      }))
 
       // 既存の施工計画を削除
       await supabase
