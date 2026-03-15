@@ -72,7 +72,7 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
         minHeight: 0,
         maxHeight: 10,
         totalDistance: 100,
-        padding: { top: 30, right: 50, bottom: 60, left: 60 },
+        padding: { top: 30, right: 50, bottom: 60, left: 50 },
         chartWidth: 600,
         chartHeight: 220,
       }
@@ -85,11 +85,18 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
 
     const dist = sectionData.length > 0 ? sectionData[sectionData.length - 1].distance : 100
 
+    // 標高値の桁数に応じて左パディングを調整
+    const maxDigits = Math.max(
+      max.toFixed(2).length,
+      min.toFixed(2).length
+    )
+    const leftPadding = Math.max(45, maxDigits * 7 + 20)
+
     return {
       minHeight: min - heightPadding,
       maxHeight: max + heightPadding,
       totalDistance: dist || 100,
-      padding: { top: 30, right: 50, bottom: 60, left: 60 },
+      padding: { top: 30, right: 50, bottom: 60, left: leftPadding },
       chartWidth: Math.max(600, dist * 5 + 120), // 距離に応じて幅を調整
       chartHeight: 220,
     }
@@ -310,11 +317,13 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
                   />
                 )}
 
-                {/* 吸水接続マーク（三角形） */}
+                {/* 吸水接続マーク（丸） */}
                 {point.absorptionPlannedHeight !== null && (
                   <g>
-                    <polygon
-                      points={`${x},${yScale(point.absorptionPlannedHeight) - 12} ${x - 8},${yScale(point.absorptionPlannedHeight) + 2} ${x + 8},${yScale(point.absorptionPlannedHeight) + 2}`}
+                    <circle
+                      cx={x}
+                      cy={yScale(point.absorptionPlannedHeight)}
+                      r={5}
                       fill="#16a34a"
                       stroke="white"
                       strokeWidth="1.5"
@@ -396,7 +405,7 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
             <text x="35" y="30" dominantBaseline="middle" className="fill-slate-700 text-[10px]">計画高（集水）</text>
 
             {/* 吸水接続 */}
-            <polygon points="19,40 12,52 26,52" fill="#16a34a" />
+            <circle cx="19" cy="46" r="4" fill="#16a34a" />
             <text x="35" y="46" dominantBaseline="middle" className="fill-slate-700 text-[10px]">吸水下流部</text>
 
             {/* 接続線 */}

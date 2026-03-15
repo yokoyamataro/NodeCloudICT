@@ -175,14 +175,14 @@ export function DepthCalcPage() {
         {/* 行の詳細（展開時） */}
         {isExpanded && (
           <div className="border-t px-4 py-3 overflow-x-auto">
-            <table className="w-full text-sm border-collapse">
+            <table className="w-full text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-100">
-                  <th className="px-2 py-1.5 text-left font-medium border">項目</th>
+                  <th className="px-1.5 py-1 text-left font-medium border whitespace-nowrap min-w-[60px]">項目</th>
                   {row.absorptionPoints.map(p => (
                     <th
                       key={p.id}
-                      className="px-2 py-1.5 text-center font-medium border min-w-[80px]"
+                      className="px-1.5 py-1 text-center font-medium border min-w-[70px]"
                     >
                       {p.pointName}
                     </th>
@@ -190,10 +190,10 @@ export function DepthCalcPage() {
                   {row.collectorPoint && (
                     <>
                       {/* 吸水と集水の間のスペーサー */}
-                      <th className="w-4 border-0 bg-transparent"></th>
-                      <th className="px-2 py-1.5 text-center font-medium border min-w-[80px] bg-green-50">
+                      <th className="w-3 border-0 bg-transparent"></th>
+                      <th className="px-1.5 py-1 text-center font-medium border min-w-[70px] bg-green-50">
                         {row.collectorPoint.pointName}
-                        <div className="text-xs text-green-600 font-normal">
+                        <div className="text-[10px] text-green-600 font-normal">
                           (集水)
                         </div>
                       </th>
@@ -204,11 +204,11 @@ export function DepthCalcPage() {
               <tbody>
                 {/* 地盤高 */}
                 <tr>
-                  <td className="px-2 py-1.5 font-medium border bg-slate-50">
+                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
                     地盤高
                   </td>
                   {row.absorptionPoints.map(p => (
-                    <td key={p.id} className="px-1 py-1 border">
+                    <td key={p.id} className="px-0.5 py-0.5 border">
                       <input
                         type="number"
                         step="0.001"
@@ -216,7 +216,7 @@ export function DepthCalcPage() {
                         onChange={e =>
                           handleGroundHeightChange(row.id, p.id, e.target.value)
                         }
-                        className="w-full px-1 py-0.5 text-center font-mono text-sm border rounded bg-amber-50"
+                        className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded bg-amber-50"
                         placeholder="-"
                       />
                     </td>
@@ -224,7 +224,7 @@ export function DepthCalcPage() {
                   {row.collectorPoint && (
                     <>
                       <td className="border-0 bg-transparent"></td>
-                      <td className="px-1 py-1 border bg-green-50">
+                      <td className="px-0.5 py-0.5 border bg-green-50">
                         <input
                           type="number"
                           step="0.001"
@@ -236,7 +236,7 @@ export function DepthCalcPage() {
                               e.target.value
                             )
                           }
-                          className="w-full px-1 py-0.5 text-center font-mono text-sm border rounded bg-amber-50"
+                          className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded bg-amber-50"
                           placeholder="-"
                         />
                       </td>
@@ -246,11 +246,11 @@ export function DepthCalcPage() {
 
                 {/* 計画高 */}
                 <tr>
-                  <td className="px-2 py-1.5 font-medium border bg-slate-50">
+                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
                     計画高
                   </td>
                   {row.absorptionPoints.map(p => (
-                    <td key={p.id} className="px-1 py-1 border">
+                    <td key={p.id} className="px-0.5 py-0.5 border">
                       <input
                         type="number"
                         step="0.001"
@@ -258,7 +258,7 @@ export function DepthCalcPage() {
                         onChange={e =>
                           handlePlannedHeightChange(row.id, p.id, e.target.value)
                         }
-                        className="w-full px-1 py-0.5 text-center font-mono text-sm border rounded"
+                        className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded"
                         placeholder="-"
                       />
                     </td>
@@ -266,7 +266,7 @@ export function DepthCalcPage() {
                   {row.collectorPoint && (
                     <>
                       <td className="border-0 bg-transparent"></td>
-                      <td className="px-1 py-1 border bg-green-50">
+                      <td className="px-0.5 py-0.5 border bg-green-50">
                         <input
                           type="number"
                           step="0.001"
@@ -278,7 +278,7 @@ export function DepthCalcPage() {
                               e.target.value
                             )
                           }
-                          className="w-full px-1 py-0.5 text-center font-mono text-sm border rounded"
+                          className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded"
                           placeholder="-"
                         />
                       </td>
@@ -288,13 +288,13 @@ export function DepthCalcPage() {
 
                 {/* 切深 */}
                 <tr>
-                  <td className="px-2 py-1.5 font-medium border bg-slate-50">
+                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
                     切深
                   </td>
                   {row.absorptionPoints.map(p => (
                     <td
                       key={p.id}
-                      className={`px-2 py-1.5 text-center border font-mono ${
+                      className={`px-1.5 py-1 text-center border font-mono ${
                         p.cutDepth !== null
                           ? p.cutDepth < 0
                             ? 'text-red-600 bg-red-50'
@@ -309,7 +309,7 @@ export function DepthCalcPage() {
                     <>
                       <td className="border-0 bg-transparent"></td>
                       <td
-                        className={`px-2 py-1.5 text-center border font-mono bg-green-50 ${
+                        className={`px-1.5 py-1 text-center border font-mono bg-green-50 ${
                           row.collectorPoint.cutDepth !== null &&
                           row.collectorPoint.cutDepth < 0
                             ? 'text-red-600'
@@ -324,13 +324,13 @@ export function DepthCalcPage() {
 
                 {/* 区間距離 */}
                 <tr>
-                  <td className="px-2 py-1.5 font-medium border bg-slate-50">
+                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
                     区間距離
                   </td>
                   {row.absorptionPoints.map(p => (
                     <td
                       key={p.id}
-                      className="px-2 py-1.5 text-center border font-mono text-slate-600"
+                      className="px-1.5 py-1 text-center border font-mono text-slate-600"
                     >
                       {p.segmentDistance?.toFixed(2) ?? '-'}
                     </td>
@@ -338,7 +338,7 @@ export function DepthCalcPage() {
                   {row.collectorPoint && (
                     <>
                       <td className="border-0 bg-transparent"></td>
-                      <td className="px-2 py-1.5 text-center border font-mono text-slate-600 bg-green-50">
+                      <td className="px-1.5 py-1 text-center border font-mono text-slate-600 bg-green-50">
                         {row.collectorPoint.segmentDistance?.toFixed(2) ?? '-'}
                       </td>
                     </>
@@ -347,13 +347,13 @@ export function DepthCalcPage() {
 
                 {/* 区間勾配 */}
                 <tr>
-                  <td className="px-2 py-1.5 font-medium border bg-slate-50">
+                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
                     区間勾配
                   </td>
                   {row.absorptionPoints.map(p => (
                     <td
                       key={p.id}
-                      className="px-2 py-1.5 text-center border font-mono text-slate-600"
+                      className="px-1.5 py-1 text-center border font-mono text-slate-600"
                     >
                       {p.segmentSlope ?? '-'}
                     </td>
@@ -361,7 +361,7 @@ export function DepthCalcPage() {
                   {row.collectorPoint && (
                     <>
                       <td className="border-0 bg-transparent"></td>
-                      <td className="px-2 py-1.5 text-center border font-mono text-slate-600 bg-green-50">
+                      <td className="px-1.5 py-1 text-center border font-mono text-slate-600 bg-green-50">
                         {row.collectorPoint.segmentSlope ?? '-'}
                       </td>
                     </>
