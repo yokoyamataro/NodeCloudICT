@@ -50,6 +50,14 @@ export interface PlanGroup {
   rows: PlanRow[]
 }
 
+// 自動計画高計算パラメータ
+export interface AutoCalcParams {
+  kh: number // 吸水渠標準切深 (m) デフォルト: 0.80
+  sh: number // 集水渠標準切深 (m) デフォルト: 0.90
+  imin: number // 最低勾配 (1/imin) デフォルト: 600
+  istd: number // 推奨勾配 (1/istd) デフォルト: 550
+}
+
 interface ConstructionPlanState {
   // 施工計画データ
   planGroups: PlanGroup[]
@@ -72,6 +80,9 @@ interface ConstructionPlanState {
 
   // 自動計算
   recalculateCutDepthAndSlope: () => void
+
+  // 自動計画高計算
+  autoCalculatePlannedHeights: (params: AutoCalcParams) => void
 }
 
 // プロジェクトIDを取得するヘルパー
@@ -854,5 +865,119 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
 
       return { planGroups: newGroups }
     })
+  },
+
+  autoCalculatePlannedHeights: (params: AutoCalcParams) => {
+    const { kh, sh, istd } = params
+
+    set(state => {
+      const newGroups = state.planGroups.map(group => {
+        // 系統ごとにグループ化
+        const systemMap: Record<number, PlanRow[]> = {}
+        for (const row of group.rows) {
+          const sysIdx = row.systemIndex || 1
+          if (!systemMap[sysIdx]) systemMap[sysIdx] = []
+          systemMap[sysIdx].push(row)
+        }
+
+        // 各系統ごとに計算
+        const updatedRows = [...group.rows]
+
+        for (const sysIdx in systemMap) {
+          const systemRows = systemMap[sysIdx]
+
+          // 系統内の行を上流から下流の順で処理
+          for (let rowIdx = 0; rowIdx < systemRows.length; rowIdx++) {
+            const row = systemRows[rowIdx]
+            const rowInGroup = updatedRows.find(r => r.id === row.id)
+            if (!rowInGroup) continue
+
+            // 吸水点の計画高を計算
+            const newAbsorptionPoints = rowInGroup.absorptionPoints.map((point, pointIdx) => {
+              if (point.groundHeight === null) return point
+
+              let plannedHeight: number
+
+              if (pointIdx === 0) {
+                // 最上流点: 地盤高 - kh
+                plannedHeight = point.groundHeight - kh
+              } else {
+                // それ以外: min(地盤高 - kh, 上流点計画高 - 距離 × 勾配)
+                const prevPoint = rowInGroup.absorptionPoints[pointIdx - 1]
+                const standardHeight = point.groundHeight - kh
+
+                if (prevPoint.plannedHeight !== null && point.segmentDistance !== null) {
+                  const slopeHeight = prevPoint.plannedHeight - (point.segmentDistance / istd)
+                  plannedHeight = Math.min(standardHeight, slopeHeight)
+                } else {
+                  plannedHeight = standardHeight
+                }
+              }
+
+              const cutDepth = point.groundHeight - plannedHeight
+
+              return { ...point, plannedHeight, cutDepth }
+            })
+
+            // 集水点の計画高を計算
+            let newCollectorPoint = rowInGroup.collectorPoint
+            if (newCollectorPoint && newCollectorPoint.groundHeight !== null) {
+              // 接続する吸水下流部の計画高を取得
+              const absorptionDownstreamHeight = newAbsorptionPoints.length > 0
+                ? newAbsorptionPoints[newAbsorptionPoints.length - 1].plannedHeight
+                : null
+
+              // 標準切深による計画高
+              const standardHeight = newCollectorPoint.groundHeight - sh
+
+              // 計画高の候補
+              const candidates: number[] = [standardHeight]
+
+              // 吸水下流部の計画高を追加
+              if (absorptionDownstreamHeight !== null) {
+                candidates.push(absorptionDownstreamHeight)
+              }
+
+              // 前の行の集水点計画高からの勾配による計画高
+              if (rowIdx > 0) {
+                const prevRow = systemRows[rowIdx - 1]
+                const prevRowInGroup = updatedRows.find(r => r.id === prevRow.id)
+                if (prevRowInGroup &&
+                    prevRowInGroup.collectorPoint &&
+                    prevRowInGroup.collectorPoint.plannedHeight !== null &&
+                    prevRowInGroup.collectorPoint.segmentDistance !== null) {
+                  const slopeHeight = prevRowInGroup.collectorPoint.plannedHeight -
+                    (prevRowInGroup.collectorPoint.segmentDistance / istd)
+                  candidates.push(slopeHeight)
+                }
+              }
+
+              // 最小値を計画高とする
+              const plannedHeight = Math.min(...candidates)
+              const cutDepth = newCollectorPoint.groundHeight - plannedHeight
+
+              newCollectorPoint = { ...newCollectorPoint, plannedHeight, cutDepth }
+            }
+
+            // 行を更新
+            const rowIndex = updatedRows.findIndex(r => r.id === row.id)
+            if (rowIndex !== -1) {
+              updatedRows[rowIndex] = {
+                ...updatedRows[rowIndex],
+                absorptionPoints: newAbsorptionPoints,
+                collectorPoint: newCollectorPoint,
+              }
+            }
+          }
+        }
+
+        return { ...group, rows: updatedRows }
+      })
+
+      return { planGroups: newGroups }
+    })
+
+    // 勾配を再計算
+    get().recalculateCutDepthAndSlope()
   },
 }))

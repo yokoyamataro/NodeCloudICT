@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState, useCallback } from 'react'
 import type { PlanRow } from '@/stores/constructionPlanStore'
 
 interface CrossSectionChartProps {
@@ -20,6 +20,21 @@ interface SectionPoint {
 }
 
 export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSectionChartProps) {
+  // 標高スケールのズーム倍率（1.0が基準、大きいほど拡大）
+  const [heightScale, setHeightScale] = useState(1.0)
+
+  // マウスホイールで標高スケールを変更
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault()
+    const delta = e.deltaY > 0 ? -0.1 : 0.1
+    setHeightScale(prev => Math.max(0.2, Math.min(5.0, prev + delta)))
+  }, [])
+
+  // スケールリセット
+  const resetScale = useCallback(() => {
+    setHeightScale(1.0)
+  }, [])
+
   // 集水管の断面を構成
   // 系統内の各行の集水点を累積距離で配置（上流から下流へ）
   const sectionData = useMemo(() => {
@@ -61,7 +76,7 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
     return points
   }, [systemRows])
 
-  // 描画範囲を計算
+  // 描画範囲を計算（heightScaleを考慮）
   const { minHeight, maxHeight, totalDistance, padding, chartWidth, chartHeight } = useMemo(() => {
     const heights = sectionData
       .flatMap(p => [p.groundHeight, p.plannedHeight, p.absorptionPlannedHeight])
@@ -81,26 +96,30 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
     const min = Math.min(...heights)
     const max = Math.max(...heights)
     const range = max - min || 1
-    const heightPadding = range * 0.2
+    const center = (min + max) / 2
+
+    // スケールに応じて表示範囲を調整（大きいほど狭い範囲=拡大）
+    const scaledRange = range / heightScale
+    const heightPadding = scaledRange * 0.2
 
     const dist = sectionData.length > 0 ? sectionData[sectionData.length - 1].distance : 100
 
     // 標高値の桁数に応じて左パディングを調整
     const maxDigits = Math.max(
-      max.toFixed(2).length,
-      min.toFixed(2).length
+      (center + scaledRange / 2).toFixed(2).length,
+      (center - scaledRange / 2).toFixed(2).length
     )
     const leftPadding = Math.max(45, maxDigits * 7 + 20)
 
     return {
-      minHeight: min - heightPadding,
-      maxHeight: max + heightPadding,
+      minHeight: center - scaledRange / 2 - heightPadding,
+      maxHeight: center + scaledRange / 2 + heightPadding,
       totalDistance: dist || 100,
       padding: { top: 30, right: 50, bottom: 60, left: leftPadding },
       chartWidth: Math.max(600, dist * 5 + 120), // 距離に応じて幅を調整
       chartHeight: 220,
     }
-  }, [sectionData])
+  }, [sectionData, heightScale])
 
   // 座標変換関数
   const xScale = (distance: number) => {
@@ -184,14 +203,29 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
         <span className="text-xs text-slate-500 ml-2">
           ← 上流　｜　下流 →
         </span>
+        <span className="ml-auto text-xs text-slate-500 flex items-center gap-2">
+          <span>縦スケール: {(heightScale * 100).toFixed(0)}%</span>
+          {heightScale !== 1.0 && (
+            <button
+              onClick={resetScale}
+              className="px-1.5 py-0.5 text-[10px] bg-slate-200 hover:bg-slate-300 rounded"
+            >
+              リセット
+            </button>
+          )}
+          <span className="text-slate-400">（ホイールで調整）</span>
+        </span>
       </div>
 
       {/* SVG断面図 */}
-      <div className="flex-1 overflow-x-auto overflow-y-hidden bg-white">
+      <div
+        className="flex-1 overflow-x-auto overflow-y-hidden bg-white"
+        onWheel={handleWheel}
+      >
         <svg
           width={chartWidth}
           height={chartHeight}
-          className="min-w-full"
+          className="min-w-full cursor-ns-resize"
         >
           {/* 背景グリッド */}
           <g className="grid">

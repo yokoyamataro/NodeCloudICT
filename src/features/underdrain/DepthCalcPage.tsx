@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import {
   Ruler,
   RefreshCw,
@@ -9,6 +9,8 @@ import {
   ChevronDown,
   ChevronRight,
   Map,
+  Settings,
+  Calculator,
 } from 'lucide-react'
 import { useProjectStore } from '@/stores/projectStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
@@ -18,6 +20,7 @@ import {
   useConstructionPlanStore,
   type PlanGroup,
   type PlanRow,
+  type AutoCalcParams,
 } from '@/stores/constructionPlanStore'
 import { PipeMap } from '@/components/map/PipeMap'
 import { CrossSectionChart } from '@/components/charts/CrossSectionChart'
@@ -39,7 +42,24 @@ export function DepthCalcPage() {
     deletePlan,
     updatePlannedHeight,
     updateGroundHeight,
+    autoCalculatePlannedHeights,
   } = useConstructionPlanStore()
+
+  // 自動計画高計算パラメータ
+  const [calcParams, setCalcParams] = useState<AutoCalcParams>({
+    kh: 0.80,  // 吸水渠標準切深
+    sh: 0.90,  // 集水渠標準切深
+    imin: 600, // 最低勾配
+    istd: 550, // 推奨勾配
+  })
+
+  // 設定パネルの表示状態
+  const [showCalcSettings, setShowCalcSettings] = useState(false)
+
+  // 自動計算実行
+  const handleAutoCalculate = useCallback(() => {
+    autoCalculatePlannedHeights(calcParams)
+  }, [autoCalculatePlannedHeights, calcParams])
 
   // 展開状態
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
@@ -503,6 +523,29 @@ export function DepthCalcPage() {
             <>
               {hasData ? (
                 <>
+                  {/* 自動計算設定 */}
+                  <button
+                    onClick={() => setShowCalcSettings(!showCalcSettings)}
+                    className={`flex items-center gap-2 px-3 py-2 border rounded-lg transition-colors ${
+                      showCalcSettings
+                        ? 'bg-amber-100 border-amber-300 text-amber-700'
+                        : 'text-slate-600 hover:bg-slate-50'
+                    }`}
+                    title="自動計算設定"
+                  >
+                    <Settings className="h-4 w-4" />
+                  </button>
+                  {/* 自動計算ボタン */}
+                  <button
+                    onClick={handleAutoCalculate}
+                    disabled={saving}
+                    className="flex items-center gap-2 px-3 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors disabled:opacity-50"
+                    title="計画高を自動計算"
+                  >
+                    <Calculator className="h-4 w-4" />
+                    自動計算
+                  </button>
+                  <div className="w-px h-6 bg-slate-300" />
                   <button
                     onClick={() => currentProject && fetchPlan(currentProject.id)}
                     disabled={saving}
@@ -545,6 +588,57 @@ export function DepthCalcPage() {
           )}
         </div>
       </div>
+
+      {/* 自動計算設定パネル */}
+      {showCalcSettings && hasData && (
+        <div className="px-4 py-3 border-b bg-amber-50 flex items-center gap-6 text-sm">
+          <span className="font-medium text-amber-800">自動計算パラメータ:</span>
+          <div className="flex items-center gap-2">
+            <label className="text-slate-600">吸水切深 kh:</label>
+            <input
+              type="number"
+              step="0.01"
+              value={calcParams.kh}
+              onChange={e => setCalcParams(prev => ({ ...prev, kh: parseFloat(e.target.value) || 0 }))}
+              className="w-16 px-2 py-1 border rounded text-center font-mono"
+            />
+            <span className="text-slate-500">m</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-slate-600">集水切深 sh:</label>
+            <input
+              type="number"
+              step="0.01"
+              value={calcParams.sh}
+              onChange={e => setCalcParams(prev => ({ ...prev, sh: parseFloat(e.target.value) || 0 }))}
+              className="w-16 px-2 py-1 border rounded text-center font-mono"
+            />
+            <span className="text-slate-500">m</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-slate-600">最低勾配:</label>
+            <span className="text-slate-500">1/</span>
+            <input
+              type="number"
+              step="1"
+              value={calcParams.imin}
+              onChange={e => setCalcParams(prev => ({ ...prev, imin: parseInt(e.target.value) || 1 }))}
+              className="w-16 px-2 py-1 border rounded text-center font-mono"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-slate-600">推奨勾配:</label>
+            <span className="text-slate-500">1/</span>
+            <input
+              type="number"
+              step="1"
+              value={calcParams.istd}
+              onChange={e => setCalcParams(prev => ({ ...prev, istd: parseInt(e.target.value) || 1 }))}
+              className="w-16 px-2 py-1 border rounded text-center font-mono"
+            />
+          </div>
+        </div>
+      )}
 
       {/* エラー表示 */}
       {error && (
