@@ -15,6 +15,7 @@ import {
   Loader2,
   RefreshCw,
   PlusCircle,
+  Trash2,
 } from 'lucide-react'
 import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
@@ -462,6 +463,54 @@ export function PipeWiringPage() {
     }
     // 削除した行が選択中だった場合は選択解除
     if (selectedRowId === rowId) {
+      setSelectionMode('none')
+      setSelectedRowId(null)
+    }
+  }
+
+  // 系統を追加（現在の系統リストの最後に新しい空の系統を追加）
+  const addSystem = () => {
+    if (activeTabType === 'collector') {
+      setCollectorTabs(prev => {
+        const newTabs = [...prev]
+        const currentTab = newTabs[activeCollectorIndex]
+        // 新しい系統として空の行を追加
+        currentTab.rows.push(createEmptyRow())
+        return newTabs
+      })
+    } else {
+      setDirectRows(prev => [...prev, createEmptyRow()])
+    }
+  }
+
+  // 系統を削除（指定した系統の全行を削除）
+  const removeSystem = (systemRowIds: string[]) => {
+    if (systemRowIds.length === 0) return
+
+    if (activeTabType === 'collector') {
+      setCollectorTabs(prev => {
+        const newTabs = [...prev]
+        const currentTab = newTabs[activeCollectorIndex]
+        // 系統の行を削除
+        currentTab.rows = currentTab.rows.filter(r => !systemRowIds.includes(r.id))
+        // 全て削除された場合は空の行を追加
+        if (currentTab.rows.length === 0) {
+          currentTab.rows.push(createEmptyRow())
+        }
+        return newTabs
+      })
+    } else {
+      setDirectRows(prev => {
+        const newRows = prev.filter(r => !systemRowIds.includes(r.id))
+        // 全て削除された場合は空の行を追加
+        if (newRows.length === 0) {
+          return [createEmptyRow()]
+        }
+        return newRows
+      })
+    }
+    // 削除した行に選択中のものがあれば選択解除
+    if (selectedRowId && systemRowIds.includes(selectedRowId)) {
       setSelectionMode('none')
       setSelectedRowId(null)
     }
@@ -1043,12 +1092,20 @@ export function PipeWiringPage() {
                   <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-white text-xs font-bold">
                     {group.systemIndex}
                   </span>
-                  <span>
+                  <span className="flex-1">
                     系統 {group.systemIndex}
                     {group.endType === 'outlet' && ' （落口）'}
                     {group.endType === 'merge' && ' （合流）'}
                     {group.endType === 'open' && ' （設定中）'}
                   </span>
+                  {/* 系統削除ボタン */}
+                  <button
+                    onClick={() => removeSystem(group.rows.map(r => r.id))}
+                    className="p-1 rounded hover:bg-white/50 text-red-600 hover:text-red-700"
+                    title="この系統を削除"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
                 </div>
 
                 {/* 系統内テーブル */}
@@ -1220,7 +1277,7 @@ export function PipeWiringPage() {
             ))}
           </div>
 
-          {/* 行追加ボタン */}
+          {/* 行追加・系統追加ボタン */}
           <div className="p-2 border-t bg-white flex items-center gap-2">
             <button
               onClick={() =>
@@ -1233,6 +1290,13 @@ export function PipeWiringPage() {
             >
               <Plus className="h-4 w-4" />
               行を追加
+            </button>
+            <button
+              onClick={addSystem}
+              className="flex items-center gap-1 px-3 py-1.5 text-sm text-green-600 hover:bg-green-50 rounded border border-green-200"
+            >
+              <PlusCircle className="h-4 w-4" />
+              系統を追加
             </button>
             {activeTabType === 'collector' && (
               <button
