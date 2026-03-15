@@ -63,10 +63,9 @@ export function DepthCalcPage() {
 
   // 展開状態
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
-  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
 
   // 選択中の管路ID（地図フォーカス用）
-  const [focusedPipeId, setFocusedPipeId] = useState<string | null>(null)
+  const [focusedPipeId] = useState<string | null>(null)
 
   // 確認ダイアログ
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
@@ -108,24 +107,6 @@ export function DepthCalcPage() {
     })
   }
 
-  // 行の展開/折りたたみ
-  const toggleRow = (rowId: string, pipeId: string | null) => {
-    setExpandedRows(prev => {
-      const newSet = new Set(prev)
-      if (newSet.has(rowId)) {
-        newSet.delete(rowId)
-        setFocusedPipeId(null)
-      } else {
-        newSet.add(rowId)
-        // 展開時に地図を管路にフォーカス
-        if (pipeId) {
-          setFocusedPipeId(pipeId)
-        }
-      }
-      return newSet
-    })
-  }
-
   // 計画高の変更ハンドラ
   const handlePlannedHeightChange = (
     rowId: string,
@@ -160,237 +141,227 @@ export function DepthCalcPage() {
     await deletePlan()
   }
 
-  // 行のレンダリング
-  const renderRow = (row: PlanRow, _groupId: string) => {
-    const isExpanded = expandedRows.has(row.id)
+  // 計画高を3桁で表示するフォーマッタ
+  const formatPlannedHeight = (height: number | null): string => {
+    if (height === null) return ''
+    return height.toFixed(3)
+  }
+
+  // 集水の区間勾配を計算（現在の行と次の行の集水計画高の差）
+  const calcCollectorSlope = (
+    currentRow: PlanRow,
+    nextRow: PlanRow | null
+  ): string | null => {
+    if (!currentRow.collectorPoint || !nextRow?.collectorPoint) return null
+    const currentHeight = currentRow.collectorPoint.plannedHeight
+    const nextHeight = nextRow.collectorPoint.plannedHeight
+    const distance = currentRow.collectorPoint.segmentDistance
+    if (currentHeight === null || nextHeight === null || !distance) return null
+    const heightDiff = currentHeight - nextHeight
+    if (heightDiff === 0) return null
+    const slope = Math.abs(distance / heightDiff)
+    return `1/${Math.round(slope)}`
+  }
+
+  // 行のレンダリング（系統内の行リストと現在のインデックスを受け取る）
+  const renderRow = (row: PlanRow, systemRows: PlanRow[], rowIndexInSystem: number) => {
+    const nextRow = rowIndexInSystem < systemRows.length - 1 ? systemRows[rowIndexInSystem + 1] : null
+    const collectorSlope = calcCollectorSlope(row, nextRow)
 
     return (
-      <div key={row.id} className="border rounded-lg mb-2 bg-white">
-        {/* 行ヘッダー */}
-        <div
-          className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50"
-          onClick={() => toggleRow(row.id, row.absorptionPipeId)}
-        >
-          {isExpanded ? (
-            <ChevronDown className="h-4 w-4 text-slate-400" />
-          ) : (
-            <ChevronRight className="h-4 w-4 text-slate-400" />
-          )}
-          <div className="flex-1">
-            <span className="font-medium text-blue-700">吸水</span>
-            <span className="ml-2 font-mono">{row.pipeNumber || '-'}</span>
-            {row.diameter && (
-              <span className="ml-2 text-sm text-slate-500">
-                管径: {row.diameter}mm
-              </span>
-            )}
-            {row.designLength && (
-              <span className="ml-2 text-sm text-slate-500">
-                設計延長: {row.designLength.toFixed(1)}m
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* 行の詳細（展開時） */}
-        {isExpanded && (
-          <div className="border-t px-4 py-3 overflow-x-auto">
-            <table className="w-full text-xs border-collapse">
-              <thead>
-                <tr className="bg-slate-100">
-                  <th className="px-1.5 py-1 text-left font-medium border whitespace-nowrap min-w-[60px]">項目</th>
-                  {row.absorptionPoints.map(p => (
-                    <th
-                      key={p.id}
-                      className="px-1.5 py-1 text-center font-medium border min-w-[70px]"
-                    >
-                      {p.pointName}
-                    </th>
-                  ))}
-                  {row.collectorPoint && (
-                    <>
-                      {/* 吸水と集水の間のスペーサー */}
-                      <th className="w-3 border-0 bg-transparent"></th>
-                      <th className="px-1.5 py-1 text-center font-medium border min-w-[70px] bg-green-50">
-                        {row.collectorPoint.pointName}
-                        <div className="text-[10px] text-green-600 font-normal">
-                          (集水)
-                        </div>
-                      </th>
-                    </>
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {/* 地盤高 */}
-                <tr>
-                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
-                    地盤高
+      <div key={row.id} className="border rounded-lg mb-2 bg-white overflow-x-auto">
+        <table className="w-full text-xs border-collapse">
+          <thead>
+            <tr className="bg-slate-100">
+              <th className="px-1.5 py-1 text-left font-medium border whitespace-nowrap min-w-[60px] text-blue-700">
+                {row.pipeNumber || '-'}
+              </th>
+              {row.absorptionPoints.map(p => (
+                <th
+                  key={p.id}
+                  className="px-1.5 py-1 text-center font-medium border min-w-[70px]"
+                >
+                  {p.pointName}
+                </th>
+              ))}
+              {row.collectorPoint && (
+                <>
+                  <th className="w-3 border-0 bg-transparent"></th>
+                  <th className="px-1.5 py-1 text-center font-medium border min-w-[70px] bg-green-50">
+                    {row.collectorPoint.pointName}
+                  </th>
+                </>
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {/* 地盤高 */}
+            <tr>
+              <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
+                地盤高
+              </td>
+              {row.absorptionPoints.map(p => (
+                <td key={p.id} className="px-0.5 py-0.5 border">
+                  <input
+                    type="number"
+                    step="0.001"
+                    value={p.groundHeight ?? ''}
+                    onChange={e =>
+                      handleGroundHeightChange(row.id, p.id, e.target.value)
+                    }
+                    className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded bg-amber-50"
+                    placeholder="-"
+                  />
+                </td>
+              ))}
+              {row.collectorPoint && (
+                <>
+                  <td className="border-0 bg-transparent"></td>
+                  <td className="px-0.5 py-0.5 border bg-green-50">
+                    <input
+                      type="number"
+                      step="0.001"
+                      value={row.collectorPoint.groundHeight ?? ''}
+                      onChange={e =>
+                        handleGroundHeightChange(
+                          row.id,
+                          row.collectorPoint!.id,
+                          e.target.value
+                        )
+                      }
+                      className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded bg-amber-50"
+                      placeholder="-"
+                    />
                   </td>
-                  {row.absorptionPoints.map(p => (
-                    <td key={p.id} className="px-0.5 py-0.5 border">
-                      <input
-                        type="number"
-                        step="0.001"
-                        value={p.groundHeight ?? ''}
-                        onChange={e =>
-                          handleGroundHeightChange(row.id, p.id, e.target.value)
-                        }
-                        className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded bg-amber-50"
-                        placeholder="-"
-                      />
-                    </td>
-                  ))}
-                  {row.collectorPoint && (
-                    <>
-                      <td className="border-0 bg-transparent"></td>
-                      <td className="px-0.5 py-0.5 border bg-green-50">
-                        <input
-                          type="number"
-                          step="0.001"
-                          value={row.collectorPoint.groundHeight ?? ''}
-                          onChange={e =>
-                            handleGroundHeightChange(
-                              row.id,
-                              row.collectorPoint!.id,
-                              e.target.value
-                            )
-                          }
-                          className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded bg-amber-50"
-                          placeholder="-"
-                        />
-                      </td>
-                    </>
-                  )}
-                </tr>
+                </>
+              )}
+            </tr>
 
-                {/* 計画高 */}
-                <tr>
-                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
-                    計画高
+            {/* 計画高 */}
+            <tr>
+              <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
+                計画高
+              </td>
+              {row.absorptionPoints.map(p => (
+                <td key={p.id} className="px-0.5 py-0.5 border">
+                  <input
+                    type="number"
+                    step="0.001"
+                    value={formatPlannedHeight(p.plannedHeight)}
+                    onChange={e =>
+                      handlePlannedHeightChange(row.id, p.id, e.target.value)
+                    }
+                    className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded"
+                    placeholder="-"
+                  />
+                </td>
+              ))}
+              {row.collectorPoint && (
+                <>
+                  <td className="border-0 bg-transparent"></td>
+                  <td className="px-0.5 py-0.5 border bg-green-50">
+                    <input
+                      type="number"
+                      step="0.001"
+                      value={formatPlannedHeight(row.collectorPoint.plannedHeight)}
+                      onChange={e =>
+                        handlePlannedHeightChange(
+                          row.id,
+                          row.collectorPoint!.id,
+                          e.target.value
+                        )
+                      }
+                      className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded"
+                      placeholder="-"
+                    />
                   </td>
-                  {row.absorptionPoints.map(p => (
-                    <td key={p.id} className="px-0.5 py-0.5 border">
-                      <input
-                        type="number"
-                        step="0.001"
-                        value={p.plannedHeight ?? ''}
-                        onChange={e =>
-                          handlePlannedHeightChange(row.id, p.id, e.target.value)
-                        }
-                        className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded"
-                        placeholder="-"
-                      />
-                    </td>
-                  ))}
-                  {row.collectorPoint && (
-                    <>
-                      <td className="border-0 bg-transparent"></td>
-                      <td className="px-0.5 py-0.5 border bg-green-50">
-                        <input
-                          type="number"
-                          step="0.001"
-                          value={row.collectorPoint.plannedHeight ?? ''}
-                          onChange={e =>
-                            handlePlannedHeightChange(
-                              row.id,
-                              row.collectorPoint!.id,
-                              e.target.value
-                            )
-                          }
-                          className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded"
-                          placeholder="-"
-                        />
-                      </td>
-                    </>
-                  )}
-                </tr>
+                </>
+              )}
+            </tr>
 
-                {/* 切深 */}
-                <tr>
-                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
-                    切深
+            {/* 切深 */}
+            <tr>
+              <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
+                切深
+              </td>
+              {row.absorptionPoints.map(p => (
+                <td
+                  key={p.id}
+                  className={`px-1.5 py-1 text-center border font-mono ${
+                    p.cutDepth !== null
+                      ? p.cutDepth < 0
+                        ? 'text-red-600 bg-red-50'
+                        : ''
+                      : 'text-slate-400'
+                  }`}
+                >
+                  {p.cutDepth?.toFixed(3) ?? '-'}
+                </td>
+              ))}
+              {row.collectorPoint && (
+                <>
+                  <td className="border-0 bg-transparent"></td>
+                  <td
+                    className={`px-1.5 py-1 text-center border font-mono bg-green-50 ${
+                      row.collectorPoint.cutDepth !== null &&
+                      row.collectorPoint.cutDepth < 0
+                        ? 'text-red-600'
+                        : ''
+                    }`}
+                  >
+                    {row.collectorPoint.cutDepth?.toFixed(3) ?? '-'}
                   </td>
-                  {row.absorptionPoints.map(p => (
-                    <td
-                      key={p.id}
-                      className={`px-1.5 py-1 text-center border font-mono ${
-                        p.cutDepth !== null
-                          ? p.cutDepth < 0
-                            ? 'text-red-600 bg-red-50'
-                            : ''
-                          : 'text-slate-400'
-                      }`}
-                    >
-                      {p.cutDepth?.toFixed(3) ?? '-'}
-                    </td>
-                  ))}
-                  {row.collectorPoint && (
-                    <>
-                      <td className="border-0 bg-transparent"></td>
-                      <td
-                        className={`px-1.5 py-1 text-center border font-mono bg-green-50 ${
-                          row.collectorPoint.cutDepth !== null &&
-                          row.collectorPoint.cutDepth < 0
-                            ? 'text-red-600'
-                            : ''
-                        }`}
-                      >
-                        {row.collectorPoint.cutDepth?.toFixed(3) ?? '-'}
-                      </td>
-                    </>
-                  )}
-                </tr>
+                </>
+              )}
+            </tr>
 
-                {/* 区間距離 */}
-                <tr>
-                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
-                    区間距離
+            {/* 区間距離 */}
+            <tr>
+              <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
+                区間距離
+              </td>
+              {row.absorptionPoints.map(p => (
+                <td
+                  key={p.id}
+                  className="px-1.5 py-1 text-center border font-mono text-slate-600"
+                >
+                  {p.segmentDistance?.toFixed(2) ?? '-'}
+                </td>
+              ))}
+              {row.collectorPoint && (
+                <>
+                  <td className="border-0 bg-transparent"></td>
+                  <td className="px-1.5 py-1 text-center border font-mono text-slate-600 bg-green-50">
+                    {row.collectorPoint.segmentDistance?.toFixed(2) ?? '-'}
                   </td>
-                  {row.absorptionPoints.map(p => (
-                    <td
-                      key={p.id}
-                      className="px-1.5 py-1 text-center border font-mono text-slate-600"
-                    >
-                      {p.segmentDistance?.toFixed(2) ?? '-'}
-                    </td>
-                  ))}
-                  {row.collectorPoint && (
-                    <>
-                      <td className="border-0 bg-transparent"></td>
-                      <td className="px-1.5 py-1 text-center border font-mono text-slate-600 bg-green-50">
-                        {row.collectorPoint.segmentDistance?.toFixed(2) ?? '-'}
-                      </td>
-                    </>
-                  )}
-                </tr>
+                </>
+              )}
+            </tr>
 
-                {/* 区間勾配 */}
-                <tr>
-                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
-                    区間勾配
+            {/* 区間勾配 */}
+            <tr>
+              <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
+                区間勾配
+              </td>
+              {row.absorptionPoints.map(p => (
+                <td
+                  key={p.id}
+                  className="px-1.5 py-1 text-center border font-mono text-slate-600"
+                >
+                  {p.segmentSlope ?? '-'}
+                </td>
+              ))}
+              {row.collectorPoint && (
+                <>
+                  <td className="border-0 bg-transparent"></td>
+                  <td className="px-1.5 py-1 text-center border font-mono text-slate-600 bg-green-50">
+                    {collectorSlope ?? '-'}
                   </td>
-                  {row.absorptionPoints.map(p => (
-                    <td
-                      key={p.id}
-                      className="px-1.5 py-1 text-center border font-mono text-slate-600"
-                    >
-                      {p.segmentSlope ?? '-'}
-                    </td>
-                  ))}
-                  {row.collectorPoint && (
-                    <>
-                      <td className="border-0 bg-transparent"></td>
-                      <td className="px-1.5 py-1 text-center border font-mono text-slate-600 bg-green-50">
-                        {row.collectorPoint.segmentSlope ?? '-'}
-                      </td>
-                    </>
-                  )}
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        )}
+                </>
+              )}
+            </tr>
+          </tbody>
+        </table>
       </div>
     )
   }
@@ -490,7 +461,7 @@ export function DepthCalcPage() {
 
                 {/* 系統内の行 */}
                 <div className="p-2">
-                  {system.rows.map(row => renderRow(row, group.id))}
+                  {system.rows.map((row, idx) => renderRow(row, system.rows, idx))}
                 </div>
               </div>
             ))}
