@@ -193,6 +193,16 @@ export function PipeWiringPage() {
         const newTabs = [...prev]
         const currentTab = newTabs[activeCollectorIndex]
 
+        // 先頭の空行を削除（rowType, absorptionPipes, collectorPipeが全て空の行）
+        while (currentTab.rows.length > 0) {
+          const firstRow = currentTab.rows[0]
+          if (!firstRow.rowType && firstRow.absorptionPipes.length === 0 && !firstRow.collectorPipe) {
+            currentTab.rows.shift()
+          } else {
+            break
+          }
+        }
+
         // 各吸水管を距離の大きい順に新しい行として追加
         for (let i = 0; i < sortedAbsorptionPipes.length; i++) {
           const { pipe } = sortedAbsorptionPipes[i]
@@ -212,7 +222,18 @@ export function PipeWiringPage() {
       })
     } else {
       setDirectRows(prev => {
-        const newRows = [...prev]
+        let newRows = [...prev]
+
+        // 先頭の空行を削除
+        while (newRows.length > 0) {
+          const firstRow = newRows[0]
+          if (!firstRow.rowType && firstRow.absorptionPipes.length === 0 && !firstRow.collectorPipe) {
+            newRows.shift()
+          } else {
+            break
+          }
+        }
+
         for (let i = 0; i < sortedAbsorptionPipes.length; i++) {
           const { pipe } = sortedAbsorptionPipes[i]
           const autoRowType: RowType = i === 0 ? 'absorption_end' : 'absorption_merge'
@@ -1134,33 +1155,49 @@ export function PipeWiringPage() {
                             <div className="flex items-center gap-1">
                               {row.collectorPipe ? (
                                 <>
-                                  <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs ${
-                                    activeTabType === 'collector'
-                                      ? 'bg-green-100 text-green-800'
-                                      : 'bg-orange-100 text-orange-800'
-                                  }`}>
-                                    {getPipeNumber(row.collectorPipe)}
-                                    <button
-                                      onClick={() => clearCollectorPipe(
-                                        row.id,
-                                        activeTabType === 'collector' ? activeCollectorIndex : undefined
-                                      )}
-                                      className="hover:text-red-600"
-                                    >
-                                      <X className="h-3 w-3" />
-                                    </button>
-                                  </span>
-                                  {/* 接続測点名を表示 */}
-                                  {row.absorptionPipes.length > 0 ? (
+                                  {/* 集水合流点の場合は配管番号ではなく下流測点を表示 */}
+                                  {row.rowType === 'collector_junction' ? (
+                                    <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs bg-purple-100 text-purple-800`}>
+                                      {getMergePointName(row.collectorPipe)}
+                                      <button
+                                        onClick={() => clearCollectorPipe(
+                                          row.id,
+                                          activeTabType === 'collector' ? activeCollectorIndex : undefined
+                                        )}
+                                        className="hover:text-red-600"
+                                      >
+                                        <X className="h-3 w-3" />
+                                      </button>
+                                    </span>
+                                  ) : (
+                                    <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs ${
+                                      activeTabType === 'collector'
+                                        ? 'bg-green-100 text-green-800'
+                                        : 'bg-orange-100 text-orange-800'
+                                    }`}>
+                                      {getPipeNumber(row.collectorPipe)}
+                                      <button
+                                        onClick={() => clearCollectorPipe(
+                                          row.id,
+                                          activeTabType === 'collector' ? activeCollectorIndex : undefined
+                                        )}
+                                        className="hover:text-red-600"
+                                      >
+                                        <X className="h-3 w-3" />
+                                      </button>
+                                    </span>
+                                  )}
+                                  {/* 接続測点名を表示（集水合流点以外） */}
+                                  {row.rowType !== 'collector_junction' && row.absorptionPipes.length > 0 ? (
                                     <span className="text-xs text-slate-500">
                                       → {getConnectionPointName(row.absorptionPipes, row.collectorPipe) || '-'}
                                     </span>
-                                  ) : (
+                                  ) : row.rowType !== 'collector_junction' && row.absorptionPipes.length === 0 ? (
                                     // 落口行（吸水が空）の場合は下流測点を表示
                                     <span className="text-xs text-orange-500">
                                       → {getMergePointName(row.collectorPipe)} (落口)
                                     </span>
-                                  )}
+                                  ) : null}
                                 </>
                               ) : (
                                 <button
