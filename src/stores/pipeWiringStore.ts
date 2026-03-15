@@ -3,9 +3,19 @@ import { supabase } from '@/lib/supabase'
 import type { PipeWiringGroup, PipeWiringRow } from '@/types/database'
 import { useProjectStore } from './projectStore'
 
+// 行タイプの定義
+export type RowType =
+  | 'absorption_end'      // 吸水端部（最上流の吸水）
+  | 'absorption_merge'    // 吸水合流（吸水と集水が合流する点）
+  | 'collector_merge'     // 集水合流（別系統の集水と合流する点）
+  | 'collector_change'    // 集水変化点（吸水なしで折れ点/管径変化点）
+  | 'collector_junction'  // 集水合流点（系統の最後）
+  | 'outlet'              // 落口（系統の最後）
+
 // ローカル状態用の行型
 export interface WiringRow {
   id: string
+  rowType: RowType | null    // 行タイプ
   absorptionPipes: string[]  // 吸水（複数選択可能）
   collectorPipe: string | null    // 集水（または落口）
   isMergePipe: boolean  // 集水合流管かどうか
@@ -51,6 +61,7 @@ interface PipeWiringState {
 function createEmptyRow(): WiringRow {
   return {
     id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+    rowType: null,
     absorptionPipes: [],
     collectorPipe: null,
     isMergePipe: false,
@@ -135,6 +146,7 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
           .filter(r => r.group_id === group.id)
           .map(r => ({
             id: r.id,
+            rowType: r.row_type ?? null,
             absorptionPipes: r.absorption_pipe_ids || [],
             collectorPipe: r.collector_pipe_id,
             isMergePipe: r.is_merge_pipe,
@@ -224,6 +236,7 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
         // 行を挿入
         const rowsToInsert = tab.rows.map((row, rowIndex) => ({
           group_id: groupId,
+          row_type: row.rowType,
           absorption_pipe_ids: row.absorptionPipes,
           collector_pipe_id: row.collectorPipe,
           is_merge_pipe: row.isMergePipe,
@@ -257,6 +270,7 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
 
       const directRowsToInsert = state.directRows.map((row, rowIndex) => ({
         group_id: directGroupId,
+        row_type: row.rowType,
         absorption_pipe_ids: row.absorptionPipes,
         collector_pipe_id: row.collectorPipe,
         is_merge_pipe: row.isMergePipe,

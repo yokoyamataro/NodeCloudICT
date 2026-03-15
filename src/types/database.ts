@@ -260,10 +260,20 @@ export interface PipeWiringGroup {
   updated_at: string
 }
 
+// 管路設定行タイプ
+export type PipeWiringRowType =
+  | 'absorption_end'      // 吸水端部
+  | 'absorption_merge'    // 吸水合流
+  | 'collector_merge'     // 集水合流
+  | 'collector_change'    // 集水変化点
+  | 'collector_junction'  // 集水合流点
+  | 'outlet'              // 落口
+
 // 管路設定行
 export interface PipeWiringRow {
   id: string
   group_id: string
+  row_type: PipeWiringRowType | null
   absorption_pipe_ids: string[]
   collector_pipe_id: string | null
   is_merge_pipe: boolean
