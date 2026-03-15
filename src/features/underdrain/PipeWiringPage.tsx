@@ -11,7 +11,6 @@ import {
   MousePointer,
   Zap,
   GitMerge,
-  Save,
   Loader2,
   RefreshCw,
   PlusCircle,
@@ -41,10 +40,8 @@ export function PipeWiringPage() {
     setCollectorTabs,
     setDirectRows,
     fetchWiring,
-    saveWiring,
     loading: wiringLoading,
     saving: wiringSaving,
-    hasChanges,
   } = usePipeWiringStore()
   const { fetchPlan } = useConstructionPlanStore()
 
@@ -881,7 +878,7 @@ export function PipeWiringPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {/* 保存ボタン */}
+          {/* 再読み込みボタン */}
           {selectionMode === 'none' && (
             <>
               {wiringLoading ? (
@@ -890,45 +887,16 @@ export function PipeWiringPage() {
                   読み込み中...
                 </div>
               ) : (
-                <>
-                  <button
-                    onClick={() => currentProject && fetchWiring(currentProject.id)}
-                    disabled={wiringSaving}
-                    className="flex items-center gap-2 px-3 py-2 text-slate-600 border rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50"
-                    title="データを再読み込み"
-                  >
-                    <RefreshCw className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={saveWiring}
-                    disabled={wiringSaving || !hasChanges}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-                      hasChanges
-                        ? 'bg-blue-600 text-white hover:bg-blue-700'
-                        : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                    }`}
-                  >
-                    {wiringSaving ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Save className="h-4 w-4" />
-                    )}
-                    {wiringSaving ? '保存中...' : '保存'}
-                  </button>
-                </>
+                <button
+                  onClick={() => currentProject && fetchWiring(currentProject.id)}
+                  disabled={wiringSaving}
+                  className="flex items-center gap-2 px-3 py-2 text-slate-600 border rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50"
+                  title="データを再読み込み"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                </button>
               )}
             </>
-          )}
-
-          {/* 一括設定ボタン */}
-          {selectionMode === 'none' && !wiringLoading && (
-            <button
-              onClick={startBulkSetting}
-              className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
-            >
-              <Zap className="h-4 w-4" />
-              一括設定
-            </button>
           )}
 
           {/* 選択モード表示 */}
@@ -1056,6 +1024,17 @@ export function PipeWiringPage() {
                     {group.endType === 'merge' && ' （合流）'}
                     {group.endType === 'open' && ' （設定中）'}
                   </span>
+                  {/* 一括設定ボタン */}
+                  {selectionMode === 'none' && (
+                    <button
+                      onClick={startBulkSetting}
+                      className="flex items-center gap-1 px-2 py-1 bg-purple-600 text-white rounded hover:bg-purple-700 transition-colors text-xs"
+                      title="一括設定"
+                    >
+                      <Zap className="h-3 w-3" />
+                      一括設定
+                    </button>
+                  )}
                   {/* 系統削除ボタン */}
                   <button
                     onClick={() => removeSystem(group.rows.map(r => r.id))}
