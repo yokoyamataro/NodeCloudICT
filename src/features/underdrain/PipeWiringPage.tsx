@@ -72,6 +72,7 @@ export function PipeWiringPage() {
 
   // 一括設定モード用の状態
   const [pendingCollectorPipeId, setPendingCollectorPipeId] = useState<string | null>(null) // 次に処理する集水管
+  const [previousCollectorPipeId, setPreviousCollectorPipeId] = useState<string | null>(null) // 前の集水管ID（除外用）
   const [showContinueDialog, setShowContinueDialog] = useState(false) // 続けるか確認ダイアログ
   const [isOutletDialog, setIsOutletDialog] = useState(false) // 落口確認ダイアログかどうか
 
@@ -141,6 +142,7 @@ export function PipeWiringPage() {
     setSelectionMode('none')
     setSelectedRowId(null)
     setPendingCollectorPipeId(null)
+    setPreviousCollectorPipeId(null)
     setShowContinueDialog(false)
     setIsOutletDialog(false)
   }
@@ -233,6 +235,8 @@ export function PipeWiringPage() {
       const nextCollector = pipes.find(p => p.id === nextCollectorId)
       if (nextCollector) {
         // 次の集水管がある場合は確認ダイアログを表示
+        // 現在の集水管IDを保存（次の吸水検索時に除外するため）
+        setPreviousCollectorPipeId(collectorPipeId)
         setPendingCollectorPipeId(nextCollectorId)
         setIsOutletDialog(false)
         setShowContinueDialog(true)
@@ -241,6 +245,7 @@ export function PipeWiringPage() {
     }
 
     // 次の集水管がない場合は落口確認ダイアログを表示
+    setPreviousCollectorPipeId(collectorPipeId)
     setPendingCollectorPipeId(collectorPipeId)
     setIsOutletDialog(true)
     setShowContinueDialog(true)
@@ -250,7 +255,8 @@ export function PipeWiringPage() {
   const continueBulkSetting = () => {
     setShowContinueDialog(false)
     if (pendingCollectorPipeId) {
-      executeBulkSetting(pendingCollectorPipeId)
+      // 前の集水管IDを除外して実行（前の集水管が吸水として選択されないように）
+      executeBulkSetting(pendingCollectorPipeId, previousCollectorPipeId ?? undefined)
     }
   }
 
@@ -258,6 +264,7 @@ export function PipeWiringPage() {
   const finishBulkSetting = () => {
     setShowContinueDialog(false)
     setPendingCollectorPipeId(null)
+    setPreviousCollectorPipeId(null)
     setIsOutletDialog(false)
     setSelectionMode('none')
   }
