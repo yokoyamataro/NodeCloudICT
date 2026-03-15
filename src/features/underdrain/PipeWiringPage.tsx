@@ -187,17 +187,20 @@ export function PipeWiringPage() {
       }))
       .sort((a, b) => b.distance - a.distance)
 
-    // 現在のタブに行を追加
+    // 現在のタブに行を追加（タイプを自動判別）
     if (activeTabType === 'collector') {
       setCollectorTabs(prev => {
         const newTabs = [...prev]
         const currentTab = newTabs[activeCollectorIndex]
 
         // 各吸水管を距離の大きい順に新しい行として追加
-        for (const { pipe } of sortedAbsorptionPipes) {
+        for (let i = 0; i < sortedAbsorptionPipes.length; i++) {
+          const { pipe } = sortedAbsorptionPipes[i]
+          // 最初の行（最上流）は absorption_end、それ以降は absorption_merge
+          const autoRowType: RowType = i === 0 ? 'absorption_end' : 'absorption_merge'
           const newRow: WiringRow = {
             id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-            rowType: null,
+            rowType: autoRowType,
             absorptionPipes: [pipe.id],
             collectorPipe: collectorPipeId,
             isMergePipe: false,
@@ -210,10 +213,12 @@ export function PipeWiringPage() {
     } else {
       setDirectRows(prev => {
         const newRows = [...prev]
-        for (const { pipe } of sortedAbsorptionPipes) {
+        for (let i = 0; i < sortedAbsorptionPipes.length; i++) {
+          const { pipe } = sortedAbsorptionPipes[i]
+          const autoRowType: RowType = i === 0 ? 'absorption_end' : 'absorption_merge'
           const newRow: WiringRow = {
             id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-            rowType: null,
+            rowType: autoRowType,
             absorptionPipes: [pipe.id],
             collectorPipe: collectorPipeId,
             isMergePipe: false,
@@ -772,9 +777,10 @@ export function PipeWiringPage() {
     let systemIndex = 1
 
     for (const row of currentRows) {
-      // 落口行（吸水が空で集水がある行）の場合
-      if (row.absorptionPipes.length === 0 && row.collectorPipe && !row.isMergePipe) {
-        currentGroup.push(row)
+      currentGroup.push(row)
+
+      // 落口行の場合（rowTypeで判定）
+      if (row.rowType === 'outlet') {
         groups.push({
           id: `system-${systemIndex}`,
           systemIndex,
@@ -786,9 +792,8 @@ export function PipeWiringPage() {
         continue
       }
 
-      // 合流管行の場合
-      if (row.isMergePipe) {
-        currentGroup.push(row)
+      // 集水合流点行の場合（rowTypeで判定）
+      if (row.rowType === 'collector_junction') {
         groups.push({
           id: `system-${systemIndex}`,
           systemIndex,
@@ -799,9 +804,6 @@ export function PipeWiringPage() {
         systemIndex++
         continue
       }
-
-      // 通常の行
-      currentGroup.push(row)
     }
 
     // 残りの行があれば未完系統として追加
@@ -1071,71 +1073,6 @@ export function PipeWiringPage() {
                     {group.rows.map((row) => {
                       const isAbsorptionSelecting = selectionMode === 'absorption' && selectedRowId === row.id
                       const isCollectorSelecting = selectionMode === 'collector' && selectedRowId === row.id
-
-                      // 合流管行の場合は特別な表示
-                      if (row.isMergePipe) {
-                        return (
-                          <tr key={row.id} className="bg-purple-50 h-9">
-                            {/* タイプ列 */}
-                            <td className="px-1 py-1 border-r text-center">
-                              <span className="text-xs text-purple-700 font-medium">集水合流点</span>
-                            </td>
-                            {/* 吸水列（空） */}
-                            <td className="px-1 py-1 border-r text-center text-slate-400 text-xs">-</td>
-                            {/* 集水列 */}
-                            <td className="px-1 py-1">
-                              <div className="flex items-center gap-1">
-                                <GitMerge className="h-3 w-3 text-purple-600 flex-shrink-0" />
-                                {row.collectorPipe ? (
-                                  <>
-                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-purple-200 text-purple-800 rounded text-xs">
-                                      {getPipeNumber(row.collectorPipe)}
-                                      <button
-                                        onClick={() => clearCollectorPipe(
-                                          row.id,
-                                          activeTabType === 'collector' ? activeCollectorIndex : undefined
-                                        )}
-                                        className="hover:text-red-600"
-                                      >
-                                        <X className="h-3 w-3" />
-                                      </button>
-                                    </span>
-                                    <span className="text-xs text-purple-600">
-                                      → {getMergePointName(row.collectorPipe) || '-'}
-                                    </span>
-                                  </>
-                                ) : (
-                                  <button
-                                    onClick={() => startCollectorSelection(row.id)}
-                                    className={`px-1.5 py-0.5 text-xs rounded border transition-colors ${
-                                      isCollectorSelecting
-                                        ? 'bg-purple-600 text-white border-purple-600'
-                                        : 'border-purple-300 text-purple-600 hover:bg-purple-100'
-                                    }`}
-                                  >
-                                    {isCollectorSelecting ? '選択中' : '選択'}
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                            <td className="px-1 py-1 text-center">
-                              <button
-                                onClick={() =>
-                                  removeRow(
-                                    activeTabType,
-                                    row.id,
-                                    activeTabType === 'collector' ? activeCollectorIndex : undefined
-                                  )
-                                }
-                                className="p-0.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
-                                title="行を削除"
-                              >
-                                <X className="h-3.5 w-3.5" />
-                              </button>
-                            </td>
-                          </tr>
-                        )
-                      }
 
                       return (
                         <tr key={row.id} className={`hover:bg-slate-50 h-9 ${
