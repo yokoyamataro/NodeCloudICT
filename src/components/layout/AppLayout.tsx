@@ -32,6 +32,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
+import { usePipeWiringStore } from '@/stores/pipeWiringStore'
 
 interface NavItem {
   name: string
@@ -83,10 +84,14 @@ export function AppLayout() {
   const { saveMode, setSaveMode, hasUnsavedChanges } = useSettingsStore()
   const { saveAllCoordinates, resetCoordinateChanges } = useCoordinateStore()
   const { saveAllPipes, resetPipeChanges } = useUnderdrainStore()
+  const { saveWiring, hasChanges: hasWiringChanges } = usePipeWiringStore()
   const [saving, setSaving] = useState(false)
 
+  // 未保存の変更があるか（配管系統も含む）
+  const hasAnyUnsavedChanges = hasUnsavedChanges || hasWiringChanges
+
   const handleSignOut = async () => {
-    if (hasUnsavedChanges) {
+    if (hasAnyUnsavedChanges) {
       if (!confirm('未保存の変更があります。保存せずにログアウトしますか？')) {
         return
       }
@@ -102,6 +107,7 @@ export function AppLayout() {
       await Promise.all([
         saveAllCoordinates(),
         saveAllPipes(),
+        saveWiring(),
       ])
     } finally {
       setSaving(false)
@@ -183,10 +189,10 @@ export function AppLayout() {
               <div className="mt-2 flex gap-1">
                 <button
                   onClick={handleSaveAll}
-                  disabled={!hasUnsavedChanges || saving}
+                  disabled={!hasAnyUnsavedChanges || saving}
                   className={cn(
                     'flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs rounded transition-colors',
-                    hasUnsavedChanges
+                    hasAnyUnsavedChanges
                       ? 'bg-blue-600 text-white hover:bg-blue-500'
                       : 'bg-slate-700 text-slate-500 cursor-not-allowed'
                   )}
@@ -200,10 +206,10 @@ export function AppLayout() {
                 </button>
                 <button
                   onClick={handleResetAll}
-                  disabled={!hasUnsavedChanges}
+                  disabled={!hasAnyUnsavedChanges}
                   className={cn(
                     'flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs rounded transition-colors',
-                    hasUnsavedChanges
+                    hasAnyUnsavedChanges
                       ? 'bg-slate-600 text-white hover:bg-slate-500'
                       : 'bg-slate-700 text-slate-500 cursor-not-allowed'
                   )}
@@ -215,7 +221,7 @@ export function AppLayout() {
             )}
 
             {/* 未保存の変更インジケーター */}
-            {hasUnsavedChanges && (
+            {hasAnyUnsavedChanges && (
               <div className="mt-2 text-xs text-yellow-400 flex items-center gap-1">
                 <span className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse" />
                 未保存の変更があります
