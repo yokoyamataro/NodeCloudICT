@@ -356,37 +356,6 @@ export function PipeWiringPage() {
     setSelectionMode('none')
   }
 
-  // 手動で集水合流管を追加
-  const addMergePipeRow = () => {
-    if (activeTabType === 'collector') {
-      const mergeRowId = `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
-
-      setCollectorTabs(prev => {
-        const newTabs = [...prev]
-        const currentTab = newTabs[activeCollectorIndex]
-
-        // 合流管行を追加（集水管は後で選択）
-        const mergeRow: WiringRow = {
-          id: mergeRowId,
-          rowType: 'collector_junction',
-          absorptionPipes: [],
-          collectorPipe: null,
-          isMergePipe: true,
-        }
-        currentTab.rows.push(mergeRow)
-
-        // 新しい空行を追加
-        currentTab.rows.push(createEmptyRow())
-
-        return newTabs
-      })
-
-      // 合流管の選択モードに入る
-      setSelectionMode('collector')
-      setSelectedRowId(mergeRowId)
-    }
-  }
-
   // 空の行を作成
   function createEmptyRow(): WiringRow {
     return {
@@ -417,17 +386,6 @@ export function PipeWiringPage() {
     setCollectorTabs(newTabs)
     if (activeCollectorIndex >= newTabs.length) {
       setActiveCollectorIndex(newTabs.length - 1)
-    }
-  }
-
-  // 行を追加
-  const addRow = (tabType: TabType, tabIndex?: number) => {
-    if (tabType === 'collector' && tabIndex !== undefined) {
-      const newTabs = [...collectorTabs]
-      newTabs[tabIndex].rows.push(createEmptyRow())
-      setCollectorTabs(newTabs)
-    } else if (tabType === 'direct') {
-      setDirectRows([...directRows, createEmptyRow()])
     }
   }
 
@@ -1273,24 +1231,48 @@ export function PipeWiringPage() {
                     })}
                   </tbody>
                 </table>
+                {/* 行追加ボタン（各系統内） */}
+                <div className="px-2 py-1.5 bg-slate-50 border-t">
+                  <button
+                    onClick={() => {
+                      // 系統の最後の行の後に新しい行を挿入
+                      const lastRowId = group.rows[group.rows.length - 1]?.id
+                      if (lastRowId) {
+                        // 最後の行の後に挿入するため、addRowを使用
+                        if (activeTabType === 'collector') {
+                          setCollectorTabs(prev => {
+                            const newTabs = [...prev]
+                            const currentTab = newTabs[activeCollectorIndex]
+                            const lastRowIndex = currentTab.rows.findIndex(r => r.id === lastRowId)
+                            if (lastRowIndex >= 0) {
+                              currentTab.rows.splice(lastRowIndex + 1, 0, createEmptyRow())
+                            }
+                            return newTabs
+                          })
+                        } else {
+                          setDirectRows(prev => {
+                            const newRows = [...prev]
+                            const lastRowIndex = newRows.findIndex(r => r.id === lastRowId)
+                            if (lastRowIndex >= 0) {
+                              newRows.splice(lastRowIndex + 1, 0, createEmptyRow())
+                            }
+                            return newRows
+                          })
+                        }
+                      }
+                    }}
+                    className="flex items-center gap-1 px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    行を追加
+                  </button>
+                </div>
               </div>
             ))}
           </div>
 
-          {/* 行追加・系統追加ボタン */}
+          {/* 系統追加ボタン */}
           <div className="p-2 border-t bg-white flex items-center gap-2">
-            <button
-              onClick={() =>
-                addRow(
-                  activeTabType,
-                  activeTabType === 'collector' ? activeCollectorIndex : undefined
-                )
-              }
-              className="flex items-center gap-1 px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 rounded"
-            >
-              <Plus className="h-4 w-4" />
-              行を追加
-            </button>
             <button
               onClick={addSystem}
               className="flex items-center gap-1 px-3 py-1.5 text-sm text-green-600 hover:bg-green-50 rounded border border-green-200"
@@ -1298,15 +1280,6 @@ export function PipeWiringPage() {
               <PlusCircle className="h-4 w-4" />
               系統を追加
             </button>
-            {activeTabType === 'collector' && (
-              <button
-                onClick={addMergePipeRow}
-                className="flex items-center gap-1 px-3 py-1.5 text-sm text-purple-600 hover:bg-purple-50 rounded border border-purple-200"
-              >
-                <GitMerge className="h-4 w-4" />
-                集水合流管に接続
-              </button>
-            )}
           </div>
         </div>
 
