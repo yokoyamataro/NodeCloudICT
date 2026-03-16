@@ -41,6 +41,7 @@ interface SurveyState {
 
   // 測量データ操作
   importSurveyData: (data: Omit<SurveyDataRow, 'id'>[]) => Promise<void>
+  addSurveyData: (data: Omit<SurveyDataRow, 'id'>) => Promise<SurveyDataRow | null>
   updateSurveyData: (id: string, updates: Partial<SurveyDataRow>) => Promise<void>
   deleteSurveyData: (id: string) => Promise<void>
   clearSurveyData: () => Promise<void>
@@ -200,6 +201,65 @@ export const useSurveyStore = create<SurveyState>()((set, get) => ({
       set({ surveyData, loading: false })
     } catch (err) {
       set({ error: err instanceof Error ? err.message : '測量データのインポートに失敗しました', loading: false })
+    }
+  },
+
+  // 単一の測量データを追加
+  addSurveyData: async (data) => {
+    const projectId = getCurrentProjectId()
+    if (!projectId) {
+      set({ error: 'プロジェクトが選択されていません' })
+      return null
+    }
+
+    try {
+      const insertData = {
+        project_id: projectId,
+        point_number: data.pointNumber,
+        x: data.x,
+        y: data.y,
+        z: data.z,
+        matched_point_id: data.matchedPointId,
+        matched_point_type: data.matchedPointType,
+        match_distance: data.matchDistance,
+        category: data.category,
+        dz_raw: data.dzRaw,
+        dz_calibrated: data.dzCalibrated,
+        notes: data.notes,
+      }
+
+      const { data: inserted, error } = await supabase
+        .from('design_survey_data')
+        .insert(insertData as never)
+        .select()
+        .single()
+
+      if (error) throw error
+
+      const row = inserted as DesignSurveyData
+      const newRow: SurveyDataRow = {
+        id: row.id,
+        pointNumber: row.point_number,
+        x: row.x,
+        y: row.y,
+        z: row.z,
+        matchedPointId: row.matched_point_id,
+        matchedPointType: row.matched_point_type,
+        matchDistance: row.match_distance,
+        category: row.category,
+        dzRaw: row.dz_raw,
+        dzCalibrated: row.dz_calibrated,
+        notes: row.notes,
+      }
+
+      set((state) => ({
+        surveyData: [...state.surveyData, newRow],
+      }))
+
+      return newRow
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : '測量データの追加に失敗しました' })
+      return null
     }
   },
 

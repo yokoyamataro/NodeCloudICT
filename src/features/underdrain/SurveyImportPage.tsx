@@ -65,6 +65,7 @@ export function SurveyImportPage() {
     updateCalibration,
     saveAllMatches,
     updateSurveyData,
+    addSurveyData,
   } = useSurveyStore()
 
   // プロジェクト選択時にデータを読み込む
@@ -388,6 +389,83 @@ export function SurveyImportPage() {
     setHasUnsavedChanges(true)
   }
 
+  // 手入力用のローカル状態（測量データがない点の一時データ）
+  const [manualInputs, setManualInputs] = useState<Map<string, {
+    pointNumber: string
+    x: number
+    y: number
+    z: number | null
+  }>>(new Map())
+
+  // 手入力データを更新
+  const updateManualInput = (designPointId: string, field: 'pointNumber' | 'x' | 'y' | 'z', value: string | number | null) => {
+    setManualInputs((prev) => {
+      const next = new Map(prev)
+      const existing = next.get(designPointId)
+      const dp = designPoints.find(d => d.id === designPointId)
+      if (!dp) return next
+
+      const current = existing || {
+        pointNumber: dp.name,
+        x: dp.x,
+        y: dp.y,
+        z: dp.z,
+      }
+
+      if (field === 'pointNumber') {
+        next.set(designPointId, { ...current, pointNumber: value as string })
+      } else if (field === 'x' || field === 'y') {
+        next.set(designPointId, { ...current, [field]: value as number })
+      } else if (field === 'z') {
+        next.set(designPointId, { ...current, z: value as number | null })
+      }
+      return next
+    })
+    setHasUnsavedChanges(true)
+  }
+
+  // 手入力データを保存
+  const saveManualInput = async (designPoint: DesignPoint) => {
+    const input = manualInputs.get(designPoint.id)
+    if (!input) return
+
+    const newSurvey = await addSurveyData({
+      pointNumber: input.pointNumber,
+      x: input.x,
+      y: input.y,
+      z: input.z,
+      matchedPointId: designPoint.id,
+      matchedPointType: designPoint.source,
+      matchDistance: 0,
+      category: designPoint.type,
+      dzRaw: input.z !== null && designPoint.z !== null ? input.z - designPoint.z : null,
+      dzCalibrated: input.z !== null && designPoint.z !== null ? input.z - designPoint.z : null,
+      notes: null,
+    })
+
+    if (newSurvey) {
+      setLocalMatches((prev) => {
+        const next = new Map(prev)
+        next.set(designPoint.id, {
+          surveyId: newSurvey.id,
+          matchedPointId: designPoint.id,
+          matchedPointType: designPoint.source,
+          matchDistance: 0,
+          category: designPoint.type,
+          dzRaw: input.z !== null && designPoint.z !== null ? input.z - designPoint.z : null,
+          dzCalibrated: input.z !== null && designPoint.z !== null ? input.z - designPoint.z : null,
+        })
+        return next
+      })
+      // 手入力データをクリア
+      setManualInputs((prev) => {
+        const next = new Map(prev)
+        next.delete(designPoint.id)
+        return next
+      })
+    }
+  }
+
   // カテゴリ変更（その他からの振り分け）
   const changeCategory = (designPointId: string, newCategory: TabType) => {
     const result = matchResults.find((r) => r.designPoint.id === designPointId)
@@ -695,7 +773,13 @@ export function SurveyImportPage() {
                           className="w-16 px-1 py-0 text-xs font-mono border rounded bg-white"
                         />
                       ) : (
-                        '-'
+                        <input
+                          type="text"
+                          value={manualInputs.get(result.designPoint.id)?.pointNumber ?? result.designPoint.name}
+                          onChange={(e) => updateManualInput(result.designPoint.id, 'pointNumber', e.target.value)}
+                          className="w-16 px-1 py-0 text-xs font-mono border rounded bg-amber-50 border-amber-300"
+                          placeholder={result.designPoint.name}
+                        />
                       )}
                       {hasMultipleCandidates && (
                         <span className="ml-1 text-[10px] text-orange-600">
@@ -719,7 +803,16 @@ export function SurveyImportPage() {
                           className="w-20 px-1 py-0 text-xs font-mono text-right border rounded bg-white"
                         />
                       ) : (
-                        <span className="text-xs font-mono">-</span>
+                        <input
+                          type="number"
+                          step="0.001"
+                          value={manualInputs.get(result.designPoint.id)?.x ?? result.designPoint.x}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value)
+                            if (!isNaN(val)) updateManualInput(result.designPoint.id, 'x', val)
+                          }}
+                          className="w-20 px-1 py-0 text-xs font-mono text-right border rounded bg-amber-50 border-amber-300"
+                        />
                       )}
                     </td>
                     <td className="px-1 py-0.5 text-right">
@@ -738,7 +831,16 @@ export function SurveyImportPage() {
                           className="w-20 px-1 py-0 text-xs font-mono text-right border rounded bg-white"
                         />
                       ) : (
-                        <span className="text-xs font-mono">-</span>
+                        <input
+                          type="number"
+                          step="0.001"
+                          value={manualInputs.get(result.designPoint.id)?.y ?? result.designPoint.y}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value)
+                            if (!isNaN(val)) updateManualInput(result.designPoint.id, 'y', val)
+                          }}
+                          className="w-20 px-1 py-0 text-xs font-mono text-right border rounded bg-amber-50 border-amber-300"
+                        />
                       )}
                     </td>
                     <td className="px-1 py-0.5 text-right">
@@ -758,7 +860,17 @@ export function SurveyImportPage() {
                           placeholder="-"
                         />
                       ) : (
-                        <span className="text-xs font-mono">-</span>
+                        <input
+                          type="number"
+                          step="0.001"
+                          value={manualInputs.get(result.designPoint.id)?.z ?? result.designPoint.z ?? ''}
+                          onChange={(e) => {
+                            const val = e.target.value === '' ? null : parseFloat(e.target.value)
+                            if (val === null || !isNaN(val)) updateManualInput(result.designPoint.id, 'z', val)
+                          }}
+                          className="w-16 px-1 py-0 text-xs font-mono text-right border rounded bg-amber-50 border-amber-300"
+                          placeholder="-"
+                        />
                       )}
                     </td>
                     <td className="px-2 py-0.5 text-right font-mono text-xs">
@@ -820,6 +932,16 @@ export function SurveyImportPage() {
                     )}
                     <td className="px-2 py-0.5 text-center">
                       <div className="flex items-center justify-center gap-0.5">
+                        {/* 手入力データがある場合は保存ボタン */}
+                        {!hasMatch && manualInputs.has(result.designPoint.id) && (
+                          <button
+                            onClick={() => saveManualInput(result.designPoint)}
+                            className="px-1.5 py-0.5 text-[10px] bg-green-100 text-green-700 rounded hover:bg-green-200"
+                            title="測量データを保存"
+                          >
+                            保存
+                          </button>
+                        )}
                         {hasMultipleCandidates && (
                           <button
                             onClick={() =>
