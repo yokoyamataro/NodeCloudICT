@@ -64,6 +64,7 @@ export function SurveyImportPage() {
     importSurveyData,
     updateCalibration,
     saveAllMatches,
+    updateSurveyData,
   } = useSurveyStore()
 
   // プロジェクト選択時にデータを読み込む
@@ -624,24 +625,24 @@ export function SurveyImportPage() {
           <table className="w-full text-sm">
             <thead className="bg-slate-100 sticky top-0 z-10">
               <tr>
-                <th className="px-3 py-2 text-left font-medium w-8"></th>
-                <th className="px-3 py-2 text-left font-medium">点名</th>
-                <th className="px-3 py-2 text-right font-medium">設計X</th>
-                <th className="px-3 py-2 text-right font-medium">設計Y</th>
-                <th className="px-3 py-2 text-right font-medium">設計Z</th>
-                <th className="px-3 py-2 text-center font-medium w-8">
-                  <Link2 className="h-4 w-4 mx-auto" />
+                <th className="px-2 py-1.5 text-left font-medium w-6 text-xs"></th>
+                <th className="px-2 py-1.5 text-left font-medium text-xs">点名</th>
+                <th className="px-2 py-1.5 text-right font-medium text-xs">設計X</th>
+                <th className="px-2 py-1.5 text-right font-medium text-xs">設計Y</th>
+                <th className="px-2 py-1.5 text-right font-medium text-xs">設計Z</th>
+                <th className="px-2 py-1.5 text-center font-medium w-6 text-xs">
+                  <Link2 className="h-3.5 w-3.5 mx-auto" />
                 </th>
-                <th className="px-3 py-2 text-left font-medium">測量点名</th>
-                <th className="px-3 py-2 text-right font-medium">測量X</th>
-                <th className="px-3 py-2 text-right font-medium">測量Y</th>
-                <th className="px-3 py-2 text-right font-medium">測量Z</th>
-                <th className="px-3 py-2 text-right font-medium">距離</th>
-                <th className="px-3 py-2 text-right font-medium">dZ</th>
+                <th className="px-2 py-1.5 text-left font-medium text-xs">測量点名</th>
+                <th className="px-2 py-1.5 text-right font-medium text-xs">測量X</th>
+                <th className="px-2 py-1.5 text-right font-medium text-xs">測量Y</th>
+                <th className="px-2 py-1.5 text-right font-medium text-xs">測量Z</th>
+                <th className="px-2 py-1.5 text-right font-medium text-xs">距離</th>
+                <th className="px-2 py-1.5 text-right font-medium text-xs">dZ</th>
                 {activeTab === 'other' && (
-                  <th className="px-3 py-2 text-center font-medium">振り分け</th>
+                  <th className="px-2 py-1.5 text-center font-medium text-xs">振り分け</th>
                 )}
-                <th className="px-3 py-2 text-center font-medium w-16">操作</th>
+                <th className="px-2 py-1.5 text-center font-medium w-14 text-xs">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -655,51 +656,112 @@ export function SurveyImportPage() {
                       hasMatch ? 'bg-green-50' : surveyData.length > 0 ? 'bg-red-50' : ''
                     }`}
                   >
-                    <td className="px-3 py-2 text-center">
+                    <td className="px-2 py-0.5 text-center">
                       {hasMatch ? (
-                        <CheckCircle2 className="h-4 w-4 text-green-600" />
+                        <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
                       ) : surveyData.length > 0 ? (
-                        <AlertCircle className="h-4 w-4 text-red-500" />
+                        <AlertCircle className="h-3.5 w-3.5 text-red-500" />
                       ) : (
-                        <span className="h-4 w-4 block" />
+                        <span className="h-3.5 w-3.5 block" />
                       )}
                     </td>
-                    <td className="px-3 py-2 font-mono font-medium">
+                    <td className="px-2 py-0.5 font-mono font-medium text-xs">
                       {result.designPoint.name}
                       {result.designPoint.source === 'coordinate' && (
-                        <span className="ml-1 text-xs text-orange-600">(座標)</span>
+                        <span className="ml-1 text-[10px] text-orange-600">(座標)</span>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-right font-mono">
+                    <td className="px-2 py-0.5 text-right font-mono text-xs">
                       {result.designPoint.x.toFixed(3)}
                     </td>
-                    <td className="px-3 py-2 text-right font-mono">
+                    <td className="px-2 py-0.5 text-right font-mono text-xs">
                       {result.designPoint.y.toFixed(3)}
                     </td>
-                    <td className="px-3 py-2 text-right font-mono">
+                    <td className="px-2 py-0.5 text-right font-mono text-xs">
                       {result.designPoint.z?.toFixed(3) ?? '-'}
                     </td>
-                    <td className="px-3 py-2 text-center">
-                      {hasMatch && <Link2 className="h-4 w-4 mx-auto text-green-600" />}
+                    <td className="px-2 py-0.5 text-center">
+                      {hasMatch && <Link2 className="h-3.5 w-3.5 mx-auto text-green-600" />}
                     </td>
-                    <td className="px-3 py-2 font-mono">
-                      {result.surveyData?.pointNumber ?? '-'}
+                    <td className="px-2 py-0.5 font-mono text-xs">
+                      {result.surveyData ? (
+                        <input
+                          type="text"
+                          value={result.surveyData.pointNumber}
+                          onChange={(e) => {
+                            updateSurveyData(result.surveyData!.id, { pointNumber: e.target.value })
+                            setHasUnsavedChanges(true)
+                          }}
+                          className="w-16 px-1 py-0 text-xs font-mono border rounded bg-white"
+                        />
+                      ) : (
+                        '-'
+                      )}
                       {hasMultipleCandidates && (
-                        <span className="ml-1 text-xs text-orange-600">
+                        <span className="ml-1 text-[10px] text-orange-600">
                           (+{result.matchCandidates.length - 1})
                         </span>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-right font-mono">
-                      {result.surveyData?.x.toFixed(3) ?? '-'}
+                    <td className="px-1 py-0.5 text-right">
+                      {result.surveyData ? (
+                        <input
+                          type="number"
+                          step="0.001"
+                          value={result.surveyData.x}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value)
+                            if (!isNaN(val)) {
+                              updateSurveyData(result.surveyData!.id, { x: val })
+                              setHasUnsavedChanges(true)
+                            }
+                          }}
+                          className="w-20 px-1 py-0 text-xs font-mono text-right border rounded bg-white"
+                        />
+                      ) : (
+                        <span className="text-xs font-mono">-</span>
+                      )}
                     </td>
-                    <td className="px-3 py-2 text-right font-mono">
-                      {result.surveyData?.y.toFixed(3) ?? '-'}
+                    <td className="px-1 py-0.5 text-right">
+                      {result.surveyData ? (
+                        <input
+                          type="number"
+                          step="0.001"
+                          value={result.surveyData.y}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value)
+                            if (!isNaN(val)) {
+                              updateSurveyData(result.surveyData!.id, { y: val })
+                              setHasUnsavedChanges(true)
+                            }
+                          }}
+                          className="w-20 px-1 py-0 text-xs font-mono text-right border rounded bg-white"
+                        />
+                      ) : (
+                        <span className="text-xs font-mono">-</span>
+                      )}
                     </td>
-                    <td className="px-3 py-2 text-right font-mono">
-                      {result.surveyData?.z?.toFixed(3) ?? '-'}
+                    <td className="px-1 py-0.5 text-right">
+                      {result.surveyData ? (
+                        <input
+                          type="number"
+                          step="0.001"
+                          value={result.surveyData.z ?? ''}
+                          onChange={(e) => {
+                            const val = e.target.value === '' ? null : parseFloat(e.target.value)
+                            if (val === null || !isNaN(val)) {
+                              updateSurveyData(result.surveyData!.id, { z: val })
+                              setHasUnsavedChanges(true)
+                            }
+                          }}
+                          className="w-16 px-1 py-0 text-xs font-mono text-right border rounded bg-white"
+                          placeholder="-"
+                        />
+                      ) : (
+                        <span className="text-xs font-mono">-</span>
+                      )}
                     </td>
-                    <td className="px-3 py-2 text-right font-mono">
+                    <td className="px-2 py-0.5 text-right font-mono text-xs">
                       {result.distance !== null ? (
                         <span
                           className={`${
@@ -716,7 +778,7 @@ export function SurveyImportPage() {
                         '-'
                       )}
                     </td>
-                    <td className="px-3 py-2 text-right font-mono">
+                    <td className="px-2 py-0.5 text-right font-mono text-xs">
                       {result.dzCalibrated !== null ? (
                         <span
                           className={`${
@@ -734,19 +796,19 @@ export function SurveyImportPage() {
                         '-'
                       )}
                       {calibration.isEnabled && result.dzRaw !== null && result.dzRaw !== result.dzCalibrated && (
-                        <span className="text-xs text-slate-400 ml-1">
+                        <span className="text-[10px] text-slate-400 ml-1">
                           (生:{result.dzRaw >= 0 ? '+' : ''}{result.dzRaw.toFixed(3)})
                         </span>
                       )}
                     </td>
                     {activeTab === 'other' && (
-                      <td className="px-3 py-2 text-center">
+                      <td className="px-2 py-0.5 text-center">
                         <select
                           value={result.designPoint.type}
                           onChange={(e) =>
                             changeCategory(result.designPoint.id, e.target.value as TabType)
                           }
-                          className="text-xs border rounded px-1 py-0.5"
+                          className="text-xs border rounded px-1 py-0"
                           disabled={!hasMatch}
                         >
                           <option value="other">その他</option>
@@ -756,14 +818,14 @@ export function SurveyImportPage() {
                         </select>
                       </td>
                     )}
-                    <td className="px-3 py-2 text-center">
-                      <div className="flex items-center justify-center gap-1">
+                    <td className="px-2 py-0.5 text-center">
+                      <div className="flex items-center justify-center gap-0.5">
                         {hasMultipleCandidates && (
                           <button
                             onClick={() =>
                               openSelectionModal(result.designPoint.id, result.matchCandidates)
                             }
-                            className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+                            className="px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
                           >
                             選択
                           </button>
@@ -771,7 +833,7 @@ export function SurveyImportPage() {
                         {hasMatch && (
                           <button
                             onClick={() => clearMatch(result.designPoint.id)}
-                            className="p-1 text-red-500 hover:bg-red-100 rounded"
+                            className="p-0.5 text-red-500 hover:bg-red-100 rounded"
                             title="マッチング解除"
                           >
                             <X className="h-3 w-3" />
@@ -784,7 +846,7 @@ export function SurveyImportPage() {
               })}
               {filteredResults.length === 0 && (
                 <tr>
-                  <td colSpan={activeTab === 'other' ? 14 : 13} className="px-4 py-8 text-center text-muted-foreground">
+                  <td colSpan={activeTab === 'other' ? 14 : 13} className="px-4 py-6 text-center text-muted-foreground text-sm">
                     {surveyData.length === 0
                       ? 'SIMファイルをインポートしてください'
                       : 'このカテゴリには該当する点がありません'}

@@ -765,6 +765,9 @@ export function PipeWiringPage() {
     { value: 'outlet', label: '落口' },
   ]
 
+  // 吸水列を非表示・選択不可にするタイプ
+  const hideAbsorptionTypes: RowType[] = ['collector_junction', 'collector_change', 'outlet']
+
   // 行タイプを変更
   const updateRowType = useCallback((rowId: string, newType: RowType | null, tabIndex?: number) => {
     if (activeTabType === 'collector' && tabIndex !== undefined) {
@@ -850,6 +853,26 @@ export function PipeWiringPage() {
 
     return groups
   }, [currentRows])
+
+  // 吸水に登録済みの系統（自系統を除く）を取得
+  // 集水合流タイプで選択可能な系統を返す
+  const getAvailableSystemsForMerge = useCallback((currentSystemIndex: number): { systemIndex: number; label: string }[] => {
+    const systems: { systemIndex: number; label: string }[] = []
+
+    for (const group of systemGroups) {
+      // 自系統を除外
+      if (group.systemIndex === currentSystemIndex) continue
+      // 完了済み系統（落口または合流）のみ選択可能
+      if (group.endType === 'outlet' || group.endType === 'merge') {
+        systems.push({
+          systemIndex: group.systemIndex,
+          label: `系統${group.systemIndex}${group.endType === 'outlet' ? '（落口）' : '（合流）'}`
+        })
+      }
+    }
+
+    return systems
+  }, [systemGroups])
 
   // 右列のラベル
   const rightColumnLabel = activeTabType === 'collector' ? '集水' : '落口'
@@ -1095,6 +1118,12 @@ export function PipeWiringPage() {
                     {group.rows.map((row) => {
                       const isAbsorptionSelecting = selectionMode === 'absorption' && selectedRowId === row.id
                       const isCollectorSelecting = selectionMode === 'collector' && selectedRowId === row.id
+                      // 吸水を非表示・選択不可にするタイプかどうか
+                      const shouldHideAbsorption = row.rowType && hideAbsorptionTypes.includes(row.rowType)
+                      // 集水合流タイプかどうか
+                      const isCollectorMerge = row.rowType === 'collector_merge'
+                      // 選択可能な系統リスト（集水合流タイプ用）
+                      const availableSystems = isCollectorMerge ? getAvailableSystemsForMerge(group.systemIndex) : []
 
                       return (
                         <tr key={row.id} className={`hover:bg-slate-50 h-9 ${
@@ -1119,36 +1148,107 @@ export function PipeWiringPage() {
                           </td>
                           {/* 吸水列 */}
                           <td className="px-1 py-1 border-r">
-                            <div className="flex flex-wrap gap-0.5 items-center">
-                              {row.absorptionPipes.map(pipeId => (
-                                <span
-                                  key={pipeId}
-                                  className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded text-xs"
-                                >
-                                  {getPipeNumber(pipeId)}
-                                  <button
-                                    onClick={() => removeAbsorptionPipe(
-                                      row.id,
-                                      pipeId,
-                                      activeTabType === 'collector' ? activeCollectorIndex : undefined
-                                    )}
-                                    className="hover:text-red-600"
+                            {shouldHideAbsorption ? (
+                              // 集水合流点・集水変化点・落口は吸水非表示
+                              <span className="text-xs text-slate-400">-</span>
+                            ) : isCollectorMerge ? (
+                              // 集水合流タイプ: 登録済みの他系統を選択
+                              <div className="flex flex-wrap gap-0.5 items-center">
+                                {row.absorptionPipes.length > 0 && (
+                                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-purple-100 text-purple-800 rounded text-xs">
+                                    系統{row.absorptionPipes[0]}
+                                    <button
+                                      onClick={() => {
+                                        // 系統IDを削除
+                                        if (activeTabType === 'collector') {
+                                          setCollectorTabs(prev => {
+                                            const newTabs = [...prev]
+                                            const r = newTabs[activeCollectorIndex].rows.find(r => r.id === row.id)
+                                            if (r) r.absorptionPipes = []
+                                            return newTabs
+                                          })
+                                        } else {
+                                          setDirectRows(prev => {
+                                            const newRows = [...prev]
+                                            const r = newRows.find(r => r.id === row.id)
+                                            if (r) r.absorptionPipes = []
+                                            return newRows
+                                          })
+                                        }
+                                      }}
+                                      className="hover:text-red-600"
+                                    >
+                                      <X className="h-3 w-3" />
+                                    </button>
+                                  </span>
+                                )}
+                                {row.absorptionPipes.length === 0 && (
+                                  <select
+                                    value=""
+                                    onChange={(e) => {
+                                      const selectedSystemIndex = e.target.value
+                                      if (!selectedSystemIndex) return
+                                      // 系統インデックスをabsorptionPipesに格納（文字列として）
+                                      if (activeTabType === 'collector') {
+                                        setCollectorTabs(prev => {
+                                          const newTabs = [...prev]
+                                          const r = newTabs[activeCollectorIndex].rows.find(r => r.id === row.id)
+                                          if (r) r.absorptionPipes = [selectedSystemIndex]
+                                          return newTabs
+                                        })
+                                      } else {
+                                        setDirectRows(prev => {
+                                          const newRows = [...prev]
+                                          const r = newRows.find(r => r.id === row.id)
+                                          if (r) r.absorptionPipes = [selectedSystemIndex]
+                                          return newRows
+                                        })
+                                      }
+                                    }}
+                                    className="text-xs py-0.5 px-1 border rounded bg-white"
                                   >
-                                    <X className="h-3 w-3" />
-                                  </button>
-                                </span>
-                              ))}
-                              <button
-                                onClick={() => startAbsorptionSelection(row.id)}
-                                className={`px-1.5 py-0.5 text-xs rounded border transition-colors ${
-                                  isAbsorptionSelecting
-                                    ? 'bg-blue-600 text-white border-blue-600'
-                                    : 'border-blue-300 text-blue-600 hover:bg-blue-50'
-                                }`}
-                              >
-                                {isAbsorptionSelecting ? '選択中' : '+'}
-                              </button>
-                            </div>
+                                    <option value="">系統を選択...</option>
+                                    {availableSystems.map(sys => (
+                                      <option key={sys.systemIndex} value={sys.systemIndex.toString()}>
+                                        {sys.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                )}
+                              </div>
+                            ) : (
+                              // 通常の吸水選択
+                              <div className="flex flex-wrap gap-0.5 items-center">
+                                {row.absorptionPipes.map(pipeId => (
+                                  <span
+                                    key={pipeId}
+                                    className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded text-xs"
+                                  >
+                                    {getPipeNumber(pipeId)}
+                                    <button
+                                      onClick={() => removeAbsorptionPipe(
+                                        row.id,
+                                        pipeId,
+                                        activeTabType === 'collector' ? activeCollectorIndex : undefined
+                                      )}
+                                      className="hover:text-red-600"
+                                    >
+                                      <X className="h-3 w-3" />
+                                    </button>
+                                  </span>
+                                ))}
+                                <button
+                                  onClick={() => startAbsorptionSelection(row.id)}
+                                  className={`px-1.5 py-0.5 text-xs rounded border transition-colors ${
+                                    isAbsorptionSelecting
+                                      ? 'bg-blue-600 text-white border-blue-600'
+                                      : 'border-blue-300 text-blue-600 hover:bg-blue-50'
+                                  }`}
+                                >
+                                  {isAbsorptionSelecting ? '選択中' : '+'}
+                                </button>
+                              </div>
+                            )}
                           </td>
                           {/* 集水列 */}
                           <td className="px-1 py-1">
@@ -1188,12 +1288,12 @@ export function PipeWiringPage() {
                                     </span>
                                   )}
                                   {/* 接続測点名を表示（集水合流点以外） */}
-                                  {row.rowType !== 'collector_junction' && row.absorptionPipes.length > 0 ? (
+                                  {row.rowType !== 'collector_junction' && row.absorptionPipes.length > 0 && !isCollectorMerge ? (
                                     <span className="text-xs text-slate-500">
                                       → {getConnectionPointName(row.absorptionPipes, row.collectorPipe) || '-'}
                                     </span>
-                                  ) : row.rowType !== 'collector_junction' && row.absorptionPipes.length === 0 ? (
-                                    // 落口行（吸水が空）の場合は下流測点を表示
+                                  ) : row.rowType === 'outlet' ? (
+                                    // 落口タイプの場合のみ（落口）を表示
                                     <span className="text-xs text-orange-500">
                                       → {getMergePointName(row.collectorPipe)} (落口)
                                     </span>
