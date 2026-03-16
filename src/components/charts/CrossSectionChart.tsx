@@ -23,6 +23,9 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
   // 標高スケールのズーム倍率（1.0が基準、大きいほど拡大）
   const [heightScale, setHeightScale] = useState(1.0)
 
+  // 勾配表示の切り替え
+  const [showSlope, setShowSlope] = useState(true)
+
   // マウスホイールで標高スケールを変更
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault()
@@ -174,6 +177,38 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
     return ticks
   }, [minHeight, maxHeight])
 
+  // 各スパンの勾配を計算
+  const slopeData = useMemo(() => {
+    const slopes: { startIdx: number; endIdx: number; slope: string }[] = []
+
+    for (let i = 0; i < sectionData.length - 1; i++) {
+      const p1 = sectionData[i]
+      const p2 = sectionData[i + 1]
+
+      if (p1.plannedHeight !== null && p2.plannedHeight !== null) {
+        const distance = p2.distance - p1.distance
+        const heightDiff = p1.plannedHeight - p2.plannedHeight // 上流から下流への落差
+
+        if (distance > 0 && heightDiff !== 0) {
+          const slopeValue = Math.abs(distance / heightDiff)
+          slopes.push({
+            startIdx: i,
+            endIdx: i + 1,
+            slope: `1/${Math.round(slopeValue)}`,
+          })
+        } else if (distance > 0 && heightDiff === 0) {
+          slopes.push({
+            startIdx: i,
+            endIdx: i + 1,
+            slope: '水平',
+          })
+        }
+      }
+    }
+
+    return slopes
+  }, [sectionData])
+
   if (sectionData.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-slate-400 text-sm">
@@ -204,6 +239,17 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
           ← 上流　｜　下流 →
         </span>
         <span className="ml-auto text-xs text-slate-500 flex items-center gap-2">
+          <button
+            onClick={() => setShowSlope(!showSlope)}
+            className={`px-2 py-0.5 text-[10px] rounded transition-colors ${
+              showSlope
+                ? 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
+            }`}
+          >
+            勾配{showSlope ? '表示' : '非表示'}
+          </button>
+          <span className="text-slate-400">|</span>
           <span>縦スケール: {(heightScale * 100).toFixed(0)}%</span>
           {heightScale !== 1.0 && (
             <button
@@ -320,6 +366,47 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
               strokeLinejoin="round"
             />
           )}
+
+          {/* 勾配ラベル */}
+          {showSlope && slopeData.map((slope, idx) => {
+            const p1 = sectionData[slope.startIdx]
+            const p2 = sectionData[slope.endIdx]
+            if (p1.plannedHeight === null || p2.plannedHeight === null) return null
+
+            const x1 = xScale(p1.distance)
+            const x2 = xScale(p2.distance)
+            const y1 = yScale(p1.plannedHeight)
+            const y2 = yScale(p2.plannedHeight)
+
+            // ラベルの位置（線分の中点、少し上にオフセット）
+            const midX = (x1 + x2) / 2
+            const midY = (y1 + y2) / 2 - 12
+
+            return (
+              <g key={idx}>
+                {/* 勾配ラベル背景 */}
+                <rect
+                  x={midX - 20}
+                  y={midY - 8}
+                  width={40}
+                  height={14}
+                  fill="white"
+                  fillOpacity={0.85}
+                  rx={2}
+                />
+                {/* 勾配ラベルテキスト */}
+                <text
+                  x={midX}
+                  y={midY}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  className="fill-blue-700 text-[9px] font-medium"
+                >
+                  {slope.slope}
+                </text>
+              </g>
+            )
+          })}
 
           {/* 測点マーカーとラベル */}
           {sectionData.map((point, idx) => {
