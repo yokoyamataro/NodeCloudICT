@@ -775,7 +775,7 @@ export function SurveyImportPage() {
                       ) : (
                         <input
                           type="text"
-                          value={manualInputs.get(result.designPoint.id)?.pointNumber ?? result.designPoint.name}
+                          value={manualInputs.get(result.designPoint.id)?.pointNumber ?? ''}
                           onChange={(e) => updateManualInput(result.designPoint.id, 'pointNumber', e.target.value)}
                           className="w-16 px-1 py-0 text-xs font-mono border rounded bg-amber-50 border-amber-300"
                           placeholder={result.designPoint.name}
@@ -806,12 +806,13 @@ export function SurveyImportPage() {
                         <input
                           type="number"
                           step="0.001"
-                          value={manualInputs.get(result.designPoint.id)?.x ?? result.designPoint.x}
+                          value={manualInputs.get(result.designPoint.id)?.x ?? ''}
                           onChange={(e) => {
                             const val = parseFloat(e.target.value)
                             if (!isNaN(val)) updateManualInput(result.designPoint.id, 'x', val)
                           }}
                           className="w-20 px-1 py-0 text-xs font-mono text-right border rounded bg-amber-50 border-amber-300"
+                          placeholder={result.designPoint.x.toFixed(3)}
                         />
                       )}
                     </td>
@@ -834,12 +835,13 @@ export function SurveyImportPage() {
                         <input
                           type="number"
                           step="0.001"
-                          value={manualInputs.get(result.designPoint.id)?.y ?? result.designPoint.y}
+                          value={manualInputs.get(result.designPoint.id)?.y ?? ''}
                           onChange={(e) => {
                             const val = parseFloat(e.target.value)
                             if (!isNaN(val)) updateManualInput(result.designPoint.id, 'y', val)
                           }}
                           className="w-20 px-1 py-0 text-xs font-mono text-right border rounded bg-amber-50 border-amber-300"
+                          placeholder={result.designPoint.y.toFixed(3)}
                         />
                       )}
                     </td>
@@ -863,13 +865,13 @@ export function SurveyImportPage() {
                         <input
                           type="number"
                           step="0.001"
-                          value={manualInputs.get(result.designPoint.id)?.z ?? result.designPoint.z ?? ''}
+                          value={manualInputs.get(result.designPoint.id)?.z ?? ''}
                           onChange={(e) => {
                             const val = e.target.value === '' ? null : parseFloat(e.target.value)
                             if (val === null || !isNaN(val)) updateManualInput(result.designPoint.id, 'z', val)
                           }}
                           className="w-16 px-1 py-0 text-xs font-mono text-right border rounded bg-amber-50 border-amber-300"
-                          placeholder="-"
+                          placeholder={result.designPoint.z?.toFixed(3) ?? '-'}
                         />
                       )}
                     </td>
