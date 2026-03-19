@@ -132,7 +132,6 @@ export function LandXMLViewer({
 
     // 軸を描画
     const origin = project(bounds.centerX, bounds.centerY, bounds.centerZ)
-    const axisLength = 50
 
     // X軸（赤）
     const xEnd = project(bounds.centerX + (bounds.maxX - bounds.minX) * 0.3, bounds.centerY, bounds.centerZ)

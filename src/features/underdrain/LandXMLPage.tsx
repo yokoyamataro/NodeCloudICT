@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import {
   FileCode,
-  RefreshCw,
   Download,
   Loader2,
   AlertTriangle,
@@ -15,7 +14,7 @@ import {
   generateLandXMLFromPlan,
   downloadLandXML,
 } from '@/utils/landxml'
-import type { Point3D, Face, TINSurface } from '@/utils/landxml/types'
+import type { Point3D, Face } from '@/utils/landxml/types'
 import { generatePipeMesh, mergeMeshes, applyTransition } from '@/utils/landxml/triangulation'
 import { distance2D } from '@/utils/landxml/geometry'
 
