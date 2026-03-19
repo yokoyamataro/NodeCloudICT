@@ -11,6 +11,7 @@ import {
   Map,
   Settings,
   Calculator,
+  Download,
 } from 'lucide-react'
 import { useProjectStore } from '@/stores/projectStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
@@ -24,6 +25,7 @@ import {
 } from '@/stores/constructionPlanStore'
 import { PipeMap } from '@/components/map/PipeMap'
 import { CrossSectionChart } from '@/components/charts/CrossSectionChart'
+import { exportLandXML } from '@/utils/landxml'
 
 export function DepthCalcPage() {
   const { currentProject } = useProjectStore()
@@ -544,6 +546,20 @@ export function DepthCalcPage() {
                     title="施工計画を削除"
                   >
                     <Trash2 className="h-4 w-4" />
+                  </button>
+                  <div className="w-px h-6 bg-slate-300" />
+                  <button
+                    onClick={() => {
+                      const projectName = currentProject?.name || 'construction_plan'
+                      const filename = `${projectName}_landxml.xml`
+                      exportLandXML(planGroups, filename, { projectName })
+                    }}
+                    disabled={saving}
+                    className="flex items-center gap-2 px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50"
+                    title="LandXMLをエクスポート"
+                  >
+                    <Download className="h-4 w-4" />
+                    LandXML
                   </button>
                 </>
               ) : (
