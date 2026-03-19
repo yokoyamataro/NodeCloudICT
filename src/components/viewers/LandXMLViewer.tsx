@@ -167,6 +167,29 @@ export function LandXMLViewer({
     ctx.fillStyle = '#3b82f6'
     ctx.fillText('Z', zEnd.screenX + 5, zEnd.screenY)
 
+    // 高さに応じた色を計算する関数（赤→黄→青のグラデーション）
+    const getColorForHeight = (zNorm: number): { r: number; g: number; b: number } => {
+      // zNorm: 0（最低）→ 1（最高）
+      // 赤(255,0,0) → 黄(255,255,0) → 青(0,0,255)
+      let r: number, g: number, b: number
+
+      if (zNorm < 0.5) {
+        // 赤 → 黄（0～0.5）
+        const t = zNorm * 2 // 0～1
+        r = 255
+        g = Math.floor(255 * t)
+        b = 0
+      } else {
+        // 黄 → 青（0.5～1）
+        const t = (zNorm - 0.5) * 2 // 0～1
+        r = Math.floor(255 * (1 - t))
+        g = Math.floor(255 * (1 - t))
+        b = Math.floor(255 * t)
+      }
+
+      return { r, g, b }
+    }
+
     // 面を描画
     for (const item of sortedFaces) {
       if (!item) continue
@@ -180,14 +203,12 @@ export function LandXMLViewer({
       const v2y = proj3.screenY - proj1.screenY
       const cross = v1x * v2y - v1y * v2x
 
-      // 高さに応じた色（低いほど青、高いほど緑）
+      // 高さに応じた色（赤→黄→青）
       const avgZ = (item.points[0].z + item.points[1].z + item.points[2].z) / 3
       const zRange = bounds.maxZ - bounds.minZ || 1
       const zNorm = (avgZ - bounds.minZ) / zRange
 
-      const r = Math.floor(50 + zNorm * 50)
-      const g = Math.floor(100 + zNorm * 100)
-      const b = Math.floor(200 - zNorm * 100)
+      const { r, g, b } = getColorForHeight(zNorm)
 
       // 表面
       ctx.beginPath()
@@ -198,12 +219,12 @@ export function LandXMLViewer({
 
       // 表裏で明るさを変える
       const brightness = cross > 0 ? 1.0 : 0.7
-      ctx.fillStyle = `rgba(${r * brightness}, ${g * brightness}, ${b * brightness}, 0.8)`
+      ctx.fillStyle = `rgba(${Math.floor(r * brightness)}, ${Math.floor(g * brightness)}, ${Math.floor(b * brightness)}, 0.85)`
       ctx.fill()
 
-      // エッジ
-      ctx.strokeStyle = `rgba(${r * 0.5}, ${g * 0.5}, ${b * 0.5}, 0.5)`
-      ctx.lineWidth = 0.5
+      // エッジ（三角形の線を明確に表示）
+      ctx.strokeStyle = '#1e293b'
+      ctx.lineWidth = 1
       ctx.stroke()
     }
 
@@ -214,7 +235,38 @@ export function LandXMLViewer({
     ctx.fillText(`点数: ${pointArray.length}`, 10, 36)
     ctx.fillText(`X: ${bounds.minX.toFixed(1)} ~ ${bounds.maxX.toFixed(1)}`, 10, 52)
     ctx.fillText(`Y: ${bounds.minY.toFixed(1)} ~ ${bounds.maxY.toFixed(1)}`, 10, 68)
-    ctx.fillText(`Z: ${bounds.minZ.toFixed(1)} ~ ${bounds.maxZ.toFixed(1)}`, 10, 84)
+    ctx.fillText(`Z: ${bounds.minZ.toFixed(3)} ~ ${bounds.maxZ.toFixed(3)}`, 10, 84)
+
+    // カラースケール凡例を描画
+    const legendX = width - 30
+    const legendY = 20
+    const legendHeight = 100
+    const legendWidth = 15
+
+    // グラデーション
+    for (let i = 0; i < legendHeight; i++) {
+      const zNorm = 1 - i / legendHeight // 上が高い、下が低い
+      const { r, g, b } = getColorForHeight(zNorm)
+      ctx.fillStyle = `rgb(${r}, ${g}, ${b})`
+      ctx.fillRect(legendX, legendY + i, legendWidth, 1)
+    }
+
+    // 枠線
+    ctx.strokeStyle = '#64748b'
+    ctx.lineWidth = 1
+    ctx.strokeRect(legendX, legendY, legendWidth, legendHeight)
+
+    // ラベル
+    ctx.fillStyle = '#334155'
+    ctx.font = '10px sans-serif'
+    ctx.textAlign = 'right'
+    ctx.fillText(`${bounds.maxZ.toFixed(2)}m`, legendX - 3, legendY + 10)
+    ctx.fillText(`${((bounds.maxZ + bounds.minZ) / 2).toFixed(2)}m`, legendX - 3, legendY + legendHeight / 2 + 3)
+    ctx.fillText(`${bounds.minZ.toFixed(2)}m`, legendX - 3, legendY + legendHeight - 2)
+    ctx.textAlign = 'left'
+
+    // 凡例タイトル
+    ctx.fillText('標高', legendX, legendY - 5)
 
   }, [sortedFaces, width, height, bounds, project, faces.length, pointArray.length])
 
