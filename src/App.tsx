@@ -10,6 +10,7 @@ import { PipeCoordinateCalcPage } from '@/features/underdrain/PipeCoordinateCalc
 import { SurveyImportPage } from '@/features/underdrain/SurveyImportPage'
 import { PipeWiringPage } from '@/features/underdrain/PipeWiringPage'
 import { DepthCalcPage } from '@/features/underdrain/DepthCalcPage'
+import { LandXMLPage } from '@/features/underdrain/LandXMLPage'
 import { Loader2 } from 'lucide-react'
 
 // 認証が必要なルートのラッパー
@@ -55,7 +56,7 @@ function AppRoutes() {
           <Route path="depth-calc" element={<DepthCalcPage />} />
           <Route path="hydraulics" element={<PlaceholderPage title="水理計算" />} />
           <Route path="cad-export" element={<PlaceholderPage title="CAD転記" />} />
-          <Route path="landxml" element={<PlaceholderPage title="LandXML出力" />} />
+          <Route path="landxml" element={<LandXMLPage />} />
           <Route path="field-data" element={<PlaceholderPage title="現場データ" />} />
           <Route path="reports" element={<PlaceholderPage title="帳票作成" />} />
         </Route>
