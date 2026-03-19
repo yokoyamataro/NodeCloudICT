@@ -1,6 +1,6 @@
 // LandXML生成ユーティリティ
 
-import type { TINSurface, Point3D, Face } from './types'
+import type { TINSurface, Point3D } from './types'
 
 // XMLエスケープ
 function escapeXml(str: string): string {

@@ -1,6 +1,6 @@
 // 三角形分割ユーティリティ
 
-import type { Point3D, Face, OffsetPoint, TINSurface } from './types'
+import type { Point3D, Face, TINSurface } from './types'
 import { distance2D, offsetLine, adjustOffsetLinesAtCorner } from './geometry'
 
 // 配管の線形から三角形メッシュを生成

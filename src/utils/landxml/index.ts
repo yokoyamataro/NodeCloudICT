@@ -1,7 +1,7 @@
 // LandXMLエクスポート機能
 
-import type { PlanGroup, PlanRow, PlanPoint } from '@/stores/constructionPlanStore'
-import type { Point3D, TINSurface, Face } from './types'
+import type { PlanGroup } from '@/stores/constructionPlanStore'
+import type { Point3D, Face } from './types'
 import { distance2D } from './geometry'
 import { generatePipeMesh, mergeMeshes, applyTransition } from './triangulation'
 import { generateLandXML, downloadLandXML } from './generator'
