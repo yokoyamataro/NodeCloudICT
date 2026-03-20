@@ -2,8 +2,15 @@
 
 import type { PlanGroup } from '@/stores/constructionPlanStore'
 import type { Point3D, Face } from './types'
-import { distance2D } from './geometry'
-import { generatePipeMesh, mergeMeshes, applyTransition } from './triangulation'
+import {
+  generatePipeMesh,
+  mergeMeshes,
+  applyTransition,
+  detectMergeConnections,
+  insertMergePointsIntoCollector,
+  trimAbsorptionToCollectorEdge,
+  generateMergeTriangles,
+} from './triangulation'
 import { generateLandXML, downloadLandXML } from './generator'
 
 // 施工計画データから配管の線形データを抽出
@@ -13,14 +20,6 @@ interface PipeLineData {
   pipeType: 'absorption' | 'collector'
   vertices: Point3D[]
   mergePointId: string | null // 合流先の配管ID（集水の場合）
-}
-
-// 合流点情報
-interface MergeInfo {
-  x: number
-  y: number
-  z: number // 最も低い計画高
-  connectedPipes: string[] // 合流する配管ID
 }
 
 // 施工計画データから配管線形を抽出
@@ -98,193 +97,6 @@ function extractPipeLines(planGroups: PlanGroup[]): PipeLineData[] {
   return pipeLines
 }
 
-// 合流点を検出
-function detectMergePoints(
-  pipeLines: PipeLineData[],
-  tolerance: number = 0.5
-): MergeInfo[] {
-  const mergePoints: MergeInfo[] = []
-
-  // 全ての終端点（下流端）を収集
-  const endPoints: { pipeId: string; point: Point3D }[] = []
-
-  for (const pipe of pipeLines) {
-    if (pipe.vertices.length > 0) {
-      const lastVertex = pipe.vertices[pipe.vertices.length - 1]
-      endPoints.push({ pipeId: pipe.pipeId, point: lastVertex })
-    }
-  }
-
-  // 近接する終端点をグループ化
-  const processed = new Set<string>()
-
-  for (let i = 0; i < endPoints.length; i++) {
-    if (processed.has(endPoints[i].pipeId)) continue
-
-    const nearby: typeof endPoints = [endPoints[i]]
-    processed.add(endPoints[i].pipeId)
-
-    for (let j = i + 1; j < endPoints.length; j++) {
-      if (processed.has(endPoints[j].pipeId)) continue
-
-      const dist = distance2D(endPoints[i].point, endPoints[j].point)
-      if (dist < tolerance) {
-        nearby.push(endPoints[j])
-        processed.add(endPoints[j].pipeId)
-      }
-    }
-
-    if (nearby.length > 1) {
-      // 最も低い計画高を採用
-      const minZ = Math.min(...nearby.map(e => e.point.z))
-      const avgX = nearby.reduce((sum, e) => sum + e.point.x, 0) / nearby.length
-      const avgY = nearby.reduce((sum, e) => sum + e.point.y, 0) / nearby.length
-
-      mergePoints.push({
-        x: avgX,
-        y: avgY,
-        z: minZ,
-        connectedPipes: nearby.map(e => e.pipeId),
-      })
-    }
-  }
-
-  // 吸水と集水の接続点も検出
-  for (const pipe of pipeLines) {
-    if (pipe.pipeType === 'absorption' && pipe.mergePointId && pipe.vertices.length > 0) {
-      const endPoint = pipe.vertices[pipe.vertices.length - 1]
-
-      // 接続先の集水線形を探す
-      const collectorPipe = pipeLines.find(
-        p => p.pipeType === 'collector' && p.pipeId.includes(pipe.mergePointId!)
-      )
-
-      if (collectorPipe && collectorPipe.vertices.length > 0) {
-        // 最も近い集水点を探す
-        let nearestVertex: Point3D | null = null
-        let nearestDist = Infinity
-
-        for (const v of collectorPipe.vertices) {
-          const dist = distance2D(endPoint, v)
-          if (dist < nearestDist) {
-            nearestDist = dist
-            nearestVertex = v
-          }
-        }
-
-        if (nearestVertex && nearestDist < tolerance) {
-          // 既存の合流点に追加またはの新規作成
-          const existingMerge = mergePoints.find(
-            m => distance2D(m, nearestVertex!) < tolerance
-          )
-
-          if (existingMerge) {
-            if (!existingMerge.connectedPipes.includes(pipe.pipeId)) {
-              existingMerge.connectedPipes.push(pipe.pipeId)
-            }
-            // 低い方の高さを採用
-            existingMerge.z = Math.min(existingMerge.z, endPoint.z, nearestVertex.z)
-          } else {
-            const minZ = Math.min(endPoint.z, nearestVertex.z)
-            mergePoints.push({
-              x: nearestVertex.x,
-              y: nearestVertex.y,
-              z: minZ,
-              connectedPipes: [pipe.pipeId],
-            })
-          }
-        }
-      }
-    }
-  }
-
-  return mergePoints
-}
-
-// 合流点で擦り付け処理を適用
-function applyMergeTransitions(
-  pipeLines: PipeLineData[],
-  mergePoints: MergeInfo[],
-  transitionDistance: number = 5.0
-): PipeLineData[] {
-  const result: PipeLineData[] = []
-
-  for (const pipe of pipeLines) {
-    let vertices = [...pipe.vertices]
-
-    // この配管に関係する合流点を探す
-    for (const merge of mergePoints) {
-      if (!merge.connectedPipes.includes(pipe.pipeId)) continue
-
-      if (vertices.length > 0) {
-        const endPoint = vertices[vertices.length - 1]
-        const distToMerge = distance2D(endPoint, merge)
-
-        if (distToMerge < 0.5) {
-          // この配管の終端が合流点に近い
-          if (endPoint.z > merge.z + 0.001) {
-            // 計画高が高い場合、擦り付けを適用
-            vertices = applyTransition(vertices, merge.z, transitionDistance)
-          }
-        }
-      }
-    }
-
-    result.push({
-      ...pipe,
-      vertices,
-    })
-  }
-
-  return result
-}
-
-// 吸水管の終端を集水管の幅分だけ手前で止める（重なり防止）
-function trimAbsorptionPipes(
-  pipeLines: PipeLineData[],
-  offsetDistance: number
-): PipeLineData[] {
-  return pipeLines.map(pipe => {
-    if (pipe.pipeType !== 'absorption' || pipe.vertices.length < 2) {
-      return pipe
-    }
-
-    // 終端点を確認
-    const lastIdx = pipe.vertices.length - 1
-    const lastVertex = pipe.vertices[lastIdx]
-    const prevVertex = pipe.vertices[lastIdx - 1]
-
-    // 集水管との接続点を探す
-    const connectedCollector = pipeLines.find(
-      p => p.pipeType === 'collector' &&
-        p.vertices.some(v => distance2D(v, lastVertex) < 0.5)
-    )
-
-    if (!connectedCollector) {
-      return pipe
-    }
-
-    // 吸水管の最後のセグメントの方向
-    const segmentLen = distance2D(prevVertex, lastVertex)
-    if (segmentLen < offsetDistance * 2) {
-      return pipe
-    }
-
-    // 終端を集水管の幅分（offsetDistance）だけ手前に移動
-    const ratio = (segmentLen - offsetDistance) / segmentLen
-    const newLastVertex: Point3D = {
-      id: lastVertex.id,
-      x: prevVertex.x + (lastVertex.x - prevVertex.x) * ratio,
-      y: prevVertex.y + (lastVertex.y - prevVertex.y) * ratio,
-      z: prevVertex.z + (lastVertex.z - prevVertex.z) * ratio,
-    }
-
-    const newVertices = [...pipe.vertices]
-    newVertices[lastIdx] = newLastVertex
-
-    return { ...pipe, vertices: newVertices }
-  })
-}
 
 // 施工計画データからLandXMLを生成
 export function generateLandXMLFromPlan(
@@ -304,25 +116,102 @@ export function generateLandXMLFromPlan(
   const offsetDistance = pipeWidth / 2
 
   // 配管線形を抽出
-  let pipeLines = extractPipeLines(planGroups)
+  const pipeLines = extractPipeLines(planGroups)
 
-  // 合流点を検出
-  const mergePoints = detectMergePoints(pipeLines)
+  // 吸水管と集水管を分離
+  const absorptionPipes = pipeLines.filter(p => p.pipeType === 'absorption')
+  const collectorPipes = pipeLines.filter(p => p.pipeType === 'collector')
 
-  // 擦り付け処理を適用
-  pipeLines = applyMergeTransitions(pipeLines, mergePoints, transitionDistance)
-
-  // 吸水管の終端をトリム（重なり防止）
-  pipeLines = trimAbsorptionPipes(pipeLines, offsetDistance)
+  // 合流接続を検出
+  const mergeConnections = detectMergeConnections(
+    absorptionPipes.map(p => ({ pipeId: p.pipeId, vertices: p.vertices })),
+    collectorPipes.map(p => ({ pipeId: p.pipeId, vertices: p.vertices }))
+  )
 
   // 各配管のメッシュを生成
   const meshes: { points: Point3D[]; faces: Face[] }[] = []
 
-  for (const pipe of pipeLines) {
-    if (pipe.vertices.length >= 2) {
-      const mesh = generatePipeMesh(pipe.vertices, offsetDistance, pipe.pipeId)
+  // 集水管のメッシュを生成（合流点を挿入）
+  for (const collector of collectorPipes) {
+    if (collector.vertices.length < 2) continue
+
+    // この集水管に関連する合流接続
+    const relatedConnections = mergeConnections.filter(c => c.collectorPipeId === collector.pipeId)
+
+    if (relatedConnections.length === 0) {
+      // 合流点がない場合は通常のメッシュ生成
+      const mesh = generatePipeMesh(collector.vertices, offsetDistance, collector.pipeId)
       meshes.push(mesh)
+    } else {
+      // 合流点を挿入してメッシュを生成
+      const { vertices: insertedVertices, mergeOffsetPoints } = insertMergePointsIntoCollector(
+        collector.vertices,
+        relatedConnections,
+        offsetDistance,
+        collector.pipeId
+      )
+
+      const mesh = generatePipeMesh(insertedVertices, offsetDistance, collector.pipeId)
+      meshes.push(mesh)
+
+      // 合流部の処理
+      for (const conn of relatedConnections) {
+        const offsetPoints = mergeOffsetPoints.get(conn.absorptionPipeId)
+        if (!offsetPoints) continue
+
+        // 吸水管を探す
+        const absorption = absorptionPipes.find(p => p.pipeId === conn.absorptionPipeId)
+        if (!absorption || absorption.vertices.length < 2) continue
+
+        // 吸水管の高さを合流点の高さに擦り付け
+        const adjustedAbsVertices = applyTransition(
+          absorption.vertices,
+          conn.mergePoint.z,
+          transitionDistance
+        )
+
+        // 吸水管の終端を集水管の端に合わせてトリミング
+        const { trimmedVertices, transitionPoint, edgePoint } = trimAbsorptionToCollectorEdge(
+          adjustedAbsVertices,
+          conn,
+          offsetPoints,
+          offsetDistance,
+          transitionDistance
+        )
+
+        // 吸水管のメッシュを生成（トリミング済み、5m手前まで）
+        if (trimmedVertices.length >= 2) {
+          const absMesh = generatePipeMesh(
+            trimmedVertices.slice(0, -1), // 終端点を除く（合流部で処理）
+            offsetDistance,
+            absorption.pipeId
+          )
+          meshes.push(absMesh)
+        }
+
+        // 合流部の三角形メッシュを生成
+        const mergeMesh = generateMergeTriangles(
+          absorption.pipeId,
+          transitionPoint,
+          edgePoint,
+          offsetPoints,
+          conn.absorptionDirection,
+          offsetDistance,
+          conn.mergeFromLeft
+        )
+        meshes.push(mergeMesh)
+      }
     }
+  }
+
+  // 合流しない吸水管のメッシュを生成
+  const connectedAbsorptionIds = new Set(mergeConnections.map(c => c.absorptionPipeId))
+  for (const absorption of absorptionPipes) {
+    if (connectedAbsorptionIds.has(absorption.pipeId)) continue
+    if (absorption.vertices.length < 2) continue
+
+    const mesh = generatePipeMesh(absorption.vertices, offsetDistance, absorption.pipeId)
+    meshes.push(mesh)
   }
 
   // メッシュを統合
