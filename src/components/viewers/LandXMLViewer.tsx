@@ -36,12 +36,18 @@ function segmentsIntersect(
   return false
 }
 
-// 点が三角形の内部にあるか判定
+// 点が三角形の内部にあるか判定（境界上は含まない）
 function pointInTriangle(px: number, py: number, t: Triangle2D): boolean {
   const { p1, p2, p3 } = t
   const d1 = ccw(px, py, p1.x, p1.y, p2.x, p2.y)
   const d2 = ccw(px, py, p2.x, p2.y, p3.x, p3.y)
   const d3 = ccw(px, py, p3.x, p3.y, p1.x, p1.y)
+
+  // 境界上（d == 0）は内部とみなさない
+  const eps = 1e-10
+  if (Math.abs(d1) < eps || Math.abs(d2) < eps || Math.abs(d3) < eps) {
+    return false
+  }
 
   const hasNeg = (d1 < 0) || (d2 < 0) || (d3 < 0)
   const hasPos = (d1 > 0) || (d2 > 0) || (d3 > 0)
@@ -49,8 +55,36 @@ function pointInTriangle(px: number, py: number, t: Triangle2D): boolean {
   return !(hasNeg && hasPos)
 }
 
+// 2点を共有しているか判定（同じ辺を持つ隣接三角形）
+function sharesTwoVertices(t1: Triangle2D, t2: Triangle2D): boolean {
+  const eps = 1e-6
+  const pointsEqual = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+    Math.abs(a.x - b.x) < eps && Math.abs(a.y - b.y) < eps
+
+  const t1Points = [t1.p1, t1.p2, t1.p3]
+  const t2Points = [t2.p1, t2.p2, t2.p3]
+
+  let sharedCount = 0
+  for (const p1 of t1Points) {
+    for (const p2 of t2Points) {
+      if (pointsEqual(p1, p2)) {
+        sharedCount++
+        break
+      }
+    }
+  }
+
+  return sharedCount >= 2
+}
+
 // 2つの三角形が重なっているか判定（XY平面）
+// 2点を共有している三角形（隣接三角形）は重なりとみなさない
 function trianglesOverlap(t1: Triangle2D, t2: Triangle2D): boolean {
+  // 2点以上を共有している場合は隣接三角形なので重なりではない
+  if (sharesTwoVertices(t1, t2)) {
+    return false
+  }
+
   // エッジの交差チェック
   const edges1 = [
     [t1.p1, t1.p2], [t1.p2, t1.p3], [t1.p3, t1.p1]
