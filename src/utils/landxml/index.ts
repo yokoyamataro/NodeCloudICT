@@ -148,7 +148,8 @@ export function generateLandXMLFromPlan(
         collector.vertices,
         relatedConnections,
         offsetDistance,
-        collector.pipeId
+        collector.pipeId,
+        pipeWidth // 吸水管の幅
       )
 
       const mesh = generatePipeMesh(insertedVertices, offsetDistance, collector.pipeId)
