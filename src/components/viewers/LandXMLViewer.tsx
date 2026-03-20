@@ -167,22 +167,28 @@ export function LandXMLViewer({
     ctx.fillStyle = '#3b82f6'
     ctx.fillText('Z', zEnd.screenX + 5, zEnd.screenY)
 
-    // 高さに応じた色を計算する関数（赤→黄→青のグラデーション）
+    // 高さに応じた色を計算する関数（赤→黄→緑→青のグラデーション）
     const getColorForHeight = (zNorm: number): { r: number; g: number; b: number } => {
       // zNorm: 0（最低）→ 1（最高）
-      // 赤(255,0,0) → 黄(255,255,0) → 青(0,0,255)
+      // 赤(255,0,0) → 黄(255,255,0) → 緑(0,255,0) → 青(0,0,255)
       let r: number, g: number, b: number
 
-      if (zNorm < 0.5) {
-        // 赤 → 黄（0～0.5）
-        const t = zNorm * 2 // 0～1
+      if (zNorm < 0.333) {
+        // 赤 → 黄（0～0.333）
+        const t = zNorm / 0.333 // 0～1
         r = 255
         g = Math.floor(255 * t)
         b = 0
-      } else {
-        // 黄 → 青（0.5～1）
-        const t = (zNorm - 0.5) * 2 // 0～1
+      } else if (zNorm < 0.667) {
+        // 黄 → 緑（0.333～0.667）
+        const t = (zNorm - 0.333) / 0.334 // 0～1
         r = Math.floor(255 * (1 - t))
+        g = 255
+        b = 0
+      } else {
+        // 緑 → 青（0.667～1）
+        const t = (zNorm - 0.667) / 0.333 // 0～1
+        r = 0
         g = Math.floor(255 * (1 - t))
         b = Math.floor(255 * t)
       }
