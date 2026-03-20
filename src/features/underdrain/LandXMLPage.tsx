@@ -204,10 +204,53 @@ export function LandXMLPage() {
         return { ...pipe, vertices }
       })
 
+      // 吸水管の終端を集水管の幅分だけ手前で止める（重なり防止）
+      // 吸水管は集水管に接続するため、集水管の幅の半分だけ手前で終端する
+      const trimmedPipeLines = adjustedPipeLines.map(pipe => {
+        if (pipe.pipeType !== 'absorption' || pipe.vertices.length < 2) {
+          return pipe
+        }
+
+        // 終端点を確認
+        const lastIdx = pipe.vertices.length - 1
+        const lastVertex = pipe.vertices[lastIdx]
+        const prevVertex = pipe.vertices[lastIdx - 1]
+
+        // 集水管との接続点を探す
+        const connectedCollector = adjustedPipeLines.find(
+          p => p.pipeType === 'collector' &&
+            p.vertices.some(v => distance2D(v, lastVertex) < 0.5)
+        )
+
+        if (!connectedCollector) {
+          return pipe
+        }
+
+        // 吸水管の最後のセグメントの方向
+        const segmentLen = distance2D(prevVertex, lastVertex)
+        if (segmentLen < offsetDistance * 2) {
+          return pipe
+        }
+
+        // 終端を集水管の幅分（offsetDistance）だけ手前に移動
+        const ratio = (segmentLen - offsetDistance) / segmentLen
+        const newLastVertex: Point3D = {
+          id: lastVertex.id,
+          x: prevVertex.x + (lastVertex.x - prevVertex.x) * ratio,
+          y: prevVertex.y + (lastVertex.y - prevVertex.y) * ratio,
+          z: prevVertex.z + (lastVertex.z - prevVertex.z) * ratio,
+        }
+
+        const newVertices = [...pipe.vertices]
+        newVertices[lastIdx] = newLastVertex
+
+        return { ...pipe, vertices: newVertices }
+      })
+
       // 各配管のメッシュを生成
       const meshes: { points: Point3D[]; faces: Face[] }[] = []
 
-      for (const pipe of adjustedPipeLines) {
+      for (const pipe of trimmedPipeLines) {
         if (pipe.vertices.length >= 2) {
           const mesh = generatePipeMesh(pipe.vertices, offsetDistance, pipe.pipeId)
           meshes.push(mesh)

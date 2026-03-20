@@ -222,10 +222,12 @@ export function LandXMLViewer({
       ctx.fillStyle = `rgba(${Math.floor(r * brightness)}, ${Math.floor(g * brightness)}, ${Math.floor(b * brightness)}, 0.85)`
       ctx.fill()
 
-      // エッジ（三角形の線を明確に表示）
-      ctx.strokeStyle = '#1e293b'
-      ctx.lineWidth = 1
-      ctx.stroke()
+      // エッジ（拡大時のみ表示、白線）
+      if (zoom >= 2.0) {
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)'
+        ctx.lineWidth = 0.5
+        ctx.stroke()
+      }
     }
 
     // 情報表示
@@ -305,7 +307,7 @@ export function LandXMLViewer({
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault()
     const delta = e.deltaY > 0 ? 0.9 : 1.1
-    setZoom(prev => Math.max(0.1, Math.min(10, prev * delta)))
+    setZoom(prev => Math.max(0.1, Math.min(50, prev * delta)))
   }
 
   const resetView = () => {
