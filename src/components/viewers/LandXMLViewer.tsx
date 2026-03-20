@@ -8,6 +8,83 @@ interface LandXMLViewerProps {
   height?: number
 }
 
+// 2D三角形の頂点
+interface Triangle2D {
+  p1: { x: number; y: number }
+  p2: { x: number; y: number }
+  p3: { x: number; y: number }
+}
+
+// 線分の交差判定
+function ccw(ax: number, ay: number, bx: number, by: number, cx: number, cy: number): number {
+  return (cy - ay) * (bx - ax) - (by - ay) * (cx - ax)
+}
+
+function segmentsIntersect(
+  ax: number, ay: number, bx: number, by: number,
+  cx: number, cy: number, dx: number, dy: number
+): boolean {
+  const d1 = ccw(cx, cy, dx, dy, ax, ay)
+  const d2 = ccw(cx, cy, dx, dy, bx, by)
+  const d3 = ccw(ax, ay, bx, by, cx, cy)
+  const d4 = ccw(ax, ay, bx, by, dx, dy)
+
+  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+      ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) {
+    return true
+  }
+  return false
+}
+
+// 点が三角形の内部にあるか判定
+function pointInTriangle(px: number, py: number, t: Triangle2D): boolean {
+  const { p1, p2, p3 } = t
+  const d1 = ccw(px, py, p1.x, p1.y, p2.x, p2.y)
+  const d2 = ccw(px, py, p2.x, p2.y, p3.x, p3.y)
+  const d3 = ccw(px, py, p3.x, p3.y, p1.x, p1.y)
+
+  const hasNeg = (d1 < 0) || (d2 < 0) || (d3 < 0)
+  const hasPos = (d1 > 0) || (d2 > 0) || (d3 > 0)
+
+  return !(hasNeg && hasPos)
+}
+
+// 2つの三角形が重なっているか判定（XY平面）
+function trianglesOverlap(t1: Triangle2D, t2: Triangle2D): boolean {
+  // エッジの交差チェック
+  const edges1 = [
+    [t1.p1, t1.p2], [t1.p2, t1.p3], [t1.p3, t1.p1]
+  ]
+  const edges2 = [
+    [t2.p1, t2.p2], [t2.p2, t2.p3], [t2.p3, t2.p1]
+  ]
+
+  for (const e1 of edges1) {
+    for (const e2 of edges2) {
+      if (segmentsIntersect(
+        e1[0].x, e1[0].y, e1[1].x, e1[1].y,
+        e2[0].x, e2[0].y, e2[1].x, e2[1].y
+      )) {
+        return true
+      }
+    }
+  }
+
+  // 一方の頂点が他方の内部にあるかチェック
+  if (pointInTriangle(t1.p1.x, t1.p1.y, t2) ||
+      pointInTriangle(t1.p2.x, t1.p2.y, t2) ||
+      pointInTriangle(t1.p3.x, t1.p3.y, t2)) {
+    return true
+  }
+  if (pointInTriangle(t2.p1.x, t2.p1.y, t1) ||
+      pointInTriangle(t2.p2.x, t2.p2.y, t1) ||
+      pointInTriangle(t2.p3.x, t2.p3.y, t1)) {
+    return true
+  }
+
+  return false
+}
+
 // 2Dキャンバスで3D風に描画するシンプルなビューアー
 export function LandXMLViewer({
   points,
@@ -22,6 +99,7 @@ export function LandXMLViewer({
   const [isDragging, setIsDragging] = useState(false)
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
   const [dragMode, setDragMode] = useState<'rotate' | 'pan'>('rotate')
+  const [showOverlap, setShowOverlap] = useState(true)
 
   // 点の配列に変換
   const pointArray = useMemo(() => Array.from(points.values()), [points])
@@ -112,11 +190,42 @@ export function LandXMLViewer({
           points: [p1, p2, p3],
           projected: [proj1, proj2, proj3],
           avgDepth,
+          // XY平面での三角形（重なり検出用）
+          triangle2D: {
+            p1: { x: p1.x, y: p1.y },
+            p2: { x: p2.x, y: p2.y },
+            p3: { x: p3.x, y: p3.y },
+          } as Triangle2D,
         }
       })
       .filter(f => f !== null)
       .sort((a, b) => a!.avgDepth - b!.avgDepth)
   }, [faces, points, project])
+
+  // 重なっている面を検出
+  const overlappingFaceIndices = useMemo(() => {
+    if (!showOverlap) return new Set<number>()
+
+    const overlapping = new Set<number>()
+    const faceData = sortedFaces.filter(f => f !== null) as NonNullable<typeof sortedFaces[0]>[]
+
+    // O(n^2) だが、面数が多くない想定
+    for (let i = 0; i < faceData.length; i++) {
+      for (let j = i + 1; j < faceData.length; j++) {
+        // 同じパイプのメッシュ間の重なりはスキップ（隣接する三角形は共有辺を持つ）
+        const id1 = faceData[i].face.p1.split('_')[0]
+        const id2 = faceData[j].face.p1.split('_')[0]
+        if (id1 === id2) continue
+
+        if (trianglesOverlap(faceData[i].triangle2D, faceData[j].triangle2D)) {
+          overlapping.add(i)
+          overlapping.add(j)
+        }
+      }
+    }
+
+    return overlapping
+  }, [sortedFaces, showOverlap])
 
   // 描画
   useEffect(() => {
@@ -197,10 +306,14 @@ export function LandXMLViewer({
     }
 
     // 面を描画
-    for (const item of sortedFaces) {
+    let overlapCount = 0
+    for (let faceIdx = 0; faceIdx < sortedFaces.length; faceIdx++) {
+      const item = sortedFaces[faceIdx]
       if (!item) continue
 
       const [proj1, proj2, proj3] = item.projected
+      const isOverlapping = overlappingFaceIndices.has(faceIdx)
+      if (isOverlapping) overlapCount++
 
       // 法線を計算して表裏を判定
       const v1x = proj2.screenX - proj1.screenX
@@ -214,7 +327,19 @@ export function LandXMLViewer({
       const zRange = bounds.maxZ - bounds.minZ || 1
       const zNorm = (avgZ - bounds.minZ) / zRange
 
-      const { r, g, b } = getColorForHeight(zNorm)
+      let r: number, g: number, b: number
+
+      if (isOverlapping && showOverlap) {
+        // 重なっている面はマゼンタでハイライト
+        r = 255
+        g = 0
+        b = 255
+      } else {
+        const color = getColorForHeight(zNorm)
+        r = color.r
+        g = color.g
+        b = color.b
+      }
 
       // 表面
       ctx.beginPath()
@@ -228,10 +353,10 @@ export function LandXMLViewer({
       ctx.fillStyle = `rgba(${Math.floor(r * brightness)}, ${Math.floor(g * brightness)}, ${Math.floor(b * brightness)}, 0.85)`
       ctx.fill()
 
-      // エッジ（拡大時のみ表示、白線）
-      if (zoom >= 2.0) {
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)'
-        ctx.lineWidth = 0.5
+      // エッジ（拡大時のみ表示、白線。重なりはマゼンタ枠）
+      if (zoom >= 2.0 || isOverlapping) {
+        ctx.strokeStyle = isOverlapping ? 'rgba(255, 0, 255, 1)' : 'rgba(255, 255, 255, 0.8)'
+        ctx.lineWidth = isOverlapping ? 1.5 : 0.5
         ctx.stroke()
       }
     }
@@ -244,6 +369,15 @@ export function LandXMLViewer({
     ctx.fillText(`X: ${bounds.minX.toFixed(1)} ~ ${bounds.maxX.toFixed(1)}`, 10, 52)
     ctx.fillText(`Y: ${bounds.minY.toFixed(1)} ~ ${bounds.maxY.toFixed(1)}`, 10, 68)
     ctx.fillText(`Z: ${bounds.minZ.toFixed(3)} ~ ${bounds.maxZ.toFixed(3)}`, 10, 84)
+
+    // 重なり検出結果
+    if (showOverlap && overlapCount > 0) {
+      ctx.fillStyle = '#dc2626'
+      ctx.fillText(`⚠ 重なり: ${overlapCount / 2} 組`, 10, 104)
+    } else if (showOverlap) {
+      ctx.fillStyle = '#16a34a'
+      ctx.fillText(`✓ 重なりなし`, 10, 104)
+    }
 
     // カラースケール凡例を描画
     const legendX = width - 30
@@ -276,7 +410,7 @@ export function LandXMLViewer({
     // 凡例タイトル
     ctx.fillText('標高', legendX, legendY - 5)
 
-  }, [sortedFaces, width, height, bounds, project, faces.length, pointArray.length])
+  }, [sortedFaces, width, height, bounds, project, faces.length, pointArray.length, overlappingFaceIndices, showOverlap, zoom])
 
   // マウスイベント
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -336,6 +470,16 @@ export function LandXMLViewer({
         onWheel={handleWheel}
       />
       <div className="absolute bottom-2 right-2 flex gap-2">
+        <button
+          onClick={() => setShowOverlap(!showOverlap)}
+          className={`px-2 py-1 text-xs border rounded shadow ${
+            showOverlap
+              ? 'bg-purple-100 border-purple-300 text-purple-700'
+              : 'bg-white hover:bg-slate-50'
+          }`}
+        >
+          重なり検出: {showOverlap ? 'ON' : 'OFF'}
+        </button>
         <button
           onClick={resetView}
           className="px-2 py-1 text-xs bg-white border rounded shadow hover:bg-slate-50"
