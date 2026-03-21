@@ -119,6 +119,26 @@ function trianglesOverlap(t1: Triangle2D, t2: Triangle2D): boolean {
   return false
 }
 
+// スクリーン座標での三角形
+interface ScreenTriangle {
+  p1: { x: number; y: number }
+  p2: { x: number; y: number }
+  p3: { x: number; y: number }
+}
+
+// 点がスクリーン座標の三角形内にあるか判定
+function pointInScreenTriangle(px: number, py: number, t: ScreenTriangle): boolean {
+  const { p1, p2, p3 } = t
+  const d1 = ccw(px, py, p1.x, p1.y, p2.x, p2.y)
+  const d2 = ccw(px, py, p2.x, p2.y, p3.x, p3.y)
+  const d3 = ccw(px, py, p3.x, p3.y, p1.x, p1.y)
+
+  const hasNeg = (d1 < 0) || (d2 < 0) || (d3 < 0)
+  const hasPos = (d1 > 0) || (d2 > 0) || (d3 > 0)
+
+  return !(hasNeg && hasPos)
+}
+
 // 2Dキャンバスで3D風に描画するシンプルなビューアー
 export function LandXMLViewer({
   points,
@@ -134,6 +154,8 @@ export function LandXMLViewer({
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
   const [dragMode, setDragMode] = useState<'rotate' | 'pan'>('rotate')
   const [showOverlap, setShowOverlap] = useState(true)
+  const [selectedFaceIndex, setSelectedFaceIndex] = useState<number | null>(null)
+  const [showVertices, setShowVertices] = useState(false)
 
   // 点の配列に変換
   const pointArray = useMemo(() => Array.from(points.values()), [points])
@@ -387,11 +409,55 @@ export function LandXMLViewer({
       ctx.fillStyle = `rgba(${Math.floor(r * brightness)}, ${Math.floor(g * brightness)}, ${Math.floor(b * brightness)}, 0.85)`
       ctx.fill()
 
-      // エッジ（拡大時のみ表示、白線。重なりはマゼンタ枠）
-      if (zoom >= 2.0 || isOverlapping) {
-        ctx.strokeStyle = isOverlapping ? 'rgba(255, 0, 255, 1)' : 'rgba(255, 255, 255, 0.8)'
-        ctx.lineWidth = isOverlapping ? 1.5 : 0.5
+      // 選択された面のハイライト
+      const isSelected = selectedFaceIndex === faceIdx
+
+      // エッジ（拡大時のみ表示、白線。重なりはマゼンタ枠、選択はシアン枠）
+      if (zoom >= 2.0 || isOverlapping || isSelected) {
+        if (isSelected) {
+          ctx.strokeStyle = 'rgba(0, 255, 255, 1)'
+          ctx.lineWidth = 3
+        } else if (isOverlapping) {
+          ctx.strokeStyle = 'rgba(255, 0, 255, 1)'
+          ctx.lineWidth = 1.5
+        } else {
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)'
+          ctx.lineWidth = 0.5
+        }
         ctx.stroke()
+      }
+
+      // 選択された面の頂点マーク
+      if (isSelected && showVertices) {
+        const vertexRadius = 5
+        const vertexColors = ['#ef4444', '#22c55e', '#3b82f6'] // 赤、緑、青
+        const labels = ['P1', 'P2', 'P3']
+
+        ;[proj1, proj2, proj3].forEach((proj, idx) => {
+          ctx.beginPath()
+          ctx.arc(proj.screenX, proj.screenY, vertexRadius, 0, Math.PI * 2)
+          ctx.fillStyle = vertexColors[idx]
+          ctx.fill()
+          ctx.strokeStyle = '#ffffff'
+          ctx.lineWidth = 2
+          ctx.stroke()
+
+          // ラベル
+          ctx.fillStyle = vertexColors[idx]
+          ctx.font = 'bold 10px sans-serif'
+          ctx.fillText(labels[idx], proj.screenX + 8, proj.screenY - 5)
+        })
+      }
+    }
+
+    // 頂点表示モード: 全ての頂点を表示
+    if (showVertices && selectedFaceIndex === null) {
+      for (const p of pointArray) {
+        const proj = project(p.x, p.y, p.z)
+        ctx.beginPath()
+        ctx.arc(proj.screenX, proj.screenY, 3, 0, Math.PI * 2)
+        ctx.fillStyle = '#6366f1'
+        ctx.fill()
       }
     }
 
@@ -444,7 +510,34 @@ export function LandXMLViewer({
     // 凡例タイトル
     ctx.fillText('標高', legendX, legendY - 5)
 
-  }, [sortedFaces, width, height, bounds, project, faces.length, pointArray.length, overlappingFaceIndices, showOverlap, zoom])
+    // 選択された三角形の情報を表示
+    if (selectedFaceIndex !== null) {
+      const selectedItem = sortedFaces[selectedFaceIndex]
+      if (selectedItem) {
+        const infoY = showOverlap ? 124 : 104
+        ctx.fillStyle = '#0891b2'
+        ctx.font = 'bold 12px sans-serif'
+        ctx.fillText(`選択: Face #${selectedFaceIndex}`, 10, infoY)
+
+        ctx.font = '11px monospace'
+        const [p1, p2, p3] = selectedItem.points
+        ctx.fillStyle = '#ef4444'
+        ctx.fillText(`P1: (${p1.x.toFixed(3)}, ${p1.y.toFixed(3)}, ${p1.z.toFixed(4)})`, 10, infoY + 14)
+        ctx.fillStyle = '#22c55e'
+        ctx.fillText(`P2: (${p2.x.toFixed(3)}, ${p2.y.toFixed(3)}, ${p2.z.toFixed(4)})`, 10, infoY + 26)
+        ctx.fillStyle = '#3b82f6'
+        ctx.fillText(`P3: (${p3.x.toFixed(3)}, ${p3.y.toFixed(3)}, ${p3.z.toFixed(4)})`, 10, infoY + 38)
+
+        // 面のID情報
+        ctx.fillStyle = '#64748b'
+        ctx.font = '10px monospace'
+        ctx.fillText(`IDs: ${selectedItem.face.p1}`, 10, infoY + 52)
+        ctx.fillText(`     ${selectedItem.face.p2}`, 10, infoY + 62)
+        ctx.fillText(`     ${selectedItem.face.p3}`, 10, infoY + 72)
+      }
+    }
+
+  }, [sortedFaces, width, height, bounds, project, faces.length, pointArray.length, overlappingFaceIndices, showOverlap, zoom, selectedFaceIndex, showVertices])
 
   // マウスイベント
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -488,6 +581,38 @@ export function LandXMLViewer({
     setRotation({ x: 30, z: 45 })
     setZoom(1)
     setPan({ x: 0, y: 0 })
+    setSelectedFaceIndex(null)
+  }
+
+  // クリックで三角形を選択
+  const handleClick = (e: React.MouseEvent) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const rect = canvas.getBoundingClientRect()
+    const clickX = e.clientX - rect.left
+    const clickY = e.clientY - rect.top
+
+    // 後ろから前に向かって検索（前面の面を優先）
+    for (let i = sortedFaces.length - 1; i >= 0; i--) {
+      const item = sortedFaces[i]
+      if (!item) continue
+
+      const [proj1, proj2, proj3] = item.projected
+      const screenTriangle: ScreenTriangle = {
+        p1: { x: proj1.screenX, y: proj1.screenY },
+        p2: { x: proj2.screenX, y: proj2.screenY },
+        p3: { x: proj3.screenX, y: proj3.screenY },
+      }
+
+      if (pointInScreenTriangle(clickX, clickY, screenTriangle)) {
+        setSelectedFaceIndex(i === selectedFaceIndex ? null : i)
+        return
+      }
+    }
+
+    // 何も選択されなかった場合は選択解除
+    setSelectedFaceIndex(null)
   }
 
   return (
@@ -502,8 +627,19 @@ export function LandXMLViewer({
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
         onWheel={handleWheel}
+        onClick={handleClick}
       />
       <div className="absolute bottom-2 right-2 flex gap-2">
+        <button
+          onClick={() => setShowVertices(!showVertices)}
+          className={`px-2 py-1 text-xs border rounded shadow ${
+            showVertices
+              ? 'bg-indigo-100 border-indigo-300 text-indigo-700'
+              : 'bg-white hover:bg-slate-50'
+          }`}
+        >
+          頂点: {showVertices ? 'ON' : 'OFF'}
+        </button>
         <button
           onClick={() => setShowOverlap(!showOverlap)}
           className={`px-2 py-1 text-xs border rounded shadow ${
@@ -522,7 +658,7 @@ export function LandXMLViewer({
         </button>
       </div>
       <div className="absolute top-2 right-2 text-xs text-slate-500 bg-white/80 px-2 py-1 rounded">
-        ドラッグ: 回転 | Shift+ドラッグ: 移動 | ホイール: ズーム
+        ドラッグ: 回転 | Shift+ドラッグ: 移動 | ホイール: ズーム | クリック: 面選択
       </div>
     </div>
   )
