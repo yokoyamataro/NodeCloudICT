@@ -1178,19 +1178,19 @@ export function generateAbsorptionMergeTriangles(
     })
   } else {
     // 右から合流
-    // 吸水管の左側は集水管の下流側右に接続
-    // 吸水管の右側は集水管の上流側右に接続
-    // transL → downstreamRight
-    // transR → upstreamRight
+    // 吸水管の左側は集水管の上流側右に接続
+    // 吸水管の右側は集水管の下流側右に接続
+    // transL → upstreamRight
+    // transR → downstreamRight
     faces.push({
       p1: transitionPointLeft.id,
       p2: transitionPointRight.id,
-      p3: downstreamRight.id,
+      p3: upstreamRight.id,
     })
     faces.push({
       p1: transitionPointRight.id,
-      p2: upstreamRight.id,
-      p3: downstreamRight.id,
+      p2: downstreamRight.id,
+      p3: upstreamRight.id,
     })
   }
 
