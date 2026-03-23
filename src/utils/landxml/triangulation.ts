@@ -1169,37 +1169,35 @@ export function generateAbsorptionMergeTriangles(
   const { upstreamLeft, upstreamRight, downstreamLeft, downstreamRight } = collectorMergeVertices
 
   // 合流三角形を生成
+  // 吸水管が左から合流する場合、吸水管の右側エッジが集水管の左側エッジに接続
+  // 吸水管が右から合流する場合、吸水管の左側エッジが集水管の右側エッジに接続
   if (mergeFromLeft) {
     // 左から合流
-    // 吸水管の左側は集水管の上流側左に接続
-    // 吸水管の右側は集水管の下流側左に接続
-    // transL → upstreamLeft
-    // transR → downstreamLeft
-    faces.push({
-      p1: transitionPointLeft.id,
-      p2: transitionPointRight.id,
-      p3: upstreamLeft.id,
-    })
+    // 吸水管の右側（transR）を集水管の左側（upstreamLeft, downstreamLeft）に接続
+    // 吸水管の左側（transL）は反対側（吸水管のメッシュ外側）
     faces.push({
       p1: transitionPointRight.id,
-      p2: downstreamLeft.id,
-      p3: upstreamLeft.id,
+      p2: transitionPointLeft.id,
+      p3: downstreamLeft.id,
+    })
+    faces.push({
+      p1: transitionPointLeft.id,
+      p2: upstreamLeft.id,
+      p3: downstreamLeft.id,
     })
   } else {
     // 右から合流
-    // 吸水管の左側は集水管の上流側右に接続
-    // 吸水管の右側は集水管の下流側右に接続
-    // transL → upstreamRight
-    // transR → downstreamRight
+    // 吸水管の左側（transL）を集水管の右側（upstreamRight, downstreamRight）に接続
+    // 吸水管の右側（transR）は反対側（吸水管のメッシュ外側）
     faces.push({
       p1: transitionPointLeft.id,
       p2: transitionPointRight.id,
-      p3: upstreamRight.id,
+      p3: downstreamRight.id,
     })
     faces.push({
       p1: transitionPointRight.id,
-      p2: downstreamRight.id,
-      p3: upstreamRight.id,
+      p2: upstreamRight.id,
+      p3: downstreamRight.id,
     })
   }
 
