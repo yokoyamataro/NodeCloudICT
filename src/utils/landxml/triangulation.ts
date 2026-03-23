@@ -1,7 +1,7 @@
 // 三角形分割ユーティリティ
 
 import type { Point3D, Face, TINSurface } from './types'
-import { distance2D, offsetLine, adjustOffsetLinesAtCorner, normalizedDirection, rotateLeft90 } from './geometry'
+import { distance2D, offsetLine, adjustOffsetLinesAtCorner, normalizedDirection, rotateLeft90, lineIntersection } from './geometry'
 
 // 合流情報
 export interface MergeConnection {
@@ -494,7 +494,7 @@ export function trimAbsorptionToCollectorEdge(
   return { trimmedVertices, transitionPoint, edgePoint }
 }
 
-// 合流部の三角形メッシュを生成
+// 合流部の三角形メッシュを生成（旧方式 - 互換性のため残す）
 // 吸水管の5m手前の左右点と、集水管上の合流点（2点）を接続
 export function generateMergeTriangles(
   absorptionPipeId: string,
@@ -590,6 +590,427 @@ export function generateMergeTriangles(
       p3: collectorMergePoints.mergePoint2.id,
     })
   }
+
+  return { points, faces }
+}
+
+// ========================================
+// 新アルゴリズム: 交点計算方式による合流部処理
+// ========================================
+
+// 中間合流部の情報
+export interface MidMergeInfo {
+  absorptionPipeId: string
+  collectorPipeId: string
+  // 集水管の中心線上の点（1A→1B→1C）
+  col1A: Point3D // 下流側
+  col1B: Point3D // 合流点
+  col1C: Point3D // 上流側
+  // 吸水管の中心線上の点（2A→2B）
+  abs2A: Point3D // 下流（集水管に近い側）
+  abs2B: Point3D // 上流側
+  // 合流方向
+  mergeFromLeft: boolean
+  // 合流点のZ座標
+  mergeZ: number
+}
+
+// 中間合流部の交点を計算
+export function calculateMidMergeIntersections(
+  info: MidMergeInfo,
+  offsetDistance: number,
+  transitionDistance: number
+): {
+  // 交点
+  point2AL: Point3D // 吸水管左オフセットと集水管オフセットの交点
+  point2AR: Point3D // 吸水管右オフセットと集水管オフセットの交点
+  // 集水管側の折点（合流の反対側）
+  point1BOpposite: Point3D // 1BL または 1BR
+  // 吸水管の擦り付け点
+  point2LS: Point3D // 吸水管左側の擦り付け点
+  point2RS: Point3D // 吸水管右側の擦り付け点
+} {
+  const { col1A, col1B, col1C, abs2A, abs2B, mergeFromLeft, mergeZ } = info
+
+  // 集水管の方向ベクトル
+  const colDir1A1B = normalizedDirection(col1A, col1B)
+  const colDir1B1C = normalizedDirection(col1B, col1C)
+  const colNormal1A1B = rotateLeft90(colDir1A1B)
+  const colNormal1B1C = rotateLeft90(colDir1B1C)
+
+  // 吸水管の方向ベクトル
+  const absDir2A2B = normalizedDirection(abs2A, abs2B)
+  const absNormal = rotateLeft90(absDir2A2B)
+
+  // 吸水管の左右オフセット点（2A位置）
+  const abs2A_L = {
+    x: abs2A.x + absNormal.dx * offsetDistance,
+    y: abs2A.y + absNormal.dy * offsetDistance,
+  }
+  const abs2A_R = {
+    x: abs2A.x - absNormal.dx * offsetDistance,
+    y: abs2A.y - absNormal.dy * offsetDistance,
+  }
+
+  let point2AL: Point3D
+  let point2AR: Point3D
+  let point1BOpposite: Point3D
+
+  if (mergeFromLeft) {
+    // 左側から合流する場合
+    // 1A→1Bから左にオフセットした線と、2A→2Bから左にオフセットした線との交点(2AL)
+    const col1A_L = {
+      x: col1A.x + colNormal1A1B.dx * offsetDistance,
+      y: col1A.y + colNormal1A1B.dy * offsetDistance,
+    }
+    const intersection2AL = lineIntersection(
+      col1A_L,
+      colDir1A1B,
+      abs2A_L,
+      absDir2A2B
+    )
+
+    // 1B→1Cから左にオフセットした線と、2A→2Bから右にオフセットした線との交点(2AR)
+    const col1B_L = {
+      x: col1B.x + colNormal1B1C.dx * offsetDistance,
+      y: col1B.y + colNormal1B1C.dy * offsetDistance,
+    }
+    const intersection2AR = lineIntersection(
+      col1B_L,
+      colDir1B1C,
+      abs2A_R,
+      absDir2A2B
+    )
+
+    point2AL = {
+      id: `${info.absorptionPipeId}_2AL`,
+      x: intersection2AL?.x ?? abs2A_L.x,
+      y: intersection2AL?.y ?? abs2A_L.y,
+      z: mergeZ,
+    }
+    point2AR = {
+      id: `${info.absorptionPipeId}_2AR`,
+      x: intersection2AR?.x ?? abs2A_R.x,
+      y: intersection2AR?.y ?? abs2A_R.y,
+      z: mergeZ,
+    }
+
+    // 合流の反対側（右側）に折点を追加
+    // 単独折点と同様に、1Bの右オフセット位置
+    const avgNormalDx = (colNormal1A1B.dx + colNormal1B1C.dx) / 2
+    const avgNormalDy = (colNormal1A1B.dy + colNormal1B1C.dy) / 2
+    const avgLen = Math.sqrt(avgNormalDx ** 2 + avgNormalDy ** 2) || 1
+    point1BOpposite = {
+      id: `${info.collectorPipeId}_1BR`,
+      x: col1B.x - (avgNormalDx / avgLen) * offsetDistance,
+      y: col1B.y - (avgNormalDy / avgLen) * offsetDistance,
+      z: mergeZ,
+    }
+  } else {
+    // 右側から合流する場合
+    // 1A→1Bから右にオフセットした線と、2A→2Bから左にオフセットした線との交点(2AL)
+    const col1A_R = {
+      x: col1A.x - colNormal1A1B.dx * offsetDistance,
+      y: col1A.y - colNormal1A1B.dy * offsetDistance,
+    }
+    const intersection2AL = lineIntersection(
+      col1A_R,
+      colDir1A1B,
+      abs2A_L,
+      absDir2A2B
+    )
+
+    // 1B→1Cから右にオフセットした線と、2A→2Bから右にオフセットした線との交点(2AR)
+    const col1B_R = {
+      x: col1B.x - colNormal1B1C.dx * offsetDistance,
+      y: col1B.y - colNormal1B1C.dy * offsetDistance,
+    }
+    const intersection2AR = lineIntersection(
+      col1B_R,
+      colDir1B1C,
+      abs2A_R,
+      absDir2A2B
+    )
+
+    point2AL = {
+      id: `${info.absorptionPipeId}_2AL`,
+      x: intersection2AL?.x ?? abs2A_L.x,
+      y: intersection2AL?.y ?? abs2A_L.y,
+      z: mergeZ,
+    }
+    point2AR = {
+      id: `${info.absorptionPipeId}_2AR`,
+      x: intersection2AR?.x ?? abs2A_R.x,
+      y: intersection2AR?.y ?? abs2A_R.y,
+      z: mergeZ,
+    }
+
+    // 合流の反対側（左側）に折点を追加
+    const avgNormalDx = (colNormal1A1B.dx + colNormal1B1C.dx) / 2
+    const avgNormalDy = (colNormal1A1B.dy + colNormal1B1C.dy) / 2
+    const avgLen = Math.sqrt(avgNormalDx ** 2 + avgNormalDy ** 2) || 1
+    point1BOpposite = {
+      id: `${info.collectorPipeId}_1BL`,
+      x: col1B.x + (avgNormalDx / avgLen) * offsetDistance,
+      y: col1B.y + (avgNormalDy / avgLen) * offsetDistance,
+      z: mergeZ,
+    }
+  }
+
+  // 擦り付け点を計算（2Aから上流方向にtransitionDistance進んだ位置）
+  const totalDist = distance2D(abs2A, abs2B)
+  const t = Math.min(transitionDistance / totalDist, 1)
+  const transX = abs2A.x + (abs2B.x - abs2A.x) * t
+  const transY = abs2A.y + (abs2B.y - abs2A.y) * t
+  const transZ = abs2A.z + (abs2B.z - abs2A.z) * t
+
+  const point2LS: Point3D = {
+    id: `${info.absorptionPipeId}_2LS`,
+    x: transX + absNormal.dx * offsetDistance,
+    y: transY + absNormal.dy * offsetDistance,
+    z: transZ,
+  }
+  const point2RS: Point3D = {
+    id: `${info.absorptionPipeId}_2RS`,
+    x: transX - absNormal.dx * offsetDistance,
+    y: transY - absNormal.dy * offsetDistance,
+    z: transZ,
+  }
+
+  return { point2AL, point2AR, point1BOpposite, point2LS, point2RS }
+}
+
+// 中間合流部の三角形メッシュを生成（新アルゴリズム）
+export function generateMidMergeTrianglesNew(
+  info: MidMergeInfo,
+  offsetDistance: number,
+  transitionDistance: number
+): { points: Point3D[]; faces: Face[] } {
+  const { point2AL, point2AR, point1BOpposite, point2LS, point2RS } =
+    calculateMidMergeIntersections(info, offsetDistance, transitionDistance)
+
+  const points: Point3D[] = [point2AL, point2AR, point1BOpposite, point2LS, point2RS]
+  const faces: Face[] = []
+
+  // 吸水管部分の三角形（2AL, 2LS, 2AR, 2RS）
+  // 三角形1: 2AL, 2LS, 2AR
+  faces.push({
+    p1: point2AL.id,
+    p2: point2LS.id,
+    p3: point2AR.id,
+  })
+  // 三角形2: 2AR, 2LS, 2RS
+  faces.push({
+    p1: point2AR.id,
+    p2: point2LS.id,
+    p3: point2RS.id,
+  })
+
+  // 合流部集水の三角形: 1BOpposite, 2AL, 2AR
+  faces.push({
+    p1: point1BOpposite.id,
+    p2: point2AL.id,
+    p3: point2AR.id,
+  })
+
+  return { points, faces }
+}
+
+// 最上流部合流（3管合流）の情報
+export interface UpstreamMergeInfo {
+  collectorPipeId: string
+  // 集水管（1）の中心線上の点
+  col1A: Point3D // 下流
+  col1B: Point3D // 上流（合流点）
+  // 左側の吸水管（2）
+  abs2PipeId: string
+  abs2A: Point3D // 下流（集水管に近い側）
+  abs2B: Point3D // 上流
+  // 右側の吸水管（3）
+  abs3PipeId: string
+  abs3A: Point3D // 下流（集水管に近い側）
+  abs3B: Point3D // 上流
+  // 合流点のZ座標
+  mergeZ: number
+}
+
+// 最上流部合流（3管合流）の交点を計算
+export function calculateUpstreamMergeIntersections(
+  info: UpstreamMergeInfo,
+  offsetDistance: number,
+  transitionDistance: number
+): {
+  // 交点
+  point2AL: Point3D // 集水管左オフセットと吸水管2左オフセットの交点
+  point3AR: Point3D // 集水管右オフセットと吸水管3右オフセットの交点
+  point2AR3AL: Point3D // 吸水管2右オフセットと吸水管3左オフセットの交点
+  // 吸水管2の擦り付け点
+  point2LS: Point3D
+  point2RS: Point3D
+  // 吸水管3の擦り付け点
+  point3LS: Point3D
+  point3RS: Point3D
+} {
+  const { col1A, col1B, abs2A, abs2B, abs3A, abs3B, mergeZ } = info
+
+  // 集水管の方向ベクトル
+  const colDir = normalizedDirection(col1A, col1B)
+  const colNormal = rotateLeft90(colDir)
+
+  // 吸水管2の方向ベクトル
+  const abs2Dir = normalizedDirection(abs2A, abs2B)
+  const abs2Normal = rotateLeft90(abs2Dir)
+
+  // 吸水管3の方向ベクトル
+  const abs3Dir = normalizedDirection(abs3A, abs3B)
+  const abs3Normal = rotateLeft90(abs3Dir)
+
+  // 集水管の左右オフセット点（1A位置）
+  const col1A_L = {
+    x: col1A.x + colNormal.dx * offsetDistance,
+    y: col1A.y + colNormal.dy * offsetDistance,
+  }
+  const col1A_R = {
+    x: col1A.x - colNormal.dx * offsetDistance,
+    y: col1A.y - colNormal.dy * offsetDistance,
+  }
+
+  // 吸水管2の左右オフセット点（2A位置）
+  const abs2A_L = {
+    x: abs2A.x + abs2Normal.dx * offsetDistance,
+    y: abs2A.y + abs2Normal.dy * offsetDistance,
+  }
+  const abs2A_R = {
+    x: abs2A.x - abs2Normal.dx * offsetDistance,
+    y: abs2A.y - abs2Normal.dy * offsetDistance,
+  }
+
+  // 吸水管3の左右オフセット点（3A位置）
+  const abs3A_L = {
+    x: abs3A.x + abs3Normal.dx * offsetDistance,
+    y: abs3A.y + abs3Normal.dy * offsetDistance,
+  }
+  const abs3A_R = {
+    x: abs3A.x - abs3Normal.dx * offsetDistance,
+    y: abs3A.y - abs3Normal.dy * offsetDistance,
+  }
+
+  // 1A→1Bから左にオフセットした線と、2A→2Bから左にオフセットした線の交点(2AL)
+  const intersection2AL = lineIntersection(col1A_L, colDir, abs2A_L, abs2Dir)
+  const point2AL: Point3D = {
+    id: `${info.abs2PipeId}_2AL`,
+    x: intersection2AL?.x ?? abs2A_L.x,
+    y: intersection2AL?.y ?? abs2A_L.y,
+    z: mergeZ,
+  }
+
+  // 1A→1Bから右にオフセットした線と、3A→3Bから右にオフセットした線の交点(3AR)
+  const intersection3AR = lineIntersection(col1A_R, colDir, abs3A_R, abs3Dir)
+  const point3AR: Point3D = {
+    id: `${info.abs3PipeId}_3AR`,
+    x: intersection3AR?.x ?? abs3A_R.x,
+    y: intersection3AR?.y ?? abs3A_R.y,
+    z: mergeZ,
+  }
+
+  // 2A→2Bから右にオフセットした線と、3A→3Bから左にオフセットした線の交点(2AR3AL)
+  const intersection2AR3AL = lineIntersection(abs2A_R, abs2Dir, abs3A_L, abs3Dir)
+  const point2AR3AL: Point3D = {
+    id: `${info.abs2PipeId}_2AR3AL`,
+    x: intersection2AR3AL?.x ?? (abs2A_R.x + abs3A_L.x) / 2,
+    y: intersection2AR3AL?.y ?? (abs2A_R.y + abs3A_L.y) / 2,
+    z: mergeZ,
+  }
+
+  // 吸水管2の擦り付け点
+  const totalDist2 = distance2D(abs2A, abs2B)
+  const t2 = Math.min(transitionDistance / totalDist2, 1)
+  const trans2X = abs2A.x + (abs2B.x - abs2A.x) * t2
+  const trans2Y = abs2A.y + (abs2B.y - abs2A.y) * t2
+  const trans2Z = abs2A.z + (abs2B.z - abs2A.z) * t2
+
+  const point2LS: Point3D = {
+    id: `${info.abs2PipeId}_2LS`,
+    x: trans2X + abs2Normal.dx * offsetDistance,
+    y: trans2Y + abs2Normal.dy * offsetDistance,
+    z: trans2Z,
+  }
+  const point2RS: Point3D = {
+    id: `${info.abs2PipeId}_2RS`,
+    x: trans2X - abs2Normal.dx * offsetDistance,
+    y: trans2Y - abs2Normal.dy * offsetDistance,
+    z: trans2Z,
+  }
+
+  // 吸水管3の擦り付け点
+  const totalDist3 = distance2D(abs3A, abs3B)
+  const t3 = Math.min(transitionDistance / totalDist3, 1)
+  const trans3X = abs3A.x + (abs3B.x - abs3A.x) * t3
+  const trans3Y = abs3A.y + (abs3B.y - abs3A.y) * t3
+  const trans3Z = abs3A.z + (abs3B.z - abs3A.z) * t3
+
+  const point3LS: Point3D = {
+    id: `${info.abs3PipeId}_3LS`,
+    x: trans3X + abs3Normal.dx * offsetDistance,
+    y: trans3Y + abs3Normal.dy * offsetDistance,
+    z: trans3Z,
+  }
+  const point3RS: Point3D = {
+    id: `${info.abs3PipeId}_3RS`,
+    x: trans3X - abs3Normal.dx * offsetDistance,
+    y: trans3Y - abs3Normal.dy * offsetDistance,
+    z: trans3Z,
+  }
+
+  return { point2AL, point3AR, point2AR3AL, point2LS, point2RS, point3LS, point3RS }
+}
+
+// 最上流部合流（3管合流）の三角形メッシュを生成
+export function generateUpstreamMergeTriangles(
+  info: UpstreamMergeInfo,
+  offsetDistance: number,
+  transitionDistance: number
+): { points: Point3D[]; faces: Face[] } {
+  const { point2AL, point3AR, point2AR3AL, point2LS, point2RS, point3LS, point3RS } =
+    calculateUpstreamMergeIntersections(info, offsetDistance, transitionDistance)
+
+  const points: Point3D[] = [point2AL, point3AR, point2AR3AL, point2LS, point2RS, point3LS, point3RS]
+  const faces: Face[] = []
+
+  // 吸水管2部分の三角形（2AL, 2AR3AL, 2RS, 2LS）
+  // 三角形1: 2AL, 2LS, 2AR3AL
+  faces.push({
+    p1: point2AL.id,
+    p2: point2LS.id,
+    p3: point2AR3AL.id,
+  })
+  // 三角形2: 2AR3AL, 2LS, 2RS
+  faces.push({
+    p1: point2AR3AL.id,
+    p2: point2LS.id,
+    p3: point2RS.id,
+  })
+
+  // 吸水管3部分の三角形（2AR3AL, 3AR, 3RS, 3LS）
+  // 三角形3: 2AR3AL, 3LS, 3AR
+  faces.push({
+    p1: point2AR3AL.id,
+    p2: point3LS.id,
+    p3: point3AR.id,
+  })
+  // 三角形4: 3AR, 3LS, 3RS
+  faces.push({
+    p1: point3AR.id,
+    p2: point3LS.id,
+    p3: point3RS.id,
+  })
+
+  // 中央の三角形: 2AL, 3AR, 2AR3AL
+  faces.push({
+    p1: point2AL.id,
+    p2: point3AR.id,
+    p3: point2AR3AL.id,
+  })
 
   return { points, faces }
 }
