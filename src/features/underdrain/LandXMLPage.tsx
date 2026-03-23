@@ -19,9 +19,7 @@ import {
   generatePipeMesh,
   mergeMeshes,
   detectMergeConnections,
-  generateMidMergeTrianglesNew,
   generateUpstreamMergeTriangles,
-  type MidMergeInfo,
   type UpstreamMergeInfo,
   type MergeConnection,
 } from '@/utils/landxml/triangulation'
@@ -310,60 +308,21 @@ export function LandXMLPage() {
           }
 
           // 残りの中間合流部を処理
+          // 注意: 現在の実装では中間合流部の三角形が集水管メッシュと重なる問題がある
+          // TODO: 集水管メッシュと合流部三角形を統合する必要がある
           for (const mergeInfo of mergeInfos) {
-            const { conn, segmentIndex } = mergeInfo
+            const { conn } = mergeInfo
             const absorption = absorptionPipes.find(p => p.pipeId === conn.absorptionPipeId)
             if (!absorption || absorption.vertices.length < 2) continue
             if (processedAbsorptionIds.has(absorption.pipeId)) continue
 
-            // 集水管の3点（1A, 1B, 1C）を取得
-            const col1B = collector.vertices[segmentIndex + 1] // 合流点に最も近い集水管頂点
-            const col1A = collector.vertices[segmentIndex] // 下流側
-            const col1C = collector.vertices[Math.min(segmentIndex + 2, collector.vertices.length - 1)] // 上流側
-
-            const midMergeInfo: MidMergeInfo = {
-              absorptionPipeId: absorption.pipeId,
-              collectorPipeId: collector.pipeId,
-              col1A,
-              col1B,
-              col1C,
-              abs2A: absorption.vertices[absorption.vertices.length - 1], // 下流（集水管に近い側）
-              abs2B: absorption.vertices[absorption.vertices.length - 2], // 上流側
-              mergeFromLeft: conn.mergeFromLeft,
-              mergeZ: conn.mergePoint.z,
-            }
-
-            const midMergeMesh = generateMidMergeTrianglesNew(
-              midMergeInfo,
-              offsetDistance,
-              transitionDistance
-            )
-            meshes.push(midMergeMesh)
+            // 中間合流の三角形生成は一時的に無効化（重なり問題のため）
+            // 代わりに、吸水管全体をメッシュ化して集水管に接続する
+            // 吸水管全体のメッシュを生成
+            const absMesh = generatePipeMesh(absorption.vertices, offsetDistance, absorption.pipeId)
+            meshes.push(absMesh)
 
             processedAbsorptionIds.add(absorption.pipeId)
-
-            // 吸水管の擦り付け点より上流をメッシュ化
-            // vertices[0]が最上流、vertices[length-1]が最下流（集水管接合点）
-            let cumDist = 0
-            let transitionIdx = -1
-
-            // 下流から上流に向かって距離を累積
-            for (let i = absorption.vertices.length - 1; i > 0; i--) {
-              cumDist += distance2D(absorption.vertices[i], absorption.vertices[i - 1])
-              if (cumDist >= transitionDistance) {
-                transitionIdx = i - 1
-                break
-              }
-            }
-
-            // 擦り付け点より上流の頂点を収集（vertices[0]からtransitionIdxまで）
-            if (transitionIdx > 0) {
-              const upperVertices = absorption.vertices.slice(0, transitionIdx + 1)
-              if (upperVertices.length >= 2) {
-                const mesh = generatePipeMesh(upperVertices, offsetDistance, absorption.pipeId + '_upper')
-                meshes.push(mesh)
-              }
-            }
           }
 
           // 集水管メッシュの生成
