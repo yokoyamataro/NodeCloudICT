@@ -948,6 +948,18 @@ export function generateCollectorWithMerges(
         // 合流点の上流側（t + offset）: 合流点より上流（segEnd側）
         const tUpstream = Math.min(1, merge.t + absorptionHalfWidth / segLen)
 
+        // デバッグ出力
+        console.log('[MergeDebug]', {
+          absorptionPipeId: merge.absorptionPipeId,
+          segLen,
+          mergeT: merge.t,
+          absorptionHalfWidth,
+          offsetRatio: absorptionHalfWidth / segLen,
+          tDownstream,
+          tUpstream,
+          tDiff: tUpstream - tDownstream,
+        })
+
         // 上流側の位置を計算
         const upX = segStart.x + tUpstream * (segEnd.x - segStart.x)
         const upY = segStart.y + tUpstream * (segEnd.y - segStart.y)
