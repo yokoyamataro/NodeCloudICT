@@ -876,7 +876,6 @@ export function generateCollectorWithMerges(
   for (let segIdx = 0; segIdx < collectorVertices.length - 1; segIdx++) {
     const segStart = collectorVertices[segIdx]
     const segEnd = collectorVertices[segIdx + 1]
-    const segLen = distance2D(segStart, segEnd)
 
     // このセグメントの合流点を収集
     const segmentMerges: MidMergeInfoWithSegment[] = []
@@ -937,63 +936,40 @@ export function generateCollectorWithMerges(
       }
 
       for (const merge of segmentMerges) {
-        // 合流点の前後にオフセット頂点を生成
-        // 吸水管の幅分だけ上流・下流にずらした位置に点を作成
-        const absorptionHalfWidth = offsetDistance // 吸水管の半幅 = オフセット距離と同じと仮定
+        // 合流点の前後の頂点を使用するアプローチ
+        // 合流点がセグメントの端（t=0またはt=1に近い）にある場合、
+        // その前後の実際の頂点（segStartとsegEnd）を上流・下流の基準点として使用
 
-        // セグメントはsegStart(下流)→segEnd(上流)の方向
-        // tが増加する方向 = 上流方向、tが減少する方向 = 下流方向
-        // 合流点の下流側（t - offset）: 合流点より下流（segStart側）
-        const tDownstream = Math.max(0, merge.t - absorptionHalfWidth / segLen)
-        // 合流点の上流側（t + offset）: 合流点より上流（segEnd側）
-        const tUpstream = Math.min(1, merge.t + absorptionHalfWidth / segLen)
+        // 上流側の基準点: セグメントの終点（segEnd）
+        // 下流側の基準点: セグメントの開始点（segStart）
+        // これにより、合流部の幅が60cm（30cm×2）となる
 
-        // デバッグ出力
-        console.log('[MergeDebug]', {
-          absorptionPipeId: merge.absorptionPipeId,
-          segLen,
-          mergeT: merge.t,
-          absorptionHalfWidth,
-          offsetRatio: absorptionHalfWidth / segLen,
-          tDownstream,
-          tUpstream,
-          tDiff: tUpstream - tDownstream,
-        })
-
-        // 上流側の位置を計算
-        const upX = segStart.x + tUpstream * (segEnd.x - segStart.x)
-        const upY = segStart.y + tUpstream * (segEnd.y - segStart.y)
-        const upZ = segStart.z + tUpstream * (segEnd.z - segStart.z)
-
+        // 上流側の点（セグメント終点）
         const upstreamLeft: Point3D = {
           id: `${collectorPipeId}_merge_${merge.absorptionPipeId}_upL`,
-          x: upX + colNormal.dx * offsetDistance,
-          y: upY + colNormal.dy * offsetDistance,
-          z: upZ,
+          x: segEnd.x + colNormal.dx * offsetDistance,
+          y: segEnd.y + colNormal.dy * offsetDistance,
+          z: segEnd.z,
         }
         const upstreamRight: Point3D = {
           id: `${collectorPipeId}_merge_${merge.absorptionPipeId}_upR`,
-          x: upX - colNormal.dx * offsetDistance,
-          y: upY - colNormal.dy * offsetDistance,
-          z: upZ,
+          x: segEnd.x - colNormal.dx * offsetDistance,
+          y: segEnd.y - colNormal.dy * offsetDistance,
+          z: segEnd.z,
         }
 
-        // 下流側の位置を計算
-        const downX = segStart.x + tDownstream * (segEnd.x - segStart.x)
-        const downY = segStart.y + tDownstream * (segEnd.y - segStart.y)
-        const downZ = segStart.z + tDownstream * (segEnd.z - segStart.z)
-
+        // 下流側の点（セグメント開始点）
         const downstreamLeft: Point3D = {
           id: `${collectorPipeId}_merge_${merge.absorptionPipeId}_downL`,
-          x: downX + colNormal.dx * offsetDistance,
-          y: downY + colNormal.dy * offsetDistance,
-          z: downZ,
+          x: segStart.x + colNormal.dx * offsetDistance,
+          y: segStart.y + colNormal.dy * offsetDistance,
+          z: segStart.z,
         }
         const downstreamRight: Point3D = {
           id: `${collectorPipeId}_merge_${merge.absorptionPipeId}_downR`,
-          x: downX - colNormal.dx * offsetDistance,
-          y: downY - colNormal.dy * offsetDistance,
-          z: downZ,
+          x: segStart.x - colNormal.dx * offsetDistance,
+          y: segStart.y - colNormal.dy * offsetDistance,
+          z: segStart.z,
         }
 
         points.push(upstreamLeft, upstreamRight, downstreamLeft, downstreamRight)
@@ -1007,7 +983,8 @@ export function generateCollectorWithMerges(
         })
 
         // 前の位置（下流側）から合流点の下流側までの三角形を生成
-        if (tDownstream > prevT + 0.001) {
+        // prevTが0より大きい場合、前の合流点からの三角形が必要
+        if (prevT > 0.001) {
           faces.push({
             p1: prevLeftId,
             p2: prevRightId,
@@ -1046,8 +1023,8 @@ export function generateCollectorWithMerges(
         }
 
         // 次のセクションのために更新
-        // tUpstreamが上流側（t値が大きい）なので、次は上流側から継続
-        prevT = tUpstream
+        // 上流側の点から継続
+        prevT = 1 // セグメント終端まで処理した
         prevLeftId = upstreamLeft.id
         prevRightId = upstreamRight.id
       }
