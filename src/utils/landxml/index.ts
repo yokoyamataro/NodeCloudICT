@@ -242,24 +242,25 @@ export function generateLandXMLFromPlan(
             }
 
             // 吸水管の擦り付け点より上流をメッシュ化
+            // vertices[0]が最上流、vertices[length-1]が最下流（集水管接合点）
             for (const abs of [leftAbs, rightAbs]) {
-              const totalLen = abs.vertices.reduce((sum, v, i) => {
-                if (i === 0) return 0
-                return sum + distance2D(abs.vertices[i - 1], v)
-              }, 0)
+              // 下流端（集水管接合点）からの累積距離を計算
+              // 擦り付け点は下流端からtransitionDistance（5m）の位置
+              let cumDist = 0
+              let transitionIdx = -1
 
-              if (totalLen > transitionDistance) {
-                // 擦り付け点より上流の頂点を収集
-                let cumDist = 0
-                const upperVertices: Point3D[] = []
-                for (let i = abs.vertices.length - 1; i >= 0; i--) {
-                  if (i < abs.vertices.length - 1) {
-                    cumDist += distance2D(abs.vertices[i], abs.vertices[i + 1])
-                  }
-                  if (cumDist >= transitionDistance) {
-                    upperVertices.unshift(abs.vertices[i])
-                  }
+              // 下流から上流に向かって距離を累積
+              for (let i = abs.vertices.length - 1; i > 0; i--) {
+                cumDist += distance2D(abs.vertices[i], abs.vertices[i - 1])
+                if (cumDist >= transitionDistance) {
+                  transitionIdx = i - 1
+                  break
                 }
+              }
+
+              // 擦り付け点より上流の頂点を収集（vertices[0]からtransitionIdxまで）
+              if (transitionIdx > 0) {
+                const upperVertices = abs.vertices.slice(0, transitionIdx + 1)
                 if (upperVertices.length >= 2) {
                   const mesh = generatePipeMesh(upperVertices, offsetDistance, abs.pipeId + '_upper')
                   meshes.push(mesh)
@@ -310,22 +311,22 @@ export function generateLandXMLFromPlan(
         processedAbsorptionIds.add(absorption.pipeId)
 
         // 吸水管の擦り付け点より上流をメッシュ化
-        const totalLen = absorption.vertices.reduce((sum, v, i) => {
-          if (i === 0) return 0
-          return sum + distance2D(absorption.vertices[i - 1], v)
-        }, 0)
+        // vertices[0]が最上流、vertices[length-1]が最下流（集水管接合点）
+        let cumDist = 0
+        let transitionIdx = -1
 
-        if (totalLen > transitionDistance) {
-          let cumDist = 0
-          const upperVertices: Point3D[] = []
-          for (let i = absorption.vertices.length - 1; i >= 0; i--) {
-            if (i < absorption.vertices.length - 1) {
-              cumDist += distance2D(absorption.vertices[i], absorption.vertices[i + 1])
-            }
-            if (cumDist >= transitionDistance) {
-              upperVertices.unshift(absorption.vertices[i])
-            }
+        // 下流から上流に向かって距離を累積
+        for (let i = absorption.vertices.length - 1; i > 0; i--) {
+          cumDist += distance2D(absorption.vertices[i], absorption.vertices[i - 1])
+          if (cumDist >= transitionDistance) {
+            transitionIdx = i - 1
+            break
           }
+        }
+
+        // 擦り付け点より上流の頂点を収集（vertices[0]からtransitionIdxまで）
+        if (transitionIdx > 0) {
+          const upperVertices = absorption.vertices.slice(0, transitionIdx + 1)
           if (upperVertices.length >= 2) {
             const mesh = generatePipeMesh(upperVertices, offsetDistance, absorption.pipeId + '_upper')
             meshes.push(mesh)
@@ -333,9 +334,11 @@ export function generateLandXMLFromPlan(
         }
       }
 
-      // 合流がない場合、または中間合流の場合は集水管全体をメッシュ化
-      if (mergeInfos.length === relatedConnections.length) {
-        // すべて中間合流の場合
+      // 中間合流のみの場合（最上流部合流がなかった場合）、集水管全体をメッシュ化
+      // 最上流部合流があった場合は上で既に処理済み
+      const hadUpstreamMerge = upstreamMerges.length >= 2
+      if (!hadUpstreamMerge) {
+        // 最上流部合流がない場合は集水管全体をメッシュ化
         const mesh = generatePipeMesh(collector.vertices, offsetDistance, collector.pipeId)
         meshes.push(mesh)
       }
