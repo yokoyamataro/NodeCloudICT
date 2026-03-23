@@ -781,6 +781,7 @@ export function calculateMidMergeIntersections(
 }
 
 // 中間合流部の三角形メッシュを生成（新アルゴリズム）
+// 注意: この関数は単独では使用せず、generateCollectorWithMergesと組み合わせて使用
 export function generateMidMergeTrianglesNew(
   info: MidMergeInfo,
   offsetDistance: number,
@@ -814,6 +815,400 @@ export function generateMidMergeTrianglesNew(
   })
 
   return { points, faces }
+}
+
+// 中間合流部の情報を拡張（集水管のセグメントインデックスを含む）
+export interface MidMergeInfoWithSegment extends MidMergeInfo {
+  segmentIndex: number // 合流点が存在する集水管セグメントのインデックス
+  t: number // セグメント上の位置（0-1）
+}
+
+// 集水管メッシュを合流点対応で生成
+// 合流点でメッシュを分割し、合流部の頂点と共有する
+export function generateCollectorWithMerges(
+  collectorVertices: Point3D[],
+  collectorPipeId: string,
+  merges: MidMergeInfoWithSegment[],
+  offsetDistance: number
+): {
+  collectorMesh: { points: Point3D[]; faces: Face[] }
+  // 各合流点での集水管オフセット頂点（合流部三角形との共有用）
+  mergeVertices: Map<string, {
+    // 合流点の上流側オフセット頂点
+    upstreamLeft: Point3D
+    upstreamRight: Point3D
+    // 合流点の下流側オフセット頂点
+    downstreamLeft: Point3D
+    downstreamRight: Point3D
+  }>
+} {
+  if (collectorVertices.length < 2) {
+    return { collectorMesh: { points: [], faces: [] }, mergeVertices: new Map() }
+  }
+
+  // 合流点をセグメントとt値でソート
+  const sortedMerges = [...merges].sort((a, b) => {
+    if (a.segmentIndex !== b.segmentIndex) return a.segmentIndex - b.segmentIndex
+    return a.t - b.t
+  })
+
+  // 集水管の各セグメントで合流点を処理
+  const points: Point3D[] = []
+  const faces: Face[] = []
+  const mergeVertices = new Map<string, {
+    upstreamLeft: Point3D
+    upstreamRight: Point3D
+    downstreamLeft: Point3D
+    downstreamRight: Point3D
+  }>()
+
+  // オフセット線を計算
+  const offsetPoints = offsetLine(collectorVertices, offsetDistance)
+
+  // 折れ点でのオフセット線の交点を調整
+  for (let i = 1; i < offsetPoints.length - 1; i++) {
+    adjustOffsetLinesAtCorner(offsetPoints, i)
+  }
+
+  // 各セグメントを処理
+  let currentMergeIdx = 0
+
+  for (let segIdx = 0; segIdx < collectorVertices.length - 1; segIdx++) {
+    const segStart = collectorVertices[segIdx]
+    const segEnd = collectorVertices[segIdx + 1]
+    const segLen = distance2D(segStart, segEnd)
+
+    // このセグメントの合流点を収集
+    const segmentMerges: MidMergeInfoWithSegment[] = []
+    while (currentMergeIdx < sortedMerges.length && sortedMerges[currentMergeIdx].segmentIndex === segIdx) {
+      segmentMerges.push(sortedMerges[currentMergeIdx])
+      currentMergeIdx++
+    }
+
+    if (segmentMerges.length === 0) {
+      // 合流点がないセグメント - 通常の三角形を生成
+      const leftIdStart = `${collectorPipeId}_L${segIdx}`
+      const rightIdStart = `${collectorPipeId}_R${segIdx}`
+      const leftIdEnd = `${collectorPipeId}_L${segIdx + 1}`
+      const rightIdEnd = `${collectorPipeId}_R${segIdx + 1}`
+
+      // 点を追加（重複チェック）
+      if (!points.find(p => p.id === leftIdStart)) {
+        points.push({ id: leftIdStart, x: offsetPoints[segIdx].left.x, y: offsetPoints[segIdx].left.y, z: offsetPoints[segIdx].left.z })
+      }
+      if (!points.find(p => p.id === rightIdStart)) {
+        points.push({ id: rightIdStart, x: offsetPoints[segIdx].right.x, y: offsetPoints[segIdx].right.y, z: offsetPoints[segIdx].right.z })
+      }
+      if (!points.find(p => p.id === leftIdEnd)) {
+        points.push({ id: leftIdEnd, x: offsetPoints[segIdx + 1].left.x, y: offsetPoints[segIdx + 1].left.y, z: offsetPoints[segIdx + 1].left.z })
+      }
+      if (!points.find(p => p.id === rightIdEnd)) {
+        points.push({ id: rightIdEnd, x: offsetPoints[segIdx + 1].right.x, y: offsetPoints[segIdx + 1].right.y, z: offsetPoints[segIdx + 1].right.z })
+      }
+
+      // 三角形を生成
+      faces.push({
+        p1: leftIdStart,
+        p2: rightIdStart,
+        p3: leftIdEnd,
+      })
+      faces.push({
+        p1: rightIdStart,
+        p2: rightIdEnd,
+        p3: leftIdEnd,
+      })
+    } else {
+      // 合流点があるセグメント - 合流点で分割して三角形を生成
+      // セグメントの方向と法線
+      const colDir = normalizedDirection(segStart, segEnd)
+      const colNormal = rotateLeft90(colDir)
+
+      // 前の位置（セグメント開始点）
+      let prevT = 0
+      let prevLeftId = `${collectorPipeId}_L${segIdx}`
+      let prevRightId = `${collectorPipeId}_R${segIdx}`
+
+      // 開始点を追加
+      if (!points.find(p => p.id === prevLeftId)) {
+        points.push({ id: prevLeftId, x: offsetPoints[segIdx].left.x, y: offsetPoints[segIdx].left.y, z: offsetPoints[segIdx].left.z })
+      }
+      if (!points.find(p => p.id === prevRightId)) {
+        points.push({ id: prevRightId, x: offsetPoints[segIdx].right.x, y: offsetPoints[segIdx].right.y, z: offsetPoints[segIdx].right.z })
+      }
+
+      for (const merge of segmentMerges) {
+        // 合流点の前後にオフセット頂点を生成
+        // 吸水管の幅分だけ上流・下流にずらした位置に点を作成
+        const absorptionHalfWidth = offsetDistance // 吸水管の半幅 = オフセット距離と同じと仮定
+
+        // 合流点の上流側（t - offset）
+        const tUpstream = Math.max(0, merge.t - absorptionHalfWidth / segLen)
+        // 合流点の下流側（t + offset）
+        const tDownstream = Math.min(1, merge.t + absorptionHalfWidth / segLen)
+
+        // 上流側の位置を計算
+        const upX = segStart.x + tUpstream * (segEnd.x - segStart.x)
+        const upY = segStart.y + tUpstream * (segEnd.y - segStart.y)
+        const upZ = segStart.z + tUpstream * (segEnd.z - segStart.z)
+
+        const upstreamLeft: Point3D = {
+          id: `${collectorPipeId}_merge_${merge.absorptionPipeId}_upL`,
+          x: upX + colNormal.dx * offsetDistance,
+          y: upY + colNormal.dy * offsetDistance,
+          z: upZ,
+        }
+        const upstreamRight: Point3D = {
+          id: `${collectorPipeId}_merge_${merge.absorptionPipeId}_upR`,
+          x: upX - colNormal.dx * offsetDistance,
+          y: upY - colNormal.dy * offsetDistance,
+          z: upZ,
+        }
+
+        // 下流側の位置を計算
+        const downX = segStart.x + tDownstream * (segEnd.x - segStart.x)
+        const downY = segStart.y + tDownstream * (segEnd.y - segStart.y)
+        const downZ = segStart.z + tDownstream * (segEnd.z - segStart.z)
+
+        const downstreamLeft: Point3D = {
+          id: `${collectorPipeId}_merge_${merge.absorptionPipeId}_downL`,
+          x: downX + colNormal.dx * offsetDistance,
+          y: downY + colNormal.dy * offsetDistance,
+          z: downZ,
+        }
+        const downstreamRight: Point3D = {
+          id: `${collectorPipeId}_merge_${merge.absorptionPipeId}_downR`,
+          x: downX - colNormal.dx * offsetDistance,
+          y: downY - colNormal.dy * offsetDistance,
+          z: downZ,
+        }
+
+        points.push(upstreamLeft, upstreamRight, downstreamLeft, downstreamRight)
+
+        // 合流頂点を保存
+        mergeVertices.set(merge.absorptionPipeId, {
+          upstreamLeft,
+          upstreamRight,
+          downstreamLeft,
+          downstreamRight,
+        })
+
+        // 前の位置から上流側までの三角形を生成
+        if (tUpstream > prevT + 0.001) {
+          faces.push({
+            p1: prevLeftId,
+            p2: prevRightId,
+            p3: upstreamLeft.id,
+          })
+          faces.push({
+            p1: prevRightId,
+            p2: upstreamRight.id,
+            p3: upstreamLeft.id,
+          })
+        }
+
+        // 合流部分は三角形を生成しない（吸水管の合流三角形が入る）
+        // 合流の反対側だけ小さな三角形を追加
+        if (merge.mergeFromLeft) {
+          // 左から合流 → 右側に三角形
+          faces.push({
+            p1: upstreamRight.id,
+            p2: downstreamRight.id,
+            p3: upstreamLeft.id, // この頂点は合流三角形と共有
+          })
+          faces.push({
+            p1: downstreamRight.id,
+            p2: downstreamLeft.id,
+            p3: upstreamLeft.id, // この頂点は合流三角形と共有
+          })
+        } else {
+          // 右から合流 → 左側に三角形
+          faces.push({
+            p1: upstreamLeft.id,
+            p2: downstreamLeft.id,
+            p3: upstreamRight.id, // この頂点は合流三角形と共有
+          })
+          faces.push({
+            p1: downstreamLeft.id,
+            p2: downstreamRight.id,
+            p3: upstreamRight.id, // この頂点は合流三角形と共有
+          })
+        }
+
+        // 次のセクションのために更新
+        prevT = tDownstream
+        prevLeftId = downstreamLeft.id
+        prevRightId = downstreamRight.id
+      }
+
+      // 最後の合流点からセグメント終了までの三角形
+      if (prevT < 1 - 0.001) {
+        const endLeftId = `${collectorPipeId}_L${segIdx + 1}`
+        const endRightId = `${collectorPipeId}_R${segIdx + 1}`
+
+        if (!points.find(p => p.id === endLeftId)) {
+          points.push({ id: endLeftId, x: offsetPoints[segIdx + 1].left.x, y: offsetPoints[segIdx + 1].left.y, z: offsetPoints[segIdx + 1].left.z })
+        }
+        if (!points.find(p => p.id === endRightId)) {
+          points.push({ id: endRightId, x: offsetPoints[segIdx + 1].right.x, y: offsetPoints[segIdx + 1].right.y, z: offsetPoints[segIdx + 1].right.z })
+        }
+
+        faces.push({
+          p1: prevLeftId,
+          p2: prevRightId,
+          p3: endLeftId,
+        })
+        faces.push({
+          p1: prevRightId,
+          p2: endRightId,
+          p3: endLeftId,
+        })
+      }
+    }
+  }
+
+  return { collectorMesh: { points, faces }, mergeVertices }
+}
+
+// 吸水管の合流部三角形を生成（集水管の頂点と共有）
+export function generateAbsorptionMergeTriangles(
+  absorptionVertices: Point3D[],
+  absorptionPipeId: string,
+  collectorMergeVertices: {
+    upstreamLeft: Point3D
+    upstreamRight: Point3D
+    downstreamLeft: Point3D
+    downstreamRight: Point3D
+  },
+  mergeFromLeft: boolean,
+  offsetDistance: number,
+  transitionDistance: number
+): {
+  mergeTriangles: { points: Point3D[]; faces: Face[] }
+  upperVertices: Point3D[] // 擦り付け点より上流の頂点（通常メッシュ用）
+  transitionPointLeft: Point3D // 擦り付け点の左オフセット
+  transitionPointRight: Point3D // 擦り付け点の右オフセット
+} {
+  const points: Point3D[] = []
+  const faces: Face[] = []
+
+  // 吸水管の下流端と上流方向
+  const absEnd = absorptionVertices[absorptionVertices.length - 1]
+  const absPrev = absorptionVertices[absorptionVertices.length - 2]
+  const absDir = normalizedDirection(absPrev, absEnd)
+
+  // 擦り付け点を計算（下流端からtransitionDistance上流）
+  let cumDist = 0
+  let transitionIdx = absorptionVertices.length - 1
+  let transitionPoint: Point3D = absEnd
+
+  for (let i = absorptionVertices.length - 1; i > 0; i--) {
+    const segDist = distance2D(absorptionVertices[i], absorptionVertices[i - 1])
+    if (cumDist + segDist >= transitionDistance) {
+      const remainingDist = transitionDistance - cumDist
+      const t = remainingDist / segDist
+      transitionPoint = {
+        id: `${absorptionPipeId}_trans`,
+        x: absorptionVertices[i].x + (absorptionVertices[i - 1].x - absorptionVertices[i].x) * t,
+        y: absorptionVertices[i].y + (absorptionVertices[i - 1].y - absorptionVertices[i].y) * t,
+        z: absorptionVertices[i].z + (absorptionVertices[i - 1].z - absorptionVertices[i].z) * t,
+      }
+      transitionIdx = i
+      break
+    }
+    cumDist += segDist
+  }
+
+  // 擦り付け点がなければ（吸水管が5m未満）最初の点を使用
+  if (transitionIdx === absorptionVertices.length - 1) {
+    transitionPoint = { ...absorptionVertices[0], id: `${absorptionPipeId}_trans` }
+    transitionIdx = 0
+  }
+
+  // 擦り付け点での左右オフセット
+  // 方向は擦り付け点前後のセグメントから計算
+  let transDir = absDir
+  if (transitionIdx > 0 && transitionIdx < absorptionVertices.length - 1) {
+    const dirBefore = normalizedDirection(absorptionVertices[transitionIdx - 1], absorptionVertices[transitionIdx])
+    const dirAfter = normalizedDirection(absorptionVertices[transitionIdx], absorptionVertices[transitionIdx + 1])
+    transDir = {
+      dx: (dirBefore.dx + dirAfter.dx) / 2,
+      dy: (dirBefore.dy + dirAfter.dy) / 2,
+    }
+    const len = Math.sqrt(transDir.dx ** 2 + transDir.dy ** 2)
+    if (len > 0.001) {
+      transDir = { dx: transDir.dx / len, dy: transDir.dy / len }
+    }
+  }
+  const transNormal = rotateLeft90(transDir)
+
+  const transitionPointLeft: Point3D = {
+    id: `${absorptionPipeId}_transL`,
+    x: transitionPoint.x + transNormal.dx * offsetDistance,
+    y: transitionPoint.y + transNormal.dy * offsetDistance,
+    z: transitionPoint.z,
+  }
+  const transitionPointRight: Point3D = {
+    id: `${absorptionPipeId}_transR`,
+    x: transitionPoint.x - transNormal.dx * offsetDistance,
+    y: transitionPoint.y - transNormal.dy * offsetDistance,
+    z: transitionPoint.z,
+  }
+
+  points.push(transitionPointLeft, transitionPointRight)
+
+  // 集水管の合流頂点を取得
+  const { upstreamLeft, upstreamRight, downstreamLeft, downstreamRight } = collectorMergeVertices
+
+  // 合流三角形を生成
+  if (mergeFromLeft) {
+    // 左から合流
+    // 吸水管の左側は集水管の上流側左に接続
+    // 吸水管の右側は集水管の下流側左に接続
+    // transL → upstreamLeft
+    // transR → downstreamLeft
+    faces.push({
+      p1: transitionPointLeft.id,
+      p2: transitionPointRight.id,
+      p3: upstreamLeft.id,
+    })
+    faces.push({
+      p1: transitionPointRight.id,
+      p2: downstreamLeft.id,
+      p3: upstreamLeft.id,
+    })
+  } else {
+    // 右から合流
+    // 吸水管の左側は集水管の下流側右に接続
+    // 吸水管の右側は集水管の上流側右に接続
+    // transL → downstreamRight
+    // transR → upstreamRight
+    faces.push({
+      p1: transitionPointLeft.id,
+      p2: transitionPointRight.id,
+      p3: downstreamRight.id,
+    })
+    faces.push({
+      p1: transitionPointRight.id,
+      p2: upstreamRight.id,
+      p3: downstreamRight.id,
+    })
+  }
+
+  // 擦り付け点より上流の頂点を収集
+  const upperVertices: Point3D[] = []
+  for (let i = 0; i < transitionIdx; i++) {
+    upperVertices.push(absorptionVertices[i])
+  }
+  if (transitionIdx > 0) {
+    upperVertices.push(transitionPoint)
+  }
+
+  return {
+    mergeTriangles: { points, faces },
+    upperVertices,
+    transitionPointLeft,
+    transitionPointRight,
+  }
 }
 
 // 最上流部合流（3管合流）の情報

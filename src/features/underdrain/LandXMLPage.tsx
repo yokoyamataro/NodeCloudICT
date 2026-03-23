@@ -20,8 +20,11 @@ import {
   mergeMeshes,
   detectMergeConnections,
   generateUpstreamMergeTriangles,
+  generateCollectorWithMerges,
+  generateAbsorptionMergeTriangles,
   type UpstreamMergeInfo,
   type MergeConnection,
+  type MidMergeInfoWithSegment,
 } from '@/utils/landxml/triangulation'
 import { distance2D } from '@/utils/landxml/geometry'
 
@@ -308,27 +311,102 @@ export function LandXMLPage() {
           }
 
           // 残りの中間合流部を処理
-          // 注意: 現在の実装では中間合流部の三角形が集水管メッシュと重なる問題がある
-          // TODO: 集水管メッシュと合流部三角形を統合する必要がある
+          // 新アルゴリズム: 集水管メッシュを合流点で分割し、頂点を共有
+          const midMergeInfos: MidMergeInfoWithSegment[] = []
+
           for (const mergeInfo of mergeInfos) {
-            const { conn } = mergeInfo
+            const { conn, segmentIndex, t } = mergeInfo
             const absorption = absorptionPipes.find(p => p.pipeId === conn.absorptionPipeId)
             if (!absorption || absorption.vertices.length < 2) continue
             if (processedAbsorptionIds.has(absorption.pipeId)) continue
 
-            // 中間合流の三角形生成は一時的に無効化（重なり問題のため）
-            // 代わりに、吸水管全体をメッシュ化して集水管に接続する
-            // 吸水管全体のメッシュを生成
-            const absMesh = generatePipeMesh(absorption.vertices, offsetDistance, absorption.pipeId)
-            meshes.push(absMesh)
+            // 中間合流情報を構築
+            const col1A = collector.vertices[segmentIndex]
+            const col1B = conn.mergePoint
+            const col1C = collector.vertices[segmentIndex + 1]
 
-            processedAbsorptionIds.add(absorption.pipeId)
+            midMergeInfos.push({
+              absorptionPipeId: absorption.pipeId,
+              collectorPipeId: collector.pipeId,
+              col1A,
+              col1B,
+              col1C,
+              abs2A: absorption.vertices[absorption.vertices.length - 1],
+              abs2B: absorption.vertices[absorption.vertices.length - 2],
+              mergeFromLeft: conn.mergeFromLeft,
+              mergeZ: conn.mergePoint.z,
+              segmentIndex,
+              t,
+            })
           }
 
-          // 集水管メッシュの生成
+          // 中間合流のみの場合（最上流部合流がなかった場合）
           const hadUpstreamMerge = upstreamMerges.length >= 2
-          if (!hadUpstreamMerge) {
-            // 最上流部合流がない場合は集水管全体をメッシュ化
+
+          if (midMergeInfos.length > 0) {
+            // 中間合流がある場合、集水管メッシュを合流点対応で生成
+            const collectorVertices = hadUpstreamMerge
+              ? collector.vertices.slice(0, -1)
+              : collector.vertices
+
+            const { collectorMesh, mergeVertices } = generateCollectorWithMerges(
+              collectorVertices,
+              collector.pipeId,
+              midMergeInfos,
+              offsetDistance
+            )
+            meshes.push(collectorMesh)
+
+            // 各吸水管の合流三角形と上流部メッシュを生成
+            for (const midMerge of midMergeInfos) {
+              const absorption = absorptionPipes.find(p => p.pipeId === midMerge.absorptionPipeId)
+              if (!absorption || absorption.vertices.length < 2) continue
+
+              const collMergeVerts = mergeVertices.get(midMerge.absorptionPipeId)
+              if (!collMergeVerts) continue
+
+              const {
+                mergeTriangles,
+                upperVertices,
+                transitionPointLeft,
+                transitionPointRight,
+              } = generateAbsorptionMergeTriangles(
+                absorption.vertices,
+                absorption.pipeId,
+                collMergeVerts,
+                midMerge.mergeFromLeft,
+                offsetDistance,
+                transitionDistance
+              )
+
+              meshes.push(mergeTriangles)
+
+              // 上流部分の通常メッシュを生成
+              if (upperVertices.length >= 2) {
+                const upperMesh = generatePipeMesh(upperVertices, offsetDistance, absorption.pipeId + '_upper')
+                const lastUpperLeftId = `${absorption.pipeId}_upper_L${upperVertices.length - 1}`
+                const lastUpperRightId = `${absorption.pipeId}_upper_R${upperVertices.length - 1}`
+
+                // 上流メッシュと擦り付け点を接続する三角形
+                upperMesh.points.push(transitionPointLeft, transitionPointRight)
+                upperMesh.faces.push({
+                  p1: lastUpperLeftId,
+                  p2: lastUpperRightId,
+                  p3: transitionPointLeft.id,
+                })
+                upperMesh.faces.push({
+                  p1: lastUpperRightId,
+                  p2: transitionPointRight.id,
+                  p3: transitionPointLeft.id,
+                })
+
+                meshes.push(upperMesh)
+              }
+
+              processedAbsorptionIds.add(absorption.pipeId)
+            }
+          } else if (!hadUpstreamMerge) {
+            // 中間合流がなく、最上流部合流もない場合は集水管全体をメッシュ化
             const mesh = generatePipeMesh(collector.vertices, offsetDistance, collector.pipeId)
             meshes.push(mesh)
           }
