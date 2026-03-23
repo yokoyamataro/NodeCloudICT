@@ -366,8 +366,7 @@ export function LandXMLPage() {
             }
           }
 
-          // 中間合流のみの場合（最上流部合流がなかった場合）、集水管全体をメッシュ化
-          // 最上流部合流があった場合は上で既に処理済み
+          // 集水管メッシュの生成
           const hadUpstreamMerge = upstreamMerges.length >= 2
           if (!hadUpstreamMerge) {
             // 最上流部合流がない場合は集水管全体をメッシュ化

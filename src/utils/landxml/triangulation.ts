@@ -701,7 +701,7 @@ export function calculateMidMergeIntersections(
     const avgNormalDy = (colNormal1A1B.dy + colNormal1B1C.dy) / 2
     const avgLen = Math.sqrt(avgNormalDx ** 2 + avgNormalDy ** 2) || 1
     point1BOpposite = {
-      id: `${info.collectorPipeId}_1BR`,
+      id: `${info.collectorPipeId}_${info.absorptionPipeId}_1BR`,
       x: col1B.x - (avgNormalDx / avgLen) * offsetDistance,
       y: col1B.y - (avgNormalDy / avgLen) * offsetDistance,
       z: mergeZ,
@@ -750,7 +750,7 @@ export function calculateMidMergeIntersections(
     const avgNormalDy = (colNormal1A1B.dy + colNormal1B1C.dy) / 2
     const avgLen = Math.sqrt(avgNormalDx ** 2 + avgNormalDy ** 2) || 1
     point1BOpposite = {
-      id: `${info.collectorPipeId}_1BL`,
+      id: `${info.collectorPipeId}_${info.absorptionPipeId}_1BL`,
       x: col1B.x + (avgNormalDx / avgLen) * offsetDistance,
       y: col1B.y + (avgNormalDy / avgLen) * offsetDistance,
       z: mergeZ,
