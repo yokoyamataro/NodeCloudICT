@@ -941,10 +941,12 @@ export function generateCollectorWithMerges(
         // 吸水管の幅分だけ上流・下流にずらした位置に点を作成
         const absorptionHalfWidth = offsetDistance // 吸水管の半幅 = オフセット距離と同じと仮定
 
-        // 合流点の上流側（t - offset）
-        const tUpstream = Math.max(0, merge.t - absorptionHalfWidth / segLen)
-        // 合流点の下流側（t + offset）
-        const tDownstream = Math.min(1, merge.t + absorptionHalfWidth / segLen)
+        // セグメントはsegStart(下流)→segEnd(上流)の方向
+        // tが増加する方向 = 上流方向、tが減少する方向 = 下流方向
+        // 合流点の下流側（t - offset）: 合流点より下流（segStart側）
+        const tDownstream = Math.max(0, merge.t - absorptionHalfWidth / segLen)
+        // 合流点の上流側（t + offset）: 合流点より上流（segEnd側）
+        const tUpstream = Math.min(1, merge.t + absorptionHalfWidth / segLen)
 
         // 上流側の位置を計算
         const upX = segStart.x + tUpstream * (segEnd.x - segStart.x)
@@ -992,52 +994,50 @@ export function generateCollectorWithMerges(
           downstreamRight,
         })
 
-        // 前の位置から上流側までの三角形を生成
-        if (tUpstream > prevT + 0.001) {
+        // 前の位置（下流側）から合流点の下流側までの三角形を生成
+        if (tDownstream > prevT + 0.001) {
           faces.push({
             p1: prevLeftId,
             p2: prevRightId,
-            p3: upstreamLeft.id,
+            p3: downstreamLeft.id,
           })
           faces.push({
             p1: prevRightId,
-            p2: upstreamRight.id,
-            p3: upstreamLeft.id,
+            p2: downstreamRight.id,
+            p3: downstreamLeft.id,
           })
         }
 
-        // 合流部分は三角形を生成しない（吸水管の合流三角形が入る）
-        // 合流の反対側だけ小さな三角形を追加
+        // 合流部分: 吸水管が接続しない側の三角形を生成
+        // 吸水管の合流三角形が接続側の2点と擦り付け点を結ぶ
+        // 集水管側は反対側の2点と、接続側の1点を使って三角形を作る
         if (merge.mergeFromLeft) {
-          // 左から合流 → 右側に三角形
+          // 左から合流 → 吸水管はupstreamLeft, downstreamLeftに接続
+          // 集水管側は右側の帯 + 中央を埋める三角形
+          // upR → downR → downL の三角形（下半分）
+          // upR → downL → upL の三角形（上半分）は吸水管がカバー
           faces.push({
             p1: upstreamRight.id,
             p2: downstreamRight.id,
-            p3: upstreamLeft.id, // この頂点は合流三角形と共有
-          })
-          faces.push({
-            p1: downstreamRight.id,
-            p2: downstreamLeft.id,
-            p3: upstreamLeft.id, // この頂点は合流三角形と共有
+            p3: downstreamLeft.id,
           })
         } else {
-          // 右から合流 → 左側に三角形
+          // 右から合流 → 吸水管はupstreamRight, downstreamRightに接続
+          // 集水管側は左側の帯 + 中央を埋める三角形
+          // upL → downL → downR の三角形（下半分）
+          // upL → downR → upR の三角形（上半分）は吸水管がカバー
           faces.push({
             p1: upstreamLeft.id,
             p2: downstreamLeft.id,
-            p3: upstreamRight.id, // この頂点は合流三角形と共有
-          })
-          faces.push({
-            p1: downstreamLeft.id,
-            p2: downstreamRight.id,
-            p3: upstreamRight.id, // この頂点は合流三角形と共有
+            p3: downstreamRight.id,
           })
         }
 
         // 次のセクションのために更新
-        prevT = tDownstream
-        prevLeftId = downstreamLeft.id
-        prevRightId = downstreamRight.id
+        // tUpstreamが上流側（t値が大きい）なので、次は上流側から継続
+        prevT = tUpstream
+        prevLeftId = upstreamLeft.id
+        prevRightId = upstreamRight.id
       }
 
       // 最後の合流点からセグメント終了までの三角形
