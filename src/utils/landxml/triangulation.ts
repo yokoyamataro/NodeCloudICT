@@ -1017,28 +1017,38 @@ export function generateCollectorWithMerges(
           })
         }
 
-        // 合流部分: 吸水管が接続しない側の三角形を生成
-        // 吸水管の合流三角形が接続側の2点と擦り付け点を結ぶ
-        // 集水管側は反対側の2点と、接続側の1点を使って三角形を作る
+        // 合流部分: 60cm×60cmの正方形を2つの三角形で構成
+        // 吸水管が接続する側の三角形は吸水管側で生成
+        // 集水管側は反対側の三角形を生成
         if (merge.mergeFromLeft) {
           // 左から合流 → 吸水管はupstreamLeft, downstreamLeftに接続
-          // 集水管側は右側の帯 + 中央を埋める三角形
-          // upR → downR → downL の三角形（下半分）
-          // upR → downL → upL の三角形（上半分）は吸水管がカバー
+          // 集水管側は右側の三角形を生成（upL, upR, downL と upR, downR, downL）
+          // 右半分: upR → downR → downL
           faces.push({
             p1: upstreamRight.id,
             p2: downstreamRight.id,
             p3: downstreamLeft.id,
           })
+          // 上半分（右三角）: upL → upR → downL
+          faces.push({
+            p1: upstreamLeft.id,
+            p2: upstreamRight.id,
+            p3: downstreamLeft.id,
+          })
         } else {
           // 右から合流 → 吸水管はupstreamRight, downstreamRightに接続
-          // 集水管側は左側の帯 + 中央を埋める三角形
-          // upL → downL → downR の三角形（下半分）
-          // upL → downR → upR の三角形（上半分）は吸水管がカバー
+          // 集水管側は左側の三角形を生成
+          // 左半分: upL → downL → downR
           faces.push({
             p1: upstreamLeft.id,
             p2: downstreamLeft.id,
             p3: downstreamRight.id,
+          })
+          // 上半分（左三角）: upL → downR → upR
+          faces.push({
+            p1: upstreamLeft.id,
+            p2: downstreamRight.id,
+            p3: upstreamRight.id,
           })
         }
 
@@ -1169,35 +1179,37 @@ export function generateAbsorptionMergeTriangles(
   const { upstreamLeft, upstreamRight, downstreamLeft, downstreamRight } = collectorMergeVertices
 
   // 合流三角形を生成
-  // 吸水管が左から合流する場合、吸水管の右側エッジが集水管の左側エッジに接続
-  // 吸水管が右から合流する場合、吸水管の左側エッジが集水管の右側エッジに接続
+  // 集水管側で60cm×60cmの正方形（2三角形）を生成済み
+  // 吸水管側は擦り付け点から集水管の合流点（2点）への接続三角形を生成
   if (mergeFromLeft) {
     // 左から合流
     // 吸水管の右側（transR）を集水管の左側（upstreamLeft, downstreamLeft）に接続
-    // 吸水管の左側（transL）は反対側（吸水管のメッシュ外側）
-    faces.push({
-      p1: transitionPointRight.id,
-      p2: transitionPointLeft.id,
-      p3: downstreamLeft.id,
-    })
+    // transL → transR → downstreamLeft
     faces.push({
       p1: transitionPointLeft.id,
-      p2: upstreamLeft.id,
+      p2: transitionPointRight.id,
       p3: downstreamLeft.id,
+    })
+    // transL → downstreamLeft → upstreamLeft
+    faces.push({
+      p1: transitionPointLeft.id,
+      p2: downstreamLeft.id,
+      p3: upstreamLeft.id,
     })
   } else {
     // 右から合流
     // 吸水管の左側（transL）を集水管の右側（upstreamRight, downstreamRight）に接続
-    // 吸水管の右側（transR）は反対側（吸水管のメッシュ外側）
-    faces.push({
-      p1: transitionPointLeft.id,
-      p2: transitionPointRight.id,
-      p3: downstreamRight.id,
-    })
+    // transR → transL → downstreamRight
     faces.push({
       p1: transitionPointRight.id,
-      p2: upstreamRight.id,
+      p2: transitionPointLeft.id,
       p3: downstreamRight.id,
+    })
+    // transR → downstreamRight → upstreamRight
+    faces.push({
+      p1: transitionPointRight.id,
+      p2: downstreamRight.id,
+      p3: upstreamRight.id,
     })
   }
 
