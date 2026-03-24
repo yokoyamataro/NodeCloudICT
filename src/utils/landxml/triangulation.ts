@@ -1018,39 +1018,19 @@ export function generateCollectorWithMerges(
         }
 
         // 合流部分: 60cm×60cmの正方形を2つの三角形で構成
-        // 吸水管が接続する側の三角形は吸水管側で生成
-        // 集水管側は反対側の三角形を生成
-        if (merge.mergeFromLeft) {
-          // 左から合流 → 吸水管はupstreamLeft, downstreamLeftに接続
-          // 集水管側は右側の三角形を生成（upL, upR, downL と upR, downR, downL）
-          // 右半分: upR → downR → downL
-          faces.push({
-            p1: upstreamRight.id,
-            p2: downstreamRight.id,
-            p3: downstreamLeft.id,
-          })
-          // 上半分（右三角）: upL → upR → downL
-          faces.push({
-            p1: upstreamLeft.id,
-            p2: upstreamRight.id,
-            p3: downstreamLeft.id,
-          })
-        } else {
-          // 右から合流 → 吸水管はupstreamRight, downstreamRightに接続
-          // 集水管側は左側の三角形を生成
-          // 左半分: upL → downL → downR
-          faces.push({
-            p1: upstreamLeft.id,
-            p2: downstreamLeft.id,
-            p3: downstreamRight.id,
-          })
-          // 上半分（左三角）: upL → downR → upR
-          faces.push({
-            p1: upstreamLeft.id,
-            p2: downstreamRight.id,
-            p3: upstreamRight.id,
-          })
-        }
+        // 集水管側で正方形全体（2三角形）を生成
+        // 三角形1: upL → downL → downR
+        faces.push({
+          p1: upstreamLeft.id,
+          p2: downstreamLeft.id,
+          p3: downstreamRight.id,
+        })
+        // 三角形2: upL → downR → upR
+        faces.push({
+          p1: upstreamLeft.id,
+          p2: downstreamRight.id,
+          p3: upstreamRight.id,
+        })
 
         // 次のセクションのために更新
         // 上流側の点から継続
