@@ -84,13 +84,40 @@ export function mergeMeshes(
   meshes: { points: Point3D[]; faces: Face[] }[]
 ): TINSurface {
   const pointMap = new Map<string, Point3D>()
+  // 座標をキーとしたマップ（座標の重複排除用）
+  const coordToIdMap = new Map<string, string>()
+  // 古いIDから新しいIDへのマッピング
+  const idRemap = new Map<string, string>()
   const allFaces: Face[] = []
 
   for (const mesh of meshes) {
     for (const point of mesh.points) {
-      pointMap.set(point.id, point)
+      // 座標を文字列キーに変換（小数点以下6桁で丸める）
+      const coordKey = `${point.x.toFixed(6)},${point.y.toFixed(6)},${point.z.toFixed(6)}`
+
+      const existingId = coordToIdMap.get(coordKey)
+      if (existingId) {
+        // 同じ座標の点が既に存在する場合、IDをリマップ
+        idRemap.set(point.id, existingId)
+      } else {
+        // 新しい点として登録
+        coordToIdMap.set(coordKey, point.id)
+        pointMap.set(point.id, point)
+        idRemap.set(point.id, point.id)
+      }
     }
-    allFaces.push(...mesh.faces)
+  }
+
+  // FaceのIDをリマップ
+  for (const mesh of meshes) {
+    for (const face of mesh.faces) {
+      const remappedFace: Face = {
+        p1: idRemap.get(face.p1) ?? face.p1,
+        p2: idRemap.get(face.p2) ?? face.p2,
+        p3: idRemap.get(face.p3) ?? face.p3,
+      }
+      allFaces.push(remappedFace)
+    }
   }
 
   return {
