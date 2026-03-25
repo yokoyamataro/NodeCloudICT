@@ -246,10 +246,10 @@ export function detectMergeConnections(
         if (dist < tolerance) {
           // 吸水管が集水管の左側から来るか右側から来るか判定
           // 吸水管の進入方向と集水管の法線の内積で判定
-          // 吸水管が集水管の左側から進入する場合、absDir と colNormal（左向き）の内積が正
+          // 吸水管が集水管の左側から進入する場合、absDir は右向き（法線と逆向き）なので内積が負
           const colNormal = rotateLeft90(colDir)
           const dot = absDir.dx * colNormal.dx + absDir.dy * colNormal.dy
-          const mergeFromLeft = dot > 0
+          const mergeFromLeft = dot < 0
 
           connections.push({
             absorptionPipeId: absorption.pipeId,
