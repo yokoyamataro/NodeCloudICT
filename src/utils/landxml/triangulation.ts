@@ -900,6 +900,12 @@ export function generateCollectorWithMerges(
   // 各セグメントを処理
   let currentMergeIdx = 0
 
+  // 前のセグメントの終了点を追跡（合流があった場合はその上流端点）
+  let prevSegmentEndLeftId: string | null = null
+  let prevSegmentEndRightId: string | null = null
+  let prevSegmentEndLeft: Point3D | null = null
+  let prevSegmentEndRight: Point3D | null = null
+
   for (let segIdx = 0; segIdx < collectorVertices.length - 1; segIdx++) {
     const segStart = collectorVertices[segIdx]
     const segEnd = collectorVertices[segIdx + 1]
@@ -913,18 +919,31 @@ export function generateCollectorWithMerges(
 
     if (segmentMerges.length === 0) {
       // 合流点がないセグメント - 通常の三角形を生成
-      const leftIdStart = `${collectorPipeId}_L${segIdx}`
-      const rightIdStart = `${collectorPipeId}_R${segIdx}`
+      // 前のセグメントで合流があった場合は、その上流端点を開始点として使用
+      let actualStartLeftId: string
+      let actualStartRightId: string
+
+      if (prevSegmentEndLeftId && prevSegmentEndRightId && prevSegmentEndLeft && prevSegmentEndRight) {
+        // 前のセグメントの合流上流端点を使用
+        actualStartLeftId = prevSegmentEndLeftId
+        actualStartRightId = prevSegmentEndRightId
+        // 点は既に追加済み
+      } else {
+        // 通常の開始点を使用
+        actualStartLeftId = `${collectorPipeId}_L${segIdx}`
+        actualStartRightId = `${collectorPipeId}_R${segIdx}`
+        // 点を追加（重複チェック）
+        if (!points.find(p => p.id === actualStartLeftId)) {
+          points.push({ id: actualStartLeftId, x: offsetPoints[segIdx].left.x, y: offsetPoints[segIdx].left.y, z: offsetPoints[segIdx].left.z })
+        }
+        if (!points.find(p => p.id === actualStartRightId)) {
+          points.push({ id: actualStartRightId, x: offsetPoints[segIdx].right.x, y: offsetPoints[segIdx].right.y, z: offsetPoints[segIdx].right.z })
+        }
+      }
+
       const leftIdEnd = `${collectorPipeId}_L${segIdx + 1}`
       const rightIdEnd = `${collectorPipeId}_R${segIdx + 1}`
 
-      // 点を追加（重複チェック）
-      if (!points.find(p => p.id === leftIdStart)) {
-        points.push({ id: leftIdStart, x: offsetPoints[segIdx].left.x, y: offsetPoints[segIdx].left.y, z: offsetPoints[segIdx].left.z })
-      }
-      if (!points.find(p => p.id === rightIdStart)) {
-        points.push({ id: rightIdStart, x: offsetPoints[segIdx].right.x, y: offsetPoints[segIdx].right.y, z: offsetPoints[segIdx].right.z })
-      }
       if (!points.find(p => p.id === leftIdEnd)) {
         points.push({ id: leftIdEnd, x: offsetPoints[segIdx + 1].left.x, y: offsetPoints[segIdx + 1].left.y, z: offsetPoints[segIdx + 1].left.z })
       }
@@ -934,15 +953,21 @@ export function generateCollectorWithMerges(
 
       // 三角形を生成
       faces.push({
-        p1: leftIdStart,
-        p2: rightIdStart,
+        p1: actualStartLeftId,
+        p2: actualStartRightId,
         p3: leftIdEnd,
       })
       faces.push({
-        p1: rightIdStart,
+        p1: actualStartRightId,
         p2: rightIdEnd,
         p3: leftIdEnd,
       })
+
+      // このセグメントには合流がないので、次のセグメントは通常の折れ点から開始
+      prevSegmentEndLeftId = null
+      prevSegmentEndRightId = null
+      prevSegmentEndLeft = null
+      prevSegmentEndRight = null
     } else {
       // 合流点があるセグメント - 合流点で分割して三角形を生成
       // セグメントの方向と法線
@@ -950,16 +975,27 @@ export function generateCollectorWithMerges(
       const colNormal = rotateLeft90(colDir)
 
       // 前の位置（セグメント開始点）
+      // 前のセグメントで合流があった場合は、その上流端点を開始点として使用
       let prevT = 0
-      let prevLeftId = `${collectorPipeId}_L${segIdx}`
-      let prevRightId = `${collectorPipeId}_R${segIdx}`
+      let prevLeftId: string
+      let prevRightId: string
 
-      // 開始点を追加
-      if (!points.find(p => p.id === prevLeftId)) {
-        points.push({ id: prevLeftId, x: offsetPoints[segIdx].left.x, y: offsetPoints[segIdx].left.y, z: offsetPoints[segIdx].left.z })
-      }
-      if (!points.find(p => p.id === prevRightId)) {
-        points.push({ id: prevRightId, x: offsetPoints[segIdx].right.x, y: offsetPoints[segIdx].right.y, z: offsetPoints[segIdx].right.z })
+      if (prevSegmentEndLeftId && prevSegmentEndRightId && prevSegmentEndLeft && prevSegmentEndRight) {
+        // 前のセグメントの合流上流端点を使用
+        prevLeftId = prevSegmentEndLeftId
+        prevRightId = prevSegmentEndRightId
+        // 点は既に追加済み
+      } else {
+        // 通常の開始点を使用
+        prevLeftId = `${collectorPipeId}_L${segIdx}`
+        prevRightId = `${collectorPipeId}_R${segIdx}`
+        // 開始点を追加
+        if (!points.find(p => p.id === prevLeftId)) {
+          points.push({ id: prevLeftId, x: offsetPoints[segIdx].left.x, y: offsetPoints[segIdx].left.y, z: offsetPoints[segIdx].left.z })
+        }
+        if (!points.find(p => p.id === prevRightId)) {
+          points.push({ id: prevRightId, x: offsetPoints[segIdx].right.x, y: offsetPoints[segIdx].right.y, z: offsetPoints[segIdx].right.z })
+        }
       }
 
       for (const merge of segmentMerges) {
@@ -1064,6 +1100,12 @@ export function generateCollectorWithMerges(
         prevT = tUpstream
         prevLeftId = upstreamLeft.id
         prevRightId = upstreamRight.id
+
+        // 次のセグメント用に最後の合流の上流端点を保存
+        prevSegmentEndLeftId = upstreamLeft.id
+        prevSegmentEndRightId = upstreamRight.id
+        prevSegmentEndLeft = upstreamLeft
+        prevSegmentEndRight = upstreamRight
       }
 
       // 最後の合流点からセグメント終了までの三角形
@@ -1088,7 +1130,14 @@ export function generateCollectorWithMerges(
           p2: endRightId,
           p3: endLeftId,
         })
+
+        // 通常の終了点まで三角形を生成したので、次のセグメントは通常の開始点から
+        prevSegmentEndLeftId = null
+        prevSegmentEndRightId = null
+        prevSegmentEndLeft = null
+        prevSegmentEndRight = null
       }
+      // else: 合流がセグメント終端付近にある場合、次のセグメントはprevSegmentEnd*を使用
     }
   }
 
