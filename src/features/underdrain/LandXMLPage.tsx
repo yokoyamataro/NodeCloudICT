@@ -138,12 +138,21 @@ export function LandXMLPage() {
             }
 
             const system = systemCollectorMap.get(systemIndex)!
-            system.vertices.push({
+
+            // 座標が重複している点を除外（最上流部で2点が同じ座標になる場合）
+            const newPoint = {
               id: `col_${row.collectorPipeId}_${row.rowIndex}`,
               x: row.collectorPoint.x,
               y: row.collectorPoint.y,
               z: row.collectorPoint.plannedHeight,
-            })
+            }
+            const isDuplicate = system.vertices.some(v =>
+              Math.abs(v.x - newPoint.x) < 0.001 && Math.abs(v.y - newPoint.y) < 0.001
+            )
+            if (!isDuplicate) {
+              system.vertices.push(newPoint)
+            }
+
             if (!system.pipeIds.includes(row.collectorPipeId)) {
               system.pipeIds.push(row.collectorPipeId)
             }
