@@ -361,17 +361,14 @@ export function LandXMLPage() {
           let hadUpstreamMerge = false
 
           if (upstreamAbsIds.length >= 2) {
-            // 対応するmergeInfoを取得
-            const upstreamAbsIdSet = new Set(upstreamAbsIds)
-            const upstreamMergeInfos = mergeInfos.filter(m => upstreamAbsIdSet.has(m.conn.absorptionPipeId))
+            // 三管合流ペアの吸水管を取得（左右の判定に関係なく最初の2本を使用）
+            const abs1 = absorptionPipes.find(p => p.pipeId === upstreamAbsIds[0])
+            const abs2 = absorptionPipes.find(p => p.pipeId === upstreamAbsIds[1])
 
-            // 左右の吸水管を判別
-            const leftMerge = upstreamMergeInfos.find(m => m.conn.mergeFromLeft)
-            const rightMerge = upstreamMergeInfos.find(m => !m.conn.mergeFromLeft)
-
-            if (leftMerge && rightMerge) {
-              const leftAbs = absorptionPipes.find(p => p.pipeId === leftMerge.conn.absorptionPipeId)
-              const rightAbs = absorptionPipes.find(p => p.pipeId === rightMerge.conn.absorptionPipeId)
+            if (abs1 && abs1.vertices.length >= 2 && abs2 && abs2.vertices.length >= 2) {
+              // 三管合流として処理（左右は任意の順序で割り当て）
+              const leftAbs = abs1
+              const rightAbs = abs2
 
               if (leftAbs && leftAbs.vertices.length >= 2 && rightAbs && rightAbs.vertices.length >= 2) {
                 upstreamMergeCount++
@@ -436,9 +433,11 @@ export function LandXMLPage() {
                 }
 
                 // 最上流部で処理した合流をリストから除外
-                for (const m of upstreamMergeInfos) {
-                  const idx = mergeInfos.indexOf(m)
-                  if (idx >= 0) mergeInfos.splice(idx, 1)
+                const upstreamAbsIdSet = new Set(upstreamAbsIds)
+                for (let i = mergeInfos.length - 1; i >= 0; i--) {
+                  if (upstreamAbsIdSet.has(mergeInfos[i].conn.absorptionPipeId)) {
+                    mergeInfos.splice(i, 1)
+                  }
                 }
                 hadUpstreamMerge = true
               }
