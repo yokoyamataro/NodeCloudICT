@@ -66,13 +66,15 @@ export function generateLandXML(
 `
 
   // 面を出力
+  let faceIndex = 0
   for (const face of surface.faces) {
     const id1 = idMap.get(face.p1)
     const id2 = idMap.get(face.p2)
     const id3 = idMap.get(face.p3)
 
     if (id1 !== undefined && id2 !== undefined && id3 !== undefined) {
-      xml += `                    <F>${id1} ${id2} ${id3}</F>\n`
+      xml += `                    <F>${id1} ${id2} ${id3}</F><!-- ${faceIndex} -->\n`
+      faceIndex++
     }
   }
 
