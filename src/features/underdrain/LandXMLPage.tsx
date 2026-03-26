@@ -177,6 +177,9 @@ export function LandXMLPage() {
       // 処理済みの吸水管IDを記録
       const processedAbsorptionIds = new Set<string>()
 
+      // 三管合流の処理回数カウンタ
+      let upstreamMergeCount = 0
+
       // 集水管のメッシュを生成
       for (const collector of collectorPipes) {
         if (collector.vertices.length < 2) continue
@@ -241,6 +244,7 @@ export function LandXMLPage() {
               const rightAbs = absorptionPipes.find(p => p.pipeId === rightMerge.conn.absorptionPipeId)
 
               if (leftAbs && leftAbs.vertices.length >= 2 && rightAbs && rightAbs.vertices.length >= 2) {
+                upstreamMergeCount++
                 const col1A = collector.vertices[collector.vertices.length - 2]
                 const col1B = collector.vertices[collector.vertices.length - 1]
 
@@ -424,6 +428,8 @@ export function LandXMLPage() {
 
       // メッシュを統合
       const surface = mergeMeshes(meshes)
+
+      alert(`[LandXML] 三管合流処理: ${upstreamMergeCount}回`)
 
       setPreviewData({
         points: surface.points,
