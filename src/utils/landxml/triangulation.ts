@@ -1367,22 +1367,51 @@ export function calculateUpstreamMergeIntersections(
     y: abs3A.y - abs3Normal.dy * offsetDistance,
   }
 
+  // 集水管と吸水管の方向の内積で平行判定
+  const dot2 = Math.abs(colDir.dx * abs2Dir.dx + colDir.dy * abs2Dir.dy)
+  const dot3 = Math.abs(colDir.dx * abs3Dir.dx + colDir.dy * abs3Dir.dy)
+  const parallelThreshold = 0.95 // ほぼ平行とみなす閾値
+
   // 1A→1Bから左にオフセットした線と、2A→2Bから左にオフセットした線の交点(2AL)
-  const intersection2AL = lineIntersection(col1A_L, colDir, abs2A_L, abs2Dir)
-  const point2AL: Point3D = {
-    id: `${info.abs2PipeId}_2AL`,
-    x: intersection2AL?.x ?? abs2A_L.x,
-    y: intersection2AL?.y ?? abs2A_L.y,
-    z: mergeZ,
+  // 吸水管2が集水管とほぼ平行な場合は、集水管の法線方向に単純オフセット
+  let point2AL: Point3D
+  if (dot2 > parallelThreshold) {
+    // 平行な場合: 集水管の終点(col1B)を基準に、集水管の法線方向にオフセット
+    point2AL = {
+      id: `${info.abs2PipeId}_2AL`,
+      x: col1B.x + colNormal.dx * offsetDistance,
+      y: col1B.y + colNormal.dy * offsetDistance,
+      z: mergeZ,
+    }
+  } else {
+    const intersection2AL = lineIntersection(col1A_L, colDir, abs2A_L, abs2Dir)
+    point2AL = {
+      id: `${info.abs2PipeId}_2AL`,
+      x: intersection2AL?.x ?? abs2A_L.x,
+      y: intersection2AL?.y ?? abs2A_L.y,
+      z: mergeZ,
+    }
   }
 
   // 1A→1Bから右にオフセットした線と、3A→3Bから右にオフセットした線の交点(3AR)
-  const intersection3AR = lineIntersection(col1A_R, colDir, abs3A_R, abs3Dir)
-  const point3AR: Point3D = {
-    id: `${info.abs3PipeId}_3AR`,
-    x: intersection3AR?.x ?? abs3A_R.x,
-    y: intersection3AR?.y ?? abs3A_R.y,
-    z: mergeZ,
+  // 吸水管3が集水管とほぼ平行な場合は、集水管の法線方向に単純オフセット
+  let point3AR: Point3D
+  if (dot3 > parallelThreshold) {
+    // 平行な場合: 集水管の終点(col1B)を基準に、集水管の法線方向にオフセット
+    point3AR = {
+      id: `${info.abs3PipeId}_3AR`,
+      x: col1B.x - colNormal.dx * offsetDistance,
+      y: col1B.y - colNormal.dy * offsetDistance,
+      z: mergeZ,
+    }
+  } else {
+    const intersection3AR = lineIntersection(col1A_R, colDir, abs3A_R, abs3Dir)
+    point3AR = {
+      id: `${info.abs3PipeId}_3AR`,
+      x: intersection3AR?.x ?? abs3A_R.x,
+      y: intersection3AR?.y ?? abs3A_R.y,
+      z: mergeZ,
+    }
   }
 
   // 2A→2Bから右にオフセットした線と、3A→3Bから左にオフセットした線の交点(2AR3AL)
