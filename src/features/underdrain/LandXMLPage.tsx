@@ -473,6 +473,46 @@ export function LandXMLPage() {
     downloadLandXML(xml, filename)
   }
 
+  // デバッグ用: 施工計画データをJSONでダウンロード
+  const handleExportDebugData = () => {
+    const debugData = {
+      planGroups: planGroups.map(group => ({
+        id: group.id,
+        name: group.name,
+        groupType: group.groupType,
+        groupIndex: group.groupIndex,
+        rows: group.rows.map(row => ({
+          rowIndex: row.rowIndex,
+          pipeNumber: row.pipeNumber,
+          absorptionPipeId: row.absorptionPipeId,
+          collectorPipeId: row.collectorPipeId,
+          systemIndex: row.systemIndex,
+          absorptionPoints: row.absorptionPoints.map(p => ({
+            pointIndex: p.pointIndex,
+            x: p.x,
+            y: p.y,
+            plannedHeight: p.plannedHeight,
+          })),
+          collectorPoint: row.collectorPoint ? {
+            x: row.collectorPoint.x,
+            y: row.collectorPoint.y,
+            plannedHeight: row.collectorPoint.plannedHeight,
+          } : null,
+        })),
+      })),
+      pipeWidth,
+      transitionDistance,
+    }
+
+    const blob = new Blob([JSON.stringify(debugData, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'landxml_debug_data.json'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   // 統計情報
   const stats = useMemo(() => {
     if (!previewData) return null
@@ -512,6 +552,14 @@ export function LandXMLPage() {
             </div>
           ) : (
             <>
+              <button
+                onClick={handleExportDebugData}
+                disabled={!hasData}
+                className="flex items-center gap-2 px-3 py-2 border rounded-lg text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50"
+                title="デバッグデータ出力"
+              >
+                デバッグ出力
+              </button>
               <button
                 onClick={() => setShowSettings(!showSettings)}
                 className={`flex items-center gap-2 px-3 py-2 border rounded-lg transition-colors ${
