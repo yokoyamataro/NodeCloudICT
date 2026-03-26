@@ -193,6 +193,14 @@ export function LandXMLPage() {
       // 三管合流の処理回数カウンタ
       let upstreamMergeCount = 0
 
+      // デバッグ: 集水管と吸水管のID対応を確認
+      const debugInfo = {
+        collectorPipeIds: collectorPipes.map(c => c.pipeId),
+        absorptionMergePointIds: absorptionPipes.map(a => ({ pipeId: a.pipeId, mergePointId: a.mergePointId, systemIndex: a.systemIndex })),
+        absorptionsByCollectorKeys: Array.from(absorptionsByCollector.keys()),
+      }
+      alert(`デバッグ情報:\n集水管ID: ${debugInfo.collectorPipeIds.join(', ')}\n\n吸水管mergePointId: ${debugInfo.absorptionMergePointIds.map(a => a.mergePointId).join(', ')}\n\nabsorptionsByCollectorキー: ${debugInfo.absorptionsByCollectorKeys.join(', ')}`)
+
       // 集水管のメッシュを生成
       for (const collector of collectorPipes) {
         if (collector.vertices.length < 2) continue
