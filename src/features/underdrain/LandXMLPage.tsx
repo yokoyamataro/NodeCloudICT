@@ -174,6 +174,16 @@ export function LandXMLPage() {
         connectionsByCollector.set(conn.collectorPipeId, list)
       }
 
+      // 施工計画順で各集水管に合流する吸水管をグループ化（最初の2本が最上流部）
+      const absorptionsByCollector = new Map<string, PipeLineData[]>()
+      for (const abs of absorptionPipes) {
+        if (abs.mergePointId) {
+          const list = absorptionsByCollector.get(abs.mergePointId) || []
+          list.push(abs)
+          absorptionsByCollector.set(abs.mergePointId, list)
+        }
+      }
+
       // 処理済みの吸水管IDを記録
       const processedAbsorptionIds = new Set<string>()
 
@@ -185,6 +195,7 @@ export function LandXMLPage() {
         if (collector.vertices.length < 2) continue
 
         const relatedConnections = connectionsByCollector.get(collector.pipeId) || []
+        const relatedAbsorptions = absorptionsByCollector.get(collector.pipeId) || []
 
         if (relatedConnections.length === 0) {
           // 合流点がない場合は通常のメッシュ生成
@@ -228,16 +239,19 @@ export function LandXMLPage() {
             }
           }
 
-          // 最上流部（集水管の最後のセグメント端）での合流を検出
-          const upstreamMerges = mergeInfos.filter(
-            m => m.segmentIndex === collector.vertices.length - 2 && m.t > 0.9
-          )
+          // 最上流部: 施工計画順で最初の2本の吸水管を三管合流として処理
+          const upstreamAbsorptions = relatedAbsorptions.slice(0, 2)
+          let hadUpstreamMerge = false
 
-          if (upstreamMerges.length >= 2) {
-            // 最上流部で2本以上の吸水管が合流（3管合流）
+          if (upstreamAbsorptions.length >= 2) {
+            // 最初の2本の吸水管IDを取得
+            const upstreamAbsIds = new Set(upstreamAbsorptions.map(a => a.pipeId))
+            // 対応するmergeInfoを取得
+            const upstreamMergeInfos = mergeInfos.filter(m => upstreamAbsIds.has(m.conn.absorptionPipeId))
+
             // 左右の吸水管を判別
-            const leftMerge = upstreamMerges.find(m => m.conn.mergeFromLeft)
-            const rightMerge = upstreamMerges.find(m => !m.conn.mergeFromLeft)
+            const leftMerge = upstreamMergeInfos.find(m => m.conn.mergeFromLeft)
+            const rightMerge = upstreamMergeInfos.find(m => !m.conn.mergeFromLeft)
 
             if (leftMerge && rightMerge) {
               const leftAbs = absorptionPipes.find(p => p.pipeId === leftMerge.conn.absorptionPipeId)
@@ -306,10 +320,11 @@ export function LandXMLPage() {
                 }
 
                 // 最上流部で処理した合流をリストから除外
-                for (const m of upstreamMerges) {
+                for (const m of upstreamMergeInfos) {
                   const idx = mergeInfos.indexOf(m)
                   if (idx >= 0) mergeInfos.splice(idx, 1)
                 }
+                hadUpstreamMerge = true
               }
             }
           }
@@ -343,9 +358,6 @@ export function LandXMLPage() {
               t,
             })
           }
-
-          // 中間合流のみの場合（最上流部合流がなかった場合）
-          const hadUpstreamMerge = upstreamMerges.length >= 2
 
           if (midMergeInfos.length > 0) {
             // 中間合流がある場合、集水管メッシュを合流点対応で生成
