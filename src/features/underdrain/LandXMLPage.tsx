@@ -80,8 +80,14 @@ export function LandXMLPage() {
         vertices: Point3D[]
         mergePointId: string | null
         systemIndex: number // 系統番号
+        collectorPipeIds?: string[] // collector管の場合: 関連するcollectorPipeId（UUID）のリスト
       }
       const pipeLines: PipeLineData[] = []
+
+      // 三管合流ペア: 同じcollectorPipeId（UUID）を持つ最初の2本の吸水管
+      const upstreamPairs: { collectorPipeId: string; absIds: string[] }[] = []
+      // collectorPipeIdごとに吸水管を収集
+      const absByCollectorPipeId = new Map<string, string[]>()
 
       for (const group of planGroups) {
         const systemCollectorMap = new Map<number, {
@@ -112,6 +118,13 @@ export function LandXMLPage() {
                 mergePointId: row.collectorPipeId,
                 systemIndex,
               })
+
+              // collectorPipeIdごとに吸水管IDを収集
+              if (row.collectorPipeId) {
+                const list = absByCollectorPipeId.get(row.collectorPipeId) || []
+                list.push(row.absorptionPipeId)
+                absByCollectorPipeId.set(row.collectorPipeId, list)
+              }
             }
           }
 
@@ -147,8 +160,19 @@ export function LandXMLPage() {
               vertices: system.vertices,
               mergePointId: null,
               systemIndex: sysIdx,
+              collectorPipeIds: system.pipeIds, // 関連するcollectorPipeId（UUID）のリスト
             })
           }
+        }
+      }
+
+      // 三管合流ペアを構築: 同じcollectorPipeIdを持つ最初の2本の吸水管
+      for (const [colPipeId, absIds] of absByCollectorPipeId) {
+        if (absIds.length >= 2) {
+          upstreamPairs.push({
+            collectorPipeId: colPipeId,
+            absIds: absIds.slice(0, 2),
+          })
         }
       }
 
@@ -210,7 +234,6 @@ export function LandXMLPage() {
         if (collector.vertices.length < 2) continue
 
         const relatedConnections = connectionsByCollector.get(collector.pipeId) || []
-        const relatedAbsorptions = absorptionsByCollector.get(collector.pipeId) || []
 
         if (relatedConnections.length === 0) {
           // 合流点がない場合は通常のメッシュ生成
@@ -254,17 +277,24 @@ export function LandXMLPage() {
             }
           }
 
-          // 最上流部: 同じsystemIndexの最初の2本の吸水管を三管合流として処理
-          // 集水管のsystemIndexと同じ吸水管をフィルタリング
-          const sameSystemAbsorptions = relatedAbsorptions.filter(a => a.systemIndex === collector.systemIndex)
-          const upstreamAbsorptions = sameSystemAbsorptions.slice(0, 2)
+          // 最上流部: upstreamPairsから対応する三管合流ペアを取得
+          // collector.collectorPipeIdsに含まれるcollectorPipeIdを持つペアを探す
+          let upstreamAbsIds: string[] = []
+          if (collector.collectorPipeIds) {
+            for (const colPipeId of collector.collectorPipeIds) {
+              const pair = upstreamPairs.find(p => p.collectorPipeId === colPipeId)
+              if (pair && pair.absIds.length >= 2) {
+                upstreamAbsIds = pair.absIds
+                break
+              }
+            }
+          }
           let hadUpstreamMerge = false
 
-          if (upstreamAbsorptions.length >= 2) {
-            // 最初の2本の吸水管IDを取得
-            const upstreamAbsIds = new Set(upstreamAbsorptions.map(a => a.pipeId))
+          if (upstreamAbsIds.length >= 2) {
             // 対応するmergeInfoを取得
-            const upstreamMergeInfos = mergeInfos.filter(m => upstreamAbsIds.has(m.conn.absorptionPipeId))
+            const upstreamAbsIdSet = new Set(upstreamAbsIds)
+            const upstreamMergeInfos = mergeInfos.filter(m => upstreamAbsIdSet.has(m.conn.absorptionPipeId))
 
             // 左右の吸水管を判別
             const leftMerge = upstreamMergeInfos.find(m => m.conn.mergeFromLeft)
