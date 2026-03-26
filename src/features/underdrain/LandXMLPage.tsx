@@ -49,6 +49,8 @@ export function LandXMLPage() {
   } | null>(null)
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // デバッグ情報
+  const [debugInfo, setDebugInfo] = useState<Record<string, unknown> | null>(null)
 
   // プロジェクト選択時にデータを読み込む
   useEffect(() => {
@@ -194,12 +196,14 @@ export function LandXMLPage() {
       let upstreamMergeCount = 0
 
       // デバッグ: 集水管と吸水管のID対応を確認
-      const debugInfo = {
-        collectorPipeIds: collectorPipes.map(c => c.pipeId),
-        absorptionMergePointIds: absorptionPipes.map(a => ({ pipeId: a.pipeId, mergePointId: a.mergePointId, systemIndex: a.systemIndex })),
+      const pipeDebugInfo = {
+        collectorPipes: collectorPipes.map(c => ({ pipeId: c.pipeId, systemIndex: c.systemIndex, vertexCount: c.vertices.length })),
+        absorptionPipes: absorptionPipes.map(a => ({ pipeId: a.pipeId, mergePointId: a.mergePointId, systemIndex: a.systemIndex, vertexCount: a.vertices.length })),
         absorptionsByCollectorKeys: Array.from(absorptionsByCollector.keys()),
+        connectionsByCollectorKeys: Array.from(connectionsByCollector.keys()),
+        mergeConnections: mergeConnections.map(c => ({ absId: c.absorptionPipeId, colId: c.collectorPipeId, fromLeft: c.mergeFromLeft })),
       }
-      alert(`デバッグ情報:\n集水管ID: ${debugInfo.collectorPipeIds.join(', ')}\n\n吸水管mergePointId: ${debugInfo.absorptionMergePointIds.map(a => a.mergePointId).join(', ')}\n\nabsorptionsByCollectorキー: ${debugInfo.absorptionsByCollectorKeys.join(', ')}`)
+      setDebugInfo(pipeDebugInfo)
 
       // 集水管のメッシュを生成
       for (const collector of collectorPipes) {
@@ -515,6 +519,8 @@ export function LandXMLPage() {
       })),
       pipeWidth,
       transitionDistance,
+      // プレビュー生成時のデバッグ情報
+      pipeDebugInfo: debugInfo,
     }
 
     const blob = new Blob([JSON.stringify(debugData, null, 2)], { type: 'application/json' })
