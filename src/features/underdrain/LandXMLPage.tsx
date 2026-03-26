@@ -250,64 +250,157 @@ export function LandXMLPage() {
 
         // 三管合流のみの場合（中間合流がない場合）
         if (relatedConnections.length === 0 && collectorUpstreamPair) {
-          // 三管合流処理
+          // 三管合流処理 - 中間合流と同じアルゴリズムで処理
+          // 上の行の吸水管を「集水管の上流側」から合流するものとして扱う
+          // 集水管の端部（最上流点）を「中間点（折点）」として扱う
           const upstreamAbsIds = collectorUpstreamPair.absIds
-          const leftAbs = absorptionPipes.find(p => p.pipeId === upstreamAbsIds[0])
-          const rightAbs = absorptionPipes.find(p => p.pipeId === upstreamAbsIds[1])
+          const abs1 = absorptionPipes.find(p => p.pipeId === upstreamAbsIds[0]) // 上の行（上流側から合流）
+          const abs2 = absorptionPipes.find(p => p.pipeId === upstreamAbsIds[1]) // 下の行（下流側から合流）
 
-          if (leftAbs && leftAbs.vertices.length >= 2 && rightAbs && rightAbs.vertices.length >= 2) {
+          if (abs1 && abs1.vertices.length >= 2 && abs2 && abs2.vertices.length >= 2) {
             upstreamMergeCount++
+
+            // 集水管の最上流点を合流点とする
+            const mergePoint = collector.vertices[collector.vertices.length - 1]
+
+            // 集水管の方向ベクトル
             const col1A = collector.vertices[collector.vertices.length - 2]
             const col1B = collector.vertices[collector.vertices.length - 1]
+            const colLen = distance2D(col1A, col1B)
+            const colDir = { dx: (col1B.x - col1A.x) / colLen, dy: (col1B.y - col1A.y) / colLen }
+            const colNormal = { dx: -colDir.dy, dy: colDir.dx }
 
-            const upstreamInfo: UpstreamMergeInfo = {
-              collectorPipeId: collector.pipeId,
-              col1A,
-              col1B,
-              abs2PipeId: leftAbs.pipeId,
-              abs2A: leftAbs.vertices[leftAbs.vertices.length - 1],
-              abs2B: leftAbs.vertices[leftAbs.vertices.length - 2],
-              abs3PipeId: rightAbs.pipeId,
-              abs3A: rightAbs.vertices[rightAbs.vertices.length - 1],
-              abs3B: rightAbs.vertices[rightAbs.vertices.length - 2],
-              mergeZ: col1B.z,
+            // abs1（上の行）を「上流側から合流」として処理
+            // abs2（下の行）を「下流側から合流」として処理
+            // 合流点から上流・下流にオフセット距離分ずらして正方形を作成
+            const upX = mergePoint.x + colDir.dx * offsetDistance
+            const upY = mergePoint.y + colDir.dy * offsetDistance
+            const downX = mergePoint.x - colDir.dx * offsetDistance
+            const downY = mergePoint.y - colDir.dy * offsetDistance
+
+            const upstreamLeft: Point3D = {
+              id: `${collector.pipeId}_upstream_upL`,
+              x: upX + colNormal.dx * offsetDistance,
+              y: upY + colNormal.dy * offsetDistance,
+              z: mergePoint.z,
+            }
+            const upstreamRight: Point3D = {
+              id: `${collector.pipeId}_upstream_upR`,
+              x: upX - colNormal.dx * offsetDistance,
+              y: upY - colNormal.dy * offsetDistance,
+              z: mergePoint.z,
+            }
+            const downstreamLeft: Point3D = {
+              id: `${collector.pipeId}_upstream_downL`,
+              x: downX + colNormal.dx * offsetDistance,
+              y: downY + colNormal.dy * offsetDistance,
+              z: mergePoint.z,
+            }
+            const downstreamRight: Point3D = {
+              id: `${collector.pipeId}_upstream_downR`,
+              x: downX - colNormal.dx * offsetDistance,
+              y: downY - colNormal.dy * offsetDistance,
+              z: mergePoint.z,
             }
 
-            const upstreamMesh = generateUpstreamMergeTriangles(
-              upstreamInfo,
+            // 正方形メッシュ（集水管側）
+            const squarePoints = [upstreamLeft, upstreamRight, downstreamLeft, downstreamRight]
+            const squareFaces: Face[] = [
+              { p1: upstreamLeft.id, p2: downstreamLeft.id, p3: downstreamRight.id },
+              { p1: upstreamLeft.id, p2: downstreamRight.id, p3: upstreamRight.id },
+            ]
+            meshes.push({ points: squarePoints, faces: squareFaces })
+
+            // abs1の合流方向を判定
+            const abs1End = abs1.vertices[abs1.vertices.length - 1]
+            const abs1Prev = abs1.vertices[abs1.vertices.length - 2]
+            const abs1Dir = {
+              dx: abs1End.x - abs1Prev.x,
+              dy: abs1End.y - abs1Prev.y
+            }
+            const cross1 = colDir.dx * abs1Dir.dy - colDir.dy * abs1Dir.dx
+            const abs1FromLeft = cross1 > 0
+
+            // abs2の合流方向を判定
+            const abs2End = abs2.vertices[abs2.vertices.length - 1]
+            const abs2Prev = abs2.vertices[abs2.vertices.length - 2]
+            const abs2Dir = {
+              dx: abs2End.x - abs2Prev.x,
+              dy: abs2End.y - abs2Prev.y
+            }
+            const cross2 = colDir.dx * abs2Dir.dy - colDir.dy * abs2Dir.dx
+            const abs2FromLeft = cross2 > 0
+
+            // abs1（上の行）の吸水管三角形を生成 - 上流側の頂点に接続
+            const abs1MergeVertices = {
+              upstreamLeft,
+              upstreamRight,
+              downstreamLeft: upstreamLeft, // 上流側の頂点を使用
+              downstreamRight: upstreamRight,
+            }
+            const abs1Result = generateAbsorptionMergeTriangles(
+              abs1.vertices,
+              abs1.pipeId,
+              abs1MergeVertices,
+              abs1FromLeft,
               offsetDistance,
               transitionDistance
             )
-            meshes.push(upstreamMesh)
-
-            processedAbsorptionIds.add(leftAbs.pipeId)
-            processedAbsorptionIds.add(rightAbs.pipeId)
-
-            // 集水管の最上流部以外をメッシュ化
-            if (collector.vertices.length > 2) {
-              const collectorWithoutUpstream = collector.vertices.slice(0, -1)
-              const mesh = generatePipeMesh(collectorWithoutUpstream, offsetDistance, collector.pipeId)
-              meshes.push(mesh)
+            meshes.push(abs1Result.mergeTriangles)
+            if (abs1Result.upperVertices.length >= 2) {
+              const upperMesh = generatePipeMesh(abs1Result.upperVertices, offsetDistance, abs1.pipeId + '_upper')
+              meshes.push(upperMesh)
             }
+            processedAbsorptionIds.add(abs1.pipeId)
 
-            // 吸水管の擦り付け点より上流をメッシュ化
-            for (const abs of [leftAbs, rightAbs]) {
-              let cumDist = 0
-              let transitionIdx = -1
-              for (let i = abs.vertices.length - 1; i > 0; i--) {
-                cumDist += distance2D(abs.vertices[i], abs.vertices[i - 1])
-                if (cumDist >= transitionDistance) {
-                  transitionIdx = i - 1
-                  break
-                }
+            // abs2（下の行）の吸水管三角形を生成 - 下流側の頂点に接続
+            const abs2MergeVertices = {
+              upstreamLeft: downstreamLeft, // 下流側の頂点を使用
+              upstreamRight: downstreamRight,
+              downstreamLeft,
+              downstreamRight,
+            }
+            const abs2Result = generateAbsorptionMergeTriangles(
+              abs2.vertices,
+              abs2.pipeId,
+              abs2MergeVertices,
+              abs2FromLeft,
+              offsetDistance,
+              transitionDistance
+            )
+            meshes.push(abs2Result.mergeTriangles)
+            if (abs2Result.upperVertices.length >= 2) {
+              const upperMesh = generatePipeMesh(abs2Result.upperVertices, offsetDistance, abs2.pipeId + '_upper')
+              meshes.push(upperMesh)
+            }
+            processedAbsorptionIds.add(abs2.pipeId)
+
+            // 集水管の最上流部以外をメッシュ化（正方形の下流端に接続）
+            if (collector.vertices.length >= 2) {
+              // 集水管の下流部分をメッシュ化し、正方形の下流端に接続
+              const collectorWithoutUpstream = collector.vertices.slice(0, -1)
+              if (collectorWithoutUpstream.length >= 2) {
+                const mesh = generatePipeMesh(collectorWithoutUpstream, offsetDistance, collector.pipeId + '_lower')
+                meshes.push(mesh)
               }
-              if (transitionIdx > 0) {
-                const upperVertices = abs.vertices.slice(0, transitionIdx + 1)
-                if (upperVertices.length >= 2) {
-                  const mesh = generatePipeMesh(upperVertices, offsetDistance, abs.pipeId + '_upper')
-                  meshes.push(mesh)
-                }
+              // 正方形の下流端と集水管メッシュの接続三角形
+              const connectLeft: Point3D = {
+                id: `${collector.pipeId}_connectL`,
+                x: col1A.x + colNormal.dx * offsetDistance,
+                y: col1A.y + colNormal.dy * offsetDistance,
+                z: col1A.z,
               }
+              const connectRight: Point3D = {
+                id: `${collector.pipeId}_connectR`,
+                x: col1A.x - colNormal.dx * offsetDistance,
+                y: col1A.y - colNormal.dy * offsetDistance,
+                z: col1A.z,
+              }
+              const connectFaces: Face[] = [
+                { p1: connectLeft.id, p2: connectRight.id, p3: downstreamLeft.id },
+                { p1: connectRight.id, p2: downstreamRight.id, p3: downstreamLeft.id },
+              ]
+              meshes.push({ points: [connectLeft, connectRight], faces: connectFaces })
             }
           } else {
             // 吸水管が見つからない場合は通常のメッシュ生成
