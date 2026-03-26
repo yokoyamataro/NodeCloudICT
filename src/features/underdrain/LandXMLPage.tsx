@@ -77,6 +77,7 @@ export function LandXMLPage() {
         pipeType: 'absorption' | 'collector'
         vertices: Point3D[]
         mergePointId: string | null
+        systemIndex: number // 系統番号
       }
       const pipeLines: PipeLineData[] = []
 
@@ -107,6 +108,7 @@ export function LandXMLPage() {
                 pipeType: 'absorption',
                 vertices: absVertices,
                 mergePointId: row.collectorPipeId,
+                systemIndex,
               })
             }
           }
@@ -134,14 +136,15 @@ export function LandXMLPage() {
         }
 
         // 系統ごとの集水線形を追加
-        for (const [systemIndex, system] of systemCollectorMap) {
+        for (const [sysIdx, system] of systemCollectorMap) {
           if (system.vertices.length >= 2) {
             pipeLines.push({
-              pipeId: `collector_system_${group.groupIndex}_${systemIndex}`,
-              pipeNumber: `集水${group.groupIndex + 1}-系統${systemIndex}`,
+              pipeId: `collector_system_${group.groupIndex}_${sysIdx}`,
+              pipeNumber: `集水${group.groupIndex + 1}-系統${sysIdx}`,
               pipeType: 'collector',
               vertices: system.vertices,
               mergePointId: null,
+              systemIndex: sysIdx,
             })
           }
         }
@@ -239,8 +242,10 @@ export function LandXMLPage() {
             }
           }
 
-          // 最上流部: 施工計画順で最初の2本の吸水管を三管合流として処理
-          const upstreamAbsorptions = relatedAbsorptions.slice(0, 2)
+          // 最上流部: 同じsystemIndexの最初の2本の吸水管を三管合流として処理
+          // 集水管のsystemIndexと同じ吸水管をフィルタリング
+          const sameSystemAbsorptions = relatedAbsorptions.filter(a => a.systemIndex === collector.systemIndex)
+          const upstreamAbsorptions = sameSystemAbsorptions.slice(0, 2)
           let hadUpstreamMerge = false
 
           if (upstreamAbsorptions.length >= 2) {
