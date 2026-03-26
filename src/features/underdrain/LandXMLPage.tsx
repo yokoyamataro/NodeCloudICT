@@ -221,11 +221,12 @@ export function LandXMLPage() {
 
       // デバッグ: 集水管と吸水管のID対応を確認
       const pipeDebugInfo = {
-        collectorPipes: collectorPipes.map(c => ({ pipeId: c.pipeId, systemIndex: c.systemIndex, vertexCount: c.vertices.length })),
+        collectorPipes: collectorPipes.map(c => ({ pipeId: c.pipeId, systemIndex: c.systemIndex, vertexCount: c.vertices.length, collectorPipeIds: c.collectorPipeIds })),
         absorptionPipes: absorptionPipes.map(a => ({ pipeId: a.pipeId, mergePointId: a.mergePointId, systemIndex: a.systemIndex, vertexCount: a.vertices.length })),
         absorptionsByCollectorKeys: Array.from(absorptionsByCollector.keys()),
         connectionsByCollectorKeys: Array.from(connectionsByCollector.keys()),
         mergeConnections: mergeConnections.map(c => ({ absId: c.absorptionPipeId, colId: c.collectorPipeId, fromLeft: c.mergeFromLeft })),
+        upstreamPairs: upstreamPairs,
       }
       setDebugInfo(pipeDebugInfo)
 
@@ -235,7 +236,85 @@ export function LandXMLPage() {
 
         const relatedConnections = connectionsByCollector.get(collector.pipeId) || []
 
-        if (relatedConnections.length === 0) {
+        // この集水管に対応する三管合流ペアを先に検出
+        let collectorUpstreamPair: { collectorPipeId: string; absIds: string[] } | null = null
+        if (collector.collectorPipeIds) {
+          for (const colPipeId of collector.collectorPipeIds) {
+            const pair = upstreamPairs.find(p => p.collectorPipeId === colPipeId)
+            if (pair && pair.absIds.length >= 2) {
+              collectorUpstreamPair = pair
+              break
+            }
+          }
+        }
+
+        // 三管合流のみの場合（中間合流がない場合）
+        if (relatedConnections.length === 0 && collectorUpstreamPair) {
+          // 三管合流処理
+          const upstreamAbsIds = collectorUpstreamPair.absIds
+          const leftAbs = absorptionPipes.find(p => p.pipeId === upstreamAbsIds[0])
+          const rightAbs = absorptionPipes.find(p => p.pipeId === upstreamAbsIds[1])
+
+          if (leftAbs && leftAbs.vertices.length >= 2 && rightAbs && rightAbs.vertices.length >= 2) {
+            upstreamMergeCount++
+            const col1A = collector.vertices[collector.vertices.length - 2]
+            const col1B = collector.vertices[collector.vertices.length - 1]
+
+            const upstreamInfo: UpstreamMergeInfo = {
+              collectorPipeId: collector.pipeId,
+              col1A,
+              col1B,
+              abs2PipeId: leftAbs.pipeId,
+              abs2A: leftAbs.vertices[leftAbs.vertices.length - 1],
+              abs2B: leftAbs.vertices[leftAbs.vertices.length - 2],
+              abs3PipeId: rightAbs.pipeId,
+              abs3A: rightAbs.vertices[rightAbs.vertices.length - 1],
+              abs3B: rightAbs.vertices[rightAbs.vertices.length - 2],
+              mergeZ: col1B.z,
+            }
+
+            const upstreamMesh = generateUpstreamMergeTriangles(
+              upstreamInfo,
+              offsetDistance,
+              transitionDistance
+            )
+            meshes.push(upstreamMesh)
+
+            processedAbsorptionIds.add(leftAbs.pipeId)
+            processedAbsorptionIds.add(rightAbs.pipeId)
+
+            // 集水管の最上流部以外をメッシュ化
+            if (collector.vertices.length > 2) {
+              const collectorWithoutUpstream = collector.vertices.slice(0, -1)
+              const mesh = generatePipeMesh(collectorWithoutUpstream, offsetDistance, collector.pipeId)
+              meshes.push(mesh)
+            }
+
+            // 吸水管の擦り付け点より上流をメッシュ化
+            for (const abs of [leftAbs, rightAbs]) {
+              let cumDist = 0
+              let transitionIdx = -1
+              for (let i = abs.vertices.length - 1; i > 0; i--) {
+                cumDist += distance2D(abs.vertices[i], abs.vertices[i - 1])
+                if (cumDist >= transitionDistance) {
+                  transitionIdx = i - 1
+                  break
+                }
+              }
+              if (transitionIdx > 0) {
+                const upperVertices = abs.vertices.slice(0, transitionIdx + 1)
+                if (upperVertices.length >= 2) {
+                  const mesh = generatePipeMesh(upperVertices, offsetDistance, abs.pipeId + '_upper')
+                  meshes.push(mesh)
+                }
+              }
+            }
+          } else {
+            // 吸水管が見つからない場合は通常のメッシュ生成
+            const mesh = generatePipeMesh(collector.vertices, offsetDistance, collector.pipeId)
+            meshes.push(mesh)
+          }
+        } else if (relatedConnections.length === 0) {
           // 合流点がない場合は通常のメッシュ生成
           const mesh = generatePipeMesh(collector.vertices, offsetDistance, collector.pipeId)
           meshes.push(mesh)
@@ -277,18 +356,8 @@ export function LandXMLPage() {
             }
           }
 
-          // 最上流部: upstreamPairsから対応する三管合流ペアを取得
-          // collector.collectorPipeIdsに含まれるcollectorPipeIdを持つペアを探す
-          let upstreamAbsIds: string[] = []
-          if (collector.collectorPipeIds) {
-            for (const colPipeId of collector.collectorPipeIds) {
-              const pair = upstreamPairs.find(p => p.collectorPipeId === colPipeId)
-              if (pair && pair.absIds.length >= 2) {
-                upstreamAbsIds = pair.absIds
-                break
-              }
-            }
-          }
+          // 最上流部: 既に検出済みのcollectorUpstreamPairを使用
+          const upstreamAbsIds = collectorUpstreamPair ? collectorUpstreamPair.absIds : []
           let hadUpstreamMerge = false
 
           if (upstreamAbsIds.length >= 2) {
