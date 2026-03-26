@@ -401,7 +401,7 @@ export function generateLandXMLFromPlan(
   const surface = mergeMeshes(meshes)
   surface.name = projectName
 
-  console.log(`[LandXML] 三管合流処理: ${upstreamMergeCount}回`)
+  alert(`[LandXML] 三管合流処理: ${upstreamMergeCount}回`)
 
   // LandXMLを生成
   return generateLandXML(surface, projectName)
