@@ -56,3 +56,9 @@ input[type="number"] {
 .point-label-tooltip::before {
   display: none !important;
 }
+
+/* カスタムマーカー（デフォルトのLeafletマーカースタイルを上書き） */
+.custom-marker {
+  background: transparent !important;
+  border: none !important;
+}
