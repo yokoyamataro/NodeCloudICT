@@ -4,7 +4,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useUnderdrainStore, EXTENDED_PIPE_TYPES } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
-import { CoordinateConverter, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
+import { CoordinateConverter } from '@/lib/coordinates'
 import type { PipeVertex } from '@/types/database'
 
 // ラベルアイコンを生成
@@ -601,24 +601,7 @@ export function PipeMap({
             eventHandlers={selectablePoints && onPointClick ? {
               click: () => onPointClick(point.id),
             } : {}}
-          >
-            {/* 選択モードではPopupを表示しない */}
-            {!selectablePoints && (
-              <Popup>
-                <div className="text-xs font-mono">
-                  <div className="font-bold">{point.name}</div>
-                  <div>X: {point.x.toFixed(3)}</div>
-                  <div>Y: {point.y.toFixed(3)}</div>
-                  {point.z !== null && <div>Z: {point.z.toFixed(3)}</div>}
-                  {point.isMerged && point.originalCount && (
-                    <div className="mt-1 text-yellow-600">
-                      {point.originalCount}点を集約
-                    </div>
-                  )}
-                </div>
-              </Popup>
-            )}
-          </Marker>
+          />
         )
       })}
 
@@ -670,20 +653,7 @@ export function PipeMap({
             eventHandlers={selectablePoints && onPointClick ? {
               click: () => onPointClick(coord.id),
             } : {}}
-          >
-            {/* 選択モードではPopupを表示しない */}
-            {!selectablePoints && (
-              <Popup>
-                <div className="text-xs font-mono">
-                  <div className="font-bold">{coord.pointNumber}</div>
-                  <div>種類: {COORDINATE_TYPE_NAMES[coord.type] || coord.type}</div>
-                  <div>X: {coord.x.toFixed(3)}</div>
-                  <div>Y: {coord.y.toFixed(3)}</div>
-                  {coord.z !== null && <div>Z: {coord.z.toFixed(3)}</div>}
-                </div>
-              </Popup>
-            )}
-          </Marker>
+          />
         )
       })}
 

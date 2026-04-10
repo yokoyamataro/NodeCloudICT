@@ -685,6 +685,29 @@ export function CadAnalysisPage() {
               {pipes.length > 0 && !isBulkEditMode && editMode === 'normal' && !isSequentialMode && autoConnectMode === 'idle' && (
                 <>
                   <button
+                    onClick={startBulkEdit}
+                    className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white"
+                  >
+                    <Edit3 className="h-3.5 w-3.5" />
+                    一括訂正
+                  </button>
+                  <button
+                    onClick={() => { setEditMode('merge'); clearPipeSelection() }}
+                    className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white"
+                    title="複数の管路を結合"
+                  >
+                    <Merge className="h-3.5 w-3.5" />
+                    結合
+                  </button>
+                  <button
+                    onClick={() => { setEditMode('split'); setSelectedPipeId(null) }}
+                    className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white"
+                    title="管路を分割"
+                  >
+                    <Split className="h-3.5 w-3.5" />
+                    分割
+                  </button>
+                  <button
                     onClick={startAutoConnect}
                     className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white bg-green-50 border-green-400 text-green-700 hover:bg-green-100"
                     title="落口を選択して接続関係を自動設定"
@@ -704,35 +727,12 @@ export function CadAnalysisPage() {
                     連番
                   </button>
                   <button
-                    onClick={() => { setEditMode('merge'); clearPipeSelection() }}
-                    className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white"
-                    title="複数の管路を結合"
-                  >
-                    <Merge className="h-3.5 w-3.5" />
-                    結合
-                  </button>
-                  <button
-                    onClick={() => { setEditMode('split'); setSelectedPipeId(null) }}
-                    className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white"
-                    title="管路を分割"
-                  >
-                    <Split className="h-3.5 w-3.5" />
-                    分割
-                  </button>
-                  <button
                     onClick={() => setShowMidpointModal(true)}
                     className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white"
                     title="長い区間に自動で中間点を設置"
                   >
                     <MapPin className="h-3.5 w-3.5" />
                     中間点
-                  </button>
-                  <button
-                    onClick={startBulkEdit}
-                    className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white"
-                  >
-                    <Edit3 className="h-3.5 w-3.5" />
-                    一括訂正
                   </button>
                   <button
                     onClick={handleExportCSV}
