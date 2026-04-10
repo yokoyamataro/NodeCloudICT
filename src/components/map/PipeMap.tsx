@@ -214,32 +214,43 @@ function createSurveyPointIcon(label: string): L.DivIcon {
   })
 }
 
-// 座標管理の点用アイコン
+// 座標管理の点用アイコン（座標管理画面と同じスタイル）
 function createCoordinateIcon(label: string, type: string): L.DivIcon {
   const typeColors: Record<string, string> = {
-    benchmark: '#ef4444',     // 基準点: 赤
-    boundary: '#3b82f6',      // 筆界点: 青
-    control: '#8b5cf6',       // 図根点: 紫
-    temporary: '#f97316',     // 仮杭: オレンジ
-    other: '#64748b',         // その他: グレー
+    control: '#ef4444',     // 基準点: 赤
+    boundary: '#3b82f6',    // 外周点: 青
+    underdrain: '#22c55e',  // 暗渠構成点: 緑
+    soil_import: '#f59e0b', // 客土構成点: オレンジ
+    stake: '#22c55e',       // 測点: 緑
   }
-  const color = typeColors[type] || typeColors.other
+  const color = typeColors[type] || '#666'
 
   return L.divIcon({
-    html: `<div style="
-      font-size: 10px;
-      font-weight: bold;
-      color: white;
-      background-color: ${color};
-      padding: 2px 4px;
-      border-radius: 3px;
-      white-space: nowrap;
-      border: 1px solid rgba(0,0,0,0.3);
-      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-    ">${label}</div>`,
+    html: `<div style="display: flex; flex-direction: column; align-items: center;">
+      <div style="
+        font-size: 10px;
+        font-weight: 500;
+        color: #333;
+        background-color: rgba(255, 255, 255, 0.9);
+        padding: 1px 4px;
+        border-radius: 3px;
+        white-space: nowrap;
+        border: 1px solid #ccc;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        margin-bottom: 2px;
+      ">${label}</div>
+      <div style="
+        width: 12px;
+        height: 12px;
+        background-color: ${color};
+        border-radius: 50%;
+        border: 2px solid white;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      "></div>
+    </div>`,
     className: 'coordinate-marker',
-    iconSize: [0, 0],
-    iconAnchor: [-8, 8],
+    iconSize: [12, 30],
+    iconAnchor: [6, 30],
   })
 }
 
