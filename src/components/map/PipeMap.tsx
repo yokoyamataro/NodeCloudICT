@@ -164,6 +164,9 @@ export interface SurveyPointData {
   isSelected?: boolean   // 選択中かどうか
 }
 
+// 背景地図の種類
+export type BaseLayerType = 'osm' | 'gsi-photo' | 'gsi-std'
+
 interface PipeMapProps {
   selectedPipeId?: string | null
   selectedPipeIds?: Set<string>
@@ -185,6 +188,7 @@ interface PipeMapProps {
   selectedPointIds?: Set<string>  // 選択中の点ID（出力点選択用）
   selectedPointRoute?: [number, number][]  // 選択した点を結ぶルート（座標のリスト）
   showSelectedRoute?: boolean  // 選択ルートを表示するか
+  baseLayer?: BaseLayerType     // 背景地図の種類
 }
 
 // 測点ラベルアイコンを生成（緑の丸マーカー + ラベル、選択時はオレンジ）
@@ -294,6 +298,7 @@ export function PipeMap({
   selectedPointIds = new Set(),
   selectedPointRoute = [],
   showSelectedRoute = true,
+  baseLayer = 'osm',
 }: PipeMapProps) {
   const { pipes } = useUnderdrainStore()
   const { zone, zones, coordinates } = useCoordinateStore()
@@ -337,12 +342,30 @@ export function PipeMap({
       className={`h-full w-full ${isBulkEditMode ? 'cursor-crosshair' : ''}`}
       style={{ minHeight: '400px' }}
     >
-      <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        maxZoom={22}
-        maxNativeZoom={19}
-      />
+      {baseLayer === 'osm' && (
+        <TileLayer
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          maxZoom={22}
+          maxNativeZoom={19}
+        />
+      )}
+      {baseLayer === 'gsi-photo' && (
+        <TileLayer
+          attribution='&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>'
+          url="https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg"
+          maxZoom={22}
+          maxNativeZoom={18}
+        />
+      )}
+      {baseLayer === 'gsi-std' && (
+        <TileLayer
+          attribution='&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>'
+          url="https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png"
+          maxZoom={22}
+          maxNativeZoom={18}
+        />
+      )}
 
       {focusedPipeId ? (
         <FocusPipe pipeLines={pipeLines} focusedPipeId={focusedPipeId} />

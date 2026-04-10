@@ -5,7 +5,7 @@ import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { useProjectStore } from '@/stores/projectStore'
-import { PipeMap, type SurveyPointData } from '@/components/map/PipeMap'
+import { PipeMap, type SurveyPointData, type BaseLayerType } from '@/components/map/PipeMap'
 
 // 測点命名設定
 interface NamingSettings {
@@ -98,6 +98,7 @@ export function PipeCoordinateCalcPage() {
   const [showZones, setShowZones] = useState(false)
   const [showCoordinates, setShowCoordinates] = useState(true)
   const [showSelectedRoute, setShowSelectedRoute] = useState(true)
+  const [baseLayer, setBaseLayer] = useState<BaseLayerType>('osm')
 
   // 出力点選択モード
   const [isSelectMode, setIsSelectMode] = useState(false)
@@ -959,6 +960,15 @@ export function PipeCoordinateCalcPage() {
                 ルート
               </button>
             )}
+            <select
+              value={baseLayer}
+              onChange={(e) => setBaseLayer(e.target.value as BaseLayerType)}
+              className="px-2 py-1.5 text-sm border rounded bg-white"
+            >
+              <option value="osm">地図</option>
+              <option value="gsi-photo">航空写真</option>
+              <option value="gsi-std">地理院地図</option>
+            </select>
           </div>
           {/* 選択モード表示 */}
           {isSelectMode && (
@@ -981,6 +991,7 @@ export function PipeCoordinateCalcPage() {
               selectedPointIds={selectedPointIdsSet}
               selectedPointRoute={selectedPointRoute}
               showSelectedRoute={showSelectedRoute}
+              baseLayer={baseLayer}
             />
           </div>
         </div>

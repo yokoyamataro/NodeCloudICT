@@ -68,6 +68,9 @@ function MapBoundsUpdater({ coordinates }: { coordinates: CoordinateRow[] }) {
   return null
 }
 
+// 背景地図の種類
+export type BaseLayerType = 'osm' | 'gsi-photo' | 'gsi-std'
+
 interface CoordinateMapProps {
   selectedPointId?: string | null
   onPointSelect?: (id: string) => void
@@ -75,6 +78,7 @@ interface CoordinateMapProps {
   editingZoneId?: string | null
   showLabels?: boolean
   visibleTypes?: Set<string>
+  baseLayer?: BaseLayerType
 }
 
 export function CoordinateMap({
@@ -84,6 +88,7 @@ export function CoordinateMap({
   editingZoneId,
   showLabels = true,
   visibleTypes,
+  baseLayer = 'osm',
 }: CoordinateMapProps) {
   const { coordinates, zones } = useCoordinateStore()
 
@@ -133,16 +138,26 @@ export function CoordinateMap({
       className="h-full w-full"
       style={{ minHeight: '400px' }}
     >
-      <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-      />
-
-      {/* 地理院タイル（日本向け）- コメントアウト、必要に応じて切り替え */}
-      {/* <TileLayer
-        attribution='&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>'
-        url="https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png"
-      /> */}
+      {baseLayer === 'osm' && (
+        <TileLayer
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
+      )}
+      {baseLayer === 'gsi-photo' && (
+        <TileLayer
+          attribution='&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>'
+          url="https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg"
+          maxZoom={18}
+        />
+      )}
+      {baseLayer === 'gsi-std' && (
+        <TileLayer
+          attribution='&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>'
+          url="https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png"
+          maxZoom={18}
+        />
+      )}
 
       <MapBoundsUpdater coordinates={validCoordinates} />
 

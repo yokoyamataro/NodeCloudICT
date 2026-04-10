@@ -5,7 +5,7 @@ import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useProjectStore } from '@/stores/projectStore'
 import { ZoneRegistration } from './ZoneRegistration'
 import { AreaCalculationSheet } from './AreaCalculationSheet'
-import { CoordinateMap } from '@/components/map/CoordinateMap'
+import { CoordinateMap, type BaseLayerType } from '@/components/map/CoordinateMap'
 import { loadSimaFile } from '@/lib/sima-parser'
 import type { CoordinateType, AreaCalculationSheet as AreaCalculationSheetType } from '@/types/database'
 
@@ -20,6 +20,7 @@ export function CoordinatesPage() {
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(
     new Set(Object.keys(COORDINATE_TYPE_NAMES))
   )
+  const [baseLayer, setBaseLayer] = useState<BaseLayerType>('osm')
 
   const { currentProject } = useProjectStore()
   const {
@@ -500,6 +501,15 @@ export function CoordinatesPage() {
                 </label>
               ))}
             </div>
+            <select
+              value={baseLayer}
+              onChange={(e) => setBaseLayer(e.target.value as BaseLayerType)}
+              className="px-2 py-1 text-xs border rounded bg-white"
+            >
+              <option value="osm">地図</option>
+              <option value="gsi-photo">航空写真</option>
+              <option value="gsi-std">地理院地図</option>
+            </select>
           </div>
           <div className="flex-1">
             <CoordinateMap
@@ -509,6 +519,7 @@ export function CoordinatesPage() {
               editingZoneId={editingZoneId}
               showLabels={showLabels}
               visibleTypes={visibleTypes}
+              baseLayer={baseLayer}
             />
           </div>
         </div>
