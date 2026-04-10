@@ -74,11 +74,12 @@ export class CoordinateConverter {
 }
 
 // 座標の種類
-export type CoordinateType = 'control' | 'boundary' | 'underdrain' | 'soil_import'
+export type CoordinateType = 'control' | 'boundary' | 'underdrain' | 'soil_import' | 'stake'
 
 export const COORDINATE_TYPE_NAMES: Record<CoordinateType, string> = {
   control: '基準点',
   boundary: '外周点',
   underdrain: '暗渠構成点',
   soil_import: '客土構成点',
+  stake: '測点',
 }

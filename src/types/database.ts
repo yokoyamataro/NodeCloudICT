@@ -10,7 +10,7 @@ export type Json =
   | Json[]
 
 // 座標の種類
-export type CoordinateType = 'control' | 'boundary' | 'underdrain' | 'soil_import'
+export type CoordinateType = 'control' | 'boundary' | 'underdrain' | 'soil_import' | 'stake'
 
 // 点種（座標の用途）
 export type PointType =
