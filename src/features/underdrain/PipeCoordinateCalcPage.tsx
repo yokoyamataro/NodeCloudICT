@@ -1,7 +1,8 @@
 import { useState, useMemo, useEffect } from 'react'
-import { MapPin, Settings, Download, Merge, Hash, Navigation, Target, Square, Map, FileText, MousePointer, X, ArrowUp, ArrowDown } from 'lucide-react'
+import { MapPin, Settings, Download, Merge, Hash, Navigation, Target, Square, Map, FileText, MousePointer, X, ArrowUp, ArrowDown, Route } from 'lucide-react'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
+import { CoordinateConverter } from '@/lib/coordinates'
 import { useProjectStore } from '@/stores/projectStore'
 import { PipeMap, type SurveyPointData } from '@/components/map/PipeMap'
 
@@ -94,6 +95,7 @@ export function PipeCoordinateCalcPage() {
   const [showSurveyPoints, setShowSurveyPoints] = useState(true)
   const [showZones, setShowZones] = useState(false)
   const [showCoordinates, setShowCoordinates] = useState(true)
+  const [showSelectedRoute, setShowSelectedRoute] = useState(true)
 
   // 出力点選択モード
   const [isSelectMode, setIsSelectMode] = useState(false)
@@ -237,6 +239,24 @@ export function PipeCoordinateCalcPage() {
       originalCount: point.originalPoints.length,
     }))
   }, [mergedPoints])
+
+  // 選択中の出力点IDセット
+  const selectedPointIdsSet = useMemo(() => {
+    return new Set(exportPoints.map(p => p.id))
+  }, [exportPoints])
+
+  // 選択した点を結ぶルートの座標（緯度経度）を計算
+  const { zone } = useCoordinateStore()
+  const selectedPointRoute = useMemo(() => {
+    if (exportPoints.length < 2) return []
+
+    const converter = new CoordinateConverter(zone)
+
+    return exportPoints.map(point => {
+      const { lat, lng } = converter.toLatLng(point.x, point.y)
+      return [lat, lng] as [number, number]
+    })
+  }, [exportPoints, zone])
 
   // 点をクリックして出力リストに追加
   const handlePointClick = (pointId: string) => {
@@ -742,6 +762,17 @@ export function PipeCoordinateCalcPage() {
               <Map className="h-4 w-4" />
               座標
             </button>
+            {exportPoints.length >= 2 && (
+              <button
+                onClick={() => setShowSelectedRoute(!showSelectedRoute)}
+                className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 ${
+                  showSelectedRoute ? 'bg-orange-50 border-orange-300 text-orange-700' : ''
+                }`}
+              >
+                <Route className="h-4 w-4" />
+                ルート
+              </button>
+            )}
           </div>
           {/* 選択モード表示 */}
           {isSelectMode && (
@@ -761,6 +792,9 @@ export function PipeCoordinateCalcPage() {
               showCoordinates={showCoordinates}
               onPointClick={isSelectMode ? handlePointClick : undefined}
               selectablePoints={isSelectMode}
+              selectedPointIds={selectedPointIdsSet}
+              selectedPointRoute={selectedPointRoute}
+              showSelectedRoute={showSelectedRoute}
             />
           </div>
         </div>

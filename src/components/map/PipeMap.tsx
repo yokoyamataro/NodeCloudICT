@@ -161,6 +161,7 @@ export interface SurveyPointData {
   z: number | null
   isMerged: boolean      // 集約された点かどうか
   originalCount?: number // 集約元の点数
+  isSelected?: boolean   // 選択中かどうか
 }
 
 interface PipeMapProps {
@@ -181,41 +182,47 @@ interface PipeMapProps {
   showCoordinates?: boolean     // 座標管理の点表示
   onPointClick?: (pointId: string) => void  // 点クリック時のコールバック
   selectablePoints?: boolean    // 点を選択可能にするか
+  selectedPointIds?: Set<string>  // 選択中の点ID（出力点選択用）
+  selectedPointRoute?: [number, number][]  // 選択した点を結ぶルート（座標のリスト）
+  showSelectedRoute?: boolean  // 選択ルートを表示するか
 }
 
-// 測点ラベルアイコンを生成（緑の丸マーカー + ラベル）
-function createSurveyPointIcon(label: string): L.DivIcon {
+// 測点ラベルアイコンを生成（緑の丸マーカー + ラベル、選択時はオレンジ）
+function createSurveyPointIcon(label: string, isSelected: boolean = false): L.DivIcon {
+  const color = isSelected ? '#f97316' : '#22c55e'  // オレンジ or 緑
+  const size = isSelected ? 14 : 12
+  const borderColor = isSelected ? '#ea580c' : 'white'
   return L.divIcon({
     html: `<div style="display: flex; flex-direction: column; align-items: center;">
       <div style="
         font-size: 10px;
         font-weight: 500;
-        color: #333;
-        background-color: rgba(255, 255, 255, 0.9);
+        color: ${isSelected ? '#c2410c' : '#333'};
+        background-color: ${isSelected ? 'rgba(255, 237, 213, 0.95)' : 'rgba(255, 255, 255, 0.9)'};
         padding: 1px 4px;
         border-radius: 3px;
         white-space: nowrap;
-        border: 1px solid #ccc;
+        border: 1px solid ${isSelected ? '#f97316' : '#ccc'};
         box-shadow: 0 1px 3px rgba(0,0,0,0.2);
         margin-bottom: 2px;
       ">${label}</div>
       <div style="
-        width: 12px;
-        height: 12px;
-        background-color: #22c55e;
+        width: ${size}px;
+        height: ${size}px;
+        background-color: ${color};
         border-radius: 50%;
-        border: 2px solid white;
+        border: 2px solid ${borderColor};
         box-shadow: 0 2px 4px rgba(0,0,0,0.3);
       "></div>
     </div>`,
     className: 'survey-point-marker',
-    iconSize: [12, 30],
-    iconAnchor: [6, 30],
+    iconSize: [size, 30],
+    iconAnchor: [size / 2, 30],
   })
 }
 
-// 座標管理の点用アイコン（座標管理画面と同じスタイル）
-function createCoordinateIcon(label: string, type: string): L.DivIcon {
+// 座標管理の点用アイコン（座標管理画面と同じスタイル、選択時はオレンジ）
+function createCoordinateIcon(label: string, type: string, isSelected: boolean = false): L.DivIcon {
   const typeColors: Record<string, string> = {
     control: '#ef4444',     // 基準点: 赤
     boundary: '#3b82f6',    // 外周点: 青
@@ -223,34 +230,36 @@ function createCoordinateIcon(label: string, type: string): L.DivIcon {
     soil_import: '#f59e0b', // 客土構成点: オレンジ
     stake: '#22c55e',       // 測点: 緑
   }
-  const color = typeColors[type] || '#666'
+  const color = isSelected ? '#f97316' : (typeColors[type] || '#666')
+  const size = isSelected ? 14 : 12
+  const borderColor = isSelected ? '#ea580c' : 'white'
 
   return L.divIcon({
     html: `<div style="display: flex; flex-direction: column; align-items: center;">
       <div style="
         font-size: 10px;
         font-weight: 500;
-        color: #333;
-        background-color: rgba(255, 255, 255, 0.9);
+        color: ${isSelected ? '#c2410c' : '#333'};
+        background-color: ${isSelected ? 'rgba(255, 237, 213, 0.95)' : 'rgba(255, 255, 255, 0.9)'};
         padding: 1px 4px;
         border-radius: 3px;
         white-space: nowrap;
-        border: 1px solid #ccc;
+        border: 1px solid ${isSelected ? '#f97316' : '#ccc'};
         box-shadow: 0 1px 3px rgba(0,0,0,0.2);
         margin-bottom: 2px;
       ">${label}</div>
       <div style="
-        width: 12px;
-        height: 12px;
+        width: ${size}px;
+        height: ${size}px;
         background-color: ${color};
         border-radius: 50%;
-        border: 2px solid white;
+        border: 2px solid ${borderColor};
         box-shadow: 0 2px 4px rgba(0,0,0,0.3);
       "></div>
     </div>`,
     className: 'coordinate-marker',
-    iconSize: [12, 30],
-    iconAnchor: [6, 30],
+    iconSize: [size, 30],
+    iconAnchor: [size / 2, 30],
   })
 }
 
@@ -282,6 +291,9 @@ export function PipeMap({
   showCoordinates = false,
   onPointClick,
   selectablePoints = false,
+  selectedPointIds = new Set(),
+  selectedPointRoute = [],
+  showSelectedRoute = true,
 }: PipeMapProps) {
   const { pipes } = useUnderdrainStore()
   const { zone, zones, coordinates } = useCoordinateStore()
@@ -541,36 +553,48 @@ export function PipeMap({
         )
       })}
 
+      {/* 選択した点を結ぶルート */}
+      {showSelectedRoute && selectedPointRoute.length >= 2 && (
+        <Polyline
+          positions={selectedPointRoute}
+          pathOptions={{
+            color: '#f97316',
+            weight: 3,
+            opacity: 0.8,
+            dashArray: '8, 4',
+          }}
+        />
+      )}
+
       {/* 測点表示モード */}
       {showSurveyPoints && surveyPoints.map(point => {
         const { lat, lng } = converter.toLatLng(point.x, point.y)
+        const isSelected = selectedPointIds.has(point.id)
         return (
           <Marker
             key={`survey-${point.id}`}
             position={[lat, lng]}
-            icon={createSurveyPointIcon(point.name)}
+            icon={createSurveyPointIcon(point.name, isSelected)}
             eventHandlers={selectablePoints && onPointClick ? {
               click: () => onPointClick(point.id),
             } : {}}
           >
-            <Popup>
-              <div className="text-xs font-mono">
-                <div className="font-bold">{point.name}</div>
-                <div>X: {point.x.toFixed(3)}</div>
-                <div>Y: {point.y.toFixed(3)}</div>
-                {point.z !== null && <div>Z: {point.z.toFixed(3)}</div>}
-                {point.isMerged && point.originalCount && (
-                  <div className="mt-1 text-yellow-600">
-                    {point.originalCount}点を集約
-                  </div>
-                )}
-                {selectablePoints && (
-                  <div className="mt-1 text-green-600 font-bold">
-                    クリックで選択
-                  </div>
-                )}
-              </div>
-            </Popup>
+            {/* 選択モードではPopupを表示しない */}
+            {!selectablePoints && (
+              <Popup>
+                <div className="text-xs font-mono">
+                  <div className="font-bold">{point.name}</div>
+                  <div>X: {point.x.toFixed(3)}</div>
+                  <div>Y: {point.y.toFixed(3)}</div>
+                  {point.z !== null && <div>Z: {point.z.toFixed(3)}</div>}
+                  {point.isMerged && point.originalCount && (
+                    <div className="mt-1 text-yellow-600">
+                      {point.originalCount}点を集約
+                    </div>
+                  )}
+                </div>
+              </Popup>
+            )}
           </Marker>
         )
       })}
@@ -614,29 +638,28 @@ export function PipeMap({
       {/* 座標管理の点表示 */}
       {showCoordinates && coordinates.map(coord => {
         const { lat, lng } = converter.toLatLng(coord.x, coord.y)
+        const isSelected = selectedPointIds.has(coord.id)
         return (
           <Marker
             key={`coord-${coord.id}`}
             position={[lat, lng]}
-            icon={createCoordinateIcon(coord.pointNumber, coord.type)}
+            icon={createCoordinateIcon(coord.pointNumber, coord.type, isSelected)}
             eventHandlers={selectablePoints && onPointClick ? {
               click: () => onPointClick(coord.id),
             } : {}}
           >
-            <Popup>
-              <div className="text-xs font-mono">
-                <div className="font-bold">{coord.pointNumber}</div>
-                <div>種類: {COORDINATE_TYPE_NAMES[coord.type] || coord.type}</div>
-                <div>X: {coord.x.toFixed(3)}</div>
-                <div>Y: {coord.y.toFixed(3)}</div>
-                {coord.z !== null && <div>Z: {coord.z.toFixed(3)}</div>}
-                {selectablePoints && (
-                  <div className="mt-1 text-green-600 font-bold">
-                    クリックで選択
-                  </div>
-                )}
-              </div>
-            </Popup>
+            {/* 選択モードではPopupを表示しない */}
+            {!selectablePoints && (
+              <Popup>
+                <div className="text-xs font-mono">
+                  <div className="font-bold">{coord.pointNumber}</div>
+                  <div>種類: {COORDINATE_TYPE_NAMES[coord.type] || coord.type}</div>
+                  <div>X: {coord.x.toFixed(3)}</div>
+                  <div>Y: {coord.y.toFixed(3)}</div>
+                  {coord.z !== null && <div>Z: {coord.z.toFixed(3)}</div>}
+                </div>
+              </Popup>
+            )}
           </Marker>
         )
       })}
