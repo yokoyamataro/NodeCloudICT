@@ -183,28 +183,34 @@ interface PipeMapProps {
   selectablePoints?: boolean    // 点を選択可能にするか
 }
 
-// 測点ラベルアイコンを生成
+// 測点ラベルアイコンを生成（緑の丸マーカー + ラベル）
 function createSurveyPointIcon(label: string): L.DivIcon {
   return L.divIcon({
-    html: `<div style="
-      font-size: 11px;
-      font-weight: bold;
-      color: #000;
-      background-color: #fbbf24;
-      padding: 2px 4px;
-      border-radius: 3px;
-      white-space: nowrap;
-      border: 1px solid #d97706;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-      text-shadow:
-        -1px -1px 0 white,
-        1px -1px 0 white,
-        -1px 1px 0 white,
-        1px 1px 0 white;
-    ">${label}</div>`,
+    html: `<div style="display: flex; flex-direction: column; align-items: center;">
+      <div style="
+        font-size: 10px;
+        font-weight: 500;
+        color: #333;
+        background-color: rgba(255, 255, 255, 0.9);
+        padding: 1px 4px;
+        border-radius: 3px;
+        white-space: nowrap;
+        border: 1px solid #ccc;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        margin-bottom: 2px;
+      ">${label}</div>
+      <div style="
+        width: 12px;
+        height: 12px;
+        background-color: #22c55e;
+        border-radius: 50%;
+        border: 2px solid white;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      "></div>
+    </div>`,
     className: 'survey-point-marker',
-    iconSize: [0, 0],
-    iconAnchor: [-8, 8],
+    iconSize: [12, 30],
+    iconAnchor: [6, 30],
   })
 }
 
