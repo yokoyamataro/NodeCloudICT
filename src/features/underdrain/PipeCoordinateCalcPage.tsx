@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from 'react'
-import { MapPin, Settings, Download, Merge, Hash, Navigation, Target, Square, Map, FileText, MousePointer, X, ArrowUp, ArrowDown, Route } from 'lucide-react'
+import { MapPin, Settings, Download, Merge, Hash, Navigation, Target, Square, Map, FileText, MousePointer, X, ArrowUp, ArrowDown, Route, Plus, Table } from 'lucide-react'
+import * as XLSX from 'xlsx'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { CoordinateConverter } from '@/lib/coordinates'
@@ -45,6 +46,7 @@ interface ExportPoint {
   y: number
   z: number | null
   source: 'pipe' | 'coordinate'  // 管路からか座標管理からか
+  type?: string  // 座標管理の場合の点種（control, boundary, underdrain等）
 }
 
 // 同一点集約結果
@@ -100,6 +102,7 @@ export function PipeCoordinateCalcPage() {
   // 出力点選択モード
   const [isSelectMode, setIsSelectMode] = useState(false)
   const [exportPoints, setExportPoints] = useState<ExportPoint[]>([])
+  const [insertIndex, setInsertIndex] = useState<number | null>(null)  // 挿入位置（nullの場合は末尾に追加）
 
   // 測点を生成
   const surveyPoints = useMemo(() => {
@@ -258,7 +261,7 @@ export function PipeCoordinateCalcPage() {
     })
   }, [exportPoints, zone])
 
-  // 点をクリックして出力リストに追加
+  // 点をクリックして出力リストに追加（挿入位置指定対応）
   const handlePointClick = (pointId: string) => {
     if (!isSelectMode) {
       setSelectedPointId(pointId)
@@ -272,14 +275,26 @@ export function PipeCoordinateCalcPage() {
       if (exportPoints.some(p => p.id === pointId)) {
         return
       }
-      setExportPoints(prev => [...prev, {
+      const newPoint: ExportPoint = {
         id: pipePoint.id,
         name: pipePoint.mergedName,
         x: pipePoint.x,
         y: pipePoint.y,
         z: pipePoint.z,
         source: 'pipe',
-      }])
+      }
+      if (insertIndex !== null) {
+        // 指定位置に挿入
+        setExportPoints(prev => [
+          ...prev.slice(0, insertIndex),
+          newPoint,
+          ...prev.slice(insertIndex)
+        ])
+        setInsertIndex(insertIndex + 1)  // 次の挿入位置を更新
+      } else {
+        // 末尾に追加
+        setExportPoints(prev => [...prev, newPoint])
+      }
       return
     }
 
@@ -290,14 +305,27 @@ export function PipeCoordinateCalcPage() {
       if (exportPoints.some(p => p.id === pointId)) {
         return
       }
-      setExportPoints(prev => [...prev, {
+      const newPoint: ExportPoint = {
         id: coordPoint.id,
         name: coordPoint.pointNumber,
         x: coordPoint.x,
         y: coordPoint.y,
         z: coordPoint.z,
         source: 'coordinate',
-      }])
+        type: coordPoint.type,
+      }
+      if (insertIndex !== null) {
+        // 指定位置に挿入
+        setExportPoints(prev => [
+          ...prev.slice(0, insertIndex),
+          newPoint,
+          ...prev.slice(insertIndex)
+        ])
+        setInsertIndex(insertIndex + 1)  // 次の挿入位置を更新
+      } else {
+        // 末尾に追加
+        setExportPoints(prev => [...prev, newPoint])
+      }
     }
   }
 
@@ -393,6 +421,71 @@ export function PipeCoordinateCalcPage() {
     URL.revokeObjectURL(url)
   }
 
+  // 点種の日本語名マップ
+  const TYPE_NAMES: Record<string, string> = {
+    control: '基準点',
+    boundary: '外周点',
+    underdrain: '暗渠構成点',
+    soil_import: '客土構成点',
+    stake: '測点',
+    pipe: '管路測点',
+  }
+
+  // Excelエクスポート
+  const handleExportExcel = () => {
+    const projectName = currentProject?.name || 'NoName'
+
+    // 出力データを準備
+    const pointsToExport = exportPoints.length > 0 ? exportPoints : [
+      ...mergedPoints.map(p => ({
+        name: p.mergedName,
+        x: p.x,
+        y: p.y,
+        z: p.z,
+        source: 'pipe' as const,
+        type: undefined,
+      })),
+      ...coordinatePoints.map(p => ({
+        name: p.pointNumber,
+        x: p.x,
+        y: p.y,
+        z: p.z,
+        source: 'coordinate' as const,
+        type: p.type,
+      })),
+    ]
+
+    // Excel用データを作成
+    const data = pointsToExport.map((point, index) => ({
+      '番号': index + 1,
+      '点名': point.name,
+      '点種': point.source === 'pipe' ? TYPE_NAMES.pipe : (TYPE_NAMES[point.type || ''] || point.type || ''),
+      'X (m)': point.x,
+      'Y (m)': point.y,
+      'Z (m)': point.z ?? '',
+    }))
+
+    // ワークシートを作成
+    const ws = XLSX.utils.json_to_sheet(data)
+
+    // 列幅を設定
+    ws['!cols'] = [
+      { wch: 6 },   // 番号
+      { wch: 20 },  // 点名
+      { wch: 12 },  // 点種
+      { wch: 14 },  // X
+      { wch: 14 },  // Y
+      { wch: 10 },  // Z
+    ]
+
+    // ワークブックを作成
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, '座標一覧')
+
+    // ファイルを出力
+    XLSX.writeFile(wb, `${projectName}_座標一覧.xlsx`)
+  }
+
   return (
     <div className="h-full flex flex-col">
       {/* ヘッダー */}
@@ -449,6 +542,14 @@ export function PipeCoordinateCalcPage() {
               >
                 <FileText className="h-4 w-4" />
                 SIMA出力
+              </button>
+              <button
+                onClick={handleExportExcel}
+                disabled={mergedPoints.length === 0 && exportPoints.length === 0 && coordinatePoints.length === 0}
+                className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed bg-green-50 border-green-300 text-green-700"
+              >
+                <Table className="h-4 w-4" />
+                Excel出力
               </button>
             </div>
           </div>
@@ -517,7 +618,12 @@ export function PipeCoordinateCalcPage() {
               </h3>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setIsSelectMode(!isSelectMode)}
+                  onClick={() => {
+                    setIsSelectMode(!isSelectMode)
+                    if (isSelectMode) {
+                      setInsertIndex(null)  // 選択終了時に挿入位置をリセット
+                    }
+                  }}
                   className={`px-3 py-1 text-sm rounded ${
                     isSelectMode
                       ? 'bg-green-600 text-white'
@@ -542,53 +648,87 @@ export function PipeCoordinateCalcPage() {
               </p>
             )}
             {exportPoints.length > 0 && (
-              <div className="bg-white rounded border max-h-32 overflow-auto">
+              <div className="bg-white rounded border max-h-40 overflow-auto">
                 <table className="w-full text-xs">
                   <thead className="bg-slate-50 sticky top-0">
                     <tr>
                       <th className="px-2 py-1 text-left w-8">#</th>
                       <th className="px-2 py-1 text-left">点名</th>
                       <th className="px-2 py-1 text-left w-16">種別</th>
-                      <th className="px-2 py-1 w-16"></th>
+                      <th className="px-2 py-1 w-20"></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {exportPoints.map((point, index) => (
-                      <tr key={`${point.id}-${index}`} className="hover:bg-slate-50">
-                        <td className="px-2 py-1 font-mono">{index + 1}</td>
-                        <td className="px-2 py-1 font-mono">{point.name}</td>
-                        <td className="px-2 py-1">
-                          <span className={`px-1.5 py-0.5 rounded text-xs ${
-                            point.source === 'pipe' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'
-                          }`}>
-                            {point.source === 'pipe' ? '測点' : '座標'}
-                          </span>
-                        </td>
-                        <td className="px-2 py-1">
-                          <div className="flex items-center gap-1">
-                            <button
-                              onClick={() => moveExportPoint(index, 'up')}
-                              disabled={index === 0}
-                              className="p-0.5 hover:bg-slate-200 rounded disabled:opacity-30"
-                            >
-                              <ArrowUp className="h-3 w-3" />
-                            </button>
-                            <button
-                              onClick={() => moveExportPoint(index, 'down')}
-                              disabled={index === exportPoints.length - 1}
-                              className="p-0.5 hover:bg-slate-200 rounded disabled:opacity-30"
-                            >
-                              <ArrowDown className="h-3 w-3" />
-                            </button>
-                            <button
-                              onClick={() => removeExportPoint(index)}
-                              className="p-0.5 hover:bg-red-100 rounded text-red-500"
-                            >
-                              <X className="h-3 w-3" />
-                            </button>
-                          </div>
+                    {/* 先頭に挿入するボタン */}
+                    {isSelectMode && (
+                      <tr className={`${insertIndex === 0 ? 'bg-yellow-100' : 'hover:bg-slate-50'}`}>
+                        <td colSpan={4} className="px-2 py-0.5">
+                          <button
+                            onClick={() => setInsertIndex(insertIndex === 0 ? null : 0)}
+                            className={`w-full flex items-center justify-center gap-1 py-0.5 rounded text-xs ${
+                              insertIndex === 0 ? 'bg-yellow-200 text-yellow-800' : 'hover:bg-slate-100 text-slate-500'
+                            }`}
+                          >
+                            <Plus className="h-3 w-3" />
+                            {insertIndex === 0 ? 'ここに挿入中' : 'ここに挿入'}
+                          </button>
                         </td>
                       </tr>
+                    )}
+                    {exportPoints.map((point, index) => (
+                      <>
+                        <tr key={`${point.id}-${index}`} className="hover:bg-slate-50">
+                          <td className="px-2 py-1 font-mono">{index + 1}</td>
+                          <td className="px-2 py-1 font-mono">{point.name}</td>
+                          <td className="px-2 py-1">
+                            <span className={`px-1.5 py-0.5 rounded text-xs ${
+                              point.source === 'pipe' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'
+                            }`}>
+                              {point.source === 'pipe' ? '測点' : '座標'}
+                            </span>
+                          </td>
+                          <td className="px-2 py-1">
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => moveExportPoint(index, 'up')}
+                                disabled={index === 0}
+                                className="p-0.5 hover:bg-slate-200 rounded disabled:opacity-30"
+                              >
+                                <ArrowUp className="h-3 w-3" />
+                              </button>
+                              <button
+                                onClick={() => moveExportPoint(index, 'down')}
+                                disabled={index === exportPoints.length - 1}
+                                className="p-0.5 hover:bg-slate-200 rounded disabled:opacity-30"
+                              >
+                                <ArrowDown className="h-3 w-3" />
+                              </button>
+                              <button
+                                onClick={() => removeExportPoint(index)}
+                                className="p-0.5 hover:bg-red-100 rounded text-red-500"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                        {/* 各行の後に挿入ボタンを表示（選択モード時） */}
+                        {isSelectMode && (
+                          <tr key={`insert-${index}`} className={`${insertIndex === index + 1 ? 'bg-yellow-100' : 'hover:bg-slate-50'}`}>
+                            <td colSpan={4} className="px-2 py-0.5">
+                              <button
+                                onClick={() => setInsertIndex(insertIndex === index + 1 ? null : index + 1)}
+                                className={`w-full flex items-center justify-center gap-1 py-0.5 rounded text-xs ${
+                                  insertIndex === index + 1 ? 'bg-yellow-200 text-yellow-800' : 'hover:bg-slate-100 text-slate-500'
+                                }`}
+                              >
+                                <Plus className="h-3 w-3" />
+                                {insertIndex === index + 1 ? 'ここに挿入中' : 'ここに挿入'}
+                              </button>
+                            </td>
+                          </tr>
+                        )}
+                      </>
                     ))}
                   </tbody>
                 </table>
