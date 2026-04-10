@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
-import { MapPin, Settings, Download, Merge, Hash, Navigation, Target, Square, Map, FileText, MousePointer, X, ArrowUp, ArrowDown, Route, Plus, Table } from 'lucide-react'
+import { MapPin, Settings, Download, Merge, Hash, Navigation, Target, Square, Map, FileText, MousePointer, X, ArrowUp, ArrowDown, Route, Plus, Table, Save, FolderOpen } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
@@ -351,6 +351,52 @@ export function PipeCoordinateCalcPage() {
     setExportPoints([])
   }
 
+  // 出力点の保存（JSONファイルとしてダウンロード）
+  const saveExportPoints = () => {
+    if (exportPoints.length === 0) return
+
+    const name = currentProject?.name || 'NoName'
+    const data = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      projectName: name,
+      points: exportPoints,
+    }
+
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${name}_出力点選択.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  // 出力点の読み込み（JSONファイルから）
+  const loadExportPoints = () => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.json'
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0]
+      if (!file) return
+
+      const reader = new FileReader()
+      reader.onload = (event) => {
+        try {
+          const data = JSON.parse(event.target?.result as string)
+          if (data.points && Array.isArray(data.points)) {
+            setExportPoints(data.points as ExportPoint[])
+          }
+        } catch {
+          alert('ファイルの読み込みに失敗しました')
+        }
+      }
+      reader.readAsText(file)
+    }
+    input.click()
+  }
+
   // CSVエクスポート
   const handleExportCSV = () => {
     const pointsToExport = exportPoints.length > 0 ? exportPoints : mergedPoints.map(p => ({
@@ -633,13 +679,31 @@ export function PipeCoordinateCalcPage() {
                   {isSelectMode ? '選択終了' : '地図から選択'}
                 </button>
                 {exportPoints.length > 0 && (
-                  <button
-                    onClick={clearExportPoints}
-                    className="px-3 py-1 text-sm border border-red-300 text-red-600 rounded hover:bg-red-50"
-                  >
-                    クリア
-                  </button>
+                  <>
+                    <button
+                      onClick={saveExportPoints}
+                      className="flex items-center gap-1 px-2 py-1 text-sm border border-blue-300 text-blue-600 rounded hover:bg-blue-50"
+                      title="選択を保存"
+                    >
+                      <Save className="h-3 w-3" />
+                      保存
+                    </button>
+                    <button
+                      onClick={clearExportPoints}
+                      className="px-3 py-1 text-sm border border-red-300 text-red-600 rounded hover:bg-red-50"
+                    >
+                      クリア
+                    </button>
+                  </>
                 )}
+                <button
+                  onClick={loadExportPoints}
+                  className="flex items-center gap-1 px-2 py-1 text-sm border border-slate-300 text-slate-600 rounded hover:bg-slate-50"
+                  title="選択を読み込み"
+                >
+                  <FolderOpen className="h-3 w-3" />
+                  読込
+                </button>
               </div>
             </div>
             {isSelectMode && (
@@ -659,76 +723,58 @@ export function PipeCoordinateCalcPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {/* 先頭に挿入するボタン */}
-                    {isSelectMode && (
-                      <tr className={`${insertIndex === 0 ? 'bg-yellow-100' : 'hover:bg-slate-50'}`}>
-                        <td colSpan={4} className="px-2 py-0.5">
-                          <button
-                            onClick={() => setInsertIndex(insertIndex === 0 ? null : 0)}
-                            className={`w-full flex items-center justify-center gap-1 py-0.5 rounded text-xs ${
-                              insertIndex === 0 ? 'bg-yellow-200 text-yellow-800' : 'hover:bg-slate-100 text-slate-500'
-                            }`}
-                          >
-                            <Plus className="h-3 w-3" />
-                            {insertIndex === 0 ? 'ここに挿入中' : 'ここに挿入'}
-                          </button>
-                        </td>
-                      </tr>
-                    )}
                     {exportPoints.map((point, index) => (
-                      <>
-                        <tr key={`${point.id}-${index}`} className="hover:bg-slate-50">
-                          <td className="px-2 py-1 font-mono">{index + 1}</td>
-                          <td className="px-2 py-1 font-mono">{point.name}</td>
-                          <td className="px-2 py-1">
-                            <span className={`px-1.5 py-0.5 rounded text-xs ${
-                              point.source === 'pipe' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'
-                            }`}>
-                              {point.source === 'pipe' ? '測点' : '座標'}
-                            </span>
-                          </td>
-                          <td className="px-2 py-1">
-                            <div className="flex items-center gap-1">
+                      <tr
+                        key={`${point.id}-${index}`}
+                        className={`${insertIndex === index ? 'bg-yellow-100' : 'hover:bg-slate-50'}`}
+                      >
+                        <td className="px-2 py-1 font-mono">{index + 1}</td>
+                        <td className="px-2 py-1 font-mono">{point.name}</td>
+                        <td className="px-2 py-1">
+                          <span className={`px-1.5 py-0.5 rounded text-xs ${
+                            point.source === 'pipe' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'
+                          }`}>
+                            {point.source === 'pipe' ? '測点' : '座標'}
+                          </span>
+                        </td>
+                        <td className="px-2 py-1">
+                          <div className="flex items-center gap-1">
+                            {isSelectMode && (
                               <button
-                                onClick={() => moveExportPoint(index, 'up')}
-                                disabled={index === 0}
-                                className="p-0.5 hover:bg-slate-200 rounded disabled:opacity-30"
-                              >
-                                <ArrowUp className="h-3 w-3" />
-                              </button>
-                              <button
-                                onClick={() => moveExportPoint(index, 'down')}
-                                disabled={index === exportPoints.length - 1}
-                                className="p-0.5 hover:bg-slate-200 rounded disabled:opacity-30"
-                              >
-                                <ArrowDown className="h-3 w-3" />
-                              </button>
-                              <button
-                                onClick={() => removeExportPoint(index)}
-                                className="p-0.5 hover:bg-red-100 rounded text-red-500"
-                              >
-                                <X className="h-3 w-3" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                        {/* 各行の後に挿入ボタンを表示（選択モード時） */}
-                        {isSelectMode && (
-                          <tr key={`insert-${index}`} className={`${insertIndex === index + 1 ? 'bg-yellow-100' : 'hover:bg-slate-50'}`}>
-                            <td colSpan={4} className="px-2 py-0.5">
-                              <button
-                                onClick={() => setInsertIndex(insertIndex === index + 1 ? null : index + 1)}
-                                className={`w-full flex items-center justify-center gap-1 py-0.5 rounded text-xs ${
-                                  insertIndex === index + 1 ? 'bg-yellow-200 text-yellow-800' : 'hover:bg-slate-100 text-slate-500'
+                                onClick={() => setInsertIndex(insertIndex === index ? null : index)}
+                                className={`p-0.5 rounded text-xs ${
+                                  insertIndex === index
+                                    ? 'bg-yellow-200 text-yellow-800'
+                                    : 'hover:bg-slate-200 text-slate-500'
                                 }`}
+                                title="この行の上に挿入"
                               >
                                 <Plus className="h-3 w-3" />
-                                {insertIndex === index + 1 ? 'ここに挿入中' : 'ここに挿入'}
                               </button>
-                            </td>
-                          </tr>
-                        )}
-                      </>
+                            )}
+                            <button
+                              onClick={() => moveExportPoint(index, 'up')}
+                              disabled={index === 0}
+                              className="p-0.5 hover:bg-slate-200 rounded disabled:opacity-30"
+                            >
+                              <ArrowUp className="h-3 w-3" />
+                            </button>
+                            <button
+                              onClick={() => moveExportPoint(index, 'down')}
+                              disabled={index === exportPoints.length - 1}
+                              className="p-0.5 hover:bg-slate-200 rounded disabled:opacity-30"
+                            >
+                              <ArrowDown className="h-3 w-3" />
+                            </button>
+                            <button
+                              onClick={() => removeExportPoint(index)}
+                              className="p-0.5 hover:bg-red-100 rounded text-red-500"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
                     ))}
                   </tbody>
                 </table>
