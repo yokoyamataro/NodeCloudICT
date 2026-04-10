@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Upload, Download, Plus, Trash2, FileText } from 'lucide-react'
+import { Upload, Download, Plus, Trash2, FileText, Eye, EyeOff } from 'lucide-react'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useProjectStore } from '@/stores/projectStore'
@@ -16,6 +16,10 @@ export function CoordinatesPage() {
   const [calculationSheet, setCalculationSheet] = useState<AreaCalculationSheetType | null>(null)
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
   const [editingZoneId, setEditingZoneId] = useState<string | null>(null)
+  const [showLabels, setShowLabels] = useState(true)
+  const [visibleTypes, setVisibleTypes] = useState<Set<string>>(
+    new Set(Object.keys(COORDINATE_TYPE_NAMES))
+  )
 
   const { currentProject } = useProjectStore()
   const {
@@ -463,13 +467,50 @@ export function CoordinatesPage() {
         </div>
 
         {/* 右側: 地図 */}
-        <div className="w-1/2 bg-slate-100">
-          <CoordinateMap
-            selectedPointId={selectedPointId}
-            onPointSelect={handlePointClick}
-            showZonePolygons={true}
-            editingZoneId={editingZoneId}
-          />
+        <div className="w-1/2 bg-slate-100 flex flex-col">
+          {/* 表示設定パネル */}
+          <div className="p-2 bg-white border-b flex items-center gap-4 flex-wrap">
+            <button
+              onClick={() => setShowLabels(!showLabels)}
+              className={`flex items-center gap-1 px-2 py-1 text-xs rounded border ${
+                showLabels ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-gray-50 border-gray-300'
+              }`}
+            >
+              {showLabels ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+              点名
+            </button>
+            <div className="flex items-center gap-2">
+              {Object.entries(COORDINATE_TYPE_NAMES).map(([type, name]) => (
+                <label key={type} className="flex items-center gap-1 text-xs cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={visibleTypes.has(type)}
+                    onChange={(e) => {
+                      const newTypes = new Set(visibleTypes)
+                      if (e.target.checked) {
+                        newTypes.add(type)
+                      } else {
+                        newTypes.delete(type)
+                      }
+                      setVisibleTypes(newTypes)
+                    }}
+                    className="h-3 w-3"
+                  />
+                  {name}
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="flex-1">
+            <CoordinateMap
+              selectedPointId={selectedPointId}
+              onPointSelect={handlePointClick}
+              showZonePolygons={true}
+              editingZoneId={editingZoneId}
+              showLabels={showLabels}
+              visibleTypes={visibleTypes}
+            />
+          </div>
         </div>
       </div>
 

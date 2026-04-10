@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { MapContainer, TileLayer, Marker, Popup, Polygon, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
@@ -72,6 +72,8 @@ interface CoordinateMapProps {
   onPointSelect?: (id: string) => void
   showZonePolygons?: boolean
   editingZoneId?: string | null
+  showLabels?: boolean
+  visibleTypes?: Set<string>
 }
 
 export function CoordinateMap({
@@ -79,6 +81,8 @@ export function CoordinateMap({
   onPointSelect,
   showZonePolygons = true,
   editingZoneId,
+  showLabels = true,
+  visibleTypes,
 }: CoordinateMapProps) {
   const { coordinates, zones } = useCoordinateStore()
 
@@ -87,6 +91,11 @@ export function CoordinateMap({
     (c): c is CoordinateRow & { lat: number; lng: number } =>
       c.lat !== null && c.lng !== null
   )
+
+  // 表示対象の座標をフィルタリング
+  const displayCoordinates = visibleTypes
+    ? validCoordinates.filter(c => visibleTypes.has(c.type))
+    : validCoordinates
 
   // 初期中心（座標がない場合は東京）
   const defaultCenter: [number, number] = [35.6762, 139.6503]
@@ -165,7 +174,7 @@ export function CoordinateMap({
         })}
 
       {/* 座標マーカー */}
-      {validCoordinates.map(coord => (
+      {displayCoordinates.map(coord => (
         <Marker
           key={coord.id}
           position={[coord.lat, coord.lng]}
@@ -177,6 +186,16 @@ export function CoordinateMap({
             click: () => onPointSelect?.(coord.id),
           }}
         >
+          {showLabels && (
+            <Tooltip
+              permanent
+              direction="top"
+              offset={[0, -8]}
+              className="point-label-tooltip"
+            >
+              {coord.pointNumber}
+            </Tooltip>
+          )}
           <Popup>
             <div className="text-sm">
               <div className="font-bold">{coord.pointNumber}</div>
