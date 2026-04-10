@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Upload, Download, Plus, Trash2, FileText } from 'lucide-react'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 import { useCoordinateStore } from '@/stores/coordinateStore'
@@ -118,6 +118,75 @@ export function CoordinatesPage() {
     a.click()
     URL.revokeObjectURL(url)
   }
+
+  // TSVペースト処理
+  const handlePaste = useCallback((event: React.ClipboardEvent) => {
+    const text = event.clipboardData.getData('text')
+    if (!text) return
+
+    // TSV（タブ区切り）またはCSV（カンマ区切り）を検出
+    const lines = text.split('\n').filter(line => line.trim())
+    if (lines.length === 0) return
+
+    // 区切り文字を判定（タブが多ければTSV、そうでなければCSV）
+    const firstLine = lines[0]
+    const tabCount = (firstLine.match(/\t/g) || []).length
+    const commaCount = (firstLine.match(/,/g) || []).length
+    const delimiter = tabCount >= commaCount ? '\t' : ','
+
+    const newCoords = lines.map((line, idx) => {
+      const parts = line.split(delimiter).map(s => s.trim())
+      // 最低2列（X, Y）が必要
+      if (parts.length < 2) return null
+
+      // 列数で判定: 2列=X,Y、3列=X,Y,Z または 点番号,X,Y、4列=点番号,X,Y,Z
+      let pointNumber: string
+      let x: number
+      let y: number
+      let z: number | null = null
+
+      if (parts.length === 2) {
+        // X, Y のみ
+        pointNumber = `P${coordinates.length + idx + 1}`
+        x = parseFloat(parts[0]) || 0
+        y = parseFloat(parts[1]) || 0
+      } else if (parts.length === 3) {
+        // 最初の列が数値かどうかで判定
+        const firstIsNumber = !isNaN(parseFloat(parts[0])) && parts[0].match(/^-?\d+\.?\d*$/)
+        if (firstIsNumber) {
+          // X, Y, Z
+          pointNumber = `P${coordinates.length + idx + 1}`
+          x = parseFloat(parts[0]) || 0
+          y = parseFloat(parts[1]) || 0
+          z = parseFloat(parts[2]) || null
+        } else {
+          // 点番号, X, Y
+          pointNumber = parts[0] || `P${coordinates.length + idx + 1}`
+          x = parseFloat(parts[1]) || 0
+          y = parseFloat(parts[2]) || 0
+        }
+      } else {
+        // 4列以上: 点番号, X, Y, Z
+        pointNumber = parts[0] || `P${coordinates.length + idx + 1}`
+        x = parseFloat(parts[1]) || 0
+        y = parseFloat(parts[2]) || 0
+        z = parts[3] ? parseFloat(parts[3]) : null
+      }
+
+      return {
+        pointNumber,
+        x,
+        y,
+        z,
+        type: selectedType,
+      }
+    }).filter((c): c is NonNullable<typeof c> => c !== null)
+
+    if (newCoords.length > 0) {
+      importCoordinates(newCoords)
+      event.preventDefault()
+    }
+  }, [coordinates.length, selectedType, importCoordinates])
 
   const handleCalculateArea = (zoneId: string) => {
     const sheet = calculateZoneArea(zoneId)
@@ -269,7 +338,7 @@ export function CoordinatesPage() {
               </div>
 
               {/* 座標テーブル */}
-              <div className="flex-1 overflow-auto">
+              <div className="flex-1 overflow-auto" onPaste={handlePaste}>
                 <table className="w-full text-sm">
                   <thead className="bg-slate-100 sticky top-0">
                     <tr>
