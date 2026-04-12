@@ -40,8 +40,10 @@ export function PipeWiringPage() {
     setCollectorTabs,
     setDirectRows,
     fetchWiring,
+    saveWiring,
     loading: wiringLoading,
     saving: wiringSaving,
+    hasChanges,
   } = usePipeWiringStore()
   const { fetchPlan } = useConstructionPlanStore()
 
@@ -54,6 +56,17 @@ export function PipeWiringPage() {
       fetchPlan(currentProject.id)
     }
   }, [currentProject, fetchPipes, fetchCoordinates, fetchWiring, fetchPlan])
+
+  // 変更があった場合に自動保存（デバウンス付き）
+  useEffect(() => {
+    if (!hasChanges || wiringSaving) return
+
+    const timeoutId = setTimeout(() => {
+      saveWiring()
+    }, 500) // 500ms後に保存
+
+    return () => clearTimeout(timeoutId)
+  }, [hasChanges, wiringSaving, saveWiring, collectorTabs, directRows])
 
   // タブ管理
   const [activeTabType, setActiveTabType] = useState<TabType>('collector')
@@ -337,7 +350,9 @@ export function PipeWiringPage() {
 
   // 集水合流管として指定して終了
   const setAsMergePipe = () => {
-    if (!pendingCollectorPipeId) return
+    // 現在の系統の最後の集水管IDを使用（previousCollectorPipeIdが設定されていればそれを、なければpendingを使用）
+    const lastCollectorPipeId = previousCollectorPipeId || pendingCollectorPipeId
+    if (!lastCollectorPipeId) return
 
     // 現在のタブに区切り行（合流管）を追加
     if (activeTabType === 'collector') {
@@ -345,12 +360,12 @@ export function PipeWiringPage() {
         const newTabs = [...prev]
         const currentTab = newTabs[activeCollectorIndex]
 
-        // 合流管行を追加
+        // 合流管行を追加（現在の系統の最後の集水管を使用）
         const mergeRow: WiringRow = {
           id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
           rowType: 'collector_junction',
           absorptionPipes: [],
-          collectorPipe: pendingCollectorPipeId,
+          collectorPipe: lastCollectorPipeId,
           isMergePipe: true,
         }
         currentTab.rows.push(mergeRow)
@@ -367,7 +382,7 @@ export function PipeWiringPage() {
           id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
           rowType: 'collector_junction',
           absorptionPipes: [],
-          collectorPipe: pendingCollectorPipeId,
+          collectorPipe: lastCollectorPipeId,
           isMergePipe: true,
         }
         newRows.push(mergeRow)
@@ -378,6 +393,7 @@ export function PipeWiringPage() {
 
     setShowContinueDialog(false)
     setPendingCollectorPipeId(null)
+    setPreviousCollectorPipeId(null)
     setSelectionMode('none')
   }
 
@@ -790,13 +806,23 @@ export function PipeWiringPage() {
     }
 
     // 吸水合流・集水合流・集水変化点の場合
-    // 管が変わる場合（前の行と集水管が異なる）: 下流管の上流端（C）
+    // 管が変わる場合（前の行と集水管が異なる）: 前の管の下流端 + 新しい管の上流端（S4A S3C形式）
     // 管が変わらない場合: 測点なし（管の途中の合流点なので測点は登録されない）
     if (rowType === 'absorption_merge' || rowType === 'collector_merge' || rowType === 'collector_change') {
       // 管の切り替わりをチェック
       if (prevCollectorPipeId && prevCollectorPipeId !== collectorPipeId) {
-        // 管が変わった: 新しい管（下流管）の上流端
-        return generatePointName(collectorPipe.number, 0, collectorPipe.vertices.length)
+        // 前の管の下流端名を取得
+        const prevPipe = pipes.find(p => p.id === prevCollectorPipeId)
+        const prevEndPointName = prevPipe && prevPipe.vertices.length > 0
+          ? generatePointName(prevPipe.number, prevPipe.vertices.length - 1, prevPipe.vertices.length)
+          : null
+        // 新しい管の上流端名
+        const newStartPointName = generatePointName(collectorPipe.number, 0, collectorPipe.vertices.length)
+        // 両方を結合して返す（S4A S3C形式）
+        if (prevEndPointName) {
+          return `${prevEndPointName} ${newStartPointName}`
+        }
+        return newStartPointName
       } else {
         // 管が変わっていない場合: 測点なし
         return null
@@ -1293,27 +1319,18 @@ export function PipeWiringPage() {
                   </thead>
                   <tbody className="divide-y">
                     {buildDisplayRows(group.rows).map((displayRow, displayIndex) => {
-                      // セパレータ行（管が変わる場合は両方の測点名を表示）
+                      // セパレータ行（配管番号のみ表示）
                       if (displayRow.type === 'pipe-separator') {
-                        const hasPipeChange = displayRow.currentPipeEndPointName && displayRow.nextPipeStartPointName
                         return (
                           <tr key={`sep-${displayRow.pipeId}-${displayIndex}`} className="bg-green-50 h-6">
                             <td className="px-1 py-0.5 border-r"></td>
                             <td className="px-1 py-0.5 border-r"></td>
                             <td className="px-1 py-0.5">
-                              <div className="flex items-center gap-2">
-                                <span className={`text-xs font-medium ${
-                                  activeTabType === 'collector' ? 'text-green-700' : 'text-orange-700'
-                                }`}>
-                                  {displayRow.pipeNumber}
-                                </span>
-                                {/* 管が変わる場合は両方の測点名を表示 (S4A S3C) */}
-                                {hasPipeChange && (
-                                  <span className="text-xs text-slate-600 font-medium">
-                                    {displayRow.currentPipeEndPointName} {displayRow.nextPipeStartPointName}
-                                  </span>
-                                )}
-                              </div>
+                              <span className={`text-xs font-medium ${
+                                activeTabType === 'collector' ? 'text-green-700' : 'text-orange-700'
+                              }`}>
+                                {displayRow.pipeNumber}
+                              </span>
                             </td>
                             <td className="px-1 py-0.5"></td>
                           </tr>
