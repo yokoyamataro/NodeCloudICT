@@ -106,6 +106,7 @@ export function CadAnalysisPage() {
     reversePipeDirection,
     mergePipes,
     splitPipe,
+    splitPipeAtPoint,
     autoInsertMidpoints,
     previewMidpoints,
   } = useUnderdrainStore()
@@ -532,6 +533,19 @@ export function CadAnalysisPage() {
     const result = splitPipe(pipeId, vertexIndex)
     if (result) {
       alert('管路を分割しました')
+      setEditMode('normal')
+    } else {
+      alert('分割できませんでした')
+    }
+  }
+
+  // 合流点クリック処理（分割モード用）
+  const handleJunctionSplitClick = (pipeId: string, point: { x: number; y: number }) => {
+    if (editMode !== 'split') return
+
+    const result = splitPipeAtPoint(pipeId, point)
+    if (result) {
+      alert('合流点で管路を分割しました')
       setEditMode('normal')
     } else {
       alert('分割できませんでした')
@@ -1335,6 +1349,7 @@ export function CadAnalysisPage() {
               selectedPipeIds={selectedPipeIds}
               onPipeSelect={handlePipeClick}
               onVertexClick={handleVertexClick}
+              onJunctionSplitClick={handleJunctionSplitClick}
               isBulkEditMode={isBulkEditMode || autoConnectMode === 'selecting-outlet'}
               showDirection={showDirection}
               showLabels={showLabels}

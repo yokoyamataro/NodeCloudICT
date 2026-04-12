@@ -66,6 +66,7 @@ interface UnderdrainState {
   reversePipeDirection: (id: string) => void // 上流/下流反転
   mergePipes: (ids: string[]) => string | null // 管路の結合（返り値は新しい管路ID）
   splitPipe: (id: string, vertexIndex: number) => [string, string] | null // 管路の分割
+  splitPipeAtPoint: (id: string, point: { x: number; y: number }) => [string, string] | null // 任意の座標で管路を分割
   autoInsertMidpoints: (maxSegmentLength: number, pipeTypes: PipeType[]) => number // 自動中間点設置（返り値は追加された中間点数）
   previewMidpoints: (maxSegmentLength: number, pipeTypes: PipeType[]) => PipeVertex[] // 中間点のプレビュー（適用せずに計算のみ）
 
@@ -492,6 +493,217 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
 
     const firstVertices = pipe.vertices.slice(0, vertexIndex + 1)
     const secondVertices = pipe.vertices.slice(vertexIndex)
+
+    const calcLength = (vertices: PipeVertex[]) => {
+      let length = 0
+      for (let i = 0; i < vertices.length - 1; i++) {
+        const dx = vertices[i + 1].x - vertices[i].x
+        const dy = vertices[i + 1].y - vertices[i].y
+        length += Math.sqrt(dx * dx + dy * dy)
+      }
+      return length
+    }
+
+    const id1 = crypto.randomUUID()
+    const id2 = crypto.randomUUID()
+
+    const pipe1: PipeRow = {
+      id: id1,
+      number: `${pipe.number}-1`,
+      layerName: pipe.layerName,
+      pipeType: pipe.pipeType,
+      diameter: pipe.diameter,
+      designLength: null,
+      measuredLength: calcLength(firstVertices),
+      vertices: firstVertices,
+      connectionTo: id2,
+      notes: pipe.notes,
+    }
+
+    const pipe2: PipeRow = {
+      id: id2,
+      number: `${pipe.number}-2`,
+      layerName: pipe.layerName,
+      pipeType: pipe.pipeType,
+      diameter: pipe.diameter,
+      designLength: null,
+      measuredLength: calcLength(secondVertices),
+      vertices: secondVertices,
+      connectionTo: pipe.connectionTo,
+      notes: null,
+    }
+
+    // 接続先を更新する必要がある他の管路
+    const pipesToUpdateConnection = state.pipes.filter(p => p.connectionTo === id && p.id !== id)
+
+    set((state) => ({
+      pipes: [
+        ...state.pipes
+          .filter(p => p.id !== id)
+          .map(p => {
+            if (p.connectionTo === id) {
+              return { ...p, connectionTo: id1 }
+            }
+            return p
+          }),
+        pipe1,
+        pipe2,
+      ],
+      selectedPipeId: id1,
+      selectedPipeIds: new Set(),
+    }))
+
+    // Supabaseに同期
+    const projectId = getCurrentProjectId()
+    if (projectId) {
+      ;(async () => {
+        try {
+          // 元の管路を削除
+          const { error: deleteError } = await supabase
+            .from('design_pipes')
+            .delete()
+            .eq('id', id)
+
+          if (deleteError) {
+            console.error('管路削除エラー:', deleteError)
+            set({ error: deleteError.message })
+            return
+          }
+
+          // 2つの新しい管路を挿入
+          const { error: insertError } = await supabase
+            .from('design_pipes')
+            .insert([
+              {
+                id: id1,
+                project_id: projectId,
+                number: pipe1.number,
+                layer_name: pipe1.layerName,
+                pipe_type: pipe1.pipeType,
+                diameter: pipe1.diameter,
+                design_length: pipe1.designLength,
+                measured_length: pipe1.measuredLength,
+                vertices: pipe1.vertices,
+                connection_to: pipe1.connectionTo,
+                notes: pipe1.notes,
+              },
+              {
+                id: id2,
+                project_id: projectId,
+                number: pipe2.number,
+                layer_name: pipe2.layerName,
+                pipe_type: pipe2.pipeType,
+                diameter: pipe2.diameter,
+                design_length: pipe2.designLength,
+                measured_length: pipe2.measuredLength,
+                vertices: pipe2.vertices,
+                connection_to: pipe2.connectionTo,
+                notes: pipe2.notes,
+              },
+            ] as never)
+
+          if (insertError) {
+            console.error('管路挿入エラー:', insertError)
+            set({ error: insertError.message })
+            return
+          }
+
+          // 接続先を更新した他の管路も同期
+          for (const p of pipesToUpdateConnection) {
+            await supabase
+              .from('design_pipes')
+              .update({ connection_to: id1 } as never)
+              .eq('id', p.id)
+          }
+        } catch (err) {
+          console.error('管路分割の同期エラー:', err)
+          set({ error: err instanceof Error ? err.message : '管路分割の同期に失敗しました' })
+        }
+      })()
+    }
+
+    return [id1, id2]
+  },
+
+  splitPipeAtPoint: (id, point) => {
+    const state = get()
+    const pipe = state.pipes.find(p => p.id === id)
+    if (!pipe || pipe.vertices.length < 2) return null
+
+    const threshold = 0.5 // 50cm以内なら分割可能
+
+    // 点がどのセグメント上にあるかを探す
+    let bestSegmentIndex = -1
+    let bestT = 0
+    let bestDistance = Infinity
+
+    for (let i = 0; i < pipe.vertices.length - 1; i++) {
+      const v1 = pipe.vertices[i]
+      const v2 = pipe.vertices[i + 1]
+
+      const dx = v2.x - v1.x
+      const dy = v2.y - v1.y
+      const lengthSq = dx * dx + dy * dy
+
+      if (lengthSq === 0) continue
+
+      // 線分上の最近点のパラメータ t を計算
+      let t = ((point.x - v1.x) * dx + (point.y - v1.y) * dy) / lengthSq
+      t = Math.max(0, Math.min(1, t))
+
+      // 最近点の座標
+      const nearestX = v1.x + t * dx
+      const nearestY = v1.y + t * dy
+
+      // 距離を計算
+      const dist = Math.sqrt(
+        Math.pow(point.x - nearestX, 2) + Math.pow(point.y - nearestY, 2)
+      )
+
+      if (dist < bestDistance) {
+        bestDistance = dist
+        bestSegmentIndex = i
+        bestT = t
+      }
+    }
+
+    // 閾値内でなければ分割不可
+    if (bestDistance > threshold || bestSegmentIndex < 0) {
+      return null
+    }
+
+    // 分割点を計算
+    const v1 = pipe.vertices[bestSegmentIndex]
+    const v2 = pipe.vertices[bestSegmentIndex + 1]
+    const splitPoint: PipeVertex = {
+      x: v1.x + bestT * (v2.x - v1.x),
+      y: v1.y + bestT * (v2.y - v1.y),
+      z: (v1.z !== null && v2.z !== null)
+        ? v1.z + bestT * (v2.z - v1.z)
+        : v1.z ?? v2.z,
+    }
+
+    // 既存の頂点とほぼ同じ位置なら、その頂点で分割
+    for (let i = 0; i < pipe.vertices.length; i++) {
+      const v = pipe.vertices[i]
+      const dist = Math.sqrt(Math.pow(v.x - splitPoint.x, 2) + Math.pow(v.y - splitPoint.y, 2))
+      if (dist < 0.1) { // 10cm以内なら既存頂点
+        // 端点なら分割不可
+        if (i === 0 || i === pipe.vertices.length - 1) return null
+        // 既存のsplitPipe関数で分割
+        return get().splitPipe(id, i)
+      }
+    }
+
+    // 新しい頂点を挿入して分割
+    const firstVertices = [
+      ...pipe.vertices.slice(0, bestSegmentIndex + 1),
+      splitPoint,
+    ]
+    const secondVertices = [
+      splitPoint,
+      ...pipe.vertices.slice(bestSegmentIndex + 1),
+    ]
 
     const calcLength = (vertices: PipeVertex[]) => {
       let length = 0

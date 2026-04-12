@@ -181,6 +181,7 @@ interface PipeMapProps {
   focusedPipeId?: string | null  // フォーカス対象の管路（中央拡大表示）
   onPipeSelect?: (id: string, ctrlKey?: boolean) => void
   onVertexClick?: (pipeId: string, vertexIndex: number) => void
+  onJunctionSplitClick?: (pipeId: string, point: { x: number; y: number }) => void  // 合流点での分割
   isBulkEditMode?: boolean
   showDirection?: boolean
   showLabels?: boolean
@@ -323,6 +324,7 @@ export function PipeMap({
   focusedPipeId = null,
   onPipeSelect,
   onVertexClick,
+  onJunctionSplitClick,
   isBulkEditMode = false,
   showDirection = false,
   showLabels = false,
@@ -537,6 +539,111 @@ export function PipeMap({
             )
           })
         )}
+
+      {/* 分割モードでの合流点マーカー（選択中管路上にある他の管路の端点） */}
+      {editMode === 'split' && selectedPipeId && (() => {
+        const selectedPipe = pipes.find(p => p.id === selectedPipeId)
+        if (!selectedPipe || selectedPipe.vertices.length < 2) return null
+
+        // 選択中の管路上にある他の管路の端点を探す
+        const junctionPoints: { x: number; y: number; pipeNumber: string }[] = []
+        const threshold = 0.5 // 50cm以内
+
+        for (const otherPipe of pipes) {
+          if (otherPipe.id === selectedPipeId) continue
+          if (otherPipe.vertices.length < 2) continue
+
+          // 他の管路の両端点をチェック
+          const endpoints = [
+            otherPipe.vertices[0],
+            otherPipe.vertices[otherPipe.vertices.length - 1],
+          ]
+
+          for (const endpoint of endpoints) {
+            // この端点が選択中の管路上にあるかチェック
+            for (let i = 0; i < selectedPipe.vertices.length - 1; i++) {
+              const v1 = selectedPipe.vertices[i]
+              const v2 = selectedPipe.vertices[i + 1]
+
+              const dx = v2.x - v1.x
+              const dy = v2.y - v1.y
+              const lengthSq = dx * dx + dy * dy
+              if (lengthSq === 0) continue
+
+              // 線分上の最近点を計算
+              let t = ((endpoint.x - v1.x) * dx + (endpoint.y - v1.y) * dy) / lengthSq
+              t = Math.max(0, Math.min(1, t))
+
+              const nearestX = v1.x + t * dx
+              const nearestY = v1.y + t * dy
+              const dist = Math.sqrt(
+                Math.pow(endpoint.x - nearestX, 2) + Math.pow(endpoint.y - nearestY, 2)
+              )
+
+              // 閾値内で、かつ既存の頂点とは離れている場合（端点では分割不可）
+              if (dist <= threshold) {
+                // 選択中管路の端点でないことを確認
+                const isAtEndpoint = selectedPipe.vertices.some((v, idx) => {
+                  if (idx === 0 || idx === selectedPipe.vertices.length - 1) {
+                    const d = Math.sqrt(Math.pow(v.x - endpoint.x, 2) + Math.pow(v.y - endpoint.y, 2))
+                    return d < 0.1
+                  }
+                  return false
+                })
+
+                if (!isAtEndpoint) {
+                  // 重複チェック
+                  const isDuplicate = junctionPoints.some(jp =>
+                    Math.sqrt(Math.pow(jp.x - endpoint.x, 2) + Math.pow(jp.y - endpoint.y, 2)) < 0.1
+                  )
+                  if (!isDuplicate) {
+                    junctionPoints.push({
+                      x: endpoint.x,
+                      y: endpoint.y,
+                      pipeNumber: otherPipe.number,
+                    })
+                  }
+                }
+                break
+              }
+            }
+          }
+        }
+
+        return junctionPoints.map((jp, idx) => {
+          const { lat, lng } = converter.toLatLng(jp.x, jp.y)
+          return (
+            <CircleMarker
+              key={`junction-${idx}`}
+              center={[lat, lng]}
+              radius={10}
+              pathOptions={{
+                color: '#16a34a',
+                fillColor: '#22c55e',
+                fillOpacity: 0.9,
+                weight: 3,
+              }}
+              eventHandlers={{
+                click: () => onJunctionSplitClick?.(selectedPipeId, { x: jp.x, y: jp.y }),
+                mouseover: (e) => {
+                  e.target.setStyle({ radius: 12, fillColor: '#15803d' })
+                },
+                mouseout: (e) => {
+                  e.target.setStyle({ radius: 10, fillColor: '#22c55e' })
+                },
+              }}
+            >
+              <Popup>
+                <div className="text-xs font-mono">
+                  <div className="font-bold text-green-600">合流点で分割</div>
+                  <div>接続管路: {jp.pipeNumber}</div>
+                  <div className="mt-1 text-green-600">クリックで分割</div>
+                </div>
+              </Popup>
+            </CircleMarker>
+          )
+        })
+      })()}
 
       {/* 方向表示モード: 全管路の矢印 */}
       {showDirection && pipeLines.map(pipe => {
