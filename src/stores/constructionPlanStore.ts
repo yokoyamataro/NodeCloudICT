@@ -376,97 +376,193 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
           // 合流管行はスキップ
           if (wiringRow.isMergePipe) continue
 
-          // 落口行（吸水が空）はスキップ
-          if (wiringRow.absorptionPipes.length === 0) continue
+          // 集水管情報を取得
+          const collectorPipe = wiringRow.collectorPipe
+            ? pipes.find(p => p.id === wiringRow.collectorPipe)
+            : null
 
-          // 吸水管が設定されている行のみ処理
-          for (const absorptionPipeId of wiringRow.absorptionPipes) {
-            const absorptionPipe = pipes.find(p => p.id === absorptionPipeId)
-            if (!absorptionPipe) continue
+          // 吸水管がある行の処理
+          if (wiringRow.absorptionPipes.length > 0) {
+            for (const absorptionPipeId of wiringRow.absorptionPipes) {
+              const absorptionPipe = pipes.find(p => p.id === absorptionPipeId)
+              if (!absorptionPipe) continue
 
-            const collectorPipe = wiringRow.collectorPipe
-              ? pipes.find(p => p.id === wiringRow.collectorPipe)
-              : null
+              // 吸水管の測点を生成（上流から順）
+              const absorptionPoints: PlanPoint[] = absorptionPipe.vertices.map((vertex, idx) => {
+                const pointName = generatePointName(
+                  absorptionPipe.number,
+                  idx,
+                  absorptionPipe.vertices.length
+                )
+                return {
+                  id: `point-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+                  pointType: 'absorption' as const,
+                  pointIndex: idx,
+                  pointName,
+                  x: vertex.x,
+                  y: vertex.y,
+                  groundHeight: getGroundHeightByCoordinate(vertex.x, vertex.y) ?? vertex.z,
+                  plannedHeight: null,
+                  cutDepth: null,
+                  segmentDistance: null,
+                  segmentSlope: null,
+                }
+              })
 
-            // 吸水管の測点を生成（上流から順）
-            const absorptionPoints: PlanPoint[] = absorptionPipe.vertices.map((vertex, idx) => {
-              const pointName = generatePointName(
-                absorptionPipe.number,
-                idx,
-                absorptionPipe.vertices.length
-              )
-              return {
-                id: `point-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-                pointType: 'absorption' as const,
-                pointIndex: idx,
-                pointName,
-                x: vertex.x,
-                y: vertex.y,
-                groundHeight: getGroundHeightByCoordinate(vertex.x, vertex.y) ?? vertex.z,
-                plannedHeight: null,
-                cutDepth: null,
-                segmentDistance: null,
-                segmentSlope: null,
+              // 区間距離を計算（最初の点以外）
+              for (let i = 1; i < absorptionPoints.length; i++) {
+                absorptionPoints[i].segmentDistance = calcDistance(
+                  absorptionPoints[i - 1],
+                  absorptionPoints[i]
+                )
               }
-            })
 
-            // 区間距離を計算（最初の点以外）
-            for (let i = 1; i < absorptionPoints.length; i++) {
-              absorptionPoints[i].segmentDistance = calcDistance(
-                absorptionPoints[i - 1],
-                absorptionPoints[i]
-              )
+              // 集水との合流点（常に接続元の下流端末番号を使用）
+              let collectorPoint: PlanPoint | null = null
+              if (collectorPipe && absorptionPipe.vertices.length > 0) {
+                const downstreamVertex = absorptionPipe.vertices[absorptionPipe.vertices.length - 1]
+
+                // 測点名は常に吸水管の下流端末番号を使用
+                const collectorPointName = generatePointName(
+                  absorptionPipe.number,
+                  absorptionPipe.vertices.length - 1,
+                  absorptionPipe.vertices.length
+                )
+
+                collectorPoint = {
+                  id: `point-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+                  pointType: 'collector',
+                  pointIndex: 0,
+                  pointName: collectorPointName,
+                  x: downstreamVertex.x,
+                  y: downstreamVertex.y,
+                  groundHeight: getGroundHeightByCoordinate(downstreamVertex.x, downstreamVertex.y) ?? downstreamVertex.z,
+                  plannedHeight: null,
+                  cutDepth: null,
+                  segmentDistance: null,
+                  segmentSlope: null,
+                }
+              }
+
+              // 系統情報を取得
+              const rowSystemInfo = systemInfo.get(wiringRow.id) || { systemIndex: 1, isSystemEnd: false, systemEndType: null }
+
+              const planRow: PlanRow = {
+                id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+                wiringRowId: wiringRow.id,
+                groupType: 'collector',
+                groupIndex: tabIndex,
+                rowIndex: group.rows.length,
+                systemIndex: rowSystemInfo.systemIndex,
+                isSystemEnd: rowSystemInfo.isSystemEnd,
+                systemEndType: rowSystemInfo.systemEndType,
+                absorptionPipeId,
+                collectorPipeId: wiringRow.collectorPipe,
+                pipeNumber: absorptionPipe.number,
+                diameter: absorptionPipe.diameter,
+                designLength: absorptionPipe.designLength,
+                absorptionPoints,
+                collectorPoint,
+              }
+
+              group.rows.push(planRow)
+            }
+          } else if (collectorPipe) {
+            // 吸水管がない行（collector_change, collector_junction, outlet など）
+            // 集水管の変化点/落口のみを処理
+            const rowType = wiringRow.rowType
+
+            // 集水管の全頂点に対応する測点を生成
+            // ただし、前の行で既に処理済みの点は除く
+            // ここでは集水管の特定の点（rowTypeに応じた点）のみを追加
+
+            // 集水管の頂点から適切な点を選択
+            // collector_change: 集水の中間変化点
+            // collector_junction: 集水の合流点
+            // outlet: 落口（集水の最下流）
+
+            let targetVertex: PipeVertex | null = null
+            let collectorPointName = ''
+
+            if (rowType === 'outlet' || rowType === 'collector_junction') {
+              // 落口または集水合流点: 集水管の最下流点
+              if (collectorPipe.vertices.length > 0) {
+                const lastIdx = collectorPipe.vertices.length - 1
+                targetVertex = collectorPipe.vertices[lastIdx]
+                collectorPointName = generatePointName(collectorPipe.number, lastIdx, collectorPipe.vertices.length)
+              }
+            } else if (rowType === 'collector_change' || rowType === 'collector_merge') {
+              // 集水変化点/集水合流: 前の行の集水点の次の点を探す
+              // 前の行を探して、その集水点の位置から次の頂点を特定
+              const prevRows = group.rows.filter(r => r.collectorPipeId === wiringRow.collectorPipe)
+              if (prevRows.length > 0 && collectorPipe.vertices.length > 1) {
+                const lastRow = prevRows[prevRows.length - 1]
+                if (lastRow.collectorPoint) {
+                  // 前の行の集水点位置を取得
+                  const prevX = lastRow.collectorPoint.x
+                  const prevY = lastRow.collectorPoint.y
+
+                  // 集水管の頂点から前の点を探し、その次の点を取得
+                  for (let i = 0; i < collectorPipe.vertices.length; i++) {
+                    const v = collectorPipe.vertices[i]
+                    const dist = calcDistance({ x: v.x, y: v.y }, { x: prevX, y: prevY })
+                    if (dist < 0.5) {
+                      // 次の点があれば使用
+                      if (i + 1 < collectorPipe.vertices.length) {
+                        targetVertex = collectorPipe.vertices[i + 1]
+                        collectorPointName = generatePointName(collectorPipe.number, i + 1, collectorPipe.vertices.length)
+                      }
+                      break
+                    }
+                  }
+                }
+              }
+
+              // 見つからなければ最初の点
+              if (!targetVertex && collectorPipe.vertices.length > 0) {
+                targetVertex = collectorPipe.vertices[0]
+                collectorPointName = generatePointName(collectorPipe.number, 0, collectorPipe.vertices.length)
+              }
             }
 
-            // 集水との合流点（常に接続元の下流端末番号を使用）
-            let collectorPoint: PlanPoint | null = null
-            if (collectorPipe && absorptionPipe.vertices.length > 0) {
-              const downstreamVertex = absorptionPipe.vertices[absorptionPipe.vertices.length - 1]
-
-              // 測点名は常に吸水管の下流端末番号を使用
-              const collectorPointName = generatePointName(
-                absorptionPipe.number,
-                absorptionPipe.vertices.length - 1,
-                absorptionPipe.vertices.length
-              )
-
-              collectorPoint = {
+            if (targetVertex) {
+              const collectorPoint: PlanPoint = {
                 id: `point-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
                 pointType: 'collector',
                 pointIndex: 0,
                 pointName: collectorPointName,
-                x: downstreamVertex.x,
-                y: downstreamVertex.y,
-                groundHeight: getGroundHeightByCoordinate(downstreamVertex.x, downstreamVertex.y) ?? downstreamVertex.z,
+                x: targetVertex.x,
+                y: targetVertex.y,
+                groundHeight: getGroundHeightByCoordinate(targetVertex.x, targetVertex.y) ?? targetVertex.z,
                 plannedHeight: null,
                 cutDepth: null,
                 segmentDistance: null,
                 segmentSlope: null,
               }
+
+              // 系統情報を取得
+              const rowSystemInfo = systemInfo.get(wiringRow.id) || { systemIndex: 1, isSystemEnd: false, systemEndType: null }
+
+              const planRow: PlanRow = {
+                id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+                wiringRowId: wiringRow.id,
+                groupType: 'collector',
+                groupIndex: tabIndex,
+                rowIndex: group.rows.length,
+                systemIndex: rowSystemInfo.systemIndex,
+                isSystemEnd: rowSystemInfo.isSystemEnd,
+                systemEndType: rowSystemInfo.systemEndType,
+                absorptionPipeId: null,
+                collectorPipeId: wiringRow.collectorPipe,
+                pipeNumber: collectorPipe.number, // 集水管の番号を使用
+                diameter: collectorPipe.diameter,
+                designLength: collectorPipe.designLength,
+                absorptionPoints: [], // 吸水点なし
+                collectorPoint,
+              }
+
+              group.rows.push(planRow)
             }
-
-            // 系統情報を取得
-            const rowSystemInfo = systemInfo.get(wiringRow.id) || { systemIndex: 1, isSystemEnd: false, systemEndType: null }
-
-            const planRow: PlanRow = {
-              id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-              wiringRowId: wiringRow.id,
-              groupType: 'collector',
-              groupIndex: tabIndex,
-              rowIndex: group.rows.length,
-              systemIndex: rowSystemInfo.systemIndex,
-              isSystemEnd: rowSystemInfo.isSystemEnd,
-              systemEndType: rowSystemInfo.systemEndType,
-              absorptionPipeId,
-              collectorPipeId: wiringRow.collectorPipe,
-              pipeNumber: absorptionPipe.number,
-              diameter: absorptionPipe.diameter,
-              designLength: absorptionPipe.designLength,
-              absorptionPoints,
-              collectorPoint,
-            }
-
-            group.rows.push(planRow)
           }
         }
 
@@ -489,108 +585,161 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
 
         if (wiringRow.isMergePipe) continue
 
-        for (const absorptionPipeId of wiringRow.absorptionPipes) {
-          const absorptionPipe = pipes.find(p => p.id === absorptionPipeId)
-          if (!absorptionPipe) continue
+        const collectorPipe = wiringRow.collectorPipe
+          ? pipes.find(p => p.id === wiringRow.collectorPipe)
+          : null
 
-          const collectorPipe = wiringRow.collectorPipe
-            ? pipes.find(p => p.id === wiringRow.collectorPipe)
-            : null
+        // 吸水管がある行の処理
+        if (wiringRow.absorptionPipes.length > 0) {
+          for (const absorptionPipeId of wiringRow.absorptionPipes) {
+            const absorptionPipe = pipes.find(p => p.id === absorptionPipeId)
+            if (!absorptionPipe) continue
 
-          const absorptionPoints: PlanPoint[] = absorptionPipe.vertices.map((vertex, idx) => {
-            const pointName = generatePointName(
-              absorptionPipe.number,
-              idx,
-              absorptionPipe.vertices.length
-            )
-            return {
-              id: `point-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-              pointType: 'absorption' as const,
-              pointIndex: idx,
-              pointName,
-              x: vertex.x,
-              y: vertex.y,
-              groundHeight: getGroundHeightByCoordinate(vertex.x, vertex.y) ?? vertex.z,
-              plannedHeight: null,
-              cutDepth: null,
-              segmentDistance: null,
-              segmentSlope: null,
-            }
-          })
-
-          for (let i = 1; i < absorptionPoints.length; i++) {
-            absorptionPoints[i].segmentDistance = calcDistance(
-              absorptionPoints[i - 1],
-              absorptionPoints[i]
-            )
-          }
-
-          let collectorPoint: PlanPoint | null = null
-          if (collectorPipe && absorptionPipe.vertices.length > 0) {
-            const downstreamVertex = absorptionPipe.vertices[absorptionPipe.vertices.length - 1]
-
-            let nearestCollectorPoint: PipeVertex | null = null
-            let nearestDistance = Infinity
-
-            for (const vertex of collectorPipe.vertices) {
-              const dist = calcDistance(downstreamVertex, vertex)
-              if (dist < nearestDistance) {
-                nearestDistance = dist
-                nearestCollectorPoint = vertex
-              }
-            }
-
-            if (nearestCollectorPoint) {
-              let collectorPointName = ''
-              for (let i = 0; i < collectorPipe.vertices.length; i++) {
-                const v = collectorPipe.vertices[i]
-                if (v.x === nearestCollectorPoint.x && v.y === nearestCollectorPoint.y) {
-                  collectorPointName = generatePointName(
-                    collectorPipe.number,
-                    i,
-                    collectorPipe.vertices.length
-                  )
-                  break
-                }
-              }
-
-              collectorPoint = {
+            const absorptionPoints: PlanPoint[] = absorptionPipe.vertices.map((vertex, idx) => {
+              const pointName = generatePointName(
+                absorptionPipe.number,
+                idx,
+                absorptionPipe.vertices.length
+              )
+              return {
                 id: `point-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-                pointType: 'collector',
-                pointIndex: 0,
-                pointName: collectorPointName || collectorPipe.number,
-                x: nearestCollectorPoint.x,
-                y: nearestCollectorPoint.y,
-                groundHeight: absorptionPoints.length > 0
-                  ? absorptionPoints[absorptionPoints.length - 1].groundHeight
-                  : nearestCollectorPoint.z,
+                pointType: 'absorption' as const,
+                pointIndex: idx,
+                pointName,
+                x: vertex.x,
+                y: vertex.y,
+                groundHeight: getGroundHeightByCoordinate(vertex.x, vertex.y) ?? vertex.z,
                 plannedHeight: null,
                 cutDepth: null,
                 segmentDistance: null,
                 segmentSlope: null,
               }
+            })
+
+            for (let i = 1; i < absorptionPoints.length; i++) {
+              absorptionPoints[i].segmentDistance = calcDistance(
+                absorptionPoints[i - 1],
+                absorptionPoints[i]
+              )
+            }
+
+            let collectorPoint: PlanPoint | null = null
+            if (collectorPipe && absorptionPipe.vertices.length > 0) {
+              const downstreamVertex = absorptionPipe.vertices[absorptionPipe.vertices.length - 1]
+
+              let nearestCollectorPoint: PipeVertex | null = null
+              let nearestDistance = Infinity
+
+              for (const vertex of collectorPipe.vertices) {
+                const dist = calcDistance(downstreamVertex, vertex)
+                if (dist < nearestDistance) {
+                  nearestDistance = dist
+                  nearestCollectorPoint = vertex
+                }
+              }
+
+              if (nearestCollectorPoint) {
+                let collectorPointName = ''
+                for (let i = 0; i < collectorPipe.vertices.length; i++) {
+                  const v = collectorPipe.vertices[i]
+                  if (v.x === nearestCollectorPoint.x && v.y === nearestCollectorPoint.y) {
+                    collectorPointName = generatePointName(
+                      collectorPipe.number,
+                      i,
+                      collectorPipe.vertices.length
+                    )
+                    break
+                  }
+                }
+
+                collectorPoint = {
+                  id: `point-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+                  pointType: 'collector',
+                  pointIndex: 0,
+                  pointName: collectorPointName || collectorPipe.number,
+                  x: nearestCollectorPoint.x,
+                  y: nearestCollectorPoint.y,
+                  groundHeight: absorptionPoints.length > 0
+                    ? absorptionPoints[absorptionPoints.length - 1].groundHeight
+                    : nearestCollectorPoint.z,
+                  plannedHeight: null,
+                  cutDepth: null,
+                  segmentDistance: null,
+                  segmentSlope: null,
+                }
+              }
+            }
+
+            const planRow: PlanRow = {
+              id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+              wiringRowId: wiringRow.id,
+              groupType: 'direct',
+              groupIndex: 0,
+              rowIndex: directGroup.rows.length,
+              systemIndex: 1, // 直落暗渠は系統分けしない
+              isSystemEnd: false,
+              systemEndType: null,
+              absorptionPipeId,
+              collectorPipeId: wiringRow.collectorPipe,
+              pipeNumber: absorptionPipe.number,
+              diameter: absorptionPipe.diameter,
+              designLength: absorptionPipe.designLength,
+              absorptionPoints,
+              collectorPoint,
+            }
+
+            directGroup.rows.push(planRow)
+          }
+        } else if (collectorPipe) {
+          // 吸水管がない行（落口など）
+          const rowType = wiringRow.rowType
+          let targetVertex: PipeVertex | null = null
+          let collectorPointName = ''
+
+          if (rowType === 'outlet') {
+            // 落口: 集水管の最下流点
+            if (collectorPipe.vertices.length > 0) {
+              const lastIdx = collectorPipe.vertices.length - 1
+              targetVertex = collectorPipe.vertices[lastIdx]
+              collectorPointName = generatePointName(collectorPipe.number, lastIdx, collectorPipe.vertices.length)
             }
           }
 
-          const planRow: PlanRow = {
-            id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-            wiringRowId: wiringRow.id,
-            groupType: 'direct',
-            groupIndex: 0,
-            rowIndex: directGroup.rows.length,
-            systemIndex: 1, // 直落暗渠は系統分けしない
-            isSystemEnd: false,
-            systemEndType: null,
-            absorptionPipeId,
-            collectorPipeId: wiringRow.collectorPipe,
-            pipeNumber: absorptionPipe.number,
-            diameter: absorptionPipe.diameter,
-            designLength: absorptionPipe.designLength,
-            absorptionPoints,
-            collectorPoint,
-          }
+          if (targetVertex) {
+            const collectorPoint: PlanPoint = {
+              id: `point-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+              pointType: 'collector',
+              pointIndex: 0,
+              pointName: collectorPointName,
+              x: targetVertex.x,
+              y: targetVertex.y,
+              groundHeight: getGroundHeightByCoordinate(targetVertex.x, targetVertex.y) ?? targetVertex.z,
+              plannedHeight: null,
+              cutDepth: null,
+              segmentDistance: null,
+              segmentSlope: null,
+            }
 
-          directGroup.rows.push(planRow)
+            const planRow: PlanRow = {
+              id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+              wiringRowId: wiringRow.id,
+              groupType: 'direct',
+              groupIndex: 0,
+              rowIndex: directGroup.rows.length,
+              systemIndex: 1,
+              isSystemEnd: true,
+              systemEndType: 'outlet',
+              absorptionPipeId: null,
+              collectorPipeId: wiringRow.collectorPipe,
+              pipeNumber: collectorPipe.number,
+              diameter: collectorPipe.diameter,
+              designLength: collectorPipe.designLength,
+              absorptionPoints: [],
+              collectorPoint,
+            }
+
+            directGroup.rows.push(planRow)
+          }
         }
       }
 

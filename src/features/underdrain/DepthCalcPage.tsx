@@ -618,12 +618,12 @@ export function DepthCalcPage() {
         </div>
       )}
 
-      {/* メインコンテンツ - 3分割レイアウト */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* 上部3/4: 表と地図 */}
-        <div className="flex-[3] flex overflow-hidden">
+      {/* メインコンテンツ - 上下分割レイアウト */}
+      <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+        {/* 上部: 表と地図（残りスペースを使用） */}
+        <div className="flex-1 flex overflow-hidden min-h-0">
           {/* 左側: 表 */}
-          <div className="flex-1 overflow-auto p-4 border-r">
+          <div className="flex-1 overflow-auto p-4 border-r min-h-0">
             {!hasData ? (
               <div className="flex flex-col items-center justify-center h-full text-slate-500">
                 <Ruler className="h-16 w-16 mb-4 text-slate-300" />
@@ -661,8 +661,8 @@ export function DepthCalcPage() {
           </div>
         </div>
 
-        {/* 下部1/4: 断面図エリア */}
-        <div className="flex-1 border-t bg-slate-50 flex flex-col min-h-[250px]">
+        {/* 下部: 断面図エリア（固定高さ） */}
+        <div className="h-[280px] flex-shrink-0 border-t bg-slate-50 flex flex-col">
           {/* 系統選択タブ */}
           <div className="flex items-center gap-1 px-2 py-1 bg-slate-100 border-b overflow-x-auto">
             <span className="text-xs text-slate-500 mr-2 whitespace-nowrap">断面図:</span>
