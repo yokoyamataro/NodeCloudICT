@@ -1639,24 +1639,6 @@ export function PipeWiringPage() {
                                         <X className="h-3 w-3" />
                                       </button>
                                     </span>
-                                  ) : row.rowType === 'absorption_end' ? (
-                                    // 吸水端部の場合: 「（端部）」のみ表示（集水の端部と重複するため）
-                                    <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs ${
-                                      activeTabType === 'collector'
-                                        ? 'bg-green-100 text-green-800'
-                                        : 'bg-orange-100 text-orange-800'
-                                    }`}>
-                                      （端部）
-                                      <button
-                                        onClick={() => clearCollectorPipe(
-                                          row.id,
-                                          activeTabType === 'collector' ? activeCollectorIndex : undefined
-                                        )}
-                                        className="hover:text-red-600"
-                                      >
-                                        <X className="h-3 w-3" />
-                                      </button>
-                                    </span>
                                   ) : (
                                     // 通常の行: 測点名を表示（ある場合）
                                     <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs ${
