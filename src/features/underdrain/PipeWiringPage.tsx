@@ -1247,6 +1247,12 @@ export function PipeWiringPage() {
                                 >
                                   {isAbsorptionSelecting ? '選択中' : '+'}
                                 </button>
+                                {/* 接続点名を吸水列の右端に表示 */}
+                                {row.collectorPipe && row.absorptionPipes.length > 0 && (
+                                  <span className="text-xs text-slate-500 ml-1">
+                                    {getConnectionPointName(row.absorptionPipes, row.collectorPipe) || '-'}
+                                  </span>
+                                )}
                               </div>
                             )}
                           </td>
@@ -1287,17 +1293,12 @@ export function PipeWiringPage() {
                                       </button>
                                     </span>
                                   )}
-                                  {/* 接続測点名を表示（集水合流点以外） */}
-                                  {row.rowType !== 'collector_junction' && row.absorptionPipes.length > 0 && !isCollectorMerge ? (
-                                    <span className="text-xs text-slate-500">
-                                      → {getConnectionPointName(row.absorptionPipes, row.collectorPipe) || '-'}
-                                    </span>
-                                  ) : row.rowType === 'outlet' ? (
-                                    // 落口タイプの場合のみ（落口）を表示
+                                  {/* 落口タイプの場合のみ落口情報を表示 */}
+                                  {row.rowType === 'outlet' && (
                                     <span className="text-xs text-orange-500">
                                       → {getMergePointName(row.collectorPipe)} (落口)
                                     </span>
-                                  ) : null}
+                                  )}
                                 </>
                               ) : (
                                 <button
