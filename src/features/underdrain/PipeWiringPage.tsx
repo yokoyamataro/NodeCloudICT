@@ -1097,10 +1097,87 @@ export function PipeWiringPage() {
   // 右列のラベル
   const rightColumnLabel = activeTabType === 'collector' ? '集水' : '落口'
 
-  // 地図用の測点データ
+  // 地図用の測点データ（管路の頂点から生成）
   const mapSurveyPoints: SurveyPointData[] = useMemo(() => {
-    return []
-  }, [])
+    const MERGE_THRESHOLD = 0.1 // 10cm
+
+    // まず全測点を生成
+    const rawPoints: { id: string; name: string; x: number; y: number; z: number | null }[] = []
+    for (const pipe of pipes) {
+      if (pipe.vertices.length < 2) continue
+      const vertices = pipe.vertices
+
+      // 最上流（始点）
+      rawPoints.push({
+        id: `${pipe.id}-upstream`,
+        name: `${pipe.number}C`,
+        x: vertices[0].x,
+        y: vertices[0].y,
+        z: vertices[0].z,
+      })
+
+      // 中間点
+      if (vertices.length > 2) {
+        const middleCount = vertices.length - 2
+        for (let i = 0; i < middleCount; i++) {
+          const vertexIndex = vertices.length - 2 - i
+          const middleIndex = i + 1
+          rawPoints.push({
+            id: `${pipe.id}-middle-${middleIndex}`,
+            name: `${pipe.number}B${middleIndex}`,
+            x: vertices[vertexIndex].x,
+            y: vertices[vertexIndex].y,
+            z: vertices[vertexIndex].z,
+          })
+        }
+      }
+
+      // 最下流（終点）
+      const lastVertex = vertices[vertices.length - 1]
+      rawPoints.push({
+        id: `${pipe.id}-downstream`,
+        name: `${pipe.number}A`,
+        x: lastVertex.x,
+        y: lastVertex.y,
+        z: lastVertex.z,
+      })
+    }
+
+    // 同一点集約
+    const result: SurveyPointData[] = []
+    const processed = new Set<string>()
+
+    for (const point of rawPoints) {
+      if (processed.has(point.id)) continue
+
+      const samePoints = rawPoints.filter(p => {
+        if (processed.has(p.id)) return false
+        const dx = p.x - point.x
+        const dy = p.y - point.y
+        return Math.sqrt(dx * dx + dy * dy) <= MERGE_THRESHOLD
+      })
+
+      const mergedName = samePoints.map(p => p.name).join('.')
+
+      for (const p of samePoints) {
+        processed.add(p.id)
+      }
+
+      const z = samePoints.find(p => p.z !== null)?.z ?? null
+
+      result.push({
+        id: samePoints.map(p => p.id).join('-'),
+        name: mergedName,
+        x: point.x,
+        y: point.y,
+        z,
+        isMerged: samePoints.length > 1,
+        originalCount: samePoints.length,
+      })
+    }
+
+    return result
+  }, [pipes])
 
   // 管切り替え点のデータ（地図上で〇マーカー表示用）
   const pipeChangePoints: PipeChangePoint[] = useMemo(() => {
