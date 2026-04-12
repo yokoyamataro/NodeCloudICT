@@ -394,24 +394,29 @@ export function PipeWiringPage() {
 
   // 集水暗渠タブを追加
   const addCollectorTab = () => {
-    const newIndex = collectorTabs.length + 1
-    const newTab: CollectorTab = {
-      id: `collector-${Date.now()}`,
-      name: `集水暗渠${newIndex}`,
-      rows: [createEmptyRow()],
-    }
-    setCollectorTabs([...collectorTabs, newTab])
-    setActiveCollectorIndex(collectorTabs.length)
+    setCollectorTabs(prev => {
+      const newIndex = prev.length + 1
+      const newTab: CollectorTab = {
+        id: `collector-${Date.now()}`,
+        name: `集水暗渠${newIndex}`,
+        rows: [createEmptyRow()],
+      }
+      // 新しいタブのインデックスを設定
+      setActiveCollectorIndex(prev.length)
+      return [...prev, newTab]
+    })
   }
 
   // 集水暗渠タブを削除
   const removeCollectorTab = (index: number) => {
-    if (collectorTabs.length <= 1) return
-    const newTabs = collectorTabs.filter((_, i) => i !== index)
-    setCollectorTabs(newTabs)
-    if (activeCollectorIndex >= newTabs.length) {
-      setActiveCollectorIndex(newTabs.length - 1)
-    }
+    setCollectorTabs(prev => {
+      if (prev.length <= 1) return prev
+      const newTabs = prev.filter((_, i) => i !== index)
+      if (activeCollectorIndex >= newTabs.length) {
+        setActiveCollectorIndex(newTabs.length - 1)
+      }
+      return newTabs
+    })
   }
 
   // 行を挿入（指定した行の前に挿入）
