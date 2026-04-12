@@ -760,48 +760,62 @@ export function PipeWiringPage() {
     )
   }, [pipes, generatePointName])
 
-  // 集水管上の測点名を取得（吸水管の接続位置に基づく）
-  // 吸水管の下流端から最も近い集水管の頂点を特定し、その測点名を返す
-  const getCollectorPointName = useCallback((absorptionPipeIds: string[], collectorPipeId: string | null): string | null => {
+  // 集水管上の測点名を取得（行タイプと前後の管路関係に基づく）
+  // rowType: 行タイプ
+  // collectorPipeId: 現在の行の集水管ID
+  // prevCollectorPipeId: 前の行の集水管ID（管の切り替わり判定用）
+  const getCollectorPointName = useCallback((
+    rowType: RowType | null,
+    collectorPipeId: string | null,
+    prevCollectorPipeId: string | null
+  ): string | null => {
     if (!collectorPipeId) return null
 
     const collectorPipe = pipes.find(p => p.id === collectorPipeId)
     if (!collectorPipe || collectorPipe.vertices.length === 0) return null
 
-    // 吸水管がない場合（集水変化点など）は測点名なし
-    if (absorptionPipeIds.length === 0) {
-      return null
+    // 吸水端部: 集水管の最上流点（C）
+    if (rowType === 'absorption_end') {
+      return generatePointName(collectorPipe.number, 0, collectorPipe.vertices.length)
     }
 
-    // 最初の吸水管の下流点を取得
-    const absorptionPipe = pipes.find(p => p.id === absorptionPipeIds[0])
-    if (!absorptionPipe || absorptionPipe.vertices.length === 0) return null
+    // 落口: 落口管の下流端（A）
+    if (rowType === 'outlet') {
+      return generatePointName(collectorPipe.number, collectorPipe.vertices.length - 1, collectorPipe.vertices.length)
+    }
 
-    const absorptionEndPoint = absorptionPipe.vertices[absorptionPipe.vertices.length - 1]
+    // 集水合流点: 集水管の下流端（A）
+    if (rowType === 'collector_junction') {
+      return generatePointName(collectorPipe.number, collectorPipe.vertices.length - 1, collectorPipe.vertices.length)
+    }
 
-    // 集水管の頂点から最も近いものを探す
-    let minDistance = Infinity
-    let closestVertexIndex = 0
-
-    for (let i = 0; i < collectorPipe.vertices.length; i++) {
-      const v = collectorPipe.vertices[i]
-      const dx = v.x - absorptionEndPoint.x
-      const dy = v.y - absorptionEndPoint.y
-      const distance = Math.sqrt(dx * dx + dy * dy)
-      if (distance < minDistance) {
-        minDistance = distance
-        closestVertexIndex = i
+    // 吸水合流・集水合流・集水変化点の場合
+    // 管が変わる場合（前の行と集水管が異なる）: 下流管の上流端（C）
+    // 管が変わらない場合や最初の行: 現在の管の上流端（C）
+    if (rowType === 'absorption_merge' || rowType === 'collector_merge' || rowType === 'collector_change') {
+      // 管の切り替わりをチェック
+      if (prevCollectorPipeId && prevCollectorPipeId !== collectorPipeId) {
+        // 管が変わった: 新しい管（下流管）の上流端
+        return generatePointName(collectorPipe.number, 0, collectorPipe.vertices.length)
+      } else {
+        // 管が変わっていない場合: 上流端
+        return generatePointName(collectorPipe.number, 0, collectorPipe.vertices.length)
       }
     }
 
-    // 近い頂点がある場合のみ測点名を返す（閾値: 5m）
-    if (minDistance > 5) return null
+    // その他の場合（行タイプが未設定など）
+    return null
+  }, [pipes, generatePointName])
 
-    return generatePointName(
-      collectorPipe.number,
-      closestVertexIndex,
-      collectorPipe.vertices.length
-    )
+  // 前の行の集水管下流端の測点名を取得（管が変わる場合のセパレータ行用）
+  const getPrevCollectorEndPointName = useCallback((prevCollectorPipeId: string | null): string | null => {
+    if (!prevCollectorPipeId) return null
+
+    const prevCollectorPipe = pipes.find(p => p.id === prevCollectorPipeId)
+    if (!prevCollectorPipe || prevCollectorPipe.vertices.length === 0) return null
+
+    // 前の集水管の下流端（A）
+    return generatePointName(prevCollectorPipe.number, prevCollectorPipe.vertices.length - 1, prevCollectorPipe.vertices.length)
   }, [pipes, generatePointName])
 
   // 行タイプの選択肢
@@ -909,8 +923,11 @@ export function PipeWiringPage() {
   interface DisplayRow {
     type: DisplayRowType
     row?: WiringRow  // データ行の場合
+    rowIndex?: number  // データ行の系統内インデックス
+    prevCollectorPipeId?: string | null  // 前の行の集水管ID
     pipeNumber?: string  // セパレータ行の場合の管番号
     pipeId?: string  // セパレータ行の場合の管ID
+    prevPipeEndPointName?: string | null  // セパレータ行の場合の前の管の下流端名
   }
 
   // 系統ごとに表示用の行データを生成（各吸水行の後にセパレータ行を挿入、ただし最終行は除く）
@@ -920,26 +937,40 @@ export function PipeWiringPage() {
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i]
       const isLastRow = i === rows.length - 1
+      const prevRow = i > 0 ? rows[i - 1] : null
+      const prevCollectorPipeId = prevRow?.collectorPipe || null
 
       // データ行を追加
       displayRows.push({
         type: 'data',
-        row
+        row,
+        rowIndex: i,
+        prevCollectorPipeId
       })
 
       // 各データ行の後にセパレータ行を挿入（集水管がある場合、ただし最終行は除く）
       if (row.collectorPipe && !isLastRow) {
+        const nextRow = rows[i + 1]
+        const nextCollectorPipeId = nextRow?.collectorPipe || null
+        const isPipeChanging = nextCollectorPipeId && nextCollectorPipeId !== row.collectorPipe
+
         const pipe = pipes.find(p => p.id === row.collectorPipe)
+        // 管が変わる場合は現在の管の下流端名を取得
+        const currentPipeEndPointName = isPipeChanging
+          ? getPrevCollectorEndPointName(row.collectorPipe)
+          : null
+
         displayRows.push({
           type: 'pipe-separator',
           pipeNumber: pipe?.number || row.collectorPipe,
-          pipeId: row.collectorPipe
+          pipeId: row.collectorPipe,
+          prevPipeEndPointName: currentPipeEndPointName
         })
       }
     }
 
     return displayRows
-  }, [pipes])
+  }, [pipes, getPrevCollectorEndPointName])
 
   // 吸水に登録済みの系統（自系統を除く）を取得
   // 集水合流タイプで選択可能な系統を返す
@@ -1203,18 +1234,26 @@ export function PipeWiringPage() {
                   </thead>
                   <tbody className="divide-y">
                     {buildDisplayRows(group.rows).map((displayRow, displayIndex) => {
-                      // セパレータ行（集水管番号を表示）
+                      // セパレータ行（集水管番号を表示、管が変わる場合は下流端名も表示）
                       if (displayRow.type === 'pipe-separator') {
                         return (
                           <tr key={`sep-${displayRow.pipeId}-${displayIndex}`} className="bg-green-50 h-6">
                             <td className="px-1 py-0.5 border-r"></td>
                             <td className="px-1 py-0.5 border-r"></td>
                             <td className="px-1 py-0.5">
-                              <span className={`text-xs font-medium ${
-                                activeTabType === 'collector' ? 'text-green-700' : 'text-orange-700'
-                              }`}>
-                                {displayRow.pipeNumber}
-                              </span>
+                              <div className="flex items-center gap-2">
+                                <span className={`text-xs font-medium ${
+                                  activeTabType === 'collector' ? 'text-green-700' : 'text-orange-700'
+                                }`}>
+                                  {displayRow.pipeNumber}
+                                </span>
+                                {/* 管が変わる場合は下流端名を表示 */}
+                                {displayRow.prevPipeEndPointName && (
+                                  <span className="text-xs text-slate-500">
+                                    ({displayRow.prevPipeEndPointName})
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td className="px-1 py-0.5"></td>
                           </tr>
@@ -1232,9 +1271,9 @@ export function PipeWiringPage() {
                       // 選択可能な系統リスト（集水合流タイプ用）
                       const availableSystems = isCollectorMerge ? getAvailableSystemsForMerge(group.systemIndex) : []
 
-                      // 集水管の測点名を取得
-                      const collectorPointName = row.collectorPipe && row.absorptionPipes.length > 0
-                        ? getCollectorPointName(row.absorptionPipes, row.collectorPipe)
+                      // 集水管の測点名を取得（行タイプと前後の管路関係に基づく）
+                      const collectorPointName = row.collectorPipe
+                        ? getCollectorPointName(row.rowType, row.collectorPipe, displayRow.prevCollectorPipeId || null)
                         : null
 
                       return (
