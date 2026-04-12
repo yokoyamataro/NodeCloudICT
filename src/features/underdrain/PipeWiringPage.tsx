@@ -21,7 +21,7 @@ import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useProjectStore } from '@/stores/projectStore'
 import { usePipeWiringStore, type CollectorTab, type WiringRow, type RowType } from '@/stores/pipeWiringStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
-import { PipeMap, type SurveyPointData } from '@/components/map/PipeMap'
+import { PipeMap, type SurveyPointData, type PipeChangePoint } from '@/components/map/PipeMap'
 import type { PipeVertex } from '@/types/database'
 
 // タブの種類
@@ -927,8 +927,20 @@ export function PipeWiringPage() {
     prevCollectorPipeId?: string | null  // 前の行の集水管ID
     pipeNumber?: string  // セパレータ行の場合の管番号
     pipeId?: string  // セパレータ行の場合の管ID
-    prevPipeEndPointName?: string | null  // セパレータ行の場合の前の管の下流端名
+    currentPipeEndPointName?: string | null  // セパレータ行: 現在の管の下流端名（S4A）
+    nextPipeStartPointName?: string | null  // セパレータ行: 次の管の上流端名（S3C）
   }
+
+  // 次の管の上流端の測点名を取得
+  const getNextCollectorStartPointName = useCallback((nextCollectorPipeId: string | null): string | null => {
+    if (!nextCollectorPipeId) return null
+
+    const nextCollectorPipe = pipes.find(p => p.id === nextCollectorPipeId)
+    if (!nextCollectorPipe || nextCollectorPipe.vertices.length === 0) return null
+
+    // 次の集水管の上流端（C）
+    return generatePointName(nextCollectorPipe.number, 0, nextCollectorPipe.vertices.length)
+  }, [pipes, generatePointName])
 
   // 系統ごとに表示用の行データを生成（各吸水行の後にセパレータ行を挿入、ただし最終行は除く）
   const buildDisplayRows = useCallback((rows: WiringRow[]): DisplayRow[] => {
@@ -955,22 +967,27 @@ export function PipeWiringPage() {
         const isPipeChanging = nextCollectorPipeId && nextCollectorPipeId !== row.collectorPipe
 
         const pipe = pipes.find(p => p.id === row.collectorPipe)
-        // 管が変わる場合は現在の管の下流端名を取得
+
+        // 管が変わる場合: 現在の管の下流端名と次の管の上流端名を取得
         const currentPipeEndPointName = isPipeChanging
           ? getPrevCollectorEndPointName(row.collectorPipe)
+          : null
+        const nextPipeStartPointName = isPipeChanging
+          ? getNextCollectorStartPointName(nextCollectorPipeId)
           : null
 
         displayRows.push({
           type: 'pipe-separator',
           pipeNumber: pipe?.number || row.collectorPipe,
           pipeId: row.collectorPipe,
-          prevPipeEndPointName: currentPipeEndPointName
+          currentPipeEndPointName,
+          nextPipeStartPointName
         })
       }
     }
 
     return displayRows
-  }, [pipes, getPrevCollectorEndPointName])
+  }, [pipes, getPrevCollectorEndPointName, getNextCollectorStartPointName])
 
   // 吸水に登録済みの系統（自系統を除く）を取得
   // 集水合流タイプで選択可能な系統を返す
@@ -999,6 +1016,48 @@ export function PipeWiringPage() {
   const mapSurveyPoints: SurveyPointData[] = useMemo(() => {
     return []
   }, [])
+
+  // 管切り替え点のデータ（地図上で〇マーカー表示用）
+  const pipeChangePoints: PipeChangePoint[] = useMemo(() => {
+    const points: PipeChangePoint[] = []
+
+    // 全タブ・全系統から管切り替え点を収集
+    const allRows: WiringRow[] = []
+    for (const tab of collectorTabs) {
+      allRows.push(...tab.rows)
+    }
+    allRows.push(...directRows)
+
+    // 各行を順に見て、管が切り替わる箇所を検出
+    for (let i = 1; i < allRows.length; i++) {
+      const currentRow = allRows[i]
+      const prevRow = allRows[i - 1]
+
+      // 前の行と現在の行の両方に集水管が設定されていて、異なる管の場合
+      if (prevRow.collectorPipe && currentRow.collectorPipe && prevRow.collectorPipe !== currentRow.collectorPipe) {
+        // 前の管の下流端点の座標を取得
+        const prevPipe = pipes.find(p => p.id === prevRow.collectorPipe)
+        if (prevPipe && prevPipe.vertices.length > 0) {
+          const endVertex = prevPipe.vertices[prevPipe.vertices.length - 1]
+
+          // ラベルを生成（S4A S3C形式）
+          const prevEndPointName = generatePointName(prevPipe.number, prevPipe.vertices.length - 1, prevPipe.vertices.length)
+          const nextPipe = pipes.find(p => p.id === currentRow.collectorPipe)
+          const nextStartPointName = nextPipe && nextPipe.vertices.length > 0
+            ? generatePointName(nextPipe.number, 0, nextPipe.vertices.length)
+            : ''
+
+          points.push({
+            x: endVertex.x,
+            y: endVertex.y,
+            label: `${prevEndPointName} ${nextStartPointName}`.trim()
+          })
+        }
+      }
+    }
+
+    return points
+  }, [collectorTabs, directRows, pipes, generatePointName])
 
   // 現在選択中の行の吸水管路IDs（地図上でハイライト用）
   const selectedAbsorptionPipes = useMemo(() => {
@@ -1234,8 +1293,9 @@ export function PipeWiringPage() {
                   </thead>
                   <tbody className="divide-y">
                     {buildDisplayRows(group.rows).map((displayRow, displayIndex) => {
-                      // セパレータ行（集水管番号を表示、管が変わる場合は下流端名も表示）
+                      // セパレータ行（管が変わる場合は両方の測点名を表示）
                       if (displayRow.type === 'pipe-separator') {
+                        const hasPipeChange = displayRow.currentPipeEndPointName && displayRow.nextPipeStartPointName
                         return (
                           <tr key={`sep-${displayRow.pipeId}-${displayIndex}`} className="bg-green-50 h-6">
                             <td className="px-1 py-0.5 border-r"></td>
@@ -1247,10 +1307,10 @@ export function PipeWiringPage() {
                                 }`}>
                                   {displayRow.pipeNumber}
                                 </span>
-                                {/* 管が変わる場合は下流端名を表示 */}
-                                {displayRow.prevPipeEndPointName && (
-                                  <span className="text-xs text-slate-500">
-                                    ({displayRow.prevPipeEndPointName})
+                                {/* 管が変わる場合は両方の測点名を表示 (S4A S3C) */}
+                                {hasPipeChange && (
+                                  <span className="text-xs text-slate-600 font-medium">
+                                    {displayRow.currentPipeEndPointName} {displayRow.nextPipeStartPointName}
                                   </span>
                                 )}
                               </div>
@@ -1637,6 +1697,7 @@ export function PipeWiringPage() {
               selectedPipeIds={selectedAbsorptionPipes}
               assignedPipeIds={allAssignedPipeIds}
               isBulkEditMode={selectionMode !== 'none'}
+              pipeChangePoints={pipeChangePoints}
             />
           </div>
         </div>

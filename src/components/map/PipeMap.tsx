@@ -167,6 +167,13 @@ export interface SurveyPointData {
 // 背景地図の種類
 export type BaseLayerType = 'osm' | 'gsi-photo' | 'gsi-std'
 
+// 管切り替え点のデータ型
+export interface PipeChangePoint {
+  x: number
+  y: number
+  label: string  // 表示ラベル（例: "S4A S3C"）
+}
+
 interface PipeMapProps {
   selectedPipeId?: string | null
   selectedPipeIds?: Set<string>
@@ -189,6 +196,7 @@ interface PipeMapProps {
   selectedPointRoute?: [number, number][]  // 選択した点を結ぶルート（座標のリスト）
   showSelectedRoute?: boolean  // 選択ルートを表示するか
   baseLayer?: BaseLayerType     // 背景地図の種類
+  pipeChangePoints?: PipeChangePoint[]  // 管切り替え点（〇マーカー表示用）
 }
 
 // 測点ラベルアイコンを生成（緑の丸マーカー + ラベル、選択時はオレンジ）
@@ -277,6 +285,37 @@ const ZONE_COLORS = [
   '#06b6d4', // シアン
 ]
 
+// 管切り替え点用の〇マーカーアイコンを生成
+function createPipeChangeIcon(label: string): L.DivIcon {
+  return L.divIcon({
+    html: `<div style="display: flex; flex-direction: column; align-items: center;">
+      <div style="
+        font-size: 10px;
+        font-weight: 600;
+        color: #b45309;
+        background-color: rgba(254, 243, 199, 0.95);
+        padding: 2px 6px;
+        border-radius: 4px;
+        white-space: nowrap;
+        border: 1px solid #f59e0b;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        margin-bottom: 3px;
+      ">${label}</div>
+      <div style="
+        width: 16px;
+        height: 16px;
+        background-color: transparent;
+        border-radius: 50%;
+        border: 3px solid #f59e0b;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      "></div>
+    </div>`,
+    className: 'pipe-change-marker',
+    iconSize: [16, 40],
+    iconAnchor: [8, 40],
+  })
+}
+
 export function PipeMap({
   selectedPipeId,
   selectedPipeIds = new Set(),
@@ -299,6 +338,7 @@ export function PipeMap({
   selectedPointRoute = [],
   showSelectedRoute = true,
   baseLayer = 'osm',
+  pipeChangePoints = [],
 }: PipeMapProps) {
   const { pipes } = useUnderdrainStore()
   const { zone, zones, coordinates } = useCoordinateStore()
@@ -654,6 +694,25 @@ export function PipeMap({
               click: () => onPointClick(coord.id),
             } : {}}
           />
+        )
+      })}
+
+      {/* 管切り替え点（〇マーカー） */}
+      {pipeChangePoints.map((point, idx) => {
+        const { lat, lng } = converter.toLatLng(point.x, point.y)
+        return (
+          <Marker
+            key={`pipe-change-${idx}`}
+            position={[lat, lng]}
+            icon={createPipeChangeIcon(point.label)}
+          >
+            <Popup>
+              <div className="text-xs">
+                <div className="font-bold text-amber-700">管切り替え点</div>
+                <div>{point.label}</div>
+              </div>
+            </Popup>
+          </Marker>
         )
       })}
 
