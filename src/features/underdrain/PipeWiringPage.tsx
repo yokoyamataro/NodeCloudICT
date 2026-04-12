@@ -791,15 +791,15 @@ export function PipeWiringPage() {
 
     // 吸水合流・集水合流・集水変化点の場合
     // 管が変わる場合（前の行と集水管が異なる）: 下流管の上流端（C）
-    // 管が変わらない場合や最初の行: 現在の管の上流端（C）
+    // 管が変わらない場合: 測点なし（管の途中の合流点なので測点は登録されない）
     if (rowType === 'absorption_merge' || rowType === 'collector_merge' || rowType === 'collector_change') {
       // 管の切り替わりをチェック
       if (prevCollectorPipeId && prevCollectorPipeId !== collectorPipeId) {
         // 管が変わった: 新しい管（下流管）の上流端
         return generatePointName(collectorPipe.number, 0, collectorPipe.vertices.length)
       } else {
-        // 管が変わっていない場合: 上流端
-        return generatePointName(collectorPipe.number, 0, collectorPipe.vertices.length)
+        // 管が変わっていない場合: 測点なし
+        return null
       }
     }
 
