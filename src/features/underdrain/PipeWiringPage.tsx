@@ -390,10 +390,25 @@ export function PipeWiringPage() {
 
   // 集水暗渠タブを追加
   const addCollectorTab = () => {
+    // 既存のタブ名から使用中の番号を抽出
+    const usedNumbers = new Set<number>()
+    collectorTabs.forEach(tab => {
+      const match = tab.name.match(/^集水暗渠(\d+)$/)
+      if (match) {
+        usedNumbers.add(parseInt(match[1], 10))
+      }
+    })
+
+    // 使われていない最小の番号を見つける
+    let newNumber = 1
+    while (usedNumbers.has(newNumber)) {
+      newNumber++
+    }
+
     const currentLength = collectorTabs.length
     const newTab: CollectorTab = {
       id: `collector-${Date.now()}`,
-      name: `集水暗渠${currentLength + 1}`,
+      name: `集水暗渠${newNumber}`,
       rows: [createEmptyRow()],
     }
     // 新しいタブを追加
