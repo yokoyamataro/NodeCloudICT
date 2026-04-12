@@ -913,30 +913,28 @@ export function PipeWiringPage() {
     pipeId?: string  // セパレータ行の場合の管ID
   }
 
-  // 系統ごとに表示用の行データを生成（吸水行の間にセパレータ行を挿入）
+  // 系統ごとに表示用の行データを生成（各吸水行の後にセパレータ行を挿入）
   const buildDisplayRows = useCallback((rows: WiringRow[]): DisplayRow[] => {
     const displayRows: DisplayRow[] = []
-    let prevCollectorPipeId: string | null = null
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i]
-
-      // 集水管が変わった場合、または最初の行の場合にセパレータ行を挿入
-      if (row.collectorPipe && row.collectorPipe !== prevCollectorPipeId) {
-        const pipe = pipes.find(p => p.id === row.collectorPipe)
-        displayRows.push({
-          type: 'pipe-separator',
-          pipeNumber: pipe?.number || row.collectorPipe,
-          pipeId: row.collectorPipe
-        })
-        prevCollectorPipeId = row.collectorPipe
-      }
 
       // データ行を追加
       displayRows.push({
         type: 'data',
         row
       })
+
+      // 各データ行の後にセパレータ行を挿入（集水管がある場合）
+      if (row.collectorPipe) {
+        const pipe = pipes.find(p => p.id === row.collectorPipe)
+        displayRows.push({
+          type: 'pipe-separator',
+          pipeNumber: pipe?.number || row.collectorPipe,
+          pipeId: row.collectorPipe
+        })
+      }
     }
 
     return displayRows
