@@ -240,11 +240,15 @@ export function PipeWiringPage() {
             }
           }
 
+          // 既にabsorption_endがあるかチェック（タブ全体で最初の1つだけがabsorption_end）
+          const hasAbsorptionEnd = newRows.some(r => r.rowType === 'absorption_end')
+
           // 各吸水管を距離の大きい順に新しい行として追加
           for (let i = 0; i < sortedAbsorptionPipes.length; i++) {
             const { pipe } = sortedAbsorptionPipes[i]
-            // 最初の行（最上流）は absorption_end、それ以降は absorption_merge
-            const autoRowType: RowType = i === 0 ? 'absorption_end' : 'absorption_merge'
+            // タブ全体で最初の行のみ absorption_end、それ以降は全て absorption_merge
+            const isFirstAbsorption = !hasAbsorptionEnd && i === 0
+            const autoRowType: RowType = isFirstAbsorption ? 'absorption_end' : 'absorption_merge'
             const newRow: WiringRow = {
               id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
               rowType: autoRowType,
@@ -272,9 +276,14 @@ export function PipeWiringPage() {
           }
         }
 
+        // 既にabsorption_endがあるかチェック
+        const hasAbsorptionEnd = newRows.some(r => r.rowType === 'absorption_end')
+
         for (let i = 0; i < sortedAbsorptionPipes.length; i++) {
           const { pipe } = sortedAbsorptionPipes[i]
-          const autoRowType: RowType = i === 0 ? 'absorption_end' : 'absorption_merge'
+          // 全体で最初の行のみ absorption_end、それ以降は全て absorption_merge
+          const isFirstAbsorption = !hasAbsorptionEnd && i === 0
+          const autoRowType: RowType = isFirstAbsorption ? 'absorption_end' : 'absorption_merge'
           const newRow: WiringRow = {
             id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
             rowType: autoRowType,
