@@ -760,6 +760,50 @@ export function PipeWiringPage() {
     )
   }, [pipes, generatePointName])
 
+  // 集水管上の測点名を取得（吸水管の接続位置に基づく）
+  // 吸水管の下流端から最も近い集水管の頂点を特定し、その測点名を返す
+  const getCollectorPointName = useCallback((absorptionPipeIds: string[], collectorPipeId: string | null): string | null => {
+    if (!collectorPipeId) return null
+
+    const collectorPipe = pipes.find(p => p.id === collectorPipeId)
+    if (!collectorPipe || collectorPipe.vertices.length === 0) return null
+
+    // 吸水管がない場合（集水変化点など）は測点名なし
+    if (absorptionPipeIds.length === 0) {
+      return null
+    }
+
+    // 最初の吸水管の下流点を取得
+    const absorptionPipe = pipes.find(p => p.id === absorptionPipeIds[0])
+    if (!absorptionPipe || absorptionPipe.vertices.length === 0) return null
+
+    const absorptionEndPoint = absorptionPipe.vertices[absorptionPipe.vertices.length - 1]
+
+    // 集水管の頂点から最も近いものを探す
+    let minDistance = Infinity
+    let closestVertexIndex = 0
+
+    for (let i = 0; i < collectorPipe.vertices.length; i++) {
+      const v = collectorPipe.vertices[i]
+      const dx = v.x - absorptionEndPoint.x
+      const dy = v.y - absorptionEndPoint.y
+      const distance = Math.sqrt(dx * dx + dy * dy)
+      if (distance < minDistance) {
+        minDistance = distance
+        closestVertexIndex = i
+      }
+    }
+
+    // 近い頂点がある場合のみ測点名を返す（閾値: 5m）
+    if (minDistance > 5) return null
+
+    return generatePointName(
+      collectorPipe.number,
+      closestVertexIndex,
+      collectorPipe.vertices.length
+    )
+  }, [pipes, generatePointName])
+
   // 行タイプの選択肢
   const rowTypeOptions: { value: RowType; label: string }[] = [
     { value: 'absorption_end', label: '吸水端部' },
@@ -858,6 +902,45 @@ export function PipeWiringPage() {
 
     return groups
   }, [currentRows])
+
+  // 表示用の行タイプ
+  type DisplayRowType = 'data' | 'pipe-separator'
+
+  interface DisplayRow {
+    type: DisplayRowType
+    row?: WiringRow  // データ行の場合
+    pipeNumber?: string  // セパレータ行の場合の管番号
+    pipeId?: string  // セパレータ行の場合の管ID
+  }
+
+  // 系統ごとに表示用の行データを生成（吸水行の間にセパレータ行を挿入）
+  const buildDisplayRows = useCallback((rows: WiringRow[]): DisplayRow[] => {
+    const displayRows: DisplayRow[] = []
+    let prevCollectorPipeId: string | null = null
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i]
+
+      // 集水管が変わった場合、または最初の行の場合にセパレータ行を挿入
+      if (row.collectorPipe && row.collectorPipe !== prevCollectorPipeId) {
+        const pipe = pipes.find(p => p.id === row.collectorPipe)
+        displayRows.push({
+          type: 'pipe-separator',
+          pipeNumber: pipe?.number || row.collectorPipe,
+          pipeId: row.collectorPipe
+        })
+        prevCollectorPipeId = row.collectorPipe
+      }
+
+      // データ行を追加
+      displayRows.push({
+        type: 'data',
+        row
+      })
+    }
+
+    return displayRows
+  }, [pipes])
 
   // 吸水に登録済みの系統（自系統を除く）を取得
   // 集水合流タイプで選択可能な系統を返す
@@ -1120,7 +1203,27 @@ export function PipeWiringPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {group.rows.map((row) => {
+                    {buildDisplayRows(group.rows).map((displayRow, displayIndex) => {
+                      // セパレータ行（集水管番号を表示）
+                      if (displayRow.type === 'pipe-separator') {
+                        return (
+                          <tr key={`sep-${displayRow.pipeId}-${displayIndex}`} className="bg-green-50 h-6">
+                            <td className="px-1 py-0.5 border-r"></td>
+                            <td className="px-1 py-0.5 border-r"></td>
+                            <td className="px-1 py-0.5">
+                              <span className={`text-xs font-medium ${
+                                activeTabType === 'collector' ? 'text-green-700' : 'text-orange-700'
+                              }`}>
+                                {displayRow.pipeNumber}
+                              </span>
+                            </td>
+                            <td className="px-1 py-0.5"></td>
+                          </tr>
+                        )
+                      }
+
+                      // データ行
+                      const row = displayRow.row!
                       const isAbsorptionSelecting = selectionMode === 'absorption' && selectedRowId === row.id
                       const isCollectorSelecting = selectionMode === 'collector' && selectedRowId === row.id
                       // 吸水を非表示・選択不可にするタイプかどうか
@@ -1129,6 +1232,11 @@ export function PipeWiringPage() {
                       const isCollectorMerge = row.rowType === 'collector_merge'
                       // 選択可能な系統リスト（集水合流タイプ用）
                       const availableSystems = isCollectorMerge ? getAvailableSystemsForMerge(group.systemIndex) : []
+
+                      // 集水管の測点名を取得
+                      const collectorPointName = row.collectorPipe && row.absorptionPipes.length > 0
+                        ? getCollectorPointName(row.absorptionPipes, row.collectorPipe)
+                        : null
 
                       return (
                         <tr key={row.id} className={`hover:bg-slate-50 h-9 ${
@@ -1261,12 +1369,12 @@ export function PipeWiringPage() {
                               </div>
                             )}
                           </td>
-                          {/* 集水列 */}
+                          {/* 集水列 - 測点名を表示 */}
                           <td className="px-1 py-1">
                             <div className="flex items-center gap-1">
                               {row.collectorPipe ? (
                                 <>
-                                  {/* 集水合流点の場合は配管番号ではなく下流測点を表示 */}
+                                  {/* 集水合流点の場合は下流測点を表示 */}
                                   {row.rowType === 'collector_junction' ? (
                                     <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs bg-purple-100 text-purple-800`}>
                                       {getMergePointName(row.collectorPipe)}
@@ -1281,12 +1389,13 @@ export function PipeWiringPage() {
                                       </button>
                                     </span>
                                   ) : (
+                                    // 通常の行: 測点名を表示（ある場合）
                                     <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs ${
                                       activeTabType === 'collector'
                                         ? 'bg-green-100 text-green-800'
                                         : 'bg-orange-100 text-orange-800'
                                     }`}>
-                                      {getPipeNumber(row.collectorPipe)}
+                                      {collectorPointName || '-'}
                                       <button
                                         onClick={() => clearCollectorPipe(
                                           row.id,
