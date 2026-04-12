@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Upload, Download, Plus, Trash2, FileText, Eye, EyeOff } from 'lucide-react'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 import { useCoordinateStore } from '@/stores/coordinateStore'
@@ -10,6 +10,83 @@ import { loadSimaFile } from '@/lib/sima-parser'
 import type { CoordinateType, AreaCalculationSheet as AreaCalculationSheetType } from '@/types/database'
 
 type TabType = 'coordinates' | 'zones'
+
+// 数値入力用コンポーネント（入力中はフォーマットしない）
+function NumberInput({
+  value,
+  onChange,
+  onClick,
+  className,
+  placeholder,
+  decimals = 3,
+}: {
+  value: number | null
+  onChange: (value: number | null) => void
+  onClick?: (e: React.MouseEvent) => void
+  className?: string
+  placeholder?: string
+  decimals?: number
+}) {
+  const [localValue, setLocalValue] = useState<string>('')
+  const [isFocused, setIsFocused] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // 外部の値が変更されたとき（フォーカスしていないときのみ更新）
+  useEffect(() => {
+    if (!isFocused) {
+      if (value === null) {
+        setLocalValue('')
+      } else {
+        setLocalValue(value.toFixed(decimals))
+      }
+    }
+  }, [value, isFocused, decimals])
+
+  const handleFocus = () => {
+    setIsFocused(true)
+    // フォーカス時は現在の数値をそのまま表示（末尾の0を削除）
+    if (value !== null) {
+      setLocalValue(String(value))
+    }
+  }
+
+  const handleBlur = () => {
+    setIsFocused(false)
+    // フォーカスが外れたら数値に変換して親に通知
+    if (localValue === '' || localValue === '-') {
+      onChange(null)
+      setLocalValue('')
+    } else {
+      const num = parseFloat(localValue)
+      if (!isNaN(num)) {
+        onChange(num)
+        setLocalValue(num.toFixed(decimals))
+      } else {
+        // 不正な値は元に戻す
+        setLocalValue(value !== null ? value.toFixed(decimals) : '')
+      }
+    }
+  }
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setLocalValue(e.target.value)
+  }
+
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      inputMode="decimal"
+      value={localValue}
+      onChange={handleChange}
+      onFocus={handleFocus}
+      onBlur={handleBlur}
+      onClick={onClick}
+      className={className}
+      placeholder={placeholder}
+    />
+  )
+}
 
 export function CoordinatesPage() {
   const [activeTab, setActiveTab] = useState<TabType>('coordinates')
@@ -376,33 +453,27 @@ export function CoordinatesPage() {
                           />
                         </td>
                         <td className="px-2 py-1">
-                          <input
-                            type="number"
-                            value={coord.x.toFixed(3)}
-                            onChange={(e) => updateCoordinate(coord.id, 'x', parseFloat(e.target.value) || 0)}
+                          <NumberInput
+                            value={coord.x}
+                            onChange={(v) => updateCoordinate(coord.id, 'x', v ?? 0)}
                             onClick={(e) => e.stopPropagation()}
                             className="w-24 px-1 py-0.5 border rounded text-right text-sm"
-                            step="0.001"
                           />
                         </td>
                         <td className="px-2 py-1">
-                          <input
-                            type="number"
-                            value={coord.y.toFixed(3)}
-                            onChange={(e) => updateCoordinate(coord.id, 'y', parseFloat(e.target.value) || 0)}
+                          <NumberInput
+                            value={coord.y}
+                            onChange={(v) => updateCoordinate(coord.id, 'y', v ?? 0)}
                             onClick={(e) => e.stopPropagation()}
                             className="w-24 px-1 py-0.5 border rounded text-right text-sm"
-                            step="0.001"
                           />
                         </td>
                         <td className="px-2 py-1">
-                          <input
-                            type="number"
-                            value={coord.z?.toFixed(3) ?? ''}
-                            onChange={(e) => updateCoordinate(coord.id, 'z', parseFloat(e.target.value) || null)}
+                          <NumberInput
+                            value={coord.z}
+                            onChange={(v) => updateCoordinate(coord.id, 'z', v)}
                             onClick={(e) => e.stopPropagation()}
                             className="w-20 px-1 py-0.5 border rounded text-right text-sm"
-                            step="0.001"
                             placeholder="-"
                           />
                         </td>
