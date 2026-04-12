@@ -1853,6 +1853,7 @@ export function PipeWiringPage() {
               assignedPipeIds={allAssignedPipeIds}
               isBulkEditMode={selectionMode !== 'none'}
               pipeChangePoints={pipeChangePoints}
+              focusedPipeId={showContinueDialog ? pendingCollectorPipeId : null}
             />
           </div>
         </div>
