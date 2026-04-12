@@ -859,13 +859,18 @@ export function PipeWiringPage() {
 
   // 行タイプを変更
   const updateRowType = useCallback((rowId: string, newType: RowType | null, tabIndex?: number) => {
+    // 集水合流に変更する場合はabsorptionPipesをクリアして系統選択を促す
+    const shouldClearAbsorption = newType === 'collector_merge'
+
     if (activeTabType === 'collector' && tabIndex !== undefined) {
       setCollectorTabs(prev => {
         const newTabs = [...prev]
         const tab = newTabs[tabIndex]
         if (tab) {
           tab.rows = tab.rows.map(row =>
-            row.id === rowId ? { ...row, rowType: newType } : row
+            row.id === rowId
+              ? { ...row, rowType: newType, ...(shouldClearAbsorption ? { absorptionPipes: [] } : {}) }
+              : row
           )
         }
         return newTabs
@@ -873,7 +878,9 @@ export function PipeWiringPage() {
     } else {
       setDirectRows(prev =>
         prev.map(row =>
-          row.id === rowId ? { ...row, rowType: newType } : row
+          row.id === rowId
+            ? { ...row, rowType: newType, ...(shouldClearAbsorption ? { absorptionPipes: [] } : {}) }
+            : row
         )
       )
     }
