@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import {
   Cable,
   Plus,
@@ -57,6 +57,16 @@ export function PipeWiringPage() {
     }
   }, [currentProject, fetchPipes, fetchCoordinates, fetchWiring, fetchPlan])
 
+  // 最新の状態を参照するためのref（アンマウント時の保存用）
+  const hasChangesRef = useRef(hasChanges)
+  const saveWiringRef = useRef(saveWiring)
+
+  // refを最新の値に更新
+  useEffect(() => {
+    hasChangesRef.current = hasChanges
+    saveWiringRef.current = saveWiring
+  }, [hasChanges, saveWiring])
+
   // 変更があった場合に自動保存（デバウンス付き）
   useEffect(() => {
     if (!hasChanges || wiringSaving) return
@@ -67,6 +77,16 @@ export function PipeWiringPage() {
 
     return () => clearTimeout(timeoutId)
   }, [hasChanges, wiringSaving, saveWiring, collectorTabs, directRows])
+
+  // ページ離脱時に未保存の変更を保存
+  useEffect(() => {
+    return () => {
+      // アンマウント時に未保存の変更があれば即座に保存
+      if (hasChangesRef.current) {
+        saveWiringRef.current()
+      }
+    }
+  }, [])
 
   // タブ管理
   const [activeTabType, setActiveTabType] = useState<TabType>('collector')
