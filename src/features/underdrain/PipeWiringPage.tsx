@@ -203,35 +203,40 @@ export function PipeWiringPage() {
     // 現在のタブに行を追加（タイプを自動判別）
     if (activeTabType === 'collector') {
       setCollectorTabs(prev => {
-        const newTabs = [...prev]
-        const currentTab = newTabs[activeCollectorIndex]
+        // 深いコピーを作成
+        return prev.map((tab, i) => {
+          if (i !== activeCollectorIndex) return tab
 
-        // 先頭の空行を削除（rowType, absorptionPipes, collectorPipeが全て空の行）
-        while (currentTab.rows.length > 0) {
-          const firstRow = currentTab.rows[0]
-          if (!firstRow.rowType && firstRow.absorptionPipes.length === 0 && !firstRow.collectorPipe) {
-            currentTab.rows.shift()
-          } else {
-            break
+          // 現在のタブの行を処理
+          let newRows = [...tab.rows]
+
+          // 先頭の空行を削除（rowType, absorptionPipes, collectorPipeが全て空の行）
+          while (newRows.length > 0) {
+            const firstRow = newRows[0]
+            if (!firstRow.rowType && firstRow.absorptionPipes.length === 0 && !firstRow.collectorPipe) {
+              newRows.shift()
+            } else {
+              break
+            }
           }
-        }
 
-        // 各吸水管を距離の大きい順に新しい行として追加
-        for (let i = 0; i < sortedAbsorptionPipes.length; i++) {
-          const { pipe } = sortedAbsorptionPipes[i]
-          // 最初の行（最上流）は absorption_end、それ以降は absorption_merge
-          const autoRowType: RowType = i === 0 ? 'absorption_end' : 'absorption_merge'
-          const newRow: WiringRow = {
-            id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-            rowType: autoRowType,
-            absorptionPipes: [pipe.id],
-            collectorPipe: collectorPipeId,
-            isMergePipe: false,
+          // 各吸水管を距離の大きい順に新しい行として追加
+          for (let i = 0; i < sortedAbsorptionPipes.length; i++) {
+            const { pipe } = sortedAbsorptionPipes[i]
+            // 最初の行（最上流）は absorption_end、それ以降は absorption_merge
+            const autoRowType: RowType = i === 0 ? 'absorption_end' : 'absorption_merge'
+            const newRow: WiringRow = {
+              id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+              rowType: autoRowType,
+              absorptionPipes: [pipe.id],
+              collectorPipe: collectorPipeId,
+              isMergePipe: false,
+            }
+            newRows.push(newRow)
           }
-          currentTab.rows.push(newRow)
-        }
 
-        return newTabs
+          return { ...tab, rows: newRows }
+        })
       })
     } else {
       setDirectRows(prev => {
@@ -310,36 +315,26 @@ export function PipeWiringPage() {
     const collectorPipe = pipes.find(p => p.id === pendingCollectorPipeId)
     if (!collectorPipe) return
 
+    const outletRow: WiringRow = {
+      id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+      rowType: 'outlet',
+      absorptionPipes: [],
+      collectorPipe: pendingCollectorPipeId,
+      isMergePipe: false,
+    }
+
     // 落口行を追加（吸水は空、集水に最後の管路番号と下流測点を表示）
     if (activeTabType === 'collector') {
-      setCollectorTabs(prev => {
-        const newTabs = [...prev]
-        const currentTab = newTabs[activeCollectorIndex]
-
-        const outletRow: WiringRow = {
-          id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-          rowType: 'outlet',
-          absorptionPipes: [],
-          collectorPipe: pendingCollectorPipeId,
-          isMergePipe: false, // 通常行として表示（ただし吸水は空）
+      // 深いコピーを作成
+      const newTabs = collectorTabs.map((tab, i) => {
+        if (i === activeCollectorIndex) {
+          return { ...tab, rows: [...tab.rows, outletRow] }
         }
-        currentTab.rows.push(outletRow)
-
-        return newTabs
+        return tab
       })
+      setCollectorTabs(newTabs)
     } else {
-      setDirectRows(prev => {
-        const newRows = [...prev]
-        const outletRow: WiringRow = {
-          id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-          rowType: 'outlet',
-          absorptionPipes: [],
-          collectorPipe: pendingCollectorPipeId,
-          isMergePipe: false,
-        }
-        newRows.push(outletRow)
-        return newRows
-      })
+      setDirectRows([...directRows, outletRow])
     }
 
     setShowContinueDialog(false)
@@ -354,41 +349,26 @@ export function PipeWiringPage() {
     const lastCollectorPipeId = previousCollectorPipeId || pendingCollectorPipeId
     if (!lastCollectorPipeId) return
 
+    const mergeRow: WiringRow = {
+      id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+      rowType: 'collector_junction',
+      absorptionPipes: [],
+      collectorPipe: lastCollectorPipeId,
+      isMergePipe: true,
+    }
+
     // 現在のタブに区切り行（合流管）を追加
     if (activeTabType === 'collector') {
-      setCollectorTabs(prev => {
-        const newTabs = [...prev]
-        const currentTab = newTabs[activeCollectorIndex]
-
-        // 合流管行を追加（現在の系統の最後の集水管を使用）
-        const mergeRow: WiringRow = {
-          id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-          rowType: 'collector_junction',
-          absorptionPipes: [],
-          collectorPipe: lastCollectorPipeId,
-          isMergePipe: true,
+      // 深いコピーを作成
+      const newTabs = collectorTabs.map((tab, i) => {
+        if (i === activeCollectorIndex) {
+          return { ...tab, rows: [...tab.rows, mergeRow, createEmptyRow()] }
         }
-        currentTab.rows.push(mergeRow)
-
-        // 新しい空行を追加（次のセクションの開始）
-        currentTab.rows.push(createEmptyRow())
-
-        return newTabs
+        return tab
       })
+      setCollectorTabs(newTabs)
     } else {
-      setDirectRows(prev => {
-        const newRows = [...prev]
-        const mergeRow: WiringRow = {
-          id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-          rowType: 'collector_junction',
-          absorptionPipes: [],
-          collectorPipe: lastCollectorPipeId,
-          isMergePipe: true,
-        }
-        newRows.push(mergeRow)
-        newRows.push(createEmptyRow())
-        return newRows
-      })
+      setDirectRows([...directRows, mergeRow, createEmptyRow()])
     }
 
     setShowContinueDialog(false)
@@ -410,38 +390,47 @@ export function PipeWiringPage() {
 
   // 集水暗渠タブを追加
   const addCollectorTab = () => {
-    setCollectorTabs(prev => {
-      const newIndex = prev.length + 1
-      const newTab: CollectorTab = {
-        id: `collector-${Date.now()}`,
-        name: `集水暗渠${newIndex}`,
-        rows: [createEmptyRow()],
-      }
-      // 新しいタブのインデックスを設定
-      setActiveCollectorIndex(prev.length)
-      return [...prev, newTab]
-    })
+    const currentLength = collectorTabs.length
+    const newTab: CollectorTab = {
+      id: `collector-${Date.now()}`,
+      name: `集水暗渠${currentLength + 1}`,
+      rows: [createEmptyRow()],
+    }
+    // 新しいタブを追加
+    setCollectorTabs([...collectorTabs, newTab])
+    // 新しいタブのインデックスを設定（状態更新後に実行されるようにsetTimeoutで遅延）
+    setTimeout(() => {
+      setActiveCollectorIndex(currentLength)
+    }, 0)
   }
 
   // 集水暗渠タブを削除
   const removeCollectorTab = (index: number) => {
-    setCollectorTabs(prev => {
-      if (prev.length <= 1) return prev
-      const newTabs = prev.filter((_, i) => i !== index)
-      if (activeCollectorIndex >= newTabs.length) {
+    if (collectorTabs.length <= 1) return
+    const newTabs = collectorTabs.filter((_, i) => i !== index)
+    setCollectorTabs(newTabs)
+    // インデックス調整（状態更新後に実行されるようにsetTimeoutで遅延）
+    if (activeCollectorIndex >= newTabs.length) {
+      setTimeout(() => {
         setActiveCollectorIndex(newTabs.length - 1)
-      }
-      return newTabs
-    })
+      }, 0)
+    }
   }
 
   // 行を挿入（指定した行の前に挿入）
   const insertRowBefore = (tabType: TabType, rowId: string, tabIndex?: number) => {
     if (tabType === 'collector' && tabIndex !== undefined) {
-      const newTabs = [...collectorTabs]
-      const rowIndex = newTabs[tabIndex].rows.findIndex(r => r.id === rowId)
+      const rowIndex = collectorTabs[tabIndex].rows.findIndex(r => r.id === rowId)
       if (rowIndex >= 0) {
-        newTabs[tabIndex].rows.splice(rowIndex, 0, createEmptyRow())
+        // 深いコピーを作成
+        const newTabs = collectorTabs.map((tab, i) => {
+          if (i === tabIndex) {
+            const newRows = [...tab.rows]
+            newRows.splice(rowIndex, 0, createEmptyRow())
+            return { ...tab, rows: newRows }
+          }
+          return tab
+        })
         setCollectorTabs(newTabs)
       }
     } else if (tabType === 'direct') {
@@ -457,9 +446,14 @@ export function PipeWiringPage() {
   // 行を削除
   const removeRow = (tabType: TabType, rowId: string, tabIndex?: number) => {
     if (tabType === 'collector' && tabIndex !== undefined) {
-      const newTabs = [...collectorTabs]
-      if (newTabs[tabIndex].rows.length <= 1) return
-      newTabs[tabIndex].rows = newTabs[tabIndex].rows.filter((r) => r.id !== rowId)
+      if (collectorTabs[tabIndex].rows.length <= 1) return
+      // 深いコピーを作成
+      const newTabs = collectorTabs.map((tab, i) => {
+        if (i === tabIndex) {
+          return { ...tab, rows: tab.rows.filter((r) => r.id !== rowId) }
+        }
+        return tab
+      })
       setCollectorTabs(newTabs)
     } else if (tabType === 'direct') {
       if (directRows.length <= 1) return
@@ -475,15 +469,16 @@ export function PipeWiringPage() {
   // 系統を追加（現在の系統リストの最後に新しい空の系統を追加）
   const addSystem = () => {
     if (activeTabType === 'collector') {
-      setCollectorTabs(prev => {
-        const newTabs = [...prev]
-        const currentTab = newTabs[activeCollectorIndex]
-        // 新しい系統として空の行を追加
-        currentTab.rows.push(createEmptyRow())
-        return newTabs
+      // 深いコピーを作成
+      const newTabs = collectorTabs.map((tab, i) => {
+        if (i === activeCollectorIndex) {
+          return { ...tab, rows: [...tab.rows, createEmptyRow()] }
+        }
+        return tab
       })
+      setCollectorTabs(newTabs)
     } else {
-      setDirectRows(prev => [...prev, createEmptyRow()])
+      setDirectRows([...directRows, createEmptyRow()])
     }
   }
 
@@ -492,26 +487,26 @@ export function PipeWiringPage() {
     if (systemRowIds.length === 0) return
 
     if (activeTabType === 'collector') {
-      setCollectorTabs(prev => {
-        const newTabs = [...prev]
-        const currentTab = newTabs[activeCollectorIndex]
-        // 系統の行を削除
-        currentTab.rows = currentTab.rows.filter(r => !systemRowIds.includes(r.id))
-        // 全て削除された場合は空の行を追加
-        if (currentTab.rows.length === 0) {
-          currentTab.rows.push(createEmptyRow())
+      // 深いコピーを作成
+      const newTabs = collectorTabs.map((tab, i) => {
+        if (i === activeCollectorIndex) {
+          let newRows = tab.rows.filter(r => !systemRowIds.includes(r.id))
+          // 全て削除された場合は空の行を追加
+          if (newRows.length === 0) {
+            newRows = [createEmptyRow()]
+          }
+          return { ...tab, rows: newRows }
         }
-        return newTabs
+        return tab
       })
+      setCollectorTabs(newTabs)
     } else {
-      setDirectRows(prev => {
-        const newRows = prev.filter(r => !systemRowIds.includes(r.id))
-        // 全て削除された場合は空の行を追加
-        if (newRows.length === 0) {
-          return [createEmptyRow()]
-        }
-        return newRows
-      })
+      let newRows = directRows.filter(r => !systemRowIds.includes(r.id))
+      // 全て削除された場合は空の行を追加
+      if (newRows.length === 0) {
+        newRows = [createEmptyRow()]
+      }
+      setDirectRows(newRows)
     }
     // 削除した行に選択中のものがあれば選択解除
     if (selectedRowId && systemRowIds.includes(selectedRowId)) {
@@ -565,36 +560,25 @@ export function PipeWiringPage() {
       }
 
       // 最初の行を追加（選択した末端吸水 + その接続先）
+      const firstRow: WiringRow = {
+        id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+        rowType: 'absorption_end',
+        absorptionPipes: [pipeId],
+        collectorPipe: collectorPipeId,
+        isMergePipe: false,
+      }
+
       if (activeTabType === 'collector') {
-        setCollectorTabs(prev => {
-          const newTabs = [...prev]
-          const currentTab = newTabs[activeCollectorIndex]
-
-          // 最初の行：選択した末端吸水とその接続先
-          const firstRow: WiringRow = {
-            id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-            rowType: 'absorption_end',
-            absorptionPipes: [pipeId],
-            collectorPipe: collectorPipeId,
-            isMergePipe: false,
+        // 深いコピーを作成
+        const newTabs = collectorTabs.map((tab, i) => {
+          if (i === activeCollectorIndex) {
+            return { ...tab, rows: [...tab.rows, firstRow] }
           }
-          currentTab.rows.push(firstRow)
-
-          return newTabs
+          return tab
         })
+        setCollectorTabs(newTabs)
       } else {
-        setDirectRows(prev => {
-          const newRows = [...prev]
-          const firstRow: WiringRow = {
-            id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-            rowType: 'absorption_end',
-            absorptionPipes: [pipeId],
-            collectorPipe: collectorPipeId,
-            isMergePipe: false,
-          }
-          newRows.push(firstRow)
-          return newRows
-        })
+        setDirectRows([...directRows, firstRow])
       }
 
       // 同じ接続先を持つ他の管路を追加（最初に追加した管路は除外）
@@ -617,23 +601,30 @@ export function PipeWiringPage() {
 
       // 吸水に追加
       if (activeTabType === 'collector') {
-        setCollectorTabs(prev => {
-          const newTabs = [...prev]
-          const row = newTabs[activeCollectorIndex].rows.find(r => r.id === selectedRowId)
-          if (row && !row.absorptionPipes.includes(pipeId)) {
-            row.absorptionPipes = [...row.absorptionPipes, pipeId]
+        // 深いコピーを作成
+        const newTabs = collectorTabs.map((tab, i) => {
+          if (i === activeCollectorIndex) {
+            return {
+              ...tab,
+              rows: tab.rows.map(row => {
+                if (row.id === selectedRowId && !row.absorptionPipes.includes(pipeId)) {
+                  return { ...row, absorptionPipes: [...row.absorptionPipes, pipeId] }
+                }
+                return row
+              })
+            }
           }
-          return newTabs
+          return tab
         })
+        setCollectorTabs(newTabs)
       } else {
-        setDirectRows(prev => {
-          const newRows = [...prev]
-          const row = newRows.find(r => r.id === selectedRowId)
-          if (row && !row.absorptionPipes.includes(pipeId)) {
-            row.absorptionPipes = [...row.absorptionPipes, pipeId]
+        const newRows = directRows.map(row => {
+          if (row.id === selectedRowId && !row.absorptionPipes.includes(pipeId)) {
+            return { ...row, absorptionPipes: [...row.absorptionPipes, pipeId] }
           }
-          return newRows
+          return row
         })
+        setDirectRows(newRows)
       }
 
       // Ctrlキーが押されていなければ次の行に移動
@@ -644,13 +635,16 @@ export function PipeWiringPage() {
           // 最後の行の場合は新しい行を作成してそこに移動
           const newRow = createEmptyRow()
           if (activeTabType === 'collector') {
-            setCollectorTabs(prev => {
-              const newTabs = [...prev]
-              newTabs[activeCollectorIndex].rows.push(newRow)
-              return newTabs
+            // 深いコピーを作成
+            const newTabs = collectorTabs.map((tab, i) => {
+              if (i === activeCollectorIndex) {
+                return { ...tab, rows: [...tab.rows, newRow] }
+              }
+              return tab
             })
+            setCollectorTabs(newTabs)
           } else {
-            setDirectRows(prev => [...prev, newRow])
+            setDirectRows([...directRows, newRow])
           }
           setSelectedRowId(newRow.id)
         }
@@ -658,23 +652,30 @@ export function PipeWiringPage() {
     } else if (selectionMode === 'collector') {
       // 集水に設定（1つのみ）
       if (activeTabType === 'collector') {
-        setCollectorTabs(prev => {
-          const newTabs = [...prev]
-          const row = newTabs[activeCollectorIndex].rows.find(r => r.id === selectedRowId)
-          if (row) {
-            row.collectorPipe = row.collectorPipe === pipeId ? null : pipeId
+        // 深いコピーを作成
+        const newTabs = collectorTabs.map((tab, i) => {
+          if (i === activeCollectorIndex) {
+            return {
+              ...tab,
+              rows: tab.rows.map(row => {
+                if (row.id === selectedRowId) {
+                  return { ...row, collectorPipe: row.collectorPipe === pipeId ? null : pipeId }
+                }
+                return row
+              })
+            }
           }
-          return newTabs
+          return tab
         })
+        setCollectorTabs(newTabs)
       } else {
-        setDirectRows(prev => {
-          const newRows = [...prev]
-          const row = newRows.find(r => r.id === selectedRowId)
-          if (row) {
-            row.collectorPipe = row.collectorPipe === pipeId ? null : pipeId
+        const newRows = directRows.map(row => {
+          if (row.id === selectedRowId) {
+            return { ...row, collectorPipe: row.collectorPipe === pipeId ? null : pipeId }
           }
-          return newRows
+          return row
         })
+        setDirectRows(newRows)
       }
       // 集水選択後は選択モード解除
       setSelectionMode('none')
@@ -685,46 +686,60 @@ export function PipeWiringPage() {
   // 吸水から管を削除
   const removeAbsorptionPipe = (rowId: string, pipeId: string, tabIndex?: number) => {
     if (activeTabType === 'collector' && tabIndex !== undefined) {
-      setCollectorTabs(prev => {
-        const newTabs = [...prev]
-        const row = newTabs[tabIndex].rows.find(r => r.id === rowId)
-        if (row) {
-          row.absorptionPipes = row.absorptionPipes.filter(id => id !== pipeId)
+      // 深いコピーを作成
+      const newTabs = collectorTabs.map((tab, i) => {
+        if (i === tabIndex) {
+          return {
+            ...tab,
+            rows: tab.rows.map(row => {
+              if (row.id === rowId) {
+                return { ...row, absorptionPipes: row.absorptionPipes.filter(id => id !== pipeId) }
+              }
+              return row
+            })
+          }
         }
-        return newTabs
+        return tab
       })
+      setCollectorTabs(newTabs)
     } else {
-      setDirectRows(prev => {
-        const newRows = [...prev]
-        const row = newRows.find(r => r.id === rowId)
-        if (row) {
-          row.absorptionPipes = row.absorptionPipes.filter(id => id !== pipeId)
+      const newRows = directRows.map(row => {
+        if (row.id === rowId) {
+          return { ...row, absorptionPipes: row.absorptionPipes.filter(id => id !== pipeId) }
         }
-        return newRows
+        return row
       })
+      setDirectRows(newRows)
     }
   }
 
   // 集水を削除
   const clearCollectorPipe = (rowId: string, tabIndex?: number) => {
     if (activeTabType === 'collector' && tabIndex !== undefined) {
-      setCollectorTabs(prev => {
-        const newTabs = [...prev]
-        const row = newTabs[tabIndex].rows.find(r => r.id === rowId)
-        if (row) {
-          row.collectorPipe = null
+      // 深いコピーを作成
+      const newTabs = collectorTabs.map((tab, i) => {
+        if (i === tabIndex) {
+          return {
+            ...tab,
+            rows: tab.rows.map(row => {
+              if (row.id === rowId) {
+                return { ...row, collectorPipe: null }
+              }
+              return row
+            })
+          }
         }
-        return newTabs
+        return tab
       })
+      setCollectorTabs(newTabs)
     } else {
-      setDirectRows(prev => {
-        const newRows = [...prev]
-        const row = newRows.find(r => r.id === rowId)
-        if (row) {
-          row.collectorPipe = null
+      const newRows = directRows.map(row => {
+        if (row.id === rowId) {
+          return { ...row, collectorPipe: null }
         }
-        return newRows
+        return row
       })
+      setDirectRows(newRows)
     }
   }
 
@@ -863,28 +878,30 @@ export function PipeWiringPage() {
     const shouldClearAbsorption = newType === 'collector_merge'
 
     if (activeTabType === 'collector' && tabIndex !== undefined) {
-      setCollectorTabs(prev => {
-        const newTabs = [...prev]
-        const tab = newTabs[tabIndex]
-        if (tab) {
-          tab.rows = tab.rows.map(row =>
-            row.id === rowId
-              ? { ...row, rowType: newType, ...(shouldClearAbsorption ? { absorptionPipes: [] } : {}) }
-              : row
-          )
+      // 深いコピーを作成
+      const newTabs = collectorTabs.map((tab, i) => {
+        if (i === tabIndex) {
+          return {
+            ...tab,
+            rows: tab.rows.map(row =>
+              row.id === rowId
+                ? { ...row, rowType: newType, ...(shouldClearAbsorption ? { absorptionPipes: [] } : {}) }
+                : row
+            )
+          }
         }
-        return newTabs
+        return tab
       })
+      setCollectorTabs(newTabs)
     } else {
-      setDirectRows(prev =>
-        prev.map(row =>
-          row.id === rowId
-            ? { ...row, rowType: newType, ...(shouldClearAbsorption ? { absorptionPipes: [] } : {}) }
-            : row
-        )
+      const newRows = directRows.map(row =>
+        row.id === rowId
+          ? { ...row, rowType: newType, ...(shouldClearAbsorption ? { absorptionPipes: [] } : {}) }
+          : row
       )
+      setDirectRows(newRows)
     }
-  }, [activeTabType, setCollectorTabs, setDirectRows])
+  }, [activeTabType, collectorTabs, directRows, setCollectorTabs, setDirectRows])
 
   // 現在のタブのデータ
   const currentRows = useMemo(() => {
@@ -1394,21 +1411,21 @@ export function PipeWiringPage() {
                                     系統{row.absorptionPipes[0]}
                                     <button
                                       onClick={() => {
-                                        // 系統IDを削除
+                                        // 系統IDを削除（深いコピーを作成）
                                         if (activeTabType === 'collector') {
-                                          setCollectorTabs(prev => {
-                                            const newTabs = [...prev]
-                                            const r = newTabs[activeCollectorIndex].rows.find(r => r.id === row.id)
-                                            if (r) r.absorptionPipes = []
-                                            return newTabs
+                                          const newTabs = collectorTabs.map((tab, i) => {
+                                            if (i === activeCollectorIndex) {
+                                              return {
+                                                ...tab,
+                                                rows: tab.rows.map(r => r.id === row.id ? { ...r, absorptionPipes: [] } : r)
+                                              }
+                                            }
+                                            return tab
                                           })
+                                          setCollectorTabs(newTabs)
                                         } else {
-                                          setDirectRows(prev => {
-                                            const newRows = [...prev]
-                                            const r = newRows.find(r => r.id === row.id)
-                                            if (r) r.absorptionPipes = []
-                                            return newRows
-                                          })
+                                          const newRows = directRows.map(r => r.id === row.id ? { ...r, absorptionPipes: [] } : r)
+                                          setDirectRows(newRows)
                                         }
                                       }}
                                       className="hover:text-red-600"
@@ -1423,21 +1440,21 @@ export function PipeWiringPage() {
                                     onChange={(e) => {
                                       const selectedSystemIndex = e.target.value
                                       if (!selectedSystemIndex) return
-                                      // 系統インデックスをabsorptionPipesに格納（文字列として）
+                                      // 系統インデックスをabsorptionPipesに格納（深いコピーを作成）
                                       if (activeTabType === 'collector') {
-                                        setCollectorTabs(prev => {
-                                          const newTabs = [...prev]
-                                          const r = newTabs[activeCollectorIndex].rows.find(r => r.id === row.id)
-                                          if (r) r.absorptionPipes = [selectedSystemIndex]
-                                          return newTabs
+                                        const newTabs = collectorTabs.map((tab, i) => {
+                                          if (i === activeCollectorIndex) {
+                                            return {
+                                              ...tab,
+                                              rows: tab.rows.map(r => r.id === row.id ? { ...r, absorptionPipes: [selectedSystemIndex] } : r)
+                                            }
+                                          }
+                                          return tab
                                         })
+                                        setCollectorTabs(newTabs)
                                       } else {
-                                        setDirectRows(prev => {
-                                          const newRows = [...prev]
-                                          const r = newRows.find(r => r.id === row.id)
-                                          if (r) r.absorptionPipes = [selectedSystemIndex]
-                                          return newRows
-                                        })
+                                        const newRows = directRows.map(r => r.id === row.id ? { ...r, absorptionPipes: [selectedSystemIndex] } : r)
+                                        setDirectRows(newRows)
                                       }
                                     }}
                                     className="text-xs py-0.5 px-1 border rounded bg-white"
@@ -1602,36 +1619,38 @@ export function PipeWiringPage() {
                       const newRow = createEmptyRow()
 
                       if (activeTabType === 'collector') {
-                        setCollectorTabs(prev => {
-                          const newTabs = [...prev]
-                          const currentTab = newTabs[activeCollectorIndex]
-                          // IDで検索して挿入位置を特定
-                          const lastRowIndex = currentTab.rows.findIndex(r => r.id === lastRow.id)
-                          if (lastRowIndex >= 0) {
-                            // 最後の行の次に挿入
-                            currentTab.rows = [
-                              ...currentTab.rows.slice(0, lastRowIndex + 1),
-                              newRow,
-                              ...currentTab.rows.slice(lastRowIndex + 1)
-                            ]
-                          } else {
-                            // 見つからない場合は末尾に追加
-                            currentTab.rows = [...currentTab.rows, newRow]
+                        // 深いコピーを作成
+                        const newTabs = collectorTabs.map((tab, i) => {
+                          if (i === activeCollectorIndex) {
+                            const lastRowIndex = tab.rows.findIndex(r => r.id === lastRow.id)
+                            let newRows: WiringRow[]
+                            if (lastRowIndex >= 0) {
+                              newRows = [
+                                ...tab.rows.slice(0, lastRowIndex + 1),
+                                newRow,
+                                ...tab.rows.slice(lastRowIndex + 1)
+                              ]
+                            } else {
+                              newRows = [...tab.rows, newRow]
+                            }
+                            return { ...tab, rows: newRows }
                           }
-                          return newTabs
+                          return tab
                         })
+                        setCollectorTabs(newTabs)
                       } else {
-                        setDirectRows(prev => {
-                          const lastRowIndex = prev.findIndex(r => r.id === lastRow.id)
-                          if (lastRowIndex >= 0) {
-                            return [
-                              ...prev.slice(0, lastRowIndex + 1),
-                              newRow,
-                              ...prev.slice(lastRowIndex + 1)
-                            ]
-                          }
-                          return [...prev, newRow]
-                        })
+                        const lastRowIndex = directRows.findIndex(r => r.id === lastRow.id)
+                        let newRows: WiringRow[]
+                        if (lastRowIndex >= 0) {
+                          newRows = [
+                            ...directRows.slice(0, lastRowIndex + 1),
+                            newRow,
+                            ...directRows.slice(lastRowIndex + 1)
+                          ]
+                        } else {
+                          newRows = [...directRows, newRow]
+                        }
+                        setDirectRows(newRows)
                       }
                     }}
                     className="flex items-center gap-1 px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded"
