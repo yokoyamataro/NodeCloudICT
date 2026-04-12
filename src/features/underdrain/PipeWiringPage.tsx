@@ -1359,29 +1359,42 @@ export function PipeWiringPage() {
                   <button
                     onClick={() => {
                       // 系統の最後の行の後に新しい行を挿入
-                      const lastRowId = group.rows[group.rows.length - 1]?.id
-                      if (lastRowId) {
-                        // 最後の行の後に挿入するため、addRowを使用
-                        if (activeTabType === 'collector') {
-                          setCollectorTabs(prev => {
-                            const newTabs = [...prev]
-                            const currentTab = newTabs[activeCollectorIndex]
-                            const lastRowIndex = currentTab.rows.findIndex(r => r.id === lastRowId)
-                            if (lastRowIndex >= 0) {
-                              currentTab.rows.splice(lastRowIndex + 1, 0, createEmptyRow())
-                            }
-                            return newTabs
-                          })
-                        } else {
-                          setDirectRows(prev => {
-                            const newRows = [...prev]
-                            const lastRowIndex = newRows.findIndex(r => r.id === lastRowId)
-                            if (lastRowIndex >= 0) {
-                              newRows.splice(lastRowIndex + 1, 0, createEmptyRow())
-                            }
-                            return newRows
-                          })
-                        }
+                      const lastRow = group.rows[group.rows.length - 1]
+                      if (!lastRow) return
+
+                      const newRow = createEmptyRow()
+
+                      if (activeTabType === 'collector') {
+                        setCollectorTabs(prev => {
+                          const newTabs = [...prev]
+                          const currentTab = newTabs[activeCollectorIndex]
+                          // IDで検索して挿入位置を特定
+                          const lastRowIndex = currentTab.rows.findIndex(r => r.id === lastRow.id)
+                          if (lastRowIndex >= 0) {
+                            // 最後の行の次に挿入
+                            currentTab.rows = [
+                              ...currentTab.rows.slice(0, lastRowIndex + 1),
+                              newRow,
+                              ...currentTab.rows.slice(lastRowIndex + 1)
+                            ]
+                          } else {
+                            // 見つからない場合は末尾に追加
+                            currentTab.rows = [...currentTab.rows, newRow]
+                          }
+                          return newTabs
+                        })
+                      } else {
+                        setDirectRows(prev => {
+                          const lastRowIndex = prev.findIndex(r => r.id === lastRow.id)
+                          if (lastRowIndex >= 0) {
+                            return [
+                              ...prev.slice(0, lastRowIndex + 1),
+                              newRow,
+                              ...prev.slice(lastRowIndex + 1)
+                            ]
+                          }
+                          return [...prev, newRow]
+                        })
                       }
                     }}
                     className="flex items-center gap-1 px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded"

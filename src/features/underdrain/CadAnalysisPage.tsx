@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { Upload, Trash2, FileSearch, Download, ArrowUpDown, Edit3, X, Navigation, Link2, Merge, Split, Tag, MapPin, ChevronUp, ChevronDown, Hash, Target, Square, Map } from 'lucide-react'
+import { Upload, Trash2, FileSearch, Download, ArrowUpDown, Edit3, X, Navigation, Link2, Merge, Split, Tag, MapPin, ChevronUp, ChevronDown, Target, Square, Map } from 'lucide-react'
 import { parseDxf, calculateLineLength } from '@/lib/dxf-parser'
 import { autoConnectFromOutlet } from '@/lib/pipe-connection'
 import {
@@ -24,22 +24,20 @@ interface ParsedEntity {
 // 表示モード
 type ViewMode = 'import' | 'list'
 
-// 一括訂正モードの設定
+// 一括訂正モードの設定（連番機能を統合）
 interface BulkEditSettings {
   pipeType: PipeType | null
   diameter: number | null
+  // 連番設定
+  enableSequential: boolean  // 連番を有効にするか
+  prefix: string             // 頭文字
+  currentNumber: number      // 現在の番号
+  suffix: string             // 末尾文字
 }
 
 // ソートの設定
 type SortKey = 'number' | 'pipeType' | 'diameter' | 'designLength' | 'connectionTo' | null
 type SortDirection = 'asc' | 'desc'
-
-// 連番設定
-interface SequentialNumberSettings {
-  prefix: string    // 頭文字
-  startNumber: number  // 開始番号
-  suffix: string    // 末尾文字
-}
 
 // 自動接続モード
 type AutoConnectMode = 'idle' | 'selecting-outlet'
@@ -54,11 +52,15 @@ export function CadAnalysisPage() {
   } | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('import')
 
-  // 一括訂正モード
+  // 一括訂正モード（連番機能を統合）
   const [isBulkEditMode, setIsBulkEditMode] = useState(false)
   const [bulkEditSettings, setBulkEditSettings] = useState<BulkEditSettings>({
     pipeType: null,
     diameter: null,
+    enableSequential: false,
+    prefix: '',
+    currentNumber: 1,
+    suffix: '',
   })
 
   // 方向表示モード
@@ -82,15 +84,6 @@ export function CadAnalysisPage() {
   // ソート設定
   const [sortKey, setSortKey] = useState<SortKey>(null)
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
-
-  // 連番モード
-  const [isSequentialMode, setIsSequentialMode] = useState(false)
-  const [sequentialSettings, setSequentialSettings] = useState<SequentialNumberSettings>({
-    prefix: '',
-    startNumber: 1,
-    suffix: '',
-  })
-  const [currentSequentialNumber, setCurrentSequentialNumber] = useState(1)
 
   // 自動接続モード
   const [autoConnectMode, setAutoConnectMode] = useState<AutoConnectMode>('idle')
@@ -506,7 +499,7 @@ export function CadAnalysisPage() {
       return
     }
 
-    // 一括訂正モード
+    // 一括訂正モード（連番機能を含む）
     if (isBulkEditMode) {
       const updates: Partial<PipeRow> = {}
       if (bulkEditSettings.pipeType !== null) {
@@ -515,17 +508,15 @@ export function CadAnalysisPage() {
       if (bulkEditSettings.diameter !== null) {
         updates.diameter = bulkEditSettings.diameter
       }
+      // 連番が有効な場合
+      if (bulkEditSettings.enableSequential) {
+        const newNumber = `${bulkEditSettings.prefix}${bulkEditSettings.currentNumber}${bulkEditSettings.suffix}`
+        updates.number = newNumber
+        setBulkEditSettings(prev => ({ ...prev, currentNumber: prev.currentNumber + 1 }))
+      }
       if (Object.keys(updates).length > 0) {
         updatePipe(id, updates)
       }
-      return
-    }
-
-    // 連番モード
-    if (isSequentialMode) {
-      const newNumber = `${sequentialSettings.prefix}${currentSequentialNumber}${sequentialSettings.suffix}`
-      updatePipe(id, { number: newNumber })
-      setCurrentSequentialNumber(prev => prev + 1)
       setSelectedPipeId(id)
       return
     }
@@ -598,13 +589,27 @@ export function CadAnalysisPage() {
   // 一括訂正モード開始
   const startBulkEdit = () => {
     setIsBulkEditMode(true)
-    setBulkEditSettings({ pipeType: null, diameter: null })
+    setBulkEditSettings({
+      pipeType: null,
+      diameter: null,
+      enableSequential: false,
+      prefix: '',
+      currentNumber: 1,
+      suffix: '',
+    })
   }
 
   // 一括訂正モード終了
   const endBulkEdit = () => {
     setIsBulkEditMode(false)
-    setBulkEditSettings({ pipeType: null, diameter: null })
+    setBulkEditSettings({
+      pipeType: null,
+      diameter: null,
+      enableSequential: false,
+      prefix: '',
+      currentNumber: 1,
+      suffix: '',
+    })
   }
 
   // 自動接続モード開始
@@ -682,7 +687,7 @@ export function CadAnalysisPage() {
                 <Upload className="h-4 w-4" />
                 DXFインポート
               </button>
-              {pipes.length > 0 && !isBulkEditMode && editMode === 'normal' && !isSequentialMode && autoConnectMode === 'idle' && (
+              {pipes.length > 0 && !isBulkEditMode && editMode === 'normal' && autoConnectMode === 'idle' && (
                 <>
                   <button
                     onClick={startBulkEdit}
@@ -714,17 +719,6 @@ export function CadAnalysisPage() {
                   >
                     <Link2 className="h-3.5 w-3.5" />
                     自動接続
-                  </button>
-                  <button
-                    onClick={() => {
-                      setIsSequentialMode(true)
-                      setCurrentSequentialNumber(sequentialSettings.startNumber)
-                    }}
-                    className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white"
-                    title="クリックで連番を付与"
-                  >
-                    <Hash className="h-3.5 w-3.5" />
-                    連番
                   </button>
                   <button
                     onClick={() => setShowMidpointModal(true)}
@@ -845,66 +839,17 @@ export function CadAnalysisPage() {
             </div>
           )}
 
-          {/* 連番モードパネル */}
-          {isSequentialMode && (
-            <div className="p-3 bg-cyan-50 border-b flex-shrink-0">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium text-cyan-800">
-                  連番モード: 管路をクリックして番号を付与（次: {sequentialSettings.prefix}{currentSequentialNumber}{sequentialSettings.suffix}）
-                </span>
-                <button
-                  onClick={() => setIsSequentialMode(false)}
-                  className="p-1 text-cyan-600 hover:bg-cyan-100 rounded"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <label className="text-xs text-cyan-700">頭文字:</label>
-                  <input
-                    type="text"
-                    value={sequentialSettings.prefix}
-                    onChange={(e) =>
-                      setSequentialSettings((prev) => ({ ...prev, prefix: e.target.value }))
-                    }
-                    className="w-16 px-2 py-1 border rounded text-xs"
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  <label className="text-xs text-cyan-700">開始番号:</label>
-                  <input
-                    type="number"
-                    value={currentSequentialNumber}
-                    onChange={(e) => setCurrentSequentialNumber(parseInt(e.target.value) || 1)}
-                    className="w-16 px-2 py-1 border rounded text-xs text-right"
-                    min={1}
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  <label className="text-xs text-cyan-700">末尾文字:</label>
-                  <input
-                    type="text"
-                    value={sequentialSettings.suffix}
-                    onChange={(e) =>
-                      setSequentialSettings((prev) => ({ ...prev, suffix: e.target.value }))
-                    }
-                    className="w-16 px-2 py-1 border rounded text-xs"
-                  />
-                </div>
-                <div className="text-xs text-cyan-600 bg-cyan-100 px-2 py-1 rounded">
-                  プレビュー: {sequentialSettings.prefix}{currentSequentialNumber}{sequentialSettings.suffix}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 一括訂正モードパネル */}
+          {/* 一括訂正モードパネル（連番機能を含む） */}
           {isBulkEditMode && editMode === 'normal' && (
             <div className="p-3 bg-amber-50 border-b flex-shrink-0">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-medium text-amber-800">
                   一括訂正モード: 地図上の管路をクリックして変更
+                  {bulkEditSettings.enableSequential && (
+                    <span className="ml-2 text-cyan-700">
+                      （次の番号: {bulkEditSettings.prefix}{bulkEditSettings.currentNumber}{bulkEditSettings.suffix}）
+                    </span>
+                  )}
                 </span>
                 <button
                   onClick={endBulkEdit}
@@ -913,7 +858,7 @@ export function CadAnalysisPage() {
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-4 flex-wrap">
                 <div className="flex items-center gap-2">
                   <label className="text-xs text-amber-700">管種:</label>
                   <select
@@ -954,6 +899,63 @@ export function CadAnalysisPage() {
                     ))}
                   </select>
                 </div>
+                <div className="border-l pl-4 flex items-center gap-2">
+                  <label className="flex items-center gap-1 text-xs text-amber-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={bulkEditSettings.enableSequential}
+                      onChange={(e) =>
+                        setBulkEditSettings((prev) => ({
+                          ...prev,
+                          enableSequential: e.target.checked,
+                        }))
+                      }
+                      className="h-3 w-3"
+                    />
+                    連番
+                  </label>
+                </div>
+                {bulkEditSettings.enableSequential && (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-cyan-700">頭文字:</label>
+                      <input
+                        type="text"
+                        value={bulkEditSettings.prefix}
+                        onChange={(e) =>
+                          setBulkEditSettings((prev) => ({ ...prev, prefix: e.target.value }))
+                        }
+                        className="w-16 px-2 py-1 border rounded text-xs"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-cyan-700">番号:</label>
+                      <input
+                        type="number"
+                        value={bulkEditSettings.currentNumber}
+                        onChange={(e) =>
+                          setBulkEditSettings((prev) => ({
+                            ...prev,
+                            currentNumber: parseInt(e.target.value) || 1,
+                          }))
+                        }
+                        className="w-16 px-2 py-1 border rounded text-xs text-right"
+                        min={1}
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-cyan-700">末尾:</label>
+                      <input
+                        type="text"
+                        value={bulkEditSettings.suffix}
+                        onChange={(e) =>
+                          setBulkEditSettings((prev) => ({ ...prev, suffix: e.target.value }))
+                        }
+                        className="w-16 px-2 py-1 border rounded text-xs"
+                      />
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -1333,7 +1335,7 @@ export function CadAnalysisPage() {
               selectedPipeIds={selectedPipeIds}
               onPipeSelect={handlePipeClick}
               onVertexClick={handleVertexClick}
-              isBulkEditMode={isBulkEditMode || isSequentialMode || autoConnectMode === 'selecting-outlet'}
+              isBulkEditMode={isBulkEditMode || autoConnectMode === 'selecting-outlet'}
               showDirection={showDirection}
               showLabels={showLabels}
               showSurveyPoints={showSurveyPoints}
