@@ -1201,7 +1201,7 @@ export function PipeWiringPage() {
                 </div>
               ) : (
                 <button
-                  onClick={() => currentProject && fetchWiring(currentProject.id)}
+                  onClick={() => currentProject && fetchWiring(currentProject.id, true)}
                   disabled={wiringSaving}
                   className="flex items-center gap-2 px-3 py-2 text-slate-600 border rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50"
                   title="データを再読み込み"

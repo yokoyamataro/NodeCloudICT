@@ -46,8 +46,10 @@ interface PipeWiringState {
   loading: boolean
   saving: boolean
   error: string | null
+  // 現在ロード済みのプロジェクトID（ページ遷移時の再フェッチ防止用）
+  loadedProjectId: string | null
   // データ操作
-  fetchWiring: (projectId: string) => Promise<void>
+  fetchWiring: (projectId: string, force?: boolean) => Promise<void>
   saveWiring: () => Promise<void>
   // タブ操作（関数も受け付ける）
   setCollectorTabs: (updater: TabsUpdater) => void
@@ -55,6 +57,8 @@ interface PipeWiringState {
   // 変更検知
   hasChanges: boolean
   setHasChanges: (value: boolean) => void
+  // ストアをリセット（プロジェクト切り替え時用）
+  resetStore: () => void
 }
 
 // 空の行を作成
@@ -80,6 +84,7 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
   loading: false,
   saving: false,
   error: null,
+  loadedProjectId: null,
   hasChanges: false,
 
   setCollectorTabs: (updater) => {
@@ -98,7 +103,39 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
     set({ hasChanges: value })
   },
 
-  fetchWiring: async (projectId: string) => {
+  resetStore: () => {
+    set({
+      collectorTabs: [
+        {
+          id: 'collector-1',
+          name: '集水暗渠1',
+          rows: [createEmptyRow()],
+        },
+      ],
+      directRows: [createEmptyRow()],
+      loading: false,
+      saving: false,
+      error: null,
+      loadedProjectId: null,
+      hasChanges: false,
+    })
+  },
+
+  fetchWiring: async (projectId: string, force?: boolean) => {
+    const state = get()
+
+    // 保存中の場合はフェッチをスキップ（データ競合防止）
+    if (state.saving) {
+      console.log('[pipeWiringStore] Skipping fetch while saving')
+      return
+    }
+
+    // 同じプロジェクトのデータが既にロードされていて、強制リロードでなければスキップ
+    if (!force && state.loadedProjectId === projectId) {
+      console.log('[pipeWiringStore] Data already loaded for project, skipping fetch')
+      return
+    }
+
     set({ loading: true, error: null })
     try {
       // グループを取得
@@ -122,6 +159,7 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
           ],
           directRows: [createEmptyRow()],
           loading: false,
+          loadedProjectId: projectId,
           hasChanges: false,
         })
         return
@@ -184,6 +222,7 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
         collectorTabs,
         directRows,
         loading: false,
+        loadedProjectId: projectId,
         hasChanges: false,
       })
     } catch (err) {
