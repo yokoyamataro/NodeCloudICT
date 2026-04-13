@@ -11,6 +11,7 @@ import { SurveyImportPage } from '@/features/underdrain/SurveyImportPage'
 import { PipeWiringPage } from '@/features/underdrain/PipeWiringPage'
 import { DepthCalcPage } from '@/features/underdrain/DepthCalcPage'
 import { LandXMLPage } from '@/features/underdrain/LandXMLPage'
+import { MobileProjectMapPage } from '@/features/mobile/MobileProjectMapPage'
 import { Loader2 } from 'lucide-react'
 
 // 認証が必要なルートのラッパー
@@ -36,6 +37,15 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      {/* モバイル用現場マップ */}
+      <Route
+        path="/mobile/map"
+        element={
+          <ProtectedRoute>
+            <MobileProjectMapPage />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/"
         element={
