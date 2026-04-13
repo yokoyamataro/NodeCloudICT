@@ -1,26 +1,84 @@
 import { useEffect, useState } from 'react'
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, useMap, CircleMarker } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Navigation, MapPin, List, RefreshCw, Loader2 } from 'lucide-react'
+import { Navigation, MapPin, List, RefreshCw, Loader2, Locate } from 'lucide-react'
 import { useProjectStore, type ProjectLocation } from '@/stores/projectStore'
 
-// カスタムマーカーアイコン
-const createMarkerIcon = (isSelected: boolean = false): L.DivIcon => {
+// カスタムマーカーアイコン（ラベル付き）
+const createMarkerIcon = (isSelected: boolean = false, label?: string): L.DivIcon => {
   const size = isSelected ? 32 : 24
   const color = isSelected ? '#2563eb' : '#ef4444'
+  const labelHtml = label ? `
+    <div style="
+      position: absolute;
+      bottom: ${size + 4}px;
+      left: 50%;
+      transform: translateX(-50%);
+      background-color: white;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: bold;
+      white-space: nowrap;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+      border: 1px solid ${color};
+      color: ${isSelected ? '#1e40af' : '#b91c1c'};
+    ">${label}</div>
+  ` : ''
   return L.divIcon({
     className: 'custom-marker',
-    html: `<div style="
-      background-color: ${color};
-      width: ${size}px;
-      height: ${size}px;
-      border-radius: 50%;
-      border: 3px solid white;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
-    "></div>`,
+    html: `
+      <div style="position: relative;">
+        ${labelHtml}
+        <div style="
+          background-color: ${color};
+          width: ${size}px;
+          height: ${size}px;
+          border-radius: 50%;
+          border: 3px solid white;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+        "></div>
+      </div>
+    `,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
+  })
+}
+
+// 自己位置マーカーアイコン
+const createUserLocationIcon = (): L.DivIcon => {
+  return L.divIcon({
+    className: 'user-location-marker',
+    html: `
+      <div style="position: relative;">
+        <div style="
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          width: 40px;
+          height: 40px;
+          background-color: rgba(59, 130, 246, 0.2);
+          border-radius: 50%;
+          animation: pulse 2s infinite;
+        "></div>
+        <div style="
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          width: 16px;
+          height: 16px;
+          background-color: #3b82f6;
+          border: 3px solid white;
+          border-radius: 50%;
+          box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+        "></div>
+      </div>
+    `,
+    iconSize: [40, 40],
+    iconAnchor: [20, 20],
   })
 }
 
@@ -55,14 +113,97 @@ function FocusOnProject({ location }: { location: ProjectLocation | null }) {
   return null
 }
 
+// 自己位置にフォーカス
+function FocusOnUserLocation({ userLocation }: { userLocation: { lat: number; lng: number } | null }) {
+  const map = useMap()
+
+  useEffect(() => {
+    if (userLocation) {
+      map.setView([userLocation.lat, userLocation.lng], 16, { animate: true })
+    }
+  }, [userLocation, map])
+
+  return null
+}
+
 export function MobileProjectMapPage() {
   const { projects, loading, fetchProjects, projectLocations } = useProjectStore()
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [showList, setShowList] = useState(false)
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number; accuracy: number } | null>(null)
+  const [watchingLocation, setWatchingLocation] = useState(false)
+  const [locationError, setLocationError] = useState<string | null>(null)
+  const [focusOnUser, setFocusOnUser] = useState(false)
 
   useEffect(() => {
     fetchProjects()
   }, [fetchProjects])
+
+  // GPS位置情報の監視
+  useEffect(() => {
+    if (!watchingLocation) return
+
+    if (!navigator.geolocation) {
+      setLocationError('お使いのブラウザは位置情報に対応していません')
+      setWatchingLocation(false)
+      return
+    }
+
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        setUserLocation({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+        })
+        setLocationError(null)
+      },
+      (error) => {
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            setLocationError('位置情報の使用が許可されていません')
+            break
+          case error.POSITION_UNAVAILABLE:
+            setLocationError('位置情報を取得できません')
+            break
+          case error.TIMEOUT:
+            setLocationError('位置情報の取得がタイムアウトしました')
+            break
+          default:
+            setLocationError('位置情報の取得に失敗しました')
+        }
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      }
+    )
+
+    return () => {
+      navigator.geolocation.clearWatch(watchId)
+    }
+  }, [watchingLocation])
+
+  const toggleLocationTracking = () => {
+    if (watchingLocation) {
+      setWatchingLocation(false)
+      setUserLocation(null)
+      setFocusOnUser(false)
+    } else {
+      setWatchingLocation(true)
+      setFocusOnUser(true)
+    }
+  }
+
+  const handleFocusOnUser = () => {
+    if (userLocation) {
+      setFocusOnUser(true)
+      setSelectedProjectId(null)
+      // フォーカス後にリセット
+      setTimeout(() => setFocusOnUser(false), 100)
+    }
+  }
 
   const locations = Array.from(projectLocations.values())
   const selectedLocation = selectedProjectId ? projectLocations.get(selectedProjectId) : null
@@ -140,8 +281,39 @@ export function MobileProjectMapPage() {
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
 
-          {!selectedProjectId && <FitBoundsToProjects locations={locations} />}
+          {!selectedProjectId && !focusOnUser && <FitBoundsToProjects locations={locations} />}
           {selectedLocation && <FocusOnProject location={selectedLocation} />}
+          {focusOnUser && <FocusOnUserLocation userLocation={userLocation} />}
+
+          {/* 自己位置マーカー */}
+          {userLocation && (
+            <>
+              {/* 精度を示す円 */}
+              <CircleMarker
+                center={[userLocation.lat, userLocation.lng]}
+                radius={Math.min(userLocation.accuracy / 2, 50)}
+                pathOptions={{
+                  color: '#3b82f6',
+                  fillColor: '#3b82f6',
+                  fillOpacity: 0.1,
+                  weight: 1,
+                }}
+              />
+              {/* 自己位置マーカー */}
+              <Marker
+                position={[userLocation.lat, userLocation.lng]}
+                icon={createUserLocationIcon()}
+                zIndexOffset={1000}
+              >
+                <Popup>
+                  <div className="text-sm">
+                    <div className="font-bold">現在地</div>
+                    <div className="text-slate-500">精度: 約{Math.round(userLocation.accuracy)}m</div>
+                  </div>
+                </Popup>
+              </Marker>
+            </>
+          )}
 
           {/* プロジェクトマーカー */}
           {locations.map(location => {
@@ -151,7 +323,7 @@ export function MobileProjectMapPage() {
               <Marker
                 key={location.projectId}
                 position={[location.lat, location.lng]}
-                icon={createMarkerIcon(isSelected)}
+                icon={createMarkerIcon(isSelected, project?.name)}
                 eventHandlers={{
                   click: () => handleMarkerClick(location.projectId),
                 }}
@@ -248,16 +420,62 @@ export function MobileProjectMapPage() {
         </div>
       )}
 
-      {/* 全体表示ボタン */}
-      {selectedProjectId && !showList && (
-        <button
-          onClick={() => setSelectedProjectId(null)}
-          className="absolute bottom-24 right-4 p-3 bg-white rounded-full shadow-lg border z-10"
-          title="全体表示"
-        >
-          <MapPin className="h-5 w-5 text-slate-600" />
-        </button>
+      {/* フローティングボタン群 */}
+      {!showList && (
+        <div className="absolute bottom-24 right-4 flex flex-col gap-2 z-10">
+          {/* 現在地ボタン */}
+          <button
+            onClick={watchingLocation ? handleFocusOnUser : toggleLocationTracking}
+            onDoubleClick={toggleLocationTracking}
+            className={`p-3 rounded-full shadow-lg border transition-colors ${
+              watchingLocation
+                ? 'bg-blue-500 text-white border-blue-500'
+                : 'bg-white text-slate-600 border-slate-200'
+            }`}
+            title={watchingLocation ? '現在地にフォーカス（ダブルクリックで停止）' : '現在地を表示'}
+          >
+            <Locate className="h-5 w-5" />
+          </button>
+
+          {/* 全体表示ボタン */}
+          {selectedProjectId && (
+            <button
+              onClick={() => setSelectedProjectId(null)}
+              className="p-3 bg-white rounded-full shadow-lg border border-slate-200"
+              title="全体表示"
+            >
+              <MapPin className="h-5 w-5 text-slate-600" />
+            </button>
+          )}
+        </div>
       )}
+
+      {/* 位置情報エラー表示 */}
+      {locationError && (
+        <div className="absolute top-16 left-4 right-4 bg-red-50 border border-red-200 rounded-lg p-3 z-20">
+          <p className="text-sm text-red-600">{locationError}</p>
+          <button
+            onClick={() => setLocationError(null)}
+            className="text-xs text-red-500 underline mt-1"
+          >
+            閉じる
+          </button>
+        </div>
+      )}
+
+      {/* CSSアニメーション */}
+      <style>{`
+        @keyframes pulse {
+          0% {
+            transform: translate(-50%, -50%) scale(1);
+            opacity: 1;
+          }
+          100% {
+            transform: translate(-50%, -50%) scale(2);
+            opacity: 0;
+          }
+        }
+      `}</style>
     </div>
   )
 }
