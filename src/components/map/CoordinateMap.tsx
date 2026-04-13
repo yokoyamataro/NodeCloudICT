@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, Marker, Popup, Polygon, useMap, Tooltip } from
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
+import { useMapViewStore } from '@/stores/mapViewStore'
 import { COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 
 // デフォルトマーカーアイコンの修正（Leafletの既知の問題）
@@ -45,25 +46,50 @@ function createColoredIcon(color: string, isSelected: boolean = false): L.DivIco
   })
 }
 
-// 地図の中心とズームを座標に合わせるコンポーネント
-function MapBoundsUpdater({ coordinates }: { coordinates: CoordinateRow[] }) {
+// 地図の表示状態を管理するコンポーネント
+function MapViewManager({ coordinates }: { coordinates: CoordinateRow[] }) {
   const map = useMap()
-  const prevCoordsRef = useRef<string>('')
+  const { center, zoom, isInitialized, setView } = useMapViewStore()
+  const initializedRef = useRef(false)
 
+  // 地図の移動・ズーム時にストアを更新
   useEffect(() => {
+    const handleMoveEnd = () => {
+      const currentCenter = map.getCenter()
+      const currentZoom = map.getZoom()
+      setView([currentCenter.lat, currentCenter.lng], currentZoom)
+    }
+
+    map.on('moveend', handleMoveEnd)
+    map.on('zoomend', handleMoveEnd)
+
+    return () => {
+      map.off('moveend', handleMoveEnd)
+      map.off('zoomend', handleMoveEnd)
+    }
+  }, [map, setView])
+
+  // 初期表示：保存された位置があればそれを使用、なければ座標にフィット
+  useEffect(() => {
+    if (initializedRef.current) return
+
+    // 保存された位置があれば復元
+    if (isInitialized && center && zoom) {
+      map.setView(center, zoom)
+      initializedRef.current = true
+      return
+    }
+
+    // 保存された位置がなければ座標にフィット
     const validCoords = coordinates.filter(c => c.lat !== null && c.lng !== null)
-    if (validCoords.length === 0) return
-
-    // 座標が変更されたかチェック
-    const coordsKey = validCoords.map(c => `${c.id}:${c.lat}:${c.lng}`).join(',')
-    if (coordsKey === prevCoordsRef.current) return
-    prevCoordsRef.current = coordsKey
-
-    const bounds = L.latLngBounds(
-      validCoords.map(c => [c.lat!, c.lng!] as [number, number])
-    )
-    map.fitBounds(bounds, { padding: [50, 50], maxZoom: 18 })
-  }, [coordinates, map])
+    if (validCoords.length > 0) {
+      const bounds = L.latLngBounds(
+        validCoords.map(c => [c.lat!, c.lng!] as [number, number])
+      )
+      map.fitBounds(bounds, { padding: [50, 50], maxZoom: 18 })
+      initializedRef.current = true
+    }
+  }, [coordinates, map, center, zoom, isInitialized])
 
   return null
 }
@@ -159,7 +185,7 @@ export function CoordinateMap({
         />
       )}
 
-      <MapBoundsUpdater coordinates={validCoordinates} />
+      <MapViewManager coordinates={validCoordinates} />
 
       {/* 区域ポリゴン */}
       {showZonePolygons &&

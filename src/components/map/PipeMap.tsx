@@ -4,6 +4,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useUnderdrainStore, EXTENDED_PIPE_TYPES } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
+import { useMapViewStore } from '@/stores/mapViewStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import type { PipeVertex } from '@/types/database'
 
@@ -112,23 +113,48 @@ interface PipeLineData {
   measuredLength: number | null
 }
 
-// 地図の境界を管路に合わせる
-function MapBoundsUpdater({ pipeLines }: { pipeLines: PipeLineData[] }) {
+// 地図の表示状態を管理するコンポーネント
+function MapViewManager({ pipeLines }: { pipeLines: PipeLineData[] }) {
   const map = useMap()
-  const prevBoundsRef = useRef<string>('')
+  const { center, zoom, isInitialized, setView } = useMapViewStore()
+  const initializedRef = useRef(false)
 
+  // 地図の移動・ズーム時にストアを更新
   useEffect(() => {
+    const handleMoveEnd = () => {
+      const currentCenter = map.getCenter()
+      const currentZoom = map.getZoom()
+      setView([currentCenter.lat, currentCenter.lng], currentZoom)
+    }
+
+    map.on('moveend', handleMoveEnd)
+    map.on('zoomend', handleMoveEnd)
+
+    return () => {
+      map.off('moveend', handleMoveEnd)
+      map.off('zoomend', handleMoveEnd)
+    }
+  }, [map, setView])
+
+  // 初期表示：保存された位置があればそれを使用、なければ管路にフィット
+  useEffect(() => {
+    if (initializedRef.current) return
+
+    // 保存された位置があれば復元
+    if (isInitialized && center && zoom) {
+      map.setView(center, zoom)
+      initializedRef.current = true
+      return
+    }
+
+    // 保存された位置がなければ管路にフィット
     const allPositions = pipeLines.flatMap(p => p.positions)
-    if (allPositions.length === 0) return
-
-    // 境界が変更されたかチェック
-    const boundsKey = allPositions.map(p => `${p[0]}:${p[1]}`).join(',')
-    if (boundsKey === prevBoundsRef.current) return
-    prevBoundsRef.current = boundsKey
-
-    const bounds = L.latLngBounds(allPositions)
-    map.fitBounds(bounds, { padding: [50, 50], maxZoom: 20 })
-  }, [pipeLines, map])
+    if (allPositions.length > 0) {
+      const bounds = L.latLngBounds(allPositions)
+      map.fitBounds(bounds, { padding: [50, 50], maxZoom: 20 })
+      initializedRef.current = true
+    }
+  }, [pipeLines, map, center, zoom, isInitialized])
 
   return null
 }
@@ -412,7 +438,7 @@ export function PipeMap({
       {focusedPipeId ? (
         <FocusPipe pipeLines={pipeLines} focusedPipeId={focusedPipeId} />
       ) : (
-        <MapBoundsUpdater pipeLines={pipeLines} />
+        <MapViewManager pipeLines={pipeLines} />
       )}
 
       {/* 管路ポリライン */}
