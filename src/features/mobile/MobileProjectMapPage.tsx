@@ -126,12 +126,13 @@ export function MobileProjectMapPage() {
       </header>
 
       {/* メインコンテンツ */}
-      <div className="flex-1 relative">
+      <div className="flex-1 relative" style={{ minHeight: 0 }}>
         {/* 地図 */}
         <MapContainer
           center={defaultCenter}
           zoom={10}
           className="h-full w-full"
+          style={{ height: '100%', width: '100%' }}
           zoomControl={false}
         >
           <TileLayer
