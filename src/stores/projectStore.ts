@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
+import { CoordinateConverter } from '@/lib/coordinates'
 
 export interface Project {
   id: string
@@ -11,11 +12,22 @@ export interface Project {
   updated_at: string
 }
 
+// プロジェクトの先頭座標情報
+export interface ProjectLocation {
+  projectId: string
+  lat: number
+  lng: number
+  pointNumber: string
+}
+
 interface ProjectState {
   // プロジェクト一覧
   projects: Project[]
   loading: boolean
   error: string | null
+
+  // プロジェクトの位置情報（先頭座標）
+  projectLocations: Map<string, ProjectLocation>
 
   // 現在のプロジェクト
   currentProject: Project | null
@@ -23,16 +35,18 @@ interface ProjectState {
 
   // CRUD操作
   fetchProjects: () => Promise<void>
+  fetchProjectLocations: () => Promise<void>
   createProject: (name: string, description?: string, coordinateZone?: number) => Promise<Project | null>
   updateProject: (id: string, updates: Partial<Pick<Project, 'name' | 'description' | 'coordinate_zone'>>) => Promise<void>
   deleteProject: (id: string) => Promise<void>
 }
 
-export const useProjectStore = create<ProjectState>((set) => ({
+export const useProjectStore = create<ProjectState>((set, get) => ({
   projects: [],
   loading: false,
   error: null,
   currentProject: null,
+  projectLocations: new Map(),
 
   setCurrentProject: (project) => set({ currentProject: project }),
 
@@ -46,8 +60,56 @@ export const useProjectStore = create<ProjectState>((set) => ({
 
       if (error) throw error
       set({ projects: data || [], loading: false })
+
+      // 位置情報も取得
+      get().fetchProjectLocations()
     } catch (err) {
       set({ error: err instanceof Error ? err.message : 'プロジェクトの取得に失敗しました', loading: false })
+    }
+  },
+
+  fetchProjectLocations: async () => {
+    const { projects } = get()
+    if (projects.length === 0) return
+
+    try {
+      // 各プロジェクトの先頭座標を取得
+      const { data, error } = await supabase
+        .from('design_coordinates')
+        .select('id, project_id, point_number, x, y')
+        .in('project_id', projects.map(p => p.id))
+        .order('point_number')
+
+      if (error) throw error
+
+      // プロジェクトごとに先頭の座標を取得
+      const locations = new Map<string, ProjectLocation>()
+      const coordData = data as Array<{
+        id: string
+        project_id: string
+        point_number: string
+        x: number
+        y: number
+      }> | null
+
+      for (const project of projects) {
+        const coords = (coordData || []).filter(c => c.project_id === project.id)
+        if (coords.length > 0) {
+          const firstCoord = coords[0]
+          const converter = new CoordinateConverter(project.coordinate_zone)
+          const { lat, lng } = converter.toLatLng(firstCoord.x, firstCoord.y)
+          locations.set(project.id, {
+            projectId: project.id,
+            lat,
+            lng,
+            pointNumber: firstCoord.point_number,
+          })
+        }
+      }
+
+      set({ projectLocations: locations })
+    } catch (err) {
+      console.error('位置情報の取得に失敗:', err)
     }
   },
 

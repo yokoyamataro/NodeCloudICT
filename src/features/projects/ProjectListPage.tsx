@@ -1,17 +1,38 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, FolderOpen, Trash2, Loader2 } from 'lucide-react'
-import { useProjectStore, type Project } from '@/stores/projectStore'
+import { Plus, FolderOpen, Trash2, Loader2, MapPin, Navigation, X } from 'lucide-react'
+import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet'
+import L from 'leaflet'
+import 'leaflet/dist/leaflet.css'
+import { useProjectStore, type Project, type ProjectLocation } from '@/stores/projectStore'
 import { JGD2011_ZONES } from '@/lib/coordinates'
+
+// カスタムマーカーアイコン
+const createMarkerIcon = (): L.DivIcon => {
+  return L.divIcon({
+    className: 'custom-marker',
+    html: `<div style="
+      background-color: #ef4444;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      border: 3px solid white;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+    "></div>`,
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+  })
+}
 
 export function ProjectListPage() {
   const navigate = useNavigate()
-  const { projects, loading, error, fetchProjects, createProject, deleteProject, setCurrentProject } = useProjectStore()
+  const { projects, loading, error, fetchProjects, createProject, deleteProject, setCurrentProject, projectLocations } = useProjectStore()
   const [showNewDialog, setShowNewDialog] = useState(false)
   const [newProjectName, setNewProjectName] = useState('')
   const [newProjectDescription, setNewProjectDescription] = useState('')
   const [newProjectZone, setNewProjectZone] = useState(6)
   const [creating, setCreating] = useState(false)
+  const [showMapDialog, setShowMapDialog] = useState<{ project: Project; location: ProjectLocation } | null>(null)
 
   useEffect(() => {
     fetchProjects()
@@ -40,6 +61,20 @@ export function ProjectListPage() {
     if (confirm('このプロジェクトを削除しますか？関連するすべてのデータが削除されます。')) {
       await deleteProject(id)
     }
+  }
+
+  const handleShowMap = (e: React.MouseEvent, project: Project) => {
+    e.stopPropagation()
+    const location = projectLocations.get(project.id)
+    if (location) {
+      setShowMapDialog({ project, location })
+    }
+  }
+
+  const openGoogleMapsNavigation = (lat: number, lng: number) => {
+    // Google Mapsの経路検索URL（目的地のみ指定、現在地からの経路）
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`
+    window.open(url, '_blank')
   }
 
   if (loading && projects.length === 0) {
@@ -74,37 +109,51 @@ export function ProjectListPage() {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {projects.map((project) => (
-          <div
-            key={project.id}
-            onClick={() => handleSelectProject(project)}
-            className="block p-6 bg-white rounded-lg border hover:border-primary transition-colors cursor-pointer"
-          >
-            <div className="flex items-start gap-4">
-              <div className="p-2 bg-slate-100 rounded-lg">
-                <FolderOpen className="h-6 w-6 text-slate-600" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="font-semibold truncate">{project.name}</h3>
-                <p className="text-sm text-muted-foreground">
-                  {project.description || '説明なし'}
-                </p>
-                <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
-                  <span>第{project.coordinate_zone}系</span>
-                  <span>•</span>
-                  <span>{new Date(project.created_at).toLocaleDateString('ja-JP')}</span>
+        {projects.map((project) => {
+          const location = projectLocations.get(project.id)
+          return (
+            <div
+              key={project.id}
+              onClick={() => handleSelectProject(project)}
+              className="block p-6 bg-white rounded-lg border hover:border-primary transition-colors cursor-pointer"
+            >
+              <div className="flex items-start gap-4">
+                <div className="p-2 bg-slate-100 rounded-lg">
+                  <FolderOpen className="h-6 w-6 text-slate-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-semibold truncate">{project.name}</h3>
+                  <p className="text-sm text-muted-foreground">
+                    {project.description || '説明なし'}
+                  </p>
+                  <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
+                    <span>第{project.coordinate_zone}系</span>
+                    <span>•</span>
+                    <span>{new Date(project.created_at).toLocaleDateString('ja-JP')}</span>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1">
+                  {location && (
+                    <button
+                      onClick={(e) => handleShowMap(e, project)}
+                      className="p-1.5 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors"
+                      title="地図で表示"
+                    >
+                      <MapPin className="h-4 w-4" />
+                    </button>
+                  )}
+                  <button
+                    onClick={(e) => handleDeleteProject(e, project.id)}
+                    className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                    title="削除"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
                 </div>
               </div>
-              <button
-                onClick={(e) => handleDeleteProject(e, project.id)}
-                className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
-                title="削除"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
             </div>
-          </div>
-        ))}
+          )
+        })}
 
         {projects.length === 0 && (
           <div className="col-span-full text-center py-12 text-muted-foreground">
@@ -112,6 +161,68 @@ export function ProjectListPage() {
           </div>
         )}
       </div>
+
+      {/* 地図表示ダイアログ */}
+      {showMapDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b">
+              <div>
+                <h2 className="text-lg font-bold">{showMapDialog.project.name}</h2>
+                <p className="text-sm text-muted-foreground">
+                  先頭座標: {showMapDialog.location.pointNumber}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowMapDialog(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 min-h-[300px] h-[50vh]">
+              <MapContainer
+                center={[showMapDialog.location.lat, showMapDialog.location.lng]}
+                zoom={16}
+                className="h-full w-full"
+              >
+                <TileLayer
+                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                />
+                <Marker
+                  position={[showMapDialog.location.lat, showMapDialog.location.lng]}
+                  icon={createMarkerIcon()}
+                >
+                  <Popup>
+                    <div className="text-sm">
+                      <div className="font-bold">{showMapDialog.project.name}</div>
+                      <div className="text-muted-foreground">{showMapDialog.location.pointNumber}</div>
+                    </div>
+                  </Popup>
+                </Marker>
+              </MapContainer>
+            </div>
+
+            <div className="p-4 border-t flex flex-col sm:flex-row gap-2">
+              <button
+                onClick={() => openGoogleMapsNavigation(showMapDialog.location.lat, showMapDialog.location.lng)}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+              >
+                <Navigation className="h-5 w-5" />
+                Google Mapsで経路探索
+              </button>
+              <button
+                onClick={() => setShowMapDialog(null)}
+                className="px-4 py-3 border rounded-lg hover:bg-slate-50 transition-colors text-sm"
+              >
+                閉じる
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 新規プロジェクトダイアログ */}
       {showNewDialog && (
