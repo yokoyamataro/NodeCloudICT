@@ -3,13 +3,9 @@ import { Upload, Download, Plus, Trash2, FileText, Eye, EyeOff } from 'lucide-re
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useProjectStore } from '@/stores/projectStore'
-import { ZoneRegistration } from './ZoneRegistration'
-import { AreaCalculationSheet } from './AreaCalculationSheet'
 import { CoordinateMap, type BaseLayerType } from '@/components/map/CoordinateMap'
 import { loadSimaFile } from '@/lib/sima-parser'
-import type { CoordinateType, AreaCalculationSheet as AreaCalculationSheetType } from '@/types/database'
-
-type TabType = 'coordinates' | 'zones'
+import type { CoordinateType } from '@/types/database'
 
 // 数値入力用コンポーネント（入力中はフォーマットしない）
 function NumberInput({
@@ -89,10 +85,7 @@ function NumberInput({
 }
 
 export function CoordinatesPage() {
-  const [activeTab, setActiveTab] = useState<TabType>('coordinates')
-  const [calculationSheet, setCalculationSheet] = useState<AreaCalculationSheetType | null>(null)
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
-  const [editingZoneId, setEditingZoneId] = useState<string | null>(null)
   const [showLabels, setShowLabels] = useState(true)
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(
     new Set(Object.keys(COORDINATE_TYPE_NAMES))
@@ -105,15 +98,12 @@ export function CoordinatesPage() {
     setZone,
     coordinates,
     fetchCoordinates,
-    fetchZones,
     addCoordinate,
     updateCoordinate,
     deleteCoordinate,
     importCoordinates,
     selectedType,
     setSelectedType,
-    calculateZoneArea,
-    addPointToZone,
   } = useCoordinateStore()
 
   // プロジェクト選択時にデータを読み込む
@@ -123,9 +113,8 @@ export function CoordinatesPage() {
       setZone(currentProject.coordinate_zone)
       // Supabaseからデータを読み込む
       fetchCoordinates(currentProject.id)
-      fetchZones(currentProject.id)
     }
-  }, [currentProject, setZone, fetchCoordinates, fetchZones])
+  }, [currentProject, setZone, fetchCoordinates])
 
   const handleAddCoordinate = () => {
     addCoordinate(selectedType)
@@ -270,76 +259,23 @@ export function CoordinatesPage() {
     }
   }, [coordinates.length, selectedType, importCoordinates])
 
-  const handleCalculateArea = (zoneId: string) => {
-    const sheet = calculateZoneArea(zoneId)
-    if (sheet) {
-      setCalculationSheet(sheet)
-    }
-  }
-
   // 点がクリックされたとき
   const handlePointClick = (id: string) => {
     setSelectedPointId(id)
-
-    // 区域編集中なら、その区域に点を追加
-    if (editingZoneId) {
-      addPointToZone(editingZoneId, id)
-    }
   }
 
   return (
     <div className="h-full flex flex-col">
       <div className="p-4 border-b bg-white">
         <h1 className="text-xl font-bold">座標管理</h1>
-        <p className="text-sm text-muted-foreground">平面直角座標の登録・区域設定・面積計算</p>
+        <p className="text-sm text-muted-foreground">平面直角座標の登録</p>
       </div>
-
-      {/* タブナビゲーション */}
-      <div className="border-b bg-white px-4">
-        <nav className="flex gap-4">
-          <button
-            onClick={() => setActiveTab('coordinates')}
-            className={`px-4 py-2 border-b-2 font-medium transition-colors ${
-              activeTab === 'coordinates'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            座標登録
-          </button>
-          <button
-            onClick={() => setActiveTab('zones')}
-            className={`px-4 py-2 border-b-2 font-medium transition-colors ${
-              activeTab === 'zones'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            区域・面積計算
-          </button>
-        </nav>
-      </div>
-
-      {/* 区域編集中の案内 */}
-      {editingZoneId && (
-        <div className="px-4 py-2 bg-blue-50 border-b text-sm text-blue-700 flex items-center justify-between">
-          <span>区域編集中: 座標一覧または地図上の点をクリックして追加</span>
-          <button
-            onClick={() => setEditingZoneId(null)}
-            className="px-2 py-1 text-xs bg-blue-100 hover:bg-blue-200 rounded"
-          >
-            編集終了
-          </button>
-        </div>
-      )}
 
       {/* メインコンテンツ */}
       <div className="flex-1 flex overflow-hidden">
         {/* 左側: テーブル/フォーム */}
         <div className="w-1/2 flex flex-col overflow-hidden border-r">
-          {/* 座標登録タブ */}
-          {activeTab === 'coordinates' && (
-            <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex-1 flex flex-col overflow-hidden">
               {/* 設定パネル */}
               <div className="p-4 border-b bg-slate-50">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -524,18 +460,6 @@ export function CoordinatesPage() {
                 {coordinates.length} 点登録済み
               </div>
             </div>
-          )}
-
-          {/* 区域・面積計算タブ */}
-          {activeTab === 'zones' && (
-            <div className="flex-1 overflow-auto p-4">
-              <ZoneRegistration
-                onCalculateArea={handleCalculateArea}
-                editingZoneId={editingZoneId}
-                onEditZone={setEditingZoneId}
-              />
-            </div>
-          )}
         </div>
 
         {/* 右側: 地図 */}
@@ -586,8 +510,7 @@ export function CoordinatesPage() {
             <CoordinateMap
               selectedPointId={selectedPointId}
               onPointSelect={handlePointClick}
-              showZonePolygons={true}
-              editingZoneId={editingZoneId}
+              showZonePolygons={false}
               showLabels={showLabels}
               visibleTypes={visibleTypes}
               baseLayer={baseLayer}
@@ -595,14 +518,6 @@ export function CoordinatesPage() {
           </div>
         </div>
       </div>
-
-      {/* 面積計算簿モーダル */}
-      {calculationSheet && (
-        <AreaCalculationSheet
-          sheet={calculationSheet}
-          onClose={() => setCalculationSheet(null)}
-        />
-      )}
     </div>
   )
 }

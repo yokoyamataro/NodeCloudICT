@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { Upload, Trash2, FileSearch, Download, ArrowUpDown, Edit3, X, Navigation, Link2, Merge, Split, Tag, MapPin, ChevronUp, ChevronDown, Target, Square, Map } from 'lucide-react'
+import { Upload, Trash2, FileSearch, Download, ArrowUpDown, Edit3, X, Navigation, Link2, Merge, Split, Tag, MapPin, ChevronUp, ChevronDown, Target, Square, Map, Maximize2, Minimize2, Printer } from 'lucide-react'
 import { parseDxf, calculateLineLength } from '@/lib/dxf-parser'
 import { autoConnectFromOutlet } from '@/lib/pipe-connection'
 import {
@@ -77,6 +77,9 @@ export function CadAnalysisPage() {
 
   // 座標管理表示モード
   const [showCoordinates, setShowCoordinates] = useState(false)
+
+  // 全画面表示モード
+  const [isFullscreen, setIsFullscreen] = useState(false)
 
   // 結合・分割モード
   const [editMode, setEditMode] = useState<'normal' | 'merge' | 'split'>('normal')
@@ -1341,6 +1344,21 @@ export function CadAnalysisPage() {
               <Map className="h-3.5 w-3.5" />
               座標
             </button>
+            <div className="border-l h-6 mx-1" />
+            <button
+              onClick={() => setIsFullscreen(true)}
+              className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
+              title="全画面表示"
+            >
+              <Maximize2 className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={() => window.print()}
+              className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
+              title="印刷"
+            >
+              <Printer className="h-3.5 w-3.5" />
+            </button>
           </div>
           {/* 地図 */}
           <div className="flex-1">
@@ -1507,6 +1525,97 @@ export function CadAnalysisPage() {
                 </button>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 全画面表示モード */}
+      {isFullscreen && (
+        <div className="fixed inset-0 z-[9999] bg-white flex flex-col print:static print:h-auto">
+          {/* 全画面時のツールバー */}
+          <div className="p-2 bg-white border-b flex items-center gap-2 flex-shrink-0 print:hidden">
+            <button
+              onClick={() => setShowLabels(!showLabels)}
+              className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 ${
+                showLabels ? 'bg-blue-100 border-blue-400 text-blue-700' : ''
+              }`}
+            >
+              <Tag className="h-3.5 w-3.5" />
+              番号表示
+            </button>
+            <button
+              onClick={() => setShowDirection(!showDirection)}
+              className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 ${
+                showDirection ? 'bg-blue-100 border-blue-400 text-blue-700' : ''
+              }`}
+            >
+              <Navigation className="h-3.5 w-3.5" />
+              方向表示
+            </button>
+            <button
+              onClick={() => setShowSurveyPoints(!showSurveyPoints)}
+              className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 ${
+                showSurveyPoints ? 'bg-green-100 border-green-400 text-green-700' : ''
+              }`}
+            >
+              <Target className="h-3.5 w-3.5" />
+              測点表示
+            </button>
+            <div className="border-l h-6 mx-1" />
+            <button
+              onClick={() => setShowZones(!showZones)}
+              className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 ${
+                showZones ? 'bg-purple-100 border-purple-400 text-purple-700' : ''
+              }`}
+            >
+              <Square className="h-3.5 w-3.5" />
+              区域
+            </button>
+            <button
+              onClick={() => setShowCoordinates(!showCoordinates)}
+              className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 ${
+                showCoordinates ? 'bg-orange-100 border-orange-400 text-orange-700' : ''
+              }`}
+            >
+              <Map className="h-3.5 w-3.5" />
+              座標
+            </button>
+            <div className="flex-1" />
+            <button
+              onClick={() => window.print()}
+              className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
+              title="印刷"
+            >
+              <Printer className="h-3.5 w-3.5" />
+              印刷
+            </button>
+            <button
+              onClick={() => setIsFullscreen(false)}
+              className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
+              title="全画面終了"
+            >
+              <Minimize2 className="h-3.5 w-3.5" />
+              閉じる
+            </button>
+          </div>
+          {/* 全画面地図 */}
+          <div className="flex-1 print:h-[100vh]">
+            <PipeMap
+              selectedPipeId={selectedPipeId}
+              selectedPipeIds={selectedPipeIds}
+              onPipeSelect={handlePipeClick}
+              onVertexClick={handleVertexClick}
+              onJunctionSplitClick={handleJunctionSplitClick}
+              isBulkEditMode={false}
+              showDirection={showDirection}
+              showLabels={showLabels}
+              showSurveyPoints={showSurveyPoints}
+              surveyPoints={surveyPointsData}
+              editMode="normal"
+              previewPoints={[]}
+              showZones={showZones}
+              showCoordinates={showCoordinates}
+            />
           </div>
         </div>
       )}

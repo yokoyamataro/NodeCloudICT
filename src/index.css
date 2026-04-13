@@ -62,3 +62,48 @@ input[type="number"] {
   background: transparent !important;
   border: none !important;
 }
+
+/* 印刷用スタイル */
+@media print {
+  /* 印刷時は全画面モード以外を非表示 */
+  body > * {
+    visibility: hidden;
+  }
+
+  /* 全画面モーダルのみ表示 */
+  .fixed.inset-0.z-\[9999\] {
+    visibility: visible;
+    position: absolute !important;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* 全画面モーダル内の全要素を表示 */
+  .fixed.inset-0.z-\[9999\] * {
+    visibility: visible;
+  }
+
+  /* 印刷時はツールバーを非表示 */
+  .print\:hidden {
+    display: none !important;
+  }
+
+  /* 地図を用紙いっぱいに */
+  .print\:h-\[100vh\] {
+    height: 100vh !important;
+    width: 100vw !important;
+  }
+
+  /* Leaflet地図のコントロールを非表示 */
+  .leaflet-control-container {
+    display: none !important;
+  }
+
+  /* 余白を最小化 */
+  @page {
+    margin: 5mm;
+    size: A3 landscape;
+  }
+}
