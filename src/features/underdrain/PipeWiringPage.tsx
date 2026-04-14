@@ -47,9 +47,18 @@ export function PipeWiringPage() {
   } = usePipeWiringStore()
   const { fetchPlan } = useConstructionPlanStore()
 
+  // 前の圃場IDを保持するref
+  const prevFarmIdRef = useRef<string | null>(null)
+
   // プロジェクト選択時にデータを読み込む
   useEffect(() => {
     if (currentFarm) {
+      // 圃場が変更された場合、先に未保存の変更を保存
+      if (prevFarmIdRef.current && prevFarmIdRef.current !== currentFarm.id && hasChangesRef.current) {
+        saveWiringRef.current()
+      }
+      prevFarmIdRef.current = currentFarm.id
+
       fetchPipes(currentFarm.id)
       fetchCoordinates(currentFarm.id)
       fetchWiring(currentFarm.id)
@@ -68,15 +77,16 @@ export function PipeWiringPage() {
   }, [hasChanges, saveWiring])
 
   // 変更があった場合に自動保存（デバウンス付き）
+  // 注意: collectorTabs/directRowsを依存配列に入れると、fetchWiring後にも発火するため、hasChangesのみを監視
   useEffect(() => {
-    if (!hasChanges || wiringSaving) return
+    if (!hasChanges || wiringSaving || wiringLoading) return
 
     const timeoutId = setTimeout(() => {
       saveWiring()
-    }, 500) // 500ms後に保存
+    }, 1000) // 1秒後に保存（操作中の頻繁な保存を防ぐ）
 
     return () => clearTimeout(timeoutId)
-  }, [hasChanges, wiringSaving, saveWiring, collectorTabs, directRows])
+  }, [hasChanges, wiringSaving, wiringLoading, saveWiring])
 
   // ページ離脱時に未保存の変更を保存
   useEffect(() => {

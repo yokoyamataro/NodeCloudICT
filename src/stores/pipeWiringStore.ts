@@ -130,10 +130,21 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
       return
     }
 
+    // 既に読み込み中の場合もスキップ
+    if (state.loading) {
+      console.log('[pipeWiringStore] Already loading, skipping fetch')
+      return
+    }
+
     // 同じプロジェクトのデータが既にロードされていて、強制リロードでなければスキップ
     if (!force && state.loadedFarmId === farmId) {
       console.log('[pipeWiringStore] Data already loaded for project, skipping fetch')
       return
+    }
+
+    // 未保存の変更がある場合は警告（強制リロードの場合のみ）
+    if (force && state.hasChanges) {
+      console.warn('[pipeWiringStore] Discarding unsaved changes due to force reload')
     }
 
     set({ loading: true, error: null })
@@ -241,6 +252,23 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
     }
 
     const state = get()
+
+    // 読み込み中または既に保存中の場合はスキップ
+    if (state.loading) {
+      console.log('[pipeWiringStore] Skipping save while loading')
+      return
+    }
+    if (state.saving) {
+      console.log('[pipeWiringStore] Already saving, skipping')
+      return
+    }
+
+    // 変更がない場合はスキップ
+    if (!state.hasChanges) {
+      console.log('[pipeWiringStore] No changes to save')
+      return
+    }
+
     set({ saving: true, error: null })
 
     try {
