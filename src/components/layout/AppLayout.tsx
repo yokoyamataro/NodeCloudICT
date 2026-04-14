@@ -29,6 +29,7 @@ import {
   Mountain,
   Shovel,
   Gem,
+  LandPlot,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
@@ -85,6 +86,14 @@ const navigation: NavGroup[] = [
     icon: Mountain,
     children: [
       { name: '工事区域', href: '/simple-grading/work-area', icon: Square },
+    ],
+  },
+  {
+    name: '整地',
+    href: '/grading',
+    icon: LandPlot,
+    children: [
+      { name: '工事区域', href: '/grading/work-area', icon: Square },
     ],
   },
   {

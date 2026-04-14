@@ -14,6 +14,7 @@ export type WorkType =
   | 'underdrain'     // 暗渠工事
   | 'soil_import'    // 客土工事
   | 'simple_grading' // 簡易整地
+  | 'grading'        // 整地
   | 'subsoil'        // 心破土改
   | 'stone_removal'  // 徐礫
 
@@ -22,6 +23,7 @@ export const WORK_TYPE_NAMES: Record<WorkType, string> = {
   underdrain: '暗渠工事',
   soil_import: '客土工事',
   simple_grading: '簡易整地',
+  grading: '整地',
   subsoil: '心破土改',
   stone_removal: '徐礫',
 }

@@ -4,7 +4,6 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useMapViewStore } from '@/stores/mapViewStore'
-import { COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 
 // デフォルトマーカーアイコンの修正（Leafletの既知の問題）
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
@@ -97,6 +96,14 @@ function MapViewManager({ coordinates }: { coordinates: CoordinateRow[] }) {
 // 背景地図の種類
 export type BaseLayerType = 'osm' | 'gsi-photo' | 'gsi-std'
 
+// 外部から渡す区域ポリゴン
+export interface ExternalPolygon {
+  id: string
+  name: string
+  positions: [number, number][]
+  isEditing?: boolean
+}
+
 interface CoordinateMapProps {
   selectedPointId?: string | null
   onPointSelect?: (id: string) => void
@@ -105,6 +112,8 @@ interface CoordinateMapProps {
   showLabels?: boolean
   visibleTypes?: Set<string>
   baseLayer?: BaseLayerType
+  externalPolygons?: ExternalPolygon[]
+  editingExternalPolygonId?: string | null
 }
 
 export function CoordinateMap({
@@ -115,6 +124,8 @@ export function CoordinateMap({
   showLabels = true,
   visibleTypes,
   baseLayer = 'osm',
+  externalPolygons = [],
+  editingExternalPolygonId,
 }: CoordinateMapProps) {
   const { coordinates, zones } = useCoordinateStore()
 
@@ -187,7 +198,7 @@ export function CoordinateMap({
 
       <MapViewManager coordinates={validCoordinates} />
 
-      {/* 区域ポリゴン */}
+      {/* 区域ポリゴン（coordinateStoreのzones） */}
       {showZonePolygons &&
         zonePolygons.map(zone => {
           const isEditing = zone.id === editingZoneId
@@ -215,6 +226,25 @@ export function CoordinateMap({
           )
         })}
 
+      {/* 外部から渡されたポリゴン（workAreaStoreなど） */}
+      {externalPolygons.map(polygon => {
+        if (polygon.positions.length < 3) return null
+        const isEditing = polygon.id === editingExternalPolygonId
+        return (
+          <Polygon
+            key={polygon.id}
+            positions={polygon.positions}
+            pathOptions={{
+              color: isEditing ? '#16a34a' : '#22c55e',
+              fillColor: isEditing ? '#16a34a' : '#22c55e',
+              fillOpacity: isEditing ? 0.3 : 0.2,
+              weight: isEditing ? 3 : 2,
+              dashArray: isEditing ? '5, 5' : undefined,
+            }}
+          />
+        )
+      })}
+
       {/* 座標マーカー */}
       {displayCoordinates.map(coord => (
         <Marker
@@ -238,19 +268,6 @@ export function CoordinateMap({
               {coord.pointNumber}
             </Tooltip>
           )}
-          <Popup>
-            <div className="text-sm">
-              <div className="font-bold">{coord.pointNumber}</div>
-              <div className="text-muted-foreground">
-                {COORDINATE_TYPE_NAMES[coord.type]}
-              </div>
-              <div className="mt-1 font-mono text-xs">
-                <div>X: {coord.x.toFixed(3)} m</div>
-                <div>Y: {coord.y.toFixed(3)} m</div>
-                {coord.z !== null && <div>Z: {coord.z.toFixed(2)} m</div>}
-              </div>
-            </div>
-          </Popup>
         </Marker>
       ))}
     </MapContainer>

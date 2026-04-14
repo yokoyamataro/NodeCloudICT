@@ -3,7 +3,7 @@ import { Plus, Trash2, GripVertical, Calculator, Download, X, MapPin } from 'luc
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
-import { CoordinateMap } from '@/components/map/CoordinateMap'
+import { CoordinateMap, type ExternalPolygon } from '@/components/map/CoordinateMap'
 import type { WorkType, AreaCalculationSheet as AreaCalculationSheetType } from '@/types/database'
 import { WORK_TYPE_NAMES } from '@/types/database'
 import { exportAreaCalculationToCSV } from '@/lib/area-calculation'
@@ -239,6 +239,18 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
     }
   }
 
+  // 区域ポリゴンを生成
+  const externalPolygons: ExternalPolygon[] = areas
+    .filter(area => area.points.length >= 3)
+    .map(area => ({
+      id: area.id,
+      name: area.name,
+      positions: area.points
+        .filter(p => p.lat !== null && p.lng !== null)
+        .map(p => [p.lat!, p.lng!] as [number, number]),
+    }))
+    .filter(p => p.positions.length >= 3)
+
   if (!currentFarm) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -445,6 +457,8 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
             onPointSelect={handlePointClick}
             showZonePolygons={false}
             editingZoneId={null}
+            externalPolygons={externalPolygons}
+            editingExternalPolygonId={editingAreaId}
           />
         </div>
       </div>

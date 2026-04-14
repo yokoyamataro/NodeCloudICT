@@ -15,6 +15,7 @@ import { LandXMLPage } from '@/features/underdrain/LandXMLPage'
 // 新規工種
 import { SoilImportWorkAreaPage } from '@/features/soil-import/SoilImportWorkAreaPage'
 import { SimpleGradingWorkAreaPage } from '@/features/simple-grading/SimpleGradingWorkAreaPage'
+import { GradingWorkAreaPage } from '@/features/grading/GradingWorkAreaPage'
 import { SubsoilWorkAreaPage } from '@/features/subsoil/SubsoilWorkAreaPage'
 import { StoneRemovalWorkAreaPage } from '@/features/stone-removal/StoneRemovalWorkAreaPage'
 // モバイル
@@ -103,6 +104,10 @@ function AppRoutes() {
         {/* 簡易整地 */}
         <Route path="simple-grading">
           <Route path="work-area" element={<SimpleGradingWorkAreaPage />} />
+        </Route>
+        {/* 整地 */}
+        <Route path="grading">
+          <Route path="work-area" element={<GradingWorkAreaPage />} />
         </Route>
         {/* 心破土改 */}
         <Route path="subsoil">
