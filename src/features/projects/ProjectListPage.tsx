@@ -109,6 +109,7 @@ export function ProjectListPage() {
   const [showNewFarmDialog, setShowNewFarmDialog] = useState<string | null>(null) // project_id
   const [newProjectName, setNewProjectName] = useState('')
   const [newProjectDescription, setNewProjectDescription] = useState('')
+  const [newProjectZone, setNewProjectZone] = useState(13)
   const [newFarmName, setNewFarmName] = useState('')
   const [newFarmDescription, setNewFarmDescription] = useState('')
   const [newFarmZone, setNewFarmZone] = useState(6)
@@ -123,6 +124,7 @@ export function ProjectListPage() {
   const [editProjectEndDate, setEditProjectEndDate] = useState('')
   const [editProjectClient, setEditProjectClient] = useState('')
   const [editProjectContractor, setEditProjectContractor] = useState('')
+  const [editProjectZone, setEditProjectZone] = useState(13)
   const [saving, setSaving] = useState(false)
 
   // メンバー管理用state
@@ -192,12 +194,13 @@ export function ProjectListPage() {
   const handleCreateProject = async () => {
     if (!newProjectName.trim()) return
     setCreating(true)
-    const project = await createProject(newProjectName, newProjectDescription)
+    const project = await createProject(newProjectName, newProjectDescription, newProjectZone)
     setCreating(false)
     if (project) {
       setShowNewProjectDialog(false)
       setNewProjectName('')
       setNewProjectDescription('')
+      setNewProjectZone(13)
       setExpandedProjects((prev) => new Set([...prev, project.id]))
     }
   }
@@ -205,13 +208,16 @@ export function ProjectListPage() {
   const handleCreateFarm = async () => {
     if (!newFarmName.trim() || !showNewFarmDialog) return
     setCreating(true)
-    const farm = await createFarm(showNewFarmDialog, newFarmName, newFarmDescription, newFarmZone)
+    // 座標系が変更されていない場合はundefinedを渡してプロジェクトの座標系を使用
+    const project = projects.find(p => p.id === showNewFarmDialog)
+    const zoneToUse = newFarmZone === (project?.coordinate_zone ?? 13) ? undefined : newFarmZone
+    const farm = await createFarm(showNewFarmDialog, newFarmName, newFarmDescription, zoneToUse)
     setCreating(false)
     if (farm) {
       setShowNewFarmDialog(null)
       setNewFarmName('')
       setNewFarmDescription('')
-      setNewFarmZone(6)
+      setNewFarmZone(13)
     }
   }
 
@@ -269,6 +275,7 @@ export function ProjectListPage() {
     setEditProjectEndDate(project.end_date || '')
     setEditProjectClient(project.client || '')
     setEditProjectContractor(project.contractor || '')
+    setEditProjectZone(project.coordinate_zone ?? 13)
   }
 
   // プロジェクト更新
@@ -282,6 +289,7 @@ export function ProjectListPage() {
       end_date: editProjectEndDate || null,
       client: editProjectClient || null,
       contractor: editProjectContractor || null,
+      coordinate_zone: editProjectZone,
     })
     setSaving(false)
     setEditingProject(null)
@@ -399,6 +407,8 @@ export function ProjectListPage() {
                             onClick={(e) => {
                               e.stopPropagation()
                               setShowNewFarmDialog(project.id)
+                              // プロジェクトの座標系をデフォルトに設定
+                              setNewFarmZone(project.coordinate_zone ?? 13)
                             }}
                             className="p-1 text-green-600 hover:bg-green-50 rounded"
                             title="圃場追加"
@@ -677,6 +687,20 @@ export function ProjectListPage() {
                   placeholder="プロジェクトの説明（任意）"
                 />
               </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">座標系</label>
+                <select
+                  value={newProjectZone}
+                  onChange={(e) => setNewProjectZone(parseInt(e.target.value))}
+                  className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {Object.entries(JGD2011_ZONES).map(([num, info]) => (
+                    <option key={num} value={num}>
+                      {info.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
             <div className="flex justify-end gap-2 mt-6">
               <button
@@ -824,6 +848,20 @@ export function ProjectListPage() {
                   className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="例: 〇〇建設株式会社"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">座標系</label>
+                <select
+                  value={editProjectZone}
+                  onChange={(e) => setEditProjectZone(parseInt(e.target.value))}
+                  className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {Object.entries(JGD2011_ZONES).map(([num, info]) => (
+                    <option key={num} value={num}>
+                      {info.name}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
             <div className="flex justify-end gap-2 mt-6">

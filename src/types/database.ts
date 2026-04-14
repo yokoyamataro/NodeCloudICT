@@ -219,6 +219,7 @@ export interface Project {
   end_date: string | null        // 工期終了日
   client: string | null          // 発注者
   contractor: string | null      // 受託者
+  coordinate_zone: number        // 座標系（平面直角座標系の系番号、デフォルト13系）
   created_at: string
   updated_at: string
 }

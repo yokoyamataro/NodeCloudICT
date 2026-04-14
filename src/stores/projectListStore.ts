@@ -18,8 +18,8 @@ interface ProjectListState {
   fetchMembers: (projectId: string) => Promise<void>
 
   // プロジェクト操作
-  createProject: (name: string, description?: string) => Promise<Project | null>
-  updateProject: (id: string, updates: Partial<Pick<Project, 'name' | 'description' | 'start_date' | 'end_date' | 'client' | 'contractor'>>) => Promise<void>
+  createProject: (name: string, description?: string, coordinateZone?: number) => Promise<Project | null>
+  updateProject: (id: string, updates: Partial<Pick<Project, 'name' | 'description' | 'start_date' | 'end_date' | 'client' | 'contractor' | 'coordinate_zone'>>) => Promise<void>
   deleteProject: (id: string) => Promise<void>
 
   // メンバー操作
@@ -96,7 +96,7 @@ export const useProjectListStore = create<ProjectListState>()((set, get) => ({
     }
   },
 
-  createProject: async (name, description) => {
+  createProject: async (name, description, coordinateZone = 13) => {
     set({ error: null })
     try {
       const { data: userData } = await supabase.auth.getUser()
@@ -111,6 +111,7 @@ export const useProjectListStore = create<ProjectListState>()((set, get) => ({
           user_id: userData.user.id,
           name,
           description: description || null,
+          coordinate_zone: coordinateZone,
         } as never)
         .select()
         .single()

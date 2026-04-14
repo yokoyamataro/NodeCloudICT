@@ -274,7 +274,7 @@ export const useFarmStore = create<FarmState>((set, get) => ({
     }
   },
 
-  createFarm: async (projectId, name, description, coordinateZone = 6) => {
+  createFarm: async (projectId, name, description, coordinateZone) => {
     set({ loading: true, error: null })
     try {
       // 現在のユーザーIDを取得
@@ -283,12 +283,30 @@ export const useFarmStore = create<FarmState>((set, get) => ({
         throw new Error('ユーザー認証情報を取得できませんでした')
       }
 
+      // 座標系が指定されていない場合はプロジェクトの座標系を取得
+      let zone = coordinateZone
+      if (zone === undefined) {
+        const { data: projectData, error: projectError } = await supabase
+          .from('projects')
+          .select('coordinate_zone')
+          .eq('id', projectId)
+          .single()
+
+        if (projectError) {
+          console.error('プロジェクトの座標系取得に失敗:', projectError)
+          zone = 13 // デフォルト値
+        } else {
+          const project = projectData as { coordinate_zone: number } | null
+          zone = project?.coordinate_zone ?? 13
+        }
+      }
+
       const insertData = {
         user_id: user.id,
         project_id: projectId,
         name,
         description: description || null,
-        coordinate_zone: coordinateZone,
+        coordinate_zone: zone,
       }
 
       const { data, error } = await supabase
