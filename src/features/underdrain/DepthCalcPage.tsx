@@ -12,7 +12,7 @@ import {
   Settings,
   Calculator,
 } from 'lucide-react'
-import { useProjectStore } from '@/stores/projectStore'
+import { useFarmStore } from '@/stores/farmStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useSurveyStore } from '@/stores/surveyStore'
 import { usePipeWiringStore } from '@/stores/pipeWiringStore'
@@ -26,7 +26,7 @@ import { PipeMap } from '@/components/map/PipeMap'
 import { CrossSectionChart } from '@/components/charts/CrossSectionChart'
 
 export function DepthCalcPage() {
-  const { currentProject } = useProjectStore()
+  const { currentFarm } = useFarmStore()
   const { fetchPipes } = useUnderdrainStore()
   const { fetchSurveyData } = useSurveyStore()
   const { fetchWiring } = usePipeWiringStore()
@@ -79,13 +79,13 @@ export function DepthCalcPage() {
 
   // プロジェクト選択時にデータを読み込む
   useEffect(() => {
-    if (currentProject) {
-      fetchPipes(currentProject.id)
-      fetchSurveyData(currentProject.id)
-      fetchWiring(currentProject.id)
-      fetchPlan(currentProject.id)
+    if (currentFarm) {
+      fetchPipes(currentFarm.id)
+      fetchSurveyData(currentFarm.id)
+      fetchWiring(currentFarm.id)
+      fetchPlan(currentFarm.id)
     }
-  }, [currentProject, fetchPipes, fetchSurveyData, fetchWiring, fetchPlan])
+  }, [currentFarm, fetchPipes, fetchSurveyData, fetchWiring, fetchPlan])
 
   // 全グループを展開
   useEffect(() => {
@@ -518,7 +518,7 @@ export function DepthCalcPage() {
                   </button>
                   <div className="w-px h-6 bg-slate-300" />
                   <button
-                    onClick={() => currentProject && fetchPlan(currentProject.id)}
+                    onClick={() => currentFarm && fetchPlan(currentFarm.id)}
                     disabled={saving}
                     className="flex items-center gap-2 px-3 py-2 text-slate-600 border rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50"
                     title="データを再読み込み"

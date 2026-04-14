@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
 import type { SurveyCategory, DesignSurveyData, DesignSurveyCalibration } from '@/types/database'
-import { useProjectStore } from './projectStore'
+import { useFarmStore } from './farmStore'
 
 // ローカル状態用の測量データ型
 export interface SurveyDataRow {
@@ -36,8 +36,8 @@ interface SurveyState {
   calibration: CalibrationSettings
 
   // データ取得
-  fetchSurveyData: (projectId: string) => Promise<void>
-  fetchCalibration: (projectId: string) => Promise<void>
+  fetchSurveyData: (farmId: string) => Promise<void>
+  fetchCalibration: (farmId: string) => Promise<void>
 
   // 測量データ操作
   importSurveyData: (data: Omit<SurveyDataRow, 'id'>[]) => Promise<void>
@@ -67,9 +67,9 @@ interface SurveyState {
   }>) => Promise<void>
 }
 
-// プロジェクトIDを取得するヘルパー
-const getCurrentProjectId = (): string | null => {
-  return useProjectStore.getState().currentProject?.id ?? null
+// 圃場IDを取得するヘルパー
+const getCurrentFarmId = (): string | null => {
+  return useFarmStore.getState().currentFarm?.id ?? null
 }
 
 export const useSurveyStore = create<SurveyState>()((set, get) => ({
@@ -84,13 +84,13 @@ export const useSurveyStore = create<SurveyState>()((set, get) => ({
   },
 
   // 測量データ取得
-  fetchSurveyData: async (projectId: string) => {
+  fetchSurveyData: async (farmId: string) => {
     set({ loading: true, error: null })
     try {
       const { data, error } = await supabase
         .from('design_survey_data')
         .select('*')
-        .eq('project_id', projectId)
+        .eq('farm_id', farmId)
         .order('point_number')
 
       if (error) throw error
@@ -117,12 +117,12 @@ export const useSurveyStore = create<SurveyState>()((set, get) => ({
   },
 
   // 補正設定取得
-  fetchCalibration: async (projectId: string) => {
+  fetchCalibration: async (farmId: string) => {
     try {
       const { data, error } = await supabase
         .from('design_survey_calibration')
         .select('*')
-        .eq('project_id', projectId)
+        .eq('farm_id', farmId)
         .single()
 
       if (error && error.code !== 'PGRST116') throw error // PGRST116 = no rows
@@ -144,9 +144,9 @@ export const useSurveyStore = create<SurveyState>()((set, get) => ({
 
   // 測量データインポート
   importSurveyData: async (data) => {
-    const projectId = getCurrentProjectId()
-    if (!projectId) {
-      set({ error: 'プロジェクトが選択されていません' })
+    const farmId = getCurrentFarmId()
+    if (!farmId) {
+      set({ error: '圃場が選択されていません' })
       return
     }
 
@@ -156,13 +156,13 @@ export const useSurveyStore = create<SurveyState>()((set, get) => ({
       const { error: deleteError } = await supabase
         .from('design_survey_data')
         .delete()
-        .eq('project_id', projectId)
+        .eq('farm_id', farmId)
 
       if (deleteError) throw deleteError
 
       // 新しいデータを挿入
       const insertData = data.map((d) => ({
-        project_id: projectId,
+        farm_id: farmId,
         point_number: d.pointNumber,
         x: d.x,
         y: d.y,
@@ -206,15 +206,15 @@ export const useSurveyStore = create<SurveyState>()((set, get) => ({
 
   // 単一の測量データを追加
   addSurveyData: async (data) => {
-    const projectId = getCurrentProjectId()
-    if (!projectId) {
-      set({ error: 'プロジェクトが選択されていません' })
+    const farmId = getCurrentFarmId()
+    if (!farmId) {
+      set({ error: '圃場が選択されていません' })
       return null
     }
 
     try {
       const insertData = {
-        project_id: projectId,
+        farm_id: farmId,
         point_number: data.pointNumber,
         x: data.x,
         y: data.y,
@@ -319,13 +319,13 @@ export const useSurveyStore = create<SurveyState>()((set, get) => ({
 
   // 測量データ全削除
   clearSurveyData: async () => {
-    const projectId = getCurrentProjectId()
-    if (!projectId) return
+    const farmId = getCurrentFarmId()
+    if (!farmId) return
 
     const { error } = await supabase
       .from('design_survey_data')
       .delete()
-      .eq('project_id', projectId)
+      .eq('farm_id', farmId)
 
     if (error) {
       set({ error: error.message })
@@ -362,8 +362,8 @@ export const useSurveyStore = create<SurveyState>()((set, get) => ({
 
   // 補正設定更新
   updateCalibration: async (settings) => {
-    const projectId = getCurrentProjectId()
-    if (!projectId) return
+    const farmId = getCurrentFarmId()
+    if (!farmId) return
 
     const state = get()
     const newCalibration = { ...state.calibration, ...settings }
@@ -375,7 +375,7 @@ export const useSurveyStore = create<SurveyState>()((set, get) => ({
     const { error } = await supabase
       .from('design_survey_calibration')
       .upsert({
-        project_id: projectId,
+        farm_id: farmId,
         is_enabled: newCalibration.isEnabled,
         dz_offset: newCalibration.dzOffset,
         matching_threshold: newCalibration.matchingThreshold,

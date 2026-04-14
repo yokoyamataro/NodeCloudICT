@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
-import { useProjectStore } from './projectStore'
+import { useFarmStore } from './farmStore'
 import { usePipeWiringStore } from './pipeWiringStore'
 import { useUnderdrainStore } from './underdrainStore'
 import type { PipeVertex, ConstructionPlanRow, ConstructionPlanPoint } from '@/types/database'
@@ -67,7 +67,7 @@ interface ConstructionPlanState {
   hasData: boolean // 施工計画データが存在するか
 
   // データ取得・生成
-  fetchPlan: (projectId: string) => Promise<void>
+  fetchPlan: (farmId: string) => Promise<void>
   generatePlanFromWiring: () => Promise<void> // 配管系統から施工計画を生成
   savePlan: () => Promise<void>
   deletePlan: () => Promise<void>
@@ -85,9 +85,9 @@ interface ConstructionPlanState {
   autoCalculatePlannedHeights: (params: AutoCalcParams) => void
 }
 
-// プロジェクトIDを取得するヘルパー
-const getCurrentProjectId = (): string | null => {
-  return useProjectStore.getState().currentProject?.id ?? null
+// 圃場IDを取得するヘルパー
+const getCurrentFarmId = (): string | null => {
+  return useFarmStore.getState().currentFarm?.id ?? null
 }
 
 // 2点間の距離を計算
@@ -111,14 +111,14 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
   error: null,
   hasData: false,
 
-  fetchPlan: async (projectId: string) => {
+  fetchPlan: async (farmId: string) => {
     set({ loading: true, error: null })
     try {
       // 施工計画行を取得
       const { data: rows, error: rowError } = await supabase
         .from('construction_plan_rows')
         .select('*')
-        .eq('project_id', projectId)
+        .eq('farm_id', farmId)
         .order('group_type')
         .order('group_index')
         .order('row_index')
@@ -236,9 +236,9 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
   },
 
   generatePlanFromWiring: async () => {
-    const projectId = getCurrentProjectId()
-    if (!projectId) {
-      set({ error: 'プロジェクトが選択されていません' })
+    const farmId = getCurrentFarmId()
+    if (!farmId) {
+      set({ error: '圃場が選択されていません' })
       return
     }
 
@@ -253,7 +253,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       const { data: surveyDataRaw } = await supabase
         .from('design_survey_data')
         .select('*')
-        .eq('project_id', projectId)
+        .eq('farm_id', farmId)
 
       const surveyData = (surveyDataRaw || []).map((row: {
         id: string
@@ -275,7 +275,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       await supabase
         .from('construction_plan_rows')
         .delete()
-        .eq('project_id', projectId)
+        .eq('farm_id', farmId)
 
       const planGroups: PlanGroup[] = []
 
@@ -788,9 +788,9 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
   },
 
   savePlan: async () => {
-    const projectId = getCurrentProjectId()
-    if (!projectId) {
-      set({ error: 'プロジェクトが選択されていません' })
+    const farmId = getCurrentFarmId()
+    if (!farmId) {
+      set({ error: '圃場が選択されていません' })
       return
     }
 
@@ -802,7 +802,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       await supabase
         .from('construction_plan_rows')
         .delete()
-        .eq('project_id', projectId)
+        .eq('farm_id', farmId)
 
       // 行を挿入
       for (const group of state.planGroups) {
@@ -810,7 +810,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
           const { data: rowData, error: rowError } = await supabase
             .from('construction_plan_rows')
             .insert({
-              project_id: projectId,
+              farm_id: farmId,
               wiring_row_id: row.wiringRowId,
               group_type: row.groupType,
               group_index: row.groupIndex,
@@ -878,8 +878,8 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
   },
 
   deletePlan: async () => {
-    const projectId = getCurrentProjectId()
-    if (!projectId) return
+    const farmId = getCurrentFarmId()
+    if (!farmId) return
 
     set({ loading: true, error: null })
 
@@ -887,7 +887,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       await supabase
         .from('construction_plan_rows')
         .delete()
-        .eq('project_id', projectId)
+        .eq('farm_id', farmId)
 
       set({ planGroups: [], hasData: false, loading: false })
     } catch (err) {

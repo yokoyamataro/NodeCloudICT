@@ -3,7 +3,7 @@ import { supabase } from '@/lib/supabase'
 import type { CoordinateType, AreaCalculationSheet, DesignCoordinate, DesignZone } from '@/types/database'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { generateAreaCalculationSheet, type Point } from '@/lib/area-calculation'
-import { useProjectStore } from './projectStore'
+import { useFarmStore } from './farmStore'
 import { useSettingsStore } from './settingsStore'
 
 // ローカル状態用の座標型
@@ -38,7 +38,7 @@ interface CoordinateState {
   coordinates: CoordinateRow[]
   loading: boolean
   error: string | null
-  fetchCoordinates: (projectId: string) => Promise<void>
+  fetchCoordinates: (farmId: string) => Promise<void>
   addCoordinate: (type: CoordinateType) => Promise<void>
   updateCoordinate: (id: string, field: keyof CoordinateRow, value: string | number | null) => void
   deleteCoordinate: (id: string) => Promise<void>
@@ -48,7 +48,7 @@ interface CoordinateState {
 
   // 区域データ
   zones: ZoneRow[]
-  fetchZones: (projectId: string) => Promise<void>
+  fetchZones: (farmId: string) => Promise<void>
   addZone: () => Promise<void>
   updateZone: (id: string, field: keyof ZoneRow, value: string | string[] | number | null) => void
   deleteZone: (id: string) => Promise<void>
@@ -69,9 +69,9 @@ interface CoordinateState {
   resetCoordinateChanges: () => void
 }
 
-// プロジェクトIDを取得するヘルパー
-const getCurrentProjectId = (): string | null => {
-  return useProjectStore.getState().currentProject?.id ?? null
+// 圃場IDを取得するヘルパー
+const getCurrentFarmId = (): string | null => {
+  return useFarmStore.getState().currentFarm?.id ?? null
 }
 
 export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
@@ -97,13 +97,13 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
   loading: false,
   error: null,
 
-  fetchCoordinates: async (projectId: string) => {
+  fetchCoordinates: async (farmId: string) => {
     set({ loading: true, error: null })
     try {
       const { data, error } = await supabase
         .from('design_coordinates')
         .select('*')
-        .eq('project_id', projectId)
+        .eq('farm_id', farmId)
         .order('point_number')
 
       if (error) throw error
@@ -138,9 +138,9 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
   },
 
   addCoordinate: async (type) => {
-    const projectId = getCurrentProjectId()
-    if (!projectId) {
-      set({ error: 'プロジェクトが選択されていません' })
+    const farmId = getCurrentFarmId()
+    if (!farmId) {
+      set({ error: '圃場が選択されていません' })
       return
     }
 
@@ -151,7 +151,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
       const { data, error } = await supabase
         .from('design_coordinates')
         .insert({
-          project_id: projectId,
+          farm_id: farmId,
           point_number: pointNumber,
           x: 0,
           y: 0,
@@ -259,9 +259,9 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
   },
 
   importCoordinates: async (coords) => {
-    const projectId = getCurrentProjectId()
-    if (!projectId) {
-      set({ error: 'プロジェクトが選択されていません' })
+    const farmId = getCurrentFarmId()
+    if (!farmId) {
+      set({ error: '圃場が選択されていません' })
       return
     }
 
@@ -278,7 +278,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
           lng = result.lng
         }
         return {
-          project_id: projectId,
+          farm_id: farmId,
           point_number: c.pointNumber,
           x: c.x,
           y: c.y,
@@ -314,15 +314,15 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
   },
 
   clearCoordinates: async () => {
-    const projectId = getCurrentProjectId()
-    if (!projectId) return
+    const farmId = getCurrentFarmId()
+    if (!farmId) return
 
     try {
       // 座標を全削除
       const { error: coordError } = await supabase
         .from('design_coordinates')
         .delete()
-        .eq('project_id', projectId)
+        .eq('farm_id', farmId)
 
       if (coordError) throw coordError
 
@@ -330,7 +330,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
       const { error: zoneError } = await supabase
         .from('design_zones')
         .delete()
-        .eq('project_id', projectId)
+        .eq('farm_id', farmId)
 
       if (zoneError) throw zoneError
 
@@ -347,12 +347,12 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
   // 区域データ
   zones: [],
 
-  fetchZones: async (projectId: string) => {
+  fetchZones: async (farmId: string) => {
     try {
       const { data, error } = await supabase
         .from('design_zones')
         .select('*')
-        .eq('project_id', projectId)
+        .eq('farm_id', farmId)
         .order('zone_number')
 
       if (error) throw error
@@ -374,9 +374,9 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
   },
 
   addZone: async () => {
-    const projectId = getCurrentProjectId()
-    if (!projectId) {
-      set({ error: 'プロジェクトが選択されていません' })
+    const farmId = getCurrentFarmId()
+    if (!farmId) {
+      set({ error: '圃場が選択されていません' })
       return
     }
 
@@ -388,7 +388,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
       const { data, error } = await supabase
         .from('design_zones')
         .insert({
-          project_id: projectId,
+          farm_id: farmId,
           zone_number: zoneNumber,
           name,
           point_ids: [],
@@ -549,8 +549,8 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
 
   saveAllCoordinates: async () => {
     const state = get()
-    const projectId = getCurrentProjectId()
-    if (!projectId) return
+    const farmId = getCurrentFarmId()
+    if (!farmId) return
 
     try {
       // 座標の変更を保存
@@ -597,12 +597,12 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
   },
 
   resetCoordinateChanges: () => {
-    const projectId = getCurrentProjectId()
-    if (!projectId) return
+    const farmId = getCurrentFarmId()
+    if (!farmId) return
 
     // Supabaseから再読み込み
-    get().fetchCoordinates(projectId)
-    get().fetchZones(projectId)
+    get().fetchCoordinates(farmId)
+    get().fetchZones(farmId)
 
     // 変更をクリア
     set({ pendingChanges: new Map(), pendingZoneChanges: new Map() })

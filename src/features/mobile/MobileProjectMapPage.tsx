@@ -3,7 +3,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMap, CircleMarker } from 're
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { Navigation, MapPin, List, RefreshCw, Loader2, Locate } from 'lucide-react'
-import { useProjectStore, type ProjectLocation } from '@/stores/projectStore'
+import { useFarmStore, type FarmLocation } from '@/stores/farmStore'
 
 // カスタムマーカーアイコン（ラベル付き）
 const createMarkerIcon = (isSelected: boolean = false, label?: string): L.DivIcon => {
@@ -83,7 +83,7 @@ const createUserLocationIcon = (): L.DivIcon => {
 }
 
 // 地図の境界を全プロジェクトに合わせる
-function FitBoundsToProjects({ locations }: { locations: ProjectLocation[] }) {
+function FitBoundsToFarms({ locations }: { locations: FarmLocation[] }) {
   const map = useMap()
 
   useEffect(() => {
@@ -101,7 +101,7 @@ function FitBoundsToProjects({ locations }: { locations: ProjectLocation[] }) {
 }
 
 // 選択したプロジェクトにフォーカス
-function FocusOnProject({ location }: { location: ProjectLocation | null }) {
+function FocusOnFarm({ location }: { location: FarmLocation | null }) {
   const map = useMap()
 
   useEffect(() => {
@@ -126,9 +126,9 @@ function FocusOnUserLocation({ userLocation }: { userLocation: { lat: number; ln
   return null
 }
 
-export function MobileProjectMapPage() {
-  const { projects, loading, fetchProjects, projectLocations } = useProjectStore()
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
+export function MobileFarmMapPage() {
+  const { farms, loading, fetchFarms, farmLocations } = useFarmStore()
+  const [selectedFarmId, setSelectedFarmId] = useState<string | null>(null)
   const [showList, setShowList] = useState(false)
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number; accuracy: number } | null>(null)
   const [watchingLocation, setWatchingLocation] = useState(false)
@@ -136,8 +136,8 @@ export function MobileProjectMapPage() {
   const [focusOnUser, setFocusOnUser] = useState(false)
 
   useEffect(() => {
-    fetchProjects()
-  }, [fetchProjects])
+    fetchFarms()
+  }, [fetchFarms])
 
   // GPS位置情報の監視
   useEffect(() => {
@@ -199,32 +199,32 @@ export function MobileProjectMapPage() {
   const handleFocusOnUser = () => {
     if (userLocation) {
       setFocusOnUser(true)
-      setSelectedProjectId(null)
+      setSelectedFarmId(null)
       // フォーカス後にリセット
       setTimeout(() => setFocusOnUser(false), 100)
     }
   }
 
-  const locations = Array.from(projectLocations.values())
-  const selectedLocation = selectedProjectId ? projectLocations.get(selectedProjectId) : null
-  const selectedProject = selectedProjectId ? projects.find(p => p.id === selectedProjectId) : null
+  const locations = Array.from(farmLocations.values())
+  const selectedLocation = selectedFarmId ? farmLocations.get(selectedFarmId) : null
+  const selectedFarm = selectedFarmId ? farms.find(p => p.id === selectedFarmId) : null
 
   const openGoogleMapsNavigation = (lat: number, lng: number) => {
     const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`
     window.open(url, '_blank')
   }
 
-  const handleMarkerClick = (projectId: string) => {
-    setSelectedProjectId(projectId)
+  const handleMarkerClick = (farmId: string) => {
+    setSelectedFarmId(farmId)
     setShowList(false)
   }
 
-  const handleListItemClick = (projectId: string) => {
-    setSelectedProjectId(projectId)
+  const handleListItemClick = (farmId: string) => {
+    setSelectedFarmId(farmId)
     setShowList(false)
   }
 
-  if (loading && projects.length === 0) {
+  if (loading && farms.length === 0) {
     return (
       <div className="h-screen flex items-center justify-center bg-slate-100">
         <div className="text-center">
@@ -236,7 +236,7 @@ export function MobileProjectMapPage() {
   }
 
   // 座標が登録されているプロジェクトのみ
-  const projectsWithLocation = projects.filter(p => projectLocations.has(p.id))
+  const farmsWithLocation = farms.filter(p => farmLocations.has(p.id))
 
   // デフォルトの中心（日本の中心あたり）
   const defaultCenter: [number, number] = locations.length > 0
@@ -250,7 +250,7 @@ export function MobileProjectMapPage() {
         <h1 className="text-lg font-bold text-slate-800">現場マップ</h1>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => fetchProjects()}
+            onClick={() => fetchFarms()}
             className="p-2 text-slate-600 hover:bg-slate-100 rounded-full"
             title="更新"
           >
@@ -281,8 +281,8 @@ export function MobileProjectMapPage() {
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
 
-          {!selectedProjectId && !focusOnUser && <FitBoundsToProjects locations={locations} />}
-          {selectedLocation && <FocusOnProject location={selectedLocation} />}
+          {!selectedFarmId && !focusOnUser && <FitBoundsToFarms locations={locations} />}
+          {selectedLocation && <FocusOnFarm location={selectedLocation} />}
           {focusOnUser && <FocusOnUserLocation userLocation={userLocation} />}
 
           {/* 自己位置マーカー */}
@@ -317,20 +317,20 @@ export function MobileProjectMapPage() {
 
           {/* プロジェクトマーカー */}
           {locations.map(location => {
-            const project = projects.find(p => p.id === location.projectId)
-            const isSelected = location.projectId === selectedProjectId
+            const farm = farms.find(p => p.id === location.farmId)
+            const isSelected = location.farmId === selectedFarmId
             return (
               <Marker
-                key={location.projectId}
+                key={location.farmId}
                 position={[location.lat, location.lng]}
-                icon={createMarkerIcon(isSelected, project?.name)}
+                icon={createMarkerIcon(isSelected, farm?.name)}
                 eventHandlers={{
-                  click: () => handleMarkerClick(location.projectId),
+                  click: () => handleMarkerClick(location.farmId),
                 }}
               >
                 <Popup>
                   <div className="text-sm min-w-[200px]">
-                    <div className="font-bold text-base">{project?.name}</div>
+                    <div className="font-bold text-base">{farm?.name}</div>
                     <div className="text-slate-500 mt-1">{location.pointNumber}</div>
                     <button
                       onClick={() => openGoogleMapsNavigation(location.lat, location.lng)}
@@ -351,19 +351,19 @@ export function MobileProjectMapPage() {
           <div className="absolute inset-0 bg-white z-20 overflow-auto">
             <div className="p-4">
               <h2 className="text-lg font-bold mb-4">プロジェクト一覧</h2>
-              {projectsWithLocation.length === 0 ? (
+              {farmsWithLocation.length === 0 ? (
                 <p className="text-slate-500 text-center py-8">
                   座標が登録されたプロジェクトがありません
                 </p>
               ) : (
                 <div className="space-y-2">
-                  {projectsWithLocation.map(project => {
-                    const location = projectLocations.get(project.id)!
-                    const isSelected = project.id === selectedProjectId
+                  {farmsWithLocation.map(farm => {
+                    const location = farmLocations.get(farm.id)!
+                    const isSelected = farm.id === selectedFarmId
                     return (
                       <div
-                        key={project.id}
-                        onClick={() => handleListItemClick(project.id)}
+                        key={farm.id}
+                        onClick={() => handleListItemClick(farm.id)}
                         className={`p-4 rounded-lg border cursor-pointer transition-colors ${
                           isSelected
                             ? 'bg-blue-50 border-blue-300'
@@ -373,9 +373,9 @@ export function MobileProjectMapPage() {
                         <div className="flex items-start gap-3">
                           <MapPin className={`h-5 w-5 mt-0.5 ${isSelected ? 'text-blue-600' : 'text-red-500'}`} />
                           <div className="flex-1 min-w-0">
-                            <h3 className="font-semibold truncate">{project.name}</h3>
+                            <h3 className="font-semibold truncate">{farm.name}</h3>
                             <p className="text-sm text-slate-500 truncate">
-                              {project.description || '説明なし'}
+                              {farm.description || '説明なし'}
                             </p>
                             <p className="text-xs text-slate-400 mt-1">
                               {location.pointNumber}
@@ -402,11 +402,11 @@ export function MobileProjectMapPage() {
       </div>
 
       {/* 選択中のプロジェクト情報（フッター） */}
-      {selectedProject && selectedLocation && !showList && (
+      {selectedFarm && selectedLocation && !showList && (
         <div className="bg-white border-t p-4 z-10">
           <div className="flex items-center gap-3">
             <div className="flex-1 min-w-0">
-              <h3 className="font-bold truncate">{selectedProject.name}</h3>
+              <h3 className="font-bold truncate">{selectedFarm.name}</h3>
               <p className="text-sm text-slate-500">{selectedLocation.pointNumber}</p>
             </div>
             <button
@@ -438,9 +438,9 @@ export function MobileProjectMapPage() {
           </button>
 
           {/* 全体表示ボタン */}
-          {selectedProjectId && (
+          {selectedFarmId && (
             <button
-              onClick={() => setSelectedProjectId(null)}
+              onClick={() => setSelectedFarmId(null)}
               className="p-3 bg-white rounded-full shadow-lg border border-slate-200"
               title="全体表示"
             >

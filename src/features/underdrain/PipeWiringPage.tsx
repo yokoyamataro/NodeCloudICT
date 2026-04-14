@@ -18,7 +18,7 @@ import {
 } from 'lucide-react'
 import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
-import { useProjectStore } from '@/stores/projectStore'
+import { useFarmStore } from '@/stores/farmStore'
 import { usePipeWiringStore, type CollectorTab, type WiringRow, type RowType } from '@/stores/pipeWiringStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import { PipeMap, type SurveyPointData, type PipeChangePoint } from '@/components/map/PipeMap'
@@ -33,7 +33,7 @@ type SelectionMode = 'none' | 'absorption' | 'collector' | 'bulk-start'
 export function PipeWiringPage() {
   const { pipes, fetchPipes } = useUnderdrainStore()
   const { fetchCoordinates } = useCoordinateStore()
-  const { currentProject } = useProjectStore()
+  const { currentFarm } = useFarmStore()
   const {
     collectorTabs,
     directRows,
@@ -49,13 +49,13 @@ export function PipeWiringPage() {
 
   // プロジェクト選択時にデータを読み込む
   useEffect(() => {
-    if (currentProject) {
-      fetchPipes(currentProject.id)
-      fetchCoordinates(currentProject.id)
-      fetchWiring(currentProject.id)
-      fetchPlan(currentProject.id)
+    if (currentFarm) {
+      fetchPipes(currentFarm.id)
+      fetchCoordinates(currentFarm.id)
+      fetchWiring(currentFarm.id)
+      fetchPlan(currentFarm.id)
     }
-  }, [currentProject, fetchPipes, fetchCoordinates, fetchWiring, fetchPlan])
+  }, [currentFarm, fetchPipes, fetchCoordinates, fetchWiring, fetchPlan])
 
   // 最新の状態を参照するためのref（アンマウント時の保存用）
   const hasChangesRef = useRef(hasChanges)
@@ -1278,7 +1278,7 @@ export function PipeWiringPage() {
                 </div>
               ) : (
                 <button
-                  onClick={() => currentProject && fetchWiring(currentProject.id, true)}
+                  onClick={() => currentFarm && fetchWiring(currentFarm.id, true)}
                   disabled={wiringSaving}
                   className="flex items-center gap-2 px-3 py-2 text-slate-600 border rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50"
                   title="データを再読み込み"

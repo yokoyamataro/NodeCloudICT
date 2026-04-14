@@ -187,8 +187,8 @@ export interface OrthoLayer {
   created_at: string
 }
 
-// NodeCloud-Design用プロジェクト
-export interface DesignProject {
+// NodeCloud-Design用圃場
+export interface Farm {
   id: string
   user_id: string
   name: string
@@ -198,10 +198,13 @@ export interface DesignProject {
   updated_at: string
 }
 
+// 後方互換性のためのエイリアス
+export type DesignProject = Farm
+
 // NodeCloud-Design用座標
 export interface DesignCoordinate {
   id: string
-  project_id: string
+  farm_id: string
   point_number: string
   x: number
   y: number
@@ -217,7 +220,7 @@ export interface DesignCoordinate {
 // NodeCloud-Design用区域
 export interface DesignZone {
   id: string
-  project_id: string
+  farm_id: string
   zone_number: string
   name: string
   point_ids: string[]
@@ -232,7 +235,7 @@ export interface DesignZone {
 // NodeCloud-Design用管路
 export interface DesignPipe {
   id: string
-  project_id: string
+  farm_id: string
   number: string
   layer_name: string | null
   pipe_type: string | null
@@ -252,7 +255,7 @@ export type SurveyCategory = 'control' | 'boundary' | 'underdrain' | 'other'
 // 管路設定グループ
 export interface PipeWiringGroup {
   id: string
-  project_id: string
+  farm_id: string
   group_type: 'collector' | 'direct'
   name: string
   sort_order: number
@@ -285,7 +288,7 @@ export interface PipeWiringRow {
 // 施工計画行
 export interface ConstructionPlanRow {
   id: string
-  project_id: string
+  farm_id: string
   wiring_row_id: string
   group_type: 'collector' | 'direct'
   group_index: number
@@ -317,7 +320,7 @@ export interface ConstructionPlanPoint {
 // NodeCloud-Design用測量データ
 export interface DesignSurveyData {
   id: string
-  project_id: string
+  farm_id: string
   point_number: string
   x: number
   y: number
@@ -336,7 +339,7 @@ export interface DesignSurveyData {
 // NodeCloud-Design用測量補正設定
 export interface DesignSurveyCalibration {
   id: string
-  project_id: string
+  farm_id: string
   is_enabled: boolean
   dz_offset: number
   matching_threshold: number
@@ -349,10 +352,10 @@ export interface Database {
   public: {
     Tables: {
       // NodeCloud-Design テーブル
-      design_projects: {
-        Row: DesignProject
-        Insert: Omit<DesignProject, 'id' | 'created_at' | 'updated_at'>
-        Update: Partial<Omit<DesignProject, 'id' | 'created_at' | 'updated_at'>>
+      farms: {
+        Row: Farm
+        Insert: Omit<Farm, 'id' | 'created_at' | 'updated_at'>
+        Update: Partial<Omit<Farm, 'id' | 'created_at' | 'updated_at'>>
       }
       design_coordinates: {
         Row: DesignCoordinate

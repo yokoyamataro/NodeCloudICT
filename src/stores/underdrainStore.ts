@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
 import type { PipeType, PipeVertex, DesignPipe } from '@/types/database'
-import { useProjectStore } from './projectStore'
+import { useFarmStore } from './farmStore'
 import { useSettingsStore } from './settingsStore'
 
 // ローカル状態用の管路型
@@ -46,9 +46,9 @@ export type ExtendedPipeType = typeof EXTENDED_PIPE_TYPES[number]['value']
 // 管径の選択肢 (mm)
 export const PIPE_DIAMETERS = [60, 80, 90, 100, 125, 150, 200, 250] as const
 
-// プロジェクトIDを取得するヘルパー
-const getCurrentProjectId = (): string | null => {
-  return useProjectStore.getState().currentProject?.id ?? null
+// 圃場IDを取得するヘルパー
+const getCurrentFarmId = (): string | null => {
+  return useFarmStore.getState().currentFarm?.id ?? null
 }
 
 interface UnderdrainState {
@@ -56,7 +56,7 @@ interface UnderdrainState {
   pipes: PipeRow[]
   loading: boolean
   error: string | null
-  fetchPipes: (projectId: string) => Promise<void>
+  fetchPipes: (farmId: string) => Promise<void>
   addPipe: (pipe: Omit<PipeRow, 'id'>) => Promise<string | null>
   addPipes: (pipes: Omit<PipeRow, 'id'>[]) => Promise<void>
   updatePipe: (id: string, updates: Partial<PipeRow>) => Promise<void>
@@ -96,13 +96,13 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
   loading: false,
   error: null,
 
-  fetchPipes: async (projectId: string) => {
+  fetchPipes: async (farmId: string) => {
     set({ loading: true, error: null })
     try {
       const { data, error } = await supabase
         .from('design_pipes')
         .select('*')
-        .eq('project_id', projectId)
+        .eq('farm_id', farmId)
         .order('number')
 
       if (error) throw error
@@ -127,9 +127,9 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
   },
 
   addPipe: async (pipe) => {
-    const projectId = getCurrentProjectId()
-    if (!projectId) {
-      set({ error: 'プロジェクトが選択されていません' })
+    const farmId = getCurrentFarmId()
+    if (!farmId) {
+      set({ error: '圃場が選択されていません' })
       return null
     }
 
@@ -137,7 +137,7 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
       const { data, error } = await supabase
         .from('design_pipes')
         .insert({
-          project_id: projectId,
+          farm_id: farmId,
           number: pipe.number,
           layer_name: pipe.layerName,
           pipe_type: pipe.pipeType,
@@ -176,15 +176,15 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
   },
 
   addPipes: async (pipes) => {
-    const projectId = getCurrentProjectId()
-    if (!projectId) {
-      set({ error: 'プロジェクトが選択されていません' })
+    const farmId = getCurrentFarmId()
+    if (!farmId) {
+      set({ error: '圃場が選択されていません' })
       return
     }
 
     try {
       const insertData = pipes.map((pipe) => ({
-        project_id: projectId,
+        farm_id: farmId,
         number: pipe.number,
         layer_name: pipe.layerName,
         pipe_type: pipe.pipeType,
@@ -286,14 +286,14 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
   },
 
   clearPipes: async () => {
-    const projectId = getCurrentProjectId()
-    if (!projectId) return
+    const farmId = getCurrentFarmId()
+    if (!farmId) return
 
     try {
       const { error } = await supabase
         .from('design_pipes')
         .delete()
-        .eq('project_id', projectId)
+        .eq('farm_id', farmId)
 
       if (error) throw error
 
@@ -425,8 +425,8 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
     }))
 
     // Supabaseに同期
-    const projectId = getCurrentProjectId()
-    if (projectId) {
+    const farmId = getCurrentFarmId()
+    if (farmId) {
       // 古い管路を削除し、新しい管路を挿入
       ;(async () => {
         try {
@@ -447,7 +447,7 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
             .from('design_pipes')
             .insert({
               id: newId,
-              project_id: projectId,
+              farm_id: farmId,
               number: newPipe.number,
               layer_name: newPipe.layerName,
               pipe_type: newPipe.pipeType,
@@ -554,8 +554,8 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
     }))
 
     // Supabaseに同期
-    const projectId = getCurrentProjectId()
-    if (projectId) {
+    const farmId = getCurrentFarmId()
+    if (farmId) {
       ;(async () => {
         try {
           // 元の管路を削除
@@ -576,7 +576,7 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
             .insert([
               {
                 id: id1,
-                project_id: projectId,
+                farm_id: farmId,
                 number: pipe1.number,
                 layer_name: pipe1.layerName,
                 pipe_type: pipe1.pipeType,
@@ -589,7 +589,7 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
               },
               {
                 id: id2,
-                project_id: projectId,
+                farm_id: farmId,
                 number: pipe2.number,
                 layer_name: pipe2.layerName,
                 pipe_type: pipe2.pipeType,
@@ -765,8 +765,8 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
     }))
 
     // Supabaseに同期
-    const projectId = getCurrentProjectId()
-    if (projectId) {
+    const farmId = getCurrentFarmId()
+    if (farmId) {
       ;(async () => {
         try {
           // 元の管路を削除
@@ -787,7 +787,7 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
             .insert([
               {
                 id: id1,
-                project_id: projectId,
+                farm_id: farmId,
                 number: pipe1.number,
                 layer_name: pipe1.layerName,
                 pipe_type: pipe1.pipeType,
@@ -800,7 +800,7 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
               },
               {
                 id: id2,
-                project_id: projectId,
+                farm_id: farmId,
                 number: pipe2.number,
                 layer_name: pipe2.layerName,
                 pipe_type: pipe2.pipeType,
@@ -999,8 +999,8 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
 
   saveAllPipes: async () => {
     const state = get()
-    const projectId = getCurrentProjectId()
-    if (!projectId) return
+    const farmId = getCurrentFarmId()
+    if (!farmId) return
 
     try {
       for (const [id, pipe] of state.pendingPipeChanges) {
@@ -1031,11 +1031,11 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
   },
 
   resetPipeChanges: () => {
-    const projectId = getCurrentProjectId()
-    if (!projectId) return
+    const farmId = getCurrentFarmId()
+    if (!farmId) return
 
     // Supabaseから再読み込み
-    get().fetchPipes(projectId)
+    get().fetchPipes(farmId)
 
     // 変更をクリア
     set({ pendingPipeChanges: new Map() })

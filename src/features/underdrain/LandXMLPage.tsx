@@ -7,7 +7,7 @@ import {
   Eye,
   Settings,
 } from 'lucide-react'
-import { useProjectStore } from '@/stores/projectStore'
+import { useFarmStore } from '@/stores/farmStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import { LandXMLViewer } from '@/components/viewers/LandXMLViewer'
 import {
@@ -29,7 +29,7 @@ import {
 import { distance2D } from '@/utils/landxml/geometry'
 
 export function LandXMLPage() {
-  const { currentProject } = useProjectStore()
+  const { currentFarm } = useFarmStore()
   const {
     planGroups,
     loading: planLoading,
@@ -54,10 +54,10 @@ export function LandXMLPage() {
 
   // プロジェクト選択時にデータを読み込む
   useEffect(() => {
-    if (currentProject) {
-      fetchPlan(currentProject.id)
+    if (currentFarm) {
+      fetchPlan(currentFarm.id)
     }
-  }, [currentProject, fetchPlan])
+  }, [currentFarm, fetchPlan])
 
   // プレビューデータを生成
   const generatePreview = useCallback(() => {
@@ -680,7 +680,7 @@ export function LandXMLPage() {
   const handleExport = () => {
     if (!previewData) return
 
-    const projectName = currentProject?.name || 'construction_plan'
+    const projectName = currentFarm?.name || 'construction_plan'
     const filename = `${projectName}_landxml.xml`
     const xml = generateLandXMLFromPlan(planGroups, {
       pipeWidth,

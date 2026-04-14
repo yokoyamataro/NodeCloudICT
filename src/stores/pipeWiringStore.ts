@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
 import type { PipeWiringGroup, PipeWiringRow } from '@/types/database'
-import { useProjectStore } from './projectStore'
+import { useFarmStore } from './farmStore'
 
 // 行タイプの定義
 export type RowType =
@@ -28,9 +28,9 @@ export interface CollectorTab {
   rows: WiringRow[]
 }
 
-// プロジェクトIDを取得するヘルパー
-const getCurrentProjectId = (): string | null => {
-  return useProjectStore.getState().currentProject?.id ?? null
+// 圃場IDを取得するヘルパー
+const getCurrentFarmId = (): string | null => {
+  return useFarmStore.getState().currentFarm?.id ?? null
 }
 
 // アップデータ関数の型
@@ -47,9 +47,9 @@ interface PipeWiringState {
   saving: boolean
   error: string | null
   // 現在ロード済みのプロジェクトID（ページ遷移時の再フェッチ防止用）
-  loadedProjectId: string | null
+  loadedFarmId: string | null
   // データ操作
-  fetchWiring: (projectId: string, force?: boolean) => Promise<void>
+  fetchWiring: (farmId: string, force?: boolean) => Promise<void>
   saveWiring: () => Promise<void>
   // タブ操作（関数も受け付ける）
   setCollectorTabs: (updater: TabsUpdater) => void
@@ -84,7 +84,7 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
   loading: false,
   saving: false,
   error: null,
-  loadedProjectId: null,
+  loadedFarmId: null,
   hasChanges: false,
 
   setCollectorTabs: (updater) => {
@@ -116,12 +116,12 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
       loading: false,
       saving: false,
       error: null,
-      loadedProjectId: null,
+      loadedFarmId: null,
       hasChanges: false,
     })
   },
 
-  fetchWiring: async (projectId: string, force?: boolean) => {
+  fetchWiring: async (farmId: string, force?: boolean) => {
     const state = get()
 
     // 保存中の場合はフェッチをスキップ（データ競合防止）
@@ -131,7 +131,7 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
     }
 
     // 同じプロジェクトのデータが既にロードされていて、強制リロードでなければスキップ
-    if (!force && state.loadedProjectId === projectId) {
+    if (!force && state.loadedFarmId === farmId) {
       console.log('[pipeWiringStore] Data already loaded for project, skipping fetch')
       return
     }
@@ -142,7 +142,7 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
       const { data: groups, error: groupError } = await supabase
         .from('pipe_wiring_groups')
         .select('*')
-        .eq('project_id', projectId)
+        .eq('farm_id', farmId)
         .order('sort_order')
 
       if (groupError) throw groupError
@@ -159,7 +159,7 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
           ],
           directRows: [createEmptyRow()],
           loading: false,
-          loadedProjectId: projectId,
+          loadedFarmId: farmId,
           hasChanges: false,
         })
         return
@@ -222,7 +222,7 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
         collectorTabs,
         directRows,
         loading: false,
-        loadedProjectId: projectId,
+        loadedFarmId: farmId,
         hasChanges: false,
       })
     } catch (err) {
@@ -234,9 +234,9 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
   },
 
   saveWiring: async () => {
-    const projectId = getCurrentProjectId()
-    if (!projectId) {
-      set({ error: 'プロジェクトが選択されていません' })
+    const farmId = getCurrentFarmId()
+    if (!farmId) {
+      set({ error: '圃場が選択されていません' })
       return
     }
 
@@ -248,7 +248,7 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
       const { error: deleteGroupError } = await supabase
         .from('pipe_wiring_groups')
         .delete()
-        .eq('project_id', projectId)
+        .eq('farm_id', farmId)
 
       if (deleteGroupError) throw deleteGroupError
 
@@ -260,7 +260,7 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
         const { data: groupData, error: groupError } = await supabase
           .from('pipe_wiring_groups')
           .insert({
-            project_id: projectId,
+            farm_id: farmId,
             group_type: 'collector',
             name: tab.name,
             sort_order: i,
@@ -295,7 +295,7 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
       const { data: directGroupData, error: directGroupError } = await supabase
         .from('pipe_wiring_groups')
         .insert({
-          project_id: projectId,
+          farm_id: farmId,
           group_type: 'direct',
           name: '直落暗渠',
           sort_order: state.collectorTabs.length,

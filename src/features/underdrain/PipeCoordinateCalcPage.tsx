@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { CoordinateConverter } from '@/lib/coordinates'
-import { useProjectStore } from '@/stores/projectStore'
+import { useFarmStore } from '@/stores/farmStore'
 import { PipeMap, type SurveyPointData, type BaseLayerType } from '@/components/map/PipeMap'
 
 // 測点命名設定
@@ -65,15 +65,15 @@ const MERGE_THRESHOLD = 0.1 // 10cm
 export function PipeCoordinateCalcPage() {
   const { pipes, fetchPipes } = useUnderdrainStore()
   const { coordinates, fetchCoordinates } = useCoordinateStore()
-  const { currentProject } = useProjectStore()
+  const { currentFarm } = useFarmStore()
 
   // プロジェクト選択時にデータを読み込む
   useEffect(() => {
-    if (currentProject) {
-      fetchPipes(currentProject.id)
-      fetchCoordinates(currentProject.id)
+    if (currentFarm) {
+      fetchPipes(currentFarm.id)
+      fetchCoordinates(currentFarm.id)
     }
-  }, [currentProject, fetchPipes, fetchCoordinates])
+  }, [currentFarm, fetchPipes, fetchCoordinates])
 
   // 命名設定
   const [namingSettings, setNamingSettings] = useState<NamingSettings>({
@@ -356,7 +356,7 @@ export function PipeCoordinateCalcPage() {
   const saveExportPoints = () => {
     if (exportPoints.length === 0) return
 
-    const name = currentProject?.name || 'NoName'
+    const name = currentFarm?.name || 'NoName'
     const data = {
       version: 1,
       exportedAt: new Date().toISOString(),
@@ -430,7 +430,7 @@ export function PipeCoordinateCalcPage() {
       z: p.z,
     }))
 
-    const projectName = currentProject?.name || 'NoName'
+    const projectName = currentFarm?.name || 'NoName'
 
     // SIMA形式の行を生成
     const lines: string[] = []
@@ -480,7 +480,7 @@ export function PipeCoordinateCalcPage() {
 
   // Excelエクスポート
   const handleExportExcel = () => {
-    const projectName = currentProject?.name || 'NoName'
+    const projectName = currentFarm?.name || 'NoName'
 
     // 出力データを準備
     const pointsToExport = exportPoints.length > 0 ? exportPoints : [

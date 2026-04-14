@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Upload, Download, Plus, Trash2, FileText, Eye, EyeOff } from 'lucide-react'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 import { useCoordinateStore } from '@/stores/coordinateStore'
-import { useProjectStore } from '@/stores/projectStore'
+import { useFarmStore } from '@/stores/farmStore'
 import { CoordinateMap, type BaseLayerType } from '@/components/map/CoordinateMap'
 import { loadSimaFile } from '@/lib/sima-parser'
 import type { CoordinateType } from '@/types/database'
@@ -92,7 +92,7 @@ export function CoordinatesPage() {
   )
   const [baseLayer, setBaseLayer] = useState<BaseLayerType>('osm')
 
-  const { currentProject } = useProjectStore()
+  const { currentFarm } = useFarmStore()
   const {
     zone,
     setZone,
@@ -106,15 +106,15 @@ export function CoordinatesPage() {
     setSelectedType,
   } = useCoordinateStore()
 
-  // プロジェクト選択時にデータを読み込む
+  // 圃場選択時にデータを読み込む
   useEffect(() => {
-    if (currentProject) {
-      // プロジェクトの座標系を設定
-      setZone(currentProject.coordinate_zone)
+    if (currentFarm) {
+      // 圃場の座標系を設定
+      setZone(currentFarm.coordinate_zone)
       // Supabaseからデータを読み込む
-      fetchCoordinates(currentProject.id)
+      fetchCoordinates(currentFarm.id)
     }
-  }, [currentProject, setZone, fetchCoordinates])
+  }, [currentFarm, setZone, fetchCoordinates])
 
   const handleAddCoordinate = () => {
     addCoordinate(selectedType)

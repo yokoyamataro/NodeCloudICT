@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
-import { useProjectStore } from '@/stores/projectStore'
+import { useFarmStore } from '@/stores/farmStore'
 import { useSurveyStore, type SurveyDataRow } from '@/stores/surveyStore'
 import { loadSimaFile, type SimaCoordinate } from '@/lib/sima-parser'
 import type { SurveyCategory } from '@/types/database'
@@ -54,7 +54,7 @@ interface MatchResult {
 export function SurveyImportPage() {
   const { pipes, fetchPipes } = useUnderdrainStore()
   const { coordinates, fetchCoordinates } = useCoordinateStore()
-  const { currentProject } = useProjectStore()
+  const { currentFarm } = useFarmStore()
   const {
     surveyData,
     calibration,
@@ -70,13 +70,13 @@ export function SurveyImportPage() {
 
   // プロジェクト選択時にデータを読み込む
   useEffect(() => {
-    if (currentProject) {
-      fetchPipes(currentProject.id)
-      fetchCoordinates(currentProject.id)
-      fetchSurveyData(currentProject.id)
-      fetchCalibration(currentProject.id)
+    if (currentFarm) {
+      fetchPipes(currentFarm.id)
+      fetchCoordinates(currentFarm.id)
+      fetchSurveyData(currentFarm.id)
+      fetchCalibration(currentFarm.id)
     }
-  }, [currentProject, fetchPipes, fetchCoordinates, fetchSurveyData, fetchCalibration])
+  }, [currentFarm, fetchPipes, fetchCoordinates, fetchSurveyData, fetchCalibration])
 
   // 状態
   const [activeTab, setActiveTab] = useState<TabType>('control')
