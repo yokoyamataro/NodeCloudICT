@@ -142,7 +142,9 @@ export const useFarmStore = create<FarmState>((set, get) => ({
     }
 
     try {
-      // 全圃場の工事区域を取得
+      const polygons: WorkAreaPolygon[] = []
+
+      // 1. design_work_areas から工事区域を取得（客土、整地など）
       const { data: areasData, error: areaError } = await supabase
         .from('design_work_areas')
         .select('id, farm_id, work_type, zone_number, name')
@@ -158,54 +160,111 @@ export const useFarmStore = create<FarmState>((set, get) => ({
         name: string | null
       }> | null
 
-      if (!areas || areas.length === 0) {
-        set({ workAreaPolygons: [] })
-        return
+      if (areas && areas.length > 0) {
+        // 座標を取得
+        const { data: coordsData, error: coordError } = await supabase
+          .from('work_area_coordinates')
+          .select('id, work_area_id, x, y, sort_order')
+          .in('work_area_id', areas.map(a => a.id))
+          .order('sort_order')
+
+        if (coordError) throw coordError
+
+        const coords = coordsData as Array<{
+          id: string
+          work_area_id: string
+          x: number
+          y: number
+          sort_order: number
+        }> | null
+
+        for (const area of areas) {
+          const farm = farms.find(f => f.id === area.farm_id)
+          if (!farm) continue
+
+          const areaCoords = (coords || [])
+            .filter(c => c.work_area_id === area.id)
+            .sort((a, b) => a.sort_order - b.sort_order)
+
+          if (areaCoords.length < 3) continue
+
+          const converter = new CoordinateConverter(farm.coordinate_zone)
+          const positions: [number, number][] = areaCoords.map(c => {
+            const { lat, lng } = converter.toLatLng(c.x, c.y)
+            return [lat, lng] as [number, number]
+          })
+
+          polygons.push({
+            id: area.id,
+            farmId: area.farm_id,
+            workType: area.work_type,
+            name: area.name || area.zone_number || '',
+            positions,
+          })
+        }
       }
 
-      // 座標を取得
-      const { data: coordsData, error: coordError } = await supabase
-        .from('work_area_coordinates')
-        .select('id, work_area_id, x, y, sort_order')
-        .in('work_area_id', areas.map(a => a.id))
-        .order('sort_order')
+      // 2. design_zones から暗渠の区域を取得
+      const { data: zonesData, error: zoneError } = await supabase
+        .from('design_zones')
+        .select('id, farm_id, zone_number, name, point_ids')
+        .in('farm_id', farms.map(f => f.id))
 
-      if (coordError) throw coordError
+      if (zoneError) throw zoneError
 
-      const coords = coordsData as Array<{
+      const zones = zonesData as Array<{
         id: string
-        work_area_id: string
-        x: number
-        y: number
-        sort_order: number
+        farm_id: string
+        zone_number: string
+        name: string | null
+        point_ids: string[] | null
       }> | null
 
-      // ポリゴンデータを生成
-      const polygons: WorkAreaPolygon[] = []
+      if (zones && zones.length > 0) {
+        // 各圃場の座標を取得
+        const { data: coordsData, error: coordError } = await supabase
+          .from('design_coordinates')
+          .select('id, farm_id, x, y')
+          .in('farm_id', farms.map(f => f.id))
 
-      for (const area of areas) {
-        const farm = farms.find(f => f.id === area.farm_id)
-        if (!farm) continue
+        if (coordError) throw coordError
 
-        const areaCoords = (coords || [])
-          .filter(c => c.work_area_id === area.id)
-          .sort((a, b) => a.sort_order - b.sort_order)
+        const allCoords = coordsData as Array<{
+          id: string
+          farm_id: string
+          x: number
+          y: number
+        }> | null
 
-        if (areaCoords.length < 3) continue
+        for (const zone of zones) {
+          const farm = farms.find(f => f.id === zone.farm_id)
+          if (!farm) continue
 
-        const converter = new CoordinateConverter(farm.coordinate_zone)
-        const positions: [number, number][] = areaCoords.map(c => {
-          const { lat, lng } = converter.toLatLng(c.x, c.y)
-          return [lat, lng] as [number, number]
-        })
+          const pointIds = zone.point_ids || []
+          if (pointIds.length < 3) continue
 
-        polygons.push({
-          id: area.id,
-          farmId: area.farm_id,
-          workType: area.work_type,
-          name: area.name || area.zone_number || '',
-          positions,
-        })
+          const farmCoords = (allCoords || []).filter(c => c.farm_id === farm.id)
+          const converter = new CoordinateConverter(farm.coordinate_zone)
+
+          const positions: [number, number][] = []
+          for (const pointId of pointIds) {
+            const coord = farmCoords.find(c => c.id === pointId)
+            if (coord) {
+              const { lat, lng } = converter.toLatLng(coord.x, coord.y)
+              positions.push([lat, lng])
+            }
+          }
+
+          if (positions.length < 3) continue
+
+          polygons.push({
+            id: zone.id,
+            farmId: zone.farm_id,
+            workType: 'underdrain', // 暗渠工事
+            name: zone.name || zone.zone_number || '',
+            positions,
+          })
+        }
       }
 
       set({ workAreaPolygons: polygons })
