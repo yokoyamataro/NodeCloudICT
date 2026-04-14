@@ -121,7 +121,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
           .map(p => {
             let lat: number | null = null
             let lng: number | null = null
-            if (p.x && p.y) {
+            if (p.x !== null && p.x !== undefined && p.y !== null && p.y !== undefined) {
               const result = converter.toLatLng(p.x, p.y)
               lat = result.lat
               lng = result.lng
@@ -290,7 +290,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
     const converter = new CoordinateConverter(zone)
     let lat: number | null = null
     let lng: number | null = null
-    if (x && y) {
+    if (x !== null && x !== undefined && y !== null && y !== undefined) {
       const result = converter.toLatLng(x, y)
       lat = result.lat
       lng = result.lng
