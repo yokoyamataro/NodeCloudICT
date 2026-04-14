@@ -196,6 +196,10 @@ export interface Project {
   user_id: string
   name: string
   description: string | null
+  start_date: string | null      // 工期開始日
+  end_date: string | null        // 工期終了日
+  client: string | null          // 発注者
+  contractor: string | null      // 受託者
   created_at: string
   updated_at: string
 }

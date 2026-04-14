@@ -19,7 +19,7 @@ interface ProjectListState {
 
   // プロジェクト操作
   createProject: (name: string, description?: string) => Promise<Project | null>
-  updateProject: (id: string, updates: Partial<Pick<Project, 'name' | 'description'>>) => Promise<void>
+  updateProject: (id: string, updates: Partial<Pick<Project, 'name' | 'description' | 'start_date' | 'end_date' | 'client' | 'contractor'>>) => Promise<void>
   deleteProject: (id: string) => Promise<void>
 
   // メンバー操作
