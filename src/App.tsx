@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from '@/contexts/AuthContext'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { LoginPage } from '@/features/auth/LoginPage'
@@ -13,6 +13,12 @@ import { DepthCalcPage } from '@/features/underdrain/DepthCalcPage'
 import { LandXMLPage } from '@/features/underdrain/LandXMLPage'
 import { MobileFarmMapPage } from '@/features/mobile/MobileProjectMapPage'
 import { Loader2 } from 'lucide-react'
+
+// スマホ判定
+const isMobile = (): boolean => {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+    window.innerWidth <= 768
+}
 
 // 認証が必要なルートのラッパー
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -33,27 +39,40 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+// トップページでスマホならモバイルページにリダイレクト
+function MobileRedirectWrapper({ children }: { children: React.ReactNode }) {
+  const location = useLocation()
+
+  // トップページ（/）かつスマホの場合はモバイルページにリダイレクト
+  if (location.pathname === '/' && isMobile()) {
+    return <Navigate to="/mobile/map" replace />
+  }
+
+  return <>{children}</>
+}
+
 function AppRoutes() {
   return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      {/* モバイル用現場マップ */}
-      <Route
-        path="/mobile/map"
-        element={
-          <ProtectedRoute>
-            <MobileFarmMapPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/"
-        element={
-          <ProtectedRoute>
-            <AppLayout />
-          </ProtectedRoute>
-        }
-      >
+    <MobileRedirectWrapper>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        {/* モバイル用現場マップ */}
+        <Route
+          path="/mobile/map"
+          element={
+            <ProtectedRoute>
+              <MobileFarmMapPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <AppLayout />
+            </ProtectedRoute>
+          }
+        >
         <Route index element={<ProjectListPage />} />
         <Route path="coordinates" element={<CoordinatesPage />} />
         {/* 暗渠工事 */}
@@ -72,8 +91,9 @@ function AppRoutes() {
         </Route>
         <Route path="hydraulics" element={<PlaceholderPage title="水理計算" />} />
         <Route path="settings" element={<PlaceholderPage title="設定" />} />
-      </Route>
-    </Routes>
+        </Route>
+      </Routes>
+    </MobileRedirectWrapper>
   )
 }
 
