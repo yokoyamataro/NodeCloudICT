@@ -112,7 +112,6 @@ function AppRoutes() {
         <Route path="stone-removal">
           <Route path="work-area" element={<StoneRemovalWorkAreaPage />} />
         </Route>
-        <Route path="hydraulics" element={<PlaceholderPage title="水理計算" />} />
         <Route path="settings" element={<PlaceholderPage title="設定" />} />
         </Route>
       </Routes>

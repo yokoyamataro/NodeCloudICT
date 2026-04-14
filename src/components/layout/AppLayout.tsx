@@ -3,7 +3,6 @@ import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   Map,
   Database,
-  Calculator,
   GitBranch,
   Settings,
   ChevronDown,
@@ -104,7 +103,6 @@ const navigation: NavGroup[] = [
       { name: '工事区域', href: '/stone-removal/work-area', icon: Square },
     ],
   },
-  { name: '水理計算', href: '/hydraulics', icon: Calculator },
   { name: '設定', href: '/settings', icon: Settings },
 ]
 

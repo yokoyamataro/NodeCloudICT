@@ -1,58 +1,12 @@
-import { useState, useEffect, useCallback } from 'react'
-import {
-  Plus,
-  Trash2,
-  GripVertical,
-  Calculator,
-  Download,
-  X,
-  Clipboard,
-  MapPin,
-} from 'lucide-react'
-import { MapContainer, TileLayer, Marker, Polygon, useMap } from 'react-leaflet'
-import L from 'leaflet'
-import 'leaflet/dist/leaflet.css'
+import { useState, useEffect } from 'react'
+import { Plus, Trash2, GripVertical, Calculator, Download, X, MapPin } from 'lucide-react'
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
+import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
+import { CoordinateMap } from '@/components/map/CoordinateMap'
 import type { WorkType, AreaCalculationSheet as AreaCalculationSheetType } from '@/types/database'
 import { WORK_TYPE_NAMES } from '@/types/database'
 import { exportAreaCalculationToCSV } from '@/lib/area-calculation'
-
-// マーカーアイコン
-const createMarkerIcon = (isSelected: boolean): L.DivIcon => {
-  return L.divIcon({
-    className: 'custom-marker',
-    html: `<div style="
-      background-color: ${isSelected ? '#ef4444' : '#3b82f6'};
-      width: 20px;
-      height: 20px;
-      border-radius: 50%;
-      border: 3px solid white;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.4);
-    "></div>`,
-    iconSize: [20, 20],
-    iconAnchor: [10, 10],
-  })
-}
-
-// 地図の境界を自動調整
-function FitBounds({ points }: { points: WorkAreaPoint[] }) {
-  const map = useMap()
-
-  useEffect(() => {
-    if (points.length === 0) return
-
-    const validPoints = points.filter(p => p.lat !== null && p.lng !== null)
-    if (validPoints.length === 0) return
-
-    const bounds = L.latLngBounds(
-      validPoints.map(p => [p.lat!, p.lng!] as [number, number])
-    )
-    map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 })
-  }, [map, points])
-
-  return null
-}
 
 // 面積計算簿コンポーネント
 function AreaCalculationSheet({
@@ -167,83 +121,17 @@ function AreaCalculationSheet({
               <div className="text-lg font-bold font-mono">{sheet.perimeter_m.toFixed(3)}</div>
             </div>
           </div>
-        </div>
-      </div>
-    </div>
-  )
-}
 
-// TSV貼り付けダイアログ
-function TSVPasteDialog({
-  onImport,
-  onClose,
-}: {
-  onImport: (tsv: string) => void
-  onClose: () => void
-}) {
-  const [tsvData, setTsvData] = useState('')
-
-  const handlePaste = useCallback((e: React.ClipboardEvent) => {
-    const text = e.clipboardData.getData('text')
-    setTsvData(text)
-  }, [])
-
-  const handleImport = () => {
-    if (tsvData.trim()) {
-      onImport(tsvData)
-      onClose()
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center" style={{ zIndex: 9999 }}>
-      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4">
-        <div className="flex items-center justify-between p-4 border-b">
-          <div>
-            <h2 className="text-lg font-bold">座標の貼り付け</h2>
-            <p className="text-sm text-muted-foreground">
-              TSV形式（タブ区切り）またはCSV形式（カンマ区切り）で座標を貼り付け
-            </p>
-          </div>
-          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-lg">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <div className="p-4">
-          <div className="mb-4">
-            <label className="block text-sm font-medium mb-2">
-              形式: 点番号, X座標, Y座標, Z座標（任意）
-            </label>
-            <div className="text-xs text-muted-foreground mb-2">
-              例:<br />
-              P1{'\t'}12345.678{'\t'}67890.123{'\t'}45.6<br />
-              P2{'\t'}12346.789{'\t'}67891.234{'\t'}46.7<br />
-              または X, Y のみ、X, Y, Z のみでも可
+          <div className="mt-4 p-3 bg-white rounded-lg border text-sm">
+            <h4 className="font-medium mb-2">直角座標法（座標法）</h4>
+            <div className="text-muted-foreground space-y-1">
+              <p>
+                <span className="font-mono">2S = Σ(Xi × Yi+1 - Xi+1 × Yi)</span>
+              </p>
+              <p>
+                <span className="font-mono">S = |2S| / 2 = |{sheet.total_double_area.toFixed(3)}| / 2 = {sheet.area_sqm.toFixed(3)} m²</span>
+              </p>
             </div>
-            <textarea
-              value={tsvData}
-              onChange={(e) => setTsvData(e.target.value)}
-              onPaste={handlePaste}
-              placeholder="ここにデータを貼り付け（Ctrl+V）"
-              className="w-full h-48 p-3 border rounded-lg font-mono text-sm resize-none"
-            />
-          </div>
-
-          <div className="flex justify-end gap-2">
-            <button
-              onClick={onClose}
-              className="px-4 py-2 text-sm border rounded-lg hover:bg-slate-50"
-            >
-              キャンセル
-            </button>
-            <button
-              onClick={handleImport}
-              disabled={!tsvData.trim()}
-              className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              インポート
-            </button>
           </div>
         </div>
       </div>
@@ -258,22 +146,20 @@ interface GenericWorkAreaPageProps {
 
 export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
   const [calculationSheet, setCalculationSheet] = useState<AreaCalculationSheetType | null>(null)
+  const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
   const [editingAreaId, setEditingAreaId] = useState<string | null>(null)
-  const [showTSVDialog, setShowTSVDialog] = useState(false)
-  const [tsvTargetAreaId, setTsvTargetAreaId] = useState<string | null>(null)
-  const [importMessage, setImportMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   const { currentFarm } = useFarmStore()
+  const { coordinates, fetchCoordinates } = useCoordinateStore()
   const {
     loading,
     fetchWorkAreas,
     addWorkArea,
     updateWorkArea,
     deleteWorkArea,
-    addPoint,
+    addPointFromCoordinate,
     removePoint,
     reorderPoints,
-    importPointsFromTSV,
     calculateArea,
     getWorkAreasByType,
   } = useWorkAreaStore()
@@ -282,11 +168,22 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
   useEffect(() => {
     if (currentFarm) {
       fetchWorkAreas(currentFarm.id)
+      fetchCoordinates(currentFarm.id)
     }
-  }, [currentFarm, fetchWorkAreas])
+  }, [currentFarm, fetchWorkAreas, fetchCoordinates])
 
   const areas = getWorkAreasByType(workType)
   const workTypeName = WORK_TYPE_NAMES[workType]
+
+  // 区域の構成点情報を座標一覧から取得
+  const getAreaPoints = (areaId: string): (WorkAreaPoint & { coord?: CoordinateRow })[] => {
+    const area = areas.find(a => a.id === areaId)
+    if (!area) return []
+    return area.points.map(p => ({
+      ...p,
+      coord: coordinates.find(c => c.id === p.id),
+    }))
+  }
 
   const handleAddArea = async () => {
     const newArea = await addWorkArea(workType)
@@ -329,52 +226,17 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
     reorderPoints(areaId, newPointIds)
   }
 
-  const handleOpenTSVDialog = (areaId: string) => {
-    setTsvTargetAreaId(areaId)
-    setShowTSVDialog(true)
-  }
+  // 点がクリックされたとき
+  const handlePointClick = (id: string) => {
+    setSelectedPointId(id)
 
-  const handleTSVImport = (tsv: string) => {
-    if (!tsvTargetAreaId) return
-
-    const result = importPointsFromTSV(tsvTargetAreaId, tsv)
-    if (result.success) {
-      setImportMessage({ type: 'success', text: `${result.count}点をインポートしました` })
-    } else {
-      setImportMessage({ type: 'error', text: result.error || 'インポートに失敗しました' })
-    }
-
-    setTimeout(() => setImportMessage(null), 3000)
-  }
-
-  const handleAddManualPoint = (areaId: string) => {
-    const area = areas.find(a => a.id === areaId)
-    if (!area) return
-
-    const pointNumber = `P${area.points.length + 1}`
-    addPoint(areaId, {
-      pointNumber,
-      x: 0,
-      y: 0,
-      z: null,
-    })
-  }
-
-  // 現在編集中の区域
-  const editingArea = editingAreaId ? areas.find(a => a.id === editingAreaId) : null
-
-  // 地図の中心座標を計算
-  const getMapCenter = (): [number, number] => {
-    if (editingArea && editingArea.points.length > 0) {
-      const validPoints = editingArea.points.filter(p => p.lat !== null && p.lng !== null)
-      if (validPoints.length > 0) {
-        const avgLat = validPoints.reduce((sum, p) => sum + p.lat!, 0) / validPoints.length
-        const avgLng = validPoints.reduce((sum, p) => sum + p.lng!, 0) / validPoints.length
-        return [avgLat, avgLng]
+    // 区域編集中なら、その区域に点を追加
+    if (editingAreaId) {
+      const coord = coordinates.find(c => c.id === id)
+      if (coord) {
+        addPointFromCoordinate(editingAreaId, coord.id, coord.pointNumber, coord.x, coord.y, coord.z)
       }
     }
-    // デフォルト位置（北海道中央部）
-    return [43.06, 141.35]
   }
 
   if (!currentFarm) {
@@ -393,27 +255,27 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
       <div className="p-4 border-b bg-white">
         <h1 className="text-xl font-bold">{workTypeName} - 工事区域</h1>
         <p className="text-sm text-muted-foreground">
-          {workTypeName}の工事区域を設定・面積計算
+          座標管理に登録した座標を使って{workTypeName}の工事区域を設定・面積計算
         </p>
       </div>
-
-      {/* インポートメッセージ */}
-      {importMessage && (
-        <div className={`px-4 py-2 text-sm ${importMessage.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
-          {importMessage.text}
-        </div>
-      )}
 
       {/* 区域編集中の案内 */}
       {editingAreaId && (
         <div className="px-4 py-2 bg-blue-50 border-b text-sm text-blue-700 flex items-center justify-between">
-          <span>区域編集中: 座標を追加・編集できます</span>
+          <span>区域編集中: 地図上の点をクリックして追加</span>
           <button
             onClick={() => setEditingAreaId(null)}
             className="px-2 py-1 text-xs bg-blue-100 hover:bg-blue-200 rounded"
           >
             編集終了
           </button>
+        </div>
+      )}
+
+      {/* 座標未登録の案内 */}
+      {coordinates.length === 0 && (
+        <div className="px-4 py-3 bg-amber-50 border-b text-sm text-amber-700">
+          座標が登録されていません。先に「座標管理」で座標を登録してください。
         </div>
       )}
 
@@ -424,8 +286,8 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
             <h3 className="text-lg font-semibold">区域登録</h3>
             <button
               onClick={handleAddArea}
-              disabled={loading}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50"
+              disabled={loading || coordinates.length === 0}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Plus className="h-4 w-4" />
               区域追加
@@ -440,6 +302,7 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
             <div className="flex-1 overflow-auto space-y-2">
               {areas.map((area) => {
                 const isEditing = editingAreaId === area.id
+                const areaPoints = getAreaPoints(area.id)
 
                 return (
                   <div
@@ -507,81 +370,44 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
                       </div>
                     </div>
 
-                    {/* 編集中の区域: 座標点リスト */}
+                    {/* 編集中の区域: 構成点リスト */}
                     {isEditing && (
                       <div className="border-t px-3 py-2 bg-slate-50">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs text-muted-foreground">
-                            構成点（ドラッグで順序変更）
-                          </span>
-                          <div className="flex gap-1">
-                            <button
-                              onClick={() => handleOpenTSVDialog(area.id)}
-                              className="flex items-center gap-1 px-2 py-1 text-xs bg-green-50 text-green-700 border border-green-200 rounded hover:bg-green-100"
-                              title="TSV/CSVから貼り付け"
-                            >
-                              <Clipboard className="h-3 w-3" />
-                              貼り付け
-                            </button>
-                            <button
-                              onClick={() => handleAddManualPoint(area.id)}
-                              className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100"
-                            >
-                              <Plus className="h-3 w-3" />
-                              点追加
-                            </button>
-                          </div>
+                        <div className="text-xs text-muted-foreground mb-2">
+                          構成点（地図上の点をクリックして追加、ドラッグで順序変更）
                         </div>
-
-                        {area.points.length === 0 ? (
+                        {areaPoints.length === 0 ? (
                           <div className="py-4 text-center text-sm text-muted-foreground border border-dashed rounded">
-                            「貼り付け」または「点追加」で座標を追加
+                            点を選択してください
                           </div>
                         ) : (
-                          <div className="max-h-64 overflow-auto">
-                            <table className="w-full text-xs">
-                              <thead className="bg-slate-100 sticky top-0">
-                                <tr>
-                                  <th className="w-6 px-1 py-1"></th>
-                                  <th className="px-2 py-1 text-left">点番号</th>
-                                  <th className="px-2 py-1 text-right">X</th>
-                                  <th className="px-2 py-1 text-right">Y</th>
-                                  <th className="px-2 py-1 text-right">Z</th>
-                                  <th className="w-6 px-1 py-1"></th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {area.points.map((point, index) => (
-                                  <tr
-                                    key={point.id}
-                                    draggable
-                                    onDragStart={(e) => handleDragStart(e, point.id)}
-                                    onDragOver={handleDragOver}
-                                    onDrop={(e) => handleDrop(e, area.id, index)}
-                                    className="hover:bg-slate-100 cursor-move"
-                                  >
-                                    <td className="px-1 py-1 text-muted-foreground">
-                                      <GripVertical className="h-3 w-3" />
-                                    </td>
-                                    <td className="px-2 py-1 font-medium">{point.pointNumber}</td>
-                                    <td className="px-2 py-1 text-right font-mono">{point.x.toFixed(3)}</td>
-                                    <td className="px-2 py-1 text-right font-mono">{point.y.toFixed(3)}</td>
-                                    <td className="px-2 py-1 text-right font-mono">
-                                      {point.z !== null ? point.z.toFixed(3) : '-'}
-                                    </td>
-                                    <td className="px-1 py-1">
-                                      <button
-                                        onClick={() => removePoint(area.id, point.id)}
-                                        className="p-0.5 text-red-500 hover:bg-red-50 rounded"
-                                      >
-                                        <Trash2 className="h-3 w-3" />
-                                      </button>
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
+                          <ul className="space-y-1">
+                            {areaPoints.map((point, index) => (
+                              <li
+                                key={point.id}
+                                draggable
+                                onDragStart={(e) => handleDragStart(e, point.id)}
+                                onDragOver={handleDragOver}
+                                onDrop={(e) => handleDrop(e, area.id, index)}
+                                className="flex items-center gap-2 px-2 py-1.5 text-sm bg-white border rounded cursor-move hover:bg-slate-50"
+                              >
+                                <GripVertical className="h-3.5 w-3.5 text-muted-foreground" />
+                                <span className="w-5 text-xs text-muted-foreground">
+                                  {index + 1}.
+                                </span>
+                                <span className="font-medium">{point.pointNumber}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  ({point.x.toFixed(1)}, {point.y.toFixed(1)})
+                                </span>
+                                <button
+                                  onClick={() => removePoint(area.id, point.id)}
+                                  className="ml-auto p-0.5 text-red-500 hover:bg-red-50 rounded"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
                         )}
 
                         {/* 面積情報 */}
@@ -614,54 +440,12 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
 
         {/* 右側: 地図 */}
         <div className="w-1/2 bg-slate-100">
-          <MapContainer
-            center={getMapCenter()}
-            zoom={13}
-            className="h-full w-full"
-          >
-            <TileLayer
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            />
-
-            {editingArea && editingArea.points.length > 0 && (
-              <FitBounds points={editingArea.points} />
-            )}
-
-            {/* 全区域のポリゴンを表示 */}
-            {areas.map((area) => {
-              const validPoints = area.points.filter(p => p.lat !== null && p.lng !== null)
-              if (validPoints.length < 3) return null
-
-              const positions = validPoints.map(p => [p.lat!, p.lng!] as [number, number])
-              const isEditing = area.id === editingAreaId
-
-              return (
-                <Polygon
-                  key={area.id}
-                  positions={positions}
-                  pathOptions={{
-                    color: isEditing ? '#3b82f6' : '#6b7280',
-                    fillColor: isEditing ? '#3b82f6' : '#6b7280',
-                    fillOpacity: isEditing ? 0.2 : 0.1,
-                    weight: isEditing ? 2 : 1,
-                  }}
-                />
-              )
-            })}
-
-            {/* 編集中の区域の点を表示 */}
-            {editingArea?.points.map((point) => {
-              if (point.lat === null || point.lng === null) return null
-              return (
-                <Marker
-                  key={point.id}
-                  position={[point.lat, point.lng]}
-                  icon={createMarkerIcon(false)}
-                />
-              )
-            })}
-          </MapContainer>
+          <CoordinateMap
+            selectedPointId={selectedPointId}
+            onPointSelect={handlePointClick}
+            showZonePolygons={false}
+            editingZoneId={null}
+          />
         </div>
       </div>
 
@@ -670,17 +454,6 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
         <AreaCalculationSheet
           sheet={calculationSheet}
           onClose={() => setCalculationSheet(null)}
-        />
-      )}
-
-      {/* TSV貼り付けダイアログ */}
-      {showTSVDialog && (
-        <TSVPasteDialog
-          onImport={handleTSVImport}
-          onClose={() => {
-            setShowTSVDialog(false)
-            setTsvTargetAreaId(null)
-          }}
         />
       )}
     </div>
