@@ -21,6 +21,15 @@ export interface FarmLocation {
   pointNumber: string
 }
 
+// 工事区域のポリゴン情報
+export interface WorkAreaPolygon {
+  id: string
+  farmId: string
+  workType: string
+  name: string
+  positions: [number, number][]
+}
+
 interface FarmState {
   // 圃場一覧
   farms: Farm[]
@@ -30,6 +39,9 @@ interface FarmState {
   // 圃場の位置情報（先頭座標）
   farmLocations: Map<string, FarmLocation>
 
+  // 工事区域ポリゴン
+  workAreaPolygons: WorkAreaPolygon[]
+
   // 現在の圃場
   currentFarm: Farm | null
   setCurrentFarm: (farm: Farm | null) => void
@@ -37,6 +49,7 @@ interface FarmState {
   // CRUD操作
   fetchFarms: (projectId?: string) => Promise<void>
   fetchFarmLocations: () => Promise<void>
+  fetchWorkAreaPolygons: () => Promise<void>
   createFarm: (projectId: string, name: string, description?: string, coordinateZone?: number) => Promise<Farm | null>
   updateFarm: (id: string, updates: Partial<Pick<Farm, 'name' | 'description' | 'coordinate_zone'>>) => Promise<void>
   deleteFarm: (id: string) => Promise<void>
@@ -48,6 +61,7 @@ export const useFarmStore = create<FarmState>((set, get) => ({
   error: null,
   currentFarm: null,
   farmLocations: new Map(),
+  workAreaPolygons: [],
 
   setCurrentFarm: (farm) => set({ currentFarm: farm }),
 
@@ -117,6 +131,87 @@ export const useFarmStore = create<FarmState>((set, get) => ({
       set({ farmLocations: locations })
     } catch (err) {
       console.error('位置情報の取得に失敗:', err)
+    }
+  },
+
+  fetchWorkAreaPolygons: async () => {
+    const { farms } = get()
+    if (farms.length === 0) {
+      set({ workAreaPolygons: [] })
+      return
+    }
+
+    try {
+      // 全圃場の工事区域を取得
+      const { data: areasData, error: areaError } = await supabase
+        .from('design_work_areas')
+        .select('id, farm_id, work_type, zone_number, name')
+        .in('farm_id', farms.map(f => f.id))
+
+      if (areaError) throw areaError
+
+      const areas = areasData as Array<{
+        id: string
+        farm_id: string
+        work_type: string
+        zone_number: string
+        name: string | null
+      }> | null
+
+      if (!areas || areas.length === 0) {
+        set({ workAreaPolygons: [] })
+        return
+      }
+
+      // 座標を取得
+      const { data: coordsData, error: coordError } = await supabase
+        .from('work_area_coordinates')
+        .select('id, work_area_id, x, y, sort_order')
+        .in('work_area_id', areas.map(a => a.id))
+        .order('sort_order')
+
+      if (coordError) throw coordError
+
+      const coords = coordsData as Array<{
+        id: string
+        work_area_id: string
+        x: number
+        y: number
+        sort_order: number
+      }> | null
+
+      // ポリゴンデータを生成
+      const polygons: WorkAreaPolygon[] = []
+
+      for (const area of areas) {
+        const farm = farms.find(f => f.id === area.farm_id)
+        if (!farm) continue
+
+        const areaCoords = (coords || [])
+          .filter(c => c.work_area_id === area.id)
+          .sort((a, b) => a.sort_order - b.sort_order)
+
+        if (areaCoords.length < 3) continue
+
+        const converter = new CoordinateConverter(farm.coordinate_zone)
+        const positions: [number, number][] = areaCoords.map(c => {
+          const { lat, lng } = converter.toLatLng(c.x, c.y)
+          return [lat, lng] as [number, number]
+        })
+
+        polygons.push({
+          id: area.id,
+          farmId: area.farm_id,
+          workType: area.work_type,
+          name: area.name || area.zone_number || '',
+          positions,
+        })
+      }
+
+      set({ workAreaPolygons: polygons })
+    } catch (err) {
+      console.error('工事区域ポリゴンの取得に失敗:', err)
+      set({ workAreaPolygons: [] })
     }
   },
 

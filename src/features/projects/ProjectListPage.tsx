@@ -16,13 +16,23 @@ import {
   UserPlus,
   UserMinus,
 } from 'lucide-react'
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, Polygon, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useFarmStore, type Farm, type FarmLocation } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { JGD2011_ZONES } from '@/lib/coordinates'
 import type { Project, ProjectMemberRole } from '@/types/database'
+
+// 工種ごとのポリゴン色
+const WORK_TYPE_COLORS: Record<string, string> = {
+  underdrain: '#3b82f6',     // 暗渠工事: 青
+  soil_import: '#f59e0b',    // 客土工事: オレンジ
+  simple_grading: '#8b5cf6', // 簡易整地: 紫
+  grading: '#10b981',        // 整地: 緑
+  subsoil: '#ec4899',        // 心破土改: ピンク
+  stone_removal: '#6b7280',  // 徐礫: グレー
+}
 
 // カスタムマーカーアイコン
 const createMarkerIcon = (isSelected: boolean = false): L.DivIcon => {
@@ -74,6 +84,8 @@ export function ProjectListPage() {
     deleteFarm,
     setCurrentFarm,
     farmLocations,
+    workAreaPolygons,
+    fetchWorkAreaPolygons,
   } = useFarmStore()
   const {
     projects,
@@ -123,6 +135,13 @@ export function ProjectListPage() {
     fetchProjects()
     fetchFarms()
   }, [fetchProjects, fetchFarms])
+
+  // 圃場が読み込まれたらポリゴンデータを取得
+  useEffect(() => {
+    if (farms.length > 0) {
+      fetchWorkAreaPolygons()
+    }
+  }, [farms, fetchWorkAreaPolygons])
 
   // 初期表示時に全プロジェクトを展開
   useEffect(() => {
@@ -518,6 +537,20 @@ export function ProjectListPage() {
               {selectedFarm && selectedFarmLocation && (
                 <FocusOnFarm location={selectedFarmLocation} />
               )}
+              {/* 工事区域ポリゴン */}
+              {workAreaPolygons.map((polygon) => (
+                <Polygon
+                  key={polygon.id}
+                  positions={polygon.positions}
+                  pathOptions={{
+                    color: WORK_TYPE_COLORS[polygon.workType] || '#22c55e',
+                    fillColor: WORK_TYPE_COLORS[polygon.workType] || '#22c55e',
+                    fillOpacity: 0.3,
+                    weight: 2,
+                  }}
+                />
+              ))}
+              {/* 圃場マーカー */}
               {farms.map((farm) => {
                 const location = farmLocations.get(farm.id)
                 if (!location) return null
