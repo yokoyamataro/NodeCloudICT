@@ -277,7 +277,14 @@ export const useFarmStore = create<FarmState>((set, get) => ({
   createFarm: async (projectId, name, description, coordinateZone = 6) => {
     set({ loading: true, error: null })
     try {
+      // 現在のユーザーIDを取得
+      const { data: { user }, error: userError } = await supabase.auth.getUser()
+      if (userError || !user) {
+        throw new Error('ユーザー認証情報を取得できませんでした')
+      }
+
       const insertData = {
+        user_id: user.id,
         project_id: projectId,
         name,
         description: description || null,
