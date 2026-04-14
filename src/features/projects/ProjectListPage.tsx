@@ -557,7 +557,7 @@ export function ProjectListPage() {
 
       {/* 地図表示ダイアログ */}
       {showMapDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000] p-4">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between p-4 border-b">
               <div>
@@ -619,7 +619,7 @@ export function ProjectListPage() {
 
       {/* 新規プロジェクトダイアログ */}
       {showNewProjectDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
             <h2 className="text-lg font-bold mb-4">新規プロジェクト</h2>
             <div className="space-y-4">
@@ -667,7 +667,7 @@ export function ProjectListPage() {
 
       {/* 新規圃場ダイアログ */}
       {showNewFarmDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
             <h2 className="text-lg font-bold mb-4">新規圃場</h2>
             <div className="space-y-4">
@@ -729,7 +729,7 @@ export function ProjectListPage() {
 
       {/* プロジェクト編集ダイアログ */}
       {editingProject && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-lg font-bold mb-4">プロジェクト編集</h2>
             <div className="space-y-4">
@@ -815,7 +815,7 @@ export function ProjectListPage() {
 
       {/* メンバー管理ダイアログ */}
       {showMemberDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-bold">メンバー管理</h2>
