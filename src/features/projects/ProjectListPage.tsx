@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Plus,
@@ -16,7 +16,7 @@ import {
   UserPlus,
   UserMinus,
 } from 'lucide-react'
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useFarmStore, type Farm, type FarmLocation } from '@/stores/farmStore'
@@ -39,6 +39,121 @@ const createMarkerIcon = (): L.DivIcon => {
     iconSize: [24, 24],
     iconAnchor: [12, 12],
   })
+}
+
+// 小さいマーカーアイコン（プロジェクト地図用）
+const createSmallMarkerIcon = (): L.DivIcon => {
+  return L.divIcon({
+    className: 'custom-marker-small',
+    html: `<div style="
+      background-color: #3b82f6;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 2px solid white;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+    "></div>`,
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+  })
+}
+
+// 地図の境界を自動調整するコンポーネント
+function FitBounds({ bounds }: { bounds: L.LatLngBoundsExpression }) {
+  const map = useMap()
+  useEffect(() => {
+    if (bounds) {
+      map.fitBounds(bounds, { padding: [20, 20], maxZoom: 15 })
+    }
+  }, [map, bounds])
+  return null
+}
+
+// プロジェクト地図コンポーネント
+function ProjectMap({
+  projectFarms,
+  farmLocations,
+  onFarmClick,
+}: {
+  projectFarms: Farm[]
+  farmLocations: Map<string, FarmLocation>
+  onFarmClick: (farm: Farm) => void
+}) {
+  // 位置情報があるフマーだけ取得
+  const farmsWithLocation = useMemo(() => {
+    return projectFarms.filter((farm) => farmLocations.has(farm.id))
+  }, [projectFarms, farmLocations])
+
+  // 境界を計算
+  const bounds = useMemo(() => {
+    if (farmsWithLocation.length === 0) return null
+    const locations = farmsWithLocation.map((farm) => farmLocations.get(farm.id)!)
+    const lats = locations.map((loc) => loc.lat)
+    const lngs = locations.map((loc) => loc.lng)
+    return L.latLngBounds(
+      [Math.min(...lats), Math.min(...lngs)],
+      [Math.max(...lats), Math.max(...lngs)]
+    )
+  }, [farmsWithLocation, farmLocations])
+
+  // 中心座標を計算
+  const center = useMemo(() => {
+    if (farmsWithLocation.length === 0) return null
+    const locations = farmsWithLocation.map((farm) => farmLocations.get(farm.id)!)
+    const avgLat = locations.reduce((sum, loc) => sum + loc.lat, 0) / locations.length
+    const avgLng = locations.reduce((sum, loc) => sum + loc.lng, 0) / locations.length
+    return { lat: avgLat, lng: avgLng }
+  }, [farmsWithLocation, farmLocations])
+
+  if (farmsWithLocation.length === 0 || !center) {
+    return (
+      <div className="h-48 bg-slate-100 flex items-center justify-center text-sm text-muted-foreground">
+        <MapPin className="h-4 w-4 mr-2" />
+        位置情報のある圃場がありません
+      </div>
+    )
+  }
+
+  return (
+    <div className="h-48 relative">
+      <MapContainer
+        center={[center.lat, center.lng]}
+        zoom={13}
+        className="h-full w-full"
+        scrollWheelZoom={false}
+        dragging={true}
+        touchZoom={true}
+      >
+        <TileLayer
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
+        {bounds && <FitBounds bounds={bounds} />}
+        {farmsWithLocation.map((farm) => {
+          const location = farmLocations.get(farm.id)!
+          return (
+            <Marker
+              key={farm.id}
+              position={[location.lat, location.lng]}
+              icon={createSmallMarkerIcon()}
+              eventHandlers={{
+                click: () => onFarmClick(farm),
+              }}
+            >
+              <Popup>
+                <div className="text-sm">
+                  <div className="font-bold">{farm.name}</div>
+                  {farm.description && (
+                    <div className="text-muted-foreground text-xs">{farm.description}</div>
+                  )}
+                </div>
+              </Popup>
+            </Marker>
+          )
+        })}
+      </MapContainer>
+    </div>
+  )
 }
 
 export function ProjectListPage() {
@@ -356,9 +471,21 @@ export function ProjectListPage() {
                 </div>
               </div>
 
-              {/* 圃場一覧 */}
+              {/* プロジェクト地図 + 圃場一覧 */}
               {isExpanded && (
                 <div className="border-t bg-slate-50/50">
+                  {/* プロジェクト地図 */}
+                  {projectFarms.length > 0 && (
+                    <div className="border-b">
+                      <ProjectMap
+                        projectFarms={projectFarms}
+                        farmLocations={farmLocations}
+                        onFarmClick={handleSelectFarm}
+                      />
+                    </div>
+                  )}
+
+                  {/* 圃場一覧 */}
                   {projectFarms.length === 0 ? (
                     <div className="p-6 text-center text-muted-foreground text-sm">
                       圃場がありません。「圃場追加」から作成してください。
