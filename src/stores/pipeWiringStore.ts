@@ -72,6 +72,93 @@ function createEmptyRow(): WiringRow {
   }
 }
 
+// 保存処理の共通ロジック（farmIdを指定して保存）
+async function saveWiringToDb(
+  farmId: string,
+  collectorTabs: CollectorTab[],
+  directRows: WiringRow[]
+): Promise<void> {
+  // 既存データを削除
+  const { error: deleteGroupError } = await supabase
+    .from('pipe_wiring_groups')
+    .delete()
+    .eq('farm_id', farmId)
+
+  if (deleteGroupError) throw deleteGroupError
+
+  // 集水暗渠タブを保存
+  for (let i = 0; i < collectorTabs.length; i++) {
+    const tab = collectorTabs[i]
+
+    // グループを挿入
+    const { data: groupData, error: groupError } = await supabase
+      .from('pipe_wiring_groups')
+      .insert({
+        farm_id: farmId,
+        group_type: 'collector',
+        name: tab.name,
+        sort_order: i,
+      } as never)
+      .select()
+      .single()
+
+    if (groupError) throw groupError
+
+    const groupId = (groupData as PipeWiringGroup).id
+
+    // 行を挿入
+    const rowsToInsert = tab.rows.map((row, rowIndex) => ({
+      group_id: groupId,
+      row_type: row.rowType,
+      absorption_pipe_ids: row.absorptionPipes,
+      collector_pipe_id: row.collectorPipe,
+      is_merge_pipe: row.isMergePipe,
+      sort_order: rowIndex,
+    }))
+
+    if (rowsToInsert.length > 0) {
+      const { error: rowError } = await supabase
+        .from('pipe_wiring_rows')
+        .insert(rowsToInsert as never)
+
+      if (rowError) throw rowError
+    }
+  }
+
+  // 直落暗渠を保存
+  const { data: directGroupData, error: directGroupError } = await supabase
+    .from('pipe_wiring_groups')
+    .insert({
+      farm_id: farmId,
+      group_type: 'direct',
+      name: '直落暗渠',
+      sort_order: collectorTabs.length,
+    } as never)
+    .select()
+    .single()
+
+  if (directGroupError) throw directGroupError
+
+  const directGroupId = (directGroupData as PipeWiringGroup).id
+
+  const directRowsToInsert = directRows.map((row, rowIndex) => ({
+    group_id: directGroupId,
+    row_type: row.rowType,
+    absorption_pipe_ids: row.absorptionPipes,
+    collector_pipe_id: row.collectorPipe,
+    is_merge_pipe: row.isMergePipe,
+    sort_order: rowIndex,
+  }))
+
+  if (directRowsToInsert.length > 0) {
+    const { error: directRowError } = await supabase
+      .from('pipe_wiring_rows')
+      .insert(directRowsToInsert as never)
+
+    if (directRowError) throw directRowError
+  }
+}
+
 export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
   collectorTabs: [
     {
@@ -142,9 +229,26 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
       return
     }
 
-    // 未保存の変更がある場合は警告（強制リロードの場合のみ）
+    // 強制リロードで未保存の変更がある場合は、まず保存を実行してから読み込む
     if (force && state.hasChanges) {
-      console.warn('[pipeWiringStore] Discarding unsaved changes due to force reload')
+      console.log('[pipeWiringStore] Saving unsaved changes before force reload')
+      // 現在のfarmIdを保存（保存時にloadedFarmIdを参照するため）
+      const currentLoadedFarmId = state.loadedFarmId
+      if (currentLoadedFarmId) {
+        set({ saving: true, error: null })
+        try {
+          await saveWiringToDb(currentLoadedFarmId, state.collectorTabs, state.directRows)
+          set({ saving: false, hasChanges: false })
+          console.log('[pipeWiringStore] Saved unsaved changes before force reload')
+        } catch (err) {
+          console.error('[pipeWiringStore] Failed to save before force reload:', err)
+          set({
+            error: err instanceof Error ? err.message : '管路設定の保存に失敗しました',
+            saving: false,
+          })
+          return // 保存に失敗した場合はフェッチを中止
+        }
+      }
     }
 
     set({ loading: true, error: null })
@@ -272,86 +376,7 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
     set({ saving: true, error: null })
 
     try {
-      // 既存データを削除
-      const { error: deleteGroupError } = await supabase
-        .from('pipe_wiring_groups')
-        .delete()
-        .eq('farm_id', farmId)
-
-      if (deleteGroupError) throw deleteGroupError
-
-      // 集水暗渠タブを保存
-      for (let i = 0; i < state.collectorTabs.length; i++) {
-        const tab = state.collectorTabs[i]
-
-        // グループを挿入
-        const { data: groupData, error: groupError } = await supabase
-          .from('pipe_wiring_groups')
-          .insert({
-            farm_id: farmId,
-            group_type: 'collector',
-            name: tab.name,
-            sort_order: i,
-          } as never)
-          .select()
-          .single()
-
-        if (groupError) throw groupError
-
-        const groupId = (groupData as PipeWiringGroup).id
-
-        // 行を挿入
-        const rowsToInsert = tab.rows.map((row, rowIndex) => ({
-          group_id: groupId,
-          row_type: row.rowType,
-          absorption_pipe_ids: row.absorptionPipes,
-          collector_pipe_id: row.collectorPipe,
-          is_merge_pipe: row.isMergePipe,
-          sort_order: rowIndex,
-        }))
-
-        if (rowsToInsert.length > 0) {
-          const { error: rowError } = await supabase
-            .from('pipe_wiring_rows')
-            .insert(rowsToInsert as never)
-
-          if (rowError) throw rowError
-        }
-      }
-
-      // 直落暗渠を保存
-      const { data: directGroupData, error: directGroupError } = await supabase
-        .from('pipe_wiring_groups')
-        .insert({
-          farm_id: farmId,
-          group_type: 'direct',
-          name: '直落暗渠',
-          sort_order: state.collectorTabs.length,
-        } as never)
-        .select()
-        .single()
-
-      if (directGroupError) throw directGroupError
-
-      const directGroupId = (directGroupData as PipeWiringGroup).id
-
-      const directRowsToInsert = state.directRows.map((row, rowIndex) => ({
-        group_id: directGroupId,
-        row_type: row.rowType,
-        absorption_pipe_ids: row.absorptionPipes,
-        collector_pipe_id: row.collectorPipe,
-        is_merge_pipe: row.isMergePipe,
-        sort_order: rowIndex,
-      }))
-
-      if (directRowsToInsert.length > 0) {
-        const { error: directRowError } = await supabase
-          .from('pipe_wiring_rows')
-          .insert(directRowsToInsert as never)
-
-        if (directRowError) throw directRowError
-      }
-
+      await saveWiringToDb(farmId, state.collectorTabs, state.directRows)
       set({ saving: false, hasChanges: false })
     } catch (err) {
       set({
