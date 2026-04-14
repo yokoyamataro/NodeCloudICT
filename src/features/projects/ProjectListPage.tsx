@@ -25,135 +25,42 @@ import { JGD2011_ZONES } from '@/lib/coordinates'
 import type { Project, ProjectMemberRole } from '@/types/database'
 
 // カスタムマーカーアイコン
-const createMarkerIcon = (): L.DivIcon => {
+const createMarkerIcon = (isSelected: boolean = false): L.DivIcon => {
   return L.divIcon({
     className: 'custom-marker',
     html: `<div style="
-      background-color: #ef4444;
-      width: 24px;
-      height: 24px;
+      background-color: ${isSelected ? '#ef4444' : '#3b82f6'};
+      width: ${isSelected ? 28 : 20}px;
+      height: ${isSelected ? 28 : 20}px;
       border-radius: 50%;
       border: 3px solid white;
       box-shadow: 0 2px 6px rgba(0,0,0,0.4);
     "></div>`,
-    iconSize: [24, 24],
-    iconAnchor: [12, 12],
-  })
-}
-
-// 小さいマーカーアイコン（プロジェクト地図用）
-const createSmallMarkerIcon = (): L.DivIcon => {
-  return L.divIcon({
-    className: 'custom-marker-small',
-    html: `<div style="
-      background-color: #3b82f6;
-      width: 16px;
-      height: 16px;
-      border-radius: 50%;
-      border: 2px solid white;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
-    "></div>`,
-    iconSize: [16, 16],
-    iconAnchor: [8, 8],
+    iconSize: [isSelected ? 28 : 20, isSelected ? 28 : 20],
+    iconAnchor: [isSelected ? 14 : 10, isSelected ? 14 : 10],
   })
 }
 
 // 地図の境界を自動調整するコンポーネント
-function FitBounds({ bounds }: { bounds: L.LatLngBoundsExpression }) {
+function FitBounds({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
   const map = useMap()
   useEffect(() => {
     if (bounds) {
-      map.fitBounds(bounds, { padding: [20, 20], maxZoom: 15 })
+      map.fitBounds(bounds, { padding: [30, 30], maxZoom: 15 })
     }
   }, [map, bounds])
   return null
 }
 
-// プロジェクト地図コンポーネント
-function ProjectMap({
-  projectFarms,
-  farmLocations,
-  onFarmClick,
-}: {
-  projectFarms: Farm[]
-  farmLocations: Map<string, FarmLocation>
-  onFarmClick: (farm: Farm) => void
-}) {
-  // 位置情報があるフマーだけ取得
-  const farmsWithLocation = useMemo(() => {
-    return projectFarms.filter((farm) => farmLocations.has(farm.id))
-  }, [projectFarms, farmLocations])
-
-  // 境界を計算
-  const bounds = useMemo(() => {
-    if (farmsWithLocation.length === 0) return null
-    const locations = farmsWithLocation.map((farm) => farmLocations.get(farm.id)!)
-    const lats = locations.map((loc) => loc.lat)
-    const lngs = locations.map((loc) => loc.lng)
-    return L.latLngBounds(
-      [Math.min(...lats), Math.min(...lngs)],
-      [Math.max(...lats), Math.max(...lngs)]
-    )
-  }, [farmsWithLocation, farmLocations])
-
-  // 中心座標を計算
-  const center = useMemo(() => {
-    if (farmsWithLocation.length === 0) return null
-    const locations = farmsWithLocation.map((farm) => farmLocations.get(farm.id)!)
-    const avgLat = locations.reduce((sum, loc) => sum + loc.lat, 0) / locations.length
-    const avgLng = locations.reduce((sum, loc) => sum + loc.lng, 0) / locations.length
-    return { lat: avgLat, lng: avgLng }
-  }, [farmsWithLocation, farmLocations])
-
-  if (farmsWithLocation.length === 0 || !center) {
-    return (
-      <div className="h-48 bg-slate-100 flex items-center justify-center text-sm text-muted-foreground">
-        <MapPin className="h-4 w-4 mr-2" />
-        位置情報のある圃場がありません
-      </div>
-    )
-  }
-
-  return (
-    <div className="h-48 relative">
-      <MapContainer
-        center={[center.lat, center.lng]}
-        zoom={13}
-        className="h-full w-full"
-        scrollWheelZoom={false}
-        dragging={true}
-        touchZoom={true}
-      >
-        <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
-        {bounds && <FitBounds bounds={bounds} />}
-        {farmsWithLocation.map((farm) => {
-          const location = farmLocations.get(farm.id)!
-          return (
-            <Marker
-              key={farm.id}
-              position={[location.lat, location.lng]}
-              icon={createSmallMarkerIcon()}
-              eventHandlers={{
-                click: () => onFarmClick(farm),
-              }}
-            >
-              <Popup>
-                <div className="text-sm">
-                  <div className="font-bold">{farm.name}</div>
-                  {farm.description && (
-                    <div className="text-muted-foreground text-xs">{farm.description}</div>
-                  )}
-                </div>
-              </Popup>
-            </Marker>
-          )
-        })}
-      </MapContainer>
-    </div>
-  )
+// 選択した圃場にフォーカス
+function FocusOnFarm({ location }: { location: { lat: number; lng: number } | null }) {
+  const map = useMap()
+  useEffect(() => {
+    if (location) {
+      map.setView([location.lat, location.lng], 16, { animate: true })
+    }
+  }, [map, location])
+  return null
 }
 
 export function ProjectListPage() {
@@ -185,6 +92,7 @@ export function ProjectListPage() {
   } = useProjectListStore()
 
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
+  const [selectedFarm, setSelectedFarm] = useState<Farm | null>(null)
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false)
   const [showNewFarmDialog, setShowNewFarmDialog] = useState<string | null>(null) // project_id
   const [newProjectName, setNewProjectName] = useState('')
@@ -223,6 +131,33 @@ export function ProjectListPage() {
     }
   }, [projects, expandedProjects.size])
 
+  // 全圃場の位置情報から地図の境界を計算
+  const allBounds = useMemo(() => {
+    const allLocations = Array.from(farmLocations.values())
+    if (allLocations.length === 0) return null
+    const lats = allLocations.map((loc) => loc.lat)
+    const lngs = allLocations.map((loc) => loc.lng)
+    return L.latLngBounds(
+      [Math.min(...lats), Math.min(...lngs)],
+      [Math.max(...lats), Math.max(...lngs)]
+    )
+  }, [farmLocations])
+
+  // 地図の中心
+  const mapCenter = useMemo(() => {
+    const allLocations = Array.from(farmLocations.values())
+    if (allLocations.length === 0) return { lat: 43.06, lng: 141.35 } // 北海道
+    const avgLat = allLocations.reduce((sum, loc) => sum + loc.lat, 0) / allLocations.length
+    const avgLng = allLocations.reduce((sum, loc) => sum + loc.lng, 0) / allLocations.length
+    return { lat: avgLat, lng: avgLng }
+  }, [farmLocations])
+
+  // 選択された圃場の位置
+  const selectedFarmLocation = useMemo(() => {
+    if (!selectedFarm) return null
+    return farmLocations.get(selectedFarm.id) || null
+  }, [selectedFarm, farmLocations])
+
   const toggleProject = (projectId: string) => {
     setExpandedProjects((prev) => {
       const newSet = new Set(prev)
@@ -244,7 +179,6 @@ export function ProjectListPage() {
       setShowNewProjectDialog(false)
       setNewProjectName('')
       setNewProjectDescription('')
-      // 新しいプロジェクトを展開
       setExpandedProjects((prev) => new Set([...prev, project.id]))
     }
   }
@@ -263,6 +197,10 @@ export function ProjectListPage() {
   }
 
   const handleSelectFarm = (farm: Farm) => {
+    setSelectedFarm(farm)
+  }
+
+  const handleOpenFarm = (farm: Farm) => {
     setCurrentFarm(farm)
     navigate('/coordinates')
   }
@@ -284,21 +222,16 @@ export function ProjectListPage() {
       }
     }
     await deleteProject(id)
-    fetchFarms() // 圃場一覧を再取得
+    fetchFarms()
   }
 
   const handleDeleteFarm = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
     if (confirm('この圃場を削除しますか？関連するすべてのデータが削除されます。')) {
       await deleteFarm(id)
-    }
-  }
-
-  const handleShowMap = (e: React.MouseEvent, farm: Farm) => {
-    e.stopPropagation()
-    const location = farmLocations.get(farm.id)
-    if (location) {
-      setShowMapDialog({ farm, location })
+      if (selectedFarm?.id === id) {
+        setSelectedFarm(null)
+      }
     }
   }
 
@@ -375,7 +308,7 @@ export function ProjectListPage() {
 
   if (loading && projects.length === 0) {
     return (
-      <div className="p-8 flex items-center justify-center">
+      <div className="h-full flex items-center justify-center">
         <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
         <span className="ml-2 text-muted-foreground">読み込み中...</span>
       </div>
@@ -383,173 +316,243 @@ export function ProjectListPage() {
   }
 
   return (
-    <div className="p-8">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold">プロジェクト一覧</h1>
-          <p className="text-muted-foreground">工事プロジェクトと圃場を管理</p>
-        </div>
-        <button
-          onClick={() => setShowNewProjectDialog(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
-        >
-          <Plus className="h-4 w-4" />
-          新規プロジェクト
-        </button>
-      </div>
-
+    <div className="h-full flex flex-col">
       {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-600">
+        <div className="p-3 bg-red-50 border-b border-red-200 text-sm text-red-600">
           {error}
         </div>
       )}
 
-      <div className="space-y-4">
-        {projects.map((project) => {
-          const projectFarms = getFarmsForProject(project.id)
-          const isExpanded = expandedProjects.has(project.id)
+      <div className="flex-1 flex overflow-hidden">
+        {/* 左側: プロジェクト・圃場ツリー */}
+        <div className="w-80 border-r bg-white flex flex-col overflow-hidden">
+          {/* ヘッダー */}
+          <div className="p-3 border-b flex items-center justify-between">
+            <span className="font-medium text-sm">プロジェクト</span>
+            <button
+              onClick={() => setShowNewProjectDialog(true)}
+              className="flex items-center gap-1 px-2 py-1 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90"
+            >
+              <Plus className="h-3 w-3" />
+              追加
+            </button>
+          </div>
 
-          return (
-            <div key={project.id} className="bg-white rounded-lg border">
-              {/* プロジェクトヘッダー */}
-              <div
-                onClick={() => toggleProject(project.id)}
-                className="flex items-center gap-3 p-4 cursor-pointer hover:bg-slate-50 transition-colors"
-              >
-                <button className="p-1 hover:bg-slate-200 rounded">
-                  {isExpanded ? (
-                    <ChevronDown className="h-5 w-5 text-slate-500" />
-                  ) : (
-                    <ChevronRight className="h-5 w-5 text-slate-500" />
-                  )}
-                </button>
-                <div className="p-2 bg-blue-100 rounded-lg">
-                  <Folder className="h-5 w-5 text-blue-600" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h2 className="font-semibold text-lg">{project.name}</h2>
-                  {project.description && (
-                    <p className="text-sm text-muted-foreground truncate">{project.description}</p>
-                  )}
-                  <div className="text-xs text-slate-500 mt-1">
-                    {projectFarms.length}件の圃場 •{' '}
-                    {new Date(project.created_at).toLocaleDateString('ja-JP')}作成
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setShowNewFarmDialog(project.id)
-                    }}
-                    className="flex items-center gap-1 px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
-                  >
-                    <Plus className="h-3 w-3" />
-                    圃場追加
-                  </button>
-                  <button
-                    onClick={(e) => handleOpenMemberDialog(e, project)}
-                    className="p-1.5 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded transition-colors"
-                    title="メンバー管理"
-                  >
-                    <Users className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={(e) => handleOpenEditDialog(e, project)}
-                    className="p-1.5 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded transition-colors"
-                    title="編集"
-                  >
-                    <Edit3 className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={(e) => handleDeleteProject(e, project.id)}
-                    className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
-                    title="削除"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
+          {/* ツリー表示 */}
+          <div className="flex-1 overflow-auto p-2">
+            {projects.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground text-sm">
+                プロジェクトがありません
               </div>
+            ) : (
+              <div className="space-y-1">
+                {projects.map((project) => {
+                  const projectFarms = getFarmsForProject(project.id)
+                  const isExpanded = expandedProjects.has(project.id)
 
-              {/* プロジェクト地図 + 圃場一覧 */}
-              {isExpanded && (
-                <div className="border-t bg-slate-50/50">
-                  {/* プロジェクト地図 */}
-                  {projectFarms.length > 0 && (
-                    <div className="border-b">
-                      <ProjectMap
-                        projectFarms={projectFarms}
-                        farmLocations={farmLocations}
-                        onFarmClick={handleSelectFarm}
-                      />
-                    </div>
-                  )}
-
-                  {/* 圃場一覧 */}
-                  {projectFarms.length === 0 ? (
-                    <div className="p-6 text-center text-muted-foreground text-sm">
-                      圃場がありません。「圃場追加」から作成してください。
-                    </div>
-                  ) : (
-                    <div className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                      {projectFarms.map((farm) => {
-                        const location = farmLocations.get(farm.id)
-                        return (
-                          <div
-                            key={farm.id}
-                            onClick={() => handleSelectFarm(farm)}
-                            className="block p-4 bg-white rounded-lg border hover:border-primary transition-colors cursor-pointer"
+                  return (
+                    <div key={project.id}>
+                      {/* プロジェクト行 */}
+                      <div className="flex items-center gap-1 group">
+                        <button
+                          onClick={() => toggleProject(project.id)}
+                          className="p-1 hover:bg-slate-100 rounded"
+                        >
+                          {isExpanded ? (
+                            <ChevronDown className="h-4 w-4 text-slate-500" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4 text-slate-500" />
+                          )}
+                        </button>
+                        <Folder className="h-4 w-4 text-blue-500 flex-shrink-0" />
+                        <span
+                          className="flex-1 text-sm truncate cursor-pointer hover:text-blue-600"
+                          onClick={() => toggleProject(project.id)}
+                          title={project.name}
+                        >
+                          {project.name}
+                        </span>
+                        <span className="text-xs text-muted-foreground mr-1">
+                          {projectFarms.length}
+                        </span>
+                        <div className="hidden group-hover:flex items-center">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setShowNewFarmDialog(project.id)
+                            }}
+                            className="p-1 text-green-600 hover:bg-green-50 rounded"
+                            title="圃場追加"
                           >
-                            <div className="flex items-start gap-3">
-                              <div className="p-1.5 bg-slate-100 rounded">
-                                <FolderOpen className="h-4 w-4 text-slate-600" />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <h3 className="font-medium truncate">{farm.name}</h3>
-                                <p className="text-xs text-muted-foreground truncate">
-                                  {farm.description || '説明なし'}
-                                </p>
-                                <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
-                                  <span>第{farm.coordinate_zone}系</span>
-                                  <span>•</span>
-                                  <span>{new Date(farm.created_at).toLocaleDateString('ja-JP')}</span>
-                                </div>
-                              </div>
-                              <div className="flex flex-col gap-1">
-                                {location && (
-                                  <button
-                                    onClick={(e) => handleShowMap(e, farm)}
-                                    className="p-1 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors"
-                                    title="地図で表示"
-                                  >
-                                    <MapPin className="h-3.5 w-3.5" />
-                                  </button>
-                                )}
-                                <button
-                                  onClick={(e) => handleDeleteFarm(e, farm.id)}
-                                  className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
-                                  title="削除"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
-                              </div>
+                            <Plus className="h-3 w-3" />
+                          </button>
+                          <button
+                            onClick={(e) => handleOpenMemberDialog(e, project)}
+                            className="p-1 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded"
+                            title="メンバー"
+                          >
+                            <Users className="h-3 w-3" />
+                          </button>
+                          <button
+                            onClick={(e) => handleOpenEditDialog(e, project)}
+                            className="p-1 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded"
+                            title="編集"
+                          >
+                            <Edit3 className="h-3 w-3" />
+                          </button>
+                          <button
+                            onClick={(e) => handleDeleteProject(e, project.id)}
+                            className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded"
+                            title="削除"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* 圃場一覧 */}
+                      {isExpanded && (
+                        <div className="ml-5 mt-1 space-y-0.5">
+                          {projectFarms.length === 0 ? (
+                            <div className="text-xs text-muted-foreground py-2 pl-5">
+                              圃場なし
                             </div>
-                          </div>
-                        )
-                      })}
+                          ) : (
+                            projectFarms.map((farm) => {
+                              const location = farmLocations.get(farm.id)
+                              const isSelected = selectedFarm?.id === farm.id
+
+                              return (
+                                <div
+                                  key={farm.id}
+                                  onClick={() => handleSelectFarm(farm)}
+                                  onDoubleClick={() => handleOpenFarm(farm)}
+                                  className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group ${
+                                    isSelected
+                                      ? 'bg-blue-100 text-blue-700'
+                                      : 'hover:bg-slate-100'
+                                  }`}
+                                >
+                                  <FolderOpen className={`h-4 w-4 flex-shrink-0 ${isSelected ? 'text-blue-600' : 'text-slate-400'}`} />
+                                  <span className="flex-1 text-sm truncate" title={farm.name}>
+                                    {farm.name}
+                                  </span>
+                                  {location && (
+                                    <MapPin className="h-3 w-3 text-slate-400 flex-shrink-0" />
+                                  )}
+                                  <div className="hidden group-hover:flex items-center">
+                                    <button
+                                      onClick={(e) => handleDeleteFarm(e, farm.id)}
+                                      className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded"
+                                      title="削除"
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                    </button>
+                                  </div>
+                                </div>
+                              )
+                            })
+                          )}
+                        </div>
+                      )}
                     </div>
-                  )}
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* 選択中の圃場情報 */}
+          {selectedFarm && (
+            <div className="border-t p-3 bg-slate-50">
+              <div className="text-xs text-muted-foreground mb-1">選択中</div>
+              <div className="font-medium text-sm truncate">{selectedFarm.name}</div>
+              {selectedFarm.description && (
+                <div className="text-xs text-muted-foreground truncate mt-0.5">
+                  {selectedFarm.description}
                 </div>
               )}
+              <div className="text-xs text-slate-500 mt-1">第{selectedFarm.coordinate_zone}系</div>
+              <div className="mt-2 flex gap-2">
+                <button
+                  onClick={() => handleOpenFarm(selectedFarm)}
+                  className="flex-1 px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90"
+                >
+                  開く
+                </button>
+                {selectedFarmLocation && (
+                  <button
+                    onClick={() => openGoogleMapsNavigation(selectedFarmLocation.lat, selectedFarmLocation.lng)}
+                    className="px-3 py-1.5 text-xs border rounded hover:bg-slate-100"
+                    title="Google Mapsで経路探索"
+                  >
+                    <Navigation className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
             </div>
-          )
-        })}
+          )}
+        </div>
 
-        {projects.length === 0 && (
-          <div className="text-center py-12 text-muted-foreground">
-            プロジェクトがありません。「新規プロジェクト」から作成してください。
-          </div>
-        )}
+        {/* 右側: 地図 */}
+        <div className="flex-1 bg-slate-100">
+          {farmLocations.size === 0 ? (
+            <div className="h-full flex items-center justify-center text-muted-foreground">
+              <div className="text-center">
+                <MapPin className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <p>位置情報のある圃場がありません</p>
+                <p className="text-sm mt-1">座標を登録すると地図に表示されます</p>
+              </div>
+            </div>
+          ) : (
+            <MapContainer
+              center={[mapCenter.lat, mapCenter.lng]}
+              zoom={10}
+              className="h-full w-full"
+            >
+              <TileLayer
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              />
+              {!selectedFarm && allBounds && <FitBounds bounds={allBounds} />}
+              {selectedFarm && selectedFarmLocation && (
+                <FocusOnFarm location={selectedFarmLocation} />
+              )}
+              {farms.map((farm) => {
+                const location = farmLocations.get(farm.id)
+                if (!location) return null
+                const isSelected = selectedFarm?.id === farm.id
+
+                return (
+                  <Marker
+                    key={farm.id}
+                    position={[location.lat, location.lng]}
+                    icon={createMarkerIcon(isSelected)}
+                    eventHandlers={{
+                      click: () => handleSelectFarm(farm),
+                      dblclick: () => handleOpenFarm(farm),
+                    }}
+                  >
+                    <Popup>
+                      <div className="text-sm">
+                        <div className="font-bold">{farm.name}</div>
+                        {farm.description && (
+                          <div className="text-muted-foreground text-xs">{farm.description}</div>
+                        )}
+                        <button
+                          onClick={() => handleOpenFarm(farm)}
+                          className="mt-2 px-3 py-1 text-xs bg-primary text-white rounded hover:bg-primary/90 w-full"
+                        >
+                          開く
+                        </button>
+                      </div>
+                    </Popup>
+                  </Marker>
+                )
+              })}
+            </MapContainer>
+          )}
+        </div>
       </div>
 
       {/* 地図表示ダイアログ */}
@@ -583,7 +586,7 @@ export function ProjectListPage() {
                 />
                 <Marker
                   position={[showMapDialog.location.lat, showMapDialog.location.lng]}
-                  icon={createMarkerIcon()}
+                  icon={createMarkerIcon(true)}
                 >
                   <Popup>
                     <div className="text-sm">
