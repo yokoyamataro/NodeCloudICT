@@ -187,10 +187,21 @@ export interface OrthoLayer {
   created_at: string
 }
 
+// NodeCloud-Design用プロジェクト
+export interface Project {
+  id: string
+  user_id: string
+  name: string
+  description: string | null
+  created_at: string
+  updated_at: string
+}
+
 // NodeCloud-Design用圃場
 export interface Farm {
   id: string
   user_id: string
+  project_id: string
   name: string
   description: string | null
   coordinate_zone: number
@@ -352,6 +363,11 @@ export interface Database {
   public: {
     Tables: {
       // NodeCloud-Design テーブル
+      projects: {
+        Row: Project
+        Insert: Omit<Project, 'id' | 'created_at' | 'updated_at'>
+        Update: Partial<Omit<Project, 'id' | 'created_at' | 'updated_at'>>
+      }
       farms: {
         Row: Farm
         Insert: Omit<Farm, 'id' | 'created_at' | 'updated_at'>

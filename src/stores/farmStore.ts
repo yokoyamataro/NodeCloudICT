@@ -5,6 +5,7 @@ import { CoordinateConverter } from '@/lib/coordinates'
 export interface Farm {
   id: string
   user_id: string
+  project_id: string
   name: string
   description: string | null
   coordinate_zone: number
@@ -34,9 +35,9 @@ interface FarmState {
   setCurrentFarm: (farm: Farm | null) => void
 
   // CRUD操作
-  fetchFarms: () => Promise<void>
+  fetchFarms: (projectId?: string) => Promise<void>
   fetchFarmLocations: () => Promise<void>
-  createFarm: (name: string, description?: string, coordinateZone?: number) => Promise<Farm | null>
+  createFarm: (projectId: string, name: string, description?: string, coordinateZone?: number) => Promise<Farm | null>
   updateFarm: (id: string, updates: Partial<Pick<Farm, 'name' | 'description' | 'coordinate_zone'>>) => Promise<void>
   deleteFarm: (id: string) => Promise<void>
 }
@@ -50,13 +51,19 @@ export const useFarmStore = create<FarmState>((set, get) => ({
 
   setCurrentFarm: (farm) => set({ currentFarm: farm }),
 
-  fetchFarms: async () => {
+  fetchFarms: async (projectId?: string) => {
     set({ loading: true, error: null })
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('farms')
         .select('*')
         .order('updated_at', { ascending: false })
+
+      if (projectId) {
+        query = query.eq('project_id', projectId)
+      }
+
+      const { data, error } = await query
 
       if (error) throw error
       set({ farms: data || [], loading: false })
@@ -113,7 +120,7 @@ export const useFarmStore = create<FarmState>((set, get) => ({
     }
   },
 
-  createFarm: async (name, description, coordinateZone = 6) => {
+  createFarm: async (projectId, name, description, coordinateZone = 6) => {
     set({ loading: true, error: null })
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -121,6 +128,7 @@ export const useFarmStore = create<FarmState>((set, get) => ({
 
       const insertData = {
         user_id: user.id,
+        project_id: projectId,
         name,
         description: description || null,
         coordinate_zone: coordinateZone,
