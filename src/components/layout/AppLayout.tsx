@@ -26,6 +26,10 @@ import {
   CloudOff,
   Cloud,
   Loader2,
+  Layers,
+  Mountain,
+  Shovel,
+  Gem,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
@@ -66,6 +70,38 @@ const navigation: NavGroup[] = [
       { name: 'LandXML出力', href: '/underdrain/landxml', icon: FileOutput },
       { name: '現場データ', href: '/underdrain/field-data', icon: Eye },
       { name: '帳票作成', href: '/underdrain/reports', icon: FileText },
+    ],
+  },
+  {
+    name: '客土工事',
+    href: '/soil-import',
+    icon: Layers,
+    children: [
+      { name: '工事区域', href: '/soil-import/work-area', icon: Square },
+    ],
+  },
+  {
+    name: '簡易整地',
+    href: '/simple-grading',
+    icon: Mountain,
+    children: [
+      { name: '工事区域', href: '/simple-grading/work-area', icon: Square },
+    ],
+  },
+  {
+    name: '心破土改',
+    href: '/subsoil',
+    icon: Shovel,
+    children: [
+      { name: '工事区域', href: '/subsoil/work-area', icon: Square },
+    ],
+  },
+  {
+    name: '徐礫',
+    href: '/stone-removal',
+    icon: Gem,
+    children: [
+      { name: '工事区域', href: '/stone-removal/work-area', icon: Square },
     ],
   },
   { name: '水理計算', href: '/hydraulics', icon: Calculator },

@@ -4,6 +4,7 @@ import { AppLayout } from '@/components/layout/AppLayout'
 import { LoginPage } from '@/features/auth/LoginPage'
 import { ProjectListPage } from '@/features/projects/ProjectListPage'
 import { CoordinatesPage } from '@/features/coordinates/CoordinatesPage'
+// 暗渠工事
 import { WorkAreaPage } from '@/features/underdrain/WorkAreaPage'
 import { CadAnalysisPage } from '@/features/underdrain/CadAnalysisPage'
 import { PipeCoordinateCalcPage } from '@/features/underdrain/PipeCoordinateCalcPage'
@@ -11,6 +12,12 @@ import { SurveyImportPage } from '@/features/underdrain/SurveyImportPage'
 import { PipeWiringPage } from '@/features/underdrain/PipeWiringPage'
 import { DepthCalcPage } from '@/features/underdrain/DepthCalcPage'
 import { LandXMLPage } from '@/features/underdrain/LandXMLPage'
+// 新規工種
+import { SoilImportWorkAreaPage } from '@/features/soil-import/SoilImportWorkAreaPage'
+import { SimpleGradingWorkAreaPage } from '@/features/simple-grading/SimpleGradingWorkAreaPage'
+import { SubsoilWorkAreaPage } from '@/features/subsoil/SubsoilWorkAreaPage'
+import { StoneRemovalWorkAreaPage } from '@/features/stone-removal/StoneRemovalWorkAreaPage'
+// モバイル
 import { MobileFarmMapPage } from '@/features/mobile/MobileProjectMapPage'
 import { Loader2 } from 'lucide-react'
 
@@ -88,6 +95,22 @@ function AppRoutes() {
           <Route path="landxml" element={<LandXMLPage />} />
           <Route path="field-data" element={<PlaceholderPage title="現場データ" />} />
           <Route path="reports" element={<PlaceholderPage title="帳票作成" />} />
+        </Route>
+        {/* 客土工事 */}
+        <Route path="soil-import">
+          <Route path="work-area" element={<SoilImportWorkAreaPage />} />
+        </Route>
+        {/* 簡易整地 */}
+        <Route path="simple-grading">
+          <Route path="work-area" element={<SimpleGradingWorkAreaPage />} />
+        </Route>
+        {/* 心破土改 */}
+        <Route path="subsoil">
+          <Route path="work-area" element={<SubsoilWorkAreaPage />} />
+        </Route>
+        {/* 徐礫 */}
+        <Route path="stone-removal">
+          <Route path="work-area" element={<StoneRemovalWorkAreaPage />} />
         </Route>
         <Route path="hydraulics" element={<PlaceholderPage title="水理計算" />} />
         <Route path="settings" element={<PlaceholderPage title="設定" />} />

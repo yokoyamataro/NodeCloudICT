@@ -9,6 +9,23 @@ export type Json =
   | { [key: string]: Json | undefined }
   | Json[]
 
+// 工種タイプ
+export type WorkType =
+  | 'underdrain'     // 暗渠工事
+  | 'soil_import'    // 客土工事
+  | 'simple_grading' // 簡易整地
+  | 'subsoil'        // 心破土改
+  | 'stone_removal'  // 徐礫
+
+// 工種の表示名
+export const WORK_TYPE_NAMES: Record<WorkType, string> = {
+  underdrain: '暗渠工事',
+  soil_import: '客土工事',
+  simple_grading: '簡易整地',
+  subsoil: '心破土改',
+  stone_removal: '徐礫',
+}
+
 // 座標の種類
 export type CoordinateType = 'control' | 'boundary' | 'underdrain' | 'soil_import' | 'stake'
 
@@ -258,6 +275,35 @@ export interface DesignZone {
   area_ha: number | null
   perimeter_m: number | null
   notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+// 工種別工事区域
+export interface DesignWorkArea {
+  id: string
+  farm_id: string
+  work_type: WorkType
+  zone_number: string
+  name: string
+  point_ids: string[]       // 構成点IDリスト（順序付き）
+  area_sqm: number | null
+  area_ha: number | null
+  perimeter_m: number | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+// 工事区域に使用する座標点
+export interface WorkAreaCoordinate {
+  id: string
+  work_area_id: string
+  point_number: string
+  x: number
+  y: number
+  z: number | null
+  sort_order: number
   created_at: string
   updated_at: string
 }
