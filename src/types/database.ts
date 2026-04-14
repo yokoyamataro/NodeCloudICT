@@ -187,6 +187,9 @@ export interface OrthoLayer {
   created_at: string
 }
 
+// プロジェクトメンバーのロール
+export type ProjectMemberRole = 'owner' | 'editor' | 'viewer'
+
 // NodeCloud-Design用プロジェクト
 export interface Project {
   id: string
@@ -195,6 +198,18 @@ export interface Project {
   description: string | null
   created_at: string
   updated_at: string
+}
+
+// プロジェクトメンバー
+export interface ProjectMember {
+  id: string
+  project_id: string
+  user_id: string
+  role: ProjectMemberRole
+  created_at: string
+  updated_at: string
+  // JOINで取得する場合のユーザー情報（オプション）
+  email?: string
 }
 
 // NodeCloud-Design用圃場
@@ -367,6 +382,11 @@ export interface Database {
         Row: Project
         Insert: Omit<Project, 'id' | 'created_at' | 'updated_at'>
         Update: Partial<Omit<Project, 'id' | 'created_at' | 'updated_at'>>
+      }
+      project_members: {
+        Row: ProjectMember
+        Insert: Omit<ProjectMember, 'id' | 'created_at' | 'updated_at' | 'email'>
+        Update: Partial<Omit<ProjectMember, 'id' | 'created_at' | 'updated_at' | 'email'>>
       }
       farms: {
         Row: Farm

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
-import type { Project } from '@/types/database'
+import type { Project, ProjectMember, ProjectMemberRole } from '@/types/database'
 
 interface ProjectListState {
   projects: Project[]
@@ -8,16 +8,31 @@ interface ProjectListState {
   loading: boolean
   error: string | null
 
+  // メンバー管理
+  members: ProjectMember[]
+  membersLoading: boolean
+  currentUserRole: ProjectMemberRole | null
+
   // データ取得
   fetchProjects: () => Promise<void>
+  fetchMembers: (projectId: string) => Promise<void>
 
   // プロジェクト操作
   createProject: (name: string, description?: string) => Promise<Project | null>
   updateProject: (id: string, updates: Partial<Pick<Project, 'name' | 'description'>>) => Promise<void>
   deleteProject: (id: string) => Promise<void>
 
+  // メンバー操作
+  addMember: (projectId: string, email: string, role: ProjectMemberRole) => Promise<boolean>
+  updateMemberRole: (memberId: string, role: ProjectMemberRole) => Promise<void>
+  removeMember: (memberId: string) => Promise<void>
+
   // 選択
   setCurrentProject: (project: Project | null) => void
+
+  // 権限チェック
+  canEdit: () => boolean
+  canDelete: () => boolean
 }
 
 export const useProjectListStore = create<ProjectListState>()((set, get) => ({
@@ -25,6 +40,9 @@ export const useProjectListStore = create<ProjectListState>()((set, get) => ({
   currentProject: null,
   loading: false,
   error: null,
+  members: [],
+  membersLoading: false,
+  currentUserRole: null,
 
   fetchProjects: async () => {
     set({ loading: true, error: null })
@@ -42,6 +60,39 @@ export const useProjectListStore = create<ProjectListState>()((set, get) => ({
         error: err instanceof Error ? err.message : 'プロジェクトの取得に失敗しました',
         loading: false,
       })
+    }
+  },
+
+  fetchMembers: async (projectId: string) => {
+    set({ membersLoading: true })
+    try {
+      // メンバー一覧を取得（auth.usersへのJOINはRLSで制限されるため、別途処理）
+      const { data: membersData, error: membersError } = await supabase
+        .from('project_members')
+        .select('*')
+        .eq('project_id', projectId)
+        .order('created_at')
+
+      if (membersError) throw membersError
+
+      // 現在のユーザーIDを取得
+      const { data: userData } = await supabase.auth.getUser()
+      const currentUserId = userData.user?.id
+
+      const members = (membersData || []) as ProjectMember[]
+
+      // 現在のユーザーのロールを特定
+      const currentMember = members.find(m => m.user_id === currentUserId)
+      const currentUserRole = currentMember?.role ?? null
+
+      set({
+        members,
+        membersLoading: false,
+        currentUserRole,
+      })
+    } catch (err) {
+      console.error('メンバー取得エラー:', err)
+      set({ membersLoading: false })
     }
   },
 
@@ -123,7 +174,92 @@ export const useProjectListStore = create<ProjectListState>()((set, get) => ({
     }
   },
 
+  addMember: async (projectId, email, role) => {
+    try {
+      // メールアドレスからユーザーIDを取得するため、RPC関数を使用
+      // 注: セキュリティ上、auth.usersへの直接アクセスはできないため、
+      // RPC関数をSupabaseで作成する必要がある
+      const { data: userData, error: userError } = await supabase.rpc('get_user_id_by_email', {
+        user_email: email,
+      } as never)
+
+      if (userError || !userData) {
+        set({ error: 'ユーザーが見つかりません' })
+        return false
+      }
+
+      const { error } = await supabase.from('project_members').insert({
+        project_id: projectId,
+        user_id: userData,
+        role,
+      } as never)
+
+      if (error) {
+        if (error.code === '23505') {
+          set({ error: 'このユーザーは既にメンバーです' })
+        } else {
+          throw error
+        }
+        return false
+      }
+
+      // メンバー一覧を再取得
+      await get().fetchMembers(projectId)
+      return true
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : 'メンバーの追加に失敗しました' })
+      return false
+    }
+  },
+
+  updateMemberRole: async (memberId, role) => {
+    const state = get()
+    try {
+      const { error } = await supabase
+        .from('project_members')
+        .update({ role } as never)
+        .eq('id', memberId)
+
+      if (error) throw error
+
+      set({
+        members: state.members.map((m) => (m.id === memberId ? { ...m, role } : m)),
+      })
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : 'ロールの更新に失敗しました' })
+    }
+  },
+
+  removeMember: async (memberId) => {
+    const state = get()
+    try {
+      const { error } = await supabase.from('project_members').delete().eq('id', memberId)
+
+      if (error) throw error
+
+      set({
+        members: state.members.filter((m) => m.id !== memberId),
+      })
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : 'メンバーの削除に失敗しました' })
+    }
+  },
+
   setCurrentProject: (project) => {
-    set({ currentProject: project })
+    set({ currentProject: project, members: [], currentUserRole: null })
+    // プロジェクトが選択されたらメンバーも取得
+    if (project) {
+      get().fetchMembers(project.id)
+    }
+  },
+
+  canEdit: () => {
+    const { currentUserRole } = get()
+    return currentUserRole === 'owner' || currentUserRole === 'editor'
+  },
+
+  canDelete: () => {
+    const { currentUserRole } = get()
+    return currentUserRole === 'owner'
   },
 }))

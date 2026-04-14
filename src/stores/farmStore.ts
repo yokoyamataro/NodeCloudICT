@@ -123,11 +123,7 @@ export const useFarmStore = create<FarmState>((set, get) => ({
   createFarm: async (projectId, name, description, coordinateZone = 6) => {
     set({ loading: true, error: null })
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) throw new Error('ログインが必要です')
-
       const insertData = {
-        user_id: user.id,
         project_id: projectId,
         name,
         description: description || null,
