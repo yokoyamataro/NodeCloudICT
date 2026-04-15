@@ -40,10 +40,8 @@ export function PipeWiringPage() {
     setCollectorTabs,
     setDirectRows,
     fetchWiring,
-    saveWiring,
     loading: wiringLoading,
     saving: wiringSaving,
-    hasChanges,
   } = usePipeWiringStore()
   const { fetchPlan } = useConstructionPlanStore()
 
