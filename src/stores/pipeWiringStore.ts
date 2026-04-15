@@ -78,13 +78,21 @@ async function saveWiringToDb(
   collectorTabs: CollectorTab[],
   directRows: WiringRow[]
 ): Promise<void> {
+  console.log('[saveWiringToDb] Starting save for farmId:', farmId)
+  console.log('[saveWiringToDb] collectorTabs:', collectorTabs)
+  console.log('[saveWiringToDb] directRows:', directRows)
+
   // 既存データを削除
   const { error: deleteGroupError } = await supabase
     .from('pipe_wiring_groups')
     .delete()
     .eq('farm_id', farmId)
 
-  if (deleteGroupError) throw deleteGroupError
+  if (deleteGroupError) {
+    console.error('[saveWiringToDb] Delete error:', deleteGroupError)
+    throw deleteGroupError
+  }
+  console.log('[saveWiringToDb] Existing data deleted')
 
   // 集水暗渠タブを保存
   for (let i = 0; i < collectorTabs.length; i++) {
@@ -105,9 +113,15 @@ async function saveWiringToDb(
     if (groupError) throw groupError
 
     const groupId = (groupData as PipeWiringGroup).id
+    console.log('[saveWiringToDb] Created collector group:', groupId, tab.name)
 
-    // 行を挿入
-    const rowsToInsert = tab.rows.map((row, rowIndex) => ({
+    // 行を挿入（空の行をフィルタリング）
+    console.log('[saveWiringToDb] Tab rows before filter:', tab.rows)
+    const nonEmptyRows = tab.rows.filter(row =>
+      row.rowType || row.absorptionPipes.length > 0 || row.collectorPipe
+    )
+    console.log('[saveWiringToDb] Non-empty rows after filter:', nonEmptyRows)
+    const rowsToInsert = nonEmptyRows.map((row, rowIndex) => ({
       group_id: groupId,
       row_type: row.rowType,
       absorption_pipe_ids: row.absorptionPipes,
@@ -117,11 +131,15 @@ async function saveWiringToDb(
     }))
 
     if (rowsToInsert.length > 0) {
+      console.log('[saveWiringToDb] Inserting rows for collector group:', rowsToInsert.length)
       const { error: rowError } = await supabase
         .from('pipe_wiring_rows')
         .insert(rowsToInsert as never)
 
-      if (rowError) throw rowError
+      if (rowError) {
+        console.error('[saveWiringToDb] Row insert error:', rowError)
+        throw rowError
+      }
     }
   }
 
@@ -140,8 +158,13 @@ async function saveWiringToDb(
   if (directGroupError) throw directGroupError
 
   const directGroupId = (directGroupData as PipeWiringGroup).id
+  console.log('[saveWiringToDb] Created direct group:', directGroupId)
 
-  const directRowsToInsert = directRows.map((row, rowIndex) => ({
+  // 空の行をフィルタリング
+  const nonEmptyDirectRows = directRows.filter(row =>
+    row.rowType || row.absorptionPipes.length > 0 || row.collectorPipe
+  )
+  const directRowsToInsert = nonEmptyDirectRows.map((row, rowIndex) => ({
     group_id: directGroupId,
     row_type: row.rowType,
     absorption_pipe_ids: row.absorptionPipes,
@@ -151,12 +174,17 @@ async function saveWiringToDb(
   }))
 
   if (directRowsToInsert.length > 0) {
+    console.log('[saveWiringToDb] Inserting direct rows:', directRowsToInsert.length)
     const { error: directRowError } = await supabase
       .from('pipe_wiring_rows')
       .insert(directRowsToInsert as never)
 
-    if (directRowError) throw directRowError
+    if (directRowError) {
+      console.error('[saveWiringToDb] Direct row insert error:', directRowError)
+      throw directRowError
+    }
   }
+  console.log('[saveWiringToDb] Save completed successfully')
 }
 
 export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
@@ -177,12 +205,14 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
   setCollectorTabs: (updater) => {
     const state = get()
     const newTabs = typeof updater === 'function' ? updater(state.collectorTabs) : updater
+    console.log('[pipeWiringStore] setCollectorTabs called, setting hasChanges: true')
     set({ collectorTabs: newTabs, hasChanges: true })
   },
 
   setDirectRows: (updater) => {
     const state = get()
     const newRows = typeof updater === 'function' ? updater(state.directRows) : updater
+    console.log('[pipeWiringStore] setDirectRows called, setting hasChanges: true')
     set({ directRows: newRows, hasChanges: true })
   },
 
@@ -210,6 +240,7 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
 
   fetchWiring: async (farmId: string, force?: boolean) => {
     const state = get()
+    console.log('[pipeWiringStore] fetchWiring called', { farmId, force, loadedFarmId: state.loadedFarmId, hasChanges: state.hasChanges, saving: state.saving, loading: state.loading })
 
     // 保存中の場合はフェッチをスキップ（データ競合防止）
     if (state.saving) {
@@ -229,10 +260,18 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
       return
     }
 
+    // 未保存の変更がある場合はスキップ（強制リロードでない限り）
+    if (!force && state.hasChanges) {
+      console.log('[pipeWiringStore] Has unsaved changes, skipping fetch')
+      return
+    }
+
     // 強制リロードで未保存の変更がある場合は警告（自動保存しない）
     if (force && state.hasChanges) {
       console.log('[pipeWiringStore] Force reload requested but there are unsaved changes. They will be discarded.')
     }
+
+    console.log('[pipeWiringStore] Proceeding with fetch...')
 
     set({ loading: true, error: null })
     try {
@@ -357,11 +396,20 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
     }
 
     set({ saving: true, error: null })
+    console.log('[pipeWiringStore] Saving wiring data...', { farmId, tabCount: state.collectorTabs.length, directRowCount: state.directRows.length })
 
     try {
       await saveWiringToDb(farmId, state.collectorTabs, state.directRows)
+      console.log('[pipeWiringStore] Save completed successfully')
       set({ saving: false, hasChanges: false })
+
+      // 保存後にDBから再読み込みしてIDを同期
+      // loadedFarmIdをクリアして強制リロード
+      set({ loadedFarmId: null })
+      await get().fetchWiring(farmId)
+      console.log('[pipeWiringStore] Reloaded after save')
     } catch (err) {
+      console.error('[pipeWiringStore] Save failed:', err)
       set({
         error: err instanceof Error ? err.message : '管路設定の保存に失敗しました',
         saving: false,
