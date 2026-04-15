@@ -234,7 +234,7 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
     if (editingAreaId) {
       const coord = coordinates.find(c => c.id === id)
       if (coord) {
-        addPointFromCoordinate(editingAreaId, coord.id, coord.pointNumber, coord.x, coord.y, coord.z)
+        addPointFromCoordinate(editingAreaId, coord.pointNumber, coord.x, coord.y, coord.z)
       }
     }
   }

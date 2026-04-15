@@ -49,7 +49,7 @@ interface WorkAreaState {
   deleteWorkArea: (id: string) => Promise<void>
 
   // 座標点操作（座標管理の座標を選択して追加）
-  addPointFromCoordinate: (workAreaId: string, coordinateId: string, pointNumber: string, x: number, y: number, z: number | null) => void
+  addPointFromCoordinate: (workAreaId: string, pointNumber: string, x: number, y: number, z: number | null) => void
   removePoint: (workAreaId: string, pointId: string) => void
   reorderPoints: (workAreaId: string, pointIds: string[]) => void
 
@@ -281,7 +281,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
     }
   },
 
-  addPointFromCoordinate: (workAreaId, coordinateId, pointNumber, x, y, z) => {
+  addPointFromCoordinate: (workAreaId, pointNumber, x, y, z) => {
     const zone = getCurrentZone()
     const converter = new CoordinateConverter(zone)
     let lat: number | null = null
@@ -292,14 +292,15 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
       lng = result.lng
     }
 
-    // 座標IDをそのまま使用（重複追加を防ぐため）
     const area = get().getWorkAreaById(workAreaId)
     if (!area) return
 
-    // 既に追加されている場合はスキップ
-    if (area.points.some(p => p.id === coordinateId)) return
+    // 同じ座標点番号が既に追加されている場合はスキップ
+    if (area.points.some(p => p.pointNumber === pointNumber)) return
 
     const sortOrder = area.points.length
+    // 新しいIDを生成（座標IDとは別にwork_area_coordinates用のID）
+    const newPointId = crypto.randomUUID()
 
     set((state) => {
       const newMap = new Map(state.workAreas)
@@ -309,7 +310,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
           const updatedAreas = [...areas]
           const areaToUpdate = { ...updatedAreas[index] }
           const newPoint: WorkAreaPoint = {
-            id: coordinateId, // 座標IDをそのまま使用
+            id: newPointId,
             pointNumber,
             x,
             y,
@@ -451,7 +452,6 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
 
       if (area.points.length > 0) {
         const insertData = area.points.map(p => ({
-          id: p.id,
           work_area_id: id,
           point_number: p.pointNumber,
           x: p.x,
