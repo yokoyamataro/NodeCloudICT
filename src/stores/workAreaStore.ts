@@ -36,6 +36,10 @@ interface WorkAreaState {
   loading: boolean
   error: string | null
 
+  // 変更追跡
+  hasChanges: boolean
+  pendingWorkAreaIds: Set<string>
+
   // データ取得
   fetchWorkAreas: (farmId: string) => Promise<void>
 
@@ -54,6 +58,8 @@ interface WorkAreaState {
 
   // 保存
   saveWorkArea: (id: string) => Promise<void>
+  saveAllWorkAreas: () => Promise<void>
+  resetWorkAreaChanges: () => void
 
   // 工種別の工事区域を取得
   getWorkAreasByType: (workType: WorkType) => WorkAreaRow[]
@@ -74,6 +80,8 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
   workAreas: new Map(),
   loading: false,
   error: null,
+  hasChanges: false,
+  pendingWorkAreaIds: new Set(),
 
   fetchWorkAreas: async (farmId: string) => {
     set({ loading: true, error: null })
@@ -234,7 +242,9 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
           break
         }
       }
-      return { workAreas: newMap }
+      const newPending = new Set(state.pendingWorkAreaIds)
+      newPending.add(id)
+      return { workAreas: newMap, hasChanges: true, pendingWorkAreaIds: newPending }
     })
     // 明示的にsaveWorkAreaを呼び出すまでSupabaseには保存しない
   },
@@ -314,7 +324,9 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
           break
         }
       }
-      return { workAreas: newMap }
+      const newPending = new Set(state.pendingWorkAreaIds)
+      newPending.add(workAreaId)
+      return { workAreas: newMap, hasChanges: true, pendingWorkAreaIds: newPending }
     })
     // 明示的にsaveWorkAreaを呼び出すまでSupabaseには保存しない
   },
@@ -335,7 +347,9 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
           break
         }
       }
-      return { workAreas: newMap }
+      const newPending = new Set(state.pendingWorkAreaIds)
+      newPending.add(workAreaId)
+      return { workAreas: newMap, hasChanges: true, pendingWorkAreaIds: newPending }
     })
     // 明示的にsaveWorkAreaを呼び出すまでSupabaseには保存しない
   },
@@ -360,7 +374,9 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
           break
         }
       }
-      return { workAreas: newMap }
+      const newPending = new Set(state.pendingWorkAreaIds)
+      newPending.add(workAreaId)
+      return { workAreas: newMap, hasChanges: true, pendingWorkAreaIds: newPending }
     })
     // 明示的にsaveWorkAreaを呼び出すまでSupabaseには保存しない
   },
@@ -400,7 +416,9 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
           break
         }
       }
-      return { workAreas: newMap }
+      const newPending = new Set(state.pendingWorkAreaIds)
+      newPending.add(workAreaId)
+      return { workAreas: newMap, hasChanges: true, pendingWorkAreaIds: newPending }
     })
     // 明示的にsaveWorkAreaを呼び出すまでSupabaseには保存しない
 
@@ -448,6 +466,24 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
       }
     } catch (err) {
       set({ error: err instanceof Error ? err.message : '保存に失敗しました' })
+    }
+  },
+
+  saveAllWorkAreas: async () => {
+    const state = get()
+    const pendingIds = Array.from(state.pendingWorkAreaIds)
+    for (const id of pendingIds) {
+      await get().saveWorkArea(id)
+    }
+    set({ hasChanges: false, pendingWorkAreaIds: new Set() })
+  },
+
+  resetWorkAreaChanges: () => {
+    // 変更フラグをリセット（データは再フェッチで復元）
+    const farmId = getCurrentFarmId()
+    set({ hasChanges: false, pendingWorkAreaIds: new Set() })
+    if (farmId) {
+      get().fetchWorkAreas(farmId)
     }
   },
 

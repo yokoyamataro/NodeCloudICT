@@ -35,6 +35,7 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { usePipeWiringStore } from '@/stores/pipeWiringStore'
+import { useWorkAreaStore } from '@/stores/workAreaStore'
 
 interface NavItem {
   name: string
@@ -126,10 +127,11 @@ export function AppLayout() {
   const { saveAllCoordinates, resetCoordinateChanges } = useCoordinateStore()
   const { saveAllPipes, resetPipeChanges } = useUnderdrainStore()
   const { saveWiring, hasChanges: hasWiringChanges } = usePipeWiringStore()
+  const { hasChanges: hasWorkAreaChanges, saveAllWorkAreas, resetWorkAreaChanges } = useWorkAreaStore()
   const [saving, setSaving] = useState(false)
 
-  // 未保存の変更があるか（配管系統も含む）
-  const hasAnyUnsavedChanges = hasUnsavedChanges || hasWiringChanges
+  // 未保存の変更があるか（配管系統・工事区域も含む）
+  const hasAnyUnsavedChanges = hasUnsavedChanges || hasWiringChanges || hasWorkAreaChanges
 
   const handleSignOut = async () => {
     if (hasAnyUnsavedChanges) {
@@ -149,6 +151,7 @@ export function AppLayout() {
         saveAllCoordinates(),
         saveAllPipes(),
         saveWiring(),
+        saveAllWorkAreas(),
       ])
     } finally {
       setSaving(false)
@@ -160,6 +163,7 @@ export function AppLayout() {
     if (confirm('未保存の変更を破棄しますか？')) {
       resetCoordinateChanges()
       resetPipeChanges()
+      resetWorkAreaChanges()
     }
   }
 
