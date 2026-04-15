@@ -22,8 +22,6 @@ import {
   User,
   Save,
   RotateCcw,
-  CloudOff,
-  Cloud,
   Loader2,
   Layers,
   Mountain,
@@ -124,7 +122,7 @@ export function AppLayout() {
   )
 
   // 設定ストア
-  const { saveMode, setSaveMode, hasUnsavedChanges } = useSettingsStore()
+  const { hasUnsavedChanges } = useSettingsStore()
   const { saveAllCoordinates, resetCoordinateChanges } = useCoordinateStore()
   const { saveAllPipes, resetPipeChanges } = useUnderdrainStore()
   const { saveWiring, hasChanges: hasWiringChanges } = usePipeWiringStore()
@@ -192,76 +190,40 @@ export function AppLayout() {
             <span className="text-xs text-slate-500">{__BUILD_TIME__}</span>
           </div>
 
-          {/* 保存モード切替 */}
+          {/* 保存ボタン */}
           <div className="mt-3 p-2 bg-slate-800 rounded-lg">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-slate-400">保存モード</span>
-              {saveMode === 'auto' ? (
-                <Cloud className="h-3.5 w-3.5 text-green-400" />
-              ) : (
-                <CloudOff className="h-3.5 w-3.5 text-yellow-400" />
-              )}
-            </div>
             <div className="flex gap-1">
               <button
-                onClick={() => setSaveMode('auto')}
+                onClick={handleSaveAll}
+                disabled={!hasAnyUnsavedChanges || saving}
                 className={cn(
-                  'flex-1 px-2 py-1 text-xs rounded transition-colors',
-                  saveMode === 'auto'
-                    ? 'bg-green-600 text-white'
-                    : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                  'flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs rounded transition-colors',
+                  hasAnyUnsavedChanges
+                    ? 'bg-blue-600 text-white hover:bg-blue-500'
+                    : 'bg-slate-700 text-slate-500 cursor-not-allowed'
                 )}
               >
-                自動
+                {saving ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Save className="h-3 w-3" />
+                )}
+                保存
               </button>
               <button
-                onClick={() => setSaveMode('manual')}
+                onClick={handleResetAll}
+                disabled={!hasAnyUnsavedChanges}
                 className={cn(
-                  'flex-1 px-2 py-1 text-xs rounded transition-colors',
-                  saveMode === 'manual'
-                    ? 'bg-yellow-600 text-white'
-                    : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                  'flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs rounded transition-colors',
+                  hasAnyUnsavedChanges
+                    ? 'bg-slate-600 text-white hover:bg-slate-500'
+                    : 'bg-slate-700 text-slate-500 cursor-not-allowed'
                 )}
               >
-                手動
+                <RotateCcw className="h-3 w-3" />
+                リセット
               </button>
             </div>
-
-            {/* 手動モード時の保存・リセットボタン */}
-            {saveMode === 'manual' && (
-              <div className="mt-2 flex gap-1">
-                <button
-                  onClick={handleSaveAll}
-                  disabled={!hasAnyUnsavedChanges || saving}
-                  className={cn(
-                    'flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs rounded transition-colors',
-                    hasAnyUnsavedChanges
-                      ? 'bg-blue-600 text-white hover:bg-blue-500'
-                      : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-                  )}
-                >
-                  {saving ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <Save className="h-3 w-3" />
-                  )}
-                  保存
-                </button>
-                <button
-                  onClick={handleResetAll}
-                  disabled={!hasAnyUnsavedChanges}
-                  className={cn(
-                    'flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs rounded transition-colors',
-                    hasAnyUnsavedChanges
-                      ? 'bg-slate-600 text-white hover:bg-slate-500'
-                      : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-                  )}
-                >
-                  <RotateCcw className="h-3 w-3" />
-                  リセット
-                </button>
-              </div>
-            )}
 
             {/* 未保存の変更インジケーター */}
             {hasAnyUnsavedChanges && (

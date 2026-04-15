@@ -229,26 +229,9 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
       return
     }
 
-    // 強制リロードで未保存の変更がある場合は、まず保存を実行してから読み込む
+    // 強制リロードで未保存の変更がある場合は警告（自動保存しない）
     if (force && state.hasChanges) {
-      console.log('[pipeWiringStore] Saving unsaved changes before force reload')
-      // 現在のfarmIdを保存（保存時にloadedFarmIdを参照するため）
-      const currentLoadedFarmId = state.loadedFarmId
-      if (currentLoadedFarmId) {
-        set({ saving: true, error: null })
-        try {
-          await saveWiringToDb(currentLoadedFarmId, state.collectorTabs, state.directRows)
-          set({ saving: false, hasChanges: false })
-          console.log('[pipeWiringStore] Saved unsaved changes before force reload')
-        } catch (err) {
-          console.error('[pipeWiringStore] Failed to save before force reload:', err)
-          set({
-            error: err instanceof Error ? err.message : '管路設定の保存に失敗しました',
-            saving: false,
-          })
-          return // 保存に失敗した場合はフェッチを中止
-        }
-      }
+      console.log('[pipeWiringStore] Force reload requested but there are unsaved changes. They will be discarded.')
     }
 
     set({ loading: true, error: null })

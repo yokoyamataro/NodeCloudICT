@@ -236,21 +236,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
       }
       return { workAreas: newMap }
     })
-
-    // Supabaseに同期
-    ;(async () => {
-      const updateData: Record<string, unknown> = {}
-      if (updates.zoneNumber !== undefined) updateData.zone_number = updates.zoneNumber
-      if (updates.name !== undefined) updateData.name = updates.name
-      if (updates.notes !== undefined) updateData.notes = updates.notes
-
-      if (Object.keys(updateData).length > 0) {
-        await supabase
-          .from('design_work_areas')
-          .update(updateData as never)
-          .eq('id', id)
-      }
-    })()
+    // 明示的にsaveWorkAreaを呼び出すまでSupabaseには保存しない
   },
 
   deleteWorkArea: async (id) => {
@@ -330,21 +316,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
       }
       return { workAreas: newMap }
     })
-
-    // Supabaseに同期
-    ;(async () => {
-      await supabase
-        .from('work_area_coordinates')
-        .insert({
-          id: coordinateId,
-          work_area_id: workAreaId,
-          point_number: pointNumber,
-          x,
-          y,
-          z,
-          sort_order: sortOrder,
-        } as never)
-    })()
+    // 明示的にsaveWorkAreaを呼び出すまでSupabaseには保存しない
   },
 
   removePoint: (workAreaId, pointId) => {
@@ -365,14 +337,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
       }
       return { workAreas: newMap }
     })
-
-    // Supabaseに同期
-    ;(async () => {
-      await supabase
-        .from('work_area_coordinates')
-        .delete()
-        .eq('id', pointId)
-    })()
+    // 明示的にsaveWorkAreaを呼び出すまでSupabaseには保存しない
   },
 
   reorderPoints: (workAreaId, pointIds) => {
@@ -397,16 +362,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
       }
       return { workAreas: newMap }
     })
-
-    // Supabaseに同期
-    ;(async () => {
-      for (let i = 0; i < pointIds.length; i++) {
-        await supabase
-          .from('work_area_coordinates')
-          .update({ sort_order: i } as never)
-          .eq('id', pointIds[i])
-      }
-    })()
+    // 明示的にsaveWorkAreaを呼び出すまでSupabaseには保存しない
   },
 
   calculateArea: (workAreaId) => {
@@ -446,18 +402,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
       }
       return { workAreas: newMap }
     })
-
-    // Supabaseに同期
-    ;(async () => {
-      await supabase
-        .from('design_work_areas')
-        .update({
-          area_sqm: sheet.area_sqm,
-          area_ha: sheet.area_ha,
-          perimeter_m: sheet.perimeter_m,
-        } as never)
-        .eq('id', workAreaId)
-    })()
+    // 明示的にsaveWorkAreaを呼び出すまでSupabaseには保存しない
 
     return sheet
   },

@@ -53,10 +53,6 @@ export function PipeWiringPage() {
   // プロジェクト選択時にデータを読み込む
   useEffect(() => {
     if (currentFarm) {
-      // 圃場が変更された場合、先に未保存の変更を保存
-      if (prevFarmIdRef.current && prevFarmIdRef.current !== currentFarm.id && hasChangesRef.current) {
-        saveWiringRef.current()
-      }
       prevFarmIdRef.current = currentFarm.id
 
       fetchPipes(currentFarm.id)
@@ -65,38 +61,6 @@ export function PipeWiringPage() {
       fetchPlan(currentFarm.id)
     }
   }, [currentFarm, fetchPipes, fetchCoordinates, fetchWiring, fetchPlan])
-
-  // 最新の状態を参照するためのref（アンマウント時の保存用）
-  const hasChangesRef = useRef(hasChanges)
-  const saveWiringRef = useRef(saveWiring)
-
-  // refを最新の値に更新
-  useEffect(() => {
-    hasChangesRef.current = hasChanges
-    saveWiringRef.current = saveWiring
-  }, [hasChanges, saveWiring])
-
-  // 変更があった場合に自動保存（デバウンス付き）
-  // 注意: collectorTabs/directRowsを依存配列に入れると、fetchWiring後にも発火するため、hasChangesのみを監視
-  useEffect(() => {
-    if (!hasChanges || wiringSaving || wiringLoading) return
-
-    const timeoutId = setTimeout(() => {
-      saveWiring()
-    }, 1000) // 1秒後に保存（操作中の頻繁な保存を防ぐ）
-
-    return () => clearTimeout(timeoutId)
-  }, [hasChanges, wiringSaving, wiringLoading, saveWiring])
-
-  // ページ離脱時に未保存の変更を保存
-  useEffect(() => {
-    return () => {
-      // アンマウント時に未保存の変更があれば即座に保存
-      if (hasChangesRef.current) {
-        saveWiringRef.current()
-      }
-    }
-  }, [])
 
   // タブ管理
   const [activeTabType, setActiveTabType] = useState<TabType>('collector')

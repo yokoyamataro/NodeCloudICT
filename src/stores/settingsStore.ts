@@ -16,7 +16,7 @@ interface SettingsState {
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
-      saveMode: 'auto',
+      saveMode: 'manual',
       setSaveMode: (mode) => set({ saveMode: mode }),
 
       hasUnsavedChanges: false,
