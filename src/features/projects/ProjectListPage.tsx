@@ -16,7 +16,7 @@ import {
   UserPlus,
   UserMinus,
 } from 'lucide-react'
-import { MapContainer, TileLayer, Marker, Popup, Polygon, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useFarmStore, type Farm, type FarmLocation } from '@/stores/farmStore'
@@ -33,6 +33,19 @@ const WORK_TYPE_COLORS: Record<string, string> = {
   subsoil: '#ec4899',        // 心破土改: ピンク
   stone_removal: '#6b7280',  // 徐礫: グレー
 }
+
+// 工種名
+const WORK_TYPE_NAMES: Record<string, string> = {
+  underdrain: '暗渠',
+  soil_import: '客土',
+  simple_grading: '簡易整地',
+  grading: '整地',
+  subsoil: '心土破砕',
+  stone_removal: '除礫',
+}
+
+// 全工種リスト
+const ALL_WORK_TYPES = ['underdrain', 'soil_import', 'simple_grading', 'grading', 'subsoil', 'stone_removal'] as const
 
 // カスタムマーカーアイコン
 const createMarkerIcon = (isSelected: boolean = false): L.DivIcon => {
@@ -106,6 +119,9 @@ export function ProjectListPage() {
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
   const [selectedFarm, setSelectedFarm] = useState<Farm | null>(null)
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false)
+
+  // 工種フィルター（表示する工種のSet）
+  const [visibleWorkTypes, setVisibleWorkTypes] = useState<Set<string>>(new Set(ALL_WORK_TYPES))
   const [showNewFarmDialog, setShowNewFarmDialog] = useState<string | null>(null) // project_id
   const [newProjectName, setNewProjectName] = useState('')
   const [newProjectDescription, setNewProjectDescription] = useState('')
@@ -178,6 +194,56 @@ export function ProjectListPage() {
     if (!selectedFarm) return null
     return farmLocations.get(selectedFarm.id) || null
   }, [selectedFarm, farmLocations])
+
+  // フィルタリングされたポリゴン
+  const filteredPolygons = useMemo(() => {
+    return workAreaPolygons.filter(p => visibleWorkTypes.has(p.workType))
+  }, [workAreaPolygons, visibleWorkTypes])
+
+  // 圃場ごとの工種別面積を計算（ポップアップ用）
+  const farmWorkAreaSummary = useMemo(() => {
+    const summary: Record<string, Record<string, number>> = {}
+    for (const polygon of workAreaPolygons) {
+      if (!summary[polygon.farmId]) {
+        summary[polygon.farmId] = {}
+      }
+      // ポリゴンの面積を計算（簡易計算：ラジアンベースの球面幾何）
+      const positions = polygon.positions
+      if (positions.length >= 3) {
+        // Shoelace公式で面積計算（緯度経度から概算）
+        let area = 0
+        for (let i = 0; i < positions.length; i++) {
+          const [lat1, lng1] = positions[i]
+          const [lat2, lng2] = positions[(i + 1) % positions.length]
+          area += lng1 * lat2 - lng2 * lat1
+        }
+        area = Math.abs(area) / 2
+        // 緯度経度から平方メートルに変換（北海道付近の概算係数）
+        const metersPerDegree = 111000 // 緯度1度 ≈ 111km
+        const areaM2 = area * metersPerDegree * metersPerDegree * Math.cos((positions[0][0] * Math.PI) / 180)
+        const areaHa = areaM2 / 10000
+
+        if (!summary[polygon.farmId][polygon.workType]) {
+          summary[polygon.farmId][polygon.workType] = 0
+        }
+        summary[polygon.farmId][polygon.workType] += areaHa
+      }
+    }
+    return summary
+  }, [workAreaPolygons])
+
+  // 工種フィルターの切り替え
+  const toggleWorkType = (workType: string) => {
+    setVisibleWorkTypes(prev => {
+      const next = new Set(prev)
+      if (next.has(workType)) {
+        next.delete(workType)
+      } else {
+        next.add(workType)
+      }
+      return next
+    })
+  }
 
   const toggleProject = (projectId: string) => {
     setExpandedProjects((prev) => {
@@ -524,9 +590,32 @@ export function ProjectListPage() {
         </div>
 
         {/* 右側: 地図 */}
-        <div className="flex-1 bg-slate-100">
+        <div className="flex-1 bg-slate-100 flex flex-col">
+          {/* 凡例（工種フィルター） */}
+          <div className="p-2 bg-white border-b flex flex-wrap gap-2 items-center">
+            <span className="text-xs text-muted-foreground mr-2">工種:</span>
+            {ALL_WORK_TYPES.map(workType => (
+              <label
+                key={workType}
+                className="flex items-center gap-1 cursor-pointer text-xs"
+              >
+                <input
+                  type="checkbox"
+                  checked={visibleWorkTypes.has(workType)}
+                  onChange={() => toggleWorkType(workType)}
+                  className="h-3 w-3"
+                />
+                <span
+                  className="w-3 h-3 rounded-sm"
+                  style={{ backgroundColor: WORK_TYPE_COLORS[workType] }}
+                />
+                <span>{WORK_TYPE_NAMES[workType]}</span>
+              </label>
+            ))}
+          </div>
+
           {farmLocations.size === 0 ? (
-            <div className="h-full flex items-center justify-center text-muted-foreground">
+            <div className="flex-1 flex items-center justify-center text-muted-foreground">
               <div className="text-center">
                 <MapPin className="h-12 w-12 mx-auto mb-4 opacity-50" />
                 <p>位置情報のある圃場がありません</p>
@@ -537,7 +626,7 @@ export function ProjectListPage() {
             <MapContainer
               center={[mapCenter.lat, mapCenter.lng]}
               zoom={10}
-              className="h-full w-full"
+              className="flex-1 w-full"
             >
               <TileLayer
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
@@ -547,8 +636,8 @@ export function ProjectListPage() {
               {selectedFarm && selectedFarmLocation && (
                 <FocusOnFarm location={selectedFarmLocation} />
               )}
-              {/* 工事区域ポリゴン */}
-              {workAreaPolygons.map((polygon) => (
+              {/* 工事区域ポリゴン（フィルタリング済み） */}
+              {filteredPolygons.map((polygon) => (
                 <Polygon
                   key={polygon.id}
                   positions={polygon.positions}
@@ -565,6 +654,7 @@ export function ProjectListPage() {
                 const location = farmLocations.get(farm.id)
                 if (!location) return null
                 const isSelected = selectedFarm?.id === farm.id
+                const areaSummary = farmWorkAreaSummary[farm.id] || {}
 
                 return (
                   <Marker
@@ -576,15 +666,38 @@ export function ProjectListPage() {
                       dblclick: () => handleOpenFarm(farm),
                     }}
                   >
+                    <Tooltip permanent direction="top" offset={[0, -15]} className="farm-label-tooltip">
+                      {farm.name}
+                    </Tooltip>
                     <Popup>
-                      <div className="text-sm">
-                        <div className="font-bold">{farm.name}</div>
+                      <div className="text-sm min-w-[180px]">
+                        <div className="font-bold text-base mb-2">{farm.name}</div>
                         {farm.description && (
-                          <div className="text-muted-foreground text-xs">{farm.description}</div>
+                          <div className="text-muted-foreground text-xs mb-2">{farm.description}</div>
+                        )}
+                        {/* 工種別面積 */}
+                        {Object.keys(areaSummary).length > 0 && (
+                          <div className="border-t pt-2 mb-2">
+                            <div className="text-xs font-semibold mb-1">施工面積</div>
+                            {ALL_WORK_TYPES.map(wt => {
+                              const area = areaSummary[wt]
+                              if (!area) return null
+                              return (
+                                <div key={wt} className="flex items-center gap-2 text-xs">
+                                  <span
+                                    className="w-2 h-2 rounded-sm flex-shrink-0"
+                                    style={{ backgroundColor: WORK_TYPE_COLORS[wt] }}
+                                  />
+                                  <span className="flex-1">{WORK_TYPE_NAMES[wt]}</span>
+                                  <span className="font-mono">{area.toFixed(2)} ha</span>
+                                </div>
+                              )
+                            })}
+                          </div>
                         )}
                         <button
                           onClick={() => handleOpenFarm(farm)}
-                          className="mt-2 px-3 py-1 text-xs bg-primary text-white rounded hover:bg-primary/90 w-full"
+                          className="mt-2 px-3 py-1.5 text-xs bg-primary text-white rounded hover:bg-primary/90 w-full"
                         >
                           開く
                         </button>

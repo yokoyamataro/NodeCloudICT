@@ -57,6 +57,23 @@ input[type="number"] {
   display: none !important;
 }
 
+/* 圃場名ラベル（プロジェクト一覧図） */
+.farm-label-tooltip {
+  background-color: rgba(255, 255, 255, 0.95) !important;
+  border: 1px solid #3b82f6 !important;
+  border-radius: 4px !important;
+  padding: 2px 6px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: #1e40af !important;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2) !important;
+  white-space: nowrap !important;
+}
+
+.farm-label-tooltip::before {
+  border-top-color: #3b82f6 !important;
+}
+
 /* カスタムマーカー（デフォルトのLeafletマーカースタイルを上書き） */
 .custom-marker {
   background: transparent !important;
