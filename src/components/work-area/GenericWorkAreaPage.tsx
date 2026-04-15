@@ -495,8 +495,6 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
           <CoordinateMap
             selectedPointId={selectedPointId}
             onPointSelect={handlePointClick}
-            showZonePolygons={false}
-            editingZoneId={null}
             externalPolygons={externalPolygons}
             editingExternalPolygonId={editingAreaId}
           />

@@ -510,7 +510,6 @@ export function CoordinatesPage() {
             <CoordinateMap
               selectedPointId={selectedPointId}
               onPointSelect={handlePointClick}
-              showZonePolygons={false}
               showLabels={showLabels}
               visibleTypes={visibleTypes}
               baseLayer={baseLayer}

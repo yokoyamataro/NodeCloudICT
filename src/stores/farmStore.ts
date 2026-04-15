@@ -225,69 +225,6 @@ export const useFarmStore = create<FarmState>((set, get) => ({
         }
       }
 
-      // 2. design_zones から暗渠の区域を取得
-      const { data: zonesData, error: zoneError } = await supabase
-        .from('design_zones')
-        .select('id, farm_id, zone_number, name, point_ids')
-        .in('farm_id', farms.map(f => f.id))
-
-      if (zoneError) throw zoneError
-
-      const zones = zonesData as Array<{
-        id: string
-        farm_id: string
-        zone_number: string
-        name: string | null
-        point_ids: string[] | null
-      }> | null
-
-      if (zones && zones.length > 0) {
-        // 各圃場の座標を取得
-        const { data: coordsData, error: coordError } = await supabase
-          .from('design_coordinates')
-          .select('id, farm_id, x, y')
-          .in('farm_id', farms.map(f => f.id))
-
-        if (coordError) throw coordError
-
-        const allCoords = coordsData as Array<{
-          id: string
-          farm_id: string
-          x: number
-          y: number
-        }> | null
-
-        for (const zone of zones) {
-          const farm = farms.find(f => f.id === zone.farm_id)
-          if (!farm) continue
-
-          const pointIds = zone.point_ids || []
-          if (pointIds.length < 3) continue
-
-          const farmCoords = (allCoords || []).filter(c => c.farm_id === farm.id)
-          const converter = new CoordinateConverter(farm.coordinate_zone)
-
-          const positions: [number, number][] = []
-          for (const pointId of pointIds) {
-            const coord = farmCoords.find(c => c.id === pointId)
-            if (coord) {
-              const { lat, lng } = converter.toLatLng(coord.x, coord.y)
-              positions.push([lat, lng])
-            }
-          }
-
-          if (positions.length < 3) continue
-
-          polygons.push({
-            id: zone.id,
-            farmId: zone.farm_id,
-            workType: 'underdrain', // 暗渠工事
-            name: zone.name || zone.zone_number || '',
-            positions,
-          })
-        }
-      }
-
       set({ workAreaPolygons: polygons })
     } catch (err) {
       console.error('工事区域ポリゴンの取得に失敗:', err)

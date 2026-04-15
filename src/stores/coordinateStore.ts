@@ -1,8 +1,7 @@
 import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
-import type { CoordinateType, AreaCalculationSheet, DesignCoordinate, DesignZone } from '@/types/database'
+import type { CoordinateType, DesignCoordinate } from '@/types/database'
 import { CoordinateConverter } from '@/lib/coordinates'
-import { generateAreaCalculationSheet, type Point } from '@/lib/area-calculation'
 import { useFarmStore } from './farmStore'
 import { useSettingsStore } from './settingsStore'
 
@@ -16,17 +15,6 @@ export interface CoordinateRow {
   lat: number | null
   lng: number | null
   type: CoordinateType
-}
-
-// ローカル状態用の区域型
-export interface ZoneRow {
-  id: string
-  zoneNumber: string
-  name: string
-  pointIds: string[]     // 構成点IDリスト
-  areaSqm: number | null
-  areaHa: number | null
-  perimeterM: number | null
 }
 
 interface CoordinateState {
@@ -46,17 +34,6 @@ interface CoordinateState {
   clearCoordinates: () => Promise<void>
   getCoordinateById: (id: string) => CoordinateRow | undefined
 
-  // 区域データ
-  zones: ZoneRow[]
-  fetchZones: (farmId: string) => Promise<void>
-  addZone: () => Promise<void>
-  updateZone: (id: string, field: keyof ZoneRow, value: string | string[] | number | null) => void
-  deleteZone: (id: string) => Promise<void>
-  addPointToZone: (zoneId: string, pointId: string) => void
-  removePointFromZone: (zoneId: string, pointId: string) => void
-  reorderZonePoints: (zoneId: string, pointIds: string[]) => void
-  calculateZoneArea: (zoneId: string) => AreaCalculationSheet | null
-
   // フィルタリング
   selectedType: CoordinateType
   setSelectedType: (type: CoordinateType) => void
@@ -64,7 +41,6 @@ interface CoordinateState {
 
   // 手動保存モード用
   pendingChanges: Map<string, CoordinateRow>
-  pendingZoneChanges: Map<string, ZoneRow>
   saveAllCoordinates: () => Promise<void>
   resetCoordinateChanges: () => void
 }
@@ -243,16 +219,9 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
 
       if (error) throw error
 
-      set((state) => {
-        // 座標を削除
-        const newCoordinates = state.coordinates.filter((c) => c.id !== id)
-        // 区域から参照を削除
-        const newZones = state.zones.map((zone) => ({
-          ...zone,
-          pointIds: zone.pointIds.filter((pid) => pid !== id),
-        }))
-        return { coordinates: newCoordinates, zones: newZones }
-      })
+      set((state) => ({
+        coordinates: state.coordinates.filter((c) => c.id !== id),
+      }))
     } catch (err) {
       set({ error: err instanceof Error ? err.message : '座標の削除に失敗しました' })
     }
@@ -326,15 +295,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
 
       if (coordError) throw coordError
 
-      // 区域も全削除
-      const { error: zoneError } = await supabase
-        .from('design_zones')
-        .delete()
-        .eq('farm_id', farmId)
-
-      if (zoneError) throw zoneError
-
-      set({ coordinates: [], zones: [] })
+      set({ coordinates: [] })
     } catch (err) {
       set({ error: err instanceof Error ? err.message : 'データの削除に失敗しました' })
     }
@@ -342,196 +303,6 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
 
   getCoordinateById: (id) => {
     return get().coordinates.find((c) => c.id === id)
-  },
-
-  // 区域データ
-  zones: [],
-
-  fetchZones: async (farmId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('design_zones')
-        .select('*')
-        .eq('farm_id', farmId)
-        .order('zone_number')
-
-      if (error) throw error
-
-      const zones: ZoneRow[] = ((data || []) as DesignZone[]).map((row) => ({
-        id: row.id,
-        zoneNumber: row.zone_number,
-        name: row.name,
-        pointIds: row.point_ids || [],
-        areaSqm: row.area_sqm,
-        areaHa: row.area_ha,
-        perimeterM: row.perimeter_m,
-      }))
-
-      set({ zones })
-    } catch (err) {
-      set({ error: err instanceof Error ? err.message : '区域の取得に失敗しました' })
-    }
-  },
-
-  addZone: async () => {
-    const farmId = getCurrentFarmId()
-    if (!farmId) {
-      set({ error: '圃場が選択されていません' })
-      return
-    }
-
-    const state = get()
-    const zoneNumber = `Z${state.zones.length + 1}`
-    const name = `区域${state.zones.length + 1}`
-
-    try {
-      const { data, error } = await supabase
-        .from('design_zones')
-        .insert({
-          farm_id: farmId,
-          zone_number: zoneNumber,
-          name,
-          point_ids: [],
-          area_sqm: null,
-          area_ha: null,
-          perimeter_m: null,
-        } as never)
-        .select()
-        .single()
-
-      if (error) throw error
-
-      const row = data as DesignZone
-      const newZone: ZoneRow = {
-        id: row.id,
-        zoneNumber: row.zone_number,
-        name: row.name,
-        pointIds: row.point_ids || [],
-        areaSqm: row.area_sqm,
-        areaHa: row.area_ha,
-        perimeterM: row.perimeter_m,
-      }
-
-      set({ zones: [...state.zones, newZone] })
-    } catch (err) {
-      set({ error: err instanceof Error ? err.message : '区域の追加に失敗しました' })
-    }
-  },
-
-  updateZone: (id, field, value) => {
-    const state = get()
-    const zone = state.zones.find((z) => z.id === id)
-    if (!zone) return
-
-    const updated = { ...zone, [field]: value }
-
-    // ローカル状態を即座に更新
-    set({
-      zones: state.zones.map((z) => (z.id === id ? updated : z)),
-    })
-
-    // 保存モードをチェック
-    const saveMode = useSettingsStore.getState().saveMode
-    if (saveMode === 'manual') {
-      // 手動保存モード: 変更を記録
-      const newPendingZoneChanges = new Map(state.pendingZoneChanges)
-      newPendingZoneChanges.set(id, updated as ZoneRow)
-      set({ pendingZoneChanges: newPendingZoneChanges })
-      useSettingsStore.getState().setHasUnsavedChanges(true)
-    } else {
-      // 自動保存モード: 即座にSupabaseに保存
-      const dbFieldMap: Record<string, string> = {
-        zoneNumber: 'zone_number',
-        pointIds: 'point_ids',
-        areaSqm: 'area_sqm',
-        areaHa: 'area_ha',
-        perimeterM: 'perimeter_m',
-      }
-      const dbField = dbFieldMap[field] || field
-
-      supabase
-        .from('design_zones')
-        .update({ [dbField]: value } as never)
-        .eq('id', id)
-        .then(({ error }) => {
-          if (error) {
-            set({ error: error.message })
-          }
-        })
-    }
-  },
-
-  deleteZone: async (id) => {
-    try {
-      const { error } = await supabase
-        .from('design_zones')
-        .delete()
-        .eq('id', id)
-
-      if (error) throw error
-
-      set((state) => ({
-        zones: state.zones.filter((z) => z.id !== id),
-      }))
-    } catch (err) {
-      set({ error: err instanceof Error ? err.message : '区域の削除に失敗しました' })
-    }
-  },
-
-  addPointToZone: (zoneId, pointId) => {
-    const state = get()
-    const zone = state.zones.find((z) => z.id === zoneId)
-    if (!zone || zone.pointIds.includes(pointId)) return
-
-    const newPointIds = [...zone.pointIds, pointId]
-    get().updateZone(zoneId, 'pointIds', newPointIds)
-  },
-
-  removePointFromZone: (zoneId, pointId) => {
-    const state = get()
-    const zone = state.zones.find((z) => z.id === zoneId)
-    if (!zone) return
-
-    const newPointIds = zone.pointIds.filter((id) => id !== pointId)
-    get().updateZone(zoneId, 'pointIds', newPointIds)
-  },
-
-  reorderZonePoints: (zoneId, pointIds) => {
-    get().updateZone(zoneId, 'pointIds', pointIds)
-  },
-
-  calculateZoneArea: (zoneId) => {
-    const state = get()
-    const zone = state.zones.find((z) => z.id === zoneId)
-    if (!zone || zone.pointIds.length < 3) return null
-
-    // 構成点を取得
-    const points: Point[] = zone.pointIds
-      .map((id) => state.coordinates.find((c) => c.id === id))
-      .filter((c): c is CoordinateRow => c !== undefined)
-      .map((c) => ({
-        id: c.id,
-        pointNumber: c.pointNumber,
-        x: c.x,
-        y: c.y,
-      }))
-
-    if (points.length < 3) return null
-
-    // 面積計算簿を生成
-    const sheet = generateAreaCalculationSheet(
-      zone.id,
-      zone.zoneNumber,
-      zone.name,
-      points
-    )
-
-    // 区域の面積情報を更新（非同期だがawaitしない）
-    get().updateZone(zoneId, 'areaSqm', sheet.area_sqm)
-    get().updateZone(zoneId, 'areaHa', sheet.area_ha)
-    get().updateZone(zoneId, 'perimeterM', sheet.perimeter_m)
-
-    return sheet
   },
 
   // フィルタリング
@@ -545,7 +316,6 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
 
   // 手動保存モード用
   pendingChanges: new Map(),
-  pendingZoneChanges: new Map(),
 
   saveAllCoordinates: async () => {
     const state = get()
@@ -571,25 +341,8 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         if (error) throw error
       }
 
-      // 区域の変更を保存
-      for (const [id, zone] of state.pendingZoneChanges) {
-        const { error } = await supabase
-          .from('design_zones')
-          .update({
-            zone_number: zone.zoneNumber,
-            name: zone.name,
-            point_ids: zone.pointIds,
-            area_sqm: zone.areaSqm,
-            area_ha: zone.areaHa,
-            perimeter_m: zone.perimeterM,
-          } as never)
-          .eq('id', id)
-
-        if (error) throw error
-      }
-
       // 変更をクリア
-      set({ pendingChanges: new Map(), pendingZoneChanges: new Map() })
+      set({ pendingChanges: new Map() })
       useSettingsStore.getState().setHasUnsavedChanges(false)
     } catch (err) {
       set({ error: err instanceof Error ? err.message : '保存に失敗しました' })
@@ -602,10 +355,9 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
 
     // Supabaseから再読み込み
     get().fetchCoordinates(farmId)
-    get().fetchZones(farmId)
 
     // 変更をクリア
-    set({ pendingChanges: new Map(), pendingZoneChanges: new Map() })
+    set({ pendingChanges: new Map() })
     useSettingsStore.getState().setHasUnsavedChanges(false)
   },
 }))

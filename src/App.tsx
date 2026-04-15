@@ -5,7 +5,7 @@ import { LoginPage } from '@/features/auth/LoginPage'
 import { ProjectListPage } from '@/features/projects/ProjectListPage'
 import { CoordinatesPage } from '@/features/coordinates/CoordinatesPage'
 // 暗渠工事
-import { WorkAreaPage } from '@/features/underdrain/WorkAreaPage'
+import { UnderdrainWorkAreaPage } from '@/features/underdrain/UnderdrainWorkAreaPage'
 import { CadAnalysisPage } from '@/features/underdrain/CadAnalysisPage'
 import { PipeCoordinateCalcPage } from '@/features/underdrain/PipeCoordinateCalcPage'
 import { SurveyImportPage } from '@/features/underdrain/SurveyImportPage'
@@ -85,7 +85,7 @@ function AppRoutes() {
         <Route path="coordinates" element={<CoordinatesPage />} />
         {/* 暗渠工事 */}
         <Route path="underdrain">
-          <Route path="work-area" element={<WorkAreaPage />} />
+          <Route path="work-area" element={<UnderdrainWorkAreaPage />} />
           <Route path="cad-analysis" element={<CadAnalysisPage />} />
           <Route path="coordinate-calc" element={<PipeCoordinateCalcPage />} />
           <Route path="pipe-wiring" element={<PipeWiringPage />} />

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { MapContainer, TileLayer, Marker, Popup, Polygon, useMap, Tooltip } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
@@ -107,8 +107,6 @@ export interface ExternalPolygon {
 interface CoordinateMapProps {
   selectedPointId?: string | null
   onPointSelect?: (id: string) => void
-  showZonePolygons?: boolean
-  editingZoneId?: string | null
   showLabels?: boolean
   visibleTypes?: Set<string>
   baseLayer?: BaseLayerType
@@ -119,15 +117,13 @@ interface CoordinateMapProps {
 export function CoordinateMap({
   selectedPointId,
   onPointSelect,
-  showZonePolygons = true,
-  editingZoneId,
   showLabels = true,
   visibleTypes,
   baseLayer = 'osm',
   externalPolygons = [],
   editingExternalPolygonId,
 }: CoordinateMapProps) {
-  const { coordinates, zones } = useCoordinateStore()
+  const { coordinates } = useCoordinateStore()
 
   // 有効な座標（緯度経度が計算済み）のみ表示
   const validCoordinates = coordinates.filter(
@@ -146,27 +142,6 @@ export function CoordinateMap({
     validCoordinates.length > 0
       ? [validCoordinates[0].lat, validCoordinates[0].lng] as [number, number]
       : defaultCenter
-
-  // 区域のポリゴンデータを生成
-  const zonePolygons = zones
-    .filter(zone => zone.pointIds.length >= 3)
-    .map(zone => {
-      const points = zone.pointIds
-        .map(id => coordinates.find(c => c.id === id))
-        .filter((c): c is CoordinateRow & { lat: number; lng: number } =>
-          c !== undefined && c.lat !== null && c.lng !== null
-        )
-        .map(c => [c.lat, c.lng] as [number, number])
-
-      return {
-        id: zone.id,
-        name: zone.name,
-        zoneNumber: zone.zoneNumber,
-        positions: points,
-        area: zone.areaHa,
-      }
-    })
-    .filter(z => z.positions.length >= 3)
 
   return (
     <MapContainer
@@ -197,34 +172,6 @@ export function CoordinateMap({
       )}
 
       <MapViewManager coordinates={validCoordinates} />
-
-      {/* 区域ポリゴン（coordinateStoreのzones） */}
-      {showZonePolygons &&
-        zonePolygons.map(zone => {
-          const isEditing = zone.id === editingZoneId
-          return (
-            <Polygon
-              key={zone.id}
-              positions={zone.positions}
-              pathOptions={{
-                color: isEditing ? '#2563eb' : '#3b82f6',
-                fillColor: isEditing ? '#2563eb' : '#3b82f6',
-                fillOpacity: isEditing ? 0.3 : 0.2,
-                weight: isEditing ? 3 : 2,
-                dashArray: isEditing ? '5, 5' : undefined,
-              }}
-            >
-              <Popup>
-                <div className="text-sm">
-                  <div className="font-bold">{zone.zoneNumber}: {zone.name}</div>
-                  {zone.area !== null && (
-                    <div>面積: {zone.area.toFixed(4)} ha</div>
-                  )}
-                </div>
-              </Popup>
-            </Polygon>
-          )
-        })}
 
       {/* 外部から渡されたポリゴン（workAreaStoreなど） */}
       {externalPolygons.map(polygon => {

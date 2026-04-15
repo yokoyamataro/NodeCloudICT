@@ -4,6 +4,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useUnderdrainStore, EXTENDED_PIPE_TYPES } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
+import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useMapViewStore } from '@/stores/mapViewStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import type { PipeVertex } from '@/types/database'
@@ -369,7 +370,8 @@ export function PipeMap({
   pipeChangePoints = [],
 }: PipeMapProps) {
   const { pipes } = useUnderdrainStore()
-  const { zone, zones, coordinates } = useCoordinateStore()
+  const { zone, coordinates } = useCoordinateStore()
+  const workAreas = useWorkAreaStore((state) => state.workAreas['underdrain'] || [])
 
   const converter = new CoordinateConverter(zone)
 
@@ -778,16 +780,11 @@ export function PipeMap({
         )
       })}
 
-      {/* 区域ポリゴン表示 */}
-      {showZones && zones.map((zoneData, idx) => {
-        const positions = zoneData.pointIds
-          .map(pointId => {
-            const coord = coordinates.find(c => c.id === pointId)
-            if (!coord) return null
-            const { lat, lng } = converter.toLatLng(coord.x, coord.y)
-            return [lat, lng] as [number, number]
-          })
-          .filter((p): p is [number, number] => p !== null)
+      {/* 区域ポリゴン表示（workAreaStoreから暗渠の工事区域） */}
+      {showZones && workAreas.map((area, idx) => {
+        const positions = area.points
+          .filter((p): p is typeof p & { lat: number; lng: number } => p.lat !== null && p.lng !== null)
+          .map(p => [p.lat, p.lng] as [number, number])
 
         if (positions.length < 3) return null
 
@@ -795,7 +792,7 @@ export function PipeMap({
 
         return (
           <Polygon
-            key={zoneData.id}
+            key={area.id}
             positions={positions}
             pathOptions={{
               color: color,
@@ -806,7 +803,7 @@ export function PipeMap({
           >
             <Popup>
               <div className="text-xs">
-                <div className="font-bold">{zoneData.name}</div>
+                <div className="font-bold">{area.name}</div>
                 <div>{positions.length}点で構成</div>
               </div>
             </Popup>

@@ -267,21 +267,6 @@ export interface DesignCoordinate {
   updated_at: string
 }
 
-// NodeCloud-Design用区域
-export interface DesignZone {
-  id: string
-  farm_id: string
-  zone_number: string
-  name: string
-  point_ids: string[]
-  area_sqm: number | null
-  area_ha: number | null
-  perimeter_m: number | null
-  notes: string | null
-  created_at: string
-  updated_at: string
-}
-
 // 工種別工事区域
 export interface DesignWorkArea {
   id: string
@@ -450,11 +435,6 @@ export interface Database {
         Row: DesignCoordinate
         Insert: Omit<DesignCoordinate, 'id' | 'created_at' | 'updated_at'>
         Update: Partial<Omit<DesignCoordinate, 'id' | 'created_at' | 'updated_at'>>
-      }
-      design_zones: {
-        Row: DesignZone
-        Insert: Omit<DesignZone, 'id' | 'created_at' | 'updated_at'>
-        Update: Partial<Omit<DesignZone, 'id' | 'created_at' | 'updated_at'>>
       }
       design_pipes: {
         Row: DesignPipe
