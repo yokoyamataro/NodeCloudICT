@@ -148,6 +148,7 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
   const [calculationSheet, setCalculationSheet] = useState<AreaCalculationSheetType | null>(null)
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
   const [editingAreaId, setEditingAreaId] = useState<string | null>(null)
+  const [pointNameInput, setPointNameInput] = useState<string>('')
 
   const { currentFarm } = useFarmStore()
   const { coordinates, fetchCoordinates } = useCoordinateStore()
@@ -239,6 +240,18 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
       if (coord) {
         addPoint(editingAreaId, { id: coord.id, pointNumber: coord.pointNumber, x: coord.x, y: coord.y, z: coord.z })
       }
+    }
+  }
+
+  // 点名入力から座標を追加
+  const handleAddPointByName = (areaId: string) => {
+    const trimmed = pointNameInput.trim()
+    if (!trimmed) return
+
+    const coord = coordinates.find(c => c.pointNumber === trimmed)
+    if (coord) {
+      addPoint(areaId, { id: coord.id, pointNumber: coord.pointNumber, x: coord.x, y: coord.y, z: coord.z })
+      setPointNameInput('')
     }
   }
 
@@ -424,6 +437,30 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
                             ))}
                           </ul>
                         )}
+
+                        {/* 点名入力フィールド */}
+                        <div className="mt-2 flex gap-2">
+                          <input
+                            type="text"
+                            value={pointNameInput}
+                            onChange={(e) => setPointNameInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault()
+                                handleAddPointByName(area.id)
+                              }
+                            }}
+                            placeholder="点名を入力 (例: K1)"
+                            className="flex-1 px-2 py-1 text-sm border rounded"
+                          />
+                          <button
+                            onClick={() => handleAddPointByName(area.id)}
+                            disabled={!pointNameInput.trim()}
+                            className="px-3 py-1 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            追加
+                          </button>
+                        </div>
 
                         {/* 面積情報 */}
                         {area.areaSqm !== null && (
