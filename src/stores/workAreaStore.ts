@@ -3,11 +3,11 @@ import { supabase } from '@/lib/supabase'
 import { useFarmStore } from './farmStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { generateAreaCalculationSheet } from '@/lib/area-calculation'
-import type { WorkType, AreaCalculationSheet, DesignWorkArea, WorkAreaCoordinate } from '@/types/database'
+import type { WorkType, AreaCalculationSheet, DesignWorkArea, DesignCoordinate } from '@/types/database'
 
-// 工事区域の座標点
+// 工事区域の座標点（design_coordinatesから取得したデータ）
 export interface WorkAreaPoint {
-  id: string
+  id: string // design_coordinatesのID
   pointNumber: string
   x: number
   y: number
@@ -23,7 +23,8 @@ export interface WorkAreaRow {
   workType: WorkType
   zoneNumber: string
   name: string
-  points: WorkAreaPoint[]
+  pointIds: string[] // design_coordinatesのID配列（順序付き）
+  points: WorkAreaPoint[] // 展開した座標データ
   areaSqm: number | null
   areaHa: number | null
   perimeterM: number | null
@@ -51,10 +52,10 @@ interface WorkAreaState {
   updateWorkArea: (id: string, updates: Partial<Pick<WorkAreaRow, 'zoneNumber' | 'name' | 'notes'>>) => void
   deleteWorkArea: (id: string) => Promise<void>
 
-  // 座標点操作（座標管理の座標を選択して追加）
-  addPointFromCoordinate: (workAreaId: string, pointNumber: string, x: number, y: number, z: number | null) => void
-  removePoint: (workAreaId: string, pointId: string) => void
-  reorderPoints: (workAreaId: string, pointIds: string[]) => void
+  // 座標点操作（座標管理の座標を追加）
+  addPoint: (workAreaId: string, coordinate: { id: string; pointNumber: string; x: number; y: number; z: number | null }) => void
+  removePoint: (workAreaId: string, coordinateId: string) => void
+  reorderPoints: (workAreaId: string, coordinateIds: string[]) => void
 
   // 面積計算
   calculateArea: (workAreaId: string) => AreaCalculationSheet | null
@@ -104,7 +105,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
       console.log('[workAreaStore] fetchWorkAreas - areas from DB:', {
         farmId,
         areasCount: typedAreas.length,
-        areas: typedAreas.map(a => ({ id: a.id, work_type: a.work_type, name: a.name })),
+        areas: typedAreas.map(a => ({ id: a.id, work_type: a.work_type, name: a.name, point_ids: a.point_ids })),
       })
 
       if (typedAreas.length === 0) {
@@ -112,19 +113,26 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         return
       }
 
-      // 全エリアのIDを取得
-      const areaIds = typedAreas.map(a => a.id)
+      // 全エリアのpoint_idsを収集
+      const allPointIds = typedAreas.flatMap(a => a.point_ids || [])
+      const uniquePointIds = [...new Set(allPointIds)]
 
-      // 各エリアの座標点を取得
-      const { data: points, error: pointError } = await supabase
-        .from('work_area_coordinates')
-        .select('*')
-        .in('work_area_id', areaIds)
-        .order('sort_order')
+      // design_coordinatesから座標データを取得
+      let coordinatesMap: Record<string, DesignCoordinate> = {}
+      if (uniquePointIds.length > 0) {
+        const { data: coords, error: coordError } = await supabase
+          .from('design_coordinates')
+          .select('*')
+          .in('id', uniquePointIds)
 
-      if (pointError) throw pointError
+        if (coordError) throw coordError
 
-      const typedPoints = (points || []) as WorkAreaCoordinate[]
+        const typedCoords = coords as DesignCoordinate[]
+        coordinatesMap = typedCoords.reduce((acc, c) => {
+          acc[c.id] = c
+          return acc
+        }, {} as Record<string, DesignCoordinate>)
+      }
 
       const zone = getCurrentZone()
       const converter = new CoordinateConverter(zone)
@@ -133,33 +141,37 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
       const workAreasRecord: WorkAreasRecord = {}
 
       for (const area of typedAreas) {
-        const areaPoints = typedPoints
-          .filter(p => p.work_area_id === area.id)
-          .map(p => {
+        const pointIds = area.point_ids || []
+        const areaPoints: WorkAreaPoint[] = pointIds
+          .map((id, index) => {
+            const coord = coordinatesMap[id]
+            if (!coord) return null
             let lat: number | null = null
             let lng: number | null = null
-            if (p.x !== null && p.x !== undefined && p.y !== null && p.y !== undefined) {
-              const result = converter.toLatLng(p.x, p.y)
+            if (coord.x !== null && coord.y !== null) {
+              const result = converter.toLatLng(coord.x, coord.y)
               lat = result.lat
               lng = result.lng
             }
             return {
-              id: p.id,
-              pointNumber: p.point_number,
-              x: p.x,
-              y: p.y,
-              z: p.z,
+              id: coord.id,
+              pointNumber: coord.point_number,
+              x: coord.x,
+              y: coord.y,
+              z: coord.z,
               lat,
               lng,
-              sortOrder: p.sort_order,
+              sortOrder: index,
             }
           })
+          .filter((p): p is WorkAreaPoint => p !== null)
 
         const workAreaRow: WorkAreaRow = {
           id: area.id,
           workType: area.work_type,
           zoneNumber: area.zone_number,
           name: area.name,
+          pointIds,
           points: areaPoints,
           areaSqm: area.area_sqm,
           areaHa: area.area_ha,
@@ -176,7 +188,6 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
       console.log('[workAreaStore] fetchWorkAreas result:', {
         farmId,
         areasCount: typedAreas.length,
-        pointsCount: typedPoints.length,
         workAreasRecord: Object.fromEntries(
           Object.entries(workAreasRecord).map(([k, v]) => [k, v?.map(a => ({ id: a.id, name: a.name, pointsCount: a.points.length }))])
         ),
@@ -227,6 +238,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         workType,
         zoneNumber: typedData.zone_number,
         name: typedData.name,
+        pointIds: [],
         points: [],
         areaSqm: null,
         areaHa: null,
@@ -267,18 +279,11 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         : [...state.pendingWorkAreaIds, id]
       return { workAreas: newWorkAreas, hasChanges: true, pendingWorkAreaIds: newPending }
     })
-    // 明示的にsaveWorkAreaを呼び出すまでSupabaseには保存しない
   },
 
   deleteWorkArea: async (id) => {
     try {
-      // 座標点を削除
-      await supabase
-        .from('work_area_coordinates')
-        .delete()
-        .eq('work_area_id', id)
-
-      // 工事区域を削除
+      // 工事区域を削除（point_ids配列なのでwork_area_coordinatesの削除は不要）
       const { error } = await supabase
         .from('design_work_areas')
         .delete()
@@ -304,26 +309,33 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
     }
   },
 
-  addPointFromCoordinate: (workAreaId, pointNumber, x, y, z) => {
+  addPoint: (workAreaId, coordinate) => {
+    const area = get().getWorkAreaById(workAreaId)
+    if (!area) return
+
+    // 既に追加されている場合はスキップ
+    if (area.pointIds.includes(coordinate.id)) return
+
     const zone = getCurrentZone()
     const converter = new CoordinateConverter(zone)
     let lat: number | null = null
     let lng: number | null = null
-    if (x !== null && x !== undefined && y !== null && y !== undefined) {
-      const result = converter.toLatLng(x, y)
+    if (coordinate.x !== null && coordinate.y !== null) {
+      const result = converter.toLatLng(coordinate.x, coordinate.y)
       lat = result.lat
       lng = result.lng
     }
 
-    const area = get().getWorkAreaById(workAreaId)
-    if (!area) return
-
-    // 同じ座標点番号が既に追加されている場合はスキップ
-    if (area.points.some(p => p.pointNumber === pointNumber)) return
-
-    const sortOrder = area.points.length
-    // 新しいIDを生成（座標IDとは別にwork_area_coordinates用のID）
-    const newPointId = crypto.randomUUID()
+    const newPoint: WorkAreaPoint = {
+      id: coordinate.id,
+      pointNumber: coordinate.pointNumber,
+      x: coordinate.x,
+      y: coordinate.y,
+      z: coordinate.z,
+      lat,
+      lng,
+      sortOrder: area.points.length,
+    }
 
     set((state) => {
       const newWorkAreas = { ...state.workAreas }
@@ -334,16 +346,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         if (index !== -1) {
           const updatedAreas = [...areas]
           const areaToUpdate = { ...updatedAreas[index] }
-          const newPoint: WorkAreaPoint = {
-            id: newPointId,
-            pointNumber,
-            x,
-            y,
-            z,
-            lat,
-            lng,
-            sortOrder,
-          }
+          areaToUpdate.pointIds = [...areaToUpdate.pointIds, coordinate.id]
           areaToUpdate.points = [...areaToUpdate.points, newPoint]
           updatedAreas[index] = areaToUpdate
           newWorkAreas[workType] = updatedAreas
@@ -355,10 +358,9 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         : [...state.pendingWorkAreaIds, workAreaId]
       return { workAreas: newWorkAreas, hasChanges: true, pendingWorkAreaIds: newPending }
     })
-    // 明示的にsaveWorkAreaを呼び出すまでSupabaseには保存しない
   },
 
-  removePoint: (workAreaId, pointId) => {
+  removePoint: (workAreaId, coordinateId) => {
     set((state) => {
       const newWorkAreas = { ...state.workAreas }
       for (const workType of Object.keys(newWorkAreas) as WorkType[]) {
@@ -368,7 +370,8 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         if (areaIndex !== -1) {
           const updatedAreas = [...areas]
           const area = { ...updatedAreas[areaIndex] }
-          area.points = area.points.filter(p => p.id !== pointId)
+          area.pointIds = area.pointIds.filter(id => id !== coordinateId)
+          area.points = area.points.filter(p => p.id !== coordinateId)
           // sortOrderを再割り当て
           area.points = area.points.map((p, i) => ({ ...p, sortOrder: i }))
           updatedAreas[areaIndex] = area
@@ -381,10 +384,9 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         : [...state.pendingWorkAreaIds, workAreaId]
       return { workAreas: newWorkAreas, hasChanges: true, pendingWorkAreaIds: newPending }
     })
-    // 明示的にsaveWorkAreaを呼び出すまでSupabaseには保存しない
   },
 
-  reorderPoints: (workAreaId, pointIds) => {
+  reorderPoints: (workAreaId, coordinateIds) => {
     set((state) => {
       const newWorkAreas = { ...state.workAreas }
       for (const workType of Object.keys(newWorkAreas) as WorkType[]) {
@@ -394,7 +396,8 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         if (areaIndex !== -1) {
           const updatedAreas = [...areas]
           const area = { ...updatedAreas[areaIndex] }
-          const reorderedPoints = pointIds
+          area.pointIds = coordinateIds
+          const reorderedPoints = coordinateIds
             .map((id, index) => {
               const point = area.points.find(p => p.id === id)
               return point ? { ...point, sortOrder: index } : null
@@ -411,7 +414,6 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         : [...state.pendingWorkAreaIds, workAreaId]
       return { workAreas: newWorkAreas, hasChanges: true, pendingWorkAreaIds: newPending }
     })
-    // 明示的にsaveWorkAreaを呼び出すまでSupabaseには保存しない
   },
 
   calculateArea: (workAreaId) => {
@@ -456,7 +458,6 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         : [...state.pendingWorkAreaIds, workAreaId]
       return { workAreas: newWorkAreas, hasChanges: true, pendingWorkAreaIds: newPending }
     })
-    // 明示的にsaveWorkAreaを呼び出すまでSupabaseには保存しない
 
     return sheet
   },
@@ -466,39 +467,19 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
     if (!area) return
 
     try {
-      // 工事区域を更新
+      // 工事区域を更新（point_ids配列を保存）
       await supabase
         .from('design_work_areas')
         .update({
           zone_number: area.zoneNumber,
           name: area.name,
+          point_ids: area.pointIds,
           area_sqm: area.areaSqm,
           area_ha: area.areaHa,
           perimeter_m: area.perimeterM,
           notes: area.notes,
         } as never)
         .eq('id', id)
-
-      // 座標点を全削除して再挿入
-      await supabase
-        .from('work_area_coordinates')
-        .delete()
-        .eq('work_area_id', id)
-
-      if (area.points.length > 0) {
-        const insertData = area.points.map(p => ({
-          work_area_id: id,
-          point_number: p.pointNumber,
-          x: p.x,
-          y: p.y,
-          z: p.z,
-          sort_order: p.sortOrder,
-        }))
-
-        await supabase
-          .from('work_area_coordinates')
-          .insert(insertData as never)
-      }
     } catch (err) {
       set({ error: err instanceof Error ? err.message : '保存に失敗しました' })
     }

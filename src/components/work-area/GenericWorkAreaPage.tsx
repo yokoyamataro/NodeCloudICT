@@ -157,7 +157,7 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
     addWorkArea,
     updateWorkArea,
     deleteWorkArea,
-    addPointFromCoordinate,
+    addPoint,
     removePoint,
     reorderPoints,
     calculateArea,
@@ -237,7 +237,7 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
     if (editingAreaId) {
       const coord = coordinates.find(c => c.id === id)
       if (coord) {
-        addPointFromCoordinate(editingAreaId, coord.pointNumber, coord.x, coord.y, coord.z)
+        addPoint(editingAreaId, { id: coord.id, pointNumber: coord.pointNumber, x: coord.x, y: coord.y, z: coord.z })
       }
     }
   }

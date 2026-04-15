@@ -161,38 +161,58 @@ export const useFarmStore = create<FarmState>((set, get) => ({
       }> | null
 
       if (areas && areas.length > 0) {
-        // 座標を取得
-        const { data: coordsData, error: coordError } = await supabase
-          .from('work_area_coordinates')
-          .select('id, work_area_id, x, y, sort_order')
-          .in('work_area_id', areas.map(a => a.id))
-          .order('sort_order')
+        // design_work_areasのpoint_idsを取得
+        const { data: areasWithPointIds, error: pointIdsError } = await supabase
+          .from('design_work_areas')
+          .select('id, point_ids')
+          .in('id', areas.map(a => a.id))
 
-        if (coordError) throw coordError
+        if (pointIdsError) throw pointIdsError
 
-        const coords = coordsData as Array<{
+        const areasPointIds = areasWithPointIds as Array<{
           id: string
-          work_area_id: string
-          x: number
-          y: number
-          sort_order: number
+          point_ids: string[] | null
         }> | null
+
+        // 全てのpoint_idsを収集
+        const allPointIds = (areasPointIds || []).flatMap(a => a.point_ids || [])
+        const uniquePointIds = [...new Set(allPointIds)]
+
+        // design_coordinatesから座標を取得
+        let coordsMap: Record<string, { x: number; y: number }> = {}
+        if (uniquePointIds.length > 0) {
+          const { data: coordsData, error: coordError } = await supabase
+            .from('design_coordinates')
+            .select('id, x, y')
+            .in('id', uniquePointIds)
+
+          if (coordError) throw coordError
+
+          coordsMap = (coordsData || []).reduce((acc, c) => {
+            acc[c.id] = { x: c.x, y: c.y }
+            return acc
+          }, {} as Record<string, { x: number; y: number }>)
+        }
 
         for (const area of areas) {
           const farm = farms.find(f => f.id === area.farm_id)
           if (!farm) continue
 
-          const areaCoords = (coords || [])
-            .filter(c => c.work_area_id === area.id)
-            .sort((a, b) => a.sort_order - b.sort_order)
-
-          if (areaCoords.length < 3) continue
+          const areaPointIds = areasPointIds?.find(a => a.id === area.id)?.point_ids || []
+          if (areaPointIds.length < 3) continue
 
           const converter = new CoordinateConverter(farm.coordinate_zone)
-          const positions: [number, number][] = areaCoords.map(c => {
-            const { lat, lng } = converter.toLatLng(c.x, c.y)
-            return [lat, lng] as [number, number]
-          })
+          const positions: [number, number][] = []
+
+          for (const pointId of areaPointIds) {
+            const coord = coordsMap[pointId]
+            if (coord) {
+              const { lat, lng } = converter.toLatLng(coord.x, coord.y)
+              positions.push([lat, lng])
+            }
+          }
+
+          if (positions.length < 3) continue
 
           polygons.push({
             id: area.id,
