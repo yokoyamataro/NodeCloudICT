@@ -166,6 +166,7 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
 
   // 圃場が変更されたらデータを取得
   useEffect(() => {
+    console.log('[GenericWorkAreaPage] useEffect triggered:', { currentFarm: currentFarm?.id, workType })
     if (currentFarm) {
       fetchWorkAreas(currentFarm.id)
       fetchCoordinates(currentFarm.id)
@@ -173,6 +174,7 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
   }, [currentFarm, fetchWorkAreas, fetchCoordinates])
 
   const areas = getWorkAreasByType(workType)
+  console.log('[GenericWorkAreaPage] areas:', { workType, areasCount: areas.length, areas: areas.map(a => ({ id: a.id, name: a.name })) })
   const workTypeName = WORK_TYPE_NAMES[workType]
 
   // 区域の構成点情報を座標一覧から取得

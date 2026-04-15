@@ -98,8 +98,14 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
 
       const typedAreas = areas as DesignWorkArea[]
 
+      console.log('[workAreaStore] fetchWorkAreas - areas from DB:', {
+        farmId,
+        areasCount: typedAreas.length,
+        areas: typedAreas.map(a => ({ id: a.id, work_type: a.work_type, name: a.name })),
+      })
+
       if (typedAreas.length === 0) {
-        set({ workAreas: new Map(), loading: false })
+        set({ workAreas: new Map(), loading: false, hasChanges: false, pendingWorkAreaIds: new Set() })
         return
       }
 
