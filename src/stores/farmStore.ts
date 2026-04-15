@@ -188,7 +188,8 @@ export const useFarmStore = create<FarmState>((set, get) => ({
 
           if (coordError) throw coordError
 
-          coordsMap = (coordsData || []).reduce((acc, c) => {
+          const typedCoordsData = coordsData as Array<{ id: string; x: number; y: number }>
+          coordsMap = typedCoordsData.reduce((acc, c) => {
             acc[c.id] = { x: c.x, y: c.y }
             return acc
           }, {} as Record<string, { x: number; y: number }>)
