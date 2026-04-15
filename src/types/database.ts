@@ -344,6 +344,7 @@ export interface PipeWiringRow {
   absorption_pipe_ids: string[]
   collector_pipe_id: string | null
   is_merge_pipe: boolean
+  merge_system_index: number | null  // 集水合流タイプの接続先系統番号
   sort_order: number
   created_at: string
   updated_at: string

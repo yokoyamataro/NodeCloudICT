@@ -19,6 +19,7 @@ export interface WiringRow {
   absorptionPipes: string[]  // 吸水（複数選択可能）
   collectorPipe: string | null    // 集水（または落口）
   isMergePipe: boolean  // 集水合流管かどうか
+  mergeSystemIndex: number | null  // 集水合流タイプの接続先系統番号
 }
 
 // ローカル状態用のタブ型
@@ -69,6 +70,7 @@ function createEmptyRow(): WiringRow {
     absorptionPipes: [],
     collectorPipe: null,
     isMergePipe: false,
+    mergeSystemIndex: null,
   }
 }
 
@@ -121,14 +123,26 @@ async function saveWiringToDb(
       row.rowType || row.absorptionPipes.length > 0 || row.collectorPipe
     )
     console.log('[saveWiringToDb] Non-empty rows after filter:', nonEmptyRows)
-    const rowsToInsert = nonEmptyRows.map((row, rowIndex) => ({
-      group_id: groupId,
-      row_type: row.rowType,
-      absorption_pipe_ids: row.absorptionPipes,
-      collector_pipe_id: row.collectorPipe,
-      is_merge_pipe: row.isMergePipe,
-      sort_order: rowIndex,
-    }))
+    const rowsToInsert = nonEmptyRows.map((row, rowIndex) => {
+      // collector_mergeタイプの場合、absorptionPipesには系統番号が入っている（UUIDではない）
+      // merge_system_indexに系統番号を保存する
+      const isCollectorMerge = row.rowType === 'collector_merge'
+      const absorptionPipeIds = isCollectorMerge ? [] : row.absorptionPipes
+      // collector_mergeの場合、absorptionPipes[0]に系統番号が文字列で入っている
+      const mergeSystemIndex = isCollectorMerge && row.absorptionPipes.length > 0
+        ? parseInt(row.absorptionPipes[0], 10)
+        : row.mergeSystemIndex
+
+      return {
+        group_id: groupId,
+        row_type: row.rowType,
+        absorption_pipe_ids: absorptionPipeIds,
+        collector_pipe_id: row.collectorPipe,
+        is_merge_pipe: row.isMergePipe,
+        merge_system_index: mergeSystemIndex,
+        sort_order: rowIndex,
+      }
+    })
 
     if (rowsToInsert.length > 0) {
       console.log('[saveWiringToDb] Inserting rows for collector group:', rowsToInsert.length)
@@ -164,14 +178,23 @@ async function saveWiringToDb(
   const nonEmptyDirectRows = directRows.filter(row =>
     row.rowType || row.absorptionPipes.length > 0 || row.collectorPipe
   )
-  const directRowsToInsert = nonEmptyDirectRows.map((row, rowIndex) => ({
-    group_id: directGroupId,
-    row_type: row.rowType,
-    absorption_pipe_ids: row.absorptionPipes,
-    collector_pipe_id: row.collectorPipe,
-    is_merge_pipe: row.isMergePipe,
-    sort_order: rowIndex,
-  }))
+  const directRowsToInsert = nonEmptyDirectRows.map((row, rowIndex) => {
+    const isCollectorMerge = row.rowType === 'collector_merge'
+    const absorptionPipeIds = isCollectorMerge ? [] : row.absorptionPipes
+    const mergeSystemIndex = isCollectorMerge && row.absorptionPipes.length > 0
+      ? parseInt(row.absorptionPipes[0], 10)
+      : row.mergeSystemIndex
+
+    return {
+      group_id: directGroupId,
+      row_type: row.rowType,
+      absorption_pipe_ids: absorptionPipeIds,
+      collector_pipe_id: row.collectorPipe,
+      is_merge_pipe: row.isMergePipe,
+      merge_system_index: mergeSystemIndex,
+      sort_order: rowIndex,
+    }
+  })
 
   if (directRowsToInsert.length > 0) {
     console.log('[saveWiringToDb] Inserting direct rows:', directRowsToInsert.length)
@@ -319,13 +342,22 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
       for (const group of groups as PipeWiringGroup[]) {
         const groupRows = (rows as PipeWiringRow[] || [])
           .filter(r => r.group_id === group.id)
-          .map(r => ({
-            id: r.id,
-            rowType: r.row_type ?? null,
-            absorptionPipes: r.absorption_pipe_ids || [],
-            collectorPipe: r.collector_pipe_id,
-            isMergePipe: r.is_merge_pipe,
-          }))
+          .map(r => {
+            // collector_mergeタイプの場合、merge_system_indexをabsorptionPipesに復元
+            const isCollectorMerge = r.row_type === 'collector_merge'
+            const absorptionPipes = isCollectorMerge && r.merge_system_index !== null
+              ? [r.merge_system_index.toString()]  // 系統番号を文字列として復元
+              : r.absorption_pipe_ids || []
+
+            return {
+              id: r.id,
+              rowType: r.row_type ?? null,
+              absorptionPipes,
+              collectorPipe: r.collector_pipe_id,
+              isMergePipe: r.is_merge_pipe,
+              mergeSystemIndex: r.merge_system_index ?? null,
+            }
+          })
 
         // 行がない場合は空の行を追加
         const finalRows = groupRows.length > 0 ? groupRows : [createEmptyRow()]
