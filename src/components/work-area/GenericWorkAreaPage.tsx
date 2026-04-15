@@ -165,13 +165,14 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
   } = useWorkAreaStore()
 
   // 圃場が変更されたらデータを取得
+  const farmId = currentFarm?.id
   useEffect(() => {
-    console.log('[GenericWorkAreaPage] useEffect triggered:', { currentFarm: currentFarm?.id, workType })
-    if (currentFarm) {
-      fetchWorkAreas(currentFarm.id)
-      fetchCoordinates(currentFarm.id)
+    console.log('[GenericWorkAreaPage] useEffect triggered:', { farmId, workType })
+    if (farmId) {
+      fetchWorkAreas(farmId)
+      fetchCoordinates(farmId)
     }
-  }, [currentFarm, fetchWorkAreas, fetchCoordinates])
+  }, [farmId, workType, fetchWorkAreas, fetchCoordinates])
 
   const areas = getWorkAreasByType(workType)
   console.log('[GenericWorkAreaPage] areas:', { workType, areasCount: areas.length, areas: areas.map(a => ({ id: a.id, name: a.name })) })

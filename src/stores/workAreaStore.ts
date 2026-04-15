@@ -30,15 +30,18 @@ export interface WorkAreaRow {
   notes: string | null
 }
 
+// 工種別の工事区域データ
+type WorkAreasRecord = Partial<Record<WorkType, WorkAreaRow[]>>
+
 interface WorkAreaState {
   // 工事区域データ（工種別）
-  workAreas: Map<WorkType, WorkAreaRow[]>
+  workAreas: WorkAreasRecord
   loading: boolean
   error: string | null
 
   // 変更追跡
   hasChanges: boolean
-  pendingWorkAreaIds: Set<string>
+  pendingWorkAreaIds: string[]
 
   // データ取得
   fetchWorkAreas: (farmId: string) => Promise<void>
@@ -77,11 +80,11 @@ const getCurrentZone = (): number => {
 }
 
 export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
-  workAreas: new Map(),
+  workAreas: {},
   loading: false,
   error: null,
   hasChanges: false,
-  pendingWorkAreaIds: new Set(),
+  pendingWorkAreaIds: [],
 
   fetchWorkAreas: async (farmId: string) => {
     set({ loading: true, error: null })
@@ -105,7 +108,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
       })
 
       if (typedAreas.length === 0) {
-        set({ workAreas: new Map(), loading: false, hasChanges: false, pendingWorkAreaIds: new Set() })
+        set({ workAreas: {}, loading: false, hasChanges: false, pendingWorkAreaIds: [] })
         return
       }
 
@@ -127,7 +130,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
       const converter = new CoordinateConverter(zone)
 
       // 工種別にグループ化
-      const workAreasMap = new Map<WorkType, WorkAreaRow[]>()
+      const workAreasRecord: WorkAreasRecord = {}
 
       for (const area of typedAreas) {
         const areaPoints = typedPoints
@@ -164,20 +167,21 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
           notes: area.notes,
         }
 
-        const existing = workAreasMap.get(area.work_type) || []
-        existing.push(workAreaRow)
-        workAreasMap.set(area.work_type, existing)
+        if (!workAreasRecord[area.work_type]) {
+          workAreasRecord[area.work_type] = []
+        }
+        workAreasRecord[area.work_type]!.push(workAreaRow)
       }
 
       console.log('[workAreaStore] fetchWorkAreas result:', {
         farmId,
         areasCount: typedAreas.length,
         pointsCount: typedPoints.length,
-        workAreasMap: Object.fromEntries(
-          Array.from(workAreasMap.entries()).map(([k, v]) => [k, v.map(a => ({ id: a.id, name: a.name, pointsCount: a.points.length }))])
+        workAreasRecord: Object.fromEntries(
+          Object.entries(workAreasRecord).map(([k, v]) => [k, v?.map(a => ({ id: a.id, name: a.name, pointsCount: a.points.length }))])
         ),
       })
-      set({ workAreas: workAreasMap, loading: false, hasChanges: false, pendingWorkAreaIds: new Set() })
+      set({ workAreas: workAreasRecord, loading: false, hasChanges: false, pendingWorkAreaIds: [] })
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : '工事区域の取得に失敗しました',
@@ -194,7 +198,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
     }
 
     const state = get()
-    const existingAreas = state.workAreas.get(workType) || []
+    const existingAreas = state.workAreas[workType] || []
     const zoneNumber = `${workType.charAt(0).toUpperCase()}${existingAreas.length + 1}`
     const name = `区域${existingAreas.length + 1}`
 
@@ -231,10 +235,10 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
       }
 
       set((state) => {
-        const newMap = new Map(state.workAreas)
-        const existing = newMap.get(workType) || []
-        newMap.set(workType, [...existing, newArea])
-        return { workAreas: newMap }
+        const newWorkAreas = { ...state.workAreas }
+        const existing = newWorkAreas[workType] || []
+        newWorkAreas[workType] = [...existing, newArea]
+        return { workAreas: newWorkAreas }
       })
 
       return newArea
@@ -246,19 +250,22 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
 
   updateWorkArea: (id, updates) => {
     set((state) => {
-      const newMap = new Map(state.workAreas)
-      for (const [workType, areas] of newMap) {
+      const newWorkAreas = { ...state.workAreas }
+      for (const workType of Object.keys(newWorkAreas) as WorkType[]) {
+        const areas = newWorkAreas[workType]
+        if (!areas) continue
         const index = areas.findIndex(a => a.id === id)
         if (index !== -1) {
           const updatedAreas = [...areas]
           updatedAreas[index] = { ...updatedAreas[index], ...updates }
-          newMap.set(workType, updatedAreas)
+          newWorkAreas[workType] = updatedAreas
           break
         }
       }
-      const newPending = new Set(state.pendingWorkAreaIds)
-      newPending.add(id)
-      return { workAreas: newMap, hasChanges: true, pendingWorkAreaIds: newPending }
+      const newPending = state.pendingWorkAreaIds.includes(id)
+        ? state.pendingWorkAreaIds
+        : [...state.pendingWorkAreaIds, id]
+      return { workAreas: newWorkAreas, hasChanges: true, pendingWorkAreaIds: newPending }
     })
     // 明示的にsaveWorkAreaを呼び出すまでSupabaseには保存しない
   },
@@ -280,15 +287,17 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
       if (error) throw error
 
       set((state) => {
-        const newMap = new Map(state.workAreas)
-        for (const [workType, areas] of newMap) {
+        const newWorkAreas = { ...state.workAreas }
+        for (const workType of Object.keys(newWorkAreas) as WorkType[]) {
+          const areas = newWorkAreas[workType]
+          if (!areas) continue
           const filtered = areas.filter(a => a.id !== id)
           if (filtered.length !== areas.length) {
-            newMap.set(workType, filtered)
+            newWorkAreas[workType] = filtered
             break
           }
         }
-        return { workAreas: newMap }
+        return { workAreas: newWorkAreas }
       })
     } catch (err) {
       set({ error: err instanceof Error ? err.message : '工事区域の削除に失敗しました' })
@@ -317,8 +326,10 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
     const newPointId = crypto.randomUUID()
 
     set((state) => {
-      const newMap = new Map(state.workAreas)
-      for (const [workType, areas] of newMap) {
+      const newWorkAreas = { ...state.workAreas }
+      for (const workType of Object.keys(newWorkAreas) as WorkType[]) {
+        const areas = newWorkAreas[workType]
+        if (!areas) continue
         const index = areas.findIndex(a => a.id === workAreaId)
         if (index !== -1) {
           const updatedAreas = [...areas]
@@ -335,21 +346,24 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
           }
           areaToUpdate.points = [...areaToUpdate.points, newPoint]
           updatedAreas[index] = areaToUpdate
-          newMap.set(workType, updatedAreas)
+          newWorkAreas[workType] = updatedAreas
           break
         }
       }
-      const newPending = new Set(state.pendingWorkAreaIds)
-      newPending.add(workAreaId)
-      return { workAreas: newMap, hasChanges: true, pendingWorkAreaIds: newPending }
+      const newPending = state.pendingWorkAreaIds.includes(workAreaId)
+        ? state.pendingWorkAreaIds
+        : [...state.pendingWorkAreaIds, workAreaId]
+      return { workAreas: newWorkAreas, hasChanges: true, pendingWorkAreaIds: newPending }
     })
     // 明示的にsaveWorkAreaを呼び出すまでSupabaseには保存しない
   },
 
   removePoint: (workAreaId, pointId) => {
     set((state) => {
-      const newMap = new Map(state.workAreas)
-      for (const [workType, areas] of newMap) {
+      const newWorkAreas = { ...state.workAreas }
+      for (const workType of Object.keys(newWorkAreas) as WorkType[]) {
+        const areas = newWorkAreas[workType]
+        if (!areas) continue
         const areaIndex = areas.findIndex(a => a.id === workAreaId)
         if (areaIndex !== -1) {
           const updatedAreas = [...areas]
@@ -358,21 +372,24 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
           // sortOrderを再割り当て
           area.points = area.points.map((p, i) => ({ ...p, sortOrder: i }))
           updatedAreas[areaIndex] = area
-          newMap.set(workType, updatedAreas)
+          newWorkAreas[workType] = updatedAreas
           break
         }
       }
-      const newPending = new Set(state.pendingWorkAreaIds)
-      newPending.add(workAreaId)
-      return { workAreas: newMap, hasChanges: true, pendingWorkAreaIds: newPending }
+      const newPending = state.pendingWorkAreaIds.includes(workAreaId)
+        ? state.pendingWorkAreaIds
+        : [...state.pendingWorkAreaIds, workAreaId]
+      return { workAreas: newWorkAreas, hasChanges: true, pendingWorkAreaIds: newPending }
     })
     // 明示的にsaveWorkAreaを呼び出すまでSupabaseには保存しない
   },
 
   reorderPoints: (workAreaId, pointIds) => {
     set((state) => {
-      const newMap = new Map(state.workAreas)
-      for (const [workType, areas] of newMap) {
+      const newWorkAreas = { ...state.workAreas }
+      for (const workType of Object.keys(newWorkAreas) as WorkType[]) {
+        const areas = newWorkAreas[workType]
+        if (!areas) continue
         const areaIndex = areas.findIndex(a => a.id === workAreaId)
         if (areaIndex !== -1) {
           const updatedAreas = [...areas]
@@ -385,13 +402,14 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
             .filter((p): p is WorkAreaPoint => p !== null)
           area.points = reorderedPoints
           updatedAreas[areaIndex] = area
-          newMap.set(workType, updatedAreas)
+          newWorkAreas[workType] = updatedAreas
           break
         }
       }
-      const newPending = new Set(state.pendingWorkAreaIds)
-      newPending.add(workAreaId)
-      return { workAreas: newMap, hasChanges: true, pendingWorkAreaIds: newPending }
+      const newPending = state.pendingWorkAreaIds.includes(workAreaId)
+        ? state.pendingWorkAreaIds
+        : [...state.pendingWorkAreaIds, workAreaId]
+      return { workAreas: newWorkAreas, hasChanges: true, pendingWorkAreaIds: newPending }
     })
     // 明示的にsaveWorkAreaを呼び出すまでSupabaseには保存しない
   },
@@ -416,8 +434,10 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
 
     // ローカル状態を更新
     set((state) => {
-      const newMap = new Map(state.workAreas)
-      for (const [workType, areas] of newMap) {
+      const newWorkAreas = { ...state.workAreas }
+      for (const workType of Object.keys(newWorkAreas) as WorkType[]) {
+        const areas = newWorkAreas[workType]
+        if (!areas) continue
         const areaIndex = areas.findIndex(a => a.id === workAreaId)
         if (areaIndex !== -1) {
           const updatedAreas = [...areas]
@@ -427,13 +447,14 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
             areaHa: sheet.area_ha,
             perimeterM: sheet.perimeter_m,
           }
-          newMap.set(workType, updatedAreas)
+          newWorkAreas[workType] = updatedAreas
           break
         }
       }
-      const newPending = new Set(state.pendingWorkAreaIds)
-      newPending.add(workAreaId)
-      return { workAreas: newMap, hasChanges: true, pendingWorkAreaIds: newPending }
+      const newPending = state.pendingWorkAreaIds.includes(workAreaId)
+        ? state.pendingWorkAreaIds
+        : [...state.pendingWorkAreaIds, workAreaId]
+      return { workAreas: newWorkAreas, hasChanges: true, pendingWorkAreaIds: newPending }
     })
     // 明示的にsaveWorkAreaを呼び出すまでSupabaseには保存しない
 
@@ -485,28 +506,31 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
 
   saveAllWorkAreas: async () => {
     const state = get()
-    const pendingIds = Array.from(state.pendingWorkAreaIds)
+    const pendingIds = [...state.pendingWorkAreaIds]
     for (const id of pendingIds) {
       await get().saveWorkArea(id)
     }
-    set({ hasChanges: false, pendingWorkAreaIds: new Set() })
+    set({ hasChanges: false, pendingWorkAreaIds: [] })
   },
 
   resetWorkAreaChanges: () => {
     // 変更フラグをリセット（データは再フェッチで復元）
     const farmId = getCurrentFarmId()
-    set({ hasChanges: false, pendingWorkAreaIds: new Set() })
+    set({ hasChanges: false, pendingWorkAreaIds: [] })
     if (farmId) {
       get().fetchWorkAreas(farmId)
     }
   },
 
   getWorkAreasByType: (workType) => {
-    return get().workAreas.get(workType) || []
+    return get().workAreas[workType] || []
   },
 
   getWorkAreaById: (id) => {
-    for (const areas of get().workAreas.values()) {
+    const workAreas = get().workAreas
+    for (const workType of Object.keys(workAreas) as WorkType[]) {
+      const areas = workAreas[workType]
+      if (!areas) continue
       const found = areas.find(a => a.id === id)
       if (found) return found
     }
