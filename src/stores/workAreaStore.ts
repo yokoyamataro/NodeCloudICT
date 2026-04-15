@@ -49,7 +49,7 @@ interface WorkAreaState {
 
   // 工事区域操作
   addWorkArea: (workType: WorkType) => Promise<WorkAreaRow | null>
-  updateWorkArea: (id: string, updates: Partial<Pick<WorkAreaRow, 'zoneNumber' | 'name' | 'notes'>>) => void
+  updateWorkArea: (id: string, updates: Partial<Pick<WorkAreaRow, 'zoneNumber' | 'notes'>>) => void
   deleteWorkArea: (id: string) => Promise<void>
 
   // 座標点操作（座標管理の座標を追加）

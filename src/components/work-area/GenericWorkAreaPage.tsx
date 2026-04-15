@@ -4,6 +4,7 @@ import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { CoordinateMap, type ExternalPolygon } from '@/components/map/CoordinateMap'
+import { PageHeader } from '@/components/layout/PageHeader'
 import type { WorkType, AreaCalculationSheet as AreaCalculationSheetType } from '@/types/database'
 import { WORK_TYPE_NAMES } from '@/types/database'
 import { exportAreaCalculationToCSV } from '@/lib/area-calculation'
@@ -280,12 +281,10 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="p-4 border-b bg-white">
-        <h1 className="text-xl font-bold">{workTypeName} - 工事区域</h1>
-        <p className="text-sm text-muted-foreground">
-          座標管理に登録した座標を使って{workTypeName}の工事区域を設定・面積計算
-        </p>
-      </div>
+      <PageHeader
+        title={`${workTypeName} - 工事区域`}
+        subtitle={`座標管理に登録した座標を使って${workTypeName}の工事区域を設定・面積計算`}
+      />
 
       {/* 区域編集中の案内 */}
       {editingAreaId && (
@@ -342,7 +341,7 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
                       className={`p-3 flex items-center gap-3 cursor-pointer hover:bg-slate-50 ${isEditing ? 'bg-blue-50' : ''}`}
                       onClick={() => setEditingAreaId(isEditing ? null : area.id)}
                     >
-                      <div className="flex-1 grid grid-cols-4 gap-2 text-sm">
+                      <div className="flex-1 grid grid-cols-3 gap-2 text-sm">
                         <input
                           type="text"
                           value={area.zoneNumber}
@@ -352,18 +351,7 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
                           }}
                           onClick={(e) => e.stopPropagation()}
                           className="px-2 py-1 border rounded"
-                          placeholder="番号"
-                        />
-                        <input
-                          type="text"
-                          value={area.name}
-                          onChange={(e) => {
-                            e.stopPropagation()
-                            updateWorkArea(area.id, { name: e.target.value })
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                          className="px-2 py-1 border rounded"
-                          placeholder="区域名"
+                          placeholder="区域番号"
                         />
                         <div className="px-2 py-1 text-muted-foreground">
                           {area.points.length} 点

@@ -5,6 +5,7 @@ import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { CoordinateMap, type BaseLayerType } from '@/components/map/CoordinateMap'
 import { loadSimaFile } from '@/lib/sima-parser'
+import { PageHeader } from '@/components/layout/PageHeader'
 import type { CoordinateType } from '@/types/database'
 
 // 数値入力用コンポーネント（入力中はフォーマットしない）
@@ -266,10 +267,7 @@ export function CoordinatesPage() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="p-4 border-b bg-white">
-        <h1 className="text-xl font-bold">座標管理</h1>
-        <p className="text-sm text-muted-foreground">平面直角座標の登録</p>
-      </div>
+      <PageHeader title="座標管理" subtitle="平面直角座標の登録" />
 
       {/* メインコンテンツ */}
       <div className="flex-1 flex overflow-hidden">

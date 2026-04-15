@@ -36,6 +36,8 @@ import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { usePipeWiringStore } from '@/stores/pipeWiringStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
+import { useProjectListStore } from '@/stores/projectListStore'
+import { useFarmStore } from '@/stores/farmStore'
 
 interface NavItem {
   name: string
@@ -128,6 +130,8 @@ export function AppLayout() {
   const { saveAllPipes, resetPipeChanges } = useUnderdrainStore()
   const { saveWiring, hasChanges: hasWiringChanges } = usePipeWiringStore()
   const { hasChanges: hasWorkAreaChanges, saveAllWorkAreas, resetWorkAreaChanges } = useWorkAreaStore()
+  const currentProject = useProjectListStore((state) => state.currentProject)
+  const currentFarm = useFarmStore((state) => state.currentFarm)
   const [saving, setSaving] = useState(false)
 
   // 未保存の変更があるか（配管系統・工事区域も含む）
@@ -193,6 +197,22 @@ export function AppLayout() {
             <p className="text-sm text-slate-400">ICT設計システム</p>
             <span className="text-xs text-slate-500">{__BUILD_TIME__}</span>
           </div>
+
+          {/* 作業中のプロジェクト・圃場 */}
+          {(currentProject || currentFarm) && (
+            <div className="mt-3 p-2 bg-slate-800 rounded-lg text-xs">
+              {currentProject && (
+                <div className="text-slate-300 truncate" title={currentProject.name}>
+                  {currentProject.name}
+                </div>
+              )}
+              {currentFarm && (
+                <div className="text-slate-400 truncate" title={currentFarm.name}>
+                  └ {currentFarm.name}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* 保存ボタン */}
           <div className="mt-3 p-2 bg-slate-800 rounded-lg">

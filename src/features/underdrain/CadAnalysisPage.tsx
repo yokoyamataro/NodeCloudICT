@@ -10,6 +10,7 @@ import {
 } from '@/stores/underdrainStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { PipeMap, type SurveyPointData } from '@/components/map/PipeMap'
+import { PageHeader } from '@/components/layout/PageHeader'
 import type { PipeType, PipeVertex } from '@/types/database'
 
 // パース済みエンティティ（インポート前）
@@ -677,12 +678,7 @@ export function CadAnalysisPage() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="p-4 border-b bg-white">
-        <h1 className="text-xl font-bold">CAD解析</h1>
-        <p className="text-sm text-muted-foreground">
-          DXFファイルから管路データを抽出・登録
-        </p>
-      </div>
+      <PageHeader title="CAD解析" subtitle="DXFファイルから管路データを抽出・登録" />
 
       <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* 左側: データ管理 */}
