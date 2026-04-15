@@ -163,7 +163,15 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         workAreasMap.set(area.work_type, existing)
       }
 
-      set({ workAreas: workAreasMap, loading: false })
+      console.log('[workAreaStore] fetchWorkAreas result:', {
+        farmId,
+        areasCount: typedAreas.length,
+        pointsCount: typedPoints.length,
+        workAreasMap: Object.fromEntries(
+          Array.from(workAreasMap.entries()).map(([k, v]) => [k, v.map(a => ({ id: a.id, name: a.name, pointsCount: a.points.length }))])
+        ),
+      })
+      set({ workAreas: workAreasMap, loading: false, hasChanges: false, pendingWorkAreaIds: new Set() })
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : '工事区域の取得に失敗しました',
