@@ -592,24 +592,24 @@ export function ProjectListPage() {
         {/* 右側: 地図 */}
         <div className="flex-1 bg-slate-100 flex flex-col">
           {/* 凡例（工種フィルター） */}
-          <div className="p-2 bg-white border-b flex flex-wrap gap-2 items-center">
-            <span className="text-xs text-muted-foreground mr-2">工種:</span>
+          <div className="p-3 bg-white border-b flex flex-wrap gap-4 items-center">
+            <span className="text-sm font-medium text-muted-foreground">工種:</span>
             {ALL_WORK_TYPES.map(workType => (
               <label
                 key={workType}
-                className="flex items-center gap-1 cursor-pointer text-xs"
+                className="flex items-center gap-2 cursor-pointer text-sm px-2 py-1 rounded hover:bg-slate-50"
               >
                 <input
                   type="checkbox"
                   checked={visibleWorkTypes.has(workType)}
                   onChange={() => toggleWorkType(workType)}
-                  className="h-3 w-3"
+                  className="h-4 w-4"
                 />
                 <span
-                  className="w-3 h-3 rounded-sm"
+                  className="w-4 h-4 rounded"
                   style={{ backgroundColor: WORK_TYPE_COLORS[workType] }}
                 />
-                <span>{WORK_TYPE_NAMES[workType]}</span>
+                <span className="font-medium">{WORK_TYPE_NAMES[workType]}</span>
               </label>
             ))}
           </div>
