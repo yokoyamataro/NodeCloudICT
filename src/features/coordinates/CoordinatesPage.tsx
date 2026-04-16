@@ -256,9 +256,11 @@ export function CoordinatesPage() {
 
   const handleExportCSV = () => {
     const header = '点番号,X,Y,Z,緯度,経度,種類\n'
-    const rows = coordinates.map(c =>
-      `${c.pointNumber},${c.x},${c.y},${c.z ?? ''},${c.lat ?? ''},${c.lng ?? ''},${COORDINATE_TYPE_NAMES[c.type]}`
-    ).join('\n')
+    const rows = coordinates.map(c => {
+      // 型の互換性のため、古い型の値をフォールバック
+      const typeName = COORDINATE_TYPE_NAMES[c.type as keyof typeof COORDINATE_TYPE_NAMES] || '不明'
+      return `${c.pointNumber},${c.x},${c.y},${c.z ?? ''},${c.lat ?? ''},${c.lng ?? ''},${typeName}`
+    }).join('\n')
 
     const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
