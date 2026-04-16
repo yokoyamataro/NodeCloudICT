@@ -109,8 +109,8 @@ function PasteModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg p-6 w-full max-w-2xl">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center" style={{ zIndex: 9999 }}>
+      <div className="bg-white rounded-lg p-6 w-full max-w-2xl" style={{ zIndex: 10000 }}>
         <h3 className="text-lg font-semibold mb-4">座標データの貼り付け</h3>
 
         <div className="mb-4">
