@@ -535,7 +535,17 @@ export function ProjectListPage() {
                                   {location && (
                                     <MapPin className="h-3 w-3 text-slate-400 flex-shrink-0" />
                                   )}
-                                  <div className="hidden group-hover:flex items-center">
+                                  <div className="hidden group-hover:flex items-center gap-1">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        handleOpenFarm(farm)
+                                      }}
+                                      className="px-2 py-0.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+                                      title="この圃場を開く"
+                                    >
+                                      開く
+                                    </button>
                                     <button
                                       onClick={(e) => handleDeleteFarm(e, farm.id)}
                                       className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded"
@@ -569,36 +579,6 @@ export function ProjectListPage() {
             )}
           </div>
 
-          {/* 選択中の圃場情報 */}
-          {selectedFarm && (
-            <div className="border-t p-3 bg-slate-50">
-              <div className="text-xs text-muted-foreground mb-1">選択中</div>
-              <div className="font-medium text-sm truncate">{selectedFarm.name}</div>
-              {selectedFarm.description && (
-                <div className="text-xs text-muted-foreground truncate mt-0.5">
-                  {selectedFarm.description}
-                </div>
-              )}
-              <div className="text-xs text-slate-500 mt-1">第{selectedFarm.coordinate_zone}系</div>
-              <div className="mt-2 flex gap-2">
-                <button
-                  onClick={() => handleOpenFarm(selectedFarm)}
-                  className="flex-1 px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90"
-                >
-                  開く
-                </button>
-                {selectedFarmLocation && (
-                  <button
-                    onClick={() => openGoogleMapsNavigation(selectedFarmLocation.lat, selectedFarmLocation.lng)}
-                    className="px-3 py-1.5 text-xs border rounded hover:bg-slate-100"
-                    title="Google Mapsで経路探索"
-                  >
-                    <Navigation className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
         </div>
 
         {/* 右側: 地図 */}
