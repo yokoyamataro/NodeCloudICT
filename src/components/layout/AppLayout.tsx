@@ -126,16 +126,20 @@ export function AppLayout() {
 
   // 設定ストア
   const { hasUnsavedChanges } = useSettingsStore()
-  const { saveAllCoordinates, resetCoordinateChanges } = useCoordinateStore()
-  const { saveAllPipes, resetPipeChanges } = useUnderdrainStore()
-  const { saveWiring, hasChanges: hasWiringChanges } = usePipeWiringStore()
-  const { hasChanges: hasWorkAreaChanges, saveAllWorkAreas, resetWorkAreaChanges } = useWorkAreaStore()
+  const { saveAllCoordinates, resetCoordinateChanges, error: coordinateError } = useCoordinateStore()
+  const { saveAllPipes, resetPipeChanges, error: pipeError } = useUnderdrainStore()
+  const { saveWiring, hasChanges: hasWiringChanges, error: wiringError } = usePipeWiringStore()
+  const { hasChanges: hasWorkAreaChanges, saveAllWorkAreas, resetWorkAreaChanges, error: workAreaError } = useWorkAreaStore()
   const currentProject = useProjectListStore((state) => state.currentProject)
   const currentFarm = useFarmStore((state) => state.currentFarm)
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   // 未保存の変更があるか（配管系統・工事区域も含む）
   const hasAnyUnsavedChanges = hasUnsavedChanges || hasWiringChanges || hasWorkAreaChanges
+
+  // 各ストアのエラーを集約
+  const anyError = coordinateError || pipeError || wiringError || workAreaError || saveError
 
   const handleSignOut = async () => {
     if (hasAnyUnsavedChanges) {
@@ -150,6 +154,7 @@ export function AppLayout() {
   // 全データを保存
   const handleSaveAll = async () => {
     setSaving(true)
+    setSaveError(null)
     try {
       await Promise.all([
         saveAllCoordinates(),
@@ -157,6 +162,8 @@ export function AppLayout() {
         saveWiring(),
         saveAllWorkAreas(),
       ])
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : '保存に失敗しました')
     } finally {
       setSaving(false)
     }
@@ -254,6 +261,14 @@ export function AppLayout() {
               <div className="mt-2 text-xs text-yellow-400 flex items-center gap-1">
                 <span className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse" />
                 未保存の変更があります
+              </div>
+            )}
+
+            {/* エラーメッセージ */}
+            {anyError && (
+              <div className="mt-2 text-xs text-red-400 bg-red-900/30 p-2 rounded">
+                <div className="font-semibold">保存エラー</div>
+                <div className="mt-1 break-words">{anyError}</div>
               </div>
             )}
           </div>
