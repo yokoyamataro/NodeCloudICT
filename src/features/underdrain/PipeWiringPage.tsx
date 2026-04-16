@@ -223,6 +223,7 @@ export function PipeWiringPage() {
               absorptionPipes: [pipe.id],
               collectorPipe: collectorPipeId,
               isMergePipe: false,
+              mergeSystemIndex: null,
             }
             newRows.push(newRow)
           }
@@ -253,6 +254,7 @@ export function PipeWiringPage() {
             absorptionPipes: [pipe.id],
             collectorPipe: collectorPipeId,
             isMergePipe: false,
+            mergeSystemIndex: null,
           }
           newRows.push(newRow)
         }
@@ -313,6 +315,7 @@ export function PipeWiringPage() {
       absorptionPipes: [],
       collectorPipe: pendingCollectorPipeId,
       isMergePipe: false,
+      mergeSystemIndex: null,
     }
 
     // 落口行を追加（吸水は空、集水に最後の管路番号と下流測点を表示）
@@ -347,6 +350,7 @@ export function PipeWiringPage() {
       absorptionPipes: [],
       collectorPipe: lastCollectorPipeId,
       isMergePipe: true,
+      mergeSystemIndex: null,
     }
 
     // 現在のタブに区切り行（合流管）を追加
@@ -377,6 +381,7 @@ export function PipeWiringPage() {
       absorptionPipes: [],
       collectorPipe: null,
       isMergePipe: false,
+      mergeSystemIndex: null,
     }
   }
 
@@ -573,6 +578,7 @@ export function PipeWiringPage() {
         absorptionPipes: [pipeId],
         collectorPipe: collectorPipeId,
         isMergePipe: false,
+        mergeSystemIndex: null,
       }
 
       if (activeTabType === 'collector') {
