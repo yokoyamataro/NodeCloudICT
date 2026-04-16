@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
 import { CoordinateConverter } from '@/lib/coordinates'
+import { useMapViewStore } from './mapViewStore'
 
 export interface Farm {
   id: string
@@ -63,7 +64,14 @@ export const useFarmStore = create<FarmState>((set, get) => ({
   farmLocations: new Map(),
   workAreaPolygons: [],
 
-  setCurrentFarm: (farm) => set({ currentFarm: farm }),
+  setCurrentFarm: (farm) => {
+    // 圃場が変わったら地図の表示状態をリセット（座標にフィットさせる）
+    const currentFarm = get().currentFarm
+    if (farm?.id !== currentFarm?.id) {
+      useMapViewStore.getState().resetView()
+    }
+    set({ currentFarm: farm })
+  },
 
   fetchFarms: async (projectId?: string) => {
     set({ loading: true, error: null })
