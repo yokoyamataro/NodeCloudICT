@@ -548,6 +548,18 @@ export function ProjectListPage() {
                               )
                             })
                           )}
+                          {/* 新規圃場ボタン */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setShowNewFarmDialog(project.id)
+                              setNewFarmZone(project.coordinate_zone ?? 13)
+                            }}
+                            className="flex items-center gap-2 px-2 py-1.5 w-full text-left text-xs text-green-600 hover:bg-green-50 rounded"
+                          >
+                            <Plus className="h-3 w-3" />
+                            新規圃場を追加
+                          </button>
                         </div>
                       )}
                     </div>
