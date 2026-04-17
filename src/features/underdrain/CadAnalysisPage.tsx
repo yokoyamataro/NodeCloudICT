@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { Upload, Trash2, FileSearch, Download, ArrowUpDown, Edit3, X, Navigation, Link2, Merge, Split, Tag, MapPin, ChevronUp, ChevronDown, Target, Square, Map, Maximize2, Minimize2, Printer, AlertCircle } from 'lucide-react'
+import { Upload, Trash2, FileSearch, Download, ArrowUpDown, Edit3, X, Navigation, Link2, Merge, Split, Tag, MapPin, ChevronUp, ChevronDown, Target, Square, Map, Maximize2, Minimize2, Printer } from 'lucide-react'
 import { parseDxf, calculateLineLength } from '@/lib/dxf-parser'
 import { autoConnectFromOutlet } from '@/lib/pipe-connection'
 import {
@@ -679,15 +679,9 @@ export function CadAnalysisPage() {
   // 圃場が選択されていない場合のエラー表示
   if (!currentFarm) {
     return (
-      <div className="h-full flex flex-col">
-        <PageHeader title="CAD解析" subtitle="DXFファイルから管路データを抽出・登録" />
-        <div className="flex-1 flex items-center justify-center bg-red-50">
-          <div className="text-center p-8 bg-white rounded-lg shadow-lg border-2 border-red-200">
-            <AlertCircle className="h-16 w-16 mx-auto mb-4 text-red-500" />
-            <h2 className="text-xl font-bold text-red-700 mb-2">圃場が選択されていません</h2>
-            <p className="text-gray-600 mb-4">CAD解析を実行するには、先に圃場を選択してください。</p>
-            <p className="text-sm text-gray-500">トップページから工事を行う圃場を選択してから、再度このページにアクセスしてください。</p>
-          </div>
+      <div className="h-full flex items-center justify-center">
+        <div className="text-center text-muted-foreground">
+          <p>圃場を選択してください</p>
         </div>
       </div>
     )

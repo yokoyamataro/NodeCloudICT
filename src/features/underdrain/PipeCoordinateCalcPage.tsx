@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
-import { MapPin, Settings, Download, Merge, Hash, Navigation, Target, Square, Map, FileText, MousePointer, X, ArrowUp, ArrowDown, Route, Plus, Table, Save, FolderOpen, AlertCircle } from 'lucide-react'
+import { MapPin, Settings, Download, Merge, Hash, Navigation, Target, Square, Map, FileText, MousePointer, X, ArrowUp, ArrowDown, Route, Plus, Table, Save, FolderOpen } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
@@ -535,23 +535,9 @@ export function PipeCoordinateCalcPage() {
   // 圃場が選択されていない場合のエラー表示
   if (!currentFarm) {
     return (
-      <div className="h-full flex flex-col">
-        <div className="p-4 border-b bg-white">
-          <h1 className="text-xl font-bold flex items-center gap-2">
-            <MapPin className="h-5 w-5" />
-            座標計算
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            管路の頂点から測点座標を生成・同一点を集約
-          </p>
-        </div>
-        <div className="flex-1 flex items-center justify-center bg-red-50">
-          <div className="text-center p-8 bg-white rounded-lg shadow-lg border-2 border-red-200">
-            <AlertCircle className="h-16 w-16 mx-auto mb-4 text-red-500" />
-            <h2 className="text-xl font-bold text-red-700 mb-2">圃場が選択されていません</h2>
-            <p className="text-gray-600 mb-4">座標計算を実行するには、先に圃場を選択してください。</p>
-            <p className="text-sm text-gray-500">トップページから工事を行う圃場を選択してから、再度このページにアクセスしてください。</p>
-          </div>
+      <div className="h-full flex items-center justify-center">
+        <div className="text-center text-muted-foreground">
+          <p>圃場を選択してください</p>
         </div>
       </div>
     )

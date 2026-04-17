@@ -198,6 +198,10 @@ export function AppLayout() {
     return location.pathname === href || location.pathname.startsWith(href + '/')
   }
 
+  // トップページかつプロジェクト・圃場未選択の場合は左メニューを非表示
+  const isTopPage = location.pathname === '/'
+  const showSidebar = !(isTopPage && !currentFarm)
+
   return (
     <div className="h-screen flex flex-col overflow-hidden">
       {/* 上部ヘッダー */}
@@ -242,7 +246,8 @@ export function AppLayout() {
       {/* メインコンテンツ領域 */}
       <div className="flex-1 flex overflow-hidden">
         {/* サイドバー */}
-        <aside className="w-64 bg-slate-900 text-white flex flex-col flex-shrink-0">
+        {showSidebar && (
+          <aside className="w-64 bg-slate-900 text-white flex flex-col flex-shrink-0">
           {/* 保存ボタン */}
           <div className="p-4 border-b border-slate-700">
             <div className="p-2 bg-slate-800 rounded-lg">
@@ -371,6 +376,7 @@ export function AppLayout() {
             </ul>
         </nav>
       </aside>
+        )}
 
       {/* メインコンテンツ */}
       <main className="flex-1 bg-slate-50 overflow-hidden">
