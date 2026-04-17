@@ -5,7 +5,6 @@ import {
   GitBranch,
   Settings,
   ChevronDown,
-  ChevronRight,
   FileSearch,
   MapPin,
   Upload,
@@ -120,9 +119,7 @@ export function AppLayout() {
   const location = useLocation()
   const navigate = useNavigate()
   const { user, signOut } = useAuth()
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
-    new Set(['暗渠工事']) // デフォルトで暗渠工事を展開
-  )
+  const [activeDropdown, setActiveDropdown] = useState<string | null>(null)
 
   // 設定ストア
   const { hasUnsavedChanges } = useSettingsStore()
@@ -182,17 +179,6 @@ export function AppLayout() {
     }
   }
 
-  const toggleGroup = (name: string) => {
-    setExpandedGroups((prev) => {
-      const next = new Set(prev)
-      if (next.has(name)) {
-        next.delete(name)
-      } else {
-        next.add(name)
-      }
-      return next
-    })
-  }
 
   const isActiveLink = (href: string) => {
     return location.pathname === href || location.pathname.startsWith(href + '/')
@@ -201,17 +187,14 @@ export function AppLayout() {
   return (
     <div className="h-screen flex flex-col overflow-hidden">
       {/* 上部ヘッダー */}
-      <header className="bg-slate-900 text-white border-b border-slate-700">
-        <div className="px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-6">
+      <header className="bg-slate-900 text-white">
+        {/* 上段：タイトルとユーザー情報 */}
+        <div className="px-4 py-3 flex items-center justify-between border-b border-slate-700">
+          <div className="flex items-center gap-4">
             {/* タイトル部分 */}
             <div>
               <h1 className="text-xl font-bold">NodeCloud</h1>
               <p className="text-xs text-slate-400">農業土木ICT設計システム <span className="text-slate-500">{__BUILD_TIME__}</span></p>
-            </div>
-            {/* 運営会社 */}
-            <div className="text-xs text-slate-500">
-              運営会社: 有限会社横山測量設計事務所
             </div>
           </div>
 
@@ -229,6 +212,34 @@ export function AppLayout() {
               </div>
             )}
 
+            {/* 保存ボタン */}
+            {hasAnyUnsavedChanges && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleSaveAll}
+                  disabled={saving}
+                  className={cn(
+                    'flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors',
+                    'bg-blue-600 text-white hover:bg-blue-500'
+                  )}
+                >
+                  {saving ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Save className="h-3 w-3" />
+                  )}
+                  保存
+                </button>
+                <button
+                  onClick={handleResetAll}
+                  className="flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors bg-slate-600 text-white hover:bg-slate-500"
+                >
+                  <RotateCcw className="h-3 w-3" />
+                  リセット
+                </button>
+              </div>
+            )}
+
             <div className="flex items-center gap-2">
               <User className="h-4 w-4 text-slate-400" />
               <span className="text-sm text-slate-300">{user?.email}</span>
@@ -242,146 +253,94 @@ export function AppLayout() {
             </button>
           </div>
         </div>
-      </header>
 
-      {/* メインコンテンツ領域 */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* サイドバー */}
-        <aside className="w-64 bg-slate-900 text-white flex flex-col flex-shrink-0">
-          {/* 保存ボタン */}
-          <div className="p-4 border-b border-slate-700">
-            <div className="p-2 bg-slate-800 rounded-lg">
-            <div className="flex gap-1">
-              <button
-                onClick={handleSaveAll}
-                disabled={!hasAnyUnsavedChanges || saving}
-                className={cn(
-                  'flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs rounded transition-colors',
-                  hasAnyUnsavedChanges
-                    ? 'bg-blue-600 text-white hover:bg-blue-500'
-                    : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-                )}
-              >
-                {saving ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                ) : (
-                  <Save className="h-3 w-3" />
-                )}
-                保存
-              </button>
-              <button
-                onClick={handleResetAll}
-                disabled={!hasAnyUnsavedChanges}
-                className={cn(
-                  'flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs rounded transition-colors',
-                  hasAnyUnsavedChanges
-                    ? 'bg-slate-600 text-white hover:bg-slate-500'
-                    : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-                )}
-              >
-                <RotateCcw className="h-3 w-3" />
-                リセット
-              </button>
-            </div>
-
-            {/* 未保存の変更インジケーター */}
-            {hasAnyUnsavedChanges && (
-              <div className="mt-2 text-xs text-yellow-400 flex items-center gap-1">
-                <span className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse" />
-                未保存の変更があります
-              </div>
-            )}
-
-            {/* エラーメッセージ */}
-            {anyError && (
-              <div className="mt-2 text-xs text-red-400 bg-red-900/30 p-2 rounded">
-                <div className="font-semibold">保存エラー</div>
-                <div className="mt-1 break-words">{anyError}</div>
-              </div>
-            )}
-            </div>
-          </div>
-          <nav className="flex-1 p-4 overflow-y-auto">
-          <ul className="space-y-1">
+        {/* 下段：ナビゲーション */}
+        <nav className="bg-slate-800">
+          <div className="px-4">
+            <ul className="flex items-center space-x-1">
               {navigation.map((item) => {
                 const hasChildren = item.children && item.children.length > 0
-                const isExpanded = expandedGroups.has(item.name)
                 const isActive = isActiveLink(item.href)
                 const isChildActive = item.children?.some((child) =>
                   isActiveLink(child.href)
                 )
 
                 return (
-                  <li key={item.name}>
+                  <li key={item.name} className="relative">
                     {hasChildren ? (
-                      <>
+                      <div
+                        className="relative"
+                        onMouseEnter={() => setActiveDropdown(item.name)}
+                        onMouseLeave={() => setActiveDropdown(null)}
+                      >
                         <button
-                          onClick={() => toggleGroup(item.name)}
                           className={cn(
-                            'w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                            'flex items-center gap-2 px-3 py-3 text-sm font-medium transition-colors',
                             isActive || isChildActive
-                              ? 'bg-slate-800 text-white'
-                              : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                              ? 'bg-slate-700 text-white'
+                              : 'text-slate-300 hover:bg-slate-700 hover:text-white'
                           )}
                         >
-                          <item.icon className="h-5 w-5" />
-                          <span className="flex-1 text-left">{item.name}</span>
-                          {isExpanded ? (
-                            <ChevronDown className="h-4 w-4" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4" />
-                          )}
+                          <item.icon className="h-4 w-4" />
+                          <span>{item.name}</span>
+                          <ChevronDown className="h-3 w-3" />
                         </button>
-                        {isExpanded && item.children && (
-                          <ul className="mt-1 ml-4 space-y-1">
+                        {activeDropdown === item.name && item.children && (
+                          <div className="absolute left-0 top-full z-50 w-56 bg-slate-800 border border-slate-700 rounded-lg shadow-xl mt-1">
                             {item.children.map((child) => {
                               const isChildItemActive = isActiveLink(child.href)
                               return (
-                                <li key={child.name}>
-                                  <Link
-                                    to={child.href}
-                                    className={cn(
-                                      'flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
-                                      isChildItemActive
-                                        ? 'bg-slate-700 text-white'
-                                        : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                                    )}
-                                  >
-                                    <child.icon className="h-4 w-4" />
-                                    {child.name}
-                                  </Link>
-                                </li>
+                                <Link
+                                  key={child.name}
+                                  to={child.href}
+                                  className={cn(
+                                    'flex items-center gap-2 px-3 py-2 text-sm transition-colors',
+                                    isChildItemActive
+                                      ? 'bg-slate-700 text-white'
+                                      : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                                  )}
+                                >
+                                  <child.icon className="h-4 w-4" />
+                                  {child.name}
+                                </Link>
                               )
                             })}
-                          </ul>
+                          </div>
                         )}
-                      </>
+                      </div>
                     ) : (
                       <Link
                         to={item.href}
                         className={cn(
-                          'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                          'flex items-center gap-2 px-3 py-3 text-sm font-medium transition-colors',
                           isActive
-                            ? 'bg-slate-800 text-white'
-                          : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                      )}
-                    >
-                      <item.icon className="h-5 w-5" />
-                      {item.name}
-                    </Link>
-                  )}
-                </li>
-              )
+                            ? 'bg-slate-700 text-white'
+                            : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                        )}
+                      >
+                        <item.icon className="h-4 w-4" />
+                        {item.name}
+                      </Link>
+                    )}
+                  </li>
+                )
               })}
             </ul>
+          </div>
         </nav>
-      </aside>
+      </header>
 
       {/* メインコンテンツ */}
       <main className="flex-1 bg-slate-50 overflow-hidden">
+        {/* エラーメッセージ表示 */}
+        {anyError && (
+          <div className="mx-4 mt-2 text-sm text-red-600 bg-red-50 p-3 rounded-lg border border-red-200">
+            <div className="font-semibold">エラー</div>
+            <div className="mt-1">{anyError}</div>
+          </div>
+        )}
         <Outlet />
       </main>
-    </div>
   </div>
   )
 }
