@@ -133,7 +133,7 @@ export function AppLayout() {
 
   // プロジェクト・圃場ストア（現在の表示用）
   const { currentProject } = useProjectListStore()
-  const { currentFarm } = useFarmStore()
+  const { currentFarm, setCurrentFarm } = useFarmStore()
 
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -144,6 +144,27 @@ export function AppLayout() {
 
   // 各ストアのエラーを集約
   const anyError = coordinateError || pipeError || wiringError || workAreaError || saveError
+
+  // トップページに戻る処理
+  const handleGoToTop = () => {
+    // 既にトップページなら何もしない
+    if (location.pathname === '/') {
+      return
+    }
+
+    // 未保存データがある場合は確認
+    if (hasAnyUnsavedChanges) {
+      if (!confirm('未保存の変更があります。破棄してトップページに戻りますか？')) {
+        return
+      }
+    }
+
+    // 状態をリセット（圃場を選択なしに戻す）
+    setCurrentFarm(null)
+
+    // トップページに遷移
+    navigate('/')
+  }
 
   const handleSignOut = async () => {
     if (hasAnyUnsavedChanges) {
@@ -357,19 +378,34 @@ export function AppLayout() {
                         )}
                       </>
                     ) : (
-                      <Link
-                        to={item.href}
-                        className={cn(
-                          'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-                          isActive
-                            ? 'bg-slate-800 text-white'
-                          : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                      )}
-                    >
-                      <item.icon className="h-5 w-5" />
-                      {item.name}
-                    </Link>
-                  )}
+                      item.name === 'トップ' ? (
+                        <button
+                          onClick={handleGoToTop}
+                          className={cn(
+                            'w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors text-left',
+                            location.pathname === '/'
+                              ? 'bg-slate-800 text-white'
+                              : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                          )}
+                        >
+                          <item.icon className="h-5 w-5" />
+                          {item.name}
+                        </button>
+                      ) : (
+                        <Link
+                          to={item.href}
+                          className={cn(
+                            'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                            isActive
+                              ? 'bg-slate-800 text-white'
+                            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                        )}
+                      >
+                        <item.icon className="h-5 w-5" />
+                        {item.name}
+                      </Link>
+                      )
+                    )}
                 </li>
               )
               })}
