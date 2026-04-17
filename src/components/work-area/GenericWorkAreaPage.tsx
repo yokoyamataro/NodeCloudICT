@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Plus, Trash2, GripVertical, Calculator, Download, X, MapPin } from 'lucide-react'
+import { Plus, Trash2, GripVertical, Calculator, Download, X, MapPin, AlertCircle } from 'lucide-react'
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
@@ -270,10 +270,18 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
 
   if (!currentFarm) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <div className="text-center text-muted-foreground">
-          <MapPin className="h-12 w-12 mx-auto mb-4 opacity-50" />
-          <p>圃場を選択してください</p>
+      <div className="h-full flex flex-col">
+        <PageHeader
+          title={`${workTypeName} - 工事区域`}
+          subtitle={`座標管理に登録した座標を使って${workTypeName}の工事区域を設定・面積計算`}
+        />
+        <div className="flex-1 flex items-center justify-center bg-red-50">
+          <div className="text-center p-8 bg-white rounded-lg shadow-lg border-2 border-red-200">
+            <AlertCircle className="h-16 w-16 mx-auto mb-4 text-red-500" />
+            <h2 className="text-xl font-bold text-red-700 mb-2">圃場が選択されていません</h2>
+            <p className="text-gray-600 mb-4">工事区域を編集するには、先に圃場を選択してください。</p>
+            <p className="text-sm text-gray-500">トップページから工事を行う圃場を選択してから、再度このページにアクセスしてください。</p>
+          </div>
         </div>
       </div>
     )
