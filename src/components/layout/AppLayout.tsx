@@ -199,34 +199,58 @@ export function AppLayout() {
   }
 
   return (
-    <div className="h-screen flex overflow-hidden">
-      {/* サイドバー */}
-      <aside className="w-64 bg-slate-900 text-white flex flex-col flex-shrink-0">
-        <div className="p-4 border-b border-slate-700">
-          <h1 className="text-xl font-bold">NodeCloud（農土クラウド）</h1>
-          <div className="flex items-center gap-2">
-            <p className="text-sm text-slate-400">ICT設計システム</p>
-            <span className="text-xs text-slate-500">{__BUILD_TIME__}</span>
+    <div className="h-screen flex flex-col overflow-hidden">
+      {/* 上部ヘッダー */}
+      <header className="bg-slate-900 text-white border-b border-slate-700">
+        <div className="px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-6">
+            {/* タイトル部分 */}
+            <div>
+              <h1 className="text-xl font-bold">NodeCloud</h1>
+              <p className="text-xs text-slate-400">農業土木ICT設計システム <span className="text-slate-500">{__BUILD_TIME__}</span></p>
+            </div>
+            {/* 運営会社 */}
+            <div className="text-xs text-slate-500">
+              運営会社: 有限会社横山測量設計事務所
+            </div>
           </div>
 
-          {/* 作業中のプロジェクト・圃場 */}
-          {(currentProject || currentFarm) && (
-            <div className="mt-3 p-2 bg-slate-800 rounded-lg text-xs">
-              {currentProject && (
-                <div className="text-slate-300 truncate" title={currentProject.name}>
-                  {currentProject.name}
-                </div>
-              )}
-              {currentFarm && (
-                <div className="text-slate-400 truncate" title={currentFarm.name}>
-                  └ {currentFarm.name}
-                </div>
-              )}
-            </div>
-          )}
+          {/* 右側：ログイン情報 */}
+          <div className="flex items-center gap-4">
+            {/* 作業中のプロジェクト・圃場 */}
+            {(currentProject || currentFarm) && (
+              <div className="text-xs">
+                {currentProject && (
+                  <span className="text-slate-300">{currentProject.name}</span>
+                )}
+                {currentFarm && (
+                  <span className="text-slate-400"> / {currentFarm.name}</span>
+                )}
+              </div>
+            )}
 
+            <div className="flex items-center gap-2">
+              <User className="h-4 w-4 text-slate-400" />
+              <span className="text-sm text-slate-300">{user?.email}</span>
+            </div>
+            <button
+              onClick={handleSignOut}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+            >
+              <LogOut className="h-4 w-4" />
+              ログアウト
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* メインコンテンツ領域 */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* サイドバー */}
+        <aside className="w-64 bg-slate-900 text-white flex flex-col flex-shrink-0">
           {/* 保存ボタン */}
-          <div className="mt-3 p-2 bg-slate-800 rounded-lg">
+          <div className="p-4 border-b border-slate-700">
+            <div className="p-2 bg-slate-800 rounded-lg">
             <div className="flex gap-1">
               <button
                 onClick={handleSaveAll}
@@ -275,9 +299,9 @@ export function AppLayout() {
                 <div className="mt-1 break-words">{anyError}</div>
               </div>
             )}
+            </div>
           </div>
-        </div>
-        <nav className="flex-1 p-4 overflow-y-auto">
+          <nav className="flex-1 p-4 overflow-y-auto">
           <ul className="space-y-1">
               {navigation.map((item) => {
                 const hasChildren = item.children && item.children.length > 0
@@ -351,20 +375,6 @@ export function AppLayout() {
               })}
             </ul>
         </nav>
-        <div className="p-4 border-t border-slate-700">
-          <div className="flex items-center gap-2 mb-2">
-            <User className="h-4 w-4 text-slate-400" />
-            <span className="text-xs text-slate-300 truncate">{user?.email}</span>
-          </div>
-          <button
-            onClick={handleSignOut}
-            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors"
-          >
-            <LogOut className="h-4 w-4" />
-            ログアウト
-          </button>
-          <div className="mt-2 text-xs text-slate-500">v0.1.0</div>
-        </div>
       </aside>
 
       {/* メインコンテンツ */}
@@ -372,5 +382,6 @@ export function AppLayout() {
         <Outlet />
       </main>
     </div>
+  </div>
   )
 }
