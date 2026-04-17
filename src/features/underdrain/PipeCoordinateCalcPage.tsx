@@ -64,7 +64,7 @@ const MERGE_THRESHOLD = 0.1 // 10cm
 
 export function PipeCoordinateCalcPage() {
   const { pipes, fetchPipes } = useUnderdrainStore()
-  const { coordinates, fetchCoordinates } = useCoordinateStore()
+  const { coordinates, fetchCoordinates, zone } = useCoordinateStore()
   const { currentFarm } = useFarmStore()
 
   // プロジェクト選択時にデータを読み込む
@@ -250,7 +250,6 @@ export function PipeCoordinateCalcPage() {
   }, [exportPoints])
 
   // 選択した点を結ぶルートの座標（緯度経度）を計算
-  const { zone } = useCoordinateStore()
   const selectedPointRoute = useMemo(() => {
     if (exportPoints.length < 2) return []
 
