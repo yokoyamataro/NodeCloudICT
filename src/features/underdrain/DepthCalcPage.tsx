@@ -27,9 +27,16 @@ import { CrossSectionChart } from '@/components/charts/CrossSectionChart'
 
 export function DepthCalcPage() {
   const { currentFarm } = useFarmStore()
-  const { fetchPipes } = useUnderdrainStore()
+  const { fetchPipes, pipes } = useUnderdrainStore()
   const { fetchSurveyData } = useSurveyStore()
   const { fetchWiring } = usePipeWiringStore()
+
+  // 管路ID → 管路番号のルックアップ
+  const pipeNumberById = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const p of pipes) map.set(p.id, p.number)
+    return map
+  }, [pipes])
   const {
     planGroups,
     loading,
@@ -187,6 +194,87 @@ export function DepthCalcPage() {
     const collectorSlope = calcCollectorSlope(row, nextRow)
     const collector = row.collectorPoint
     const isCollapsed = collapsedRows.has(row.id)
+    const collectorPipeNumber = row.collectorPipeId
+      ? pipeNumberById.get(row.collectorPipeId) ?? ''
+      : ''
+
+    // 集水合流行の場合、合流先系統の最下流集水の計画高を取得
+    const isMergeRow = row.mergeSystemIndex !== null && row.mergeSystemIndex !== undefined
+    let mergedPlannedHeight: number | null = null
+    let mergedPointName: string | null = null
+    if (isMergeRow && row.mergeSystemIndex !== null && row.mergeSystemIndex !== undefined) {
+      // 全プラングループから該当系統の行を探す
+      for (const g of planGroups) {
+        const targetRows = g.rows.filter((r) => r.systemIndex === row.mergeSystemIndex)
+        if (targetRows.length === 0) continue
+        // 最下流（最後）の集水測点を探す
+        for (let i = targetRows.length - 1; i >= 0; i--) {
+          const tr = targetRows[i]
+          if (tr.collectorPoint) {
+            mergedPlannedHeight = tr.collectorPoint.plannedHeight
+            mergedPointName = tr.collectorPoint.pointName || null
+            break
+          }
+        }
+        if (mergedPlannedHeight !== null) break
+      }
+    }
+
+    // 集水合流行は専用レイアウトで表示
+    if (isMergeRow) {
+      return (
+        <div key={row.id} className="border rounded-lg mb-2 bg-purple-50 overflow-x-auto">
+          <table className="w-full text-xs border-collapse">
+            <colgroup>
+              <col className="w-[60px]" />
+              <col />
+              <col className="w-[140px]" />
+              <col className="w-3" />
+              <col className="w-[90px]" />
+              <col className="w-[70px]" />
+            </colgroup>
+            <thead>
+              <tr className="bg-purple-100">
+                <th className="px-1.5 py-1 text-left font-medium border whitespace-nowrap text-purple-700">
+                  {row.pipeNumber || '集水合流'}
+                </th>
+                <th className="border-0 bg-transparent"></th>
+                <th className="px-1.5 py-1 text-center font-medium border whitespace-nowrap">
+                  {mergedPointName
+                    ? `${mergedPointName}（系統${row.mergeSystemIndex}）`
+                    : `→ 系統${row.mergeSystemIndex}`}
+                </th>
+                <th className="border-0 bg-transparent"></th>
+                <th className="px-1.5 py-1 text-center font-medium border bg-slate-100 text-slate-400">
+                  別系統管理
+                </th>
+                <th className="px-1.5 py-1 text-left font-medium border whitespace-nowrap text-purple-700 bg-purple-100">
+                  {row.pipeNumber || '-'}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
+                  計画高
+                </td>
+                <td className="border-0 bg-transparent"></td>
+                <td className="px-1.5 py-1 text-center border font-mono bg-white">
+                  {mergedPlannedHeight !== null ? mergedPlannedHeight.toFixed(3) : '-'}
+                </td>
+                <td className="border-0 bg-transparent"></td>
+                <td className="px-1.5 py-1 text-center border font-mono bg-slate-50 text-slate-400">
+                  -
+                </td>
+                <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
+                  計画高
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )
+    }
 
     return (
       <div key={row.id} className="border rounded-lg mb-2 bg-white overflow-x-auto">
@@ -199,6 +287,7 @@ export function DepthCalcPage() {
             ))}
             <col className="w-3" />
             <col className="w-[90px]" />
+            <col className="w-[70px]" />
           </colgroup>
           <thead>
             <tr className="bg-slate-100">
@@ -229,6 +318,9 @@ export function DepthCalcPage() {
               <th className="border-0 bg-transparent"></th>
               <th className="px-1.5 py-1 text-center font-medium border bg-green-50">
                 {collector?.pointName || ''}
+              </th>
+              <th className="px-1.5 py-1 text-left font-medium border whitespace-nowrap text-emerald-700 bg-green-50">
+                {collectorPipeNumber || '-'}
               </th>
             </tr>
           </thead>
@@ -272,6 +364,9 @@ export function DepthCalcPage() {
                       <div className="px-0.5 py-0.5 text-center font-mono text-xs text-slate-400">-</div>
                     )}
                   </td>
+                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
+                    地盤高
+                  </td>
                 </tr>
 
                 {/* 計画高 */}
@@ -311,6 +406,9 @@ export function DepthCalcPage() {
                       <div className="px-0.5 py-0.5 text-center font-mono text-xs text-slate-400">-</div>
                     )}
                   </td>
+                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
+                    計画高
+                  </td>
                 </tr>
 
                 {/* 切深 */}
@@ -343,6 +441,9 @@ export function DepthCalcPage() {
                   >
                     {collector?.cutDepth?.toFixed(3) ?? '-'}
                   </td>
+                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
+                    切深
+                  </td>
                 </tr>
 
                 {/* 区間距離 */}
@@ -363,6 +464,9 @@ export function DepthCalcPage() {
                   <td className="px-1.5 py-1 text-center border font-mono text-slate-600 bg-green-50">
                     {collector?.segmentDistance?.toFixed(2) ?? '-'}
                   </td>
+                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
+                    区間距離
+                  </td>
                 </tr>
 
                 {/* 区間勾配 */}
@@ -382,6 +486,9 @@ export function DepthCalcPage() {
                   <td className="border-0 bg-transparent"></td>
                   <td className="px-1.5 py-1 text-center border font-mono text-slate-600 bg-green-50">
                     {collectorSlope ?? '-'}
+                  </td>
+                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
+                    区間勾配
                   </td>
                 </tr>
               </>

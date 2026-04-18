@@ -39,6 +39,8 @@ export interface PlanRow {
   // 測点データ
   absorptionPoints: PlanPoint[] // 吸水の測点（上流から順）
   collectorPoint: PlanPoint | null // 集水との合流点
+  // 集水合流の参照先系統（別系統の集水計画高を参照する行）
+  mergeSystemIndex?: number | null
 }
 
 // グループ（集水暗渠タブまたは直落暗渠）
@@ -150,6 +152,19 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       // 管路情報を取得
       const pipes = useUnderdrainStore.getState().pipes
 
+      // 配管系統データから wiringRowId → mergeSystemIndex のルックアップを作成
+      const wiringState = usePipeWiringStore.getState()
+      const mergeInfoByWiringRowId = new Map<string, number>()
+      const allWiringRows = [
+        ...wiringState.collectorTabs.flatMap((t) => t.rows),
+        ...wiringState.directRows,
+      ]
+      for (const wr of allWiringRows) {
+        if (wr.rowType === 'collector_merge' && wr.mergeSystemIndex !== null) {
+          mergeInfoByWiringRowId.set(wr.id, wr.mergeSystemIndex)
+        }
+      }
+
       // データを整形
       const groupMap = new Map<string, PlanGroup>()
 
@@ -223,6 +238,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
           designLength: pipe?.designLength || null,
           absorptionPoints,
           collectorPoint,
+          mergeSystemIndex: mergeInfoByWiringRowId.get(row.wiring_row_id) ?? null,
         }
 
         groupMap.get(groupKey)!.rows.push(planRow)
@@ -449,6 +465,35 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
           // 前の wiring 行の集水管ID（管切替判定用）
           const prevWiringRow = rowIndex > 0 ? tab.rows[rowIndex - 1] : null
           const prevCollectorPipeId = prevWiringRow?.collectorPipe ?? null
+
+          // 集水合流行: 合流先系統の計画高を参照表示する行として生成
+          if (wiringRow.rowType === 'collector_merge' && wiringRow.mergeSystemIndex !== null) {
+            const rowSystemInfo = systemInfo.get(wiringRow.id) || {
+              systemIndex: 1,
+              isSystemEnd: false,
+              systemEndType: null,
+            }
+            const planRow: PlanRow = {
+              id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+              wiringRowId: wiringRow.id,
+              groupType: 'collector',
+              groupIndex: tabIndex,
+              rowIndex: group.rows.length,
+              systemIndex: rowSystemInfo.systemIndex,
+              isSystemEnd: rowSystemInfo.isSystemEnd,
+              systemEndType: rowSystemInfo.systemEndType,
+              absorptionPipeId: null,
+              collectorPipeId: wiringRow.collectorPipe,
+              pipeNumber: collectorPipe?.number ?? null,
+              diameter: collectorPipe?.diameter ?? null,
+              designLength: collectorPipe?.designLength ?? null,
+              absorptionPoints: [],
+              collectorPoint: null,
+              mergeSystemIndex: wiringRow.mergeSystemIndex,
+            }
+            group.rows.push(planRow)
+            continue
+          }
 
           // 吸水管がある行の処理
           if (wiringRow.absorptionPipes.length > 0) {
