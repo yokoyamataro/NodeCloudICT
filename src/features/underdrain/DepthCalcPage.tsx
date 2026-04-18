@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, type ReactNode } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import {
   Ruler,
   RefreshCw,
@@ -18,8 +18,8 @@ import { useSurveyStore } from '@/stores/surveyStore'
 import { usePipeWiringStore } from '@/stores/pipeWiringStore'
 import {
   useConstructionPlanStore,
-  type PlanGroup,
   type PlanRow,
+  type PlanPoint,
   type AutoCalcParams,
 } from '@/stores/constructionPlanStore'
 import { PipeMap } from '@/components/map/PipeMap'
@@ -68,9 +68,6 @@ export function DepthCalcPage() {
     autoCalculatePlannedHeights(calcParams)
   }, [autoCalculatePlannedHeights, calcParams])
 
-  // 展開状態
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
-
   // 行ごとの折りたたみ状態（地盤高より下の行を隠す）
   const [collapsedRows, setCollapsedRows] = useState<Set<string>>(new Set())
 
@@ -86,8 +83,6 @@ export function DepthCalcPage() {
     })
   }
 
-  // グループごとのアクティブ系統インデックス
-  const [activeSystemByGroup, setActiveSystemByGroup] = useState<Record<string, number>>({})
 
   // 選択中の管路ID（地図フォーカス用）
   const [focusedPipeId] = useState<string | null>(null)
@@ -112,25 +107,6 @@ export function DepthCalcPage() {
     }
   }, [currentFarm, fetchPipes, fetchSurveyData, fetchWiring, fetchPlan])
 
-  // 全グループを展開
-  useEffect(() => {
-    if (planGroups.length > 0) {
-      setExpandedGroups(new Set(planGroups.map(g => g.id)))
-    }
-  }, [planGroups])
-
-  // グループの展開/折りたたみ
-  const toggleGroup = (groupId: string) => {
-    setExpandedGroups(prev => {
-      const newSet = new Set(prev)
-      if (newSet.has(groupId)) {
-        newSet.delete(groupId)
-      } else {
-        newSet.add(groupId)
-      }
-      return newSet
-    })
-  }
 
   // 計画高の変更ハンドラ
   const handlePlannedHeightChange = (
@@ -198,121 +174,65 @@ export function DepthCalcPage() {
       ? pipeNumberById.get(row.collectorPipeId) ?? ''
       : ''
 
-    // 集水合流行の場合、合流先系統の最下流集水の計画高を取得
+    // 集水合流行の場合、合流先系統の最下流 3 点を取得
     const isMergeRow = row.mergeSystemIndex !== null && row.mergeSystemIndex !== undefined
-    let mergedPlannedHeight: number | null = null
-    let mergedPointName: string | null = null
+    const mergedLast3Points: PlanPoint[] = []
     if (isMergeRow && row.mergeSystemIndex !== null && row.mergeSystemIndex !== undefined) {
-      // 全プラングループから該当系統の行を探す
       for (const g of planGroups) {
-        const targetRows = g.rows.filter((r) => r.systemIndex === row.mergeSystemIndex)
+        const targetRows = g.rows.filter(
+          (r) => r.systemIndex === row.mergeSystemIndex && r.mergeSystemIndex == null
+        )
         if (targetRows.length === 0) continue
-        // 最下流（最後）の集水測点を探す
-        for (let i = targetRows.length - 1; i >= 0; i--) {
-          const tr = targetRows[i]
-          if (tr.collectorPoint) {
-            mergedPlannedHeight = tr.collectorPoint.plannedHeight
-            mergedPointName = tr.collectorPoint.pointName || null
-            break
-          }
+        const allCollectorPoints: PlanPoint[] = []
+        for (const tr of targetRows) {
+          if (tr.collectorPoint) allCollectorPoints.push(tr.collectorPoint)
         }
-        if (mergedPlannedHeight !== null) break
+        if (allCollectorPoints.length === 0) continue
+        mergedLast3Points.push(...allCollectorPoints.slice(-3))
+        break
       }
     }
 
-    // 集水合流行は通常レイアウトで、吸水列に「別系統管理」を表示
+    // 集水合流行: 吸水列に合流先系統の最下流 3 点を読み取り専用で表示。集水列は通常編集可。
     if (isMergeRow) {
-      const mergeLabel = mergedPointName
-        ? `別系統管理（系統${row.mergeSystemIndex}: ${mergedPointName}${
-            mergedPlannedHeight !== null ? ` / ${mergedPlannedHeight.toFixed(3)}` : ''
-          }）`
-        : `別系統管理（系統${row.mergeSystemIndex}）`
-      const rows: Array<{ key: string; label: string; cell: ReactNode }> = [
-        {
-          key: 'ground',
-          label: '地盤高',
-          cell: collector ? (
-            <input
-              type="number"
-              step="0.001"
-              value={collector.groundHeight ?? ''}
-              onChange={(e) => handleGroundHeightChange(row.id, collector.id, e.target.value)}
-              className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded bg-amber-50"
-              placeholder="-"
-            />
-          ) : (
-            <div className="px-0.5 py-0.5 text-center font-mono text-xs text-slate-400">-</div>
-          ),
-        },
-        {
-          key: 'planned',
-          label: '計画高',
-          cell: collector ? (
-            <input
-              type="number"
-              step="0.001"
-              value={formatPlannedHeight(collector.plannedHeight)}
-              onChange={(e) => handlePlannedHeightChange(row.id, collector.id, e.target.value)}
-              className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded"
-              placeholder="-"
-            />
-          ) : (
-            <div className="px-0.5 py-0.5 text-center font-mono text-xs text-slate-400">-</div>
-          ),
-        },
-        {
-          key: 'cut',
-          label: '切深',
-          cell: (
-            <div
-              className={`px-1.5 py-1 text-center font-mono ${
-                collector?.cutDepth !== null && collector?.cutDepth !== undefined && collector.cutDepth < 0
-                  ? 'text-red-600'
-                  : ''
-              }`}
-            >
-              {collector?.cutDepth?.toFixed(3) ?? '-'}
-            </div>
-          ),
-        },
-        {
-          key: 'dist',
-          label: '区間距離',
-          cell: (
-            <div className="px-1.5 py-1 text-center font-mono text-slate-600">
-              {collector?.segmentDistance?.toFixed(2) ?? '-'}
-            </div>
-          ),
-        },
-        {
-          key: 'slope',
-          label: '区間勾配',
-          cell: (
-            <div className="px-1.5 py-1 text-center font-mono text-slate-600">
-              {collectorSlope ?? '-'}
-            </div>
-          ),
-        },
-      ]
-
+      const refCount = mergedLast3Points.length
       return (
         <div key={row.id} className="border rounded-lg mb-2 bg-purple-50 overflow-x-auto">
           <table className="w-full text-xs border-collapse">
             <colgroup>
               <col className="w-[60px]" />
               <col />
+              {mergedLast3Points.map((p) => (
+                <col key={p.id} className="w-[70px]" />
+              ))}
               <col className="w-3" />
               <col className="w-[90px]" />
               <col className="w-[70px]" />
             </colgroup>
             <thead>
               <tr className="bg-purple-100">
-                <th className="px-1.5 py-1 text-left font-medium border whitespace-nowrap text-purple-700">
+                <th
+                  className="px-1.5 py-1 text-left font-medium border whitespace-nowrap text-purple-700"
+                  colSpan={refCount > 0 ? 1 : 1}
+                >
                   {row.pipeNumber || '-'}
                 </th>
-                <th className="px-1.5 py-1 text-center font-medium border text-slate-500 whitespace-nowrap">
-                  {mergeLabel}
-                </th>
+                <th className="border-0 bg-transparent"></th>
+                {refCount > 0 ? (
+                  mergedLast3Points.map((p) => (
+                    <th
+                      key={p.id}
+                      className="px-1.5 py-1 text-center font-medium border bg-slate-100 text-slate-500 whitespace-nowrap"
+                      title={`別系統管理（系統${row.mergeSystemIndex}）`}
+                    >
+                      {p.pointName || '-'}
+                    </th>
+                  ))
+                ) : (
+                  <th className="px-1.5 py-1 text-center font-medium border bg-slate-100 text-slate-400 whitespace-nowrap">
+                    別系統管理（系統{row.mergeSystemIndex}）
+                  </th>
+                )}
                 <th className="border-0 bg-transparent"></th>
                 <th className="px-1.5 py-1 text-center font-medium border bg-green-50">
                   {collector?.pointName || ''}
@@ -323,26 +243,129 @@ export function DepthCalcPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, idx) => (
-                <tr key={r.key}>
-                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
-                    {r.label}
-                  </td>
-                  {idx === 0 ? (
-                    <td
-                      rowSpan={rows.length}
-                      className="px-1.5 py-1 text-center align-middle border bg-slate-100 text-slate-400 whitespace-nowrap"
-                    >
-                      別系統管理
+              {/* 地盤高 */}
+              <tr>
+                <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">地盤高</td>
+                <td className="border-0 bg-transparent"></td>
+                {refCount > 0 ? (
+                  mergedLast3Points.map((p) => (
+                    <td key={p.id} className="px-1.5 py-1 text-center border font-mono bg-slate-100 text-slate-500">
+                      {p.groundHeight !== null ? p.groundHeight.toFixed(3) : '-'}
                     </td>
-                  ) : null}
-                  <td className="border-0 bg-transparent"></td>
-                  <td className="px-0.5 py-0.5 border bg-green-50">{r.cell}</td>
-                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
-                    {r.label}
-                  </td>
-                </tr>
-              ))}
+                  ))
+                ) : (
+                  <td className="px-1.5 py-1 text-center border bg-slate-100 text-slate-400">-</td>
+                )}
+                <td className="border-0 bg-transparent"></td>
+                <td className="px-0.5 py-0.5 border bg-green-50">
+                  {collector ? (
+                    <input
+                      type="number"
+                      step="0.001"
+                      value={collector.groundHeight ?? ''}
+                      onChange={(e) => handleGroundHeightChange(row.id, collector.id, e.target.value)}
+                      className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded bg-amber-50"
+                      placeholder="-"
+                    />
+                  ) : (
+                    <div className="px-0.5 py-0.5 text-center font-mono text-xs text-slate-400">-</div>
+                  )}
+                </td>
+                <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">地盤高</td>
+              </tr>
+              {/* 計画高 */}
+              <tr>
+                <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">計画高</td>
+                <td className="border-0 bg-transparent"></td>
+                {refCount > 0 ? (
+                  mergedLast3Points.map((p) => (
+                    <td key={p.id} className="px-1.5 py-1 text-center border font-mono bg-slate-100 text-slate-700 font-semibold">
+                      {p.plannedHeight !== null ? p.plannedHeight.toFixed(3) : '-'}
+                    </td>
+                  ))
+                ) : (
+                  <td className="px-1.5 py-1 text-center border bg-slate-100 text-slate-400">-</td>
+                )}
+                <td className="border-0 bg-transparent"></td>
+                <td className="px-0.5 py-0.5 border bg-green-50">
+                  {collector ? (
+                    <input
+                      type="number"
+                      step="0.001"
+                      value={formatPlannedHeight(collector.plannedHeight)}
+                      onChange={(e) => handlePlannedHeightChange(row.id, collector.id, e.target.value)}
+                      className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded"
+                      placeholder="-"
+                    />
+                  ) : (
+                    <div className="px-0.5 py-0.5 text-center font-mono text-xs text-slate-400">-</div>
+                  )}
+                </td>
+                <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">計画高</td>
+              </tr>
+              {/* 切深 */}
+              <tr>
+                <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">切深</td>
+                <td className="border-0 bg-transparent"></td>
+                {refCount > 0 ? (
+                  mergedLast3Points.map((p) => (
+                    <td key={p.id} className="px-1.5 py-1 text-center border font-mono bg-slate-100 text-slate-500">
+                      {p.cutDepth !== null ? p.cutDepth.toFixed(3) : '-'}
+                    </td>
+                  ))
+                ) : (
+                  <td className="px-1.5 py-1 text-center border bg-slate-100 text-slate-400">-</td>
+                )}
+                <td className="border-0 bg-transparent"></td>
+                <td
+                  className={`px-1.5 py-1 text-center border font-mono bg-green-50 ${
+                    collector?.cutDepth !== null && collector?.cutDepth !== undefined && collector.cutDepth < 0
+                      ? 'text-red-600'
+                      : ''
+                  }`}
+                >
+                  {collector?.cutDepth?.toFixed(3) ?? '-'}
+                </td>
+                <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">切深</td>
+              </tr>
+              {/* 区間距離 */}
+              <tr>
+                <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">区間距離</td>
+                <td className="border-0 bg-transparent"></td>
+                {refCount > 0 ? (
+                  mergedLast3Points.map((p) => (
+                    <td key={p.id} className="px-1.5 py-1 text-center border font-mono bg-slate-100 text-slate-500">
+                      {p.segmentDistance?.toFixed(2) ?? '-'}
+                    </td>
+                  ))
+                ) : (
+                  <td className="px-1.5 py-1 text-center border bg-slate-100 text-slate-400">-</td>
+                )}
+                <td className="border-0 bg-transparent"></td>
+                <td className="px-1.5 py-1 text-center border font-mono text-slate-600 bg-green-50">
+                  {collector?.segmentDistance?.toFixed(2) ?? '-'}
+                </td>
+                <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">区間距離</td>
+              </tr>
+              {/* 区間勾配 */}
+              <tr>
+                <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">区間勾配</td>
+                <td className="border-0 bg-transparent"></td>
+                {refCount > 0 ? (
+                  mergedLast3Points.map((p) => (
+                    <td key={p.id} className="px-1.5 py-1 text-center border font-mono bg-slate-100 text-slate-500">
+                      {p.segmentSlope ?? '-'}
+                    </td>
+                  ))
+                ) : (
+                  <td className="px-1.5 py-1 text-center border bg-slate-100 text-slate-400">-</td>
+                )}
+                <td className="border-0 bg-transparent"></td>
+                <td className="px-1.5 py-1 text-center border font-mono text-slate-600 bg-green-50">
+                  {collectorSlope ?? '-'}
+                </td>
+                <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">区間勾配</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -609,91 +632,58 @@ export function DepthCalcPage() {
     })
   }, [planGroups])
 
-  // グループのレンダリング
-  const renderGroup = (group: PlanGroup, groupIndex: number) => {
-    const isExpanded = expandedGroups.has(group.id)
-    const groupData = groupedBySystem[groupIndex]
+  // 全グループ × 全系統のフラットなタブリストを計算
+  const flatTabs = useMemo(() => {
+    const tabs: Array<{
+      key: string
+      groupIndex: number
+      systemIndex: number
+      groupName: string
+      groupType: 'collector' | 'direct'
+      endType: 'outlet' | 'merge' | null
+      rows: PlanRow[]
+    }> = []
+    groupedBySystem.forEach((group, gi) => {
+      group.systems.forEach((system) => {
+        tabs.push({
+          key: `${gi}-${system.systemIndex}`,
+          groupIndex: gi,
+          systemIndex: system.systemIndex,
+          groupName: group.name,
+          groupType: group.groupType,
+          endType: system.endType,
+          rows: system.rows,
+        })
+      })
+    })
+    return tabs
+  }, [groupedBySystem])
 
-    return (
-      <div key={group.id} className="mb-4">
-        {/* グループヘッダー */}
-        <div
-          className={`flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer ${
-            group.groupType === 'collector'
-              ? 'bg-blue-100 hover:bg-blue-200'
-              : 'bg-orange-100 hover:bg-orange-200'
-          }`}
-          onClick={() => toggleGroup(group.id)}
-        >
-          {isExpanded ? (
-            <ChevronDown className="h-5 w-5" />
-          ) : (
-            <ChevronRight className="h-5 w-5" />
-          )}
-          <span className="font-bold text-lg">{group.name}</span>
-          <span className="text-sm text-slate-600">
-            ({group.rows.length}本 / {groupData?.systems.length || 0}系統)
-          </span>
-        </div>
+  // タブが読み込まれたら最初のタブをアクティブに（未選択時のみ）
+  useEffect(() => {
+    if (flatTabs.length === 0) return
+    const exists =
+      selectedSystem &&
+      flatTabs.some(
+        (t) =>
+          t.groupIndex === selectedSystem.groupIndex && t.systemIndex === selectedSystem.systemIndex
+      )
+    if (!exists) {
+      setSelectedSystem({
+        groupIndex: flatTabs[0].groupIndex,
+        systemIndex: flatTabs[0].systemIndex,
+      })
+    }
+  }, [flatTabs, selectedSystem])
 
-        {/* グループの内容（系統ごとにタブ表示） */}
-        {isExpanded && groupData && groupData.systems.length > 0 && (() => {
-          const activeIdx = activeSystemByGroup[group.id] ?? groupData.systems[0].systemIndex
-          const activeSystem =
-            groupData.systems.find((s) => s.systemIndex === activeIdx) ?? groupData.systems[0]
-
-          return (
-            <div className="mt-2 pl-4">
-              {/* タブバー */}
-              <div className="flex items-end gap-1 border-b border-slate-200 overflow-x-auto">
-                {groupData.systems.map((system) => {
-                  const isActive = system.systemIndex === activeSystem.systemIndex
-                  const endLabel =
-                    system.endType === 'outlet'
-                      ? '落口'
-                      : system.endType === 'merge'
-                        ? '合流'
-                        : null
-                  return (
-                    <button
-                      key={`tab-${system.systemIndex}`}
-                      type="button"
-                      onClick={() =>
-                        setActiveSystemByGroup((prev) => ({ ...prev, [group.id]: system.systemIndex }))
-                      }
-                      className={`flex items-center gap-2 px-3 py-2 text-sm rounded-t-lg border border-b-0 whitespace-nowrap transition-colors ${
-                        isActive
-                          ? system.endType === 'outlet'
-                            ? 'bg-orange-100 border-orange-300 text-orange-800 font-medium'
-                            : system.endType === 'merge'
-                              ? 'bg-purple-100 border-purple-300 text-purple-800 font-medium'
-                              : 'bg-slate-100 border-slate-300 text-slate-700 font-medium'
-                          : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
-                      }`}
-                    >
-                      <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-white text-xs font-bold border">
-                        {system.systemIndex}
-                      </span>
-                      <span>
-                        系統 {system.systemIndex}
-                        {endLabel && ` （${endLabel}）`}
-                      </span>
-                      <span className="text-xs text-slate-500">({system.rows.length})</span>
-                    </button>
-                  )
-                })}
-              </div>
-
-              {/* アクティブ系統の内容 */}
-              <div className="border border-t-0 rounded-b-lg bg-white shadow-sm p-2">
-                {activeSystem.rows.map((row, idx) => renderRow(row, activeSystem.rows, idx))}
-              </div>
-            </div>
-          )
-        })()}
-      </div>
-    )
-  }
+  // 現在アクティブなタブ
+  const activeTab =
+    flatTabs.find(
+      (t) =>
+        selectedSystem != null &&
+        t.groupIndex === selectedSystem.groupIndex &&
+        t.systemIndex === selectedSystem.systemIndex,
+    ) ?? null
 
   return (
     <div className="h-full flex flex-col">
@@ -874,7 +864,60 @@ export function DepthCalcPage() {
               </div>
             ) : (
               <div>
-                {planGroups.map((group, index) => renderGroup(group, index))}
+                {/* フラットな系統タブバー */}
+                <div className="flex items-end gap-1 border-b border-slate-200 overflow-x-auto mb-2">
+                  {flatTabs.map((tab) => {
+                    const isActive =
+                      selectedSystem?.groupIndex === tab.groupIndex &&
+                      selectedSystem?.systemIndex === tab.systemIndex
+                    const endLabel =
+                      tab.endType === 'outlet'
+                        ? '落口'
+                        : tab.endType === 'merge'
+                          ? '合流'
+                          : null
+                    return (
+                      <button
+                        key={tab.key}
+                        type="button"
+                        onClick={() =>
+                          setSelectedSystem({
+                            groupIndex: tab.groupIndex,
+                            systemIndex: tab.systemIndex,
+                          })
+                        }
+                        className={`flex items-center gap-2 px-3 py-2 text-sm rounded-t-lg border border-b-0 whitespace-nowrap transition-colors ${
+                          isActive
+                            ? tab.endType === 'outlet'
+                              ? 'bg-orange-100 border-orange-300 text-orange-800 font-medium'
+                              : tab.endType === 'merge'
+                                ? 'bg-purple-100 border-purple-300 text-purple-800 font-medium'
+                                : tab.groupType === 'direct'
+                                  ? 'bg-amber-100 border-amber-300 text-amber-800 font-medium'
+                                  : 'bg-blue-100 border-blue-300 text-blue-800 font-medium'
+                            : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span>
+                          {tab.groupName} 系統{tab.systemIndex}
+                          {endLabel && `（${endLabel}）`}
+                        </span>
+                        <span className="text-xs text-slate-500">({tab.rows.length})</span>
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {/* アクティブなタブの内容 */}
+                {activeTab ? (
+                  <div className="border border-t-0 rounded-b-lg bg-white shadow-sm p-2">
+                    {activeTab.rows.map((row, idx) => renderRow(row, activeTab.rows, idx))}
+                  </div>
+                ) : (
+                  <div className="p-8 text-center text-slate-400 text-sm">
+                    タブを選択してください
+                  </div>
+                )}
               </div>
             )}
           </div>
