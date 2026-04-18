@@ -466,12 +466,30 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
           const prevWiringRow = rowIndex > 0 ? tab.rows[rowIndex - 1] : null
           const prevCollectorPipeId = prevWiringRow?.collectorPipe ?? null
 
-          // 集水合流行: 合流先系統の計画高を参照表示する行として生成
+          // 集水合流行: 吸水は別系統管理・集水は通常の測点を持つ行として生成
           if (wiringRow.rowType === 'collector_merge' && wiringRow.mergeSystemIndex !== null) {
             const rowSystemInfo = systemInfo.get(wiringRow.id) || {
               systemIndex: 1,
               isSystemEnd: false,
               systemEndType: null,
+            }
+            let mergeCollectorPoint: PlanPoint | null = null
+            if (collectorPipe && collectorPipe.vertices.length > 0) {
+              const lastIdx = collectorPipe.vertices.length - 1
+              const v = collectorPipe.vertices[lastIdx]
+              mergeCollectorPoint = {
+                id: `point-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+                pointType: 'collector',
+                pointIndex: 0,
+                pointName: generatePointName(collectorPipe.number, lastIdx, collectorPipe.vertices.length),
+                x: v.x,
+                y: v.y,
+                groundHeight: getGroundHeightByCoordinate(v.x, v.y) ?? v.z,
+                plannedHeight: null,
+                cutDepth: null,
+                segmentDistance: null,
+                segmentSlope: null,
+              }
             }
             const planRow: PlanRow = {
               id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
@@ -488,7 +506,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
               diameter: collectorPipe?.diameter ?? null,
               designLength: collectorPipe?.designLength ?? null,
               absorptionPoints: [],
-              collectorPoint: null,
+              collectorPoint: mergeCollectorPoint,
               mergeSystemIndex: wiringRow.mergeSystemIndex,
             }
             group.rows.push(planRow)

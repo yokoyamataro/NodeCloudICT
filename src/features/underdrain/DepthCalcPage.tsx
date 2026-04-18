@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, type ReactNode } from 'react'
 import {
   Ruler,
   RefreshCw,
@@ -220,15 +220,87 @@ export function DepthCalcPage() {
       }
     }
 
-    // 集水合流行は専用レイアウトで表示
+    // 集水合流行は通常レイアウトで、吸水列に「別系統管理」を表示
     if (isMergeRow) {
+      const mergeLabel = mergedPointName
+        ? `別系統管理（系統${row.mergeSystemIndex}: ${mergedPointName}${
+            mergedPlannedHeight !== null ? ` / ${mergedPlannedHeight.toFixed(3)}` : ''
+          }）`
+        : `別系統管理（系統${row.mergeSystemIndex}）`
+      const rows: Array<{ key: string; label: string; cell: ReactNode }> = [
+        {
+          key: 'ground',
+          label: '地盤高',
+          cell: collector ? (
+            <input
+              type="number"
+              step="0.001"
+              value={collector.groundHeight ?? ''}
+              onChange={(e) => handleGroundHeightChange(row.id, collector.id, e.target.value)}
+              className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded bg-amber-50"
+              placeholder="-"
+            />
+          ) : (
+            <div className="px-0.5 py-0.5 text-center font-mono text-xs text-slate-400">-</div>
+          ),
+        },
+        {
+          key: 'planned',
+          label: '計画高',
+          cell: collector ? (
+            <input
+              type="number"
+              step="0.001"
+              value={formatPlannedHeight(collector.plannedHeight)}
+              onChange={(e) => handlePlannedHeightChange(row.id, collector.id, e.target.value)}
+              className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded"
+              placeholder="-"
+            />
+          ) : (
+            <div className="px-0.5 py-0.5 text-center font-mono text-xs text-slate-400">-</div>
+          ),
+        },
+        {
+          key: 'cut',
+          label: '切深',
+          cell: (
+            <div
+              className={`px-1.5 py-1 text-center font-mono ${
+                collector?.cutDepth !== null && collector?.cutDepth !== undefined && collector.cutDepth < 0
+                  ? 'text-red-600'
+                  : ''
+              }`}
+            >
+              {collector?.cutDepth?.toFixed(3) ?? '-'}
+            </div>
+          ),
+        },
+        {
+          key: 'dist',
+          label: '区間距離',
+          cell: (
+            <div className="px-1.5 py-1 text-center font-mono text-slate-600">
+              {collector?.segmentDistance?.toFixed(2) ?? '-'}
+            </div>
+          ),
+        },
+        {
+          key: 'slope',
+          label: '区間勾配',
+          cell: (
+            <div className="px-1.5 py-1 text-center font-mono text-slate-600">
+              {collectorSlope ?? '-'}
+            </div>
+          ),
+        },
+      ]
+
       return (
         <div key={row.id} className="border rounded-lg mb-2 bg-purple-50 overflow-x-auto">
           <table className="w-full text-xs border-collapse">
             <colgroup>
               <col className="w-[60px]" />
               <col />
-              <col className="w-[140px]" />
               <col className="w-3" />
               <col className="w-[90px]" />
               <col className="w-[70px]" />
@@ -236,40 +308,41 @@ export function DepthCalcPage() {
             <thead>
               <tr className="bg-purple-100">
                 <th className="px-1.5 py-1 text-left font-medium border whitespace-nowrap text-purple-700">
-                  {row.pipeNumber || '集水合流'}
-                </th>
-                <th className="border-0 bg-transparent"></th>
-                <th className="px-1.5 py-1 text-center font-medium border whitespace-nowrap">
-                  {mergedPointName
-                    ? `${mergedPointName}（系統${row.mergeSystemIndex}）`
-                    : `→ 系統${row.mergeSystemIndex}`}
-                </th>
-                <th className="border-0 bg-transparent"></th>
-                <th className="px-1.5 py-1 text-center font-medium border bg-slate-100 text-slate-400">
-                  別系統管理
-                </th>
-                <th className="px-1.5 py-1 text-left font-medium border whitespace-nowrap text-purple-700 bg-purple-100">
                   {row.pipeNumber || '-'}
+                </th>
+                <th className="px-1.5 py-1 text-center font-medium border text-slate-500 whitespace-nowrap">
+                  {mergeLabel}
+                </th>
+                <th className="border-0 bg-transparent"></th>
+                <th className="px-1.5 py-1 text-center font-medium border bg-green-50">
+                  {collector?.pointName || ''}
+                </th>
+                <th className="px-1.5 py-1 text-left font-medium border whitespace-nowrap text-emerald-700 bg-green-50">
+                  {collectorPipeNumber || '-'}
                 </th>
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
-                  計画高
-                </td>
-                <td className="border-0 bg-transparent"></td>
-                <td className="px-1.5 py-1 text-center border font-mono bg-white">
-                  {mergedPlannedHeight !== null ? mergedPlannedHeight.toFixed(3) : '-'}
-                </td>
-                <td className="border-0 bg-transparent"></td>
-                <td className="px-1.5 py-1 text-center border font-mono bg-slate-50 text-slate-400">
-                  -
-                </td>
-                <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
-                  計画高
-                </td>
-              </tr>
+              {rows.map((r, idx) => (
+                <tr key={r.key}>
+                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
+                    {r.label}
+                  </td>
+                  {idx === 0 ? (
+                    <td
+                      rowSpan={rows.length}
+                      className="px-1.5 py-1 text-center align-middle border bg-slate-100 text-slate-400 whitespace-nowrap"
+                    >
+                      別系統管理
+                    </td>
+                  ) : null}
+                  <td className="border-0 bg-transparent"></td>
+                  <td className="px-0.5 py-0.5 border bg-green-50">{r.cell}</td>
+                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
+                    {r.label}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
