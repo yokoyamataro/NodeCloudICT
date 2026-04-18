@@ -168,9 +168,12 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
           })
         }
 
+        // 吸水管が無い場合は集水管側の情報を使う（集水合流点・落口などの行用）
         const pipe = row.absorption_pipe_id
           ? pipes.find(p => p.id === row.absorption_pipe_id)
-          : null
+          : row.collector_pipe_id
+            ? pipes.find(p => p.id === row.collector_pipe_id)
+            : null
 
         const rowPoints = typedPoints.filter(p => p.row_id === row.id)
         const absorptionPoints: PlanPoint[] = rowPoints
