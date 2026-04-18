@@ -8,7 +8,7 @@ import {
   Trash2,
   ChevronDown,
   ChevronRight,
-  Map,
+  Map as MapIcon,
   Settings,
   Calculator,
 } from 'lucide-react'
@@ -809,7 +809,7 @@ export function DepthCalcPage() {
           {/* 右側: 地図 */}
           <div className="flex-1 relative">
             <div className="absolute top-2 left-2 z-10 bg-white/90 px-2 py-1 rounded shadow text-sm font-medium flex items-center gap-1">
-              <Map className="h-4 w-4" />
+              <MapIcon className="h-4 w-4" />
               管路マップ
             </div>
             <PipeMap
