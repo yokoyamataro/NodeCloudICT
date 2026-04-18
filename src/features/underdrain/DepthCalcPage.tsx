@@ -230,47 +230,47 @@ export function DepthCalcPage() {
             </tr>
           </thead>
           <tbody>
-            {/* 地盤高 */}
-            <tr>
-              <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
-                地盤高
-              </td>
-              <td className="border-0 bg-transparent"></td>
-              {row.absorptionPoints.map(p => (
-                <td key={p.id} className="px-0.5 py-0.5 border">
-                  <input
-                    type="number"
-                    step="0.001"
-                    value={p.groundHeight ?? ''}
-                    onChange={e =>
-                      handleGroundHeightChange(row.id, p.id, e.target.value)
-                    }
-                    className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded bg-amber-50"
-                    placeholder="-"
-                  />
-                </td>
-              ))}
-              <td className="border-0 bg-transparent"></td>
-              <td className="px-0.5 py-0.5 border bg-green-50">
-                {collector ? (
-                  <input
-                    type="number"
-                    step="0.001"
-                    value={collector.groundHeight ?? ''}
-                    onChange={e =>
-                      handleGroundHeightChange(row.id, collector.id, e.target.value)
-                    }
-                    className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded bg-amber-50"
-                    placeholder="-"
-                  />
-                ) : (
-                  <div className="px-0.5 py-0.5 text-center font-mono text-xs text-slate-400">-</div>
-                )}
-              </td>
-            </tr>
-
             {!isCollapsed && (
               <>
+                {/* 地盤高 */}
+                <tr>
+                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
+                    地盤高
+                  </td>
+                  <td className="border-0 bg-transparent"></td>
+                  {row.absorptionPoints.map(p => (
+                    <td key={p.id} className="px-0.5 py-0.5 border">
+                      <input
+                        type="number"
+                        step="0.001"
+                        value={p.groundHeight ?? ''}
+                        onChange={e =>
+                          handleGroundHeightChange(row.id, p.id, e.target.value)
+                        }
+                        className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded bg-amber-50"
+                        placeholder="-"
+                      />
+                    </td>
+                  ))}
+                  <td className="border-0 bg-transparent"></td>
+                  <td className="px-0.5 py-0.5 border bg-green-50">
+                    {collector ? (
+                      <input
+                        type="number"
+                        step="0.001"
+                        value={collector.groundHeight ?? ''}
+                        onChange={e =>
+                          handleGroundHeightChange(row.id, collector.id, e.target.value)
+                        }
+                        className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded bg-amber-50"
+                        placeholder="-"
+                      />
+                    ) : (
+                      <div className="px-0.5 py-0.5 text-center font-mono text-xs text-slate-400">-</div>
+                    )}
+                  </td>
+                </tr>
+
                 {/* 計画高 */}
                 <tr>
                   <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">

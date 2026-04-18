@@ -438,8 +438,8 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
         for (let rowIndex = 0; rowIndex < tab.rows.length; rowIndex++) {
           const wiringRow = tab.rows[rowIndex]
 
-          // 合流管行はスキップ
-          if (wiringRow.isMergePipe) continue
+          // isMergePipe=true の行は「集水合流点（系統の最後）」を表すため、
+          // 吸水は空でも集水点は施工計画の行として必ず出力する。
 
           // 集水管情報を取得
           const collectorPipe = wiringRow.collectorPipe
@@ -651,7 +651,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       for (let rowIndex = 0; rowIndex < directRows.length; rowIndex++) {
         const wiringRow = directRows[rowIndex]
 
-        if (wiringRow.isMergePipe) continue
+        // isMergePipe=true の行も集水合流点として行を生成する（スキップしない）
 
         const collectorPipe = wiringRow.collectorPipe
           ? pipes.find(p => p.id === wiringRow.collectorPipe)
