@@ -466,7 +466,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
           const prevWiringRow = rowIndex > 0 ? tab.rows[rowIndex - 1] : null
           const prevCollectorPipeId = prevWiringRow?.collectorPipe ?? null
 
-          // 集水合流行: 吸水は別系統管理・集水は通常の測点を持つ行として生成
+          // 集水合流行: 吸水は別系統管理・集水は合流点（新集水管の上流端）を測点として生成
           if (wiringRow.rowType === 'collector_merge' && wiringRow.mergeSystemIndex !== null) {
             const rowSystemInfo = systemInfo.get(wiringRow.id) || {
               systemIndex: 1,
@@ -475,13 +475,31 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
             }
             let mergeCollectorPoint: PlanPoint | null = null
             if (collectorPipe && collectorPipe.vertices.length > 0) {
-              const lastIdx = collectorPipe.vertices.length - 1
-              const v = collectorPipe.vertices[lastIdx]
+              // 合流点 = 新しい集水管の最上流頂点（C）。物理的には前の集水管の下流端と一致。
+              const v = collectorPipe.vertices[0]
+              const newStartName = generatePointName(
+                collectorPipe.number,
+                0,
+                collectorPipe.vertices.length,
+              )
+              // 前の集水管が異なる場合は「prevA newC」形式の名前に
+              let pointName = newStartName
+              if (prevCollectorPipeId && prevCollectorPipeId !== wiringRow.collectorPipe) {
+                const prevPipe = pipes.find((p) => p.id === prevCollectorPipeId)
+                if (prevPipe && prevPipe.vertices.length > 0) {
+                  const prevEndName = generatePointName(
+                    prevPipe.number,
+                    prevPipe.vertices.length - 1,
+                    prevPipe.vertices.length,
+                  )
+                  pointName = `${prevEndName} ${newStartName}`
+                }
+              }
               mergeCollectorPoint = {
                 id: `point-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
                 pointType: 'collector',
                 pointIndex: 0,
-                pointName: generatePointName(collectorPipe.number, lastIdx, collectorPipe.vertices.length),
+                pointName,
                 x: v.x,
                 y: v.y,
                 groundHeight: getGroundHeightByCoordinate(v.x, v.y) ?? v.z,
