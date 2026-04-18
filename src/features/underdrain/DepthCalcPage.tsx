@@ -79,6 +79,9 @@ export function DepthCalcPage() {
     })
   }
 
+  // グループごとのアクティブ系統インデックス
+  const [activeSystemByGroup, setActiveSystemByGroup] = useState<Record<string, number>>({})
+
   // 選択中の管路ID（地図フォーカス用）
   const [focusedPipeId] = useState<string | null>(null)
 
@@ -453,43 +456,61 @@ export function DepthCalcPage() {
           </span>
         </div>
 
-        {/* グループの内容（系統ごとにブロック分け） */}
-        {isExpanded && groupData && (
-          <div className="mt-2 pl-4 space-y-4">
-            {groupData.systems.map(system => (
-              <div
-                key={`system-${system.systemIndex}`}
-                className="border rounded-lg overflow-hidden bg-white shadow-sm"
-              >
-                {/* 系統ヘッダー */}
-                <div className={`px-3 py-2 font-medium text-sm flex items-center gap-2 ${
-                  system.endType === 'outlet'
-                    ? 'bg-orange-100 text-orange-800 border-b border-orange-200'
-                    : system.endType === 'merge'
-                      ? 'bg-purple-100 text-purple-800 border-b border-purple-200'
-                      : 'bg-slate-100 text-slate-700 border-b border-slate-200'
-                }`}>
-                  <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-white text-xs font-bold">
-                    {system.systemIndex}
-                  </span>
-                  <span>
-                    系統 {system.systemIndex}
-                    {system.endType === 'outlet' && ' （落口）'}
-                    {system.endType === 'merge' && ' （合流）'}
-                  </span>
-                  <span className="text-xs text-slate-500">
-                    ({system.rows.length}本)
-                  </span>
-                </div>
+        {/* グループの内容（系統ごとにタブ表示） */}
+        {isExpanded && groupData && groupData.systems.length > 0 && (() => {
+          const activeIdx = activeSystemByGroup[group.id] ?? groupData.systems[0].systemIndex
+          const activeSystem =
+            groupData.systems.find((s) => s.systemIndex === activeIdx) ?? groupData.systems[0]
 
-                {/* 系統内の行 */}
-                <div className="p-2">
-                  {system.rows.map((row, idx) => renderRow(row, system.rows, idx))}
-                </div>
+          return (
+            <div className="mt-2 pl-4">
+              {/* タブバー */}
+              <div className="flex items-end gap-1 border-b border-slate-200 overflow-x-auto">
+                {groupData.systems.map((system) => {
+                  const isActive = system.systemIndex === activeSystem.systemIndex
+                  const endLabel =
+                    system.endType === 'outlet'
+                      ? '落口'
+                      : system.endType === 'merge'
+                        ? '合流'
+                        : null
+                  return (
+                    <button
+                      key={`tab-${system.systemIndex}`}
+                      type="button"
+                      onClick={() =>
+                        setActiveSystemByGroup((prev) => ({ ...prev, [group.id]: system.systemIndex }))
+                      }
+                      className={`flex items-center gap-2 px-3 py-2 text-sm rounded-t-lg border border-b-0 whitespace-nowrap transition-colors ${
+                        isActive
+                          ? system.endType === 'outlet'
+                            ? 'bg-orange-100 border-orange-300 text-orange-800 font-medium'
+                            : system.endType === 'merge'
+                              ? 'bg-purple-100 border-purple-300 text-purple-800 font-medium'
+                              : 'bg-slate-100 border-slate-300 text-slate-700 font-medium'
+                          : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-white text-xs font-bold border">
+                        {system.systemIndex}
+                      </span>
+                      <span>
+                        系統 {system.systemIndex}
+                        {endLabel && ` （${endLabel}）`}
+                      </span>
+                      <span className="text-xs text-slate-500">({system.rows.length})</span>
+                    </button>
+                  )
+                })}
               </div>
-            ))}
-          </div>
-        )}
+
+              {/* アクティブ系統の内容 */}
+              <div className="border border-t-0 rounded-b-lg bg-white shadow-sm p-2">
+                {activeSystem.rows.map((row, idx) => renderRow(row, activeSystem.rows, idx))}
+              </div>
+            </div>
+          )
+        })()}
       </div>
     )
   }

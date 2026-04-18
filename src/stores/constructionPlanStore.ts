@@ -1109,9 +1109,14 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
             const rowInGroup = updatedRows.find(r => r.id === row.id)
             if (!rowInGroup) continue
 
-            // 吸水点の計画高を計算
-            const newAbsorptionPoints = rowInGroup.absorptionPoints.map((point, pointIdx) => {
-              if (point.groundHeight === null) return point
+            // 吸水点の計画高を計算（上流から順に計算し、直前に計算した計画高を次点で参照）
+            const newAbsorptionPoints: PlanPoint[] = []
+            for (let pointIdx = 0; pointIdx < rowInGroup.absorptionPoints.length; pointIdx++) {
+              const point = rowInGroup.absorptionPoints[pointIdx]
+              if (point.groundHeight === null) {
+                newAbsorptionPoints.push(point)
+                continue
+              }
 
               let plannedHeight: number
 
@@ -1119,8 +1124,8 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                 // 最上流点: 地盤高 - kh
                 plannedHeight = point.groundHeight - kh
               } else {
-                // それ以外: min(地盤高 - kh, 上流点計画高 - 距離 × 勾配)
-                const prevPoint = rowInGroup.absorptionPoints[pointIdx - 1]
+                // それ以外: min(地盤高 - kh, 上流点計画高 - 距離 / 推奨勾配)
+                const prevPoint = newAbsorptionPoints[pointIdx - 1]
                 const standardHeight = point.groundHeight - kh
 
                 if (prevPoint.plannedHeight !== null && point.segmentDistance !== null) {
@@ -1132,9 +1137,8 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
               }
 
               const cutDepth = point.groundHeight - plannedHeight
-
-              return { ...point, plannedHeight, cutDepth }
-            })
+              newAbsorptionPoints.push({ ...point, plannedHeight, cutDepth })
+            }
 
             // 集水点の計画高を計算
             let newCollectorPoint = rowInGroup.collectorPoint
