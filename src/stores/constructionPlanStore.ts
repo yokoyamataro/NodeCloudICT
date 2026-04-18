@@ -554,59 +554,42 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
             }
           } else if (collectorPipe) {
             // 吸水管がない行（collector_change, collector_junction, outlet など）
-            // 集水管の変化点/落口のみを処理
             const rowType = wiringRow.rowType
-
-            // 集水管の全頂点に対応する測点を生成
-            // ただし、前の行で既に処理済みの点は除く
-            // ここでは集水管の特定の点（rowTypeに応じた点）のみを追加
-
-            // 集水管の頂点から適切な点を選択
-            // collector_change: 集水の中間変化点
-            // collector_junction: 集水の合流点
-            // outlet: 落口（集水の最下流）
 
             let targetVertex: PipeVertex | null = null
             let collectorPointName = ''
 
-            if (rowType === 'outlet' || rowType === 'collector_junction') {
-              // 落口または集水合流点: 集水管の最下流点
-              if (collectorPipe.vertices.length > 0) {
-                const lastIdx = collectorPipe.vertices.length - 1
-                targetVertex = collectorPipe.vertices[lastIdx]
-                collectorPointName = generatePointName(collectorPipe.number, lastIdx, collectorPipe.vertices.length)
-              }
-            } else if (rowType === 'collector_change' || rowType === 'collector_merge') {
-              // 集水変化点/集水合流: 前の行の集水点の次の点を探す
-              // 前の行を探して、その集水点の位置から次の頂点を特定
-              const prevRows = group.rows.filter(r => r.collectorPipeId === wiringRow.collectorPipe)
-              if (prevRows.length > 0 && collectorPipe.vertices.length > 1) {
-                const lastRow = prevRows[prevRows.length - 1]
-                if (lastRow.collectorPoint) {
-                  // 前の行の集水点位置を取得
-                  const prevX = lastRow.collectorPoint.x
-                  const prevY = lastRow.collectorPoint.y
-
-                  // 集水管の頂点から前の点を探し、その次の点を取得
-                  for (let i = 0; i < collectorPipe.vertices.length; i++) {
-                    const v = collectorPipe.vertices[i]
-                    const dist = calcDistance({ x: v.x, y: v.y }, { x: prevX, y: prevY })
-                    if (dist < 0.5) {
-                      // 次の点があれば使用
-                      if (i + 1 < collectorPipe.vertices.length) {
-                        targetVertex = collectorPipe.vertices[i + 1]
-                        collectorPointName = generatePointName(collectorPipe.number, i + 1, collectorPipe.vertices.length)
+            if (collectorPipe.vertices.length > 0) {
+              if (rowType === 'collector_change' || rowType === 'collector_merge') {
+                // 集水変化点/集水合流: 前の行の集水点の次の頂点
+                const prevRows = group.rows.filter(r => r.collectorPipeId === wiringRow.collectorPipe)
+                if (prevRows.length > 0 && collectorPipe.vertices.length > 1) {
+                  const lastRow = prevRows[prevRows.length - 1]
+                  if (lastRow.collectorPoint) {
+                    const prevX = lastRow.collectorPoint.x
+                    const prevY = lastRow.collectorPoint.y
+                    for (let i = 0; i < collectorPipe.vertices.length; i++) {
+                      const v = collectorPipe.vertices[i]
+                      const dist = calcDistance({ x: v.x, y: v.y }, { x: prevX, y: prevY })
+                      if (dist < 0.5) {
+                        if (i + 1 < collectorPipe.vertices.length) {
+                          targetVertex = collectorPipe.vertices[i + 1]
+                          collectorPointName = generatePointName(collectorPipe.number, i + 1, collectorPipe.vertices.length)
+                        }
+                        break
                       }
-                      break
                     }
                   }
                 }
-              }
-
-              // 見つからなければ最初の点
-              if (!targetVertex && collectorPipe.vertices.length > 0) {
-                targetVertex = collectorPipe.vertices[0]
-                collectorPointName = generatePointName(collectorPipe.number, 0, collectorPipe.vertices.length)
+                if (!targetVertex) {
+                  targetVertex = collectorPipe.vertices[0]
+                  collectorPointName = generatePointName(collectorPipe.number, 0, collectorPipe.vertices.length)
+                }
+              } else {
+                // outlet / collector_junction / rowType未設定: 集水管の最下流点
+                const lastIdx = collectorPipe.vertices.length - 1
+                targetVertex = collectorPipe.vertices[lastIdx]
+                collectorPointName = generatePointName(collectorPipe.number, lastIdx, collectorPipe.vertices.length)
               }
             }
 

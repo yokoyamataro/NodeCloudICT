@@ -541,6 +541,15 @@ export function DepthCalcPage() {
                   </button>
                   <div className="w-px h-6 bg-slate-300" />
                   <button
+                    onClick={() => setShowGenerateConfirm(true)}
+                    disabled={saving}
+                    className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
+                    title="配管系統から再生成（現在のデータを上書き）"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    配管系統から再生成
+                  </button>
+                  <button
                     onClick={() => currentFarm && fetchPlan(currentFarm.id)}
                     disabled={saving}
                     className="flex items-center gap-2 px-3 py-2 text-slate-600 border rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50"
