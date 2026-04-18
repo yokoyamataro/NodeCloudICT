@@ -9,6 +9,8 @@ import {
   type PipeRow,
 } from '@/stores/underdrainStore'
 import { useFarmStore } from '@/stores/farmStore'
+import { useProjectListStore } from '@/stores/projectListStore'
+import { useCoordinateStore } from '@/stores/coordinateStore'
 import { PipeMap, type SurveyPointData } from '@/components/map/PipeMap'
 import { PageHeader } from '@/components/layout/PageHeader'
 import type { PipeType, PipeVertex } from '@/types/database'
@@ -93,6 +95,7 @@ export function CadAnalysisPage() {
   const [autoConnectMode, setAutoConnectMode] = useState<AutoConnectMode>('idle')
 
   const { currentFarm } = useFarmStore()
+  const { projects } = useProjectListStore()
   const {
     pipes,
     fetchPipes,
@@ -118,9 +121,14 @@ export function CadAnalysisPage() {
   // プロジェクト選択時にデータを読み込む
   useEffect(() => {
     if (currentFarm) {
+      const project = projects.find((p) => p.id === currentFarm.project_id)
+      if (project) {
+        const { setZone } = useCoordinateStore.getState()
+        setZone(project.coordinate_zone)
+      }
       fetchPipes(currentFarm.id)
     }
-  }, [currentFarm, fetchPipes])
+  }, [currentFarm, projects, fetchPipes])
 
   // 2点間の距離を計算
   const calcDistance = (p1: PipeVertex, p2: PipeVertex): number => {

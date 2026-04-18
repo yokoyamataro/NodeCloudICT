@@ -19,6 +19,7 @@ import {
 import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
+import { useProjectListStore } from '@/stores/projectListStore'
 import { usePipeWiringStore, type CollectorTab, type WiringRow, type RowType } from '@/stores/pipeWiringStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import { PipeMap, type SurveyPointData, type PipeChangePoint } from '@/components/map/PipeMap'
@@ -32,8 +33,9 @@ type SelectionMode = 'none' | 'absorption' | 'collector' | 'bulk-start'
 
 export function PipeWiringPage() {
   const { pipes, fetchPipes } = useUnderdrainStore()
-  const { fetchCoordinates } = useCoordinateStore()
+  const { fetchCoordinates, setZone } = useCoordinateStore()
   const { currentFarm } = useFarmStore()
+  const { projects } = useProjectListStore()
   const {
     collectorTabs,
     directRows,
@@ -53,12 +55,18 @@ export function PipeWiringPage() {
     if (currentFarm) {
       prevFarmIdRef.current = currentFarm.id
 
+      // プロジェクトの座標系を設定
+      const project = projects.find((p) => p.id === currentFarm.project_id)
+      if (project) {
+        setZone(project.coordinate_zone)
+      }
+
       fetchPipes(currentFarm.id)
       fetchCoordinates(currentFarm.id)
       fetchWiring(currentFarm.id)
       fetchPlan(currentFarm.id)
     }
-  }, [currentFarm, fetchPipes, fetchCoordinates, fetchWiring, fetchPlan])
+  }, [currentFarm, projects, setZone, fetchPipes, fetchCoordinates, fetchWiring, fetchPlan])
 
   // タブ管理
   const [activeTabType, setActiveTabType] = useState<TabType>('collector')

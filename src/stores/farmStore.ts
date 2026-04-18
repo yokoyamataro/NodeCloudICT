@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { useMapViewStore } from './mapViewStore'
+import { useProjectListStore } from './projectListStore'
 
 export interface Farm {
   id: string
@@ -9,7 +10,6 @@ export interface Farm {
   project_id: string
   name: string
   description: string | null
-  coordinate_zone: number
   created_at: string
   updated_at: string
 }
@@ -29,6 +29,40 @@ export interface WorkAreaPolygon {
   workType: string
   name: string
   positions: [number, number][]
+}
+
+// プロジェクトIDから座標系を取得（projectListStore を優先し、不足分はDBから補完）
+async function fetchProjectZones(projectIds: string[]): Promise<Map<string, number>> {
+  const unique = Array.from(new Set(projectIds))
+  const zones = new Map<string, number>()
+
+  // まずストアから取得
+  const storeProjects = useProjectListStore.getState().projects
+  const missing: string[] = []
+  for (const id of unique) {
+    const proj = storeProjects.find((p) => p.id === id)
+    if (proj) {
+      zones.set(id, proj.coordinate_zone)
+    } else {
+      missing.push(id)
+    }
+  }
+
+  // ストアに無いものだけDBから取得
+  if (missing.length > 0) {
+    const { data, error } = await supabase
+      .from('projects')
+      .select('id, coordinate_zone')
+      .in('id', missing)
+    if (!error && data) {
+      const rows = data as Array<{ id: string; coordinate_zone: number }>
+      for (const row of rows) {
+        zones.set(row.id, row.coordinate_zone)
+      }
+    }
+  }
+
+  return zones
 }
 
 interface FarmState {
@@ -51,8 +85,8 @@ interface FarmState {
   fetchFarms: (projectId?: string) => Promise<void>
   fetchFarmLocations: () => Promise<void>
   fetchWorkAreaPolygons: () => Promise<void>
-  createFarm: (projectId: string, name: string, description?: string, coordinateZone?: number) => Promise<Farm | null>
-  updateFarm: (id: string, updates: Partial<Pick<Farm, 'name' | 'description' | 'coordinate_zone'>>) => Promise<void>
+  createFarm: (projectId: string, name: string, description?: string) => Promise<Farm | null>
+  updateFarm: (id: string, updates: Partial<Pick<Farm, 'name' | 'description'>>) => Promise<void>
   deleteFarm: (id: string) => Promise<void>
 }
 
@@ -111,6 +145,9 @@ export const useFarmStore = create<FarmState>((set, get) => ({
 
       if (error) throw error
 
+      // プロジェクトごとの座標系を取得
+      const projectZones = await fetchProjectZones(farms.map(f => f.project_id))
+
       // 圃場ごとに先頭の座標を取得
       const locations = new Map<string, FarmLocation>()
       const coordData = data as Array<{
@@ -125,7 +162,8 @@ export const useFarmStore = create<FarmState>((set, get) => ({
         const coords = (coordData || []).filter(c => c.farm_id === farm.id)
         if (coords.length > 0) {
           const firstCoord = coords[0]
-          const converter = new CoordinateConverter(farm.coordinate_zone)
+          const zone = projectZones.get(farm.project_id) ?? 13
+          const converter = new CoordinateConverter(zone)
           const { lat, lng } = converter.toLatLng(firstCoord.x, firstCoord.y)
           locations.set(farm.id, {
             farmId: farm.id,
@@ -203,6 +241,9 @@ export const useFarmStore = create<FarmState>((set, get) => ({
           }, {} as Record<string, { x: number; y: number }>)
         }
 
+        // プロジェクトごとの座標系を取得
+        const projectZones = await fetchProjectZones(farms.map(f => f.project_id))
+
         for (const area of areas) {
           const farm = farms.find(f => f.id === area.farm_id)
           if (!farm) continue
@@ -210,7 +251,8 @@ export const useFarmStore = create<FarmState>((set, get) => ({
           const areaPointIds = areasPointIds?.find(a => a.id === area.id)?.point_ids || []
           if (areaPointIds.length < 3) continue
 
-          const converter = new CoordinateConverter(farm.coordinate_zone)
+          const zone = projectZones.get(farm.project_id) ?? 13
+          const converter = new CoordinateConverter(zone)
           const positions: [number, number][] = []
 
           for (const pointId of areaPointIds) {
@@ -240,7 +282,7 @@ export const useFarmStore = create<FarmState>((set, get) => ({
     }
   },
 
-  createFarm: async (projectId, name, description, coordinateZone) => {
+  createFarm: async (projectId, name, description) => {
     set({ loading: true, error: null })
     try {
       // 現在のユーザーIDを取得
@@ -249,30 +291,11 @@ export const useFarmStore = create<FarmState>((set, get) => ({
         throw new Error('ユーザー認証情報を取得できませんでした')
       }
 
-      // 座標系が指定されていない場合はプロジェクトの座標系を取得
-      let zone = coordinateZone
-      if (zone === undefined) {
-        const { data: projectData, error: projectError } = await supabase
-          .from('projects')
-          .select('coordinate_zone')
-          .eq('id', projectId)
-          .single()
-
-        if (projectError) {
-          console.error('プロジェクトの座標系取得に失敗:', projectError)
-          zone = 13 // デフォルト値
-        } else {
-          const project = projectData as { coordinate_zone: number } | null
-          zone = project?.coordinate_zone ?? 13
-        }
-      }
-
       const insertData = {
         user_id: user.id,
         project_id: projectId,
         name,
         description: description || null,
-        coordinate_zone: zone,
       }
 
       const { data, error } = await supabase

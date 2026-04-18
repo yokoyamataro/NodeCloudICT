@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore } from './farmStore'
+import { useProjectListStore } from './projectListStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { generateAreaCalculationSheet } from '@/lib/area-calculation'
 import type { WorkType, AreaCalculationSheet, DesignWorkArea, DesignCoordinate } from '@/types/database'
@@ -75,9 +76,14 @@ const getCurrentFarmId = (): string | null => {
   return useFarmStore.getState().currentFarm?.id ?? null
 }
 
-// 座標系を取得するヘルパー
+// 座標系を取得するヘルパー（現在の圃場が属するプロジェクトの座標系を使う）
 const getCurrentZone = (): number => {
-  return useFarmStore.getState().currentFarm?.coordinate_zone ?? 6
+  const currentFarm = useFarmStore.getState().currentFarm
+  if (!currentFarm) return 13
+  const project = useProjectListStore.getState().projects.find(
+    (p) => p.id === currentFarm.project_id
+  )
+  return project?.coordinate_zone ?? 13
 }
 
 export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({

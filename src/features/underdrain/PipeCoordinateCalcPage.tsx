@@ -5,6 +5,7 @@ import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { useFarmStore } from '@/stores/farmStore'
+import { useProjectListStore } from '@/stores/projectListStore'
 import { PipeMap, type SurveyPointData, type BaseLayerType } from '@/components/map/PipeMap'
 
 // 測点命名設定
@@ -66,14 +67,20 @@ export function PipeCoordinateCalcPage() {
   const { pipes, fetchPipes } = useUnderdrainStore()
   const { coordinates, fetchCoordinates, zone } = useCoordinateStore()
   const { currentFarm } = useFarmStore()
+  const { projects } = useProjectListStore()
 
   // プロジェクト選択時にデータを読み込む
   useEffect(() => {
     if (currentFarm) {
+      const project = projects.find((p) => p.id === currentFarm.project_id)
+      if (project) {
+        const { setZone } = useCoordinateStore.getState()
+        setZone(project.coordinate_zone)
+      }
       fetchPipes(currentFarm.id)
       fetchCoordinates(currentFarm.id)
     }
-  }, [currentFarm, fetchPipes, fetchCoordinates])
+  }, [currentFarm, projects, fetchPipes, fetchCoordinates])
 
   // 命名設定
   const [namingSettings, setNamingSettings] = useState<NamingSettings>({

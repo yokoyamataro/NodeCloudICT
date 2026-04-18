@@ -243,7 +243,6 @@ export interface Farm {
   project_id: string
   name: string
   description: string | null
-  coordinate_zone: number
   created_at: string
   updated_at: string
 }

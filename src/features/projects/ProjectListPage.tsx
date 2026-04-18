@@ -128,7 +128,6 @@ export function ProjectListPage() {
   const [newProjectZone, setNewProjectZone] = useState(13)
   const [newFarmName, setNewFarmName] = useState('')
   const [newFarmDescription, setNewFarmDescription] = useState('')
-  const [newFarmZone, setNewFarmZone] = useState(6)
   const [creating, setCreating] = useState(false)
   const [showMapDialog, setShowMapDialog] = useState<{ farm: Farm; location: FarmLocation } | null>(null)
 
@@ -274,16 +273,12 @@ export function ProjectListPage() {
   const handleCreateFarm = async () => {
     if (!newFarmName.trim() || !showNewFarmDialog) return
     setCreating(true)
-    // 座標系が変更されていない場合はundefinedを渡してプロジェクトの座標系を使用
-    const project = projects.find(p => p.id === showNewFarmDialog)
-    const zoneToUse = newFarmZone === (project?.coordinate_zone ?? 13) ? undefined : newFarmZone
-    const farm = await createFarm(showNewFarmDialog, newFarmName, newFarmDescription, zoneToUse)
+    const farm = await createFarm(showNewFarmDialog, newFarmName, newFarmDescription)
     setCreating(false)
     if (farm) {
       setShowNewFarmDialog(null)
       setNewFarmName('')
       setNewFarmDescription('')
-      setNewFarmZone(13)
     }
   }
 
@@ -473,8 +468,6 @@ export function ProjectListPage() {
                             onClick={(e) => {
                               e.stopPropagation()
                               setShowNewFarmDialog(project.id)
-                              // プロジェクトの座標系をデフォルトに設定
-                              setNewFarmZone(project.coordinate_zone ?? 13)
                             }}
                             className="p-1 text-green-600 hover:bg-green-50 rounded"
                             title="圃場追加"
@@ -563,7 +556,6 @@ export function ProjectListPage() {
                             onClick={(e) => {
                               e.stopPropagation()
                               setShowNewFarmDialog(project.id)
-                              setNewFarmZone(project.coordinate_zone ?? 13)
                             }}
                             className="flex items-center gap-2 px-2 py-1.5 w-full text-left text-xs text-green-600 hover:bg-green-50 rounded"
                           >
@@ -853,20 +845,6 @@ export function ProjectListPage() {
                   rows={2}
                   placeholder="圃場の説明（任意）"
                 />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">座標系</label>
-                <select
-                  value={newFarmZone}
-                  onChange={(e) => setNewFarmZone(parseInt(e.target.value))}
-                  className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {Object.entries(JGD2011_ZONES).map(([num, info]) => (
-                    <option key={num} value={num}>
-                      {info.name}
-                    </option>
-                  ))}
-                </select>
               </div>
             </div>
             <div className="flex justify-end gap-2 mt-6">

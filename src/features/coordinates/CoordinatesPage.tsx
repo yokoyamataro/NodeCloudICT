@@ -3,6 +3,7 @@ import { Upload, Download, Plus, Trash2, FileText, Eye, EyeOff, ExternalLink, Cl
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
+import { useProjectListStore } from '@/stores/projectListStore'
 import { CoordinateMap, type BaseLayerType } from '@/components/map/CoordinateMap'
 import { loadSimaFile } from '@/lib/sima-parser'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -172,6 +173,7 @@ export function CoordinatesPage() {
   const viewMode = urlParams.get('view') // 'map' または 'table'
 
   const { currentFarm } = useFarmStore()
+  const { projects } = useProjectListStore()
   const {
     zone,
     setZone,
@@ -185,15 +187,20 @@ export function CoordinatesPage() {
     setSelectedType,
   } = useCoordinateStore()
 
+  // 現在の圃場が属するプロジェクトの座標系
+  const projectZone = currentFarm
+    ? projects.find((p) => p.id === currentFarm.project_id)?.coordinate_zone ?? null
+    : null
+
   // 圃場選択時にデータを読み込む
   useEffect(() => {
-    if (currentFarm) {
-      // 圃場の座標系を設定
-      setZone(currentFarm.coordinate_zone)
+    if (currentFarm && projectZone !== null) {
+      // プロジェクトの座標系を設定
+      setZone(projectZone)
       // Supabaseからデータを読み込む
       fetchCoordinates(currentFarm.id)
     }
-  }, [currentFarm, setZone, fetchCoordinates])
+  }, [currentFarm, projectZone, setZone, fetchCoordinates])
 
   const handleAddCoordinate = () => {
     addCoordinate(selectedType)
@@ -242,9 +249,14 @@ export function CoordinatesPage() {
 
       importCoordinates(newCoords)
 
-      // SIMAファイルに座標系情報があれば設定
-      if (result.system !== null) {
-        setZone(result.system)
+      // SIMAファイルに座標系情報があり、プロジェクトの座標系と異なる場合は警告
+      if (result.system !== null && projectZone !== null && result.system !== projectZone) {
+        const simaZoneName = JGD2011_ZONES[result.system]?.name ?? `第${result.system}系`
+        const projectZoneName = JGD2011_ZONES[projectZone]?.name ?? `第${projectZone}系`
+        alert(
+          `SIMAファイルの座標系（${simaZoneName}）がプロジェクトの座標系（${projectZoneName}）と異なります。\n` +
+            `座標値はプロジェクトの座標系として読み込まれました。必要であればプロジェクト設定を変更してください。`
+        )
       }
     } catch (error) {
       console.error('SIMAファイルの読み込みに失敗しました:', error)
@@ -420,18 +432,10 @@ export function CoordinatesPage() {
           <h2 className="text-lg font-semibold mb-3">座標計算書</h2>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium mb-1">座標系</label>
-              <select
-                value={zone}
-                onChange={(e) => setZone(parseInt(e.target.value))}
-                className="w-full px-2 py-1.5 text-sm border rounded"
-              >
-                {Object.entries(JGD2011_ZONES).map(([num, info]) => (
-                  <option key={num} value={num}>
-                    {info.name}
-                  </option>
-                ))}
-              </select>
+              <label className="block text-xs font-medium mb-1">座標系（プロジェクト設定）</label>
+              <div className="w-full px-2 py-1.5 text-sm border rounded bg-slate-50 text-slate-700">
+                {JGD2011_ZONES[zone]?.name ?? `第${zone}系`}
+              </div>
             </div>
             <div>
               <label className="block text-xs font-medium mb-1">座標種類</label>
@@ -631,18 +635,10 @@ export function CoordinatesPage() {
                 </div>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-medium mb-1">座標系</label>
-                    <select
-                      value={zone}
-                      onChange={(e) => setZone(parseInt(e.target.value))}
-                      className="w-full px-2 py-1.5 text-sm border rounded"
-                    >
-                      {Object.entries(JGD2011_ZONES).map(([num, info]) => (
-                        <option key={num} value={num}>
-                          {info.name}
-                        </option>
-                      ))}
-                    </select>
+                    <label className="block text-xs font-medium mb-1">座標系（プロジェクト設定）</label>
+                    <div className="w-full px-2 py-1.5 text-sm border rounded bg-slate-50 text-slate-700">
+                      {JGD2011_ZONES[zone]?.name ?? `第${zone}系`}
+                    </div>
                   </div>
                   <div>
                     <label className="block text-xs font-medium mb-1">座標種類</label>
