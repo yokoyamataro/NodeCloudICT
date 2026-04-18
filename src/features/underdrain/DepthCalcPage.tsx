@@ -174,6 +174,16 @@ export function DepthCalcPage() {
       ? pipeNumberById.get(row.collectorPipeId) ?? ''
       : ''
 
+    // 系統の終端行（吸水なし）では、配線番号欄に「合流点」「落口」を表示
+    const isTerminalCollectorRow = row.isSystemEnd && row.absorptionPoints.length === 0
+    const terminalLabel = isTerminalCollectorRow
+      ? row.systemEndType === 'merge'
+        ? '合流点'
+        : row.systemEndType === 'outlet'
+          ? '落口'
+          : null
+      : null
+
     // 集水合流行の場合、合流先系統の最下流 3 点を取得
     const isMergeRow = row.mergeSystemIndex !== null && row.mergeSystemIndex !== undefined
     const mergedLast3Points: PlanPoint[] = []
@@ -387,11 +397,19 @@ export function DepthCalcPage() {
           </colgroup>
           <thead>
             <tr className="bg-slate-100">
-              <th className="px-1.5 py-1 text-left font-medium border whitespace-nowrap text-blue-700">
+              <th
+                className={`px-1.5 py-1 text-left font-medium border whitespace-nowrap ${
+                  terminalLabel
+                    ? row.systemEndType === 'outlet'
+                      ? 'text-orange-700'
+                      : 'text-purple-700'
+                    : 'text-blue-700'
+                }`}
+              >
                 <button
                   type="button"
                   onClick={() => toggleRowCollapsed(row.id)}
-                  className="inline-flex items-center gap-1 hover:text-blue-900"
+                  className="inline-flex items-center gap-1 hover:opacity-80"
                   title={isCollapsed ? '展開' : '折りたたみ'}
                 >
                   {isCollapsed ? (
@@ -399,7 +417,7 @@ export function DepthCalcPage() {
                   ) : (
                     <ChevronDown className="h-3 w-3" />
                   )}
-                  {row.pipeNumber || '-'}
+                  {terminalLabel ?? row.pipeNumber ?? '-'}
                 </button>
               </th>
               <th className="border-0 bg-transparent"></th>
@@ -415,8 +433,16 @@ export function DepthCalcPage() {
               <th className="px-1.5 py-1 text-center font-medium border bg-green-50">
                 {collector?.pointName || ''}
               </th>
-              <th className="px-1.5 py-1 text-left font-medium border whitespace-nowrap text-emerald-700 bg-green-50">
-                {collectorPipeNumber || '-'}
+              <th
+                className={`px-1.5 py-1 text-left font-medium border whitespace-nowrap bg-green-50 ${
+                  terminalLabel
+                    ? row.systemEndType === 'outlet'
+                      ? 'text-orange-700'
+                      : 'text-purple-700'
+                    : 'text-emerald-700'
+                }`}
+              >
+                {terminalLabel ?? collectorPipeNumber ?? '-'}
               </th>
             </tr>
           </thead>
