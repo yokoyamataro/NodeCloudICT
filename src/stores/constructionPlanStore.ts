@@ -484,6 +484,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
               }
 
               // 集水との合流点（rowType と前の集水管に基づいて決定）
+              // 吸水管が集水管に接続する行は、測点名が無くても集水列を保持する
               let collectorPoint: PlanPoint | null = null
               if (collectorPipe) {
                 const info = resolveCollectorPointByRowType(
@@ -500,6 +501,23 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                     x: info.x,
                     y: info.y,
                     groundHeight: getGroundHeightByCoordinate(info.x, info.y) ?? info.z,
+                    plannedHeight: null,
+                    cutDepth: null,
+                    segmentDistance: null,
+                    segmentSlope: null,
+                  }
+                } else if (absorptionPipe.vertices.length > 0) {
+                  // 吸水合流（同一集水管）などで名前なしの集水測点を作成。
+                  // 位置・地盤高は吸水管の下流端（集水管との接続点）に合わせる。
+                  const downstream = absorptionPipe.vertices[absorptionPipe.vertices.length - 1]
+                  collectorPoint = {
+                    id: `point-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+                    pointType: 'collector',
+                    pointIndex: 0,
+                    pointName: '',
+                    x: downstream.x,
+                    y: downstream.y,
+                    groundHeight: getGroundHeightByCoordinate(downstream.x, downstream.y) ?? downstream.z,
                     plannedHeight: null,
                     cutDepth: null,
                     segmentDistance: null,
