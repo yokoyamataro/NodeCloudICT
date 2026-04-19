@@ -102,7 +102,6 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
     chartWidth,
     chartHeight,
     flagRowByIndex,
-    numFlagRows,
   } = useMemo(() => {
     const heights = sectionData
       .flatMap(p => [p.groundHeight, p.plannedHeight, p.absorptionPlannedHeight])
