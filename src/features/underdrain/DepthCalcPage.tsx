@@ -880,7 +880,7 @@ export function DepthCalcPage() {
           <div
             className={
               fullscreenPanel === 'table'
-                ? 'fixed inset-0 z-50 bg-white p-4 overflow-auto'
+                ? 'fixed inset-0 z-[9999] bg-white p-4 overflow-auto'
                 : 'flex-1 overflow-auto p-4 border-r min-h-0 relative'
             }
           >
@@ -1005,7 +1005,7 @@ export function DepthCalcPage() {
           <div
             className={
               fullscreenPanel === 'map'
-                ? 'fixed inset-0 z-50 bg-white'
+                ? 'fixed inset-0 z-[9999] bg-white'
                 : 'flex-1 relative'
             }
           >
@@ -1038,7 +1038,7 @@ export function DepthCalcPage() {
         <div
           className={
             fullscreenPanel === 'chart'
-              ? 'fixed inset-0 z-50 bg-slate-50 flex flex-col'
+              ? 'fixed inset-0 z-[9999] bg-slate-50 flex flex-col'
               : 'h-[280px] flex-shrink-0 border-t bg-slate-50 flex flex-col relative'
           }
         >
