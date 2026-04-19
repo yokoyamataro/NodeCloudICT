@@ -11,6 +11,8 @@ import {
   Map as MapIcon,
   Settings,
   Calculator,
+  Maximize2,
+  X,
 } from 'lucide-react'
 import { useFarmStore } from '@/stores/farmStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
@@ -70,6 +72,9 @@ export function DepthCalcPage() {
 
   // 行ごとの折りたたみ状態（地盤高より下の行を隠す）
   const [collapsedRows, setCollapsedRows] = useState<Set<string>>(new Set())
+
+  // 全画面表示パネル
+  const [fullscreenPanel, setFullscreenPanel] = useState<'table' | 'map' | 'chart' | null>(null)
 
   const toggleRowCollapsed = (rowId: string) => {
     setCollapsedRows((prev) => {
@@ -872,7 +877,26 @@ export function DepthCalcPage() {
         {/* 上部: 表と地図（残りスペースを使用） */}
         <div className="flex-1 flex overflow-hidden min-h-0">
           {/* 左側: 表 */}
-          <div className="flex-1 overflow-auto p-4 border-r min-h-0">
+          <div
+            className={
+              fullscreenPanel === 'table'
+                ? 'fixed inset-0 z-50 bg-white p-4 overflow-auto'
+                : 'flex-1 overflow-auto p-4 border-r min-h-0 relative'
+            }
+          >
+            {/* 全画面トグルボタン */}
+            <button
+              type="button"
+              onClick={() => setFullscreenPanel(fullscreenPanel === 'table' ? null : 'table')}
+              className="absolute top-2 right-2 z-20 p-1.5 rounded border bg-white shadow-sm hover:bg-slate-50"
+              title={fullscreenPanel === 'table' ? '全画面を閉じる' : '全画面表示'}
+            >
+              {fullscreenPanel === 'table' ? (
+                <X className="h-4 w-4" />
+              ) : (
+                <Maximize2 className="h-4 w-4" />
+              )}
+            </button>
             {!hasData ? (
               <div className="flex flex-col items-center justify-center h-full text-slate-500">
                 <Ruler className="h-16 w-16 mb-4 text-slate-300" />
@@ -890,49 +914,78 @@ export function DepthCalcPage() {
               </div>
             ) : (
               <div>
-                {/* フラットな系統タブバー */}
-                <div className="flex items-end gap-1 border-b border-slate-200 overflow-x-auto mb-2">
-                  {flatTabs.map((tab) => {
-                    const isActive =
-                      selectedSystem?.groupIndex === tab.groupIndex &&
-                      selectedSystem?.systemIndex === tab.systemIndex
-                    const endLabel =
-                      tab.endType === 'outlet'
-                        ? '落口'
-                        : tab.endType === 'merge'
-                          ? '合流'
-                          : null
+                {/* 1段目: 集水暗渠/直落暗渠タブ */}
+                <div className="flex items-end gap-1 border-b border-slate-300 overflow-x-auto">
+                  {groupedBySystem.map((group, gi) => {
+                    const isActive = selectedSystem?.groupIndex === gi
                     return (
                       <button
-                        key={tab.key}
+                        key={`grp-${gi}`}
                         type="button"
-                        onClick={() =>
-                          setSelectedSystem({
-                            groupIndex: tab.groupIndex,
-                            systemIndex: tab.systemIndex,
-                          })
-                        }
-                        className={`flex items-center gap-2 px-3 py-2 text-sm rounded-t-lg border border-b-0 whitespace-nowrap transition-colors ${
+                        onClick={() => {
+                          const firstSystem = group.systems[0]
+                          if (firstSystem) {
+                            setSelectedSystem({
+                              groupIndex: gi,
+                              systemIndex: firstSystem.systemIndex,
+                            })
+                          }
+                        }}
+                        className={`px-4 py-2 text-sm rounded-t-lg border border-b-0 whitespace-nowrap transition-colors ${
                           isActive
-                            ? tab.endType === 'outlet'
-                              ? 'bg-orange-100 border-orange-300 text-orange-800 font-medium'
-                              : tab.endType === 'merge'
-                                ? 'bg-purple-100 border-purple-300 text-purple-800 font-medium'
-                                : tab.groupType === 'direct'
-                                  ? 'bg-amber-100 border-amber-300 text-amber-800 font-medium'
-                                  : 'bg-blue-100 border-blue-300 text-blue-800 font-medium'
+                            ? group.groupType === 'direct'
+                              ? 'bg-amber-100 border-amber-400 text-amber-900 font-bold'
+                              : 'bg-blue-100 border-blue-400 text-blue-900 font-bold'
                             : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
                         }`}
                       >
-                        <span>
-                          {tab.groupName} 系統{tab.systemIndex}
-                          {endLabel && `（${endLabel}）`}
-                        </span>
-                        <span className="text-xs text-slate-500">({tab.rows.length})</span>
+                        {group.name}
                       </button>
                     )
                   })}
                 </div>
+
+                {/* 2段目: 系統タブ */}
+                {selectedSystem && groupedBySystem[selectedSystem.groupIndex] && (
+                  <div className="flex items-end gap-1 border-b border-slate-200 overflow-x-auto px-2 py-1 bg-slate-50">
+                    {groupedBySystem[selectedSystem.groupIndex].systems.map((system) => {
+                      const isActive = selectedSystem.systemIndex === system.systemIndex
+                      const endLabel =
+                        system.endType === 'outlet'
+                          ? '落口'
+                          : system.endType === 'merge'
+                            ? '合流'
+                            : null
+                      return (
+                        <button
+                          key={`sys-${system.systemIndex}`}
+                          type="button"
+                          onClick={() =>
+                            setSelectedSystem({
+                              groupIndex: selectedSystem.groupIndex,
+                              systemIndex: system.systemIndex,
+                            })
+                          }
+                          className={`flex items-center gap-2 px-3 py-1.5 text-sm rounded-t-lg border border-b-0 whitespace-nowrap transition-colors ${
+                            isActive
+                              ? system.endType === 'outlet'
+                                ? 'bg-orange-100 border-orange-300 text-orange-800 font-medium'
+                                : system.endType === 'merge'
+                                  ? 'bg-purple-100 border-purple-300 text-purple-800 font-medium'
+                                  : 'bg-white border-slate-300 text-slate-800 font-medium'
+                              : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-100'
+                          }`}
+                        >
+                          <span>
+                            系統{system.systemIndex}
+                            {endLabel && `（${endLabel}）`}
+                          </span>
+                          <span className="text-xs text-slate-500">({system.rows.length})</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
 
                 {/* アクティブなタブの内容 */}
                 {activeTab ? (
@@ -949,11 +1002,29 @@ export function DepthCalcPage() {
           </div>
 
           {/* 右側: 地図 */}
-          <div className="flex-1 relative">
+          <div
+            className={
+              fullscreenPanel === 'map'
+                ? 'fixed inset-0 z-50 bg-white'
+                : 'flex-1 relative'
+            }
+          >
             <div className="absolute top-2 left-2 z-10 bg-white/90 px-2 py-1 rounded shadow text-sm font-medium flex items-center gap-1">
               <MapIcon className="h-4 w-4" />
               管路マップ
             </div>
+            <button
+              type="button"
+              onClick={() => setFullscreenPanel(fullscreenPanel === 'map' ? null : 'map')}
+              className="absolute top-2 right-2 z-20 p-1.5 rounded border bg-white shadow-sm hover:bg-slate-50"
+              title={fullscreenPanel === 'map' ? '全画面を閉じる' : '全画面表示'}
+            >
+              {fullscreenPanel === 'map' ? (
+                <X className="h-4 w-4" />
+              ) : (
+                <Maximize2 className="h-4 w-4" />
+              )}
+            </button>
             <PipeMap
               selectedPipeId={focusedPipeId}
               focusedPipeId={focusedPipeId}
@@ -963,42 +1034,27 @@ export function DepthCalcPage() {
           </div>
         </div>
 
-        {/* 下部: 断面図エリア（固定高さ） */}
-        <div className="h-[280px] flex-shrink-0 border-t bg-slate-50 flex flex-col">
-          {/* 系統選択タブ */}
-          <div className="flex items-center gap-1 px-2 py-1 bg-slate-100 border-b overflow-x-auto">
-            <span className="text-xs text-slate-500 mr-2 whitespace-nowrap">断面図:</span>
-            {groupedBySystem.map((group, groupIdx) => (
-              group.systems.map(system => (
-                <button
-                  key={`${groupIdx}-${system.systemIndex}`}
-                  onClick={() => setSelectedSystem({ groupIndex: groupIdx, systemIndex: system.systemIndex })}
-                  className={`px-2 py-1 text-xs rounded whitespace-nowrap transition-colors ${
-                    selectedSystem?.groupIndex === groupIdx && selectedSystem?.systemIndex === system.systemIndex
-                      ? system.endType === 'outlet'
-                        ? 'bg-orange-500 text-white'
-                        : system.endType === 'merge'
-                          ? 'bg-purple-500 text-white'
-                          : 'bg-blue-500 text-white'
-                      : system.endType === 'outlet'
-                        ? 'bg-orange-100 text-orange-700 hover:bg-orange-200'
-                        : system.endType === 'merge'
-                          ? 'bg-purple-100 text-purple-700 hover:bg-purple-200'
-                          : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-                  }`}
-                >
-                  {group.name} 系統{system.systemIndex}
-                  {system.endType === 'outlet' && '(落口)'}
-                  {system.endType === 'merge' && '(合流)'}
-                </button>
-              ))
-            ))}
-            {groupedBySystem.length === 0 && (
-              <span className="text-xs text-slate-400">系統データがありません</span>
+        {/* 下部: 断面図エリア */}
+        <div
+          className={
+            fullscreenPanel === 'chart'
+              ? 'fixed inset-0 z-50 bg-slate-50 flex flex-col'
+              : 'h-[280px] flex-shrink-0 border-t bg-slate-50 flex flex-col relative'
+          }
+        >
+          <button
+            type="button"
+            onClick={() => setFullscreenPanel(fullscreenPanel === 'chart' ? null : 'chart')}
+            className="absolute top-2 right-2 z-20 p-1.5 rounded border bg-white shadow-sm hover:bg-slate-50"
+            title={fullscreenPanel === 'chart' ? '全画面を閉じる' : '全画面表示'}
+          >
+            {fullscreenPanel === 'chart' ? (
+              <X className="h-4 w-4" />
+            ) : (
+              <Maximize2 className="h-4 w-4" />
             )}
-          </div>
-
-          {/* 断面図表示 */}
+          </button>
+          {/* 断面図表示（タブは上部タブと連動） */}
           <div className="flex-1 overflow-hidden">
             {selectedSystem ? (
               (() => {
@@ -1010,6 +1066,7 @@ export function DepthCalcPage() {
                     systemRows={systemData.rows}
                     systemIndex={systemData.systemIndex}
                     endType={systemData.endType}
+                    chartHeight={fullscreenPanel === 'chart' ? window.innerHeight - 120 : 220}
                   />
                 )
               })()

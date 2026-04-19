@@ -5,6 +5,7 @@ interface CrossSectionChartProps {
   systemRows: PlanRow[] // 系統内の行（rowIndex順）
   systemIndex: number
   endType: 'outlet' | 'merge' | null
+  chartHeight?: number // SVG チャート高さ（px）。未指定時は 220
 }
 
 // 断面図の点データ（集水管の点のみ）
@@ -19,23 +20,30 @@ interface SectionPoint {
   absorptionPlannedHeight: number | null // 吸水下流部の計画高
 }
 
-export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSectionChartProps) {
+export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeight: chartHeightProp }: CrossSectionChartProps) {
   // 標高スケールのズーム倍率（1.0が基準、大きいほど拡大）
   const [heightScale, setHeightScale] = useState(1.0)
+  // 横（距離）スケールのズーム倍率
+  const [widthScale, setWidthScale] = useState(1.0)
 
   // 勾配表示の切り替え
   const [showSlope, setShowSlope] = useState(true)
 
-  // マウスホイールで標高スケールを変更
+  // マウスホイールでスケールを変更（Shift 押下で横、それ以外は縦）
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault()
     const delta = e.deltaY > 0 ? -0.1 : 0.1
-    setHeightScale(prev => Math.max(0.2, Math.min(5.0, prev + delta)))
+    if (e.shiftKey) {
+      setWidthScale((prev) => Math.max(0.2, Math.min(10.0, prev + delta)))
+    } else {
+      setHeightScale((prev) => Math.max(0.2, Math.min(5.0, prev + delta)))
+    }
   }, [])
 
   // スケールリセット
   const resetScale = useCallback(() => {
     setHeightScale(1.0)
+    setWidthScale(1.0)
   }, [])
 
   // 集水管の断面を構成
@@ -85,6 +93,7 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
       .flatMap(p => [p.groundHeight, p.plannedHeight, p.absorptionPlannedHeight])
       .filter((h): h is number => h !== null)
 
+    const effectiveHeight = chartHeightProp ?? 220
     if (heights.length === 0) {
       return {
         minHeight: 0,
@@ -92,7 +101,7 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
         totalDistance: 100,
         padding: { top: 30, right: 50, bottom: 60, left: 50 },
         chartWidth: 600,
-        chartHeight: 220,
+        chartHeight: effectiveHeight,
       }
     }
 
@@ -119,10 +128,10 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
       maxHeight: center + scaledRange / 2 + heightPadding,
       totalDistance: dist || 100,
       padding: { top: 30, right: 50, bottom: 60, left: leftPadding },
-      chartWidth: Math.max(600, dist * 5 + 120), // 距離に応じて幅を調整
-      chartHeight: 220,
+      chartWidth: Math.max(600, dist * 5 * widthScale + 120), // 距離と横スケールに応じて幅を調整
+      chartHeight: effectiveHeight,
     }
-  }, [sectionData, heightScale])
+  }, [sectionData, heightScale, widthScale, chartHeightProp])
 
   // 座標変換関数
   const xScale = (distance: number) => {
@@ -250,8 +259,33 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
             勾配{showSlope ? '表示' : '非表示'}
           </button>
           <span className="text-slate-400">|</span>
-          <span>縦スケール: {(heightScale * 100).toFixed(0)}%</span>
-          {heightScale !== 1.0 && (
+          <span className="flex items-center gap-1">
+            縦:
+            <input
+              type="range"
+              min={0.2}
+              max={5.0}
+              step={0.1}
+              value={heightScale}
+              onChange={(e) => setHeightScale(parseFloat(e.target.value))}
+              className="w-20"
+            />
+            <span className="w-10 text-right">{(heightScale * 100).toFixed(0)}%</span>
+          </span>
+          <span className="flex items-center gap-1">
+            横:
+            <input
+              type="range"
+              min={0.2}
+              max={10.0}
+              step={0.1}
+              value={widthScale}
+              onChange={(e) => setWidthScale(parseFloat(e.target.value))}
+              className="w-20"
+            />
+            <span className="w-10 text-right">{(widthScale * 100).toFixed(0)}%</span>
+          </span>
+          {(heightScale !== 1.0 || widthScale !== 1.0) && (
             <button
               onClick={resetScale}
               className="px-1.5 py-0.5 text-[10px] bg-slate-200 hover:bg-slate-300 rounded"
@@ -259,7 +293,7 @@ export function CrossSectionChart({ systemRows, systemIndex, endType }: CrossSec
               リセット
             </button>
           )}
-          <span className="text-slate-400">（ホイールで調整）</span>
+          <span className="text-slate-400">（ホイール:縦 / Shift+ホイール:横）</span>
         </span>
       </div>
 
