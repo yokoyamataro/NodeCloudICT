@@ -146,13 +146,13 @@ export async function exportHydraulicCalcSheet({
       if (collectorPipe) {
         // S: 集水番号
         ws.getCell(`S${currentRow}`).value = collectorPipe.number
-        // T: 管種（連絡渠・落口なら 3、それ以外は設定）
-        ws.getCell(`T${currentRow}`).value = isOutletOrConnector(collectorPipe)
+        // T: 管種（1 行下に転記。連絡渠・落口なら 3、それ以外は設定）
+        ws.getCell(`T${currentRow + 1}`).value = isOutletOrConnector(collectorPipe)
           ? 3
           : collectorPipeType
-        // W: 管径（cm）
+        // W: 管径（cm）— 1 行下に転記
         if (collectorPipe.diameter != null) {
-          ws.getCell(`W${currentRow}`).value = collectorPipe.diameter / 10
+          ws.getCell(`W${currentRow + 1}`).value = collectorPipe.diameter / 10
         }
         // X: 実延長（次の管までの区間延長）
         if (row.collectorPoint?.segmentDistance != null) {

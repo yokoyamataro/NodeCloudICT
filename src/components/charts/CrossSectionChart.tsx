@@ -353,11 +353,42 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
         </span>
       </div>
 
-      {/* SVG断面図 */}
-      <div
-        className="flex-1 overflow-x-auto overflow-y-hidden bg-white"
-        onWheel={handleWheel}
-      >
+      {/* SVG断面図（凡例はスクロール外に固定表示） */}
+      <div className="flex-1 relative overflow-hidden bg-white">
+        {/* 凡例（右上に固定、スクロールの影響を受けない） */}
+        <div className="absolute top-2 right-2 z-10 bg-white border border-slate-200 rounded shadow-sm p-2 text-[14px] space-y-1 pointer-events-none">
+          <div className="flex items-center gap-2">
+            <svg width="24" height="10" className="flex-shrink-0">
+              <line x1="2" y1="5" x2="22" y2="5" stroke="#92400e" strokeWidth="2" />
+              <circle cx="12" cy="5" r="3" fill="#92400e" />
+            </svg>
+            <span className="text-slate-700">現況高</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <svg width="24" height="10" className="flex-shrink-0">
+              <line x1="2" y1="5" x2="22" y2="5" stroke="#2563eb" strokeWidth="2" />
+              <circle cx="12" cy="5" r="3" fill="#2563eb" />
+            </svg>
+            <span className="text-slate-700">計画高（集水）</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <svg width="24" height="10" className="flex-shrink-0">
+              <circle cx="12" cy="5" r="3" fill="#16a34a" />
+            </svg>
+            <span className="text-slate-700">吸水下流部</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <svg width="24" height="10" className="flex-shrink-0">
+              <line x1="2" y1="5" x2="22" y2="5" stroke="#16a34a" strokeWidth="1.5" strokeDasharray="4,3" />
+            </svg>
+            <span className="text-slate-700">吸水接続</span>
+          </div>
+        </div>
+
+        <div
+          className="absolute inset-0 overflow-x-auto overflow-y-hidden"
+          onWheel={handleWheel}
+        >
         <svg
           width={chartWidth}
           height={chartHeight}
@@ -468,9 +499,9 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
             const y1 = yScale(p1.plannedHeight)
             const y2 = yScale(p2.plannedHeight)
 
-            // ラベルの位置（線分の中点、少し上にオフセット）
+            // ラベルの位置（線分の中点、計画線の下に描画）
             const midX = (x1 + x2) / 2
-            const midY = (y1 + y2) / 2 - 12
+            const midY = (y1 + y2) / 2 + 16
 
             return (
               <g key={idx}>
@@ -636,29 +667,8 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
             )
           })}
 
-          {/* 凡例 */}
-          <g transform={`translate(${chartWidth - padding.right - 145}, ${padding.top})`}>
-            <rect x="0" y="0" width="135" height="72" fill="white" stroke="#e2e8f0" rx="4" />
-
-            {/* 現況線 */}
-            <line x1="10" y1="14" x2="28" y2="14" stroke="#92400e" strokeWidth="2" />
-            <circle cx="19" cy="14" r="4" fill="#92400e" />
-            <text x="35" y="14" dominantBaseline="middle" className="fill-slate-700 text-[18px]">現況高</text>
-
-            {/* 計画線 */}
-            <line x1="10" y1="30" x2="28" y2="30" stroke="#2563eb" strokeWidth="2" />
-            <circle cx="19" cy="30" r="4" fill="#2563eb" />
-            <text x="35" y="30" dominantBaseline="middle" className="fill-slate-700 text-[18px]">計画高（集水）</text>
-
-            {/* 吸水接続 */}
-            <circle cx="19" cy="46" r="4" fill="#16a34a" />
-            <text x="35" y="46" dominantBaseline="middle" className="fill-slate-700 text-[18px]">吸水下流部</text>
-
-            {/* 接続線 */}
-            <line x1="10" y1="62" x2="28" y2="62" stroke="#16a34a" strokeWidth="1.5" strokeDasharray="4,3" />
-            <text x="35" y="62" dominantBaseline="middle" className="fill-slate-700 text-[18px]">吸水接続</text>
-          </g>
         </svg>
+        </div>
       </div>
     </div>
   )
