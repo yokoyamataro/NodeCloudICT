@@ -1060,6 +1060,17 @@ export function PipeWiringPage() {
     return displayRows
   }, [pipes, getPrevCollectorEndPointName, getNextCollectorStartPointName])
 
+  // 指定した系統の末尾の集水管の下流端点名を返す（例: S6A）
+  const getSystemEndPointName = useCallback((systemIndex: number): string | null => {
+    const group = systemGroups.find(g => g.systemIndex === systemIndex)
+    if (!group || group.rows.length === 0) return null
+    const lastRow = group.rows[group.rows.length - 1]
+    if (!lastRow.collectorPipe) return null
+    const pipe = pipes.find(p => p.id === lastRow.collectorPipe)
+    if (!pipe || pipe.vertices.length === 0) return null
+    return generatePointName(pipe.number, pipe.vertices.length - 1, pipe.vertices.length)
+  }, [systemGroups, pipes, generatePointName])
+
   // 吸水に登録済みの系統（自系統を除く）を取得
   // 集水合流タイプで選択可能な系統を返す
   const getAvailableSystemsForMerge = useCallback((currentSystemIndex: number): { systemIndex: number; label: string }[] => {
@@ -1070,15 +1081,18 @@ export function PipeWiringPage() {
       if (group.systemIndex === currentSystemIndex) continue
       // 完了済み系統（落口または合流）のみ選択可能
       if (group.endType === 'outlet' || group.endType === 'merge') {
+        const endName = getSystemEndPointName(group.systemIndex)
+        const endSuffix = group.endType === 'outlet' ? '（落口）' : '（合流）'
+        const nameSuffix = endName ? ` → ${endName}` : ''
         systems.push({
           systemIndex: group.systemIndex,
-          label: `系統${group.systemIndex}${group.endType === 'outlet' ? '（落口）' : '（合流）'}`
+          label: `系統${group.systemIndex}${endSuffix}${nameSuffix}`
         })
       }
     }
 
     return systems
-  }, [systemGroups])
+  }, [systemGroups, getSystemEndPointName])
 
   // 右列のラベル
   const rightColumnLabel = activeTabType === 'collector' ? '集水' : '落口'
@@ -1507,6 +1521,14 @@ export function PipeWiringPage() {
                                 {row.absorptionPipes.length > 0 && (
                                   <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-purple-100 text-purple-800 rounded text-xs">
                                     系統{row.absorptionPipes[0]}
+                                    {(() => {
+                                      const sysIdx = parseInt(row.absorptionPipes[0])
+                                      if (isNaN(sysIdx)) return null
+                                      const endName = getSystemEndPointName(sysIdx)
+                                      return endName ? (
+                                        <span className="ml-1 text-purple-600">→ {endName}</span>
+                                      ) : null
+                                    })()}
                                     <button
                                       onClick={() => {
                                         // 系統IDを削除（深いコピーを作成）
