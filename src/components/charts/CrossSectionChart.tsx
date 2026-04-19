@@ -87,8 +87,23 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
     return points
   }, [systemRows])
 
+  // 旗上げ設定
+  const FLAG_ROW_HEIGHT = 24
+  const FLAG_WIDTH = 80
+  const BASE_TOP_PADDING = 16
+  const BASE_BOTTOM_PADDING = 80
+
   // 描画範囲を計算（heightScaleを考慮）
-  const { minHeight, maxHeight, totalDistance, padding, chartWidth, chartHeight } = useMemo(() => {
+  const {
+    minHeight,
+    maxHeight,
+    totalDistance,
+    padding,
+    chartWidth,
+    chartHeight,
+    flagRowByIndex,
+    numFlagRows,
+  } = useMemo(() => {
     const heights = sectionData
       .flatMap(p => [p.groundHeight, p.plannedHeight, p.absorptionPlannedHeight])
       .filter((h): h is number => h !== null)
@@ -99,9 +114,11 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
         minHeight: 0,
         maxHeight: 10,
         totalDistance: 100,
-        padding: { top: 40, right: 60, bottom: 80, left: 80 },
+        padding: { top: BASE_TOP_PADDING + FLAG_ROW_HEIGHT, right: 60, bottom: BASE_BOTTOM_PADDING, left: 80 },
         chartWidth: 600,
         chartHeight: effectiveHeight,
+        flagRowByIndex: new Map<number, number>(),
+        numFlagRows: 0,
       }
     }
 
@@ -122,14 +139,54 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
       (center - scaledRange / 2).toFixed(2).length
     )
     const leftPadding = Math.max(80, maxDigits * 12 + 30)
+    const rightPadding = 60
+    const computedTotalDistance = dist || 100
+    const computedChartWidth = Math.max(600, dist * 5 * widthScale + 160)
+
+    // 吸水旗上げの行配置（重ならないよう段組み）
+    const absorptionIndices = sectionData
+      .map((p, i) => ({ p, idx: i }))
+      .filter(({ p }) => !!p.absorptionPipeNumber)
+      .sort((a, b) => a.p.distance - b.p.distance)
+
+    const scaleXProvisional = (d: number) => {
+      if (computedTotalDistance === 0) return leftPadding
+      return leftPadding + (d / computedTotalDistance) * (computedChartWidth - leftPadding - rightPadding)
+    }
+
+    const rowRightEdges: number[] = []
+    const flagRowByIndex = new Map<number, number>()
+    for (const { p, idx } of absorptionIndices) {
+      const x = scaleXProvisional(p.distance)
+      const leftEdge = x - FLAG_WIDTH / 2
+      const rightEdge = x + FLAG_WIDTH / 2
+      let assigned = -1
+      for (let r = 0; r < rowRightEdges.length; r++) {
+        if (leftEdge >= rowRightEdges[r] + 4) {
+          assigned = r
+          break
+        }
+      }
+      if (assigned === -1) {
+        rowRightEdges.push(rightEdge)
+        assigned = rowRightEdges.length - 1
+      } else {
+        rowRightEdges[assigned] = rightEdge
+      }
+      flagRowByIndex.set(idx, assigned)
+    }
+    const numFlagRows = rowRightEdges.length
+    const topPadding = BASE_TOP_PADDING + Math.max(1, numFlagRows) * FLAG_ROW_HEIGHT
 
     return {
       minHeight: center - scaledRange / 2 - heightPadding,
       maxHeight: center + scaledRange / 2 + heightPadding,
-      totalDistance: dist || 100,
-      padding: { top: 40, right: 60, bottom: 80, left: leftPadding },
-      chartWidth: Math.max(600, dist * 5 * widthScale + 160), // 距離と横スケールに応じて幅を調整
-      chartHeight: effectiveHeight,
+      totalDistance: computedTotalDistance,
+      padding: { top: topPadding, right: rightPadding, bottom: BASE_BOTTOM_PADDING, left: leftPadding },
+      chartWidth: computedChartWidth,
+      chartHeight: effectiveHeight + Math.max(0, numFlagRows - 1) * FLAG_ROW_HEIGHT,
+      flagRowByIndex,
+      numFlagRows,
     }
   }, [sectionData, heightScale, widthScale, chartHeightProp])
 
@@ -442,6 +499,55 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
             )
           })}
 
+          {/* 吸水旗上げ（上部） */}
+          {sectionData.map((point, idx) => {
+            if (!point.absorptionPipeNumber) return null
+            const x = xScale(point.distance)
+            const row = flagRowByIndex.get(idx) ?? 0
+            const flagTop = BASE_TOP_PADDING + row * FLAG_ROW_HEIGHT
+            const flagBottom = flagTop + FLAG_ROW_HEIGHT - 4
+            const leaderEndY = point.absorptionPlannedHeight !== null
+              ? yScale(point.absorptionPlannedHeight)
+              : point.plannedHeight !== null
+                ? yScale(point.plannedHeight)
+                : chartHeight - padding.bottom
+            return (
+              <g key={`flag-${idx}`}>
+                {/* リーダー線（旗 → 点） */}
+                <line
+                  x1={x}
+                  y1={flagBottom}
+                  x2={x}
+                  y2={leaderEndY}
+                  stroke="#16a34a"
+                  strokeWidth="1"
+                  strokeDasharray="2,2"
+                />
+                {/* 旗の枠 */}
+                <rect
+                  x={x - FLAG_WIDTH / 2}
+                  y={flagTop}
+                  width={FLAG_WIDTH}
+                  height={FLAG_ROW_HEIGHT - 4}
+                  fill="white"
+                  stroke="#16a34a"
+                  strokeWidth="1"
+                  rx={3}
+                />
+                {/* 旗のテキスト */}
+                <text
+                  x={x}
+                  y={flagTop + (FLAG_ROW_HEIGHT - 4) / 2 + 1}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  className="fill-green-700 text-[16px] font-semibold"
+                >
+                  {point.absorptionPipeNumber}
+                </text>
+              </g>
+            )
+          })}
+
           {/* 測点マーカーとラベル */}
           {sectionData.map((point, idx) => {
             const x = xScale(point.distance)
@@ -501,36 +607,22 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
                 {/* 測点名ラベル */}
                 <text
                   x={x}
-                  y={chartHeight - padding.bottom + 14}
+                  y={chartHeight - padding.bottom + 22}
                   textAnchor="middle"
                   className="fill-slate-700 text-[18px] font-medium"
                 >
                   {point.pointName}
                 </text>
 
-                {/* 吸水管番号 */}
-                {point.absorptionPipeNumber && (
-                  <text
-                    x={x}
-                    y={chartHeight - padding.bottom + 28}
-                    textAnchor="middle"
-                    className="fill-blue-600 text-[16px]"
-                  >
-                    吸水{point.absorptionPipeNumber}
-                  </text>
-                )}
-
-                {/* 区間距離（最初の点以外） */}
-                {idx > 0 && (
-                  <text
-                    x={(xScale(sectionData[idx - 1].distance) + x) / 2}
-                    y={chartHeight - padding.bottom + 44}
-                    textAnchor="middle"
-                    className="fill-slate-500 text-[16px]"
-                  >
-                    {(point.distance - sectionData[idx - 1].distance).toFixed(2)}m
-                  </text>
-                )}
+                {/* 累加距離 */}
+                <text
+                  x={x}
+                  y={chartHeight - padding.bottom + 46}
+                  textAnchor="middle"
+                  className="fill-slate-500 text-[16px]"
+                >
+                  {point.distance.toFixed(2)}m
+                </text>
 
                 {/* 垂直線（点線） */}
                 <line
