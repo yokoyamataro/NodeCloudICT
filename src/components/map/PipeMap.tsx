@@ -4,10 +4,13 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useUnderdrainStore, EXTENDED_PIPE_TYPES } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
-import { useWorkAreaStore } from '@/stores/workAreaStore'
+import { useWorkAreaStore, type WorkAreaRow } from '@/stores/workAreaStore'
 import { useMapViewStore } from '@/stores/mapViewStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import type { PipeVertex } from '@/types/database'
+
+// 空配列の安定参照（selector で || [] すると新しい参照が毎回返り無限ループする）
+const EMPTY_WORK_AREAS: WorkAreaRow[] = []
 
 // ラベルアイコンを生成
 function createLabelIcon(label: string, color: string): L.DivIcon {
@@ -371,7 +374,7 @@ export function PipeMap({
 }: PipeMapProps) {
   const { pipes } = useUnderdrainStore()
   const { zone, coordinates } = useCoordinateStore()
-  const workAreas = useWorkAreaStore((state) => state.workAreas['underdrain'] || [])
+  const workAreas = useWorkAreaStore((state) => state.workAreas['underdrain'] ?? EMPTY_WORK_AREAS)
 
   const converter = new CoordinateConverter(zone)
 
