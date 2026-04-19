@@ -64,6 +64,29 @@ export async function exportHydraulicCalcSheet({
   const ws = workbook.worksheets[0]
   if (!ws) throw new Error('テンプレートにシートが見つかりません')
 
+  // 外部ワークブック参照の定義名を削除
+  // （テンプレートに `[10]3.延長調書!$B$62` のような外部参照が残っており、
+  //  Excel が開く際に解決できず「修復されたブック」警告を出すため）
+  try {
+    const definedNames = (workbook as unknown as {
+      definedNames?: {
+        model?: Array<{ name: string; ranges?: string[] }>
+        matrixMap?: Record<string, unknown>
+      }
+    }).definedNames
+    if (definedNames) {
+      // model を空配列に（removeAllNames は外部参照解決でエラーになるため直接操作）
+      definedNames.model = []
+      if (definedNames.matrixMap) {
+        for (const key of Object.keys(definedNames.matrixMap)) {
+          delete definedNames.matrixMap[key]
+        }
+      }
+    }
+  } catch {
+    // 失敗しても続行
+  }
+
   // タイトル行
   ws.getCell('E3').value = farm?.name ?? ''
   ws.getCell('U3').value = plannedFlow
