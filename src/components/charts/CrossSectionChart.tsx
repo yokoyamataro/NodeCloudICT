@@ -99,7 +99,7 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
         minHeight: 0,
         maxHeight: 10,
         totalDistance: 100,
-        padding: { top: 30, right: 50, bottom: 60, left: 50 },
+        padding: { top: 40, right: 60, bottom: 80, left: 80 },
         chartWidth: 600,
         chartHeight: effectiveHeight,
       }
@@ -116,19 +116,19 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
 
     const dist = sectionData.length > 0 ? sectionData[sectionData.length - 1].distance : 100
 
-    // 標高値の桁数に応じて左パディングを調整
+    // 標高値の桁数に応じて左パディングを調整（18px フォント基準）
     const maxDigits = Math.max(
       (center + scaledRange / 2).toFixed(2).length,
       (center - scaledRange / 2).toFixed(2).length
     )
-    const leftPadding = Math.max(45, maxDigits * 7 + 20)
+    const leftPadding = Math.max(80, maxDigits * 12 + 30)
 
     return {
       minHeight: center - scaledRange / 2 - heightPadding,
       maxHeight: center + scaledRange / 2 + heightPadding,
       totalDistance: dist || 100,
-      padding: { top: 30, right: 50, bottom: 60, left: leftPadding },
-      chartWidth: Math.max(600, dist * 5 * widthScale + 120), // 距離と横スケールに応じて幅を調整
+      padding: { top: 40, right: 60, bottom: 80, left: leftPadding },
+      chartWidth: Math.max(600, dist * 5 * widthScale + 160), // 距離と横スケールに応じて幅を調整
       chartHeight: effectiveHeight,
     }
   }, [sectionData, heightScale, widthScale, chartHeightProp])
@@ -250,7 +250,7 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
         <span className="ml-auto text-xs text-slate-500 flex items-center gap-2">
           <button
             onClick={() => setShowSlope(!showSlope)}
-            className={`px-2 py-0.5 text-[10px] rounded transition-colors ${
+            className={`px-2 py-0.5 text-[18px] rounded transition-colors ${
               showSlope
                 ? 'bg-blue-100 text-blue-700 hover:bg-blue-200'
                 : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
@@ -288,7 +288,7 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
           {(heightScale !== 1.0 || widthScale !== 1.0) && (
             <button
               onClick={resetScale}
-              className="px-1.5 py-0.5 text-[10px] bg-slate-200 hover:bg-slate-300 rounded"
+              className="px-1.5 py-0.5 text-[18px] bg-slate-200 hover:bg-slate-300 rounded"
             >
               リセット
             </button>
@@ -347,7 +347,7 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
                   y={yScale(tick)}
                   textAnchor="end"
                   dominantBaseline="middle"
-                  className="fill-slate-600 text-[10px]"
+                  className="fill-slate-600 text-[18px]"
                 >
                   {tick.toFixed(2)}
                 </text>
@@ -359,7 +359,7 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
               textAnchor="middle"
               dominantBaseline="middle"
               transform={`rotate(-90, 15, ${chartHeight / 2})`}
-              className="fill-slate-600 text-xs font-medium"
+              className="fill-slate-600 text-base font-medium"
             >
               標高 (m)
             </text>
@@ -434,7 +434,7 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
                   y={midY}
                   textAnchor="middle"
                   dominantBaseline="middle"
-                  className="fill-blue-700 text-[9px] font-medium"
+                  className="fill-blue-700 text-[16px] font-medium"
                 >
                   {slope.slope}
                 </text>
@@ -503,7 +503,7 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
                   x={x}
                   y={chartHeight - padding.bottom + 14}
                   textAnchor="middle"
-                  className="fill-slate-700 text-[10px] font-medium"
+                  className="fill-slate-700 text-[18px] font-medium"
                 >
                   {point.pointName}
                 </text>
@@ -514,7 +514,7 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
                     x={x}
                     y={chartHeight - padding.bottom + 28}
                     textAnchor="middle"
-                    className="fill-blue-600 text-[9px]"
+                    className="fill-blue-600 text-[16px]"
                   >
                     吸水{point.absorptionPipeNumber}
                   </text>
@@ -526,7 +526,7 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
                     x={(xScale(sectionData[idx - 1].distance) + x) / 2}
                     y={chartHeight - padding.bottom + 44}
                     textAnchor="middle"
-                    className="fill-slate-500 text-[9px]"
+                    className="fill-slate-500 text-[16px]"
                   >
                     {(point.distance - sectionData[idx - 1].distance).toFixed(2)}m
                   </text>
@@ -552,20 +552,20 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
             {/* 現況線 */}
             <line x1="10" y1="14" x2="28" y2="14" stroke="#92400e" strokeWidth="2" />
             <circle cx="19" cy="14" r="4" fill="#92400e" />
-            <text x="35" y="14" dominantBaseline="middle" className="fill-slate-700 text-[10px]">現況高</text>
+            <text x="35" y="14" dominantBaseline="middle" className="fill-slate-700 text-[18px]">現況高</text>
 
             {/* 計画線 */}
             <line x1="10" y1="30" x2="28" y2="30" stroke="#2563eb" strokeWidth="2" />
             <circle cx="19" cy="30" r="4" fill="#2563eb" />
-            <text x="35" y="30" dominantBaseline="middle" className="fill-slate-700 text-[10px]">計画高（集水）</text>
+            <text x="35" y="30" dominantBaseline="middle" className="fill-slate-700 text-[18px]">計画高（集水）</text>
 
             {/* 吸水接続 */}
             <circle cx="19" cy="46" r="4" fill="#16a34a" />
-            <text x="35" y="46" dominantBaseline="middle" className="fill-slate-700 text-[10px]">吸水下流部</text>
+            <text x="35" y="46" dominantBaseline="middle" className="fill-slate-700 text-[18px]">吸水下流部</text>
 
             {/* 接続線 */}
             <line x1="10" y1="62" x2="28" y2="62" stroke="#16a34a" strokeWidth="1.5" strokeDasharray="4,3" />
-            <text x="35" y="62" dominantBaseline="middle" className="fill-slate-700 text-[10px]">吸水接続</text>
+            <text x="35" y="62" dominantBaseline="middle" className="fill-slate-700 text-[18px]">吸水接続</text>
           </g>
         </svg>
       </div>
