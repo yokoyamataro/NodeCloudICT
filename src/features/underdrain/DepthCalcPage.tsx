@@ -13,7 +13,9 @@ import {
   Calculator,
   Maximize2,
   X,
+  FileSpreadsheet,
 } from 'lucide-react'
+import { HydraulicCalcModal } from './HydraulicCalcModal'
 import { useFarmStore } from '@/stores/farmStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useSurveyStore } from '@/stores/surveyStore'
@@ -75,6 +77,9 @@ export function DepthCalcPage() {
 
   // 全画面表示パネル
   const [fullscreenPanel, setFullscreenPanel] = useState<'table' | 'map' | 'chart' | null>(null)
+
+  // 水理計算書モーダル
+  const [showHydraulicModal, setShowHydraulicModal] = useState(false)
 
   const toggleRowCollapsed = (rowId: string) => {
     setCollapsedRows((prev) => {
@@ -761,6 +766,16 @@ export function DepthCalcPage() {
                     <Calculator className="h-4 w-4" />
                     自動計算
                   </button>
+                  {/* 水理計算書作成ボタン */}
+                  <button
+                    onClick={() => setShowHydraulicModal(true)}
+                    disabled={saving || planGroups.length === 0}
+                    className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
+                    title="水理計算書を作成"
+                  >
+                    <FileSpreadsheet className="h-4 w-4" />
+                    水理計算書作成
+                  </button>
                   <div className="w-px h-6 bg-slate-300" />
                   <button
                     onClick={() => setShowGenerateConfirm(true)}
@@ -1141,6 +1156,15 @@ export function DepthCalcPage() {
           </div>
         </div>
       )}
+
+      {/* 水理計算書モーダル */}
+      <HydraulicCalcModal
+        open={showHydraulicModal}
+        onClose={() => setShowHydraulicModal(false)}
+        planGroups={planGroups}
+        pipes={pipes}
+        farm={currentFarm}
+      />
     </div>
   )
 }
