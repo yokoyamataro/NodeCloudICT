@@ -205,9 +205,10 @@ export function DepthCalcPage() {
           : null
       : null
 
-    // 集水合流行の場合、合流先系統の最下流 3 点を取得
+    // 集水合流行の場合、合流先系統の最下流 3 点と末尾集水管の番号を取得
     const isMergeRow = row.mergeSystemIndex !== null && row.mergeSystemIndex !== undefined
     const mergedLast3Points: PlanPoint[] = []
+    let refEndPipeNumber: string | null = null
     if (isMergeRow && row.mergeSystemIndex !== null && row.mergeSystemIndex !== undefined) {
       for (const g of planGroups) {
         const targetRows = g.rows.filter(
@@ -220,6 +221,14 @@ export function DepthCalcPage() {
         }
         if (allCollectorPoints.length === 0) continue
         mergedLast3Points.push(...allCollectorPoints.slice(-3))
+        // 合流先系統の末尾集水管番号を取得
+        for (let i = targetRows.length - 1; i >= 0; i--) {
+          const tr = targetRows[i]
+          if (tr.collectorPipeId) {
+            refEndPipeNumber = pipeNumberById.get(tr.collectorPipeId) ?? null
+            break
+          }
+        }
         break
       }
     }
@@ -246,7 +255,7 @@ export function DepthCalcPage() {
                   className="px-1.5 py-1 text-left font-medium border whitespace-nowrap text-purple-700"
                   colSpan={refCount > 0 ? 1 : 1}
                 >
-                  {row.pipeNumber || '-'}
+                  {refEndPipeNumber || row.pipeNumber || '-'}
                   <div className="mt-0.5 text-[10px] text-purple-600 font-normal">集水合流</div>
                 </th>
                 <th className="border-0 bg-transparent"></th>
