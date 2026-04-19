@@ -174,6 +174,16 @@ export function DepthCalcPage() {
     return `1/${Math.round(slope)}`
   }
 
+  // 行タイプの日本語ラベル
+  const ROW_TYPE_LABELS: Record<string, string> = {
+    absorption_end: '吸水端部',
+    absorption_merge: '吸水合流',
+    collector_merge: '集水合流',
+    collector_change: '集水変化点',
+    collector_junction: '集水合流点',
+    outlet: '落口',
+  }
+
   // 行のレンダリング（系統内の行リストと現在のインデックスを受け取る）
   const renderRow = (row: PlanRow, systemRows: PlanRow[], rowIndexInSystem: number) => {
     const nextRow = rowIndexInSystem < systemRows.length - 1 ? systemRows[rowIndexInSystem + 1] : null
@@ -183,6 +193,7 @@ export function DepthCalcPage() {
     const collectorPipeNumber = row.collectorPipeId
       ? pipeNumberById.get(row.collectorPipeId) ?? ''
       : ''
+    const typeLabel = row.wiringRowType ? ROW_TYPE_LABELS[row.wiringRowType] ?? null : null
 
     // 系統の終端行（吸水なし）では、配線番号欄に「合流点」「落口」を表示
     const isTerminalCollectorRow = row.isSystemEnd && row.absorptionPoints.length === 0
@@ -236,6 +247,7 @@ export function DepthCalcPage() {
                   colSpan={refCount > 0 ? 1 : 1}
                 >
                   {row.pipeNumber || '-'}
+                  <div className="mt-0.5 text-[10px] text-purple-600 font-normal">集水合流</div>
                 </th>
                 <th className="border-0 bg-transparent"></th>
                 {refCount > 0 ? (
@@ -429,6 +441,11 @@ export function DepthCalcPage() {
                   )}
                   {terminalLabel ?? row.pipeNumber ?? '-'}
                 </button>
+                {typeLabel && !terminalLabel && (
+                  <div className="mt-0.5 text-[10px] text-slate-500 font-normal">
+                    {typeLabel}
+                  </div>
+                )}
               </th>
               <th className="border-0 bg-transparent"></th>
               {row.absorptionPoints.map(p => (

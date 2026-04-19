@@ -41,6 +41,8 @@ export interface PlanRow {
   collectorPoint: PlanPoint | null // 集水との合流点
   // 集水合流の参照先系統（別系統の集水計画高を参照する行）
   mergeSystemIndex?: number | null
+  // 配管系統で設定された行タイプ（吸水端部 / 吸水合流 / 集水合流点 等）
+  wiringRowType?: string | null
 }
 
 // グループ（集水暗渠タブまたは直落暗渠）
@@ -152,9 +154,10 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       // 管路情報を取得
       const pipes = useUnderdrainStore.getState().pipes
 
-      // 配管系統データから wiringRowId → mergeSystemIndex のルックアップを作成
+      // 配管系統データから wiringRowId → {mergeSystemIndex, rowType} のルックアップを作成
       const wiringState = usePipeWiringStore.getState()
       const mergeInfoByWiringRowId = new Map<string, number>()
+      const rowTypeByWiringRowId = new Map<string, string>()
       const allWiringRows = [
         ...wiringState.collectorTabs.flatMap((t) => t.rows),
         ...wiringState.directRows,
@@ -162,6 +165,9 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       for (const wr of allWiringRows) {
         if (wr.rowType === 'collector_merge' && wr.mergeSystemIndex !== null) {
           mergeInfoByWiringRowId.set(wr.id, wr.mergeSystemIndex)
+        }
+        if (wr.rowType) {
+          rowTypeByWiringRowId.set(wr.id, wr.rowType)
         }
       }
 
@@ -239,6 +245,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
           absorptionPoints,
           collectorPoint,
           mergeSystemIndex: mergeInfoByWiringRowId.get(row.wiring_row_id) ?? null,
+          wiringRowType: rowTypeByWiringRowId.get(row.wiring_row_id) ?? null,
         }
 
         groupMap.get(groupKey)!.rows.push(planRow)
@@ -526,6 +533,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
               absorptionPoints: [],
               collectorPoint: mergeCollectorPoint,
               mergeSystemIndex: wiringRow.mergeSystemIndex,
+              wiringRowType: wiringRow.rowType ?? null,
             }
             group.rows.push(planRow)
             continue
@@ -629,6 +637,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                 designLength: absorptionPipe.designLength,
                 absorptionPoints,
                 collectorPoint,
+                wiringRowType: wiringRow.rowType ?? null,
               }
 
               group.rows.push(planRow)
@@ -708,6 +717,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                 designLength: collectorPipe.designLength,
                 absorptionPoints: [], // 吸水点なし
                 collectorPoint,
+                wiringRowType: wiringRow.rowType ?? null,
               }
 
               group.rows.push(planRow)
@@ -835,6 +845,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
               designLength: absorptionPipe.designLength,
               absorptionPoints,
               collectorPoint,
+              wiringRowType: wiringRow.rowType ?? null,
             }
 
             directGroup.rows.push(planRow)
@@ -885,6 +896,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
               designLength: collectorPipe.designLength,
               absorptionPoints: [],
               collectorPoint,
+              wiringRowType: wiringRow.rowType ?? null,
             }
 
             directGroup.rows.push(planRow)

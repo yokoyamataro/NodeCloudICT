@@ -123,14 +123,15 @@ export async function exportHydraulicCalcSheet({
   for (let sysIdx = 0; sysIdx < systems.length; sysIdx++) {
     const system = systems[sysIdx]
 
-    // 集水合流行を除く実データ行を順序保持で取得
-    const dataRows = system.rows.filter((r) => r.mergeSystemIndex == null)
+    // 全行（集水合流も含めて）を順序保持で取得
+    const dataRows = system.rows
 
     for (let i = 0; i < dataRows.length; i++) {
       const row = dataRows[i]
       const isFirstInSystem = i === 0
       const isLastInSystem = i === dataRows.length - 1
       const nextRow = dataRows[i + 1]
+      const isMergeRow = row.mergeSystemIndex != null
 
       // 系統の最後の行は配管がないため全て転記しない（行送りだけ進める）
       if (isLastInSystem) {
@@ -141,8 +142,8 @@ export async function exportHydraulicCalcSheet({
       const absorptionPipe = row.absorptionPipeId ? pipeById.get(row.absorptionPipeId) : null
       const collectorPipe = row.collectorPipeId ? pipeById.get(row.collectorPipeId) : null
 
-      // === 吸水側 ===
-      if (absorptionPipe) {
+      // === 吸水側 ===（集水合流行では吸水側は転記しない）
+      if (absorptionPipe && !isMergeRow) {
         // A: 吸水番号
         ws.getCell(`A${currentRow}`).value = absorptionPipe.number
         // B: 管種
@@ -195,13 +196,10 @@ export async function exportHydraulicCalcSheet({
             lengthDecimals,
           )
         }
-        // Y: 補正 — 次行が集水合流なら -配線間隔/2
-        //   現行 dataRows では集水合流を除外しているが、system.rows から next を確認
-        const origIdx = system.rows.indexOf(row)
-        const nextOrig = system.rows[origIdx + 1]
-        if (nextOrig && nextOrig.mergeSystemIndex != null) {
+        // Y: 補正 — 集水合流行のみ -配線間隔/2
+        // Z: 累加距離 — 集水合流行のみ =上のセル(Z) + 2つ左(X) + 1つ左(Y)
+        if (isMergeRow) {
           ws.getCell(`Y${currentRow}`).value = -(pipeInterval / 2)
-          // Z: 累加距離の数式（Z の上セル + 2つ左(X) + 1つ左(Y)）
           ws.getCell(`Z${currentRow}`).value = {
             formula: `Z${currentRow - 2}+X${currentRow}+Y${currentRow}`,
           }
