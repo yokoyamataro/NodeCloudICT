@@ -128,6 +128,16 @@ export async function exportHydraulicCalcSheet({
 
     for (let i = 0; i < dataRows.length; i++) {
       const row = dataRows[i]
+      const isFirstInSystem = i === 0
+      const isLastInSystem = i === dataRows.length - 1
+      const nextRow = dataRows[i + 1]
+
+      // 系統の最後の行は配管がないため全て転記しない（行送りだけ進める）
+      if (isLastInSystem) {
+        currentRow += 2
+        continue
+      }
+
       const absorptionPipe = row.absorptionPipeId ? pipeById.get(row.absorptionPipeId) : null
       const collectorPipe = row.collectorPipeId ? pipeById.get(row.collectorPipeId) : null
 
@@ -166,7 +176,8 @@ export async function exportHydraulicCalcSheet({
       }
 
       // === 集水側 ===
-      if (collectorPipe) {
+      // 系統の最初の行は集水を転記しない（1行目と2行目は同じ集水管の区間になるため）
+      if (!isFirstInSystem && collectorPipe) {
         // S: 集水番号
         ws.getCell(`S${currentRow}`).value = collectorPipe.number
         // T: 管種（1 行下に転記。連絡渠・落口なら 3、それ以外は設定）
@@ -195,13 +206,14 @@ export async function exportHydraulicCalcSheet({
             formula: `Z${currentRow - 2}+X${currentRow}+Y${currentRow}`,
           }
         }
-        // AB: 集水勾配（区間勾配の分母を抽出）
-        const slopeStr = row.collectorPoint?.segmentSlope
-        if (slopeStr) {
-          const match = slopeStr.match(/1\/(\d+)/)
-          if (match) {
-            ws.getCell(`AB${currentRow}`).value = parseInt(match[1])
-          }
+        // AB: 集水勾配 — 次の行の集水計画高との差分から算出
+        //   segmentSlope は表示時計算のためストア上は null。ここで再計算する。
+        const curH = row.collectorPoint?.plannedHeight
+        const nextH = nextRow?.collectorPoint?.plannedHeight
+        const dist = row.collectorPoint?.segmentDistance
+        if (curH != null && nextH != null && dist != null && curH !== nextH) {
+          const slope = Math.abs(dist / (curH - nextH))
+          ws.getCell(`AB${currentRow}`).value = Math.round(slope)
         }
       }
 
