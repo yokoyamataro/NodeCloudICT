@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import {
   Ruler,
   RefreshCw,
-  Save,
   Loader2,
   AlertTriangle,
   Trash2,
@@ -14,6 +13,7 @@ import {
   Maximize2,
   X,
   FileSpreadsheet,
+  Mountain,
 } from 'lucide-react'
 import { HydraulicCalcModal } from './HydraulicCalcModal'
 import { useFarmStore } from '@/stores/farmStore'
@@ -49,7 +49,7 @@ export function DepthCalcPage() {
     hasData,
     fetchPlan,
     generatePlanFromWiring,
-    savePlan,
+    reloadGroundHeights,
     deletePlan,
     updatePlannedHeight,
     updateGroundHeight,
@@ -770,6 +770,26 @@ export function DepthCalcPage() {
             <>
               {hasData ? (
                 <>
+                  {/* 配管系統から系統読込 */}
+                  <button
+                    onClick={() => setShowGenerateConfirm(true)}
+                    disabled={saving}
+                    className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
+                    title="配管系統から系統を読み込み（地盤高は読み込まれません）"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    配管系統から系統読込
+                  </button>
+                  {/* 地盤高読込 */}
+                  <button
+                    onClick={() => reloadGroundHeights()}
+                    disabled={saving}
+                    className="flex items-center gap-2 px-3 py-2 bg-sky-600 text-white rounded-lg hover:bg-sky-700 transition-colors disabled:opacity-50"
+                    title="測量データから地盤高を読み込み"
+                  >
+                    <Mountain className="h-4 w-4" />
+                    地盤高読込
+                  </button>
                   {/* 自動計算設定 */}
                   <button
                     onClick={() => setShowCalcSettings(!showCalcSettings)}
@@ -778,11 +798,11 @@ export function DepthCalcPage() {
                         ? 'bg-amber-100 border-amber-300 text-amber-700'
                         : 'text-slate-600 hover:bg-slate-50'
                     }`}
-                    title="自動計算設定"
+                    title="自動切深計画設定"
                   >
                     <Settings className="h-4 w-4" />
                   </button>
-                  {/* 自動計算ボタン */}
+                  {/* 自動切深計画 */}
                   <button
                     onClick={handleAutoCalculate}
                     disabled={saving}
@@ -790,28 +810,19 @@ export function DepthCalcPage() {
                     title="計画高を自動計算"
                   >
                     <Calculator className="h-4 w-4" />
-                    自動計算
+                    自動切深計画
                   </button>
-                  {/* 水理計算書作成ボタン */}
+                  {/* 水理計算出力 */}
                   <button
                     onClick={() => setShowHydraulicModal(true)}
                     disabled={saving || planGroups.length === 0}
-                    className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
+                    className="flex items-center gap-2 px-3 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50"
                     title="水理計算書を作成"
                   >
                     <FileSpreadsheet className="h-4 w-4" />
-                    水理計算書作成
+                    水理計算出力
                   </button>
                   <div className="w-px h-6 bg-slate-300" />
-                  <button
-                    onClick={() => setShowGenerateConfirm(true)}
-                    disabled={saving}
-                    className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
-                    title="配管系統から再生成（現在のデータを上書き）"
-                  >
-                    <RefreshCw className="h-4 w-4" />
-                    配管系統から再生成
-                  </button>
                   <button
                     onClick={() => currentFarm && fetchPlan(currentFarm.id)}
                     disabled={saving}
@@ -819,18 +830,6 @@ export function DepthCalcPage() {
                     title="データを再読み込み"
                   >
                     <RefreshCw className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={savePlan}
-                    disabled={saving}
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-                  >
-                    {saving ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Save className="h-4 w-4" />
-                    )}
-                    {saving ? '保存中...' : '保存'}
                   </button>
                   <button
                     onClick={() => setShowDeleteConfirm(true)}
@@ -847,7 +846,7 @@ export function DepthCalcPage() {
                   className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
                 >
                   <RefreshCw className="h-4 w-4" />
-                  配管系統から生成
+                  配管系統から系統読込
                 </button>
               )}
             </>

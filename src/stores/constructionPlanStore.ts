@@ -69,10 +69,12 @@ interface ConstructionPlanState {
   saving: boolean
   error: string | null
   hasData: boolean // 施工計画データが存在するか
+  hasChanges: boolean // 未保存の変更があるか
 
   // データ取得・生成
   fetchPlan: (farmId: string) => Promise<void>
-  generatePlanFromWiring: () => Promise<void> // 配管系統から施工計画を生成
+  generatePlanFromWiring: () => Promise<void> // 配管系統から施工計画を生成（地盤高は読み込まない）
+  reloadGroundHeights: () => Promise<void> // 測量データから地盤高のみを読み込み適用
   savePlan: () => Promise<void>
   deletePlan: () => Promise<void>
 
@@ -87,6 +89,9 @@ interface ConstructionPlanState {
 
   // 自動計画高計算
   autoCalculatePlannedHeights: (params: AutoCalcParams) => void
+
+  // 変更フラグのクリア
+  markSaved: () => void
 }
 
 // 圃場IDを取得するヘルパー
@@ -112,6 +117,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
   planGroups: [],
   loading: false,
   saving: false,
+  hasChanges: false,
   error: null,
   hasData: false,
 
@@ -130,7 +136,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       if (rowError) throw rowError
 
       if (!rows || rows.length === 0) {
-        set({ planGroups: [], hasData: false, loading: false })
+        set({ planGroups: [], hasData: false, loading: false, hasChanges: false })
         return
       }
 
@@ -252,7 +258,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       }
 
       const planGroups = Array.from(groupMap.values())
-      set({ planGroups, hasData: true, loading: false })
+      set({ planGroups, hasData: true, loading: false, hasChanges: false })
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : '施工計画の取得に失敗しました',
@@ -275,28 +281,6 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       const { collectorTabs, directRows } = usePipeWiringStore.getState()
       const pipes = useUnderdrainStore.getState().pipes
 
-      // 測量データを直接Supabaseから取得（ストアのデータが古い可能性があるため）
-      const { data: surveyDataRaw } = await supabase
-        .from('design_survey_data')
-        .select('*')
-        .eq('farm_id', farmId)
-
-      const surveyData = (surveyDataRaw || []).map((row: {
-        id: string
-        x: number
-        y: number
-        z: number | null
-        category: string
-        point_number: string
-      }) => ({
-        id: row.id,
-        x: row.x,
-        y: row.y,
-        z: row.z,
-        category: row.category,
-        pointNumber: row.point_number,
-      }))
-
       // 既存の施工計画を削除
       await supabase
         .from('construction_plan_rows')
@@ -305,26 +289,9 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
 
       const planGroups: PlanGroup[] = []
 
-      // 座標から最も近い測量データの地盤高を取得するヘルパー
-      // z値を持つ測量データのみ対象
-      const getGroundHeightByCoordinate = (x: number, y: number, threshold: number = 0.5): number | null => {
-        const validSurvey = surveyData.filter(s => s.z !== null)
-        if (validSurvey.length === 0) return null
-
-        let nearestSurvey: typeof validSurvey[0] | null = null
-        let nearestDistance = Infinity
-
-        for (const survey of validSurvey) {
-          const dx = survey.x - x
-          const dy = survey.y - y
-          const distance = Math.sqrt(dx * dx + dy * dy)
-          if (distance < nearestDistance && distance < threshold) {
-            nearestDistance = distance
-            nearestSurvey = survey
-          }
-        }
-
-        return nearestSurvey?.z ?? null
+      // 地盤高は後で「地盤高読込」ボタンで当てるため、生成時点では常に null を返す
+      const getGroundHeightByCoordinate = (_x: number, _y: number, _threshold: number = 0.5): number | null => {
+        return null
       }
 
       // 管路の頂点から測点名を生成するヘルパー
@@ -936,7 +903,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
         }
       }
 
-      set({ planGroups, hasData: planGroups.length > 0, loading: false })
+      set({ planGroups, hasData: planGroups.length > 0, loading: false, hasChanges: true })
 
       // DBに保存
       await get().savePlan()
@@ -1029,7 +996,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
         }
       }
 
-      set({ saving: false })
+      set({ saving: false, hasChanges: false })
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : '施工計画の保存に失敗しました',
@@ -1050,10 +1017,91 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
         .delete()
         .eq('farm_id', farmId)
 
-      set({ planGroups: [], hasData: false, loading: false })
+      set({ planGroups: [], hasData: false, loading: false, hasChanges: false })
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : '施工計画の削除に失敗しました',
+        loading: false,
+      })
+    }
+  },
+
+  reloadGroundHeights: async () => {
+    const farmId = getCurrentFarmId()
+    if (!farmId) {
+      set({ error: '圃場が選択されていません' })
+      return
+    }
+
+    set({ loading: true, error: null })
+
+    try {
+      // 測量データを取得
+      const { data: surveyDataRaw } = await supabase
+        .from('design_survey_data')
+        .select('*')
+        .eq('farm_id', farmId)
+
+      const surveyData = (surveyDataRaw || []).map(
+        (row: { id: string; x: number; y: number; z: number | null; category: string; point_number: string }) => ({
+          id: row.id,
+          x: row.x,
+          y: row.y,
+          z: row.z,
+          category: row.category,
+          pointNumber: row.point_number,
+        }),
+      )
+      const validSurvey = surveyData.filter((s) => s.z !== null) as Array<{
+        id: string
+        x: number
+        y: number
+        z: number
+        category: string
+        pointNumber: string
+      }>
+
+      const findGroundHeight = (x: number, y: number, threshold = 0.5): number | null => {
+        let nearest: (typeof validSurvey)[number] | null = null
+        let nearestDistance = Infinity
+        for (const s of validSurvey) {
+          const dx = s.x - x
+          const dy = s.y - y
+          const dist = Math.sqrt(dx * dx + dy * dy)
+          if (dist < nearestDistance && dist < threshold) {
+            nearestDistance = dist
+            nearest = s
+          }
+        }
+        return nearest?.z ?? null
+      }
+
+      const newGroups = get().planGroups.map((group) => ({
+        ...group,
+        rows: group.rows.map((row) => {
+          const newAbsorption = row.absorptionPoints.map((p) => {
+            const gh = findGroundHeight(p.x, p.y)
+            if (gh === null) return p
+            const cutDepth = p.plannedHeight !== null ? gh - p.plannedHeight : p.cutDepth
+            return { ...p, groundHeight: gh, cutDepth }
+          })
+          let newCollector = row.collectorPoint
+          if (newCollector) {
+            const gh = findGroundHeight(newCollector.x, newCollector.y)
+            if (gh !== null) {
+              const cutDepth =
+                newCollector.plannedHeight !== null ? gh - newCollector.plannedHeight : newCollector.cutDepth
+              newCollector = { ...newCollector, groundHeight: gh, cutDepth }
+            }
+          }
+          return { ...row, absorptionPoints: newAbsorption, collectorPoint: newCollector }
+        }),
+      }))
+
+      set({ planGroups: newGroups, loading: false, hasChanges: true })
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : '地盤高の読込に失敗しました',
         loading: false,
       })
     }
@@ -1088,7 +1136,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
         }),
       }))
 
-      return { planGroups: newGroups }
+      return { planGroups: newGroups, hasChanges: true }
     })
 
     // 勾配を再計算
@@ -1124,7 +1172,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
         }),
       }))
 
-      return { planGroups: newGroups }
+      return { planGroups: newGroups, hasChanges: true }
     })
   },
 
@@ -1288,10 +1336,14 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
         return { ...group, rows: updatedRows }
       })
 
-      return { planGroups: newGroups }
+      return { planGroups: newGroups, hasChanges: true }
     })
 
     // 勾配を再計算
     get().recalculateCutDepthAndSlope()
+  },
+
+  markSaved: () => {
+    set({ hasChanges: false })
   },
 }))

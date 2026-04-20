@@ -36,6 +36,12 @@ import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { usePipeWiringStore } from '@/stores/pipeWiringStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
+import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
+import {
+  useGlobalSaveRegistry,
+  hasAnyRegisteredChanges,
+  runAllRegisteredSaves,
+} from '@/stores/globalSaveRegistry'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useFarmStore } from '@/stores/farmStore'
 
@@ -130,6 +136,13 @@ export function AppLayout() {
   const { saveAllPipes, resetPipeChanges, error: pipeError } = useUnderdrainStore()
   const { saveWiring, hasChanges: hasWiringChanges, error: wiringError } = usePipeWiringStore()
   const { hasChanges: hasWorkAreaChanges, saveAllWorkAreas, resetWorkAreaChanges, error: workAreaError } = useWorkAreaStore()
+  const {
+    hasChanges: hasPlanChanges,
+    savePlan,
+    error: planError,
+    hasData: hasPlanData,
+  } = useConstructionPlanStore()
+  const { registrations: globalSaveRegs } = useGlobalSaveRegistry()
 
   // プロジェクト・圃場ストア（現在の表示用）
   const { currentProject } = useProjectListStore()
@@ -139,11 +152,16 @@ export function AppLayout() {
   const [saveError, setSaveError] = useState<string | null>(null)
 
 
-  // 未保存の変更があるか（配管系統・工事区域も含む）
-  const hasAnyUnsavedChanges = hasUnsavedChanges || hasWiringChanges || hasWorkAreaChanges
+  // 未保存の変更があるか（配管系統・工事区域・施工計画・登録されたページの変更も含む）
+  const hasAnyUnsavedChanges =
+    hasUnsavedChanges ||
+    hasWiringChanges ||
+    hasWorkAreaChanges ||
+    hasPlanChanges ||
+    hasAnyRegisteredChanges(globalSaveRegs)
 
   // 各ストアのエラーを集約
-  const anyError = coordinateError || pipeError || wiringError || workAreaError || saveError
+  const anyError = coordinateError || pipeError || wiringError || workAreaError || planError || saveError
 
   // トップページに戻る処理
   const handleGoToTop = () => {
@@ -186,6 +204,8 @@ export function AppLayout() {
         saveAllPipes(),
         saveWiring(),
         saveAllWorkAreas(),
+        hasPlanData ? savePlan() : Promise.resolve(),
+        runAllRegisteredSaves(globalSaveRegs),
       ])
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : '保存に失敗しました')

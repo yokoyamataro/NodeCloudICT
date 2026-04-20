@@ -17,6 +17,7 @@ import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { useSurveyStore, type SurveyDataRow } from '@/stores/surveyStore'
+import { useGlobalSaveRegistry } from '@/stores/globalSaveRegistry'
 import { loadSimaFile, type SimaCoordinate } from '@/lib/sima-parser'
 import type { SurveyCategory } from '@/types/database'
 
@@ -538,6 +539,20 @@ export function SurveyImportPage() {
     }
   }
 
+  // グローバル保存レジストリに登録（メニュー上の保存ボタンと統合）
+  const saveRef = useRef(handleSaveMatches)
+  saveRef.current = handleSaveMatches
+  useEffect(() => {
+    const { register, unregister } = useGlobalSaveRegistry.getState()
+    register('survey-import', {
+      hasChanges: hasUnsavedChanges,
+      save: () => saveRef.current(),
+    })
+    return () => {
+      unregister('survey-import')
+    }
+  }, [hasUnsavedChanges])
+
   return (
     <div className="h-full flex flex-col">
       {/* ヘッダー */}
@@ -574,24 +589,6 @@ export function SurveyImportPage() {
             <FileText className="h-4 w-4" />
             LANDXML
           </button>
-          {surveyData.length > 0 && (
-            <button
-              onClick={handleSaveMatches}
-              disabled={saving || !hasUnsavedChanges}
-              className={`flex items-center gap-2 px-4 py-2 rounded ${
-                hasUnsavedChanges
-                  ? 'bg-green-600 text-white hover:bg-green-500'
-                  : 'bg-slate-200 text-slate-500 cursor-not-allowed'
-              }`}
-            >
-              {saving ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Save className="h-4 w-4" />
-              )}
-              保存
-            </button>
-          )}
           <button
             onClick={() => setShowSettings(!showSettings)}
             className={`flex items-center gap-1 px-3 py-2 border rounded hover:bg-slate-50 ${
