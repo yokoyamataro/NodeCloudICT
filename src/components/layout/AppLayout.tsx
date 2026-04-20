@@ -275,12 +275,12 @@ export function AppLayout() {
               <button
                 type="button"
                 onClick={() => {
-                  const url = '/coordinates?view=map'
+                  const url = `/site-map?farmId=${encodeURIComponent(currentFarm.id)}`
                   const screenW = window.screen.availWidth
                   const screenH = window.screen.availHeight
                   window.open(
                     url,
-                    'nodecloud_site_map',
+                    `nodecloud_site_map_${currentFarm.id}`,
                     `width=${screenW},height=${screenH},left=0,top=0`,
                   )
                 }}

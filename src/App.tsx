@@ -4,6 +4,7 @@ import { AppLayout } from '@/components/layout/AppLayout'
 import { LoginPage } from '@/features/auth/LoginPage'
 import { ProjectListPage } from '@/features/projects/ProjectListPage'
 import { CoordinatesPage } from '@/features/coordinates/CoordinatesPage'
+import { SiteMapWindowPage } from '@/features/coordinates/SiteMapWindowPage'
 // 暗渠工事
 import { UnderdrainWorkAreaPage } from '@/features/underdrain/UnderdrainWorkAreaPage'
 import { CadAnalysisPage } from '@/features/underdrain/CadAnalysisPage'
@@ -70,6 +71,15 @@ function AppRoutes() {
           element={
             <ProtectedRoute>
               <MobileFarmMapPage />
+            </ProtectedRoute>
+          }
+        />
+        {/* 別ウィンドウ: 現場地図のみ全画面表示（AppLayout を介さない） */}
+        <Route
+          path="/site-map"
+          element={
+            <ProtectedRoute>
+              <SiteMapWindowPage />
             </ProtectedRoute>
           }
         />
