@@ -218,10 +218,7 @@ export async function exportHydraulicCalcSheet({
       currentRow += 2
     }
 
-    // 系統の末尾は 2 行余分に空ける
-    if (sysIdx < systems.length - 1) {
-      currentRow += 2
-    }
+    // 系統の末尾の skip（isLastInSystem）で既に 1 行分空くため、追加の間隔は不要
   }
 
   // ダウンロード
