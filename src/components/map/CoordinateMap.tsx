@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react'
-import { MapContainer, TileLayer, Marker, Polygon, useMap, Tooltip } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Polygon, Polyline, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
+import { useCoordinateStore, type CoordinateRow, type RoutePoint } from '@/stores/coordinateStore'
 import { useMapViewStore } from '@/stores/mapViewStore'
 
 // デフォルトマーカーアイコンの修正（Leafletの既知の問題）
@@ -112,6 +112,9 @@ interface CoordinateMapProps {
   baseLayer?: BaseLayerType
   externalPolygons?: ExternalPolygon[]
   editingExternalPolygonId?: string | null
+  // 経路（順路）の描画
+  route?: RoutePoint[]
+  showRoute?: boolean
 }
 
 export function CoordinateMap({
@@ -122,6 +125,8 @@ export function CoordinateMap({
   baseLayer = 'osm',
   externalPolygons = [],
   editingExternalPolygonId,
+  route = [],
+  showRoute = false,
 }: CoordinateMapProps) {
   const { coordinates } = useCoordinateStore()
 
@@ -188,6 +193,73 @@ export function CoordinateMap({
               weight: isEditing ? 3 : 2,
               dashArray: isEditing ? '5, 5' : undefined,
             }}
+          />
+        )
+      })}
+
+      {/* 経路: down セグメントのみポリラインで結線 */}
+      {showRoute && route.length > 1 && (() => {
+        const coordById = new Map(validCoordinates.map((c) => [c.id, c]))
+        const segments: Array<[number, number][]> = []
+        let current: [number, number][] = []
+        for (let i = 0; i < route.length; i++) {
+          const p = route[i]
+          const c = coordById.get(p.coordinateId)
+          if (!c) continue
+          if (i === 0) {
+            current = [[c.lat, c.lng]]
+            continue
+          }
+          if (p.direction === 'down') {
+            // 前の点からこの点までを down として描く
+            current.push([c.lat, c.lng])
+          } else {
+            // up: 現在のセグメントを終了し、新しいセグメントをこの点から開始
+            if (current.length >= 2) segments.push(current)
+            current = [[c.lat, c.lng]]
+          }
+        }
+        if (current.length >= 2) segments.push(current)
+        return segments.map((positions, idx) => (
+          <Polyline
+            key={`route-seg-${idx}`}
+            positions={positions}
+            pathOptions={{ color: '#2563eb', weight: 3, opacity: 0.9 }}
+          />
+        ))
+      })()}
+
+      {/* 経路の順番ラベル */}
+      {showRoute && route.map((p, idx) => {
+        const c = validCoordinates.find((co) => co.id === p.coordinateId)
+        if (!c) return null
+        const color = p.direction === 'down' ? '#2563eb' : '#9ca3af'
+        const orderIcon = L.divIcon({
+          className: 'route-order-marker',
+          html: `<div style="
+            background: ${color};
+            color: white;
+            border-radius: 50%;
+            width: 22px;
+            height: 22px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: bold;
+            border: 2px solid white;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+          ">${idx + 1}</div>`,
+          iconSize: [22, 22],
+          iconAnchor: [11, 11],
+        })
+        return (
+          <Marker
+            key={`route-${idx}`}
+            position={[c.lat, c.lng]}
+            icon={orderIcon}
+            interactive={false}
+            zIndexOffset={1000}
           />
         )
       })}

@@ -17,6 +17,15 @@ export interface CoordinateRow {
   type: CoordinateType
 }
 
+// 経路（順路）の方向
+export type RouteDirection = 'up' | 'down'
+
+// 経路の1点
+export interface RoutePoint {
+  coordinateId: string
+  direction: RouteDirection
+}
+
 interface CoordinateState {
   // 座標系設定
   zone: number
@@ -43,6 +52,17 @@ interface CoordinateState {
   pendingChanges: Map<string, CoordinateRow>
   saveAllCoordinates: () => Promise<void>
   resetCoordinateChanges: () => void
+
+  // 経路（順路）
+  route: RoutePoint[]
+  routeHasChanges: boolean
+  fetchRoute: (farmId: string) => Promise<void>
+  appendRoutePoint: (coordinateId: string, direction?: RouteDirection) => void
+  removeRoutePoint: (index: number) => void
+  setRouteDirection: (index: number, direction: RouteDirection) => void
+  moveRoutePoint: (index: number, offset: number) => void
+  clearRoute: () => void
+  saveRoute: () => Promise<void>
 }
 
 // 圃場IDを取得するヘルパー
@@ -359,5 +379,100 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
     // 変更をクリア
     set({ pendingChanges: new Map() })
     useSettingsStore.getState().setHasUnsavedChanges(false)
+  },
+
+  // 経路（順路）
+  route: [] as RoutePoint[],
+  routeHasChanges: false,
+
+  fetchRoute: async (farmId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('design_coordinate_routes')
+        .select('coordinate_id, direction, sort_order')
+        .eq('farm_id', farmId)
+        .order('sort_order', { ascending: true })
+
+      if (error) throw error
+
+      const route = ((data || []) as Array<{
+        coordinate_id: string
+        direction: RouteDirection
+        sort_order: number
+      }>).map((r) => ({ coordinateId: r.coordinate_id, direction: r.direction }))
+      set({ route, routeHasChanges: false })
+    } catch (err) {
+      console.error('経路の取得に失敗:', err)
+    }
+  },
+
+  appendRoutePoint: (coordinateId, direction = 'down') => {
+    set((state) => ({
+      route: [...state.route, { coordinateId, direction }],
+      routeHasChanges: true,
+    }))
+  },
+
+  removeRoutePoint: (index) => {
+    set((state) => ({
+      route: state.route.filter((_, i) => i !== index),
+      routeHasChanges: true,
+    }))
+  },
+
+  setRouteDirection: (index, direction) => {
+    set((state) => ({
+      route: state.route.map((r, i) => (i === index ? { ...r, direction } : r)),
+      routeHasChanges: true,
+    }))
+  },
+
+  moveRoutePoint: (index, offset) => {
+    set((state) => {
+      const next = [...state.route]
+      const target = index + offset
+      if (index < 0 || index >= next.length || target < 0 || target >= next.length) {
+        return state
+      }
+      const tmp = next[index]
+      next[index] = next[target]
+      next[target] = tmp
+      return { route: next, routeHasChanges: true }
+    })
+  },
+
+  clearRoute: () => {
+    set({ route: [], routeHasChanges: true })
+  },
+
+  saveRoute: async () => {
+    const farmId = getCurrentFarmId()
+    if (!farmId) return
+    const { route } = get()
+    try {
+      // 既存の経路を削除
+      const { error: delErr } = await supabase
+        .from('design_coordinate_routes')
+        .delete()
+        .eq('farm_id', farmId)
+      if (delErr) throw delErr
+
+      if (route.length > 0) {
+        const rows = route.map((r, idx) => ({
+          farm_id: farmId,
+          coordinate_id: r.coordinateId,
+          direction: r.direction,
+          sort_order: idx,
+        }))
+        const { error: insErr } = await supabase
+          .from('design_coordinate_routes')
+          .insert(rows as never)
+        if (insErr) throw insErr
+      }
+      set({ routeHasChanges: false })
+    } catch (err) {
+      console.error('経路の保存に失敗:', err)
+      throw err
+    }
   },
 }))

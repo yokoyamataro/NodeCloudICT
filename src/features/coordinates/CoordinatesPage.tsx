@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Upload, Download, Plus, Trash2, FileText, Eye, EyeOff, Clipboard } from 'lucide-react'
+import { Upload, Download, Plus, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown } from 'lucide-react'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
+import { useGlobalSaveRegistry } from '@/stores/globalSaveRegistry'
 import { CoordinateMap, type BaseLayerType } from '@/components/map/CoordinateMap'
 import { loadSimaFile } from '@/lib/sima-parser'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -185,7 +186,19 @@ export function CoordinatesPage() {
     importCoordinates,
     selectedType,
     setSelectedType,
+    route,
+    routeHasChanges,
+    fetchRoute,
+    appendRoutePoint,
+    removeRoutePoint,
+    setRouteDirection,
+    moveRoutePoint,
+    clearRoute,
+    saveRoute,
   } = useCoordinateStore()
+
+  // 経路モード（クリックで経路に追加）
+  const [routeMode, setRouteMode] = useState(false)
 
   // 現在の圃場が属するプロジェクトの座標系
   const projectZone = currentFarm
@@ -199,8 +212,24 @@ export function CoordinatesPage() {
       setZone(projectZone)
       // Supabaseからデータを読み込む
       fetchCoordinates(currentFarm.id)
+      // 経路を読み込む
+      fetchRoute(currentFarm.id)
     }
-  }, [currentFarm, projectZone, setZone, fetchCoordinates])
+  }, [currentFarm, projectZone, setZone, fetchCoordinates, fetchRoute])
+
+  // グローバル保存レジストリに経路保存を登録
+  const routeSaveRef = useRef(saveRoute)
+  routeSaveRef.current = saveRoute
+  useEffect(() => {
+    const { register, unregister } = useGlobalSaveRegistry.getState()
+    register('coordinate-route', {
+      hasChanges: routeHasChanges,
+      save: () => routeSaveRef.current(),
+    })
+    return () => {
+      unregister('coordinate-route')
+    }
+  }, [routeHasChanges])
 
   const handleAddCoordinate = () => {
     addCoordinate(selectedType)
@@ -353,6 +382,9 @@ export function CoordinatesPage() {
   // 点がクリックされたとき
   const handlePointClick = (id: string) => {
     setSelectedPointId(id)
+    if (routeMode) {
+      appendRoutePoint(id, 'down')
+    }
   }
 
   // ポップアウトモードの場合
@@ -409,6 +441,8 @@ export function CoordinatesPage() {
             showLabels={showLabels}
             visibleTypes={visibleTypes}
             baseLayer={baseLayer}
+            route={route}
+            showRoute={true}
           />
         </div>
       </div>
@@ -797,9 +831,21 @@ export function CoordinatesPage() {
         </div>
 
         {/* 右側: 地図 */}
-        <div className="w-1/2 bg-slate-100 flex flex-col">
+        <div className="w-1/2 bg-slate-100 flex flex-col relative">
           {/* 表示設定パネル */}
           <div className="p-2 bg-white border-b flex items-center gap-4 flex-wrap">
+            <button
+              onClick={() => setRouteMode(!routeMode)}
+              className={`flex items-center gap-1 px-2 py-1 text-xs rounded border ${
+                routeMode
+                  ? 'bg-blue-100 border-blue-400 text-blue-800 font-medium'
+                  : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
+              }`}
+              title="ONにすると地図クリックで点を経路に追加"
+            >
+              <Route className="h-3 w-3" />
+              経路モード{routeMode ? 'ON' : 'OFF'}
+            </button>
             <button
               onClick={() => setShowLabels(!showLabels)}
               className={`flex items-center gap-1 px-2 py-1 text-xs rounded border ${
@@ -840,14 +886,105 @@ export function CoordinatesPage() {
               <option value="gsi-std">地理院地図</option>
             </select>
           </div>
-          <div className="flex-1">
+          <div className="flex-1 relative">
             <CoordinateMap
               selectedPointId={selectedPointId}
               onPointSelect={handlePointClick}
               showLabels={showLabels}
               visibleTypes={visibleTypes}
               baseLayer={baseLayer}
+              route={route}
+              showRoute={true}
             />
+
+            {/* 経路パネル（地図右上にオーバーレイ） */}
+            {(routeMode || route.length > 0) && (
+              <div className="absolute top-2 right-2 z-[1000] w-64 max-h-[60vh] flex flex-col bg-white border border-slate-300 rounded shadow-lg">
+                <div className="px-2 py-1.5 border-b flex items-center justify-between bg-slate-50 rounded-t">
+                  <span className="text-xs font-medium text-slate-700 flex items-center gap-1">
+                    <Route className="h-3 w-3" />
+                    経路 ({route.length})
+                  </span>
+                  {route.length > 0 && (
+                    <button
+                      onClick={() => {
+                        if (confirm('経路を全てクリアしますか？')) clearRoute()
+                      }}
+                      className="text-[10px] text-red-600 hover:text-red-800"
+                      title="経路を全てクリア"
+                    >
+                      クリア
+                    </button>
+                  )}
+                </div>
+                <div className="flex-1 overflow-auto text-xs">
+                  {route.length === 0 ? (
+                    <div className="p-3 text-slate-500 text-center">
+                      {routeMode ? '地図の点をクリックして追加' : '経路なし'}
+                    </div>
+                  ) : (
+                    <table className="w-full">
+                      <tbody>
+                        {route.map((p, idx) => {
+                          const coord = coordinates.find((c) => c.id === p.coordinateId)
+                          return (
+                            <tr key={`${p.coordinateId}-${idx}`} className="border-b last:border-0 hover:bg-slate-50">
+                              <td className="px-1 py-1 text-slate-500 w-6 text-right">{idx + 1}</td>
+                              <td className="px-1 py-1 font-mono">{coord?.pointNumber ?? '(不明)'}</td>
+                              <td className="px-1 py-1">
+                                <button
+                                  onClick={() =>
+                                    setRouteDirection(idx, p.direction === 'down' ? 'up' : 'down')
+                                  }
+                                  className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[10px] border ${
+                                    p.direction === 'down'
+                                      ? 'bg-blue-100 border-blue-300 text-blue-800'
+                                      : 'bg-slate-100 border-slate-300 text-slate-500'
+                                  }`}
+                                  title="up/down 切替"
+                                >
+                                  {p.direction === 'down' ? (
+                                    <ArrowDown className="h-3 w-3" />
+                                  ) : (
+                                    <ArrowUp className="h-3 w-3" />
+                                  )}
+                                  {p.direction}
+                                </button>
+                              </td>
+                              <td className="px-1 py-1 text-right whitespace-nowrap">
+                                <button
+                                  onClick={() => moveRoutePoint(idx, -1)}
+                                  disabled={idx === 0}
+                                  className="px-0.5 text-slate-500 hover:text-slate-800 disabled:opacity-30"
+                                  title="上へ"
+                                >
+                                  ↑
+                                </button>
+                                <button
+                                  onClick={() => moveRoutePoint(idx, 1)}
+                                  disabled={idx === route.length - 1}
+                                  className="px-0.5 text-slate-500 hover:text-slate-800 disabled:opacity-30"
+                                  title="下へ"
+                                >
+                                  ↓
+                                </button>
+                                <button
+                                  onClick={() => removeRoutePoint(idx)}
+                                  className="px-0.5 text-red-500 hover:text-red-700"
+                                  title="削除"
+                                >
+                                  ×
+                                </button>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
