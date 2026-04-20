@@ -88,10 +88,6 @@ export function LoginPage() {
           </form>
 
           <p className="mt-6 text-center text-xs text-slate-500">
-            NodeCloud本体と同じアカウントでログインできます
-          </p>
-
-          <p className="mt-4 text-center text-xs text-slate-500">
             開発者：
             <a
               href="https://yokoyama-s.jp"

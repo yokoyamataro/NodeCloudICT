@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Upload, Download, Plus, Trash2, FileText, Eye, EyeOff, ExternalLink, Clipboard } from 'lucide-react'
+import { Upload, Download, Plus, Trash2, FileText, Eye, EyeOff, Clipboard } from 'lucide-react'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
@@ -355,15 +355,6 @@ export function CoordinatesPage() {
     setSelectedPointId(id)
   }
 
-  // ポップアウトウィンドウを開く
-  const handlePopout = (mode: 'map' | 'table') => {
-    const url = `${window.location.pathname}?view=${mode}`
-    const features = mode === 'map'
-      ? 'width=1200,height=800,left=100,top=100'
-      : 'width=900,height=700,left=200,top=150'
-    window.open(url, `nodecloud_${mode}`, features)
-  }
-
   // ポップアウトモードの場合
   if (viewMode === 'map') {
     // 地図のみ表示
@@ -622,17 +613,6 @@ export function CoordinatesPage() {
           <div className="flex-1 flex flex-col overflow-hidden">
               {/* 設定パネル */}
               <div className="p-4 border-b bg-slate-50">
-                {/* ポップアウトボタン */}
-                <div className="flex justify-end mb-2">
-                  <button
-                    onClick={() => handlePopout('table')}
-                    className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-white"
-                    title="計算書を別ウィンドウで開く"
-                  >
-                    <ExternalLink className="h-3 w-3" />
-                    別ウィンドウ
-                  </button>
-                </div>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium mb-1">座標系（プロジェクト設定）</label>
@@ -820,14 +800,6 @@ export function CoordinatesPage() {
         <div className="w-1/2 bg-slate-100 flex flex-col">
           {/* 表示設定パネル */}
           <div className="p-2 bg-white border-b flex items-center gap-4 flex-wrap">
-            <button
-              onClick={() => handlePopout('map')}
-              className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-gray-50"
-              title="地図を別ウィンドウで開く"
-            >
-              <ExternalLink className="h-3 w-3" />
-              別ウィンドウ
-            </button>
             <button
               onClick={() => setShowLabels(!showLabels)}
               className={`flex items-center gap-1 px-2 py-1 text-xs rounded border ${

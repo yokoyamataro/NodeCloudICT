@@ -28,6 +28,7 @@ import {
   Gem,
   LandPlot,
   Home,
+  ExternalLink,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
@@ -267,6 +268,28 @@ export function AppLayout() {
                   <span className="text-slate-400"> / {currentFarm.name}</span>
                 )}
               </div>
+            )}
+
+            {/* 現場の地図を別ウィンドウで全画面表示 */}
+            {currentFarm && (
+              <button
+                type="button"
+                onClick={() => {
+                  const url = '/coordinates?view=map'
+                  const screenW = window.screen.availWidth
+                  const screenH = window.screen.availHeight
+                  window.open(
+                    url,
+                    'nodecloud_site_map',
+                    `width=${screenW},height=${screenH},left=0,top=0`,
+                  )
+                }}
+                className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+                title="現場の地図を別ウィンドウで全画面表示"
+              >
+                <ExternalLink className="h-4 w-4" />
+                地図ウィンドウ
+              </button>
             )}
 
             <div className="flex items-center gap-2">
