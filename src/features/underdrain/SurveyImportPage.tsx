@@ -10,7 +10,6 @@ import {
   Link2,
   X,
   FileText,
-  Save,
   Loader2,
 } from 'lucide-react'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
@@ -89,7 +88,7 @@ export function SurveyImportPage() {
     designPointId: string
     candidates: SurveyDataRow[]
   } | null>(null)
-  const [saving, setSaving] = useState(false)
+  const [, setSaving] = useState(false)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
 
   // ローカル状態（保存前のマッチング変更を追跡）
