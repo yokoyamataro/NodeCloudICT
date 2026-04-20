@@ -1,18 +1,13 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
-import { LogIn, Loader2, UserCircle } from 'lucide-react'
-
-// デモアカウント
-const DEMO_EMAIL = 'demo@nodecloud.jp'
-const DEMO_PASSWORD = 'demo1234'
+import { LogIn, Loader2 } from 'lucide-react'
 
 export function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const [demoLoading, setDemoLoading] = useState(false)
   const { signIn } = useAuth()
   const navigate = useNavigate()
 
@@ -31,27 +26,16 @@ export function LoginPage() {
     }
   }
 
-  const handleDemoLogin = async () => {
-    setError(null)
-    setDemoLoading(true)
-
-    try {
-      await signIn(DEMO_EMAIL, DEMO_PASSWORD)
-      navigate('/')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'デモログインに失敗しました')
-    } finally {
-      setDemoLoading(false)
-    }
-  }
-
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-100">
       <div className="w-full max-w-md">
         <div className="bg-white rounded-lg shadow-lg p-8">
           <div className="text-center mb-8">
-            <h1 className="text-2xl font-bold text-slate-900">NodeCloud Design</h1>
-            <p className="text-sm text-slate-600 mt-1">ICT設計システム</p>
+            <h1 className="text-2xl font-bold text-slate-900">NodeCloud-農土クラウド-</h1>
+            <p className="text-sm text-slate-600 mt-1">ICT農業土木施工システム</p>
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-3 inline-block">
+              開発中プロトタイプです
+            </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -91,7 +75,7 @@ export function LoginPage() {
 
             <button
               type="submit"
-              disabled={loading || demoLoading}
+              disabled={loading}
               className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? (
@@ -103,33 +87,20 @@ export function LoginPage() {
             </button>
           </form>
 
-          <div className="mt-4">
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-slate-200" />
-              </div>
-              <div className="relative flex justify-center text-xs">
-                <span className="bg-white px-2 text-slate-500">または</span>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={handleDemoLogin}
-              disabled={loading || demoLoading}
-              className="mt-4 w-full flex items-center justify-center gap-2 px-4 py-2 border border-slate-300 text-slate-700 rounded-md hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {demoLoading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <UserCircle className="h-4 w-4" />
-              )}
-              デモアカウントでログイン
-            </button>
-          </div>
-
           <p className="mt-6 text-center text-xs text-slate-500">
             NodeCloud本体と同じアカウントでログインできます
+          </p>
+
+          <p className="mt-4 text-center text-xs text-slate-500">
+            開発者：
+            <a
+              href="https://yokoyama-s.jp"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:underline"
+            >
+              有限会社横山測量設計事務所
+            </a>
           </p>
         </div>
       </div>
