@@ -1,12 +1,14 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Loader2 } from 'lucide-react'
+import { Loader2, Layers } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
-import { COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
-import { CoordinateMap, type BaseLayerType } from '@/components/map/CoordinateMap'
+import { useUnderdrainStore } from '@/stores/underdrainStore'
+import { useWorkAreaStore } from '@/stores/workAreaStore'
+import { useSurveyStore } from '@/stores/surveyStore'
+import { UnifiedFieldMap, type BaseLayerType, type LayerVisibility } from '@/components/map/UnifiedFieldMap'
 import type { Project } from '@/types/database'
 
 // 別ウィンドウで現場の地図のみを全画面表示するページ
@@ -16,18 +18,26 @@ export function SiteMapWindowPage() {
   const farmId = params.get('farmId')
 
   const { setCurrentFarm } = useFarmStore()
-  const { setZone, fetchCoordinates, fetchRoute, route } = useCoordinateStore()
+  const { setZone, fetchCoordinates, fetchRoute } = useCoordinateStore()
+  const { fetchPipes } = useUnderdrainStore()
+  const { fetchWorkAreas } = useWorkAreaStore()
+  const { fetchSurveyData } = useSurveyStore()
 
   const [farm, setFarm] = useState<Farm | null>(null)
   const [project, setProject] = useState<Project | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const [showLabels, setShowLabels] = useState(true)
   const [baseLayer, setBaseLayer] = useState<BaseLayerType>('osm')
-  const [visibleTypes, setVisibleTypes] = useState<Set<string>>(
-    new Set(Object.keys(COORDINATE_TYPE_NAMES)),
-  )
+  const [layers, setLayers] = useState<LayerVisibility>({
+    coordinatePoints: true,
+    pipes: true,
+    pipeNumbers: true,
+    surveyPoints: true,
+    workAreas: true,
+    route: true,
+  })
+  const [showLayerPanel, setShowLayerPanel] = useState(true)
 
   // URL から farmId を元にデータをロード
   useEffect(() => {
@@ -41,7 +51,6 @@ export function SiteMapWindowPage() {
     ;(async () => {
       try {
         setLoading(true)
-        // 圃場を取得
         const { data: farmData, error: farmErr } = await supabase
           .from('farms')
           .select('*')
@@ -53,7 +62,6 @@ export function SiteMapWindowPage() {
         setFarm(typedFarm)
         setCurrentFarm(typedFarm)
 
-        // プロジェクトを取得（座標系のため）
         if (typedFarm.project_id) {
           const { data: projData } = await supabase
             .from('projects')
@@ -63,14 +71,19 @@ export function SiteMapWindowPage() {
           if (!cancelled && projData) {
             const typedProj = projData as Project
             setProject(typedProj)
-            // projectListStore にも設定（他コンポーネントの参照用）
             useProjectListStore.setState({ currentProject: typedProj })
             setZone(typedProj.coordinate_zone)
           }
         }
 
-        // 座標と経路をロード
-        await Promise.all([fetchCoordinates(typedFarm.id), fetchRoute(typedFarm.id)])
+        // 全データを並列ロード
+        await Promise.all([
+          fetchCoordinates(typedFarm.id),
+          fetchRoute(typedFarm.id),
+          fetchPipes(typedFarm.id),
+          fetchWorkAreas(typedFarm.id),
+          fetchSurveyData(typedFarm.id),
+        ])
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : '圃場データの取得に失敗しました')
@@ -83,12 +96,25 @@ export function SiteMapWindowPage() {
     return () => {
       cancelled = true
     }
-  }, [farmId, setCurrentFarm, setZone, fetchCoordinates, fetchRoute])
+  }, [
+    farmId,
+    setCurrentFarm,
+    setZone,
+    fetchCoordinates,
+    fetchRoute,
+    fetchPipes,
+    fetchWorkAreas,
+    fetchSurveyData,
+  ])
 
   const title = useMemo(() => {
     if (!farm) return '現場地図'
     return project ? `${project.name} / ${farm.name}` : farm.name
   }, [farm, project])
+
+  const toggleLayer = (key: keyof LayerVisibility) => {
+    setLayers((prev) => ({ ...prev, [key]: !prev[key] }))
+  }
 
   if (loading) {
     return (
@@ -108,38 +134,23 @@ export function SiteMapWindowPage() {
 
   return (
     <div className="h-screen flex flex-col">
-      {/* ヘッダー（ツールバー） */}
+      {/* ヘッダー */}
       <div className="px-3 py-2 bg-white border-b flex items-center gap-4 flex-wrap text-sm">
         <span className="font-medium text-slate-800">{title}</span>
         <span className="text-xs text-slate-500">現場地図（別ウィンドウ）</span>
 
         <div className="ml-auto flex items-center gap-3">
           <button
-            onClick={() => setShowLabels(!showLabels)}
+            onClick={() => setShowLayerPanel((s) => !s)}
             className={`flex items-center gap-1 px-2 py-1 text-xs rounded border ${
-              showLabels ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-gray-50 border-gray-300'
+              showLayerPanel
+                ? 'bg-blue-100 border-blue-300 text-blue-800'
+                : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
             }`}
           >
-            点名 {showLabels ? 'ON' : 'OFF'}
+            <Layers className="h-3 w-3" />
+            レイヤー
           </button>
-          <div className="flex items-center gap-2">
-            {Object.entries(COORDINATE_TYPE_NAMES).map(([type, name]) => (
-              <label key={type} className="flex items-center gap-1 text-xs cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={visibleTypes.has(type)}
-                  onChange={(e) => {
-                    const next = new Set(visibleTypes)
-                    if (e.target.checked) next.add(type)
-                    else next.delete(type)
-                    setVisibleTypes(next)
-                  }}
-                  className="h-3 w-3"
-                />
-                {name}
-              </label>
-            ))}
-          </div>
           <select
             value={baseLayer}
             onChange={(e) => setBaseLayer(e.target.value as BaseLayerType)}
@@ -152,15 +163,92 @@ export function SiteMapWindowPage() {
         </div>
       </div>
 
-      <div className="flex-1">
-        <CoordinateMap
-          showLabels={showLabels}
-          visibleTypes={visibleTypes}
-          baseLayer={baseLayer}
-          route={route}
-          showRoute={true}
-        />
+      {/* 地図エリア */}
+      <div className="flex-1 relative">
+        <UnifiedFieldMap baseLayer={baseLayer} layers={layers} />
+
+        {/* レイヤーパネル（オーバーレイ） */}
+        {showLayerPanel && (
+          <div className="absolute top-3 right-3 z-[1000] w-56 bg-white border border-slate-300 rounded shadow-lg">
+            <div className="px-3 py-2 border-b bg-slate-50 rounded-t text-xs font-semibold text-slate-700 flex items-center gap-1">
+              <Layers className="h-3 w-3" />
+              レイヤー表示
+            </div>
+            <div className="p-2 space-y-1 text-xs">
+              <LayerCheckbox
+                label="座標点"
+                checked={layers.coordinatePoints}
+                onChange={() => toggleLayer('coordinatePoints')}
+                color="#3b82f6"
+              />
+              <LayerCheckbox
+                label="工事区域"
+                checked={layers.workAreas}
+                onChange={() => toggleLayer('workAreas')}
+                color="#10b981"
+              />
+              <LayerCheckbox
+                label="配管"
+                checked={layers.pipes}
+                onChange={() => toggleLayer('pipes')}
+                color="#ef4444"
+              />
+              <div className="pl-5">
+                <LayerCheckbox
+                  label="配管番号"
+                  checked={layers.pipeNumbers}
+                  onChange={() => toggleLayer('pipeNumbers')}
+                  disabled={!layers.pipes}
+                />
+              </div>
+              <LayerCheckbox
+                label="測点（測量）"
+                checked={layers.surveyPoints}
+                onChange={() => toggleLayer('surveyPoints')}
+                color="#0ea5e9"
+              />
+              <LayerCheckbox
+                label="経路"
+                checked={layers.route}
+                onChange={() => toggleLayer('route')}
+                color="#2563eb"
+              />
+            </div>
+          </div>
+        )}
       </div>
     </div>
+  )
+}
+
+function LayerCheckbox({
+  label,
+  checked,
+  onChange,
+  color,
+  disabled,
+}: {
+  label: string
+  checked: boolean
+  onChange: () => void
+  color?: string
+  disabled?: boolean
+}) {
+  return (
+    <label
+      className={`flex items-center gap-2 px-1 py-0.5 rounded cursor-pointer ${
+        disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-50'
+      }`}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={onChange}
+        disabled={disabled}
+        className="h-3.5 w-3.5"
+      />
+      {color && <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: color }} />}
+      <span className="text-slate-700">{label}</span>
+    </label>
   )
 }
