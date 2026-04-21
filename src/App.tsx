@@ -5,6 +5,9 @@ import { LoginPage } from '@/features/auth/LoginPage'
 import { ProjectListPage } from '@/features/projects/ProjectListPage'
 import { CoordinatesPage } from '@/features/coordinates/CoordinatesPage'
 import { SiteMapWindowPage } from '@/features/coordinates/SiteMapWindowPage'
+// スマホ画面
+import { MobileTopPage } from '@/features/mobile/MobileTopPage'
+import { MobileDetailMapPage } from '@/features/mobile/MobileDetailMapPage'
 // 暗渠工事
 import { UnderdrainWorkAreaPage } from '@/features/underdrain/UnderdrainWorkAreaPage'
 import { CadAnalysisPage } from '@/features/underdrain/CadAnalysisPage'
@@ -50,6 +53,23 @@ function AppRoutes() {
           element={
             <ProtectedRoute>
               <SiteMapWindowPage />
+            </ProtectedRoute>
+          }
+        />
+        {/* スマホ画面（AppLayout を介さない、ボタンで切替） */}
+        <Route
+          path="/mobile"
+          element={
+            <ProtectedRoute>
+              <MobileTopPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/mobile/map"
+          element={
+            <ProtectedRoute>
+              <MobileDetailMapPage />
             </ProtectedRoute>
           }
         />

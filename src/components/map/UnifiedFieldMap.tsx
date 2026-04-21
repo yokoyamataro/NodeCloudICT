@@ -114,6 +114,22 @@ function createLabelIcon(label: string, color: string): L.DivIcon {
   })
 }
 
+function createSmallLabelIcon(label: string, color: string): L.DivIcon {
+  return L.divIcon({
+    className: 'unified-map-mp-label',
+    html: `<div style="
+      color: ${color};
+      font-weight: 600;
+      font-size: 10px;
+      text-shadow: 0 0 2px white, 0 0 2px white, 0 0 2px white;
+      white-space: nowrap;
+      transform: translate(6px, -14px);
+    ">${label}</div>`,
+    iconSize: [0, 0],
+    iconAnchor: [0, 0],
+  })
+}
+
 // 頂点を緯度経度に
 function vertexToLatLng(
   v: { x: number; y: number },
@@ -372,6 +388,16 @@ export function UnifiedFieldMap({ baseLayer = 'osm', layers }: UnifiedFieldMapPr
               {mp.name}
             </Tooltip>
           </Marker>
+        ))}
+      {/* 配管の測点の点名ラベル（常時表示） */}
+      {layers.pipeMeasurementPoints &&
+        pipeMeasurementPoints.map((mp) => (
+          <Marker
+            key={`mp-label-${mp.id}`}
+            position={mp.ll}
+            icon={createSmallLabelIcon(mp.name, mp.color)}
+            interactive={false}
+          />
         ))}
 
       {/* 測量点（測点） */}

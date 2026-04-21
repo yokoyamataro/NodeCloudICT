@@ -29,6 +29,7 @@ import {
   LandPlot,
   Home,
   ExternalLink,
+  Smartphone,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
@@ -272,6 +273,17 @@ export function AppLayout() {
 
           {/* 右側：ログイン情報 */}
           <div className="flex items-center gap-4">
+            {/* スマホ画面へ切替 */}
+            <button
+              type="button"
+              onClick={() => navigate('/mobile')}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+              title="スマホ画面へ切替"
+            >
+              <Smartphone className="h-4 w-4" />
+              スマホ表示
+            </button>
+
             {/* 現場の地図を別ウィンドウで全画面表示 */}
             {currentFarm && (
               <button
