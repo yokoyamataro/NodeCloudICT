@@ -89,7 +89,8 @@ export function CadAnalysisPage() {
   const [editMode, setEditMode] = useState<'normal' | 'merge' | 'split'>('normal')
 
   // ソート設定
-  const [sortKey, setSortKey] = useState<SortKey>(null)
+  // デフォルトは配管番号昇順（頭文字を除いた数字で比較）
+  const [sortKey, setSortKey] = useState<SortKey>('number')
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
 
   // 自動接続モード
@@ -471,7 +472,8 @@ export function CadAnalysisPage() {
       layerName: entity.layer,
       pipeType: null,
       diameter: null,
-      designLength: null,
+      // 設計延長は実測延長を整数に四捨五入した値で初期化
+      designLength: entity.length != null ? Math.round(entity.length) : null,
       measuredLength: entity.length, // 実測延長に登録
       vertices: entity.vertices,
       connectionTo: null,
@@ -1221,6 +1223,8 @@ export function CadAnalysisPage() {
                             }
                             onClick={(e) => e.stopPropagation()}
                             onKeyDown={(e) => handleCellKeyDown(e, pipe.id, 3)}
+                            // フォーカス中のマウスホイールで数値が変わるのを防止
+                            onWheel={(e) => e.currentTarget.blur()}
                             className="w-16 px-1 py-0.5 border rounded text-right text-sm"
                             step="0.001"
                             placeholder="m"

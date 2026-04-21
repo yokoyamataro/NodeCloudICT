@@ -13,6 +13,7 @@ export function ReportsPage() {
   const [farmNumber, setFarmNumber] = useState('')
   const [area, setArea] = useState('')
   const [beneficiary, setBeneficiary] = useState('')
+  const [spacing, setSpacing] = useState<number>(12)
   const [exporting, setExporting] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
@@ -43,6 +44,7 @@ export function ReportsPage() {
           farmNumber,
           area,
           beneficiary,
+          spacing,
         },
         farmName: currentFarm?.name,
       })
@@ -73,7 +75,7 @@ export function ReportsPage() {
             配管（すべての配線）の 上下端（必要に応じて中間）の現況高と切深を様式に転記します。
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm mb-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm mb-3">
             <LabeledInput
               label="圃場番号"
               value={farmNumber}
@@ -90,6 +92,17 @@ export function ReportsPage() {
               value={beneficiary}
               onChange={setBeneficiary}
             />
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-slate-600">配線間隔 (m)</span>
+              <select
+                value={spacing}
+                onChange={(e) => setSpacing(parseInt(e.target.value, 10))}
+                className="px-2 py-1.5 border rounded text-sm bg-white"
+              >
+                <option value={10}>10</option>
+                <option value={12}>12</option>
+              </select>
+            </label>
           </div>
 
           <div className="text-xs text-slate-600 mb-2 flex items-center gap-2">

@@ -11,6 +11,8 @@ export interface MeasurementHeader {
   farmNumber: string // 圃場番号 → B3
   area: string // 面積 → F3
   beneficiary: string // 受益者名 → J3
+  /** 配線間隔（m）。各管路の D{j} セルに書き込む。10 または 12 を想定 */
+  spacing: number | null
 }
 
 interface PointData {
@@ -135,8 +137,13 @@ export async function exportMeasurementResult({
     ws.getCell(j, 1).value = pipe.number                                         // A{j}: 渠番号
     ws.getCell(j + 2, 1).value = pipe.diameter ?? null                           // A{j+2}: 管径
     ws.getCell(j + 3, 1).value = pipeTypeLabel                                   // A{j+3}: 管種
+    // B{j}: 設計延長（CAD解析の「設計延長」を整数丸めで転記）
     ws.getCell(j, 2).value =
-      pipe.designLength != null ? Math.round(pipe.designLength) : null          // B{j}: 延長
+      pipe.designLength != null ? Math.round(pipe.designLength) : null
+    // D{j}: 配線間隔
+    if (header.spacing != null) {
+      ws.getCell(j, 4).value = header.spacing
+    }
 
     // 上流 C
     if (cData.groundHeight != null) {
