@@ -16,6 +16,9 @@ import {
   UserPlus,
   UserMinus,
   Crosshair,
+  Maximize2,
+  Minimize2,
+  Table as TableIcon,
 } from 'lucide-react'
 import { MapContainer, TileLayer, Marker, Popup, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
@@ -127,6 +130,9 @@ export function ProjectListPage() {
 
   // 現在地表示トグル
   const [showCurrentLocation, setShowCurrentLocation] = useState(false)
+
+  // 一覧拡大表示モード
+  const [expandedList, setExpandedList] = useState(false)
   const [showNewFarmDialog, setShowNewFarmDialog] = useState<string | null>(null) // project_id
   const [newProjectName, setNewProjectName] = useState('')
   const [newProjectDescription, setNewProjectDescription] = useState('')
@@ -417,18 +423,39 @@ export function ProjectListPage() {
       )}
 
       <div className="flex-1 flex overflow-hidden">
+        {expandedList ? (
+          <ExpandedProjectTable
+            projects={projects}
+            farms={farms}
+            farmWorkAreaSummary={farmWorkAreaSummary}
+            onClose={() => setExpandedList(false)}
+            onOpenFarm={handleOpenFarm}
+            onNewProject={() => setShowNewProjectDialog(true)}
+          />
+        ) : (
+        <>
         {/* 左側: プロジェクト・圃場ツリー */}
         <div className="w-80 border-r bg-white flex flex-col overflow-hidden">
           {/* ヘッダー */}
-          <div className="p-3 border-b flex items-center justify-between">
+          <div className="p-3 border-b flex items-center justify-between gap-1">
             <span className="font-medium text-sm">プロジェクト</span>
-            <button
-              onClick={() => setShowNewProjectDialog(true)}
-              className="flex items-center gap-1 px-2 py-1 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90"
-            >
-              <Plus className="h-3 w-3" />
-              追加
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setExpandedList(true)}
+                className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50"
+                title="一覧を拡大表示"
+              >
+                <Maximize2 className="h-3 w-3" />
+                拡大
+              </button>
+              <button
+                onClick={() => setShowNewProjectDialog(true)}
+                className="flex items-center gap-1 px-2 py-1 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90"
+              >
+                <Plus className="h-3 w-3" />
+                追加
+              </button>
+            </div>
           </div>
 
           {/* ツリー表示 */}
@@ -712,6 +739,8 @@ export function ProjectListPage() {
             </MapContainer>
           )}
         </div>
+        </>
+        )}
       </div>
 
       {/* 地図表示ダイアログ */}
@@ -1099,5 +1128,209 @@ export function ProjectListPage() {
         </div>
       )}
     </div>
+  )
+}
+
+// 一覧拡大表示: 工種別面積テーブル
+function ExpandedProjectTable({
+  projects,
+  farms,
+  farmWorkAreaSummary,
+  onClose,
+  onOpenFarm,
+  onNewProject,
+}: {
+  projects: Project[]
+  farms: Farm[]
+  farmWorkAreaSummary: Record<string, Record<string, number>>
+  onClose: () => void
+  onOpenFarm: (farm: Farm) => void
+  onNewProject: () => void
+}) {
+  // プロジェクトごとの工種別合計
+  const projectTotals = useMemo(() => {
+    const result: Record<string, Record<string, number>> = {}
+    for (const project of projects) {
+      const totals: Record<string, number> = {}
+      const projFarms = farms.filter((f) => f.project_id === project.id)
+      for (const farm of projFarms) {
+        const summary = farmWorkAreaSummary[farm.id] || {}
+        for (const wt of ALL_WORK_TYPES) {
+          if (summary[wt]) {
+            totals[wt] = (totals[wt] || 0) + summary[wt]
+          }
+        }
+      }
+      result[project.id] = totals
+    }
+    return result
+  }, [projects, farms, farmWorkAreaSummary])
+
+  return (
+    <div className="flex-1 flex flex-col bg-white overflow-hidden">
+      {/* ヘッダー */}
+      <div className="p-3 border-b flex items-center gap-2">
+        <TableIcon className="h-4 w-4 text-slate-500" />
+        <span className="font-medium text-sm">プロジェクト一覧（工種別面積）</span>
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            onClick={onNewProject}
+            className="flex items-center gap-1 px-2 py-1 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90"
+          >
+            <Plus className="h-3 w-3" />
+            プロジェクト追加
+          </button>
+          <button
+            onClick={onClose}
+            className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50"
+            title="地図表示に戻す"
+          >
+            <Minimize2 className="h-3 w-3" />
+            地図表示
+          </button>
+        </div>
+      </div>
+
+      {/* テーブル */}
+      <div className="flex-1 overflow-auto">
+        {projects.length === 0 ? (
+          <div className="py-12 text-center text-muted-foreground text-sm">
+            プロジェクトがありません
+          </div>
+        ) : (
+          <table className="w-full text-xs border-collapse">
+            <thead className="bg-slate-100 sticky top-0 z-10">
+              <tr>
+                <th className="px-2 py-2 border-b border-r text-left font-semibold text-slate-700" style={{ minWidth: 200 }}>
+                  工事名 / 圃場名
+                </th>
+                {ALL_WORK_TYPES.map((wt) => (
+                  <th
+                    key={wt}
+                    className="px-2 py-2 border-b border-r text-right font-semibold text-slate-700 whitespace-nowrap"
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      <span
+                        className="w-2 h-2 rounded-sm flex-shrink-0"
+                        style={{ backgroundColor: WORK_TYPE_COLORS[wt] }}
+                      />
+                      {WORK_TYPE_NAMES[wt]}
+                      <span className="text-slate-400 font-normal">(ha)</span>
+                    </div>
+                  </th>
+                ))}
+                <th className="px-2 py-2 border-b border-r text-right font-semibold text-slate-700 whitespace-nowrap bg-slate-200">
+                  合計 (ha)
+                </th>
+                {/* 進捗: 将来実装用プレースホルダ */}
+                <th
+                  className="px-2 py-2 border-b text-center font-semibold text-slate-500 whitespace-nowrap bg-slate-50"
+                  style={{ minWidth: 120 }}
+                  title="各工程の進捗状況（実装予定）"
+                >
+                  進捗
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {projects.map((project) => {
+                const projFarms = farms.filter((f) => f.project_id === project.id)
+                const pTotals = projectTotals[project.id] || {}
+                const pGrandTotal = ALL_WORK_TYPES.reduce((s, wt) => s + (pTotals[wt] || 0), 0)
+                return (
+                  <ProjectTableGroup
+                    key={project.id}
+                    project={project}
+                    farms={projFarms}
+                    farmWorkAreaSummary={farmWorkAreaSummary}
+                    projectTotals={pTotals}
+                    projectGrandTotal={pGrandTotal}
+                    onOpenFarm={onOpenFarm}
+                  />
+                )
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ProjectTableGroup({
+  project,
+  farms,
+  farmWorkAreaSummary,
+  projectTotals,
+  projectGrandTotal,
+  onOpenFarm,
+}: {
+  project: Project
+  farms: Farm[]
+  farmWorkAreaSummary: Record<string, Record<string, number>>
+  projectTotals: Record<string, number>
+  projectGrandTotal: number
+  onOpenFarm: (farm: Farm) => void
+}) {
+  const [expanded, setExpanded] = useState(true)
+  return (
+    <>
+      {/* プロジェクト行（合計） */}
+      <tr className="bg-blue-50 hover:bg-blue-100">
+        <td className="px-2 py-1.5 border-b border-r">
+          <button
+            onClick={() => setExpanded((s) => !s)}
+            className="flex items-center gap-1 font-medium text-slate-800"
+          >
+            {expanded ? (
+              <ChevronDown className="h-3 w-3 text-slate-500" />
+            ) : (
+              <ChevronRight className="h-3 w-3 text-slate-500" />
+            )}
+            <Folder className="h-3.5 w-3.5 text-blue-500" />
+            <span>{project.name}</span>
+            <span className="text-xs text-slate-500 ml-1">（{farms.length}圃場）</span>
+          </button>
+        </td>
+        {ALL_WORK_TYPES.map((wt) => (
+          <td key={wt} className="px-2 py-1.5 border-b border-r text-right font-mono text-slate-700">
+            {projectTotals[wt] ? projectTotals[wt].toFixed(2) : '—'}
+          </td>
+        ))}
+        <td className="px-2 py-1.5 border-b border-r text-right font-mono font-semibold bg-blue-100">
+          {projectGrandTotal > 0 ? projectGrandTotal.toFixed(2) : '—'}
+        </td>
+        <td className="px-2 py-1.5 border-b text-center text-slate-400">—</td>
+      </tr>
+      {/* 圃場行 */}
+      {expanded &&
+        farms.map((farm) => {
+          const summary = farmWorkAreaSummary[farm.id] || {}
+          const grandTotal = ALL_WORK_TYPES.reduce((s, wt) => s + (summary[wt] || 0), 0)
+          return (
+            <tr key={farm.id} className="hover:bg-slate-50 cursor-pointer" onDoubleClick={() => onOpenFarm(farm)}>
+              <td className="px-2 py-1.5 border-b border-r pl-8">
+                <button
+                  onClick={() => onOpenFarm(farm)}
+                  className="flex items-center gap-1 text-slate-700 hover:text-blue-600"
+                  title="ダブルクリックまたはクリックで開く"
+                >
+                  <FolderOpen className="h-3.5 w-3.5 text-slate-400" />
+                  <span>{farm.name}</span>
+                </button>
+              </td>
+              {ALL_WORK_TYPES.map((wt) => (
+                <td key={wt} className="px-2 py-1.5 border-b border-r text-right font-mono text-slate-600">
+                  {summary[wt] ? summary[wt].toFixed(2) : '—'}
+                </td>
+              ))}
+              <td className="px-2 py-1.5 border-b border-r text-right font-mono text-slate-700 bg-slate-50">
+                {grandTotal > 0 ? grandTotal.toFixed(2) : '—'}
+              </td>
+              <td className="px-2 py-1.5 border-b text-center text-slate-400">—</td>
+            </tr>
+          )
+        })}
+    </>
   )
 }
