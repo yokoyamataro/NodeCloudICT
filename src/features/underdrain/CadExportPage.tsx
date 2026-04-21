@@ -22,10 +22,13 @@ const DEFAULT_LEVEL: DrawingLevel = {
   rotation: 0,
 }
 
-// 実座標 (x, y) を用紙座標へ変換
-// 1. 原点シフト
-// 2. -回転角 で回転（XY 座標系 → 用紙座標系）
-// 3. 縮尺で除算（paper = (real - origin) / scale）
+// 実座標 (x, y) を用紙座標へ変換（旧マクロ 用紙座標 関数と同じロジック）
+// 極座標形式:
+//   1. 原点シフト: dx = x - x0, dy = y - y0
+//   2. 角度計算: a0 = atan(dy/dx), 距離 s1 = sqrt(dx²+dy²)
+//   3. 回転: a1 = a0 + 回転角, π で wrap（2π ではないのがマクロの quirk）
+//   4. 直交座標に戻す: x1 = s1 * cos(a1), y1 = s1 * sin(a1)
+// ※ 縮尺は旧マクロでも使用されていない（引数だけ渡って無視されている）
 function toPaperCoords(
   x: number,
   y: number,
@@ -33,17 +36,24 @@ function toPaperCoords(
 ): { px: number; py: number } {
   const dx = x - level.originX
   const dy = y - level.originY
-  const c = Math.cos(-level.rotation)
-  const s = Math.sin(-level.rotation)
-  const rx = dx * c - dy * s
-  const ry = dx * s + dy * c
-  const px = rx / (level.scaleH || 1)
-  const py = ry / (level.scaleV || 1)
+  // 原点と同一点の場合は (0,0) として早期リターン
+  if (dx === 0 && dy === 0) return { px: 0, py: 0 }
+  // atan(dy/dx): JS では atan(Infinity) = π/2 のように動くので dx=0 も自然に扱える
+  const a0 = Math.atan(dy / dx)
+  const s1 = Math.sqrt(dx * dx + dy * dy)
+  let a1 = a0 + level.rotation
+  // 旧マクロと同じく π modulo で 2 回までチェック（2π 付近を 0 に戻すため）
+  if (a1 >= Math.PI) a1 -= Math.PI
+  if (a1 >= Math.PI) a1 -= Math.PI
+  const px = s1 * Math.cos(a1)
+  const py = s1 * Math.sin(a1)
   return { px, py }
 }
 
-// 文字要素行（TrendOne アスキー形式）を生成
-// `5,<layer>,100,<color>,0,1,0,<pointType>,0,0,0,0,<x>,<y>,<angle>,<size>,2,0,10,0,5,0,0,0,0,0,1,0.000000,0.000000,ＭＳ ゴシック,<text>`
+// 文字要素行（TrendOne アスキー形式）を生成（旧マクロ 文字入力 関数と同じ）
+//   mx = Len(text) * moji / 2 * cos(angle)
+//   my = Len(text) * moji / 2 * sin(angle)
+//   出力: `5,<layer>,100,<color>,0,1,0,<pointType>,0,0,0,0,<x>,<y>,<mx>,<my>,<moji>,0,10,0,5,0,0,0,0,0,1,0.000000,0.000000,ＭＳ ゴシック,<text>`
 function buildTextElement(
   layer: number,
   color: number,
@@ -54,11 +64,14 @@ function buildTextElement(
   size: number,
   text: string,
 ): string {
+  const halfLen = (text.length * size) / 2
+  const mx = halfLen * Math.cos(angle)
+  const my = halfLen * Math.sin(angle)
   const fx = x.toFixed(6)
   const fy = y.toFixed(6)
-  const fa = angle.toFixed(6)
-  const fs = size.toFixed(6)
-  return `5,${layer},100,${color},0,1,0,${pointType},0,0,0,0,${fx},${fy},${fa},${fs},2,0,10,0,5,0,0,0,0,0,1,0.000000,0.000000,ＭＳ ゴシック,${text}`
+  const fmx = mx.toFixed(6)
+  const fmy = my.toFixed(6)
+  return `5,${layer},100,${color},0,1,0,${pointType},0,0,0,0,${fx},${fy},${fmx},${fmy},${size},0,10,0,5,0,0,0,0,0,1,0.000000,0.000000,ＭＳ ゴシック,${text}`
 }
 
 // 旧マクロ同様のヘッダを生成（Level 行は固定値）
