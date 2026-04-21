@@ -1,11 +1,13 @@
 import { useMemo, useState, useCallback } from 'react'
-import type { PlanRow } from '@/stores/constructionPlanStore'
+import type { PlanRow, PlanGroup } from '@/stores/constructionPlanStore'
 
 interface CrossSectionChartProps {
   systemRows: PlanRow[] // 系統内の行（rowIndex順）
   systemIndex: number
   endType: 'outlet' | 'merge' | null
   chartHeight?: number // SVG チャート高さ（px）。未指定時は 220
+  pipeNumberById?: Map<string, string> // 管路ID → 管路番号
+  allPlanGroups?: PlanGroup[] // 合流先系統の参照用
 }
 
 // 断面図の点データ（集水管の点のみ）
@@ -16,11 +18,22 @@ interface SectionPoint {
   pointName: string // 測点名
   rowIndex: number // 元の行インデックス
   // 吸水接続情報
-  absorptionPipeNumber: string | null // 接続している吸水管番号
+  // 合流行の場合は「合流先系統の末端集水管の番号」（例: S4）を入れる
+  absorptionPipeNumber: string | null
   absorptionPlannedHeight: number | null // 吸水下流部の計画高
+  // 集水帯表示用
+  collectorPipeId: string | null
+  collectorPipeNumber: string | null
 }
 
-export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeight: chartHeightProp }: CrossSectionChartProps) {
+export function CrossSectionChart({
+  systemRows,
+  systemIndex,
+  endType,
+  chartHeight: chartHeightProp,
+  pipeNumberById,
+  allPlanGroups,
+}: CrossSectionChartProps) {
   // 標高スケールのズーム倍率（1.0が基準、大きいほど拡大）
   const [heightScale, setHeightScale] = useState(1.0)
   // 横（距離）スケールのズーム倍率
@@ -45,6 +58,33 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
     setHeightScale(1.0)
     setWidthScale(1.0)
   }, [])
+
+  // 合流先系統ID → その系統末端集水管の番号（例: S4）
+  const mergeTargetPipeNumberBySystemIndex = useMemo(() => {
+    const map = new Map<number, string>()
+    if (!allPlanGroups || !pipeNumberById) return map
+    for (const group of allPlanGroups) {
+      // 同グループ内の末端行を探す: 各 systemIndex 最後の mergeSystemIndex=null 行
+      const bySystem = new Map<number, PlanRow[]>()
+      for (const r of group.rows) {
+        if (r.mergeSystemIndex != null) continue
+        const arr = bySystem.get(r.systemIndex) ?? []
+        arr.push(r)
+        bySystem.set(r.systemIndex, arr)
+      }
+      for (const [sysIdx, rs] of bySystem) {
+        for (let i = rs.length - 1; i >= 0; i--) {
+          const r = rs[i]
+          if (r.collectorPipeId) {
+            const num = pipeNumberById.get(r.collectorPipeId)
+            if (num) map.set(sysIdx, num)
+            break
+          }
+        }
+      }
+    }
+    return map
+  }, [allPlanGroups, pipeNumberById])
 
   // 集水管の断面を構成
   // 系統内の各行の集水点を累積距離で配置（上流から下流へ）
@@ -73,19 +113,37 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
         ? row.absorptionPoints[row.absorptionPoints.length - 1].plannedHeight
         : null
 
+      // 旗上げ用ラベル:
+      // - 吸水行: 吸水管の番号（row.pipeNumber）
+      // - 合流行（mergeSystemIndex あり）: 合流先系統の末端集水管番号（例: S4）
+      // - 集水のみ行（落口等）: ラベルなし
+      let flagPipeNumber: string | null = null
+      if (row.absorptionPipeId) {
+        flagPipeNumber = row.pipeNumber
+      } else if (row.mergeSystemIndex != null) {
+        flagPipeNumber = mergeTargetPipeNumberBySystemIndex.get(row.mergeSystemIndex) ?? null
+      }
+
+      // 集水帯用: 集水管番号
+      const collectorPipeNumber = row.collectorPipeId
+        ? pipeNumberById?.get(row.collectorPipeId) ?? null
+        : null
+
       points.push({
         distance: cumulativeDistance,
         groundHeight: row.collectorPoint.groundHeight,
         plannedHeight: row.collectorPoint.plannedHeight,
         pointName: row.collectorPoint.pointName,
         rowIndex: rowIdx,
-        absorptionPipeNumber: row.pipeNumber,
+        absorptionPipeNumber: flagPipeNumber,
         absorptionPlannedHeight: absorptionDownstreamHeight,
+        collectorPipeId: row.collectorPipeId,
+        collectorPipeNumber,
       })
     }
 
     return points
-  }, [systemRows])
+  }, [systemRows, mergeTargetPipeNumberBySystemIndex, pipeNumberById])
 
   // 旗上げ設定
   const FLAG_ROW_HEIGHT = 24
@@ -634,20 +692,10 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
                   </g>
                 )}
 
-                {/* 測点名ラベル */}
-                <text
-                  x={x}
-                  y={chartHeight - padding.bottom + 22}
-                  textAnchor="middle"
-                  className="fill-slate-700 text-[18px] font-medium"
-                >
-                  {point.pointName}
-                </text>
-
                 {/* 累加距離 */}
                 <text
                   x={x}
-                  y={chartHeight - padding.bottom + 46}
+                  y={chartHeight - padding.bottom + 22}
                   textAnchor="middle"
                   className="fill-slate-500 text-[16px]"
                 >
@@ -666,6 +714,67 @@ export function CrossSectionChart({ systemRows, systemIndex, endType, chartHeigh
               </g>
             )
           })}
+
+          {/* 集水番号の帯（X軸下、各区間ごと） */}
+          {(() => {
+            if (sectionData.length === 0) return null
+            const bands: Array<{
+              startIdx: number
+              endIdx: number
+              pipeNumber: string
+            }> = []
+            let bandStart = 0
+            for (let i = 1; i <= sectionData.length; i++) {
+              const prev = sectionData[i - 1]
+              const cur = i < sectionData.length ? sectionData[i] : null
+              if (
+                !cur ||
+                cur.collectorPipeId !== prev.collectorPipeId ||
+                !cur.collectorPipeNumber
+              ) {
+                // バンド確定
+                if (prev.collectorPipeNumber) {
+                  bands.push({
+                    startIdx: bandStart,
+                    endIdx: i - 1,
+                    pipeNumber: prev.collectorPipeNumber,
+                  })
+                }
+                bandStart = i
+              }
+            }
+            const bandTop = chartHeight - padding.bottom + 40
+            const bandHeight = 22
+            return bands.map((b, idx) => {
+              const x1 = xScale(sectionData[b.startIdx].distance)
+              const x2 = xScale(sectionData[b.endIdx].distance)
+              const width = Math.max(x2 - x1, 2)
+              const cx = (x1 + x2) / 2
+              return (
+                <g key={`band-${idx}`}>
+                  <rect
+                    x={x1}
+                    y={bandTop}
+                    width={width}
+                    height={bandHeight}
+                    fill="#dbeafe"
+                    stroke="#2563eb"
+                    strokeWidth="1"
+                    rx={2}
+                  />
+                  <text
+                    x={cx}
+                    y={bandTop + bandHeight / 2 + 1}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    className="fill-blue-800 text-[16px] font-semibold"
+                  >
+                    {b.pipeNumber}
+                  </text>
+                </g>
+              )
+            })
+          })()}
 
         </svg>
         </div>

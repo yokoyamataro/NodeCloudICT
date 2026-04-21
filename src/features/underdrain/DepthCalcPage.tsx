@@ -1214,6 +1214,8 @@ export function DepthCalcPage() {
                     systemIndex={systemData.systemIndex}
                     endType={systemData.endType}
                     chartHeight={fullscreenPanel === 'chart' ? window.innerHeight - 120 : 220}
+                    pipeNumberById={pipeNumberById}
+                    allPlanGroups={planGroups}
                   />
                 )
               })()
