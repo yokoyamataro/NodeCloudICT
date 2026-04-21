@@ -20,6 +20,8 @@ import { useFarmStore } from '@/stores/farmStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useSurveyStore } from '@/stores/surveyStore'
 import { usePipeWiringStore } from '@/stores/pipeWiringStore'
+// generatePlanFromWiring は配管系統ストアの in-memory state を参照する。
+// 未保存変更がある場合は saveWiring 後に再取得せず、そのまま生成対象にする。
 import {
   useConstructionPlanStore,
   type PlanRow,
@@ -33,7 +35,7 @@ export function DepthCalcPage() {
   const { currentFarm } = useFarmStore()
   const { fetchPipes, pipes } = useUnderdrainStore()
   const { fetchSurveyData } = useSurveyStore()
-  const { fetchWiring } = usePipeWiringStore()
+  const { fetchWiring, saveWiring, hasChanges: hasWiringChanges } = usePipeWiringStore()
 
   // 管路ID → 管路番号のルックアップ
   const pipeNumberById = useMemo(() => {
@@ -118,31 +120,15 @@ export function DepthCalcPage() {
   }, [currentFarm, fetchPipes, fetchSurveyData, fetchWiring, fetchPlan])
 
 
-  // 計画高の変更ハンドラ
-  const handlePlannedHeightChange = (
-    rowId: string,
-    pointId: string,
-    value: string
-  ) => {
-    const numValue = value === '' ? null : parseFloat(value)
-    if (value !== '' && isNaN(numValue!)) return
-    updatePlannedHeight(rowId, pointId, numValue)
-  }
-
-  // 地盤高の変更ハンドラ
-  const handleGroundHeightChange = (
-    rowId: string,
-    pointId: string,
-    value: string
-  ) => {
-    const numValue = value === '' ? null : parseFloat(value)
-    if (value !== '' && isNaN(numValue!)) return
-    updateGroundHeight(rowId, pointId, numValue)
-  }
-
   // 施工計画を生成
+  // 配管系統側に未保存変更がある場合は先に保存して DB と in-memory を一致させる。
+  // generatePlanFromWiring は usePipeWiringStore の in-memory state を読むため、
+  // 手動で調整した最新の系統内容が確実に反映される。
   const handleGenerate = async () => {
     setShowGenerateConfirm(false)
+    if (hasWiringChanges) {
+      await saveWiring()
+    }
     await generatePlanFromWiring()
   }
 
@@ -150,12 +136,6 @@ export function DepthCalcPage() {
   const handleDelete = async () => {
     setShowDeleteConfirm(false)
     await deletePlan()
-  }
-
-  // 計画高を3桁で表示するフォーマッタ
-  const formatPlannedHeight = (height: number | null): string => {
-    if (height === null) return ''
-    return height.toFixed(3)
   }
 
   // --- 逆勾配チェック ---
@@ -371,11 +351,9 @@ export function DepthCalcPage() {
                 <td className="border-0 bg-transparent"></td>
                 <td className="px-0.5 py-0.5 border bg-green-50">
                   {collector ? (
-                    <input
-                      type="number"
-                      step="0.001"
-                      value={collector.groundHeight ?? ''}
-                      onChange={(e) => handleGroundHeightChange(row.id, collector.id, e.target.value)}
+                    <HeightInput
+                      value={collector.groundHeight}
+                      onCommit={(v) => updateGroundHeight(row.id, collector.id, v)}
                       className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded bg-amber-50"
                       placeholder="-"
                     />
@@ -406,11 +384,9 @@ export function DepthCalcPage() {
                   }
                 >
                   {collector ? (
-                    <input
-                      type="number"
-                      step="0.001"
-                      value={formatPlannedHeight(collector.plannedHeight)}
-                      onChange={(e) => handlePlannedHeightChange(row.id, collector.id, e.target.value)}
+                    <HeightInput
+                      value={collector.plannedHeight}
+                      onCommit={(v) => updatePlannedHeight(row.id, collector.id, v)}
                       className={`w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded ${
                         collectorHasError ? 'text-red-700 border-red-400' : ''
                       }`}
@@ -571,13 +547,9 @@ export function DepthCalcPage() {
                   <td className="border-0 bg-transparent"></td>
                   {row.absorptionPoints.map(p => (
                     <td key={p.id} className="px-0.5 py-0.5 border">
-                      <input
-                        type="number"
-                        step="0.001"
-                        value={p.groundHeight ?? ''}
-                        onChange={e =>
-                          handleGroundHeightChange(row.id, p.id, e.target.value)
-                        }
+                      <HeightInput
+                        value={p.groundHeight}
+                        onCommit={(v) => updateGroundHeight(row.id, p.id, v)}
                         className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded bg-amber-50"
                         placeholder="-"
                       />
@@ -586,13 +558,9 @@ export function DepthCalcPage() {
                   <td className="border-0 bg-transparent"></td>
                   <td className="px-0.5 py-0.5 border bg-green-50">
                     {collector ? (
-                      <input
-                        type="number"
-                        step="0.001"
-                        value={collector.groundHeight ?? ''}
-                        onChange={e =>
-                          handleGroundHeightChange(row.id, collector.id, e.target.value)
-                        }
+                      <HeightInput
+                        value={collector.groundHeight}
+                        onCommit={(v) => updateGroundHeight(row.id, collector.id, v)}
                         className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded bg-amber-50"
                         placeholder="-"
                       />
@@ -619,13 +587,9 @@ export function DepthCalcPage() {
                         className={`px-0.5 py-0.5 border ${hasError ? 'bg-red-100' : ''}`}
                         title={hasError ? '逆勾配（上流側の計画高が下流側より低い）' : undefined}
                       >
-                        <input
-                          type="number"
-                          step="0.001"
-                          value={formatPlannedHeight(p.plannedHeight)}
-                          onChange={e =>
-                            handlePlannedHeightChange(row.id, p.id, e.target.value)
-                          }
+                        <HeightInput
+                          value={p.plannedHeight}
+                          onCommit={(v) => updatePlannedHeight(row.id, p.id, v)}
                           className={`w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded ${
                             hasError ? 'text-red-700 border-red-400' : ''
                           }`}
@@ -646,13 +610,9 @@ export function DepthCalcPage() {
                     }
                   >
                     {collector ? (
-                      <input
-                        type="number"
-                        step="0.001"
-                        value={formatPlannedHeight(collector.plannedHeight)}
-                        onChange={e =>
-                          handlePlannedHeightChange(row.id, collector.id, e.target.value)
-                        }
+                      <HeightInput
+                        value={collector.plannedHeight}
+                        onCommit={(v) => updatePlannedHeight(row.id, collector.id, v)}
                         className={`w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded ${
                           collectorHasError ? 'text-red-700 border-red-400' : ''
                         }`}
@@ -1300,5 +1260,73 @@ export function DepthCalcPage() {
         farm={currentFarm}
       />
     </div>
+  )
+}
+
+// 数値入力: フォーカス中はユーザーの生入力を保持し、blur 時にストアへ反映する
+// これにより `toFixed(3)` による再フォーマットでカーソルがジャンプする問題を回避
+function HeightInput({
+  value,
+  onCommit,
+  className = '',
+  title,
+  placeholder,
+}: {
+  value: number | null
+  onCommit: (v: number | null) => void
+  className?: string
+  title?: string
+  placeholder?: string
+}) {
+  const [local, setLocal] = useState<string>(value === null || value === undefined ? '' : value.toFixed(3))
+  const [focused, setFocused] = useState(false)
+
+  // ストア値が外部更新された時（自動計算など）、非フォーカス時のみ同期
+  useEffect(() => {
+    if (!focused) {
+      setLocal(value === null || value === undefined ? '' : value.toFixed(3))
+    }
+  }, [value, focused])
+
+  const commit = () => {
+    setFocused(false)
+    if (local.trim() === '') {
+      onCommit(null)
+      return
+    }
+    const n = parseFloat(local)
+    if (isNaN(n)) {
+      // 不正な値: 元の値に戻す
+      setLocal(value === null || value === undefined ? '' : value.toFixed(3))
+      return
+    }
+    onCommit(n)
+    setLocal(n.toFixed(3))
+  }
+
+  return (
+    <input
+      type="number"
+      step="any"
+      value={local}
+      onChange={(e) => setLocal(e.target.value)}
+      onFocus={(e) => {
+        setFocused(true)
+        // フォーカス時は末尾ゼロを取った生の値にして編集しやすく
+        if (value !== null && value !== undefined) {
+          setLocal(String(value))
+        }
+        e.target.select()
+      }}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          ;(e.target as HTMLInputElement).blur()
+        }
+      }}
+      className={className}
+      title={title}
+      placeholder={placeholder}
+    />
   )
 }
