@@ -5,7 +5,6 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { Loader2, Monitor, LogOut } from 'lucide-react'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
-import { useProjectListStore } from '@/stores/projectListStore'
 import { useAuth } from '@/contexts/AuthContext'
 import { CurrentLocationLayer } from '@/components/map/CurrentLocationLayer'
 
@@ -54,22 +53,13 @@ export function MobileTopPage() {
     workAreaPolygons,
     fetchWorkAreaPolygons,
   } = useFarmStore()
-  const { projects, fetchProjects } = useProjectListStore()
-
   useEffect(() => {
-    fetchProjects()
     fetchFarms()
-  }, [fetchProjects, fetchFarms])
+  }, [fetchFarms])
 
   useEffect(() => {
     if (farms.length > 0) fetchWorkAreaPolygons()
   }, [farms, fetchWorkAreaPolygons])
-
-  const projectById = useMemo(() => {
-    const m = new Map<string, string>()
-    for (const p of projects) m.set(p.id, p.name)
-    return m
-  }, [projects])
 
   const allBounds = useMemo(() => {
     const locs = Array.from(farmLocations.values())
@@ -164,7 +154,6 @@ export function MobileTopPage() {
             {farms.map((farm) => {
               const location = farmLocations.get(farm.id)
               if (!location) return null
-              const projectName = farm.project_id ? projectById.get(farm.project_id) : null
               return (
                 <Marker
                   key={farm.id}
@@ -173,7 +162,7 @@ export function MobileTopPage() {
                   eventHandlers={{ click: () => handleOpenFarm(farm) }}
                 >
                   <Tooltip permanent direction="top" offset={[0, -16]}>
-                    {projectName ? `${projectName} / ${farm.name}` : farm.name}
+                    {farm.name}
                   </Tooltip>
                 </Marker>
               )

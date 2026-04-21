@@ -167,7 +167,8 @@ export function SiteMapWindowPage() {
 
       {/* 地図エリア */}
       <div className="flex-1 relative">
-        <UnifiedFieldMap baseLayer={baseLayer} layers={layers} />
+        {/* farmId が変わったら確実に再マウントして fitBounds を再実行 */}
+        <UnifiedFieldMap key={farmId ?? 'no-farm'} baseLayer={baseLayer} layers={layers} />
 
         {/* レイヤーパネル（オーバーレイ） */}
         {showLayerPanel && (

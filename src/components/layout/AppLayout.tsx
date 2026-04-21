@@ -292,11 +292,23 @@ export function AppLayout() {
                   const url = `/site-map?farmId=${encodeURIComponent(currentFarm.id)}`
                   const screenW = window.screen.availWidth
                   const screenH = window.screen.availHeight
-                  window.open(
+                  // 同じ target で開くことで、別の現場のウィンドウが残らず常に現在の現場に切り替わる
+                  const w = window.open(
                     url,
-                    `nodecloud_site_map_${currentFarm.id}`,
+                    'nodecloud_site_map',
                     `width=${screenW},height=${screenH},left=0,top=0`,
                   )
+                  // 既存ウィンドウが開いていて URL が違う場合は明示的に navigate
+                  if (w) {
+                    try {
+                      if (w.location.href.indexOf(url) === -1) {
+                        w.location.href = url
+                      }
+                      w.focus()
+                    } catch {
+                      // cross-origin などの例外は無視
+                    }
+                  }
                 }}
                 className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
                 title="現場の地図を別ウィンドウで全画面表示"

@@ -771,15 +771,37 @@ export function PipeWiringPage() {
   }, [pipes])
 
   // 管路の頂点から測点名を生成するヘルパー
+  // vertexIndex=0 → C（最上流）
+  // vertexIndex=totalVertices-1 → A（最下流）
+  // それ以外 → B{i}（中間点、下流から順。vertexIndex が下流側ほど小さい番号）
   const generatePointName = useCallback((pipeNumber: string, vertexIndex: number, totalVertices: number): string => {
     if (vertexIndex === 0) {
       return `${pipeNumber}C` // 最上流
     } else if (vertexIndex === totalVertices - 1) {
       return `${pipeNumber}A` // 最下流
     } else {
-      return `${pipeNumber}B${vertexIndex}` // 中間点
+      // 中間点: 下流から順に B1, B2, ...（PipeCoordinateCalcPage と同じ規則）
+      const middleIndex = totalVertices - 1 - vertexIndex
+      return `${pipeNumber}B${middleIndex}`
     }
   }, [])
+
+  // 前の管の下流端と一致する、次の管の頂点インデックスを検出
+  // 一致が見つからなければ 0（従来通りの C）を返す
+  const findMatchingVertexIndex = useCallback(
+    (nextPipe: PipeRow, endVertex: PipeVertex): number => {
+      if (nextPipe.vertices.length === 0) return 0
+      const EPS = 1e-4
+      for (let i = 0; i < nextPipe.vertices.length; i++) {
+        const v = nextPipe.vertices[i]
+        if (Math.abs(v.x - endVertex.x) < EPS && Math.abs(v.y - endVertex.y) < EPS) {
+          return i
+        }
+      }
+      return 0
+    },
+    [],
+  )
 
   // 吸水管と集水管の接続測点名を取得（常に接続元の下流端末番号）
   const getConnectionPointName = useCallback((absorptionPipeIds: string[], collectorPipeId: string | null): string | null => {
@@ -852,8 +874,14 @@ export function PipeWiringPage() {
         const prevEndPointName = prevPipe && prevPipe.vertices.length > 0
           ? generatePointName(prevPipe.number, prevPipe.vertices.length - 1, prevPipe.vertices.length)
           : null
-        // 新しい管の上流端名
-        const newStartPointName = generatePointName(collectorPipe.number, 0, collectorPipe.vertices.length)
+        // 新しい管の接続点名: 前管の下流端と一致する頂点を検索（中間頂点と接続する場合もあり）
+        const prevEndVertex = prevPipe && prevPipe.vertices.length > 0
+          ? prevPipe.vertices[prevPipe.vertices.length - 1]
+          : null
+        const newStartIndex = prevEndVertex
+          ? findMatchingVertexIndex(collectorPipe, prevEndVertex)
+          : 0
+        const newStartPointName = generatePointName(collectorPipe.number, newStartIndex, collectorPipe.vertices.length)
         // 両方を結合して返す（S4A S3C形式）
         if (prevEndPointName) {
           return `${prevEndPointName} ${newStartPointName}`
@@ -867,7 +895,7 @@ export function PipeWiringPage() {
 
     // その他の場合（行タイプが未設定など）
     return null
-  }, [pipes, generatePointName])
+  }, [pipes, generatePointName, findMatchingVertexIndex])
 
   // 前の行の集水管下流端の測点名を取得（管が変わる場合のセパレータ行用）
   const getPrevCollectorEndPointName = useCallback((prevCollectorPipeId: string | null): string | null => {
@@ -1002,16 +1030,30 @@ export function PipeWiringPage() {
     nextPipeStartPointName?: string | null  // セパレータ行: 次の管の上流端名（S3C）
   }
 
-  // 次の管の上流端の測点名を取得
-  const getNextCollectorStartPointName = useCallback((nextCollectorPipeId: string | null): string | null => {
+  // 次の管の接続点測点名を取得
+  // 前の管の下流端と一致する頂点を検出して命名（CAD解析で測点分割した場合 C 以外と接続し得る）
+  const getNextCollectorStartPointName = useCallback((
+    nextCollectorPipeId: string | null,
+    prevCollectorPipeId?: string | null,
+  ): string | null => {
     if (!nextCollectorPipeId) return null
 
     const nextCollectorPipe = pipes.find(p => p.id === nextCollectorPipeId)
     if (!nextCollectorPipe || nextCollectorPipe.vertices.length === 0) return null
 
-    // 次の集水管の上流端（C）
+    // 前管の下流端が分かる場合は、その座標に一致する頂点を検出
+    if (prevCollectorPipeId) {
+      const prevPipe = pipes.find(p => p.id === prevCollectorPipeId)
+      if (prevPipe && prevPipe.vertices.length > 0) {
+        const endVertex = prevPipe.vertices[prevPipe.vertices.length - 1]
+        const idx = findMatchingVertexIndex(nextCollectorPipe, endVertex)
+        return generatePointName(nextCollectorPipe.number, idx, nextCollectorPipe.vertices.length)
+      }
+    }
+
+    // 前管が未指定の場合は C を返す（従来動作）
     return generatePointName(nextCollectorPipe.number, 0, nextCollectorPipe.vertices.length)
-  }, [pipes, generatePointName])
+  }, [pipes, generatePointName, findMatchingVertexIndex])
 
   // 系統ごとに表示用の行データを生成（各吸水行の後にセパレータ行を挿入、ただし最終行は除く）
   const buildDisplayRows = useCallback((rows: WiringRow[]): DisplayRow[] => {
@@ -1044,7 +1086,7 @@ export function PipeWiringPage() {
           ? getPrevCollectorEndPointName(row.collectorPipe)
           : null
         const nextPipeStartPointName = isPipeChanging
-          ? getNextCollectorStartPointName(nextCollectorPipeId)
+          ? getNextCollectorStartPointName(nextCollectorPipeId, row.collectorPipe)
           : null
 
         displayRows.push({
@@ -1205,8 +1247,13 @@ export function PipeWiringPage() {
           // ラベルを生成（S4A S3C形式）
           const prevEndPointName = generatePointName(prevPipe.number, prevPipe.vertices.length - 1, prevPipe.vertices.length)
           const nextPipe = pipes.find(p => p.id === currentRow.collectorPipe)
+          // 次管のどの頂点が前管の下流端と一致するかを検出（CAD解析で測点を分割した場合に C 以外と接続し得る）
           const nextStartPointName = nextPipe && nextPipe.vertices.length > 0
-            ? generatePointName(nextPipe.number, 0, nextPipe.vertices.length)
+            ? generatePointName(
+                nextPipe.number,
+                findMatchingVertexIndex(nextPipe, endVertex),
+                nextPipe.vertices.length,
+              )
             : ''
 
           points.push({
@@ -1219,7 +1266,7 @@ export function PipeWiringPage() {
     }
 
     return points
-  }, [collectorTabs, directRows, pipes, generatePointName])
+  }, [collectorTabs, directRows, pipes, generatePointName, findMatchingVertexIndex])
 
   // 現在選択中の行の吸水管路IDs（地図上でハイライト用）
   const selectedAbsorptionPipes = useMemo(() => {

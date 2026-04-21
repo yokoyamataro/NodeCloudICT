@@ -274,17 +274,18 @@ export function UnifiedFieldMap({ baseLayer = 'osm', layers }: UnifiedFieldMapPr
     return list
   }, [workAreasByType])
 
-  // 初期表示の境界
+  // 初期表示の境界（座標点・配管・工事区域・測量点を包含）
   const allBounds = useMemo(() => {
     const all: [number, number][] = []
     for (const c of validCoords) all.push([c.lat, c.lng])
     for (const p of pipeLines) all.push(...p.positions)
     for (const a of workAreas) all.push(...a.positions)
+    for (const s of surveyMarkers) all.push(s.ll)
     if (all.length === 0) return null
     const lats = all.map((p) => p[0])
     const lngs = all.map((p) => p[1])
     return L.latLngBounds([Math.min(...lats), Math.min(...lngs)], [Math.max(...lats), Math.max(...lngs)])
-  }, [validCoords, pipeLines, workAreas])
+  }, [validCoords, pipeLines, workAreas, surveyMarkers])
 
   const defaultCenter: [number, number] = [35.6762, 139.6503]
   const initialCenter = allBounds

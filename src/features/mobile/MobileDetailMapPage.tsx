@@ -172,7 +172,7 @@ export function MobileDetailMapPage() {
       </div>
 
       <div className="flex-1 relative">
-        <UnifiedFieldMap baseLayer={baseLayer} layers={layers} />
+        <UnifiedFieldMap key={farmId ?? 'no-farm'} baseLayer={baseLayer} layers={layers} />
 
         {showLayerPanel && (
           <div className="absolute top-2 right-2 z-[1000] w-56 bg-white border border-slate-300 rounded shadow-lg">
