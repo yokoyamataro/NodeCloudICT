@@ -13,6 +13,7 @@ import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { PipeMap, type SurveyPointData } from '@/components/map/PipeMap'
 import { PageHeader } from '@/components/layout/PageHeader'
+import { comparePipeNumbers } from '@/lib/pipeSort'
 import type { PipeType, PipeVertex } from '@/types/database'
 
 // パース済みエンティティ（インポート前）
@@ -254,7 +255,8 @@ export function CadAnalysisPage() {
 
       switch (sortKey) {
         case 'number':
-          return multiplier * a.number.localeCompare(b.number, 'ja', { numeric: true })
+          // 頭文字・末尾文字を除いた数字部分のみで比較（K3 < O1 にしない）
+          return multiplier * comparePipeNumbers(a.number, b.number)
         case 'pipeType': {
           const typeOrder = EXTENDED_PIPE_TYPES.map(t => t.value)
           const aIndex = a.pipeType ? typeOrder.indexOf(a.pipeType) : 999

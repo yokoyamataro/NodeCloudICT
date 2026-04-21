@@ -116,6 +116,10 @@ function buildTextLines(
 ): string[] {
   const lines: string[] = []
   const HALF_PI = Math.PI / 2
+  // 各文字を積むオフセット: 旧マクロは x -= moji * sin(a0), y += moji * cos(a0)
+  // a0 = π/2 なので sin = 1, cos ≈ 0 → x が -moji ずつシフトし縦方向に並ぶ
+  const stepDx = -moji * Math.sin(HALF_PI)
+  const stepDy = moji * Math.cos(HALF_PI)
 
   for (const group of planGroups) {
     for (const row of group.rows) {
@@ -147,16 +151,19 @@ function buildTextLines(
         const sl = p.segmentSlope
 
         let cx = x1
-        let cy = y1 + moji
+        let cy = y1 + 1 // 旧マクロ: y1 + 1（リテラル）
         // 点名
         lines.push(buildTextElement(2050, 0, 'P0', cx, cy, HALF_PI, moji, p.pointName))
-        cy += moji
+        cx += stepDx
+        cy += stepDy
         // 地盤高
         lines.push(buildTextElement(2051, 0, 'N0', cx, cy, HALF_PI, moji, gh))
-        cy += moji
+        cx += stepDx
+        cy += stepDy
         // 計画高
         lines.push(buildTextElement(2052, 1, 'N0', cx, cy, HALF_PI, moji, fh))
-        cy += moji
+        cx += stepDx
+        cy += stepDy
         // 切深（標準切深と異なる場合のみ）
         const chNum = typeof p.cutDepth === 'number' ? p.cutDepth : null
         if (chNum !== null && Math.abs(chNum - absorptionStdDepth) > 0.005) {
@@ -206,16 +213,19 @@ function buildTextLines(
         })()
 
         let cx = x1
-        let cy = y1 + moji * 3.2
+        let cy = y1 + moji * 3.2 // 旧マクロ: y1 + moji * 3.2
         // 点名
         lines.push(buildTextElement(2055, 0, 'P0', cx, cy, HALF_PI, moji, cp.pointName))
-        cy += moji
+        cx += stepDx
+        cy += stepDy
         // 地盤高
         lines.push(buildTextElement(2056, 0, 'N0', cx, cy, HALF_PI, moji, gh))
-        cy += moji
+        cx += stepDx
+        cy += stepDy
         // 計画高
         lines.push(buildTextElement(2057, 5, 'N0', cx, cy, HALF_PI, moji, fh))
-        cy += moji
+        cx += stepDx
+        cy += stepDy
         // 切深（標準切深と異なる場合のみ）
         const chNum = typeof cp.cutDepth === 'number' ? cp.cutDepth : null
         if (chNum !== null && Math.abs(chNum - collectorStdDepth) > 0.005) {
