@@ -16,6 +16,15 @@ import {
   Mountain,
 } from 'lucide-react'
 import { HydraulicCalcModal } from './HydraulicCalcModal'
+
+// 区間勾配の任意設定ダイアログ用ターゲット
+interface SlopeEditTarget {
+  segmentLabel: string // 例: "K13C → K13A"
+  distance: number
+  currentSlope: string | null
+  upstream: { rowId: string; pointId: string; ph: number | null; label: string }
+  downstream: { rowId: string; pointId: string; ph: number | null; label: string }
+}
 import { useFarmStore } from '@/stores/farmStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useSurveyStore } from '@/stores/surveyStore'
@@ -82,6 +91,9 @@ export function DepthCalcPage() {
 
   // 水理計算書モーダル
   const [showHydraulicModal, setShowHydraulicModal] = useState(false)
+
+  // 区間勾配の任意設定ダイアログ
+  const [slopeEdit, setSlopeEdit] = useState<SlopeEditTarget | null>(null)
 
   const toggleRowCollapsed = (rowId: string) => {
     setCollapsedRows((prev) => {
@@ -173,6 +185,22 @@ export function DepthCalcPage() {
     return row.collectorPoint.plannedHeight > prevRow.collectorPoint.plannedHeight
   }, [])
 
+  // 系統内・吸水行間の逆勾配:
+  // 現在行の吸水上流端(C)が、同一系統の前行の吸水下流端(A)より高い場合 true
+  // （別々の吸水管でも、系統を流れとして追いかけた時に上流→下流で標高が下がっていない状況を検出）
+  const isAbsorptionUpstreamHigherThanPrevDownstream = useCallback(
+    (row: PlanRow, prevRow: PlanRow | null): boolean => {
+      if (!prevRow) return false
+      if (row.systemIndex !== prevRow.systemIndex) return false
+      if (row.absorptionPoints.length === 0 || prevRow.absorptionPoints.length === 0) return false
+      const prevDown = prevRow.absorptionPoints[prevRow.absorptionPoints.length - 1].plannedHeight
+      const currUp = row.absorptionPoints[0].plannedHeight
+      if (prevDown === null || currUp === null) return false
+      return currUp > prevDown
+    },
+    [],
+  )
+
   // 全行の逆勾配エラー件数（ヘッダ表示用）
   const reverseSlopeErrorCount = useMemo(() => {
     let count = 0
@@ -195,12 +223,19 @@ export function DepthCalcPage() {
           }
           if (isCollectorHigherThanAbsorption(r)) count++
           if (isCollectorHigherThanPrev(r, prev)) count++
+          if (isAbsorptionUpstreamHigherThanPrevDownstream(r, prev)) count++
           prev = r
         }
       }
     }
     return count
-  }, [planGroups, getAbsorptionReverseIndices, isCollectorHigherThanAbsorption, isCollectorHigherThanPrev])
+  }, [
+    planGroups,
+    getAbsorptionReverseIndices,
+    isCollectorHigherThanAbsorption,
+    isCollectorHigherThanPrev,
+    isAbsorptionUpstreamHigherThanPrevDownstream,
+  ])
 
   // 集水の区間勾配を計算（現在の行と次の行の集水計画高の差）
   const calcCollectorSlope = (
@@ -241,6 +276,7 @@ export function DepthCalcPage() {
     const collectorMergeError = isCollectorHigherThanAbsorption(row)
     const collectorPrevError = isCollectorHigherThanPrev(row, prevRow)
     const collectorHasError = collectorMergeError || collectorPrevError
+    const absorptionUpstreamInterRowError = isAbsorptionUpstreamHigherThanPrevDownstream(row, prevRow)
     const collectorPipeNumber = row.collectorPipeId
       ? pipeNumberById.get(row.collectorPipeId) ?? ''
       : ''
@@ -457,7 +493,36 @@ export function DepthCalcPage() {
                 )}
                 <td className="border-0 bg-transparent"></td>
                 <td className="px-1.5 py-1 text-center border font-mono text-slate-600 bg-green-50">
-                  {collectorSlope ?? '-'}
+                  {collector && nextRow?.collectorPoint && collector.segmentDistance && collector.segmentDistance > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSlopeEdit({
+                          segmentLabel: `${collector.pointName || '集水'} → ${nextRow.collectorPoint?.pointName || '集水'}`,
+                          distance: collector.segmentDistance!,
+                          currentSlope: collectorSlope ?? null,
+                          upstream: {
+                            rowId: row.id,
+                            pointId: collector.id,
+                            ph: collector.plannedHeight,
+                            label: collector.pointName || '集水',
+                          },
+                          downstream: {
+                            rowId: nextRow.id,
+                            pointId: nextRow.collectorPoint!.id,
+                            ph: nextRow.collectorPoint!.plannedHeight,
+                            label: nextRow.collectorPoint!.pointName || '集水',
+                          },
+                        })
+                      }
+                      className="w-full hover:bg-blue-50 rounded px-1 py-0.5 text-blue-700 hover:underline"
+                      title="勾配を任意設定"
+                    >
+                      {collectorSlope ?? '-'}
+                    </button>
+                  ) : (
+                    <span>{collectorSlope ?? '-'}</span>
+                  )}
                 </td>
                 <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">区間勾配</td>
               </tr>
@@ -580,12 +645,21 @@ export function DepthCalcPage() {
                   </td>
                   <td className="border-0 bg-transparent"></td>
                   {row.absorptionPoints.map((p, idx) => {
-                    const hasError = absorptionReverseIdxs.has(idx)
+                    const withinPipeError = absorptionReverseIdxs.has(idx)
+                    // 行間の逆勾配は上流端(index 0)のみ赤表示
+                    const interRowError = idx === 0 && absorptionUpstreamInterRowError
+                    const hasError = withinPipeError || interRowError
                     return (
                       <td
                         key={p.id}
                         className={`px-0.5 py-0.5 border ${hasError ? 'bg-red-100' : ''}`}
-                        title={hasError ? '逆勾配（上流側の計画高が下流側より低い）' : undefined}
+                        title={
+                          interRowError
+                            ? '逆勾配（前の行の吸水下流端より計画高が高い）'
+                            : withinPipeError
+                              ? '逆勾配（上流側の計画高が下流側より低い）'
+                              : undefined
+                        }
                       >
                         <HeightInput
                           value={p.plannedHeight}
@@ -691,17 +765,79 @@ export function DepthCalcPage() {
                     区間勾配
                   </td>
                   <td className="border-0 bg-transparent"></td>
-                  {row.absorptionPoints.map(p => (
-                    <td
-                      key={p.id}
-                      className="px-1.5 py-1 text-center border font-mono text-slate-600"
-                    >
-                      {p.segmentSlope ?? '-'}
-                    </td>
-                  ))}
+                  {row.absorptionPoints.map((p, idx) => {
+                    const prevP = idx > 0 ? row.absorptionPoints[idx - 1] : null
+                    const canEdit = prevP != null && p.segmentDistance != null && p.segmentDistance > 0
+                    return (
+                      <td
+                        key={p.id}
+                        className="px-1.5 py-1 text-center border font-mono text-slate-600"
+                      >
+                        {canEdit && prevP ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSlopeEdit({
+                                segmentLabel: `${prevP.pointName} → ${p.pointName}`,
+                                distance: p.segmentDistance!,
+                                currentSlope: p.segmentSlope ?? null,
+                                upstream: {
+                                  rowId: row.id,
+                                  pointId: prevP.id,
+                                  ph: prevP.plannedHeight,
+                                  label: prevP.pointName,
+                                },
+                                downstream: {
+                                  rowId: row.id,
+                                  pointId: p.id,
+                                  ph: p.plannedHeight,
+                                  label: p.pointName,
+                                },
+                              })
+                            }
+                            className="w-full hover:bg-blue-50 rounded px-1 py-0.5 text-blue-700 hover:underline"
+                            title="勾配を任意設定"
+                          >
+                            {p.segmentSlope ?? '-'}
+                          </button>
+                        ) : (
+                          <span>{p.segmentSlope ?? '-'}</span>
+                        )}
+                      </td>
+                    )
+                  })}
                   <td className="border-0 bg-transparent"></td>
                   <td className="px-1.5 py-1 text-center border font-mono text-slate-600 bg-green-50">
-                    {collectorSlope ?? '-'}
+                    {collector && nextRow?.collectorPoint && collector.segmentDistance && collector.segmentDistance > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSlopeEdit({
+                            segmentLabel: `${collector.pointName || '集水'} → ${nextRow.collectorPoint?.pointName || '集水'}`,
+                            distance: collector.segmentDistance!,
+                            currentSlope: collectorSlope ?? null,
+                            upstream: {
+                              rowId: row.id,
+                              pointId: collector.id,
+                              ph: collector.plannedHeight,
+                              label: collector.pointName || '集水',
+                            },
+                            downstream: {
+                              rowId: nextRow.id,
+                              pointId: nextRow.collectorPoint!.id,
+                              ph: nextRow.collectorPoint!.plannedHeight,
+                              label: nextRow.collectorPoint!.pointName || '集水',
+                            },
+                          })
+                        }
+                        className="w-full hover:bg-blue-50 rounded px-1 py-0.5 text-blue-700 hover:underline"
+                        title="勾配を任意設定"
+                      >
+                        {collectorSlope ?? '-'}
+                      </button>
+                    ) : (
+                      <span>{collectorSlope ?? '-'}</span>
+                    )}
                   </td>
                   <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
                     区間勾配
@@ -1222,6 +1358,19 @@ export function DepthCalcPage() {
         </div>
       )}
 
+      {/* 区間勾配 任意設定ダイアログ */}
+      {slopeEdit && (
+        <SlopeEditDialog
+          target={slopeEdit}
+          onClose={() => setSlopeEdit(null)}
+          onApply={(side, newPh) => {
+            const target = side === 'upstream' ? slopeEdit.upstream : slopeEdit.downstream
+            updatePlannedHeight(target.rowId, target.pointId, newPh)
+            setSlopeEdit(null)
+          }}
+        />
+      )}
+
       {/* 削除確認ダイアログ */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -1328,5 +1477,168 @@ function HeightInput({
       title={title}
       placeholder={placeholder}
     />
+  )
+}
+
+// 区間勾配の任意設定ダイアログ
+// 入力形式: "1/400" または "400"（= 1/400）。
+// 上流/下流どちらを調整するか選んで Apply すると、選択側の計画高を再計算する。
+function SlopeEditDialog({
+  target,
+  onClose,
+  onApply,
+}: {
+  target: SlopeEditTarget
+  onClose: () => void
+  onApply: (side: 'upstream' | 'downstream', newPh: number) => void
+}) {
+  const [slopeInput, setSlopeInput] = useState<string>(
+    target.currentSlope?.replace(/^1\//, '') ?? '',
+  )
+  const [side, setSide] = useState<'upstream' | 'downstream'>('downstream')
+
+  // 勾配パース: "1/400" or "400" → 400（分母）を返す
+  const parseDenominator = (input: string): number | null => {
+    const t = input.trim()
+    if (!t) return null
+    const m = t.match(/^(?:1\s*\/\s*)?(-?\d+(?:\.\d+)?)$/)
+    if (!m) return null
+    const n = parseFloat(m[1])
+    if (!Number.isFinite(n) || n === 0) return null
+    return n
+  }
+
+  const denom = parseDenominator(slopeInput)
+  const upPh = target.upstream.ph
+  const downPh = target.downstream.ph
+
+  // 新しい計画高を計算（勾配 1/denom、distance を使用。正の denom は下り）
+  const previewNewPh = useMemo<number | null>(() => {
+    if (denom === null) return null
+    const drop = target.distance / denom
+    if (side === 'upstream') {
+      // 上流を調整: 下流 + drop
+      if (downPh === null) return null
+      return downPh + drop
+    } else {
+      if (upPh === null) return null
+      return upPh - drop
+    }
+  }, [denom, side, upPh, downPh, target.distance])
+
+  const canApply = previewNewPh !== null && Number.isFinite(previewNewPh)
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/40 flex items-center justify-center z-[1600] p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-lg shadow-xl w-full max-w-md p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-base font-bold mb-1">区間勾配の任意設定</h3>
+        <div className="text-xs text-slate-500 mb-4">{target.segmentLabel}</div>
+
+        <div className="grid grid-cols-2 gap-2 text-xs mb-4">
+          <div>
+            <div className="text-slate-500">区間距離</div>
+            <div className="font-mono">{target.distance.toFixed(2)} m</div>
+          </div>
+          <div>
+            <div className="text-slate-500">現在の勾配</div>
+            <div className="font-mono">{target.currentSlope ?? '-'}</div>
+          </div>
+          <div>
+            <div className="text-slate-500">上流: {target.upstream.label}</div>
+            <div className="font-mono">
+              {upPh !== null ? upPh.toFixed(3) : '-'} m
+            </div>
+          </div>
+          <div>
+            <div className="text-slate-500">下流: {target.downstream.label}</div>
+            <div className="font-mono">
+              {downPh !== null ? downPh.toFixed(3) : '-'} m
+            </div>
+          </div>
+        </div>
+
+        <div className="mb-3">
+          <label className="block text-xs text-slate-600 mb-1">
+            新しい勾配（例: 1/400 または 400）
+          </label>
+          <div className="flex items-center gap-2">
+            <span className="text-slate-500">1/</span>
+            <input
+              type="text"
+              value={slopeInput.replace(/^1\s*\//, '')}
+              onChange={(e) => setSlopeInput(e.target.value)}
+              placeholder="400"
+              autoFocus
+              className="flex-1 px-2 py-1.5 border rounded text-sm font-mono"
+            />
+          </div>
+        </div>
+
+        <div className="mb-4">
+          <div className="text-xs text-slate-600 mb-1">調整する側</div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setSide('upstream')}
+              className={`flex-1 px-3 py-2 rounded border text-sm ${
+                side === 'upstream'
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              上流側を調整（{target.upstream.label}）
+            </button>
+            <button
+              type="button"
+              onClick={() => setSide('downstream')}
+              className={`flex-1 px-3 py-2 rounded border text-sm ${
+                side === 'downstream'
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              下流側を調整（{target.downstream.label}）
+            </button>
+          </div>
+        </div>
+
+        <div className="mb-4 p-2 bg-slate-50 rounded text-xs">
+          <div className="text-slate-600">適用後の計画高（{side === 'upstream' ? '上流' : '下流'}）</div>
+          <div className="font-mono text-base font-bold text-blue-700">
+            {canApply ? `${previewNewPh!.toFixed(3)} m` : '—'}
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 text-sm border rounded hover:bg-slate-50"
+          >
+            キャンセル
+          </button>
+          <button
+            type="button"
+            disabled={!canApply}
+            onClick={() => {
+              if (canApply) onApply(side, previewNewPh!)
+            }}
+            className={`px-4 py-2 text-sm rounded ${
+              canApply
+                ? 'bg-blue-600 text-white hover:bg-blue-700'
+                : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+            }`}
+          >
+            適用
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
