@@ -13,6 +13,10 @@ interface ProjectListState {
   membersLoading: boolean
   currentUserRole: ProjectMemberRole | null
 
+  // プロジェクト ID ごとの現在ユーザーのロール（トップページ等で閲覧判定に使用）
+  userRolesByProject: Map<string, ProjectMemberRole>
+  fetchUserRoles: () => Promise<void>
+
   // データ取得
   fetchProjects: () => Promise<void>
   fetchMembers: (projectId: string) => Promise<void>
@@ -43,6 +47,30 @@ export const useProjectListStore = create<ProjectListState>()((set, get) => ({
   members: [],
   membersLoading: false,
   currentUserRole: null,
+  userRolesByProject: new Map(),
+
+  fetchUserRoles: async () => {
+    try {
+      const { data: userData } = await supabase.auth.getUser()
+      const currentUserId = userData.user?.id
+      if (!currentUserId) return
+
+      const { data, error } = await supabase
+        .from('project_members')
+        .select('project_id, role')
+        .eq('user_id', currentUserId)
+
+      if (error) throw error
+
+      const map = new Map<string, ProjectMemberRole>()
+      for (const row of (data || []) as { project_id: string; role: ProjectMemberRole }[]) {
+        map.set(row.project_id, row.role)
+      }
+      set({ userRolesByProject: map })
+    } catch (err) {
+      console.error('ユーザーロール取得エラー:', err)
+    }
+  },
 
   fetchProjects: async () => {
     set({ loading: true, error: null })

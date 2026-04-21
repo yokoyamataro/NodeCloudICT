@@ -19,6 +19,9 @@ import {
   Maximize2,
   Minimize2,
   Table as TableIcon,
+  Edit,
+  Map as MapIcon,
+  Lock,
 } from 'lucide-react'
 import { MapContainer, TileLayer, Marker, Popup, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
@@ -119,6 +122,8 @@ export function ProjectListPage() {
     addMember,
     updateMemberRole,
     removeMember,
+    userRolesByProject,
+    fetchUserRoles,
   } = useProjectListStore()
 
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
@@ -162,7 +167,11 @@ export function ProjectListPage() {
   useEffect(() => {
     fetchProjects()
     fetchFarms()
-  }, [fetchProjects, fetchFarms])
+    fetchUserRoles()
+  }, [fetchProjects, fetchFarms, fetchUserRoles])
+
+  // 圃場クリック時のアクション選択ダイアログ
+  const [farmActionDialog, setFarmActionDialog] = useState<Farm | null>(null)
 
   // 圃場が読み込まれたらポリゴンデータを取得
   useEffect(() => {
@@ -545,8 +554,10 @@ export function ProjectListPage() {
                               return (
                                 <div
                                   key={farm.id}
-                                  onClick={() => handleSelectFarm(farm)}
-                                  onDoubleClick={() => handleOpenFarm(farm)}
+                                  onClick={() => {
+                                    handleSelectFarm(farm)
+                                    setFarmActionDialog(farm)
+                                  }}
                                   className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group ${
                                     isSelected
                                       ? 'bg-blue-100 text-blue-700'
@@ -564,12 +575,12 @@ export function ProjectListPage() {
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation()
-                                        handleOpenFarm(farm)
+                                        setFarmActionDialog(farm)
                                       }}
-                                      className="px-2 py-0.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
-                                      title="この圃場を開く"
+                                      className="px-2 py-0.5 text-xs border text-slate-500 rounded hover:bg-slate-50"
+                                      title="アクション選択"
                                     >
-                                      開く
+                                      …
                                     </button>
                                     <button
                                       onClick={(e) => handleDeleteFarm(e, farm.id)}
@@ -742,6 +753,119 @@ export function ProjectListPage() {
         </>
         )}
       </div>
+
+      {/* 圃場アクション選択ダイアログ */}
+      {farmActionDialog && (() => {
+        const farm = farmActionDialog
+        const location = farmLocations.get(farm.id)
+        const project = projects.find((p) => p.id === farm.project_id)
+        const role = farm.project_id ? userRolesByProject.get(farm.project_id) ?? null : null
+        const canEdit = role === 'owner' || role === 'editor' || role == null // 未登録は owner 扱い（既存データ互換）
+        const canEditExplicitViewer = role === 'viewer'
+        return (
+          <div
+            className="fixed inset-0 bg-black/40 flex items-center justify-center z-[1500] p-4"
+            onClick={() => setFarmActionDialog(null)}
+          >
+            <div
+              className="bg-white rounded-xl shadow-xl w-full max-w-sm p-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between mb-3">
+                <div>
+                  {project && <div className="text-xs text-slate-500">{project.name}</div>}
+                  <div className="text-base font-bold">{farm.name}</div>
+                  {role && (
+                    <div className="mt-1 text-xs text-slate-500">
+                      権限:{' '}
+                      {role === 'owner' ? 'オーナー' : role === 'editor' ? '編集者' : '閲覧者'}
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={() => setFarmActionDialog(null)}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="space-y-2">
+                <button
+                  disabled={canEditExplicitViewer || !canEdit}
+                  onClick={() => {
+                    setFarmActionDialog(null)
+                    handleOpenFarm(farm)
+                  }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium ${
+                    canEditExplicitViewer || !canEdit
+                      ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                      : 'bg-blue-600 text-white hover:bg-blue-700'
+                  }`}
+                  title={canEditExplicitViewer ? '閲覧権限では編集できません' : ''}
+                >
+                  {canEditExplicitViewer ? (
+                    <Lock className="h-5 w-5" />
+                  ) : (
+                    <Edit className="h-5 w-5" />
+                  )}
+                  圃場編集
+                  {canEditExplicitViewer && (
+                    <span className="ml-auto text-xs">閲覧のみ</span>
+                  )}
+                </button>
+                <button
+                  onClick={() => {
+                    setFarmActionDialog(null)
+                    const url = `/site-map?farmId=${encodeURIComponent(farm.id)}`
+                    const screenW = window.screen.availWidth
+                    const screenH = window.screen.availHeight
+                    const w = window.open(
+                      url,
+                      'nodecloud_site_map',
+                      `width=${screenW},height=${screenH},left=0,top=0`,
+                    )
+                    if (w) {
+                      try {
+                        if (w.location.href.indexOf(url) === -1) w.location.href = url
+                        w.focus()
+                      } catch {
+                        // ignore
+                      }
+                    }
+                  }}
+                  className="w-full flex items-center gap-3 px-4 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium"
+                >
+                  <MapIcon className="h-5 w-5" />
+                  地図表示
+                </button>
+                <button
+                  disabled={!location}
+                  onClick={() => {
+                    if (!location) return
+                    setFarmActionDialog(null)
+                    openGoogleMapsNavigation(location.lat, location.lng)
+                  }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium ${
+                    location
+                      ? 'bg-green-600 text-white hover:bg-green-700'
+                      : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                  }`}
+                  title={!location ? '位置情報がありません' : ''}
+                >
+                  <Navigation className="h-5 w-5" />
+                  経路案内（Google マップ）
+                </button>
+                <button
+                  onClick={() => setFarmActionDialog(null)}
+                  className="w-full px-4 py-2.5 border rounded-lg hover:bg-slate-50 text-sm"
+                >
+                  キャンセル
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* 地図表示ダイアログ */}
       {showMapDialog && (
