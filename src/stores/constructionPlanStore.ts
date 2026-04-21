@@ -295,15 +295,33 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       }
 
       // 管路の頂点から測点名を生成するヘルパー
+      // vertexIndex=0 → C（最上流）/ 最後 → A（最下流）/ 中間 → B{i}（下流起点、座標計算ページと整合）
       const generatePointName = (pipeNumber: string, vertexIndex: number, totalVertices: number): string => {
         if (vertexIndex === 0) {
-          return `${pipeNumber}C` // 最上流
+          return `${pipeNumber}C`
         } else if (vertexIndex === totalVertices - 1) {
-          return `${pipeNumber}A` // 最下流
+          return `${pipeNumber}A`
         } else {
-          // 中間点: B1, B2, ...（上流から順）
-          return `${pipeNumber}B${vertexIndex}`
+          const middleIndex = totalVertices - 1 - vertexIndex
+          return `${pipeNumber}B${middleIndex}`
         }
+      }
+
+      // 前の管の下流端と一致する、次の管の頂点インデックスを検出
+      // 一致が見つからなければ 0（従来どおりの C）を返す
+      const findMatchingVertexIndex = (
+        nextPipe: { vertices: PipeVertex[] },
+        endVertex: PipeVertex,
+      ): number => {
+        if (nextPipe.vertices.length === 0) return 0
+        const EPS = 1e-4
+        for (let i = 0; i < nextPipe.vertices.length; i++) {
+          const v = nextPipe.vertices[i]
+          if (Math.abs(v.x - endVertex.x) < EPS && Math.abs(v.y - endVertex.y) < EPS) {
+            return i
+          }
+        }
+        return 0
       }
 
       // 系統情報を計算するヘルパー（行ごとの系統インデックスと終端情報を返す）
@@ -394,14 +412,20 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
           rowType === 'collector_merge' ||
           rowType === 'collector_change'
         ) {
-          // 管が変わる場合: 新しい管の上流端（C）
+          // 管が変わる場合: 前管の下流端と一致する、新集水管の頂点を接続点とする
+          // （CAD解析で測点を分割した場合に C 以外の中間頂点と接続し得る）
           if (prevCollectorPipeId && prevCollectorPipeId !== collectorPipeId) {
-            const v = collectorPipe.vertices[0]
+            const prevPipe = pipes.find((p) => p.id === prevCollectorPipeId)
+            const prevEndVertex = prevPipe && prevPipe.vertices.length > 0
+              ? prevPipe.vertices[prevPipe.vertices.length - 1]
+              : null
+            const idx = prevEndVertex ? findMatchingVertexIndex(collectorPipe, prevEndVertex) : 0
+            const v = collectorPipe.vertices[idx]
             return {
               x: v.x,
               y: v.y,
               z: v.z,
-              name: generatePointName(collectorPipe.number, 0, collectorPipe.vertices.length),
+              name: generatePointName(collectorPipe.number, idx, collectorPipe.vertices.length),
             }
           }
           // 管が変わらない場合: 測点なし
@@ -449,17 +473,26 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
             }
             let mergeCollectorPoint: PlanPoint | null = null
             if (collectorPipe && collectorPipe.vertices.length > 0) {
-              // 合流点 = 新しい集水管の最上流頂点（C）。物理的には前の集水管の下流端と一致。
-              const v = collectorPipe.vertices[0]
+              // 合流点 = 前の集水管の下流端と一致する、新しい集水管の頂点
+              // （CAD解析で測点分割した場合は必ずしも C ではない）
+              const prevPipe = prevCollectorPipeId
+                ? pipes.find((p) => p.id === prevCollectorPipeId)
+                : null
+              const prevEndVertex = prevPipe && prevPipe.vertices.length > 0
+                ? prevPipe.vertices[prevPipe.vertices.length - 1]
+                : null
+              const newStartIdx = prevEndVertex
+                ? findMatchingVertexIndex(collectorPipe, prevEndVertex)
+                : 0
+              const v = collectorPipe.vertices[newStartIdx]
               const newStartName = generatePointName(
                 collectorPipe.number,
-                0,
+                newStartIdx,
                 collectorPipe.vertices.length,
               )
-              // 前の集水管が異なる場合は「prevA newC」形式の名前に
+              // 前の集水管が異なる場合は「prevA newStart」形式の名前に
               let pointName = newStartName
               if (prevCollectorPipeId && prevCollectorPipeId !== wiringRow.collectorPipe) {
-                const prevPipe = pipes.find((p) => p.id === prevCollectorPipeId)
                 if (prevPipe && prevPipe.vertices.length > 0) {
                   const prevEndName = generatePointName(
                     prevPipe.number,
@@ -639,8 +672,18 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                   }
                 }
                 if (!targetVertex) {
-                  targetVertex = collectorPipe.vertices[0]
-                  collectorPointName = generatePointName(collectorPipe.number, 0, collectorPipe.vertices.length)
+                  // 管変更の場合: 前 wiring 行の集水管下流端と一致する頂点を接続点とする
+                  const prevPipe = prevCollectorPipeId
+                    ? pipes.find((p) => p.id === prevCollectorPipeId)
+                    : null
+                  const prevEndVertex = prevPipe && prevPipe.vertices.length > 0
+                    ? prevPipe.vertices[prevPipe.vertices.length - 1]
+                    : null
+                  const idx = prevEndVertex
+                    ? findMatchingVertexIndex(collectorPipe, prevEndVertex)
+                    : 0
+                  targetVertex = collectorPipe.vertices[idx]
+                  collectorPointName = generatePointName(collectorPipe.number, idx, collectorPipe.vertices.length)
                 }
               } else {
                 // outlet / collector_junction / rowType未設定: 集水管の最下流点
