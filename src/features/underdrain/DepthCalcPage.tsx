@@ -185,22 +185,6 @@ export function DepthCalcPage() {
     return row.collectorPoint.plannedHeight > prevRow.collectorPoint.plannedHeight
   }, [])
 
-  // 系統内・吸水行間の逆勾配:
-  // 現在行の吸水上流端(C)が、同一系統の前行の吸水下流端(A)より高い場合 true
-  // （別々の吸水管でも、系統を流れとして追いかけた時に上流→下流で標高が下がっていない状況を検出）
-  const isAbsorptionUpstreamHigherThanPrevDownstream = useCallback(
-    (row: PlanRow, prevRow: PlanRow | null): boolean => {
-      if (!prevRow) return false
-      if (row.systemIndex !== prevRow.systemIndex) return false
-      if (row.absorptionPoints.length === 0 || prevRow.absorptionPoints.length === 0) return false
-      const prevDown = prevRow.absorptionPoints[prevRow.absorptionPoints.length - 1].plannedHeight
-      const currUp = row.absorptionPoints[0].plannedHeight
-      if (prevDown === null || currUp === null) return false
-      return currUp > prevDown
-    },
-    [],
-  )
-
   // 全行の逆勾配エラー件数（ヘッダ表示用）
   const reverseSlopeErrorCount = useMemo(() => {
     let count = 0
@@ -223,7 +207,6 @@ export function DepthCalcPage() {
           }
           if (isCollectorHigherThanAbsorption(r)) count++
           if (isCollectorHigherThanPrev(r, prev)) count++
-          if (isAbsorptionUpstreamHigherThanPrevDownstream(r, prev)) count++
           prev = r
         }
       }
@@ -234,7 +217,6 @@ export function DepthCalcPage() {
     getAbsorptionReverseIndices,
     isCollectorHigherThanAbsorption,
     isCollectorHigherThanPrev,
-    isAbsorptionUpstreamHigherThanPrevDownstream,
   ])
 
   // 集水の区間勾配を計算（現在の行と次の行の集水計画高の差）
@@ -276,7 +258,6 @@ export function DepthCalcPage() {
     const collectorMergeError = isCollectorHigherThanAbsorption(row)
     const collectorPrevError = isCollectorHigherThanPrev(row, prevRow)
     const collectorHasError = collectorMergeError || collectorPrevError
-    const absorptionUpstreamInterRowError = isAbsorptionUpstreamHigherThanPrevDownstream(row, prevRow)
     const collectorPipeNumber = row.collectorPipeId
       ? pipeNumberById.get(row.collectorPipeId) ?? ''
       : ''
@@ -645,21 +626,12 @@ export function DepthCalcPage() {
                   </td>
                   <td className="border-0 bg-transparent"></td>
                   {row.absorptionPoints.map((p, idx) => {
-                    const withinPipeError = absorptionReverseIdxs.has(idx)
-                    // 行間の逆勾配は上流端(index 0)のみ赤表示
-                    const interRowError = idx === 0 && absorptionUpstreamInterRowError
-                    const hasError = withinPipeError || interRowError
+                    const hasError = absorptionReverseIdxs.has(idx)
                     return (
                       <td
                         key={p.id}
                         className={`px-0.5 py-0.5 border ${hasError ? 'bg-red-100' : ''}`}
-                        title={
-                          interRowError
-                            ? '逆勾配（前の行の吸水下流端より計画高が高い）'
-                            : withinPipeError
-                              ? '逆勾配（上流側の計画高が下流側より低い）'
-                              : undefined
-                        }
+                        title={hasError ? '逆勾配（上流側の計画高が下流側より低い）' : undefined}
                       >
                         <HeightInput
                           value={p.plannedHeight}
