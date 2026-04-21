@@ -59,31 +59,26 @@ export function CrossSectionChart({
     setWidthScale(1.0)
   }, [])
 
-  // 合流先系統ID → その系統末端集水管の番号（例: S4）
-  const mergeTargetPipeNumberBySystemIndex = useMemo(() => {
-    const map = new Map<number, string>()
-    if (!allPlanGroups || !pipeNumberById) return map
-    for (const group of allPlanGroups) {
-      // 同グループ内の末端行を探す: 各 systemIndex 最後の mergeSystemIndex=null 行
-      const bySystem = new Map<number, PlanRow[]>()
-      for (const r of group.rows) {
-        if (r.mergeSystemIndex != null) continue
-        const arr = bySystem.get(r.systemIndex) ?? []
-        arr.push(r)
-        bySystem.set(r.systemIndex, arr)
-      }
-      for (const [sysIdx, rs] of bySystem) {
-        for (let i = rs.length - 1; i >= 0; i--) {
-          const r = rs[i]
-          if (r.collectorPipeId) {
-            const num = pipeNumberById.get(r.collectorPipeId)
-            if (num) map.set(sysIdx, num)
-            break
+  // 合流先系統の末端集水管の番号を取得（DepthCalcPage の refEndPipeNumber と同じロジック）
+  // systemIndex はグループごとにローカル連番なので、最初に一致したグループの結果を採用する（first-match-wins）
+  const resolveMergeTargetPipeNumber = useMemo(() => {
+    return (mergeSystemIndex: number): string | null => {
+      if (!allPlanGroups || !pipeNumberById) return null
+      for (const g of allPlanGroups) {
+        const targetRows = g.rows.filter(
+          (r) => r.systemIndex === mergeSystemIndex && r.mergeSystemIndex == null,
+        )
+        if (targetRows.length === 0) continue
+        for (let i = targetRows.length - 1; i >= 0; i--) {
+          const tr = targetRows[i]
+          if (tr.collectorPipeId) {
+            return pipeNumberById.get(tr.collectorPipeId) ?? null
           }
         }
+        return null
       }
+      return null
     }
-    return map
   }, [allPlanGroups, pipeNumberById])
 
   // 集水管の断面を構成
@@ -113,15 +108,22 @@ export function CrossSectionChart({
         ? row.absorptionPoints[row.absorptionPoints.length - 1].plannedHeight
         : null
 
-      // 旗上げ用ラベル:
-      // - 吸水行: 吸水管の番号（row.pipeNumber）
-      // - 合流行（mergeSystemIndex あり）: 合流先系統の末端集水管番号（例: S4）
-      // - 集水のみ行（落口等）: ラベルなし
+      // 旗上げラベル: 施工計画表の左端ヘッダと一致させる
+      // - 合流行（mergeSystemIndex あり）: 合流先系統の末端集水管（例: R2, S19）
+      // - 系統終端のみの行（落口/合流点 = 吸水なし・isSystemEnd）: 旗上げなし
+      //   （表では「落口」「合流点」ラベルが表示されるだけなのでチャートの旗も省略）
+      // - それ以外（吸水行・集水変化点など）: row.pipeNumber をそのまま
       let flagPipeNumber: string | null = null
-      if (row.absorptionPipeId) {
+      if (row.mergeSystemIndex != null) {
+        flagPipeNumber = resolveMergeTargetPipeNumber(row.mergeSystemIndex) ?? row.pipeNumber
+      } else if (
+        row.isSystemEnd &&
+        row.absorptionPoints.length === 0 &&
+        (row.systemEndType === 'outlet' || row.systemEndType === 'merge')
+      ) {
+        flagPipeNumber = null
+      } else {
         flagPipeNumber = row.pipeNumber
-      } else if (row.mergeSystemIndex != null) {
-        flagPipeNumber = mergeTargetPipeNumberBySystemIndex.get(row.mergeSystemIndex) ?? null
       }
 
       // 集水帯用: 集水管番号
@@ -143,7 +145,7 @@ export function CrossSectionChart({
     }
 
     return points
-  }, [systemRows, mergeTargetPipeNumberBySystemIndex, pipeNumberById])
+  }, [systemRows, resolveMergeTargetPipeNumber, pipeNumberById])
 
   // 旗上げ設定
   const FLAG_ROW_HEIGHT = 24
