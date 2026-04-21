@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { PenTool, Download, FileText } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { PenTool, Download, FileText, Loader2 } from 'lucide-react'
 import { useFarmStore } from '@/stores/farmStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useConstructionPlanStore, type PlanGroup } from '@/stores/constructionPlanStore'
@@ -247,14 +247,21 @@ function calcTextAngle(dx: number, dy: number): number {
 
 export function CadExportPage() {
   const { currentFarm } = useFarmStore()
-  const { pipes } = useUnderdrainStore()
-  const { planGroups, hasData } = useConstructionPlanStore()
+  const { pipes, fetchPipes } = useUnderdrainStore()
+  const { planGroups, hasData, fetchPlan, loading: planLoading } = useConstructionPlanStore()
 
   const [level, setLevel] = useState<DrawingLevel>(DEFAULT_LEVEL)
   const [moji, setMoji] = useState<number>(2.0)
   const [absStdDepth, setAbsStdDepth] = useState<number>(0.8)
   const [colStdDepth, setColStdDepth] = useState<number>(0.9)
   const [preview, setPreview] = useState<string>('')
+
+  // 現在の圃場で施工計画と管路データをロード（他ページから来た場合は既にあるが、直接訪問にも対応）
+  useEffect(() => {
+    if (!currentFarm) return
+    fetchPipes(currentFarm.id)
+    fetchPlan(currentFarm.id)
+  }, [currentFarm, fetchPipes, fetchPlan])
 
   // 管路 ID → 頂点配列のルックアップ
   const pipeVerticesById = useMemo(() => {
@@ -411,14 +418,25 @@ export function CadExportPage() {
         {/* 操作 */}
         <section className="bg-white border rounded-lg p-4">
           <h2 className="text-sm font-bold mb-3">操作</h2>
-          <div className="text-xs text-slate-600 mb-3">
-            施工計画データ: {hasData ? `${previewLineCount} 文字要素` : 'なし'}
+          <div className="text-xs text-slate-600 mb-3 flex items-center gap-2">
+            {planLoading ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" />
+                施工計画を読み込み中...
+              </>
+            ) : hasData ? (
+              <span>施工計画データ: {previewLineCount} 文字要素</span>
+            ) : (
+              <span className="text-red-600">
+                施工計画データがありません。先に「施工計画」ページで『配管系統から系統読込』してください。
+              </span>
+            )}
           </div>
           <div className="flex gap-2">
             <button
               type="button"
               onClick={handlePreview}
-              disabled={!hasData}
+              disabled={!hasData || planLoading}
               className="flex items-center gap-2 px-4 py-2 bg-slate-600 text-white rounded hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
             >
               <FileText className="h-4 w-4" />
@@ -427,7 +445,7 @@ export function CadExportPage() {
             <button
               type="button"
               onClick={handleDownload}
-              disabled={!hasData}
+              disabled={!hasData || planLoading}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
             >
               <Download className="h-4 w-4" />
