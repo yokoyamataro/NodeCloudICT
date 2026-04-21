@@ -33,6 +33,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
+import { setDisplayModeOverride } from '@/lib/displayMode'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
@@ -276,7 +277,10 @@ export function AppLayout() {
             {/* スマホ画面へ切替 */}
             <button
               type="button"
-              onClick={() => navigate('/mobile')}
+              onClick={() => {
+                setDisplayModeOverride('mobile')
+                navigate('/mobile')
+              }}
               className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
               title="スマホ画面へ切替"
             >

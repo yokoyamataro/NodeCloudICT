@@ -1,4 +1,6 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { useEffect } from 'react'
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { getDisplayModeOverride, isMobileDevice } from '@/lib/displayMode'
 import { AuthProvider, useAuth } from '@/contexts/AuthContext'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { LoginPage } from '@/features/auth/LoginPage'
@@ -41,6 +43,36 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   }
 
   return <>{children}</>
+}
+
+// モバイル端末を自動判定して /mobile へリダイレクト
+// ユーザーがトグルボタンで選択した場合（localStorage の override）はそれを尊重
+function MobileAutoRedirect() {
+  const location = useLocation()
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    const path = location.pathname
+    if (
+      path === '/login' ||
+      path === '/site-map' ||
+      path.startsWith('/mobile')
+    ) {
+      return
+    }
+
+    const override = getDisplayModeOverride()
+    if (override === 'pc') return
+    if (override === 'mobile') {
+      navigate('/mobile', { replace: true })
+      return
+    }
+    if (isMobileDevice()) {
+      navigate('/mobile', { replace: true })
+    }
+  }, [location.pathname, navigate])
+
+  return null
 }
 
 function AppRoutes() {
@@ -127,6 +159,7 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <MobileAutoRedirect />
         <AppRoutes />
       </AuthProvider>
     </BrowserRouter>

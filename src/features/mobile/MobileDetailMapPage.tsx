@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Loader2, ArrowLeft, Layers } from 'lucide-react'
+import { Loader2, ArrowLeft, Layers, Crosshair } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
@@ -155,6 +155,19 @@ export function MobileDetailMapPage() {
         </button>
         <span className="font-medium truncate flex-1">{title}</span>
         <button
+          onClick={() =>
+            setLayers((prev) => ({ ...prev, currentLocation: !prev.currentLocation }))
+          }
+          className={`flex items-center gap-1 px-2 py-1 text-xs rounded border ${
+            layers.currentLocation
+              ? 'bg-blue-600 border-blue-400'
+              : 'bg-slate-700 border-slate-500 hover:bg-slate-600'
+          }`}
+          title="現在位置の表示を切替"
+        >
+          <Crosshair className="h-3.5 w-3.5" />
+        </button>
+        <button
           onClick={() => setShowLayerPanel((s) => !s)}
           className={`flex items-center gap-1 px-2 py-1 text-xs rounded border ${
             showLayerPanel
@@ -194,7 +207,6 @@ export function MobileDetailMapPage() {
               <LayerCheckbox label="管の測点 (C/B/A)" checked={layers.pipeMeasurementPoints} onChange={() => toggleLayer('pipeMeasurementPoints')} color="#3b82f6" />
               <LayerCheckbox label="測点（測量）" checked={layers.surveyPoints} onChange={() => toggleLayer('surveyPoints')} color="#0ea5e9" />
               <LayerCheckbox label="経路" checked={layers.route} onChange={() => toggleLayer('route')} color="#2563eb" />
-              <LayerCheckbox label="現在位置" checked={layers.currentLocation} onChange={() => toggleLayer('currentLocation')} color="#2563eb" />
             </div>
           </div>
         )}

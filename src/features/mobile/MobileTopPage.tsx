@@ -1,12 +1,13 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Loader2, Monitor, LogOut } from 'lucide-react'
+import { Loader2, Monitor, LogOut, Map as MapIcon, Navigation, X } from 'lucide-react'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useAuth } from '@/contexts/AuthContext'
 import { CurrentLocationLayer } from '@/components/map/CurrentLocationLayer'
+import { setDisplayModeOverride } from '@/lib/displayMode'
 
 const WORK_TYPE_COLORS: Record<string, string> = {
   underdrain: '#3b82f6',
@@ -53,6 +54,10 @@ export function MobileTopPage() {
     workAreaPolygons,
     fetchWorkAreaPolygons,
   } = useFarmStore()
+
+  // 圃場クリック時のアクション選択ダイアログ
+  const [actionFarm, setActionFarm] = useState<Farm | null>(null)
+
   useEffect(() => {
     fetchFarms()
   }, [fetchFarms])
@@ -77,8 +82,26 @@ export function MobileTopPage() {
     return { lat: avgLat, lng: avgLng }
   }, [farmLocations])
 
-  const handleOpenFarm = (farm: Farm) => {
+  const handleFarmClick = (farm: Farm) => {
+    setActionFarm(farm)
+  }
+
+  const handleOpenMap = (farm: Farm) => {
+    setActionFarm(null)
     navigate(`/mobile/map?farmId=${farm.id}`)
+  }
+
+  const handleOpenDirections = (farm: Farm) => {
+    const loc = farmLocations.get(farm.id)
+    if (!loc) return
+    setActionFarm(null)
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${loc.lat},${loc.lng}`
+    window.open(url, '_blank')
+  }
+
+  const handleGoPC = () => {
+    setDisplayModeOverride('pc')
+    navigate('/')
   }
 
   const handleSignOut = async () => {
@@ -102,7 +125,7 @@ export function MobileTopPage() {
         <span className="font-medium">圃場一覧（スマホ）</span>
         <div className="ml-auto flex items-center gap-2">
           <button
-            onClick={() => navigate('/')}
+            onClick={handleGoPC}
             className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-500 hover:bg-slate-700"
             title="PC表示へ切替"
           >
@@ -159,7 +182,7 @@ export function MobileTopPage() {
                   key={farm.id}
                   position={[location.lat, location.lng]}
                   icon={createMarkerIcon()}
-                  eventHandlers={{ click: () => handleOpenFarm(farm) }}
+                  eventHandlers={{ click: () => handleFarmClick(farm) }}
                 >
                   <Tooltip permanent direction="top" offset={[0, -16]}>
                     {farm.name}
@@ -170,6 +193,54 @@ export function MobileTopPage() {
           </MapContainer>
         )}
       </div>
+
+      {/* 圃場アクション選択 */}
+      {actionFarm && (
+        <div
+          className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-[2000]"
+          onClick={() => setActionFarm(null)}
+        >
+          <div
+            className="bg-white w-full sm:max-w-sm rounded-t-xl sm:rounded-xl shadow-xl p-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <div className="text-xs text-slate-500">圃場</div>
+                <div className="text-base font-bold">{actionFarm.name}</div>
+              </div>
+              <button
+                onClick={() => setActionFarm(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-2">
+              <button
+                onClick={() => handleOpenMap(actionFarm)}
+                className="w-full flex items-center gap-3 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
+              >
+                <MapIcon className="h-5 w-5" />
+                地図を見る
+              </button>
+              <button
+                onClick={() => handleOpenDirections(actionFarm)}
+                className="w-full flex items-center gap-3 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium"
+              >
+                <Navigation className="h-5 w-5" />
+                道案内（Google マップ）
+              </button>
+              <button
+                onClick={() => setActionFarm(null)}
+                className="w-full px-4 py-2.5 border rounded-lg hover:bg-slate-50 text-sm"
+              >
+                キャンセル
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

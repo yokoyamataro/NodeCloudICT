@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Loader2, Layers } from 'lucide-react'
+import { Loader2, Layers, Crosshair } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
@@ -147,6 +147,20 @@ export function SiteMapWindowPage() {
 
         <div className="ml-auto flex items-center gap-3">
           <button
+            onClick={() =>
+              setLayers((prev) => ({ ...prev, currentLocation: !prev.currentLocation }))
+            }
+            className={`flex items-center gap-1 px-2 py-1 text-xs rounded border ${
+              layers.currentLocation
+                ? 'bg-blue-100 border-blue-400 text-blue-800 font-medium'
+                : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
+            }`}
+            title="現在位置の表示を切替"
+          >
+            <Crosshair className="h-3 w-3" />
+            現在地
+          </button>
+          <button
             onClick={() => setShowLayerPanel((s) => !s)}
             className={`flex items-center gap-1 px-2 py-1 text-xs rounded border ${
               showLayerPanel
@@ -224,12 +238,6 @@ export function SiteMapWindowPage() {
                 label="経路"
                 checked={layers.route}
                 onChange={() => toggleLayer('route')}
-                color="#2563eb"
-              />
-              <LayerCheckbox
-                label="現在位置"
-                checked={layers.currentLocation}
-                onChange={() => toggleLayer('currentLocation')}
                 color="#2563eb"
               />
             </div>

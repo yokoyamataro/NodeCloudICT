@@ -746,8 +746,14 @@ export function CrossSectionChart({
             const bandTop = chartHeight - padding.bottom + 40
             const bandHeight = 22
             return bands.map((b, idx) => {
+              // 帯の右端は次の変化点（次のバンドの開始位置）まで伸ばす。
+              // 最後のバンドは自身の末端まで。
+              const nextBand = idx + 1 < bands.length ? bands[idx + 1] : null
+              const endDistance = nextBand
+                ? sectionData[nextBand.startIdx].distance
+                : sectionData[b.endIdx].distance
               const x1 = xScale(sectionData[b.startIdx].distance)
-              const x2 = xScale(sectionData[b.endIdx].distance)
+              const x2 = xScale(endDistance)
               const width = Math.max(x2 - x1, 2)
               const cx = (x1 + x2) / 2
               return (
