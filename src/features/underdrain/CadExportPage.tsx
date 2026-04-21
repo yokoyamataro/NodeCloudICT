@@ -1,34 +1,31 @@
 import { useEffect, useMemo, useState } from 'react'
 import { PenTool, Download, FileText, Loader2 } from 'lucide-react'
+import Encoding from 'encoding-japanese'
 import { useFarmStore } from '@/stores/farmStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useConstructionPlanStore, type PlanGroup } from '@/stores/constructionPlanStore'
 
-// 図面レベル（用紙系）設定
+// 図面レベル（座標変換用パラメータ）
 interface DrawingLevel {
-  levelNumber: number
   originX: number
   originY: number
   scaleV: number // 縦縮尺（例: 1000 = 1/1000）
   scaleH: number // 横縮尺（例: 1000 = 1/1000）
   rotation: number // 回転角（ラジアン）
-  levelName: string
 }
 
 const DEFAULT_LEVEL: DrawingLevel = {
-  levelNumber: 117,
   originX: 0,
   originY: 0,
   scaleV: 1000,
   scaleH: 1000,
   rotation: 0,
-  levelName: '用紙系',
 }
 
-// 実座標 (x, y) を図面レベルに基づく用紙座標へ変換
+// 実座標 (x, y) を用紙座標へ変換
 // 1. 原点シフト
-// 2. -回転角 で回転
-// 3. 縮尺で縮小（paper_x = real_dx / scaleH, paper_y = real_dy / scaleV）
+// 2. -回転角 で回転（XY 座標系 → 用紙座標系）
+// 3. 縮尺で除算（paper = (real - origin) / scale）
 function toPaperCoords(
   x: number,
   y: number,
@@ -45,8 +42,8 @@ function toPaperCoords(
   return { px, py }
 }
 
-// 文字エレメント行を生成
-// NORDIC SYSTEM ASCII フォーマット想定: W,<layer>,<color>,<pointType>,<x>,<y>,<angle>,<size>,<text>
+// 文字要素行（TrendOne アスキー形式）を生成
+// `5,<layer>,100,<color>,0,1,0,<pointType>,0,0,0,0,<x>,<y>,<angle>,<size>,2,0,10,0,5,0,0,0,0,0,1,0.000000,0.000000,ＭＳ ゴシック,<text>`
 function buildTextElement(
   layer: number,
   color: number,
@@ -60,12 +57,12 @@ function buildTextElement(
   const fx = x.toFixed(6)
   const fy = y.toFixed(6)
   const fa = angle.toFixed(6)
-  const fs = size.toFixed(3)
-  return `W,${layer},${color},${pointType},${fx},${fy},${fa},${fs},${text}`
+  const fs = size.toFixed(6)
+  return `5,${layer},100,${color},0,1,0,${pointType},0,0,0,0,${fx},${fy},${fa},${fs},2,0,10,0,5,0,0,0,0,0,1,0.000000,0.000000,ＭＳ ゴシック,${text}`
 }
 
-// 旧マクロ同様のヘッダを生成
-function buildHeader(level: DrawingLevel): string[] {
+// 旧マクロ同様のヘッダを生成（Level 行は固定値）
+function buildHeader(): string[] {
   return [
     '0,NORDIC SYSTEM,VERSION=3.00,BUILDNO=3014',
     'L , 1',
@@ -84,7 +81,7 @@ function buildHeader(level: DrawingLevel): string[] {
     '2058,集水切深',
     '2059,集水勾配',
     'Z , Level',
-    `${level.levelNumber},${level.originX.toFixed(6)},${level.originY.toFixed(6)},${level.scaleV},${level.scaleH},${level.rotation.toFixed(4)},0,${level.levelName}`,
+    '100,0.000000,0.000000,1,1,6.0,0,用紙系',
     'Z , LineType',
     'Z , ELEMENT',
   ]
@@ -95,7 +92,7 @@ function formatHeight(v: number | null | undefined): string {
   return v.toFixed(2)
 }
 
-// 施工計画から文字エレメント行を生成
+// 施工計画から文字要素行を生成
 function buildTextLines(
   planGroups: PlanGroup[],
   pipeVerticesById: Map<string, { x: number; y: number }[]>,
@@ -118,9 +115,7 @@ function buildTextLines(
         const v = absVerts?.[i]
         if (!v) continue
         const prevV = i > 0 ? absVerts?.[i - 1] : null
-        // 用紙座標
         const { px: x1, py: y1 } = toPaperCoords(v.x, v.y, level)
-        // 区間角度
         let segAngle = 0
         let midX = x1
         let midY = y1
@@ -138,9 +133,9 @@ function buildTextLines(
         const ch = formatHeight(p.cutDepth)
         const sl = p.segmentSlope
 
-        // 点名
         let cx = x1
         let cy = y1 + moji
+        // 点名
         lines.push(buildTextElement(2050, 0, 'P0', cx, cy, HALF_PI, moji, p.pointName))
         cy += moji
         // 地盤高
@@ -168,10 +163,7 @@ function buildTextLines(
       // 集水管の測点
       if (row.collectorPoint && row.collectorPipeId) {
         const cp = row.collectorPoint
-        // 集水管の場合、vertex 情報は (x, y) が cp.x, cp.y で取得可能
-        // 次の集水点（同一系統内次行）との角度で勾配を配置
         const { px: x1, py: y1 } = toPaperCoords(cp.x, cp.y, level)
-        // 次の行の collectorPoint を探す（同じ group 内で次行）
         const idx = group.rows.indexOf(row)
         const nextRow = idx >= 0 && idx + 1 < group.rows.length ? group.rows[idx + 1] : null
         let segAngle = 0
@@ -190,7 +182,6 @@ function buildTextLines(
         const fh = formatHeight(cp.plannedHeight)
         const ch = formatHeight(cp.cutDepth)
         const sl = (() => {
-          // 集水の勾配は「このpoint→next point」で計算
           if (!nextRow?.collectorPoint) return null
           const a = cp.plannedHeight
           const b = nextRow.collectorPoint.plannedHeight
@@ -245,6 +236,16 @@ function calcTextAngle(dx: number, dy: number): number {
   return a
 }
 
+// 文字列を Shift-JIS の Uint8Array に変換
+function toShiftJIS(text: string): Uint8Array {
+  const unicodeArray = Encoding.stringToCode(text)
+  const sjisArray = Encoding.convert(unicodeArray, {
+    to: 'SJIS',
+    from: 'UNICODE',
+  })
+  return new Uint8Array(sjisArray)
+}
+
 export function CadExportPage() {
   const { currentFarm } = useFarmStore()
   const { pipes, fetchPipes } = useUnderdrainStore()
@@ -256,21 +257,18 @@ export function CadExportPage() {
   const [colStdDepth, setColStdDepth] = useState<number>(0.9)
   const [preview, setPreview] = useState<string>('')
 
-  // 現在の圃場で施工計画と管路データをロード（他ページから来た場合は既にあるが、直接訪問にも対応）
   useEffect(() => {
     if (!currentFarm) return
     fetchPipes(currentFarm.id)
     fetchPlan(currentFarm.id)
   }, [currentFarm, fetchPipes, fetchPlan])
 
-  // 管路 ID → 頂点配列のルックアップ
   const pipeVerticesById = useMemo(() => {
     const m = new Map<string, { x: number; y: number }[]>()
     for (const p of pipes) m.set(p.id, p.vertices.map(v => ({ x: v.x, y: v.y })))
     return m
   }, [pipes])
 
-  // 出力行数の予測（プレビュー用）
   const previewLineCount = useMemo(() => {
     if (!hasData) return 0
     let n = 0
@@ -285,10 +283,10 @@ export function CadExportPage() {
 
   const generateOutput = (): string => {
     const lines = [
-      ...buildHeader(level),
+      ...buildHeader(),
       ...buildTextLines(planGroups, pipeVerticesById, level, moji, absStdDepth, colStdDepth),
     ]
-    return lines.join('\r\n')
+    return lines.join('\r\n') + '\r\n'
   }
 
   const handlePreview = () => {
@@ -305,8 +303,10 @@ export function CadExportPage() {
       return
     }
     const text = generateOutput()
-    // Shift-JIS が欲しいとこだが JS 標準では UTF-8 のみ。必要なら外部で変換。
-    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+    const sjis = toShiftJIS(text)
+    // Uint8Array<ArrayBufferLike> → ArrayBuffer 互換にするため buffer をコピー
+    const buf = sjis.slice().buffer
+    const blob = new Blob([buf], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -325,7 +325,7 @@ export function CadExportPage() {
           CAD転記
         </h1>
         <p className="text-sm text-muted-foreground">
-          施工計画から TrendOne アスキー形式の文字データを出力します
+          施工計画から TrendOne アスキー形式（Shift-JIS）の文字データを出力します
         </p>
       </div>
 
@@ -334,29 +334,18 @@ export function CadExportPage() {
         <section className="bg-white border rounded-lg p-4">
           <h2 className="text-sm font-bold mb-3 flex items-center gap-2">
             <FileText className="h-4 w-4 text-blue-600" />
-            図面レベル
+            図面レベル（座標変換用）
           </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-sm">
             <LabeledInput
-              label="レベル番号"
-              value={level.levelNumber}
-              onChange={(v) => setLevel({ ...level, levelNumber: parseInt(v) || 0 })}
-              type="number"
-            />
-            <LabeledInput
-              label="レベル名"
-              value={level.levelName}
-              onChange={(v) => setLevel({ ...level, levelName: v })}
-            />
-            <LabeledInput
-              label="原点X (m)"
+              label="原点X"
               value={level.originX}
               onChange={(v) => setLevel({ ...level, originX: parseFloat(v) || 0 })}
               type="number"
               step="0.001"
             />
             <LabeledInput
-              label="原点Y (m)"
+              label="原点Y"
               value={level.originY}
               onChange={(v) => setLevel({ ...level, originY: parseFloat(v) || 0 })}
               type="number"
@@ -382,6 +371,9 @@ export function CadExportPage() {
               step="0.0001"
             />
           </div>
+          <p className="mt-2 text-xs text-slate-500">
+            これらは座標変換のみに使用します。出力ファイルのレベル行は固定（100,...,用紙系）。
+          </p>
         </section>
 
         {/* 出力設定 */}
@@ -449,12 +441,11 @@ export function CadExportPage() {
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
             >
               <Download className="h-4 w-4" />
-              TrendOne アスキー出力
+              TrendOne アスキー出力（Shift-JIS）
             </button>
           </div>
         </section>
 
-        {/* プレビュー */}
         {preview && (
           <section className="bg-white border rounded-lg p-4">
             <h2 className="text-sm font-bold mb-3">プレビュー</h2>
@@ -468,7 +459,6 @@ export function CadExportPage() {
   )
 }
 
-// ラベル + 入力
 function LabeledInput({
   label,
   value,
@@ -495,4 +485,3 @@ function LabeledInput({
     </label>
   )
 }
-
