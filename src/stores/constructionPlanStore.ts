@@ -1073,7 +1073,8 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
             nearest = s
           }
         }
-        return nearest?.z ?? null
+        // 地盤高は小数点2桁に丸めて適用
+        return nearest ? Math.round(nearest.z * 100) / 100 : null
       }
 
       const newGroups = get().planGroups.map((group) => ({
