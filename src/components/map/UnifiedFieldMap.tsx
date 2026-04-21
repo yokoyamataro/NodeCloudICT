@@ -18,6 +18,7 @@ import { useSurveyStore } from '@/stores/surveyStore'
 import { useMapViewStore } from '@/stores/mapViewStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { WORK_TYPE_NAMES, type WorkType } from '@/types/database'
+import { CurrentLocationLayer } from './CurrentLocationLayer'
 
 export type BaseLayerType = 'osm' | 'gsi-photo' | 'gsi-std'
 
@@ -25,9 +26,11 @@ export interface LayerVisibility {
   coordinatePoints: boolean
   pipes: boolean
   pipeNumbers: boolean
+  pipeMeasurementPoints: boolean
   surveyPoints: boolean
   workAreas: boolean
   route: boolean
+  currentLocation: boolean
 }
 
 interface UnifiedFieldMapProps {
@@ -156,6 +159,7 @@ function MapViewPersist() {
   return null
 }
 
+
 export function UnifiedFieldMap({ baseLayer = 'osm', layers }: UnifiedFieldMapProps) {
   const { coordinates, zone, route } = useCoordinateStore()
   const { pipes } = useUnderdrainStore()
@@ -187,6 +191,44 @@ export function UnifiedFieldMap({ baseLayer = 'osm', layers }: UnifiedFieldMapPr
         }
       })
       .filter((p): p is NonNullable<typeof p> => p !== null)
+  }, [pipes, converter])
+
+  // 管路の測点（座標計算の C / B / A）
+  // C=最上流、A=最下流、B1,B2...=中間点（下流から順）
+  const pipeMeasurementPoints = useMemo(() => {
+    type MP = { id: string; name: string; ll: [number, number]; color: string }
+    const out: MP[] = []
+    for (const pipe of pipes) {
+      if (pipe.vertices.length < 1) continue
+      const color = PIPE_COLORS[pipe.pipeType || 'default'] ?? PIPE_COLORS.default
+      const vs = pipe.vertices
+      // 最上流
+      const upLL = vertexToLatLng(vs[0], converter)
+      if (upLL) out.push({ id: `${pipe.id}-C`, name: `${pipe.number}C`, ll: upLL, color })
+      // 中間点
+      if (vs.length > 2) {
+        const middleCount = vs.length - 2
+        for (let i = 0; i < middleCount; i++) {
+          const vertexIndex = vs.length - 2 - i
+          const middleIndex = i + 1
+          const ll = vertexToLatLng(vs[vertexIndex], converter)
+          if (ll) {
+            out.push({
+              id: `${pipe.id}-B${middleIndex}`,
+              name: `${pipe.number}B${middleIndex}`,
+              ll,
+              color,
+            })
+          }
+        }
+      }
+      // 最下流
+      if (vs.length >= 2) {
+        const downLL = vertexToLatLng(vs[vs.length - 1], converter)
+        if (downLL) out.push({ id: `${pipe.id}-A`, name: `${pipe.number}A`, ll: downLL, color })
+      }
+    }
+    return out
   }, [pipes, converter])
 
   // 測量点（z を持つもののみ点として表示）
@@ -318,6 +360,20 @@ export function UnifiedFieldMap({ baseLayer = 'osm', layers }: UnifiedFieldMapPr
           )
         })}
 
+      {/* 配管の測点（座標計算の C / B / A） */}
+      {layers.pipeMeasurementPoints &&
+        pipeMeasurementPoints.map((mp) => (
+          <Marker
+            key={`mp-${mp.id}`}
+            position={mp.ll}
+            icon={createColoredDotIcon(mp.color, 8)}
+          >
+            <Tooltip direction="top" offset={[0, -6]}>
+              {mp.name}
+            </Tooltip>
+          </Marker>
+        ))}
+
       {/* 測量点（測点） */}
       {layers.surveyPoints &&
         surveyMarkers.map((s) => (
@@ -411,6 +467,9 @@ export function UnifiedFieldMap({ baseLayer = 'osm', layers }: UnifiedFieldMapPr
             <Tooltip>{coord.pointNumber}</Tooltip>
           </Marker>
         ))}
+
+      {/* 現在位置（Geolocation） */}
+      {layers.currentLocation && <CurrentLocationLayer />}
     </MapContainer>
   )
 }

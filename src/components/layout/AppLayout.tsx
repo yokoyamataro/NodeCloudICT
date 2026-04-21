@@ -254,22 +254,24 @@ export function AppLayout() {
             <h1 className="text-xl font-bold">NodeCloud</h1>
             <span className="text-sm text-slate-400">農業土木ICT設計システム</span>
             <span className="text-xs text-slate-500">{__BUILD_TIME__}</span>
+            {/* 工事名／圃場番号 */}
+            {(currentProject || currentFarm) && (
+              <span className="text-sm flex items-center">
+                {currentProject && (
+                  <span className="text-slate-200 font-medium">{currentProject.name}</span>
+                )}
+                {currentFarm && (
+                  <>
+                    <span className="text-slate-500 mx-1">／</span>
+                    <span className="text-slate-200 font-medium">{currentFarm.name}</span>
+                  </>
+                )}
+              </span>
+            )}
           </div>
 
           {/* 右側：ログイン情報 */}
           <div className="flex items-center gap-4">
-            {/* 作業中のプロジェクト・圃場 */}
-            {(currentProject || currentFarm) && (
-              <div className="text-xs">
-                {currentProject && (
-                  <span className="text-slate-300">{currentProject.name}</span>
-                )}
-                {currentFarm && (
-                  <span className="text-slate-400"> / {currentFarm.name}</span>
-                )}
-              </div>
-            )}
-
             {/* 現場の地図を別ウィンドウで全画面表示 */}
             {currentFarm && (
               <button

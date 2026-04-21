@@ -15,6 +15,7 @@ import {
   Users,
   UserPlus,
   UserMinus,
+  Crosshair,
 } from 'lucide-react'
 import { MapContainer, TileLayer, Marker, Popup, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
@@ -22,6 +23,7 @@ import 'leaflet/dist/leaflet.css'
 import { useFarmStore, type Farm, type FarmLocation } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { JGD2011_ZONES } from '@/lib/coordinates'
+import { CurrentLocationLayer } from '@/components/map/CurrentLocationLayer'
 import type { Project, ProjectMemberRole } from '@/types/database'
 
 // 工種ごとのポリゴン色
@@ -122,6 +124,9 @@ export function ProjectListPage() {
 
   // 工種フィルター（表示する工種のSet）
   const [visibleWorkTypes, setVisibleWorkTypes] = useState<Set<string>>(new Set(ALL_WORK_TYPES))
+
+  // 現在地表示トグル
+  const [showCurrentLocation, setShowCurrentLocation] = useState(false)
   const [showNewFarmDialog, setShowNewFarmDialog] = useState<string | null>(null) // project_id
   const [newProjectName, setNewProjectName] = useState('')
   const [newProjectDescription, setNewProjectDescription] = useState('')
@@ -596,6 +601,19 @@ export function ProjectListPage() {
                 <span className="font-medium">{WORK_TYPE_NAMES[workType]}</span>
               </label>
             ))}
+            <button
+              type="button"
+              onClick={() => setShowCurrentLocation((s) => !s)}
+              className={`ml-auto flex items-center gap-1 px-2 py-1 text-sm rounded border ${
+                showCurrentLocation
+                  ? 'bg-blue-100 border-blue-400 text-blue-800 font-medium'
+                  : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
+              }`}
+              title="現在位置の表示を切替"
+            >
+              <Crosshair className="h-4 w-4" />
+              現在地
+            </button>
           </div>
 
           {farmLocations.size === 0 ? (
@@ -620,6 +638,7 @@ export function ProjectListPage() {
               {selectedFarm && selectedFarmLocation && (
                 <FocusOnFarm location={selectedFarmLocation} />
               )}
+              {showCurrentLocation && <CurrentLocationLayer />}
               {/* 工事区域ポリゴン（フィルタリング済み） */}
               {filteredPolygons.map((polygon) => (
                 <Polygon

@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from '@/contexts/AuthContext'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { LoginPage } from '@/features/auth/LoginPage'
@@ -19,15 +19,7 @@ import { SimpleGradingWorkAreaPage } from '@/features/simple-grading/SimpleGradi
 import { GradingWorkAreaPage } from '@/features/grading/GradingWorkAreaPage'
 import { SubsoilWorkAreaPage } from '@/features/subsoil/SubsoilWorkAreaPage'
 import { StoneRemovalWorkAreaPage } from '@/features/stone-removal/StoneRemovalWorkAreaPage'
-// モバイル
-import { MobileFarmMapPage } from '@/features/mobile/MobileProjectMapPage'
 import { Loader2 } from 'lucide-react'
-
-// スマホ判定
-const isMobile = (): boolean => {
-  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-    window.innerWidth <= 768
-}
 
 // 認証が必要なルートのラッパー
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -48,32 +40,10 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
-// トップページでスマホならモバイルページにリダイレクト
-function MobileRedirectWrapper({ children }: { children: React.ReactNode }) {
-  const location = useLocation()
-
-  // トップページ（/）かつスマホの場合はモバイルページにリダイレクト
-  if (location.pathname === '/' && isMobile()) {
-    return <Navigate to="/mobile/map" replace />
-  }
-
-  return <>{children}</>
-}
-
 function AppRoutes() {
   return (
-    <MobileRedirectWrapper>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        {/* モバイル用現場マップ */}
-        <Route
-          path="/mobile/map"
-          element={
-            <ProtectedRoute>
-              <MobileFarmMapPage />
-            </ProtectedRoute>
-          }
-        />
         {/* 別ウィンドウ: 現場地図のみ全画面表示（AppLayout を介さない） */}
         <Route
           path="/site-map"
@@ -130,7 +100,6 @@ function AppRoutes() {
         <Route path="settings" element={<PlaceholderPage title="設定" />} />
         </Route>
       </Routes>
-    </MobileRedirectWrapper>
   )
 }
 

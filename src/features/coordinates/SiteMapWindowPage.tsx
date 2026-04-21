@@ -33,9 +33,11 @@ export function SiteMapWindowPage() {
     coordinatePoints: true,
     pipes: true,
     pipeNumbers: true,
+    pipeMeasurementPoints: false,
     surveyPoints: true,
     workAreas: true,
     route: true,
+    currentLocation: false,
   })
   const [showLayerPanel, setShowLayerPanel] = useState(true)
 
@@ -202,6 +204,12 @@ export function SiteMapWindowPage() {
                 />
               </div>
               <LayerCheckbox
+                label="管の測点 (C/B/A)"
+                checked={layers.pipeMeasurementPoints}
+                onChange={() => toggleLayer('pipeMeasurementPoints')}
+                color="#3b82f6"
+              />
+              <LayerCheckbox
                 label="測点（測量）"
                 checked={layers.surveyPoints}
                 onChange={() => toggleLayer('surveyPoints')}
@@ -211,6 +219,12 @@ export function SiteMapWindowPage() {
                 label="経路"
                 checked={layers.route}
                 onChange={() => toggleLayer('route')}
+                color="#2563eb"
+              />
+              <LayerCheckbox
+                label="現在位置"
+                checked={layers.currentLocation}
+                onChange={() => toggleLayer('currentLocation')}
                 color="#2563eb"
               />
             </div>
