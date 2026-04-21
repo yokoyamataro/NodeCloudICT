@@ -8,6 +8,7 @@ import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useSurveyStore } from '@/stores/surveyStore'
+import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import { UnifiedFieldMap, type BaseLayerType, type LayerVisibility } from '@/components/map/UnifiedFieldMap'
 import type { Project } from '@/types/database'
 
@@ -21,6 +22,7 @@ export function MobileDetailMapPage() {
   const { fetchPipes } = useUnderdrainStore()
   const { fetchWorkAreas } = useWorkAreaStore()
   const { fetchSurveyData } = useSurveyStore()
+  const { fetchPlan } = useConstructionPlanStore()
 
   const [farm, setFarm] = useState<Farm | null>(null)
   const [project, setProject] = useState<Project | null>(null)
@@ -82,6 +84,7 @@ export function MobileDetailMapPage() {
           fetchPipes(typedFarm.id),
           fetchWorkAreas(typedFarm.id),
           fetchSurveyData(typedFarm.id),
+          fetchPlan(typedFarm.id),
         ])
       } catch (err) {
         if (!cancelled) {
@@ -104,6 +107,7 @@ export function MobileDetailMapPage() {
     fetchPipes,
     fetchWorkAreas,
     fetchSurveyData,
+    fetchPlan,
   ])
 
   const title = useMemo(() => {

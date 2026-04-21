@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   MapContainer,
   TileLayer,
@@ -16,6 +16,7 @@ import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
 import { useWorkAreaStore, type WorkAreaPoint, type WorkAreaRow } from '@/stores/workAreaStore'
 import { useSurveyStore } from '@/stores/surveyStore'
 import { useMapViewStore } from '@/stores/mapViewStore'
+import { useConstructionPlanStore, type PlanPoint } from '@/stores/constructionPlanStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { WORK_TYPE_NAMES, type WorkType } from '@/types/database'
 import { CurrentLocationLayer } from './CurrentLocationLayer'
@@ -114,17 +115,60 @@ function createLabelIcon(label: string, color: string): L.DivIcon {
   })
 }
 
-function createSmallLabelIcon(label: string, color: string): L.DivIcon {
+// 選択配管用: 各頂点の詳細情報アイコン（測点/地盤高/計画高/切深）
+function createVertexInfoIcon(content: {
+  name: string
+  groundHeight: number | null
+  plannedHeight: number | null
+  cutDepth: number | null
+}): L.DivIcon {
+  const fmt = (v: number | null): string => (v === null || v === undefined ? '-' : v.toFixed(3))
   return L.divIcon({
-    className: 'unified-map-mp-label',
+    className: 'pipe-point-info',
     html: `<div style="
-      color: ${color};
-      font-weight: 600;
+      background: rgba(255,255,255,0.92);
+      border: 1px solid #1d4ed8;
+      border-radius: 4px;
+      padding: 2px 4px;
       font-size: 10px;
-      text-shadow: 0 0 2px white, 0 0 2px white, 0 0 2px white;
       white-space: nowrap;
-      transform: translate(6px, -14px);
-    ">${label}</div>`,
+      line-height: 1.25;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+      transform: translate(8px, -18px);
+    ">
+      <div style="font-weight:700;color:#1d4ed8">${content.name || '-'}</div>
+      <div><span style="color:#92400e">地</span> ${fmt(content.groundHeight)}</div>
+      <div><span style="color:#166534">計</span> ${fmt(content.plannedHeight)}</div>
+      <div><span style="color:#7c2d12">切</span> ${fmt(content.cutDepth)}</div>
+    </div>`,
+    iconSize: [0, 0],
+    iconAnchor: [0, 0],
+  })
+}
+
+// 選択配管用: 頂点間（区間）の距離・勾配ラベル
+function createSegmentInfoIcon(content: {
+  distance: number | null
+  slope: string | null
+}): L.DivIcon {
+  const dist = content.distance === null ? '-' : `${content.distance.toFixed(2)} m`
+  const slope = content.slope ?? '-'
+  return L.divIcon({
+    className: 'pipe-segment-info',
+    html: `<div style="
+      background: rgba(255,255,255,0.88);
+      border: 1px solid #10b981;
+      border-radius: 3px;
+      padding: 1px 4px;
+      font-size: 9px;
+      color: #065f46;
+      white-space: nowrap;
+      line-height: 1.2;
+      transform: translate(-50%, -50%);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+    ">
+      ${dist} / ${slope}
+    </div>`,
     iconSize: [0, 0],
     iconAnchor: [0, 0],
   })
@@ -175,14 +219,72 @@ function MapViewPersist() {
   return null
 }
 
+// 地図の空白部分クリックで選択解除
+function MapBackgroundClick({ onClick }: { onClick: () => void }) {
+  const map = useMap()
+  useEffect(() => {
+    const handler = () => onClick()
+    map.on('click', handler)
+    return () => {
+      map.off('click', handler)
+    }
+  }, [map, onClick])
+  return null
+}
+
 
 export function UnifiedFieldMap({ baseLayer = 'osm', layers }: UnifiedFieldMapProps) {
   const { coordinates, zone, route } = useCoordinateStore()
   const { pipes } = useUnderdrainStore()
   const workAreasByType = useWorkAreaStore((state) => state.workAreas)
   const { surveyData } = useSurveyStore()
+  const planGroups = useConstructionPlanStore((s) => s.planGroups)
 
   const converter = useMemo(() => new CoordinateConverter(zone), [zone])
+
+  // 選択中の配管（クリックで選択）
+  const [selectedPipeId, setSelectedPipeId] = useState<string | null>(null)
+
+  // 配管ID → (頂点インデックス → PlanPoint) のルックアップ
+  const pipeVertexInfoMap = useMemo(() => {
+    const map = new Map<string, Map<number, PlanPoint>>()
+    const EPS = 1e-4
+    for (const group of planGroups) {
+      for (const row of group.rows) {
+        // 吸水管: 順に対応
+        if (row.absorptionPipeId) {
+          const pipe = pipes.find((p) => p.id === row.absorptionPipeId)
+          if (pipe) {
+            const inner = map.get(row.absorptionPipeId) ?? new Map<number, PlanPoint>()
+            const limit = Math.min(row.absorptionPoints.length, pipe.vertices.length)
+            for (let i = 0; i < limit; i++) {
+              inner.set(i, row.absorptionPoints[i])
+            }
+            map.set(row.absorptionPipeId, inner)
+          }
+        }
+        // 集水管: 座標マッチで頂点検出
+        if (row.collectorPipeId && row.collectorPoint) {
+          const pipe = pipes.find((p) => p.id === row.collectorPipeId)
+          if (pipe) {
+            const inner = map.get(row.collectorPipeId) ?? new Map<number, PlanPoint>()
+            for (let i = 0; i < pipe.vertices.length; i++) {
+              const v = pipe.vertices[i]
+              if (
+                Math.abs(v.x - row.collectorPoint.x) < EPS &&
+                Math.abs(v.y - row.collectorPoint.y) < EPS
+              ) {
+                inner.set(i, row.collectorPoint)
+                break
+              }
+            }
+            map.set(row.collectorPipeId, inner)
+          }
+        }
+      }
+    }
+    return map
+  }, [planGroups, pipes])
 
   // 座標
   const validCoords = coordinates.filter(
@@ -324,6 +426,7 @@ export function UnifiedFieldMap({ baseLayer = 'osm', layers }: UnifiedFieldMapPr
 
       <FitBoundsOnce bounds={allBounds} />
       <MapViewPersist />
+      <MapBackgroundClick onClick={() => setSelectedPipeId(null)} />
 
       {/* 工事区域 */}
       {layers.workAreas &&
@@ -349,18 +452,28 @@ export function UnifiedFieldMap({ baseLayer = 'osm', layers }: UnifiedFieldMapPr
 
       {/* 管路 */}
       {layers.pipes &&
-        pipeLines.map((pl) => (
-          <Polyline
-            key={`pipe-${pl.id}`}
-            positions={pl.positions}
-            pathOptions={{ color: pl.color, weight: pl.weight, opacity: 0.9 }}
-          >
-            <Tooltip sticky>
-              {pl.number}
-              {pl.pipeType ? ` (${pl.pipeType})` : ''}
-            </Tooltip>
-          </Polyline>
-        ))}
+        pipeLines.map((pl) => {
+          const isSelected = selectedPipeId === pl.id
+          return (
+            <Polyline
+              key={`pipe-${pl.id}`}
+              positions={pl.positions}
+              pathOptions={{
+                color: pl.color,
+                weight: isSelected ? pl.weight + 3 : pl.weight,
+                opacity: isSelected ? 1 : 0.9,
+              }}
+              eventHandlers={{
+                click: () => setSelectedPipeId((prev) => (prev === pl.id ? null : pl.id)),
+              }}
+            >
+              <Tooltip sticky>
+                {pl.number}
+                {pl.pipeType ? ` (${pl.pipeType})` : ''}
+              </Tooltip>
+            </Polyline>
+          )
+        })}
 
       {/* 配管番号ラベル（最上流頂点の位置に） */}
       {layers.pipes &&
@@ -372,12 +485,14 @@ export function UnifiedFieldMap({ baseLayer = 'osm', layers }: UnifiedFieldMapPr
               key={`pipe-label-${pl.id}`}
               position={pos}
               icon={createLabelIcon(pl.number, pl.color)}
-              interactive={false}
+              eventHandlers={{
+                click: () => setSelectedPipeId((prev) => (prev === pl.id ? null : pl.id)),
+              }}
             />
           )
         })}
 
-      {/* 配管の測点（座標計算の C / B / A） */}
+      {/* 配管の測点（座標計算の C / B / A）: ドットのみ（選択配管のときは詳細表示が別レイヤーで上に乗る） */}
       {layers.pipeMeasurementPoints &&
         pipeMeasurementPoints.map((mp) => (
           <Marker
@@ -390,16 +505,6 @@ export function UnifiedFieldMap({ baseLayer = 'osm', layers }: UnifiedFieldMapPr
             </Tooltip>
           </Marker>
         ))}
-      {/* 配管の測点の点名ラベル（常時表示） */}
-      {layers.pipeMeasurementPoints &&
-        pipeMeasurementPoints.map((mp) => (
-          <Marker
-            key={`mp-label-${mp.id}`}
-            position={mp.ll}
-            icon={createSmallLabelIcon(mp.name, mp.color)}
-            interactive={false}
-          />
-        ))}
 
       {/* 測量点（測点） */}
       {layers.surveyPoints &&
@@ -410,12 +515,94 @@ export function UnifiedFieldMap({ baseLayer = 'osm', layers }: UnifiedFieldMapPr
             radius={4}
             pathOptions={{ color: '#0ea5e9', fillColor: '#38bdf8', fillOpacity: 0.9, weight: 1 }}
           >
-            <Tooltip>
-              {s.pointNumber}
-              {s.z !== null && ` (z=${s.z.toFixed(3)})`}
-            </Tooltip>
+            <Tooltip>{s.pointNumber}</Tooltip>
           </CircleMarker>
         ))}
+
+      {/* 選択配管の詳細表示: 各頂点に測点/地盤高/計画高/切深、区間に距離/勾配 */}
+      {selectedPipeId && (() => {
+        const pipe = pipes.find((p) => p.id === selectedPipeId)
+        if (!pipe) return null
+        const vInfo = pipeVertexInfoMap.get(selectedPipeId)
+        const total = pipe.vertices.length
+        if (total === 0) return null
+
+        // generatePointName と同じ規則（B は下流起点）
+        const generatePointName = (idx: number): string => {
+          if (idx === 0) return `${pipe.number}C`
+          if (idx === total - 1) return `${pipe.number}A`
+          return `${pipe.number}B${total - 1 - idx}`
+        }
+
+        // 距離ヘルパー
+        const dist = (i: number) => {
+          if (i <= 0 || i >= total) return null
+          const a = pipe.vertices[i - 1]
+          const b = pipe.vertices[i]
+          const dx = b.x - a.x
+          const dy = b.y - a.y
+          return Math.sqrt(dx * dx + dy * dy)
+        }
+
+        const elems: React.ReactElement[] = []
+
+        // 頂点ごとの詳細マーカー
+        for (let i = 0; i < total; i++) {
+          const v = pipe.vertices[i]
+          const ll = vertexToLatLng(v, converter)
+          if (!ll) continue
+          const pp = vInfo?.get(i) ?? null
+          const gh = pp?.groundHeight ?? v.z ?? null
+          const ph = pp?.plannedHeight ?? null
+          const cd = pp?.cutDepth ?? (gh !== null && ph !== null ? gh - ph : null)
+          const name = pp?.pointName || generatePointName(i)
+          elems.push(
+            <Marker
+              key={`pv-info-${selectedPipeId}-${i}`}
+              position={ll}
+              icon={createVertexInfoIcon({
+                name,
+                groundHeight: gh,
+                plannedHeight: ph,
+                cutDepth: cd,
+              })}
+              interactive={false}
+            />,
+          )
+        }
+
+        // 区間ラベル（中点位置・距離/勾配）
+        for (let i = 1; i < total; i++) {
+          const a = pipe.vertices[i - 1]
+          const b = pipe.vertices[i]
+          const midX = (a.x + b.x) / 2
+          const midY = (a.y + b.y) / 2
+          const midLL = vertexToLatLng({ x: midX, y: midY }, converter)
+          if (!midLL) continue
+          const pp = vInfo?.get(i) ?? null
+          const segDist = pp?.segmentDistance ?? dist(i)
+          let segSlope: string | null = pp?.segmentSlope ?? null
+          if (!segSlope) {
+            const prev = vInfo?.get(i - 1) ?? null
+            const ph1 = prev?.plannedHeight ?? null
+            const ph2 = pp?.plannedHeight ?? null
+            if (ph1 !== null && ph2 !== null && segDist && segDist > 0) {
+              const diff = Math.abs(ph1 - ph2)
+              if (diff > 0) segSlope = `1/${Math.round(segDist / diff)}`
+            }
+          }
+          elems.push(
+            <Marker
+              key={`pv-seg-${selectedPipeId}-${i}`}
+              position={midLL}
+              icon={createSegmentInfoIcon({ distance: segDist, slope: segSlope })}
+              interactive={false}
+            />,
+          )
+        }
+
+        return <>{elems}</>
+      })()}
 
       {/* 経路: down セグメントのみポリライン */}
       {layers.route && route.length > 1 && (() => {
