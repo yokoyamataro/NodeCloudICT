@@ -18,6 +18,7 @@ import { SurveyImportPage } from '@/features/underdrain/SurveyImportPage'
 import { PipeWiringPage } from '@/features/underdrain/PipeWiringPage'
 import { DepthCalcPage } from '@/features/underdrain/DepthCalcPage'
 import { LandXMLPage } from '@/features/underdrain/LandXMLPage'
+import { CadExportPage } from '@/features/underdrain/CadExportPage'
 // 新規工種
 import { SoilImportWorkAreaPage } from '@/features/soil-import/SoilImportWorkAreaPage'
 import { SimpleGradingWorkAreaPage } from '@/features/simple-grading/SimpleGradingWorkAreaPage'
@@ -124,7 +125,7 @@ function AppRoutes() {
           <Route path="survey-import" element={<SurveyImportPage />} />
           <Route path="depth-calc" element={<DepthCalcPage />} />
           <Route path="hydraulics" element={<PlaceholderPage title="水理計算" />} />
-          <Route path="cad-export" element={<PlaceholderPage title="CAD転記" />} />
+          <Route path="cad-export" element={<CadExportPage />} />
           <Route path="landxml" element={<LandXMLPage />} />
           <Route path="field-data" element={<PlaceholderPage title="現場データ" />} />
           <Route path="reports" element={<PlaceholderPage title="帳票作成" />} />
