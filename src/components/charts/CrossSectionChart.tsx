@@ -1,5 +1,6 @@
 import { useMemo, useState, useCallback } from 'react'
 import type { PlanRow, PlanGroup } from '@/stores/constructionPlanStore'
+import { exportCrossSectionDxf } from '@/lib/crossSectionDxfExport'
 
 interface CrossSectionChartProps {
   systemRows: PlanRow[] // 系統内の行（rowIndex順）
@@ -8,6 +9,7 @@ interface CrossSectionChartProps {
   chartHeight?: number // SVG チャート高さ（px）。未指定時は 220
   pipeNumberById?: Map<string, string> // 管路ID → 管路番号
   allPlanGroups?: PlanGroup[] // 合流先系統の参照用
+  farmName?: string // DXF 出力ファイル名用
 }
 
 // 断面図の点データ（集水管の点のみ）
@@ -33,6 +35,7 @@ export function CrossSectionChart({
   chartHeight: chartHeightProp,
   pipeNumberById,
   allPlanGroups,
+  farmName,
 }: CrossSectionChartProps) {
   // 標高スケールのズーム倍率（1.0が基準、大きいほど拡大）
   const [heightScale, setHeightScale] = useState(1.0)
@@ -41,6 +44,21 @@ export function CrossSectionChart({
 
   // 勾配表示の切り替え
   const [showSlope, setShowSlope] = useState(true)
+
+  // DXF 出力用の縦縮尺
+  const [dxfVScale, setDxfVScale] = useState<100 | 200 | 500 | 1000>(200)
+
+  const handleDxfExport = useCallback(() => {
+    exportCrossSectionDxf({
+      systemRows,
+      systemIndex,
+      endType,
+      verticalScale: dxfVScale,
+      pipeNumberById,
+      allPlanGroups,
+      farmName,
+    })
+  }, [systemRows, systemIndex, endType, dxfVScale, pipeNumberById, allPlanGroups, farmName])
 
   // マウスホイールでスケールを変更（Shift 押下で横、それ以外は縦）
   const handleWheel = useCallback((e: React.WheelEvent) => {
@@ -412,6 +430,27 @@ export function CrossSectionChart({
             </button>
           )}
           <span className="text-slate-400">（ホイール:縦 / Shift+ホイール:横）</span>
+          <span className="text-slate-400">|</span>
+          <span className="flex items-center gap-1">
+            DXF 縦尺:
+            <select
+              value={dxfVScale}
+              onChange={(e) => setDxfVScale(parseInt(e.target.value, 10) as 100 | 200 | 500 | 1000)}
+              className="px-1 py-0.5 text-[14px] border rounded bg-white"
+            >
+              <option value={100}>1/100</option>
+              <option value={200}>1/200</option>
+              <option value={500}>1/500</option>
+              <option value={1000}>1/1000</option>
+            </select>
+            <button
+              onClick={handleDxfExport}
+              className="px-2 py-0.5 text-[14px] bg-emerald-600 text-white rounded hover:bg-emerald-700"
+              title="縦断図を DXF 形式で出力（横 1/1000 固定）"
+            >
+              DXF 出力
+            </button>
+          </span>
         </span>
       </div>
 

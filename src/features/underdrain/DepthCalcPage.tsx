@@ -1284,6 +1284,7 @@ export function DepthCalcPage() {
                     chartHeight={fullscreenPanel === 'chart' ? window.innerHeight - 120 : 220}
                     pipeNumberById={pipeNumberById}
                     allPlanGroups={planGroups}
+                    farmName={currentFarm?.name}
                   />
                 )
               })()
