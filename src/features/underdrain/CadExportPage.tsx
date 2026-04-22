@@ -23,13 +23,12 @@ const DEFAULT_LEVEL: DrawingLevel = {
   rotation: 0,
 }
 
-// 実座標 (x, y) を用紙座標へ変換（旧マクロ 用紙座標 関数と同じロジック）
-// 極座標形式:
-//   1. 原点シフト: dx = x - x0, dy = y - y0
-//   2. 角度計算: a0 = atan(dy/dx), 距離 s1 = sqrt(dx²+dy²)
-//   3. 回転: a1 = a0 + 回転角, π で wrap（2π ではないのがマクロの quirk）
-//   4. 直交座標に戻す: x1 = s1 * cos(a1), y1 = s1 * sin(a1)
-// ※ 縮尺は旧マクロでも使用されていない（引数だけ渡って無視されている）
+// 実座標 (x, y) を用紙座標へ変換
+// 旧マクロは Atn(dy/dx) を使っていたため第3象限の点が 180° 回転するバグがあった。
+// ここでは標準の 2D 回転行列（CCW 回転角 +rotation）で正しく変換する。
+//   px = dx * cos(A) - dy * sin(A)
+//   py = dx * sin(A) + dy * cos(A)
+// ※ 縮尺は旧マクロでも使用されていないため、ここでも座標変換には使わない
 function toPaperCoords(
   x: number,
   y: number,
@@ -37,17 +36,10 @@ function toPaperCoords(
 ): { px: number; py: number } {
   const dx = x - level.originX
   const dy = y - level.originY
-  // 原点と同一点の場合は (0,0) として早期リターン
-  if (dx === 0 && dy === 0) return { px: 0, py: 0 }
-  // atan(dy/dx): JS では atan(Infinity) = π/2 のように動くので dx=0 も自然に扱える
-  const a0 = Math.atan(dy / dx)
-  const s1 = Math.sqrt(dx * dx + dy * dy)
-  let a1 = a0 + level.rotation
-  // 旧マクロと同じく π modulo で 2 回までチェック（2π 付近を 0 に戻すため）
-  if (a1 >= Math.PI) a1 -= Math.PI
-  if (a1 >= Math.PI) a1 -= Math.PI
-  const px = s1 * Math.cos(a1)
-  const py = s1 * Math.sin(a1)
+  const c = Math.cos(level.rotation)
+  const s = Math.sin(level.rotation)
+  const px = dx * c - dy * s
+  const py = dx * s + dy * c
   return { px, py }
 }
 
