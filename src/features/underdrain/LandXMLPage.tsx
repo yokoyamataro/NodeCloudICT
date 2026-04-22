@@ -1,952 +1,433 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  FileCode,
-  Download,
+  FileOutput,
+  Upload,
+  Trash2,
   Loader2,
-  AlertTriangle,
-  Eye,
-  Settings,
+  AlertCircle,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react'
+import { MapContainer, TileLayer, Polyline, useMap } from 'react-leaflet'
+import L from 'leaflet'
+import 'leaflet/dist/leaflet.css'
 import { useFarmStore } from '@/stores/farmStore'
-import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
-import { LandXMLViewer } from '@/components/viewers/LandXMLViewer'
-import {
-  generateLandXMLFromPlan,
-  downloadLandXML,
-} from '@/utils/landxml'
-import type { Point3D, Face } from '@/utils/landxml/types'
-import {
-  generatePipeMesh,
-  mergeMeshes,
-  detectMergeConnections,
-  generateUpstreamMergeTriangles,
-  generateCollectorWithMerges,
-  generateAbsorptionMergeTriangles,
-  type UpstreamMergeInfo,
-  type MergeConnection,
-  type MidMergeInfoWithSegment,
-} from '@/utils/landxml/triangulation'
-import { distance2D } from '@/utils/landxml/geometry'
+import { useProjectListStore } from '@/stores/projectListStore'
+import { useCoordinateStore } from '@/stores/coordinateStore'
+import { useAlignmentStore } from '@/stores/alignmentStore'
+import { parseLandXml } from '@/lib/landxml/parser'
+import { sampleAlignment } from '@/lib/landxml/geometry'
+import { CoordinateConverter } from '@/lib/coordinates'
+import type { Alignment } from '@/lib/landxml/types'
 
 export function LandXMLPage() {
   const { currentFarm } = useFarmStore()
+  const { projects } = useProjectListStore()
+  const { zone, setZone } = useCoordinateStore()
   const {
-    planGroups,
-    loading: planLoading,
-    hasData,
-    fetchPlan,
-  } = useConstructionPlanStore()
+    alignments,
+    loading,
+    saving,
+    error,
+    fetchAlignments,
+    addAlignments,
+    deleteAlignment,
+    clearAlignments,
+  } = useAlignmentStore()
 
-  // 設定
-  const [pipeWidth, setPipeWidth] = useState(0.6)
-  const [transitionDistance, setTransitionDistance] = useState(5.0)
-  const [showSettings, setShowSettings] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const [parseError, setParseError] = useState<string | null>(null)
+  const [parseWarnings, setParseWarnings] = useState<string[]>([])
+  const [pendingAlignments, setPendingAlignments] = useState<Alignment[] | null>(null)
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
 
-  // プレビューデータ
-  const [previewData, setPreviewData] = useState<{
-    points: Map<string, Point3D>
-    faces: Face[]
-  } | null>(null)
-  const [generating, setGenerating] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  // デバッグ情報
-  const [debugInfo, setDebugInfo] = useState<Record<string, unknown> | null>(null)
-
-  // プロジェクト選択時にデータを読み込む
+  // 圃場読込時にデータ取得
   useEffect(() => {
-    if (currentFarm) {
-      fetchPlan(currentFarm.id)
-    }
-  }, [currentFarm, fetchPlan])
+    if (!currentFarm) return
+    fetchAlignments(currentFarm.id)
+  }, [currentFarm, fetchAlignments])
 
-  // プレビューデータを生成
-  const generatePreview = useCallback(() => {
-    if (!hasData || planGroups.length === 0) {
-      setError('施工計画データがありません。先に施工計画を作成してください。')
-      return
-    }
+  // プロジェクトの座標系を適用
+  useEffect(() => {
+    if (!currentFarm?.project_id) return
+    const proj = projects.find((p) => p.id === currentFarm.project_id)
+    if (proj?.coordinate_zone) setZone(proj.coordinate_zone)
+  }, [currentFarm, projects, setZone])
 
-    setGenerating(true)
-    setError(null)
+  const converter = useMemo(() => new CoordinateConverter(zone), [zone])
 
-    try {
-      const offsetDistance = pipeWidth / 2
-
-      // 配管線形を抽出
-      interface PipeLineData {
-        pipeId: string
-        pipeNumber: string
-        pipeType: 'absorption' | 'collector'
-        vertices: Point3D[]
-        mergePointId: string | null
-        systemIndex: number // 系統番号
-        collectorPipeIds?: string[] // collector管の場合: 関連するcollectorPipeId（UUID）のリスト
-      }
-      const pipeLines: PipeLineData[] = []
-
-      // 三管合流ペア: 同じcollectorPipeId（UUID）を持つ最初の2本の吸水管
-      const upstreamPairs: { collectorPipeId: string; absIds: string[] }[] = []
-      // collectorPipeIdごとに吸水管を収集
-      const absByCollectorPipeId = new Map<string, string[]>()
-
-      for (const group of planGroups) {
-        const systemCollectorMap = new Map<number, {
-          vertices: Point3D[]
-          pipeIds: string[]
-        }>()
-
-        for (const row of group.rows) {
-          const systemIndex = row.systemIndex || 1
-
-          // 吸水線形を追加
-          if (row.absorptionPoints.length > 0 && row.absorptionPipeId) {
-            const absVertices: Point3D[] = row.absorptionPoints
-              .filter(p => p.plannedHeight !== null)
-              .map(p => ({
-                id: `abs_${row.absorptionPipeId}_${p.pointIndex}`,
-                x: p.x,
-                y: p.y,
-                z: p.plannedHeight!,
-              }))
-
-            if (absVertices.length >= 2) {
-              pipeLines.push({
-                pipeId: row.absorptionPipeId,
-                pipeNumber: row.pipeNumber || '',
-                pipeType: 'absorption',
-                vertices: absVertices,
-                mergePointId: row.collectorPipeId,
-                systemIndex,
-              })
-
-              // collectorPipeIdごとに吸水管IDを収集
-              if (row.collectorPipeId) {
-                const list = absByCollectorPipeId.get(row.collectorPipeId) || []
-                list.push(row.absorptionPipeId)
-                absByCollectorPipeId.set(row.collectorPipeId, list)
-              }
-            }
-          }
-
-          // 集水点を系統ごとに収集
-          if (row.collectorPoint && row.collectorPoint.plannedHeight !== null && row.collectorPipeId) {
-            if (!systemCollectorMap.has(systemIndex)) {
-              systemCollectorMap.set(systemIndex, {
-                vertices: [],
-                pipeIds: [],
-              })
-            }
-
-            const system = systemCollectorMap.get(systemIndex)!
-
-            // 座標が重複している点を除外（最上流部で2点が同じ座標になる場合）
-            const newPoint = {
-              id: `col_${row.collectorPipeId}_${row.rowIndex}`,
-              x: row.collectorPoint.x,
-              y: row.collectorPoint.y,
-              z: row.collectorPoint.plannedHeight,
-            }
-            const isDuplicate = system.vertices.some(v =>
-              Math.abs(v.x - newPoint.x) < 0.001 && Math.abs(v.y - newPoint.y) < 0.001
-            )
-            if (!isDuplicate) {
-              system.vertices.push(newPoint)
-            }
-
-            if (!system.pipeIds.includes(row.collectorPipeId)) {
-              system.pipeIds.push(row.collectorPipeId)
-            }
+  // 保存済み線形を緯度経度で点列化
+  const alignmentPolylines = useMemo(() => {
+    return alignments
+      .map((a) => {
+        const pts = sampleAlignment(a.segments, 0.5)
+        const ll: [number, number][] = []
+        for (const p of pts) {
+          try {
+            const { lat, lng } = converter.toLatLng(p.x, p.y)
+            if (Number.isFinite(lat) && Number.isFinite(lng)) ll.push([lat, lng])
+          } catch {
+            // skip
           }
         }
-
-        // 系統ごとの集水線形を追加
-        for (const [sysIdx, system] of systemCollectorMap) {
-          if (system.vertices.length >= 2) {
-            pipeLines.push({
-              pipeId: `collector_system_${group.groupIndex}_${sysIdx}`,
-              pipeNumber: `集水${group.groupIndex + 1}-系統${sysIdx}`,
-              pipeType: 'collector',
-              vertices: system.vertices,
-              mergePointId: null,
-              systemIndex: sysIdx,
-              collectorPipeIds: system.pipeIds, // 関連するcollectorPipeId（UUID）のリスト
-            })
-          }
-        }
-      }
-
-      // 三管合流ペアを構築: 同じcollectorPipeIdを持つ最初の2本の吸水管
-      for (const [colPipeId, absIds] of absByCollectorPipeId) {
-        if (absIds.length >= 2) {
-          upstreamPairs.push({
-            collectorPipeId: colPipeId,
-            absIds: absIds.slice(0, 2),
-          })
-        }
-      }
-
-      if (pipeLines.length === 0) {
-        setError('計画高が設定された配管データがありません。施工計画で計画高を入力してください。')
-        setGenerating(false)
-        return
-      }
-
-      // 吸水管と集水管を分離
-      const absorptionPipes = pipeLines.filter(p => p.pipeType === 'absorption')
-      const collectorPipes = pipeLines.filter(p => p.pipeType === 'collector')
-
-      // 合流接続を検出
-      const mergeConnections = detectMergeConnections(
-        absorptionPipes.map(p => ({ pipeId: p.pipeId, vertices: p.vertices })),
-        collectorPipes.map(p => ({ pipeId: p.pipeId, vertices: p.vertices }))
-      )
-
-      // 各配管のメッシュを生成
-      const meshes: { points: Point3D[]; faces: Face[] }[] = []
-
-      // 合流接続を集水管ごとにグループ化
-      const connectionsByCollector = new Map<string, MergeConnection[]>()
-      for (const conn of mergeConnections) {
-        const list = connectionsByCollector.get(conn.collectorPipeId) || []
-        list.push(conn)
-        connectionsByCollector.set(conn.collectorPipeId, list)
-      }
-
-      // 施工計画順で各集水管に合流する吸水管をグループ化（最初の2本が最上流部）
-      const absorptionsByCollector = new Map<string, PipeLineData[]>()
-      for (const abs of absorptionPipes) {
-        if (abs.mergePointId) {
-          const list = absorptionsByCollector.get(abs.mergePointId) || []
-          list.push(abs)
-          absorptionsByCollector.set(abs.mergePointId, list)
-        }
-      }
-
-      // 処理済みの吸水管IDを記録
-      const processedAbsorptionIds = new Set<string>()
-
-      // 三管合流の処理回数カウンタ
-      let upstreamMergeCount = 0
-
-      // デバッグ: 集水管と吸水管のID対応を確認
-      const pipeDebugInfo = {
-        collectorPipes: collectorPipes.map(c => ({ pipeId: c.pipeId, systemIndex: c.systemIndex, vertexCount: c.vertices.length, collectorPipeIds: c.collectorPipeIds })),
-        absorptionPipes: absorptionPipes.map(a => ({ pipeId: a.pipeId, mergePointId: a.mergePointId, systemIndex: a.systemIndex, vertexCount: a.vertices.length })),
-        absorptionsByCollectorKeys: Array.from(absorptionsByCollector.keys()),
-        connectionsByCollectorKeys: Array.from(connectionsByCollector.keys()),
-        mergeConnections: mergeConnections.map(c => ({ absId: c.absorptionPipeId, colId: c.collectorPipeId, fromLeft: c.mergeFromLeft })),
-        upstreamPairs: upstreamPairs,
-      }
-      setDebugInfo(pipeDebugInfo)
-
-      // 集水管のメッシュを生成
-      for (const collector of collectorPipes) {
-        if (collector.vertices.length < 2) continue
-
-        const relatedConnections = connectionsByCollector.get(collector.pipeId) || []
-
-        // この集水管に対応する三管合流ペアを先に検出
-        let collectorUpstreamPair: { collectorPipeId: string; absIds: string[] } | null = null
-        if (collector.collectorPipeIds) {
-          for (const colPipeId of collector.collectorPipeIds) {
-            const pair = upstreamPairs.find(p => p.collectorPipeId === colPipeId)
-            if (pair && pair.absIds.length >= 2) {
-              collectorUpstreamPair = pair
-              break
-            }
-          }
-        }
-
-        // 三管合流のみの場合（中間合流がない場合）
-        if (relatedConnections.length === 0 && collectorUpstreamPair) {
-          // 三管合流処理 - 中間合流と同じアルゴリズムで処理
-          // 上の行の吸水管を「集水管の上流側」から合流するものとして扱う
-          // 集水管の端部（最上流点）を「中間点（折点）」として扱う
-          const upstreamAbsIds = collectorUpstreamPair.absIds
-          const abs1 = absorptionPipes.find(p => p.pipeId === upstreamAbsIds[0]) // 上の行（上流側から合流）
-          const abs2 = absorptionPipes.find(p => p.pipeId === upstreamAbsIds[1]) // 下の行（下流側から合流）
-
-          if (abs1 && abs1.vertices.length >= 2 && abs2 && abs2.vertices.length >= 2) {
-            upstreamMergeCount++
-
-            // 集水管の最上流点を合流点とする
-            const mergePoint = collector.vertices[collector.vertices.length - 1]
-
-            // 集水管の方向ベクトル
-            const col1A = collector.vertices[collector.vertices.length - 2]
-            const col1B = collector.vertices[collector.vertices.length - 1]
-            const colLen = distance2D(col1A, col1B)
-            const colDir = { dx: (col1B.x - col1A.x) / colLen, dy: (col1B.y - col1A.y) / colLen }
-            const colNormal = { dx: -colDir.dy, dy: colDir.dx }
-
-            // abs1（上の行）を「上流側から合流」として処理
-            // abs2（下の行）を「下流側から合流」として処理
-            // 合流点から上流・下流にオフセット距離分ずらして正方形を作成
-            const upX = mergePoint.x + colDir.dx * offsetDistance
-            const upY = mergePoint.y + colDir.dy * offsetDistance
-            const downX = mergePoint.x - colDir.dx * offsetDistance
-            const downY = mergePoint.y - colDir.dy * offsetDistance
-
-            const upstreamLeft: Point3D = {
-              id: `${collector.pipeId}_upstream_upL`,
-              x: upX + colNormal.dx * offsetDistance,
-              y: upY + colNormal.dy * offsetDistance,
-              z: mergePoint.z,
-            }
-            const upstreamRight: Point3D = {
-              id: `${collector.pipeId}_upstream_upR`,
-              x: upX - colNormal.dx * offsetDistance,
-              y: upY - colNormal.dy * offsetDistance,
-              z: mergePoint.z,
-            }
-            const downstreamLeft: Point3D = {
-              id: `${collector.pipeId}_upstream_downL`,
-              x: downX + colNormal.dx * offsetDistance,
-              y: downY + colNormal.dy * offsetDistance,
-              z: mergePoint.z,
-            }
-            const downstreamRight: Point3D = {
-              id: `${collector.pipeId}_upstream_downR`,
-              x: downX - colNormal.dx * offsetDistance,
-              y: downY - colNormal.dy * offsetDistance,
-              z: mergePoint.z,
-            }
-
-            // 正方形メッシュ（集水管側）
-            const squarePoints = [upstreamLeft, upstreamRight, downstreamLeft, downstreamRight]
-            const squareFaces: Face[] = [
-              { p1: upstreamLeft.id, p2: downstreamLeft.id, p3: downstreamRight.id },
-              { p1: upstreamLeft.id, p2: downstreamRight.id, p3: upstreamRight.id },
-            ]
-            meshes.push({ points: squarePoints, faces: squareFaces })
-
-            // abs1の合流方向を判定
-            const abs1End = abs1.vertices[abs1.vertices.length - 1]
-            const abs1Prev = abs1.vertices[abs1.vertices.length - 2]
-            const abs1Dir = {
-              dx: abs1End.x - abs1Prev.x,
-              dy: abs1End.y - abs1Prev.y
-            }
-            const cross1 = colDir.dx * abs1Dir.dy - colDir.dy * abs1Dir.dx
-            const abs1FromLeft = cross1 > 0
-
-            // abs2の合流方向を判定
-            const abs2End = abs2.vertices[abs2.vertices.length - 1]
-            const abs2Prev = abs2.vertices[abs2.vertices.length - 2]
-            const abs2Dir = {
-              dx: abs2End.x - abs2Prev.x,
-              dy: abs2End.y - abs2Prev.y
-            }
-            const cross2 = colDir.dx * abs2Dir.dy - colDir.dy * abs2Dir.dx
-            const abs2FromLeft = cross2 > 0
-
-            // abs1（上の行）の吸水管三角形を生成 - 上流側の頂点に接続
-            const abs1MergeVertices = {
-              upstreamLeft,
-              upstreamRight,
-              downstreamLeft: upstreamLeft, // 上流側の頂点を使用
-              downstreamRight: upstreamRight,
-            }
-            const abs1Result = generateAbsorptionMergeTriangles(
-              abs1.vertices,
-              abs1.pipeId,
-              abs1MergeVertices,
-              abs1FromLeft,
-              offsetDistance,
-              transitionDistance
-            )
-            meshes.push(abs1Result.mergeTriangles)
-            if (abs1Result.upperVertices.length >= 2) {
-              const upperMesh = generatePipeMesh(abs1Result.upperVertices, offsetDistance, abs1.pipeId + '_upper')
-              meshes.push(upperMesh)
-            }
-            processedAbsorptionIds.add(abs1.pipeId)
-
-            // abs2（下の行）の吸水管三角形を生成 - 下流側の頂点に接続
-            const abs2MergeVertices = {
-              upstreamLeft: downstreamLeft, // 下流側の頂点を使用
-              upstreamRight: downstreamRight,
-              downstreamLeft,
-              downstreamRight,
-            }
-            const abs2Result = generateAbsorptionMergeTriangles(
-              abs2.vertices,
-              abs2.pipeId,
-              abs2MergeVertices,
-              abs2FromLeft,
-              offsetDistance,
-              transitionDistance
-            )
-            meshes.push(abs2Result.mergeTriangles)
-            if (abs2Result.upperVertices.length >= 2) {
-              const upperMesh = generatePipeMesh(abs2Result.upperVertices, offsetDistance, abs2.pipeId + '_upper')
-              meshes.push(upperMesh)
-            }
-            processedAbsorptionIds.add(abs2.pipeId)
-
-            // 集水管の最上流部以外をメッシュ化（正方形の下流端に接続）
-            if (collector.vertices.length >= 2) {
-              // 集水管の下流部分をメッシュ化し、正方形の下流端に接続
-              const collectorWithoutUpstream = collector.vertices.slice(0, -1)
-              if (collectorWithoutUpstream.length >= 2) {
-                const mesh = generatePipeMesh(collectorWithoutUpstream, offsetDistance, collector.pipeId + '_lower')
-                meshes.push(mesh)
-              }
-              // 正方形の下流端と集水管メッシュの接続三角形
-              const connectLeft: Point3D = {
-                id: `${collector.pipeId}_connectL`,
-                x: col1A.x + colNormal.dx * offsetDistance,
-                y: col1A.y + colNormal.dy * offsetDistance,
-                z: col1A.z,
-              }
-              const connectRight: Point3D = {
-                id: `${collector.pipeId}_connectR`,
-                x: col1A.x - colNormal.dx * offsetDistance,
-                y: col1A.y - colNormal.dy * offsetDistance,
-                z: col1A.z,
-              }
-              const connectFaces: Face[] = [
-                { p1: connectLeft.id, p2: connectRight.id, p3: downstreamLeft.id },
-                { p1: connectRight.id, p2: downstreamRight.id, p3: downstreamLeft.id },
-              ]
-              meshes.push({ points: [connectLeft, connectRight], faces: connectFaces })
-            }
-          } else {
-            // 吸水管が見つからない場合は通常のメッシュ生成
-            const mesh = generatePipeMesh(collector.vertices, offsetDistance, collector.pipeId)
-            meshes.push(mesh)
-          }
-        } else if (relatedConnections.length === 0) {
-          // 合流点がない場合は通常のメッシュ生成
-          const mesh = generatePipeMesh(collector.vertices, offsetDistance, collector.pipeId)
-          meshes.push(mesh)
-        } else {
-          // 合流部の処理（新アルゴリズム）
-          // 集水管の各セグメントで合流を検出し処理
-
-          // 集水管の合流点位置を特定
-          const mergeInfos: {
-            conn: MergeConnection
-            segmentIndex: number
-            t: number // セグメント上の位置
-          }[] = []
-
-          for (const conn of relatedConnections) {
-            // 合流点がどのセグメントにあるか探す
-            for (let i = 0; i < collector.vertices.length - 1; i++) {
-              const segStart = collector.vertices[i]
-              const segEnd = collector.vertices[i + 1]
-              const segLen = distance2D(segStart, segEnd)
-              if (segLen < 0.001) continue
-
-              const dx = conn.mergePoint.x - segStart.x
-              const dy = conn.mergePoint.y - segStart.y
-              const segDirX = (segEnd.x - segStart.x) / segLen
-              const segDirY = (segEnd.y - segStart.y) / segLen
-              const t = (dx * segDirX + dy * segDirY) / segLen
-
-              if (t >= -0.01 && t <= 1.01) {
-                const projX = segStart.x + t * (segEnd.x - segStart.x)
-                const projY = segStart.y + t * (segEnd.y - segStart.y)
-                const dist = Math.sqrt((conn.mergePoint.x - projX) ** 2 + (conn.mergePoint.y - projY) ** 2)
-
-                if (dist < 0.5) {
-                  mergeInfos.push({ conn, segmentIndex: i, t: Math.max(0, Math.min(1, t)) })
-                  break
-                }
-              }
-            }
-          }
-
-          // 最上流部: 既に検出済みのcollectorUpstreamPairを使用
-          const upstreamAbsIds = collectorUpstreamPair ? collectorUpstreamPair.absIds : []
-          let hadUpstreamMerge = false
-
-          if (upstreamAbsIds.length >= 2) {
-            // 三管合流ペアの吸水管を取得（左右の判定に関係なく最初の2本を使用）
-            const abs1 = absorptionPipes.find(p => p.pipeId === upstreamAbsIds[0])
-            const abs2 = absorptionPipes.find(p => p.pipeId === upstreamAbsIds[1])
-
-            if (abs1 && abs1.vertices.length >= 2 && abs2 && abs2.vertices.length >= 2) {
-              // 三管合流として処理（左右は任意の順序で割り当て）
-              const leftAbs = abs1
-              const rightAbs = abs2
-
-              if (leftAbs && leftAbs.vertices.length >= 2 && rightAbs && rightAbs.vertices.length >= 2) {
-                upstreamMergeCount++
-                const col1A = collector.vertices[collector.vertices.length - 2]
-                const col1B = collector.vertices[collector.vertices.length - 1]
-
-                const upstreamInfo: UpstreamMergeInfo = {
-                  collectorPipeId: collector.pipeId,
-                  col1A,
-                  col1B,
-                  abs2PipeId: leftAbs.pipeId,
-                  abs2A: leftAbs.vertices[leftAbs.vertices.length - 1],
-                  abs2B: leftAbs.vertices[leftAbs.vertices.length - 2],
-                  abs3PipeId: rightAbs.pipeId,
-                  abs3A: rightAbs.vertices[rightAbs.vertices.length - 1],
-                  abs3B: rightAbs.vertices[rightAbs.vertices.length - 2],
-                  mergeZ: col1B.z,
-                }
-
-                const upstreamMesh = generateUpstreamMergeTriangles(
-                  upstreamInfo,
-                  offsetDistance,
-                  transitionDistance
-                )
-                meshes.push(upstreamMesh)
-
-                processedAbsorptionIds.add(leftAbs.pipeId)
-                processedAbsorptionIds.add(rightAbs.pipeId)
-
-                // 集水管の最上流部以外をメッシュ化
-                if (collector.vertices.length > 2) {
-                  const collectorWithoutUpstream = collector.vertices.slice(0, -1)
-                  const mesh = generatePipeMesh(collectorWithoutUpstream, offsetDistance, collector.pipeId)
-                  meshes.push(mesh)
-                }
-
-                // 吸水管の擦り付け点より上流をメッシュ化
-                // vertices[0]が最上流、vertices[length-1]が最下流（集水管接合点）
-                for (const abs of [leftAbs, rightAbs]) {
-                  // 下流端（集水管接合点）からの累積距離を計算
-                  // 擦り付け点は下流端からtransitionDistance（5m）の位置
-                  let cumDist = 0
-                  let transitionIdx = -1
-
-                  // 下流から上流に向かって距離を累積
-                  for (let i = abs.vertices.length - 1; i > 0; i--) {
-                    cumDist += distance2D(abs.vertices[i], abs.vertices[i - 1])
-                    if (cumDist >= transitionDistance) {
-                      transitionIdx = i - 1
-                      break
-                    }
-                  }
-
-                  // 擦り付け点より上流の頂点を収集（vertices[0]からtransitionIdxまで）
-                  if (transitionIdx > 0) {
-                    const upperVertices = abs.vertices.slice(0, transitionIdx + 1)
-                    if (upperVertices.length >= 2) {
-                      const mesh = generatePipeMesh(upperVertices, offsetDistance, abs.pipeId + '_upper')
-                      meshes.push(mesh)
-                    }
-                  }
-                }
-
-                // 最上流部で処理した合流をリストから除外
-                const upstreamAbsIdSet = new Set(upstreamAbsIds)
-                for (let i = mergeInfos.length - 1; i >= 0; i--) {
-                  if (upstreamAbsIdSet.has(mergeInfos[i].conn.absorptionPipeId)) {
-                    mergeInfos.splice(i, 1)
-                  }
-                }
-                hadUpstreamMerge = true
-              }
-            }
-          }
-
-          // 残りの中間合流部を処理
-          // 新アルゴリズム: 集水管メッシュを合流点で分割し、頂点を共有
-          const midMergeInfos: MidMergeInfoWithSegment[] = []
-
-          for (const mergeInfo of mergeInfos) {
-            const { conn, segmentIndex, t } = mergeInfo
-            const absorption = absorptionPipes.find(p => p.pipeId === conn.absorptionPipeId)
-            if (!absorption || absorption.vertices.length < 2) continue
-            if (processedAbsorptionIds.has(absorption.pipeId)) continue
-
-            // 中間合流情報を構築
-            const col1A = collector.vertices[segmentIndex]
-            const col1B = conn.mergePoint
-            const col1C = collector.vertices[segmentIndex + 1]
-
-            midMergeInfos.push({
-              absorptionPipeId: absorption.pipeId,
-              collectorPipeId: collector.pipeId,
-              col1A,
-              col1B,
-              col1C,
-              abs2A: absorption.vertices[absorption.vertices.length - 1],
-              abs2B: absorption.vertices[absorption.vertices.length - 2],
-              mergeFromLeft: conn.mergeFromLeft,
-              mergeZ: conn.mergePoint.z,
-              segmentIndex,
-              t,
-            })
-          }
-
-          if (midMergeInfos.length > 0) {
-            // 中間合流がある場合、集水管メッシュを合流点対応で生成
-            const collectorVertices = hadUpstreamMerge
-              ? collector.vertices.slice(0, -1)
-              : collector.vertices
-
-            const { collectorMesh, mergeVertices } = generateCollectorWithMerges(
-              collectorVertices,
-              collector.pipeId,
-              midMergeInfos,
-              offsetDistance
-            )
-            meshes.push(collectorMesh)
-
-            // 各吸水管の合流三角形と上流部メッシュを生成
-            for (const midMerge of midMergeInfos) {
-              const absorption = absorptionPipes.find(p => p.pipeId === midMerge.absorptionPipeId)
-              if (!absorption || absorption.vertices.length < 2) continue
-
-              const collMergeVerts = mergeVertices.get(midMerge.absorptionPipeId)
-              if (!collMergeVerts) continue
-
-              const {
-                mergeTriangles,
-                upperVertices,
-                transitionPointLeft,
-                transitionPointRight,
-              } = generateAbsorptionMergeTriangles(
-                absorption.vertices,
-                absorption.pipeId,
-                collMergeVerts,
-                midMerge.mergeFromLeft,
-                offsetDistance,
-                transitionDistance
-              )
-
-              meshes.push(mergeTriangles)
-
-              // 上流部分の通常メッシュを生成
-              if (upperVertices.length >= 2) {
-                const upperMesh = generatePipeMesh(upperVertices, offsetDistance, absorption.pipeId + '_upper')
-                const lastUpperLeftId = `${absorption.pipeId}_upper_L${upperVertices.length - 1}`
-                const lastUpperRightId = `${absorption.pipeId}_upper_R${upperVertices.length - 1}`
-
-                // 上流メッシュと擦り付け点を接続する三角形
-                upperMesh.points.push(transitionPointLeft, transitionPointRight)
-                upperMesh.faces.push({
-                  p1: lastUpperLeftId,
-                  p2: lastUpperRightId,
-                  p3: transitionPointLeft.id,
-                })
-                upperMesh.faces.push({
-                  p1: lastUpperRightId,
-                  p2: transitionPointRight.id,
-                  p3: transitionPointLeft.id,
-                })
-
-                meshes.push(upperMesh)
-              }
-
-              processedAbsorptionIds.add(absorption.pipeId)
-            }
-          } else if (!hadUpstreamMerge) {
-            // 中間合流がなく、最上流部合流もない場合は集水管全体をメッシュ化
-            const mesh = generatePipeMesh(collector.vertices, offsetDistance, collector.pipeId)
-            meshes.push(mesh)
-          }
-        }
-      }
-
-      // 合流しない吸水管のメッシュを生成
-      for (const absorption of absorptionPipes) {
-        if (processedAbsorptionIds.has(absorption.pipeId)) continue
-        if (absorption.vertices.length < 2) continue
-
-        const mesh = generatePipeMesh(absorption.vertices, offsetDistance, absorption.pipeId)
-        meshes.push(mesh)
-      }
-
-      // メッシュを統合
-      const surface = mergeMeshes(meshes)
-
-      alert(`[LandXML] 三管合流処理: ${upstreamMergeCount}回`)
-
-      setPreviewData({
-        points: surface.points,
-        faces: surface.faces,
+        return { id: a.id, name: a.name, positions: ll }
       })
+      .filter((p) => p.positions.length >= 2)
+  }, [alignments, converter])
+
+  // 取り込み直後の線形（未保存プレビュー）
+  const pendingPolylines = useMemo(() => {
+    if (!pendingAlignments) return []
+    return pendingAlignments
+      .map((a) => {
+        const pts = sampleAlignment(a.segments, 0.5)
+        const ll: [number, number][] = []
+        for (const p of pts) {
+          try {
+            const { lat, lng } = converter.toLatLng(p.x, p.y)
+            if (Number.isFinite(lat) && Number.isFinite(lng)) ll.push([lat, lng])
+          } catch {
+            // skip
+          }
+        }
+        return { id: a.id, name: a.name, positions: ll }
+      })
+      .filter((p) => p.positions.length >= 2)
+  }, [pendingAlignments, converter])
+
+  // 地図フィット用 bounds（保存済み + プレビューを含む）
+  // プレビューがある場合はプレビュー優先で fit する
+  const bounds = useMemo(() => {
+    const source = pendingPolylines.length > 0 ? pendingPolylines : alignmentPolylines
+    const all: [number, number][] = []
+    for (const p of source) all.push(...p.positions)
+    if (all.length === 0) return null
+    const lats = all.map((p) => p[0])
+    const lngs = all.map((p) => p[1])
+    return L.latLngBounds(
+      [Math.min(...lats), Math.min(...lngs)],
+      [Math.max(...lats), Math.max(...lngs)],
+    )
+  }, [alignmentPolylines, pendingPolylines])
+
+  const mapCenter: [number, number] = bounds
+    ? [(bounds.getNorth() + bounds.getSouth()) / 2, (bounds.getEast() + bounds.getWest()) / 2]
+    : [43.06, 141.35]
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setParseError(null)
+    setParseWarnings([])
+    try {
+      const text = await file.text()
+      const { alignments: parsed, warnings } = parseLandXml(text, file.name)
+      if (parsed.length === 0) {
+        setParseError('Alignment 要素が見つかりませんでした')
+        setPendingAlignments(null)
+      } else {
+        setPendingAlignments(parsed)
+        setParseWarnings(warnings)
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'プレビューの生成に失敗しました')
-    } finally {
-      setGenerating(false)
+      setParseError(err instanceof Error ? err.message : 'ファイルの読み込みに失敗しました')
+      setPendingAlignments(null)
     }
-  }, [planGroups, hasData, pipeWidth, transitionDistance])
+    // ファイル選択をリセット
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
 
-  // 施工計画データが変更されたらプレビューをリセット
-  useEffect(() => {
-    setPreviewData(null)
-  }, [planGroups])
+  const handleConfirmImport = async () => {
+    if (!currentFarm || !pendingAlignments) return
+    await addAlignments(currentFarm.id, pendingAlignments)
+    setPendingAlignments(null)
+    setParseWarnings([])
+  }
 
-  // LandXMLをエクスポート
-  const handleExport = () => {
-    if (!previewData) return
+  const handleCancelImport = () => {
+    setPendingAlignments(null)
+    setParseWarnings([])
+  }
 
-    const projectName = currentFarm?.name || 'construction_plan'
-    const filename = `${projectName}_landxml.xml`
-    const xml = generateLandXMLFromPlan(planGroups, {
-      pipeWidth,
-      transitionDistance,
-      projectName,
+  const handleDelete = async (id: string) => {
+    if (!confirm('この中心線形を削除しますか？')) return
+    await deleteAlignment(id)
+  }
+
+  const handleClearAll = async () => {
+    if (!currentFarm) return
+    if (!confirm(`${currentFarm.name} のすべての中心線形を削除しますか？`)) return
+    await clearAlignments(currentFarm.id)
+  }
+
+  const toggleExpanded = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
     })
-    downloadLandXML(xml, filename)
   }
-
-  // デバッグ用: 施工計画データをJSONでダウンロード
-  const handleExportDebugData = () => {
-    const debugData = {
-      planGroups: planGroups.map(group => ({
-        id: group.id,
-        name: group.name,
-        groupType: group.groupType,
-        groupIndex: group.groupIndex,
-        rows: group.rows.map(row => ({
-          rowIndex: row.rowIndex,
-          pipeNumber: row.pipeNumber,
-          absorptionPipeId: row.absorptionPipeId,
-          collectorPipeId: row.collectorPipeId,
-          systemIndex: row.systemIndex,
-          absorptionPoints: row.absorptionPoints.map(p => ({
-            pointIndex: p.pointIndex,
-            x: p.x,
-            y: p.y,
-            plannedHeight: p.plannedHeight,
-          })),
-          collectorPoint: row.collectorPoint ? {
-            x: row.collectorPoint.x,
-            y: row.collectorPoint.y,
-            plannedHeight: row.collectorPoint.plannedHeight,
-          } : null,
-        })),
-      })),
-      pipeWidth,
-      transitionDistance,
-      // プレビュー生成時のデバッグ情報
-      pipeDebugInfo: debugInfo,
-    }
-
-    const blob = new Blob([JSON.stringify(debugData, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'landxml_debug_data.json'
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-
-  // 統計情報
-  const stats = useMemo(() => {
-    if (!previewData) return null
-
-    let minZ = Infinity, maxZ = -Infinity
-    for (const p of previewData.points.values()) {
-      minZ = Math.min(minZ, p.z)
-      maxZ = Math.max(maxZ, p.z)
-    }
-
-    return {
-      pointCount: previewData.points.size,
-      faceCount: previewData.faces.length,
-      minZ: minZ === Infinity ? 0 : minZ,
-      maxZ: maxZ === -Infinity ? 0 : maxZ,
-    }
-  }, [previewData])
 
   return (
-    <div className="h-full flex flex-col">
-      {/* ヘッダー */}
-      <div className="p-4 border-b bg-white flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold flex items-center gap-2">
-            <FileCode className="h-5 w-5" />
-            LandXML出力
-          </h1>
+    <div className="h-full flex flex-col overflow-hidden">
+      <div className="p-4 border-b bg-white flex items-center gap-3">
+        <FileOutput className="h-5 w-5" />
+        <div className="flex-1">
+          <h1 className="text-xl font-bold">LandXML 取り込み</h1>
           <p className="text-sm text-muted-foreground">
-            施工計画データからLandXML形式のTINサーフェスを生成
+            LandXML ファイルから中心線形（Alignment）を取り込みます
           </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {planLoading ? (
-            <div className="flex items-center gap-2 px-4 py-2 text-slate-400">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              読み込み中...
-            </div>
-          ) : (
-            <>
-              <button
-                onClick={handleExportDebugData}
-                disabled={!hasData}
-                className="flex items-center gap-2 px-3 py-2 border rounded-lg text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50"
-                title="デバッグデータ出力"
-              >
-                デバッグ出力
-              </button>
-              <button
-                onClick={() => setShowSettings(!showSettings)}
-                className={`flex items-center gap-2 px-3 py-2 border rounded-lg transition-colors ${
-                  showSettings
-                    ? 'bg-amber-100 border-amber-300 text-amber-700'
-                    : 'text-slate-600 hover:bg-slate-50'
-                }`}
-                title="設定"
-              >
-                <Settings className="h-4 w-4" />
-              </button>
-              <button
-                onClick={generatePreview}
-                disabled={generating || !hasData}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-              >
-                {generating ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Eye className="h-4 w-4" />
-                )}
-                {generating ? '生成中...' : 'プレビュー生成'}
-              </button>
-              <button
-                onClick={handleExport}
-                disabled={!previewData}
-                className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50"
-              >
-                <Download className="h-4 w-4" />
-                XMLエクスポート
-              </button>
-            </>
-          )}
         </div>
       </div>
 
-      {/* 設定パネル */}
-      {showSettings && (
-        <div className="px-4 py-3 border-b bg-amber-50 flex items-center gap-6 text-sm">
-          <span className="font-medium text-amber-800">生成設定:</span>
-          <div className="flex items-center gap-2">
-            <label className="text-slate-600">配管幅:</label>
-            <input
-              type="number"
-              step="0.1"
-              value={pipeWidth}
-              onChange={e => setPipeWidth(parseFloat(e.target.value) || 0.6)}
-              className="w-16 px-2 py-1 border rounded text-center font-mono"
-            />
-            <span className="text-slate-500">m</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="text-slate-600">擦り付け距離:</label>
-            <input
-              type="number"
-              step="0.5"
-              value={transitionDistance}
-              onChange={e => setTransitionDistance(parseFloat(e.target.value) || 5.0)}
-              className="w-16 px-2 py-1 border rounded text-center font-mono"
-            />
-            <span className="text-slate-500">m</span>
-          </div>
-        </div>
-      )}
-
-      {/* エラー表示 */}
-      {error && (
-        <div className="mx-4 mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-center gap-2">
-          <AlertTriangle className="h-4 w-4" />
-          {error}
-        </div>
-      )}
-
-      {/* メインコンテンツ */}
       <div className="flex-1 flex overflow-hidden">
-        {/* 左側: 3Dビューアー */}
-        <div className="flex-1 p-4 flex flex-col items-center justify-center bg-slate-100">
-          {!hasData ? (
-            <div className="text-center text-slate-500">
-              <FileCode className="h-16 w-16 mx-auto mb-4 text-slate-300" />
-              <p className="text-lg font-medium mb-2">施工計画データがありません</p>
-              <p className="text-sm">
-                先に「施工計画」ページで計画高を設定してください
-              </p>
-            </div>
-          ) : !previewData ? (
-            <div className="text-center text-slate-500">
-              <Eye className="h-16 w-16 mx-auto mb-4 text-slate-300" />
-              <p className="text-lg font-medium mb-2">プレビューを生成</p>
-              <p className="text-sm mb-4">
-                「プレビュー生成」ボタンをクリックして面データを確認してください
-              </p>
-              <button
-                onClick={generatePreview}
-                disabled={generating}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-              >
-                {generating ? '生成中...' : 'プレビュー生成'}
-              </button>
-            </div>
-          ) : (
-            <LandXMLViewer
-              points={previewData.points}
-              faces={previewData.faces}
-              width={700}
-              height={500}
+        {/* 左: 操作＋リスト */}
+        <div className="w-[420px] border-r bg-white flex flex-col overflow-hidden">
+          {/* 操作 */}
+          <div className="p-3 border-b space-y-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xml,.landxml"
+              onChange={handleFileChange}
+              className="hidden"
             />
-          )}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={!currentFarm}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+            >
+              <Upload className="h-4 w-4" />
+              LandXML ファイルを選択
+            </button>
+
+            {parseError && (
+              <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2 flex items-start gap-1">
+                <AlertCircle className="h-3 w-3 flex-shrink-0 mt-0.5" />
+                <span>{parseError}</span>
+              </div>
+            )}
+
+            {error && (
+              <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2 flex items-start gap-1">
+                <AlertCircle className="h-3 w-3 flex-shrink-0 mt-0.5" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            {pendingAlignments && (
+              <div className="text-xs border border-blue-300 rounded bg-blue-50 p-2 space-y-2">
+                <div className="font-semibold text-blue-800">
+                  {pendingAlignments.length} 件の中心線形が見つかりました
+                </div>
+                <ul className="space-y-0.5">
+                  {pendingAlignments.map((a) => (
+                    <li key={a.id}>
+                      ・{a.name}（延長 {a.totalLength.toFixed(2)} m / {a.segments.length} セグメント）
+                    </li>
+                  ))}
+                </ul>
+                {parseWarnings.length > 0 && (
+                  <div className="text-amber-700 space-y-0.5">
+                    {parseWarnings.map((w, i) => (
+                      <div key={i}>⚠ {w}</div>
+                    ))}
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleConfirmImport}
+                    disabled={saving}
+                    className="flex-1 px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 text-xs"
+                  >
+                    {saving ? '保存中...' : '保存'}
+                  </button>
+                  <button
+                    onClick={handleCancelImport}
+                    className="flex-1 px-3 py-1.5 border rounded hover:bg-slate-50 text-xs"
+                  >
+                    キャンセル
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* リスト */}
+          <div className="flex-1 overflow-auto p-3">
+            {loading ? (
+              <div className="flex items-center justify-center py-8 text-slate-500 text-sm">
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                読み込み中...
+              </div>
+            ) : alignments.length === 0 ? (
+              <div className="text-center py-8 text-slate-400 text-sm">
+                登録された中心線形がありません
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-slate-600">{alignments.length} 件</span>
+                  <button
+                    onClick={handleClearAll}
+                    disabled={saving}
+                    className="text-xs text-red-600 hover:underline"
+                  >
+                    全て削除
+                  </button>
+                </div>
+                <ul className="space-y-1">
+                  {alignments.map((a) => {
+                    const isExpanded = expandedIds.has(a.id)
+                    return (
+                      <li key={a.id} className="border rounded bg-white">
+                        <div className="flex items-center gap-1 px-2 py-1.5">
+                          <button
+                            onClick={() => toggleExpanded(a.id)}
+                            className="p-0.5 hover:bg-slate-100 rounded"
+                          >
+                            {isExpanded ? (
+                              <ChevronDown className="h-3.5 w-3.5" />
+                            ) : (
+                              <ChevronRight className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium truncate" title={a.name}>
+                              {a.name}
+                            </div>
+                            <div className="text-[11px] text-slate-500">
+                              延長 {a.totalLength.toFixed(2)} m / {a.segments.length} 区間
+                              {a.sourceFile && <> · {a.sourceFile}</>}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleDelete(a.id)}
+                            className="p-1 text-slate-400 hover:text-red-500"
+                            title="削除"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                        {isExpanded && (
+                          <div className="border-t px-2 py-1 overflow-x-auto">
+                            <table className="w-full text-[11px]">
+                              <thead className="text-slate-500">
+                                <tr>
+                                  <th className="text-left font-normal px-1">#</th>
+                                  <th className="text-left font-normal px-1">種別</th>
+                                  <th className="text-right font-normal px-1">長さ</th>
+                                  <th className="text-right font-normal px-1">R</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {a.segments.map((seg, i) => (
+                                  <tr key={i}>
+                                    <td className="px-1 text-slate-500">{i + 1}</td>
+                                    <td className="px-1">
+                                      {seg.type === 'line'
+                                        ? '直線'
+                                        : seg.type === 'curve'
+                                          ? '曲線'
+                                          : '緩和'}
+                                    </td>
+                                    <td className="px-1 text-right font-mono">
+                                      {seg.length.toFixed(2)}
+                                    </td>
+                                    <td className="px-1 text-right font-mono text-slate-500">
+                                      {seg.radius ? seg.radius.toFixed(1) : '-'}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </li>
+                    )
+                  })}
+                </ul>
+              </>
+            )}
+          </div>
         </div>
 
-        {/* 右側: 統計情報 */}
-        <div className="w-64 border-l bg-white p-4">
-          <h3 className="font-medium text-sm mb-4">サーフェス情報</h3>
-
-          {previewData && stats ? (
-            <div className="space-y-3 text-sm">
-              <div className="flex justify-between">
-                <span className="text-slate-600">点数:</span>
-                <span className="font-mono">{stats.pointCount.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-600">面数:</span>
-                <span className="font-mono">{stats.faceCount.toLocaleString()}</span>
-              </div>
-              <div className="border-t pt-3 mt-3">
-                <div className="flex justify-between mb-1">
-                  <span className="text-slate-600">最低高:</span>
-                  <span className="font-mono">{stats.minZ.toFixed(3)} m</span>
+        {/* 右: 地図 */}
+        <div className="flex-1 relative">
+          <MapContainer
+            center={mapCenter}
+            zoom={15}
+            maxZoom={22}
+            className="h-full w-full"
+          >
+            <TileLayer
+              attribution='&copy; 国土地理院'
+              url="https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg"
+              maxZoom={22}
+              maxNativeZoom={18}
+            />
+            <FitBoundsOnce bounds={bounds} key={pendingPolylines.length > 0 ? 'pending' : 'saved'} />
+            {/* 保存済み: 赤 */}
+            {alignmentPolylines.map((p) => (
+              <Polyline
+                key={`saved-${p.id}`}
+                positions={p.positions}
+                pathOptions={{ color: '#dc2626', weight: 3, opacity: 0.9 }}
+              />
+            ))}
+            {/* 取り込み直後のプレビュー: オレンジ（点線） */}
+            {pendingPolylines.map((p) => (
+              <Polyline
+                key={`pending-${p.id}`}
+                positions={p.positions}
+                pathOptions={{
+                  color: '#f97316',
+                  weight: 4,
+                  opacity: 0.95,
+                  dashArray: '6,6',
+                }}
+              />
+            ))}
+          </MapContainer>
+          {/* 凡例 */}
+          {(alignmentPolylines.length > 0 || pendingPolylines.length > 0) && (
+            <div className="absolute bottom-3 right-3 bg-white/90 border rounded px-2 py-1 text-xs space-y-1 shadow">
+              {alignmentPolylines.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="inline-block w-5 h-1 bg-red-600" />
+                  <span>保存済み</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-600">最高高:</span>
-                  <span className="font-mono">{stats.maxZ.toFixed(3)} m</span>
+              )}
+              {pendingPolylines.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span
+                    className="inline-block w-5 h-1"
+                    style={{
+                      background:
+                        'repeating-linear-gradient(to right, #f97316 0 3px, transparent 3px 6px)',
+                    }}
+                  />
+                  <span>プレビュー（未保存）</span>
                 </div>
-              </div>
-
-              <div className="border-t pt-3 mt-3">
-                <h4 className="font-medium text-xs text-slate-500 mb-2">配管情報</h4>
-                <div className="space-y-1 text-xs">
-                  {planGroups.map(group => (
-                    <div key={group.id} className="flex justify-between">
-                      <span className="text-slate-600">{group.name}:</span>
-                      <span>{group.rows.length} 本</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="border-t pt-3 mt-3">
-                <h4 className="font-medium text-xs text-slate-500 mb-2">生成設定</h4>
-                <div className="space-y-1 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">配管幅:</span>
-                    <span>{pipeWidth} m</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">擦り付け距離:</span>
-                    <span>{transitionDistance} m</span>
-                  </div>
-                </div>
-              </div>
+              )}
             </div>
-          ) : (
-            <p className="text-sm text-slate-400">
-              プレビューを生成すると情報が表示されます
-            </p>
           )}
         </div>
       </div>
     </div>
   )
+}
+
+function FitBoundsOnce({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
+  const map = useMap()
+  const doneRef = useRef(false)
+  useEffect(() => {
+    if (doneRef.current) return
+    if (!bounds) return
+    map.fitBounds(bounds, { padding: [30, 30], maxZoom: 20 })
+    doneRef.current = true
+  }, [map, bounds])
+  return null
 }
