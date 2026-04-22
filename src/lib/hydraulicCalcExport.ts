@@ -24,11 +24,10 @@ const roundTo = (value: number, decimals: number): number => {
   return Math.round(value * m) / m
 }
 
-// 管の実延長（頂点間の合計距離）を計算
-const calculatePipeLength = (pipe: PipeRow): number => {
-  if (pipe.measuredLength != null) return pipe.measuredLength
+// 吸水管の延長: 設計延長を優先（水理計算書の吸水側は設計延長で出力）
+const calculateDesignLength = (pipe: PipeRow): number => {
   if (pipe.designLength != null) return pipe.designLength
-  // 頂点から再計算
+  if (pipe.measuredLength != null) return pipe.measuredLength
   let total = 0
   for (let i = 1; i < pipe.vertices.length; i++) {
     const dx = pipe.vertices[i].x - pipe.vertices[i - 1].x
@@ -152,9 +151,9 @@ export async function exportHydraulicCalcSheet({
         if (absorptionPipe.diameter != null) {
           ws.getCell(`E${currentRow}`).value = absorptionPipe.diameter / 10
         }
-        // F: 延長（実測または設計長を丸め）
-        const actualLen = calculatePipeLength(absorptionPipe)
-        ws.getCell(`F${currentRow}`).value = roundTo(actualLen, lengthDecimals)
+        // F: 延長（吸水側は設計延長を 0 桁（整数）で出力）
+        const actualLen = calculateDesignLength(absorptionPipe)
+        ws.getCell(`F${currentRow}`).value = roundTo(actualLen, 0)
         // G: 接続補正(-) — 最初の端部は空、それ以外は 配線間隔/2
         //   系統内で最初の吸水行かどうかで判断
         const isFirstAbsorption =
