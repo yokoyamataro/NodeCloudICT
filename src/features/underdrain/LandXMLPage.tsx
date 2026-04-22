@@ -18,7 +18,7 @@ import { useAlignmentStore } from '@/stores/alignmentStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import { parseLandXml } from '@/lib/landxml/parser'
 import { sampleAlignment } from '@/lib/landxml/geometry'
-import { buildAlignmentsFromPlan } from '@/lib/landxml/fromPlan'
+import { buildAlignmentsFromPlan, alignmentZRange } from '@/lib/landxml/fromPlan'
 import { CoordinateConverter } from '@/lib/coordinates'
 import type { Alignment } from '@/lib/landxml/types'
 
@@ -259,36 +259,57 @@ export function LandXMLPage() {
               </label>
             </div>
             {derivedAlignments.length > 0 && (
-              <div className="mt-2 max-h-40 overflow-auto border rounded bg-white">
+              <div className="mt-2 max-h-56 overflow-auto border rounded bg-white">
                 <table className="w-full text-[11px]">
                   <thead className="bg-slate-50 sticky top-0">
                     <tr>
                       <th className="text-left font-normal px-2 py-1">線形</th>
                       <th className="text-right font-normal px-2 py-1">延長 (m)</th>
                       <th className="text-right font-normal px-2 py-1">区間</th>
+                      <th className="text-right font-normal px-2 py-1">Z 範囲</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {derivedAlignments.map((a) => (
-                      <tr key={a.id} className="border-t">
-                        <td className="px-2 py-0.5 truncate max-w-[200px]" title={a.name}>
-                          <span
-                            className={`inline-block w-2 h-2 rounded-full mr-1 align-middle ${
-                              a.source === 'absorption' ? 'bg-blue-600' : 'bg-emerald-500'
+                    {derivedAlignments.map((a) => {
+                      const zr = alignmentZRange(a.segments)
+                      return (
+                        <tr key={a.id} className="border-t">
+                          <td className="px-2 py-0.5 truncate max-w-[160px]" title={a.name}>
+                            <span
+                              className={`inline-block w-2 h-2 rounded-full mr-1 align-middle ${
+                                a.source === 'absorption' ? 'bg-blue-600' : 'bg-emerald-500'
+                              }`}
+                            />
+                            {a.name}
+                          </td>
+                          <td className="px-2 py-0.5 text-right font-mono">
+                            {a.totalLength.toFixed(2)}
+                          </td>
+                          <td className="px-2 py-0.5 text-right font-mono text-slate-500">
+                            {a.segments.length}
+                          </td>
+                          <td
+                            className={`px-2 py-0.5 text-right font-mono ${
+                              zr.has3D ? 'text-slate-700' : 'text-red-500'
                             }`}
-                          />
-                          {a.name}
-                        </td>
-                        <td className="px-2 py-0.5 text-right font-mono">
-                          {a.totalLength.toFixed(2)}
-                        </td>
-                        <td className="px-2 py-0.5 text-right font-mono text-slate-500">
-                          {a.segments.length}
-                        </td>
-                      </tr>
-                    ))}
+                            title={
+                              zr.has3D
+                                ? `${zr.min.toFixed(3)} 〜 ${zr.max.toFixed(3)} m (3D)`
+                                : 'Z 値が入っていません（計画高・地盤高が未入力）'
+                            }
+                          >
+                            {zr.has3D
+                              ? `${zr.min.toFixed(2)}〜${zr.max.toFixed(2)}`
+                              : '2D のみ'}
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
+                <div className="px-2 py-1 text-[10px] text-slate-500 border-t">
+                  Z は計画高を優先、未入力なら地盤高をフォールバック。どちらも無い場合は「2D のみ」
+                </div>
               </div>
             )}
           </div>

@@ -16,6 +16,13 @@ function dist2d(a: { x: number; y: number }, b: { x: number; y: number }): numbe
   return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2)
 }
 
+// Z（標高）は計画高を優先、未入力なら地盤高をフォールバック
+function pickZ(p: PlanPoint): number | null {
+  if (p.plannedHeight != null) return p.plannedHeight
+  if (p.groundHeight != null) return p.groundHeight
+  return null
+}
+
 function segmentsFromPoints(points: PlanPoint[]): AlignmentSegment[] {
   const segs: AlignmentSegment[] = []
   for (let i = 1; i < points.length; i++) {
@@ -27,14 +34,27 @@ function segmentsFromPoints(points: PlanPoint[]): AlignmentSegment[] {
       type: 'line',
       startX: a.x,
       startY: a.y,
-      startZ: a.plannedHeight ?? null,
+      startZ: pickZ(a),
       endX: b.x,
       endY: b.y,
-      endZ: b.plannedHeight ?? null,
+      endZ: pickZ(b),
       length: len,
     })
   }
   return segs
+}
+
+// アライメント全体の Z 範囲を取得（セグメントから）
+export function alignmentZRange(
+  segments: AlignmentSegment[],
+): { min: number; max: number; has3D: boolean } {
+  const zs: number[] = []
+  for (const s of segments) {
+    if (s.startZ != null) zs.push(s.startZ)
+    if (s.endZ != null) zs.push(s.endZ)
+  }
+  if (zs.length === 0) return { min: 0, max: 0, has3D: false }
+  return { min: Math.min(...zs), max: Math.max(...zs), has3D: true }
 }
 
 function sumLength(segs: AlignmentSegment[]): number {
