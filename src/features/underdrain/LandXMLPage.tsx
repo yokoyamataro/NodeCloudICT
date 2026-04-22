@@ -16,9 +16,12 @@ import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useAlignmentStore } from '@/stores/alignmentStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
+import { useUnderdrainStore } from '@/stores/underdrainStore'
+import { useSurveyStore } from '@/stores/surveyStore'
 import { parseLandXml } from '@/lib/landxml/parser'
 import { sampleAlignment } from '@/lib/landxml/geometry'
 import { buildAlignmentsFromPlan, alignmentZRange } from '@/lib/landxml/fromPlan'
+import { buildTinSurface } from '@/lib/landxml/surface'
 import { CoordinateConverter } from '@/lib/coordinates'
 import type { Alignment } from '@/lib/landxml/types'
 
@@ -37,6 +40,8 @@ export function LandXMLPage() {
     clearAlignments,
   } = useAlignmentStore()
   const { planGroups, fetchPlan } = useConstructionPlanStore()
+  const { pipes, fetchPipes } = useUnderdrainStore()
+  const { surveyData, fetchSurveyData } = useSurveyStore()
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [parseError, setParseError] = useState<string | null>(null)
@@ -49,7 +54,9 @@ export function LandXMLPage() {
     if (!currentFarm) return
     fetchAlignments(currentFarm.id)
     fetchPlan(currentFarm.id)
-  }, [currentFarm, fetchAlignments, fetchPlan])
+    fetchPipes(currentFarm.id)
+    fetchSurveyData(currentFarm.id)
+  }, [currentFarm, fetchAlignments, fetchPlan, fetchPipes, fetchSurveyData])
 
   // プロジェクトの座標系を適用
   useEffect(() => {
@@ -69,6 +76,48 @@ export function LandXMLPage() {
   // 絞り込み: 吸水/集水を個別 on/off
   const [showAbsorption, setShowAbsorption] = useState(true)
   const [showCollector, setShowCollector] = useState(true)
+
+  // TIN 生成・表示設定
+  const [showTin, setShowTin] = useState(false)
+  const [tinIncludePipes, setTinIncludePipes] = useState(true)
+  const [tinIncludeSurvey, setTinIncludeSurvey] = useState(true)
+  const [tinIncludePlan, setTinIncludePlan] = useState(false)
+
+  const tinSurface = useMemo(() => {
+    if (!showTin) return null
+    return buildTinSurface({
+      pipes,
+      surveyData,
+      planGroups,
+      includePipes: tinIncludePipes,
+      includeSurvey: tinIncludeSurvey,
+      includePlan: tinIncludePlan,
+    })
+  }, [showTin, pipes, surveyData, planGroups, tinIncludePipes, tinIncludeSurvey, tinIncludePlan])
+
+  // TIN の三角形エッジを緯度経度に変換
+  const tinEdgeLatLngs = useMemo(() => {
+    if (!tinSurface) return []
+    const edges: Array<[[number, number], [number, number]]> = []
+    for (const t of tinSurface.triangles) {
+      const pts = [tinSurface.points[t.a], tinSurface.points[t.b], tinSurface.points[t.c]]
+      const ll: Array<[number, number]> = []
+      for (const p of pts) {
+        try {
+          const { lat, lng } = converter.toLatLng(p.x, p.y)
+          if (Number.isFinite(lat) && Number.isFinite(lng)) ll.push([lat, lng])
+        } catch {
+          // skip
+        }
+      }
+      if (ll.length === 3) {
+        edges.push([ll[0], ll[1]])
+        edges.push([ll[1], ll[2]])
+        edges.push([ll[2], ll[0]])
+      }
+    }
+    return edges
+  }, [tinSurface, converter])
 
   // 保存済み線形を緯度経度で点列化
   const alignmentPolylines = useMemo(() => {
@@ -490,10 +539,64 @@ export function LandXMLPage() {
               </>
             )}
 
-            {/* 面データ (未実装) */}
+            {/* 面データ（TIN 生成） */}
             <div className="border-t pt-3 mt-4">
-              <div className="text-sm font-semibold text-slate-500">2. 面データの取り込み</div>
-              <div className="text-xs text-slate-400 mt-1">（今後実装予定）</div>
+              <div className="text-sm font-semibold">2. 面データ（TIN 生成）</div>
+              <div className="text-xs text-slate-500 mt-0.5">
+                配管頂点・測量点・計画点から 3D TIN を作成
+              </div>
+              <label className="flex items-center gap-2 mt-2 text-xs cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showTin}
+                  onChange={(e) => setShowTin(e.target.checked)}
+                  className="h-3.5 w-3.5"
+                />
+                TIN を生成して表示
+              </label>
+              {showTin && (
+                <div className="mt-2 ml-4 space-y-1 text-xs">
+                  <label className="flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={tinIncludePipes}
+                      onChange={(e) => setTinIncludePipes(e.target.checked)}
+                      className="h-3.5 w-3.5"
+                    />
+                    配管頂点（{pipes.reduce((s, p) => s + p.vertices.filter((v) => v.z != null).length, 0)} 点）
+                  </label>
+                  <label className="flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={tinIncludeSurvey}
+                      onChange={(e) => setTinIncludeSurvey(e.target.checked)}
+                      className="h-3.5 w-3.5"
+                    />
+                    測量点（{surveyData.filter((s) => s.z != null).length} 点）
+                  </label>
+                  <label className="flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={tinIncludePlan}
+                      onChange={(e) => setTinIncludePlan(e.target.checked)}
+                      className="h-3.5 w-3.5"
+                    />
+                    施工計画点（計画高）
+                  </label>
+                  {tinSurface && (
+                    <div className="mt-2 text-[11px] text-slate-600 bg-slate-50 border rounded p-2 space-y-0.5">
+                      <div>
+                        点数: {tinSurface.stats.pointCount} / 三角形:{' '}
+                        {tinSurface.stats.triangleCount}
+                      </div>
+                      <div>
+                        Z 範囲: {tinSurface.stats.zMin.toFixed(2)} 〜{' '}
+                        {tinSurface.stats.zMax.toFixed(2)} m
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* LandXML 出力 (未実装) */}
@@ -530,6 +633,14 @@ export function LandXMLPage() {
               bounds={bounds}
               key={pendingPolylines.length > 0 ? 'pending' : 'saved'}
             />
+            {/* TIN 三角形エッジ: 薄灰 */}
+            {tinEdgeLatLngs.map((e, idx) => (
+              <Polyline
+                key={`tin-${idx}`}
+                positions={e}
+                pathOptions={{ color: '#94a3b8', weight: 0.7, opacity: 0.7 }}
+              />
+            ))}
             {/* 施工計画由来: 吸水=青・集水=緑 */}
             {derivedPolylines.map((p) => (
               <Polyline
@@ -567,8 +678,15 @@ export function LandXMLPage() {
           {/* 凡例 */}
           {(alignmentPolylines.length > 0 ||
             pendingPolylines.length > 0 ||
-            derivedPolylines.length > 0) && (
+            derivedPolylines.length > 0 ||
+            tinEdgeLatLngs.length > 0) && (
             <div className="absolute bottom-3 right-3 bg-white/90 border rounded px-2 py-1 text-xs space-y-1 shadow">
+              {tinEdgeLatLngs.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="inline-block w-5 h-0.5 bg-slate-400" />
+                  <span>TIN メッシュ</span>
+                </div>
+              )}
               {derivedPolylines.some((p) => p.source === 'absorption') && (
                 <div className="flex items-center gap-2">
                   <span className="inline-block w-5 h-1 bg-blue-600" />
