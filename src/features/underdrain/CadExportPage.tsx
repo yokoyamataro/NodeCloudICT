@@ -23,12 +23,17 @@ const DEFAULT_LEVEL: DrawingLevel = {
   rotation: 0,
 }
 
-// 実座標 (x, y) を用紙座標へ変換
-// 旧マクロは Atn(dy/dx) を使っていたため第3象限の点が 180° 回転するバグがあった。
-// ここでは標準の 2D 回転行列（CCW 回転角 +rotation）で正しく変換する。
-//   px = dx * cos(A) - dy * sin(A)
-//   py = dx * sin(A) + dy * cos(A)
-// ※ 縮尺は旧マクロでも使用されていないため、ここでも座標変換には使わない
+// 実座標 (x, y) を用紙座標へ変換（旧マクロ 用紙座標 関数と完全一致）
+// 極座標形式:
+//   1. 原点シフト: dx = x - x0, dy = y - y0
+//   2. 角度計算: a0 = atan(dy/dx)
+//   3. 距離: s1 = sqrt(dx²+dy²)
+//   4. 回転: a1 = a0 + 回転角, π で 2 回までの wrap
+//   5. 直交座標に戻す: x1 = s1 * cos(a1), y1 = s1 * sin(a1)
+// ※ 縮尺は旧マクロでも使用されていない
+// ※ NodeCloud の頂点は survey convention (x=北, y=東) で保存されているが、
+//   旧マクロの Excel データは math convention (x=東, y=北) 前提だったため、
+//   呼び出し側で (y, x) の順に入れ替えて渡すこと
 function toPaperCoords(
   x: number,
   y: number,
@@ -36,10 +41,14 @@ function toPaperCoords(
 ): { px: number; py: number } {
   const dx = x - level.originX
   const dy = y - level.originY
-  const c = Math.cos(level.rotation)
-  const s = Math.sin(level.rotation)
-  const px = dx * c - dy * s
-  const py = dx * s + dy * c
+  if (dx === 0 && dy === 0) return { px: 0, py: 0 }
+  const a0 = Math.atan(dy / dx)
+  const s1 = Math.sqrt(dx * dx + dy * dy)
+  let a1 = a0 + level.rotation
+  if (a1 >= Math.PI) a1 -= Math.PI
+  if (a1 >= Math.PI) a1 -= Math.PI
+  const px = s1 * Math.cos(a1)
+  const py = s1 * Math.sin(a1)
   return { px, py }
 }
 
@@ -184,7 +193,9 @@ function buildTextLines(
     for (let i = 0; i < total; i++) {
       const v = pipe.vertices[i]
       const pp = planForPipe?.get(i) ?? null
-      const { px: x1, py: y1 } = toPaperCoords(v.x, v.y, level)
+      // NodeCloud は survey (x=北, y=東) で格納。旧マクロの Excel 入力は math (x=東, y=北)
+      // 前提だったため、ここで入れ替えて渡す。
+      const { px: x1, py: y1 } = toPaperCoords(v.y, v.x, level)
 
       // 前頂点方向（勾配ラベルの角度算出用）
       let segAngle = 0
@@ -192,7 +203,7 @@ function buildTextLines(
       let midY = y1
       if (i > 0) {
         const prev = pipe.vertices[i - 1]
-        const prevP = toPaperCoords(prev.x, prev.y, level)
+        const prevP = toPaperCoords(prev.y, prev.x, level)
         const dx = prevP.px - x1
         const dy = prevP.py - y1
         segAngle = calcTextAngle(dx, dy)
