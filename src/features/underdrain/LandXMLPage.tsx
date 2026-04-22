@@ -21,7 +21,7 @@ import { useSurveyStore } from '@/stores/surveyStore'
 import { parseLandXml } from '@/lib/landxml/parser'
 import { sampleAlignment } from '@/lib/landxml/geometry'
 import { buildAlignmentsFromPlan, alignmentZRange } from '@/lib/landxml/fromPlan'
-import { buildTinSurface } from '@/lib/landxml/surface'
+import { buildTinSurface, buildTrenchTin } from '@/lib/landxml/surface'
 import { CoordinateConverter } from '@/lib/coordinates'
 import type { Alignment } from '@/lib/landxml/types'
 
@@ -83,6 +83,12 @@ export function LandXMLPage() {
   const [tinIncludeSurvey, setTinIncludeSurvey] = useState(true)
   const [tinIncludePlan, setTinIncludePlan] = useState(false)
 
+  // 床掘 TIN 設定
+  const [showTrench, setShowTrench] = useState(false)
+  const [trenchHalfWidth, setTrenchHalfWidth] = useState(0.25) // m = 片側 25cm
+  const [trenchIncludeAbsorption, setTrenchIncludeAbsorption] = useState(true)
+  const [trenchIncludeCollector, setTrenchIncludeCollector] = useState(true)
+
   const tinSurface = useMemo(() => {
     if (!showTin) return null
     return buildTinSurface({
@@ -95,12 +101,30 @@ export function LandXMLPage() {
     })
   }, [showTin, pipes, surveyData, planGroups, tinIncludePipes, tinIncludeSurvey, tinIncludePlan])
 
-  // TIN の三角形エッジを緯度経度に変換
-  const tinEdgeLatLngs = useMemo(() => {
-    if (!tinSurface) return []
+  const trenchSurface = useMemo(() => {
+    if (!showTrench) return null
+    return buildTrenchTin({
+      planGroups,
+      halfWidth: trenchHalfWidth,
+      includeAbsorption: trenchIncludeAbsorption,
+      includeCollector: trenchIncludeCollector,
+    })
+  }, [
+    showTrench,
+    planGroups,
+    trenchHalfWidth,
+    trenchIncludeAbsorption,
+    trenchIncludeCollector,
+  ])
+
+  // 三角形サーフェスのエッジを緯度経度に変換
+  const surfaceToLatLngEdges = (
+    surface: ReturnType<typeof buildTinSurface> | null,
+  ): Array<[[number, number], [number, number]]> => {
+    if (!surface) return []
     const edges: Array<[[number, number], [number, number]]> = []
-    for (const t of tinSurface.triangles) {
-      const pts = [tinSurface.points[t.a], tinSurface.points[t.b], tinSurface.points[t.c]]
+    for (const t of surface.triangles) {
+      const pts = [surface.points[t.a], surface.points[t.b], surface.points[t.c]]
       const ll: Array<[number, number]> = []
       for (const p of pts) {
         try {
@@ -117,7 +141,13 @@ export function LandXMLPage() {
       }
     }
     return edges
-  }, [tinSurface, converter])
+  }
+
+  const tinEdgeLatLngs = useMemo(() => surfaceToLatLngEdges(tinSurface), [tinSurface, converter])
+  const trenchEdgeLatLngs = useMemo(
+    () => surfaceToLatLngEdges(trenchSurface),
+    [trenchSurface, converter],
+  )
 
   // 保存済み線形を緯度経度で点列化
   const alignmentPolylines = useMemo(() => {
@@ -597,6 +627,74 @@ export function LandXMLPage() {
                   )}
                 </div>
               )}
+
+              {/* 床掘 TIN */}
+              <div className="mt-3 pt-3 border-t">
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={showTrench}
+                    onChange={(e) => setShowTrench(e.target.checked)}
+                    className="h-3.5 w-3.5"
+                  />
+                  <span className="font-semibold">床掘 TIN を生成して表示</span>
+                </label>
+                <div className="ml-4 mt-0.5 text-[11px] text-slate-500">
+                  各配管の中心線から左右へ一定幅オフセットした帯を、計画高でリボン化
+                </div>
+                {showTrench && (
+                  <div className="mt-2 ml-4 space-y-1.5 text-xs">
+                    <label className="flex items-center gap-2">
+                      <span>片側幅 (m):</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min={0.01}
+                        value={trenchHalfWidth}
+                        onChange={(e) => {
+                          const v = parseFloat(e.target.value)
+                          if (Number.isFinite(v) && v > 0) setTrenchHalfWidth(v)
+                        }}
+                        onWheel={(e) => e.currentTarget.blur()}
+                        className="w-16 px-1 py-0.5 border rounded text-right font-mono text-xs"
+                      />
+                      <span className="text-slate-500">
+                        → 全幅 {(trenchHalfWidth * 2).toFixed(2)} m
+                      </span>
+                    </label>
+                    <label className="flex items-center gap-1 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={trenchIncludeAbsorption}
+                        onChange={(e) => setTrenchIncludeAbsorption(e.target.checked)}
+                        className="h-3.5 w-3.5"
+                      />
+                      吸水管
+                    </label>
+                    <label className="flex items-center gap-1 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={trenchIncludeCollector}
+                        onChange={(e) => setTrenchIncludeCollector(e.target.checked)}
+                        className="h-3.5 w-3.5"
+                      />
+                      集水管
+                    </label>
+                    {trenchSurface && (
+                      <div className="mt-1 text-[11px] text-slate-600 bg-amber-50 border border-amber-200 rounded p-2 space-y-0.5">
+                        <div>
+                          点数: {trenchSurface.stats.pointCount} / 三角形:{' '}
+                          {trenchSurface.stats.triangleCount}
+                        </div>
+                        <div>
+                          Z 範囲: {trenchSurface.stats.zMin.toFixed(2)} 〜{' '}
+                          {trenchSurface.stats.zMax.toFixed(2)} m
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* LandXML 出力 (未実装) */}
@@ -641,6 +739,14 @@ export function LandXMLPage() {
                 pathOptions={{ color: '#94a3b8', weight: 0.7, opacity: 0.7 }}
               />
             ))}
+            {/* 床掘 TIN: 琥珀色 */}
+            {trenchEdgeLatLngs.map((e, idx) => (
+              <Polyline
+                key={`trench-${idx}`}
+                positions={e}
+                pathOptions={{ color: '#d97706', weight: 1, opacity: 0.85 }}
+              />
+            ))}
             {/* 施工計画由来: 吸水=青・集水=緑 */}
             {derivedPolylines.map((p) => (
               <Polyline
@@ -679,12 +785,19 @@ export function LandXMLPage() {
           {(alignmentPolylines.length > 0 ||
             pendingPolylines.length > 0 ||
             derivedPolylines.length > 0 ||
-            tinEdgeLatLngs.length > 0) && (
+            tinEdgeLatLngs.length > 0 ||
+            trenchEdgeLatLngs.length > 0) && (
             <div className="absolute bottom-3 right-3 bg-white/90 border rounded px-2 py-1 text-xs space-y-1 shadow">
               {tinEdgeLatLngs.length > 0 && (
                 <div className="flex items-center gap-2">
                   <span className="inline-block w-5 h-0.5 bg-slate-400" />
                   <span>TIN メッシュ</span>
+                </div>
+              )}
+              {trenchEdgeLatLngs.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="inline-block w-5 h-0.5 bg-amber-600" />
+                  <span>床掘 TIN</span>
                 </div>
               )}
               {derivedPolylines.some((p) => p.source === 'absorption') && (

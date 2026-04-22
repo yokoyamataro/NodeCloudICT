@@ -7,7 +7,7 @@
 import Delaunator from 'delaunator'
 import type { PipeRow } from '@/stores/underdrainStore'
 import type { SurveyDataRow } from '@/stores/surveyStore'
-import type { PlanGroup, PlanPoint } from '@/stores/constructionPlanStore'
+import type { PlanGroup, PlanPoint, PlanRow } from '@/stores/constructionPlanStore'
 
 export interface TinPoint {
   x: number // 北
@@ -141,6 +141,190 @@ export function buildTinSurface(opts: BuildSurfaceOptions): TinSurface {
   const triangles: TinTriangle[] = []
   for (let i = 0; i < tri.length; i += 3) {
     triangles.push({ a: tri[i], b: tri[i + 1], c: tri[i + 2] })
+  }
+
+  let zMin = Number.POSITIVE_INFINITY
+  let zMax = Number.NEGATIVE_INFINITY
+  for (const p of points) {
+    if (p.z < zMin) zMin = p.z
+    if (p.z > zMax) zMax = p.z
+  }
+  if (!Number.isFinite(zMin)) zMin = 0
+  if (!Number.isFinite(zMax)) zMax = 0
+
+  return {
+    points,
+    triangles,
+    stats: {
+      pointCount: points.length,
+      triangleCount: triangles.length,
+      zMin,
+      zMax,
+    },
+  }
+}
+
+// ============================================================
+// 床掘 TIN 生成
+//   中心線から左右にオフセットした帯（ribbon）を三角形分割する。
+//   Z は各頂点の計画高（plannedHeight）を採用。各リボンは独立。
+// ============================================================
+
+interface CenterlineVertex {
+  x: number
+  y: number
+  z: number
+}
+
+export interface TrenchTinOptions {
+  planGroups: PlanGroup[]
+  /** 中心線から片側のオフセット幅（m）。デフォルト 0.25 = 幅 50cm */
+  halfWidth?: number
+  /** 吸水を含めるか */
+  includeAbsorption?: boolean
+  /** 集水を含めるか */
+  includeCollector?: boolean
+}
+
+/**
+ * 中心線 centerPts に沿って左右 halfWidth だけオフセットした帯を追加する。
+ * 各頂点では前後セグメントの法線を平均した「miter normal」方向に offset する。
+ */
+function addRibbon(
+  points: TinPoint[],
+  triangles: TinTriangle[],
+  centerPts: CenterlineVertex[],
+  halfWidth: number,
+  source: TinPoint['source'],
+  refId?: string | null,
+): void {
+  if (centerPts.length < 2) return
+
+  const leftIdx: number[] = []
+  const rightIdx: number[] = []
+
+  // 各頂点の miter normal (長さ 1 単位、法線方向)
+  for (let i = 0; i < centerPts.length; i++) {
+    const curr = centerPts[i]
+    // 前後のセグメント方向（正規化）
+    const tangents: Array<{ tx: number; ty: number }> = []
+    if (i > 0) {
+      const prev = centerPts[i - 1]
+      const dx = curr.x - prev.x
+      const dy = curr.y - prev.y
+      const l = Math.hypot(dx, dy)
+      if (l > 1e-9) tangents.push({ tx: dx / l, ty: dy / l })
+    }
+    if (i < centerPts.length - 1) {
+      const next = centerPts[i + 1]
+      const dx = next.x - curr.x
+      const dy = next.y - curr.y
+      const l = Math.hypot(dx, dy)
+      if (l > 1e-9) tangents.push({ tx: dx / l, ty: dy / l })
+    }
+    if (tangents.length === 0) continue
+
+    // 平均接線ベクトル
+    const avgTx = tangents.reduce((s, t) => s + t.tx, 0) / tangents.length
+    const avgTy = tangents.reduce((s, t) => s + t.ty, 0) / tangents.length
+    const avgLen = Math.hypot(avgTx, avgTy)
+    if (avgLen < 1e-9) continue
+    const tx = avgTx / avgLen
+    const ty = avgTy / avgLen
+
+    // 法線（左手方向）: tangent を +90° 回転 = (-ty, tx)
+    const nx = -ty
+    const ny = tx
+
+    // 両端以外は miter scale（尖った角でオフセットを一定に保つ）
+    // miter scale = 1 / cos(angle/2)
+    //   cos(angle/2) = 平均接線と片方の接線の内積のうち非負側
+    let miter = 1
+    if (tangents.length === 2) {
+      const cosHalf = Math.abs(tangents[0].tx * tx + tangents[0].ty * ty)
+      if (cosHalf > 1e-3) miter = 1 / cosHalf
+      // 極端な鋭角は上限を設ける（暴走防止）
+      miter = Math.min(miter, 4)
+    }
+
+    const offset = halfWidth * miter
+    const leftX = curr.x + nx * offset
+    const leftY = curr.y + ny * offset
+    const rightX = curr.x - nx * offset
+    const rightY = curr.y - ny * offset
+
+    leftIdx.push(points.length)
+    points.push({ x: leftX, y: leftY, z: curr.z, source, refId })
+    rightIdx.push(points.length)
+    points.push({ x: rightX, y: rightY, z: curr.z, source, refId })
+  }
+
+  // セグメントごとに 2 三角形（quad）を生成
+  for (let i = 0; i < leftIdx.length - 1; i++) {
+    const L0 = leftIdx[i]
+    const L1 = leftIdx[i + 1]
+    const R0 = rightIdx[i]
+    const R1 = rightIdx[i + 1]
+    // Triangle 1: L0, R0, L1
+    triangles.push({ a: L0, b: R0, c: L1 })
+    // Triangle 2: R0, R1, L1
+    triangles.push({ a: R0, b: R1, c: L1 })
+  }
+}
+
+function planPointsToCenterline(points: PlanPoint[]): CenterlineVertex[] {
+  const out: CenterlineVertex[] = []
+  for (const p of points) {
+    const z = p.plannedHeight ?? p.groundHeight
+    if (z == null) continue
+    out.push({ x: p.x, y: p.y, z })
+  }
+  return out
+}
+
+export function buildTrenchTin(opts: TrenchTinOptions): TinSurface {
+  const {
+    planGroups,
+    halfWidth = 0.25,
+    includeAbsorption = true,
+    includeCollector = true,
+  } = opts
+
+  const points: TinPoint[] = []
+  const triangles: TinTriangle[] = []
+
+  for (const group of planGroups) {
+    // 吸水管: 各行ごと
+    if (includeAbsorption) {
+      for (const row of group.rows) {
+        if (!row.absorptionPipeId) continue
+        const center = planPointsToCenterline(row.absorptionPoints)
+        if (center.length >= 2) {
+          addRibbon(points, triangles, center, halfWidth, 'plan', row.absorptionPipeId)
+        }
+      }
+    }
+
+    // 集水管: 系統ごとに collectorPoint を連結
+    if (includeCollector) {
+      const systemMap = new Map<number, PlanRow[]>()
+      for (const r of group.rows) {
+        const idx = r.systemIndex ?? 1
+        const arr = systemMap.get(idx) ?? []
+        arr.push(r)
+        systemMap.set(idx, arr)
+      }
+      for (const [sysIdx, rows] of systemMap) {
+        const pts: PlanPoint[] = []
+        for (const r of rows) {
+          if (r.collectorPoint) pts.push(r.collectorPoint)
+        }
+        const center = planPointsToCenterline(pts)
+        if (center.length >= 2) {
+          addRibbon(points, triangles, center, halfWidth, 'plan', `col-${sysIdx}`)
+        }
+      }
+    }
   }
 
   let zMin = Number.POSITIVE_INFINITY
