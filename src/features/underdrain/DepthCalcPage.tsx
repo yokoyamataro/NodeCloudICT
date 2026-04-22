@@ -447,7 +447,7 @@ export function DepthCalcPage() {
                 {refCount > 0 ? (
                   mergedLast3Points.map((p) => (
                     <td key={p.id} className="px-1.5 py-1 text-center border font-mono bg-slate-100 text-slate-500">
-                      {p.segmentDistance?.toFixed(2) ?? '-'}
+                      {p.segmentDistance?.toFixed(1) ?? '-'}
                     </td>
                   ))
                 ) : (
@@ -455,7 +455,7 @@ export function DepthCalcPage() {
                 )}
                 <td className="border-0 bg-transparent"></td>
                 <td className="px-1.5 py-1 text-center border font-mono text-slate-600 bg-green-50">
-                  {collector?.segmentDistance?.toFixed(2) ?? '-'}
+                  {collector?.segmentDistance?.toFixed(1) ?? '-'}
                 </td>
                 <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">区間距離</td>
               </tr>
@@ -719,12 +719,12 @@ export function DepthCalcPage() {
                       key={p.id}
                       className="px-1.5 py-1 text-center border font-mono text-slate-600"
                     >
-                      {p.segmentDistance?.toFixed(2) ?? '-'}
+                      {p.segmentDistance?.toFixed(1) ?? '-'}
                     </td>
                   ))}
                   <td className="border-0 bg-transparent"></td>
                   <td className="px-1.5 py-1 text-center border font-mono text-slate-600 bg-green-50">
-                    {collector?.segmentDistance?.toFixed(2) ?? '-'}
+                    {collector?.segmentDistance?.toFixed(1) ?? '-'}
                   </td>
                   <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
                     区間距離

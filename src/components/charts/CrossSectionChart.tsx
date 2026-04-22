@@ -304,7 +304,7 @@ export function CrossSectionChart({
 
   // 各スパンの勾配を計算
   const slopeData = useMemo(() => {
-    const slopes: { startIdx: number; endIdx: number; slope: string }[] = []
+    const slopes: { startIdx: number; endIdx: number; slope: string; distance: number }[] = []
 
     for (let i = 0; i < sectionData.length - 1; i++) {
       const p1 = sectionData[i]
@@ -320,12 +320,14 @@ export function CrossSectionChart({
             startIdx: i,
             endIdx: i + 1,
             slope: `1/${Math.round(slopeValue)}`,
+            distance,
           })
         } else if (distance > 0 && heightDiff === 0) {
           slopes.push({
             startIdx: i,
             endIdx: i + 1,
             slope: '水平',
+            distance,
           })
         }
       }
@@ -567,10 +569,10 @@ export function CrossSectionChart({
               <g key={idx}>
                 {/* 勾配ラベル背景 */}
                 <rect
-                  x={midX - 20}
+                  x={midX - 22}
                   y={midY - 8}
-                  width={40}
-                  height={14}
+                  width={44}
+                  height={28}
                   fill="white"
                   fillOpacity={0.85}
                   rx={2}
@@ -584,6 +586,16 @@ export function CrossSectionChart({
                   className="fill-blue-700 text-[16px] font-medium"
                 >
                   {slope.slope}
+                </text>
+                {/* 区間距離（小数1桁、括弧書き） */}
+                <text
+                  x={midX}
+                  y={midY + 14}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  className="fill-slate-600 text-[12px]"
+                >
+                  ({slope.distance.toFixed(1)})
                 </text>
               </g>
             )

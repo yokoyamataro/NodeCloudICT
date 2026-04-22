@@ -99,14 +99,21 @@ const getCurrentFarmId = (): string | null => {
   return useFarmStore.getState().currentFarm?.id ?? null
 }
 
-// 2点間の距離を計算
+// 指定桁数で四捨五入
+const roundTo = (v: number, decimals: number): number => {
+  const k = Math.pow(10, decimals)
+  return Math.round(v * k) / k
+}
+
+// 2点間の距離を計算（施工計画では小数1桁に丸めて保存・表示・勾配計算に使用）
 const calcDistance = (p1: { x: number; y: number }, p2: { x: number; y: number }): number => {
   const dx = p2.x - p1.x
   const dy = p2.y - p1.y
-  return Math.sqrt(dx * dx + dy * dy)
+  return roundTo(Math.sqrt(dx * dx + dy * dy), 1)
 }
 
 // 勾配を計算して "1/xxx" 形式で返す
+// distance は小数1桁、heightDiff は小数3桁の前提（呼び出し側で丸め済みを期待）
 const calcSlope = (distance: number, heightDiff: number): string | null => {
   if (distance === 0 || heightDiff === 0) return null
   const slope = Math.abs(distance / heightDiff)
@@ -1152,6 +1159,8 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
   },
 
   updatePlannedHeight: (rowId: string, pointId: string, plannedHeight: number | null) => {
+    // 計画高は小数3桁に丸めて保存（勾配計算でも同じ値を使用）
+    const ph = plannedHeight != null ? roundTo(plannedHeight, 3) : null
     set(state => {
       const newGroups = state.planGroups.map(group => ({
         ...group,
@@ -1162,17 +1171,17 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
             ...row,
             absorptionPoints: row.absorptionPoints.map(p => {
               if (p.id !== pointId) return p
-              const cutDepth = p.groundHeight !== null && plannedHeight !== null
-                ? p.groundHeight - plannedHeight
+              const cutDepth = p.groundHeight !== null && ph !== null
+                ? roundTo(p.groundHeight - ph, 3)
                 : null
-              return { ...p, plannedHeight, cutDepth }
+              return { ...p, plannedHeight: ph, cutDepth }
             }),
             collectorPoint: row.collectorPoint?.id === pointId
               ? {
                   ...row.collectorPoint,
-                  plannedHeight,
-                  cutDepth: row.collectorPoint.groundHeight !== null && plannedHeight !== null
-                    ? row.collectorPoint.groundHeight - plannedHeight
+                  plannedHeight: ph,
+                  cutDepth: row.collectorPoint.groundHeight !== null && ph !== null
+                    ? roundTo(row.collectorPoint.groundHeight - ph, 3)
                     : null,
                 }
               : row.collectorPoint,
@@ -1188,6 +1197,8 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
   },
 
   updateGroundHeight: (rowId: string, pointId: string, groundHeight: number | null) => {
+    // 地盤高は 2 桁、切深は 3 桁で保存
+    const gh = groundHeight != null ? roundTo(groundHeight, 2) : null
     set(state => {
       const newGroups = state.planGroups.map(group => ({
         ...group,
@@ -1198,17 +1209,17 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
             ...row,
             absorptionPoints: row.absorptionPoints.map(p => {
               if (p.id !== pointId) return p
-              const cutDepth = groundHeight !== null && p.plannedHeight !== null
-                ? groundHeight - p.plannedHeight
+              const cutDepth = gh !== null && p.plannedHeight !== null
+                ? roundTo(gh - p.plannedHeight, 3)
                 : null
-              return { ...p, groundHeight, cutDepth }
+              return { ...p, groundHeight: gh, cutDepth }
             }),
             collectorPoint: row.collectorPoint?.id === pointId
               ? {
                   ...row.collectorPoint,
-                  groundHeight,
-                  cutDepth: groundHeight !== null && row.collectorPoint.plannedHeight !== null
-                    ? groundHeight - row.collectorPoint.plannedHeight
+                  groundHeight: gh,
+                  cutDepth: gh !== null && row.collectorPoint.plannedHeight !== null
+                    ? roundTo(gh - row.collectorPoint.plannedHeight, 3)
                     : null,
                 }
               : row.collectorPoint,
@@ -1226,17 +1237,18 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
         ...group,
         rows: group.rows.map(row => {
           const newAbsorptionPoints = row.absorptionPoints.map((p, idx) => {
-            // 切深
+            // 切深（丸め 3 桁）
             const cutDepth = p.groundHeight !== null && p.plannedHeight !== null
-              ? p.groundHeight - p.plannedHeight
+              ? roundTo(p.groundHeight - p.plannedHeight, 3)
               : null
 
             // 区間勾配（最初の点以外）
+            // 距離は既に 1 桁、計画高は 3 桁で保存されているので、丸め済みの値で計算する
             let segmentSlope: string | null = null
             if (idx > 0) {
               const prevPoint = row.absorptionPoints[idx - 1]
               if (prevPoint.plannedHeight !== null && p.plannedHeight !== null && p.segmentDistance) {
-                const heightDiff = prevPoint.plannedHeight - p.plannedHeight
+                const heightDiff = roundTo(prevPoint.plannedHeight - p.plannedHeight, 3)
                 segmentSlope = calcSlope(p.segmentDistance, heightDiff)
               }
             }
@@ -1248,11 +1260,8 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
           let newCollectorPoint = row.collectorPoint
           if (newCollectorPoint) {
             const cutDepth = newCollectorPoint.groundHeight !== null && newCollectorPoint.plannedHeight !== null
-              ? newCollectorPoint.groundHeight - newCollectorPoint.plannedHeight
+              ? roundTo(newCollectorPoint.groundHeight - newCollectorPoint.plannedHeight, 3)
               : null
-
-            // 集水点の区間勾配は、同じグループ内の次の行の集水点との差で計算
-            // TODO: グループ内の次の集水点との距離・勾配計算
 
             newCollectorPoint = { ...newCollectorPoint, cutDepth }
           }
@@ -1321,8 +1330,9 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                 }
               }
 
-              const cutDepth = point.groundHeight - plannedHeight
-              newAbsorptionPoints.push({ ...point, plannedHeight, cutDepth })
+              const phRounded = roundTo(plannedHeight, 3)
+              const cutDepth = roundTo(point.groundHeight - phRounded, 3)
+              newAbsorptionPoints.push({ ...point, plannedHeight: phRounded, cutDepth })
             }
 
             // 集水点の計画高を計算
@@ -1359,8 +1369,8 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
               }
 
               // 最小値を計画高とする
-              const plannedHeight = Math.min(...candidates)
-              const cutDepth = newCollectorPoint.groundHeight - plannedHeight
+              const plannedHeight = roundTo(Math.min(...candidates), 3)
+              const cutDepth = roundTo(newCollectorPoint.groundHeight - plannedHeight, 3)
 
               newCollectorPoint = { ...newCollectorPoint, plannedHeight, cutDepth }
             }
