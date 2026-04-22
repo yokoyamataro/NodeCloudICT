@@ -198,39 +198,51 @@ function toShiftJIS(text: string): Uint8Array {
   return new Uint8Array(sjisArray)
 }
 
-export function exportCrossSectionDxf(opts: CrossSectionDxfOptions): void {
-  const sectionData = buildSectionData(
-    opts.systemRows,
-    opts.pipeNumberById,
-    opts.allPlanGroups,
-  )
+// ひとつの系統のタイルを DxfBuilder に描画し、使用した縦方向サイズ (mm) を返す
+// yBase: タイル下端の Y 座標（mm）
+interface DrawTileResult {
+  totalHeight: number // mm（このタイルが使用した縦方向サイズ）
+}
 
-  if (sectionData.length === 0) {
-    alert('集水点データがありません')
-    return
-  }
+function drawSystemTile(
+  b: DxfBuilder,
+  sectionData: SectionPoint[],
+  systemIndex: number,
+  endType: 'outlet' | 'merge' | null,
+  yBase: number,
+  verticalScale: number,
+): DrawTileResult {
+  const hFactor = 1000 / HORIZONTAL_SCALE
+  const vFactor = 1000 / verticalScale
 
-  const hFactor = 1000 / HORIZONTAL_SCALE // 1m → 1mm (1/1000)
-  const vFactor = 1000 / opts.verticalScale // 1m → 10mm (1/100), 5mm (1/200), etc.
-
-  // 最小・最大標高を計算（1m 刻みで切り上げ・切り下げ）
   const heights = sectionData
     .flatMap((p) => [p.groundHeight, p.plannedHeight, p.absorptionPlannedHeight])
     .filter((h): h is number => h !== null)
   if (heights.length === 0) {
-    alert('標高データがありません')
-    return
+    return { totalHeight: 0 }
   }
   const rawMin = Math.min(...heights)
   const rawMax = Math.max(...heights)
   const minH = Math.floor(rawMin - 0.5)
   const maxH = Math.ceil(rawMax + 0.5)
 
-  // マージン (mm)
+  // タイルレイアウト:
+  //  [yBase + 0]                                  タイル下端
+  //  [yBase + bandSpace]                          集水番号帯 上端
+  //  [yBase + labelsSpace]                        測点名・累加距離
+  //  [yBase + marginBottom] = bottomEdge          チャート下端
+  //  [yBase + marginBottom + chartHeight]         チャート上端
+  //  [yBase + ... + flagSpace + titleSpace]       タイル上端
+  const labelsSpace = 16 // 測点名・累加距離
+  const bandSpace = 10 // 集水番号帯
+  const marginBottom = labelsSpace + bandSpace + 4 // 下側総余白
+  const flagSpace = 14 // 吸水旗上げ
+  const titleSpace = 10 // タイトル
+  const topPadding = 6
+
   const marginLeft = 40
-  const marginBottom = 60
   const leftEdge = marginLeft
-  const bottomEdge = marginBottom
+  const bottomEdge = yBase + marginBottom
 
   const xP = (distM: number) => leftEdge + distM * hFactor
   const yP = (elevM: number) => bottomEdge + (elevM - minH) * vFactor
@@ -238,18 +250,6 @@ export function exportCrossSectionDxf(opts: CrossSectionDxfOptions): void {
   const maxDist = sectionData[sectionData.length - 1].distance
   const chartWidth = maxDist * hFactor
   const chartHeight = (maxH - minH) * vFactor
-
-  const b = new DxfBuilder()
-
-  // レイヤー定義
-  b.addLayer('FRAME', 7) // 白/黒
-  b.addLayer('GROUND', 1) // 赤（現況線）
-  b.addLayer('PLANNED', 5) // 青（計画線）
-  b.addLayer('AXIS', 8) // グレー
-  b.addLayer('TEXT_POINT', 7)
-  b.addLayer('TEXT_HEIGHT', 7)
-  b.addLayer('SLOPE', 5)
-  b.addLayer('FLAG', 3) // 緑（吸水）
 
   // 枠
   b.line('FRAME', leftEdge, bottomEdge, leftEdge + chartWidth, bottomEdge)
@@ -285,25 +285,17 @@ export function exportCrossSectionDxf(opts: CrossSectionDxfOptions): void {
   // 点マーカー
   for (const p of sectionData) {
     const px = xP(p.distance)
-    if (p.groundHeight !== null) {
-      b.circle('GROUND', px, yP(p.groundHeight), 0.6)
-    }
-    if (p.plannedHeight !== null) {
-      b.circle('PLANNED', px, yP(p.plannedHeight), 0.6)
-    }
-    if (p.absorptionPlannedHeight !== null) {
+    if (p.groundHeight !== null) b.circle('GROUND', px, yP(p.groundHeight), 0.6)
+    if (p.plannedHeight !== null) b.circle('PLANNED', px, yP(p.plannedHeight), 0.6)
+    if (p.absorptionPlannedHeight !== null)
       b.circle('FLAG', px, yP(p.absorptionPlannedHeight), 0.6)
-    }
   }
 
   // 垂直ガイド線 + 累加距離 + 測点名
   for (const p of sectionData) {
     const px = xP(p.distance)
-    // 垂直線（軸下に少し伸ばす）
     b.line('AXIS', px, bottomEdge - 2, px, bottomEdge)
-    // 累加距離 (mm単位のラベル位置)
     b.text('TEXT_HEIGHT', px, bottomEdge - 6, 2, `${p.distance.toFixed(2)}`, 1)
-    // 測点名（さらに下）
     b.text('TEXT_POINT', px, bottomEdge - 12, 2.5, p.pointName, 1)
   }
 
@@ -317,8 +309,7 @@ export function exportCrossSectionDxf(opts: CrossSectionDxfOptions): void {
     if (dist <= 0) continue
     const midX = xP((p1.distance + p2.distance) / 2)
     const midY = (yP(p1.plannedHeight) + yP(p2.plannedHeight)) / 2
-    const slopeText =
-      diff === 0 ? '水平' : `1/${Math.round(Math.abs(dist / diff))}`
+    const slopeText = diff === 0 ? '水平' : `1/${Math.round(Math.abs(dist / diff))}`
     b.text('SLOPE', midX, midY + 3, 2.5, slopeText, 1)
     b.text('SLOPE', midX, midY, 1.8, `(${dist.toFixed(1)})`, 1)
   }
@@ -335,15 +326,13 @@ export function exportCrossSectionDxf(opts: CrossSectionDxfOptions): void {
         : p.plannedHeight !== null
           ? yP(p.plannedHeight)
           : bottomEdge
-    // リーダー線
     b.line('FLAG', px, leaderEndY, px, FLAG_TOP_Y)
-    // 旗
     b.text('FLAG', px, FLAG_TOP_Y + 2, 3, p.absorptionPipeNumber, 1)
   }
 
-  // 集水番号の帯（X軸下）
-  const bandTop = bottomEdge - 18
-  const bandHeight = 5
+  // 集水番号の帯
+  const bandTop = bottomEdge - labelsSpace
+  const bandHeight = bandSpace - 2
   let bandStart = 0
   for (let i = 1; i <= sectionData.length; i++) {
     const prev = sectionData[i - 1]
@@ -354,7 +343,6 @@ export function exportCrossSectionDxf(opts: CrossSectionDxfOptions): void {
           cur && cur.collectorPipeNumber ? cur.distance : sectionData[i - 1].distance
         const x1 = xP(sectionData[bandStart].distance)
         const x2 = xP(nextStartDist)
-        // 矩形（4 本の線）
         b.line('AXIS', x1, bandTop, x2, bandTop)
         b.line('AXIS', x1, bandTop - bandHeight, x2, bandTop - bandHeight)
         b.line('AXIS', x1, bandTop, x1, bandTop - bandHeight)
@@ -366,20 +354,103 @@ export function exportCrossSectionDxf(opts: CrossSectionDxfOptions): void {
   }
 
   // タイトル
-  const title = `系統 ${opts.systemIndex} 集水渠断面図 (H=1/${HORIZONTAL_SCALE}, V=1/${opts.verticalScale})`
-  b.text('FRAME', leftEdge, bottomEdge + chartHeight + 30, 4, title)
+  const endLabel = endType === 'outlet' ? '（落口）' : endType === 'merge' ? '（合流）' : ''
+  const title = `系統 ${systemIndex} 集水渠断面図${endLabel} (H=1/${HORIZONTAL_SCALE}, V=1/${verticalScale})`
+  b.text('FRAME', leftEdge, bottomEdge + chartHeight + flagSpace + 2, 4, title)
 
-  // 出力
-  const content = b.build()
+  const totalHeight = marginBottom + chartHeight + flagSpace + titleSpace + topPadding
+  return { totalHeight }
+}
+
+function registerLayers(b: DxfBuilder): void {
+  b.addLayer('FRAME', 7)
+  b.addLayer('GROUND', 1) // 赤
+  b.addLayer('PLANNED', 5) // 青
+  b.addLayer('AXIS', 8)
+  b.addLayer('TEXT_POINT', 7)
+  b.addLayer('TEXT_HEIGHT', 7)
+  b.addLayer('SLOPE', 5)
+  b.addLayer('FLAG', 3) // 緑
+}
+
+function downloadDxf(content: string, filename: string): void {
   const sjis = toShiftJIS(content)
   const buf = sjis.slice().buffer
   const blob = new Blob([buf], { type: 'application/dxf' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `${opts.farmName ?? 'farm'}_縦断図_系統${opts.systemIndex}.dxf`
+  a.download = filename
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
   URL.revokeObjectURL(url)
+}
+
+// 単一系統の DXF 出力
+export function exportCrossSectionDxf(opts: CrossSectionDxfOptions): void {
+  const sectionData = buildSectionData(
+    opts.systemRows,
+    opts.pipeNumberById,
+    opts.allPlanGroups,
+  )
+
+  if (sectionData.length === 0) {
+    alert('集水点データがありません')
+    return
+  }
+
+  const b = new DxfBuilder()
+  registerLayers(b)
+  drawSystemTile(b, sectionData, opts.systemIndex, opts.endType, 0, opts.verticalScale)
+
+  downloadDxf(b.build(), `${opts.farmName ?? 'farm'}_縦断図_系統${opts.systemIndex}.dxf`)
+}
+
+// 複数系統の一括 DXF 出力（縦並び）
+export interface MultipleExportOptions {
+  systems: Array<{
+    systemRows: PlanRow[]
+    systemIndex: number
+    endType: 'outlet' | 'merge' | null
+    groupName?: string // 集水暗渠1 / 直落暗渠 など（タイトル補助）
+  }>
+  verticalScale: 100 | 200 | 500 | 1000
+  pipeNumberById?: Map<string, string>
+  allPlanGroups?: PlanGroup[]
+  farmName?: string
+}
+
+const TILE_GAP = 20 // 系統間の縦余白 (mm)
+
+export function exportAllCrossSectionsDxf(opts: MultipleExportOptions): void {
+  const b = new DxfBuilder()
+  registerLayers(b)
+
+  let yCurrent = 0
+  let drawnCount = 0
+
+  for (const sys of opts.systems) {
+    const sectionData = buildSectionData(sys.systemRows, opts.pipeNumberById, opts.allPlanGroups)
+    if (sectionData.length === 0) continue
+    const { totalHeight } = drawSystemTile(
+      b,
+      sectionData,
+      sys.systemIndex,
+      sys.endType,
+      yCurrent,
+      opts.verticalScale,
+    )
+    if (totalHeight > 0) {
+      yCurrent += totalHeight + TILE_GAP
+      drawnCount++
+    }
+  }
+
+  if (drawnCount === 0) {
+    alert('出力できる集水点データがありません')
+    return
+  }
+
+  downloadDxf(b.build(), `${opts.farmName ?? 'farm'}_縦断図_全系統.dxf`)
 }
