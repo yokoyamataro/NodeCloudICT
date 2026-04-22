@@ -15,8 +15,10 @@ import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useAlignmentStore } from '@/stores/alignmentStore'
+import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import { parseLandXml } from '@/lib/landxml/parser'
 import { sampleAlignment } from '@/lib/landxml/geometry'
+import { buildAlignmentsFromPlan } from '@/lib/landxml/fromPlan'
 import { CoordinateConverter } from '@/lib/coordinates'
 import type { Alignment } from '@/lib/landxml/types'
 
@@ -34,6 +36,7 @@ export function LandXMLPage() {
     deleteAlignment,
     clearAlignments,
   } = useAlignmentStore()
+  const { planGroups, fetchPlan } = useConstructionPlanStore()
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [parseError, setParseError] = useState<string | null>(null)
@@ -45,7 +48,8 @@ export function LandXMLPage() {
   useEffect(() => {
     if (!currentFarm) return
     fetchAlignments(currentFarm.id)
-  }, [currentFarm, fetchAlignments])
+    fetchPlan(currentFarm.id)
+  }, [currentFarm, fetchAlignments, fetchPlan])
 
   // プロジェクトの座標系を適用
   useEffect(() => {
@@ -55,6 +59,16 @@ export function LandXMLPage() {
   }, [currentFarm, projects, setZone])
 
   const converter = useMemo(() => new CoordinateConverter(zone), [zone])
+
+  // 施工計画から自動算出した中心線形（吸水・集水）
+  const derivedAlignments = useMemo(() => {
+    if (!planGroups || planGroups.length === 0) return []
+    return buildAlignmentsFromPlan(planGroups)
+  }, [planGroups])
+
+  // 絞り込み: 吸水/集水を個別 on/off
+  const [showAbsorption, setShowAbsorption] = useState(true)
+  const [showCollector, setShowCollector] = useState(true)
 
   // 保存済み線形を緯度経度で点列化
   const alignmentPolylines = useMemo(() => {
@@ -74,6 +88,26 @@ export function LandXMLPage() {
       })
       .filter((p) => p.positions.length >= 2)
   }, [alignments, converter])
+
+  // 施工計画由来の線形（派生）
+  const derivedPolylines = useMemo(() => {
+    return derivedAlignments
+      .filter((a) => (a.source === 'absorption' ? showAbsorption : showCollector))
+      .map((a) => {
+        const pts = sampleAlignment(a.segments, 0.5)
+        const ll: [number, number][] = []
+        for (const p of pts) {
+          try {
+            const { lat, lng } = converter.toLatLng(p.x, p.y)
+            if (Number.isFinite(lat) && Number.isFinite(lng)) ll.push([lat, lng])
+          } catch {
+            // skip
+          }
+        }
+        return { id: a.id, name: a.name, positions: ll, source: a.source }
+      })
+      .filter((p) => p.positions.length >= 2)
+  }, [derivedAlignments, converter, showAbsorption, showCollector])
 
   // 取り込み直後の線形（未保存プレビュー）
   const pendingPolylines = useMemo(() => {
@@ -95,12 +129,16 @@ export function LandXMLPage() {
       .filter((p) => p.positions.length >= 2)
   }, [pendingAlignments, converter])
 
-  // 地図フィット用 bounds（保存済み + プレビューを含む）
-  // プレビューがある場合はプレビュー優先で fit する
+  // 地図フィット用 bounds（保存済み + プレビュー + 派生を含む）
   const bounds = useMemo(() => {
-    const source = pendingPolylines.length > 0 ? pendingPolylines : alignmentPolylines
+    const sourcePrimary =
+      pendingPolylines.length > 0
+        ? pendingPolylines
+        : alignmentPolylines.length > 0
+          ? alignmentPolylines
+          : derivedPolylines
     const all: [number, number][] = []
-    for (const p of source) all.push(...p.positions)
+    for (const p of sourcePrimary) all.push(...p.positions)
     if (all.length === 0) return null
     const lats = all.map((p) => p[0])
     const lngs = all.map((p) => p[1])
@@ -108,7 +146,7 @@ export function LandXMLPage() {
       [Math.min(...lats), Math.min(...lngs)],
       [Math.max(...lats), Math.max(...lngs)],
     )
-  }, [alignmentPolylines, pendingPolylines])
+  }, [alignmentPolylines, pendingPolylines, derivedPolylines])
 
   const mapCenter: [number, number] = bounds
     ? [(bounds.getNorth() + bounds.getSouth()) / 2, (bounds.getEast() + bounds.getWest()) / 2]
@@ -187,6 +225,74 @@ export function LandXMLPage() {
       <div className="flex-1 flex overflow-hidden">
         {/* 左: 操作＋リスト */}
         <div className="w-[420px] border-r bg-white flex flex-col overflow-hidden">
+          {/* 施工計画由来の線形 */}
+          <div className="px-3 py-2 border-b bg-emerald-50">
+            <div className="flex items-center gap-2">
+              <div className="text-sm font-semibold">施工計画から算出した中心線形</div>
+              <span className="text-xs text-slate-500">
+                {derivedAlignments.length} 件
+              </span>
+            </div>
+            <div className="text-xs text-slate-500 mt-0.5">
+              各系統の集水・吸水 XYZ から自動生成（保存不要）
+            </div>
+            <div className="flex gap-3 text-xs mt-2">
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showAbsorption}
+                  onChange={(e) => setShowAbsorption(e.target.checked)}
+                  className="h-3.5 w-3.5"
+                />
+                <span className="inline-block w-3 h-0.5 bg-blue-600" />
+                吸水
+              </label>
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showCollector}
+                  onChange={(e) => setShowCollector(e.target.checked)}
+                  className="h-3.5 w-3.5"
+                />
+                <span className="inline-block w-3 h-0.5 bg-emerald-500" />
+                集水
+              </label>
+            </div>
+            {derivedAlignments.length > 0 && (
+              <div className="mt-2 max-h-40 overflow-auto border rounded bg-white">
+                <table className="w-full text-[11px]">
+                  <thead className="bg-slate-50 sticky top-0">
+                    <tr>
+                      <th className="text-left font-normal px-2 py-1">線形</th>
+                      <th className="text-right font-normal px-2 py-1">延長 (m)</th>
+                      <th className="text-right font-normal px-2 py-1">区間</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {derivedAlignments.map((a) => (
+                      <tr key={a.id} className="border-t">
+                        <td className="px-2 py-0.5 truncate max-w-[200px]" title={a.name}>
+                          <span
+                            className={`inline-block w-2 h-2 rounded-full mr-1 align-middle ${
+                              a.source === 'absorption' ? 'bg-blue-600' : 'bg-emerald-500'
+                            }`}
+                          />
+                          {a.name}
+                        </td>
+                        <td className="px-2 py-0.5 text-right font-mono">
+                          {a.totalLength.toFixed(2)}
+                        </td>
+                        <td className="px-2 py-0.5 text-right font-mono text-slate-500">
+                          {a.segments.length}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
           {/* セクション見出し */}
           <div className="px-3 py-2 border-b bg-slate-50">
             <div className="text-sm font-semibold">1. 中心線形の取り込み</div>
@@ -399,8 +505,23 @@ export function LandXMLPage() {
               maxZoom={22}
               maxNativeZoom={18}
             />
-            <FitBoundsOnce bounds={bounds} key={pendingPolylines.length > 0 ? 'pending' : 'saved'} />
-            {/* 保存済み: 赤 */}
+            <FitBoundsOnce
+              bounds={bounds}
+              key={pendingPolylines.length > 0 ? 'pending' : 'saved'}
+            />
+            {/* 施工計画由来: 吸水=青・集水=緑 */}
+            {derivedPolylines.map((p) => (
+              <Polyline
+                key={`derived-${p.id}`}
+                positions={p.positions}
+                pathOptions={{
+                  color: p.source === 'absorption' ? '#2563eb' : '#10b981',
+                  weight: 2.5,
+                  opacity: 0.9,
+                }}
+              />
+            ))}
+            {/* 保存済み (取り込み線形): 赤 */}
             {alignmentPolylines.map((p) => (
               <Polyline
                 key={`saved-${p.id}`}
@@ -423,12 +544,26 @@ export function LandXMLPage() {
             ))}
           </MapContainer>
           {/* 凡例 */}
-          {(alignmentPolylines.length > 0 || pendingPolylines.length > 0) && (
+          {(alignmentPolylines.length > 0 ||
+            pendingPolylines.length > 0 ||
+            derivedPolylines.length > 0) && (
             <div className="absolute bottom-3 right-3 bg-white/90 border rounded px-2 py-1 text-xs space-y-1 shadow">
+              {derivedPolylines.some((p) => p.source === 'absorption') && (
+                <div className="flex items-center gap-2">
+                  <span className="inline-block w-5 h-1 bg-blue-600" />
+                  <span>吸水（施工計画）</span>
+                </div>
+              )}
+              {derivedPolylines.some((p) => p.source === 'collector') && (
+                <div className="flex items-center gap-2">
+                  <span className="inline-block w-5 h-1 bg-emerald-500" />
+                  <span>集水（施工計画）</span>
+                </div>
+              )}
               {alignmentPolylines.length > 0 && (
                 <div className="flex items-center gap-2">
                   <span className="inline-block w-5 h-1 bg-red-600" />
-                  <span>保存済み</span>
+                  <span>取込済み</span>
                 </div>
               )}
               {pendingPolylines.length > 0 && (

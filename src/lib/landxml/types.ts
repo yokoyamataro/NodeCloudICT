@@ -14,10 +14,14 @@ export interface AlignmentSegment {
   startX: number
   /** 始点の Y（東方向） */
   startY: number
+  /** 始点の Z（標高、あれば） */
+  startZ?: number | null
   /** 終点の X */
   endX: number
   /** 終点の Y */
   endY: number
+  /** 終点の Z（標高、あれば） */
+  endZ?: number | null
   /** 区間長（m） */
   length: number
   // 曲線（Curve）用
