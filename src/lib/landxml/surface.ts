@@ -317,20 +317,37 @@ function findPointUpstreamFromEnd(
   return { pos: pts[0], keepLastIndex: -1 }
 }
 
+interface EndJunctionOptions {
+  transitionDistance: number
+  /** 相手側（合流先）の片側幅 */
+  halfWidthTarget: number
+  /** 自分側（合流してくる配管）の片側幅 */
+  halfWidthSelf: number
+  /** クリアランス（相手縁からの余裕） */
+  clearance: number
+  /** 合流先の中心線方向（正規化ベクトル）。斜め合流の補正に使用。未指定時は直交と仮定 */
+  targetDir?: { dx: number; dy: number } | null
+}
+
 /**
  * 中心線の下流端で「擦り付け処理」を行う。
  *  - 終点（junction）の Z を junctionZ に置き換え
  *  - そこから transitionDistance[m] 上流に「縦断変化点」を挿入（元の Z を維持）
- *  - 終点を trimDistance[m] だけ上流側に戻し、Z を元 Z と junctionZ の線形補間に
+ *  - 相手幅 + クリアランス + 斜め合流補正で終点を上流側に戻し、Z は線形補間
+ *
+ * 斜め合流補正: 合流角 θ（自分の中心線 vs 相手の中心線）において、
+ *   自分の床掘の最も相手寄りの角が「相手中心線からの垂直距離 ≥ halfWidthTarget + clearance」
+ *   を満たす最小の trim 距離 d は:
+ *     d = (halfWidthTarget + clearance + halfWidthSelf * |cos θ|) / |sin θ|
+ *   θ=90°（直交）の場合は halfWidthTarget + clearance に一致する。
  */
 function applyEndJunctionTransition(
   center: CenterlineVertex[],
   junctionZ: number,
-  transitionDistance: number,
-  trimDistance: number,
+  opts: EndJunctionOptions,
 ): CenterlineVertex[] {
   if (center.length < 2) return center
-  if (trimDistance >= transitionDistance) return center
+  const { transitionDistance, halfWidthTarget, halfWidthSelf, clearance, targetDir } = opts
 
   const last = center[center.length - 1]
   const secondLast = center[center.length - 2]
@@ -341,12 +358,29 @@ function applyEndJunctionTransition(
   const dirX = endDx / endSegLen
   const dirY = endDy / endSegLen
 
-  // 縦断変化点（5m 上流）
+  // トリム距離を算出（斜め合流補正あり）
+  const baseTrim = halfWidthTarget + clearance
+  let trimDistance = baseTrim
+  if (targetDir) {
+    const tdLen = Math.hypot(targetDir.dx, targetDir.dy)
+    if (tdLen > 1e-9) {
+      const tx = targetDir.dx / tdLen
+      const ty = targetDir.dy / tdLen
+      const cosTheta = Math.abs(dirX * tx + dirY * ty)
+      const sinTheta = Math.abs(dirX * ty - dirY * tx)
+      if (sinTheta > 0.05) {
+        trimDistance = (halfWidthTarget + clearance + halfWidthSelf * cosTheta) / sinTheta
+      }
+    }
+  }
+  // 変化点距離を超えないよう 80% でクランプ
+  if (trimDistance >= transitionDistance) trimDistance = transitionDistance * 0.8
+
+  // 縦断変化点（transitionDistance m 上流）
   const trans = findPointUpstreamFromEnd(center, transitionDistance)
   if (!trans) return center
 
   // 新しい終点: junction から trimDistance 戻した位置
-  // Z は (5-trimDist)/5 の比で元 Z から junctionZ へ線形補間
   const ratio = (transitionDistance - trimDistance) / transitionDistance
   const newEndZ = trans.pos.z + (junctionZ - trans.pos.z) * ratio
   const newEnd: CenterlineVertex = {
@@ -355,12 +389,15 @@ function applyEndJunctionTransition(
     z: newEndZ,
   }
 
-  // 変化点位置から既存頂点を切り捨て、変化点 + 新終点を追加
   const result: CenterlineVertex[] = []
   for (let i = 0; i <= trans.keepLastIndex; i++) result.push(center[i])
-  // 既存頂点と変化点が重なる場合の微調整
-  if (result.length === 0 ||
-      Math.hypot(result[result.length - 1].x - trans.pos.x, result[result.length - 1].y - trans.pos.y) > 1e-6) {
+  if (
+    result.length === 0 ||
+    Math.hypot(
+      result[result.length - 1].x - trans.pos.x,
+      result[result.length - 1].y - trans.pos.y,
+    ) > 1e-6
+  ) {
     result.push(trans.pos)
   }
   result.push(newEnd)
@@ -380,9 +417,42 @@ export function buildTrenchTin(opts: TrenchTinOptions): TinSurface {
 
   const points: TinPoint[] = []
   const triangles: TinTriangle[] = []
-  const trimDistance = halfWidth + trimClearance
 
   for (const group of planGroups) {
+    // グループ内の系統別 collector 点列と、各 collectorPoint.id → 方向ベクトルを事前計算
+    const systemMap = new Map<number, PlanRow[]>()
+    for (const r of group.rows) {
+      const idx = r.systemIndex ?? 1
+      const arr = systemMap.get(idx) ?? []
+      arr.push(r)
+      systemMap.set(idx, arr)
+    }
+    const collectorDirById = new Map<string, { dx: number; dy: number }>()
+    const collectorPointsBySystem = new Map<number, PlanPoint[]>()
+    for (const [sysIdx, rows] of systemMap) {
+      const cps: PlanPoint[] = []
+      for (const r of rows) {
+        if (r.collectorPoint) cps.push(r.collectorPoint)
+      }
+      collectorPointsBySystem.set(sysIdx, cps)
+      for (let i = 0; i < cps.length; i++) {
+        let dx = 0
+        let dy = 0
+        if (i > 0 && i < cps.length - 1) {
+          dx = cps[i + 1].x - cps[i - 1].x
+          dy = cps[i + 1].y - cps[i - 1].y
+        } else if (i === 0 && cps.length > 1) {
+          dx = cps[i + 1].x - cps[i].x
+          dy = cps[i + 1].y - cps[i].y
+        } else if (i === cps.length - 1 && cps.length > 1) {
+          dx = cps[i].x - cps[i - 1].x
+          dy = cps[i].y - cps[i - 1].y
+        }
+        const len = Math.hypot(dx, dy)
+        if (len > 1e-9) collectorDirById.set(cps[i].id, { dx: dx / len, dy: dy / len })
+      }
+    }
+
     // 吸水管: 各行ごと。下流端で集水との合流擦り付け
     if (includeAbsorption) {
       for (const row of group.rows) {
@@ -391,13 +461,18 @@ export function buildTrenchTin(opts: TrenchTinOptions): TinSurface {
         if (center.length < 2) continue
 
         let adjusted = center
-        // 吸水の下流端の合流（row.collectorPoint の計画高と一致させる）
         if (applyTransition && row.collectorPoint?.plannedHeight != null) {
+          const targetDir = collectorDirById.get(row.collectorPoint.id) ?? null
           adjusted = applyEndJunctionTransition(
             center,
             row.collectorPoint.plannedHeight,
-            transitionDistance,
-            trimDistance,
+            {
+              transitionDistance,
+              halfWidthTarget: halfWidth,
+              halfWidthSelf: halfWidth,
+              clearance: trimClearance,
+              targetDir,
+            },
           )
         }
         addRibbon(points, triangles, adjusted, halfWidth, 'plan', row.absorptionPipeId)
@@ -406,39 +481,73 @@ export function buildTrenchTin(opts: TrenchTinOptions): TinSurface {
 
     // 集水管: 系統ごとに collectorPoint を連結。系統合流端で擦り付け
     if (includeCollector) {
-      const systemMap = new Map<number, PlanRow[]>()
-      for (const r of group.rows) {
-        const idx = r.systemIndex ?? 1
-        const arr = systemMap.get(idx) ?? []
-        arr.push(r)
-        systemMap.set(idx, arr)
-      }
       for (const [sysIdx, rows] of systemMap) {
-        const pts: PlanPoint[] = []
-        for (const r of rows) {
-          if (r.collectorPoint) pts.push(r.collectorPoint)
-        }
-        const center = planPointsToCenterline(pts)
+        const cps = collectorPointsBySystem.get(sysIdx) ?? []
+        const center = planPointsToCenterline(cps)
         if (center.length < 2) continue
 
         let adjusted = center
-        // 系統の最後が merge 行で、かつ合流先の計画高がある場合に擦り付け
         const lastRow = rows[rows.length - 1]
         if (
           applyTransition &&
           lastRow?.systemEndType === 'merge' &&
           lastRow.collectorPoint?.plannedHeight != null
         ) {
-          // 合流点の Z は、mergeSystemIndex がある場合は本来ターゲット系統の計画高。
-          // 現在の実装では merge 行の collectorPoint.plannedHeight が
-          // 既にターゲット合流点の高さを表しているため、それを junctionZ として使う。
-          const junctionZ = lastRow.collectorPoint.plannedHeight
-          adjusted = applyEndJunctionTransition(
-            center,
-            junctionZ,
+          // 合流先系統（mergeSystemIndex）の collector 方向を探す
+          let targetDir: { dx: number; dy: number } | null = null
+          if (lastRow.mergeSystemIndex != null) {
+            // 同じグループ内か、別グループも含めて mergeSystemIndex のシステムを探す
+            const otherSys = systemMap.get(lastRow.mergeSystemIndex)
+            if (otherSys) {
+              // 合流点座標に最も近い collector 点の方向を採用
+              const mergePt = lastRow.collectorPoint
+              let best: { id: string; d: number } | null = null
+              for (const r of otherSys) {
+                if (!r.collectorPoint) continue
+                const d = Math.hypot(
+                  r.collectorPoint.x - mergePt.x,
+                  r.collectorPoint.y - mergePt.y,
+                )
+                if (!best || d < best.d) best = { id: r.collectorPoint.id, d }
+              }
+              if (best) targetDir = collectorDirById.get(best.id) ?? null
+            }
+            // 別グループも探索
+            if (!targetDir) {
+              for (const otherGroup of planGroups) {
+                if (otherGroup === group) continue
+                for (const r of otherGroup.rows) {
+                  if (r.systemIndex !== lastRow.mergeSystemIndex) continue
+                  if (!r.collectorPoint) continue
+                  const d = Math.hypot(
+                    r.collectorPoint.x - lastRow.collectorPoint.x,
+                    r.collectorPoint.y - lastRow.collectorPoint.y,
+                  )
+                  if (d < 0.5) {
+                    // 近傍の点を見つけたので、その周辺から方向を取る
+                    const idx = otherGroup.rows.indexOf(r)
+                    const prev = otherGroup.rows[idx - 1]?.collectorPoint
+                    const next = otherGroup.rows[idx + 1]?.collectorPoint
+                    if (prev && next) {
+                      const ddx = next.x - prev.x
+                      const ddy = next.y - prev.y
+                      const len = Math.hypot(ddx, ddy)
+                      if (len > 1e-9) targetDir = { dx: ddx / len, dy: ddy / len }
+                    }
+                    break
+                  }
+                }
+                if (targetDir) break
+              }
+            }
+          }
+          adjusted = applyEndJunctionTransition(center, lastRow.collectorPoint.plannedHeight, {
             transitionDistance,
-            trimDistance,
-          )
+            halfWidthTarget: halfWidth,
+            halfWidthSelf: halfWidth,
+            clearance: trimClearance,
+            targetDir,
+          })
         }
         addRibbon(points, triangles, adjusted, halfWidth, 'plan', `col-${sysIdx}`)
       }
