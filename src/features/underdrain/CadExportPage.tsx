@@ -3,7 +3,8 @@ import { PenTool, Download, FileText, Loader2 } from 'lucide-react'
 import Encoding from 'encoding-japanese'
 import { useFarmStore } from '@/stores/farmStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
-import { useConstructionPlanStore, type PlanGroup } from '@/stores/constructionPlanStore'
+import { useConstructionPlanStore, type PlanGroup, type PlanPoint } from '@/stores/constructionPlanStore'
+import type { PipeRow } from '@/stores/underdrainStore'
 
 // 図面レベル（座標変換用パラメータ）
 interface DrawingLevel {
@@ -105,10 +106,62 @@ function formatHeight(v: number | null | undefined): string {
   return v.toFixed(2)
 }
 
-// 施工計画から文字要素行を生成
-function buildTextLines(
+// 頂点インデックスから測点名を生成（generatePointName の規則: C / B{n} / A、B は下流起点）
+function generatePointName(pipeNumber: string, idx: number, total: number): string {
+  if (total <= 0) return pipeNumber
+  if (idx === 0) return `${pipeNumber}C`
+  if (idx === total - 1) return `${pipeNumber}A`
+  const middleIndex = total - 1 - idx
+  return `${pipeNumber}B${middleIndex}`
+}
+
+// 管ID × 頂点インデックス → PlanPoint のルックアップを構築
+// 吸水管は idx 対応、集水管は座標一致で検出
+function buildPlanLookup(
   planGroups: PlanGroup[],
-  pipeVerticesById: Map<string, { x: number; y: number }[]>,
+  pipes: PipeRow[],
+): Map<string, Map<number, PlanPoint>> {
+  const map = new Map<string, Map<number, PlanPoint>>()
+  const EPS = 1e-4
+  for (const group of planGroups) {
+    for (const row of group.rows) {
+      if (row.absorptionPipeId) {
+        const pipe = pipes.find((p) => p.id === row.absorptionPipeId)
+        if (pipe) {
+          const inner = map.get(row.absorptionPipeId) ?? new Map<number, PlanPoint>()
+          const limit = Math.min(row.absorptionPoints.length, pipe.vertices.length)
+          for (let i = 0; i < limit; i++) {
+            inner.set(i, row.absorptionPoints[i])
+          }
+          map.set(row.absorptionPipeId, inner)
+        }
+      }
+      if (row.collectorPipeId && row.collectorPoint) {
+        const pipe = pipes.find((p) => p.id === row.collectorPipeId)
+        if (pipe) {
+          const inner = map.get(row.collectorPipeId) ?? new Map<number, PlanPoint>()
+          for (let i = 0; i < pipe.vertices.length; i++) {
+            const v = pipe.vertices[i]
+            if (
+              Math.abs(v.x - row.collectorPoint.x) < EPS &&
+              Math.abs(v.y - row.collectorPoint.y) < EPS
+            ) {
+              inner.set(i, row.collectorPoint)
+              break
+            }
+          }
+          map.set(row.collectorPipeId, inner)
+        }
+      }
+    }
+  }
+  return map
+}
+
+// 配管単位で全頂点の文字要素行を生成
+function buildTextLines(
+  pipes: PipeRow[],
+  planGroups: PlanGroup[],
   level: DrawingLevel,
   moji: number,
   absorptionStdDepth: number,
@@ -117,124 +170,91 @@ function buildTextLines(
   const lines: string[] = []
   const HALF_PI = Math.PI / 2
   // 各文字を積むオフセット: 旧マクロは x -= moji * sin(a0), y += moji * cos(a0)
-  // a0 = π/2 なので sin = 1, cos ≈ 0 → x が -moji ずつシフトし縦方向に並ぶ
   const stepDx = -moji * Math.sin(HALF_PI)
   const stepDy = moji * Math.cos(HALF_PI)
 
-  for (const group of planGroups) {
-    for (const row of group.rows) {
-      // 吸水管の測点
-      const absVerts = row.absorptionPipeId
-        ? pipeVerticesById.get(row.absorptionPipeId) ?? null
-        : null
-      for (let i = 0; i < row.absorptionPoints.length; i++) {
-        const p = row.absorptionPoints[i]
-        const v = absVerts?.[i]
-        if (!v) continue
-        const prevV = i > 0 ? absVerts?.[i - 1] : null
-        const { px: x1, py: y1 } = toPaperCoords(v.x, v.y, level)
-        let segAngle = 0
-        let midX = x1
-        let midY = y1
-        if (prevV) {
-          const prev = toPaperCoords(prevV.x, prevV.y, level)
-          const dx = prev.px - x1
-          const dy = prev.py - y1
-          segAngle = calcTextAngle(dx, dy)
-          midX = (x1 + prev.px) / 2
-          midY = (y1 + prev.py) / 2
-        }
+  const planLookup = buildPlanLookup(planGroups, pipes)
 
-        const gh = formatHeight(p.groundHeight)
-        const fh = formatHeight(p.plannedHeight)
-        const ch = formatHeight(p.cutDepth)
-        const sl = p.segmentSlope
+  for (const pipe of pipes) {
+    if (pipe.vertices.length === 0) continue
 
-        let cx = x1
-        let cy = y1 + 1 // 旧マクロ: y1 + 1（リテラル）
-        // 点名
-        lines.push(buildTextElement(2050, 0, 'P0', cx, cy, HALF_PI, moji, p.pointName))
-        cx += stepDx
-        cy += stepDy
-        // 地盤高
-        lines.push(buildTextElement(2051, 0, 'N0', cx, cy, HALF_PI, moji, gh))
-        cx += stepDx
-        cy += stepDy
-        // 計画高
-        lines.push(buildTextElement(2052, 1, 'N0', cx, cy, HALF_PI, moji, fh))
-        cx += stepDx
-        cy += stepDy
-        // 切深（標準切深と異なる場合のみ）
-        const chNum = typeof p.cutDepth === 'number' ? p.cutDepth : null
-        if (chNum !== null && Math.abs(chNum - absorptionStdDepth) > 0.005) {
-          lines.push(buildTextElement(2053, 12, 'N0', cx, cy, HALF_PI, moji, ` ${ch}`))
-        }
-        // 勾配
-        if (sl && i > 0 && prevV) {
-          const m = /^1\/(\d+(?:\.\d+)?)$/.exec(sl)
-          if (m) {
-            const slVal = parseFloat(m[1])
-            const txt = `1/${Math.round(slVal)}`
-            lines.push(buildTextElement(2054, 2, 'P0', midX, midY, segAngle, moji, txt))
-          }
+    // 吸水管（branch）は 2050 系レイヤ、それ以外（集水・落口等）は 2055 系レイヤ
+    const isAbsorption = pipe.pipeType === 'branch'
+    const layers = isAbsorption
+      ? { point: 2050, ground: 2051, plan: 2052, depth: 2053, slope: 2054, planColor: 1 }
+      : { point: 2055, ground: 2056, plan: 2057, depth: 2058, slope: 2059, planColor: 5 }
+    const stdDepth = isAbsorption ? absorptionStdDepth : collectorStdDepth
+    const initialYOffset = isAbsorption ? 1 : moji * 3.2
+
+    const planForPipe = planLookup.get(pipe.id) ?? null
+    const total = pipe.vertices.length
+
+    for (let i = 0; i < total; i++) {
+      const v = pipe.vertices[i]
+      const pp = planForPipe?.get(i) ?? null
+      const { px: x1, py: y1 } = toPaperCoords(v.x, v.y, level)
+
+      // 前頂点方向（勾配ラベルの角度算出用）
+      let segAngle = 0
+      let midX = x1
+      let midY = y1
+      if (i > 0) {
+        const prev = pipe.vertices[i - 1]
+        const prevP = toPaperCoords(prev.x, prev.y, level)
+        const dx = prevP.px - x1
+        const dy = prevP.py - y1
+        segAngle = calcTextAngle(dx, dy)
+        midX = (x1 + prevP.px) / 2
+        midY = (y1 + prevP.py) / 2
+      }
+
+      const pointName = pp?.pointName || generatePointName(pipe.number, i, total)
+      const gh = pp?.groundHeight ?? v.z ?? null
+      const ph = pp?.plannedHeight ?? null
+      const cd =
+        pp?.cutDepth ??
+        (gh !== null && ph !== null ? gh - ph : null)
+      const ghStr = formatHeight(gh)
+      const fhStr = formatHeight(ph)
+      const chStr = formatHeight(cd)
+
+      // 勾配計算: 計画高データがあれば plannedHeight 差分、なければ頂点 z 差分
+      let slopeLabel: string | null = null
+      if (i > 0) {
+        const prev = pipe.vertices[i - 1]
+        const prevPP = planForPipe?.get(i - 1) ?? null
+        const prevPh = prevPP?.plannedHeight ?? null
+        const dist = Math.sqrt(
+          (v.x - prev.x) * (v.x - prev.x) + (v.y - prev.y) * (v.y - prev.y),
+        )
+        if (ph !== null && prevPh !== null && dist > 0 && prevPh !== ph) {
+          slopeLabel = `1/${Math.round(dist / Math.abs(prevPh - ph))}`
         }
       }
 
-      // 集水管の測点
-      if (row.collectorPoint && row.collectorPipeId) {
-        const cp = row.collectorPoint
-        const { px: x1, py: y1 } = toPaperCoords(cp.x, cp.y, level)
-        const idx = group.rows.indexOf(row)
-        const nextRow = idx >= 0 && idx + 1 < group.rows.length ? group.rows[idx + 1] : null
-        let segAngle = 0
-        let midX = x1
-        let midY = y1
-        if (nextRow?.collectorPoint) {
-          const next = toPaperCoords(nextRow.collectorPoint.x, nextRow.collectorPoint.y, level)
-          const dx = next.px - x1
-          const dy = next.py - y1
-          segAngle = calcTextAngle(dx, dy)
-          midX = (x1 + next.px) / 2
-          midY = (y1 + next.py) / 2
-        }
-
-        const gh = formatHeight(cp.groundHeight)
-        const fh = formatHeight(cp.plannedHeight)
-        const ch = formatHeight(cp.cutDepth)
-        const sl = (() => {
-          if (!nextRow?.collectorPoint) return null
-          const a = cp.plannedHeight
-          const b = nextRow.collectorPoint.plannedHeight
-          const d = cp.segmentDistance
-          if (a == null || b == null || !d || d === 0) return null
-          const diff = a - b
-          if (diff === 0) return null
-          return Math.abs(d / diff)
-        })()
-
-        let cx = x1
-        let cy = y1 + moji * 3.2 // 旧マクロ: y1 + moji * 3.2
-        // 点名
-        lines.push(buildTextElement(2055, 0, 'P0', cx, cy, HALF_PI, moji, cp.pointName))
-        cx += stepDx
-        cy += stepDy
-        // 地盤高
-        lines.push(buildTextElement(2056, 0, 'N0', cx, cy, HALF_PI, moji, gh))
-        cx += stepDx
-        cy += stepDy
-        // 計画高
-        lines.push(buildTextElement(2057, 5, 'N0', cx, cy, HALF_PI, moji, fh))
-        cx += stepDx
-        cy += stepDy
-        // 切深（標準切深と異なる場合のみ）
-        const chNum = typeof cp.cutDepth === 'number' ? cp.cutDepth : null
-        if (chNum !== null && Math.abs(chNum - collectorStdDepth) > 0.005) {
-          lines.push(buildTextElement(2058, 12, 'N0', cx, cy, HALF_PI, moji, ` ${ch}`))
-        }
-        // 勾配
-        if (sl !== null && sl !== undefined) {
-          lines.push(buildTextElement(2059, 2, 'P0', midX, midY, segAngle, moji, `1/${Math.round(sl)}`))
-        }
+      // 書き込み
+      let cx = x1
+      let cy = y1 + initialYOffset
+      lines.push(buildTextElement(layers.point, 0, 'P0', cx, cy, HALF_PI, moji, pointName))
+      cx += stepDx
+      cy += stepDy
+      lines.push(buildTextElement(layers.ground, 0, 'N0', cx, cy, HALF_PI, moji, ghStr))
+      cx += stepDx
+      cy += stepDy
+      lines.push(
+        buildTextElement(layers.plan, layers.planColor, 'N0', cx, cy, HALF_PI, moji, fhStr),
+      )
+      cx += stepDx
+      cy += stepDy
+      // 切深（標準切深と異なる場合のみ）
+      if (cd !== null && Math.abs(cd - stdDepth) > 0.005) {
+        lines.push(buildTextElement(layers.depth, 12, 'N0', cx, cy, HALF_PI, moji, ` ${chStr}`))
+      }
+      // 勾配（前頂点との区間）
+      if (slopeLabel) {
+        lines.push(
+          buildTextElement(layers.slope, 2, 'P0', midX, midY, segAngle, moji, slopeLabel),
+        )
       }
     }
   }
@@ -286,43 +306,34 @@ export function CadExportPage() {
     fetchPlan(currentFarm.id)
   }, [currentFarm, fetchPipes, fetchPlan])
 
-  const pipeVerticesById = useMemo(() => {
-    const m = new Map<string, { x: number; y: number }[]>()
-    for (const p of pipes) m.set(p.id, p.vertices.map(v => ({ x: v.x, y: v.y })))
-    return m
-  }, [pipes])
-
   const previewLineCount = useMemo(() => {
-    if (!hasData) return 0
+    // 配管ごとに全頂点×4～5要素を出力
     let n = 0
-    for (const g of planGroups) {
-      for (const r of g.rows) {
-        n += r.absorptionPoints.length * 4
-        if (r.collectorPoint) n += 4
-      }
+    for (const p of pipes) {
+      n += p.vertices.length * 4 // 点名・地盤高・計画高 + 勾配 (頂点数-1)
     }
     return n
-  }, [planGroups, hasData])
+  }, [pipes])
 
   const generateOutput = (): string => {
     const lines = [
       ...buildHeader(),
-      ...buildTextLines(planGroups, pipeVerticesById, level, moji, absStdDepth, colStdDepth),
+      ...buildTextLines(pipes, planGroups, level, moji, absStdDepth, colStdDepth),
     ]
     return lines.join('\r\n') + '\r\n'
   }
 
   const handlePreview = () => {
-    if (!hasData) {
-      alert('施工計画データがありません。施工計画ページで系統を生成してください。')
+    if (pipes.length === 0) {
+      alert('配管データがありません。CAD解析ページで登録してください。')
       return
     }
     setPreview(generateOutput())
   }
 
   const handleDownload = () => {
-    if (!hasData) {
-      alert('施工計画データがありません。施工計画ページで系統を生成してください。')
+    if (pipes.length === 0) {
+      alert('配管データがありません。CAD解析ページで登録してください。')
       return
     }
     const text = generateOutput()
@@ -439,11 +450,14 @@ export function CadExportPage() {
                 <Loader2 className="h-3 w-3 animate-spin" />
                 施工計画を読み込み中...
               </>
-            ) : hasData ? (
-              <span>施工計画データ: {previewLineCount} 文字要素</span>
-            ) : (
+            ) : pipes.length === 0 ? (
               <span className="text-red-600">
-                施工計画データがありません。先に「施工計画」ページで『配管系統から系統読込』してください。
+                配管データがありません。CAD解析ページで登録してください。
+              </span>
+            ) : (
+              <span>
+                配管 {pipes.length} 本 / 予想 約 {previewLineCount} 文字要素
+                {!hasData && '（施工計画未生成: 地盤高・計画高・切深は空欄）'}
               </span>
             )}
           </div>
@@ -451,7 +465,7 @@ export function CadExportPage() {
             <button
               type="button"
               onClick={handlePreview}
-              disabled={!hasData || planLoading}
+              disabled={pipes.length === 0 || planLoading}
               className="flex items-center gap-2 px-4 py-2 bg-slate-600 text-white rounded hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
             >
               <FileText className="h-4 w-4" />
@@ -460,7 +474,7 @@ export function CadExportPage() {
             <button
               type="button"
               onClick={handleDownload}
-              disabled={!hasData || planLoading}
+              disabled={pipes.length === 0 || planLoading}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
             >
               <Download className="h-4 w-4" />
