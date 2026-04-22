@@ -174,9 +174,12 @@ export function LandXMLPage() {
       <div className="p-4 border-b bg-white flex items-center gap-3">
         <FileOutput className="h-5 w-5" />
         <div className="flex-1">
-          <h1 className="text-xl font-bold">LandXML 取り込み</h1>
+          <h1 className="text-xl font-bold">LandXML 出力</h1>
           <p className="text-sm text-muted-foreground">
-            LandXML ファイルから中心線形（Alignment）を取り込みます
+            中心線形・面データを準備し、LandXML 形式で出力します
+            <span className="ml-2 text-xs text-amber-700">
+              （現在は中心線形の取り込みまで実装。面データ取込・LandXML 出力は今後追加）
+            </span>
           </p>
         </div>
       </div>
@@ -184,6 +187,14 @@ export function LandXMLPage() {
       <div className="flex-1 flex overflow-hidden">
         {/* 左: 操作＋リスト */}
         <div className="w-[420px] border-r bg-white flex flex-col overflow-hidden">
+          {/* セクション見出し */}
+          <div className="px-3 py-2 border-b bg-slate-50">
+            <div className="text-sm font-semibold">1. 中心線形の取り込み</div>
+            <div className="text-xs text-slate-500">
+              LandXML ファイルから Alignment を読み込みます
+            </div>
+          </div>
+
           {/* 操作 */}
           <div className="p-3 border-b space-y-2">
             <input
@@ -256,7 +267,7 @@ export function LandXMLPage() {
           </div>
 
           {/* リスト */}
-          <div className="flex-1 overflow-auto p-3">
+          <div className="flex-1 overflow-auto p-3 space-y-3">
             {loading ? (
               <div className="flex items-center justify-center py-8 text-slate-500 text-sm">
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -351,6 +362,26 @@ export function LandXMLPage() {
                 </ul>
               </>
             )}
+
+            {/* 面データ (未実装) */}
+            <div className="border-t pt-3 mt-4">
+              <div className="text-sm font-semibold text-slate-500">2. 面データの取り込み</div>
+              <div className="text-xs text-slate-400 mt-1">（今後実装予定）</div>
+            </div>
+
+            {/* LandXML 出力 (未実装) */}
+            <div className="border-t pt-3 mt-3">
+              <div className="text-sm font-semibold text-slate-500">3. LandXML 出力</div>
+              <div className="text-xs text-slate-400 mt-1">（今後実装予定）</div>
+              <button
+                type="button"
+                disabled
+                className="mt-2 w-full flex items-center justify-center gap-2 px-4 py-2 bg-slate-200 text-slate-400 rounded text-sm cursor-not-allowed"
+              >
+                <FileOutput className="h-4 w-4" />
+                LandXML を出力
+              </button>
+            </div>
           </div>
         </div>
 
