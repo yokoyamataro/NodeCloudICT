@@ -44,8 +44,9 @@ function toPaperCoords(
   let a1 = a0 + level.rotation
   if (a1 >= Math.PI) a1 -= Math.PI
   if (a1 >= Math.PI) a1 -= Math.PI
-  const px = s1 * Math.cos(a1)
-  const py = s1 * Math.sin(a1)
+  // TrendOne の用紙座標系に合わせて左右・上下を反転
+  const px = -(s1 * Math.cos(a1))
+  const py = -(s1 * Math.sin(a1))
   return { px, py }
 }
 
