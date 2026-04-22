@@ -184,6 +184,12 @@ export interface TrenchTinOptions {
   includeAbsorption?: boolean
   /** 集水を含めるか */
   includeCollector?: boolean
+  /** 擦り付け処理を行うか */
+  applyTransition?: boolean
+  /** 縦断変化点までの距離（m）。デフォルト 5m */
+  transitionDistance?: number
+  /** 集水/合流側の縁からのクリアランス（m）。デフォルト 0.05 = 5cm */
+  trimClearance?: number
 }
 
 /**
@@ -282,30 +288,123 @@ function planPointsToCenterline(points: PlanPoint[]): CenterlineVertex[] {
   return out
 }
 
+// 中心線の終点から distance[m] 上流の点を返す。途中に頂点があればその位置、無ければ補間。
+// 戻り値の keepLastIndex は「この点より手前の既存頂点」の最終インデックス（この位置で切り詰める）。
+function findPointUpstreamFromEnd(
+  pts: CenterlineVertex[],
+  distance: number,
+): { pos: CenterlineVertex; keepLastIndex: number } | null {
+  if (pts.length < 2 || distance <= 0) return null
+  let remaining = distance
+  for (let i = pts.length - 1; i > 0; i--) {
+    const p1 = pts[i]
+    const p0 = pts[i - 1]
+    const segLen = Math.hypot(p1.x - p0.x, p1.y - p0.y)
+    if (remaining <= segLen + 1e-9) {
+      const t = (segLen - remaining) / segLen
+      return {
+        pos: {
+          x: p0.x + (p1.x - p0.x) * t,
+          y: p0.y + (p1.y - p0.y) * t,
+          z: p0.z + (p1.z - p0.z) * t,
+        },
+        keepLastIndex: i - 1,
+      }
+    }
+    remaining -= segLen
+  }
+  // 距離が線形全長より長い: 始点を返す
+  return { pos: pts[0], keepLastIndex: -1 }
+}
+
+/**
+ * 中心線の下流端で「擦り付け処理」を行う。
+ *  - 終点（junction）の Z を junctionZ に置き換え
+ *  - そこから transitionDistance[m] 上流に「縦断変化点」を挿入（元の Z を維持）
+ *  - 終点を trimDistance[m] だけ上流側に戻し、Z を元 Z と junctionZ の線形補間に
+ */
+function applyEndJunctionTransition(
+  center: CenterlineVertex[],
+  junctionZ: number,
+  transitionDistance: number,
+  trimDistance: number,
+): CenterlineVertex[] {
+  if (center.length < 2) return center
+  if (trimDistance >= transitionDistance) return center
+
+  const last = center[center.length - 1]
+  const secondLast = center[center.length - 2]
+  const endDx = last.x - secondLast.x
+  const endDy = last.y - secondLast.y
+  const endSegLen = Math.hypot(endDx, endDy)
+  if (endSegLen < 1e-9) return center
+  const dirX = endDx / endSegLen
+  const dirY = endDy / endSegLen
+
+  // 縦断変化点（5m 上流）
+  const trans = findPointUpstreamFromEnd(center, transitionDistance)
+  if (!trans) return center
+
+  // 新しい終点: junction から trimDistance 戻した位置
+  // Z は (5-trimDist)/5 の比で元 Z から junctionZ へ線形補間
+  const ratio = (transitionDistance - trimDistance) / transitionDistance
+  const newEndZ = trans.pos.z + (junctionZ - trans.pos.z) * ratio
+  const newEnd: CenterlineVertex = {
+    x: last.x - dirX * trimDistance,
+    y: last.y - dirY * trimDistance,
+    z: newEndZ,
+  }
+
+  // 変化点位置から既存頂点を切り捨て、変化点 + 新終点を追加
+  const result: CenterlineVertex[] = []
+  for (let i = 0; i <= trans.keepLastIndex; i++) result.push(center[i])
+  // 既存頂点と変化点が重なる場合の微調整
+  if (result.length === 0 ||
+      Math.hypot(result[result.length - 1].x - trans.pos.x, result[result.length - 1].y - trans.pos.y) > 1e-6) {
+    result.push(trans.pos)
+  }
+  result.push(newEnd)
+  return result
+}
+
 export function buildTrenchTin(opts: TrenchTinOptions): TinSurface {
   const {
     planGroups,
     halfWidth = 0.25,
     includeAbsorption = true,
     includeCollector = true,
+    applyTransition = true,
+    transitionDistance = 5.0,
+    trimClearance = 0.05,
   } = opts
 
   const points: TinPoint[] = []
   const triangles: TinTriangle[] = []
+  const trimDistance = halfWidth + trimClearance
 
   for (const group of planGroups) {
-    // 吸水管: 各行ごと
+    // 吸水管: 各行ごと。下流端で集水との合流擦り付け
     if (includeAbsorption) {
       for (const row of group.rows) {
         if (!row.absorptionPipeId) continue
         const center = planPointsToCenterline(row.absorptionPoints)
-        if (center.length >= 2) {
-          addRibbon(points, triangles, center, halfWidth, 'plan', row.absorptionPipeId)
+        if (center.length < 2) continue
+
+        let adjusted = center
+        // 吸水の下流端の合流（row.collectorPoint の計画高と一致させる）
+        if (applyTransition && row.collectorPoint?.plannedHeight != null) {
+          adjusted = applyEndJunctionTransition(
+            center,
+            row.collectorPoint.plannedHeight,
+            transitionDistance,
+            trimDistance,
+          )
         }
+        addRibbon(points, triangles, adjusted, halfWidth, 'plan', row.absorptionPipeId)
       }
     }
 
-    // 集水管: 系統ごとに collectorPoint を連結
+    // 集水管: 系統ごとに collectorPoint を連結。系統合流端で擦り付け
     if (includeCollector) {
       const systemMap = new Map<number, PlanRow[]>()
       for (const r of group.rows) {
@@ -320,9 +419,28 @@ export function buildTrenchTin(opts: TrenchTinOptions): TinSurface {
           if (r.collectorPoint) pts.push(r.collectorPoint)
         }
         const center = planPointsToCenterline(pts)
-        if (center.length >= 2) {
-          addRibbon(points, triangles, center, halfWidth, 'plan', `col-${sysIdx}`)
+        if (center.length < 2) continue
+
+        let adjusted = center
+        // 系統の最後が merge 行で、かつ合流先の計画高がある場合に擦り付け
+        const lastRow = rows[rows.length - 1]
+        if (
+          applyTransition &&
+          lastRow?.systemEndType === 'merge' &&
+          lastRow.collectorPoint?.plannedHeight != null
+        ) {
+          // 合流点の Z は、mergeSystemIndex がある場合は本来ターゲット系統の計画高。
+          // 現在の実装では merge 行の collectorPoint.plannedHeight が
+          // 既にターゲット合流点の高さを表しているため、それを junctionZ として使う。
+          const junctionZ = lastRow.collectorPoint.plannedHeight
+          adjusted = applyEndJunctionTransition(
+            center,
+            junctionZ,
+            transitionDistance,
+            trimDistance,
+          )
         }
+        addRibbon(points, triangles, adjusted, halfWidth, 'plan', `col-${sysIdx}`)
       }
     }
   }

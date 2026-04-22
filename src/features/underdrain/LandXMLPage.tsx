@@ -88,6 +88,9 @@ export function LandXMLPage() {
   const [trenchHalfWidth, setTrenchHalfWidth] = useState(0.25) // m = 片側 25cm
   const [trenchIncludeAbsorption, setTrenchIncludeAbsorption] = useState(true)
   const [trenchIncludeCollector, setTrenchIncludeCollector] = useState(true)
+  const [trenchApplyTransition, setTrenchApplyTransition] = useState(true)
+  const [trenchTransitionDistance, setTrenchTransitionDistance] = useState(5.0) // m
+  const [trenchTrimClearance, setTrenchTrimClearance] = useState(0.05) // m
 
   const tinSurface = useMemo(() => {
     if (!showTin) return null
@@ -108,6 +111,9 @@ export function LandXMLPage() {
       halfWidth: trenchHalfWidth,
       includeAbsorption: trenchIncludeAbsorption,
       includeCollector: trenchIncludeCollector,
+      applyTransition: trenchApplyTransition,
+      transitionDistance: trenchTransitionDistance,
+      trimClearance: trenchTrimClearance,
     })
   }, [
     showTrench,
@@ -115,6 +121,9 @@ export function LandXMLPage() {
     trenchHalfWidth,
     trenchIncludeAbsorption,
     trenchIncludeCollector,
+    trenchApplyTransition,
+    trenchTransitionDistance,
+    trenchTrimClearance,
   ])
 
   // 三角形サーフェスのエッジを緯度経度に変換
@@ -680,6 +689,60 @@ export function LandXMLPage() {
                       />
                       集水管
                     </label>
+                    {/* 擦り付け処理 */}
+                    <div className="border-t pt-1 mt-1">
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={trenchApplyTransition}
+                          onChange={(e) => setTrenchApplyTransition(e.target.checked)}
+                          className="h-3.5 w-3.5"
+                        />
+                        <span className="font-medium">擦り付け処理</span>
+                      </label>
+                      <div className="text-[10px] text-slate-500 mt-0.5 ml-4">
+                        合流点で Z を一致させ、N m 上流から線形変化 ·
+                        集水幅 + クリアランスでトリミング
+                      </div>
+                      {trenchApplyTransition && (
+                        <div className="ml-4 mt-1 space-y-1">
+                          <label className="flex items-center gap-2">
+                            <span>変化点距離 (m):</span>
+                            <input
+                              type="number"
+                              step="0.1"
+                              min={0.1}
+                              value={trenchTransitionDistance}
+                              onChange={(e) => {
+                                const v = parseFloat(e.target.value)
+                                if (Number.isFinite(v) && v > 0) setTrenchTransitionDistance(v)
+                              }}
+                              onWheel={(e) => e.currentTarget.blur()}
+                              className="w-16 px-1 py-0.5 border rounded text-right font-mono text-xs"
+                            />
+                          </label>
+                          <label className="flex items-center gap-2">
+                            <span>クリアランス (m):</span>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min={0}
+                              value={trenchTrimClearance}
+                              onChange={(e) => {
+                                const v = parseFloat(e.target.value)
+                                if (Number.isFinite(v) && v >= 0) setTrenchTrimClearance(v)
+                              }}
+                              onWheel={(e) => e.currentTarget.blur()}
+                              className="w-16 px-1 py-0.5 border rounded text-right font-mono text-xs"
+                            />
+                            <span className="text-slate-500">
+                              トリム = {trenchHalfWidth.toFixed(2)}+{trenchTrimClearance.toFixed(2)}
+                              ={(trenchHalfWidth + trenchTrimClearance).toFixed(2)} m
+                            </span>
+                          </label>
+                        </div>
+                      )}
+                    </div>
                     {trenchSurface && (
                       <div className="mt-1 text-[11px] text-slate-600 bg-amber-50 border border-amber-200 rounded p-2 space-y-0.5">
                         <div>
