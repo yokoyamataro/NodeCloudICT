@@ -207,7 +207,8 @@ function buildTextLines(
         midY = (y1 + prevP.py) / 2
       }
 
-      const pointName = pp?.pointName || generatePointName(pipe.number, i, total)
+      // 施工計画に対応行がある場合は空文字でもそのまま使う（縦断変化点＝A/B/Cラベルなしの吸水合流点）
+      const pointName = pp !== null ? pp.pointName : generatePointName(pipe.number, i, total)
       const gh = pp?.groundHeight ?? v.z ?? null
       const ph = pp?.plannedHeight ?? null
       const cd =
@@ -253,6 +254,105 @@ function buildTextLines(
       if (slopeLabel) {
         lines.push(
           buildTextElement(layers.slope, 2, 'P0', midX, midY, segAngle, moji, slopeLabel),
+        )
+      }
+    }
+  }
+
+  // 集水管頂点と一致しない縦断変化点（A/B/Cラベルなしの吸水合流点）を補完出力
+  // buildPlanLookup は座標一致した測点のみ拾うため、ここから漏れる
+  // 合流点を施工計画行から直接取り出して出力する。
+  const EPS = 1e-4
+  const initialYOffsetCollector = moji * 3.2
+  for (const group of planGroups) {
+    if (group.groupType !== 'collector') continue
+    for (let r = 0; r < group.rows.length; r++) {
+      const row = group.rows[r]
+      const cp = row.collectorPoint
+      if (!cp || cp.pointName !== '') continue
+      const collectorPipe = row.collectorPipeId
+        ? pipes.find((p) => p.id === row.collectorPipeId)
+        : null
+      if (!collectorPipe) continue
+      // 集水管頂点と一致する場合は pipe ループで既に出力済みのためスキップ
+      const matchesVertex = collectorPipe.vertices.some(
+        (v) => Math.abs(v.x - cp.x) < EPS && Math.abs(v.y - cp.y) < EPS,
+      )
+      if (matchesVertex) continue
+
+      const { px: x1, py: y1 } = toPaperCoords(cp.x, cp.y, level)
+
+      // 勾配用に同一集水管の前行の集水点を参照
+      let prevCp: { x: number; y: number; ph: number | null } | null = null
+      for (let pi = r - 1; pi >= 0; pi--) {
+        const prev = group.rows[pi]
+        if (
+          prev.collectorPipeId === row.collectorPipeId &&
+          prev.collectorPoint
+        ) {
+          prevCp = {
+            x: prev.collectorPoint.x,
+            y: prev.collectorPoint.y,
+            ph: prev.collectorPoint.plannedHeight,
+          }
+          break
+        }
+      }
+
+      let segAngle = 0
+      let midX = x1
+      let midY = y1
+      let slopeLabel: string | null = null
+      if (prevCp) {
+        const prevPaper = toPaperCoords(prevCp.x, prevCp.y, level)
+        const dx = prevPaper.px - x1
+        const dy = prevPaper.py - y1
+        segAngle = calcTextAngle(dx, dy)
+        midX = (x1 + prevPaper.px) / 2
+        midY = (y1 + prevPaper.py) / 2
+        const dist = Math.sqrt(
+          (cp.x - prevCp.x) * (cp.x - prevCp.x) +
+            (cp.y - prevCp.y) * (cp.y - prevCp.y),
+        )
+        if (
+          cp.plannedHeight !== null &&
+          prevCp.ph !== null &&
+          dist > 0 &&
+          prevCp.ph !== cp.plannedHeight
+        ) {
+          slopeLabel = `1/${Math.round(
+            dist / Math.abs(prevCp.ph - cp.plannedHeight),
+          )}`
+        }
+      }
+
+      const gh = cp.groundHeight ?? null
+      const ph = cp.plannedHeight ?? null
+      const cd =
+        cp.cutDepth ?? (gh !== null && ph !== null ? gh - ph : null)
+      const ghStr = formatHeight(gh)
+      const fhStr = formatHeight(ph)
+      const chStr = formatHeight(cd)
+
+      let cx = x1
+      let cy = y1 + initialYOffsetCollector
+      lines.push(buildTextElement(2055, 0, 'P0', cx, cy, HALF_PI, moji, ''))
+      cx += stepDx
+      cy += stepDy
+      lines.push(buildTextElement(2056, 0, 'N0', cx, cy, HALF_PI, moji, ghStr))
+      cx += stepDx
+      cy += stepDy
+      lines.push(buildTextElement(2057, 5, 'N0', cx, cy, HALF_PI, moji, fhStr))
+      cx += stepDx
+      cy += stepDy
+      if (cd !== null && Math.abs(cd - collectorStdDepth) > 0.005) {
+        lines.push(
+          buildTextElement(2058, 12, 'N0', cx, cy, HALF_PI, moji, ` ${chStr}`),
+        )
+      }
+      if (slopeLabel) {
+        lines.push(
+          buildTextElement(2059, 2, 'P0', midX, midY, segAngle, moji, slopeLabel),
         )
       }
     }
