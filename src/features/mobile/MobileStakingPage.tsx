@@ -13,6 +13,7 @@ import {
   Settings,
   List,
   Save,
+  Tag,
   Trash2,
   ChevronDown,
   ChevronRight,
@@ -138,6 +139,10 @@ export function MobileStakingPage() {
   const [showTargetList, setShowTargetList] = useState(false)
   const [showRecordList, setShowRecordList] = useState(false)
   const [targetFilter, setTargetFilter] = useState<'all' | 'coordinate' | 'pipe_vertex'>('all')
+  const [showLabels, setShowLabels] = useState(false)
+
+  // 測設成功とみなす許容半径（m）
+  const STAKE_TOLERANCE_M = 0.20
 
   // 選択中ターゲット
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null)
@@ -314,6 +319,25 @@ export function MobileStakingPage() {
     return L.latLngBounds([Math.min(...lats), Math.min(...lngs)], [Math.max(...lats), Math.max(...lngs)])
   }, [targets, currentPos])
 
+  // 既に測設済み（記録の measuredXY とターゲット XY が許容範囲内で一致）のターゲット ID 集合
+  const stakedTargetIds = useMemo(() => {
+    const set = new Set<string>()
+    for (const t of targets) {
+      const hit = records.some((r) => {
+        if (r.targetType === 'free') return false
+        if (r.targetType !== t.kind) return false
+        if (r.targetRefId !== t.refId) return false
+        if (t.kind === 'pipe_vertex' && r.targetVertexIndex !== t.vertexIndex) return false
+        if (r.targetX == null || r.targetY == null) return false
+        const dx = r.measuredX - r.targetX
+        const dy = r.measuredY - r.targetY
+        return Math.hypot(dx, dy) <= STAKE_TOLERANCE_M
+      })
+      if (hit) set.add(t.id)
+    }
+    return set
+  }, [targets, records])
+
   // 記録開始
   const startRecording = () => {
     if (recording) return
@@ -393,15 +417,21 @@ export function MobileStakingPage() {
 
     const { x, y } = converter.toXY(avgLat, avgLng)
 
+    // ターゲットとの距離を測って許容内なら「測設」、そうでなければ「新点」として保存
+    const dX = selectedTarget?.x != null ? x - selectedTarget.x : null
+    const dY = selectedTarget?.y != null ? y - selectedTarget.y : null
+    const dist = dX != null && dY != null ? Math.hypot(dX, dY) : null
+    const isStake = !!(selectedTarget && dist !== null && dist <= STAKE_TOLERANCE_M)
+
     const saved = await addRecord({
       farmId,
-      targetType: selectedTarget ? selectedTarget.kind : 'free',
-      targetRefId: selectedTarget?.refId ?? null,
-      targetVertexIndex: selectedTarget?.vertexIndex ?? null,
-      targetName: selectedTarget?.name ?? null,
-      targetX: selectedTarget?.x ?? null,
-      targetY: selectedTarget?.y ?? null,
-      targetZ: selectedTarget?.z ?? null,
+      targetType: isStake ? selectedTarget!.kind : 'free',
+      targetRefId: isStake ? selectedTarget!.refId : null,
+      targetVertexIndex: isStake ? selectedTarget!.vertexIndex : null,
+      targetName: isStake ? selectedTarget!.name : null,
+      targetX: isStake ? selectedTarget!.x : null,
+      targetY: isStake ? selectedTarget!.y : null,
+      targetZ: isStake ? selectedTarget!.z : null,
       measuredX: x,
       measuredY: y,
       measuredZ: avgAlt,
@@ -411,13 +441,21 @@ export function MobileStakingPage() {
       notes: null,
     })
     if (saved) {
-      // 通知用の軽いトースト（alert で代用）
-      const dX = selectedTarget?.x != null ? x - selectedTarget.x : null
-      const dY = selectedTarget?.y != null ? y - selectedTarget.y : null
-      let msg = `記録しました（${samples.length} サンプル / 精度 ${maxAcc.toFixed(3)} m）`
-      if (dX != null && dY != null) {
-        const dist = Math.hypot(dX, dY)
-        msg += `\nターゲットとの誤差: ${dist.toFixed(3)} m`
+      let msg: string
+      if (isStake && selectedTarget) {
+        msg =
+          `${selectedTarget.name} を測設しました\n` +
+          `誤差 ${dist!.toFixed(3)} m / 精度 ${maxAcc.toFixed(3)} m / ${samples.length} サンプル`
+        // 次のターゲットへ自動遷移（filteredTargets の次の要素）
+        const idx = filteredTargets.findIndex((t) => t.id === selectedTarget.id)
+        const next = idx >= 0 ? filteredTargets[idx + 1] : null
+        setSelectedTargetId(next?.id ?? null)
+      } else if (selectedTarget && dist !== null) {
+        msg =
+          `誤差が大きいため新点として記録しました（${dist.toFixed(3)} m）\n` +
+          `精度 ${maxAcc.toFixed(3)} m / ${samples.length} サンプル`
+      } else {
+        msg = `新点として記録しました（${samples.length} サンプル / 精度 ${maxAcc.toFixed(3)} m）`
       }
       alert(msg)
     }
@@ -502,6 +540,15 @@ export function MobileStakingPage() {
           <Crosshair className="h-4 w-4" />
         </button>
         <button
+          onClick={() => setShowLabels((v) => !v)}
+          className={`p-1.5 rounded ${
+            showLabels ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'
+          }`}
+          title="点名表示"
+        >
+          <Tag className="h-4 w-4" />
+        </button>
+        <button
           onClick={() => setShowRecordList((v) => !v)}
           className="p-1.5 rounded bg-slate-700 hover:bg-slate-600 relative"
           title="記録一覧"
@@ -551,6 +598,14 @@ export function MobileStakingPage() {
           {/* ターゲット */}
           {filteredTargets.map((t) => {
             const isSelected = t.id === selectedTargetId
+            const isStaked = stakedTargetIds.has(t.id)
+            // 色: 測設済 = 灰、座標管理 = 青、暗渠頂点 = 緑
+            const fillColor = isStaked
+              ? '#94a3b8'
+              : t.kind === 'coordinate'
+                ? '#3b82f6'
+                : '#22c55e'
+            const size = isSelected ? 16 : 10
             return (
               <Marker
                 key={t.id}
@@ -558,22 +613,28 @@ export function MobileStakingPage() {
                 icon={L.divIcon({
                   className: 'staking-target',
                   html: `<div style="
-                    width:${isSelected ? 16 : 10}px;
-                    height:${isSelected ? 16 : 10}px;
-                    background:${t.kind === 'coordinate' ? '#3b82f6' : '#22c55e'};
+                    width:${size}px;
+                    height:${size}px;
+                    background:${fillColor};
                     border:2px solid white;
                     border-radius:50%;
                     box-shadow:0 1px 3px rgba(0,0,0,0.4);
+                    ${isStaked ? 'opacity:0.7;' : ''}
                   "></div>`,
-                  iconSize: [isSelected ? 16 : 10, isSelected ? 16 : 10],
-                  iconAnchor: [isSelected ? 8 : 5, isSelected ? 8 : 5],
+                  iconSize: [size, size],
+                  iconAnchor: [size / 2, size / 2],
                 })}
                 eventHandlers={{
                   click: () => setSelectedTargetId(t.id),
                 }}
               >
-                <Tooltip direction="top" offset={[0, -6]}>
-                  {t.name}
+                <Tooltip
+                  direction="top"
+                  offset={[0, -6]}
+                  permanent={showLabels}
+                  className={isStaked ? 'staking-label-staked' : undefined}
+                >
+                  {isStaked ? `✓ ${t.name}` : t.name}
                 </Tooltip>
               </Marker>
             )
