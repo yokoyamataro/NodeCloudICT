@@ -90,7 +90,7 @@ export function LandXMLPage() {
   const [trenchIncludeCollector, setTrenchIncludeCollector] = useState(true)
   const [trenchApplyTransition, setTrenchApplyTransition] = useState(true)
   const [trenchTransitionDistance, setTrenchTransitionDistance] = useState(5.0) // m
-  const [trenchTrimClearance, setTrenchTrimClearance] = useState(0.05) // m
+  const [trenchTrimClearance, setTrenchTrimClearance] = useState(0.10) // m
 
   const tinSurface = useMemo(() => {
     if (!showTin) return null

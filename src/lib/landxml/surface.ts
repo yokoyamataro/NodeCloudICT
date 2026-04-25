@@ -188,7 +188,7 @@ export interface TrenchTinOptions {
   applyTransition?: boolean
   /** 縦断変化点までの距離（m）。デフォルト 5m */
   transitionDistance?: number
-  /** 集水/合流側の縁からのクリアランス（m）。デフォルト 0.05 = 5cm */
+  /** 集水/合流側の縁からのクリアランス（m）。デフォルト 0.10 = 10cm */
   trimClearance?: number
 }
 
@@ -412,7 +412,7 @@ export function buildTrenchTin(opts: TrenchTinOptions): TinSurface {
     includeCollector = true,
     applyTransition = true,
     transitionDistance = 5.0,
-    trimClearance = 0.05,
+    trimClearance = 0.10,
   } = opts
 
   const points: TinPoint[] = []
