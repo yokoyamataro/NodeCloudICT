@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Loader2, Monitor, LogOut, Map as MapIcon, Navigation, X } from 'lucide-react'
+import { Loader2, Monitor, LogOut, Map as MapIcon, Navigation, X, Crosshair } from 'lucide-react'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useAuth } from '@/contexts/AuthContext'
 import { CurrentLocationLayer } from '@/components/map/CurrentLocationLayer'
@@ -89,6 +89,11 @@ export function MobileTopPage() {
   const handleOpenMap = (farm: Farm) => {
     setActionFarm(null)
     navigate(`/mobile/map?farmId=${farm.id}`)
+  }
+
+  const handleOpenStaking = (farm: Farm) => {
+    setActionFarm(null)
+    navigate(`/mobile/staking?farmId=${farm.id}`)
   }
 
   const handleOpenDirections = (farm: Farm) => {
@@ -223,6 +228,13 @@ export function MobileTopPage() {
               >
                 <MapIcon className="h-5 w-5" />
                 地図を見る
+              </button>
+              <button
+                onClick={() => handleOpenStaking(actionFarm)}
+                className="w-full flex items-center gap-3 px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium"
+              >
+                <Crosshair className="h-5 w-5" />
+                起工測量（RTK-GNSS）
               </button>
               <button
                 onClick={() => handleOpenDirections(actionFarm)}

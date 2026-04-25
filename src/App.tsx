@@ -10,6 +10,7 @@ import { SiteMapWindowPage } from '@/features/coordinates/SiteMapWindowPage'
 // スマホ画面
 import { MobileTopPage } from '@/features/mobile/MobileTopPage'
 import { MobileDetailMapPage } from '@/features/mobile/MobileDetailMapPage'
+import { MobileStakingPage } from '@/features/mobile/MobileStakingPage'
 // 暗渠工事
 import { UnderdrainWorkAreaPage } from '@/features/underdrain/UnderdrainWorkAreaPage'
 import { CadAnalysisPage } from '@/features/underdrain/CadAnalysisPage'
@@ -104,6 +105,14 @@ function AppRoutes() {
           element={
             <ProtectedRoute>
               <MobileDetailMapPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/mobile/staking"
+          element={
+            <ProtectedRoute>
+              <MobileStakingPage />
             </ProtectedRoute>
           }
         />
