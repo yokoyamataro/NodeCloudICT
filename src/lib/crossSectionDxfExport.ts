@@ -134,7 +134,15 @@ class DxfBuilder {
     this.push('40', r)
   }
 
-  text(layer: string, x: number, y: number, height: number, text: string, hAlign = 0) {
+  text(
+    layer: string,
+    x: number,
+    y: number,
+    height: number,
+    text: string,
+    hAlign = 0,
+    rotation = 0,
+  ) {
     this.push('0', 'TEXT')
     this.push('8', layer)
     this.push('10', x)
@@ -142,6 +150,9 @@ class DxfBuilder {
     this.push('30', 0)
     this.push('40', height)
     this.push('1', text)
+    if (rotation !== 0) {
+      this.push('50', rotation)
+    }
     if (hAlign !== 0) {
       // 中央揃えの場合は 72 と 11 を使う
       this.push('72', hAlign)
@@ -233,7 +244,7 @@ function drawSystemTile(
   //  [yBase + marginBottom] = bottomEdge          チャート下端
   //  [yBase + marginBottom + chartHeight]         チャート上端
   //  [yBase + ... + flagSpace + titleSpace]       タイル上端
-  const labelsSpace = 16 // 測点名・累加距離
+  const labelsSpace = 36 // 測点名・累加距離・計画高（累加距離と計画高は縦書き）
   const bandSpace = 10 // 集水番号帯
   const marginBottom = labelsSpace + bandSpace + 4 // 下側総余白
   const flagSpace = 14 // 吸水旗上げ
@@ -291,12 +302,19 @@ function drawSystemTile(
       b.circle('FLAG', px, yP(p.absorptionPlannedHeight), 0.6)
   }
 
-  // 垂直ガイド線 + 累加距離 + 測点名
+  // 垂直ガイド線 + 累加距離 + 計画高 + 測点名
+  // 累加距離と計画高は 90 度回転させて縦書き表示する
   for (const p of sectionData) {
     const px = xP(p.distance)
     b.line('AXIS', px, bottomEdge - 2, px, bottomEdge)
-    b.text('TEXT_HEIGHT', px, bottomEdge - 6, 2, `${p.distance.toFixed(2)}`, 1)
-    b.text('TEXT_POINT', px, bottomEdge - 12, 2.5, p.pointName, 1)
+    // 累加距離（縦書き）
+    b.text('TEXT_HEIGHT', px, bottomEdge - 10, 2, `${p.distance.toFixed(2)}`, 1, 90)
+    // 計画高（縦書き、各縦断変化点で表示）
+    if (p.plannedHeight !== null) {
+      b.text('TEXT_HEIGHT', px, bottomEdge - 24, 2, `${p.plannedHeight.toFixed(3)}`, 1, 90)
+    }
+    // 測点名（横書き）
+    b.text('TEXT_POINT', px, bottomEdge - 34, 2.5, p.pointName, 1)
   }
 
   // 勾配ラベル
