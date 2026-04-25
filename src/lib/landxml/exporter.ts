@@ -188,9 +188,12 @@ function buildSurfaceLines(name: string, surface: TinSurface): string[] {
   }
   out.push('        </Pnts>')
   out.push('        <Faces>')
+  // 本プロジェクトの (x, y) は (北, 東) で Delaunator は (x=右, y=上) 系で CCW を返すため、
+  // LandXML（座標は Northing Easting）として出力すると上空視点で CW になり面の表裏が反転する。
+  // ここで頂点順を b と c で入れ替え、上空から見て CCW（上向き法線）になるよう揃える。
   for (const t of surface.triangles) {
     // インデックスは 1 始まり
-    out.push(`          <F>${t.a + 1} ${t.b + 1} ${t.c + 1}</F>`)
+    out.push(`          <F>${t.a + 1} ${t.c + 1} ${t.b + 1}</F>`)
   }
   out.push('        </Faces>')
   out.push('      </Definition>')
