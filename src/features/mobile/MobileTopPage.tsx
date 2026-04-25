@@ -118,14 +118,14 @@ export function MobileTopPage() {
 
   if (farmsLoading && farms.length === 0) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-100">
+      <div className="mobile-min-screen flex items-center justify-center bg-slate-100">
         <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
       </div>
     )
   }
 
   return (
-    <div className="h-screen flex flex-col">
+    <div className="mobile-screen flex flex-col">
       <div className="px-3 py-2 bg-slate-800 text-white flex items-center gap-2 text-sm">
         <span className="font-medium">圃場一覧（スマホ）</span>
         <div className="ml-auto flex items-center gap-2">

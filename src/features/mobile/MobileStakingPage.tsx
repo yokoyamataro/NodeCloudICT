@@ -456,7 +456,7 @@ export function MobileStakingPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-100">
+      <div className="mobile-min-screen flex items-center justify-center bg-slate-100">
         <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
       </div>
     )
@@ -464,7 +464,7 @@ export function MobileStakingPage() {
 
   if (error) {
     return (
-      <div className="min-h-screen flex flex-col bg-slate-100">
+      <div className="mobile-min-screen flex flex-col bg-slate-100">
         <div className="px-3 py-2 bg-slate-800 text-white text-sm flex items-center">
           <button onClick={() => navigate('/mobile')} className="flex items-center gap-1">
             <ArrowLeft className="h-4 w-4" />
@@ -481,7 +481,7 @@ export function MobileStakingPage() {
   const title = project ? `${project.name} / ${farm?.name}` : (farm?.name ?? '起工測量')
 
   return (
-    <div className="h-screen flex flex-col">
+    <div className="mobile-screen flex flex-col">
       {/* ヘッダー */}
       <div className="px-2 py-2 bg-slate-800 text-white flex items-center gap-2 text-sm">
         <button
