@@ -94,12 +94,10 @@ export const useProjectListStore = create<ProjectListState>()((set, get) => ({
   fetchMembers: async (projectId: string) => {
     set({ membersLoading: true })
     try {
-      // メンバー一覧を取得（auth.usersへのJOINはRLSで制限されるため、別途処理）
+      // RLS では project_members.SELECT を「自分の行」だけに絞っているため、
+      // owner / 他メンバー一覧の取得には SECURITY DEFINER の RPC を使う。
       const { data: membersData, error: membersError } = await supabase
-        .from('project_members')
-        .select('*')
-        .eq('project_id', projectId)
-        .order('created_at')
+        .rpc('get_project_members', { p_project_id: projectId })
 
       if (membersError) throw membersError
 
