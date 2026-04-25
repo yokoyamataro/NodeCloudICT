@@ -96,8 +96,13 @@ export const useProjectListStore = create<ProjectListState>()((set, get) => ({
     try {
       // RLS では project_members.SELECT を「自分の行」だけに絞っているため、
       // owner / 他メンバー一覧の取得には SECURITY DEFINER の RPC を使う。
-      const { data: membersData, error: membersError } = await supabase
-        .rpc('get_project_members', { p_project_id: projectId })
+      // database.ts に未登録の RPC のため、ここは型アサーションで呼ぶ。
+      const { data: membersData, error: membersError } = await (
+        supabase.rpc as unknown as (
+          fn: string,
+          args: { p_project_id: string },
+        ) => Promise<{ data: ProjectMember[] | null; error: { message: string } | null }>
+      )('get_project_members', { p_project_id: projectId })
 
       if (membersError) throw membersError
 
