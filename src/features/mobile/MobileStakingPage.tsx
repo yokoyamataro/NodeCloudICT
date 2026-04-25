@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { MapContainer, TileLayer, Marker, CircleMarker, Tooltip, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, Tooltip, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import {
@@ -319,6 +319,37 @@ export function MobileStakingPage() {
     return L.latLngBounds([Math.min(...lats), Math.min(...lngs)], [Math.max(...lats), Math.max(...lngs)])
   }, [targets, currentPos])
 
+  // 配線（吸水管・集水管）の線形を緯度経度ポリラインに変換
+  const pipePolylines = useMemo(() => {
+    const out: Array<{
+      id: string
+      pipeType: 'branch' | 'collector'
+      number: string
+      positions: [number, number][]
+    }> = []
+    for (const pipe of pipes as PipeRow[]) {
+      if (pipe.vertices.length < 2) continue
+      const positions: [number, number][] = []
+      for (const v of pipe.vertices) {
+        try {
+          const { lat, lng } = converter.toLatLng(v.x, v.y)
+          if (Number.isFinite(lat) && Number.isFinite(lng)) positions.push([lat, lng])
+        } catch {
+          // skip
+        }
+      }
+      if (positions.length < 2) continue
+      out.push({
+        id: pipe.id,
+        // branch=吸水管、それ以外（main/collector/outlet等）はまとめて collector 扱い
+        pipeType: pipe.pipeType === 'branch' ? 'branch' : 'collector',
+        number: pipe.number,
+        positions,
+      })
+    }
+    return out
+  }, [pipes, converter])
+
   // 既に測設済み（記録の measuredXY とターゲット XY が許容範囲内で一致）のターゲット ID 集合
   const stakedTargetIds = useMemo(() => {
     const set = new Set<string>()
@@ -613,6 +644,19 @@ export function MobileStakingPage() {
           />
           <FitOnce bounds={currentPos ? null : allBounds} />
           <FollowCurrent position={currentPos} enabled={follow} />
+
+          {/* 配線ライン（吸水=青・集水=緑） */}
+          {pipePolylines.map((p) => (
+            <Polyline
+              key={`pipe-${p.id}`}
+              positions={p.positions}
+              pathOptions={{
+                color: p.pipeType === 'branch' ? '#2563eb' : '#10b981',
+                weight: p.pipeType === 'branch' ? 2 : 3,
+                opacity: 0.85,
+              }}
+            />
+          ))}
 
           {/* ターゲット */}
           {filteredTargets.map((t) => {
