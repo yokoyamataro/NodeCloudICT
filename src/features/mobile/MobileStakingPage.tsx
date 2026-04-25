@@ -5,6 +5,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import {
   ArrowLeft,
+  ArrowUp,
   Loader2,
   Crosshair,
   Circle as CircleIcon,
@@ -73,12 +74,6 @@ function bearingDeg(
   const x = Math.cos(la1) * Math.sin(la2) - Math.sin(la1) * Math.cos(la2) * Math.cos(dLng)
   const brng = toDeg(Math.atan2(y, x))
   return (brng + 360) % 360
-}
-
-function compassLabel(deg: number): string {
-  const dirs = ['北', '北東', '東', '南東', '南', '南西', '西', '北西']
-  const idx = Math.round(deg / 45) % 8
-  return dirs[idx]
 }
 
 function accuracyColor(acc: number | null): string {
@@ -298,6 +293,16 @@ export function MobileStakingPage() {
       { lat: selectedTarget.lat, lng: selectedTarget.lng },
     )
   }, [currentPos, selectedTarget])
+
+  // 現在位置を平面直角座標 (X=北, Y=東) に変換
+  const currentXY = useMemo(() => {
+    if (!currentPos) return null
+    try {
+      return converter.toXY(currentPos[0], currentPos[1])
+    } catch {
+      return null
+    }
+  }, [currentPos, converter])
 
   const allBounds = useMemo(() => {
     const all: [number, number][] = []
@@ -759,14 +764,24 @@ export function MobileStakingPage() {
               </div>
             </button>
             {distanceToTarget != null && bearingToTarget != null && (
-              <div className="text-right">
-                <div className="text-xs text-slate-500">
-                  {compassLabel(bearingToTarget)}
-                </div>
-                <div className="font-mono font-bold text-lg leading-tight">
-                  {distanceToTarget < 1
-                    ? `${(distanceToTarget * 100).toFixed(0)} cm`
-                    : `${distanceToTarget.toFixed(2)} m`}
+              <div className="flex items-center gap-2">
+                {/* 矢印（北を 0° として時計回りに回転） */}
+                <ArrowUp
+                  className="h-7 w-7 text-blue-600"
+                  style={{
+                    transform: `rotate(${bearingToTarget}deg)`,
+                    transition: 'transform 120ms linear',
+                  }}
+                />
+                <div className="text-right">
+                  <div className="text-[10px] text-slate-500 leading-none">
+                    {bearingToTarget.toFixed(0)}°
+                  </div>
+                  <div className="font-mono font-bold text-lg leading-tight">
+                    {distanceToTarget < 1
+                      ? `${(distanceToTarget * 100).toFixed(0)} cm`
+                      : `${distanceToTarget.toFixed(2)} m`}
+                  </div>
                 </div>
               </div>
             )}
@@ -779,6 +794,29 @@ export function MobileStakingPage() {
             ターゲットを選択
           </button>
         )}
+
+        {/* 現在地 XYZ */}
+        <div className="mt-1 text-[11px] font-mono text-slate-600 flex items-center gap-3 border-t pt-1">
+          <span className="text-slate-500">現在地</span>
+          {currentXY ? (
+            <>
+              <span>
+                X: <span className="text-slate-800">{currentXY.x.toFixed(3)}</span>
+              </span>
+              <span>
+                Y: <span className="text-slate-800">{currentXY.y.toFixed(3)}</span>
+              </span>
+              <span>
+                Z:{' '}
+                <span className="text-slate-800">
+                  {currentAlt != null ? currentAlt.toFixed(3) : '-'}
+                </span>
+              </span>
+            </>
+          ) : (
+            <span className="text-slate-400">取得中...</span>
+          )}
+        </div>
 
         {/* 記録ボタン */}
         <div className="mt-2 flex gap-2">
