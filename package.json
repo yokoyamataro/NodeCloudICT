@@ -10,6 +10,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/android": "8.3.1",
+    "@capacitor/cli": "8.3.1",
+    "@capacitor/core": "8.3.1",
     "@supabase/supabase-js": "^2.99.0",
     "@types/delaunator": "^5.0.3",
     "class-variance-authority": "^0.7.1",
