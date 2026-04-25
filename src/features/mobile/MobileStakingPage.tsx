@@ -647,11 +647,13 @@ export function MobileStakingPage() {
           <FitOnce bounds={currentPos ? null : allBounds} />
           <FollowCurrent position={currentPos} enabled={follow} />
 
-          {/* 配線ライン（吸水=青・集水=緑、選択中はオレンジでハイライト） */}
-          {pipePolylines.map((p) => {
+          {/* 配線ライン（吸水=青・集水=緑、選択中はオレンジ）
+              タップ判定を確実にするため、透明な太い「ヒットレイヤ」を上に重ねる */}
+          {pipePolylines.flatMap((p) => {
             const isSelected = p.id === selectedPipeId
             const baseColor = p.pipeType === 'branch' ? '#2563eb' : '#10b981'
-            return (
+            return [
+              // 表示用ライン（クリック非対応）
               <Polyline
                 key={`pipe-${p.id}`}
                 positions={p.positions}
@@ -659,12 +661,23 @@ export function MobileStakingPage() {
                   color: isSelected ? '#f97316' : baseColor,
                   weight: isSelected ? 5 : p.pipeType === 'branch' ? 2 : 3,
                   opacity: isSelected ? 1 : 0.85,
+                  interactive: false,
+                }}
+              />,
+              // タップ判定用の太い透明ライン（指タップでも確実に拾える）
+              <Polyline
+                key={`pipe-hit-${p.id}`}
+                positions={p.positions}
+                pathOptions={{
+                  color: '#000',
+                  weight: 20,
+                  opacity: 0,
                 }}
                 eventHandlers={{
                   click: () => setSelectedPipeId(p.id),
                 }}
-              />
-            )
+              />,
+            ]
           })}
 
           {/* ターゲット */}
