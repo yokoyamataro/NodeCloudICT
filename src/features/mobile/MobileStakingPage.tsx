@@ -22,7 +22,7 @@ import { supabase } from '@/lib/supabase'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
-import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
+import { useUnderdrainStore, type PipeRow, PIPE_TYPE_NAMES } from '@/stores/underdrainStore'
 import { useStakingStore, type StakingRecord } from '@/stores/stakingStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import type { Project } from '@/types/database'
@@ -146,6 +146,8 @@ export function MobileStakingPage() {
 
   // 選択中ターゲット
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null)
+  // 選択中の配線（タップでハイライト＋情報表示）
+  const [selectedPipeId, setSelectedPipeId] = useState<string | null>(null)
 
   // 記録状態
   const [recording, setRecording] = useState(false)
@@ -645,18 +647,25 @@ export function MobileStakingPage() {
           <FitOnce bounds={currentPos ? null : allBounds} />
           <FollowCurrent position={currentPos} enabled={follow} />
 
-          {/* 配線ライン（吸水=青・集水=緑） */}
-          {pipePolylines.map((p) => (
-            <Polyline
-              key={`pipe-${p.id}`}
-              positions={p.positions}
-              pathOptions={{
-                color: p.pipeType === 'branch' ? '#2563eb' : '#10b981',
-                weight: p.pipeType === 'branch' ? 2 : 3,
-                opacity: 0.85,
-              }}
-            />
-          ))}
+          {/* 配線ライン（吸水=青・集水=緑、選択中はオレンジでハイライト） */}
+          {pipePolylines.map((p) => {
+            const isSelected = p.id === selectedPipeId
+            const baseColor = p.pipeType === 'branch' ? '#2563eb' : '#10b981'
+            return (
+              <Polyline
+                key={`pipe-${p.id}`}
+                positions={p.positions}
+                pathOptions={{
+                  color: isSelected ? '#f97316' : baseColor,
+                  weight: isSelected ? 5 : p.pipeType === 'branch' ? 2 : 3,
+                  opacity: isSelected ? 1 : 0.85,
+                }}
+                eventHandlers={{
+                  click: () => setSelectedPipeId(p.id),
+                }}
+              />
+            )
+          })}
 
           {/* ターゲット */}
           {filteredTargets.map((t) => {
@@ -692,6 +701,7 @@ export function MobileStakingPage() {
                 }}
               >
                 <Tooltip
+                  key={`tip-${showLabels ? 'on' : 'off'}`}
                   direction="top"
                   offset={[0, -6]}
                   permanent={showLabels}
@@ -731,6 +741,47 @@ export function MobileStakingPage() {
             </>
           )}
         </MapContainer>
+
+        {/* 選択中の配線情報 */}
+        {selectedPipeId && (() => {
+          const pipe = pipes.find((p) => p.id === selectedPipeId)
+          if (!pipe) return null
+          const typeLabel = pipe.pipeType ? PIPE_TYPE_NAMES[pipe.pipeType] : '-'
+          const length =
+            pipe.measuredLength != null
+              ? `${pipe.measuredLength.toFixed(2)} m（実測）`
+              : pipe.designLength != null
+                ? `${pipe.designLength.toFixed(2)} m（設計）`
+                : '-'
+          return (
+            <div className="absolute top-2 left-2 z-[1000] bg-white/95 border rounded-lg shadow-lg p-2 text-xs space-y-0.5 max-w-[60%]">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-bold text-slate-800 truncate">{pipe.number}</span>
+                <button
+                  onClick={() => setSelectedPipeId(null)}
+                  className="text-slate-400 hover:text-slate-700 px-1"
+                  title="閉じる"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-slate-500">管種:</span>
+                <span className="font-mono text-slate-800">{typeLabel}</span>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-slate-500">管径:</span>
+                <span className="font-mono text-slate-800">
+                  {pipe.diameter != null ? `${pipe.diameter} mm` : '-'}
+                </span>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-slate-500">延長:</span>
+                <span className="font-mono text-slate-800">{length}</span>
+              </div>
+            </div>
+          )
+        })()}
 
         {/* 設定パネル */}
         {showSettings && (
