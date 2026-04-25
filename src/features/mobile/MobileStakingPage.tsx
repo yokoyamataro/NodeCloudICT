@@ -423,12 +423,29 @@ export function MobileStakingPage() {
     const dist = dX != null && dY != null ? Math.hypot(dX, dY) : null
     const isStake = !!(selectedTarget && dist !== null && dist <= STAKE_TOLERANCE_M)
 
+    // 新点（free）の場合は点名を入力させる。キャンセルされたら保存しない。
+    let freePointName: string | null = null
+    if (!isStake) {
+      const freeCount = records.filter((r) => r.targetType === 'free').length
+      const defaultName = `新点-${freeCount + 1}`
+      const promptMsg =
+        selectedTarget && dist !== null
+          ? `誤差が大きいため新点として記録します（${dist.toFixed(3)} m）。\n点名を入力してください:`
+          : '新点として記録します。点名を入力してください:'
+      const input = window.prompt(promptMsg, defaultName)
+      if (input === null) {
+        // キャンセル → 保存中止
+        return
+      }
+      freePointName = input.trim() || defaultName
+    }
+
     const saved = await addRecord({
       farmId,
       targetType: isStake ? selectedTarget!.kind : 'free',
       targetRefId: isStake ? selectedTarget!.refId : null,
       targetVertexIndex: isStake ? selectedTarget!.vertexIndex : null,
-      targetName: isStake ? selectedTarget!.name : null,
+      targetName: isStake ? selectedTarget!.name : freePointName,
       targetX: isStake ? selectedTarget!.x : null,
       targetY: isStake ? selectedTarget!.y : null,
       targetZ: isStake ? selectedTarget!.z : null,
@@ -452,10 +469,12 @@ export function MobileStakingPage() {
         setSelectedTargetId(next?.id ?? null)
       } else if (selectedTarget && dist !== null) {
         msg =
-          `誤差が大きいため新点として記録しました（${dist.toFixed(3)} m）\n` +
+          `${freePointName} を新点として記録しました（誤差 ${dist.toFixed(3)} m）\n` +
           `精度 ${maxAcc.toFixed(3)} m / ${samples.length} サンプル`
       } else {
-        msg = `新点として記録しました（${samples.length} サンプル / 精度 ${maxAcc.toFixed(3)} m）`
+        msg =
+          `${freePointName} を新点として記録しました\n` +
+          `精度 ${maxAcc.toFixed(3)} m / ${samples.length} サンプル`
       }
       alert(msg)
     }
