@@ -4,8 +4,19 @@
 
 import type { Alignment, AlignmentSegment, CurveRotation } from './types'
 
+export interface ParsedSurface {
+  id: string
+  name: string
+  sourceFile?: string | null
+  /** P 要素を 0 始まりの配列に格納（XML 上の id 1 → index 0） */
+  points: { x: number; y: number; z: number }[]
+  /** F 要素のインデックス。XML は 1 始まりだが配列インデックスに変換済み */
+  triangles: { a: number; b: number; c: number }[]
+}
+
 export interface ParseResult {
   alignments: Alignment[]
+  surfaces: ParsedSurface[]
   warnings: string[]
 }
 
@@ -51,7 +62,92 @@ export function parseLandXml(xmlText: string, sourceFile?: string): ParseResult 
     })
   }
 
-  return { alignments, warnings }
+  // Surface（TIN）取込
+  const surfaceEls = doc.getElementsByTagName('Surface')
+  const surfaces: ParsedSurface[] = []
+  for (let i = 0; i < surfaceEls.length; i++) {
+    const el = surfaceEls[i]
+    const surf = parseSurface(el, i, sourceFile, warnings)
+    if (surf) surfaces.push(surf)
+  }
+
+  return { alignments, surfaces, warnings }
+}
+
+function parseSurface(
+  el: Element,
+  idx: number,
+  sourceFile: string | undefined,
+  warnings: string[],
+): ParsedSurface | null {
+  const name = el.getAttribute('name') ?? `Surface${idx + 1}`
+  // <Definition surfType="TIN"> に絞り込み（無ければ最初の Definition を使う）
+  const defs = el.getElementsByTagName('Definition')
+  if (defs.length === 0) {
+    warnings.push(`Surface "${name}" に Definition が見つかりませんでした`)
+    return null
+  }
+  const def = defs[0]
+  const surfType = def.getAttribute('surfType')
+  if (surfType && surfType !== 'TIN') {
+    warnings.push(`Surface "${name}" は TIN 以外（${surfType}）のためスキップします`)
+    return null
+  }
+
+  // Pnts → P 要素を id でインデックス化
+  const pntsEls = def.getElementsByTagName('Pnts')
+  if (pntsEls.length === 0) {
+    warnings.push(`Surface "${name}" に Pnts が見つかりませんでした`)
+    return null
+  }
+  const pIdMap = new Map<number, { x: number; y: number; z: number }>()
+  for (const pEl of Array.from(pntsEls[0].getElementsByTagName('P'))) {
+    const idAttr = pEl.getAttribute('id')
+    const id = idAttr ? parseInt(idAttr, 10) : NaN
+    const text = (pEl.textContent ?? '').trim()
+    const parts = text.split(/\s+/).map((s) => parseFloat(s))
+    if (parts.length < 3 || parts.some((v) => !Number.isFinite(v))) continue
+    if (Number.isFinite(id)) {
+      pIdMap.set(id, { x: parts[0], y: parts[1], z: parts[2] })
+    }
+  }
+  if (pIdMap.size === 0) {
+    warnings.push(`Surface "${name}" に有効な P 要素がありません`)
+    return null
+  }
+
+  // id → 配列インデックスにマッピングし直す（id は飛び番でも良い）
+  const sortedIds = Array.from(pIdMap.keys()).sort((a, b) => a - b)
+  const idToIndex = new Map<number, number>()
+  const points: { x: number; y: number; z: number }[] = []
+  for (const id of sortedIds) {
+    idToIndex.set(id, points.length)
+    points.push(pIdMap.get(id)!)
+  }
+
+  // Faces → F 要素を 0 始まりインデックスに変換
+  const facesEls = def.getElementsByTagName('Faces')
+  const triangles: { a: number; b: number; c: number }[] = []
+  if (facesEls.length > 0) {
+    for (const fEl of Array.from(facesEls[0].getElementsByTagName('F'))) {
+      const text = (fEl.textContent ?? '').trim()
+      const parts = text.split(/\s+/).map((s) => parseInt(s, 10))
+      if (parts.length < 3 || parts.some((v) => !Number.isFinite(v))) continue
+      const a = idToIndex.get(parts[0])
+      const b = idToIndex.get(parts[1])
+      const c = idToIndex.get(parts[2])
+      if (a == null || b == null || c == null) continue
+      triangles.push({ a, b, c })
+    }
+  }
+
+  return {
+    id: generateTempId(),
+    name,
+    sourceFile,
+    points,
+    triangles,
+  }
 }
 
 function parseSegment(el: Element, warnings: string[]): AlignmentSegment | null {

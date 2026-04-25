@@ -5,10 +5,11 @@ import {
   Trash2,
   Loader2,
   AlertCircle,
+  AlertTriangle,
   ChevronDown,
   ChevronRight,
 } from 'lucide-react'
-import { MapContainer, TileLayer, Polyline, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Polygon, Polyline, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useFarmStore } from '@/stores/farmStore'
@@ -18,11 +19,12 @@ import { useAlignmentStore } from '@/stores/alignmentStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useSurveyStore } from '@/stores/surveyStore'
-import { parseLandXml } from '@/lib/landxml/parser'
+import { parseLandXml, type ParsedSurface } from '@/lib/landxml/parser'
 import { sampleAlignment } from '@/lib/landxml/geometry'
 import { buildAlignmentsFromPlan, alignmentZRange } from '@/lib/landxml/fromPlan'
 import { buildTinSurface, buildTrenchTin } from '@/lib/landxml/surface'
 import { buildLandXml } from '@/lib/landxml/exporter'
+import { detectOverlaps, type OverlapResult } from '@/lib/landxml/overlap'
 import { CoordinateConverter } from '@/lib/coordinates'
 import type { Alignment } from '@/lib/landxml/types'
 
@@ -99,6 +101,13 @@ export function LandXMLPage() {
   const [exportTinSurface, setExportTinSurface] = useState(false)
   const [exportTrenchSurface, setExportTrenchSurface] = useState(false)
   const [exporting, setExporting] = useState(false)
+
+  // 重複チェック用の取込サーフェス
+  const [checkSurfaces, setCheckSurfaces] = useState<ParsedSurface[]>([])
+  const [overlapResult, setOverlapResult] = useState<OverlapResult | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [checkError, setCheckError] = useState<string | null>(null)
+  const checkFileInputRef = useRef<HTMLInputElement | null>(null)
 
   const tinSurface = useMemo(() => {
     if (!showTin) return null
@@ -346,6 +355,128 @@ export function LandXMLPage() {
       setExporting(false)
     }
   }
+
+  // 重複チェック: ファイル取込
+  const handleCheckFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+    setCheckError(null)
+    setOverlapResult(null)
+    const added: ParsedSurface[] = []
+    const warns: string[] = []
+    for (const f of Array.from(files)) {
+      try {
+        const text = await f.text()
+        const { surfaces, warnings } = parseLandXml(text, f.name)
+        if (surfaces.length === 0) {
+          warns.push(`${f.name}: Surface 要素が見つかりませんでした`)
+        } else {
+          added.push(...surfaces)
+        }
+        warns.push(...warnings)
+      } catch (err) {
+        warns.push(
+          `${f.name}: ${err instanceof Error ? err.message : 'パースに失敗しました'}`,
+        )
+      }
+    }
+    if (added.length === 0) {
+      setCheckError(warns.join(' / ') || 'TIN サーフェスが見つかりませんでした')
+    } else {
+      setCheckSurfaces((prev) => [...prev, ...added])
+      if (warns.length > 0) setCheckError(warns.join(' / '))
+    }
+    if (checkFileInputRef.current) checkFileInputRef.current.value = ''
+  }
+
+  const handleCheckSurfaceRemove = (id: string) => {
+    setCheckSurfaces((prev) => prev.filter((s) => s.id !== id))
+    setOverlapResult(null)
+  }
+
+  const handleCheckClear = () => {
+    setCheckSurfaces([])
+    setOverlapResult(null)
+    setCheckError(null)
+  }
+
+  const handleRunOverlapCheck = () => {
+    if (checkSurfaces.length === 0) return
+    setChecking(true)
+    setOverlapResult(null)
+    // 重い処理は次フレームで（UI ロックを避ける）
+    setTimeout(() => {
+      try {
+        const inputs = checkSurfaces.map((s) => ({
+          surfaceId: s.id,
+          surfaceName: s.name,
+          triangles: s.triangles.map((t, idx) => ({
+            index: idx,
+            vertices: [s.points[t.a], s.points[t.b], s.points[t.c]] as [
+              { x: number; y: number },
+              { x: number; y: number },
+              { x: number; y: number },
+            ],
+          })),
+        }))
+        const result = detectOverlaps(inputs)
+        setOverlapResult(result)
+      } finally {
+        setChecking(false)
+      }
+    }, 30)
+  }
+
+  // 地図に描画する「重複エラー三角形」のポリゴン（赤塗り）
+  const errorTrianglePolygons = useMemo(() => {
+    if (!overlapResult) return [] as Array<{ id: string; positions: [number, number][] }>
+    const errSet = new Set(
+      overlapResult.errorTriangles.map((e) => `${e.surfaceId}::${e.triangleIndex}`),
+    )
+    const out: Array<{ id: string; positions: [number, number][] }> = []
+    for (const surf of checkSurfaces) {
+      surf.triangles.forEach((t, idx) => {
+        if (!errSet.has(`${surf.id}::${idx}`)) return
+        const verts = [surf.points[t.a], surf.points[t.b], surf.points[t.c]]
+        const ll: [number, number][] = []
+        for (const p of verts) {
+          try {
+            const { lat, lng } = converter.toLatLng(p.x, p.y)
+            if (Number.isFinite(lat) && Number.isFinite(lng)) ll.push([lat, lng])
+          } catch {
+            // skip
+          }
+        }
+        if (ll.length === 3) out.push({ id: `${surf.id}-${idx}`, positions: ll })
+      })
+    }
+    return out
+  }, [overlapResult, checkSurfaces, converter])
+
+  // 地図に描画する「重複チェック対象の三角網」エッジ（薄紫、参考表示）
+  const checkSurfaceEdges = useMemo(() => {
+    const out: Array<[[number, number], [number, number]]> = []
+    for (const surf of checkSurfaces) {
+      for (const t of surf.triangles) {
+        const verts = [surf.points[t.a], surf.points[t.b], surf.points[t.c]]
+        const ll: [number, number][] = []
+        for (const p of verts) {
+          try {
+            const { lat, lng } = converter.toLatLng(p.x, p.y)
+            if (Number.isFinite(lat) && Number.isFinite(lng)) ll.push([lat, lng])
+          } catch {
+            // skip
+          }
+        }
+        if (ll.length === 3) {
+          out.push([ll[0], ll[1]])
+          out.push([ll[1], ll[2]])
+          out.push([ll[2], ll[0]])
+        }
+      }
+    }
+    return out
+  }, [checkSurfaces, converter])
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -890,6 +1021,152 @@ export function LandXMLPage() {
                 </div>
               )}
             </div>
+
+            {/* LandXML 重複チェック */}
+            <div className="border-t pt-3 mt-3">
+              <div className="text-sm font-semibold">4. LandXML 重複チェック</div>
+              <div className="text-xs text-slate-500 mt-0.5">
+                取り込んだ TIN サーフェスの三角形同士で内部が重なるペアを検出します
+                <br />
+                （エッジ・頂点だけ共有する隣接状態は OK）
+              </div>
+
+              <input
+                ref={checkFileInputRef}
+                type="file"
+                accept=".xml,.landxml"
+                multiple
+                onChange={handleCheckFileChange}
+                className="hidden"
+              />
+              <div className="flex gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => checkFileInputRef.current?.click()}
+                  className="flex-1 flex items-center justify-center gap-2 px-3 py-1.5 bg-purple-600 text-white rounded hover:bg-purple-700 text-xs"
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  LandXML を追加
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCheckClear}
+                  disabled={checkSurfaces.length === 0}
+                  className="px-3 py-1.5 border rounded hover:bg-slate-50 disabled:opacity-50 text-xs"
+                >
+                  クリア
+                </button>
+              </div>
+
+              {checkError && (
+                <div className="mt-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded p-1.5 flex items-start gap-1">
+                  <AlertTriangle className="h-3 w-3 flex-shrink-0 mt-0.5" />
+                  <span className="break-all">{checkError}</span>
+                </div>
+              )}
+
+              {checkSurfaces.length > 0 && (
+                <div className="mt-2 max-h-48 overflow-auto border rounded bg-white">
+                  <table className="w-full text-[11px]">
+                    <thead className="bg-slate-50 sticky top-0">
+                      <tr>
+                        <th className="text-left font-normal px-2 py-1">サーフェス</th>
+                        <th className="text-right font-normal px-2 py-1">点</th>
+                        <th className="text-right font-normal px-2 py-1">面</th>
+                        <th className="px-1 py-1"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {checkSurfaces.map((s) => (
+                        <tr key={s.id} className="border-t">
+                          <td className="px-2 py-0.5 truncate max-w-[200px]" title={s.name}>
+                            {s.name}
+                            {s.sourceFile && (
+                              <span className="ml-1 text-slate-400">
+                                ({s.sourceFile})
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-2 py-0.5 text-right font-mono">
+                            {s.points.length}
+                          </td>
+                          <td className="px-2 py-0.5 text-right font-mono">
+                            {s.triangles.length}
+                          </td>
+                          <td className="px-1 py-0.5">
+                            <button
+                              onClick={() => handleCheckSurfaceRemove(s.id)}
+                              className="p-0.5 text-slate-400 hover:text-red-500"
+                              title="除外"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleRunOverlapCheck}
+                disabled={checkSurfaces.length === 0 || checking}
+                className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-amber-600 text-white rounded hover:bg-amber-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-xs"
+              >
+                {checking ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                )}
+                {checking ? '検査中...' : '重複チェックを実行'}
+              </button>
+
+              {overlapResult && (
+                <div className="mt-2 text-[11px] border rounded p-2 space-y-1">
+                  <div
+                    className={
+                      overlapResult.pairs.length === 0
+                        ? 'text-emerald-700 font-semibold'
+                        : 'text-red-700 font-semibold'
+                    }
+                  >
+                    {overlapResult.pairs.length === 0
+                      ? `重複なし（${overlapResult.pairsChecked} ペア検査）`
+                      : `${overlapResult.pairs.length} 件の重複が見つかりました（エラー三角形 ${overlapResult.errorTriangles.length} / ${overlapResult.pairsChecked} ペア検査）`}
+                  </div>
+                  {overlapResult.pairs.length > 0 && (
+                    <div className="max-h-48 overflow-auto border-t pt-1 mt-1">
+                      <table className="w-full text-[10px]">
+                        <thead className="text-slate-500">
+                          <tr>
+                            <th className="text-left font-normal pr-1">A</th>
+                            <th className="text-left font-normal pr-1">B</th>
+                            <th className="text-right font-normal">面積 (m²)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {overlapResult.pairs.map((p, i) => (
+                            <tr key={i} className="border-t">
+                              <td className="pr-1 truncate max-w-[120px]">
+                                {p.aSurfaceName}#{p.aTriangleIndex}
+                              </td>
+                              <td className="pr-1 truncate max-w-[120px]">
+                                {p.bSurfaceName}#{p.bTriangleIndex}
+                              </td>
+                              <td className="text-right font-mono">
+                                {p.overlapArea.toFixed(4)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -925,6 +1202,27 @@ export function LandXMLPage() {
                 key={`trench-${idx}`}
                 positions={e}
                 pathOptions={{ color: '#d97706', weight: 1, opacity: 0.85 }}
+              />
+            ))}
+            {/* 重複チェック対象 TIN: 紫の薄エッジ */}
+            {checkSurfaceEdges.map((e, idx) => (
+              <Polyline
+                key={`check-${idx}`}
+                positions={e}
+                pathOptions={{ color: '#a855f7', weight: 0.5, opacity: 0.6 }}
+              />
+            ))}
+            {/* 重複エラー三角形: 赤の塗りつぶし */}
+            {errorTrianglePolygons.map((p) => (
+              <Polygon
+                key={`err-${p.id}`}
+                positions={p.positions}
+                pathOptions={{
+                  color: '#dc2626',
+                  weight: 1.5,
+                  fillColor: '#ef4444',
+                  fillOpacity: 0.4,
+                }}
               />
             ))}
             {/* 施工計画由来: 吸水=青・集水=緑 */}
@@ -966,7 +1264,8 @@ export function LandXMLPage() {
             pendingPolylines.length > 0 ||
             derivedPolylines.length > 0 ||
             tinEdgeLatLngs.length > 0 ||
-            trenchEdgeLatLngs.length > 0) && (
+            trenchEdgeLatLngs.length > 0 ||
+            checkSurfaceEdges.length > 0) && (
             <div className="absolute bottom-3 right-3 bg-white/90 border rounded px-2 py-1 text-xs space-y-1 shadow">
               {tinEdgeLatLngs.length > 0 && (
                 <div className="flex items-center gap-2">
@@ -978,6 +1277,18 @@ export function LandXMLPage() {
                 <div className="flex items-center gap-2">
                   <span className="inline-block w-5 h-0.5 bg-amber-600" />
                   <span>床掘 TIN</span>
+                </div>
+              )}
+              {checkSurfaceEdges.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="inline-block w-5 h-0.5 bg-purple-500" />
+                  <span>重複チェック対象</span>
+                </div>
+              )}
+              {errorTrianglePolygons.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="inline-block w-5 h-2 bg-red-500/40 border border-red-600" />
+                  <span>重複エラー</span>
                 </div>
               )}
               {derivedPolylines.some((p) => p.source === 'absorption') && (
