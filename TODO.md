@@ -16,3 +16,4 @@
 - [x] LandXML 出力機能（中心線形＋ TIN サーフェスを LandXML 1.2 で書き出し）
 - [x] LandXML 出力の Face 頂点順を反転（上空視で CCW・上向き法線）
 - [x] LandXML 重複チェック機能（TIN 三角形同士の内部重なりを検出・エラー三角形を地図に赤表示）
+- [x] メンバー方式の RLS（工事ごとに project_members 登録者のみ閲覧可。SQL 適用要）
