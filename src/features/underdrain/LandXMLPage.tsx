@@ -22,6 +22,7 @@ import { parseLandXml } from '@/lib/landxml/parser'
 import { sampleAlignment } from '@/lib/landxml/geometry'
 import { buildAlignmentsFromPlan, alignmentZRange } from '@/lib/landxml/fromPlan'
 import { buildTinSurface, buildTrenchTin } from '@/lib/landxml/surface'
+import { buildLandXml } from '@/lib/landxml/exporter'
 import { CoordinateConverter } from '@/lib/coordinates'
 import type { Alignment } from '@/lib/landxml/types'
 
@@ -91,6 +92,13 @@ export function LandXMLPage() {
   const [trenchApplyTransition, setTrenchApplyTransition] = useState(true)
   const [trenchTransitionDistance, setTrenchTransitionDistance] = useState(5.0) // m
   const [trenchTrimClearance, setTrenchTrimClearance] = useState(0.10) // m
+
+  // LandXML 出力設定
+  const [exportSavedAlignments, setExportSavedAlignments] = useState(true)
+  const [exportDerivedAlignments, setExportDerivedAlignments] = useState(true)
+  const [exportTinSurface, setExportTinSurface] = useState(false)
+  const [exportTrenchSurface, setExportTrenchSurface] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   const tinSurface = useMemo(() => {
     if (!showTin) return null
@@ -295,6 +303,50 @@ export function LandXMLPage() {
     })
   }
 
+  // 出力対象が一つでもあるか
+  const hasExportTarget =
+    (exportSavedAlignments && alignments.length > 0) ||
+    (exportDerivedAlignments && derivedAlignments.length > 0) ||
+    (exportTinSurface && tinSurface !== null) ||
+    (exportTrenchSurface && trenchSurface !== null)
+
+  const handleExportLandXml = () => {
+    if (!hasExportTarget) return
+    setExporting(true)
+    try {
+      const out: Alignment[] = []
+      if (exportSavedAlignments) out.push(...alignments)
+      if (exportDerivedAlignments) out.push(...derivedAlignments)
+
+      const surfaces: { name: string; surface: NonNullable<typeof tinSurface> }[] = []
+      if (exportTinSurface && tinSurface) {
+        surfaces.push({ name: '地盤 TIN', surface: tinSurface })
+      }
+      if (exportTrenchSurface && trenchSurface) {
+        surfaces.push({ name: '床掘 TIN', surface: trenchSurface })
+      }
+
+      const xml = buildLandXml({
+        alignments: out,
+        surfaces,
+        projectName: currentFarm?.name,
+        coordinateZoneName: zone ? `JGD2011 / 平面直角座標系第${zone}系` : undefined,
+      })
+
+      const blob = new Blob([xml], { type: 'application/xml' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${currentFarm?.name || 'export'}.xml`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <div className="p-4 border-b bg-white flex items-center gap-3">
@@ -302,10 +354,7 @@ export function LandXMLPage() {
         <div className="flex-1">
           <h1 className="text-xl font-bold">LandXML 出力</h1>
           <p className="text-sm text-muted-foreground">
-            中心線形・面データを準備し、LandXML 形式で出力します
-            <span className="ml-2 text-xs text-amber-700">
-              （現在は中心線形の取り込みまで実装。面データ取込・LandXML 出力は今後追加）
-            </span>
+            中心線形・面データを準備し、LandXML 1.2 形式で出力します
           </p>
         </div>
       </div>
@@ -760,18 +809,86 @@ export function LandXMLPage() {
               </div>
             </div>
 
-            {/* LandXML 出力 (未実装) */}
+            {/* LandXML 出力 */}
             <div className="border-t pt-3 mt-3">
-              <div className="text-sm font-semibold text-slate-500">3. LandXML 出力</div>
-              <div className="text-xs text-slate-400 mt-1">（今後実装予定）</div>
+              <div className="text-sm font-semibold">3. LandXML 出力</div>
+              <div className="text-xs text-slate-500 mt-0.5">
+                選択した中心線形・サーフェスを LandXML 1.2 形式で書き出します
+              </div>
+              <div className="mt-2 space-y-1 text-xs">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={exportSavedAlignments}
+                    onChange={(e) => setExportSavedAlignments(e.target.checked)}
+                    disabled={alignments.length === 0}
+                    className="h-3.5 w-3.5"
+                  />
+                  <span className={alignments.length === 0 ? 'text-slate-400' : ''}>
+                    取込済み中心線形（{alignments.length} 件）
+                  </span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={exportDerivedAlignments}
+                    onChange={(e) => setExportDerivedAlignments(e.target.checked)}
+                    disabled={derivedAlignments.length === 0}
+                    className="h-3.5 w-3.5"
+                  />
+                  <span className={derivedAlignments.length === 0 ? 'text-slate-400' : ''}>
+                    施工計画由来の中心線形（{derivedAlignments.length} 件）
+                  </span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={exportTinSurface}
+                    onChange={(e) => setExportTinSurface(e.target.checked)}
+                    disabled={!tinSurface}
+                    className="h-3.5 w-3.5"
+                  />
+                  <span className={!tinSurface ? 'text-slate-400' : ''}>
+                    地盤 TIN
+                    {tinSurface
+                      ? `（${tinSurface.stats.triangleCount} 三角形）`
+                      : '（上で生成して下さい）'}
+                  </span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={exportTrenchSurface}
+                    onChange={(e) => setExportTrenchSurface(e.target.checked)}
+                    disabled={!trenchSurface}
+                    className="h-3.5 w-3.5"
+                  />
+                  <span className={!trenchSurface ? 'text-slate-400' : ''}>
+                    床掘 TIN
+                    {trenchSurface
+                      ? `（${trenchSurface.stats.triangleCount} 三角形）`
+                      : '（上で生成して下さい）'}
+                  </span>
+                </label>
+              </div>
               <button
                 type="button"
-                disabled
-                className="mt-2 w-full flex items-center justify-center gap-2 px-4 py-2 bg-slate-200 text-slate-400 rounded text-sm cursor-not-allowed"
+                onClick={handleExportLandXml}
+                disabled={!hasExportTarget || exporting || !currentFarm}
+                className="mt-2 w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-sm"
               >
-                <FileOutput className="h-4 w-4" />
-                LandXML を出力
+                {exporting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <FileOutput className="h-4 w-4" />
+                )}
+                {exporting ? '出力中...' : 'LandXML を出力'}
               </button>
+              {!hasExportTarget && currentFarm && (
+                <div className="text-[11px] text-slate-500 mt-1">
+                  出力対象を 1 つ以上選択してください
+                </div>
+              )}
             </div>
           </div>
         </div>
