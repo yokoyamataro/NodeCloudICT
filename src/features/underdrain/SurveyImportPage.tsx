@@ -851,16 +851,36 @@ export function SurveyImportPage() {
                         <input
                           type="number"
                           step="0.001"
-                          value={result.surveyData.z ?? ''}
+                          // 補正有効時は (raw z - dzOffset) を表示。編集時は補正後値として
+                          // 受け取り、raw = 入力値 + dzOffset で保存する。
+                          value={
+                            result.surveyData.z !== null
+                              ? (calibration.isEnabled
+                                  ? result.surveyData.z - calibration.dzOffset
+                                  : result.surveyData.z
+                                ).toFixed(3)
+                              : ''
+                          }
                           onChange={(e) => {
                             const val = e.target.value === '' ? null : parseFloat(e.target.value)
                             if (val === null || !isNaN(val)) {
-                              updateSurveyData(result.surveyData!.id, { z: val })
+                              const rawZ =
+                                val !== null && calibration.isEnabled
+                                  ? val + calibration.dzOffset
+                                  : val
+                              updateSurveyData(result.surveyData!.id, { z: rawZ })
                               setHasUnsavedChanges(true)
                             }
                           }}
-                          className="w-16 px-1 py-0 text-xs font-mono text-right border rounded bg-white"
+                          className={`w-16 px-1 py-0 text-xs font-mono text-right border rounded ${
+                            calibration.isEnabled ? 'bg-blue-50 border-blue-200' : 'bg-white'
+                          }`}
                           placeholder="-"
+                          title={
+                            calibration.isEnabled && result.surveyData.z !== null
+                              ? `補正後（生:${result.surveyData.z.toFixed(3)}）`
+                              : undefined
+                          }
                         />
                       ) : (
                         <input
