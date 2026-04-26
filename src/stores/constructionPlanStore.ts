@@ -1098,12 +1098,23 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
         .select('*')
         .eq('farm_id', farmId)
 
+      // 標高補正設定を取得（is_enabled=true なら raw z から dz_offset を引く）
+      const { data: calRaw } = await supabase
+        .from('design_survey_calibration')
+        .select('*')
+        .eq('farm_id', farmId)
+        .maybeSingle()
+      const calibration = calRaw as { is_enabled: boolean; dz_offset: number } | null
+      const calibrationActive = !!(calibration?.is_enabled)
+      const dzOffset = calibration?.dz_offset ?? 0
+
       const surveyData = (surveyDataRaw || []).map(
         (row: { id: string; x: number; y: number; z: number | null; category: string; point_number: string }) => ({
           id: row.id,
           x: row.x,
           y: row.y,
-          z: row.z,
+          // 補正が有効なら raw z から dz_offset を引いた値を使う
+          z: row.z !== null && calibrationActive ? row.z - dzOffset : row.z,
           category: row.category,
           pointNumber: row.point_number,
         }),
