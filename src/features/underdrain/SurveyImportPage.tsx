@@ -1034,8 +1034,12 @@ export function SurveyImportPage() {
             </tbody>
           </table>
           </div>
-          {/* 右側: 地図（実測点 + 配管のみ。座標管理点は表示しない） */}
-          <div className="w-[45%] min-w-[360px] border-l flex flex-col">
+          {/* 右側: 地図（実測点 + 配管のみ。座標管理点は表示しない）
+              isolation: isolate で leaflet の高 z-index を内部に閉じ込める */}
+          <div
+            className="w-[45%] min-w-[360px] border-l flex flex-col relative z-0"
+            style={{ isolation: 'isolate' }}
+          >
             <PipeMap
               showLabels={true}
               showDirection={false}
