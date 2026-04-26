@@ -664,22 +664,40 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
 
             if (collectorPipe.vertices.length > 0) {
               if (rowType === 'collector_change' || rowType === 'collector_merge') {
-                // 集水変化点/集水合流: 前の行の集水点の次の頂点
-                const prevRows = group.rows.filter(r => r.collectorPipeId === wiringRow.collectorPipe)
-                if (prevRows.length > 0 && collectorPipe.vertices.length > 1) {
-                  const lastRow = prevRows[prevRows.length - 1]
-                  if (lastRow.collectorPoint) {
-                    const prevX = lastRow.collectorPoint.x
-                    const prevY = lastRow.collectorPoint.y
-                    for (let i = 0; i < collectorPipe.vertices.length; i++) {
-                      const v = collectorPipe.vertices[i]
-                      const dist = calcDistance({ x: v.x, y: v.y }, { x: prevX, y: prevY })
-                      if (dist < 0.5) {
-                        if (i + 1 < collectorPipe.vertices.length) {
-                          targetVertex = collectorPipe.vertices[i + 1]
-                          collectorPointName = generatePointName(collectorPipe.number, i + 1, collectorPipe.vertices.length)
+                // ★ 配管系統側で保存された collectorVertexIdx があればそれを最優先で使う
+                //   （一括設定の意図した頂点をそのまま反映）
+                const explicitIdx = (wiringRow as { collectorVertexIdx?: number }).collectorVertexIdx
+                if (
+                  explicitIdx !== undefined &&
+                  explicitIdx !== null &&
+                  explicitIdx >= 0 &&
+                  explicitIdx < collectorPipe.vertices.length
+                ) {
+                  targetVertex = collectorPipe.vertices[explicitIdx]
+                  collectorPointName = generatePointName(
+                    collectorPipe.number,
+                    explicitIdx,
+                    collectorPipe.vertices.length,
+                  )
+                }
+                // フォールバック: 前の行の集水点の次の頂点
+                if (!targetVertex) {
+                  const prevRows = group.rows.filter(r => r.collectorPipeId === wiringRow.collectorPipe)
+                  if (prevRows.length > 0 && collectorPipe.vertices.length > 1) {
+                    const lastRow = prevRows[prevRows.length - 1]
+                    if (lastRow.collectorPoint) {
+                      const prevX = lastRow.collectorPoint.x
+                      const prevY = lastRow.collectorPoint.y
+                      for (let i = 0; i < collectorPipe.vertices.length; i++) {
+                        const v = collectorPipe.vertices[i]
+                        const dist = calcDistance({ x: v.x, y: v.y }, { x: prevX, y: prevY })
+                        if (dist < 0.5) {
+                          if (i + 1 < collectorPipe.vertices.length) {
+                            targetVertex = collectorPipe.vertices[i + 1]
+                            collectorPointName = generatePointName(collectorPipe.number, i + 1, collectorPipe.vertices.length)
+                          }
+                          break
                         }
-                        break
                       }
                     }
                   }
