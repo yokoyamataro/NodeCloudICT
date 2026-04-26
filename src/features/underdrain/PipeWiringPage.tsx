@@ -184,15 +184,18 @@ export function PipeWiringPage() {
     const collectorPipe = pipes.find(p => p.id === collectorPipeId)
     if (!collectorPipe) return
 
-    // この集水管を接続先としている管を検索（既に追加済みの管路は除外）
-    const connectedAllPipes = pipes.filter(p =>
-      p.connectionTo === collectorPipeId && p.id !== excludePipeId
+    // 吸水管: 既に追加済みの管路（excludePipeId）は除外、かつ pipe_type === 'branch' のみ。
+    const connectedAbsorptionPipes = pipes.filter(p =>
+      p.connectionTo === collectorPipeId
+        && p.id !== excludePipeId
+        && p.pipeType === 'branch'
     )
-    // 「吸水管」として扱うのは pipe_type === 'branch' のみ。
-    // それ以外（main / outlet / connection 等）は集水間の連結なので
-    // 「集水変化点」として扱う。
-    const connectedAbsorptionPipes = connectedAllPipes.filter(p => p.pipeType === 'branch')
-    const connectedCollectorLinks = connectedAllPipes.filter(p => p.pipeType !== 'branch')
+    // 連結管（集水間の合流）: excludePipeId 含めて検出する。
+    // 前段の集水管がこの集水管に合流している点（例: S3 → R2 の R2 側 C 点）を
+    // 集水変化点として登録するため、excludePipeId は適用しない。
+    const connectedCollectorLinks = pipes.filter(p =>
+      p.connectionTo === collectorPipeId && p.pipeType !== 'branch'
+    )
 
     // 非吸水の連結管（前段の集水管が下流端でこの集水管に合流）について、
     // この集水管側の合流頂点を抽出
@@ -223,15 +226,6 @@ export function PipeWiringPage() {
       const changeVertexIdxs = Array.from(
         new Set([...linkJunctionVertexIdxs, ...bendIdxs]),
       ).sort((a, b) => a - b)
-      // デバッグログ: 一括設定で生成されるべき行数を確認
-      console.log('[bulk-setting/no-branch]', {
-        pipe: collectorPipe.number,
-        vertexCount: collectorPipe.vertices.length,
-        linkJunctionVertexIdxs,
-        bendIdxs,
-        changeVertexIdxs,
-        rowsToAdd: changeVertexIdxs.length,
-      })
       if (changeVertexIdxs.length > 0) {
         const newRows: WiringRow[] = changeVertexIdxs.map(() => ({
           id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
