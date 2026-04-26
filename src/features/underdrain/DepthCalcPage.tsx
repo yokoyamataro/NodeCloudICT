@@ -26,6 +26,15 @@ interface SlopeEditTarget {
   upstream: { rowId: string; pointId: string; ph: number | null; label: string }
   downstream: { rowId: string; pointId: string; ph: number | null; label: string }
 }
+
+// 連続勾配の設定対象（複数区間にわたって一定勾配にする）
+interface ContinuousSlopeRow {
+  rowId: string
+  pointId: string
+  label: string
+  ph: number | null
+  cumulativeDistance: number // 始点からの累積距離（m）
+}
 import { useFarmStore } from '@/stores/farmStore'
 import { useUnderdrainStore, PIPE_TYPE_NAMES } from '@/stores/underdrainStore'
 import { useSurveyStore } from '@/stores/surveyStore'
@@ -98,6 +107,9 @@ export function DepthCalcPage() {
 
   // 区間勾配の任意設定ダイアログ
   const [slopeEdit, setSlopeEdit] = useState<SlopeEditTarget | null>(null)
+
+  // 連続勾配ダイアログ（現在アクティブな系統内で複数区間に適用）
+  const [continuousOpen, setContinuousOpen] = useState(false)
 
   const toggleRowCollapsed = (rowId: string) => {
     setCollapsedRows((prev) => {
@@ -1014,6 +1026,16 @@ export function DepthCalcPage() {
                     <Calculator className="h-4 w-4" />
                     自動切深計画
                   </button>
+                  {/* 連続勾配 */}
+                  <button
+                    onClick={() => setContinuousOpen(true)}
+                    disabled={saving || !selectedSystem}
+                    className="flex items-center gap-2 px-3 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors disabled:opacity-50"
+                    title="複数区間にわたって一定の勾配を設定"
+                  >
+                    <Ruler className="h-4 w-4" />
+                    連続勾配
+                  </button>
                   {/* 水理計算出力 */}
                   <button
                     onClick={() => setShowHydraulicModal(true)}
@@ -1568,6 +1590,20 @@ export function DepthCalcPage() {
         />
       )}
 
+      {/* 連続勾配ダイアログ（現在の系統内の collector point に適用） */}
+      {continuousOpen && activeTab && (
+        <ContinuousSlopeDialog
+          systemRows={activeTab.rows}
+          onClose={() => setContinuousOpen(false)}
+          onApply={(updates) => {
+            for (const u of updates) {
+              updatePlannedHeight(u.rowId, u.pointId, u.newPh)
+            }
+            setContinuousOpen(false)
+          }}
+        />
+      )}
+
       {/* 削除確認ダイアログ */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -1831,6 +1867,208 @@ function SlopeEditDialog({
                 ? 'bg-blue-600 text-white hover:bg-blue-700'
                 : 'bg-slate-200 text-slate-400 cursor-not-allowed'
             }`}
+          >
+            適用
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// 連続勾配の設定ダイアログ
+//   現在の系統内の集水点を 2 つ選び（始点・終点）、その区間に一定の勾配を
+//   適用する。中間の各点の計画高は線形補間で計算される。
+function ContinuousSlopeDialog({
+  systemRows,
+  onClose,
+  onApply,
+}: {
+  systemRows: PlanRow[]
+  onClose: () => void
+  onApply: (updates: Array<{ rowId: string; pointId: string; newPh: number }>) => void
+}) {
+  // collector point のある行を上流→下流順に列挙
+  const points = useMemo<ContinuousSlopeRow[]>(() => {
+    const out: ContinuousSlopeRow[] = []
+    let cum = 0
+    for (let i = 0; i < systemRows.length; i++) {
+      const r = systemRows[i]
+      if (!r.collectorPoint) continue
+      // 累積距離: 前行までの segmentDistance の合計（前行の segmentDistance が
+      // 「前→当該」の距離を意味する）
+      if (i > 0) {
+        const prev = systemRows[i - 1]
+        const segDist = prev.collectorPoint?.segmentDistance ?? null
+        if (segDist != null) cum += segDist
+      }
+      out.push({
+        rowId: r.id,
+        pointId: r.collectorPoint.id,
+        label: r.collectorPoint.pointName || `行${i + 1}`,
+        ph: r.collectorPoint.plannedHeight,
+        cumulativeDistance: cum,
+      })
+    }
+    return out
+  }, [systemRows])
+
+  const [startIdx, setStartIdx] = useState(0)
+  const [endIdx, setEndIdx] = useState(Math.min(1, points.length - 1))
+  const [slopeInput, setSlopeInput] = useState<string>('')
+
+  const startPoint = points[startIdx] ?? null
+  const endPoint = points[endIdx] ?? null
+
+  const distance = useMemo(() => {
+    if (!startPoint || !endPoint || endIdx <= startIdx) return 0
+    return endPoint.cumulativeDistance - startPoint.cumulativeDistance
+  }, [startPoint, endPoint, startIdx, endIdx])
+
+  // 勾配パース: "1/400" or "400" → 400
+  const parseDenominator = (input: string): number | null => {
+    const t = input.trim()
+    if (!t) return null
+    const m = t.match(/^(?:1\s*\/\s*)?(-?\d+(?:\.\d+)?)$/)
+    if (!m) return null
+    const n = parseFloat(m[1])
+    if (!Number.isFinite(n) || n === 0) return null
+    return n
+  }
+
+  const denom = parseDenominator(slopeInput)
+
+  // 始点 ph がある + 勾配指定がある → 区間の各点の補間計画高をプレビュー
+  const preview = useMemo(() => {
+    if (!startPoint || startPoint.ph == null || !endPoint || endIdx <= startIdx || denom === null)
+      return [] as Array<{ rowId: string; pointId: string; label: string; oldPh: number | null; newPh: number }>
+    const startPh = startPoint.ph
+    const out: Array<{ rowId: string; pointId: string; label: string; oldPh: number | null; newPh: number }> = []
+    for (let i = startIdx + 1; i <= endIdx; i++) {
+      const p = points[i]
+      const dDist = p.cumulativeDistance - startPoint.cumulativeDistance
+      const newPh = startPh - dDist / denom
+      out.push({ rowId: p.rowId, pointId: p.pointId, label: p.label, oldPh: p.ph, newPh })
+    }
+    return out
+  }, [startPoint, endPoint, startIdx, endIdx, denom, points])
+
+  const canApply = preview.length > 0 && preview.every((p) => Number.isFinite(p.newPh))
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/40 flex items-center justify-center z-[1600] p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-lg shadow-xl w-full max-w-lg p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-base font-bold mb-1">連続勾配の設定</h3>
+        <div className="text-xs text-slate-500 mb-4">
+          選択した区間（始点〜終点）の各点の計画高を、指定した勾配で線形に再計算します。
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mb-4 text-xs">
+          <div>
+            <label className="block text-slate-600 mb-1">始点</label>
+            <select
+              value={startIdx}
+              onChange={(e) => {
+                const v = parseInt(e.target.value, 10)
+                setStartIdx(v)
+                if (v >= endIdx) setEndIdx(Math.min(v + 1, points.length - 1))
+              }}
+              className="w-full px-2 py-1.5 border rounded font-mono"
+            >
+              {points.map((p, i) => (
+                <option key={p.pointId} value={i}>
+                  {p.label}（{p.cumulativeDistance.toFixed(2)} m / {p.ph != null ? p.ph.toFixed(3) : '-'} m）
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-slate-600 mb-1">終点</label>
+            <select
+              value={endIdx}
+              onChange={(e) => setEndIdx(parseInt(e.target.value, 10))}
+              className="w-full px-2 py-1.5 border rounded font-mono"
+            >
+              {points.map((p, i) => (
+                <option key={p.pointId} value={i} disabled={i <= startIdx}>
+                  {p.label}（{p.cumulativeDistance.toFixed(2)} m / {p.ph != null ? p.ph.toFixed(3) : '-'} m）
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="text-xs mb-3 text-slate-700">
+          区間距離: <span className="font-mono">{distance.toFixed(2)} m</span>
+          {startPoint?.ph != null && endPoint?.ph != null && distance > 0 && endIdx > startIdx && (
+            <span className="ml-3">
+              現在の落差:{' '}
+              <span className="font-mono">{(startPoint.ph - endPoint.ph).toFixed(3)} m</span>
+            </span>
+          )}
+        </div>
+
+        <div className="mb-4">
+          <label className="block text-xs text-slate-600 mb-1">適用する勾配（例: 1/400 または 400）</label>
+          <div className="flex items-center gap-2">
+            <span className="text-slate-500">1/</span>
+            <input
+              type="text"
+              value={slopeInput.replace(/^1\s*\//, '')}
+              onChange={(e) => setSlopeInput(e.target.value)}
+              placeholder="400"
+              autoFocus
+              className="flex-1 px-2 py-1.5 border rounded text-sm font-mono"
+            />
+          </div>
+        </div>
+
+        {preview.length > 0 && (
+          <div className="mb-4 border rounded max-h-40 overflow-auto">
+            <table className="w-full text-[11px]">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="text-left px-2 py-1 font-medium">点名</th>
+                  <th className="text-right px-2 py-1 font-medium">現在</th>
+                  <th className="text-right px-2 py-1 font-medium">新しい計画高</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.map((p) => (
+                  <tr key={p.pointId} className="border-t">
+                    <td className="px-2 py-0.5 font-mono">{p.label}</td>
+                    <td className="px-2 py-0.5 text-right font-mono text-slate-500">
+                      {p.oldPh != null ? p.oldPh.toFixed(3) : '-'}
+                    </td>
+                    <td className="px-2 py-0.5 text-right font-mono text-blue-700">
+                      {p.newPh.toFixed(3)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 border rounded hover:bg-slate-50 text-sm"
+          >
+            キャンセル
+          </button>
+          <button
+            type="button"
+            disabled={!canApply}
+            onClick={() => onApply(preview.map((p) => ({ rowId: p.rowId, pointId: p.pointId, newPh: p.newPh })))}
+            className="px-4 py-2 bg-cyan-600 text-white rounded hover:bg-cyan-700 disabled:opacity-50 text-sm"
           >
             適用
           </button>
