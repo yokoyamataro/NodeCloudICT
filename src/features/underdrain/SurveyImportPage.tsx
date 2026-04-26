@@ -86,6 +86,8 @@ export function SurveyImportPage() {
   const [selectedSurveyId, setSelectedSurveyId] = useState<string | null>(null)
   const [isImportModalOpen, setIsImportModalOpen] = useState(false)
   const [importedData, setImportedData] = useState<SimaCoordinate[]>([])
+  // SIM 取込時の標高補正量（取込前に z へ加算する。例: -0.176 で全体を 0.176m 下げる）
+  const [importZOffset, setImportZOffset] = useState<number>(0)
   const [isSelectionModalOpen, setIsSelectionModalOpen] = useState(false)
   const [selectionTarget, setSelectionTarget] = useState<{
     designPointId: string
@@ -314,12 +316,14 @@ export function SurveyImportPage() {
   }
 
   // インポートを確定（Supabaseに保存）
+  // importZOffset を z に加算してから保存することで、SIM 取込の段階で
+  // 高さを恒久的に補正する。取込後は補正不要。
   const confirmImport = async () => {
     const newData: Omit<SurveyDataRow, 'id'>[] = importedData.map((c) => ({
       pointNumber: c.pointNumber,
       x: c.x,
       y: c.y,
-      z: c.z,
+      z: c.z !== null ? c.z + importZOffset : null,
       matchedPointId: null,
       matchedPointType: null,
       matchDistance: null,
@@ -332,6 +336,7 @@ export function SurveyImportPage() {
     await importSurveyData(newData)
     setIsImportModalOpen(false)
     setImportedData([])
+    setImportZOffset(0)
     setLocalMatches(new Map())
     setHasUnsavedChanges(false)
   }
@@ -884,36 +889,16 @@ export function SurveyImportPage() {
                         <input
                           type="number"
                           step="0.001"
-                          // 補正有効時は (raw z - dzOffset) を表示。編集時は補正後値として
-                          // 受け取り、raw = 入力値 + dzOffset で保存する。
-                          value={
-                            result.surveyData.z !== null
-                              ? (calibration.isEnabled
-                                  ? result.surveyData.z - calibration.dzOffset
-                                  : result.surveyData.z
-                                ).toFixed(3)
-                              : ''
-                          }
+                          value={result.surveyData.z ?? ''}
                           onChange={(e) => {
                             const val = e.target.value === '' ? null : parseFloat(e.target.value)
                             if (val === null || !isNaN(val)) {
-                              const rawZ =
-                                val !== null && calibration.isEnabled
-                                  ? val + calibration.dzOffset
-                                  : val
-                              updateSurveyData(result.surveyData!.id, { z: rawZ })
+                              updateSurveyData(result.surveyData!.id, { z: val })
                               setHasUnsavedChanges(true)
                             }
                           }}
-                          className={`w-16 px-1 py-0 text-xs font-mono text-right border rounded ${
-                            calibration.isEnabled ? 'bg-blue-50 border-blue-200' : 'bg-white'
-                          }`}
+                          className="w-16 px-1 py-0 text-xs font-mono text-right border rounded bg-white"
                           placeholder="-"
-                          title={
-                            calibration.isEnabled && result.surveyData.z !== null
-                              ? `補正後（生:${result.surveyData.z.toFixed(3)}）`
-                              : undefined
-                          }
                         />
                       ) : (
                         <input
@@ -1073,11 +1058,33 @@ export function SurveyImportPage() {
               </button>
             </div>
             <div className="p-4 flex-1 overflow-auto">
-              <p className="text-sm text-muted-foreground mb-4">
+              <p className="text-sm text-muted-foreground mb-3">
                 {importedData.length}件の座標データが見つかりました。インポートしますか？
                 <br />
                 <span className="text-orange-600">既存の測量データは上書きされます。</span>
               </p>
+              {/* 標高補正量 */}
+              <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded flex items-center gap-2 text-sm">
+                <Mountain className="h-4 w-4 text-blue-700" />
+                <label className="flex items-center gap-2">
+                  <span className="font-medium">標高補正量:</span>
+                  <input
+                    type="number"
+                    step="0.001"
+                    value={importZOffset}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value)
+                      setImportZOffset(Number.isFinite(v) ? v : 0)
+                    }}
+                    onWheel={(e) => e.currentTarget.blur()}
+                    className="w-24 px-2 py-1 border rounded font-mono text-right"
+                  />
+                  <span>m</span>
+                </label>
+                <span className="text-xs text-slate-600 ml-2">
+                  各点の Z にこの値を加算して保存します（取込後は補正不要）
+                </span>
+              </div>
               <table className="w-full text-sm border">
                 <thead className="bg-slate-100 sticky top-0">
                   <tr>
@@ -1085,7 +1092,8 @@ export function SurveyImportPage() {
                     <th className="px-3 py-2 text-left font-medium">点名</th>
                     <th className="px-3 py-2 text-right font-medium">X</th>
                     <th className="px-3 py-2 text-right font-medium">Y</th>
-                    <th className="px-3 py-2 text-right font-medium">Z</th>
+                    <th className="px-3 py-2 text-right font-medium">Z (生)</th>
+                    <th className="px-3 py-2 text-right font-medium">Z (補正後)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -1095,8 +1103,11 @@ export function SurveyImportPage() {
                       <td className="px-3 py-1.5 font-mono">{coord.pointNumber}</td>
                       <td className="px-3 py-1.5 text-right font-mono">{coord.x.toFixed(3)}</td>
                       <td className="px-3 py-1.5 text-right font-mono">{coord.y.toFixed(3)}</td>
-                      <td className="px-3 py-1.5 text-right font-mono">
+                      <td className="px-3 py-1.5 text-right font-mono text-slate-500">
                         {coord.z?.toFixed(3) ?? '-'}
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-mono font-semibold">
+                        {coord.z !== null ? (coord.z + importZOffset).toFixed(3) : '-'}
                       </td>
                     </tr>
                   ))}
