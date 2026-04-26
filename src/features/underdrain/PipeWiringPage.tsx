@@ -194,17 +194,47 @@ export function PipeWiringPage() {
     const collectorPipe = pipes.find(p => p.id === collectorPipeId)
     if (!collectorPipe) return
 
-    // この集水管を接続先としている吸水管を検索（既に追加済みの管路は除外）
-    const connectedAbsorptionPipes = pipes.filter(p =>
+    // この集水管を接続先としている管を検索（既に追加済みの管路は除外）
+    const connectedAllPipes = pipes.filter(p =>
       p.connectionTo === collectorPipeId && p.id !== excludePipeId
     )
+    // 「吸水管」として扱うのは pipe_type === 'branch' のみ。
+    // それ以外（main / outlet / connection 等）は集水間の連結なので
+    // 「集水変化点」として扱う。
+    const connectedAbsorptionPipes = connectedAllPipes.filter(p => p.pipeType === 'branch')
+    const connectedCollectorLinks = connectedAllPipes.filter(p => p.pipeType !== 'branch')
 
-    // 接続している管がない場合でも、この集水管自体に折点があれば
-    // collector_change 行として登録する（吸水合流が無くても変化点は出力）
+    // 非吸水の連結管（前段の集水管が下流端でこの集水管に合流）について、
+    // この集水管側の合流頂点を抽出
+    const linkJunctionVertexIdxs = connectedCollectorLinks
+      .map((linkPipe) => {
+        const downstream = linkPipe.vertices[linkPipe.vertices.length - 1]
+        let bestIdx = -1
+        let bestDist = Infinity
+        for (let i = 0; i < collectorPipe.vertices.length; i++) {
+          const d = Math.hypot(
+            collectorPipe.vertices[i].x - downstream.x,
+            collectorPipe.vertices[i].y - downstream.y,
+          )
+          if (d < bestDist) { bestDist = d; bestIdx = i }
+        }
+        return bestIdx >= 0 && bestDist <= 0.5 ? bestIdx : -1
+      })
+      .filter(idx => idx >= 0)
+
+    // 接続している吸水管が無い場合でも、この集水管自体に折点や
+    // 連結管との合流点があれば collector_change 行として登録する。
     if (connectedAbsorptionPipes.length === 0) {
       const bendIdxs = findCollectorBendVertices(collectorPipe)
-      if (bendIdxs.length > 0) {
-        const newRows: WiringRow[] = bendIdxs.map(() => ({
+      // 集水変化点として登録すべき頂点 = 「連結管との合流頂点」 + 「内部折点」
+      // 上流端（idx=0）も含める。これは前段の集水管との接続点であり、
+      // 表示時に「PrevA CurrC」の形で命名される。
+      // 重複排除して上流→下流順に並べる。
+      const changeVertexIdxs = Array.from(
+        new Set([...linkJunctionVertexIdxs, ...bendIdxs]),
+      ).sort((a, b) => a - b)
+      if (changeVertexIdxs.length > 0) {
+        const newRows: WiringRow[] = changeVertexIdxs.map(() => ({
           id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
           rowType: 'collector_change' as RowType,
           absorptionPipes: [],
@@ -257,7 +287,7 @@ export function PipeWiringPage() {
       .sort((a, b) => b.distance - a.distance)
 
     // 集水管の各頂点ごとに、最も近い吸水管下流端点との距離を計算し、
-    // 「合流が無い折点（管路の途中で曲がる頂点）」を集水変化点として抽出する。
+    // 「合流が無い折点」を集水変化点として抽出する。
     const absorptionVertexSet = new Set<number>()
     {
       const cv = collectorPipe.vertices
@@ -272,7 +302,11 @@ export function PipeWiringPage() {
         if (bestIdx >= 0 && bestDist <= 0.5) absorptionVertexSet.add(bestIdx)
       }
     }
-    const collectorChangeVertexIdx = findCollectorBendVertices(collectorPipe, absorptionVertexSet)
+    const bendOnly = findCollectorBendVertices(collectorPipe, absorptionVertexSet)
+    // 内部折点 + 連結管との合流頂点（重複排除）
+    const collectorChangeVertexIdx = Array.from(
+      new Set([...bendOnly, ...linkJunctionVertexIdxs]),
+    )
 
     // 「上流→下流」順に吸水合流イベントと集水変化点イベントを統合する。
     // - 吸水合流イベントは distance（下流からの累積距離）が大きいほど上流。
@@ -942,10 +976,12 @@ export function PipeWiringPage() {
   // rowType: 行タイプ
   // collectorPipeId: 現在の行の集水管ID
   // prevCollectorPipeId: 前の行の集水管ID（管の切り替わり判定用）
+  // collectorChangeIndex: 同一集水管内で N 番目（0 始まり）の collector_change 行であるか
   const getCollectorPointName = useCallback((
     rowType: RowType | null,
     collectorPipeId: string | null,
-    prevCollectorPipeId: string | null
+    prevCollectorPipeId: string | null,
+    collectorChangeIndex?: number,
   ): string | null => {
     if (!collectorPipeId) return null
 
@@ -967,18 +1003,45 @@ export function PipeWiringPage() {
       return generatePointName(collectorPipe.number, collectorPipe.vertices.length - 1, collectorPipe.vertices.length)
     }
 
-    // 吸水合流・集水合流・集水変化点の場合
-    // 管が変わる場合（前の行と集水管が異なる）: 前の管の下流端 + 新しい管の上流端（S4A S3C形式）
-    // 管が変わらない場合: 測点なし（管の途中の合流点なので測点は登録されない）
-    if (rowType === 'absorption_merge' || rowType === 'collector_merge' || rowType === 'collector_change') {
-      // 管の切り替わりをチェック
-      if (prevCollectorPipeId && prevCollectorPipeId !== collectorPipeId) {
-        // 前の管の下流端名を取得
+    // 集水変化点: 同一集水管における出現順 = vertex index に対応
+    //   index=0 → vertex 0（C）= 前管との合流点。「PrevA CurrC」形式
+    //   index>0 → 内部頂点（B{n}）あるいは下流端
+    if (rowType === 'collector_change' && collectorChangeIndex !== undefined) {
+      const vIdx = collectorChangeIndex
+      if (vIdx === 0 && prevCollectorPipeId && prevCollectorPipeId !== collectorPipeId) {
+        // 前管との合流点：結合名で返す
         const prevPipe = pipes.find(p => p.id === prevCollectorPipeId)
         const prevEndPointName = prevPipe && prevPipe.vertices.length > 0
           ? generatePointName(prevPipe.number, prevPipe.vertices.length - 1, prevPipe.vertices.length)
           : null
-        // 新しい管の接続点名: 前管の下流端と一致する頂点を検索（中間頂点と接続する場合もあり）
+        const prevEndVertex = prevPipe && prevPipe.vertices.length > 0
+          ? prevPipe.vertices[prevPipe.vertices.length - 1]
+          : null
+        const newStartIndex = prevEndVertex
+          ? findMatchingVertexIndex(collectorPipe, prevEndVertex)
+          : 0
+        const newStartPointName = generatePointName(
+          collectorPipe.number,
+          newStartIndex,
+          collectorPipe.vertices.length,
+        )
+        if (prevEndPointName) return `${prevEndPointName} ${newStartPointName}`
+        return newStartPointName
+      }
+      // それ以外（同管内の頂点）→ 該当する vertex の名前
+      if (vIdx >= 0 && vIdx < collectorPipe.vertices.length) {
+        return generatePointName(collectorPipe.number, vIdx, collectorPipe.vertices.length)
+      }
+      return null
+    }
+
+    // 吸水合流・集水合流: 管が変わる場合のみ「PrevA CurrC」形式、それ以外は無名
+    if (rowType === 'absorption_merge' || rowType === 'collector_merge') {
+      if (prevCollectorPipeId && prevCollectorPipeId !== collectorPipeId) {
+        const prevPipe = pipes.find(p => p.id === prevCollectorPipeId)
+        const prevEndPointName = prevPipe && prevPipe.vertices.length > 0
+          ? generatePointName(prevPipe.number, prevPipe.vertices.length - 1, prevPipe.vertices.length)
+          : null
         const prevEndVertex = prevPipe && prevPipe.vertices.length > 0
           ? prevPipe.vertices[prevPipe.vertices.length - 1]
           : null
@@ -986,18 +1049,14 @@ export function PipeWiringPage() {
           ? findMatchingVertexIndex(collectorPipe, prevEndVertex)
           : 0
         const newStartPointName = generatePointName(collectorPipe.number, newStartIndex, collectorPipe.vertices.length)
-        // 両方を結合して返す（S4A S3C形式）
-        if (prevEndPointName) {
-          return `${prevEndPointName} ${newStartPointName}`
-        }
+        if (prevEndPointName) return `${prevEndPointName} ${newStartPointName}`
         return newStartPointName
       } else {
-        // 管が変わっていない場合: 測点なし
         return null
       }
     }
 
-    // その他の場合（行タイプが未設定など）
+    // その他
     return null
   }, [pipes, generatePointName, findMatchingVertexIndex])
 
@@ -1128,6 +1187,12 @@ export function PipeWiringPage() {
     row?: WiringRow  // データ行の場合
     rowIndex?: number  // データ行の系統内インデックス
     prevCollectorPipeId?: string | null  // 前の行の集水管ID
+    /**
+     * collector_change 行で、同一集水管の N 番目（0 始まり）であることを示す。
+     * 0 番目は前段集水管との合流点（PrevA CurrC 形式の表示）、
+     * 1 番目以降は集水管の内部頂点（順番に C, B{n}, A...）に対応。
+     */
+    collectorChangeIndex?: number
     pipeNumber?: string  // セパレータ行の場合の管番号
     pipeId?: string  // セパレータ行の場合の管ID
     currentPipeEndPointName?: string | null  // セパレータ行: 現在の管の下流端名（S4A）
@@ -1163,18 +1228,28 @@ export function PipeWiringPage() {
   const buildDisplayRows = useCallback((rows: WiringRow[]): DisplayRow[] => {
     const displayRows: DisplayRow[] = []
 
+    // 同一集水管における collector_change 行の出現回数カウンタ
+    const collectorChangeCounters = new Map<string, number>()
+
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i]
       const isLastRow = i === rows.length - 1
       const prevRow = i > 0 ? rows[i - 1] : null
       const prevCollectorPipeId = prevRow?.collectorPipe || null
 
+      let collectorChangeIndex: number | undefined = undefined
+      if (row.rowType === 'collector_change' && row.collectorPipe) {
+        collectorChangeIndex = collectorChangeCounters.get(row.collectorPipe) ?? 0
+        collectorChangeCounters.set(row.collectorPipe, collectorChangeIndex + 1)
+      }
+
       // データ行を追加
       displayRows.push({
         type: 'data',
         row,
         rowIndex: i,
-        prevCollectorPipeId
+        prevCollectorPipeId,
+        collectorChangeIndex,
       })
 
       // 各データ行の後にセパレータ行を挿入（集水管がある場合、ただし最終行は除く）
@@ -1637,7 +1712,12 @@ export function PipeWiringPage() {
 
                       // 集水管の測点名を取得（行タイプと前後の管路関係に基づく）
                       const collectorPointName = row.collectorPipe
-                        ? getCollectorPointName(row.rowType, row.collectorPipe, displayRow.prevCollectorPipeId || null)
+                        ? getCollectorPointName(
+                            row.rowType,
+                            row.collectorPipe,
+                            displayRow.prevCollectorPipeId || null,
+                            displayRow.collectorChangeIndex,
+                          )
                         : null
 
                       return (
