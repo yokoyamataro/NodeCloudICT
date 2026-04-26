@@ -227,13 +227,14 @@ export function PipeWiringPage() {
         new Set([...linkJunctionVertexIdxs, ...bendIdxs]),
       ).sort((a, b) => a - b)
       if (changeVertexIdxs.length > 0) {
-        const newRows: WiringRow[] = changeVertexIdxs.map(() => ({
+        const newRows: WiringRow[] = changeVertexIdxs.map((vIdx) => ({
           id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
           rowType: 'collector_change' as RowType,
           absorptionPipes: [],
           collectorPipe: collectorPipeId,
           isMergePipe: false,
           mergeSystemIndex: null,
+          collectorVertexIdx: vIdx,
         }))
         if (activeTabType === 'collector') {
           setCollectorTabs(prev => prev.map((tab, i) => {
@@ -366,6 +367,7 @@ export function PipeWiringPage() {
             collectorPipe: collectorPipeId,
             isMergePipe: false,
             mergeSystemIndex: null,
+            collectorVertexIdx: evt.vertexIdx,
           })
         }
       }
@@ -1293,10 +1295,16 @@ export function PipeWiringPage() {
               collectorVertexCursor.set(row.collectorPipe, idx)
             }
           } else if (row.rowType === 'collector_change') {
-            const cur = collectorVertexCursor.get(row.collectorPipe) ?? -1
-            const nextIdx = cur + 1
-            collectorVertexCursor.set(row.collectorPipe, nextIdx)
-            collectorChangeIndex = nextIdx
+            // 行に明示的な vertex index が保存されていればそれを優先
+            if (row.collectorVertexIdx != null) {
+              collectorChangeIndex = row.collectorVertexIdx
+              collectorVertexCursor.set(row.collectorPipe, row.collectorVertexIdx)
+            } else {
+              const cur = collectorVertexCursor.get(row.collectorPipe) ?? -1
+              const nextIdx = cur + 1
+              collectorVertexCursor.set(row.collectorPipe, nextIdx)
+              collectorChangeIndex = nextIdx
+            }
           }
         }
       }

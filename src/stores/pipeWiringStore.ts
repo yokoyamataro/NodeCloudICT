@@ -20,6 +20,12 @@ export interface WiringRow {
   collectorPipe: string | null    // 集水（または落口）
   isMergePipe: boolean  // 集水合流管かどうか
   mergeSystemIndex: number | null  // 集水合流タイプの接続先系統番号
+  /**
+   * collector_change 行で参照する集水管の頂点 index（任意）。
+   * 一括設定で生成された collector_change 行に明示的に頂点を割り当てるため。
+   * DB には保存しない（フロントエンドのみ）。
+   */
+  collectorVertexIdx?: number
 }
 
 // ローカル状態用のタブ型
