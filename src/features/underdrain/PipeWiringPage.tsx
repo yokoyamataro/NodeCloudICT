@@ -296,9 +296,12 @@ export function PipeWiringPage() {
       }
     }
     const bendOnly = findCollectorBendVertices(collectorPipe, absorptionVertexSet)
-    // 内部折点 + 連結管との合流頂点（重複排除）
+    // 内部折点 + 連結管との合流頂点（吸水合流と同じ頂点になるものは除外して重複回避）
     const collectorChangeVertexIdx = Array.from(
-      new Set([...bendOnly, ...linkJunctionVertexIdxs]),
+      new Set([
+        ...bendOnly,
+        ...linkJunctionVertexIdxs.filter((idx) => !absorptionVertexSet.has(idx)),
+      ]),
     )
 
     // 「上流→下流」順に吸水合流イベントと集水変化点イベントを統合する。
