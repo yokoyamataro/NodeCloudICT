@@ -647,13 +647,25 @@ export function SurveyImportPage() {
             </div>
             {calibration.isEnabled && (
               <div className="flex items-center gap-2">
-                <span className="text-sm">
-                  補正量: {calibration.dzOffset >= 0 ? '+' : ''}
-                  {calibration.dzOffset.toFixed(3)}m
-                </span>
+                <label className="text-sm flex items-center gap-1">
+                  補正量:
+                  <input
+                    type="number"
+                    step="0.001"
+                    value={calibration.dzOffset.toFixed(3)}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value)
+                      if (Number.isFinite(v)) updateCalibration({ dzOffset: v })
+                    }}
+                    onWheel={(e) => e.currentTarget.blur()}
+                    className="w-24 px-2 py-1 border rounded text-sm font-mono text-right"
+                  />
+                  <span className="text-sm">m</span>
+                </label>
                 <button
                   onClick={recalculateCalibration}
                   className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-white"
+                  title="基準点の標高差から再計算"
                 >
                   <RefreshCw className="h-3 w-3" />
                   再計算
