@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import {
   Ruler,
   RefreshCw,
@@ -27,7 +27,7 @@ interface SlopeEditTarget {
   downstream: { rowId: string; pointId: string; ph: number | null; label: string }
 }
 import { useFarmStore } from '@/stores/farmStore'
-import { useUnderdrainStore } from '@/stores/underdrainStore'
+import { useUnderdrainStore, PIPE_TYPE_NAMES } from '@/stores/underdrainStore'
 import { useSurveyStore } from '@/stores/surveyStore'
 import { usePipeWiringStore } from '@/stores/pipeWiringStore'
 // generatePlanFromWiring は配管系統ストアの in-memory state を参照する。
@@ -112,8 +112,14 @@ export function DepthCalcPage() {
   }
 
 
-  // 選択中の管路ID（地図フォーカス用）
-  const [focusedPipeId] = useState<string | null>(null)
+  // 選択中の管路ID（地図フォーカス用 + 情報パネル表示）
+  const [focusedPipeId, setFocusedPipeId] = useState<string | null>(null)
+
+  // 上下／左右パネルのリサイズ状態（ドラッグで調整）
+  const [tableWidthPct, setTableWidthPct] = useState(50)
+  const [bottomHeightPx, setBottomHeightPx] = useState(280)
+  const horizontalContainerRef = useRef<HTMLDivElement>(null)
+  const mainContainerRef = useRef<HTMLDivElement>(null)
 
   // 確認ダイアログ
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
@@ -357,7 +363,7 @@ export function DepthCalcPage() {
             </thead>
             <tbody>
               {/* 地盤高 */}
-              <tr>
+              <tr className="depth-row-ground">
                 <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">地盤高</td>
                 <td className="border-0 bg-transparent"></td>
                 {refCount > 0 ? (
@@ -385,7 +391,7 @@ export function DepthCalcPage() {
                 <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">地盤高</td>
               </tr>
               {/* 計画高 */}
-              <tr>
+              <tr className="depth-row-planned">
                 <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">計画高</td>
                 <td className="border-0 bg-transparent"></td>
                 {refCount > 0 ? (
@@ -420,7 +426,7 @@ export function DepthCalcPage() {
                 <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">計画高</td>
               </tr>
               {/* 切深 */}
-              <tr>
+              <tr className="depth-row-cut">
                 <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">切深</td>
                 <td className="border-0 bg-transparent"></td>
                 {refCount > 0 ? (
@@ -464,7 +470,7 @@ export function DepthCalcPage() {
                 <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">区間距離</td>
               </tr>
               {/* 区間勾配 */}
-              <tr>
+              <tr className="depth-row-slope">
                 <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">区間勾配</td>
                 <td className="border-0 bg-transparent"></td>
                 {refCount > 0 ? (
@@ -590,7 +596,7 @@ export function DepthCalcPage() {
             {!isCollapsed && (
               <>
                 {/* 地盤高 */}
-                <tr>
+                <tr className="depth-row-ground">
                   <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
                     地盤高
                   </td>
@@ -624,7 +630,7 @@ export function DepthCalcPage() {
                 </tr>
 
                 {/* 計画高 */}
-                <tr>
+                <tr className="depth-row-planned">
                   <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
                     計画高
                   </td>
@@ -678,7 +684,7 @@ export function DepthCalcPage() {
                 </tr>
 
                 {/* 切深 */}
-                <tr>
+                <tr className="depth-row-cut">
                   <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
                     切深
                   </td>
@@ -736,7 +742,7 @@ export function DepthCalcPage() {
                 </tr>
 
                 {/* 区間勾配 */}
-                <tr>
+                <tr className="depth-row-slope">
                   <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
                     区間勾配
                   </td>
@@ -1133,16 +1139,25 @@ export function DepthCalcPage() {
         </div>
       )}
 
-      {/* メインコンテンツ - 上下分割レイアウト */}
-      <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+      {/* メインコンテンツ - 上下分割レイアウト（ドラッグでサイズ調整可） */}
+      <div ref={mainContainerRef} className="flex-1 flex flex-col overflow-hidden min-h-0">
         {/* 上部: 表と地図（残りスペースを使用） */}
-        <div className="flex-1 flex overflow-hidden min-h-0">
+        <div
+          ref={horizontalContainerRef}
+          className="flex overflow-hidden min-h-0"
+          style={{ flex: '1 1 0', minHeight: 0 }}
+        >
           {/* 左側: 表 */}
           <div
             className={
               fullscreenPanel === 'table'
                 ? 'fixed inset-0 z-[9999] bg-white p-4 overflow-auto'
-                : 'flex-1 overflow-auto p-4 border-r min-h-0 relative'
+                : 'overflow-auto p-4 border-r min-h-0 relative'
+            }
+            style={
+              fullscreenPanel === 'table'
+                ? undefined
+                : { width: `${tableWidthPct}%`, flexShrink: 0 }
             }
           >
             {/* 全画面トグルボタン */}
@@ -1262,12 +1277,41 @@ export function DepthCalcPage() {
             )}
           </div>
 
+          {/* 縦スプリッタ（左右リサイズ） */}
+          {fullscreenPanel === null && (
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              onMouseDown={(e) => {
+                e.preventDefault()
+                const onMove = (ev: MouseEvent) => {
+                  const rect = horizontalContainerRef.current?.getBoundingClientRect()
+                  if (!rect) return
+                  const p = ((ev.clientX - rect.left) / rect.width) * 100
+                  setTableWidthPct(Math.max(20, Math.min(80, p)))
+                }
+                const onUp = () => {
+                  window.removeEventListener('mousemove', onMove)
+                  window.removeEventListener('mouseup', onUp)
+                  document.body.style.cursor = ''
+                  document.body.style.userSelect = ''
+                }
+                document.body.style.cursor = 'col-resize'
+                document.body.style.userSelect = 'none'
+                window.addEventListener('mousemove', onMove)
+                window.addEventListener('mouseup', onUp)
+              }}
+              className="w-1 cursor-col-resize bg-slate-200 hover:bg-blue-400 active:bg-blue-500 flex-shrink-0 transition-colors"
+              title="ドラッグで左右分割を調整"
+            />
+          )}
+
           {/* 右側: 地図 */}
           <div
             className={
               fullscreenPanel === 'map'
                 ? 'fixed inset-0 z-[9999] bg-white'
-                : 'flex-1 relative'
+                : 'flex-1 relative min-w-0'
             }
           >
             <div className="absolute top-2 left-2 z-10 bg-white/90 px-2 py-1 rounded shadow text-sm font-medium flex items-center gap-1">
@@ -1288,20 +1332,154 @@ export function DepthCalcPage() {
             </button>
             <PipeMap
               selectedPipeId={focusedPipeId}
-              focusedPipeId={focusedPipeId}
+              focusedPipeId={null}
               showLabels={true}
               showDirection={true}
+              onPipeSelect={(id) =>
+                setFocusedPipeId((prev) => (prev === id ? null : id))
+              }
             />
+            {/* 選択中の管路情報パネル */}
+            {focusedPipeId && (() => {
+              const pipe = pipes.find((p) => p.id === focusedPipeId)
+              if (!pipe) return null
+              const typeLabel = pipe.pipeType ? PIPE_TYPE_NAMES[pipe.pipeType] : '-'
+              // この管路に関連する施工計画ポイントを集める
+              type PointInfo = {
+                pointName: string
+                groundHeight: number | null
+                plannedHeight: number | null
+                cutDepth: number | null
+                segmentDistance: number | null
+                segmentSlope: string | null
+                kind: 'absorption' | 'collector'
+              }
+              const points: PointInfo[] = []
+              for (const g of planGroups) {
+                for (const r of g.rows) {
+                  if (r.absorptionPipeId === focusedPipeId) {
+                    for (const p of r.absorptionPoints) {
+                      points.push({
+                        pointName: p.pointName,
+                        groundHeight: p.groundHeight,
+                        plannedHeight: p.plannedHeight,
+                        cutDepth: p.cutDepth,
+                        segmentDistance: p.segmentDistance,
+                        segmentSlope: p.segmentSlope,
+                        kind: 'absorption',
+                      })
+                    }
+                  }
+                  if (r.collectorPipeId === focusedPipeId && r.collectorPoint) {
+                    points.push({
+                      pointName: r.collectorPoint.pointName,
+                      groundHeight: r.collectorPoint.groundHeight,
+                      plannedHeight: r.collectorPoint.plannedHeight,
+                      cutDepth: r.collectorPoint.cutDepth,
+                      segmentDistance: r.collectorPoint.segmentDistance,
+                      segmentSlope: r.collectorPoint.segmentSlope,
+                      kind: 'collector',
+                    })
+                  }
+                }
+              }
+              return (
+                <div className="absolute top-12 left-2 z-[1000] bg-white/95 border rounded-lg shadow-lg p-2 text-xs max-w-[60%] max-h-[60%] overflow-auto">
+                  <div className="flex items-center justify-between gap-2 mb-1 pb-1 border-b">
+                    <div>
+                      <span className="font-bold text-slate-800">{pipe.number}</span>
+                      <span className="ml-2 text-slate-500">{typeLabel}</span>
+                      {pipe.diameter && <span className="ml-2 text-slate-500">φ{pipe.diameter}mm</span>}
+                    </div>
+                    <button
+                      onClick={() => setFocusedPipeId(null)}
+                      className="text-slate-400 hover:text-slate-700 px-1"
+                      title="閉じる"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  {points.length === 0 ? (
+                    <div className="text-slate-400">この管路の施工計画データがありません</div>
+                  ) : (
+                    <table className="w-full text-[11px]">
+                      <thead>
+                        <tr className="text-slate-500">
+                          <th className="text-left font-normal pr-2">点名</th>
+                          <th className="text-right font-normal pr-2">地盤高</th>
+                          <th className="text-right font-normal pr-2 text-red-600">計画高</th>
+                          <th className="text-right font-normal pr-2 text-blue-600">切深</th>
+                          <th className="text-right font-normal pr-2">区間距離</th>
+                          <th className="text-right font-normal text-green-700">勾配</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {points.map((p, i) => (
+                          <tr key={i} className="border-t">
+                            <td className="pr-2 font-mono">{p.pointName || '-'}</td>
+                            <td className="pr-2 text-right font-mono">
+                              {p.groundHeight != null ? p.groundHeight.toFixed(3) : '-'}
+                            </td>
+                            <td className="pr-2 text-right font-mono text-red-600">
+                              {p.plannedHeight != null ? p.plannedHeight.toFixed(3) : '-'}
+                            </td>
+                            <td className="pr-2 text-right font-mono text-blue-600">
+                              {p.cutDepth != null ? p.cutDepth.toFixed(3) : '-'}
+                            </td>
+                            <td className="pr-2 text-right font-mono">
+                              {p.segmentDistance != null ? p.segmentDistance.toFixed(1) : '-'}
+                            </td>
+                            <td className="text-right font-mono text-green-700">
+                              {p.segmentSlope ?? '-'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              )
+            })()}
           </div>
         </div>
+
+        {/* 横スプリッタ（上下リサイズ） */}
+        {fullscreenPanel === null && (
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            onMouseDown={(e) => {
+              e.preventDefault()
+              const onMove = (ev: MouseEvent) => {
+                const rect = mainContainerRef.current?.getBoundingClientRect()
+                if (!rect) return
+                const newH = rect.bottom - ev.clientY
+                setBottomHeightPx(Math.max(120, Math.min(rect.height - 120, newH)))
+              }
+              const onUp = () => {
+                window.removeEventListener('mousemove', onMove)
+                window.removeEventListener('mouseup', onUp)
+                document.body.style.cursor = ''
+                document.body.style.userSelect = ''
+              }
+              document.body.style.cursor = 'row-resize'
+              document.body.style.userSelect = 'none'
+              window.addEventListener('mousemove', onMove)
+              window.addEventListener('mouseup', onUp)
+            }}
+            className="h-1 cursor-row-resize bg-slate-200 hover:bg-blue-400 active:bg-blue-500 flex-shrink-0 transition-colors"
+            title="ドラッグで上下分割を調整"
+          />
+        )}
 
         {/* 下部: 断面図エリア */}
         <div
           className={
             fullscreenPanel === 'chart'
               ? 'fixed inset-0 z-[9999] bg-slate-50 flex flex-col'
-              : 'h-[280px] flex-shrink-0 border-t bg-slate-50 flex flex-col relative'
+              : 'flex-shrink-0 border-t bg-slate-50 flex flex-col relative'
           }
+          style={fullscreenPanel === 'chart' ? undefined : { height: `${bottomHeightPx}px` }}
         >
           <button
             type="button"

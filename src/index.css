@@ -29,6 +29,18 @@ body {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
+/* 施工計画テーブルの指標別カラー（見出し・数値ともに） */
+/*   地盤高: 黒（デフォルト）/ 計画高: 赤 / 切深: 青 / 区間勾配: 緑 */
+tr.depth-row-ground td,
+tr.depth-row-ground input { color: #0f172a; }
+tr.depth-row-planned td,
+tr.depth-row-planned input { color: #dc2626; }
+tr.depth-row-cut td,
+tr.depth-row-cut input { color: #2563eb; }
+tr.depth-row-slope td,
+tr.depth-row-slope input,
+tr.depth-row-slope button { color: #15803d; }
+
 /* スマホ画面用: 動的ビューポート + セーフエリア（ノッチ / ホームバー / 端末バー）対応 */
 .mobile-screen {
   height: 100dvh;
