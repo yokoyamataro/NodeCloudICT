@@ -7,7 +7,7 @@ import {
   Navigation,
   Target,
   Square,
-  Map,
+  Map as MapIcon,
   MousePointer,
   Zap,
   GitMerge,
@@ -2073,7 +2073,7 @@ export function PipeWiringPage() {
                 showCoordinates ? 'bg-orange-50 border-orange-300 text-orange-700' : ''
               }`}
             >
-              <Map className="h-4 w-4" />
+              <MapIcon className="h-4 w-4" />
               座標
             </button>
           </div>
