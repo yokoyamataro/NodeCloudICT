@@ -786,7 +786,8 @@ export function PipeMap({
       {/* 測点表示モード */}
       {showSurveyPoints && surveyPoints.map(point => {
         const { lat, lng } = converter.toLatLng(point.x, point.y)
-        const isSelected = selectedPointIds.has(point.id)
+        // 選択中判定: SurveyPointData.isSelected または selectedPointIds に含まれる
+        const isSelected = (point.isSelected ?? false) || selectedPointIds.has(point.id)
         return (
           <Marker
             key={`survey-${point.id}`}
