@@ -23,6 +23,7 @@ interface SectionPoint {
   // 合流行の場合は「合流先系統の末端集水管の番号」（例: S4）を入れる
   absorptionPipeNumber: string | null
   absorptionPlannedHeight: number | null // 吸水下流部の計画高
+  absorptionUpstreamPlannedHeight: number | null // 吸水上流部（C 点）の計画高
   // 集水帯表示用
   collectorPipeId: string | null
   collectorPipeNumber: string | null
@@ -121,9 +122,12 @@ export function CrossSectionChart({
         }
       }
 
-      // 吸水下流部の計画高を取得
+      // 吸水下流部・上流部の計画高を取得
       const absorptionDownstreamHeight = row.absorptionPoints.length > 0
         ? row.absorptionPoints[row.absorptionPoints.length - 1].plannedHeight
+        : null
+      const absorptionUpstreamHeight = row.absorptionPoints.length > 0
+        ? row.absorptionPoints[0].plannedHeight
         : null
 
       // 旗上げラベル: 施工計画表の左端ヘッダと一致させる
@@ -157,6 +161,7 @@ export function CrossSectionChart({
         rowIndex: rowIdx,
         absorptionPipeNumber: flagPipeNumber,
         absorptionPlannedHeight: absorptionDownstreamHeight,
+        absorptionUpstreamPlannedHeight: absorptionUpstreamHeight,
         collectorPipeId: row.collectorPipeId,
         collectorPipeNumber,
       })
@@ -182,7 +187,7 @@ export function CrossSectionChart({
     flagRowByIndex,
   } = useMemo(() => {
     const heights = sectionData
-      .flatMap(p => [p.groundHeight, p.plannedHeight, p.absorptionPlannedHeight])
+      .flatMap(p => [p.groundHeight, p.plannedHeight, p.absorptionPlannedHeight, p.absorptionUpstreamPlannedHeight])
       .filter((h): h is number => h !== null)
 
     const effectiveHeight = chartHeightProp ?? 220
@@ -480,6 +485,12 @@ export function CrossSectionChart({
           </div>
           <div className="flex items-center gap-2">
             <svg width="24" height="10" className="flex-shrink-0">
+              <polygon points="6,1 18,1 12,9" fill="#16a34a" stroke="white" strokeWidth="1" />
+            </svg>
+            <span className="text-slate-700">吸水上流部</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <svg width="24" height="10" className="flex-shrink-0">
               <line x1="2" y1="5" x2="22" y2="5" stroke="#16a34a" strokeWidth="1.5" strokeDasharray="4,3" />
             </svg>
             <span className="text-slate-700">吸水接続</span>
@@ -742,6 +753,28 @@ export function CrossSectionChart({
                         strokeDasharray="4,3"
                       />
                     )}
+                  </g>
+                )}
+
+                {/* 吸水上流部マーク（▼ 三角形） */}
+                {point.absorptionUpstreamPlannedHeight !== null && (
+                  <g>
+                    {(() => {
+                      const cx = x
+                      const cy = yScale(point.absorptionUpstreamPlannedHeight)
+                      const size = 8
+                      // 下向き三角 ▼: 上辺 (cx-size, cy-size), (cx+size, cy-size) と頂点 (cx, cy+size*0.6)
+                      // 頂点が上流計画高の位置に来るよう、頂点を下端ではなく中心に置く
+                      const points = `${cx - size},${cy - size} ${cx + size},${cy - size} ${cx},${cy + size}`
+                      return (
+                        <polygon
+                          points={points}
+                          fill="#16a34a"
+                          stroke="white"
+                          strokeWidth="1.5"
+                        />
+                      )
+                    })()}
                   </g>
                 )}
 
