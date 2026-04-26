@@ -1224,8 +1224,24 @@ export function PipeWiringPage() {
   const buildDisplayRows = useCallback((rows: WiringRow[]): DisplayRow[] => {
     const displayRows: DisplayRow[] = []
 
-    // 同一集水管における collector_change 行の出現回数カウンタ
-    const collectorChangeCounters = new Map<string, number>()
+    // 同一集水管における「最後に触れた頂点 index」のカーソル
+    // absorption / collector_change の各行で頂点に位置決めしながら進める。
+    const collectorVertexCursor = new Map<string, number>()
+
+    // 与えた点に最も近い集水管頂点の index を返す（0.5m 以内）
+    const findClosestVertexIdx = (
+      pipe: PipeRow,
+      pt: { x: number; y: number },
+    ): number => {
+      let bestIdx = 0
+      let bestDist = Infinity
+      for (let i = 0; i < pipe.vertices.length; i++) {
+        const v = pipe.vertices[i]
+        const d = Math.hypot(v.x - pt.x, v.y - pt.y)
+        if (d < bestDist) { bestDist = d; bestIdx = i }
+      }
+      return bestIdx
+    }
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i]
@@ -1233,10 +1249,44 @@ export function PipeWiringPage() {
       const prevRow = i > 0 ? rows[i - 1] : null
       const prevCollectorPipeId = prevRow?.collectorPipe || null
 
+      // この行の集水管における vertex index を決定する
       let collectorChangeIndex: number | undefined = undefined
-      if (row.rowType === 'collector_change' && row.collectorPipe) {
-        collectorChangeIndex = collectorChangeCounters.get(row.collectorPipe) ?? 0
-        collectorChangeCounters.set(row.collectorPipe, collectorChangeIndex + 1)
+      if (row.collectorPipe) {
+        const collectorPipe = pipes.find((p) => p.id === row.collectorPipe)
+        if (collectorPipe) {
+          // 集水管が変わったら、前管の下流端と一致する頂点をカーソルに設定
+          if (!collectorVertexCursor.has(row.collectorPipe)) {
+            if (prevCollectorPipeId && prevCollectorPipeId !== row.collectorPipe) {
+              const prevPipe = pipes.find((p) => p.id === prevCollectorPipeId)
+              if (prevPipe && prevPipe.vertices.length > 0) {
+                const endV = prevPipe.vertices[prevPipe.vertices.length - 1]
+                const startIdx = findClosestVertexIdx(collectorPipe, endV)
+                // -1 を入れて、最初の next 計算で startIdx になるよう調整
+                collectorVertexCursor.set(row.collectorPipe, startIdx - 1)
+              } else {
+                collectorVertexCursor.set(row.collectorPipe, -1)
+              }
+            } else {
+              collectorVertexCursor.set(row.collectorPipe, -1)
+            }
+          }
+
+          if (row.rowType === 'absorption_end') {
+            collectorVertexCursor.set(row.collectorPipe, 0)
+          } else if (row.rowType === 'absorption_merge' && row.absorptionPipes.length > 0) {
+            const absPipe = pipes.find((p) => p.id === row.absorptionPipes[0])
+            if (absPipe && absPipe.vertices.length > 0) {
+              const downstream = absPipe.vertices[absPipe.vertices.length - 1]
+              const idx = findClosestVertexIdx(collectorPipe, downstream)
+              collectorVertexCursor.set(row.collectorPipe, idx)
+            }
+          } else if (row.rowType === 'collector_change') {
+            const cur = collectorVertexCursor.get(row.collectorPipe) ?? -1
+            const nextIdx = cur + 1
+            collectorVertexCursor.set(row.collectorPipe, nextIdx)
+            collectorChangeIndex = nextIdx
+          }
+        }
       }
 
       // データ行を追加
