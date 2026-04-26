@@ -330,14 +330,26 @@ export function PipeWiringPage() {
     // 上流側 = distFromDownstream が大きい → 降順で並べると上流から下流に並ぶ
     events.sort((a, b) => b.distFromDownstream - a.distFromDownstream)
 
-    // events を行に変換するヘルパ。最初の吸水合流のみ absorption_end とする。
+    // events を行に変換するヘルパ。
+    // 「吸水端部」は系統の最上流（=最初の集水管における集水管上流端 vertex 0
+    //  に位置する吸水管）のみとする。再帰呼び出し（excludePipeId 指定あり）は
+    //  既に下流方向に進んでいるので、すべて absorption_merge とする。
+    const isFirstCall = !excludePipeId
     const buildRowsFromEvents = (): WiringRow[] => {
       const rows: WiringRow[] = []
-      let absorptionCount = 0
       for (const evt of events) {
         if (evt.kind === 'absorption') {
-          const rowType: RowType = absorptionCount === 0 ? 'absorption_end' : 'absorption_merge'
-          absorptionCount++
+          // 吸水管の下流端が集水管の vertex 0（上流端）に着地しているか判定
+          let atUpstreamEnd = false
+          if (isFirstCall) {
+            const downstream = evt.pipe.vertices[evt.pipe.vertices.length - 1]
+            const v0 = collectorPipe.vertices[0]
+            if (v0) {
+              const d = Math.hypot(v0.x - downstream.x, v0.y - downstream.y)
+              if (d <= 0.5) atUpstreamEnd = true
+            }
+          }
+          const rowType: RowType = atUpstreamEnd ? 'absorption_end' : 'absorption_merge'
           rows.push({
             id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
             rowType,
