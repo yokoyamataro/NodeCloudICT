@@ -146,6 +146,7 @@ async function saveWiringToDb(
         collector_pipe_id: row.collectorPipe,
         is_merge_pipe: row.isMergePipe,
         merge_system_index: mergeSystemIndex,
+        collector_vertex_idx: row.collectorVertexIdx ?? null,
         sort_order: rowIndex,
       }
     })
@@ -198,6 +199,7 @@ async function saveWiringToDb(
       collector_pipe_id: row.collectorPipe,
       is_merge_pipe: row.isMergePipe,
       merge_system_index: mergeSystemIndex,
+      collector_vertex_idx: row.collectorVertexIdx ?? null,
       sort_order: rowIndex,
     }
   })
@@ -355,6 +357,7 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
               ? [r.merge_system_index.toString()]  // 系統番号を文字列として復元
               : r.absorption_pipe_ids || []
 
+            const dbRow = r as PipeWiringRow & { collector_vertex_idx?: number | null }
             return {
               id: r.id,
               rowType: r.row_type ?? null,
@@ -362,6 +365,7 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
               collectorPipe: r.collector_pipe_id,
               isMergePipe: r.is_merge_pipe,
               mergeSystemIndex: r.merge_system_index ?? null,
+              collectorVertexIdx: dbRow.collector_vertex_idx ?? undefined,
             }
           })
 
