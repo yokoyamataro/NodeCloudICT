@@ -152,6 +152,7 @@ export function CoordinateMap({
     <MapContainer
       center={initialCenter}
       zoom={15}
+      maxZoom={22}
       className="h-full w-full"
       style={{ minHeight: '400px' }}
     >
@@ -159,20 +160,24 @@ export function CoordinateMap({
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          maxZoom={22}
+          maxNativeZoom={19}
         />
       )}
       {baseLayer === 'gsi-photo' && (
         <TileLayer
           attribution='&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>'
           url="https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg"
-          maxZoom={18}
+          maxZoom={22}
+          maxNativeZoom={18}
         />
       )}
       {baseLayer === 'gsi-std' && (
         <TileLayer
           attribution='&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>'
           url="https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png"
-          maxZoom={18}
+          maxZoom={22}
+          maxNativeZoom={18}
         />
       )}
 

@@ -71,8 +71,8 @@ const navigation: NavGroup[] = [
     children: [
       { name: '工事区域', href: '/underdrain/work-area', icon: Square },
       { name: 'CAD解析', href: '/underdrain/cad-analysis', icon: FileSearch },
-      { name: '座標計算', href: '/underdrain/coordinate-calc', icon: MapPin },
       { name: '配管系統', href: '/underdrain/pipe-wiring', icon: Cable },
+      { name: '座標計算', href: '/underdrain/coordinate-calc', icon: MapPin },
       { name: '測量データ', href: '/underdrain/survey-import', icon: Upload },
       { name: '施工計画', href: '/underdrain/depth-calc', icon: Ruler },
       { name: '水理計算', href: '/underdrain/hydraulics', icon: Droplets },
