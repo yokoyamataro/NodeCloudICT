@@ -223,6 +223,15 @@ export function PipeWiringPage() {
       const changeVertexIdxs = Array.from(
         new Set([...linkJunctionVertexIdxs, ...bendIdxs]),
       ).sort((a, b) => a - b)
+      // デバッグログ: 一括設定で生成されるべき行数を確認
+      console.log('[bulk-setting/no-branch]', {
+        pipe: collectorPipe.number,
+        vertexCount: collectorPipe.vertices.length,
+        linkJunctionVertexIdxs,
+        bendIdxs,
+        changeVertexIdxs,
+        rowsToAdd: changeVertexIdxs.length,
+      })
       if (changeVertexIdxs.length > 0) {
         const newRows: WiringRow[] = changeVertexIdxs.map(() => ({
           id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
