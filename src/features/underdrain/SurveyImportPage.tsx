@@ -649,16 +649,9 @@ export function SurveyImportPage() {
               <div className="flex items-center gap-2">
                 <label className="text-sm flex items-center gap-1">
                   補正量:
-                  <input
-                    type="number"
-                    step="0.001"
-                    value={calibration.dzOffset.toFixed(3)}
-                    onChange={(e) => {
-                      const v = parseFloat(e.target.value)
-                      if (Number.isFinite(v)) updateCalibration({ dzOffset: v })
-                    }}
-                    onWheel={(e) => e.currentTarget.blur()}
-                    className="w-24 px-2 py-1 border rounded text-sm font-mono text-right"
+                  <DzOffsetInput
+                    value={calibration.dzOffset}
+                    onCommit={(v) => updateCalibration({ dzOffset: v })}
                   />
                   <span className="text-sm">m</span>
                 </label>
@@ -1128,5 +1121,57 @@ export function SurveyImportPage() {
         </div>
       )}
     </div>
+  )
+}
+
+// 標高補正量の入力コンポーネント
+// フォーカス中は文字列状態で自由編集を許可し、blur / Enter 時にコミット。
+// 外部の値変更（再計算ボタン等）はフォーカス外なら即時表示に反映する。
+function DzOffsetInput({
+  value,
+  onCommit,
+}: {
+  value: number
+  onCommit: (v: number) => void
+}) {
+  const [text, setText] = useState<string>(value.toFixed(3))
+  const [focused, setFocused] = useState(false)
+  // フォーカス外で外部値が変わったら追従
+  useEffect(() => {
+    if (!focused) setText(value.toFixed(3))
+  }, [value, focused])
+
+  const commit = () => {
+    const v = parseFloat(text)
+    if (Number.isFinite(v)) {
+      onCommit(v)
+      setText(v.toFixed(3))
+    } else {
+      // 不正な入力は元に戻す
+      setText(value.toFixed(3))
+    }
+  }
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => {
+        setFocused(false)
+        commit()
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          ;(e.target as HTMLInputElement).blur()
+        } else if (e.key === 'Escape') {
+          setText(value.toFixed(3))
+          ;(e.target as HTMLInputElement).blur()
+        }
+      }}
+      className="w-24 px-2 py-1 border rounded text-sm font-mono text-right"
+    />
   )
 }
