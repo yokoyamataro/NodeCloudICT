@@ -223,11 +223,11 @@ export function SurveyImportPage() {
       }
 
       // 自動マッチング
+      // 結合部（上流端＝下流始点、吸水合流点 等）では複数の設計点が
+      // 同じ XY 座標に存在する。1 つの測量点を複数の設計点に共有させたいので、
+      // sd.matchedPointId が他の設計点向けに設定済みでも候補として残す。
       const candidates: { sd: SurveyDataRow; distance: number }[] = []
       for (const sd of surveyData) {
-        // 既にマッチ済みのものはスキップ
-        if (sd.matchedPointId) continue
-
         const distance = calcDistance(dp, sd)
         if (distance <= threshold) {
           candidates.push({ sd, distance })
