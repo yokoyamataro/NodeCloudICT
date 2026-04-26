@@ -160,6 +160,34 @@ export function PipeWiringPage() {
     setIsOutletDialog(false)
   }
 
+  // 集水管の内部頂点で「折点（角度のある頂点）」を検出するヘルパ
+  // absorptionVertexSet が渡されたらその頂点はスキップ。閾値 0.5°
+  const findCollectorBendVertices = useCallback(
+    (collectorPipe: PipeRow, absorptionVertexSet?: Set<number>): number[] => {
+      const result: number[] = []
+      const cv = collectorPipe.vertices
+      if (cv.length < 3) return result
+      // 端部以外の内部頂点を判定
+      for (let i = 1; i < cv.length - 1; i++) {
+        if (absorptionVertexSet?.has(i)) continue
+        const prev = cv[i - 1]
+        const curr = cv[i]
+        const next = cv[i + 1]
+        const ax = curr.x - prev.x, ay = curr.y - prev.y
+        const bx = next.x - curr.x, by = next.y - curr.y
+        const cross = ax * by - ay * bx
+        const dot = ax * bx + ay * by
+        const angle = Math.atan2(Math.abs(cross), dot)
+        // 0.5 度を超える折れがあれば折点
+        if (angle > 0.00873) {
+          result.push(i)
+        }
+      }
+      return result
+    },
+    [],
+  )
+
   // 一括設定を実行（集水管に対して吸水を追加）
   // excludePipeId: 既に追加済みの管路ID（二重登録防止用）
   const executeBulkSetting = useCallback((collectorPipeId: string, excludePipeId?: string) => {
@@ -171,8 +199,36 @@ export function PipeWiringPage() {
       p.connectionTo === collectorPipeId && p.id !== excludePipeId
     )
 
-    // 接続している管がない場合
+    // 接続している管がない場合でも、この集水管自体に折点があれば
+    // collector_change 行として登録する（吸水合流が無くても変化点は出力）
     if (connectedAbsorptionPipes.length === 0) {
+      const bendIdxs = findCollectorBendVertices(collectorPipe)
+      if (bendIdxs.length > 0) {
+        const newRows: WiringRow[] = bendIdxs.map(() => ({
+          id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+          rowType: 'collector_change' as RowType,
+          absorptionPipes: [],
+          collectorPipe: collectorPipeId,
+          isMergePipe: false,
+          mergeSystemIndex: null,
+        }))
+        if (activeTabType === 'collector') {
+          setCollectorTabs(prev => prev.map((tab, i) => {
+            if (i !== activeCollectorIndex) return tab
+            const filtered = tab.rows.filter(r =>
+              r.rowType || r.absorptionPipes.length > 0 || r.collectorPipe
+            )
+            return { ...tab, rows: [...filtered, ...newRows] }
+          }))
+        } else {
+          setDirectRows(prev => {
+            const filtered = prev.filter(r =>
+              r.rowType || r.absorptionPipes.length > 0 || r.collectorPipe
+            )
+            return [...filtered, ...newRows]
+          })
+        }
+      }
       // 集水管の接続先を調べる
       const nextCollectorId = collectorPipe.connectionTo
       if (nextCollectorId) {
@@ -202,12 +258,9 @@ export function PipeWiringPage() {
 
     // 集水管の各頂点ごとに、最も近い吸水管下流端点との距離を計算し、
     // 「合流が無い折点（管路の途中で曲がる頂点）」を集水変化点として抽出する。
-    // 集水管の最上流（idx=0）と最下流（idx=last）は端部のため除外。
-    const collectorChangeVertexIdx: number[] = []
+    const absorptionVertexSet = new Set<number>()
     {
       const cv = collectorPipe.vertices
-      // 各 collector 頂点に紐づく吸水管があるかどうかを判定（最近傍 0.1m 以内）
-      const absorptionVertexSet = new Set<number>()
       for (const { pipe } of sortedAbsorptionPipes) {
         const downstream = pipe.vertices[pipe.vertices.length - 1]
         let bestIdx = -1
@@ -218,23 +271,8 @@ export function PipeWiringPage() {
         }
         if (bestIdx >= 0 && bestDist <= 0.5) absorptionVertexSet.add(bestIdx)
       }
-      // 内部頂点（端部以外）で、吸水合流の無い折点を判定
-      for (let i = 1; i < cv.length - 1; i++) {
-        if (absorptionVertexSet.has(i)) continue
-        const prev = cv[i - 1]
-        const curr = cv[i]
-        const next = cv[i + 1]
-        const ax = curr.x - prev.x, ay = curr.y - prev.y
-        const bx = next.x - curr.x, by = next.y - curr.y
-        const cross = ax * by - ay * bx
-        const dot = ax * bx + ay * by
-        const angle = Math.atan2(Math.abs(cross), dot)
-        // 1度を超える折れがあれば「折点」として集水変化点に
-        if (angle > 0.0175) {
-          collectorChangeVertexIdx.push(i)
-        }
-      }
     }
+    const collectorChangeVertexIdx = findCollectorBendVertices(collectorPipe, absorptionVertexSet)
 
     // 「上流→下流」順に吸水合流イベントと集水変化点イベントを統合する。
     // - 吸水合流イベントは distance（下流からの累積距離）が大きいほど上流。
@@ -356,7 +394,7 @@ export function PipeWiringPage() {
     setPendingCollectorPipeId(collectorPipeId)
     setIsOutletDialog(true)
     setShowContinueDialog(true)
-  }, [pipes, activeTabType, activeCollectorIndex, getConnectionDistance])
+  }, [pipes, activeTabType, activeCollectorIndex, getConnectionDistance, calcDistance, findCollectorBendVertices])
 
   // 一括設定を続行
   const continueBulkSetting = () => {
