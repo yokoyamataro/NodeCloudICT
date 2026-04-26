@@ -49,6 +49,9 @@ export function CrossSectionChart({
   // DXF 出力用の縦縮尺
   const [dxfVScale, setDxfVScale] = useState<100 | 200 | 500 | 1000>(200)
 
+  // ホバー中の測点インデックス（緑の縦線にカーソルを合わせたとき）
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+
   const handleDxfExport = useCallback(() => {
     exportCrossSectionDxf({
       systemRows,
@@ -797,9 +800,76 @@ export function CrossSectionChart({
                   stroke="#94a3b8"
                   strokeWidth="1"
                 />
+
+                {/* ホバー検出用の透明な太い縦線（チャート全体を覆う） */}
+                <line
+                  x1={x}
+                  y1={padding.top - 4}
+                  x2={x}
+                  y2={chartHeight - padding.bottom + 4}
+                  stroke="transparent"
+                  strokeWidth="20"
+                  style={{ cursor: 'pointer' }}
+                  onMouseEnter={() => setHoveredIdx(idx)}
+                  onMouseLeave={() => setHoveredIdx((cur) => (cur === idx ? null : cur))}
+                />
+                {/* ホバー時のハイライト縦線 */}
+                {hoveredIdx === idx && (
+                  <line
+                    x1={x}
+                    y1={padding.top - 4}
+                    x2={x}
+                    y2={chartHeight - padding.bottom + 4}
+                    stroke="#16a34a"
+                    strokeWidth="1.5"
+                    strokeDasharray="3,3"
+                    pointerEvents="none"
+                  />
+                )}
               </g>
             )
           })}
+
+          {/* ホバー時のツールチップ（最後に描画して最前面に） */}
+          {hoveredIdx !== null && sectionData[hoveredIdx] && (() => {
+            const point = sectionData[hoveredIdx]
+            const x = xScale(point.distance)
+            // ツールチップ位置: 右側なら左寄せ、左側なら右寄せ
+            const tipWidth = 200
+            const tipHeight = 100
+            const isRightHalf = x > chartWidth / 2
+            const tipX = isRightHalf ? x - tipWidth - 10 : x + 10
+            const tipY = padding.top + 4
+            return (
+              <g pointerEvents="none">
+                <rect
+                  x={tipX}
+                  y={tipY}
+                  width={tipWidth}
+                  height={tipHeight}
+                  fill="rgba(255,255,255,0.97)"
+                  stroke="#16a34a"
+                  strokeWidth="1.5"
+                  rx={4}
+                />
+                <text x={tipX + 8} y={tipY + 18} className="text-[13px] font-semibold fill-slate-800">
+                  {point.pointName}（{point.distance.toFixed(2)} m）
+                </text>
+                <text x={tipX + 8} y={tipY + 38} className="text-[12px] fill-amber-800">
+                  地盤高: {point.groundHeight !== null ? `${point.groundHeight.toFixed(3)} m` : '-'}
+                </text>
+                <text x={tipX + 8} y={tipY + 56} className="text-[12px] fill-blue-700">
+                  計画高: {point.plannedHeight !== null ? `${point.plannedHeight.toFixed(3)} m` : '-'}
+                </text>
+                <text x={tipX + 8} y={tipY + 74} className="text-[12px] fill-green-700">
+                  吸水下流計画高: {point.absorptionPlannedHeight !== null ? `${point.absorptionPlannedHeight.toFixed(3)} m` : '-'}
+                </text>
+                <text x={tipX + 8} y={tipY + 92} className="text-[12px] fill-green-700">
+                  吸水上流計画高: {point.absorptionUpstreamPlannedHeight !== null ? `${point.absorptionUpstreamPlannedHeight.toFixed(3)} m` : '-'}
+                </text>
+              </g>
+            )
+          })()}
 
           {/* 集水番号の帯（X軸下、各区間ごと） */}
           {(() => {
