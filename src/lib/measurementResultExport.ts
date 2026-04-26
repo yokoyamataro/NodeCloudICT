@@ -140,8 +140,8 @@ export async function exportMeasurementResult({
     // B{j}: 設計延長（CAD解析の「設計延長」を整数丸めで転記）
     ws.getCell(j, 2).value =
       pipe.designLength != null ? Math.round(pipe.designLength) : null
-    // D{j}: 配線間隔
-    if (header.spacing != null) {
+    // D{j}: 配線間隔（管種が「吸水」の場合のみ出力）
+    if (header.spacing != null && pipe.pipeType === 'branch') {
       ws.getCell(j, 4).value = header.spacing
     }
 

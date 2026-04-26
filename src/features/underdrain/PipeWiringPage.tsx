@@ -200,6 +200,98 @@ export function PipeWiringPage() {
       }))
       .sort((a, b) => b.distance - a.distance)
 
+    // 集水管の各頂点ごとに、最も近い吸水管下流端点との距離を計算し、
+    // 「合流が無い折点（管路の途中で曲がる頂点）」を集水変化点として抽出する。
+    // 集水管の最上流（idx=0）と最下流（idx=last）は端部のため除外。
+    const collectorChangeVertexIdx: number[] = []
+    {
+      const cv = collectorPipe.vertices
+      // 各 collector 頂点に紐づく吸水管があるかどうかを判定（最近傍 0.1m 以内）
+      const absorptionVertexSet = new Set<number>()
+      for (const { pipe } of sortedAbsorptionPipes) {
+        const downstream = pipe.vertices[pipe.vertices.length - 1]
+        let bestIdx = -1
+        let bestDist = Infinity
+        for (let i = 0; i < cv.length; i++) {
+          const d = Math.hypot(cv[i].x - downstream.x, cv[i].y - downstream.y)
+          if (d < bestDist) { bestDist = d; bestIdx = i }
+        }
+        if (bestIdx >= 0 && bestDist <= 0.5) absorptionVertexSet.add(bestIdx)
+      }
+      // 内部頂点（端部以外）で、吸水合流の無い折点を判定
+      for (let i = 1; i < cv.length - 1; i++) {
+        if (absorptionVertexSet.has(i)) continue
+        const prev = cv[i - 1]
+        const curr = cv[i]
+        const next = cv[i + 1]
+        const ax = curr.x - prev.x, ay = curr.y - prev.y
+        const bx = next.x - curr.x, by = next.y - curr.y
+        const cross = ax * by - ay * bx
+        const dot = ax * bx + ay * by
+        const angle = Math.atan2(Math.abs(cross), dot)
+        // 1度を超える折れがあれば「折点」として集水変化点に
+        if (angle > 0.0175) {
+          collectorChangeVertexIdx.push(i)
+        }
+      }
+    }
+
+    // 「上流→下流」順に吸水合流イベントと集水変化点イベントを統合する。
+    // - 吸水合流イベントは distance（下流からの累積距離）が大きいほど上流。
+    // - 集水変化点は collectorChangeVertexIdx（vertex 番号 = 上流から振った index）。
+    //   下流からの累積距離に変換して比較する。
+    type Event =
+      | { kind: 'absorption'; pipe: PipeRow; distFromDownstream: number }
+      | { kind: 'change'; vertexIdx: number; distFromDownstream: number }
+
+    const cv2 = collectorPipe.vertices
+    // 頂点 i から下流端までの累積距離（m）を事前計算
+    const cumDistFromDownstream: number[] = new Array(cv2.length).fill(0)
+    for (let i = cv2.length - 2; i >= 0; i--) {
+      cumDistFromDownstream[i] = cumDistFromDownstream[i + 1] + calcDistance(cv2[i], cv2[i + 1])
+    }
+
+    const events: Event[] = []
+    for (const { pipe, distance } of sortedAbsorptionPipes) {
+      // distance は mm 単位なので m に戻す
+      events.push({ kind: 'absorption', pipe, distFromDownstream: distance / 1000 })
+    }
+    for (const idx of collectorChangeVertexIdx) {
+      events.push({ kind: 'change', vertexIdx: idx, distFromDownstream: cumDistFromDownstream[idx] })
+    }
+    // 上流側 = distFromDownstream が大きい → 降順で並べると上流から下流に並ぶ
+    events.sort((a, b) => b.distFromDownstream - a.distFromDownstream)
+
+    // events を行に変換するヘルパ。最初の吸水合流のみ absorption_end とする。
+    const buildRowsFromEvents = (): WiringRow[] => {
+      const rows: WiringRow[] = []
+      let absorptionCount = 0
+      for (const evt of events) {
+        if (evt.kind === 'absorption') {
+          const rowType: RowType = absorptionCount === 0 ? 'absorption_end' : 'absorption_merge'
+          absorptionCount++
+          rows.push({
+            id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+            rowType,
+            absorptionPipes: [evt.pipe.id],
+            collectorPipe: collectorPipeId,
+            isMergePipe: false,
+            mergeSystemIndex: null,
+          })
+        } else {
+          rows.push({
+            id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+            rowType: 'collector_change',
+            absorptionPipes: [],
+            collectorPipe: collectorPipeId,
+            isMergePipe: false,
+            mergeSystemIndex: null,
+          })
+        }
+      }
+      return rows
+    }
+
     // 現在のタブに行を追加（タイプを自動判別）
     if (activeTabType === 'collector') {
       setCollectorTabs(prev => {
@@ -220,21 +312,7 @@ export function PipeWiringPage() {
             }
           }
 
-          // 各吸水管を距離の大きい順に新しい行として追加
-          for (let i = 0; i < sortedAbsorptionPipes.length; i++) {
-            const { pipe } = sortedAbsorptionPipes[i]
-            // 最初の行（最上流）は absorption_end、それ以降は absorption_merge
-            const autoRowType: RowType = i === 0 ? 'absorption_end' : 'absorption_merge'
-            const newRow: WiringRow = {
-              id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-              rowType: autoRowType,
-              absorptionPipes: [pipe.id],
-              collectorPipe: collectorPipeId,
-              isMergePipe: false,
-              mergeSystemIndex: null,
-            }
-            newRows.push(newRow)
-          }
+          newRows.push(...buildRowsFromEvents())
 
           return { ...tab, rows: newRows }
         })
@@ -253,19 +331,7 @@ export function PipeWiringPage() {
           }
         }
 
-        for (let i = 0; i < sortedAbsorptionPipes.length; i++) {
-          const { pipe } = sortedAbsorptionPipes[i]
-          const autoRowType: RowType = i === 0 ? 'absorption_end' : 'absorption_merge'
-          const newRow: WiringRow = {
-            id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-            rowType: autoRowType,
-            absorptionPipes: [pipe.id],
-            collectorPipe: collectorPipeId,
-            isMergePipe: false,
-            mergeSystemIndex: null,
-          }
-          newRows.push(newRow)
-        }
+        newRows.push(...buildRowsFromEvents())
         return newRows
       })
     }
