@@ -230,37 +230,53 @@ interface PipeMapProps {
   pipeChangePoints?: PipeChangePoint[]  // 管切り替え点（〇マーカー表示用）
 }
 
-// 測点ラベルアイコンを生成（緑の丸マーカー + ラベル、選択時はオレンジ）
+// 測点ラベルアイコンを生成（緑の丸マーカー + ラベル、選択時はオレンジ・拡大・パルス）
 function createSurveyPointIcon(label: string, isSelected: boolean = false): L.DivIcon {
   const color = isSelected ? '#f97316' : '#22c55e'  // オレンジ or 緑
-  const size = isSelected ? 14 : 12
+  const size = isSelected ? 22 : 12
   const borderColor = isSelected ? '#ea580c' : 'white'
+  const ring = isSelected
+    ? `<div style="
+        position: absolute;
+        left: 50%; top: 50%;
+        transform: translate(-50%, -50%);
+        width: ${size + 16}px;
+        height: ${size + 16}px;
+        border-radius: 50%;
+        border: 3px solid #f97316;
+        opacity: 0.7;
+        pointer-events: none;
+      "></div>`
+    : ''
   return L.divIcon({
     html: `<div style="display: flex; flex-direction: column; align-items: center;">
       <div style="
-        font-size: 10px;
-        font-weight: 500;
+        font-size: ${isSelected ? 12 : 10}px;
+        font-weight: ${isSelected ? 700 : 500};
         color: ${isSelected ? '#c2410c' : '#333'};
-        background-color: ${isSelected ? 'rgba(255, 237, 213, 0.95)' : 'rgba(255, 255, 255, 0.9)'};
-        padding: 1px 4px;
+        background-color: ${isSelected ? 'rgba(255, 237, 213, 0.98)' : 'rgba(255, 255, 255, 0.9)'};
+        padding: ${isSelected ? '2px 6px' : '1px 4px'};
         border-radius: 3px;
         white-space: nowrap;
-        border: 1px solid ${isSelected ? '#f97316' : '#ccc'};
+        border: ${isSelected ? '2px solid #f97316' : '1px solid #ccc'};
         box-shadow: 0 1px 3px rgba(0,0,0,0.2);
         margin-bottom: 2px;
       ">${label}</div>
-      <div style="
-        width: ${size}px;
-        height: ${size}px;
-        background-color: ${color};
-        border-radius: 50%;
-        border: 2px solid ${borderColor};
-        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-      "></div>
+      <div style="position: relative; width: ${size + 16}px; height: ${size + 16}px; display: flex; align-items: center; justify-content: center;">
+        ${ring}
+        <div style="
+          width: ${size}px;
+          height: ${size}px;
+          background-color: ${color};
+          border-radius: 50%;
+          border: ${isSelected ? 3 : 2}px solid ${borderColor};
+          box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        "></div>
+      </div>
     </div>`,
     className: 'survey-point-marker',
-    iconSize: [size, 30],
-    iconAnchor: [size / 2, 30],
+    iconSize: [size + 16, isSelected ? 50 : 30],
+    iconAnchor: [(size + 16) / 2, isSelected ? 50 : 30],
   })
 }
 

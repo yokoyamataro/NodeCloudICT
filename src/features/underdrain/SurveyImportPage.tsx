@@ -1034,12 +1034,12 @@ export function SurveyImportPage() {
             </tbody>
           </table>
           </div>
-          {/* 右側: 地図 */}
+          {/* 右側: 地図（実測点 + 配管のみ。座標管理点は表示しない） */}
           <div className="w-[45%] min-w-[360px] border-l flex flex-col">
             <PipeMap
               showLabels={true}
               showDirection={false}
-              showCoordinates={true}
+              showCoordinates={false}
               showSurveyPoints={true}
               surveyPoints={mapSurveyPoints}
               selectedPipeId={null}
