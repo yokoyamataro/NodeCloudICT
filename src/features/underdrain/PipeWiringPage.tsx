@@ -160,28 +160,18 @@ export function PipeWiringPage() {
     setIsOutletDialog(false)
   }
 
-  // 集水管の内部頂点で「折点（角度のある頂点）」を検出するヘルパ
-  // absorptionVertexSet が渡されたらその頂点はスキップ。閾値 0.5°
+  // 集水管の内部頂点（端部以外）を集水変化点候補として返すヘルパ
+  // absorptionVertexSet が渡されたらその頂点はスキップ
+  // ※ 角度閾値による折点判定はせず、内部頂点はすべて変化点候補とする
+  //   （CAD 解析で測点分割された頂点はすべて意味のある節点とみなす）
   const findCollectorBendVertices = useCallback(
     (collectorPipe: PipeRow, absorptionVertexSet?: Set<number>): number[] => {
       const result: number[] = []
       const cv = collectorPipe.vertices
       if (cv.length < 3) return result
-      // 端部以外の内部頂点を判定
       for (let i = 1; i < cv.length - 1; i++) {
         if (absorptionVertexSet?.has(i)) continue
-        const prev = cv[i - 1]
-        const curr = cv[i]
-        const next = cv[i + 1]
-        const ax = curr.x - prev.x, ay = curr.y - prev.y
-        const bx = next.x - curr.x, by = next.y - curr.y
-        const cross = ax * by - ay * bx
-        const dot = ax * bx + ay * by
-        const angle = Math.atan2(Math.abs(cross), dot)
-        // 0.5 度を超える折れがあれば折点
-        if (angle > 0.00873) {
-          result.push(i)
-        }
+        result.push(i)
       }
       return result
     },
