@@ -19,6 +19,7 @@ import { useSurveyStore, type SurveyDataRow } from '@/stores/surveyStore'
 import { useGlobalSaveRegistry } from '@/stores/globalSaveRegistry'
 import { loadSimaFile, type SimaCoordinate } from '@/lib/sima-parser'
 import type { SurveyCategory } from '@/types/database'
+import { PipeMap, type SurveyPointData } from '@/components/map/PipeMap'
 
 // タブの種類
 type TabType = SurveyCategory
@@ -81,6 +82,8 @@ export function SurveyImportPage() {
   // 状態
   const [activeTab, setActiveTab] = useState<TabType>('control')
   const [showSettings, setShowSettings] = useState(false)
+  // 行クリックで地図上の測量点をハイライト
+  const [selectedSurveyId, setSelectedSurveyId] = useState<string | null>(null)
   const [isImportModalOpen, setIsImportModalOpen] = useState(false)
   const [importedData, setImportedData] = useState<SimaCoordinate[]>([])
   const [isSelectionModalOpen, setIsSelectionModalOpen] = useState(false)
@@ -390,6 +393,21 @@ export function SurveyImportPage() {
   }
 
   // 手入力用のローカル状態（測量データがない点の一時データ）
+  // 地図表示用の測量点データ。当該行の surveyData を集約せずに表示。
+  const mapSurveyPoints: SurveyPointData[] = useMemo(() => {
+    return surveyData
+      .filter((sd) => Number.isFinite(sd.x) && Number.isFinite(sd.y))
+      .map((sd) => ({
+        id: sd.id,
+        name: sd.pointNumber,
+        x: sd.x,
+        y: sd.y,
+        z: sd.z,
+        isMerged: false,
+        isSelected: sd.id === selectedSurveyId,
+      }))
+  }, [surveyData, selectedSurveyId])
+
   const [manualInputs, setManualInputs] = useState<Map<string, {
     pointNumber: string
     x: number
@@ -698,9 +716,10 @@ export function SurveyImportPage() {
         </div>
       )}
 
-      {/* メインコンテンツ */}
+      {/* メインコンテンツ: 表（左）+ 地図（右） */}
       {!loading && (
-        <div className="flex-1 overflow-auto">
+        <div className="flex-1 flex overflow-hidden min-h-0">
+          <div className="flex-1 overflow-auto min-w-0">
           <table className="w-full text-sm">
             <thead className="bg-slate-100 sticky top-0 z-10">
               <tr>
@@ -728,11 +747,25 @@ export function SurveyImportPage() {
               {filteredResults.map((result) => {
                 const hasMatch = result.surveyData !== null
                 const hasMultipleCandidates = result.matchCandidates.length > 1
+                const isRowSelected = result.surveyData?.id === selectedSurveyId && selectedSurveyId !== null
                 return (
                   <tr
                     key={result.designPoint.id}
-                    className={`hover:bg-slate-50 ${
-                      hasMatch ? 'bg-green-50' : surveyData.length > 0 ? 'bg-red-50' : ''
+                    onClick={() => {
+                      if (result.surveyData) {
+                        setSelectedSurveyId((prev) =>
+                          prev === result.surveyData!.id ? null : result.surveyData!.id,
+                        )
+                      }
+                    }}
+                    className={`hover:bg-slate-50 cursor-pointer ${
+                      isRowSelected
+                        ? 'bg-blue-100 ring-1 ring-blue-300'
+                        : hasMatch
+                          ? 'bg-green-50'
+                          : surveyData.length > 0
+                            ? 'bg-red-50'
+                            : ''
                     }`}
                   >
                     <td className="px-2 py-0.5 text-center">
@@ -1000,6 +1033,19 @@ export function SurveyImportPage() {
               )}
             </tbody>
           </table>
+          </div>
+          {/* 右側: 地図 */}
+          <div className="w-[45%] min-w-[360px] border-l flex flex-col">
+            <PipeMap
+              showLabels={true}
+              showDirection={false}
+              showCoordinates={true}
+              showSurveyPoints={true}
+              surveyPoints={mapSurveyPoints}
+              selectedPipeId={null}
+              focusedPipeId={null}
+            />
+          </div>
         </div>
       )}
 
