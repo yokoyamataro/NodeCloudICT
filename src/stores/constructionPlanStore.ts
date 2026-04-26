@@ -339,8 +339,14 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
         for (let i = 0; i < rows.length; i++) {
           const row = rows[i]
 
-          // 落口行（吸水が空で集水がある行）の場合
-          if (row.absorptionPipes.length === 0 && row.collectorPipe && !row.isMergePipe) {
+          // 落口行（吸水が空で集水がある rowType=outlet/collector_junction の行）の場合
+          // ※ collector_change は系統途中の変化点であり、系統終端ではないため除外する
+          if (
+            row.absorptionPipes.length === 0
+            && row.collectorPipe
+            && !row.isMergePipe
+            && (row.rowType === 'outlet' || row.rowType === 'collector_junction')
+          ) {
             // 前の行があれば、それを系統終端としてマーク
             if (i > 0) {
               const prevRow = rows[i - 1]
