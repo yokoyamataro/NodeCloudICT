@@ -93,6 +93,7 @@ function buildHeader(): string[] {
     '2057,集水計画高',
     '2058,集水切深',
     '2059,集水勾配',
+    '2005,配線番号',
     'Z , Level',
     '100,0.000000,0.000000,1,1,6.0,0,用紙系',
     'Z , LineType',
@@ -157,6 +158,53 @@ function buildPlanLookup(
   return map
 }
 
+// 配線（pipe）の中央（路長の半分の位置）座標を返す。
+// 路長ゼロや頂点 1 点しかない場合は最初の頂点を返す。
+function pipeMidpoint(pipe: PipeRow): { x: number; y: number } | null {
+  const v = pipe.vertices
+  if (v.length === 0) return null
+  if (v.length === 1) return { x: v[0].x, y: v[0].y }
+  // 各セグメント長の合計
+  let total = 0
+  const segLen: number[] = []
+  for (let i = 1; i < v.length; i++) {
+    const dx = v[i].x - v[i - 1].x
+    const dy = v[i].y - v[i - 1].y
+    const d = Math.sqrt(dx * dx + dy * dy)
+    segLen.push(d)
+    total += d
+  }
+  if (total === 0) return { x: v[0].x, y: v[0].y }
+  const target = total / 2
+  let acc = 0
+  for (let i = 0; i < segLen.length; i++) {
+    if (acc + segLen[i] >= target) {
+      const t = (target - acc) / segLen[i]
+      return {
+        x: v[i].x + t * (v[i + 1].x - v[i].x),
+        y: v[i].y + t * (v[i + 1].y - v[i].y),
+      }
+    }
+    acc += segLen[i]
+  }
+  // フォールバック: 末尾頂点
+  return { x: v[v.length - 1].x, y: v[v.length - 1].y }
+}
+
+// 配線番号テキスト要素（layer 2005）を生成。
+// 例: 5,2005,123,0,0,1,0,P0,0,0,0,0,449.588571,183.237376,0.000000,2.500000,2.500000,0,10,0,5,0,0,0,0,1,1,2.000000,2.000000,ＭＳ ゴシック,O1
+function buildPipeNumberElement(
+  x: number,
+  y: number,
+  size: number,
+  text: string,
+): string {
+  const fx = x.toFixed(6)
+  const fy = y.toFixed(6)
+  const fSize = size.toFixed(6)
+  return `5,2005,123,0,0,1,0,P0,0,0,0,0,${fx},${fy},0.000000,${fSize},${fSize},0,10,0,5,0,0,0,0,1,1,2.000000,2.000000,ＭＳ ゴシック,${text}`
+}
+
 // 配管単位で全頂点の文字要素行を生成
 function buildTextLines(
   pipes: PipeRow[],
@@ -165,6 +213,7 @@ function buildTextLines(
   moji: number,
   absorptionStdDepth: number,
   collectorStdDepth: number,
+  pipeNumberSize: number,
 ): string[] {
   const lines: string[] = []
   const HALF_PI = Math.PI / 2
@@ -255,6 +304,15 @@ function buildTextLines(
         lines.push(
           buildTextElement(layers.slope, 2, 'P0', midX, midY, segAngle, moji, slopeLabel),
         )
+      }
+    }
+
+    // 配線番号: 配線の中央位置（路長の半分）に配置
+    if (pipe.number) {
+      const mid = pipeMidpoint(pipe)
+      if (mid) {
+        const { px, py } = toPaperCoords(mid.x, mid.y, level)
+        lines.push(buildPipeNumberElement(px, py, pipeNumberSize, pipe.number))
       }
     }
   }
@@ -397,6 +455,7 @@ export function CadExportPage() {
   const [moji, setMoji] = useState<number>(2.0)
   const [absStdDepth, setAbsStdDepth] = useState<number>(0.8)
   const [colStdDepth, setColStdDepth] = useState<number>(0.9)
+  const [pipeNumberSize, setPipeNumberSize] = useState<number>(2.5)
   const [preview, setPreview] = useState<string>('')
 
   useEffect(() => {
@@ -417,7 +476,7 @@ export function CadExportPage() {
   const generateOutput = (): string => {
     const lines = [
       ...buildHeader(),
-      ...buildTextLines(pipes, planGroups, level, moji, absStdDepth, colStdDepth),
+      ...buildTextLines(pipes, planGroups, level, moji, absStdDepth, colStdDepth, pipeNumberSize),
     ]
     return lines.join('\r\n') + '\r\n'
   }
@@ -540,9 +599,17 @@ export function CadExportPage() {
               type="number"
               step="0.01"
             />
+            <LabeledInput
+              label="配線番号 文字サイズ"
+              value={pipeNumberSize}
+              onChange={(v) => setPipeNumberSize(parseFloat(v) || 2.5)}
+              type="number"
+              step="0.1"
+            />
           </div>
           <p className="mt-2 text-xs text-slate-500">
             標準切深と異なる測点のみ切深が出力されます（旧マクロと同仕様）。
+            配線番号は各配線の中央に layer 2005 で出力します。
           </p>
         </section>
 
