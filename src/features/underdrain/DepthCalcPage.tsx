@@ -1379,6 +1379,7 @@ export function DepthCalcPage() {
                 cutDepth: number | null
                 segmentDistance: number | null
                 segmentSlope: string | null
+                manualSlope: string | null
                 kind: 'absorption' | 'collector'
               }
               const points: PointInfo[] = []
@@ -1393,6 +1394,7 @@ export function DepthCalcPage() {
                         cutDepth: p.cutDepth,
                         segmentDistance: p.segmentDistance,
                         segmentSlope: p.segmentSlope,
+                        manualSlope: p.manualSlope ?? null,
                         kind: 'absorption',
                       })
                     }
@@ -1405,6 +1407,7 @@ export function DepthCalcPage() {
                       cutDepth: r.collectorPoint.cutDepth,
                       segmentDistance: r.collectorPoint.segmentDistance,
                       segmentSlope: r.collectorPoint.segmentSlope,
+                      manualSlope: r.collectorPoint.manualSlope ?? null,
                       kind: 'collector',
                     })
                   }
