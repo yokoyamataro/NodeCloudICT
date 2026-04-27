@@ -1606,6 +1606,49 @@ export function DepthCalcPage() {
                 slopeStr,
               )
             }
+
+            // 上流調整した結果、その上流側の集水点との間で逆勾配（前管点 < 現上流点）に
+            // なった場合、続けて前段の区間を調整できるダイアログを開く。
+            if (side === 'upstream' && activeTab) {
+              const sysRows = activeTab.rows
+              const upRowIdx = sysRows.findIndex((r) => r.id === upstream.rowId)
+              if (upRowIdx > 0) {
+                const prevRow = sysRows[upRowIdx - 1]
+                const prevPoint = prevRow.collectorPoint
+                const prevPh = prevPoint?.plannedHeight ?? null
+                const prevDist = prevPoint?.segmentDistance ?? null
+                if (
+                  prevPoint &&
+                  prevPh !== null &&
+                  prevDist !== null &&
+                  prevDist > 0 &&
+                  prevPh < newPh - 1e-6 // 逆勾配（前管点が現上流点より低い）
+                ) {
+                  // 連続して上流側を調整するため、新しい slopeEdit ターゲットをセット
+                  const upstreamLabel = prevPoint.pointName || '前管下流端'
+                  const downstreamLabel = upstream.label
+                  setSlopeEdit({
+                    segmentLabel: `${upstreamLabel} → ${downstreamLabel}`,
+                    distance: prevDist,
+                    currentSlope: null,
+                    upstream: {
+                      rowId: prevRow.id,
+                      pointId: prevPoint.id,
+                      ph: prevPh,
+                      label: upstreamLabel,
+                    },
+                    downstream: {
+                      rowId: upstream.rowId,
+                      pointId: upstream.pointId,
+                      ph: newPh,
+                      label: downstreamLabel,
+                    },
+                  })
+                  return
+                }
+              }
+            }
+
             setSlopeEdit(null)
           }}
         />
