@@ -503,9 +503,15 @@ export function CadExportPage() {
               type="number"
               step="0.0001"
             />
+            <DmsInput
+              label="回転角 (度.分秒 例: 332.5812)"
+              radValue={level.rotation}
+              onChangeRad={(rad) => setLevel({ ...level, rotation: rad })}
+            />
           </div>
           <p className="mt-2 text-xs text-slate-500">
-            これらは座標変換のみに使用します。出力ファイルのレベル行は固定（100,...,用紙系）。
+            これらは座標変換のみに使用します。度.分秒形式は「dd.mmss」（例: 332度58分12秒 → 332.5812）。
+            出力ファイルのレベル行は固定（100,...,用紙系）。
           </p>
         </section>
 
@@ -616,6 +622,98 @@ function LabeledInput({
         step={step}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        className="px-2 py-1.5 border rounded font-mono text-sm"
+      />
+    </label>
+  )
+}
+
+// 度.分秒（dd.mmss）形式 ↔ ラジアンの相互変換
+//   332.5812 → 332度58分12秒 → 約 5.8112 rad
+function dmsToDecimalDegrees(dms: number): number {
+  const sign = dms < 0 ? -1 : 1
+  const abs = Math.abs(dms)
+  const deg = Math.floor(abs + 1e-12)
+  const fracDeg = abs - deg // 0.mmss
+  // mm.ss → 整数 mm と小数 0.ss
+  const mmFloat = Math.round(fracDeg * 10000) / 100 // 例: 58.12
+  const min = Math.floor(mmFloat + 1e-9)
+  const sec = Math.round((mmFloat - min) * 100 * 100) / 100 // 例: 12.0
+  return sign * (deg + min / 60 + sec / 3600)
+}
+
+function decimalDegreesToDMS(deg: number): number {
+  const sign = deg < 0 ? -1 : 1
+  const abs = Math.abs(deg)
+  const d = Math.floor(abs + 1e-9)
+  const mFloat = (abs - d) * 60
+  let m = Math.floor(mFloat + 1e-9)
+  let s = Math.round((mFloat - m) * 60) // 整数秒
+  if (s >= 60) { m += 1; s -= 60 }
+  let dd = d
+  if (m >= 60) { dd += 1; m -= 60 }
+  return sign * (dd + m / 100 + s / 10000)
+}
+
+function dmsToRad(dms: number): number {
+  return dmsToDecimalDegrees(dms) * Math.PI / 180
+}
+
+function radToDMS(rad: number): number {
+  return decimalDegreesToDMS(rad * 180 / Math.PI)
+}
+
+// 度.分秒入力：内部状態でフォーカス中の文字列を保持し、blur 時に rad を更新する。
+// rad の外部更新があれば（フォーカス外なら）DMS 表示を再計算する。
+function DmsInput({
+  label,
+  radValue,
+  onChangeRad,
+}: {
+  label: string
+  radValue: number
+  onChangeRad: (rad: number) => void
+}) {
+  const formatDms = (rad: number): string => {
+    const dms = radToDMS(rad)
+    // 4 桁固定で見やすく
+    return dms.toFixed(4)
+  }
+  const [text, setText] = useState<string>(formatDms(radValue))
+  const [focused, setFocused] = useState(false)
+  useEffect(() => {
+    if (!focused) setText(formatDms(radValue))
+  }, [radValue, focused])
+
+  const commit = () => {
+    setFocused(false)
+    const v = parseFloat(text)
+    if (Number.isFinite(v)) {
+      const rad = dmsToRad(v)
+      onChangeRad(rad)
+      setText(formatDms(rad))
+    } else {
+      setText(formatDms(radValue))
+    }
+  }
+
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-xs text-slate-600">{label}</span>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+          if (e.key === 'Escape') {
+            setText(formatDms(radValue))
+            ;(e.target as HTMLInputElement).blur()
+          }
+        }}
         className="px-2 py-1.5 border rounded font-mono text-sm"
       />
     </label>
