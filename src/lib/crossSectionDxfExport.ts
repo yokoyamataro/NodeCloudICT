@@ -19,6 +19,7 @@ interface SectionPoint {
   distance: number // m
   groundHeight: number | null
   plannedHeight: number | null
+  cutDepth: number | null
   pointName: string
   absorptionPipeNumber: string | null
   absorptionPlannedHeight: number | null
@@ -93,6 +94,7 @@ function buildSectionData(
       distance: cumulativeDistance,
       groundHeight: row.collectorPoint.groundHeight,
       plannedHeight: row.collectorPoint.plannedHeight,
+      cutDepth: row.collectorPoint.cutDepth,
       pointName: row.collectorPoint.pointName,
       absorptionPipeNumber: flagPipeNumber,
       absorptionPlannedHeight: absorptionDownstreamHeight,
@@ -244,7 +246,9 @@ function drawSystemTile(
   //  [yBase + marginBottom] = bottomEdge          チャート下端
   //  [yBase + marginBottom + chartHeight]         チャート上端
   //  [yBase + ... + flagSpace + titleSpace]       タイル上端
-  const labelsSpace = 36 // 測点名・累加距離・計画高（累加距離と計画高は縦書き）
+  // 測点名（横書き）+ 累加距離・切深・地盤高・計画高（4 つとも縦書き）
+  // 各縦書き行 ~14、横書き 1 行 ~12 → 合計 ~70
+  const labelsSpace = 70
   const bandSpace = 10 // 集水番号帯
   const marginBottom = labelsSpace + bandSpace + 4 // 下側総余白
   const flagSpace = 14 // 吸水旗上げ
@@ -302,19 +306,27 @@ function drawSystemTile(
       b.circle('FLAG', px, yP(p.absorptionPlannedHeight), 0.6)
   }
 
-  // 垂直ガイド線 + 累加距離 + 計画高 + 測点名
-  // 累加距離と計画高は 90 度回転させて縦書き表示する
+  // 垂直ガイド線 + 計画高 + 地盤高 + 切深 + 累加距離 + 測点名
+  // 数値ラベルは 90 度回転させて縦書き表示する
   for (const p of sectionData) {
     const px = xP(p.distance)
     b.line('AXIS', px, bottomEdge - 2, px, bottomEdge)
-    // 累加距離（縦書き）
-    b.text('TEXT_HEIGHT', px, bottomEdge - 10, 2, `${p.distance.toFixed(2)}`, 1, 90)
-    // 計画高（縦書き、各縦断変化点で表示）
+    // 計画高（縦書き）
     if (p.plannedHeight !== null) {
-      b.text('TEXT_HEIGHT', px, bottomEdge - 24, 2, `${p.plannedHeight.toFixed(3)}`, 1, 90)
+      b.text('TEXT_HEIGHT', px, bottomEdge - 10, 2, `${p.plannedHeight.toFixed(3)}`, 1, 90)
     }
+    // 地盤高（縦書き）
+    if (p.groundHeight !== null) {
+      b.text('TEXT_HEIGHT', px, bottomEdge - 24, 2, `${p.groundHeight.toFixed(3)}`, 1, 90)
+    }
+    // 切深（縦書き）
+    if (p.cutDepth !== null) {
+      b.text('TEXT_HEIGHT', px, bottomEdge - 38, 2, `${p.cutDepth.toFixed(3)}`, 1, 90)
+    }
+    // 累加距離（縦書き）
+    b.text('TEXT_HEIGHT', px, bottomEdge - 52, 2, `${p.distance.toFixed(2)}`, 1, 90)
     // 測点名（横書き）
-    b.text('TEXT_POINT', px, bottomEdge - 34, 2.5, p.pointName, 1)
+    b.text('TEXT_POINT', px, bottomEdge - 64, 2.5, p.pointName, 1)
   }
 
   // 勾配ラベル
