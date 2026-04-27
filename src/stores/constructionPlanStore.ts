@@ -17,7 +17,13 @@ export interface PlanPoint {
   plannedHeight: number | null // 計画高（ユーザー入力）
   cutDepth: number | null // 切深（自動計算）
   segmentDistance: number | null // 区間距離
-  segmentSlope: string | null // 区間勾配（1/xxx形式）
+  segmentSlope: string | null // 区間勾配（1/xxx形式、自動計算の値）
+  /**
+   * ユーザーが勾配ダイアログで明示的に指定した勾配（1/N 形式）。
+   * 指定がある間は表示でも segmentSlope より優先する。
+   * フロントエンドのみ（DB には保存しない）。
+   */
+  manualSlope?: string | null
 }
 
 // 施工計画の行データ（吸水1本分）
@@ -80,6 +86,16 @@ interface ConstructionPlanState {
 
   // 計画高の更新
   updatePlannedHeight: (rowId: string, pointId: string, plannedHeight: number | null) => void
+  /**
+   * 勾配ダイアログから呼び出される、計画高の更新と勾配の手動指定を同時に行う。
+   * manualSlope は表示優先で利用される。
+   */
+  applyManualSlope: (
+    rowId: string,
+    pointId: string,
+    plannedHeight: number | null,
+    manualSlope: string,
+  ) => void
 
   // 地盤高の更新
   updateGroundHeight: (rowId: string, pointId: string, groundHeight: number | null) => void
@@ -1198,7 +1214,8 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
               const cutDepth = p.groundHeight !== null && ph !== null
                 ? roundTo(p.groundHeight - ph, 3)
                 : null
-              return { ...p, plannedHeight: ph, cutDepth }
+              // 直接編集された場合は手動勾配指定を解除（自動再計算を再開）
+              return { ...p, plannedHeight: ph, cutDepth, manualSlope: null }
             }),
             collectorPoint: row.collectorPoint?.id === pointId
               ? {
@@ -1207,6 +1224,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                   cutDepth: row.collectorPoint.groundHeight !== null && ph !== null
                     ? roundTo(row.collectorPoint.groundHeight - ph, 3)
                     : null,
+                  manualSlope: null,
                 }
               : row.collectorPoint,
           }
@@ -1217,6 +1235,44 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
     })
 
     // 勾配を再計算
+    get().recalculateCutDepthAndSlope()
+  },
+
+  applyManualSlope: (rowId, pointId, plannedHeight, manualSlope) => {
+    const ph = plannedHeight != null ? roundTo(plannedHeight, 3) : null
+    set((state) => {
+      const newGroups = state.planGroups.map((group) => ({
+        ...group,
+        rows: group.rows.map((row) => {
+          if (row.id !== rowId) return row
+          return {
+            ...row,
+            absorptionPoints: row.absorptionPoints.map((p) => {
+              if (p.id !== pointId) return p
+              const cutDepth =
+                p.groundHeight !== null && ph !== null
+                  ? roundTo(p.groundHeight - ph, 3)
+                  : null
+              return { ...p, plannedHeight: ph, cutDepth, manualSlope }
+            }),
+            collectorPoint:
+              row.collectorPoint?.id === pointId
+                ? {
+                    ...row.collectorPoint,
+                    plannedHeight: ph,
+                    cutDepth:
+                      row.collectorPoint.groundHeight !== null && ph !== null
+                        ? roundTo(row.collectorPoint.groundHeight - ph, 3)
+                        : null,
+                    manualSlope,
+                  }
+                : row.collectorPoint,
+          }
+        }),
+      }))
+      return { planGroups: newGroups, hasChanges: true }
+    })
+    // recalc は segmentSlope のみ更新する（manualSlope は保持される）
     get().recalculateCutDepthAndSlope()
   },
 

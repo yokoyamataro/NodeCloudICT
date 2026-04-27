@@ -73,6 +73,7 @@ export function DepthCalcPage() {
     reloadGroundHeights,
     deletePlan,
     updatePlannedHeight,
+    applyManualSlope,
     updateGroundHeight,
     autoCalculatePlannedHeights,
   } = useConstructionPlanStore()
@@ -242,11 +243,15 @@ export function DepthCalcPage() {
   ])
 
   // 集水の区間勾配を計算（現在の行と次の行の集水計画高の差）
+  // 手動指定（manualSlope）があればそれを優先する。
   const calcCollectorSlope = (
     currentRow: PlanRow,
     nextRow: PlanRow | null
   ): string | null => {
     if (!currentRow.collectorPoint || !nextRow?.collectorPoint) return null
+    if (currentRow.collectorPoint.manualSlope) {
+      return currentRow.collectorPoint.manualSlope
+    }
     const currentHeight = currentRow.collectorPoint.plannedHeight
     const nextHeight = nextRow.collectorPoint.plannedHeight
     const distance = currentRow.collectorPoint.segmentDistance
@@ -488,7 +493,7 @@ export function DepthCalcPage() {
                 {refCount > 0 ? (
                   mergedLast3Points.map((p) => (
                     <td key={p.id} className="px-1.5 py-1 text-center border font-mono bg-slate-100 text-slate-500">
-                      {p.segmentSlope ?? '-'}
+                      {p.manualSlope ?? p.segmentSlope ?? "-"}
                     </td>
                   ))
                 ) : (
@@ -792,10 +797,10 @@ export function DepthCalcPage() {
                             className="w-full hover:bg-blue-50 rounded px-1 py-0.5 text-blue-700 hover:underline"
                             title="勾配を任意設定"
                           >
-                            {p.segmentSlope ?? '-'}
+                            {p.manualSlope ?? p.segmentSlope ?? "-"}
                           </button>
                         ) : (
-                          <span>{p.segmentSlope ?? '-'}</span>
+                          <span>{p.manualSlope ?? p.segmentSlope ?? "-"}</span>
                         )}
                       </td>
                     )
@@ -1452,7 +1457,7 @@ export function DepthCalcPage() {
                               {p.segmentDistance != null ? p.segmentDistance.toFixed(1) : '-'}
                             </td>
                             <td className="text-right font-mono text-green-700">
-                              {p.segmentSlope ?? '-'}
+                              {p.manualSlope ?? p.segmentSlope ?? "-"}
                             </td>
                           </tr>
                         ))}
@@ -1582,9 +1587,25 @@ export function DepthCalcPage() {
         <SlopeEditDialog
           target={slopeEdit}
           onClose={() => setSlopeEdit(null)}
-          onApply={(side, newPh) => {
-            const target = side === 'upstream' ? slopeEdit.upstream : slopeEdit.downstream
-            updatePlannedHeight(target.rowId, target.pointId, newPh)
+          onApply={(side, newPh, slopeStr) => {
+            // 勾配は「上流側 point の manualSlope」に保存（次区間の勾配を表す）
+            // 調整した plannedHeight を該当側にセットしつつ、
+            // 上流側 point の manualSlope に slopeStr を保持する。
+            const upstream = slopeEdit.upstream
+            if (side === 'upstream') {
+              // 上流側を調整 → 上流の plannedHeight を更新 + manualSlope セット
+              applyManualSlope(upstream.rowId, upstream.pointId, newPh, slopeStr)
+            } else {
+              // 下流側を調整 → 下流の plannedHeight を先に更新（manualSlope は無関係区間）
+              updatePlannedHeight(slopeEdit.downstream.rowId, slopeEdit.downstream.pointId, newPh)
+              // 続いて上流側の manualSlope を保存（plannedHeight は元のまま）
+              applyManualSlope(
+                upstream.rowId,
+                upstream.pointId,
+                upstream.ph,
+                slopeStr,
+              )
+            }
             setSlopeEdit(null)
           }}
         />
@@ -1723,7 +1744,7 @@ function SlopeEditDialog({
 }: {
   target: SlopeEditTarget
   onClose: () => void
-  onApply: (side: 'upstream' | 'downstream', newPh: number) => void
+  onApply: (side: 'upstream' | 'downstream', newPh: number, slopeStr: string) => void
 }) {
   const [slopeInput, setSlopeInput] = useState<string>(
     target.currentSlope?.replace(/^1\//, '') ?? '',
@@ -1860,7 +1881,7 @@ function SlopeEditDialog({
             type="button"
             disabled={!canApply}
             onClick={() => {
-              if (canApply) onApply(side, previewNewPh!)
+              if (canApply && denom !== null) onApply(side, previewNewPh!, `1/${Math.abs(denom)}`)
             }}
             className={`px-4 py-2 text-sm rounded ${
               canApply
