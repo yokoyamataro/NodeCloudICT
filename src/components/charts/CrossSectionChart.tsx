@@ -8,6 +8,7 @@ interface CrossSectionChartProps {
   endType: 'outlet' | 'merge' | null
   chartHeight?: number // SVG チャート高さ（px）。未指定時は 220
   pipeNumberById?: Map<string, string> // 管路ID → 管路番号
+  pipeDiameterById?: Map<string, number> // 管路ID → 管径
   allPlanGroups?: PlanGroup[] // 合流先系統の参照用
   farmName?: string // DXF 出力ファイル名用
 }
@@ -35,6 +36,7 @@ export function CrossSectionChart({
   endType,
   chartHeight: chartHeightProp,
   pipeNumberById,
+  pipeDiameterById,
   allPlanGroups,
   farmName,
 }: CrossSectionChartProps) {
@@ -59,10 +61,11 @@ export function CrossSectionChart({
       endType,
       verticalScale: dxfVScale,
       pipeNumberById,
+      pipeDiameterById,
       allPlanGroups,
       farmName,
     })
-  }, [systemRows, systemIndex, endType, dxfVScale, pipeNumberById, allPlanGroups, farmName])
+  }, [systemRows, systemIndex, endType, dxfVScale, pipeNumberById, pipeDiameterById, allPlanGroups, farmName])
 
   // マウスホイールでスケールを変更（Shift 押下で横、それ以外は縦）
   const handleWheel = useCallback((e: React.WheelEvent) => {

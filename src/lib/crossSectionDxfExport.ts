@@ -11,6 +11,7 @@ export interface CrossSectionDxfOptions {
   endType: 'outlet' | 'merge' | null
   verticalScale: 100 | 200 | 500 | 1000
   pipeNumberById?: Map<string, string>
+  pipeDiameterById?: Map<string, number>
   allPlanGroups?: PlanGroup[]
   farmName?: string
 }
@@ -25,6 +26,8 @@ interface SectionPoint {
   absorptionPlannedHeight: number | null
   collectorPipeId: string | null
   collectorPipeNumber: string | null
+  collectorPipeDiameter: number | null
+  isCollectorMidpoint: boolean
 }
 
 const HORIZONTAL_SCALE = 1000
@@ -54,6 +57,7 @@ function resolveMergeTargetPipeNumber(
 function buildSectionData(
   systemRows: PlanRow[],
   pipeNumberById: Map<string, string> | undefined,
+  pipeDiameterById: Map<string, number> | undefined,
   allPlanGroups: PlanGroup[] | undefined,
 ): SectionPoint[] {
   const points: SectionPoint[] = []
@@ -89,6 +93,13 @@ function buildSectionData(
     const collectorPipeNumber = row.collectorPipeId
       ? pipeNumberById?.get(row.collectorPipeId) ?? null
       : null
+    const collectorPipeDiameter = row.collectorPipeId
+      ? pipeDiameterById?.get(row.collectorPipeId) ?? null
+      : null
+
+    // 中間点：吸水合流ではなく集水管の中間頂点（B1, B2 など）
+    const isCollectorMidpoint =
+      row.wiringRowType === 'collector_change' && !flagPipeNumber
 
     points.push({
       distance: cumulativeDistance,
@@ -100,6 +111,8 @@ function buildSectionData(
       absorptionPlannedHeight: absorptionDownstreamHeight,
       collectorPipeId: row.collectorPipeId,
       collectorPipeNumber,
+      collectorPipeDiameter,
+      isCollectorMidpoint,
     })
   }
 
@@ -241,16 +254,18 @@ function drawSystemTile(
 
   // タイルレイアウト:
   //  [yBase + 0]                                  タイル下端
-  //  [yBase + bandSpace]                          集水番号帯 上端
-  //  [yBase + labelsSpace]                        測点名・累加距離
+  //  [yBase + bandSpace ~]                        集水番号帯（管径付き）
+  //  [yBase + labelsSpace] = bandTop              数値ラベル（4行 × 10mm）下端
   //  [yBase + marginBottom] = bottomEdge          チャート下端
-  //  [yBase + marginBottom + chartHeight]         チャート上端
-  //  [yBase + ... + flagSpace + titleSpace]       タイル上端
-  // 測点名（横書き）+ 累加距離・切深・地盤高・計画高（4 つとも縦書き）
-  // 各縦書き行 ~14、横書き 1 行 ~12 → 合計 ~70
-  const labelsSpace = 70
+  // 数値ラベルは上から「地盤高 / 計画高 / 切深 / 累加距離」（各 10mm 間隔・縦書き）
+  const ROW_INTERVAL = 10
+  const numericRowsCount = 4
+  const numericRowsHeight = ROW_INTERVAL * numericRowsCount // 40
+  const pointNameHeight = 5 // 測点名（横書き）
+  const gapAboveBand = 1
   const bandSpace = 10 // 集水番号帯
-  const marginBottom = labelsSpace + bandSpace + 4 // 下側総余白
+  const labelsSpace = numericRowsHeight + pointNameHeight + gapAboveBand // 46
+  const marginBottom = labelsSpace + bandSpace + 4 // 下側総余白 = 60
   const flagSpace = 14 // 吸水旗上げ
   const titleSpace = 10 // タイトル
   const topPadding = 6
@@ -258,6 +273,13 @@ function drawSystemTile(
   const marginLeft = 40
   const leftEdge = marginLeft
   const bottomEdge = yBase + marginBottom
+
+  // 数値ラベル行の中心 Y 位置（上から下へ）
+  const ROW_GROUND_Y = bottomEdge - ROW_INTERVAL * 0.5 // 地盤高
+  const ROW_PLAN_Y = bottomEdge - ROW_INTERVAL * 1.5 // 計画高
+  const ROW_CUT_Y = bottomEdge - ROW_INTERVAL * 2.5 // 切深
+  const ROW_DIST_Y = bottomEdge - ROW_INTERVAL * 3.5 // 累加距離
+  const POINT_NAME_Y = bottomEdge - numericRowsHeight - pointNameHeight + 1.5 // 測点名（横書き）
 
   const xP = (distM: number) => leftEdge + distM * hFactor
   const yP = (elevM: number) => bottomEdge + (elevM - minH) * vFactor
@@ -306,27 +328,43 @@ function drawSystemTile(
       b.circle('FLAG', px, yP(p.absorptionPlannedHeight), 0.6)
   }
 
-  // 垂直ガイド線 + 計画高 + 地盤高 + 切深 + 累加距離 + 測点名
-  // 数値ラベルは 90 度回転させて縦書き表示する
+  // 左端の見出し列：地盤高 / 計画高 / 切深 / 累加距離（横書き、右寄せ）
+  const HEADER_X = leftEdge - 2
+  b.text('TEXT_HEIGHT', HEADER_X, ROW_GROUND_Y - 1, 2.5, '地盤高', 2)
+  b.text('TEXT_HEIGHT', HEADER_X, ROW_PLAN_Y - 1, 2.5, '計画高', 2)
+  b.text('TEXT_HEIGHT', HEADER_X, ROW_CUT_Y - 1, 2.5, '切深', 2)
+  b.text('TEXT_HEIGHT', HEADER_X, ROW_DIST_Y - 1, 2.5, '累加距離', 2)
+
+  // 各点の数値ラベル：上から 地盤高 / 計画高 / 切深 / 累加距離（縦書き、行間 10mm）
+  // 行内訳：上 1mm 縦線セグメント + 8mm 数値領域 + 1mm 縦線セグメント
   for (const p of sectionData) {
     const px = xP(p.distance)
     b.line('AXIS', px, bottomEdge - 2, px, bottomEdge)
-    // 計画高（縦書き）
-    if (p.plannedHeight !== null) {
-      b.text('TEXT_HEIGHT', px, bottomEdge - 10, 2, `${p.plannedHeight.toFixed(3)}`, 1, 90)
-    }
-    // 地盤高（縦書き）
     if (p.groundHeight !== null) {
-      b.text('TEXT_HEIGHT', px, bottomEdge - 24, 2, `${p.groundHeight.toFixed(3)}`, 1, 90)
+      b.text('TEXT_HEIGHT', px, ROW_GROUND_Y, 2, p.groundHeight.toFixed(3), 1, 90)
     }
-    // 切深（縦書き）
+    if (p.plannedHeight !== null) {
+      b.text('TEXT_HEIGHT', px, ROW_PLAN_Y, 2, p.plannedHeight.toFixed(3), 1, 90)
+    }
     if (p.cutDepth !== null) {
-      b.text('TEXT_HEIGHT', px, bottomEdge - 38, 2, `${p.cutDepth.toFixed(3)}`, 1, 90)
+      b.text('TEXT_HEIGHT', px, ROW_CUT_Y, 2, p.cutDepth.toFixed(3), 1, 90)
     }
-    // 累加距離（縦書き）
-    b.text('TEXT_HEIGHT', px, bottomEdge - 52, 2, `${p.distance.toFixed(2)}`, 1, 90)
-    // 測点名（横書き）
-    b.text('TEXT_POINT', px, bottomEdge - 64, 2.5, p.pointName, 1)
+    b.text('TEXT_HEIGHT', px, ROW_DIST_Y, 2, p.distance.toFixed(2), 1, 90)
+    b.text('TEXT_POINT', px, POINT_NAME_Y, 2.5, p.pointName, 1)
+  }
+
+  // 緑の旗上げ位置（吸水合流 + 集水中間点）には数値軸に縦線を描画
+  // 各行 10mm の上下 1mm に短いセグメントを描画し、中央 8mm（数値領域）は空ける
+  for (const p of sectionData) {
+    const hasFlag = !!p.absorptionPipeNumber || p.isCollectorMidpoint
+    if (!hasFlag) continue
+    const px = xP(p.distance)
+    for (let r = 0; r < numericRowsCount; r++) {
+      const rowTopY = bottomEdge - r * ROW_INTERVAL
+      const rowBotY = bottomEdge - (r + 1) * ROW_INTERVAL
+      b.line('FLAG', px, rowTopY, px, rowTopY - 1)
+      b.line('FLAG', px, rowBotY + 1, px, rowBotY)
+    }
   }
 
   // 勾配ラベル
@@ -344,20 +382,25 @@ function drawSystemTile(
     b.text('SLOPE', midX, midY, 1.8, `(${dist.toFixed(1)})`, 1)
   }
 
-  // 吸水旗上げ（上部）
+  // 旗上げ（上部）：吸水合流＝吸水管番号、集水中間点＝測点名
   const FLAG_HEIGHT_OFFSET = 6
   const FLAG_TOP_Y = bottomEdge + chartHeight + FLAG_HEIGHT_OFFSET
   for (const p of sectionData) {
-    if (!p.absorptionPipeNumber) continue
     const px = xP(p.distance)
-    const leaderEndY =
-      p.absorptionPlannedHeight !== null
-        ? yP(p.absorptionPlannedHeight)
-        : p.plannedHeight !== null
-          ? yP(p.plannedHeight)
-          : bottomEdge
-    b.line('FLAG', px, leaderEndY, px, FLAG_TOP_Y)
-    b.text('FLAG', px, FLAG_TOP_Y + 2, 3, p.absorptionPipeNumber, 1)
+    if (p.absorptionPipeNumber) {
+      const leaderEndY =
+        p.absorptionPlannedHeight !== null
+          ? yP(p.absorptionPlannedHeight)
+          : p.plannedHeight !== null
+            ? yP(p.plannedHeight)
+            : bottomEdge
+      b.line('FLAG', px, leaderEndY, px, FLAG_TOP_Y)
+      b.text('FLAG', px, FLAG_TOP_Y + 2, 3, p.absorptionPipeNumber, 1)
+    } else if (p.isCollectorMidpoint) {
+      const leaderEndY = p.plannedHeight !== null ? yP(p.plannedHeight) : bottomEdge
+      b.line('FLAG', px, leaderEndY, px, FLAG_TOP_Y)
+      b.text('FLAG', px, FLAG_TOP_Y + 2, 3, p.pointName, 1)
+    }
   }
 
   // 集水番号の帯
@@ -377,7 +420,11 @@ function drawSystemTile(
         b.line('AXIS', x1, bandTop - bandHeight, x2, bandTop - bandHeight)
         b.line('AXIS', x1, bandTop, x1, bandTop - bandHeight)
         b.line('AXIS', x2, bandTop, x2, bandTop - bandHeight)
-        b.text('AXIS', (x1 + x2) / 2, bandTop - bandHeight / 2 - 1, 2.5, prev.collectorPipeNumber, 1)
+        const bandLabel =
+          prev.collectorPipeDiameter !== null
+            ? `${prev.collectorPipeNumber} φ${prev.collectorPipeDiameter}`
+            : prev.collectorPipeNumber
+        b.text('AXIS', (x1 + x2) / 2, bandTop - bandHeight / 2 - 1, 2.5, bandLabel, 1)
       }
       bandStart = i
     }
@@ -422,6 +469,7 @@ export function exportCrossSectionDxf(opts: CrossSectionDxfOptions): void {
   const sectionData = buildSectionData(
     opts.systemRows,
     opts.pipeNumberById,
+    opts.pipeDiameterById,
     opts.allPlanGroups,
   )
 
@@ -447,6 +495,7 @@ export interface MultipleExportOptions {
   }>
   verticalScale: 100 | 200 | 500 | 1000
   pipeNumberById?: Map<string, string>
+  pipeDiameterById?: Map<string, number>
   allPlanGroups?: PlanGroup[]
   farmName?: string
 }
@@ -461,7 +510,12 @@ export function exportAllCrossSectionsDxf(opts: MultipleExportOptions): void {
   let drawnCount = 0
 
   for (const sys of opts.systems) {
-    const sectionData = buildSectionData(sys.systemRows, opts.pipeNumberById, opts.allPlanGroups)
+    const sectionData = buildSectionData(
+      sys.systemRows,
+      opts.pipeNumberById,
+      opts.pipeDiameterById,
+      opts.allPlanGroups,
+    )
     if (sectionData.length === 0) continue
     const { totalHeight } = drawSystemTile(
       b,

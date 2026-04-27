@@ -62,6 +62,15 @@ export function DepthCalcPage() {
     for (const p of pipes) map.set(p.id, p.number)
     return map
   }, [pipes])
+
+  // 管路ID → 管径のルックアップ
+  const pipeDiameterById = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const p of pipes) {
+      if (p.diameter != null) map.set(p.id, p.diameter)
+    }
+    return map
+  }, [pipes])
   const {
     planGroups,
     loading,
@@ -952,6 +961,7 @@ export function DepthCalcPage() {
       })),
       verticalScale: allDxfVScale,
       pipeNumberById,
+      pipeDiameterById,
       allPlanGroups: planGroups,
       farmName: currentFarm?.name,
     })
@@ -1537,6 +1547,7 @@ export function DepthCalcPage() {
                     endType={systemData.endType}
                     chartHeight={fullscreenPanel === 'chart' ? window.innerHeight - 120 : 220}
                     pipeNumberById={pipeNumberById}
+                    pipeDiameterById={pipeDiameterById}
                     allPlanGroups={planGroups}
                     farmName={currentFarm?.name}
                   />
