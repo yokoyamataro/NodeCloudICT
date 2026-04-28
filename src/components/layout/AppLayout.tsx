@@ -23,6 +23,8 @@ import {
   RotateCcw,
   Loader2,
   Layers,
+  Rows3,
+  Grid3x3,
   Mountain,
   Shovel,
   Gem,
@@ -88,6 +90,8 @@ const navigation: NavGroup[] = [
     icon: Layers,
     children: [
       { name: '工事区域', href: '/soil-import/work-area', icon: Square },
+      { name: '帯置計画作成', href: '/soil-import/strip-plan', icon: Rows3 },
+      { name: '坪置計画作成', href: '/soil-import/heap-plan', icon: Grid3x3 },
     ],
   },
   {

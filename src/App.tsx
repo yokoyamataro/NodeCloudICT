@@ -143,6 +143,8 @@ function AppRoutes() {
         {/* 客土工事 */}
         <Route path="soil-import">
           <Route path="work-area" element={<SoilImportWorkAreaPage />} />
+          <Route path="strip-plan" element={<PlaceholderPage title="帯置計画作成" />} />
+          <Route path="heap-plan" element={<PlaceholderPage title="坪置計画作成" />} />
         </Route>
         {/* 簡易整地 */}
         <Route path="simple-grading">
