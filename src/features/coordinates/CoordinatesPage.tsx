@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Upload, Download, Plus, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown } from 'lucide-react'
+import { Upload, Download, Plus, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown } from 'lucide-react'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
@@ -169,6 +169,23 @@ export function CoordinatesPage() {
   const [baseLayer, setBaseLayer] = useState<BaseLayerType>('osm')
   const [showPasteModal, setShowPasteModal] = useState(false)
 
+  // チェックされた点のID（エクスポート対象）
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set())
+
+  // ツールバーのドロップダウンメニュー（インポート / エクスポート）
+  const [openMenu, setOpenMenu] = useState<'import' | 'export' | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!openMenu) return
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpenMenu(null)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [openMenu])
+
   // URLパラメータをチェック（ポップアウトモード）
   const urlParams = new URLSearchParams(window.location.search)
   const viewMode = urlParams.get('view') // 'map' または 'table'
@@ -295,9 +312,17 @@ export function CoordinatesPage() {
     event.target.value = ''
   }
 
+  // エクスポート対象：チェックがあれば選択分のみ、無ければ全件
+  const getExportTargets = () => {
+    if (checkedIds.size === 0) return coordinates
+    return coordinates.filter((c) => checkedIds.has(c.id))
+  }
+
   const handleExportCSV = () => {
+    const targets = getExportTargets()
+    if (targets.length === 0) return
     const header = '点番号,X,Y,Z,緯度,経度,種類\n'
-    const rows = coordinates.map(c => {
+    const rows = targets.map(c => {
       // 型の互換性のため、古い型の値をフォールバック
       const typeName = COORDINATE_TYPE_NAMES[c.type as keyof typeof COORDINATE_TYPE_NAMES] || '不明'
       return `${c.pointNumber},${c.x},${c.y},${c.z ?? ''},${c.lat ?? ''},${c.lng ?? ''},${typeName}`
@@ -313,13 +338,14 @@ export function CoordinatesPage() {
   }
 
   const handleExportSIMA = () => {
-    if (coordinates.length === 0) return
+    const targets = getExportTargets()
+    if (targets.length === 0) return
     const projectName = currentFarm?.name || 'NoName'
     downloadSimaFile(
       {
         projectName,
         zone,
-        points: coordinates.map((c) => ({
+        points: targets.map((c) => ({
           pointNumber: c.pointNumber,
           x: c.x,
           y: c.y,
@@ -328,6 +354,28 @@ export function CoordinatesPage() {
       },
       `${projectName}_coordinates.sim`,
     )
+  }
+
+  const handleExportExcel = () => {
+    alert('Excel 出力は実装予定です')
+  }
+
+  // チェック関連
+  const allChecked = coordinates.length > 0 && coordinates.every((c) => checkedIds.has(c.id))
+  const toggleCheck = (id: string) => {
+    setCheckedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+  const toggleCheckAll = () => {
+    if (allChecked) {
+      setCheckedIds(new Set())
+    } else {
+      setCheckedIds(new Set(coordinates.map((c) => c.id)))
+    }
   }
 
   // モーダルからのペースト処理
@@ -403,6 +451,119 @@ export function CoordinatesPage() {
     if (routeMode) {
       appendRoutePoint(id, 'down')
     }
+  }
+
+  // ツールバー（インポート / エクスポート / 追加）— hover の背景色だけビューで切り替え
+  const renderToolbar = (hoverClass: 'hover:bg-gray-50' | 'hover:bg-white') => {
+    const exportDisabled = coordinates.length === 0
+    const exportCount = checkedIds.size === 0 ? coordinates.length : checkedIds.size
+    return (
+      <div ref={menuRef} className="flex gap-2 mt-3">
+        {/* インポート */}
+        <div className="relative flex-1">
+          <button
+            type="button"
+            onClick={() => setOpenMenu(openMenu === 'import' ? null : 'import')}
+            className={`w-full flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded ${hoverClass}`}
+          >
+            <Upload className="h-3.5 w-3.5" />
+            インポート
+            <ChevronDown className="h-3.5 w-3.5" />
+          </button>
+          {openMenu === 'import' && (
+            <div className="absolute left-0 top-full mt-1 w-44 bg-white border rounded shadow-lg z-20">
+              <button
+                type="button"
+                onClick={() => { setShowPasteModal(true); setOpenMenu(null) }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
+              >
+                <Clipboard className="h-3.5 w-3.5" />
+                表を貼り付け
+              </button>
+              <label className="block">
+                <input
+                  type="file"
+                  accept=".sim,.SIM"
+                  onChange={(e) => { handleImportSIMA(e); setOpenMenu(null) }}
+                  className="hidden"
+                />
+                <span className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-slate-100 cursor-pointer">
+                  <FileText className="h-3.5 w-3.5" />
+                  SIMA読込
+                </span>
+              </label>
+              <label className="block">
+                <input
+                  type="file"
+                  accept=".csv"
+                  onChange={(e) => { handleImportCSV(e); setOpenMenu(null) }}
+                  className="hidden"
+                />
+                <span className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-slate-100 cursor-pointer">
+                  <Upload className="h-3.5 w-3.5" />
+                  CSV読込
+                </span>
+              </label>
+            </div>
+          )}
+        </div>
+
+        {/* エクスポート */}
+        <div className="relative flex-1">
+          <button
+            type="button"
+            onClick={() => setOpenMenu(openMenu === 'export' ? null : 'export')}
+            disabled={exportDisabled}
+            className={`w-full flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded ${hoverClass} disabled:opacity-50`}
+          >
+            <Download className="h-3.5 w-3.5" />
+            エクスポート
+            {checkedIds.size > 0 && (
+              <span className="text-xs text-blue-600">({exportCount})</span>
+            )}
+            <ChevronDown className="h-3.5 w-3.5" />
+          </button>
+          {openMenu === 'export' && !exportDisabled && (
+            <div className="absolute left-0 top-full mt-1 w-44 bg-white border rounded shadow-lg z-20">
+              <button
+                type="button"
+                onClick={() => { handleExportCSV(); setOpenMenu(null) }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
+              >
+                <Download className="h-3.5 w-3.5" />
+                CSV出力
+              </button>
+              <button
+                type="button"
+                onClick={() => { handleExportSIMA(); setOpenMenu(null) }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
+              >
+                <Download className="h-3.5 w-3.5" />
+                SIMA出力
+              </button>
+              <button
+                type="button"
+                onClick={() => { handleExportExcel(); setOpenMenu(null) }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100 text-slate-500"
+              >
+                <Download className="h-3.5 w-3.5" />
+                EXCEL出力（実装予定）
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* 追加 */}
+        <button
+          type="button"
+          onClick={handleAddCoordinate}
+          className="flex items-center gap-1 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          追加
+        </button>
+      </div>
+    )
   }
 
   // ポップアウトモードの場合
@@ -495,71 +656,21 @@ export function CoordinatesPage() {
               </select>
             </div>
           </div>
-          <div className="flex gap-2 mt-3">
-            <button
-              onClick={() => setShowPasteModal(true)}
-              className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-gray-50"
-            >
-              <Clipboard className="h-3.5 w-3.5" />
-              表を貼り付け
-            </button>
-            <label className="flex-1">
-              <div className="relative">
-                <input
-                  type="file"
-                  accept=".sim,.SIM"
-                  onChange={handleImportSIMA}
-                  className="absolute inset-0 opacity-0 cursor-pointer"
-                />
-                <button className="w-full flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-gray-50">
-                  <FileText className="h-3.5 w-3.5" />
-                  SIMA読込
-                </button>
-              </div>
-            </label>
-            <label className="flex-1">
-              <div className="relative">
-                <input
-                  type="file"
-                  accept=".csv"
-                  onChange={handleImportCSV}
-                  className="absolute inset-0 opacity-0 cursor-pointer"
-                />
-                <button className="w-full flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-gray-50">
-                  <Upload className="h-3.5 w-3.5" />
-                  CSV読込
-                </button>
-              </div>
-            </label>
-            <button
-              onClick={handleExportCSV}
-              className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-gray-50"
-              disabled={coordinates.length === 0}
-            >
-              <Download className="h-3.5 w-3.5" />
-              CSV出力
-            </button>
-            <button
-              onClick={handleExportSIMA}
-              className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-gray-50"
-              disabled={coordinates.length === 0}
-            >
-              <Download className="h-3.5 w-3.5" />
-              SIMA出力
-            </button>
-            <button
-              onClick={handleAddCoordinate}
-              className="flex items-center gap-1 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              追加
-            </button>
-          </div>
+          {renderToolbar('hover:bg-gray-50')}
         </div>
         <div className="flex-1 overflow-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-100 sticky top-0">
               <tr>
+                <th className="px-2 py-2 w-8 text-center">
+                  <input
+                    type="checkbox"
+                    checked={allChecked}
+                    onChange={toggleCheckAll}
+                    className="cursor-pointer"
+                    aria-label="全選択"
+                  />
+                </th>
                 <th className="px-2 py-2 text-left font-medium">点番号</th>
                 <th className="px-2 py-2 text-right font-medium">X (m)</th>
                 <th className="px-2 py-2 text-right font-medium">Y (m)</th>
@@ -579,6 +690,15 @@ export function CoordinatesPage() {
                   }`}
                   onClick={() => handlePointClick(coord.id)}
                 >
+                  <td className="px-2 py-1 text-center" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={checkedIds.has(coord.id)}
+                      onChange={() => toggleCheck(coord.id)}
+                      className="cursor-pointer"
+                      aria-label={`${coord.pointNumber} を選択`}
+                    />
+                  </td>
                   <td className="px-2 py-1">
                     <input
                       type="text"
@@ -646,7 +766,7 @@ export function CoordinatesPage() {
               ))}
               {coordinates.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
+                  <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
                     座標データがありません
                   </td>
                 </tr>
@@ -655,7 +775,7 @@ export function CoordinatesPage() {
           </table>
         </div>
         <div className="px-4 py-2 bg-slate-50 border-t text-xs text-muted-foreground">
-          {coordinates.length} 点登録済み
+          {coordinates.length} 点登録済み{checkedIds.size > 0 && `（${checkedIds.size} 点選択中）`}
         </div>
       </div>
     )
@@ -695,66 +815,7 @@ export function CoordinatesPage() {
                     </select>
                   </div>
                 </div>
-                <div className="flex gap-2 mt-3">
-                  <button
-                    onClick={() => setShowPasteModal(true)}
-                    className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white"
-                  >
-                    <Clipboard className="h-3.5 w-3.5" />
-                    表を貼り付け
-                  </button>
-                  <label className="flex-1">
-                    <div className="relative">
-                      <input
-                        type="file"
-                        accept=".sim,.SIM"
-                        onChange={handleImportSIMA}
-                        className="absolute inset-0 opacity-0 cursor-pointer"
-                      />
-                      <button className="w-full flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white">
-                        <FileText className="h-3.5 w-3.5" />
-                        SIMA読込
-                      </button>
-                    </div>
-                  </label>
-                  <label className="flex-1">
-                    <div className="relative">
-                      <input
-                        type="file"
-                        accept=".csv"
-                        onChange={handleImportCSV}
-                        className="absolute inset-0 opacity-0 cursor-pointer"
-                      />
-                      <button className="w-full flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white">
-                        <Upload className="h-3.5 w-3.5" />
-                        CSV読込
-                      </button>
-                    </div>
-                  </label>
-                  <button
-                    onClick={handleExportCSV}
-                    className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white"
-                    disabled={coordinates.length === 0}
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    CSV出力
-                  </button>
-                  <button
-                    onClick={handleExportSIMA}
-                    className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white"
-                    disabled={coordinates.length === 0}
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    SIMA出力
-                  </button>
-                  <button
-                    onClick={handleAddCoordinate}
-                    className="flex items-center gap-1 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    追加
-                  </button>
-                </div>
+                {renderToolbar('hover:bg-white')}
               </div>
 
               {/* 座標テーブル */}
@@ -762,6 +823,15 @@ export function CoordinatesPage() {
                 <table className="w-full text-sm">
                   <thead className="bg-slate-100 sticky top-0">
                     <tr>
+                      <th className="px-2 py-2 w-8 text-center">
+                        <input
+                          type="checkbox"
+                          checked={allChecked}
+                          onChange={toggleCheckAll}
+                          className="cursor-pointer"
+                          aria-label="全選択"
+                        />
+                      </th>
                       <th className="px-2 py-2 text-left font-medium">点番号</th>
                       <th className="px-2 py-2 text-right font-medium">X (m)</th>
                       <th className="px-2 py-2 text-right font-medium">Y (m)</th>
@@ -781,6 +851,15 @@ export function CoordinatesPage() {
                         }`}
                         onClick={() => handlePointClick(coord.id)}
                       >
+                        <td className="px-2 py-1 text-center" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={checkedIds.has(coord.id)}
+                            onChange={() => toggleCheck(coord.id)}
+                            className="cursor-pointer"
+                            aria-label={`${coord.pointNumber} を選択`}
+                          />
+                        </td>
                         <td className="px-2 py-1">
                           <input
                             type="text"
@@ -848,7 +927,7 @@ export function CoordinatesPage() {
                     ))}
                     {coordinates.length === 0 && (
                       <tr>
-                        <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
+                        <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
                           座標データがありません
                         </td>
                       </tr>
@@ -859,7 +938,7 @@ export function CoordinatesPage() {
 
               {/* ステータスバー */}
               <div className="px-4 py-2 bg-slate-50 border-t text-xs text-muted-foreground">
-                {coordinates.length} 点登録済み
+                {coordinates.length} 点登録済み{checkedIds.size > 0 && `（${checkedIds.size} 点選択中）`}
               </div>
             </div>
         </div>
