@@ -23,6 +23,7 @@ import { CadExportPage } from '@/features/underdrain/CadExportPage'
 import { ReportsPage } from '@/features/underdrain/ReportsPage'
 // 新規工種
 import { SoilImportWorkAreaPage } from '@/features/soil-import/SoilImportWorkAreaPage'
+import { SoilImportStripPlanPage } from '@/features/soil-import/SoilImportStripPlanPage'
 import { SimpleGradingWorkAreaPage } from '@/features/simple-grading/SimpleGradingWorkAreaPage'
 import { GradingWorkAreaPage } from '@/features/grading/GradingWorkAreaPage'
 import { SubsoilWorkAreaPage } from '@/features/subsoil/SubsoilWorkAreaPage'
@@ -143,7 +144,7 @@ function AppRoutes() {
         {/* 客土工事 */}
         <Route path="soil-import">
           <Route path="work-area" element={<SoilImportWorkAreaPage />} />
-          <Route path="strip-plan" element={<PlaceholderPage title="帯置計画作成" />} />
+          <Route path="strip-plan" element={<SoilImportStripPlanPage />} />
           <Route path="heap-plan" element={<PlaceholderPage title="坪置計画作成" />} />
         </Route>
         {/* 簡易整地 */}
