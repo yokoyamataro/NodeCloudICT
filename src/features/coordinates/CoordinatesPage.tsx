@@ -6,7 +6,7 @@ import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useGlobalSaveRegistry } from '@/stores/globalSaveRegistry'
 import { CoordinateMap, type BaseLayerType } from '@/components/map/CoordinateMap'
-import { loadSimaFile } from '@/lib/sima-parser'
+import { loadSimaFile, downloadSimaFile } from '@/lib/sima-parser'
 import { PageHeader } from '@/components/layout/PageHeader'
 import type { CoordinateType } from '@/types/database'
 
@@ -312,6 +312,24 @@ export function CoordinatesPage() {
     URL.revokeObjectURL(url)
   }
 
+  const handleExportSIMA = () => {
+    if (coordinates.length === 0) return
+    const projectName = currentFarm?.name || 'NoName'
+    downloadSimaFile(
+      {
+        projectName,
+        zone,
+        points: coordinates.map((c) => ({
+          pointNumber: c.pointNumber,
+          x: c.x,
+          y: c.y,
+          z: c.z,
+        })),
+      },
+      `${projectName}_coordinates.sim`,
+    )
+  }
+
   // モーダルからのペースト処理
   const handleModalPaste = useCallback((text: string, pasteType: CoordinateType) => {
     if (!text) return
@@ -522,6 +540,14 @@ export function CoordinatesPage() {
               CSV出力
             </button>
             <button
+              onClick={handleExportSIMA}
+              className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-gray-50"
+              disabled={coordinates.length === 0}
+            >
+              <Download className="h-3.5 w-3.5" />
+              SIMA出力
+            </button>
+            <button
               onClick={handleAddCoordinate}
               className="flex items-center gap-1 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90"
             >
@@ -712,6 +738,14 @@ export function CoordinatesPage() {
                   >
                     <Download className="h-3.5 w-3.5" />
                     CSV出力
+                  </button>
+                  <button
+                    onClick={handleExportSIMA}
+                    className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white"
+                    disabled={coordinates.length === 0}
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    SIMA出力
                   </button>
                   <button
                     onClick={handleAddCoordinate}
