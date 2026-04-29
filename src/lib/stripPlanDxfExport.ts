@@ -3,7 +3,7 @@
 // DXF は標準的な CAD 慣習（X=東, Y=北）に合わせて軸を入れ替えて出力する。
 
 import Encoding from 'encoding-japanese'
-import { bufferPolyline, polylineLength, polylineMidpoint, type XY } from './stripPlanGeometry'
+import { bufferPolyline, polylineLength, polylineMidpoint, truckDividers, type XY } from './stripPlanGeometry'
 
 export interface StripPlanLine {
   vertices: XY[]
@@ -16,6 +16,7 @@ export interface StripPlanDxfOptions {
   areaPolygonXY: XY[]
   strips: StripPlanLine[]
   halfWidth: number // m
+  lengthPerTruck?: number // v/CA (m)。指定時は台数分割線を出力
   farmName?: string
 }
 
@@ -163,6 +164,7 @@ export function exportStripPlanDxf(opts: StripPlanDxfOptions): void {
   b.addLayer('AREA', 8) // 区域：グレー
   b.addLayer('CENTERLINE', 5) // 中心線：青
   b.addLayer('BUFFER', 4) // 帯ポリゴン：シアン
+  b.addLayer('DIVIDER', 6) // 台数分割線：マゼンタ
   b.addLayer('NUMBER', 1) // 番号：赤
   b.addLayer('DETAIL', 7) // 詳細テキスト：黒/白
 
@@ -192,6 +194,15 @@ export function exportStripPlanDxf(opts: StripPlanDxfOptions): void {
         const a = tx(buf[i])
         const c = tx(buf[(i + 1) % buf.length])
         b.line('BUFFER', a.x, a.y, c.x, c.y)
+      }
+    }
+    // 台数分割線
+    if (opts.lengthPerTruck && opts.lengthPerTruck > 0) {
+      const divs = truckDividers(strip.vertices, opts.lengthPerTruck, opts.halfWidth)
+      for (const [s, e] of divs) {
+        const ts = tx(s)
+        const te = tx(e)
+        b.line('DIVIDER', ts.x, ts.y, te.x, te.y)
       }
     }
     // 番号と詳細

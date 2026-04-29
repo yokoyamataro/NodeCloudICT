@@ -457,3 +457,58 @@ export function polylineSegmentDirection(line: XY[], segIdx: number): XY {
   if (segIdx < 0 || segIdx >= line.length - 1) return { x: 1, y: 0 }
   return normalize(sub(line[segIdx + 1], line[segIdx]))
 }
+
+// 折れ線上で始点から弧長 s の位置の点とセグメント番号を返す
+export function pointAtDistance(
+  line: XY[],
+  s: number,
+): { point: XY; segIdx: number } | null {
+  if (line.length < 2 || s < 0) return null
+  let acc = 0
+  for (let i = 1; i < line.length; i++) {
+    const a = line[i - 1]
+    const b = line[i]
+    const segLen = Math.hypot(b.x - a.x, b.y - a.y)
+    if (acc + segLen >= s - EPS) {
+      const t = segLen > 0 ? (s - acc) / segLen : 0
+      return {
+        point: { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t },
+        segIdx: i - 1,
+      }
+    }
+    acc += segLen
+  }
+  return null
+}
+
+// 折れ線を unitLength 間隔で分割する区切り線の配列を返す。
+// 各区切り線は折れ線方向に垂直な、長さ 2*halfWidth の線分。
+// 折れ線の長さ L に対して、区切り線の本数 = floor(L / unitLength)（端点を除いた内部のみ）。
+export function truckDividers(
+  line: XY[],
+  unitLength: number,
+  halfWidth: number,
+): [XY, XY][] {
+  if (line.length < 2 || unitLength <= 0 || halfWidth <= 0) return []
+  const total = polylineLength(line)
+  const dividers: [XY, XY][] = []
+  const eps = 1e-6
+  for (let k = 1; ; k++) {
+    const s = k * unitLength
+    if (s >= total - eps) break
+    const pt = pointAtDistance(line, s)
+    if (!pt) break
+    const dir = polylineSegmentDirection(line, pt.segIdx)
+    const perp = { x: -dir.y, y: dir.x }
+    const start = {
+      x: pt.point.x - perp.x * halfWidth,
+      y: pt.point.y - perp.y * halfWidth,
+    }
+    const end = {
+      x: pt.point.x + perp.x * halfWidth,
+      y: pt.point.y + perp.y * halfWidth,
+    }
+    dividers.push([start, end])
+  }
+  return dividers
+}

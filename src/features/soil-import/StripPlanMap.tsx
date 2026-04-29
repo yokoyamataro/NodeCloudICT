@@ -86,6 +86,8 @@ export interface StripPlanMapProps {
   // 仮表示（確定前の平行コピー候補）
   provisionalLines?: [number, number][][]
   provisionalBuffers?: [number, number][][]
+  // 台数分割線（各帯を v/CA 間隔で区切る短い線）
+  dividers?: [number, number][][]
   freeLabels?: StripLabel[]
   freeCurrentLabel?: StripLabel | null
   selectedFreeIdx?: number | null
@@ -160,6 +162,7 @@ export function StripPlanMap({
   freeCurrentBuffer = null,
   provisionalLines = [],
   provisionalBuffers = [],
+  dividers = [],
   freeLabels = [],
   freeCurrentLabel = null,
   selectedFreeIdx = null,
@@ -419,6 +422,15 @@ export function StripPlanMap({
           pathOptions={{ color: '#f59e0b', weight: 3, dashArray: '6,4', opacity: 0.85 }}
         />
       )}
+
+      {/* 台数分割線（短い直行線） */}
+      {dividers.map((line, i) => (
+        <Polyline
+          key={`div-${i}`}
+          positions={line}
+          pathOptions={{ color: '#7c3aed', weight: 1, opacity: 0.6, interactive: false }}
+        />
+      ))}
 
       {/* 帯ラベル：番号は円、詳細は帯と平行に回転表示 */}
       {freeLabels.flatMap((lbl, i) => {

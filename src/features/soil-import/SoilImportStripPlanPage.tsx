@@ -15,6 +15,7 @@ import {
   nearestPointOnPolyline,
   offsetPolyline,
   polylineSegmentDirection,
+  truckDividers,
   type XY,
 } from '@/lib/stripPlanGeometry'
 import { StripPlanMap, type StripPlanBaseLayer, type StripLabel } from './StripPlanMap'
@@ -284,6 +285,25 @@ export function SoilImportStripPlanPage() {
   }, [previewSegment, converter])
 
   const halfWidth = params.crossWB / 2
+
+  // 台数分割線（確定済み帯）
+  const dividerLines = useMemo<[number, number][][]>(() => {
+    if (calc.lengthPerTruck <= 0) return []
+    const result: [number, number][][] = []
+    for (const line of freeLines) {
+      const lineXY = line.map((ll) => {
+        const xy = converter.toXY(ll[0], ll[1])
+        return { x: xy.x, y: xy.y }
+      })
+      const divs = truckDividers(lineXY, calc.lengthPerTruck, halfWidth)
+      for (const [s, e] of divs) {
+        const sLL = converter.toLatLng(s.x, s.y)
+        const eLL = converter.toLatLng(e.x, e.y)
+        result.push([[sLL.lat, sLL.lng], [eLL.lat, eLL.lng]])
+      }
+    }
+    return result
+  }, [freeLines, calc.lengthPerTruck, halfWidth, converter])
 
   const freeBuffers = useMemo<[number, number][][]>(() => {
     const result: [number, number][][] = []
@@ -1000,6 +1020,7 @@ export function SoilImportStripPlanPage() {
       areaPolygonXY,
       strips,
       halfWidth,
+      lengthPerTruck: calc.lengthPerTruck,
       farmName: currentFarm?.name,
     })
   }
@@ -1557,6 +1578,7 @@ export function SoilImportStripPlanPage() {
               freeCurrentBuffer={freeCurrentBuffer}
               provisionalLines={allProvisional}
               provisionalBuffers={provisionalBuffers}
+              dividers={dividerLines}
               freeLabels={freeLabels}
               freeCurrentLabel={freeCurrentLabel}
               selectedFreeIdx={selectedFreeIdx}
