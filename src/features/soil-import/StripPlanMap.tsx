@@ -26,7 +26,11 @@ export interface StripPlanMapProps {
   axisBuffers?: [number, number][][]
   parallelBuffers?: [number, number][][]
   perpBuffers?: [number, number][][]
-  freeBuffers?: [number, number][][]
+  freeBuffers?: [number, number][][] // 確定済みのフリー線
+  freeCurrentBuffer?: [number, number][] | null // 入力途中（プレビュー含む）
+  selectedFreeIdx?: number | null
+  onSelectFreeLine?: (idx: number | null) => void
+  onFinishCurrentLine?: () => void
   // 背景レイヤ
   baseLayer?: StripPlanBaseLayer
   // 地図クリックで点を追加するモード
@@ -85,6 +89,10 @@ export function StripPlanMap({
   parallelBuffers = [],
   perpBuffers = [],
   freeBuffers = [],
+  freeCurrentBuffer = null,
+  selectedFreeIdx = null,
+  onSelectFreeLine,
+  onFinishCurrentLine,
   baseLayer = 'gsi-photo',
   pickMode,
   onMapClick,
@@ -158,10 +166,36 @@ export function StripPlanMap({
         <Polygon key={`axis-buf-${i}`} positions={poly}
           pathOptions={{ color: '#dc2626', fillColor: '#dc2626', fillOpacity: 0.25, weight: 1 }} />
       ))}
-      {freeBuffers.map((poly, i) => (
-        <Polygon key={`free-buf-${i}`} positions={poly}
-          pathOptions={{ color: '#a855f7', fillColor: '#a855f7', fillOpacity: 0.25, weight: 1 }} />
-      ))}
+      {freeBuffers.map((poly, i) => {
+        const selected = selectedFreeIdx === i
+        return (
+          <Polygon
+            key={`free-buf-${i}`}
+            positions={poly}
+            pathOptions={{
+              color: selected ? '#7c3aed' : '#a855f7',
+              fillColor: '#a855f7',
+              fillOpacity: selected ? 0.5 : 0.25,
+              weight: selected ? 3 : 1,
+            }}
+            eventHandlers={onSelectFreeLine ? {
+              click: () => onSelectFreeLine(selected ? null : i),
+            } : undefined}
+          />
+        )
+      })}
+      {freeCurrentBuffer && (
+        <Polygon
+          positions={freeCurrentBuffer}
+          pathOptions={{
+            color: '#a855f7',
+            fillColor: '#a855f7',
+            fillOpacity: 0.18,
+            weight: 1,
+            dashArray: '4,4',
+          }}
+        />
+      )}
 
       {/* 平行線 */}
       {parallelLines.map((line, i) => (
@@ -206,14 +240,34 @@ export function StripPlanMap({
           pathOptions={{ color: '#a855f7', weight: 3 }}
         />
       )}
-      {freeCurrent.map((pt, i) => (
-        <CircleMarker
-          key={`fc-${i}`}
-          center={pt}
-          radius={4}
-          pathOptions={{ color: '#a855f7', fillColor: '#fff', fillOpacity: 1, weight: 2 }}
-        />
-      ))}
+      {freeCurrent.map((pt, i) => {
+        const isLast = i === freeCurrent.length - 1 && freeCurrent.length >= 2
+        return (
+          <CircleMarker
+            key={`fc-${i}`}
+            center={pt}
+            radius={isLast ? 7 : 4}
+            pathOptions={{
+              color: isLast ? '#7c3aed' : '#a855f7',
+              fillColor: '#fff',
+              fillOpacity: 1,
+              weight: isLast ? 3 : 2,
+            }}
+            eventHandlers={isLast && onFinishCurrentLine ? {
+              click: (e) => {
+                L.DomEvent.stopPropagation(e.originalEvent)
+                onFinishCurrentLine()
+              },
+            } : undefined}
+          >
+            {isLast && (
+              <Tooltip direction="top" offset={[0, -8]} opacity={0.9}>
+                クリック / Enter で確定
+              </Tooltip>
+            )}
+          </CircleMarker>
+        )
+      })}
 
       {/* マウス追従プレビュー：直前点 → 現在位置 */}
       {previewSegment && (

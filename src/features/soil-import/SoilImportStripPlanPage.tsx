@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Layers, MousePointerClick, RotateCcw, Pencil, CornerDownRight, Undo2 } from 'lucide-react'
+import { Layers, MousePointerClick, RotateCcw, Pencil, CornerDownRight, Undo2, Trash2, Edit3 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
@@ -125,6 +125,7 @@ export function SoilImportStripPlanPage() {
   const [freeLines, setFreeLines] = useState<[number, number][][]>([])
   const [freeCurrent, setFreeCurrent] = useState<[number, number][]>([])
   const [hoverLatLng, setHoverLatLng] = useState<[number, number] | null>(null)
+  const [selectedFreeIdx, setSelectedFreeIdx] = useState<number | null>(null)
 
   useEffect(() => {
     if (!selectedAreaId && areas.length > 0) {
@@ -139,6 +140,7 @@ export function SoilImportStripPlanPage() {
     setFreeLines([])
     setFreeCurrent([])
     setFreeDrawMode(false)
+    setSelectedFreeIdx(null)
   }, [selectedAreaId])
 
   // パターン切替時はピック・描画モードを抜ける
@@ -260,11 +262,10 @@ export function SoilImportStripPlanPage() {
     return Math.hypot(a.x - b.x, a.y - b.y)
   }, [previewSegment, converter])
 
-  // フリー描画ラインの帯ポリゴン（確定済み + 入力途中 + プレビュー）
+  // 確定済みフリー線の帯ポリゴン
   const freeBuffers = useMemo<[number, number][][]>(() => {
     if (pattern !== 'free') return []
     const result: [number, number][][] = []
-    // 確定済みライン
     for (const line of freeLines) {
       const lineXY = line.map((ll) => {
         const xy = converter.toXY(ll[0], ll[1])
@@ -278,26 +279,28 @@ export function SoilImportStripPlanPage() {
         }))
       }
     }
-    // 入力途中ライン（+ プレビュー位置を末尾に追加）
+    return result
+  }, [pattern, freeLines, halfWidth, converter])
+
+  // 入力途中（+ プレビュー）のフリー線の帯ポリゴン
+  const freeCurrentBuffer = useMemo<[number, number][] | null>(() => {
+    if (pattern !== 'free') return null
     const drawing: [number, number][] = [
       ...freeCurrent,
       ...(previewSegment ? [previewSegment[1]] : []),
     ]
-    if (drawing.length >= 2) {
-      const lineXY = drawing.map((ll) => {
-        const xy = converter.toXY(ll[0], ll[1])
-        return { x: xy.x, y: xy.y }
-      })
-      const buf = bufferPolyline(lineXY, halfWidth)
-      if (buf) {
-        result.push(buf.map(({ x, y }) => {
-          const { lat, lng } = converter.toLatLng(x, y)
-          return [lat, lng] as [number, number]
-        }))
-      }
-    }
-    return result
-  }, [pattern, freeLines, freeCurrent, previewSegment, halfWidth, converter])
+    if (drawing.length < 2) return null
+    const lineXY = drawing.map((ll) => {
+      const xy = converter.toXY(ll[0], ll[1])
+      return { x: xy.x, y: xy.y }
+    })
+    const buf = bufferPolyline(lineXY, halfWidth)
+    if (!buf) return null
+    return buf.map(({ x, y }) => {
+      const { lat, lng } = converter.toLatLng(x, y)
+      return [lat, lng] as [number, number]
+    })
+  }, [pattern, freeCurrent, previewSegment, halfWidth, converter])
 
   // 統計（フリー時はプレビュー区間も含む）
   const generated = useMemo(() => {
@@ -346,6 +349,40 @@ export function SoilImportStripPlanPage() {
       setFreeLines((prev) => [...prev, freeCurrent])
     }
     setFreeCurrent([])
+  }
+
+  // Enter キーで確定（フリー描画モード時）
+  useEffect(() => {
+    if (!freeDrawMode) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter') return
+      // input にフォーカスがあるときは無視
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) return
+      if (freeCurrent.length >= 2) {
+        e.preventDefault()
+        setFreeLines((prev) => [...prev, freeCurrent])
+        setFreeCurrent([])
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [freeDrawMode, freeCurrent])
+
+  const deleteSelectedFree = () => {
+    if (selectedFreeIdx === null) return
+    setFreeLines((prev) => prev.filter((_, i) => i !== selectedFreeIdx))
+    setSelectedFreeIdx(null)
+  }
+
+  const editSelectedFree = () => {
+    if (selectedFreeIdx === null) return
+    const line = freeLines[selectedFreeIdx]
+    if (!line) return
+    setFreeLines((prev) => prev.filter((_, i) => i !== selectedFreeIdx))
+    setFreeCurrent(line)
+    setFreeDrawMode(true)
+    setSelectedFreeIdx(null)
   }
 
   const undoFreePoint = () => {
@@ -500,8 +537,9 @@ export function SoilImportStripPlanPage() {
               <h2 className="font-semibold text-slate-800 text-sm">フリー描画</h2>
               <div className="text-xs text-slate-500">
                 {!freeDrawMode && '「描画開始」を押して、地図クリックで帯の中心線を作図'}
-                {freeDrawMode && freeCurrent.length === 0 && '地図クリックで点を追加'}
-                {freeDrawMode && freeCurrent.length > 0 && `現在の線：${freeCurrent.length} 点 / 「次の帯」で確定して新しい線へ`}
+                {freeDrawMode && freeCurrent.length === 0 && '地図クリックで 1 点目を追加'}
+                {freeDrawMode && freeCurrent.length === 1 && '地図クリックで 2 点目（追加または最終点）'}
+                {freeDrawMode && freeCurrent.length >= 2 && `現在の線：${freeCurrent.length} 点 / 最終点クリック・Enter・「次の帯」で確定`}
               </div>
               <div className="flex gap-2">
                 <button
@@ -518,7 +556,7 @@ export function SoilImportStripPlanPage() {
                   onClick={finishFreeLine}
                   disabled={freeCurrent.length < 2}
                   className="flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
-                  title="現在の線を確定して新しい線へ"
+                  title="現在の線を確定（Enter キーでも確定）"
                 >
                   <CornerDownRight className="h-3.5 w-3.5" />
                   次の帯
@@ -547,6 +585,46 @@ export function SoilImportStripPlanPage() {
               <div className="text-xs text-slate-500">
                 確定済み：{freeLines.length} 本（合計 {freeLinesLengthM.toFixed(1)} m）
               </div>
+
+              {/* 選択中の線の操作 */}
+              {selectedFreeIdx !== null && freeLines[selectedFreeIdx] && (
+                <div className="mt-2 p-2 bg-purple-50 border border-purple-200 rounded space-y-2">
+                  <div className="text-xs text-purple-800">
+                    選択中：{selectedFreeIdx + 1} 本目（{freeLines[selectedFreeIdx].length} 点）
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={editSelectedFree}
+                      className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded bg-white hover:bg-slate-50"
+                      title="この線を編集状態に戻す（点列を引き継いで再作図）"
+                    >
+                      <Edit3 className="h-3.5 w-3.5" />
+                      再編集
+                    </button>
+                    <button
+                      type="button"
+                      onClick={deleteSelectedFree}
+                      className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded bg-white hover:bg-red-50 text-red-600"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      削除
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedFreeIdx(null)}
+                      className="flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded bg-white hover:bg-slate-50"
+                    >
+                      解除
+                    </button>
+                  </div>
+                </div>
+              )}
+              {pattern === 'free' && selectedFreeIdx === null && freeLines.length > 0 && !freeDrawMode && (
+                <div className="text-xs text-slate-400">
+                  既存の帯をクリックすると選択（削除・再編集）できます
+                </div>
+              )}
             </section>
           )}
 
@@ -624,6 +702,10 @@ export function SoilImportStripPlanPage() {
               parallelBuffers={parallelBuffers}
               perpBuffers={perpBuffers}
               freeBuffers={freeBuffers}
+              freeCurrentBuffer={freeCurrentBuffer}
+              selectedFreeIdx={selectedFreeIdx}
+              onSelectFreeLine={setSelectedFreeIdx}
+              onFinishCurrentLine={finishFreeLine}
               baseLayer={baseLayer}
               pickMode={pickMode || freeDrawMode}
               onMapClick={handleMapClick}
