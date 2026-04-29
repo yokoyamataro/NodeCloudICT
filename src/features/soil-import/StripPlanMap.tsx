@@ -20,18 +20,38 @@ export interface StripPlanMapProps {
   freeLines?: [number, number][][]
   // フリー描画の入力途中ライン（点列）
   freeCurrent?: [number, number][]
+  // プレビューセグメント（フリー描画中の直前点→ホバー位置）
+  previewSegment?: [[number, number], [number, number]]
   // 背景レイヤ
   baseLayer?: StripPlanBaseLayer
   // 地図クリックで点を追加するモード
   pickMode: boolean
   onMapClick?: (latLng: [number, number]) => void
+  // ホバー位置（lat/lng）を親に通知
+  onMouseMove?: (latLng: [number, number] | null) => void
 }
 
-function ClickCapture({ enabled, onClick }: { enabled: boolean; onClick?: (ll: [number, number]) => void }) {
+function ClickCapture({
+  enabled,
+  onClick,
+  onMouseMove,
+}: {
+  enabled: boolean
+  onClick?: (ll: [number, number]) => void
+  onMouseMove?: (ll: [number, number] | null) => void
+}) {
   useMapEvents({
     click: (e) => {
       if (!enabled || !onClick) return
       onClick([e.latlng.lat, e.latlng.lng])
+    },
+    mousemove: (e) => {
+      if (!enabled || !onMouseMove) return
+      onMouseMove([e.latlng.lat, e.latlng.lng])
+    },
+    mouseout: () => {
+      if (!enabled || !onMouseMove) return
+      onMouseMove(null)
     },
   })
   return null
@@ -55,9 +75,11 @@ export function StripPlanMap({
   perpLines = [],
   freeLines = [],
   freeCurrent = [],
+  previewSegment,
   baseLayer = 'gsi-photo',
   pickMode,
   onMapClick,
+  onMouseMove,
 }: StripPlanMapProps) {
   const initialCenter: [number, number] =
     areaPolygon.length > 0 ? areaPolygon[0] : [35.6762, 139.6503]
@@ -98,7 +120,7 @@ export function StripPlanMap({
         />
       )}
 
-      <ClickCapture enabled={pickMode} onClick={onMapClick} />
+      <ClickCapture enabled={pickMode} onClick={onMapClick} onMouseMove={onMouseMove} />
       {areaPolygon.length >= 3 && <FitToPolygon positions={areaPolygon} />}
 
       {/* 工事区域 */}
@@ -154,7 +176,7 @@ export function StripPlanMap({
       {freeCurrent.length >= 2 && (
         <Polyline
           positions={freeCurrent}
-          pathOptions={{ color: '#a855f7', weight: 3, dashArray: '4,4' }}
+          pathOptions={{ color: '#a855f7', weight: 3 }}
         />
       )}
       {freeCurrent.map((pt, i) => (
@@ -165,6 +187,14 @@ export function StripPlanMap({
           pathOptions={{ color: '#a855f7', fillColor: '#fff', fillOpacity: 1, weight: 2 }}
         />
       ))}
+
+      {/* マウス追従プレビュー：直前点 → 現在位置 */}
+      {previewSegment && (
+        <Polyline
+          positions={previewSegment}
+          pathOptions={{ color: '#a855f7', weight: 2, dashArray: '6,4', opacity: 0.7 }}
+        />
+      )}
 
       {/* 基線（クリック点を結ぶ） */}
       {baseline.length >= 2 && (

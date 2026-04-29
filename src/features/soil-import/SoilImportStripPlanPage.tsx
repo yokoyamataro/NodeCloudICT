@@ -122,6 +122,7 @@ export function SoilImportStripPlanPage() {
   const [freeDrawMode, setFreeDrawMode] = useState(false)
   const [freeLines, setFreeLines] = useState<[number, number][][]>([])
   const [freeCurrent, setFreeCurrent] = useState<[number, number][]>([])
+  const [hoverLatLng, setHoverLatLng] = useState<[number, number] | null>(null)
 
   useEffect(() => {
     if (!selectedAreaId && areas.length > 0) {
@@ -206,10 +207,10 @@ export function SoilImportStripPlanPage() {
   const parallelLines = useMemo(() => segmentsToLatLng(strips.parallelXY), [strips.parallelXY, converter]) // eslint-disable-line react-hooks/exhaustive-deps
   const perpLines = useMemo(() => segmentsToLatLng(strips.perpXY), [strips.perpXY, converter]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // フリー描画ラインの XY 化と長さ
+  // フリー描画ラインの XY 化と長さ（確定済み + 入力途中）
   const freeLinesLengthM = useMemo(() => {
     let total = 0
-    for (const line of freeLines) {
+    for (const line of [...freeLines, freeCurrent]) {
       for (let i = 1; i < line.length; i++) {
         const a = converter.toXY(line[i - 1][0], line[i - 1][1])
         const b = converter.toXY(line[i][0], line[i][1])
@@ -217,20 +218,45 @@ export function SoilImportStripPlanPage() {
       }
     }
     return total
-  }, [freeLines, converter])
+  }, [freeLines, freeCurrent, converter])
 
-  // 統計
+  // マウス追従プレビューセグメント（直前点 → ホバー位置）
+  const previewSegment = useMemo<[[number, number], [number, number]] | undefined>(() => {
+    if (pattern !== 'free' || !freeDrawMode) return undefined
+    if (freeCurrent.length === 0 || !hoverLatLng) return undefined
+    const last = freeCurrent[freeCurrent.length - 1]
+    return [last, hoverLatLng]
+  }, [pattern, freeDrawMode, freeCurrent, hoverLatLng])
+
+  // プレビュー区間の長さ
+  const previewLengthM = useMemo(() => {
+    if (!previewSegment) return 0
+    const a = converter.toXY(previewSegment[0][0], previewSegment[0][1])
+    const b = converter.toXY(previewSegment[1][0], previewSegment[1][1])
+    return Math.hypot(a.x - b.x, a.y - b.y)
+  }, [previewSegment, converter])
+
+  // 統計（フリー時はプレビュー区間も含む）
   const generated = useMemo(() => {
     if (pattern === 'free') {
-      const lenTotal = freeLinesLengthM
+      const lenTotal = freeLinesLengthM + previewLengthM
       const trucks = calc.lengthPerTruck > 0 ? lenTotal / calc.lengthPerTruck : 0
-      return { lenTotal, trucks, lineCount: freeLines.length }
+      // 描画中の現在線が 1 点以上ある場合も「現在描画中の線」として 1 本扱い
+      const drawingExtra = freeCurrent.length >= 1 ? 1 : 0
+      return { lenTotal, trucks, lineCount: freeLines.length + drawingExtra }
     }
     const all: [XY, XY][] = [...strips.axisXY, ...strips.parallelXY, ...strips.perpXY]
     const lenTotal = totalLength(all)
     const trucks = calc.lengthPerTruck > 0 ? lenTotal / calc.lengthPerTruck : 0
     return { lenTotal, trucks, lineCount: all.length }
-  }, [strips, calc.lengthPerTruck, pattern, freeLines.length, freeLinesLengthM])
+  }, [strips, calc.lengthPerTruck, pattern, freeLines.length, freeCurrent.length, freeLinesLengthM, previewLengthM])
+
+  // 目標との差分
+  const diff = useMemo(() => {
+    const dLen = generated.lenTotal - calc.L
+    const dTrucks = generated.trucks - calc.n
+    return { dLen, dTrucks }
+  }, [generated, calc.L, calc.n])
 
   const handleMapClick = (ll: [number, number]) => {
     if (freeDrawMode) {
@@ -461,14 +487,48 @@ export function SoilImportStripPlanPage() {
             </section>
           )}
 
-          {/* 生成統計 */}
-          {((pattern !== 'free' && baselineLatLng.length === 2) || (pattern === 'free' && (freeLines.length > 0 || freeCurrent.length >= 2))) && (
-            <section className="grid grid-cols-3 gap-2">
-              <ResultCard label="生成本数" value={generated.lineCount.toString()} unit="本" />
-              <ResultCard label="生成総延長" value={generated.lenTotal.toFixed(1)} unit="m"
-                hint={`目標 L=${calc.L.toFixed(0)} m`} />
-              <ResultCard label="台数換算" value={generated.trucks.toFixed(1)} unit="台"
-                hint={`目標 n=${calc.n} 台`} />
+          {/* 生成統計 + 目標との差分 */}
+          {((pattern !== 'free' && baselineLatLng.length === 2) || (pattern === 'free' && (freeLines.length > 0 || freeCurrent.length >= 1))) && (
+            <section className="space-y-2">
+              <table className="w-full text-xs bg-white border rounded-lg overflow-hidden">
+                <thead className="bg-slate-100">
+                  <tr>
+                    <th className="px-2 py-1.5 text-left font-medium">項目</th>
+                    <th className="px-2 py-1.5 text-right font-medium">生成</th>
+                    <th className="px-2 py-1.5 text-right font-medium">目標</th>
+                    <th className="px-2 py-1.5 text-right font-medium">差分</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-t">
+                    <td className="px-2 py-1.5">総延長 (m)</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{generated.lenTotal.toFixed(1)}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{calc.L.toFixed(1)}</td>
+                    <td className={`px-2 py-1.5 text-right tabular-nums font-medium ${diff.dLen < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                      {diff.dLen >= 0 ? '+' : ''}{diff.dLen.toFixed(1)}
+                    </td>
+                  </tr>
+                  <tr className="border-t">
+                    <td className="px-2 py-1.5">台数 (台)</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{generated.trucks.toFixed(1)}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{calc.n}</td>
+                    <td className={`px-2 py-1.5 text-right tabular-nums font-medium ${diff.dTrucks < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                      {diff.dTrucks >= 0 ? '+' : ''}{diff.dTrucks.toFixed(1)}
+                    </td>
+                  </tr>
+                  <tr className="border-t">
+                    <td className="px-2 py-1.5">本数 (本)</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums" colSpan={3}>
+                      {generated.lineCount}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              {pattern === 'free' && previewLengthM > 0 && (
+                <div className="text-xs text-purple-600 px-1">
+                  プレビュー区間：{previewLengthM.toFixed(1)} m（{calc.lengthPerTruck > 0 ? (previewLengthM / calc.lengthPerTruck).toFixed(2) : '-'} 台分）
+                </div>
+              )}
             </section>
           )}
         </div>
@@ -496,9 +556,11 @@ export function SoilImportStripPlanPage() {
               perpLines={perpLines}
               freeLines={freeLines}
               freeCurrent={freeCurrent}
+              previewSegment={previewSegment}
               baseLayer={baseLayer}
               pickMode={pickMode || freeDrawMode}
               onMapClick={handleMapClick}
+              onMouseMove={setHoverLatLng}
             />
           </div>
         </div>
