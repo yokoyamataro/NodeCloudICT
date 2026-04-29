@@ -292,25 +292,6 @@ export function SoilImportStripPlanPage() {
     return labels
   }, [freeLines, converter, calc.lengthPerTruck])
 
-  // 仮表示（平行コピー確定前）の帯ポリゴン
-  const provisionalBuffers = useMemo<[number, number][][]>(() => {
-    const result: [number, number][][] = []
-    for (const line of provisional) {
-      const lineXY = line.map((ll) => {
-        const xy = converter.toXY(ll[0], ll[1])
-        return { x: xy.x, y: xy.y }
-      })
-      const buf = bufferPolyline(lineXY, halfWidth)
-      if (buf) {
-        result.push(buf.map(({ x, y }) => {
-          const { lat, lng } = converter.toLatLng(x, y)
-          return [lat, lng] as [number, number]
-        }))
-      }
-    }
-    return result
-  }, [provisional, halfWidth, converter])
-
   const freeCurrentBuffer = useMemo<[number, number][] | null>(() => {
     const drawing: [number, number][] = [
       ...freeCurrent,
@@ -520,6 +501,25 @@ export function SoilImportStripPlanPage() {
     return lines
   }, [mode, parallelClickPos, selectedFreeIdx, freeLines, parallelCount, effectiveParallelDistance, converter]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 仮表示（平行コピー確定前）の帯ポリゴン
+  const provisionalBuffers = useMemo<[number, number][][]>(() => {
+    const result: [number, number][][] = []
+    for (const line of provisional) {
+      const lineXY = line.map((ll) => {
+        const xy = converter.toXY(ll[0], ll[1])
+        return { x: xy.x, y: xy.y }
+      })
+      const buf = bufferPolyline(lineXY, halfWidth)
+      if (buf) {
+        result.push(buf.map(({ x, y }) => {
+          const { lat, lng } = converter.toLatLng(x, y)
+          return [lat, lng] as [number, number]
+        }))
+      }
+    }
+    return result
+  }, [provisional, halfWidth, converter])
+
   const confirmProvisional = () => {
     if (provisional.length === 0) return
     const newLines = [...freeLines, ...provisional]
@@ -722,12 +722,6 @@ export function SoilImportStripPlanPage() {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [mode, freeCurrent, freeLines])
-
-  const deleteSelectedFree = () => {
-    if (selectedFreeIdx === null) return
-    commitLines(freeLines.filter((_, i) => i !== selectedFreeIdx))
-    setSelectedFreeIdx(null)
-  }
 
   const editSelectedFree = () => {
     if (selectedFreeIdx === null) return
