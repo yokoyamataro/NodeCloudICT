@@ -384,3 +384,75 @@ export function snapEndpointToMultiple(anchor: XY, target: XY, unit: number): XY
   const ratio = (k * unit) / d
   return { x: anchor.x + dx * ratio, y: anchor.y + dy * ratio }
 }
+
+// 折れ線上で点 p に最も近い位置を求める
+export function nearestPointOnPolyline(
+  p: XY,
+  line: XY[],
+): { point: XY; segIdx: number; t: number; dist: number } | null {
+  if (line.length < 2) return null
+  let best: { point: XY; segIdx: number; t: number; dist: number } | null = null
+  for (let i = 1; i < line.length; i++) {
+    const a = line[i - 1]
+    const b = line[i]
+    const ab = sub(b, a)
+    const ap = sub(p, a)
+    const len2 = ab.x * ab.x + ab.y * ab.y
+    if (len2 < EPS) continue
+    let t = (ap.x * ab.x + ap.y * ab.y) / len2
+    t = Math.max(0, Math.min(1, t))
+    const point = { x: a.x + ab.x * t, y: a.y + ab.y * t }
+    const d = Math.hypot(p.x - point.x, p.y - point.y)
+    if (best === null || d < best.dist) {
+      best = { point, segIdx: i - 1, t, dist: d }
+    }
+  }
+  return best
+}
+
+// 折れ線を offset 距離だけ片側オフセットした折れ線を返す（左+, 右-）
+// 内部頂点は miter で結合（先端制限あり）
+export function offsetPolyline(line: XY[], offset: number): XY[] | null {
+  if (line.length < 2) return null
+  if (Math.abs(offset) < EPS) return line.map((p) => ({ ...p }))
+  const MITER_LIMIT = 5
+  const result: XY[] = []
+  for (let i = 0; i < line.length; i++) {
+    let nm: XY
+    let dist = offset
+    if (i === 0) {
+      const d = normalize(sub(line[1], line[0]))
+      nm = perp(d)
+    } else if (i === line.length - 1) {
+      const d = normalize(sub(line[i], line[i - 1]))
+      nm = perp(d)
+    } else {
+      const d1 = normalize(sub(line[i], line[i - 1]))
+      const d2 = normalize(sub(line[i + 1], line[i]))
+      const n1 = perp(d1)
+      const n2 = perp(d2)
+      const sx = n1.x + n2.x
+      const sy = n1.y + n2.y
+      const m = Math.hypot(sx, sy)
+      if (m < EPS) {
+        nm = n1
+      } else {
+        nm = { x: sx / m, y: sy / m }
+        const cosHalf = nm.x * n1.x + nm.y * n1.y
+        if (cosHalf > 1 / MITER_LIMIT) {
+          dist = offset / cosHalf
+        } else {
+          dist = offset * MITER_LIMIT * Math.sign(offset || 1)
+        }
+      }
+    }
+    result.push(add(line[i], scale(nm, dist)))
+  }
+  return result
+}
+
+// 折れ線の指定セグメントの単位方向ベクトル
+export function polylineSegmentDirection(line: XY[], segIdx: number): XY {
+  if (segIdx < 0 || segIdx >= line.length - 1) return { x: 1, y: 0 }
+  return normalize(sub(line[segIdx + 1], line[segIdx]))
+}

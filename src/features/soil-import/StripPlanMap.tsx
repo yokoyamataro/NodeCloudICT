@@ -50,6 +50,9 @@ export interface StripPlanMapProps {
   selectedFreeIdx?: number | null
   onSelectFreeLine?: (idx: number | null) => void
   onFinishCurrentLine?: () => void
+  // 編集アクションの可視化
+  perpAnchor?: [number, number] | null
+  actionPreview?: [[number, number], [number, number]] | null
   // 背景レイヤ
   baseLayer?: StripPlanBaseLayer
   // 地図クリックで点を追加するモード
@@ -114,6 +117,8 @@ export function StripPlanMap({
   selectedFreeIdx = null,
   onSelectFreeLine,
   onFinishCurrentLine,
+  perpAnchor = null,
+  actionPreview = null,
   baseLayer = 'gsi-photo',
   pickMode,
   onMapClick,
@@ -317,6 +322,25 @@ export function StripPlanMap({
           </Tooltip>
         </CircleMarker>
       ))}
+
+      {/* 編集アクション：基準点（垂線作成の 1 点目） */}
+      {perpAnchor && (
+        <CircleMarker
+          center={perpAnchor}
+          radius={6}
+          pathOptions={{ color: '#f59e0b', fillColor: '#fff', fillOpacity: 1, weight: 3 }}
+        >
+          <Tooltip permanent direction="top" offset={[0, -6]}>
+            基準点
+          </Tooltip>
+        </CircleMarker>
+      )}
+      {actionPreview && (
+        <Polyline
+          positions={actionPreview}
+          pathOptions={{ color: '#f59e0b', weight: 3, dashArray: '6,4', opacity: 0.85 }}
+        />
+      )}
 
       {/* 帯ラベル（番号・延長・台数） */}
       {freeLabels.map((lbl, i) => (

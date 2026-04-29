@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Layers, MousePointerClick, RotateCcw, Pencil, CornerDownRight, Undo2, Trash2, Edit3 } from 'lucide-react'
+import { Layers, MousePointerClick, RotateCcw, Pencil, CornerDownRight, Undo2, Trash2, Edit3, Copy, Square as SquareIcon, Move } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
@@ -14,6 +14,9 @@ import {
   polylineLength,
   polylineMidpoint,
   snapEndpointToMultiple,
+  nearestPointOnPolyline,
+  offsetPolyline,
+  polylineSegmentDirection,
   type XY,
 } from '@/lib/stripPlanGeometry'
 import { StripPlanMap, type StripPlanBaseLayer, type StripLabel } from './StripPlanMap'
@@ -132,6 +135,11 @@ export function SoilImportStripPlanPage() {
   const [roundToTruck, setRoundToTruck] = useState(false)
   // 終点クリック確定の直後に発生する地図クリックを 1 回スキップ
   const skipNextMapClickRef = useRef(false)
+  // 編集アクション
+  type FreeAction = null | 'parallel' | 'perp1' | 'perp2' | 'extend'
+  const [freeAction, setFreeAction] = useState<FreeAction>(null)
+  const [perpAnchor, setPerpAnchor] = useState<[number, number] | null>(null)
+  const [parallelDistance, setParallelDistance] = useState<number>(10)
 
   useEffect(() => {
     if (!selectedAreaId && areas.length > 0) {
@@ -147,7 +155,24 @@ export function SoilImportStripPlanPage() {
     setFreeCurrent([])
     setFreeDrawMode(false)
     setSelectedFreeIdx(null)
+    setFreeAction(null)
+    setPerpAnchor(null)
   }, [selectedAreaId])
+
+  // 選択解除時はアクションも終了
+  useEffect(() => {
+    if (selectedFreeIdx === null) {
+      setFreeAction(null)
+      setPerpAnchor(null)
+    }
+  }, [selectedFreeIdx])
+
+  // アクション開始時は描画モードを抜ける（同時実行を防止）
+  useEffect(() => {
+    if (freeAction !== null) {
+      setFreeDrawMode(false)
+    }
+  }, [freeAction])
 
   // パターン切替時はピック・描画モードを抜ける
   useEffect(() => {
@@ -343,6 +368,52 @@ export function SoilImportStripPlanPage() {
     })
   }, [pattern, freeCurrent, previewSegment, halfWidth, converter])
 
+  // 編集アクションのプレビュー線（垂線作成の 2 点目 / 伸縮 で hover に応じて表示）
+  const actionPreview = useMemo<[[number, number], [number, number]] | null>(() => {
+    if (!hoverLatLng) return null
+    if (freeAction === 'perp2' && perpAnchor) {
+      const ref = refLineXY(selectedFreeIdx)
+      if (!ref) return null
+      const anchor = converter.toXY(perpAnchor[0], perpAnchor[1])
+      const click = converter.toXY(hoverLatLng[0], hoverLatLng[1])
+      const np = nearestPointOnPolyline({ x: anchor.x, y: anchor.y }, ref)
+      if (!np) return null
+      const dir = polylineSegmentDirection(ref, np.segIdx)
+      const n = { x: -dir.y, y: dir.x }
+      const t = (click.x - anchor.x) * n.x + (click.y - anchor.y) * n.y
+      let endXY: XY = { x: anchor.x + n.x * t, y: anchor.y + n.y * t }
+      if (roundToTruck && calc.lengthPerTruck > 0) {
+        endXY = snapEndpointToMultiple({ x: anchor.x, y: anchor.y }, endXY, calc.lengthPerTruck)
+      }
+      const r = converter.toLatLng(endXY.x, endXY.y)
+      return [perpAnchor, [r.lat, r.lng]]
+    }
+    if (freeAction === 'extend' && selectedFreeIdx !== null) {
+      const ref = refLineXY(selectedFreeIdx)
+      if (!ref || ref.length < 2) return null
+      const click = converter.toXY(hoverLatLng[0], hoverLatLng[1])
+      const dStart = Math.hypot(click.x - ref[0].x, click.y - ref[0].y)
+      const dEnd = Math.hypot(click.x - ref[ref.length - 1].x, click.y - ref[ref.length - 1].y)
+      const adjustEndPt = dEnd <= dStart
+      const idx = adjustEndPt ? ref.length - 1 : 0
+      const anchor = adjustEndPt ? ref[ref.length - 2] : ref[1]
+      const dx = ref[idx].x - anchor.x
+      const dy = ref[idx].y - anchor.y
+      const dirLen = Math.hypot(dx, dy)
+      if (dirLen < 1e-9) return null
+      const dir = { x: dx / dirLen, y: dy / dirLen }
+      const t = (click.x - anchor.x) * dir.x + (click.y - anchor.y) * dir.y
+      let newPt: XY = { x: anchor.x + dir.x * t, y: anchor.y + dir.y * t }
+      if (roundToTruck && calc.lengthPerTruck > 0) {
+        newPt = snapEndpointToMultiple(anchor, newPt, calc.lengthPerTruck)
+      }
+      const aLL = converter.toLatLng(anchor.x, anchor.y)
+      const nLL = converter.toLatLng(newPt.x, newPt.y)
+      return [[aLL.lat, aLL.lng], [nLL.lat, nLL.lng]]
+    }
+    return null
+  }, [freeAction, perpAnchor, hoverLatLng, selectedFreeIdx, freeLines, roundToTruck, calc.lengthPerTruck, converter]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // 入力途中ラインのラベル（編集中の番号・延長・台数）
   const freeCurrentLabel = useMemo<StripLabel | null>(() => {
     if (pattern !== 'free') return null
@@ -389,12 +460,122 @@ export function SoilImportStripPlanPage() {
     return { dLen, dTrucks }
   }, [generated, calc.L, calc.n])
 
+  const skipMapClickOnce = () => {
+    skipNextMapClickRef.current = true
+    setTimeout(() => { skipNextMapClickRef.current = false }, 100)
+  }
+
+  const refLineXY = (idx: number | null): XY[] | null => {
+    if (idx === null) return null
+    const line = freeLines[idx]
+    if (!line || line.length < 2) return null
+    return line.map((ll) => {
+      const xy = converter.toXY(ll[0], ll[1])
+      return { x: xy.x, y: xy.y }
+    })
+  }
+
+  const handleParallelClick = (ll: [number, number]) => {
+    const ref = refLineXY(selectedFreeIdx)
+    if (!ref) return
+    const click = converter.toXY(ll[0], ll[1])
+    const np = nearestPointOnPolyline({ x: click.x, y: click.y }, ref)
+    if (!np) return
+    const dir = polylineSegmentDirection(ref, np.segIdx)
+    const n = { x: -dir.y, y: dir.x }
+    const sign = (click.x - np.point.x) * n.x + (click.y - np.point.y) * n.y >= 0 ? 1 : -1
+    const offsetXY = offsetPolyline(ref, parallelDistance * sign)
+    if (!offsetXY) return
+    const newLine: [number, number][] = offsetXY.map(({ x, y }) => {
+      const r = converter.toLatLng(x, y)
+      return [r.lat, r.lng]
+    })
+    setFreeLines((prev) => [...prev, newLine])
+    setFreeAction(null)
+    skipMapClickOnce()
+  }
+
+  const handlePerp1Click = (ll: [number, number]) => {
+    const ref = refLineXY(selectedFreeIdx)
+    if (!ref) return
+    const click = converter.toXY(ll[0], ll[1])
+    const np = nearestPointOnPolyline({ x: click.x, y: click.y }, ref)
+    if (!np) return
+    const r = converter.toLatLng(np.point.x, np.point.y)
+    setPerpAnchor([r.lat, r.lng])
+    setFreeAction('perp2')
+  }
+
+  const handlePerp2Click = (ll: [number, number]) => {
+    const ref = refLineXY(selectedFreeIdx)
+    if (!ref || !perpAnchor) return
+    const anchor = converter.toXY(perpAnchor[0], perpAnchor[1])
+    const click = converter.toXY(ll[0], ll[1])
+    const np = nearestPointOnPolyline({ x: anchor.x, y: anchor.y }, ref)
+    if (!np) return
+    const dir = polylineSegmentDirection(ref, np.segIdx)
+    const n = { x: -dir.y, y: dir.x }
+    const dx = click.x - anchor.x
+    const dy = click.y - anchor.y
+    const t = dx * n.x + dy * n.y
+    let endXY: XY = { x: anchor.x + n.x * t, y: anchor.y + n.y * t }
+    if (roundToTruck && calc.lengthPerTruck > 0) {
+      endXY = snapEndpointToMultiple({ x: anchor.x, y: anchor.y }, endXY, calc.lengthPerTruck)
+    }
+    const startLL = converter.toLatLng(anchor.x, anchor.y)
+    const endLL = converter.toLatLng(endXY.x, endXY.y)
+    const newLine: [number, number][] = [
+      [startLL.lat, startLL.lng],
+      [endLL.lat, endLL.lng],
+    ]
+    setFreeLines((prev) => [...prev, newLine])
+    setPerpAnchor(null)
+    setFreeAction(null)
+    skipMapClickOnce()
+  }
+
+  const handleExtendClick = (ll: [number, number]) => {
+    const ref = refLineXY(selectedFreeIdx)
+    if (!ref || ref.length < 2 || selectedFreeIdx === null) return
+    const click = converter.toXY(ll[0], ll[1])
+    const startXY = ref[0]
+    const endXY = ref[ref.length - 1]
+    const dStart = Math.hypot(click.x - startXY.x, click.y - startXY.y)
+    const dEnd = Math.hypot(click.x - endXY.x, click.y - endXY.y)
+    const adjustEndPt = dEnd <= dStart
+    const idx = adjustEndPt ? ref.length - 1 : 0
+    const anchor = adjustEndPt ? ref[ref.length - 2] : ref[1]
+    const dx = ref[idx].x - anchor.x
+    const dy = ref[idx].y - anchor.y
+    const dirLen = Math.hypot(dx, dy)
+    if (dirLen < 1e-9) return
+    const dir = { x: dx / dirLen, y: dy / dirLen }
+    const t = (click.x - anchor.x) * dir.x + (click.y - anchor.y) * dir.y
+    let newPt: XY = { x: anchor.x + dir.x * t, y: anchor.y + dir.y * t }
+    if (roundToTruck && calc.lengthPerTruck > 0) {
+      newPt = snapEndpointToMultiple(anchor, newPt, calc.lengthPerTruck)
+    }
+    const updated = ref.slice()
+    updated[idx] = newPt
+    const updatedLL: [number, number][] = updated.map(({ x, y }) => {
+      const r = converter.toLatLng(x, y)
+      return [r.lat, r.lng]
+    })
+    setFreeLines((prev) => prev.map((l, i) => (i === selectedFreeIdx ? updatedLL : l)))
+    skipMapClickOnce()
+  }
+
   const handleMapClick = (ll: [number, number]) => {
     // 終点クリック確定の副作用クリックを 1 回スキップ
     if (skipNextMapClickRef.current) {
       skipNextMapClickRef.current = false
       return
     }
+    // 編集アクション優先
+    if (freeAction === 'parallel') { handleParallelClick(ll); return }
+    if (freeAction === 'perp1') { handlePerp1Click(ll); return }
+    if (freeAction === 'perp2') { handlePerp2Click(ll); return }
+    if (freeAction === 'extend') { handleExtendClick(ll); return }
     if (freeDrawMode) {
       setFreeCurrent((prev) => {
         if (prev.length === 0) return [ll]
@@ -429,8 +610,7 @@ export function SoilImportStripPlanPage() {
   // 終点クリックでの確定（地図側から呼ばれる）。直後に来る地図クリックをスキップする
   const finishFreeLineFromMap = () => {
     finishFreeLine()
-    skipNextMapClickRef.current = true
-    setTimeout(() => { skipNextMapClickRef.current = false }, 100)
+    skipMapClickOnce()
   }
 
   // Enter で確定 / Backspace で 1 点戻る（フリー描画モード時）
@@ -718,6 +898,51 @@ export function SoilImportStripPlanPage() {
                       解除
                     </button>
                   </div>
+
+                  {/* 編集アクション */}
+                  <div className="pt-2 border-t border-purple-200 space-y-2">
+                    <div className="grid grid-cols-3 gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setFreeAction(freeAction === 'parallel' ? null : 'parallel')}
+                        className={`flex items-center justify-center gap-1 px-2 py-1 text-xs border rounded ${freeAction === 'parallel' ? 'bg-amber-100 border-amber-400' : 'bg-white hover:bg-slate-50'}`}
+                      >
+                        <Copy className="h-3 w-3" />
+                        平行コピー
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setFreeAction(freeAction === 'perp1' || freeAction === 'perp2' ? null : 'perp1'); setPerpAnchor(null) }}
+                        className={`flex items-center justify-center gap-1 px-2 py-1 text-xs border rounded ${freeAction === 'perp1' || freeAction === 'perp2' ? 'bg-amber-100 border-amber-400' : 'bg-white hover:bg-slate-50'}`}
+                      >
+                        <SquareIcon className="h-3 w-3" />
+                        垂線作成
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFreeAction(freeAction === 'extend' ? null : 'extend')}
+                        className={`flex items-center justify-center gap-1 px-2 py-1 text-xs border rounded ${freeAction === 'extend' ? 'bg-amber-100 border-amber-400' : 'bg-white hover:bg-slate-50'}`}
+                      >
+                        <Move className="h-3 w-3" />
+                        伸縮
+                      </button>
+                    </div>
+                    {freeAction === 'parallel' && (
+                      <div className="space-y-1">
+                        <NumberField label="平行距離" unit="m" value={parallelDistance} onChange={setParallelDistance} step={0.5} decimals={1} />
+                        <div className="text-xs text-amber-700">クリックした側に平行コピーを作成</div>
+                      </div>
+                    )}
+                    {freeAction === 'perp1' && (
+                      <div className="text-xs text-amber-700">基準線上をクリック → 1 点目（基準点）を吸着</div>
+                    )}
+                    {freeAction === 'perp2' && (
+                      <div className="text-xs text-amber-700">2 点目をクリック（垂線方向に投影）</div>
+                    )}
+                    {freeAction === 'extend' && (
+                      <div className="text-xs text-amber-700">クリックに近い端点を線方向に移動（複数回クリック可）</div>
+                    )}
+                  </div>
                 </div>
               )}
               {pattern === 'free' && selectedFreeIdx === null && freeLines.length > 0 && !freeDrawMode && (
@@ -808,8 +1033,10 @@ export function SoilImportStripPlanPage() {
               selectedFreeIdx={selectedFreeIdx}
               onSelectFreeLine={setSelectedFreeIdx}
               onFinishCurrentLine={finishFreeLineFromMap}
+              perpAnchor={perpAnchor}
+              actionPreview={actionPreview}
               baseLayer={baseLayer}
-              pickMode={pickMode || freeDrawMode}
+              pickMode={pickMode || freeDrawMode || freeAction !== null}
               onMapClick={handleMapClick}
               onMouseMove={setHoverLatLng}
             />
