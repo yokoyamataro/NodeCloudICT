@@ -1,7 +1,24 @@
 import { useEffect } from 'react'
-import { MapContainer, TileLayer, Polygon, Polyline, CircleMarker, useMap, useMapEvents, Tooltip } from 'react-leaflet'
+import { MapContainer, TileLayer, Polygon, Polyline, CircleMarker, Marker, useMap, useMapEvents, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+
+export interface StripLabel {
+  position: [number, number]
+  text: string
+  variant?: 'confirmed' | 'current'
+}
+
+function makeLabelIcon(text: string, variant: 'confirmed' | 'current'): L.DivIcon {
+  const bg = variant === 'current' ? '#faf5ff' : '#ffffff'
+  const border = variant === 'current' ? '#7c3aed' : '#a855f7'
+  return L.divIcon({
+    className: 'strip-label',
+    html: `<div style="background:${bg};padding:2px 6px;border:1px solid ${border};border-radius:3px;font-size:11px;white-space:nowrap;color:#1e293b;box-shadow:0 1px 2px rgba(0,0,0,0.15);transform:translate(-50%,-50%);pointer-events:none;">${text}</div>`,
+    iconSize: [0, 0],
+    iconAnchor: [0, 0],
+  })
+}
 
 export type StripPlanBaseLayer = 'osm' | 'gsi-photo' | 'gsi-std'
 
@@ -28,6 +45,8 @@ export interface StripPlanMapProps {
   perpBuffers?: [number, number][][]
   freeBuffers?: [number, number][][] // 確定済みのフリー線
   freeCurrentBuffer?: [number, number][] | null // 入力途中（プレビュー含む）
+  freeLabels?: StripLabel[]
+  freeCurrentLabel?: StripLabel | null
   selectedFreeIdx?: number | null
   onSelectFreeLine?: (idx: number | null) => void
   onFinishCurrentLine?: () => void
@@ -90,6 +109,8 @@ export function StripPlanMap({
   perpBuffers = [],
   freeBuffers = [],
   freeCurrentBuffer = null,
+  freeLabels = [],
+  freeCurrentLabel = null,
   selectedFreeIdx = null,
   onSelectFreeLine,
   onFinishCurrentLine,
@@ -296,6 +317,23 @@ export function StripPlanMap({
           </Tooltip>
         </CircleMarker>
       ))}
+
+      {/* 帯ラベル（番号・延長・台数） */}
+      {freeLabels.map((lbl, i) => (
+        <Marker
+          key={`fl-${i}`}
+          position={lbl.position}
+          icon={makeLabelIcon(lbl.text, lbl.variant ?? 'confirmed')}
+          interactive={false}
+        />
+      ))}
+      {freeCurrentLabel && (
+        <Marker
+          position={freeCurrentLabel.position}
+          icon={makeLabelIcon(freeCurrentLabel.text, 'current')}
+          interactive={false}
+        />
+      )}
     </MapContainer>
   )
 }

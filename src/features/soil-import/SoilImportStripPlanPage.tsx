@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Layers, MousePointerClick, RotateCcw, Pencil, CornerDownRight, Undo2, Trash2, Edit3 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
@@ -11,9 +11,12 @@ import {
   totalLength,
   bufferPolyline,
   bufferSegments,
+  polylineLength,
+  polylineMidpoint,
+  snapEndpointToMultiple,
   type XY,
 } from '@/lib/stripPlanGeometry'
-import { StripPlanMap, type StripPlanBaseLayer } from './StripPlanMap'
+import { StripPlanMap, type StripPlanBaseLayer, type StripLabel } from './StripPlanMap'
 
 // 帯置計画パラメータ
 interface StripPlanParams {
@@ -126,6 +129,9 @@ export function SoilImportStripPlanPage() {
   const [freeCurrent, setFreeCurrent] = useState<[number, number][]>([])
   const [hoverLatLng, setHoverLatLng] = useState<[number, number] | null>(null)
   const [selectedFreeIdx, setSelectedFreeIdx] = useState<number | null>(null)
+  const [roundToTruck, setRoundToTruck] = useState(false)
+  // 終点クリック確定の直後に発生する地図クリックを 1 回スキップ
+  const skipNextMapClickRef = useRef(false)
 
   useEffect(() => {
     if (!selectedAreaId && areas.length > 0) {
@@ -246,13 +252,24 @@ export function SoilImportStripPlanPage() {
     return total
   }, [freeLines, freeCurrent, converter])
 
-  // マウス追従プレビューセグメント（直前点 → ホバー位置）
+  // 終点を整数台数倍に丸める（roundToTruck 有効時）
+  const adjustEndpoint = (anchor: [number, number], target: [number, number]): [number, number] => {
+    if (!roundToTruck || calc.lengthPerTruck <= 0) return target
+    const aXY = converter.toXY(anchor[0], anchor[1])
+    const tXY = converter.toXY(target[0], target[1])
+    const snapped = snapEndpointToMultiple({ x: aXY.x, y: aXY.y }, { x: tXY.x, y: tXY.y }, calc.lengthPerTruck)
+    const { lat, lng } = converter.toLatLng(snapped.x, snapped.y)
+    return [lat, lng]
+  }
+
+  // マウス追従プレビューセグメント（直前点 → ホバー位置、必要なら整数倍に丸める）
   const previewSegment = useMemo<[[number, number], [number, number]] | undefined>(() => {
     if (pattern !== 'free' || !freeDrawMode) return undefined
     if (freeCurrent.length === 0 || !hoverLatLng) return undefined
     const last = freeCurrent[freeCurrent.length - 1]
-    return [last, hoverLatLng]
-  }, [pattern, freeDrawMode, freeCurrent, hoverLatLng])
+    const adjusted = adjustEndpoint(last, hoverLatLng)
+    return [last, adjusted]
+  }, [pattern, freeDrawMode, freeCurrent, hoverLatLng, roundToTruck, calc.lengthPerTruck, converter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // プレビュー区間の長さ
   const previewLengthM = useMemo(() => {
@@ -282,6 +299,30 @@ export function SoilImportStripPlanPage() {
     return result
   }, [pattern, freeLines, halfWidth, converter])
 
+  // 確定済みフリー線のラベル（番号・延長・台数）
+  const freeLabels = useMemo<StripLabel[]>(() => {
+    if (pattern !== 'free') return []
+    const labels: StripLabel[] = []
+    for (let i = 0; i < freeLines.length; i++) {
+      const line = freeLines[i]
+      const lineXY = line.map((ll) => {
+        const xy = converter.toXY(ll[0], ll[1])
+        return { x: xy.x, y: xy.y }
+      })
+      const len = polylineLength(lineXY)
+      const trucks = calc.lengthPerTruck > 0 ? len / calc.lengthPerTruck : 0
+      const mid = polylineMidpoint(lineXY)
+      if (!mid) continue
+      const { lat, lng } = converter.toLatLng(mid.x, mid.y)
+      labels.push({
+        position: [lat, lng],
+        text: `${i + 1}: ${len.toFixed(1)} m / ${trucks.toFixed(1)} 台`,
+        variant: 'confirmed',
+      })
+    }
+    return labels
+  }, [pattern, freeLines, converter, calc.lengthPerTruck])
+
   // 入力途中（+ プレビュー）のフリー線の帯ポリゴン
   const freeCurrentBuffer = useMemo<[number, number][] | null>(() => {
     if (pattern !== 'free') return null
@@ -301,6 +342,30 @@ export function SoilImportStripPlanPage() {
       return [lat, lng] as [number, number]
     })
   }, [pattern, freeCurrent, previewSegment, halfWidth, converter])
+
+  // 入力途中ラインのラベル（編集中の番号・延長・台数）
+  const freeCurrentLabel = useMemo<StripLabel | null>(() => {
+    if (pattern !== 'free') return null
+    const drawing: [number, number][] = [
+      ...freeCurrent,
+      ...(previewSegment ? [previewSegment[1]] : []),
+    ]
+    if (drawing.length < 2) return null
+    const lineXY = drawing.map((ll) => {
+      const xy = converter.toXY(ll[0], ll[1])
+      return { x: xy.x, y: xy.y }
+    })
+    const len = polylineLength(lineXY)
+    const trucks = calc.lengthPerTruck > 0 ? len / calc.lengthPerTruck : 0
+    const mid = polylineMidpoint(lineXY)
+    if (!mid) return null
+    const { lat, lng } = converter.toLatLng(mid.x, mid.y)
+    return {
+      position: [lat, lng],
+      text: `${freeLines.length + 1}: ${len.toFixed(1)} m / ${trucks.toFixed(1)} 台`,
+      variant: 'current',
+    }
+  }, [pattern, freeCurrent, previewSegment, converter, calc.lengthPerTruck, freeLines.length])
 
   // 統計（フリー時はプレビュー区間も含む）
   const generated = useMemo(() => {
@@ -325,8 +390,18 @@ export function SoilImportStripPlanPage() {
   }, [generated, calc.L, calc.n])
 
   const handleMapClick = (ll: [number, number]) => {
+    // 終点クリック確定の副作用クリックを 1 回スキップ
+    if (skipNextMapClickRef.current) {
+      skipNextMapClickRef.current = false
+      return
+    }
     if (freeDrawMode) {
-      setFreeCurrent((prev) => [...prev, ll])
+      setFreeCurrent((prev) => {
+        if (prev.length === 0) return [ll]
+        const last = prev[prev.length - 1]
+        const adjusted = adjustEndpoint(last, ll)
+        return [...prev, adjusted]
+      })
       return
     }
     if (pickMode) {
@@ -351,23 +426,39 @@ export function SoilImportStripPlanPage() {
     setFreeCurrent([])
   }
 
-  // Enter キーで確定（フリー描画モード時）
+  // 終点クリックでの確定（地図側から呼ばれる）。直後に来る地図クリックをスキップする
+  const finishFreeLineFromMap = () => {
+    finishFreeLine()
+    skipNextMapClickRef.current = true
+    setTimeout(() => { skipNextMapClickRef.current = false }, 100)
+  }
+
+  // Enter で確定 / Backspace で 1 点戻る（フリー描画モード時）
   useEffect(() => {
     if (!freeDrawMode) return
     const handler = (e: KeyboardEvent) => {
-      if (e.key !== 'Enter') return
-      // input にフォーカスがあるときは無視
       const target = e.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) return
-      if (freeCurrent.length >= 2) {
-        e.preventDefault()
-        setFreeLines((prev) => [...prev, freeCurrent])
-        setFreeCurrent([])
+      if (e.key === 'Enter') {
+        if (freeCurrent.length >= 2) {
+          e.preventDefault()
+          setFreeLines((prev) => [...prev, freeCurrent])
+          setFreeCurrent([])
+        }
+      } else if (e.key === 'Backspace') {
+        if (freeCurrent.length > 0) {
+          e.preventDefault()
+          setFreeCurrent((prev) => prev.slice(0, -1))
+        } else if (freeLines.length > 0) {
+          e.preventDefault()
+          setFreeCurrent(freeLines[freeLines.length - 1])
+          setFreeLines((prev) => prev.slice(0, -1))
+        }
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [freeDrawMode, freeCurrent])
+  }, [freeDrawMode, freeCurrent, freeLines])
 
   const deleteSelectedFree = () => {
     if (selectedFreeIdx === null) return
@@ -582,8 +673,17 @@ export function SoilImportStripPlanPage() {
                   全削除
                 </button>
               </div>
+              <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer select-none mt-1">
+                <input
+                  type="checkbox"
+                  checked={roundToTruck}
+                  onChange={(e) => setRoundToTruck(e.target.checked)}
+                  className="cursor-pointer"
+                />
+                延長を整数台数で調整する（v/CA = {calc.lengthPerTruck.toFixed(2)} m の倍数）
+              </label>
               <div className="text-xs text-slate-500">
-                確定済み：{freeLines.length} 本（合計 {freeLinesLengthM.toFixed(1)} m）
+                確定済み：{freeLines.length} 本（合計 {freeLinesLengthM.toFixed(1)} m）／ Backspace で 1 点戻る
               </div>
 
               {/* 選択中の線の操作 */}
@@ -703,9 +803,11 @@ export function SoilImportStripPlanPage() {
               perpBuffers={perpBuffers}
               freeBuffers={freeBuffers}
               freeCurrentBuffer={freeCurrentBuffer}
+              freeLabels={freeLabels}
+              freeCurrentLabel={freeCurrentLabel}
               selectedFreeIdx={selectedFreeIdx}
               onSelectFreeLine={setSelectedFreeIdx}
-              onFinishCurrentLine={finishFreeLine}
+              onFinishCurrentLine={finishFreeLineFromMap}
               baseLayer={baseLayer}
               pickMode={pickMode || freeDrawMode}
               onMapClick={handleMapClick}

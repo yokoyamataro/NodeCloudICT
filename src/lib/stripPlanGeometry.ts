@@ -340,3 +340,47 @@ export function bufferSegments(segments: [XY, XY][], halfWidth: number): XY[][] 
   }
   return out
 }
+
+// 折れ線の総延長
+export function polylineLength(line: XY[]): number {
+  let total = 0
+  for (let i = 1; i < line.length; i++) {
+    total += Math.hypot(line[i].x - line[i - 1].x, line[i].y - line[i - 1].y)
+  }
+  return total
+}
+
+// 折れ線の中点（総延長の半分の位置）
+export function polylineMidpoint(line: XY[]): XY | null {
+  if (line.length === 0) return null
+  if (line.length === 1) return line[0]
+  const total = polylineLength(line)
+  if (total < EPS) return line[0]
+  const target = total / 2
+  let acc = 0
+  for (let i = 1; i < line.length; i++) {
+    const segLen = Math.hypot(line[i].x - line[i - 1].x, line[i].y - line[i - 1].y)
+    if (acc + segLen >= target) {
+      const t = segLen > 0 ? (target - acc) / segLen : 0
+      return {
+        x: line[i - 1].x + (line[i].x - line[i - 1].x) * t,
+        y: line[i - 1].y + (line[i].y - line[i - 1].y) * t,
+      }
+    }
+    acc += segLen
+  }
+  return line[line.length - 1]
+}
+
+// 始点 anchor から target 方向に向かう線分長を unit の整数倍に丸めた終点を返す。
+// k=round(d/unit) を min 1 でクランプ。unit<=0 や距離 0 の場合は target をそのまま返す。
+export function snapEndpointToMultiple(anchor: XY, target: XY, unit: number): XY {
+  if (unit <= 0) return target
+  const dx = target.x - anchor.x
+  const dy = target.y - anchor.y
+  const d = Math.hypot(dx, dy)
+  if (d < EPS) return target
+  const k = Math.max(1, Math.round(d / unit))
+  const ratio = (k * unit) / d
+  return { x: anchor.x + dx * ratio, y: anchor.y + dy * ratio }
+}
