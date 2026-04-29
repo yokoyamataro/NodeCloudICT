@@ -45,6 +45,9 @@ export interface StripPlanMapProps {
   perpBuffers?: [number, number][][]
   freeBuffers?: [number, number][][] // 確定済みのフリー線
   freeCurrentBuffer?: [number, number][] | null // 入力途中（プレビュー含む）
+  // 仮表示（確定前の平行コピー候補）
+  provisionalLines?: [number, number][][]
+  provisionalBuffers?: [number, number][][]
   freeLabels?: StripLabel[]
   freeCurrentLabel?: StripLabel | null
   selectedFreeIdx?: number | null
@@ -112,6 +115,8 @@ export function StripPlanMap({
   perpBuffers = [],
   freeBuffers = [],
   freeCurrentBuffer = null,
+  provisionalLines = [],
+  provisionalBuffers = [],
   freeLabels = [],
   freeCurrentLabel = null,
   selectedFreeIdx = null,
@@ -226,6 +231,29 @@ export function StripPlanMap({
           }}
         />
       )}
+
+      {/* 仮表示（平行コピーの確定前候補） */}
+      {provisionalBuffers.map((poly, i) => (
+        <Polygon
+          key={`prov-buf-${i}`}
+          positions={poly}
+          pathOptions={{
+            color: '#eab308',
+            fillColor: '#eab308',
+            fillOpacity: 0.25,
+            weight: 2,
+            dashArray: '6,3',
+            interactive: false,
+          }}
+        />
+      ))}
+      {provisionalLines.map((line, i) => (
+        <Polyline
+          key={`prov-line-${i}`}
+          positions={line}
+          pathOptions={{ color: '#ca8a04', weight: 2, dashArray: '4,4', interactive: false }}
+        />
+      ))}
 
       {/* 平行線 */}
       {parallelLines.map((line, i) => (

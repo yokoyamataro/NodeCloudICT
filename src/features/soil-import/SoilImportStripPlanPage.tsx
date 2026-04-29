@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Layers, RotateCcw, Pencil, CornerDownRight, Undo2, Trash2, Edit3,
-  Copy, Square as SquareIcon, Move, Settings, X,
+  Layers, RotateCcw, Pencil, CornerDownRight, Undo2, Redo2, Trash2, Edit3,
+  Copy, Square as SquareIcon, Move, Settings, X, Check,
 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
@@ -158,8 +158,16 @@ export function SoilImportStripPlanPage() {
   const [parallelMode, setParallelMode] = useState<'distance' | 'truckMultiple'>('distance')
   const [parallelDistance, setParallelDistance] = useState<number>(10)
   const [parallelTruckMultiple, setParallelTruckMultiple] = useState<number>(1)
+  const [parallelCount, setParallelCount] = useState<number>(1)
+  const [provisional, setProvisional] = useState<[number, number][][]>([])
   const [roundToTruck, setRoundToTruck] = useState(false)
   const skipNextMapClickRef = useRef(false)
+  // Undo/Redo: 最大 5 回。history は freeLines のスナップショット列
+  const HISTORY_LIMIT = 5
+  const [historyState, setHistoryState] = useState<{
+    history: [number, number][][][]
+    index: number
+  }>({ history: [[]], index: 0 })
 
   useEffect(() => {
     if (!selectedAreaId && areas.length > 0) {
@@ -167,13 +175,15 @@ export function SoilImportStripPlanPage() {
     }
   }, [areas, selectedAreaId])
 
-  // 区域変更時はリセット
+  // 区域変更時はリセット（履歴も初期化）
   useEffect(() => {
     setFreeLines([])
     setFreeCurrent([])
     setMode('idle')
     setSelectedFreeIdx(null)
     setPerpAnchor(null)
+    setProvisional([])
+    setHistoryState({ history: [[]], index: 0 })
   }, [selectedAreaId])
 
   // モード遷移時の整理
@@ -280,6 +290,25 @@ export function SoilImportStripPlanPage() {
     }
     return labels
   }, [freeLines, converter, calc.lengthPerTruck])
+
+  // 仮表示（平行コピー確定前）の帯ポリゴン
+  const provisionalBuffers = useMemo<[number, number][][]>(() => {
+    const result: [number, number][][] = []
+    for (const line of provisional) {
+      const lineXY = line.map((ll) => {
+        const xy = converter.toXY(ll[0], ll[1])
+        return { x: xy.x, y: xy.y }
+      })
+      const buf = bufferPolyline(lineXY, halfWidth)
+      if (buf) {
+        result.push(buf.map(({ x, y }) => {
+          const { lat, lng } = converter.toLatLng(x, y)
+          return [lat, lng] as [number, number]
+        }))
+      }
+    }
+    return result
+  }, [provisional, halfWidth, converter])
 
   const freeCurrentBuffer = useMemo<[number, number][] | null>(() => {
     const drawing: [number, number][] = [
@@ -419,6 +448,41 @@ export function SoilImportStripPlanPage() {
     setTimeout(() => { skipNextMapClickRef.current = false }, 100)
   }
 
+  // freeLines を更新しつつ履歴を 1 件追加
+  const commitLines = (newLines: [number, number][][]) => {
+    setFreeLines(newLines)
+    setHistoryState((prev) => {
+      const trimmed = prev.history.slice(0, prev.index + 1)
+      let updated = [...trimmed, newLines]
+      if (updated.length > HISTORY_LIMIT + 1) {
+        updated = updated.slice(updated.length - (HISTORY_LIMIT + 1))
+      }
+      return { history: updated, index: updated.length - 1 }
+    })
+  }
+  const canUndo = historyState.index > 0
+  const canRedo = historyState.index < historyState.history.length - 1
+  const undo = () => {
+    if (!canUndo) return
+    const newIdx = historyState.index - 1
+    setFreeLines(historyState.history[newIdx])
+    setHistoryState((prev) => ({ ...prev, index: newIdx }))
+    setSelectedFreeIdx(null)
+    setProvisional([])
+    setFreeCurrent([])
+    setPerpAnchor(null)
+  }
+  const redo = () => {
+    if (!canRedo) return
+    const newIdx = historyState.index + 1
+    setFreeLines(historyState.history[newIdx])
+    setHistoryState((prev) => ({ ...prev, index: newIdx }))
+    setSelectedFreeIdx(null)
+    setProvisional([])
+    setFreeCurrent([])
+    setPerpAnchor(null)
+  }
+
   // 現在の平行コピーモードに基づく実効間隔（中心線間隔 m）
   const effectiveParallelDistance = useMemo(() => {
     if (parallelMode === 'distance') return parallelDistance
@@ -435,18 +499,30 @@ export function SoilImportStripPlanPage() {
     const dir = polylineSegmentDirection(ref, np.segIdx)
     const n = { x: -dir.y, y: dir.x }
     const sign = (click.x - np.point.x) * n.x + (click.y - np.point.y) * n.y >= 0 ? 1 : -1
-    const offsetXY = offsetPolyline(ref, effectiveParallelDistance * sign)
-    if (!offsetXY) return
-    const newLine: [number, number][] = offsetXY.map(({ x, y }) => {
-      const r = converter.toLatLng(x, y)
-      return [r.lat, r.lng]
-    })
-    setFreeLines((prev) => {
-      const next = [...prev, newLine]
-      setSelectedFreeIdx(next.length - 1)
-      return next
-    })
+    const count = Math.max(1, Math.round(parallelCount))
+    const lines: [number, number][][] = []
+    for (let k = 1; k <= count; k++) {
+      const offsetXY = offsetPolyline(ref, effectiveParallelDistance * k * sign)
+      if (!offsetXY) continue
+      lines.push(offsetXY.map(({ x, y }) => {
+        const r = converter.toLatLng(x, y)
+        return [r.lat, r.lng] as [number, number]
+      }))
+    }
+    setProvisional(lines)
     skipMapClickOnce()
+  }
+
+  const confirmProvisional = () => {
+    if (provisional.length === 0) return
+    const newLines = [...freeLines, ...provisional]
+    commitLines(newLines)
+    setSelectedFreeIdx(newLines.length - 1)
+    setProvisional([])
+  }
+
+  const cancelProvisional = () => {
+    setProvisional([])
   }
 
   const handlePerp1Click = (ll: [number, number]) => {
@@ -514,7 +590,7 @@ export function SoilImportStripPlanPage() {
         [startLL.lat, startLL.lng],
         [endLL.lat, endLL.lng],
       ]
-      setFreeLines((prev) => [...prev, newLine])
+      commitLines([...freeLines, newLine])
       setPerpAnchor(null)
       setMode('perp1')
       skipMapClickOnce()
@@ -552,7 +628,7 @@ export function SoilImportStripPlanPage() {
       const r = converter.toLatLng(x, y)
       return [r.lat, r.lng]
     })
-    setFreeLines((prev) => prev.map((l, i) => (i === selectedFreeIdx ? updatedLL : l)))
+    commitLines(freeLines.map((l, i) => (i === selectedFreeIdx ? updatedLL : l)))
     skipMapClickOnce()
   }
 
@@ -593,7 +669,7 @@ export function SoilImportStripPlanPage() {
 
   const finishFreeLine = () => {
     if (freeCurrent.length >= 2) {
-      setFreeLines((prev) => [...prev, freeCurrent])
+      commitLines([...freeLines, freeCurrent])
     }
     setFreeCurrent([])
   }
@@ -612,7 +688,7 @@ export function SoilImportStripPlanPage() {
       if (e.key === 'Enter') {
         if (freeCurrent.length >= 2) {
           e.preventDefault()
-          setFreeLines((prev) => [...prev, freeCurrent])
+          commitLines([...freeLines, freeCurrent])
           setFreeCurrent([])
         }
       } else if (e.key === 'Backspace') {
@@ -622,7 +698,7 @@ export function SoilImportStripPlanPage() {
         } else if (freeLines.length > 0) {
           e.preventDefault()
           setFreeCurrent(freeLines[freeLines.length - 1])
-          setFreeLines((prev) => prev.slice(0, -1))
+          commitLines(freeLines.slice(0, -1))
         }
       }
     }
@@ -632,7 +708,7 @@ export function SoilImportStripPlanPage() {
 
   const deleteSelectedFree = () => {
     if (selectedFreeIdx === null) return
-    setFreeLines((prev) => prev.filter((_, i) => i !== selectedFreeIdx))
+    commitLines(freeLines.filter((_, i) => i !== selectedFreeIdx))
     setSelectedFreeIdx(null)
   }
 
@@ -640,7 +716,7 @@ export function SoilImportStripPlanPage() {
     if (selectedFreeIdx === null) return
     const line = freeLines[selectedFreeIdx]
     if (!line) return
-    setFreeLines((prev) => prev.filter((_, i) => i !== selectedFreeIdx))
+    commitLines(freeLines.filter((_, i) => i !== selectedFreeIdx))
     setFreeCurrent(line)
     setMode('draw')
     setSelectedFreeIdx(null)
@@ -651,25 +727,45 @@ export function SoilImportStripPlanPage() {
       setFreeCurrent((prev) => prev.slice(0, -1))
     } else if (freeLines.length > 0) {
       setFreeCurrent(freeLines[freeLines.length - 1])
-      setFreeLines((prev) => prev.slice(0, -1))
+      commitLines(freeLines.slice(0, -1))
     }
   }
 
   const resetAll = () => {
-    setFreeLines([])
+    commitLines([])
     setFreeCurrent([])
     setMode('idle')
     setSelectedFreeIdx(null)
     setPerpAnchor(null)
+    setProvisional([])
   }
 
   const enterMode = (next: Mode) => {
     setMode(mode === next ? 'idle' : next)
-    // モード切替時は常に選択を解除（基準線は再選択させる）
     setSelectedFreeIdx(null)
     setPerpAnchor(null)
     setFreeCurrent([])
+    setProvisional([])
   }
+
+  // Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z で undo/redo
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) return
+      if (!(e.ctrlKey || e.metaKey)) return
+      if (e.key === 'z' || e.key === 'Z') {
+        e.preventDefault()
+        if (e.shiftKey) redo()
+        else undo()
+      } else if (e.key === 'y' || e.key === 'Y') {
+        e.preventDefault()
+        redo()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [historyState]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!currentFarm) {
     return (
@@ -899,17 +995,41 @@ export function SoilImportStripPlanPage() {
                     整数台数
                   </label>
                 </div>
-                {parallelMode === 'distance' ? (
-                  <NumberField label="平行距離（中心線間隔）" unit="m" value={parallelDistance}
-                    onChange={setParallelDistance} step={0.5} decimals={1} />
-                ) : (
-                  <>
+                <div className="grid grid-cols-2 gap-2">
+                  {parallelMode === 'distance' ? (
+                    <NumberField label="間隔" unit="m" value={parallelDistance}
+                      onChange={setParallelDistance} step={0.5} decimals={1} />
+                  ) : (
                     <NumberField label="台数倍率 N" unit="台" value={parallelTruckMultiple}
                       onChange={(v) => setParallelTruckMultiple(Math.max(0, Math.round(v)))} step={1} decimals={0} />
-                    <div className="text-xs text-slate-500">
-                      中心線間隔 = WB ({params.crossWB.toFixed(2)}) + N × v/CA ({calc.lengthPerTruck.toFixed(2)}) = {effectiveParallelDistance.toFixed(2)} m
-                    </div>
-                  </>
+                  )}
+                  <NumberField label="本数" unit="本" value={parallelCount}
+                    onChange={(v) => setParallelCount(Math.max(1, Math.round(v)))} step={1} decimals={0} />
+                </div>
+                {parallelMode === 'truckMultiple' && (
+                  <div className="text-xs text-slate-500">
+                    中心線間隔 = WB ({params.crossWB.toFixed(2)}) + N × v/CA ({calc.lengthPerTruck.toFixed(2)}) = {effectiveParallelDistance.toFixed(2)} m
+                  </div>
+                )}
+                {provisional.length > 0 && (
+                  <div className="flex gap-2 pt-1 border-t">
+                    <button
+                      type="button"
+                      onClick={confirmProvisional}
+                      className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded bg-yellow-100 border-yellow-400 hover:bg-yellow-200 text-yellow-900 font-medium"
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                      確定（{provisional.length} 本）
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelProvisional}
+                      className="flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded bg-white hover:bg-slate-50"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      キャンセル
+                    </button>
+                  </div>
                 )}
               </div>
             )}
@@ -959,19 +1079,41 @@ export function SoilImportStripPlanPage() {
               />
               延長を整数台数で調整（v/CA = {calc.lengthPerTruck.toFixed(2)} m の倍数）
             </label>
-            <div className="flex justify-between items-center">
+            <div className="flex justify-between items-center gap-2">
               <div className="text-xs text-slate-500">
                 確定済み：{freeLines.length} 本
               </div>
-              <button
-                type="button"
-                onClick={resetAll}
-                disabled={freeLines.length === 0 && freeCurrent.length === 0}
-                className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50 disabled:opacity-50"
-              >
-                <RotateCcw className="h-3 w-3" />
-                全削除
-              </button>
+              <div className="flex gap-1">
+                <button
+                  type="button"
+                  onClick={undo}
+                  disabled={!canUndo}
+                  className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50 disabled:opacity-50"
+                  title="元に戻す（最大 5 回）"
+                >
+                  <Undo2 className="h-3 w-3" />
+                  元に戻す
+                </button>
+                <button
+                  type="button"
+                  onClick={redo}
+                  disabled={!canRedo}
+                  className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50 disabled:opacity-50"
+                  title="やり直す"
+                >
+                  <Redo2 className="h-3 w-3" />
+                  やり直す
+                </button>
+                <button
+                  type="button"
+                  onClick={resetAll}
+                  disabled={freeLines.length === 0 && freeCurrent.length === 0}
+                  className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50 disabled:opacity-50"
+                >
+                  <RotateCcw className="h-3 w-3" />
+                  全削除
+                </button>
+              </div>
             </div>
           </section>
 
@@ -1033,6 +1175,8 @@ export function SoilImportStripPlanPage() {
               previewSegment={previewSegment}
               freeBuffers={freeBuffers}
               freeCurrentBuffer={freeCurrentBuffer}
+              provisionalLines={provisional}
+              provisionalBuffers={provisionalBuffers}
               freeLabels={freeLabels}
               freeCurrentLabel={freeCurrentLabel}
               selectedFreeIdx={selectedFreeIdx}
