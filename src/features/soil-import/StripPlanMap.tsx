@@ -16,9 +16,13 @@ export interface StripPlanMapProps {
   parallelLines?: [number, number][][]
   // 垂直線
   perpLines?: [number, number][][]
+  // フリー描画の確定済みライン
+  freeLines?: [number, number][][]
+  // フリー描画の入力途中ライン（点列）
+  freeCurrent?: [number, number][]
   // 背景レイヤ
   baseLayer?: StripPlanBaseLayer
-  // 地図クリックで基線点を追加するモード
+  // 地図クリックで点を追加するモード
   pickMode: boolean
   onMapClick?: (latLng: [number, number]) => void
 }
@@ -49,6 +53,8 @@ export function StripPlanMap({
   axisLines = [],
   parallelLines = [],
   perpLines = [],
+  freeLines = [],
+  freeCurrent = [],
   baseLayer = 'gsi-photo',
   pickMode,
   onMapClick,
@@ -132,6 +138,31 @@ export function StripPlanMap({
           key={`axis-${i}`}
           positions={line}
           pathOptions={{ color: '#dc2626', weight: 3 }}
+        />
+      ))}
+
+      {/* フリー描画：確定済み */}
+      {freeLines.map((line, i) => (
+        <Polyline
+          key={`free-${i}`}
+          positions={line}
+          pathOptions={{ color: '#a855f7', weight: 3 }}
+        />
+      ))}
+
+      {/* フリー描画：入力途中 */}
+      {freeCurrent.length >= 2 && (
+        <Polyline
+          positions={freeCurrent}
+          pathOptions={{ color: '#a855f7', weight: 3, dashArray: '4,4' }}
+        />
+      )}
+      {freeCurrent.map((pt, i) => (
+        <CircleMarker
+          key={`fc-${i}`}
+          center={pt}
+          radius={4}
+          pathOptions={{ color: '#a855f7', fillColor: '#fff', fillOpacity: 1, weight: 2 }}
         />
       ))}
 
