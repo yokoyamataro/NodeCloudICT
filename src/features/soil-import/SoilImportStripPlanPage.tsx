@@ -610,8 +610,15 @@ export function SoilImportStripPlanPage() {
 
   const confirmProvisional = () => {
     const lines = mode === 'grid' ? gridProvisional : provisional
+    console.log('[StripPlan] confirmProvisional', {
+      mode,
+      provisionalCount: lines.length,
+      freeLinesBefore: freeLines.length,
+      provisionalLines: lines.map((l) => l.length),
+    })
     if (lines.length === 0) return
     const newLines = [...freeLines, ...lines]
+    console.log('[StripPlan] confirm → commit', { totalAfter: newLines.length })
     commitLines(newLines)
     setSelectedFreeIdx(newLines.length - 1)
     setParallelClickPos(null)
