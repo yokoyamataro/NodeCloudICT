@@ -154,7 +154,10 @@ export function SoilImportStripPlanPage() {
   const [hoverLatLng, setHoverLatLng] = useState<[number, number] | null>(null)
   const [selectedFreeIdx, setSelectedFreeIdx] = useState<number | null>(null)
   const [perpAnchor, setPerpAnchor] = useState<[number, number] | null>(null)
+  // 平行コピーの間隔モード
+  const [parallelMode, setParallelMode] = useState<'distance' | 'truckMultiple'>('distance')
   const [parallelDistance, setParallelDistance] = useState<number>(10)
+  const [parallelTruckMultiple, setParallelTruckMultiple] = useState<number>(1)
   const [roundToTruck, setRoundToTruck] = useState(false)
   const skipNextMapClickRef = useRef(false)
 
@@ -409,6 +412,13 @@ export function SoilImportStripPlanPage() {
     setTimeout(() => { skipNextMapClickRef.current = false }, 100)
   }
 
+  // 現在の平行コピーモードに基づく実効間隔（中心線間隔 m）
+  const effectiveParallelDistance = useMemo(() => {
+    if (parallelMode === 'distance') return parallelDistance
+    // 整数台数モード: 中心線間隔 = WB + N × (v/CA)
+    return params.crossWB + Math.max(0, parallelTruckMultiple) * calc.lengthPerTruck
+  }, [parallelMode, parallelDistance, parallelTruckMultiple, params.crossWB, calc.lengthPerTruck])
+
   const handleParallelClick = (ll: [number, number]) => {
     const ref = refLineXY(selectedFreeIdx)
     if (!ref) return
@@ -418,7 +428,7 @@ export function SoilImportStripPlanPage() {
     const dir = polylineSegmentDirection(ref, np.segIdx)
     const n = { x: -dir.y, y: dir.x }
     const sign = (click.x - np.point.x) * n.x + (click.y - np.point.y) * n.y >= 0 ? 1 : -1
-    const offsetXY = offsetPolyline(ref, parallelDistance * sign)
+    const offsetXY = offsetPolyline(ref, effectiveParallelDistance * sign)
     if (!offsetXY) return
     const newLine: [number, number][] = offsetXY.map(({ x, y }) => {
       const r = converter.toLatLng(x, y)
@@ -439,7 +449,24 @@ export function SoilImportStripPlanPage() {
       const click = converter.toXY(ll[0], ll[1])
       const np = nearestPointOnPolyline({ x: click.x, y: click.y }, ref)
       if (!np) return
-      const r = converter.toLatLng(np.point.x, np.point.y)
+      // 基準線の端点付近でクリックされた場合は、端部がきれいに重なるよう
+      // 内側へ WB/2 だけオフセットしたアンカーを使う
+      const SNAP = halfWidth // 端点とみなす許容距離
+      let anchorXY: XY = np.point
+      const startV = ref[0]
+      const endV = ref[ref.length - 1]
+      const dStart = Math.hypot(np.point.x - startV.x, np.point.y - startV.y)
+      const dEnd = Math.hypot(np.point.x - endV.x, np.point.y - endV.y)
+      if (dStart < SNAP) {
+        // 始点側: 直後のセグメント方向（始点→次点）に halfWidth 進める
+        const d = polylineSegmentDirection(ref, 0)
+        anchorXY = { x: startV.x + d.x * halfWidth, y: startV.y + d.y * halfWidth }
+      } else if (dEnd < SNAP) {
+        // 終点側: 末尾セグメントの逆方向に halfWidth 進める
+        const d = polylineSegmentDirection(ref, ref.length - 2)
+        anchorXY = { x: endV.x - d.x * halfWidth, y: endV.y - d.y * halfWidth }
+      }
+      const r = converter.toLatLng(anchorXY.x, anchorXY.y)
       setPerpAnchor([r.lat, r.lng])
       setMode('perp2')
     } catch (e) {
@@ -845,10 +872,32 @@ export function SoilImportStripPlanPage() {
               </div>
             )}
 
-            {/* parallel モードの距離入力 */}
+            {/* parallel モードの間隔入力 */}
             {mode === 'parallel' && (
-              <NumberField label="平行距離" unit="m" value={parallelDistance}
-                onChange={setParallelDistance} step={0.5} decimals={1} />
+              <div className="space-y-2">
+                <div className="flex gap-1 text-xs">
+                  <label className={`flex-1 flex items-center justify-center px-2 py-1 border rounded cursor-pointer ${parallelMode === 'distance' ? 'bg-orange-100 border-orange-400' : 'bg-white hover:bg-slate-50'}`}>
+                    <input type="radio" className="hidden" checked={parallelMode === 'distance'} onChange={() => setParallelMode('distance')} />
+                    中心線間隔
+                  </label>
+                  <label className={`flex-1 flex items-center justify-center px-2 py-1 border rounded cursor-pointer ${parallelMode === 'truckMultiple' ? 'bg-orange-100 border-orange-400' : 'bg-white hover:bg-slate-50'}`}>
+                    <input type="radio" className="hidden" checked={parallelMode === 'truckMultiple'} onChange={() => setParallelMode('truckMultiple')} />
+                    整数台数
+                  </label>
+                </div>
+                {parallelMode === 'distance' ? (
+                  <NumberField label="平行距離（中心線間隔）" unit="m" value={parallelDistance}
+                    onChange={setParallelDistance} step={0.5} decimals={1} />
+                ) : (
+                  <>
+                    <NumberField label="台数倍率 N" unit="台" value={parallelTruckMultiple}
+                      onChange={(v) => setParallelTruckMultiple(Math.max(0, Math.round(v)))} step={1} decimals={0} />
+                    <div className="text-xs text-slate-500">
+                      中心線間隔 = WB ({params.crossWB.toFixed(2)}) + N × v/CA ({calc.lengthPerTruck.toFixed(2)}) = {effectiveParallelDistance.toFixed(2)} m
+                    </div>
+                  </>
+                )}
+              </div>
             )}
 
             {/* edit モード：選択中の操作 */}
