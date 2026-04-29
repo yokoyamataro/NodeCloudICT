@@ -322,12 +322,19 @@ export function SoilImportStripPlanPage() {
         const dir = polylineSegmentDirection(ref, np.segIdx)
         const n = { x: -dir.y, y: dir.x }
         const t = (click.x - anchor.x) * n.x + (click.y - anchor.y) * n.y
+        if (Math.abs(t) <= halfWidth + 1e-9) return null
+        const sign = t >= 0 ? 1 : -1
+        const startXY: XY = {
+          x: anchor.x + n.x * sign * halfWidth,
+          y: anchor.y + n.y * sign * halfWidth,
+        }
         let endXY: XY = { x: anchor.x + n.x * t, y: anchor.y + n.y * t }
         if (roundToTruck && calc.lengthPerTruck > 0) {
-          endXY = snapEndpointToMultiple({ x: anchor.x, y: anchor.y }, endXY, calc.lengthPerTruck)
+          endXY = snapEndpointToMultiple(startXY, endXY, calc.lengthPerTruck)
         }
-        const r = converter.toLatLng(endXY.x, endXY.y)
-        return [perpAnchor, [r.lat, r.lng]]
+        const sLL = converter.toLatLng(startXY.x, startXY.y)
+        const eLL = converter.toLatLng(endXY.x, endXY.y)
+        return [[sLL.lat, sLL.lng], [eLL.lat, eLL.lng]]
       }
       if (mode === 'extend' && selectedFreeIdx !== null) {
         const ref = refLineXY(selectedFreeIdx)
@@ -489,12 +496,19 @@ export function SoilImportStripPlanPage() {
       const dx = click.x - anchor.x
       const dy = click.y - anchor.y
       const t = dx * n.x + dy * n.y
-      if (Math.abs(t) < 1e-9) return
+      // 起点を基準線から WB/2 オフセット（帯同士の重なり回避）
+      // クリック側に向かって halfWidth 進めた位置を起点にする
+      if (Math.abs(t) <= halfWidth + 1e-9) return // 短すぎ
+      const sign = t >= 0 ? 1 : -1
+      const startXY: XY = {
+        x: anchor.x + n.x * sign * halfWidth,
+        y: anchor.y + n.y * sign * halfWidth,
+      }
       let endXY: XY = { x: anchor.x + n.x * t, y: anchor.y + n.y * t }
       if (roundToTruck && calc.lengthPerTruck > 0) {
-        endXY = snapEndpointToMultiple({ x: anchor.x, y: anchor.y }, endXY, calc.lengthPerTruck)
+        endXY = snapEndpointToMultiple(startXY, endXY, calc.lengthPerTruck)
       }
-      const startLL = converter.toLatLng(anchor.x, anchor.y)
+      const startLL = converter.toLatLng(startXY.x, startXY.y)
       const endLL = converter.toLatLng(endXY.x, endXY.y)
       const newLine: [number, number][] = [
         [startLL.lat, startLL.lng],
