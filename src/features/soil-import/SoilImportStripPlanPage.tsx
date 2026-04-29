@@ -404,30 +404,6 @@ export function SoilImportStripPlanPage() {
     }
   }, [freeCurrent, previewSegment, converter, calc.lengthPerTruck, freeLines.length])
 
-  // 仮表示の総延長（確定前の平行/格子提案）
-  const provisionalLengthM = useMemo(() => {
-    let total = 0
-    for (const line of allProvisional) {
-      for (let i = 1; i < line.length; i++) {
-        const a = converter.toXY(line[i - 1][0], line[i - 1][1])
-        const b = converter.toXY(line[i][0], line[i][1])
-        total += Math.hypot(a.x - b.x, a.y - b.y)
-      }
-    }
-    return total
-  }, [allProvisional, converter])
-
-  const generated = useMemo(() => {
-    const lenTotal = freeLinesLengthM + previewLengthM + provisionalLengthM
-    const trucks = calc.lengthPerTruck > 0 ? lenTotal / calc.lengthPerTruck : 0
-    const drawingExtra = freeCurrent.length >= 1 ? 1 : 0
-    return {
-      lenTotal,
-      trucks,
-      lineCount: freeLines.length + drawingExtra + allProvisional.length,
-    }
-  }, [calc.lengthPerTruck, freeLines.length, freeCurrent.length, freeLinesLengthM, previewLengthM, allProvisional.length, provisionalLengthM])
-
   // 各帯の番号・延長・台数
   const lineStats = useMemo(() => {
     return freeLines.map((line, i) => {
@@ -440,12 +416,6 @@ export function SoilImportStripPlanPage() {
       return { index: i, number: i + 1, length, trucks }
     })
   }, [freeLines, converter, calc.lengthPerTruck])
-
-  const diff = useMemo(() => {
-    const dLen = generated.lenTotal - calc.L
-    const dTrucks = generated.trucks - calc.n
-    return { dLen, dTrucks }
-  }, [generated, calc.L, calc.n])
 
   const skipMapClickOnce = () => {
     skipNextMapClickRef.current = true
@@ -588,6 +558,36 @@ export function SoilImportStripPlanPage() {
   const allProvisional = useMemo<[number, number][][]>(() => {
     return mode === 'grid' ? gridProvisional : provisional
   }, [mode, provisional, gridProvisional])
+
+  // 仮表示の総延長（確定前の平行/格子提案）
+  const provisionalLengthM = useMemo(() => {
+    let total = 0
+    for (const line of allProvisional) {
+      for (let i = 1; i < line.length; i++) {
+        const a = converter.toXY(line[i - 1][0], line[i - 1][1])
+        const b = converter.toXY(line[i][0], line[i][1])
+        total += Math.hypot(a.x - b.x, a.y - b.y)
+      }
+    }
+    return total
+  }, [allProvisional, converter])
+
+  const generated = useMemo(() => {
+    const lenTotal = freeLinesLengthM + previewLengthM + provisionalLengthM
+    const trucks = calc.lengthPerTruck > 0 ? lenTotal / calc.lengthPerTruck : 0
+    const drawingExtra = freeCurrent.length >= 1 ? 1 : 0
+    return {
+      lenTotal,
+      trucks,
+      lineCount: freeLines.length + drawingExtra + allProvisional.length,
+    }
+  }, [calc.lengthPerTruck, freeLines.length, freeCurrent.length, freeLinesLengthM, previewLengthM, allProvisional.length, provisionalLengthM])
+
+  const diff = useMemo(() => {
+    const dLen = generated.lenTotal - calc.L
+    const dTrucks = generated.trucks - calc.n
+    return { dLen, dTrucks }
+  }, [generated, calc.L, calc.n])
 
   // 仮表示の帯ポリゴン
   const provisionalBuffers = useMemo<[number, number][][]>(() => {
