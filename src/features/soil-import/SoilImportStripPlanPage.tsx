@@ -1,16 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Layers, MousePointerClick, RotateCcw, Pencil, CornerDownRight, Undo2, Trash2, Edit3, Copy, Square as SquareIcon, Move } from 'lucide-react'
+import { Layers, RotateCcw, Pencil, CornerDownRight, Undo2, Trash2, Edit3, Copy, Square as SquareIcon, Move } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import {
-  generateBranchStrips,
-  generateGridStrips,
-  totalLength,
   bufferPolyline,
-  bufferSegments,
   polylineLength,
   polylineMidpoint,
   snapEndpointToMultiple,
@@ -37,8 +33,6 @@ const DEFAULT_PARAMS: StripPlanParams = {
   crossWB: 5.0,
   crossH: 0.5,
 }
-
-type Pattern = 'branch' | 'grid' | 'free'
 
 function NumberField({
   label,
@@ -121,11 +115,7 @@ export function SoilImportStripPlanPage() {
   const areas = getWorkAreasByType('soil_import')
   const [selectedAreaId, setSelectedAreaId] = useState<string | null>(null)
   const [params, setParams] = useState<StripPlanParams>(DEFAULT_PARAMS)
-  const [pattern, setPattern] = useState<Pattern>('branch')
-  const [interval, setInterval] = useState<number>(20) // m
   const [baseLayer, setBaseLayer] = useState<StripPlanBaseLayer>('gsi-photo')
-  const [pickMode, setPickMode] = useState(false)
-  const [baselineLatLng, setBaselineLatLng] = useState<[number, number][]>([])
   // フリー描画
   const [freeDrawMode, setFreeDrawMode] = useState(false)
   const [freeLines, setFreeLines] = useState<[number, number][][]>([])
@@ -147,10 +137,8 @@ export function SoilImportStripPlanPage() {
     }
   }, [areas, selectedAreaId])
 
-  // 区域変更時は基線・フリー描画をリセット
+  // 区域変更時はフリー描画をリセット
   useEffect(() => {
-    setBaselineLatLng([])
-    setPickMode(false)
     setFreeLines([])
     setFreeCurrent([])
     setFreeDrawMode(false)
@@ -174,12 +162,6 @@ export function SoilImportStripPlanPage() {
     }
   }, [freeAction])
 
-  // パターン切替時はピック・描画モードを抜ける
-  useEffect(() => {
-    setPickMode(false)
-    setFreeDrawMode(false)
-  }, [pattern])
-
   const selectedArea = areas.find((a) => a.id === selectedAreaId) ?? null
 
   // 区域ポリゴン（lat/lng）
@@ -188,12 +170,6 @@ export function SoilImportStripPlanPage() {
     return selectedArea.points
       .filter((p) => p.lat !== null && p.lng !== null)
       .map((p) => [p.lat!, p.lng!] as [number, number])
-  }, [selectedArea])
-
-  // 区域ポリゴン（XY 平面直角座標）
-  const areaXY = useMemo<XY[]>(() => {
-    if (!selectedArea) return []
-    return selectedArea.points.map((p) => ({ x: p.x, y: p.y }))
   }, [selectedArea])
 
   // 計算
@@ -208,61 +184,6 @@ export function SoilImportStripPlanPage() {
     const lengthPerTruck = CA > 0 ? v / CA : 0
     return { areaSqm, V, v, n, CA, L, lengthPerTruck }
   }, [selectedArea, params])
-
-  // 基線（XY）
-  const baselineXY = useMemo<XY[]>(() => {
-    return baselineLatLng.map((ll) => {
-      const { x, y } = converter.toXY(ll[0], ll[1])
-      return { x, y }
-    })
-  }, [baselineLatLng, converter])
-
-  // 帯線生成（branch/grid のみ。free はユーザー入力をそのまま使う）
-  const strips = useMemo(() => {
-    if (pattern === 'free' || baselineXY.length < 2 || areaXY.length < 3) {
-      return { axisXY: [] as [XY, XY][], parallelXY: [] as [XY, XY][], perpXY: [] as [XY, XY][] }
-    }
-    if (pattern === 'branch') {
-      const r = generateBranchStrips(baselineXY[0], baselineXY[1], areaXY, interval, params.crossWB)
-      return { axisXY: r.axisSegments, parallelXY: [] as [XY, XY][], perpXY: r.branchSegments }
-    } else {
-      const r = generateGridStrips(baselineXY[0], baselineXY[1], areaXY, interval)
-      return { axisXY: [] as [XY, XY][], parallelXY: r.parallelSegments, perpXY: r.perpendicularSegments }
-    }
-  }, [baselineXY, areaXY, pattern, interval, params.crossWB])
-
-  // 描画用に lat/lng に戻す
-  const segmentsToLatLng = (segs: [XY, XY][]): [number, number][][] =>
-    segs.map((seg) => seg.map(({ x, y }) => {
-      const { lat, lng } = converter.toLatLng(x, y)
-      return [lat, lng] as [number, number]
-    }))
-  const polygonsToLatLng = (polys: XY[][]): [number, number][][] =>
-    polys.map((poly) => poly.map(({ x, y }) => {
-      const { lat, lng } = converter.toLatLng(x, y)
-      return [lat, lng] as [number, number]
-    }))
-
-  const axisLines = useMemo(() => segmentsToLatLng(strips.axisXY), [strips.axisXY, converter]) // eslint-disable-line react-hooks/exhaustive-deps
-  const parallelLines = useMemo(() => segmentsToLatLng(strips.parallelXY), [strips.parallelXY, converter]) // eslint-disable-line react-hooks/exhaustive-deps
-  const perpLines = useMemo(() => segmentsToLatLng(strips.perpXY), [strips.perpXY, converter]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // 帯幅 WB の半幅
-  const halfWidth = params.crossWB / 2
-
-  // 帯ポリゴン（XY → lat/lng）
-  const axisBuffers = useMemo(
-    () => polygonsToLatLng(bufferSegments(strips.axisXY, halfWidth)),
-    [strips.axisXY, halfWidth, converter] // eslint-disable-line react-hooks/exhaustive-deps
-  )
-  const parallelBuffers = useMemo(
-    () => polygonsToLatLng(bufferSegments(strips.parallelXY, halfWidth)),
-    [strips.parallelXY, halfWidth, converter] // eslint-disable-line react-hooks/exhaustive-deps
-  )
-  const perpBuffers = useMemo(
-    () => polygonsToLatLng(bufferSegments(strips.perpXY, halfWidth)),
-    [strips.perpXY, halfWidth, converter] // eslint-disable-line react-hooks/exhaustive-deps
-  )
 
   // フリー描画ラインの XY 化と長さ（確定済み + 入力途中）
   const freeLinesLengthM = useMemo(() => {
@@ -289,12 +210,12 @@ export function SoilImportStripPlanPage() {
 
   // マウス追従プレビューセグメント（直前点 → ホバー位置、必要なら整数倍に丸める）
   const previewSegment = useMemo<[[number, number], [number, number]] | undefined>(() => {
-    if (pattern !== 'free' || !freeDrawMode) return undefined
+    if (!freeDrawMode) return undefined
     if (freeCurrent.length === 0 || !hoverLatLng) return undefined
     const last = freeCurrent[freeCurrent.length - 1]
     const adjusted = adjustEndpoint(last, hoverLatLng)
     return [last, adjusted]
-  }, [pattern, freeDrawMode, freeCurrent, hoverLatLng, roundToTruck, calc.lengthPerTruck, converter]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [freeDrawMode, freeCurrent, hoverLatLng, roundToTruck, calc.lengthPerTruck, converter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // プレビュー区間の長さ
   const previewLengthM = useMemo(() => {
@@ -304,9 +225,11 @@ export function SoilImportStripPlanPage() {
     return Math.hypot(a.x - b.x, a.y - b.y)
   }, [previewSegment, converter])
 
-  // 確定済みフリー線の帯ポリゴン
+  // 帯幅 WB の半幅
+  const halfWidth = params.crossWB / 2
+
+  // 確定済み線の帯ポリゴン
   const freeBuffers = useMemo<[number, number][][]>(() => {
-    if (pattern !== 'free') return []
     const result: [number, number][][] = []
     for (const line of freeLines) {
       const lineXY = line.map((ll) => {
@@ -322,11 +245,10 @@ export function SoilImportStripPlanPage() {
       }
     }
     return result
-  }, [pattern, freeLines, halfWidth, converter])
+  }, [freeLines, halfWidth, converter])
 
-  // 確定済みフリー線のラベル（番号・延長・台数）
+  // 確定済み線のラベル（番号・延長・台数）
   const freeLabels = useMemo<StripLabel[]>(() => {
-    if (pattern !== 'free') return []
     const labels: StripLabel[] = []
     for (let i = 0; i < freeLines.length; i++) {
       const line = freeLines[i]
@@ -346,11 +268,10 @@ export function SoilImportStripPlanPage() {
       })
     }
     return labels
-  }, [pattern, freeLines, converter, calc.lengthPerTruck])
+  }, [freeLines, converter, calc.lengthPerTruck])
 
-  // 入力途中（+ プレビュー）のフリー線の帯ポリゴン
+  // 入力途中（+ プレビュー）の帯ポリゴン
   const freeCurrentBuffer = useMemo<[number, number][] | null>(() => {
-    if (pattern !== 'free') return null
     const drawing: [number, number][] = [
       ...freeCurrent,
       ...(previewSegment ? [previewSegment[1]] : []),
@@ -366,53 +287,53 @@ export function SoilImportStripPlanPage() {
       const { lat, lng } = converter.toLatLng(x, y)
       return [lat, lng] as [number, number]
     })
-  }, [pattern, freeCurrent, previewSegment, halfWidth, converter])
+  }, [freeCurrent, previewSegment, halfWidth, converter])
 
   // 編集アクションのプレビュー線（垂線作成の 2 点目 / 伸縮 で hover に応じて表示）
   const actionPreview = useMemo<[[number, number], [number, number]] | null>(() => {
     if (!hoverLatLng) return null
     try {
-    if (freeAction === 'perp2' && perpAnchor) {
-      const ref = refLineXY(selectedFreeIdx)
-      if (!ref) return null
-      const anchor = converter.toXY(perpAnchor[0], perpAnchor[1])
-      const click = converter.toXY(hoverLatLng[0], hoverLatLng[1])
-      const np = nearestPointOnPolyline({ x: anchor.x, y: anchor.y }, ref)
-      if (!np) return null
-      const dir = polylineSegmentDirection(ref, np.segIdx)
-      const n = { x: -dir.y, y: dir.x }
-      const t = (click.x - anchor.x) * n.x + (click.y - anchor.y) * n.y
-      let endXY: XY = { x: anchor.x + n.x * t, y: anchor.y + n.y * t }
-      if (roundToTruck && calc.lengthPerTruck > 0) {
-        endXY = snapEndpointToMultiple({ x: anchor.x, y: anchor.y }, endXY, calc.lengthPerTruck)
+      if (freeAction === 'perp2' && perpAnchor) {
+        const ref = refLineXY(selectedFreeIdx)
+        if (!ref) return null
+        const anchor = converter.toXY(perpAnchor[0], perpAnchor[1])
+        const click = converter.toXY(hoverLatLng[0], hoverLatLng[1])
+        const np = nearestPointOnPolyline({ x: anchor.x, y: anchor.y }, ref)
+        if (!np) return null
+        const dir = polylineSegmentDirection(ref, np.segIdx)
+        const n = { x: -dir.y, y: dir.x }
+        const t = (click.x - anchor.x) * n.x + (click.y - anchor.y) * n.y
+        let endXY: XY = { x: anchor.x + n.x * t, y: anchor.y + n.y * t }
+        if (roundToTruck && calc.lengthPerTruck > 0) {
+          endXY = snapEndpointToMultiple({ x: anchor.x, y: anchor.y }, endXY, calc.lengthPerTruck)
+        }
+        const r = converter.toLatLng(endXY.x, endXY.y)
+        return [perpAnchor, [r.lat, r.lng]]
       }
-      const r = converter.toLatLng(endXY.x, endXY.y)
-      return [perpAnchor, [r.lat, r.lng]]
-    }
-    if (freeAction === 'extend' && selectedFreeIdx !== null) {
-      const ref = refLineXY(selectedFreeIdx)
-      if (!ref || ref.length < 2) return null
-      const click = converter.toXY(hoverLatLng[0], hoverLatLng[1])
-      const dStart = Math.hypot(click.x - ref[0].x, click.y - ref[0].y)
-      const dEnd = Math.hypot(click.x - ref[ref.length - 1].x, click.y - ref[ref.length - 1].y)
-      const adjustEndPt = dEnd <= dStart
-      const idx = adjustEndPt ? ref.length - 1 : 0
-      const anchor = adjustEndPt ? ref[ref.length - 2] : ref[1]
-      const dx = ref[idx].x - anchor.x
-      const dy = ref[idx].y - anchor.y
-      const dirLen = Math.hypot(dx, dy)
-      if (dirLen < 1e-9) return null
-      const dir = { x: dx / dirLen, y: dy / dirLen }
-      const t = (click.x - anchor.x) * dir.x + (click.y - anchor.y) * dir.y
-      let newPt: XY = { x: anchor.x + dir.x * t, y: anchor.y + dir.y * t }
-      if (roundToTruck && calc.lengthPerTruck > 0) {
-        newPt = snapEndpointToMultiple(anchor, newPt, calc.lengthPerTruck)
+      if (freeAction === 'extend' && selectedFreeIdx !== null) {
+        const ref = refLineXY(selectedFreeIdx)
+        if (!ref || ref.length < 2) return null
+        const click = converter.toXY(hoverLatLng[0], hoverLatLng[1])
+        const dStart = Math.hypot(click.x - ref[0].x, click.y - ref[0].y)
+        const dEnd = Math.hypot(click.x - ref[ref.length - 1].x, click.y - ref[ref.length - 1].y)
+        const adjustEndPt = dEnd <= dStart
+        const idx = adjustEndPt ? ref.length - 1 : 0
+        const anchor = adjustEndPt ? ref[ref.length - 2] : ref[1]
+        const dx = ref[idx].x - anchor.x
+        const dy = ref[idx].y - anchor.y
+        const dirLen = Math.hypot(dx, dy)
+        if (dirLen < 1e-9) return null
+        const dir = { x: dx / dirLen, y: dy / dirLen }
+        const t = (click.x - anchor.x) * dir.x + (click.y - anchor.y) * dir.y
+        let newPt: XY = { x: anchor.x + dir.x * t, y: anchor.y + dir.y * t }
+        if (roundToTruck && calc.lengthPerTruck > 0) {
+          newPt = snapEndpointToMultiple(anchor, newPt, calc.lengthPerTruck)
+        }
+        const aLL = converter.toLatLng(anchor.x, anchor.y)
+        const nLL = converter.toLatLng(newPt.x, newPt.y)
+        return [[aLL.lat, aLL.lng], [nLL.lat, nLL.lng]]
       }
-      const aLL = converter.toLatLng(anchor.x, anchor.y)
-      const nLL = converter.toLatLng(newPt.x, newPt.y)
-      return [[aLL.lat, aLL.lng], [nLL.lat, nLL.lng]]
-    }
-    return null
+      return null
     } catch (e) {
       console.error('[StripPlan] actionPreview error', e)
       return null
@@ -421,7 +342,6 @@ export function SoilImportStripPlanPage() {
 
   // 入力途中ラインのラベル（編集中の番号・延長・台数）
   const freeCurrentLabel = useMemo<StripLabel | null>(() => {
-    if (pattern !== 'free') return null
     const drawing: [number, number][] = [
       ...freeCurrent,
       ...(previewSegment ? [previewSegment[1]] : []),
@@ -441,22 +361,15 @@ export function SoilImportStripPlanPage() {
       text: `${freeLines.length + 1}: ${len.toFixed(1)} m / ${trucks.toFixed(1)} 台`,
       variant: 'current',
     }
-  }, [pattern, freeCurrent, previewSegment, converter, calc.lengthPerTruck, freeLines.length])
+  }, [freeCurrent, previewSegment, converter, calc.lengthPerTruck, freeLines.length])
 
-  // 統計（フリー時はプレビュー区間も含む）
+  // 統計（プレビュー区間も含む）
   const generated = useMemo(() => {
-    if (pattern === 'free') {
-      const lenTotal = freeLinesLengthM + previewLengthM
-      const trucks = calc.lengthPerTruck > 0 ? lenTotal / calc.lengthPerTruck : 0
-      // 描画中の現在線が 1 点以上ある場合も「現在描画中の線」として 1 本扱い
-      const drawingExtra = freeCurrent.length >= 1 ? 1 : 0
-      return { lenTotal, trucks, lineCount: freeLines.length + drawingExtra }
-    }
-    const all: [XY, XY][] = [...strips.axisXY, ...strips.parallelXY, ...strips.perpXY]
-    const lenTotal = totalLength(all)
+    const lenTotal = freeLinesLengthM + previewLengthM
     const trucks = calc.lengthPerTruck > 0 ? lenTotal / calc.lengthPerTruck : 0
-    return { lenTotal, trucks, lineCount: all.length }
-  }, [strips, calc.lengthPerTruck, pattern, freeLines.length, freeCurrent.length, freeLinesLengthM, previewLengthM])
+    const drawingExtra = freeCurrent.length >= 1 ? 1 : 0
+    return { lenTotal, trucks, lineCount: freeLines.length + drawingExtra }
+  }, [calc.lengthPerTruck, freeLines.length, freeCurrent.length, freeLinesLengthM, previewLengthM])
 
   // 目標との差分
   const diff = useMemo(() => {
@@ -534,7 +447,7 @@ export function SoilImportStripPlanPage() {
       const dx = click.x - anchor.x
       const dy = click.y - anchor.y
       const t = dx * n.x + dy * n.y
-      if (Math.abs(t) < 1e-9) return // ほぼ 0 長：作らない
+      if (Math.abs(t) < 1e-9) return
       let endXY: XY = { x: anchor.x + n.x * t, y: anchor.y + n.y * t }
       if (roundToTruck && calc.lengthPerTruck > 0) {
         endXY = snapEndpointToMultiple({ x: anchor.x, y: anchor.y }, endXY, calc.lengthPerTruck)
@@ -588,12 +501,10 @@ export function SoilImportStripPlanPage() {
   }
 
   const handleMapClick = (ll: [number, number]) => {
-    // 終点クリック確定の副作用クリックを 1 回スキップ
     if (skipNextMapClickRef.current) {
       skipNextMapClickRef.current = false
       return
     }
-    // 編集アクション優先
     if (freeAction === 'parallel') { handleParallelClick(ll); return }
     if (freeAction === 'perp1') { handlePerp1Click(ll); return }
     if (freeAction === 'perp2') { handlePerp2Click(ll); return }
@@ -605,21 +516,7 @@ export function SoilImportStripPlanPage() {
         const adjusted = adjustEndpoint(last, ll)
         return [...prev, adjusted]
       })
-      return
     }
-    if (pickMode) {
-      setBaselineLatLng((prev) => {
-        if (prev.length >= 2) return [ll]
-        const next = [...prev, ll]
-        if (next.length >= 2) setPickMode(false)
-        return next
-      })
-    }
-  }
-
-  const resetBaseline = () => {
-    setBaselineLatLng([])
-    setPickMode(false)
   }
 
   const finishFreeLine = () => {
@@ -629,13 +526,12 @@ export function SoilImportStripPlanPage() {
     setFreeCurrent([])
   }
 
-  // 終点クリックでの確定（地図側から呼ばれる）。直後に来る地図クリックをスキップする
   const finishFreeLineFromMap = () => {
     finishFreeLine()
     skipMapClickOnce()
   }
 
-  // Enter で確定 / Backspace で 1 点戻る（フリー描画モード時）
+  // Enter で確定 / Backspace で 1 点戻る
   useEffect(() => {
     if (!freeDrawMode) return
     const handler = (e: KeyboardEvent) => {
@@ -682,7 +578,6 @@ export function SoilImportStripPlanPage() {
     if (freeCurrent.length > 0) {
       setFreeCurrent((prev) => prev.slice(0, -1))
     } else if (freeLines.length > 0) {
-      // 直前の確定線を再編集状態に戻す
       setFreeCurrent(freeLines[freeLines.length - 1])
       setFreeLines((prev) => prev.slice(0, -1))
     }
@@ -772,211 +667,157 @@ export function SoilImportStripPlanPage() {
               hint={`v/CA=${calc.lengthPerTruck.toFixed(2)} m/台`} />
           </section>
 
-          {/* 配置パターン */}
-          <section className="bg-white rounded-lg border p-3 space-y-3">
-            <h2 className="font-semibold text-slate-800 text-sm">配置パターン</h2>
-            <div className="flex gap-2 text-sm">
-              <label className={`flex-1 flex items-center justify-center gap-1 px-3 py-1.5 border rounded cursor-pointer ${pattern === 'branch' ? 'bg-orange-100 border-orange-400' : ''}`}>
-                <input type="radio" className="hidden" checked={pattern === 'branch'} onChange={() => setPattern('branch')} />
-                枝状
-              </label>
-              <label className={`flex-1 flex items-center justify-center gap-1 px-3 py-1.5 border rounded cursor-pointer ${pattern === 'grid' ? 'bg-orange-100 border-orange-400' : ''}`}>
-                <input type="radio" className="hidden" checked={pattern === 'grid'} onChange={() => setPattern('grid')} />
-                格子状
-              </label>
-              <label className={`flex-1 flex items-center justify-center gap-1 px-3 py-1.5 border rounded cursor-pointer ${pattern === 'free' ? 'bg-orange-100 border-orange-400' : ''}`}>
-                <input type="radio" className="hidden" checked={pattern === 'free'} onChange={() => setPattern('free')} />
-                フリー
-              </label>
+          {/* 描画操作 */}
+          <section className="bg-white rounded-lg border p-3 space-y-2">
+            <h2 className="font-semibold text-slate-800 text-sm">帯の作図</h2>
+            <div className="text-xs text-slate-500">
+              {!freeDrawMode && '「描画開始」を押して、地図クリックで帯の中心線を作図'}
+              {freeDrawMode && freeCurrent.length === 0 && '地図クリックで 1 点目を追加'}
+              {freeDrawMode && freeCurrent.length === 1 && '地図クリックで 2 点目（追加または最終点）'}
+              {freeDrawMode && freeCurrent.length >= 2 && `現在の線：${freeCurrent.length} 点 / 最終点クリック・Enter・「次の帯」で確定`}
             </div>
-            {pattern !== 'free' && (
-              <NumberField label={pattern === 'branch' ? '枝の間隔' : '格子の間隔'}
-                unit="m" value={interval} onChange={setInterval} step={1} decimals={1} />
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setFreeDrawMode(!freeDrawMode)}
+                disabled={!selectedArea || areaLatLng.length < 3}
+                className={`flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded ${freeDrawMode ? 'bg-orange-100 border-orange-400' : 'hover:bg-slate-50'} disabled:opacity-50`}
+              >
+                <Pencil className="h-3.5 w-3.5" />
+                {freeDrawMode ? '描画中…' : '描画開始'}
+              </button>
+              <button
+                type="button"
+                onClick={finishFreeLine}
+                disabled={freeCurrent.length < 2}
+                className="flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
+                title="現在の線を確定（Enter キーでも確定）"
+              >
+                <CornerDownRight className="h-3.5 w-3.5" />
+                次の帯
+              </button>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={undoFreePoint}
+                disabled={freeCurrent.length === 0 && freeLines.length === 0}
+                className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
+              >
+                <Undo2 className="h-3.5 w-3.5" />
+                1点戻る
+              </button>
+              <button
+                type="button"
+                onClick={resetFree}
+                disabled={freeCurrent.length === 0 && freeLines.length === 0}
+                className="flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                全削除
+              </button>
+            </div>
+            <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer select-none mt-1">
+              <input
+                type="checkbox"
+                checked={roundToTruck}
+                onChange={(e) => setRoundToTruck(e.target.checked)}
+                className="cursor-pointer"
+              />
+              延長を整数台数で調整する（v/CA = {calc.lengthPerTruck.toFixed(2)} m の倍数）
+            </label>
+            <div className="text-xs text-slate-500">
+              確定済み：{freeLines.length} 本（合計 {freeLinesLengthM.toFixed(1)} m）／ Backspace で 1 点戻る
+            </div>
+
+            {/* 選択中の線の操作 */}
+            {selectedFreeIdx !== null && freeLines[selectedFreeIdx] && (
+              <div className="mt-2 p-2 bg-purple-50 border border-purple-200 rounded space-y-2">
+                <div className="text-xs text-purple-800">
+                  選択中：{selectedFreeIdx + 1} 本目（{freeLines[selectedFreeIdx].length} 点）
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={editSelectedFree}
+                    className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded bg-white hover:bg-slate-50"
+                    title="この線を編集状態に戻す（点列を引き継いで再作図）"
+                  >
+                    <Edit3 className="h-3.5 w-3.5" />
+                    再編集
+                  </button>
+                  <button
+                    type="button"
+                    onClick={deleteSelectedFree}
+                    className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded bg-white hover:bg-red-50 text-red-600"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    削除
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFreeIdx(null)}
+                    className="flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded bg-white hover:bg-slate-50"
+                  >
+                    解除
+                  </button>
+                </div>
+
+                {/* 編集アクション */}
+                <div className="pt-2 border-t border-purple-200 space-y-2">
+                  <div className="grid grid-cols-3 gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setFreeAction(freeAction === 'parallel' ? null : 'parallel')}
+                      className={`flex items-center justify-center gap-1 px-2 py-1 text-xs border rounded ${freeAction === 'parallel' ? 'bg-amber-100 border-amber-400' : 'bg-white hover:bg-slate-50'}`}
+                    >
+                      <Copy className="h-3 w-3" />
+                      平行コピー
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setFreeAction(freeAction === 'perp1' || freeAction === 'perp2' ? null : 'perp1'); setPerpAnchor(null) }}
+                      className={`flex items-center justify-center gap-1 px-2 py-1 text-xs border rounded ${freeAction === 'perp1' || freeAction === 'perp2' ? 'bg-amber-100 border-amber-400' : 'bg-white hover:bg-slate-50'}`}
+                    >
+                      <SquareIcon className="h-3 w-3" />
+                      垂線作成
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFreeAction(freeAction === 'extend' ? null : 'extend')}
+                      className={`flex items-center justify-center gap-1 px-2 py-1 text-xs border rounded ${freeAction === 'extend' ? 'bg-amber-100 border-amber-400' : 'bg-white hover:bg-slate-50'}`}
+                    >
+                      <Move className="h-3 w-3" />
+                      伸縮
+                    </button>
+                  </div>
+                  {freeAction === 'parallel' && (
+                    <div className="space-y-1">
+                      <NumberField label="平行距離" unit="m" value={parallelDistance} onChange={setParallelDistance} step={0.5} decimals={1} />
+                      <div className="text-xs text-amber-700">クリックした側に平行コピーを作成（連続可）</div>
+                    </div>
+                  )}
+                  {freeAction === 'perp1' && (
+                    <div className="text-xs text-amber-700">基準線上をクリック → 1 点目（基準点）を吸着</div>
+                  )}
+                  {freeAction === 'perp2' && (
+                    <div className="text-xs text-amber-700">2 点目をクリック（垂線方向に投影）</div>
+                  )}
+                  {freeAction === 'extend' && (
+                    <div className="text-xs text-amber-700">クリックに近い端点を線方向に移動（複数回クリック可）</div>
+                  )}
+                </div>
+              </div>
+            )}
+            {selectedFreeIdx === null && freeLines.length > 0 && !freeDrawMode && (
+              <div className="text-xs text-slate-400">
+                既存の帯をクリックすると選択（削除・再編集・編集アクション）できます
+              </div>
             )}
           </section>
 
-          {/* 操作パネル：パターン別 */}
-          {pattern !== 'free' ? (
-            <section className="bg-white rounded-lg border p-3 space-y-2">
-              <h2 className="font-semibold text-slate-800 text-sm">基線（軸）</h2>
-              <div className="text-xs text-slate-500">
-                {baselineLatLng.length === 0 && '地図上の 2 点をクリックして基線を指定'}
-                {baselineLatLng.length === 1 && '2 点目をクリック'}
-                {baselineLatLng.length === 2 && '基線設定済み（やり直すにはリセット）'}
-              </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPickMode(!pickMode)}
-                  disabled={!selectedArea || areaLatLng.length < 3}
-                  className={`flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded ${pickMode ? 'bg-orange-100 border-orange-400' : 'hover:bg-slate-50'} disabled:opacity-50`}
-                >
-                  <MousePointerClick className="h-3.5 w-3.5" />
-                  {pickMode ? '選択中…' : '基線を指定'}
-                </button>
-                <button
-                  type="button"
-                  onClick={resetBaseline}
-                  disabled={baselineLatLng.length === 0}
-                  className="flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  リセット
-                </button>
-              </div>
-            </section>
-          ) : (
-            <section className="bg-white rounded-lg border p-3 space-y-2">
-              <h2 className="font-semibold text-slate-800 text-sm">フリー描画</h2>
-              <div className="text-xs text-slate-500">
-                {!freeDrawMode && '「描画開始」を押して、地図クリックで帯の中心線を作図'}
-                {freeDrawMode && freeCurrent.length === 0 && '地図クリックで 1 点目を追加'}
-                {freeDrawMode && freeCurrent.length === 1 && '地図クリックで 2 点目（追加または最終点）'}
-                {freeDrawMode && freeCurrent.length >= 2 && `現在の線：${freeCurrent.length} 点 / 最終点クリック・Enter・「次の帯」で確定`}
-              </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setFreeDrawMode(!freeDrawMode)}
-                  disabled={!selectedArea || areaLatLng.length < 3}
-                  className={`flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded ${freeDrawMode ? 'bg-orange-100 border-orange-400' : 'hover:bg-slate-50'} disabled:opacity-50`}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                  {freeDrawMode ? '描画中…' : '描画開始'}
-                </button>
-                <button
-                  type="button"
-                  onClick={finishFreeLine}
-                  disabled={freeCurrent.length < 2}
-                  className="flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
-                  title="現在の線を確定（Enter キーでも確定）"
-                >
-                  <CornerDownRight className="h-3.5 w-3.5" />
-                  次の帯
-                </button>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={undoFreePoint}
-                  disabled={freeCurrent.length === 0 && freeLines.length === 0}
-                  className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
-                >
-                  <Undo2 className="h-3.5 w-3.5" />
-                  1点戻る
-                </button>
-                <button
-                  type="button"
-                  onClick={resetFree}
-                  disabled={freeCurrent.length === 0 && freeLines.length === 0}
-                  className="flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  全削除
-                </button>
-              </div>
-              <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer select-none mt-1">
-                <input
-                  type="checkbox"
-                  checked={roundToTruck}
-                  onChange={(e) => setRoundToTruck(e.target.checked)}
-                  className="cursor-pointer"
-                />
-                延長を整数台数で調整する（v/CA = {calc.lengthPerTruck.toFixed(2)} m の倍数）
-              </label>
-              <div className="text-xs text-slate-500">
-                確定済み：{freeLines.length} 本（合計 {freeLinesLengthM.toFixed(1)} m）／ Backspace で 1 点戻る
-              </div>
-
-              {/* 選択中の線の操作 */}
-              {selectedFreeIdx !== null && freeLines[selectedFreeIdx] && (
-                <div className="mt-2 p-2 bg-purple-50 border border-purple-200 rounded space-y-2">
-                  <div className="text-xs text-purple-800">
-                    選択中：{selectedFreeIdx + 1} 本目（{freeLines[selectedFreeIdx].length} 点）
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={editSelectedFree}
-                      className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded bg-white hover:bg-slate-50"
-                      title="この線を編集状態に戻す（点列を引き継いで再作図）"
-                    >
-                      <Edit3 className="h-3.5 w-3.5" />
-                      再編集
-                    </button>
-                    <button
-                      type="button"
-                      onClick={deleteSelectedFree}
-                      className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded bg-white hover:bg-red-50 text-red-600"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      削除
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedFreeIdx(null)}
-                      className="flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded bg-white hover:bg-slate-50"
-                    >
-                      解除
-                    </button>
-                  </div>
-
-                  {/* 編集アクション */}
-                  <div className="pt-2 border-t border-purple-200 space-y-2">
-                    <div className="grid grid-cols-3 gap-1">
-                      <button
-                        type="button"
-                        onClick={() => setFreeAction(freeAction === 'parallel' ? null : 'parallel')}
-                        className={`flex items-center justify-center gap-1 px-2 py-1 text-xs border rounded ${freeAction === 'parallel' ? 'bg-amber-100 border-amber-400' : 'bg-white hover:bg-slate-50'}`}
-                      >
-                        <Copy className="h-3 w-3" />
-                        平行コピー
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setFreeAction(freeAction === 'perp1' || freeAction === 'perp2' ? null : 'perp1'); setPerpAnchor(null) }}
-                        className={`flex items-center justify-center gap-1 px-2 py-1 text-xs border rounded ${freeAction === 'perp1' || freeAction === 'perp2' ? 'bg-amber-100 border-amber-400' : 'bg-white hover:bg-slate-50'}`}
-                      >
-                        <SquareIcon className="h-3 w-3" />
-                        垂線作成
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setFreeAction(freeAction === 'extend' ? null : 'extend')}
-                        className={`flex items-center justify-center gap-1 px-2 py-1 text-xs border rounded ${freeAction === 'extend' ? 'bg-amber-100 border-amber-400' : 'bg-white hover:bg-slate-50'}`}
-                      >
-                        <Move className="h-3 w-3" />
-                        伸縮
-                      </button>
-                    </div>
-                    {freeAction === 'parallel' && (
-                      <div className="space-y-1">
-                        <NumberField label="平行距離" unit="m" value={parallelDistance} onChange={setParallelDistance} step={0.5} decimals={1} />
-                        <div className="text-xs text-amber-700">クリックした側に平行コピーを作成</div>
-                      </div>
-                    )}
-                    {freeAction === 'perp1' && (
-                      <div className="text-xs text-amber-700">基準線上をクリック → 1 点目（基準点）を吸着</div>
-                    )}
-                    {freeAction === 'perp2' && (
-                      <div className="text-xs text-amber-700">2 点目をクリック（垂線方向に投影）</div>
-                    )}
-                    {freeAction === 'extend' && (
-                      <div className="text-xs text-amber-700">クリックに近い端点を線方向に移動（複数回クリック可）</div>
-                    )}
-                  </div>
-                </div>
-              )}
-              {pattern === 'free' && selectedFreeIdx === null && freeLines.length > 0 && !freeDrawMode && (
-                <div className="text-xs text-slate-400">
-                  既存の帯をクリックすると選択（削除・再編集）できます
-                </div>
-              )}
-            </section>
-          )}
-
           {/* 生成統計 + 目標との差分 */}
-          {((pattern !== 'free' && baselineLatLng.length === 2) || (pattern === 'free' && (freeLines.length > 0 || freeCurrent.length >= 1))) && (
+          {(freeLines.length > 0 || freeCurrent.length >= 1) && (
             <section className="space-y-2">
               <table className="w-full text-xs bg-white border rounded-lg overflow-hidden">
                 <thead className="bg-slate-100">
@@ -1012,7 +853,7 @@ export function SoilImportStripPlanPage() {
                   </tr>
                 </tbody>
               </table>
-              {pattern === 'free' && previewLengthM > 0 && (
+              {previewLengthM > 0 && (
                 <div className="text-xs text-purple-600 px-1">
                   プレビュー区間：{previewLengthM.toFixed(1)} m（{calc.lengthPerTruck > 0 ? (previewLengthM / calc.lengthPerTruck).toFixed(2) : '-'} 台分）
                 </div>
@@ -1038,16 +879,10 @@ export function SoilImportStripPlanPage() {
           <div className="flex-1">
             <StripPlanMap
               areaPolygon={areaLatLng}
-              baseline={baselineLatLng}
-              axisLines={axisLines}
-              parallelLines={parallelLines}
-              perpLines={perpLines}
+              baseline={[]}
               freeLines={freeLines}
               freeCurrent={freeCurrent}
               previewSegment={previewSegment}
-              axisBuffers={axisBuffers}
-              parallelBuffers={parallelBuffers}
-              perpBuffers={perpBuffers}
               freeBuffers={freeBuffers}
               freeCurrentBuffer={freeCurrentBuffer}
               freeLabels={freeLabels}
@@ -1058,7 +893,7 @@ export function SoilImportStripPlanPage() {
               perpAnchor={perpAnchor}
               actionPreview={actionPreview}
               baseLayer={baseLayer}
-              pickMode={pickMode || freeDrawMode || freeAction !== null}
+              pickMode={freeDrawMode || freeAction !== null}
               onMapClick={handleMapClick}
               onMouseMove={setHoverLatLng}
             />
