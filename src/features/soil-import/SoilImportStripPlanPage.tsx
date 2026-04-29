@@ -371,6 +371,7 @@ export function SoilImportStripPlanPage() {
   // 編集アクションのプレビュー線（垂線作成の 2 点目 / 伸縮 で hover に応じて表示）
   const actionPreview = useMemo<[[number, number], [number, number]] | null>(() => {
     if (!hoverLatLng) return null
+    try {
     if (freeAction === 'perp2' && perpAnchor) {
       const ref = refLineXY(selectedFreeIdx)
       if (!ref) return null
@@ -412,6 +413,10 @@ export function SoilImportStripPlanPage() {
       return [[aLL.lat, aLL.lng], [nLL.lat, nLL.lng]]
     }
     return null
+    } catch (e) {
+      console.error('[StripPlan] actionPreview error', e)
+      return null
+    }
   }, [freeAction, perpAnchor, hoverLatLng, selectedFreeIdx, freeLines, roundToTruck, calc.lengthPerTruck, converter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 入力途中ラインのラベル（編集中の番号・延長・台数）
@@ -490,48 +495,65 @@ export function SoilImportStripPlanPage() {
       const r = converter.toLatLng(x, y)
       return [r.lat, r.lng]
     })
-    setFreeLines((prev) => [...prev, newLine])
-    setFreeAction(null)
+    // 連続コピー：作成した線を次の基準に切替えてモードを維持
+    setFreeLines((prev) => {
+      const next = [...prev, newLine]
+      setSelectedFreeIdx(next.length - 1)
+      return next
+    })
     skipMapClickOnce()
   }
 
   const handlePerp1Click = (ll: [number, number]) => {
-    const ref = refLineXY(selectedFreeIdx)
-    if (!ref) return
-    const click = converter.toXY(ll[0], ll[1])
-    const np = nearestPointOnPolyline({ x: click.x, y: click.y }, ref)
-    if (!np) return
-    const r = converter.toLatLng(np.point.x, np.point.y)
-    setPerpAnchor([r.lat, r.lng])
-    setFreeAction('perp2')
+    try {
+      const ref = refLineXY(selectedFreeIdx)
+      if (!ref) return
+      const click = converter.toXY(ll[0], ll[1])
+      const np = nearestPointOnPolyline({ x: click.x, y: click.y }, ref)
+      if (!np) return
+      const r = converter.toLatLng(np.point.x, np.point.y)
+      setPerpAnchor([r.lat, r.lng])
+      setFreeAction('perp2')
+    } catch (e) {
+      console.error('[StripPlan] handlePerp1Click error', e)
+      setFreeAction(null)
+      setPerpAnchor(null)
+    }
   }
 
   const handlePerp2Click = (ll: [number, number]) => {
-    const ref = refLineXY(selectedFreeIdx)
-    if (!ref || !perpAnchor) return
-    const anchor = converter.toXY(perpAnchor[0], perpAnchor[1])
-    const click = converter.toXY(ll[0], ll[1])
-    const np = nearestPointOnPolyline({ x: anchor.x, y: anchor.y }, ref)
-    if (!np) return
-    const dir = polylineSegmentDirection(ref, np.segIdx)
-    const n = { x: -dir.y, y: dir.x }
-    const dx = click.x - anchor.x
-    const dy = click.y - anchor.y
-    const t = dx * n.x + dy * n.y
-    let endXY: XY = { x: anchor.x + n.x * t, y: anchor.y + n.y * t }
-    if (roundToTruck && calc.lengthPerTruck > 0) {
-      endXY = snapEndpointToMultiple({ x: anchor.x, y: anchor.y }, endXY, calc.lengthPerTruck)
+    try {
+      const ref = refLineXY(selectedFreeIdx)
+      if (!ref || !perpAnchor) return
+      const anchor = converter.toXY(perpAnchor[0], perpAnchor[1])
+      const click = converter.toXY(ll[0], ll[1])
+      const np = nearestPointOnPolyline({ x: anchor.x, y: anchor.y }, ref)
+      if (!np) return
+      const dir = polylineSegmentDirection(ref, np.segIdx)
+      const n = { x: -dir.y, y: dir.x }
+      const dx = click.x - anchor.x
+      const dy = click.y - anchor.y
+      const t = dx * n.x + dy * n.y
+      if (Math.abs(t) < 1e-9) return // ほぼ 0 長：作らない
+      let endXY: XY = { x: anchor.x + n.x * t, y: anchor.y + n.y * t }
+      if (roundToTruck && calc.lengthPerTruck > 0) {
+        endXY = snapEndpointToMultiple({ x: anchor.x, y: anchor.y }, endXY, calc.lengthPerTruck)
+      }
+      const startLL = converter.toLatLng(anchor.x, anchor.y)
+      const endLL = converter.toLatLng(endXY.x, endXY.y)
+      const newLine: [number, number][] = [
+        [startLL.lat, startLL.lng],
+        [endLL.lat, endLL.lng],
+      ]
+      setFreeLines((prev) => [...prev, newLine])
+      setPerpAnchor(null)
+      setFreeAction(null)
+      skipMapClickOnce()
+    } catch (e) {
+      console.error('[StripPlan] handlePerp2Click error', e)
+      setFreeAction(null)
+      setPerpAnchor(null)
     }
-    const startLL = converter.toLatLng(anchor.x, anchor.y)
-    const endLL = converter.toLatLng(endXY.x, endXY.y)
-    const newLine: [number, number][] = [
-      [startLL.lat, startLL.lng],
-      [endLL.lat, endLL.lng],
-    ]
-    setFreeLines((prev) => [...prev, newLine])
-    setPerpAnchor(null)
-    setFreeAction(null)
-    skipMapClickOnce()
   }
 
   const handleExtendClick = (ll: [number, number]) => {

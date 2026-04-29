@@ -442,7 +442,8 @@ export function offsetPolyline(line: XY[], offset: number): XY[] | null {
         if (cosHalf > 1 / MITER_LIMIT) {
           dist = offset / cosHalf
         } else {
-          dist = offset * MITER_LIMIT * Math.sign(offset || 1)
+          // 鋭角時の miter 制限：大きさは |offset|*MITER_LIMIT、符号は offset と同じ
+          dist = offset * MITER_LIMIT
         }
       }
     }
