@@ -404,12 +404,29 @@ export function SoilImportStripPlanPage() {
     }
   }, [freeCurrent, previewSegment, converter, calc.lengthPerTruck, freeLines.length])
 
+  // 仮表示の総延長（確定前の平行/格子提案）
+  const provisionalLengthM = useMemo(() => {
+    let total = 0
+    for (const line of allProvisional) {
+      for (let i = 1; i < line.length; i++) {
+        const a = converter.toXY(line[i - 1][0], line[i - 1][1])
+        const b = converter.toXY(line[i][0], line[i][1])
+        total += Math.hypot(a.x - b.x, a.y - b.y)
+      }
+    }
+    return total
+  }, [allProvisional, converter])
+
   const generated = useMemo(() => {
-    const lenTotal = freeLinesLengthM + previewLengthM
+    const lenTotal = freeLinesLengthM + previewLengthM + provisionalLengthM
     const trucks = calc.lengthPerTruck > 0 ? lenTotal / calc.lengthPerTruck : 0
     const drawingExtra = freeCurrent.length >= 1 ? 1 : 0
-    return { lenTotal, trucks, lineCount: freeLines.length + drawingExtra }
-  }, [calc.lengthPerTruck, freeLines.length, freeCurrent.length, freeLinesLengthM, previewLengthM])
+    return {
+      lenTotal,
+      trucks,
+      lineCount: freeLines.length + drawingExtra + allProvisional.length,
+    }
+  }, [calc.lengthPerTruck, freeLines.length, freeCurrent.length, freeLinesLengthM, previewLengthM, allProvisional.length, provisionalLengthM])
 
   // 各帯の番号・延長・台数
   const lineStats = useMemo(() => {
@@ -529,8 +546,10 @@ export function SoilImportStripPlanPage() {
         return [r.lat, r.lng] as [number, number]
       }))
     }
-    // 垂線：軸の両端点から WB/2 内側の位置を起点・終点として N 本均等配置
-    // 第 1 セグメントの直線で近似（軸が単純な場合）
+    // 垂線：軸＋平行線の各帯と重ならないよう、隣接する水平帯の間で分割した
+    // セグメントとして配置する。
+    // 隣接ペア数 = parCount（軸 + parCount 本の平行線の間に parCount 個のギャップ）
+    if (parCount < 1) return lines
     const axisStart = ref[0]
     const axisEnd = ref[ref.length - 1]
     const axisDx = axisEnd.x - axisStart.x
@@ -539,26 +558,28 @@ export function SoilImportStripPlanPage() {
     if (axisLen < 1e-9) return lines
     const axisDir = { x: axisDx / axisLen, y: axisDy / axisLen }
     const perpDir = { x: -axisDir.y, y: axisDir.x }
-    // 垂線の中心位置：軸方向、両端から WB/2 内側、(N-1) 等分
+    // 垂線中心の軸方向位置：両端から WB/2 内側、(N−1) 等分
     const firstPerpPos = halfWidth
     const lastPerpPos = axisLen - halfWidth
     const perpStep = perpCount > 1 ? (lastPerpPos - firstPerpPos) / (perpCount - 1) : 0
-    // 垂線長（垂直方向）：軸から最後の平行線の外端まで
-    const perpLen = parCount * effectiveParallelDistance + halfWidth
-    // 垂線起点：軸エッジ（WB/2 オフセット）
     for (let i = 0; i < perpCount; i++) {
       const u = firstPerpPos + i * perpStep
       const cx = axisStart.x + axisDir.x * u
       const cy = axisStart.y + axisDir.y * u
-      // 起点：軸エッジ
-      const sx = cx + perpDir.x * sign * halfWidth
-      const sy = cy + perpDir.y * sign * halfWidth
-      // 終点：cx,cy + sign * perpLen 方向
-      const ex = cx + perpDir.x * sign * perpLen
-      const ey = cy + perpDir.y * sign * perpLen
-      const sLL = converter.toLatLng(sx, sy)
-      const eLL = converter.toLatLng(ex, ey)
-      lines.push([[sLL.lat, sLL.lng], [eLL.lat, eLL.lng]])
+      // 各 ギャップ k = 0..parCount-1 に対して、k 番目と k+1 番目の水平帯の間のセグメントを生成
+      // k=0 は 軸（=0）と 1 本目の平行線（=D）の間、k=parCount-1 は (N_par-1)D と N_par D の間
+      for (let k = 0; k < parCount; k++) {
+        const startDist = sign * (k * effectiveParallelDistance + halfWidth)
+        const endDist = sign * ((k + 1) * effectiveParallelDistance - halfWidth)
+        if (Math.abs(endDist - startDist) < 1e-6) continue
+        const sx = cx + perpDir.x * startDist
+        const sy = cy + perpDir.y * startDist
+        const ex = cx + perpDir.x * endDist
+        const ey = cy + perpDir.y * endDist
+        const sLL = converter.toLatLng(sx, sy)
+        const eLL = converter.toLatLng(ex, ey)
+        lines.push([[sLL.lat, sLL.lng], [eLL.lat, eLL.lng]])
+      }
     }
     return lines
   }, [mode, gridClickPos, selectedFreeIdx, freeLines, parallelCount, gridPerpCount, effectiveParallelDistance, halfWidth, converter]) // eslint-disable-line react-hooks/exhaustive-deps
