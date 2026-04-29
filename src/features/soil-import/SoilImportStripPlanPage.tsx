@@ -36,7 +36,7 @@ const DEFAULT_PARAMS: StripPlanParams = {
   crossH: 0.5,
 }
 
-type Mode = 'idle' | 'draw' | 'parallel' | 'perp1' | 'perp2' | 'edit' | 'extend' | 'delete'
+type Mode = 'idle' | 'draw' | 'parallel' | 'perp1' | 'perp2' | 'edit' | 'extend' | 'delete' | 'translate' | 'grid'
 
 function NumberField({
   label,
@@ -161,6 +161,11 @@ export function SoilImportStripPlanPage() {
   const [parallelCount, setParallelCount] = useState<number>(1)
   // 平行コピーのクリック位置（仮表示の起点）。設定中はパラメータ変更時にも仮表示が再計算される
   const [parallelClickPos, setParallelClickPos] = useState<[number, number] | null>(null)
+  // 平行移動アンカー（1 クリック目）
+  const [translateAnchor, setTranslateAnchor] = useState<[number, number] | null>(null)
+  // 格子作成
+  const [gridPerpCount, setGridPerpCount] = useState<number>(3)
+  const [gridClickPos, setGridClickPos] = useState<[number, number] | null>(null)
   const [roundToTruck, setRoundToTruck] = useState(false)
   const skipNextMapClickRef = useRef(false)
   // Undo/Redo: 最大 5 回。history は freeLines のスナップショット列
@@ -501,10 +506,72 @@ export function SoilImportStripPlanPage() {
     return lines
   }, [mode, parallelClickPos, selectedFreeIdx, freeLines, parallelCount, effectiveParallelDistance, converter]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 仮表示（平行コピー確定前）の帯ポリゴン
+  // 格子作成の仮表示（平行 + 垂線）
+  const gridProvisional = useMemo<[number, number][][]>(() => {
+    if (mode !== 'grid' || !gridClickPos) return []
+    const ref = refLineXY(selectedFreeIdx)
+    if (!ref || ref.length < 2) return []
+    const click = converter.toXY(gridClickPos[0], gridClickPos[1])
+    const np = nearestPointOnPolyline({ x: click.x, y: click.y }, ref)
+    if (!np) return []
+    const dir = polylineSegmentDirection(ref, np.segIdx)
+    const n = { x: -dir.y, y: dir.x }
+    const sign = (click.x - np.point.x) * n.x + (click.y - np.point.y) * n.y >= 0 ? 1 : -1
+    const parCount = Math.max(0, Math.round(parallelCount))
+    const perpCount = Math.max(2, Math.round(gridPerpCount))
+    const lines: [number, number][][] = []
+    // 平行コピー（参考線は freeLines に既存）
+    for (let k = 1; k <= parCount; k++) {
+      const offsetXY = offsetPolyline(ref, effectiveParallelDistance * k * sign)
+      if (!offsetXY) continue
+      lines.push(offsetXY.map(({ x, y }) => {
+        const r = converter.toLatLng(x, y)
+        return [r.lat, r.lng] as [number, number]
+      }))
+    }
+    // 垂線：軸の両端点から WB/2 内側の位置を起点・終点として N 本均等配置
+    // 第 1 セグメントの直線で近似（軸が単純な場合）
+    const axisStart = ref[0]
+    const axisEnd = ref[ref.length - 1]
+    const axisDx = axisEnd.x - axisStart.x
+    const axisDy = axisEnd.y - axisStart.y
+    const axisLen = Math.hypot(axisDx, axisDy)
+    if (axisLen < 1e-9) return lines
+    const axisDir = { x: axisDx / axisLen, y: axisDy / axisLen }
+    const perpDir = { x: -axisDir.y, y: axisDir.x }
+    // 垂線の中心位置：軸方向、両端から WB/2 内側、(N-1) 等分
+    const firstPerpPos = halfWidth
+    const lastPerpPos = axisLen - halfWidth
+    const perpStep = perpCount > 1 ? (lastPerpPos - firstPerpPos) / (perpCount - 1) : 0
+    // 垂線長（垂直方向）：軸から最後の平行線の外端まで
+    const perpLen = parCount * effectiveParallelDistance + halfWidth
+    // 垂線起点：軸エッジ（WB/2 オフセット）
+    for (let i = 0; i < perpCount; i++) {
+      const u = firstPerpPos + i * perpStep
+      const cx = axisStart.x + axisDir.x * u
+      const cy = axisStart.y + axisDir.y * u
+      // 起点：軸エッジ
+      const sx = cx + perpDir.x * sign * halfWidth
+      const sy = cy + perpDir.y * sign * halfWidth
+      // 終点：cx,cy + sign * perpLen 方向
+      const ex = cx + perpDir.x * sign * perpLen
+      const ey = cy + perpDir.y * sign * perpLen
+      const sLL = converter.toLatLng(sx, sy)
+      const eLL = converter.toLatLng(ex, ey)
+      lines.push([[sLL.lat, sLL.lng], [eLL.lat, eLL.lng]])
+    }
+    return lines
+  }, [mode, gridClickPos, selectedFreeIdx, freeLines, parallelCount, gridPerpCount, effectiveParallelDistance, halfWidth, converter]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 仮表示（平行コピー＋格子）の合算
+  const allProvisional = useMemo<[number, number][][]>(() => {
+    return mode === 'grid' ? gridProvisional : provisional
+  }, [mode, provisional, gridProvisional])
+
+  // 仮表示の帯ポリゴン
   const provisionalBuffers = useMemo<[number, number][][]>(() => {
     const result: [number, number][][] = []
-    for (const line of provisional) {
+    for (const line of allProvisional) {
       const lineXY = line.map((ll) => {
         const xy = converter.toXY(ll[0], ll[1])
         return { x: xy.x, y: xy.y }
@@ -518,18 +585,21 @@ export function SoilImportStripPlanPage() {
       }
     }
     return result
-  }, [provisional, halfWidth, converter])
+  }, [allProvisional, halfWidth, converter])
 
   const confirmProvisional = () => {
-    if (provisional.length === 0) return
-    const newLines = [...freeLines, ...provisional]
+    const lines = mode === 'grid' ? gridProvisional : provisional
+    if (lines.length === 0) return
+    const newLines = [...freeLines, ...lines]
     commitLines(newLines)
     setSelectedFreeIdx(newLines.length - 1)
     setParallelClickPos(null)
+    setGridClickPos(null)
   }
 
   const cancelProvisional = () => {
     setParallelClickPos(null)
+    setGridClickPos(null)
   }
 
   const handlePerp1Click = (ll: [number, number]) => {
@@ -608,6 +678,38 @@ export function SoilImportStripPlanPage() {
     }
   }
 
+  // 平行移動：1 点目で基準点、2 点目で目標点を指定 → 差分を選択帯全体に適用
+  const handleTranslateClick = (ll: [number, number]) => {
+    if (selectedFreeIdx === null) return
+    if (translateAnchor === null) {
+      setTranslateAnchor(ll)
+      return
+    }
+    const a = converter.toXY(translateAnchor[0], translateAnchor[1])
+    const t = converter.toXY(ll[0], ll[1])
+    const dx = t.x - a.x
+    const dy = t.y - a.y
+    const line = freeLines[selectedFreeIdx]
+    if (!line) return
+    const newLine: [number, number][] = line.map(([lat, lng]) => {
+      const xy = converter.toXY(lat, lng)
+      const r = converter.toLatLng(xy.x + dx, xy.y + dy)
+      return [r.lat, r.lng]
+    })
+    commitLines(freeLines.map((l, i) => (i === selectedFreeIdx ? newLine : l)))
+    setTranslateAnchor(null)
+    skipMapClickOnce()
+  }
+
+  // 頂点ドラッグ：選択帯の i 番目の頂点を新しい位置に
+  const handleVertexDragEnd = (vertIdx: number, latLng: [number, number]) => {
+    if (selectedFreeIdx === null) return
+    const line = freeLines[selectedFreeIdx]
+    if (!line) return
+    const newLine: [number, number][] = line.map((p, i) => (i === vertIdx ? latLng : p))
+    commitLines(freeLines.map((l, i) => (i === selectedFreeIdx ? newLine : l)))
+  }
+
   const handleExtendClick = (ll: [number, number]) => {
     const ref = refLineXY(selectedFreeIdx)
     if (!ref || ref.length < 2 || selectedFreeIdx === null) return
@@ -681,7 +783,18 @@ export function SoilImportStripPlanPage() {
       handleExtendClick(ll)
       return
     }
-    // idle / edit: 地図クリックは無効（ポリゴンクリックでの選択のみ）
+    if (mode === 'translate') {
+      if (selectedFreeIdx === null) return
+      handleTranslateClick(ll)
+      return
+    }
+    if (mode === 'grid') {
+      if (selectedFreeIdx === null) return
+      setGridClickPos(ll)
+      skipMapClickOnce()
+      return
+    }
+    // idle / edit / delete: 地図クリックは無効（ポリゴンクリックでの選択のみ）
   }
 
   const finishFreeLine = () => {
@@ -757,6 +870,8 @@ export function SoilImportStripPlanPage() {
     setPerpAnchor(null)
     setFreeCurrent([])
     setParallelClickPos(null)
+    setTranslateAnchor(null)
+    setGridClickPos(null)
   }
 
   // Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z で undo/redo
@@ -790,7 +905,7 @@ export function SoilImportStripPlanPage() {
   }
 
   // ポリゴン選択を許可するモード
-  const allowPolygonSelect = mode !== 'draw' && mode !== 'perp2' && mode !== 'extend'
+  const allowPolygonSelect = mode !== 'draw' && mode !== 'perp2' && mode !== 'extend' && mode !== 'translate'
 
   // モードガイダンス
   let modeGuidance = ''
@@ -809,9 +924,17 @@ export function SoilImportStripPlanPage() {
   } else if (mode === 'extend') {
     modeGuidance = 'クリックに近い端点を線方向に移動'
   } else if (mode === 'edit') {
-    modeGuidance = '帯をクリックして選択（再編集・伸縮）'
+    if (selectedFreeIdx === null) modeGuidance = '帯をクリックして選択（頂点ドラッグ・伸縮・平行移動）'
+    else modeGuidance = `選択中：${selectedFreeIdx + 1} 本目 / 頂点をドラッグして編集`
   } else if (mode === 'delete') {
     modeGuidance = '削除したい帯をクリック'
+  } else if (mode === 'translate') {
+    if (selectedFreeIdx === null) modeGuidance = '帯を選択してから移動操作'
+    else if (translateAnchor === null) modeGuidance = '基準点をクリック'
+    else modeGuidance = '移動先をクリック'
+  } else if (mode === 'grid') {
+    if (selectedFreeIdx === null) modeGuidance = '軸となる帯をクリックして選択'
+    else modeGuidance = `軸: ${selectedFreeIdx + 1} 本目 / クリックした側に格子を配置`
   }
 
   const modeBtnCls = (active: boolean) =>
@@ -924,7 +1047,7 @@ export function SoilImportStripPlanPage() {
 
           {/* メイン操作：4 ボタン */}
           <section className="bg-white rounded-lg border p-3 space-y-2">
-            <div className="grid grid-cols-5 gap-1">
+            <div className="grid grid-cols-3 gap-1">
               <button
                 type="button"
                 onClick={() => enterMode('draw')}
@@ -954,9 +1077,18 @@ export function SoilImportStripPlanPage() {
               </button>
               <button
                 type="button"
+                onClick={() => enterMode('grid')}
+                disabled={freeLines.length === 0}
+                className={modeBtnCls(mode === 'grid') + ' disabled:opacity-50'}
+              >
+                <SquareIcon className="h-4 w-4" />
+                格子作成
+              </button>
+              <button
+                type="button"
                 onClick={() => enterMode('edit')}
                 disabled={freeLines.length === 0}
-                className={modeBtnCls(mode === 'edit' || mode === 'extend') + ' disabled:opacity-50'}
+                className={modeBtnCls(mode === 'edit' || mode === 'extend' || mode === 'translate') + ' disabled:opacity-50'}
               >
                 <Edit3 className="h-4 w-4" />
                 帯を編集
@@ -1056,13 +1188,68 @@ export function SoilImportStripPlanPage() {
               </div>
             )}
 
+            {/* grid モード */}
+            {mode === 'grid' && (
+              <div className="space-y-2">
+                <div className="flex gap-1 text-xs">
+                  <label className={`flex-1 flex items-center justify-center px-2 py-1 border rounded cursor-pointer ${parallelMode === 'distance' ? 'bg-orange-100 border-orange-400' : 'bg-white hover:bg-slate-50'}`}>
+                    <input type="radio" className="hidden" checked={parallelMode === 'distance'} onChange={() => setParallelMode('distance')} />
+                    中心線間隔
+                  </label>
+                  <label className={`flex-1 flex items-center justify-center px-2 py-1 border rounded cursor-pointer ${parallelMode === 'truckMultiple' ? 'bg-orange-100 border-orange-400' : 'bg-white hover:bg-slate-50'}`}>
+                    <input type="radio" className="hidden" checked={parallelMode === 'truckMultiple'} onChange={() => setParallelMode('truckMultiple')} />
+                    整数台数
+                  </label>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {parallelMode === 'distance' ? (
+                    <NumberField label="平行間隔" unit="m" value={parallelDistance}
+                      onChange={setParallelDistance} step={0.5} decimals={1} />
+                  ) : (
+                    <NumberField label="台数倍率 N" unit="台" value={parallelTruckMultiple}
+                      onChange={(v) => setParallelTruckMultiple(Math.max(0, Math.round(v)))} step={1} decimals={0} />
+                  )}
+                  <NumberField label="平行本数" unit="本" value={parallelCount}
+                    onChange={(v) => setParallelCount(Math.max(0, Math.round(v)))} step={1} decimals={0} />
+                  <NumberField label="垂線本数" unit="本" value={gridPerpCount}
+                    onChange={(v) => setGridPerpCount(Math.max(2, Math.round(v)))} step={1} decimals={0} />
+                </div>
+                <div className="text-xs text-slate-500">
+                  平行間隔 = {effectiveParallelDistance.toFixed(2)} m / 垂線間隔（中心間） = (軸長 − WB) / (本数 − 1)
+                </div>
+                {gridProvisional.length > 0 && (
+                  <div className="flex gap-2 pt-1 border-t">
+                    <button
+                      type="button"
+                      onClick={confirmProvisional}
+                      className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded bg-yellow-100 border-yellow-400 hover:bg-yellow-200 text-yellow-900 font-medium"
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                      確定（{gridProvisional.length} 本）
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelProvisional}
+                      className="flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded bg-white hover:bg-slate-50"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      キャンセル
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* edit モード：選択中の操作 */}
-            {(mode === 'edit' || mode === 'extend') && selectedFreeIdx !== null && freeLines[selectedFreeIdx] && (
+            {(mode === 'edit' || mode === 'extend' || mode === 'translate') && selectedFreeIdx !== null && freeLines[selectedFreeIdx] && (
               <div className="p-2 bg-purple-50 border border-purple-200 rounded space-y-2">
                 <div className="text-xs text-purple-800">
                   選択中：{selectedFreeIdx + 1} 本目（{freeLines[selectedFreeIdx].length} 点）
                 </div>
-                <div className="grid grid-cols-2 gap-1">
+                <div className="text-xs text-slate-500">
+                  頂点（白い四角）をドラッグして移動できます
+                </div>
+                <div className="grid grid-cols-3 gap-1">
                   <button
                     type="button"
                     onClick={editSelectedFree}
@@ -1070,15 +1257,24 @@ export function SoilImportStripPlanPage() {
                     title="点列を引き継いで再作図"
                   >
                     <Edit3 className="h-3 w-3" />
-                    再編集
+                    再描画
                   </button>
                   <button
                     type="button"
-                    onClick={() => setMode(mode === 'extend' ? 'edit' : 'extend')}
+                    onClick={() => { setMode(mode === 'extend' ? 'edit' : 'extend'); setTranslateAnchor(null) }}
                     className={`flex items-center justify-center gap-1 px-2 py-1 text-xs border rounded ${mode === 'extend' ? 'bg-amber-100 border-amber-400' : 'bg-white hover:bg-slate-50'}`}
                   >
                     <Move className="h-3 w-3" />
-                    伸縮
+                    端点伸縮
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setMode(mode === 'translate' ? 'edit' : 'translate'); setTranslateAnchor(null) }}
+                    className={`flex items-center justify-center gap-1 px-2 py-1 text-xs border rounded ${mode === 'translate' ? 'bg-amber-100 border-amber-400' : 'bg-white hover:bg-slate-50'}`}
+                    title="基準点 → 移動先 の 2 クリックで平行移動"
+                  >
+                    <Move className="h-3 w-3" />
+                    平行移動
                   </button>
                 </div>
               </div>
@@ -1195,7 +1391,7 @@ export function SoilImportStripPlanPage() {
               previewSegment={previewSegment}
               freeBuffers={freeBuffers}
               freeCurrentBuffer={freeCurrentBuffer}
-              provisionalLines={provisional}
+              provisionalLines={allProvisional}
               provisionalBuffers={provisionalBuffers}
               freeLabels={freeLabels}
               freeCurrentLabel={freeCurrentLabel}
@@ -1204,8 +1400,11 @@ export function SoilImportStripPlanPage() {
               onFinishCurrentLine={finishFreeLineFromMap}
               perpAnchor={perpAnchor}
               actionPreview={actionPreview}
+              editableVertices={mode === 'edit' && selectedFreeIdx !== null ? freeLines[selectedFreeIdx] ?? [] : []}
+              onVertexDragEnd={handleVertexDragEnd}
+              translateAnchor={translateAnchor}
               baseLayer={baseLayer}
-              pickMode={mode !== 'idle' && mode !== 'edit'}
+              pickMode={mode !== 'idle' && mode !== 'edit' && mode !== 'delete'}
               onMapClick={handleMapClick}
               onMouseMove={setHoverLatLng}
             />

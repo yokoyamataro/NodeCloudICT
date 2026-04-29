@@ -20,6 +20,13 @@ function makeLabelIcon(text: string, variant: 'confirmed' | 'current'): L.DivIco
   })
 }
 
+const vertexIcon = L.divIcon({
+  className: 'vertex-marker',
+  html: '<div style="width:12px;height:12px;background:#fff;border:2px solid #7c3aed;border-radius:2px;cursor:move;box-shadow:0 1px 2px rgba(0,0,0,0.3);"></div>',
+  iconSize: [12, 12],
+  iconAnchor: [6, 6],
+})
+
 export type StripPlanBaseLayer = 'osm' | 'gsi-photo' | 'gsi-std'
 
 export interface StripPlanMapProps {
@@ -56,6 +63,11 @@ export interface StripPlanMapProps {
   // 編集アクションの可視化
   perpAnchor?: [number, number] | null
   actionPreview?: [[number, number], [number, number]] | null
+  // 頂点ドラッグ編集
+  editableVertices?: [number, number][]
+  onVertexDragEnd?: (idx: number, latLng: [number, number]) => void
+  // 平行移動アンカー
+  translateAnchor?: [number, number] | null
   // 背景レイヤ
   baseLayer?: StripPlanBaseLayer
   // 地図クリックで点を追加するモード
@@ -124,6 +136,9 @@ export function StripPlanMap({
   onFinishCurrentLine,
   perpAnchor = null,
   actionPreview = null,
+  editableVertices = [],
+  onVertexDragEnd,
+  translateAnchor = null,
   baseLayer = 'gsi-photo',
   pickMode,
   onMapClick,
@@ -389,6 +404,33 @@ export function StripPlanMap({
           icon={makeLabelIcon(freeCurrentLabel.text, 'current')}
           interactive={false}
         />
+      )}
+
+      {/* 頂点ドラッグ編集（再編集モード） */}
+      {editableVertices.map((pt, i) => (
+        <Marker
+          key={`vert-${i}`}
+          position={pt}
+          draggable
+          icon={vertexIcon}
+          eventHandlers={{
+            dragend: (e) => {
+              const ll = (e.target as L.Marker).getLatLng()
+              onVertexDragEnd?.(i, [ll.lat, ll.lng])
+            },
+          }}
+        />
+      ))}
+
+      {/* 平行移動アンカー */}
+      {translateAnchor && (
+        <CircleMarker
+          center={translateAnchor}
+          radius={6}
+          pathOptions={{ color: '#0ea5e9', fillColor: '#fff', fillOpacity: 1, weight: 3 }}
+        >
+          <Tooltip permanent direction="top" offset={[0, -6]}>移動の基準点</Tooltip>
+        </CircleMarker>
       )}
     </MapContainer>
   )
