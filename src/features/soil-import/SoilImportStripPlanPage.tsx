@@ -385,6 +385,19 @@ export function SoilImportStripPlanPage() {
     return { lenTotal, trucks, lineCount: freeLines.length + drawingExtra }
   }, [calc.lengthPerTruck, freeLines.length, freeCurrent.length, freeLinesLengthM, previewLengthM])
 
+  // 各帯の番号・延長・台数
+  const lineStats = useMemo(() => {
+    return freeLines.map((line, i) => {
+      const lineXY = line.map((ll) => {
+        const xy = converter.toXY(ll[0], ll[1])
+        return { x: xy.x, y: xy.y }
+      })
+      const length = polylineLength(lineXY)
+      const trucks = calc.lengthPerTruck > 0 ? length / calc.lengthPerTruck : 0
+      return { index: i, number: i + 1, length, trucks }
+    })
+  }, [freeLines, converter, calc.lengthPerTruck])
+
   const diff = useMemo(() => {
     const dLen = generated.lenTotal - calc.L
     const dTrucks = generated.trucks - calc.n
@@ -611,11 +624,10 @@ export function SoilImportStripPlanPage() {
 
   const enterMode = (next: Mode) => {
     setMode(mode === next ? 'idle' : next)
-    if (next !== 'parallel' && next !== 'perp1') {
-      // 平行 / 垂線以外に入るときは選択を維持しないでもよいが、副作用が出るので最低限
-      // selectedFreeIdx は維持。perpAnchor だけクリア
-      setPerpAnchor(null)
-    }
+    // モード切替時は常に選択を解除（基準線は再選択させる）
+    setSelectedFreeIdx(null)
+    setPerpAnchor(null)
+    setFreeCurrent([])
   }
 
   if (!currentFarm) {
@@ -715,28 +727,49 @@ export function SoilImportStripPlanPage() {
             )}
           </section>
 
-          {/* 計算結果（コンパクト表） */}
+          {/* 計算結果（目標 / 生成 / 差分 を統合） */}
           <section className="bg-white rounded-lg border overflow-hidden">
             <table className="w-full text-xs">
-              <tbody>
-                <tr className="border-b">
-                  <th className="px-2 py-1.5 text-left font-medium bg-slate-50 w-1/2">客土量 V</th>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{calc.V.toFixed(1)} m³</td>
-                </tr>
-                <tr className="border-b">
-                  <th className="px-2 py-1.5 text-left font-medium bg-slate-50">台数 n</th>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{calc.n} 台 <span className="text-slate-400">(V/v={calc.v > 0 ? (calc.V / calc.v).toFixed(2) : '-'})</span></td>
-                </tr>
-                <tr className="border-b">
-                  <th className="px-2 py-1.5 text-left font-medium bg-slate-50">帯断面 CA</th>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{calc.CA.toFixed(3)} m²</td>
-                </tr>
+              <thead className="bg-slate-100">
                 <tr>
-                  <th className="px-2 py-1.5 text-left font-medium bg-slate-50">必要総延長 L</th>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{calc.L.toFixed(1)} m <span className="text-slate-400">(v/CA={calc.lengthPerTruck.toFixed(2)})</span></td>
+                  <th className="px-2 py-1.5 text-left font-medium">項目</th>
+                  <th className="px-2 py-1.5 text-right font-medium">目標</th>
+                  <th className="px-2 py-1.5 text-right font-medium">生成</th>
+                  <th className="px-2 py-1.5 text-right font-medium">差分</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-t">
+                  <th className="px-2 py-1.5 text-left font-medium bg-slate-50">客土量 V (m³)</th>
+                  <td className="px-2 py-1.5 text-right tabular-nums" colSpan={3}>{calc.V.toFixed(1)}</td>
+                </tr>
+                <tr className="border-t">
+                  <th className="px-2 py-1.5 text-left font-medium bg-slate-50">帯断面 CA (m²)</th>
+                  <td className="px-2 py-1.5 text-right tabular-nums" colSpan={3}>{calc.CA.toFixed(3)}</td>
+                </tr>
+                <tr className="border-t">
+                  <th className="px-2 py-1.5 text-left font-medium bg-slate-50">総延長 (m)</th>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{calc.L.toFixed(1)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{generated.lenTotal.toFixed(1)}</td>
+                  <td className={`px-2 py-1.5 text-right tabular-nums font-medium ${diff.dLen < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                    {diff.dLen >= 0 ? '+' : ''}{diff.dLen.toFixed(1)}
+                  </td>
+                </tr>
+                <tr className="border-t">
+                  <th className="px-2 py-1.5 text-left font-medium bg-slate-50">台数 (台)</th>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{calc.n}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{generated.trucks.toFixed(1)}</td>
+                  <td className={`px-2 py-1.5 text-right tabular-nums font-medium ${diff.dTrucks < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                    {diff.dTrucks >= 0 ? '+' : ''}{diff.dTrucks.toFixed(1)}
+                  </td>
                 </tr>
               </tbody>
             </table>
+            {previewLengthM > 0 && (
+              <div className="text-xs text-purple-600 px-2 py-1 border-t">
+                プレビュー：{previewLengthM.toFixed(1)} m / {calc.lengthPerTruck > 0 ? (previewLengthM / calc.lengthPerTruck).toFixed(2) : '-'} 台分
+              </div>
+            )}
           </section>
 
           {/* メイン操作：4 ボタン */}
@@ -879,48 +912,37 @@ export function SoilImportStripPlanPage() {
             </div>
           </section>
 
-          {/* 統計 */}
-          {(freeLines.length > 0 || freeCurrent.length >= 1) && (
+          {/* 帯一覧（番号・延長・台数） */}
+          {freeLines.length > 0 && (
             <section className="bg-white rounded-lg border overflow-hidden">
+              <div className="bg-slate-100 px-2 py-1.5 text-xs font-medium border-b">
+                帯一覧（{freeLines.length} 本）
+              </div>
               <table className="w-full text-xs">
-                <thead className="bg-slate-100">
+                <thead className="bg-slate-50">
                   <tr>
-                    <th className="px-2 py-1.5 text-left font-medium">項目</th>
-                    <th className="px-2 py-1.5 text-right font-medium">生成</th>
-                    <th className="px-2 py-1.5 text-right font-medium">目標</th>
-                    <th className="px-2 py-1.5 text-right font-medium">差分</th>
+                    <th className="px-2 py-1 text-left font-medium w-10">#</th>
+                    <th className="px-2 py-1 text-right font-medium">延長 (m)</th>
+                    <th className="px-2 py-1 text-right font-medium">台数 (台)</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr className="border-t">
-                    <td className="px-2 py-1.5">総延長 (m)</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{generated.lenTotal.toFixed(1)}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{calc.L.toFixed(1)}</td>
-                    <td className={`px-2 py-1.5 text-right tabular-nums font-medium ${diff.dLen < 0 ? 'text-red-600' : 'text-green-600'}`}>
-                      {diff.dLen >= 0 ? '+' : ''}{diff.dLen.toFixed(1)}
-                    </td>
-                  </tr>
-                  <tr className="border-t">
-                    <td className="px-2 py-1.5">台数 (台)</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{generated.trucks.toFixed(1)}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{calc.n}</td>
-                    <td className={`px-2 py-1.5 text-right tabular-nums font-medium ${diff.dTrucks < 0 ? 'text-red-600' : 'text-green-600'}`}>
-                      {diff.dTrucks >= 0 ? '+' : ''}{diff.dTrucks.toFixed(1)}
-                    </td>
-                  </tr>
-                  <tr className="border-t">
-                    <td className="px-2 py-1.5">本数 (本)</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums" colSpan={3}>
-                      {generated.lineCount}
-                    </td>
-                  </tr>
+                  {lineStats.map((s) => {
+                    const isSelected = selectedFreeIdx === s.index
+                    return (
+                      <tr
+                        key={s.index}
+                        onClick={() => setSelectedFreeIdx(isSelected ? null : s.index)}
+                        className={`border-t cursor-pointer ${isSelected ? 'bg-purple-50 text-purple-900 font-medium' : 'hover:bg-slate-50'}`}
+                      >
+                        <td className="px-2 py-1">{s.number}</td>
+                        <td className="px-2 py-1 text-right tabular-nums">{s.length.toFixed(1)}</td>
+                        <td className="px-2 py-1 text-right tabular-nums">{s.trucks.toFixed(2)}</td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
-              {previewLengthM > 0 && (
-                <div className="text-xs text-purple-600 px-2 py-1">
-                  プレビュー：{previewLengthM.toFixed(1)} m / {calc.lengthPerTruck > 0 ? (previewLengthM / calc.lengthPerTruck).toFixed(2) : '-'} 台分
-                </div>
-              )}
             </section>
           )}
         </div>
