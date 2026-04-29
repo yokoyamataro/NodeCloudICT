@@ -203,9 +203,13 @@ export function StripPlanMap({
               fillColor: '#a855f7',
               fillOpacity: selected ? 0.5 : 0.25,
               weight: selected ? 3 : 1,
+              interactive: !!onSelectFreeLine,
             }}
             eventHandlers={onSelectFreeLine ? {
-              click: () => onSelectFreeLine(selected ? null : i),
+              click: (e) => {
+                L.DomEvent.stopPropagation(e.originalEvent)
+                onSelectFreeLine(selected ? null : i)
+              },
             } : undefined}
           />
         )
