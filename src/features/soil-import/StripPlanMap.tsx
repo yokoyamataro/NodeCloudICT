@@ -1,15 +1,46 @@
-import { useEffect } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import { MapContainer, TileLayer, Polygon, Polyline, CircleMarker, Marker, useMap, useMapEvents, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
 export interface StripLabel {
   position: [number, number]
-  text: string
   variant?: 'confirmed' | 'current'
+  // 確定済み: 番号（円）と詳細（延長/台数、回転）
+  number?: number
+  detail?: string
+  angle?: number // 詳細テキストの回転角（CSS deg）
+  // 編集中（現在線）: 単一テキスト
+  text?: string
 }
 
-function makeLabelIcon(text: string, variant: 'confirmed' | 'current'): L.DivIcon {
+function makeNumberCircleIcon(num: number, variant: 'confirmed' | 'current'): L.DivIcon {
+  const border = variant === 'current' ? '#7c3aed' : '#a855f7'
+  const bg = variant === 'current' ? '#faf5ff' : '#ffffff'
+  return L.divIcon({
+    className: 'strip-num',
+    html: `<div style="width:22px;height:22px;background:${bg};border:2px solid ${border};border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:bold;color:#1e293b;box-shadow:0 1px 2px rgba(0,0,0,0.3);transform:translate(-50%,-50%);pointer-events:none;">${num}</div>`,
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
+  })
+}
+
+function makeDetailIcon(text: string, angleDeg: number, variant: 'confirmed' | 'current'): L.DivIcon {
+  // テキストが上下逆になるのを防ぐために [-90, 90] に正規化
+  let a = angleDeg
+  while (a > 90) a -= 180
+  while (a < -90) a += 180
+  const bg = variant === 'current' ? 'rgba(250,245,255,0.9)' : 'rgba(255,255,255,0.85)'
+  const border = variant === 'current' ? '#7c3aed' : '#a855f7'
+  return L.divIcon({
+    className: 'strip-detail',
+    html: `<div style="position:absolute;left:0;top:0;transform:rotate(${a}deg) translate(-50%,-22px);transform-origin:0 0;font-size:10px;background:${bg};border:1px solid ${border};padding:1px 4px;border-radius:2px;white-space:nowrap;color:#1e293b;pointer-events:none;">${text}</div>`,
+    iconSize: [0, 0],
+    iconAnchor: [0, 0],
+  })
+}
+
+function makeTextIcon(text: string, variant: 'confirmed' | 'current'): L.DivIcon {
   const bg = variant === 'current' ? '#faf5ff' : '#ffffff'
   const border = variant === 'current' ? '#7c3aed' : '#a855f7'
   return L.divIcon({
@@ -389,21 +420,66 @@ export function StripPlanMap({
         />
       )}
 
-      {/* 帯ラベル（番号・延長・台数） */}
-      {freeLabels.map((lbl, i) => (
-        <Marker
-          key={`fl-${i}`}
-          position={lbl.position}
-          icon={makeLabelIcon(lbl.text, lbl.variant ?? 'confirmed')}
-          interactive={false}
-        />
-      ))}
+      {/* 帯ラベル：番号は円、詳細は帯と平行に回転表示 */}
+      {freeLabels.flatMap((lbl, i) => {
+        const variant = lbl.variant ?? 'confirmed'
+        const items: ReactNode[] = []
+        if (lbl.number != null) {
+          items.push(
+            <Marker
+              key={`fl-num-${i}`}
+              position={lbl.position}
+              icon={makeNumberCircleIcon(lbl.number, variant)}
+              interactive={false}
+            />
+          )
+        }
+        if (lbl.detail) {
+          items.push(
+            <Marker
+              key={`fl-det-${i}`}
+              position={lbl.position}
+              icon={makeDetailIcon(lbl.detail, lbl.angle ?? 0, variant)}
+              interactive={false}
+            />
+          )
+        }
+        if (lbl.text && lbl.number == null) {
+          items.push(
+            <Marker
+              key={`fl-txt-${i}`}
+              position={lbl.position}
+              icon={makeTextIcon(lbl.text, variant)}
+              interactive={false}
+            />
+          )
+        }
+        return items
+      })}
       {freeCurrentLabel && (
-        <Marker
-          position={freeCurrentLabel.position}
-          icon={makeLabelIcon(freeCurrentLabel.text, 'current')}
-          interactive={false}
-        />
+        <>
+          {freeCurrentLabel.number != null && (
+            <Marker
+              position={freeCurrentLabel.position}
+              icon={makeNumberCircleIcon(freeCurrentLabel.number, 'current')}
+              interactive={false}
+            />
+          )}
+          {freeCurrentLabel.detail && (
+            <Marker
+              position={freeCurrentLabel.position}
+              icon={makeDetailIcon(freeCurrentLabel.detail, freeCurrentLabel.angle ?? 0, 'current')}
+              interactive={false}
+            />
+          )}
+          {freeCurrentLabel.text && freeCurrentLabel.number == null && (
+            <Marker
+              position={freeCurrentLabel.position}
+              icon={makeTextIcon(freeCurrentLabel.text, 'current')}
+              interactive={false}
+            />
+          )}
+        </>
       )}
 
       {/* 頂点ドラッグ編集（再編集モード） */}

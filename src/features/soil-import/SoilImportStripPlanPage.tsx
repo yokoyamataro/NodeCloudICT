@@ -11,7 +11,6 @@ import { CoordinateConverter } from '@/lib/coordinates'
 import {
   bufferPolyline,
   polylineLength,
-  polylineMidpoint,
   snapEndpointToMultiple,
   nearestPointOnPolyline,
   offsetPolyline,
@@ -275,6 +274,31 @@ export function SoilImportStripPlanPage() {
     return result
   }, [freeLines, halfWidth, converter])
 
+  // 折れ線の中点座標と中点における方向（CSS deg）を返す
+  // CSS deg = atan2(-dx, dy) 度（dx=北方向の差, dy=東方向の差）
+  const midAndAngle = (lineXY: XY[]): { mid: XY; angle: number } | null => {
+    if (lineXY.length < 2) return null
+    const total = polylineLength(lineXY)
+    if (total < 1e-9) return null
+    const target = total / 2
+    let acc = 0
+    for (let i = 1; i < lineXY.length; i++) {
+      const a = lineXY[i - 1]
+      const b = lineXY[i]
+      const dx = b.x - a.x
+      const dy = b.y - a.y
+      const segLen = Math.hypot(dx, dy)
+      if (acc + segLen >= target) {
+        const t = segLen > 0 ? (target - acc) / segLen : 0
+        const mid = { x: a.x + dx * t, y: a.y + dy * t }
+        const angle = (Math.atan2(-dx, dy) * 180) / Math.PI
+        return { mid, angle }
+      }
+      acc += segLen
+    }
+    return null
+  }
+
   const freeLabels = useMemo<StripLabel[]>(() => {
     const labels: StripLabel[] = []
     for (let i = 0; i < freeLines.length; i++) {
@@ -285,12 +309,14 @@ export function SoilImportStripPlanPage() {
       })
       const len = polylineLength(lineXY)
       const trucks = calc.lengthPerTruck > 0 ? len / calc.lengthPerTruck : 0
-      const mid = polylineMidpoint(lineXY)
-      if (!mid) continue
-      const { lat, lng } = converter.toLatLng(mid.x, mid.y)
+      const ma = midAndAngle(lineXY)
+      if (!ma) continue
+      const { lat, lng } = converter.toLatLng(ma.mid.x, ma.mid.y)
       labels.push({
         position: [lat, lng],
-        text: `${i + 1}: ${len.toFixed(1)} m / ${trucks.toFixed(1)} 台`,
+        number: i + 1,
+        detail: `${len.toFixed(1)} m / ${trucks.toFixed(1)} 台`,
+        angle: ma.angle,
         variant: 'confirmed',
       })
     }
@@ -394,15 +420,17 @@ export function SoilImportStripPlanPage() {
     })
     const len = polylineLength(lineXY)
     const trucks = calc.lengthPerTruck > 0 ? len / calc.lengthPerTruck : 0
-    const mid = polylineMidpoint(lineXY)
-    if (!mid) return null
-    const { lat, lng } = converter.toLatLng(mid.x, mid.y)
+    const ma = midAndAngle(lineXY)
+    if (!ma) return null
+    const { lat, lng } = converter.toLatLng(ma.mid.x, ma.mid.y)
     return {
       position: [lat, lng],
-      text: `${freeLines.length + 1}: ${len.toFixed(1)} m / ${trucks.toFixed(1)} 台`,
+      number: freeLines.length + 1,
+      detail: `${len.toFixed(1)} m / ${trucks.toFixed(1)} 台`,
+      angle: ma.angle,
       variant: 'current',
     }
-  }, [freeCurrent, previewSegment, converter, calc.lengthPerTruck, freeLines.length])
+  }, [freeCurrent, previewSegment, converter, calc.lengthPerTruck, freeLines.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 各帯の番号・延長・台数
   const lineStats = useMemo(() => {
@@ -610,15 +638,8 @@ export function SoilImportStripPlanPage() {
 
   const confirmProvisional = () => {
     const lines = mode === 'grid' ? gridProvisional : provisional
-    console.log('[StripPlan] confirmProvisional', {
-      mode,
-      provisionalCount: lines.length,
-      freeLinesBefore: freeLines.length,
-      provisionalLines: lines.map((l) => l.length),
-    })
     if (lines.length === 0) return
     const newLines = [...freeLines, ...lines]
-    console.log('[StripPlan] confirm → commit', { totalAfter: newLines.length })
     commitLines(newLines)
     setSelectedFreeIdx(newLines.length - 1)
     setParallelClickPos(null)
