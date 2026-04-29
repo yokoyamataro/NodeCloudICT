@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Layers, RotateCcw, Pencil, CornerDownRight, Undo2, Redo2, Trash2, Edit3,
-  Copy, Square as SquareIcon, Move, Settings, X, Check,
+  Copy, Square as SquareIcon, Move, Settings, X, Check, Download,
 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
@@ -18,6 +18,8 @@ import {
   type XY,
 } from '@/lib/stripPlanGeometry'
 import { StripPlanMap, type StripPlanBaseLayer, type StripLabel } from './StripPlanMap'
+import { exportStripPlanDxf, type StripPlanLine } from '@/lib/stripPlanDxfExport'
+import { supabase } from '@/lib/supabase'
 
 interface StripPlanParams {
   thicknessB: number
@@ -167,6 +169,9 @@ export function SoilImportStripPlanPage() {
   const [gridClickPos, setGridClickPos] = useState<[number, number] | null>(null)
   const [roundToTruck, setRoundToTruck] = useState(false)
   const skipNextMapClickRef = useRef(false)
+  // 保存
+  const [saving, setSaving] = useState(false)
+  const [saveMessage, setSaveMessage] = useState<string | null>(null)
   // Undo/Redo: 最大 5 回。history は freeLines のスナップショット列
   const HISTORY_LIMIT = 5
   const [historyState, setHistoryState] = useState<{
@@ -180,7 +185,7 @@ export function SoilImportStripPlanPage() {
     }
   }, [areas, selectedAreaId])
 
-  // 区域変更時はリセット（履歴も初期化）
+  // 区域変更時はリセット（履歴も初期化）→ 保存済み計画を読込
   useEffect(() => {
     setFreeLines([])
     setFreeCurrent([])
@@ -189,7 +194,31 @@ export function SoilImportStripPlanPage() {
     setPerpAnchor(null)
     setParallelClickPos(null)
     setHistoryState({ history: [[]], index: 0 })
-  }, [selectedAreaId])
+    setSaveMessage(null)
+    if (!farmId || !selectedAreaId) return
+    let cancelled = false
+    ;(async () => {
+      const { data, error } = await supabase
+        .from('soil_import_strip_plans')
+        .select('params, strips')
+        .eq('farm_id', farmId)
+        .eq('work_area_id', selectedAreaId)
+        .maybeSingle()
+      if (cancelled) return
+      if (error) {
+        console.error('[StripPlan] 読込エラー', error)
+        return
+      }
+      if (data) {
+        const loadedParams = (data as { params?: Partial<StripPlanParams> }).params ?? {}
+        const loadedStrips = ((data as { strips?: [number, number][][] }).strips ?? []) as [number, number][][]
+        setParams({ ...DEFAULT_PARAMS, ...loadedParams })
+        setFreeLines(loadedStrips)
+        setHistoryState({ history: [loadedStrips], index: 0 })
+      }
+    })()
+    return () => { cancelled = true }
+  }, [selectedAreaId, farmId])
 
   // モード遷移時の整理
   useEffect(() => {
@@ -913,6 +942,68 @@ export function SoilImportStripPlanPage() {
     setParallelClickPos(null)
   }
 
+  // 保存
+  const handleSave = async () => {
+    if (!farmId || !selectedAreaId) {
+      alert('圃場と工事区域を選択してください')
+      return
+    }
+    setSaving(true)
+    setSaveMessage(null)
+    try {
+      const { error } = await supabase
+        .from('soil_import_strip_plans')
+        .upsert(
+          {
+            farm_id: farmId,
+            work_area_id: selectedAreaId,
+            params: params as unknown as Record<string, unknown>,
+            strips: freeLines as unknown as Record<string, unknown>,
+            updated_at: new Date().toISOString(),
+          } as never,
+          { onConflict: 'farm_id,work_area_id' },
+        )
+      if (error) throw error
+      setSaveMessage(`保存しました（${freeLines.length} 本）`)
+      setTimeout(() => setSaveMessage(null), 3000)
+    } catch (e) {
+      console.error('[StripPlan] 保存エラー', e)
+      setSaveMessage('保存に失敗しました')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // DXF 出力
+  const handleExportDxf = () => {
+    if (freeLines.length === 0) {
+      alert('帯がまだ作成されていません')
+      return
+    }
+    const areaPolygonXY: XY[] = (selectedArea?.points ?? []).map((p) => ({ x: p.x, y: p.y }))
+    const strips: StripPlanLine[] = freeLines.map((line, i) => {
+      const verts: XY[] = line.map((ll) => {
+        const xy = converter.toXY(ll[0], ll[1])
+        return { x: xy.x, y: xy.y }
+      })
+      const length = (() => {
+        let total = 0
+        for (let k = 1; k < verts.length; k++) {
+          total += Math.hypot(verts[k].x - verts[k - 1].x, verts[k].y - verts[k - 1].y)
+        }
+        return total
+      })()
+      const trucks = calc.lengthPerTruck > 0 ? length / calc.lengthPerTruck : 0
+      return { vertices: verts, number: i + 1, length, trucks }
+    })
+    exportStripPlanDxf({
+      areaPolygonXY,
+      strips,
+      halfWidth,
+      farmName: currentFarm?.name,
+    })
+  }
+
   const enterMode = (next: Mode) => {
     setMode(mode === next ? 'idle' : next)
     setSelectedFreeIdx(null)
@@ -995,14 +1086,38 @@ export function SoilImportStripPlanPage() {
         title="帯置計画作成"
         subtitle="客土工事 / 帯置計画"
         actions={
-          <button
-            type="button"
-            onClick={() => setShowParamsModal(true)}
-            className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
-          >
-            <Settings className="h-4 w-4" />
-            入力パラメータ
-          </button>
+          <div className="flex items-center gap-2">
+            {saveMessage && (
+              <span className={`text-xs ${saveMessage.includes('失敗') ? 'text-red-600' : 'text-green-600'}`}>
+                {saveMessage}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving || !selectedAreaId}
+              className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {saving ? '保存中…' : '保存'}
+            </button>
+            <button
+              type="button"
+              onClick={handleExportDxf}
+              disabled={freeLines.length === 0}
+              className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
+            >
+              <Download className="h-4 w-4" />
+              DXF 出力
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowParamsModal(true)}
+              className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
+            >
+              <Settings className="h-4 w-4" />
+              入力パラメータ
+            </button>
+          </div>
         }
       />
 
