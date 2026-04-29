@@ -9,6 +9,8 @@ import {
   generateBranchStrips,
   generateGridStrips,
   totalLength,
+  bufferPolyline,
+  bufferSegments,
   type XY,
 } from '@/lib/stripPlanGeometry'
 import { StripPlanMap, type StripPlanBaseLayer } from './StripPlanMap'
@@ -25,9 +27,9 @@ interface StripPlanParams {
 const DEFAULT_PARAMS: StripPlanParams = {
   thicknessB: 0.10,
   dumpCapacityV: 7.1,
-  crossWA: 1.0,
-  crossWB: 2.0,
-  crossH: 0.30,
+  crossWA: 4.5,
+  crossWB: 5.0,
+  crossH: 0.5,
 }
 
 type Pattern = 'branch' | 'grid' | 'free'
@@ -202,10 +204,32 @@ export function SoilImportStripPlanPage() {
       const { lat, lng } = converter.toLatLng(x, y)
       return [lat, lng] as [number, number]
     }))
+  const polygonsToLatLng = (polys: XY[][]): [number, number][][] =>
+    polys.map((poly) => poly.map(({ x, y }) => {
+      const { lat, lng } = converter.toLatLng(x, y)
+      return [lat, lng] as [number, number]
+    }))
 
   const axisLines = useMemo(() => segmentsToLatLng(strips.axisXY), [strips.axisXY, converter]) // eslint-disable-line react-hooks/exhaustive-deps
   const parallelLines = useMemo(() => segmentsToLatLng(strips.parallelXY), [strips.parallelXY, converter]) // eslint-disable-line react-hooks/exhaustive-deps
   const perpLines = useMemo(() => segmentsToLatLng(strips.perpXY), [strips.perpXY, converter]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 帯幅 WB の半幅
+  const halfWidth = params.crossWB / 2
+
+  // 帯ポリゴン（XY → lat/lng）
+  const axisBuffers = useMemo(
+    () => polygonsToLatLng(bufferSegments(strips.axisXY, halfWidth)),
+    [strips.axisXY, halfWidth, converter] // eslint-disable-line react-hooks/exhaustive-deps
+  )
+  const parallelBuffers = useMemo(
+    () => polygonsToLatLng(bufferSegments(strips.parallelXY, halfWidth)),
+    [strips.parallelXY, halfWidth, converter] // eslint-disable-line react-hooks/exhaustive-deps
+  )
+  const perpBuffers = useMemo(
+    () => polygonsToLatLng(bufferSegments(strips.perpXY, halfWidth)),
+    [strips.perpXY, halfWidth, converter] // eslint-disable-line react-hooks/exhaustive-deps
+  )
 
   // フリー描画ラインの XY 化と長さ（確定済み + 入力途中）
   const freeLinesLengthM = useMemo(() => {
@@ -235,6 +259,45 @@ export function SoilImportStripPlanPage() {
     const b = converter.toXY(previewSegment[1][0], previewSegment[1][1])
     return Math.hypot(a.x - b.x, a.y - b.y)
   }, [previewSegment, converter])
+
+  // フリー描画ラインの帯ポリゴン（確定済み + 入力途中 + プレビュー）
+  const freeBuffers = useMemo<[number, number][][]>(() => {
+    if (pattern !== 'free') return []
+    const result: [number, number][][] = []
+    // 確定済みライン
+    for (const line of freeLines) {
+      const lineXY = line.map((ll) => {
+        const xy = converter.toXY(ll[0], ll[1])
+        return { x: xy.x, y: xy.y }
+      })
+      const buf = bufferPolyline(lineXY, halfWidth)
+      if (buf) {
+        result.push(buf.map(({ x, y }) => {
+          const { lat, lng } = converter.toLatLng(x, y)
+          return [lat, lng] as [number, number]
+        }))
+      }
+    }
+    // 入力途中ライン（+ プレビュー位置を末尾に追加）
+    const drawing: [number, number][] = [
+      ...freeCurrent,
+      ...(previewSegment ? [previewSegment[1]] : []),
+    ]
+    if (drawing.length >= 2) {
+      const lineXY = drawing.map((ll) => {
+        const xy = converter.toXY(ll[0], ll[1])
+        return { x: xy.x, y: xy.y }
+      })
+      const buf = bufferPolyline(lineXY, halfWidth)
+      if (buf) {
+        result.push(buf.map(({ x, y }) => {
+          const { lat, lng } = converter.toLatLng(x, y)
+          return [lat, lng] as [number, number]
+        }))
+      }
+    }
+    return result
+  }, [pattern, freeLines, freeCurrent, previewSegment, halfWidth, converter])
 
   // 統計（フリー時はプレビュー区間も含む）
   const generated = useMemo(() => {
@@ -557,6 +620,10 @@ export function SoilImportStripPlanPage() {
               freeLines={freeLines}
               freeCurrent={freeCurrent}
               previewSegment={previewSegment}
+              axisBuffers={axisBuffers}
+              parallelBuffers={parallelBuffers}
+              perpBuffers={perpBuffers}
+              freeBuffers={freeBuffers}
               baseLayer={baseLayer}
               pickMode={pickMode || freeDrawMode}
               onMapClick={handleMapClick}

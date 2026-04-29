@@ -22,6 +22,11 @@ export interface StripPlanMapProps {
   freeCurrent?: [number, number][]
   // プレビューセグメント（フリー描画中の直前点→ホバー位置）
   previewSegment?: [[number, number], [number, number]]
+  // 帯ポリゴン（幅 WB の塗りつぶし表現）— 各カテゴリごと、各ポリゴンは [lat, lng] の頂点列
+  axisBuffers?: [number, number][][]
+  parallelBuffers?: [number, number][][]
+  perpBuffers?: [number, number][][]
+  freeBuffers?: [number, number][][]
   // 背景レイヤ
   baseLayer?: StripPlanBaseLayer
   // 地図クリックで点を追加するモード
@@ -76,6 +81,10 @@ export function StripPlanMap({
   freeLines = [],
   freeCurrent = [],
   previewSegment,
+  axisBuffers = [],
+  parallelBuffers = [],
+  perpBuffers = [],
+  freeBuffers = [],
   baseLayer = 'gsi-photo',
   pickMode,
   onMapClick,
@@ -135,6 +144,24 @@ export function StripPlanMap({
           }}
         />
       )}
+
+      {/* 帯ポリゴン（幅 WB） */}
+      {parallelBuffers.map((poly, i) => (
+        <Polygon key={`par-buf-${i}`} positions={poly}
+          pathOptions={{ color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.25, weight: 1 }} />
+      ))}
+      {perpBuffers.map((poly, i) => (
+        <Polygon key={`perp-buf-${i}`} positions={poly}
+          pathOptions={{ color: '#10b981', fillColor: '#10b981', fillOpacity: 0.25, weight: 1 }} />
+      ))}
+      {axisBuffers.map((poly, i) => (
+        <Polygon key={`axis-buf-${i}`} positions={poly}
+          pathOptions={{ color: '#dc2626', fillColor: '#dc2626', fillOpacity: 0.25, weight: 1 }} />
+      ))}
+      {freeBuffers.map((poly, i) => (
+        <Polygon key={`free-buf-${i}`} positions={poly}
+          pathOptions={{ color: '#a855f7', fillColor: '#a855f7', fillOpacity: 0.25, weight: 1 }} />
+      ))}
 
       {/* 平行線 */}
       {parallelLines.map((line, i) => (

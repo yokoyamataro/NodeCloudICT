@@ -286,3 +286,57 @@ export function generateGridStrips(
 export function totalLength(segments: [XY, XY][]): number {
   return segments.reduce((sum, seg) => sum + segmentLength(seg), 0)
 }
+
+// 折れ線（点列）を一定幅でバッファして帯ポリゴン（左輪→右輪逆順）を作る。
+// halfWidth は中心線からの片側オフセット距離（m）。
+// 端部は square（線方向に対して垂直のままカット）、内部頂点は miter（先端制限あり）。
+export function bufferPolyline(line: XY[], halfWidth: number): XY[] | null {
+  if (line.length < 2 || halfWidth <= 0) return null
+  const MITER_LIMIT = 5 // cosHalf がこの逆数以下になる鋭角は端を切り詰める
+  const left: XY[] = []
+  const right: XY[] = []
+  for (let i = 0; i < line.length; i++) {
+    let nm: XY
+    let dist = halfWidth
+    if (i === 0) {
+      const d = normalize(sub(line[1], line[0]))
+      nm = perp(d)
+    } else if (i === line.length - 1) {
+      const d = normalize(sub(line[i], line[i - 1]))
+      nm = perp(d)
+    } else {
+      const d1 = normalize(sub(line[i], line[i - 1]))
+      const d2 = normalize(sub(line[i + 1], line[i]))
+      const n1 = perp(d1)
+      const n2 = perp(d2)
+      const sx = n1.x + n2.x
+      const sy = n1.y + n2.y
+      const m = Math.hypot(sx, sy)
+      if (m < EPS) {
+        // 180° 折返し
+        nm = n1
+      } else {
+        nm = { x: sx / m, y: sy / m }
+        const cosHalf = nm.x * n1.x + nm.y * n1.y // ∈ (0, 1]
+        if (cosHalf > 1 / MITER_LIMIT) {
+          dist = halfWidth / cosHalf
+        } else {
+          dist = halfWidth * MITER_LIMIT
+        }
+      }
+    }
+    left.push(add(line[i], scale(nm, dist)))
+    right.push(sub(line[i], scale(nm, dist)))
+  }
+  return [...left, ...right.reverse()]
+}
+
+// 線分の集まりをそれぞれ独立した帯ポリゴンに変換
+export function bufferSegments(segments: [XY, XY][], halfWidth: number): XY[][] {
+  const out: XY[][] = []
+  for (const seg of segments) {
+    const poly = bufferPolyline([seg[0], seg[1]], halfWidth)
+    if (poly) out.push(poly)
+  }
+  return out
+}
