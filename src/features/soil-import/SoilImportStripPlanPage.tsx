@@ -36,7 +36,7 @@ const DEFAULT_PARAMS: StripPlanParams = {
   crossH: 0.5,
 }
 
-type Mode = 'idle' | 'draw' | 'parallel' | 'perp1' | 'perp2' | 'edit' | 'extend'
+type Mode = 'idle' | 'draw' | 'parallel' | 'perp1' | 'perp2' | 'edit' | 'extend' | 'delete'
 
 function NumberField({
   label,
@@ -159,7 +159,8 @@ export function SoilImportStripPlanPage() {
   const [parallelDistance, setParallelDistance] = useState<number>(10)
   const [parallelTruckMultiple, setParallelTruckMultiple] = useState<number>(1)
   const [parallelCount, setParallelCount] = useState<number>(1)
-  const [provisional, setProvisional] = useState<[number, number][][]>([])
+  // 平行コピーのクリック位置（仮表示の起点）。設定中はパラメータ変更時にも仮表示が再計算される
+  const [parallelClickPos, setParallelClickPos] = useState<[number, number] | null>(null)
   const [roundToTruck, setRoundToTruck] = useState(false)
   const skipNextMapClickRef = useRef(false)
   // Undo/Redo: 最大 5 回。history は freeLines のスナップショット列
@@ -182,7 +183,7 @@ export function SoilImportStripPlanPage() {
     setMode('idle')
     setSelectedFreeIdx(null)
     setPerpAnchor(null)
-    setProvisional([])
+    setParallelClickPos(null)
     setHistoryState({ history: [[]], index: 0 })
   }, [selectedAreaId])
 
@@ -468,7 +469,7 @@ export function SoilImportStripPlanPage() {
     setFreeLines(historyState.history[newIdx])
     setHistoryState((prev) => ({ ...prev, index: newIdx }))
     setSelectedFreeIdx(null)
-    setProvisional([])
+    setParallelClickPos(null)
     setFreeCurrent([])
     setPerpAnchor(null)
   }
@@ -478,7 +479,7 @@ export function SoilImportStripPlanPage() {
     setFreeLines(historyState.history[newIdx])
     setHistoryState((prev) => ({ ...prev, index: newIdx }))
     setSelectedFreeIdx(null)
-    setProvisional([])
+    setParallelClickPos(null)
     setFreeCurrent([])
     setPerpAnchor(null)
   }
@@ -491,11 +492,18 @@ export function SoilImportStripPlanPage() {
   }, [parallelMode, parallelDistance, parallelTruckMultiple, params.crossWB, calc.lengthPerTruck])
 
   const handleParallelClick = (ll: [number, number]) => {
+    setParallelClickPos(ll)
+    skipMapClickOnce()
+  }
+
+  // 仮表示（平行コピー候補）— クリック位置とパラメータから動的に計算
+  const provisional = useMemo<[number, number][][]>(() => {
+    if (mode !== 'parallel' || !parallelClickPos) return []
     const ref = refLineXY(selectedFreeIdx)
-    if (!ref) return
-    const click = converter.toXY(ll[0], ll[1])
+    if (!ref) return []
+    const click = converter.toXY(parallelClickPos[0], parallelClickPos[1])
     const np = nearestPointOnPolyline({ x: click.x, y: click.y }, ref)
-    if (!np) return
+    if (!np) return []
     const dir = polylineSegmentDirection(ref, np.segIdx)
     const n = { x: -dir.y, y: dir.x }
     const sign = (click.x - np.point.x) * n.x + (click.y - np.point.y) * n.y >= 0 ? 1 : -1
@@ -509,20 +517,19 @@ export function SoilImportStripPlanPage() {
         return [r.lat, r.lng] as [number, number]
       }))
     }
-    setProvisional(lines)
-    skipMapClickOnce()
-  }
+    return lines
+  }, [mode, parallelClickPos, selectedFreeIdx, freeLines, parallelCount, effectiveParallelDistance, converter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const confirmProvisional = () => {
     if (provisional.length === 0) return
     const newLines = [...freeLines, ...provisional]
     commitLines(newLines)
     setSelectedFreeIdx(newLines.length - 1)
-    setProvisional([])
+    setParallelClickPos(null)
   }
 
   const cancelProvisional = () => {
-    setProvisional([])
+    setParallelClickPos(null)
   }
 
   const handlePerp1Click = (ll: [number, number]) => {
@@ -632,6 +639,16 @@ export function SoilImportStripPlanPage() {
     skipMapClickOnce()
   }
 
+  // 帯ポリゴンクリック：通常は選択トグル、削除モード時はそのまま削除
+  const handleSelectFreeLine = (idx: number | null) => {
+    if (mode === 'delete') {
+      if (idx === null) return
+      commitLines(freeLines.filter((_, i) => i !== idx))
+      return
+    }
+    setSelectedFreeIdx(idx)
+  }
+
   const handleMapClick = (ll: [number, number]) => {
     if (skipNextMapClickRef.current) {
       skipNextMapClickRef.current = false
@@ -737,7 +754,7 @@ export function SoilImportStripPlanPage() {
     setMode('idle')
     setSelectedFreeIdx(null)
     setPerpAnchor(null)
-    setProvisional([])
+    setParallelClickPos(null)
   }
 
   const enterMode = (next: Mode) => {
@@ -745,7 +762,7 @@ export function SoilImportStripPlanPage() {
     setSelectedFreeIdx(null)
     setPerpAnchor(null)
     setFreeCurrent([])
-    setProvisional([])
+    setParallelClickPos(null)
   }
 
   // Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z で undo/redo
@@ -798,7 +815,9 @@ export function SoilImportStripPlanPage() {
   } else if (mode === 'extend') {
     modeGuidance = 'クリックに近い端点を線方向に移動'
   } else if (mode === 'edit') {
-    modeGuidance = '帯をクリックして選択（削除・再編集・伸縮）'
+    modeGuidance = '帯をクリックして選択（再編集・伸縮）'
+  } else if (mode === 'delete') {
+    modeGuidance = '削除したい帯をクリック'
   }
 
   const modeBtnCls = (active: boolean) =>
@@ -911,7 +930,7 @@ export function SoilImportStripPlanPage() {
 
           {/* メイン操作：4 ボタン */}
           <section className="bg-white rounded-lg border p-3 space-y-2">
-            <div className="grid grid-cols-4 gap-1">
+            <div className="grid grid-cols-5 gap-1">
               <button
                 type="button"
                 onClick={() => enterMode('draw')}
@@ -947,6 +966,15 @@ export function SoilImportStripPlanPage() {
               >
                 <Edit3 className="h-4 w-4" />
                 帯を編集
+              </button>
+              <button
+                type="button"
+                onClick={() => enterMode('delete')}
+                disabled={freeLines.length === 0}
+                className={modeBtnCls(mode === 'delete') + ' disabled:opacity-50'}
+              >
+                <Trash2 className="h-4 w-4" />
+                帯を削除
               </button>
             </div>
 
@@ -1040,7 +1068,7 @@ export function SoilImportStripPlanPage() {
                 <div className="text-xs text-purple-800">
                   選択中：{selectedFreeIdx + 1} 本目（{freeLines[selectedFreeIdx].length} 点）
                 </div>
-                <div className="grid grid-cols-3 gap-1">
+                <div className="grid grid-cols-2 gap-1">
                   <button
                     type="button"
                     onClick={editSelectedFree}
@@ -1057,14 +1085,6 @@ export function SoilImportStripPlanPage() {
                   >
                     <Move className="h-3 w-3" />
                     伸縮
-                  </button>
-                  <button
-                    type="button"
-                    onClick={deleteSelectedFree}
-                    className="flex items-center justify-center gap-1 px-2 py-1 text-xs border rounded bg-white hover:bg-red-50 text-red-600"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                    削除
                   </button>
                 </div>
               </div>
@@ -1137,7 +1157,13 @@ export function SoilImportStripPlanPage() {
                     return (
                       <tr
                         key={s.index}
-                        onClick={() => setSelectedFreeIdx(isSelected ? null : s.index)}
+                        onClick={() => {
+                          if (mode === 'delete') {
+                            commitLines(freeLines.filter((_, i) => i !== s.index))
+                          } else {
+                            setSelectedFreeIdx(isSelected ? null : s.index)
+                          }
+                        }}
                         className={`border-t cursor-pointer ${isSelected ? 'bg-purple-50 text-purple-900 font-medium' : 'hover:bg-slate-50'}`}
                       >
                         <td className="px-2 py-1">{s.number}</td>
@@ -1180,7 +1206,7 @@ export function SoilImportStripPlanPage() {
               freeLabels={freeLabels}
               freeCurrentLabel={freeCurrentLabel}
               selectedFreeIdx={selectedFreeIdx}
-              onSelectFreeLine={allowPolygonSelect ? setSelectedFreeIdx : undefined}
+              onSelectFreeLine={allowPolygonSelect ? handleSelectFreeLine : undefined}
               onFinishCurrentLine={finishFreeLineFromMap}
               perpAnchor={perpAnchor}
               actionPreview={actionPreview}
