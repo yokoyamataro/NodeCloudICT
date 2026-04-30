@@ -167,7 +167,10 @@ export function SoilImportStripPlanPage() {
   const [translateAnchor, setTranslateAnchor] = useState<[number, number] | null>(null)
   // 格子作成
   const [gridPerpCount, setGridPerpCount] = useState<number>(3)
-  const [gridClickPos, setGridClickPos] = useState<[number, number] | null>(null)
+  const [gridAxisLength, setGridAxisLength] = useState<number>(100) // m
+  const [gridFlipSide, setGridFlipSide] = useState(false)
+  const [gridStart, setGridStart] = useState<[number, number] | null>(null)
+  const [gridEnd, setGridEnd] = useState<[number, number] | null>(null)
   const [roundToTruck, setRoundToTruck] = useState(false)
   const skipNextMapClickRef = useRef(false)
   // 保存
@@ -570,66 +573,90 @@ export function SoilImportStripPlanPage() {
     return lines
   }, [mode, parallelClickPos, selectedFreeIdx, freeLines, parallelCount, effectiveParallelDistance, converter]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 格子作成の仮表示（平行 + 垂線）
+  // 格子作成の仮表示（軸 + 平行 + 垂線）
+  // 流れ：パラメータ指定 → 1 点目（軸の始点）クリック → 2 点目（方向）クリック → 仮表示
+  // 軸の長さは gridAxisLength パラメータで決定（2 点目は方向のみ）
   const gridProvisional = useMemo<[number, number][][]>(() => {
-    if (mode !== 'grid' || !gridClickPos) return []
-    const ref = refLineXY(selectedFreeIdx)
-    if (!ref || ref.length < 2) return []
-    const click = converter.toXY(gridClickPos[0], gridClickPos[1])
-    const np = nearestPointOnPolyline({ x: click.x, y: click.y }, ref)
-    if (!np) return []
-    const dir = polylineSegmentDirection(ref, np.segIdx)
-    const n = { x: -dir.y, y: dir.x }
-    const sign = (click.x - np.point.x) * n.x + (click.y - np.point.y) * n.y >= 0 ? 1 : -1
+    if (mode !== 'grid' || !gridStart || !gridEnd) return []
+    const startXY = converter.toXY(gridStart[0], gridStart[1])
+    const endXY = converter.toXY(gridEnd[0], gridEnd[1])
+    const dxRaw = endXY.x - startXY.x
+    const dyRaw = endXY.y - startXY.y
+    const rawLen = Math.hypot(dxRaw, dyRaw)
+    if (rawLen < 1e-9) return []
+    const axisDir = { x: dxRaw / rawLen, y: dyRaw / rawLen }
+    const perpDir = { x: -axisDir.y, y: axisDir.x }
+    const axisLen = Math.max(0, gridAxisLength)
+    const sign = gridFlipSide ? -1 : 1
     const parCount = Math.max(0, Math.round(parallelCount))
     const perpCount = Math.max(2, Math.round(gridPerpCount))
     const lines: [number, number][][] = []
-    // 平行コピー（参考線は freeLines に既存）
-    for (let k = 1; k <= parCount; k++) {
-      const offsetXY = offsetPolyline(ref, effectiveParallelDistance * k * sign)
-      if (!offsetXY) continue
-      lines.push(offsetXY.map(({ x, y }) => {
-        const r = converter.toLatLng(x, y)
-        return [r.lat, r.lng] as [number, number]
-      }))
+
+    const axisEnd = {
+      x: startXY.x + axisDir.x * axisLen,
+      y: startXY.y + axisDir.y * axisLen,
     }
-    // 垂線：軸＋平行線の各帯と重ならないよう、隣接する水平帯の間で分割した
-    // セグメントとして配置する。
-    // 隣接ペア数 = parCount（軸 + parCount 本の平行線の間に parCount 個のギャップ）
-    if (parCount < 1) return lines
-    const axisStart = ref[0]
-    const axisEnd = ref[ref.length - 1]
-    const axisDx = axisEnd.x - axisStart.x
-    const axisDy = axisEnd.y - axisStart.y
-    const axisLen = Math.hypot(axisDx, axisDy)
-    if (axisLen < 1e-9) return lines
-    const axisDir = { x: axisDx / axisLen, y: axisDy / axisLen }
-    const perpDir = { x: -axisDir.y, y: axisDir.x }
-    // 垂線中心の軸方向位置：両端から WB/2 内側、(N−1) 等分
-    const firstPerpPos = halfWidth
-    const lastPerpPos = axisLen - halfWidth
-    const perpStep = perpCount > 1 ? (lastPerpPos - firstPerpPos) / (perpCount - 1) : 0
-    for (let i = 0; i < perpCount; i++) {
-      const u = firstPerpPos + i * perpStep
-      const cx = axisStart.x + axisDir.x * u
-      const cy = axisStart.y + axisDir.y * u
-      // 各 ギャップ k = 0..parCount-1 に対して、k 番目と k+1 番目の水平帯の間のセグメントを生成
-      // k=0 は 軸（=0）と 1 本目の平行線（=D）の間、k=parCount-1 は (N_par-1)D と N_par D の間
-      for (let k = 0; k < parCount; k++) {
-        const startDist = sign * (k * effectiveParallelDistance + halfWidth)
-        const endDist = sign * ((k + 1) * effectiveParallelDistance - halfWidth)
-        if (Math.abs(endDist - startDist) < 1e-6) continue
-        const sx = cx + perpDir.x * startDist
-        const sy = cy + perpDir.y * startDist
-        const ex = cx + perpDir.x * endDist
-        const ey = cy + perpDir.y * endDist
-        const sLL = converter.toLatLng(sx, sy)
-        const eLL = converter.toLatLng(ex, ey)
-        lines.push([[sLL.lat, sLL.lng], [eLL.lat, eLL.lng]])
+
+    // 軸（基準線）
+    {
+      const sLL = converter.toLatLng(startXY.x, startXY.y)
+      const eLL = converter.toLatLng(axisEnd.x, axisEnd.y)
+      lines.push([[sLL.lat, sLL.lng], [eLL.lat, eLL.lng]])
+    }
+
+    // 平行線
+    for (let k = 1; k <= parCount; k++) {
+      const off = effectiveParallelDistance * k * sign
+      const ps = { x: startXY.x + perpDir.x * off, y: startXY.y + perpDir.y * off }
+      const pe = { x: axisEnd.x + perpDir.x * off, y: axisEnd.y + perpDir.y * off }
+      const sLL = converter.toLatLng(ps.x, ps.y)
+      const eLL = converter.toLatLng(pe.x, pe.y)
+      lines.push([[sLL.lat, sLL.lng], [eLL.lat, eLL.lng]])
+    }
+
+    // 垂線：軸＋平行線の各帯間に分割して配置
+    if (parCount >= 1 && axisLen > halfWidth * 2) {
+      const firstPerpPos = halfWidth
+      const lastPerpPos = axisLen - halfWidth
+      const perpStep = perpCount > 1 ? (lastPerpPos - firstPerpPos) / (perpCount - 1) : 0
+      for (let i = 0; i < perpCount; i++) {
+        const u = firstPerpPos + i * perpStep
+        const cx = startXY.x + axisDir.x * u
+        const cy = startXY.y + axisDir.y * u
+        for (let k = 0; k < parCount; k++) {
+          const startDist = sign * (k * effectiveParallelDistance + halfWidth)
+          const endDist = sign * ((k + 1) * effectiveParallelDistance - halfWidth)
+          if (Math.abs(endDist - startDist) < 1e-6) continue
+          const sx = cx + perpDir.x * startDist
+          const sy = cy + perpDir.y * startDist
+          const ex = cx + perpDir.x * endDist
+          const ey = cy + perpDir.y * endDist
+          const sLL = converter.toLatLng(sx, sy)
+          const eLL = converter.toLatLng(ex, ey)
+          lines.push([[sLL.lat, sLL.lng], [eLL.lat, eLL.lng]])
+        }
       }
     }
     return lines
-  }, [mode, gridClickPos, selectedFreeIdx, freeLines, parallelCount, gridPerpCount, effectiveParallelDistance, halfWidth, converter]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode, gridStart, gridEnd, gridAxisLength, gridFlipSide, parallelCount, gridPerpCount, effectiveParallelDistance, halfWidth, converter])
+
+  // 格子のパラメータからの暫定数量（軸を置く前でも台数・延長を提示）
+  const gridEstimate = useMemo(() => {
+    const D = effectiveParallelDistance
+    const parCount = Math.max(0, Math.round(parallelCount))
+    const perpCount = Math.max(2, Math.round(gridPerpCount))
+    const WB = params.crossWB
+    const axisLen = Math.max(0, gridAxisLength)
+    // 軸 + 平行線：(parCount+1) 本 × axisLen
+    const horizontalLen = (parCount + 1) * axisLen
+    // 垂線：parCount 個のギャップ × perpCount 本 × (D - WB)
+    const perpUnit = Math.max(0, D - WB)
+    const verticalLen = parCount * perpCount * perpUnit
+    const totalLen = horizontalLen + verticalLen
+    const trucks = calc.lengthPerTruck > 0 ? totalLen / calc.lengthPerTruck : 0
+    const lineCount = (parCount + 1) + (parCount > 0 ? perpCount * parCount : 0)
+    return { totalLen, trucks, lineCount, horizontalLen, verticalLen }
+  }, [parallelCount, gridPerpCount, gridAxisLength, effectiveParallelDistance, params.crossWB, calc.lengthPerTruck])
 
   // 仮表示（平行コピー＋格子）の合算
   const allProvisional = useMemo<[number, number][][]>(() => {
@@ -692,12 +719,14 @@ export function SoilImportStripPlanPage() {
     commitLines(newLines)
     setSelectedFreeIdx(newLines.length - 1)
     setParallelClickPos(null)
-    setGridClickPos(null)
+    setGridStart(null)
+    setGridEnd(null)
   }
 
   const cancelProvisional = () => {
     setParallelClickPos(null)
-    setGridClickPos(null)
+    setGridStart(null)
+    setGridEnd(null)
   }
 
   const handlePerp1Click = (ll: [number, number]) => {
@@ -887,8 +916,19 @@ export function SoilImportStripPlanPage() {
       return
     }
     if (mode === 'grid') {
-      if (selectedFreeIdx === null) return
-      setGridClickPos(ll)
+      if (!gridStart) {
+        setGridStart(ll)
+        skipMapClickOnce()
+        return
+      }
+      if (!gridEnd) {
+        setGridEnd(ll)
+        skipMapClickOnce()
+        return
+      }
+      // 両方確定済み：再開（1 点目をリセット）
+      setGridStart(ll)
+      setGridEnd(null)
       skipMapClickOnce()
       return
     }
@@ -1032,7 +1072,8 @@ export function SoilImportStripPlanPage() {
     setFreeCurrent([])
     setParallelClickPos(null)
     setTranslateAnchor(null)
-    setGridClickPos(null)
+    setGridStart(null)
+    setGridEnd(null)
   }
 
   // Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z で undo/redo
@@ -1094,8 +1135,9 @@ export function SoilImportStripPlanPage() {
     else if (translateAnchor === null) modeGuidance = '基準点をクリック'
     else modeGuidance = '移動先をクリック'
   } else if (mode === 'grid') {
-    if (selectedFreeIdx === null) modeGuidance = '軸となる帯をクリックして選択'
-    else modeGuidance = `軸: ${selectedFreeIdx + 1} 本目 / クリックした側に格子を配置`
+    if (!gridStart) modeGuidance = 'パラメータ確認後、軸の 1 点目（始点）を地図クリック'
+    else if (!gridEnd) modeGuidance = '軸の 2 点目（方向）を地図クリック'
+    else modeGuidance = '仮表示中。確定 / キャンセル / 反対側 で操作'
   }
 
   const modeBtnCls = (active: boolean) =>
@@ -1263,7 +1305,7 @@ export function SoilImportStripPlanPage() {
               <button
                 type="button"
                 onClick={() => enterMode('grid')}
-                disabled={freeLines.length === 0}
+                disabled={!selectedArea || areaLatLng.length < 3}
                 className={modeBtnCls(mode === 'grid') + ' disabled:opacity-50'}
               >
                 <SquareIcon className="h-4 w-4" />
@@ -1386,7 +1428,7 @@ export function SoilImportStripPlanPage() {
                     整数台数
                   </label>
                 </div>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 gap-2">
                   {parallelMode === 'distance' ? (
                     <NumberField label="平行間隔" unit="m" value={parallelDistance}
                       onChange={setParallelDistance} step={0.5} decimals={1} />
@@ -1394,14 +1436,39 @@ export function SoilImportStripPlanPage() {
                     <NumberField label="台数倍率 N" unit="台" value={parallelTruckMultiple}
                       onChange={(v) => setParallelTruckMultiple(Math.max(0, Math.round(v)))} step={1} decimals={0} />
                   )}
+                  <NumberField label="軸長" unit="m" value={gridAxisLength}
+                    onChange={(v) => setGridAxisLength(Math.max(0, v))} step={1} decimals={1} />
                   <NumberField label="平行本数" unit="本" value={parallelCount}
                     onChange={(v) => setParallelCount(Math.max(0, Math.round(v)))} step={1} decimals={0} />
                   <NumberField label="垂線本数" unit="本" value={gridPerpCount}
                     onChange={(v) => setGridPerpCount(Math.max(2, Math.round(v)))} step={1} decimals={0} />
                 </div>
                 <div className="text-xs text-slate-500">
-                  平行間隔 = {effectiveParallelDistance.toFixed(2)} m / 垂線間隔（中心間） = (軸長 − WB) / (本数 − 1)
+                  平行間隔 = {effectiveParallelDistance.toFixed(2)} m
                 </div>
+                {/* 暫定数量（軸を置く前でも算出可能） */}
+                <div className="bg-slate-50 border rounded p-2 space-y-0.5 text-xs">
+                  <div className="font-medium text-slate-700 mb-1">暫定数量（パラメータからの推定）</div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">本数</span>
+                    <span className="tabular-nums">{gridEstimate.lineCount} 本</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">総延長</span>
+                    <span className="tabular-nums">{gridEstimate.totalLen.toFixed(1)} m</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">台数換算</span>
+                    <span className="tabular-nums">{gridEstimate.trucks.toFixed(1)} 台</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setGridFlipSide((v) => !v)}
+                  className={`w-full flex items-center justify-center gap-1 px-3 py-1 text-xs border rounded ${gridFlipSide ? 'bg-amber-100 border-amber-400' : 'bg-white hover:bg-slate-50'}`}
+                >
+                  反対側に配置 {gridFlipSide ? '（ON）' : '（OFF）'}
+                </button>
                 {gridProvisional.length > 0 && (
                   <div className="flex gap-2 pt-1 border-t">
                     <button
