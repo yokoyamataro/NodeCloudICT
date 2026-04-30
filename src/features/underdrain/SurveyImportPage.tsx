@@ -20,6 +20,7 @@ import { useGlobalSaveRegistry } from '@/stores/globalSaveRegistry'
 import { loadSimaFile, type SimaCoordinate } from '@/lib/sima-parser'
 import type { SurveyCategory } from '@/types/database'
 import { PipeMap, type SurveyPointData } from '@/components/map/PipeMap'
+import { TinElevationDialog, type TinElevationPoint } from '@/components/landxml/TinElevationDialog'
 
 // タブの種類
 type TabType = SurveyCategory
@@ -53,7 +54,7 @@ interface MatchResult {
 }
 
 export function SurveyImportPage() {
-  const { pipes, fetchPipes } = useUnderdrainStore()
+  const { pipes, fetchPipes, updatePipe } = useUnderdrainStore()
   const { coordinates, fetchCoordinates } = useCoordinateStore()
   const { currentFarm } = useFarmStore()
   const {
@@ -108,6 +109,44 @@ export function SurveyImportPage() {
   }>>(new Map())
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // LandXML 取込ダイアログ
+  const [isLandXmlDialogOpen, setIsLandXmlDialogOpen] = useState(false)
+
+  // ダイアログに渡す点群（暗渠各頂点を ID 付きでフラット化）
+  const landXmlPoints = useMemo<TinElevationPoint[]>(() => {
+    const list: TinElevationPoint[] = []
+    for (const pipe of pipes) {
+      for (let i = 0; i < pipe.vertices.length; i++) {
+        const v = pipe.vertices[i]
+        list.push({
+          id: `${pipe.id}/${i}`,
+          x: v.x,
+          y: v.y,
+          z: v.z,
+          label: `${pipe.number} 頂点${i + 1}`,
+        })
+      }
+    }
+    return list
+  }, [pipes])
+
+  // 確定：各 pipe の vertices.z を更新（pipe 単位でまとめて updatePipe）
+  const handleLandXmlConfirm = async (zMap: Map<string, number>) => {
+    const updates = new Map<string, { x: number; y: number; z: number | null }[]>()
+    for (const pipe of pipes) {
+      const verts = pipe.vertices.map((v, i) => {
+        const newZ = zMap.get(`${pipe.id}/${i}`)
+        return newZ != null ? { x: v.x, y: v.y, z: newZ } : v
+      })
+      // 何らかの z が更新されたら反映
+      const changed = verts.some((v, i) => v.z !== pipe.vertices[i].z)
+      if (changed) updates.set(pipe.id, verts)
+    }
+    for (const [pipeId, vertices] of updates) {
+      await updatePipe(pipeId, { vertices })
+    }
+    setIsLandXmlDialogOpen(false)
+  }
 
   // 設計点を生成（座標計算と同じロジック）
   const designPoints = useMemo(() => {
@@ -604,9 +643,10 @@ export function SurveyImportPage() {
             SIMインポート
           </button>
           <button
-            disabled
-            className="flex items-center gap-2 px-4 py-2 border rounded text-slate-400 cursor-not-allowed"
-            title="後日実装予定"
+            onClick={() => setIsLandXmlDialogOpen(true)}
+            disabled={pipes.length === 0}
+            className="flex items-center gap-2 px-4 py-2 border rounded hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="LandXML の TIN サーフェスから各暗渠頂点の標高を取込む"
           >
             <FileText className="h-4 w-4" />
             LANDXML
@@ -1200,6 +1240,15 @@ export function SurveyImportPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* LandXML 取込ダイアログ */}
+      {isLandXmlDialogOpen && (
+        <TinElevationDialog
+          points={landXmlPoints}
+          onConfirm={handleLandXmlConfirm}
+          onClose={() => setIsLandXmlDialogOpen(false)}
+        />
       )}
     </div>
   )
