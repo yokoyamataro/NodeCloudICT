@@ -135,6 +135,37 @@ export function MobileStakingPage() {
 
   // 設定・UI
   const [avgSeconds, setAvgSeconds] = useState(3)
+  // アンテナ高 (m)。RTK ローバーのアンテナ位相中心〜地表（測点）までの高さ
+  const [antennaHeight, setAntennaHeight] = useState<number>(() => {
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('rtk:antennaHeight') : null
+    const n = saved ? parseFloat(saved) : NaN
+    return Number.isFinite(n) ? n : 2.0
+  })
+  useEffect(() => {
+    try { localStorage.setItem('rtk:antennaHeight', String(antennaHeight)) } catch { /* ignore */ }
+  }, [antennaHeight])
+  // ジオイド補正の有効化
+  const [useGeoidCorrection, setUseGeoidCorrection] = useState<boolean>(() => {
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('rtk:useGeoid') : null
+    return saved === null ? true : saved === '1'
+  })
+  useEffect(() => {
+    try { localStorage.setItem('rtk:useGeoid', useGeoidCorrection ? '1' : '0') } catch { /* ignore */ }
+  }, [useGeoidCorrection])
+  // ジオイドグリッド（遅延読込）
+  const [geoidGrid, setGeoidGrid] = useState<import('@/lib/geoid').GeoidGrid | null>(null)
+  const [geoidLoading, setGeoidLoading] = useState(false)
+  const [geoidError, setGeoidError] = useState<string | null>(null)
+  useEffect(() => {
+    if (!useGeoidCorrection || geoidGrid) return
+    setGeoidLoading(true)
+    setGeoidError(null)
+    import('@/lib/geoid')
+      .then(({ loadGeoid }) => loadGeoid())
+      .then((g) => setGeoidGrid(g))
+      .catch((e) => setGeoidError(e instanceof Error ? e.message : 'ジオイド読込失敗'))
+      .finally(() => setGeoidLoading(false))
+  }, [useGeoidCorrection, geoidGrid])
   const [showSettings, setShowSettings] = useState(false)
   const [showTargetList, setShowTargetList] = useState(false)
   const [showRecordList, setShowRecordList] = useState(false)
@@ -446,7 +477,17 @@ export function MobileStakingPage() {
     }
     const avgLat = sumLat / samples.length
     const avgLng = sumLng / samples.length
-    const avgAlt = altCount > 0 ? sumAlt / altCount : null
+    const rawEllipsoidal = altCount > 0 ? sumAlt / altCount : null
+
+    // 標高 = 楕円体高 − ジオイド高 − アンテナ高
+    let geoidN: number | null = null
+    if (useGeoidCorrection && geoidGrid) {
+      const { lookupGeoid } = await import('@/lib/geoid')
+      geoidN = lookupGeoid(geoidGrid, avgLat, avgLng)
+    }
+    const avgAlt = rawEllipsoidal !== null
+      ? (geoidN !== null ? rawEllipsoidal - geoidN - antennaHeight : rawEllipsoidal - antennaHeight)
+      : null
 
     const { x, y } = converter.toXY(avgLat, avgLng)
 
@@ -630,9 +671,36 @@ export function MobileStakingPage() {
         <span className="font-mono">
           精度: {currentAcc != null ? `${currentAcc.toFixed(3)} m` : '未取得'}
         </span>
-        {currentAlt != null && (
-          <span className="ml-auto text-slate-600 font-mono">標高 {currentAlt.toFixed(3)} m</span>
-        )}
+        {currentAlt != null && (() => {
+          // 楕円体高 → 標高補正のリアルタイム表示
+          let H: number | null = null
+          if (currentPos) {
+            if (useGeoidCorrection && geoidGrid) {
+              // 直接 lookup（同期）
+              const rRow = (geoidGrid.latMax - currentPos[0]) / geoidGrid.dLat
+              const rCol = (currentPos[1] - geoidGrid.lonMin) / geoidGrid.dLon
+              if (rRow >= 0 && rCol >= 0 && rRow < geoidGrid.nrows && rCol < geoidGrid.ncols) {
+                const r0 = Math.floor(rRow), c0 = Math.floor(rCol)
+                const r1 = Math.min(r0 + 1, geoidGrid.nrows - 1)
+                const c1 = Math.min(c0 + 1, geoidGrid.ncols - 1)
+                const tr = rRow - r0, tc = rCol - c0
+                const v00 = geoidGrid.values[r0 * geoidGrid.ncols + c0]
+                const v01 = geoidGrid.values[r0 * geoidGrid.ncols + c1]
+                const v10 = geoidGrid.values[r1 * geoidGrid.ncols + c0]
+                const v11 = geoidGrid.values[r1 * geoidGrid.ncols + c1]
+                const N = (v00 * (1 - tc) + v01 * tc) * (1 - tr) + (v10 * (1 - tc) + v11 * tc) * tr
+                if (Number.isFinite(N)) H = currentAlt - N - antennaHeight
+              }
+            } else {
+              H = currentAlt - antennaHeight
+            }
+          }
+          return (
+            <span className="ml-auto text-slate-600 font-mono text-xs">
+              {H != null ? `標高 ${H.toFixed(3)} m` : `楕円体 ${currentAlt.toFixed(3)} m`}
+            </span>
+          )
+        })()}
       </div>
 
       {/* 地図 */}
@@ -798,9 +866,9 @@ export function MobileStakingPage() {
 
         {/* 設定パネル */}
         {showSettings && (
-          <div className="absolute top-2 right-2 z-[1000] bg-white border rounded-lg shadow-lg p-3 w-56 text-sm">
+          <div className="absolute top-2 right-2 z-[1000] bg-white border rounded-lg shadow-lg p-3 w-64 text-sm">
             <div className="font-semibold mb-2">設定</div>
-            <label className="flex flex-col gap-1 mb-2">
+            <label className="flex flex-col gap-1 mb-3">
               <span className="text-xs text-slate-600">平均秒数</span>
               <input
                 type="range"
@@ -813,7 +881,44 @@ export function MobileStakingPage() {
               />
               <span className="font-mono text-center">{avgSeconds} 秒</span>
             </label>
-            <div className="text-xs text-slate-500 mt-2">
+
+            <label className="flex flex-col gap-1 mb-3">
+              <span className="text-xs text-slate-600">アンテナ高 (m)</span>
+              <input
+                type="number"
+                step={0.01}
+                value={antennaHeight}
+                onChange={(e) => {
+                  const n = parseFloat(e.target.value)
+                  if (Number.isFinite(n)) setAntennaHeight(n)
+                }}
+                disabled={recording}
+                className="w-full px-2 py-1 border rounded text-right font-mono"
+              />
+            </label>
+
+            <label className="flex items-center gap-2 mb-2">
+              <input
+                type="checkbox"
+                checked={useGeoidCorrection}
+                onChange={(e) => setUseGeoidCorrection(e.target.checked)}
+                disabled={recording}
+              />
+              <span className="text-xs">ジオイド補正を有効化</span>
+            </label>
+            {useGeoidCorrection && (
+              <div className="text-[11px] text-slate-500 mb-2">
+                {geoidLoading && '読込中…'}
+                {!geoidLoading && geoidGrid && '✓ JPGEO2024 読込済み'}
+                {!geoidLoading && geoidError && <span className="text-red-600">エラー: {geoidError}</span>}
+              </div>
+            )}
+
+            <div className="text-[11px] text-slate-500 mb-2">
+              標高 = 楕円体高 − ジオイド高 − アンテナ高
+            </div>
+
+            <div className="text-xs text-slate-500 border-t pt-2">
               Mock Location 経由で RTK-GNSS の補正座標を取得できます。
             </div>
             <button
