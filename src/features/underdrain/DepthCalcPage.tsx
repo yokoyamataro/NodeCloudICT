@@ -49,6 +49,7 @@ import {
 } from '@/stores/constructionPlanStore'
 import { PipeMap } from '@/components/map/PipeMap'
 import { CrossSectionChart } from '@/components/charts/CrossSectionChart'
+import { parseLandXml, type ParsedSurface } from '@/lib/landxml/parser'
 
 export function DepthCalcPage() {
   const { currentFarm } = useFarmStore()
@@ -152,6 +153,32 @@ export function DepthCalcPage() {
     groupIndex: number
     systemIndex: number
   } | null>(null)
+
+  // LandXML TIN サーフェス（縦断図に断面表示）
+  const [tinSurface, setTinSurface] = useState<ParsedSurface | null>(null)
+  const [tinSourceFile, setTinSourceFile] = useState<string | null>(null)
+  const [tinError, setTinError] = useState<string | null>(null)
+  const handleLandXmlLoad = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setTinError(null)
+    try {
+      const text = await file.text()
+      const result = parseLandXml(text, file.name)
+      if (result.surfaces.length === 0) {
+        setTinError('LandXML 内に TIN サーフェスが見つかりません')
+        setTinSurface(null)
+        setTinSourceFile(null)
+      } else {
+        setTinSurface(result.surfaces[0])
+        setTinSourceFile(file.name)
+      }
+    } catch (err) {
+      setTinError(err instanceof Error ? err.message : 'LandXML 読込エラー')
+    } finally {
+      e.target.value = ''
+    }
+  }
 
   // プロジェクト選択時にデータを読み込む
   useEffect(() => {
@@ -1533,6 +1560,40 @@ export function DepthCalcPage() {
               <Maximize2 className="h-4 w-4" />
             )}
           </button>
+
+          {/* LandXML TIN 断面取込 */}
+          <div className="absolute top-2 right-12 z-20 flex items-center gap-1">
+            <label className="cursor-pointer">
+              <input
+                type="file"
+                accept=".xml,.XML,.landxml,.LANDXML"
+                onChange={handleLandXmlLoad}
+                className="hidden"
+              />
+              <span
+                className={`px-2 py-1 rounded border bg-white shadow-sm hover:bg-slate-50 text-xs ${tinSurface ? 'text-purple-700 border-purple-400' : ''}`}
+                title={tinSurface ? `読込済み: ${tinSourceFile}（クリックで再選択）` : 'LandXML を読み込み TIN 断面を表示'}
+              >
+                LandXML 断面 {tinSurface ? '✓' : ''}
+              </span>
+            </label>
+            {tinSurface && (
+              <button
+                type="button"
+                onClick={() => { setTinSurface(null); setTinSourceFile(null) }}
+                className="px-2 py-1 rounded border bg-white shadow-sm hover:bg-slate-50 text-xs"
+                title="TIN 断面をクリア"
+              >
+                ×
+              </button>
+            )}
+          </div>
+          {tinError && (
+            <div className="absolute top-12 right-2 z-20 text-xs text-red-600 bg-white border border-red-300 px-2 py-1 rounded shadow">
+              {tinError}
+            </div>
+          )}
+
           {/* 断面図表示（タブは上部タブと連動） */}
           <div className="flex-1 overflow-hidden">
             {selectedSystem ? (
@@ -1550,6 +1611,7 @@ export function DepthCalcPage() {
                     pipeDiameterById={pipeDiameterById}
                     allPlanGroups={planGroups}
                     farmName={currentFarm?.name}
+                    tinSurface={tinSurface}
                   />
                 )
               })()

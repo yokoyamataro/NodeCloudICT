@@ -1,6 +1,8 @@
 import { useMemo, useState, useCallback } from 'react'
 import type { PlanRow, PlanGroup } from '@/stores/constructionPlanStore'
 import { exportCrossSectionDxf } from '@/lib/crossSectionDxfExport'
+import type { ParsedSurface } from '@/lib/landxml/parser'
+import { indexTin, queryZ } from '@/lib/landxml/tinInterpolation'
 
 interface CrossSectionChartProps {
   systemRows: PlanRow[] // 系統内の行（rowIndex順）
@@ -11,6 +13,8 @@ interface CrossSectionChartProps {
   pipeDiameterById?: Map<string, number> // 管路ID → 管径
   allPlanGroups?: PlanGroup[] // 合流先系統の参照用
   farmName?: string // DXF 出力ファイル名用
+  // LandXML から読み込んだ TIN サーフェス。指定時は alignment に沿った断面を表示
+  tinSurface?: ParsedSurface | null
 }
 
 // 断面図の点データ（集水管の点のみ）
@@ -39,6 +43,7 @@ export function CrossSectionChart({
   pipeDiameterById,
   allPlanGroups,
   farmName,
+  tinSurface,
 }: CrossSectionChartProps) {
   // 標高スケールのズーム倍率（1.0が基準、大きいほど拡大）
   const [heightScale, setHeightScale] = useState(1.0)
@@ -176,6 +181,42 @@ export function CrossSectionChart({
     return points
   }, [systemRows, resolveMergeTargetPipeNumber, pipeNumberById])
 
+  // TIN サーフェスから alignment に沿った断面サンプルを生成（約 1m 間隔）
+  const tinProfile = useMemo<{ distance: number; z: number | null }[]>(() => {
+    if (!tinSurface) return []
+    const idx = indexTin(tinSurface)
+    const samples: { distance: number; z: number | null }[] = []
+    let cumDist = 0
+    const sampleStep = 1.0 // m
+    for (let i = 0; i < systemRows.length; i++) {
+      const row = systemRows[i]
+      if (!row.collectorPoint) continue
+      // この点でサンプル
+      samples.push({ distance: cumDist, z: queryZ(idx, row.collectorPoint.x, row.collectorPoint.y) })
+      // 次の集水点までセグメント上で密にサンプル
+      const nextRow = systemRows[i + 1]
+      const segLen = row.collectorPoint.segmentDistance
+      if (nextRow?.collectorPoint && segLen != null && segLen > sampleStep) {
+        const dx = nextRow.collectorPoint.x - row.collectorPoint.x
+        const dy = nextRow.collectorPoint.y - row.collectorPoint.y
+        const segXY = Math.hypot(dx, dy)
+        const numSteps = Math.floor(segLen / sampleStep)
+        for (let s = 1; s < numSteps; s++) {
+          const t = s / numSteps
+          const x = row.collectorPoint.x + dx * t
+          const y = row.collectorPoint.y + dy * t
+          samples.push({ distance: cumDist + segLen * t, z: queryZ(idx, x, y) })
+          // segXY は使っていないが lint 警告抑制のため参照
+          void segXY
+        }
+        cumDist += segLen
+      } else if (segLen != null) {
+        cumDist += segLen
+      }
+    }
+    return samples
+  }, [tinSurface, systemRows])
+
   // 旗上げ設定
   const FLAG_ROW_HEIGHT = 24
   const FLAG_WIDTH = 80
@@ -192,9 +233,10 @@ export function CrossSectionChart({
     chartHeight,
     flagRowByIndex,
   } = useMemo(() => {
-    const heights = sectionData
-      .flatMap(p => [p.groundHeight, p.plannedHeight, p.absorptionPlannedHeight, p.absorptionUpstreamPlannedHeight])
-      .filter((h): h is number => h !== null)
+    const heights = [
+      ...sectionData.flatMap(p => [p.groundHeight, p.plannedHeight, p.absorptionPlannedHeight, p.absorptionUpstreamPlannedHeight]),
+      ...tinProfile.map(p => p.z),
+    ].filter((h): h is number => h !== null)
 
     const effectiveHeight = chartHeightProp ?? 220
     if (heights.length === 0) {
@@ -276,7 +318,7 @@ export function CrossSectionChart({
       flagRowByIndex,
       numFlagRows,
     }
-  }, [sectionData, heightScale, widthScale, chartHeightProp])
+  }, [sectionData, tinProfile, heightScale, widthScale, chartHeightProp])
 
   // 座標変換関数
   const xScale = (distance: number) => {
@@ -317,6 +359,24 @@ export function CrossSectionChart({
       })
       .join(' ')
   }, [sectionData, totalDistance, chartWidth, padding, minHeight, maxHeight])
+
+  // パスデータを生成（LandXML TIN 断面）
+  const tinPath = useMemo(() => {
+    if (tinProfile.length < 2) return ''
+    // 連続する有効点ごとに M/L で接続。途中で z=null になったら一旦切る
+    const segments: string[] = []
+    let inSegment = false
+    for (const p of tinProfile) {
+      if (p.z == null) {
+        inSegment = false
+        continue
+      }
+      const cmd = inSegment ? 'L' : 'M'
+      segments.push(`${cmd} ${xScale(p.distance)} ${yScale(p.z)}`)
+      inSegment = true
+    }
+    return segments.join(' ')
+  }, [tinProfile, totalDistance, chartWidth, padding, minHeight, maxHeight]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Y軸の目盛りを計算
   const yTicks = useMemo(() => {
@@ -601,6 +661,19 @@ export function CrossSectionChart({
               fill="none"
               stroke="#2563eb"
               strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          )}
+
+          {/* LandXML TIN 断面（紫の点線） */}
+          {tinPath && (
+            <path
+              d={tinPath}
+              fill="none"
+              stroke="#9333ea"
+              strokeWidth="1.5"
+              strokeDasharray="4 3"
               strokeLinecap="round"
               strokeLinejoin="round"
             />
