@@ -10,8 +10,14 @@
 
 import { parseLandXml, type ParsedSurface } from './parser'
 
+// 補間に必要な最小限の TIN サーフェス形状（ParsedSurface / TinSurface 互換）
+export interface TinSurfaceLike {
+  points: ReadonlyArray<{ x: number; y: number; z: number }>
+  triangles: ReadonlyArray<{ a: number; b: number; c: number }>
+}
+
 export interface TinIndex {
-  surface: ParsedSurface
+  surface: TinSurfaceLike
   bounds: { minX: number; maxX: number; minY: number; maxY: number }[]
 }
 
@@ -20,7 +26,7 @@ const EPS = 1e-9
 /**
  * 三角形バウンディングボックスを事前計算
  */
-export function indexTin(surface: ParsedSurface): TinIndex {
+export function indexTin(surface: TinSurfaceLike): TinIndex {
   const bounds: TinIndex['bounds'] = []
   for (const tri of surface.triangles) {
     const a = surface.points[tri.a]
@@ -71,7 +77,7 @@ export function queryZ(idx: TinIndex, x: number, y: number): number | null {
  * 簡易ラッパ（少数点向け）。事前 index しないバージョン。
  */
 export function interpolateZOnTin(
-  surface: ParsedSurface,
+  surface: TinSurfaceLike,
   x: number,
   y: number,
 ): number | null {

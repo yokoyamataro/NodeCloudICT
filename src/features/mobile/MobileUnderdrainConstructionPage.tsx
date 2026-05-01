@@ -8,16 +8,19 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { MapContainer, TileLayer, CircleMarker, Polyline, Tooltip, useMap } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import {
-  ArrowLeft, FileText, Loader2, Crosshair, Radio, Settings,
+  ArrowLeft, FileText, Loader2, Crosshair, Radio, Settings, Database,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useSurveyStore } from '@/stores/surveyStore'
+import { useUnderdrainStore } from '@/stores/underdrainStore'
+import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { parseLandXml, type ParsedSurface } from '@/lib/landxml/parser'
-import { indexTin, queryZ, type TinIndex } from '@/lib/landxml/tinInterpolation'
+import { indexTin, queryZ, type TinIndex, type TinSurfaceLike } from '@/lib/landxml/tinInterpolation'
+import { buildTrenchTin } from '@/lib/landxml/surface'
 import type { Alignment, AlignmentSegment } from '@/lib/landxml/types'
 import type { Project } from '@/types/database'
 
@@ -77,13 +80,19 @@ export function MobileUnderdrainConstructionPage() {
   const [alt, setAlt] = useState<number | null>(null)
   const [follow, setFollow] = useState(true)
 
-  // LandXML データ
-  const [alignments, setAlignments] = useState<Alignment[]>([])
-  const [trenchSurface, setTrenchSurface] = useState<ParsedSurface | null>(null)
+  // 取込みデータ
+  // 中心線形は lat/lng のポリラインの集合として保持（LandXML の Alignment / 施工計画の Pipe どちらからでも作る）
+  const [alignmentLines, setAlignmentLines] = useState<Array<[number, number][]>>([])
+  const [trenchSurface, setTrenchSurface] = useState<TinSurfaceLike | null>(null)
   const [groundSurface, setGroundSurface] = useState<ParsedSurface | null>(null)
-  const [xmlSourceFile, setXmlSourceFile] = useState<string | null>(null)
-  const [xmlError, setXmlError] = useState<string | null>(null)
+  const [dataSourceLabel, setDataSourceLabel] = useState<string | null>(null)
+  const [dataError, setDataError] = useState<string | null>(null)
+  const [importing, setImporting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // 暗渠ストア / 施工計画ストア（施工計画から取込み用）
+  const { fetchPipes } = useUnderdrainStore()
+  const { fetchPlan } = useConstructionPlanStore()
 
   // ジオイド補正設定（モバイル測量と共通）
   const [antennaHeight, setAntennaHeight] = useState<number>(() => {
@@ -180,25 +189,81 @@ export function MobileUnderdrainConstructionPage() {
     return () => navigator.geolocation.clearWatch(watch)
   }, [])
 
+  // 中心線形：Alignment[] → lat/lng ポリラインに変換
+  const buildAlignmentLines = (als: Alignment[], conv: CoordinateConverter): Array<[number, number][]> => {
+    const lines: Array<[number, number][]> = []
+    for (const al of als) {
+      for (const seg of al.segments) {
+        const xyPts = segmentToPolyline(seg, 12)
+        const llPts: [number, number][] = xyPts.map(([x, y]) => {
+          const r = conv.toLatLng(x, y)
+          return [r.lat, r.lng]
+        })
+        lines.push(llPts)
+      }
+    }
+    return lines
+  }
+
   // LandXML 読込
   const handleLoadXml = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    setXmlError(null)
+    setDataError(null)
     try {
       const text = await file.text()
       const result = parseLandXml(text, file.name)
-      setAlignments(result.alignments)
-      // サーフェス：名称から床掘 / 現況 を判別（含まれない場合は最初を床掘扱い）
       const trenchSurf = result.surfaces.find((s) => /trench|床掘|excav/i.test(s.name)) ?? result.surfaces[0] ?? null
       const groundSurf = result.surfaces.find((s) => /ground|現況|terrain/i.test(s.name)) ?? null
+      setAlignmentLines(buildAlignmentLines(result.alignments, converter))
       setTrenchSurface(trenchSurf)
       setGroundSurface(groundSurf)
-      setXmlSourceFile(file.name)
+      setDataSourceLabel(`LandXML: ${file.name}`)
     } catch (err) {
-      setXmlError(err instanceof Error ? err.message : 'LandXML 読込エラー')
+      setDataError(err instanceof Error ? err.message : 'LandXML 読込エラー')
     } finally {
       e.target.value = ''
+    }
+  }
+
+  // 施工計画データから取込（Supabase）
+  const handleLoadFromPlan = async () => {
+    if (!farmId) return
+    setDataError(null)
+    setImporting(true)
+    try {
+      await Promise.all([fetchPipes(farmId), fetchPlan(farmId)])
+      // 状態反映後に最新値を取得
+      const freshPipes = useUnderdrainStore.getState().pipes
+      const freshPlan = useConstructionPlanStore.getState().planGroups
+      // 中心線形：各暗渠の頂点を順に結ぶポリラインへ
+      const lines: Array<[number, number][]> = []
+      for (const pipe of freshPipes) {
+        if (pipe.vertices.length < 2) continue
+        const ll: [number, number][] = pipe.vertices.map((v) => {
+          const r = converter.toLatLng(v.x, v.y)
+          return [r.lat, r.lng]
+        })
+        lines.push(ll)
+      }
+      setAlignmentLines(lines)
+      // 床掘 TIN を施工計画から構築（既定パラメータ）
+      const trench = buildTrenchTin({
+        planGroups: freshPlan,
+        halfWidth: 0.25,
+        includeAbsorption: true,
+        includeCollector: true,
+        applyTransition: true,
+        transitionDistance: 5.0,
+        trimClearance: 0.10,
+      })
+      setTrenchSurface(trench)
+      setGroundSurface(null)
+      setDataSourceLabel(`施工計画から取込（暗渠 ${freshPipes.length} / 計画 ${freshPlan.length} 系統）`)
+    } catch (err) {
+      setDataError(err instanceof Error ? err.message : '施工計画の取込に失敗')
+    } finally {
+      setImporting(false)
     }
   }
 
@@ -255,22 +320,6 @@ export function MobileUnderdrainConstructionPage() {
   // 標高差（実標高 − TIN 標高）。正なら掘り不足、負なら過掘
   const trenchDiff = trenchZ !== null && selfElevation !== null ? selfElevation - trenchZ : null
   const groundDiff = groundZ !== null && selfElevation !== null ? selfElevation - groundZ : null
-
-  // 中心線形（lat/lng）
-  const alignmentLines = useMemo<Array<[number, number][]>>(() => {
-    const lines: Array<[number, number][]> = []
-    for (const al of alignments) {
-      for (const seg of al.segments) {
-        const xyPts = segmentToPolyline(seg, 12)
-        const llPts: [number, number][] = xyPts.map(([x, y]) => {
-          const r = converter.toLatLng(x, y)
-          return [r.lat, r.lng]
-        })
-        lines.push(llPts)
-      }
-    }
-    return lines
-  }, [alignments, converter])
 
   // 床掘 TIN の輪郭線（三角形のエッジを表示）
   const trenchEdges = useMemo<Array<[number, number][]>>(() => {
@@ -331,6 +380,16 @@ export function MobileUnderdrainConstructionPage() {
         <span className="font-medium">{farm?.name ?? '施工管理'}</span>
         <span className="text-xs text-slate-400">暗渠施工管理</span>
         <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={handleLoadFromPlan}
+            disabled={importing}
+            className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-500 hover:bg-slate-700 disabled:opacity-50"
+            title="現場データの施工計画 + 暗渠から床掘 TIN を生成"
+          >
+            <Database className="h-3.5 w-3.5" />
+            施工計画
+            {importing && <Loader2 className="h-3 w-3 animate-spin" />}
+          </button>
           <label className="cursor-pointer">
             <input
               ref={fileInputRef}
@@ -342,7 +401,6 @@ export function MobileUnderdrainConstructionPage() {
             <span className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-500 hover:bg-slate-700">
               <FileText className="h-3.5 w-3.5" />
               LandXML
-              {xmlSourceFile ? <span className="text-emerald-400">✓</span> : null}
             </span>
           </label>
           <button
@@ -362,12 +420,13 @@ export function MobileUnderdrainConstructionPage() {
           <span className="ml-auto font-mono text-slate-700">標高 {selfElevation.toFixed(3)} m</span>
         )}
       </div>
-      {xmlError && (
-        <div className="px-3 py-1 bg-red-50 border-b border-red-200 text-xs text-red-700">{xmlError}</div>
+      {dataError && (
+        <div className="px-3 py-1 bg-red-50 border-b border-red-200 text-xs text-red-700">{dataError}</div>
       )}
-      {xmlSourceFile && (
+      {dataSourceLabel && (
         <div className="px-3 py-1 bg-emerald-50 border-b border-emerald-200 text-xs text-emerald-800">
-          {xmlSourceFile} ／ 中心線 {alignments.length} ／ 床掘 TIN {trenchSurface ? '✓' : '×'} ／ 現況 TIN {groundSurface ? '✓' : '×'}
+          {dataSourceLabel} ／ 中心線 {alignmentLines.length} ／ 床掘 TIN {trenchSurface ? '✓' : '×'}
+          {groundSurface ? ' ／ 現況 TIN ✓' : ''}
         </div>
       )}
 
