@@ -11,6 +11,7 @@ import { SiteMapWindowPage } from '@/features/coordinates/SiteMapWindowPage'
 import { MobileTopPage } from '@/features/mobile/MobileTopPage'
 import { MobileDetailMapPage } from '@/features/mobile/MobileDetailMapPage'
 import { MobileStakingPage } from '@/features/mobile/MobileStakingPage'
+import { MobileUnderdrainConstructionPage } from '@/features/mobile/MobileUnderdrainConstructionPage'
 // 暗渠工事
 import { UnderdrainWorkAreaPage } from '@/features/underdrain/UnderdrainWorkAreaPage'
 import { CadAnalysisPage } from '@/features/underdrain/CadAnalysisPage'
@@ -114,6 +115,14 @@ function AppRoutes() {
           element={
             <ProtectedRoute>
               <MobileStakingPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/mobile/construction"
+          element={
+            <ProtectedRoute>
+              <MobileUnderdrainConstructionPage />
             </ProtectedRoute>
           }
         />

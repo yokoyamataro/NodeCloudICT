@@ -96,6 +96,11 @@ export function MobileTopPage() {
     navigate(`/mobile/staking?farmId=${farm.id}`)
   }
 
+  const handleOpenConstruction = (farm: Farm) => {
+    setActionFarm(null)
+    navigate(`/mobile/construction?farmId=${farm.id}`)
+  }
+
   const handleOpenDirections = (farm: Farm) => {
     const loc = farmLocations.get(farm.id)
     if (!loc) return
@@ -235,6 +240,13 @@ export function MobileTopPage() {
               >
                 <Crosshair className="h-5 w-5" />
                 起工測量（RTK-GNSS）
+              </button>
+              <button
+                onClick={() => handleOpenConstruction(actionFarm)}
+                className="w-full flex items-center gap-3 px-4 py-3 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 text-sm font-medium"
+              >
+                <MapIcon className="h-5 w-5" />
+                施工管理（暗渠 / 床掘）
               </button>
               <button
                 onClick={() => handleOpenDirections(actionFarm)}
