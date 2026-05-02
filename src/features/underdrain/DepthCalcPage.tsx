@@ -154,6 +154,11 @@ export function DepthCalcPage() {
     systemIndex: number
   } | null>(null)
 
+  // 断面図のスコープ（'collector' = 系統全体の集水 / number = 系統内 row index の吸水）
+  const [chartScope, setChartScope] = useState<'collector' | number>('collector')
+  // 系統が変わったら集水に戻す
+  useEffect(() => { setChartScope('collector') }, [selectedSystem?.groupIndex, selectedSystem?.systemIndex])
+
   // LandXML TIN サーフェス（縦断図に断面表示）
   const [tinSurface, setTinSurface] = useState<ParsedSurface | null>(null)
   const [tinSourceFile, setTinSourceFile] = useState<string | null>(null)
@@ -1595,24 +1600,84 @@ export function DepthCalcPage() {
           )}
 
           {/* 断面図表示（タブは上部タブと連動） */}
-          <div className="flex-1 overflow-hidden">
+          <div className="flex-1 overflow-hidden flex flex-col">
             {selectedSystem ? (
               (() => {
                 const groupData = groupedBySystem[selectedSystem.groupIndex]
                 const systemData = groupData?.systems.find(s => s.systemIndex === selectedSystem.systemIndex)
                 if (!systemData) return <div className="flex items-center justify-center h-full text-slate-400">系統が見つかりません</div>
+
+                // 吸水を含む行（吸水点が 2 点以上ある行）の一覧
+                const absorptionRows = systemData.rows
+                  .map((r, i) => ({ row: r, idx: i }))
+                  .filter(({ row }) => row.absorptionPoints.length >= 2)
+
+                // 吸水スコープの場合：absorptionPoints から擬似 PlanRow[] を生成して既存 CrossSectionChart に渡す
+                let chartRows = systemData.rows
+                let chartLabel: string | undefined
+                if (typeof chartScope === 'number') {
+                  const r = systemData.rows[chartScope]
+                  if (r && r.absorptionPoints.length >= 2) {
+                    chartRows = r.absorptionPoints.map((p, i) => ({
+                      id: `abs-${r.id}-${i}`,
+                      wiringRowId: '',
+                      groupType: r.groupType,
+                      groupIndex: r.groupIndex,
+                      rowIndex: i,
+                      systemIndex: r.systemIndex,
+                      isSystemEnd: i === r.absorptionPoints.length - 1,
+                      systemEndType: null,
+                      absorptionPipeId: null,
+                      collectorPipeId: r.absorptionPipeId,
+                      pipeNumber: r.pipeNumber,
+                      diameter: r.diameter,
+                      designLength: r.designLength,
+                      absorptionPoints: [],
+                      collectorPoint: p,
+                      wiringRowType: null,
+                    }))
+                    chartLabel = `吸水: ${r.pipeNumber ?? '?'}`
+                  }
+                }
+
                 return (
-                  <CrossSectionChart
-                    systemRows={systemData.rows}
-                    systemIndex={systemData.systemIndex}
-                    endType={systemData.endType}
-                    chartHeight={fullscreenPanel === 'chart' ? window.innerHeight - 120 : 220}
-                    pipeNumberById={pipeNumberById}
-                    pipeDiameterById={pipeDiameterById}
-                    allPlanGroups={planGroups}
-                    farmName={currentFarm?.name}
-                    tinSurface={tinSurface}
-                  />
+                  <>
+                    {/* 断面スコープ切替 */}
+                    <div className="px-2 pt-1 pb-1 border-b bg-white flex items-center gap-2 text-xs flex-shrink-0">
+                      <span className="text-slate-600">断面:</span>
+                      <select
+                        value={typeof chartScope === 'number' ? `abs-${chartScope}` : 'collector'}
+                        onChange={(e) => {
+                          const v = e.target.value
+                          if (v === 'collector') setChartScope('collector')
+                          else if (v.startsWith('abs-')) setChartScope(parseInt(v.slice(4), 10))
+                        }}
+                        className="px-2 py-0.5 border rounded"
+                      >
+                        <option value="collector">集水（系統 {systemData.systemIndex}）</option>
+                        {absorptionRows.map(({ row, idx }) => (
+                          <option key={row.id} value={`abs-${idx}`}>
+                            吸水: {row.pipeNumber ?? '?'}
+                          </option>
+                        ))}
+                      </select>
+                      {chartLabel && <span className="text-slate-500">{chartLabel}</span>}
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                      <CrossSectionChart
+                        key={typeof chartScope === 'number' ? `abs-${chartScope}` : 'collector'}
+                        systemRows={chartRows}
+                        systemIndex={systemData.systemIndex}
+                        endType={typeof chartScope === 'number' ? null : systemData.endType}
+                        chartHeight={fullscreenPanel === 'chart' ? window.innerHeight - 150 : 200}
+                        pipeNumberById={pipeNumberById}
+                        pipeDiameterById={pipeDiameterById}
+                        allPlanGroups={planGroups}
+                        farmName={currentFarm?.name}
+                        tinSurface={tinSurface}
+                      />
+                    </div>
+                  </>
                 )
               })()
             ) : (
