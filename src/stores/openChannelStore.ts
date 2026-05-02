@@ -11,6 +11,14 @@ export interface AlignmentPoint {
   radius?: number
 }
 
+/** 縦断線形の変化点 */
+export interface ProfilePoint {
+  /** BP からの追加距離 (m) */
+  distance: number
+  /** 床高 (m, 標高) */
+  floorHeight: number
+}
+
 export interface OpenChannelRow {
   id: string
   farmId: string
@@ -22,6 +30,8 @@ export interface OpenChannelRow {
   /** 設計法面深さ(m, 任意) */
   bankHeight: number | null
   alignmentPoints: AlignmentPoint[]
+  /** 縦断線形（変化点列） */
+  profilePoints: ProfilePoint[]
   notes: string | null
 }
 
@@ -33,6 +43,7 @@ interface OpenChannelDb {
   slope_ratio: number | string
   bank_height: number | string | null
   alignment_points: AlignmentPoint[]
+  profile_points: ProfilePoint[] | null
   notes: string | null
 }
 
@@ -45,6 +56,7 @@ function toRow(d: OpenChannelDb): OpenChannelRow {
     slopeRatio: Number(d.slope_ratio),
     bankHeight: d.bank_height != null ? Number(d.bank_height) : null,
     alignmentPoints: Array.isArray(d.alignment_points) ? d.alignment_points : [],
+    profilePoints: Array.isArray(d.profile_points) ? d.profile_points : [],
     notes: d.notes,
   }
 }
@@ -93,6 +105,7 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
         slope_ratio: 1.0,
         bank_height: null,
         alignment_points: [],
+        profile_points: [],
         notes: null,
       }
       const { data, error } = await supabase
@@ -118,6 +131,7 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
       if (updates.slopeRatio !== undefined) dbUpdates.slope_ratio = updates.slopeRatio
       if (updates.bankHeight !== undefined) dbUpdates.bank_height = updates.bankHeight
       if (updates.alignmentPoints !== undefined) dbUpdates.alignment_points = updates.alignmentPoints
+      if (updates.profilePoints !== undefined) dbUpdates.profile_points = updates.profilePoints
       if (updates.notes !== undefined) dbUpdates.notes = updates.notes
       // 楽観的更新
       set((s) => ({

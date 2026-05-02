@@ -14,7 +14,7 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useProjectListStore } from '@/stores/projectListStore'
-import { useOpenChannelStore, type AlignmentPoint, type AlignmentPointKind } from '@/stores/openChannelStore'
+import { useOpenChannelStore, type AlignmentPoint, type AlignmentPointKind, type ProfilePoint } from '@/stores/openChannelStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { sampleAlignment, alignmentLength, type AlignmentVertex } from '@/lib/openChannel/alignment'
 
@@ -127,6 +127,35 @@ export function OpenChannelAlignmentPage() {
     if (!selected) return
     const arr = selected.alignmentPoints.map((p, i) => (i === idx ? { ...p, ...patch } : p))
     updateChannel(selected.id, { alignmentPoints: arr })
+  }
+
+  // 縦断線形（profile）操作
+  const [addProfileDist, setAddProfileDist] = useState<number>(0)
+  const [addProfileH, setAddProfileH] = useState<number>(0)
+
+  const sortedProfile = useMemo<ProfilePoint[]>(() => {
+    if (!selected) return []
+    return [...selected.profilePoints].sort((a, b) => a.distance - b.distance)
+  }, [selected])
+
+  const handleAddProfile = () => {
+    if (!selected) return
+    const next: ProfilePoint[] = [...selected.profilePoints, { distance: addProfileDist, floorHeight: addProfileH }]
+    next.sort((a, b) => a.distance - b.distance)
+    updateChannel(selected.id, { profilePoints: next })
+    setAddProfileDist(0)
+    setAddProfileH(0)
+  }
+  const handleRemoveProfile = (idx: number) => {
+    if (!selected) return
+    const arr = selected.profilePoints.filter((_, i) => i !== idx)
+    updateChannel(selected.id, { profilePoints: arr })
+  }
+  const handleChangeProfile = (idx: number, patch: Partial<ProfilePoint>) => {
+    if (!selected) return
+    const arr = selected.profilePoints.map((p, i) => (i === idx ? { ...p, ...patch } : p))
+    arr.sort((a, b) => a.distance - b.distance)
+    updateChannel(selected.id, { profilePoints: arr })
   }
 
   if (!currentFarm) {
@@ -377,6 +406,122 @@ export function OpenChannelAlignmentPage() {
                     <Plus className="h-3 w-3" />
                     追加
                   </button>
+                </div>
+              </section>
+
+              {/* 縦断線形 */}
+              <section className="bg-white rounded-lg border p-3 space-y-2">
+                <h3 className="font-semibold text-slate-800 text-sm">縦断線形</h3>
+                <div className="text-[11px] text-slate-500">
+                  BP からの追加距離 (m) と床高 (m) を変化点ごとに登録します
+                </div>
+
+                {sortedProfile.length > 0 && (
+                  <div className="border rounded overflow-hidden">
+                    <table className="w-full text-xs">
+                      <thead className="bg-slate-50 text-slate-600">
+                        <tr>
+                          <th className="px-1 py-1 w-8 text-center">#</th>
+                          <th className="px-1 py-1 text-right">追加距離 (m)</th>
+                          <th className="px-1 py-1 text-right">床高 (m)</th>
+                          <th className="px-1 py-1 text-right">勾配</th>
+                          <th className="px-1 py-1 w-8"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sortedProfile.map((p, i) => {
+                          // 元の配列インデックス（ソート前）
+                          const origIdx = selected.profilePoints.findIndex(
+                            (q) => q === selected.profilePoints[selected.profilePoints.indexOf(p)],
+                          )
+                          const realIdx = selected.profilePoints.indexOf(p)
+                          const prev = i > 0 ? sortedProfile[i - 1] : null
+                          const slope = prev
+                            ? (() => {
+                                const dx = p.distance - prev.distance
+                                const dy = p.floorHeight - prev.floorHeight
+                                if (Math.abs(dx) < 1e-6) return '-'
+                                if (Math.abs(dy) < 1e-9) return '水平'
+                                return `1/${Math.round(Math.abs(dx / dy))}`
+                              })()
+                            : '-'
+                          return (
+                            <tr key={`${realIdx}-${origIdx}`} className="border-t">
+                              <td className="px-1 py-1 text-center text-slate-500">{i + 1}</td>
+                              <td className="px-1 py-1 text-right">
+                                <input
+                                  type="number"
+                                  step={0.1}
+                                  value={p.distance}
+                                  onChange={(e) => {
+                                    const v = parseFloat(e.target.value)
+                                    if (Number.isFinite(v)) handleChangeProfile(realIdx, { distance: v })
+                                  }}
+                                  className="w-20 px-1 py-0.5 border rounded text-right text-xs"
+                                />
+                              </td>
+                              <td className="px-1 py-1 text-right">
+                                <input
+                                  type="number"
+                                  step={0.001}
+                                  value={p.floorHeight}
+                                  onChange={(e) => {
+                                    const v = parseFloat(e.target.value)
+                                    if (Number.isFinite(v)) handleChangeProfile(realIdx, { floorHeight: v })
+                                  }}
+                                  className="w-20 px-1 py-0.5 border rounded text-right text-xs"
+                                />
+                              </td>
+                              <td className="px-1 py-1 text-right text-slate-500 tabular-nums">{slope}</td>
+                              <td className="px-1 py-1 text-right">
+                                <button
+                                  onClick={() => handleRemoveProfile(realIdx)}
+                                  className="p-0.5 border rounded hover:bg-red-50 text-red-600"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* 追加 */}
+                <div className="grid grid-cols-12 gap-1 items-end">
+                  <label className="col-span-5 flex flex-col gap-0.5 text-[11px]">
+                    <span className="text-slate-500">追加距離 (m)</span>
+                    <input
+                      type="number"
+                      step={0.1}
+                      value={addProfileDist}
+                      onChange={(e) => setAddProfileDist(parseFloat(e.target.value) || 0)}
+                      className="px-1 py-1 border rounded text-right text-xs"
+                    />
+                  </label>
+                  <label className="col-span-5 flex flex-col gap-0.5 text-[11px]">
+                    <span className="text-slate-500">床高 (m)</span>
+                    <input
+                      type="number"
+                      step={0.001}
+                      value={addProfileH}
+                      onChange={(e) => setAddProfileH(parseFloat(e.target.value) || 0)}
+                      className="px-1 py-1 border rounded text-right text-xs"
+                    />
+                  </label>
+                  <button
+                    onClick={handleAddProfile}
+                    className="col-span-2 flex items-center justify-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+                  >
+                    <Plus className="h-3 w-3" />
+                    追加
+                  </button>
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  ※ 平面線形長 ({totalLen.toFixed(2)} m) を超えない範囲で設定。
+                  追加距離 0 を BP、平面線形長相当を EP として登録するのが基本。
                 </div>
               </section>
 
