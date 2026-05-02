@@ -28,6 +28,176 @@ function FitBounds({ positions }: { positions: [number, number][] }) {
   return null
 }
 
+// 断面形状の図（流れ方向を見た形）
+function CrossSectionDiagram({
+  W, slopeRatio, bankHeight,
+}: { W: number; slopeRatio: number; bankHeight: number | null }) {
+  if (!Number.isFinite(W) || W <= 0 || !Number.isFinite(slopeRatio) || slopeRatio <= 0) {
+    return <div className="text-xs text-slate-400 px-2 py-1">寸法が不正です</div>
+  }
+  const i = slopeRatio
+  // 法面深さが未指定なら表示用に床幅相当を仮定
+  const h = bankHeight != null && bankHeight > 0 ? bankHeight : Math.max(W * 0.6, 0.5)
+  const sw = h * i
+  const total = W + sw * 2
+
+  const widthPx = 280
+  const heightPx = 120
+  const padding = { top: 16, right: 30, bottom: 28, left: 30 }
+  const innerW = widthPx - padding.left - padding.right
+  const innerH = heightPx - padding.top - padding.bottom
+  const scaleX = innerW / total
+  const scaleY = innerH / h
+  const scale = Math.min(scaleX, scaleY)
+
+  const cx = padding.left + innerW / 2 // 中心の SVG x
+  const baseY = padding.top + innerH // 床面の SVG y
+
+  const tx = (x: number) => cx + x * scale
+  const ty = (y: number) => baseY - y * scale
+
+  return (
+    <svg width={widthPx} height={heightPx} className="border rounded bg-slate-50">
+      {/* 法肩の参考水平線 */}
+      <line x1={padding.left} y1={ty(h)} x2={widthPx - padding.right} y2={ty(h)}
+        stroke="#cbd5e1" strokeDasharray="2,3" strokeWidth={1} />
+      {/* 中心線 */}
+      <line x1={tx(0)} y1={ty(-h * 0.05)} x2={tx(0)} y2={ty(h * 1.05)}
+        stroke="#cbd5e1" strokeDasharray="3,3" strokeWidth={1} />
+
+      {/* 断面トラペゾイド */}
+      <polygon
+        points={[
+          `${tx(-total / 2)},${ty(h)}`,
+          `${tx(-W / 2)},${ty(0)}`,
+          `${tx(W / 2)},${ty(0)}`,
+          `${tx(total / 2)},${ty(h)}`,
+        ].join(' ')}
+        fill="rgba(14,165,233,0.15)"
+        stroke="#0ea5e9"
+        strokeWidth={1.5}
+      />
+
+      {/* 床面寸法 */}
+      <line x1={tx(-W / 2)} y1={baseY + 8} x2={tx(W / 2)} y2={baseY + 8}
+        stroke="#0ea5e9" strokeWidth={1} markerStart="url(#arrL)" markerEnd="url(#arrR)" />
+      <text x={cx} y={baseY + 20} textAnchor="middle" fontSize={10} fill="#0ea5e9" fontWeight="bold">
+        W = {W.toFixed(2)} m
+      </text>
+
+      {/* 斜面勾配ラベル */}
+      <text x={tx(W / 2 + sw * 0.55)} y={ty(h * 0.5)} textAnchor="middle" fontSize={10} fill="#475569">
+        1:{i}
+      </text>
+      <text x={tx(-W / 2 - sw * 0.55)} y={ty(h * 0.5)} textAnchor="middle" fontSize={10} fill="#475569">
+        1:{i}
+      </text>
+
+      {/* 高さ寸法（右側） */}
+      <text x={widthPx - padding.right + 4} y={ty(h / 2)} textAnchor="start" fontSize={9} fill="#64748b">
+        {bankHeight != null ? `H=${bankHeight.toFixed(2)}` : `(H 仮 ${h.toFixed(2)})`}
+      </text>
+
+      <defs>
+        <marker id="arrL" markerWidth={6} markerHeight={6} refX={3} refY={3} orient="auto">
+          <path d="M6,0 L0,3 L6,6 z" fill="#0ea5e9" />
+        </marker>
+        <marker id="arrR" markerWidth={6} markerHeight={6} refX={3} refY={3} orient="auto">
+          <path d="M0,0 L6,3 L0,6 z" fill="#0ea5e9" />
+        </marker>
+      </defs>
+    </svg>
+  )
+}
+
+// 縦断図（追加距離 vs 床高）
+function ProfileChart({ points, totalLen }: { points: ProfilePoint[]; totalLen: number }) {
+  const widthPx = 280
+  const heightPx = 140
+  const padding = { top: 10, right: 14, bottom: 24, left: 38 }
+  const innerW = widthPx - padding.left - padding.right
+  const innerH = heightPx - padding.top - padding.bottom
+
+  if (points.length < 2) {
+    return (
+      <div className="border rounded bg-slate-50 text-xs text-slate-400 px-2 py-3 text-center" style={{ width: widthPx }}>
+        変化点が 2 点以上で縦断図を表示
+      </div>
+    )
+  }
+  const sorted = [...points].sort((a, b) => a.distance - b.distance)
+  const minH = Math.min(...sorted.map((p) => p.floorHeight))
+  const maxH = Math.max(...sorted.map((p) => p.floorHeight))
+  const rangeRaw = maxH - minH
+  const range = rangeRaw < 1e-6 ? 1 : rangeRaw
+  const maxDist = Math.max(totalLen, sorted[sorted.length - 1].distance)
+  const minDist = Math.min(0, sorted[0].distance)
+  const distSpan = Math.max(maxDist - minDist, 1)
+
+  const tx = (d: number) => padding.left + ((d - minDist) / distSpan) * innerW
+  const ty = (h: number) => padding.top + (1 - (h - minH) / range) * innerH
+
+  const path = sorted.map((p, i) => `${i === 0 ? 'M' : 'L'} ${tx(p.distance)} ${ty(p.floorHeight)}`).join(' ')
+
+  // Y 軸目盛
+  const yStep = range > 5 ? 1 : range > 2 ? 0.5 : range > 0.5 ? 0.2 : 0.1
+  const yTicks: number[] = []
+  for (let h = Math.ceil(minH / yStep) * yStep; h <= maxH + 1e-9; h += yStep) yTicks.push(h)
+
+  // X 軸目盛
+  const xStep = distSpan > 200 ? 50 : distSpan > 80 ? 20 : distSpan > 30 ? 10 : 5
+  const xTicks: number[] = []
+  for (let d = Math.ceil(minDist / xStep) * xStep; d <= maxDist + 1e-9; d += xStep) xTicks.push(d)
+
+  return (
+    <svg width={widthPx} height={heightPx} className="border rounded bg-slate-50">
+      {/* 枠 */}
+      <line x1={padding.left} y1={padding.top} x2={padding.left} y2={padding.top + innerH} stroke="#94a3b8" strokeWidth={1} />
+      <line x1={padding.left} y1={padding.top + innerH} x2={padding.left + innerW} y2={padding.top + innerH} stroke="#94a3b8" strokeWidth={1} />
+
+      {/* Y 軸グリッド + ラベル */}
+      {yTicks.map((h, i) => (
+        <g key={`y-${i}`}>
+          <line x1={padding.left} y1={ty(h)} x2={padding.left + innerW} y2={ty(h)} stroke="#e2e8f0" strokeWidth={1} />
+          <text x={padding.left - 4} y={ty(h) + 3} textAnchor="end" fontSize={9} fill="#64748b">{h.toFixed(2)}</text>
+        </g>
+      ))}
+
+      {/* X 軸ラベル */}
+      {xTicks.map((d, i) => (
+        <g key={`x-${i}`}>
+          <line x1={tx(d)} y1={padding.top + innerH} x2={tx(d)} y2={padding.top + innerH + 3} stroke="#94a3b8" strokeWidth={1} />
+          <text x={tx(d)} y={padding.top + innerH + 12} textAnchor="middle" fontSize={9} fill="#64748b">{d}</text>
+        </g>
+      ))}
+
+      {/* 床高ライン */}
+      <path d={path} fill="none" stroke="#0ea5e9" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+
+      {/* 点 */}
+      {sorted.map((p, i) => (
+        <circle key={`p-${i}`} cx={tx(p.distance)} cy={ty(p.floorHeight)} r={3} fill="#0ea5e9" stroke="#fff" strokeWidth={1.5} />
+      ))}
+
+      {/* 勾配ラベル */}
+      {sorted.slice(1).map((p, i) => {
+        const prev = sorted[i]
+        const dx = p.distance - prev.distance
+        const dy = p.floorHeight - prev.floorHeight
+        if (Math.abs(dx) < 1e-6) return null
+        const slope = Math.abs(dy) < 1e-9 ? '水平' : `1/${Math.round(Math.abs(dx / dy))}`
+        const mx = (tx(prev.distance) + tx(p.distance)) / 2
+        const my = (ty(prev.floorHeight) + ty(p.floorHeight)) / 2 - 6
+        return <text key={`s-${i}`} x={mx} y={my} textAnchor="middle" fontSize={9} fill="#475569">{slope}</text>
+      })}
+
+      {/* 軸単位 */}
+      <text x={5} y={padding.top - 2} fontSize={9} fill="#64748b">床高 (m)</text>
+      <text x={widthPx - 4} y={heightPx - 4} textAnchor="end" fontSize={9} fill="#64748b">距離 (m)</text>
+    </svg>
+  )
+}
+
 export function OpenChannelAlignmentPage() {
   const { currentFarm } = useFarmStore()
   const { projects } = useProjectListStore()
@@ -281,6 +451,13 @@ export function OpenChannelAlignmentPage() {
                 <div className="text-[11px] text-slate-500">
                   中心 ±{(selected.floorWidth / 2).toFixed(2)} m が床、外側 sw m 進むと {selected.slopeRatio > 0 ? `${(1 / selected.slopeRatio).toFixed(3)}` : '-'} × sw m 高くなる
                 </div>
+                <div className="flex justify-center pt-1">
+                  <CrossSectionDiagram
+                    W={selected.floorWidth}
+                    slopeRatio={selected.slopeRatio}
+                    bankHeight={selected.bankHeight}
+                  />
+                </div>
               </section>
 
               {/* 線形点 */}
@@ -522,6 +699,9 @@ export function OpenChannelAlignmentPage() {
                 <div className="text-[11px] text-slate-400">
                   ※ 平面線形長 ({totalLen.toFixed(2)} m) を超えない範囲で設定。
                   追加距離 0 を BP、平面線形長相当を EP として登録するのが基本。
+                </div>
+                <div className="flex justify-center pt-1">
+                  <ProfileChart points={selected.profilePoints} totalLen={totalLen} />
                 </div>
               </section>
 
