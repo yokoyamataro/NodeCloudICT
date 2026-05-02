@@ -26,6 +26,7 @@ import {
   Rows3,
   Grid3x3,
   Mountain,
+  Waves,
   Shovel,
   Gem,
   LandPlot,
@@ -124,6 +125,14 @@ const navigation: NavGroup[] = [
     icon: Gem,
     children: [
       { name: '工事区域', href: '/stone-removal/work-area', icon: Square },
+    ],
+  },
+  {
+    name: '小水路',
+    href: '/open-channel',
+    icon: Waves,
+    children: [
+      { name: '線形登録', href: '/open-channel/alignment', icon: Square },
     ],
   },
   { name: '設定', href: '/settings', icon: Settings },

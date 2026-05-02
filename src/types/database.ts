@@ -17,6 +17,7 @@ export type WorkType =
   | 'grading'        // 整地
   | 'subsoil'        // 心破土改
   | 'stone_removal'  // 徐礫
+  | 'open_channel'   // 小水路（明渠）— 区域ではなく線形 + 断面で定義
 
 // 工種の表示名
 export const WORK_TYPE_NAMES: Record<WorkType, string> = {
@@ -26,6 +27,7 @@ export const WORK_TYPE_NAMES: Record<WorkType, string> = {
   grading: '整地',
   subsoil: '心破土改',
   stone_removal: '徐礫',
+  open_channel: '小水路',
 }
 
 // 座標の種類
