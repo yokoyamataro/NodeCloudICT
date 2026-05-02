@@ -135,6 +135,14 @@ export function MobileStakingPage() {
 
   // 設定・UI
   const [avgSeconds, setAvgSeconds] = useState(3)
+  // 工事測量の区分（起工 / 出来形）— localStorage で永続化
+  const [surveyCategory, setSurveyCategory] = useState<'initial' | 'asbuilt'>(() => {
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('survey:category') : null
+    return saved === 'asbuilt' ? 'asbuilt' : 'initial'
+  })
+  useEffect(() => {
+    try { localStorage.setItem('survey:category', surveyCategory) } catch { /* ignore */ }
+  }, [surveyCategory])
   // アンテナ高 (m)。RTK ローバーのアンテナ位相中心〜地表（測点）までの高さ
   const [antennaHeight, setAntennaHeight] = useState<number>(() => {
     const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('rtk:antennaHeight') : null
@@ -516,6 +524,7 @@ export function MobileStakingPage() {
 
     const saved = await addRecord({
       farmId,
+      surveyCategory,
       targetType: isStake ? selectedTarget!.kind : 'free',
       targetRefId: isStake ? selectedTarget!.refId : null,
       targetVertexIndex: isStake ? selectedTarget!.vertexIndex : null,
@@ -609,7 +618,7 @@ export function MobileStakingPage() {
     )
   }
 
-  const title = project ? `${project.name} / ${farm?.name}` : (farm?.name ?? '起工測量')
+  const title = project ? `${project.name} / ${farm?.name}` : (farm?.name ?? '工事測量')
 
   return (
     <div className="mobile-screen flex flex-col">
@@ -659,6 +668,29 @@ export function MobileStakingPage() {
           title="設定"
         >
           <Settings className="h-4 w-4" />
+        </button>
+      </div>
+
+      {/* 工事測量の区分（起工 / 出来形）切替 */}
+      <div className="px-2 py-1 bg-slate-700 text-white flex items-center gap-1 text-xs border-b border-slate-600">
+        <span className="text-slate-300">区分:</span>
+        <button
+          onClick={() => setSurveyCategory('initial')}
+          disabled={recording}
+          className={`flex-1 px-2 py-1 rounded ${
+            surveyCategory === 'initial' ? 'bg-blue-600 font-medium' : 'bg-slate-600 hover:bg-slate-500'
+          }`}
+        >
+          起工測量
+        </button>
+        <button
+          onClick={() => setSurveyCategory('asbuilt')}
+          disabled={recording}
+          className={`flex-1 px-2 py-1 rounded ${
+            surveyCategory === 'asbuilt' ? 'bg-emerald-600 font-medium' : 'bg-slate-600 hover:bg-slate-500'
+          }`}
+        >
+          出来形測量
         </button>
       </div>
 
@@ -1016,27 +1048,32 @@ export function MobileStakingPage() {
         )}
 
         {/* 記録リスト */}
-        {showRecordList && (
-          <div className="absolute inset-x-0 bottom-0 z-[1000] bg-white border-t shadow-xl max-h-[60%] flex flex-col">
-            <div className="px-3 py-2 border-b flex items-center gap-2 text-sm">
-              <span className="font-semibold">実測記録</span>
-              <span className="text-xs text-slate-500">{records.length} 件</span>
-              <button
-                onClick={() => setShowRecordList(false)}
-                className="ml-auto text-xs px-2 py-0.5 border rounded hover:bg-slate-50"
-              >
-                閉じる
-              </button>
+        {showRecordList && (() => {
+          const filtered = records.filter((r) => r.surveyCategory === surveyCategory)
+          return (
+            <div className="absolute inset-x-0 bottom-0 z-[1000] bg-white border-t shadow-xl max-h-[60%] flex flex-col">
+              <div className="px-3 py-2 border-b flex items-center gap-2 text-sm">
+                <span className="font-semibold">
+                  {surveyCategory === 'initial' ? '起工測量' : '出来形測量'} 記録
+                </span>
+                <span className="text-xs text-slate-500">{filtered.length} 件</span>
+                <button
+                  onClick={() => setShowRecordList(false)}
+                  className="ml-auto text-xs px-2 py-0.5 border rounded hover:bg-slate-50"
+                >
+                  閉じる
+                </button>
+              </div>
+              <div className="flex-1 overflow-auto">
+                {filtered.length === 0 ? (
+                  <div className="p-4 text-center text-xs text-slate-400">記録なし</div>
+                ) : (
+                  <RecordList records={filtered} onDelete={deleteRecord} saving={saving} />
+                )}
+              </div>
             </div>
-            <div className="flex-1 overflow-auto">
-              {records.length === 0 ? (
-                <div className="p-4 text-center text-xs text-slate-400">記録なし</div>
-              ) : (
-                <RecordList records={records} onDelete={deleteRecord} saving={saving} />
-              )}
-            </div>
-          </div>
-        )}
+          )
+        })()}
       </div>
 
       {/* 下部パネル */}

@@ -239,7 +239,7 @@ export function MobileTopPage() {
                 className="w-full flex items-center gap-3 px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium"
               >
                 <Crosshair className="h-5 w-5" />
-                起工測量（RTK-GNSS）
+                工事測量（RTK-GNSS）
               </button>
               <button
                 onClick={() => handleOpenConstruction(actionFarm)}

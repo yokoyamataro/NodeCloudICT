@@ -2,10 +2,12 @@ import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
 
 export type StakingTargetType = 'coordinate' | 'pipe_vertex' | 'free'
+export type SurveyCategory = 'initial' | 'asbuilt' // 起工 / 出来形
 
 export interface StakingRecord {
   id: string
   farmId: string
+  surveyCategory: SurveyCategory
   targetType: StakingTargetType
   targetRefId: string | null
   targetVertexIndex: number | null
@@ -26,6 +28,7 @@ export interface StakingRecord {
 interface StakingRecordRow {
   id: string
   farm_id: string
+  survey_category: SurveyCategory | null
   target_type: StakingTargetType
   target_ref_id: string | null
   target_vertex_index: number | null
@@ -47,6 +50,7 @@ function rowToRecord(r: StakingRecordRow): StakingRecord {
   return {
     id: r.id,
     farmId: r.farm_id,
+    surveyCategory: r.survey_category ?? 'initial',
     targetType: r.target_type,
     targetRefId: r.target_ref_id,
     targetVertexIndex: r.target_vertex_index,
@@ -105,6 +109,7 @@ export const useStakingStore = create<StakingState>()((set) => ({
     try {
       const row = {
         farm_id: rec.farmId,
+        survey_category: rec.surveyCategory,
         target_type: rec.targetType,
         target_ref_id: rec.targetRefId,
         target_vertex_index: rec.targetVertexIndex,
