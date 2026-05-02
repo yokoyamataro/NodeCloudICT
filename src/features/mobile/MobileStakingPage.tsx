@@ -17,6 +17,8 @@ import {
   Trash2,
   ChevronDown,
   ChevronRight,
+  FileText,
+  Database,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
@@ -24,7 +26,12 @@ import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useUnderdrainStore, type PipeRow, PIPE_TYPE_NAMES } from '@/stores/underdrainStore'
 import { useStakingStore, type StakingRecord } from '@/stores/stakingStore'
+import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import { CoordinateConverter } from '@/lib/coordinates'
+import { parseLandXml } from '@/lib/landxml/parser'
+import { indexTin, queryZ, type TinIndex, type TinSurfaceLike } from '@/lib/landxml/tinInterpolation'
+import { buildTrenchTin } from '@/lib/landxml/surface'
+import type { Alignment, AlignmentSegment } from '@/lib/landxml/types'
 import type { Project } from '@/types/database'
 
 type TargetKind = 'coordinate' | 'pipe_vertex'
@@ -135,14 +142,18 @@ export function MobileStakingPage() {
 
   // 設定・UI
   const [avgSeconds, setAvgSeconds] = useState(3)
-  // 工事測量の区分（起工 / 出来形）— localStorage で永続化
-  const [surveyCategory, setSurveyCategory] = useState<'initial' | 'asbuilt'>(() => {
-    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('survey:category') : null
-    return saved === 'asbuilt' ? 'asbuilt' : 'initial'
+  // 画面モード（起工 / 出来形 / 施工管理）— localStorage で永続化
+  type ScreenMode = 'initial' | 'asbuilt' | 'construction'
+  const [screenMode, setScreenMode] = useState<ScreenMode>(() => {
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('survey:screenMode') : null
+    if (saved === 'asbuilt' || saved === 'construction') return saved
+    return 'initial'
   })
   useEffect(() => {
-    try { localStorage.setItem('survey:category', surveyCategory) } catch { /* ignore */ }
-  }, [surveyCategory])
+    try { localStorage.setItem('survey:screenMode', screenMode) } catch { /* ignore */ }
+  }, [screenMode])
+  // 保存記録に紐付ける区分（施工管理時は記録自体を行わない）
+  const surveyCategory: 'initial' | 'asbuilt' = screenMode === 'asbuilt' ? 'asbuilt' : 'initial'
   // アンテナ高 (m)。RTK ローバーのアンテナ位相中心〜地表（測点）までの高さ
   const [antennaHeight, setAntennaHeight] = useState<number>(() => {
     const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('rtk:antennaHeight') : null
@@ -179,6 +190,16 @@ export function MobileStakingPage() {
   const [showRecordList, setShowRecordList] = useState(false)
   const [targetFilter, setTargetFilter] = useState<'all' | 'coordinate' | 'pipe_vertex'>('all')
   const [showLabels, setShowLabels] = useState(false)
+
+  // 施工管理モード用：中心線形 / 床掘 TIN / 現況 TIN
+  const { fetchPlan } = useConstructionPlanStore()
+  const [alignmentLines, setAlignmentLines] = useState<Array<[number, number][]>>([])
+  const [trenchSurface, setTrenchSurface] = useState<TinSurfaceLike | null>(null)
+  const [groundSurface, setGroundSurface] = useState<TinSurfaceLike | null>(null)
+  const [dataSourceLabel, setDataSourceLabel] = useState<string | null>(null)
+  const [dataError, setDataError] = useState<string | null>(null)
+  const [importing, setImporting] = useState(false)
+  const xmlInputRef = useRef<HTMLInputElement>(null)
 
   // 測設成功とみなす許容半径（m）
   const STAKE_TOLERANCE_M = 0.20
@@ -264,6 +285,151 @@ export function MobileStakingPage() {
 
   const zone = project?.coordinate_zone ?? 13
   const converter = useMemo(() => new CoordinateConverter(zone), [zone])
+
+  // ========== 施工管理モード関連 ==========
+  // セグメントを離散化してポリラインに変換
+  const segmentToPolylineXY = (seg: AlignmentSegment, samples = 12): Array<[number, number]> => {
+    if (seg.type === 'line') return [[seg.startX, seg.startY], [seg.endX, seg.endY]]
+    const pts: Array<[number, number]> = []
+    for (let i = 0; i <= samples; i++) {
+      const t = i / samples
+      pts.push([seg.startX + (seg.endX - seg.startX) * t, seg.startY + (seg.endY - seg.startY) * t])
+    }
+    return pts
+  }
+
+  const buildAlignmentLines = (als: Alignment[], conv: CoordinateConverter): Array<[number, number][]> => {
+    const lines: Array<[number, number][]> = []
+    for (const al of als) {
+      for (const seg of al.segments) {
+        const xyPts = segmentToPolylineXY(seg, 12)
+        const llPts: [number, number][] = xyPts.map(([x, y]) => {
+          const r = conv.toLatLng(x, y)
+          return [r.lat, r.lng]
+        })
+        lines.push(llPts)
+      }
+    }
+    return lines
+  }
+
+  const handleLoadXml = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setDataError(null)
+    try {
+      const text = await file.text()
+      const result = parseLandXml(text, file.name)
+      const trenchSurf = result.surfaces.find((s) => /trench|床掘|excav/i.test(s.name)) ?? result.surfaces[0] ?? null
+      const groundSurf = result.surfaces.find((s) => /ground|現況|terrain/i.test(s.name)) ?? null
+      setAlignmentLines(buildAlignmentLines(result.alignments, converter))
+      setTrenchSurface(trenchSurf)
+      setGroundSurface(groundSurf)
+      setDataSourceLabel(`LandXML: ${file.name}`)
+    } catch (err) {
+      setDataError(err instanceof Error ? err.message : 'LandXML 読込エラー')
+    } finally {
+      e.target.value = ''
+    }
+  }
+
+  const handleLoadFromPlan = async () => {
+    if (!farmId) return
+    setDataError(null)
+    setImporting(true)
+    try {
+      await Promise.all([fetchPipes(farmId), fetchPlan(farmId)])
+      const freshPipes = useUnderdrainStore.getState().pipes
+      const freshPlan = useConstructionPlanStore.getState().planGroups
+      const lines: Array<[number, number][]> = []
+      for (const pipe of freshPipes) {
+        if (pipe.vertices.length < 2) continue
+        const ll: [number, number][] = pipe.vertices.map((v) => {
+          const r = converter.toLatLng(v.x, v.y)
+          return [r.lat, r.lng]
+        })
+        lines.push(ll)
+      }
+      setAlignmentLines(lines)
+      const trench = buildTrenchTin({
+        planGroups: freshPlan,
+        halfWidth: 0.25,
+        includeAbsorption: true,
+        includeCollector: true,
+        applyTransition: true,
+        transitionDistance: 5.0,
+        trimClearance: 0.10,
+      })
+      setTrenchSurface(trench)
+      setGroundSurface(null)
+      setDataSourceLabel(`施工計画から取込（暗渠 ${freshPipes.length} / 計画 ${freshPlan.length} 系統）`)
+    } catch (err) {
+      setDataError(err instanceof Error ? err.message : '施工計画の取込に失敗')
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  // TIN インデックス
+  const trenchIdx = useMemo<TinIndex | null>(() => (trenchSurface ? indexTin(trenchSurface) : null), [trenchSurface])
+  const groundIdx = useMemo<TinIndex | null>(() => (groundSurface ? indexTin(groundSurface) : null), [groundSurface])
+
+  // 自己 XY と TIN 標高
+  const selfXY = useMemo(() => (currentPos ? converter.toXY(currentPos[0], currentPos[1]) : null), [currentPos, converter])
+  const trenchZ = useMemo<number | null>(() => (trenchIdx && selfXY ? queryZ(trenchIdx, selfXY.x, selfXY.y) : null), [trenchIdx, selfXY])
+  const groundZ = useMemo<number | null>(() => (groundIdx && selfXY ? queryZ(groundIdx, selfXY.x, selfXY.y) : null), [groundIdx, selfXY])
+
+  // 自己標高（補正後）— 既存の計算ロジックをここで再利用
+  const selfElevation = useMemo<number | null>(() => {
+    if (currentAlt === null || currentPos === null) return null
+    if (useGeoidCorrection && geoidGrid) {
+      const rRow = (geoidGrid.latMax - currentPos[0]) / geoidGrid.dLat
+      const rCol = (currentPos[1] - geoidGrid.lonMin) / geoidGrid.dLon
+      if (rRow >= 0 && rCol >= 0 && rRow < geoidGrid.nrows && rCol < geoidGrid.ncols) {
+        const r0 = Math.floor(rRow), c0 = Math.floor(rCol)
+        const r1 = Math.min(r0 + 1, geoidGrid.nrows - 1)
+        const c1 = Math.min(c0 + 1, geoidGrid.ncols - 1)
+        const tr = rRow - r0, tc = rCol - c0
+        const v00 = geoidGrid.values[r0 * geoidGrid.ncols + c0]
+        const v01 = geoidGrid.values[r0 * geoidGrid.ncols + c1]
+        const v10 = geoidGrid.values[r1 * geoidGrid.ncols + c0]
+        const v11 = geoidGrid.values[r1 * geoidGrid.ncols + c1]
+        const N = (v00 * (1 - tc) + v01 * tc) * (1 - tr) + (v10 * (1 - tc) + v11 * tc) * tr
+        if (Number.isFinite(N)) return currentAlt - N - antennaHeight
+      }
+    }
+    return currentAlt - antennaHeight
+  }, [currentAlt, currentPos, useGeoidCorrection, geoidGrid, antennaHeight])
+
+  const trenchDiff = trenchZ !== null && selfElevation !== null ? selfElevation - trenchZ : null
+  const groundDiff = groundZ !== null && selfElevation !== null ? selfElevation - groundZ : null
+
+  // 床掘 TIN の三角形エッジ（lat/lng）
+  const trenchEdges = useMemo<Array<[number, number][]>>(() => {
+    if (!trenchSurface) return []
+    const edges: Array<[number, number][]> = []
+    for (const tri of trenchSurface.triangles) {
+      const a = trenchSurface.points[tri.a]
+      const b = trenchSurface.points[tri.b]
+      const c = trenchSurface.points[tri.c]
+      if (!a || !b || !c) continue
+      const aa = converter.toLatLng(a.x, a.y)
+      const bb = converter.toLatLng(b.x, b.y)
+      const cc = converter.toLatLng(c.x, c.y)
+      edges.push([[aa.lat, aa.lng], [bb.lat, bb.lng], [cc.lat, cc.lng], [aa.lat, aa.lng]])
+    }
+    return edges
+  }, [trenchSurface, converter])
+
+  const diffColor = (dz: number): string => {
+    const a = Math.abs(dz)
+    if (a < 0.05) return '#10b981'
+    if (a < 0.10) return '#84cc16'
+    if (a < 0.20) return '#eab308'
+    if (a < 0.50) return '#f97316'
+    return '#ef4444'
+  }
+  // ========== 施工管理モード関連 終 ==========
 
   // ターゲット一覧（座標管理 + 暗渠頂点）
   const targets = useMemo<StakingTarget[]>(() => {
@@ -671,28 +837,73 @@ export function MobileStakingPage() {
         </button>
       </div>
 
-      {/* 工事測量の区分（起工 / 出来形）切替 */}
+      {/* 画面モード（起工 / 出来形 / 施工管理）切替 */}
       <div className="px-2 py-1 bg-slate-700 text-white flex items-center gap-1 text-xs border-b border-slate-600">
-        <span className="text-slate-300">区分:</span>
         <button
-          onClick={() => setSurveyCategory('initial')}
+          onClick={() => setScreenMode('initial')}
           disabled={recording}
           className={`flex-1 px-2 py-1 rounded ${
-            surveyCategory === 'initial' ? 'bg-blue-600 font-medium' : 'bg-slate-600 hover:bg-slate-500'
+            screenMode === 'initial' ? 'bg-blue-600 font-medium' : 'bg-slate-600 hover:bg-slate-500'
           }`}
         >
           起工測量
         </button>
         <button
-          onClick={() => setSurveyCategory('asbuilt')}
+          onClick={() => setScreenMode('asbuilt')}
           disabled={recording}
           className={`flex-1 px-2 py-1 rounded ${
-            surveyCategory === 'asbuilt' ? 'bg-emerald-600 font-medium' : 'bg-slate-600 hover:bg-slate-500'
+            screenMode === 'asbuilt' ? 'bg-emerald-600 font-medium' : 'bg-slate-600 hover:bg-slate-500'
           }`}
         >
           出来形測量
         </button>
+        <button
+          onClick={() => setScreenMode('construction')}
+          disabled={recording}
+          className={`flex-1 px-2 py-1 rounded ${
+            screenMode === 'construction' ? 'bg-cyan-600 font-medium' : 'bg-slate-600 hover:bg-slate-500'
+          }`}
+        >
+          施工管理
+        </button>
       </div>
+
+      {/* 施工管理モードのデータ取込バー */}
+      {screenMode === 'construction' && (
+        <>
+          <div className="px-2 py-1 bg-cyan-900 text-white flex items-center gap-2 text-xs border-b border-cyan-800">
+            <button
+              onClick={handleLoadFromPlan}
+              disabled={importing}
+              className="flex items-center gap-1 px-2 py-1 rounded bg-cyan-700 hover:bg-cyan-600 disabled:opacity-50"
+              title="現場データの施工計画 + 暗渠から床掘 TIN を生成"
+            >
+              <Database className="h-3.5 w-3.5" />
+              施工計画
+              {importing && <Loader2 className="h-3 w-3 animate-spin" />}
+            </button>
+            <label className="cursor-pointer">
+              <input
+                ref={xmlInputRef}
+                type="file"
+                accept=".xml,.XML,.landxml,.LANDXML"
+                onChange={handleLoadXml}
+                className="hidden"
+              />
+              <span className="flex items-center gap-1 px-2 py-1 rounded bg-cyan-700 hover:bg-cyan-600">
+                <FileText className="h-3.5 w-3.5" />
+                LandXML
+              </span>
+            </label>
+            {dataSourceLabel && (
+              <span className="text-cyan-100 truncate flex-1 text-[11px]">{dataSourceLabel}</span>
+            )}
+          </div>
+          {dataError && (
+            <div className="px-3 py-1 bg-red-50 border-b border-red-200 text-xs text-red-700">{dataError}</div>
+          )}
+        </>
+      )}
 
       {/* 精度インジケータ */}
       <div
@@ -853,7 +1064,46 @@ export function MobileStakingPage() {
               />
             </>
           )}
+
+          {/* 施工管理：床掘 TIN の三角形エッジ */}
+          {screenMode === 'construction' && trenchEdges.map((tri, i) => (
+            <Polyline
+              key={`trench-${i}`}
+              positions={tri}
+              pathOptions={{ color: '#06b6d4', weight: 0.5, opacity: 0.5 }}
+            />
+          ))}
+
+          {/* 施工管理：中心線形 */}
+          {screenMode === 'construction' && alignmentLines.map((line, i) => (
+            <Polyline
+              key={`align-${i}`}
+              positions={line}
+              pathOptions={{ color: '#1d4ed8', weight: 3, opacity: 0.9 }}
+            />
+          ))}
         </MapContainer>
+
+        {/* 施工管理モード：ΔZ 大型表示 */}
+        {screenMode === 'construction' && trenchDiff !== null && (
+          <div className="absolute top-2 left-2 z-[1000] bg-white/95 border rounded-lg shadow-lg p-3 min-w-[180px]">
+            <div className="text-[11px] text-slate-500">床掘 TIN との差分</div>
+            <div className="text-2xl font-bold tabular-nums" style={{ color: diffColor(trenchDiff) }}>
+              {trenchDiff >= 0 ? '+' : ''}{trenchDiff.toFixed(3)} m
+            </div>
+            <div className="text-[11px] text-slate-500 mt-1">
+              実標高 {selfElevation !== null ? selfElevation.toFixed(3) : '-'} ／ TIN {trenchZ !== null ? trenchZ.toFixed(3) : '-'}
+            </div>
+            <div className="text-[10px] text-slate-400 mt-1">
+              {trenchDiff >= 0 ? '↑ 掘り不足' : '↓ 過掘'} {Math.abs(trenchDiff * 100).toFixed(1)} cm
+            </div>
+            {groundDiff !== null && (
+              <div className="text-[10px] text-slate-500 mt-2 border-t pt-1">
+                現況差 {groundDiff >= 0 ? '+' : ''}{groundDiff.toFixed(3)} m
+              </div>
+            )}
+          </div>
+        )}
 
         {/* 選択中の配線情報 */}
         {selectedPipeId && (() => {
@@ -1076,7 +1326,8 @@ export function MobileStakingPage() {
         })()}
       </div>
 
-      {/* 下部パネル */}
+      {/* 下部パネル（施工管理モードでは非表示） */}
+      {screenMode !== 'construction' && (
       <div className="border-t bg-white px-3 py-2 text-sm">
         {selectedTarget ? (
           <div className="flex items-center gap-3">
@@ -1175,6 +1426,7 @@ export function MobileStakingPage() {
           )}
         </div>
       </div>
+      )}
     </div>
   )
 }
