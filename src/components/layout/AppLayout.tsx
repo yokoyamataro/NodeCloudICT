@@ -128,7 +128,7 @@ const navigation: NavGroup[] = [
     ],
   },
   {
-    name: '小水路',
+    name: '線形物',
     href: '/open-channel',
     icon: Waves,
     children: [

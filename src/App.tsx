@@ -173,7 +173,7 @@ function AppRoutes() {
         <Route path="stone-removal">
           <Route path="work-area" element={<StoneRemovalWorkAreaPage />} />
         </Route>
-        {/* 小水路（明渠） */}
+        {/* 線形物（水路・道路） */}
         <Route path="open-channel">
           <Route path="alignment" element={<OpenChannelAlignmentPage />} />
         </Route>

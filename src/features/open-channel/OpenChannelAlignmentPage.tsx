@@ -1,7 +1,8 @@
-// 小水路（明渠）— 線形登録ページ
+// 線形物（水路・道路）— 線形登録ページ
 //
-// - 圃場ごとに複数の小水路を登録可能
-// - 各小水路は線形（BP→IP→EP、IP は角 or 単曲線 R）と断面（W, 1:i）で定義
+// - 圃場ごとに複数の線形物を登録可能
+// - 各線形物は平面線形（BP→IP→EP、IP は角 or 単曲線 R）+ 縦断 + 標準断面で定義
+// - 標準断面は中心から右/左に並ぶ要素列（幅・勾配[1:i または %]）
 // - 座標管理の点を参照する
 // - 地図で線形（直線 + 曲線）をプレビュー
 
@@ -14,7 +15,17 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useProjectListStore } from '@/stores/projectListStore'
-import { useOpenChannelStore, type AlignmentPoint, type AlignmentPointKind, type ProfilePoint } from '@/stores/openChannelStore'
+import {
+  useOpenChannelStore,
+  type AlignmentPoint,
+  type AlignmentPointKind,
+  type ProfilePoint,
+  type CrossSectionElement,
+  type SlopeUnit,
+  type StandardCrossSection,
+  buildCrossSectionPath,
+  formatSlope,
+} from '@/stores/openChannelStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import {
   sampleAlignment,
@@ -34,116 +45,135 @@ function FitBounds({ positions }: { positions: [number, number][] }) {
   return null
 }
 
-// 断面形状の図（流れ方向を見た形）
-function CrossSectionDiagram({
-  W, slopeRatio, bankHeight,
-}: { W: number; slopeRatio: number; bankHeight: number | null }) {
-  if (!Number.isFinite(W) || W <= 0 || !Number.isFinite(slopeRatio) || slopeRatio <= 0) {
-    return <div className="text-xs text-slate-400 px-2 py-1">寸法が不正です</div>
+// 標準断面の図（流れ方向を見た形）— 中心から左右へ並ぶ要素列を折れ線で描画
+function CrossSectionDiagram({ cs }: { cs: StandardCrossSection }) {
+  const points = buildCrossSectionPath(cs)
+  if (points.length < 2) {
+    return (
+      <div
+        className="border rounded bg-slate-50 text-xs text-slate-400 px-2 py-3 text-center"
+        style={{ width: 360 }}
+      >
+        左右いずれかに断面要素を追加してください
+      </div>
+    )
   }
-  const i = slopeRatio
-  // 法面高さが未指定なら表示用に床幅相当を仮定
-  const hSpec = bankHeight != null && bankHeight > 0
-  const h = hSpec ? (bankHeight as number) : Math.max(W * 0.6, 0.5)
-  const sw = h * i
-  const slant = h * Math.sqrt(1 + i * i)
-  const total = W + sw * 2
 
-  const widthPx = 300
-  const heightPx = 130
-  const padding = { top: 18, right: 38, bottom: 30, left: 38 }
+  const widthPx = 360
+  const heightPx = 200
+  const padding = { top: 18, right: 14, bottom: 30, left: 14 }
   const innerW = widthPx - padding.left - padding.right
   const innerH = heightPx - padding.top - padding.bottom
-  const scaleX = innerW / total
-  const scaleY = innerH / h
-  const scale = Math.min(scaleX, scaleY)
 
-  const cx = padding.left + innerW / 2 // 中心の SVG x
-  const baseY = padding.top + innerH // 床面の SVG y
+  const xs = points.map((p) => p.x)
+  const ys = points.map((p) => p.y)
+  const minX = Math.min(...xs, -0.5)
+  const maxX = Math.max(...xs, 0.5)
+  const minY = Math.min(...ys, -0.1)
+  const maxY = Math.max(...ys, 0.1)
+  const spanX = Math.max(maxX - minX, 0.01)
+  const spanY = Math.max(maxY - minY, 0.01)
+  // 縦横の比率を保つ等方スケーリング
+  const scale = Math.min(innerW / spanX, innerH / spanY)
+  const drawnW = spanX * scale
+  const drawnH = spanY * scale
+  const offsetX = padding.left + (innerW - drawnW) / 2 - minX * scale
+  const offsetY = padding.top + (innerH - drawnH) / 2 + maxY * scale
 
-  const tx = (x: number) => cx + x * scale
-  const ty = (y: number) => baseY - y * scale
+  const tx = (x: number) => offsetX + x * scale
+  const ty = (y: number) => offsetY - y * scale
 
-  // 法面ラベル位置（右側斜面の中点）
-  const slopeMidX = (tx(W / 2) + tx(W / 2 + sw)) / 2
-  const slopeMidY = (ty(0) + ty(h)) / 2
+  // 折れ線パス
+  const pathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${tx(p.x)} ${ty(p.y)}`).join(' ')
+
+  // 各セグメントのラベル位置（右/左を別計算）
+  type Seg = { from: { x: number; y: number }; to: { x: number; y: number }; e: CrossSectionElement }
+  const segs: Seg[] = []
+  let cx = 0
+  let cy = 0
+  for (const e of cs.right) {
+    const from = { x: cx, y: cy }
+    cx += e.width
+    cy += e.width * (e.slopeUnit === 'percent' ? e.slopeValue / 100 : (Math.abs(e.slopeValue) < 1e-9 ? 0 : Math.sign(e.slopeValue) / Math.abs(e.slopeValue)))
+    segs.push({ from, to: { x: cx, y: cy }, e })
+  }
+  cx = 0
+  cy = 0
+  for (const e of cs.left) {
+    const from = { x: cx, y: cy }
+    cx += -e.width
+    cy += e.width * (e.slopeUnit === 'percent' ? e.slopeValue / 100 : (Math.abs(e.slopeValue) < 1e-9 ? 0 : Math.sign(e.slopeValue) / Math.abs(e.slopeValue)))
+    segs.push({ from, to: { x: cx, y: cy }, e })
+  }
 
   return (
     <svg width={widthPx} height={heightPx} className="border rounded bg-slate-50">
-      {/* 法肩の参考水平線 */}
-      <line x1={padding.left} y1={ty(h)} x2={widthPx - padding.right} y2={ty(h)}
-        stroke="#cbd5e1" strokeDasharray="2,3" strokeWidth={1} />
       {/* 中心線 */}
-      <line x1={tx(0)} y1={ty(-h * 0.05)} x2={tx(0)} y2={ty(h * 1.05)}
-        stroke="#cbd5e1" strokeDasharray="3,3" strokeWidth={1} />
-
-      {/* 断面トラペゾイド */}
-      <polygon
-        points={[
-          `${tx(-total / 2)},${ty(h)}`,
-          `${tx(-W / 2)},${ty(0)}`,
-          `${tx(W / 2)},${ty(0)}`,
-          `${tx(total / 2)},${ty(h)}`,
-        ].join(' ')}
-        fill="rgba(14,165,233,0.15)"
-        stroke="#0ea5e9"
-        strokeWidth={1.5}
+      <line
+        x1={tx(0)}
+        y1={padding.top}
+        x2={tx(0)}
+        y2={heightPx - padding.bottom}
+        stroke="#cbd5e1"
+        strokeDasharray="3,3"
+        strokeWidth={1}
+      />
+      {/* 標高基準（y=0 水平線） */}
+      <line
+        x1={padding.left}
+        y1={ty(0)}
+        x2={widthPx - padding.right}
+        y2={ty(0)}
+        stroke="#e2e8f0"
+        strokeWidth={1}
       />
 
-      {/* 床面寸法 W */}
-      <line x1={tx(-W / 2)} y1={baseY + 8} x2={tx(W / 2)} y2={baseY + 8}
-        stroke="#0ea5e9" strokeWidth={1} markerStart="url(#arrL)" markerEnd="url(#arrR)" />
-      <text x={cx} y={baseY + 20} textAnchor="middle" fontSize={10} fill="#0ea5e9" fontWeight="bold">
-        W = {W.toFixed(2)} m
-      </text>
+      {/* 断面ライン */}
+      <path d={pathD} fill="none" stroke="#0ea5e9" strokeWidth={2} strokeLinejoin="round" />
 
-      {/* 斜面勾配ラベル */}
-      <text x={tx(W / 2 + sw * 0.55)} y={ty(h * 0.5)} textAnchor="middle" fontSize={9} fill="#475569">
-        1:{i}
-      </text>
-      <text x={tx(-W / 2 - sw * 0.55)} y={ty(h * 0.5)} textAnchor="middle" fontSize={9} fill="#475569">
-        1:{i}
-      </text>
+      {/* セグメントごとのラベル */}
+      {segs.map((s, i) => {
+        const mx = (tx(s.from.x) + tx(s.to.x)) / 2
+        const my = (ty(s.from.y) + ty(s.to.y)) / 2
+        const slopeStr = formatSlope(s.e)
+        const label = s.e.name
+          ? `${s.e.name} ${s.e.width.toFixed(2)}m ${slopeStr}`
+          : `${s.e.width.toFixed(2)}m ${slopeStr}`
+        return (
+          <text
+            key={i}
+            x={mx}
+            y={my - 6}
+            textAnchor="middle"
+            fontSize={9}
+            fill="#475569"
+            style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
+          >
+            {label}
+          </text>
+        )
+      })}
 
-      {/* 高さ H（右端外側） */}
-      <line x1={widthPx - padding.right + 14} y1={ty(0)} x2={widthPx - padding.right + 14} y2={ty(h)}
-        stroke="#64748b" strokeWidth={1} markerStart="url(#arrU)" markerEnd="url(#arrD)" />
-      <text x={widthPx - padding.right + 16} y={ty(h / 2) + 3} textAnchor="start" fontSize={9} fill="#64748b">
-        {hSpec ? `H=${h.toFixed(2)}` : `H≈${h.toFixed(2)}`}
-      </text>
+      {/* 各折点 */}
+      {points.map((p, i) => (
+        <circle
+          key={`v-${i}`}
+          cx={tx(p.x)}
+          cy={ty(p.y)}
+          r={2.5}
+          fill={Math.abs(p.x) < 1e-9 && Math.abs(p.y) < 1e-9 ? '#0ea5e9' : '#fff'}
+          stroke="#0ea5e9"
+          strokeWidth={1.5}
+        />
+      ))}
 
-      {/* 幅 sw（右斜面の床面側水平射影、点線で示し床下に寸法） */}
-      <line x1={tx(W / 2)} y1={baseY + 22} x2={tx(W / 2 + sw)} y2={baseY + 22}
-        stroke="#94a3b8" strokeWidth={1} markerStart="url(#arrL2)" markerEnd="url(#arrR2)" />
-      <text x={(tx(W / 2) + tx(W / 2 + sw)) / 2} y={baseY + 33} textAnchor="middle" fontSize={9} fill="#475569">
-        sw={sw.toFixed(2)}
+      {/* 左右ラベル */}
+      <text x={padding.left} y={padding.top + 10} fontSize={9} fill="#94a3b8">
+        左
       </text>
-
-      {/* 法長 L（右斜面に並走させてラベルだけ） */}
-      <text x={slopeMidX + 6} y={slopeMidY - 4} fontSize={9} fill="#0ea5e9" fontWeight="bold">
-        L={slant.toFixed(2)}
+      <text x={widthPx - padding.right - 10} y={padding.top + 10} fontSize={9} fill="#94a3b8">
+        右
       </text>
-
-      <defs>
-        <marker id="arrL" markerWidth={6} markerHeight={6} refX={3} refY={3} orient="auto">
-          <path d="M6,0 L0,3 L6,6 z" fill="#0ea5e9" />
-        </marker>
-        <marker id="arrR" markerWidth={6} markerHeight={6} refX={3} refY={3} orient="auto">
-          <path d="M0,0 L6,3 L0,6 z" fill="#0ea5e9" />
-        </marker>
-        <marker id="arrL2" markerWidth={6} markerHeight={6} refX={3} refY={3} orient="auto">
-          <path d="M6,0 L0,3 L6,6 z" fill="#94a3b8" />
-        </marker>
-        <marker id="arrR2" markerWidth={6} markerHeight={6} refX={3} refY={3} orient="auto">
-          <path d="M0,0 L6,3 L0,6 z" fill="#94a3b8" />
-        </marker>
-        <marker id="arrU" markerWidth={6} markerHeight={6} refX={3} refY={3} orient="auto">
-          <path d="M0,6 L3,0 L6,6 z" fill="#64748b" />
-        </marker>
-        <marker id="arrD" markerWidth={6} markerHeight={6} refX={3} refY={3} orient="auto">
-          <path d="M0,0 L3,6 L6,0 z" fill="#64748b" />
-        </marker>
-      </defs>
     </svg>
   )
 }
@@ -233,6 +263,148 @@ function ProfileChart({ points, totalLen }: { points: ProfilePoint[]; totalLen: 
       <text x={5} y={padding.top - 2} fontSize={9} fill="#64748b">床高 (m)</text>
       <text x={widthPx - 4} y={heightPx - 4} textAnchor="end" fontSize={9} fill="#64748b">距離 (m)</text>
     </svg>
+  )
+}
+
+// 標準断面の片側（右 or 左）の要素列エディタ
+function CrossSectionSideEditor({
+  side,
+  elements,
+  onChange,
+}: {
+  side: 'right' | 'left'
+  elements: CrossSectionElement[]
+  onChange: (els: CrossSectionElement[]) => void
+}) {
+  const sideLabel = side === 'right' ? '右側' : '左側'
+
+  const updateAt = (idx: number, patch: Partial<CrossSectionElement>) => {
+    onChange(elements.map((e, i) => (i === idx ? { ...e, ...patch } : e)))
+  }
+  const removeAt = (idx: number) => onChange(elements.filter((_, i) => i !== idx))
+  const moveAt = (idx: number, dir: -1 | 1) => {
+    const tgt = idx + dir
+    if (tgt < 0 || tgt >= elements.length) return
+    const arr = elements.slice()
+    const tmp = arr[idx]
+    arr[idx] = arr[tgt]
+    arr[tgt] = tmp
+    onChange(arr)
+  }
+  const addOne = () => {
+    const el: CrossSectionElement = {
+      id: `e${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name: '',
+      width: 1.0,
+      slopeValue: 0,
+      slopeUnit: 'percent',
+    }
+    onChange([...elements, el])
+  }
+
+  return (
+    <div className="border rounded">
+      <div className="bg-slate-50 px-2 py-1 text-xs flex items-center">
+        <span className="font-semibold text-slate-700">{sideLabel}（中心 → 外側）</span>
+        <button
+          onClick={addOne}
+          className="ml-auto flex items-center gap-1 px-2 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-100"
+        >
+          <Plus className="h-3 w-3" />
+          要素追加
+        </button>
+      </div>
+      {elements.length === 0 ? (
+        <div className="px-2 py-2 text-[11px] text-slate-400">要素がありません</div>
+      ) : (
+        <table className="w-full text-xs">
+          <thead className="bg-slate-50 text-slate-600">
+            <tr>
+              <th className="px-1 py-1 w-6 text-center">#</th>
+              <th className="px-1 py-1 text-left">種別</th>
+              <th className="px-1 py-1 text-right w-14">幅(m)</th>
+              <th className="px-1 py-1 text-right w-14">勾配</th>
+              <th className="px-1 py-1 text-center w-14">単位</th>
+              <th className="px-1 py-1 w-16"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {elements.map((el, i) => (
+              <tr key={el.id} className="border-t">
+                <td className="px-1 py-1 text-center text-slate-500">{i + 1}</td>
+                <td className="px-1 py-1">
+                  <input
+                    type="text"
+                    value={el.name}
+                    onChange={(e) => updateAt(i, { name: e.target.value })}
+                    placeholder="例: 床 / 法面 / 路面"
+                    className="w-full px-1 py-0.5 border rounded text-xs"
+                  />
+                </td>
+                <td className="px-1 py-1 text-right">
+                  <input
+                    type="number"
+                    step={0.05}
+                    value={el.width}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value)
+                      if (Number.isFinite(v) && v >= 0) updateAt(i, { width: v })
+                    }}
+                    className="w-14 px-1 py-0.5 border rounded text-right text-xs"
+                  />
+                </td>
+                <td className="px-1 py-1 text-right">
+                  <input
+                    type="number"
+                    step={el.slopeUnit === 'percent' ? 0.1 : 0.05}
+                    value={el.slopeValue}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value)
+                      if (Number.isFinite(v)) updateAt(i, { slopeValue: v })
+                    }}
+                    className="w-14 px-1 py-0.5 border rounded text-right text-xs"
+                  />
+                </td>
+                <td className="px-1 py-1 text-center">
+                  <select
+                    value={el.slopeUnit}
+                    onChange={(e) => updateAt(i, { slopeUnit: e.target.value as SlopeUnit })}
+                    className="px-1 py-0.5 border rounded text-xs"
+                  >
+                    <option value="ratio">1:i</option>
+                    <option value="percent">%</option>
+                  </select>
+                </td>
+                <td className="px-1 py-1 text-right">
+                  <div className="flex gap-0.5 justify-end">
+                    <button
+                      onClick={() => moveAt(i, -1)}
+                      disabled={i === 0}
+                      className="p-0.5 border rounded hover:bg-slate-50 disabled:opacity-30"
+                    >
+                      <ArrowUp className="h-3 w-3" />
+                    </button>
+                    <button
+                      onClick={() => moveAt(i, 1)}
+                      disabled={i === elements.length - 1}
+                      className="p-0.5 border rounded hover:bg-slate-50 disabled:opacity-30"
+                    >
+                      <ArrowDown className="h-3 w-3" />
+                    </button>
+                    <button
+                      onClick={() => removeAt(i)}
+                      className="p-0.5 border rounded hover:bg-red-50 text-red-600"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   )
 }
 
@@ -429,7 +601,7 @@ export function OpenChannelAlignmentPage() {
   const handleRemoveStation = (idx: number) =>
     setStations((prev) => prev.filter((_, i) => i !== idx))
 
-  // 小水路を切り替えたら中間点はリセット
+  // 線形物を切り替えたら中間点はリセット
   useEffect(() => {
     setStations([])
   }, [selectedId])
@@ -437,7 +609,7 @@ export function OpenChannelAlignmentPage() {
   if (!currentFarm) {
     return (
       <div className="h-full flex flex-col">
-        <PageHeader title="小水路 線形登録" subtitle="小水路（明渠） / 線形 + 断面" />
+        <PageHeader title="線形物 線形登録" subtitle="水路・道路など / 線形 + 標準断面" />
         <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">圃場を選択してください</div>
       </div>
     )
@@ -445,16 +617,16 @@ export function OpenChannelAlignmentPage() {
 
   return (
     <div className="h-full flex flex-col">
-      <PageHeader title="小水路 線形登録" subtitle="小水路（明渠） / 線形 + 断面" />
+      <PageHeader title="線形物 線形登録" subtitle="水路・道路など / 線形 + 標準断面" />
 
       <div className="flex-1 flex overflow-hidden">
         {/* 左: 一覧 + 編集 */}
-        <div className="w-[440px] overflow-auto p-3 bg-slate-50 border-r space-y-3">
+        <div className="w-[480px] overflow-auto p-3 bg-slate-50 border-r space-y-3">
           {/* 一覧 + 追加 */}
           <section className="bg-white rounded-lg border p-3">
             <div className="flex items-center gap-2 mb-2">
               <Waves className="h-4 w-4 text-slate-600" />
-              <h2 className="font-semibold text-slate-800 text-sm">小水路一覧</h2>
+              <h2 className="font-semibold text-slate-800 text-sm">線形物一覧</h2>
               <button
                 onClick={() => farmId && addChannel(farmId)}
                 className="ml-auto flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50"
@@ -464,23 +636,26 @@ export function OpenChannelAlignmentPage() {
               </button>
             </div>
             {channels.length === 0 ? (
-              <div className="text-xs text-slate-500">まだ登録された小水路がありません</div>
+              <div className="text-xs text-slate-500">まだ登録された線形物がありません</div>
             ) : (
               <div className="flex flex-col gap-1">
-                {channels.map((c) => (
-                  <button
-                    key={c.id}
-                    onClick={() => setSelectedId(c.id)}
-                    className={`text-left px-2 py-1 text-xs rounded border ${
-                      c.id === selectedId ? 'bg-blue-50 border-blue-400' : 'bg-white hover:bg-slate-50'
-                    }`}
-                  >
-                    {c.name}
-                    <span className="ml-2 text-slate-400">
-                      {c.alignmentPoints.length} 点 / W={c.floorWidth.toFixed(2)}m, 1:{c.slopeRatio}
-                    </span>
-                  </button>
-                ))}
+                {channels.map((c) => {
+                  const totalEls = c.standardCrossSection.right.length + c.standardCrossSection.left.length
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => setSelectedId(c.id)}
+                      className={`text-left px-2 py-1 text-xs rounded border ${
+                        c.id === selectedId ? 'bg-blue-50 border-blue-400' : 'bg-white hover:bg-slate-50'
+                      }`}
+                    >
+                      {c.name}
+                      <span className="ml-2 text-slate-400">
+                        {c.alignmentPoints.length} 点 / 断面 {totalEls} 要素
+                      </span>
+                    </button>
+                  )
+                })}
               </div>
             )}
           </section>
@@ -505,109 +680,40 @@ export function OpenChannelAlignmentPage() {
                   className="flex items-center gap-1 px-2 py-1 text-xs border rounded text-red-600 hover:bg-red-50"
                 >
                   <Trash2 className="h-3 w-3" />
-                  この小水路を削除
+                  この線形物を削除
                 </button>
               </section>
 
-              {/* 断面 */}
+              {/* 標準断面 */}
               <section className="bg-white rounded-lg border p-3 space-y-2">
-                <h3 className="font-semibold text-slate-800 text-sm">断面</h3>
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="flex flex-col gap-1 text-xs">
-                    <span className="text-slate-500">床幅 W (m)</span>
-                    <input
-                      type="number"
-                      step={0.05}
-                      value={selected.floorWidth}
-                      onChange={(e) => {
-                        const v = parseFloat(e.target.value)
-                        if (Number.isFinite(v) && v >= 0) updateChannel(selected.id, { floorWidth: v })
-                      }}
-                      className="px-2 py-1 border rounded text-right text-sm"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1 text-xs">
-                    <span className="text-slate-500">斜面勾配 1:i</span>
-                    <input
-                      type="number"
-                      step={0.1}
-                      value={selected.slopeRatio}
-                      onChange={(e) => {
-                        const v = parseFloat(e.target.value)
-                        if (Number.isFinite(v) && v > 0) updateChannel(selected.id, { slopeRatio: v })
-                      }}
-                      className="px-2 py-1 border rounded text-right text-sm"
-                    />
-                  </label>
-                </div>
-                {(() => {
-                  const i = selected.slopeRatio
-                  const H = selected.bankHeight
-                  const valid = Number.isFinite(i) && i > 0
-                  const sw = valid && H != null ? H * i : null
-                  const slant = valid && H != null ? H * Math.sqrt(1 + i * i) : null
-                  const setH = (v: number | null) =>
-                    updateChannel(selected.id, { bankHeight: v != null && Number.isFinite(v) && v > 0 ? v : null })
-                  return (
-                    <div className="grid grid-cols-3 gap-2">
-                      <label className="flex flex-col gap-1 text-xs">
-                        <span className="text-slate-500">高さ H (m)</span>
-                        <input
-                          type="number"
-                          step={0.05}
-                          value={H ?? ''}
-                          onChange={(e) => {
-                            const v = parseFloat(e.target.value)
-                            setH(Number.isFinite(v) ? v : null)
-                          }}
-                          placeholder="-"
-                          className="px-2 py-1 border rounded text-right text-sm"
-                        />
-                      </label>
-                      <label className="flex flex-col gap-1 text-xs">
-                        <span className="text-slate-500">幅 sw (m)</span>
-                        <input
-                          type="number"
-                          step={0.05}
-                          value={sw != null ? sw.toFixed(2) : ''}
-                          disabled={!valid}
-                          onChange={(e) => {
-                            const v = parseFloat(e.target.value)
-                            if (!valid) return
-                            setH(Number.isFinite(v) ? v / i : null)
-                          }}
-                          placeholder="-"
-                          className="px-2 py-1 border rounded text-right text-sm disabled:bg-slate-50"
-                        />
-                      </label>
-                      <label className="flex flex-col gap-1 text-xs">
-                        <span className="text-slate-500">法長 L (m)</span>
-                        <input
-                          type="number"
-                          step={0.05}
-                          value={slant != null ? slant.toFixed(2) : ''}
-                          disabled={!valid}
-                          onChange={(e) => {
-                            const v = parseFloat(e.target.value)
-                            if (!valid) return
-                            setH(Number.isFinite(v) ? v / Math.sqrt(1 + i * i) : null)
-                          }}
-                          placeholder="-"
-                          className="px-2 py-1 border rounded text-right text-sm disabled:bg-slate-50"
-                        />
-                      </label>
-                    </div>
-                  )
-                })()}
+                <h3 className="font-semibold text-slate-800 text-sm">標準断面</h3>
                 <div className="text-[11px] text-slate-500">
-                  高さ H / 幅 sw / 法長 L はいずれか 1 つを入力すれば、勾配 1:i から残り 2 値が自動計算されます。
+                  中心 (0,0) から右・左へ要素列を順に並べます。各要素は 幅 (m) と 勾配（1:i または %） で定義。
+                  外側に向かって上る場合 +、下る場合 -。種別はラベル（色分け等の将来拡張用）。
                 </div>
+
+                <CrossSectionSideEditor
+                  side="right"
+                  elements={selected.standardCrossSection.right}
+                  onChange={(els) =>
+                    updateChannel(selected.id, {
+                      standardCrossSection: { ...selected.standardCrossSection, right: els },
+                    })
+                  }
+                />
+
+                <CrossSectionSideEditor
+                  side="left"
+                  elements={selected.standardCrossSection.left}
+                  onChange={(els) =>
+                    updateChannel(selected.id, {
+                      standardCrossSection: { ...selected.standardCrossSection, left: els },
+                    })
+                  }
+                />
+
                 <div className="flex justify-center pt-1">
-                  <CrossSectionDiagram
-                    W={selected.floorWidth}
-                    slopeRatio={selected.slopeRatio}
-                    bankHeight={selected.bankHeight}
-                  />
+                  <CrossSectionDiagram cs={selected.standardCrossSection} />
                 </div>
               </section>
 

@@ -19,16 +19,42 @@ export interface ProfilePoint {
   floorHeight: number
 }
 
+/** 勾配の表記単位 */
+export type SlopeUnit = 'ratio' | 'percent'
+
+/**
+ * 標準断面の 1 要素（中心からの 1 区間）。
+ *
+ * - `width` は水平方向の幅 (m, 正値)。
+ * - `slopeValue` は数値で、符号は外側に向かう向きでの上下を表す:
+ *   + = 上り（外側に向かって上がる）/ - = 下り。
+ *   - `slopeUnit='ratio'`: 「1:value」と解釈。0 は不可（フラットは percent 0% を使用）。
+ *   - `slopeUnit='percent'`: 「value %」と解釈（0% フラット）。
+ * - `name` はラベル（床 / 法面 / 道路部 など）。色分け等の将来拡張用。
+ */
+export interface CrossSectionElement {
+  id: string
+  name: string
+  width: number
+  slopeValue: number
+  slopeUnit: SlopeUnit
+}
+
+export interface StandardCrossSection {
+  /** 中心 → 右側へ並ぶ要素列 */
+  right: CrossSectionElement[]
+  /** 中心 → 左側へ並ぶ要素列 */
+  left: CrossSectionElement[]
+}
+
+export const emptyStandardCrossSection = (): StandardCrossSection => ({ right: [], left: [] })
+
 export interface OpenChannelRow {
   id: string
   farmId: string
   name: string
-  /** 床幅 W (m) */
-  floorWidth: number
-  /** 斜面勾配 1:i の i 値 */
-  slopeRatio: number
-  /** 設計法面深さ(m, 任意) */
-  bankHeight: number | null
+  /** 標準断面（要素列） */
+  standardCrossSection: StandardCrossSection
   alignmentPoints: AlignmentPoint[]
   /** 縦断線形（変化点列） */
   profilePoints: ProfilePoint[]
@@ -39,12 +65,19 @@ interface OpenChannelDb {
   id: string
   farm_id: string
   name: string
-  floor_width: number | string
-  slope_ratio: number | string
-  bank_height: number | string | null
+  standard_cross_section: StandardCrossSection | null
   alignment_points: AlignmentPoint[]
   profile_points: ProfilePoint[] | null
   notes: string | null
+}
+
+function normalizeCrossSection(raw: unknown): StandardCrossSection {
+  if (!raw || typeof raw !== 'object') return emptyStandardCrossSection()
+  const r = raw as Partial<StandardCrossSection>
+  return {
+    right: Array.isArray(r.right) ? (r.right as CrossSectionElement[]) : [],
+    left: Array.isArray(r.left) ? (r.left as CrossSectionElement[]) : [],
+  }
 }
 
 function toRow(d: OpenChannelDb): OpenChannelRow {
@@ -52,9 +85,7 @@ function toRow(d: OpenChannelDb): OpenChannelRow {
     id: d.id,
     farmId: d.farm_id,
     name: d.name,
-    floorWidth: Number(d.floor_width),
-    slopeRatio: Number(d.slope_ratio),
-    bankHeight: d.bank_height != null ? Number(d.bank_height) : null,
+    standardCrossSection: normalizeCrossSection(d.standard_cross_section),
     alignmentPoints: Array.isArray(d.alignment_points) ? d.alignment_points : [],
     profilePoints: Array.isArray(d.profile_points) ? d.profile_points : [],
     notes: d.notes,
@@ -91,7 +122,7 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
         loading: false,
       })
     } catch (e) {
-      set({ loading: false, error: e instanceof Error ? e.message : '小水路の取得に失敗' })
+      set({ loading: false, error: e instanceof Error ? e.message : '線形物の取得に失敗' })
     }
   },
 
@@ -100,10 +131,8 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
       const existing = get().channels.length
       const insert = {
         farm_id: farmId,
-        name: name ?? `小水路 ${existing + 1}`,
-        floor_width: 0.5,
-        slope_ratio: 1.0,
-        bank_height: null,
+        name: name ?? `線形物 ${existing + 1}`,
+        standard_cross_section: emptyStandardCrossSection(),
         alignment_points: [],
         profile_points: [],
         notes: null,
@@ -118,7 +147,7 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
       set((s) => ({ channels: [...s.channels, row] }))
       return row
     } catch (e) {
-      set({ error: e instanceof Error ? e.message : '小水路の追加に失敗' })
+      set({ error: e instanceof Error ? e.message : '線形物の追加に失敗' })
       return null
     }
   },
@@ -127,9 +156,8 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
     try {
       const dbUpdates: Record<string, unknown> = {}
       if (updates.name !== undefined) dbUpdates.name = updates.name
-      if (updates.floorWidth !== undefined) dbUpdates.floor_width = updates.floorWidth
-      if (updates.slopeRatio !== undefined) dbUpdates.slope_ratio = updates.slopeRatio
-      if (updates.bankHeight !== undefined) dbUpdates.bank_height = updates.bankHeight
+      if (updates.standardCrossSection !== undefined)
+        dbUpdates.standard_cross_section = updates.standardCrossSection
       if (updates.alignmentPoints !== undefined) dbUpdates.alignment_points = updates.alignmentPoints
       if (updates.profilePoints !== undefined) dbUpdates.profile_points = updates.profilePoints
       if (updates.notes !== undefined) dbUpdates.notes = updates.notes
@@ -143,7 +171,7 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
         .eq('id', id)
       if (error) throw error
     } catch (e) {
-      set({ error: e instanceof Error ? e.message : '小水路の更新に失敗' })
+      set({ error: e instanceof Error ? e.message : '線形物の更新に失敗' })
     }
   },
 
@@ -153,7 +181,49 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
       const { error } = await supabase.from('open_channels').delete().eq('id', id)
       if (error) throw error
     } catch (e) {
-      set({ error: e instanceof Error ? e.message : '小水路の削除に失敗' })
+      set({ error: e instanceof Error ? e.message : '線形物の削除に失敗' })
     }
   },
 }))
+
+/** 要素 1 区間の "外側 1m あたり何 m 上昇するか"（符号付き）。 */
+export function elementSlopePerMeter(e: CrossSectionElement): number {
+  if (e.slopeUnit === 'percent') return e.slopeValue / 100
+  if (Math.abs(e.slopeValue) < 1e-9) return 0
+  return Math.sign(e.slopeValue) * (1 / Math.abs(e.slopeValue))
+}
+
+/** 標準断面を、中心 (0,0) を含む 2D 折れ線（左端 → 右端）に展開する。 */
+export function buildCrossSectionPath(cs: StandardCrossSection): { x: number; y: number }[] {
+  const out: { x: number; y: number }[] = []
+  // 左側：中心から外側へ展開し、配列を逆順にして先頭に置く
+  let cx = 0
+  let cy = 0
+  const leftPoints: { x: number; y: number }[] = []
+  for (const e of cs.left) {
+    cx += -e.width
+    cy += e.width * elementSlopePerMeter(e)
+    leftPoints.push({ x: cx, y: cy })
+  }
+  out.push(...leftPoints.reverse())
+  out.push({ x: 0, y: 0 })
+  cx = 0
+  cy = 0
+  for (const e of cs.right) {
+    cx += e.width
+    cy += e.width * elementSlopePerMeter(e)
+    out.push({ x: cx, y: cy })
+  }
+  return out
+}
+
+/** 勾配を人間可読な文字列に整形（例: "1:0.5"、"-2.0%"、"水平"）。 */
+export function formatSlope(e: CrossSectionElement): string {
+  if (e.slopeUnit === 'percent') {
+    if (Math.abs(e.slopeValue) < 1e-9) return '0%'
+    return `${e.slopeValue >= 0 ? '+' : ''}${e.slopeValue.toFixed(2).replace(/\.?0+$/, '')}%`
+  }
+  if (Math.abs(e.slopeValue) < 1e-9) return '水平'
+  const sign = e.slopeValue < 0 ? '↓' : '↑'
+  return `1:${Math.abs(e.slopeValue).toFixed(2).replace(/\.?0+$/, '')}${sign}`
+}
