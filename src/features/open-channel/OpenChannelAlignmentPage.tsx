@@ -16,7 +16,13 @@ import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useOpenChannelStore, type AlignmentPoint, type AlignmentPointKind, type ProfilePoint } from '@/stores/openChannelStore'
 import { CoordinateConverter } from '@/lib/coordinates'
-import { sampleAlignment, alignmentLength, type AlignmentVertex } from '@/lib/openChannel/alignment'
+import {
+  sampleAlignment,
+  alignmentTotalLength,
+  buildSegments,
+  pointAtDistance,
+  type AlignmentVertex,
+} from '@/lib/openChannel/alignment'
 
 function FitBounds({ positions }: { positions: [number, number][] }) {
   const map = useMap()
@@ -36,14 +42,16 @@ function CrossSectionDiagram({
     return <div className="text-xs text-slate-400 px-2 py-1">寸法が不正です</div>
   }
   const i = slopeRatio
-  // 法面深さが未指定なら表示用に床幅相当を仮定
-  const h = bankHeight != null && bankHeight > 0 ? bankHeight : Math.max(W * 0.6, 0.5)
+  // 法面高さが未指定なら表示用に床幅相当を仮定
+  const hSpec = bankHeight != null && bankHeight > 0
+  const h = hSpec ? (bankHeight as number) : Math.max(W * 0.6, 0.5)
   const sw = h * i
+  const slant = h * Math.sqrt(1 + i * i)
   const total = W + sw * 2
 
-  const widthPx = 280
-  const heightPx = 120
-  const padding = { top: 16, right: 30, bottom: 28, left: 30 }
+  const widthPx = 300
+  const heightPx = 130
+  const padding = { top: 18, right: 38, bottom: 30, left: 38 }
   const innerW = widthPx - padding.left - padding.right
   const innerH = heightPx - padding.top - padding.bottom
   const scaleX = innerW / total
@@ -55,6 +63,10 @@ function CrossSectionDiagram({
 
   const tx = (x: number) => cx + x * scale
   const ty = (y: number) => baseY - y * scale
+
+  // 法面ラベル位置（右側斜面の中点）
+  const slopeMidX = (tx(W / 2) + tx(W / 2 + sw)) / 2
+  const slopeMidY = (ty(0) + ty(h)) / 2
 
   return (
     <svg width={widthPx} height={heightPx} className="border rounded bg-slate-50">
@@ -78,7 +90,7 @@ function CrossSectionDiagram({
         strokeWidth={1.5}
       />
 
-      {/* 床面寸法 */}
+      {/* 床面寸法 W */}
       <line x1={tx(-W / 2)} y1={baseY + 8} x2={tx(W / 2)} y2={baseY + 8}
         stroke="#0ea5e9" strokeWidth={1} markerStart="url(#arrL)" markerEnd="url(#arrR)" />
       <text x={cx} y={baseY + 20} textAnchor="middle" fontSize={10} fill="#0ea5e9" fontWeight="bold">
@@ -86,16 +98,30 @@ function CrossSectionDiagram({
       </text>
 
       {/* 斜面勾配ラベル */}
-      <text x={tx(W / 2 + sw * 0.55)} y={ty(h * 0.5)} textAnchor="middle" fontSize={10} fill="#475569">
+      <text x={tx(W / 2 + sw * 0.55)} y={ty(h * 0.5)} textAnchor="middle" fontSize={9} fill="#475569">
         1:{i}
       </text>
-      <text x={tx(-W / 2 - sw * 0.55)} y={ty(h * 0.5)} textAnchor="middle" fontSize={10} fill="#475569">
+      <text x={tx(-W / 2 - sw * 0.55)} y={ty(h * 0.5)} textAnchor="middle" fontSize={9} fill="#475569">
         1:{i}
       </text>
 
-      {/* 高さ寸法（右側） */}
-      <text x={widthPx - padding.right + 4} y={ty(h / 2)} textAnchor="start" fontSize={9} fill="#64748b">
-        {bankHeight != null ? `H=${bankHeight.toFixed(2)}` : `(H 仮 ${h.toFixed(2)})`}
+      {/* 高さ H（右端外側） */}
+      <line x1={widthPx - padding.right + 14} y1={ty(0)} x2={widthPx - padding.right + 14} y2={ty(h)}
+        stroke="#64748b" strokeWidth={1} markerStart="url(#arrU)" markerEnd="url(#arrD)" />
+      <text x={widthPx - padding.right + 16} y={ty(h / 2) + 3} textAnchor="start" fontSize={9} fill="#64748b">
+        {hSpec ? `H=${h.toFixed(2)}` : `H≈${h.toFixed(2)}`}
+      </text>
+
+      {/* 幅 sw（右斜面の床面側水平射影、点線で示し床下に寸法） */}
+      <line x1={tx(W / 2)} y1={baseY + 22} x2={tx(W / 2 + sw)} y2={baseY + 22}
+        stroke="#94a3b8" strokeWidth={1} markerStart="url(#arrL2)" markerEnd="url(#arrR2)" />
+      <text x={(tx(W / 2) + tx(W / 2 + sw)) / 2} y={baseY + 33} textAnchor="middle" fontSize={9} fill="#475569">
+        sw={sw.toFixed(2)}
+      </text>
+
+      {/* 法長 L（右斜面に並走させてラベルだけ） */}
+      <text x={slopeMidX + 6} y={slopeMidY - 4} fontSize={9} fill="#0ea5e9" fontWeight="bold">
+        L={slant.toFixed(2)}
       </text>
 
       <defs>
@@ -104,6 +130,18 @@ function CrossSectionDiagram({
         </marker>
         <marker id="arrR" markerWidth={6} markerHeight={6} refX={3} refY={3} orient="auto">
           <path d="M0,0 L6,3 L0,6 z" fill="#0ea5e9" />
+        </marker>
+        <marker id="arrL2" markerWidth={6} markerHeight={6} refX={3} refY={3} orient="auto">
+          <path d="M6,0 L0,3 L6,6 z" fill="#94a3b8" />
+        </marker>
+        <marker id="arrR2" markerWidth={6} markerHeight={6} refX={3} refY={3} orient="auto">
+          <path d="M0,0 L6,3 L0,6 z" fill="#94a3b8" />
+        </marker>
+        <marker id="arrU" markerWidth={6} markerHeight={6} refX={3} refY={3} orient="auto">
+          <path d="M0,6 L3,0 L6,6 z" fill="#64748b" />
+        </marker>
+        <marker id="arrD" markerWidth={6} markerHeight={6} refX={3} refY={3} orient="auto">
+          <path d="M0,0 L3,6 L6,0 z" fill="#64748b" />
         </marker>
       </defs>
     </svg>
@@ -238,8 +276,9 @@ export function OpenChannelAlignmentPage() {
     return out
   }, [selected, coordinates])
 
-  const sampledXY = useMemo(() => sampleAlignment(alignmentXY, 24), [alignmentXY])
-  const totalLen = useMemo(() => alignmentLength(sampledXY), [sampledXY])
+  const sampledXY = useMemo(() => sampleAlignment(alignmentXY, 64), [alignmentXY])
+  const segments = useMemo(() => buildSegments(alignmentXY), [alignmentXY])
+  const totalLen = useMemo(() => alignmentTotalLength(alignmentXY), [alignmentXY])
 
   // 描画用 lat/lng
   const sampledLatLng = useMemo<[number, number][]>(() => {
@@ -328,6 +367,73 @@ export function OpenChannelAlignmentPage() {
     updateChannel(selected.id, { profilePoints: arr })
   }
 
+  // 中間点計算（任意 SP / ピッチ割）
+  const [stationMode, setStationMode] = useState<'sp' | 'pitch'>('sp')
+  const [stationDist, setStationDist] = useState<number>(0)
+  const [stationPitch, setStationPitch] = useState<number>(20)
+  const [includeEp, setIncludeEp] = useState<boolean>(true)
+  type Station = {
+    label: string
+    distance: number
+    x: number
+    y: number
+    lat: number
+    lng: number
+  }
+  const [stations, setStations] = useState<Station[]>([])
+
+  const formatSp = (d: number) => `SP${d.toFixed(2)}`
+
+  const computeStation = (distance: number): Station | null => {
+    const p = pointAtDistance(segments, distance)
+    if (!p) return null
+    const ll = converter.toLatLng(p.x, p.y)
+    return {
+      label: formatSp(distance),
+      distance,
+      x: p.x,
+      y: p.y,
+      lat: ll.lat,
+      lng: ll.lng,
+    }
+  }
+
+  const handleAddStation = () => {
+    if (segments.length === 0) return
+    if (stationMode === 'sp') {
+      const d = Math.max(0, Math.min(stationDist, totalLen))
+      const s = computeStation(d)
+      if (s) setStations((prev) => [...prev, s])
+    } else {
+      const pitch = stationPitch
+      if (!Number.isFinite(pitch) || pitch <= 0) return
+      const out: Station[] = []
+      // BP (SP0)
+      const bp = computeStation(0)
+      if (bp) out.push({ ...bp, label: 'BP' })
+      let d = pitch
+      while (d < totalLen - 1e-6) {
+        const s = computeStation(d)
+        if (s) out.push(s)
+        d += pitch
+      }
+      if (includeEp) {
+        const ep = computeStation(totalLen)
+        if (ep) out.push({ ...ep, label: 'EP' })
+      }
+      setStations(out)
+    }
+  }
+
+  const handleClearStations = () => setStations([])
+  const handleRemoveStation = (idx: number) =>
+    setStations((prev) => prev.filter((_, i) => i !== idx))
+
+  // 小水路を切り替えたら中間点はリセット
+  useEffect(() => {
+    setStations([])
+  }, [selectedId])
+
   if (!currentFarm) {
     return (
       <div className="h-full flex flex-col">
@@ -406,7 +512,7 @@ export function OpenChannelAlignmentPage() {
               {/* 断面 */}
               <section className="bg-white rounded-lg border p-3 space-y-2">
                 <h3 className="font-semibold text-slate-800 text-sm">断面</h3>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 gap-2">
                   <label className="flex flex-col gap-1 text-xs">
                     <span className="text-slate-500">床幅 W (m)</span>
                     <input
@@ -433,23 +539,68 @@ export function OpenChannelAlignmentPage() {
                       className="px-2 py-1 border rounded text-right text-sm"
                     />
                   </label>
-                  <label className="flex flex-col gap-1 text-xs">
-                    <span className="text-slate-500">法面深さ (m)</span>
-                    <input
-                      type="number"
-                      step={0.1}
-                      value={selected.bankHeight ?? ''}
-                      onChange={(e) => {
-                        const v = parseFloat(e.target.value)
-                        updateChannel(selected.id, { bankHeight: Number.isFinite(v) ? v : null })
-                      }}
-                      placeholder="-"
-                      className="px-2 py-1 border rounded text-right text-sm"
-                    />
-                  </label>
                 </div>
+                {(() => {
+                  const i = selected.slopeRatio
+                  const H = selected.bankHeight
+                  const valid = Number.isFinite(i) && i > 0
+                  const sw = valid && H != null ? H * i : null
+                  const slant = valid && H != null ? H * Math.sqrt(1 + i * i) : null
+                  const setH = (v: number | null) =>
+                    updateChannel(selected.id, { bankHeight: v != null && Number.isFinite(v) && v > 0 ? v : null })
+                  return (
+                    <div className="grid grid-cols-3 gap-2">
+                      <label className="flex flex-col gap-1 text-xs">
+                        <span className="text-slate-500">高さ H (m)</span>
+                        <input
+                          type="number"
+                          step={0.05}
+                          value={H ?? ''}
+                          onChange={(e) => {
+                            const v = parseFloat(e.target.value)
+                            setH(Number.isFinite(v) ? v : null)
+                          }}
+                          placeholder="-"
+                          className="px-2 py-1 border rounded text-right text-sm"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-xs">
+                        <span className="text-slate-500">幅 sw (m)</span>
+                        <input
+                          type="number"
+                          step={0.05}
+                          value={sw != null ? sw.toFixed(2) : ''}
+                          disabled={!valid}
+                          onChange={(e) => {
+                            const v = parseFloat(e.target.value)
+                            if (!valid) return
+                            setH(Number.isFinite(v) ? v / i : null)
+                          }}
+                          placeholder="-"
+                          className="px-2 py-1 border rounded text-right text-sm disabled:bg-slate-50"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-xs">
+                        <span className="text-slate-500">法長 L (m)</span>
+                        <input
+                          type="number"
+                          step={0.05}
+                          value={slant != null ? slant.toFixed(2) : ''}
+                          disabled={!valid}
+                          onChange={(e) => {
+                            const v = parseFloat(e.target.value)
+                            if (!valid) return
+                            setH(Number.isFinite(v) ? v / Math.sqrt(1 + i * i) : null)
+                          }}
+                          placeholder="-"
+                          className="px-2 py-1 border rounded text-right text-sm disabled:bg-slate-50"
+                        />
+                      </label>
+                    </div>
+                  )
+                })()}
                 <div className="text-[11px] text-slate-500">
-                  中心 ±{(selected.floorWidth / 2).toFixed(2)} m が床、外側 sw m 進むと {selected.slopeRatio > 0 ? `${(1 / selected.slopeRatio).toFixed(3)}` : '-'} × sw m 高くなる
+                  高さ H / 幅 sw / 法長 L はいずれか 1 つを入力すれば、勾配 1:i から残り 2 値が自動計算されます。
                 </div>
                 <div className="flex justify-center pt-1">
                   <CrossSectionDiagram
@@ -705,6 +856,131 @@ export function OpenChannelAlignmentPage() {
                 </div>
               </section>
 
+              {/* 中間点計算 */}
+              <section className="bg-white rounded-lg border p-3 space-y-2">
+                <h3 className="font-semibold text-slate-800 text-sm">中間点計算</h3>
+                <div className="text-[11px] text-slate-500">
+                  線形上の任意位置の座標を算出します。BP からの距離 (m) を SP 値として扱います。
+                </div>
+
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => setStationMode('sp')}
+                    className={`px-2 py-1 text-xs border rounded ${
+                      stationMode === 'sp' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white hover:bg-slate-50'
+                    }`}
+                  >
+                    任意 SP
+                  </button>
+                  <button
+                    onClick={() => setStationMode('pitch')}
+                    className={`px-2 py-1 text-xs border rounded ${
+                      stationMode === 'pitch' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white hover:bg-slate-50'
+                    }`}
+                  >
+                    ピッチ割
+                  </button>
+                </div>
+
+                {stationMode === 'sp' ? (
+                  <div className="grid grid-cols-12 gap-1 items-end">
+                    <label className="col-span-7 flex flex-col gap-0.5 text-[11px]">
+                      <span className="text-slate-500">SP (BP からの距離 m)</span>
+                      <input
+                        type="number"
+                        step={0.01}
+                        value={stationDist}
+                        onChange={(e) => setStationDist(parseFloat(e.target.value) || 0)}
+                        className="px-1 py-1 border rounded text-right text-xs"
+                      />
+                    </label>
+                    <button
+                      onClick={handleAddStation}
+                      disabled={segments.length === 0}
+                      className="col-span-5 flex items-center justify-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      <Plus className="h-3 w-3" />
+                      座標を計算
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-12 gap-1 items-end">
+                    <label className="col-span-4 flex flex-col gap-0.5 text-[11px]">
+                      <span className="text-slate-500">ピッチ (m)</span>
+                      <input
+                        type="number"
+                        step={1}
+                        value={stationPitch}
+                        onChange={(e) => setStationPitch(parseFloat(e.target.value) || 0)}
+                        className="px-1 py-1 border rounded text-right text-xs"
+                      />
+                    </label>
+                    <label className="col-span-4 flex items-center gap-1 text-[11px] pb-1">
+                      <input
+                        type="checkbox"
+                        checked={includeEp}
+                        onChange={(e) => setIncludeEp(e.target.checked)}
+                      />
+                      EP も含める
+                    </label>
+                    <button
+                      onClick={handleAddStation}
+                      disabled={segments.length === 0}
+                      className="col-span-4 flex items-center justify-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      <Plus className="h-3 w-3" />
+                      生成
+                    </button>
+                  </div>
+                )}
+
+                {stations.length > 0 && (
+                  <>
+                    <div className="border rounded overflow-auto max-h-64">
+                      <table className="w-full text-xs">
+                        <thead className="bg-slate-50 text-slate-600 sticky top-0">
+                          <tr>
+                            <th className="px-1 py-1 w-8 text-center">#</th>
+                            <th className="px-1 py-1 text-left">SP</th>
+                            <th className="px-1 py-1 text-right">距離(m)</th>
+                            <th className="px-1 py-1 text-right">X</th>
+                            <th className="px-1 py-1 text-right">Y</th>
+                            <th className="px-1 py-1 w-8"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {stations.map((s, i) => (
+                            <tr key={`${s.label}-${i}`} className="border-t">
+                              <td className="px-1 py-1 text-center text-slate-500">{i + 1}</td>
+                              <td className="px-1 py-1 font-mono">{s.label}</td>
+                              <td className="px-1 py-1 text-right tabular-nums">{s.distance.toFixed(2)}</td>
+                              <td className="px-1 py-1 text-right tabular-nums">{s.x.toFixed(3)}</td>
+                              <td className="px-1 py-1 text-right tabular-nums">{s.y.toFixed(3)}</td>
+                              <td className="px-1 py-1 text-right">
+                                <button
+                                  onClick={() => handleRemoveStation(i)}
+                                  className="p-0.5 border rounded hover:bg-red-50 text-red-600"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="flex justify-end">
+                      <button
+                        onClick={handleClearStations}
+                        className="px-2 py-1 text-xs border rounded text-slate-600 hover:bg-slate-50"
+                      >
+                        全クリア
+                      </button>
+                    </div>
+                  </>
+                )}
+              </section>
+
               <section className="bg-white rounded-lg border p-3 text-xs text-slate-600 space-y-1">
                 <div>
                   <span className="text-slate-500">線形長: </span>
@@ -733,6 +1009,18 @@ export function OpenChannelAlignmentPage() {
               {sampledLatLng.length >= 2 && (
                 <Polyline positions={sampledLatLng} pathOptions={{ color: '#0ea5e9', weight: 3 }} />
               )}
+              {stations.map((s, i) => (
+                <CircleMarker
+                  key={`station-${i}`}
+                  center={[s.lat, s.lng]}
+                  radius={4}
+                  pathOptions={{ color: '#7c3aed', fillColor: '#a78bfa', fillOpacity: 0.9, weight: 1.5 }}
+                >
+                  <Tooltip direction="bottom" offset={[0, 4]} className="!text-[10px]">
+                    {s.label}
+                  </Tooltip>
+                </CircleMarker>
+              ))}
               {controlMarkers.map((m) => {
                 const color = m.point.kind === 'bp' ? '#16a34a' : m.point.kind === 'ep' ? '#dc2626' : '#f59e0b'
                 return (
