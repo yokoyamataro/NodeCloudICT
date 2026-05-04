@@ -10,7 +10,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { MapContainer, TileLayer, Polyline, CircleMarker, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Plus, Trash2, ArrowUp, ArrowDown, Waves } from 'lucide-react'
+import { Plus, Trash2, ArrowUp, ArrowDown, Waves, ChevronRight, ChevronDown } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
@@ -32,8 +32,57 @@ import {
   alignmentTotalLength,
   buildSegments,
   pointAtDistance,
+  getCurveMarkers,
   type AlignmentVertex,
 } from '@/lib/openChannel/alignment'
+
+/** タイトルのみで折りたたみ可能なセクション（開閉状態は localStorage に記憶可）。 */
+function CollapsibleSection({
+  title,
+  defaultOpen = true,
+  storageKey,
+  children,
+}: {
+  title: string
+  defaultOpen?: boolean
+  storageKey?: string
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState<boolean>(() => {
+    if (storageKey && typeof window !== 'undefined') {
+      const v = window.localStorage.getItem(storageKey)
+      if (v === '1') return true
+      if (v === '0') return false
+    }
+    return defaultOpen
+  })
+  const toggle = () => {
+    setOpen((prev) => {
+      const next = !prev
+      if (storageKey && typeof window !== 'undefined') {
+        window.localStorage.setItem(storageKey, next ? '1' : '0')
+      }
+      return next
+    })
+  }
+  return (
+    <section className="bg-white rounded-lg border">
+      <button
+        type="button"
+        onClick={toggle}
+        className="w-full px-3 py-2 flex items-center font-semibold text-slate-800 text-sm hover:bg-slate-50 rounded-t-lg"
+      >
+        {open ? (
+          <ChevronDown className="h-4 w-4 mr-1 text-slate-500" />
+        ) : (
+          <ChevronRight className="h-4 w-4 mr-1 text-slate-500" />
+        )}
+        <span>{title}</span>
+      </button>
+      {open && <div className="px-3 pb-3 space-y-2">{children}</div>}
+    </section>
+  )
+}
 
 function FitBounds({ positions }: { positions: [number, number][] }) {
   const map = useMap()
@@ -555,45 +604,64 @@ export function OpenChannelAlignmentPage() {
   const [stations, setStations] = useState<Station[]>([])
 
   const formatSp = (d: number) => `SP${d.toFixed(2)}`
+  const formatBc = (d: number) => `BC${d.toFixed(2)}`
+  const formatEc = (d: number) => `EC${d.toFixed(2)}`
 
-  const computeStation = (distance: number): Station | null => {
+  const computeStation = (distance: number, label: string): Station | null => {
     const p = pointAtDistance(segments, distance)
     if (!p) return null
     const ll = converter.toLatLng(p.x, p.y)
-    return {
-      label: formatSp(distance),
-      distance,
-      x: p.x,
-      y: p.y,
-      lat: ll.lat,
-      lng: ll.lng,
-    }
+    return { label, distance, x: p.x, y: p.y, lat: ll.lat, lng: ll.lng }
   }
 
   const handleAddStation = () => {
     if (segments.length === 0) return
     if (stationMode === 'sp') {
       const d = Math.max(0, Math.min(stationDist, totalLen))
-      const s = computeStation(d)
+      const s = computeStation(d, formatSp(d))
       if (s) setStations((prev) => [...prev, s])
     } else {
       const pitch = stationPitch
       if (!Number.isFinite(pitch) || pitch <= 0) return
       const out: Station[] = []
-      // BP (SP0)
-      const bp = computeStation(0)
-      if (bp) out.push({ ...bp, label: 'BP' })
-      let d = pitch
-      while (d < totalLen - 1e-6) {
-        const s = computeStation(d)
+      // BP (= SP0.00) からピッチ刻みで生成
+      let d = 0
+      while (d <= totalLen + 1e-6) {
+        const dist = Math.min(d, totalLen)
+        const s = computeStation(dist, formatSp(dist))
         if (s) out.push(s)
         d += pitch
       }
+      // EP がピッチに乗らなかった場合は末尾に追加
       if (includeEp) {
-        const ep = computeStation(totalLen)
-        if (ep) out.push({ ...ep, label: 'EP' })
+        const last = out.length > 0 ? out[out.length - 1].distance : -1
+        if (Math.abs(last - totalLen) > 1e-3) {
+          const ep = computeStation(totalLen, formatSp(totalLen))
+          if (ep) out.push(ep)
+        }
       }
-      setStations(out)
+      // カーブ起終点 BC / EC を追加
+      for (const m of getCurveMarkers(segments)) {
+        const s = computeStation(
+          m.distance,
+          m.kind === 'bc' ? formatBc(m.distance) : formatEc(m.distance),
+        )
+        if (s) out.push(s)
+      }
+      // 距離でソート + 同距離の SP/BC・EC は BC・EC を優先
+      out.sort((a, b) => a.distance - b.distance)
+      const merged: Station[] = []
+      for (const s of out) {
+        const prev = merged[merged.length - 1]
+        if (prev && Math.abs(prev.distance - s.distance) < 5e-3) {
+          if (s.label.startsWith('BC') || s.label.startsWith('EC')) {
+            merged[merged.length - 1] = s
+          }
+          continue
+        }
+        merged.push(s)
+      }
+      setStations(merged)
     }
   }
 
@@ -685,8 +753,7 @@ export function OpenChannelAlignmentPage() {
               </section>
 
               {/* 標準断面 */}
-              <section className="bg-white rounded-lg border p-3 space-y-2">
-                <h3 className="font-semibold text-slate-800 text-sm">標準断面</h3>
+              <CollapsibleSection title="標準断面" storageKey="oc:section:cs">
                 <div className="text-[11px] text-slate-500">
                   中心 (0,0) から右・左へ要素列を順に並べます。各要素は 幅 (m) と 勾配（1:i または %） で定義。
                   外側に向かって上る場合 +、下る場合 -。種別はラベル（色分け等の将来拡張用）。
@@ -715,11 +782,10 @@ export function OpenChannelAlignmentPage() {
                 <div className="flex justify-center pt-1">
                   <CrossSectionDiagram cs={selected.standardCrossSection} />
                 </div>
-              </section>
+              </CollapsibleSection>
 
               {/* 線形点 */}
-              <section className="bg-white rounded-lg border p-3 space-y-2">
-                <h3 className="font-semibold text-slate-800 text-sm">線形点（BP → IP → EP）</h3>
+              <CollapsibleSection title="線形点（BP → IP → EP）" storageKey="oc:section:alignment">
                 <div className="text-[11px] text-slate-500">座標管理の点を順序付きで参照します</div>
 
                 {selected.alignmentPoints.length > 0 && (
@@ -841,11 +907,10 @@ export function OpenChannelAlignmentPage() {
                     追加
                   </button>
                 </div>
-              </section>
+              </CollapsibleSection>
 
               {/* 縦断線形 */}
-              <section className="bg-white rounded-lg border p-3 space-y-2">
-                <h3 className="font-semibold text-slate-800 text-sm">縦断線形</h3>
+              <CollapsibleSection title="縦断線形" storageKey="oc:section:profile">
                 <div className="text-[11px] text-slate-500">
                   BP からの追加距離 (m) と床高 (m) を変化点ごとに登録します
                 </div>
@@ -960,13 +1025,13 @@ export function OpenChannelAlignmentPage() {
                 <div className="flex justify-center pt-1">
                   <ProfileChart points={selected.profilePoints} totalLen={totalLen} />
                 </div>
-              </section>
+              </CollapsibleSection>
 
               {/* 中間点計算 */}
-              <section className="bg-white rounded-lg border p-3 space-y-2">
-                <h3 className="font-semibold text-slate-800 text-sm">中間点計算</h3>
+              <CollapsibleSection title="中間点計算" storageKey="oc:section:stations">
                 <div className="text-[11px] text-slate-500">
                   線形上の任意位置の座標を算出します。BP からの距離 (m) を SP 値として扱います。
+                  ピッチ割では BP/EP は SP0.00 / SP{`{`}全長{`}`}.00、円弧の起終点は BC{`{`}距離{`}`}.00 / EC{`{`}距離{`}`}.00 として表示。
                 </div>
 
                 <div className="flex gap-1">
@@ -1085,7 +1150,7 @@ export function OpenChannelAlignmentPage() {
                     </div>
                   </>
                 )}
-              </section>
+              </CollapsibleSection>
 
               <section className="bg-white rounded-lg border p-3 text-xs text-slate-600 space-y-1">
                 <div>

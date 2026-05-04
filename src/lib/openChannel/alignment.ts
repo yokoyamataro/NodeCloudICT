@@ -239,3 +239,22 @@ export function alignmentLength(samples: XY[]): number {
   for (let i = 1; i < samples.length; i++) total += dist(samples[i - 1], samples[i])
   return total
 }
+
+/** 円弧の始点 (BC) / 終点 (EC) を BP からの追加距離で列挙する。 */
+export interface CurveMarker {
+  kind: 'bc' | 'ec'
+  distance: number
+}
+
+export function getCurveMarkers(segments: AlignmentSegment[]): CurveMarker[] {
+  const out: CurveMarker[] = []
+  let acc = 0
+  for (const s of segments) {
+    if (s.kind === 'arc') {
+      out.push({ kind: 'bc', distance: acc })
+      out.push({ kind: 'ec', distance: acc + s.length })
+    }
+    acc += s.length
+  }
+  return out
+}
