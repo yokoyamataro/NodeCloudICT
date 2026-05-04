@@ -15,6 +15,8 @@ interface CrossSectionChartProps {
   farmName?: string // DXF 出力ファイル名用
   // LandXML から読み込んだ TIN サーフェス。指定時は alignment に沿った断面を表示
   tinSurface?: ParsedSurface | null
+  // 吸水断面で右端（集水合流位置）に集水管の計画高を点で重ねる場合に指定
+  endCollectorPlannedHeight?: number | null
 }
 
 // 断面図の点データ（集水管の点のみ）
@@ -44,6 +46,7 @@ export function CrossSectionChart({
   allPlanGroups,
   farmName,
   tinSurface,
+  endCollectorPlannedHeight,
 }: CrossSectionChartProps) {
   // 標高スケールのズーム倍率（1.0が基準、大きいほど拡大）
   const [heightScale, setHeightScale] = useState(1.0)
@@ -236,6 +239,7 @@ export function CrossSectionChart({
     const heights = [
       ...sectionData.flatMap(p => [p.groundHeight, p.plannedHeight, p.absorptionPlannedHeight, p.absorptionUpstreamPlannedHeight]),
       ...tinProfile.map(p => p.z),
+      endCollectorPlannedHeight ?? null,
     ].filter((h): h is number => h !== null)
 
     const effectiveHeight = chartHeightProp ?? 220
@@ -318,7 +322,7 @@ export function CrossSectionChart({
       flagRowByIndex,
       numFlagRows,
     }
-  }, [sectionData, tinProfile, heightScale, widthScale, chartHeightProp])
+  }, [sectionData, tinProfile, heightScale, widthScale, chartHeightProp, endCollectorPlannedHeight])
 
   // 座標変換関数
   const xScale = (distance: number) => {
@@ -905,6 +909,32 @@ export function CrossSectionChart({
               </g>
             )
           })}
+
+          {/* 右端に集水管の計画高（吸水断面で集水合流位置を示す）*/}
+          {endCollectorPlannedHeight != null && sectionData.length > 0 && (() => {
+            const last = sectionData[sectionData.length - 1]
+            const x = xScale(last.distance)
+            const y = yScale(endCollectorPlannedHeight)
+            return (
+              <g>
+                <circle
+                  cx={x}
+                  cy={y}
+                  r={6}
+                  fill="#dc2626"
+                  stroke="white"
+                  strokeWidth="1.5"
+                />
+                <text
+                  x={x + 8}
+                  y={y - 6}
+                  className="fill-red-700 text-[12px] font-medium"
+                >
+                  集水 {endCollectorPlannedHeight.toFixed(3)}m
+                </text>
+              </g>
+            )
+          })()}
 
           {/* ホバー時のツールチップ（最後に描画して最前面に） */}
           {hoveredIdx !== null && sectionData[hoveredIdx] && (() => {

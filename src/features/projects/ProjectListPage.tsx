@@ -439,6 +439,7 @@ export function ProjectListPage() {
             farmWorkAreaSummary={farmWorkAreaSummary}
             onClose={() => setExpandedList(false)}
             onOpenFarm={handleOpenFarm}
+            onSelectFarm={(farm) => setFarmActionDialog(farm)}
             onNewProject={() => setShowNewProjectDialog(true)}
           />
         ) : (
@@ -737,10 +738,10 @@ export function ProjectListPage() {
                           </div>
                         )}
                         <button
-                          onClick={() => handleOpenFarm(farm)}
+                          onClick={() => setFarmActionDialog(farm)}
                           className="mt-2 px-3 py-1.5 text-xs bg-primary text-white rounded hover:bg-primary/90 w-full"
                         >
-                          開く
+                          アクション選択（圃場編集 / 地図表示 / 経路案内）
                         </button>
                       </div>
                     </Popup>
@@ -1262,6 +1263,7 @@ function ExpandedProjectTable({
   farmWorkAreaSummary,
   onClose,
   onOpenFarm,
+  onSelectFarm,
   onNewProject,
 }: {
   projects: Project[]
@@ -1269,6 +1271,7 @@ function ExpandedProjectTable({
   farmWorkAreaSummary: Record<string, Record<string, number>>
   onClose: () => void
   onOpenFarm: (farm: Farm) => void
+  onSelectFarm: (farm: Farm) => void
   onNewProject: () => void
 }) {
   // プロジェクトごとの工種別合計
@@ -1370,6 +1373,7 @@ function ExpandedProjectTable({
                     projectTotals={pTotals}
                     projectGrandTotal={pGrandTotal}
                     onOpenFarm={onOpenFarm}
+                    onSelectFarm={onSelectFarm}
                   />
                 )
               })}
@@ -1388,6 +1392,7 @@ function ProjectTableGroup({
   projectTotals,
   projectGrandTotal,
   onOpenFarm,
+  onSelectFarm,
 }: {
   project: Project
   farms: Farm[]
@@ -1395,6 +1400,7 @@ function ProjectTableGroup({
   projectTotals: Record<string, number>
   projectGrandTotal: number
   onOpenFarm: (farm: Farm) => void
+  onSelectFarm: (farm: Farm) => void
 }) {
   const [expanded, setExpanded] = useState(true)
   return (
@@ -1435,9 +1441,9 @@ function ProjectTableGroup({
             <tr key={farm.id} className="hover:bg-slate-50 cursor-pointer" onDoubleClick={() => onOpenFarm(farm)}>
               <td className="px-2 py-1.5 border-b border-r pl-8">
                 <button
-                  onClick={() => onOpenFarm(farm)}
+                  onClick={() => onSelectFarm(farm)}
                   className="flex items-center gap-1 text-slate-700 hover:text-blue-600"
-                  title="ダブルクリックまたはクリックで開く"
+                  title="クリックでアクション選択（ダブルクリックで圃場編集）"
                 >
                   <FolderOpen className="h-3.5 w-3.5 text-slate-400" />
                   <span>{farm.name}</span>

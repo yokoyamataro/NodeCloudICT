@@ -1615,28 +1615,37 @@ export function DepthCalcPage() {
                 // 吸水スコープの場合：absorptionPoints から擬似 PlanRow[] を生成して既存 CrossSectionChart に渡す
                 let chartRows = systemData.rows
                 let chartLabel: string | undefined
+                let chartEndCollectorHeight: number | null = null
                 if (typeof chartScope === 'number') {
                   const r = systemData.rows[chartScope]
                   if (r && r.absorptionPoints.length >= 2) {
-                    chartRows = r.absorptionPoints.map((p, i) => ({
-                      id: `abs-${r.id}-${i}`,
-                      wiringRowId: '',
-                      groupType: r.groupType,
-                      groupIndex: r.groupIndex,
-                      rowIndex: i,
-                      systemIndex: r.systemIndex,
-                      isSystemEnd: i === r.absorptionPoints.length - 1,
-                      systemEndType: null,
-                      absorptionPipeId: null,
-                      collectorPipeId: r.absorptionPipeId,
-                      pipeNumber: r.pipeNumber,
-                      diameter: r.diameter,
-                      designLength: r.designLength,
-                      absorptionPoints: [],
-                      collectorPoint: p,
-                      wiringRowType: null,
-                    }))
+                    // 吸水点の segmentDistance は「前点 → 自点」の距離だが、
+                    // CrossSectionChart は collector 規約「自点 → 次点」を期待するため、
+                    // 隣の点の segmentDistance を 1 行手前に詰めて渡す。
+                    chartRows = r.absorptionPoints.map((p, i) => {
+                      const nextPoint = r.absorptionPoints[i + 1]
+                      const segDistToNext = nextPoint?.segmentDistance ?? null
+                      return {
+                        id: `abs-${r.id}-${i}`,
+                        wiringRowId: '',
+                        groupType: r.groupType,
+                        groupIndex: r.groupIndex,
+                        rowIndex: i,
+                        systemIndex: r.systemIndex,
+                        isSystemEnd: i === r.absorptionPoints.length - 1,
+                        systemEndType: null,
+                        absorptionPipeId: null,
+                        collectorPipeId: r.absorptionPipeId,
+                        pipeNumber: r.pipeNumber,
+                        diameter: r.diameter,
+                        designLength: r.designLength,
+                        absorptionPoints: [],
+                        collectorPoint: { ...p, segmentDistance: segDistToNext },
+                        wiringRowType: null,
+                      }
+                    })
                     chartLabel = `吸水: ${r.pipeNumber ?? '?'}`
+                    chartEndCollectorHeight = r.collectorPoint?.plannedHeight ?? null
                   }
                 }
 
@@ -1675,6 +1684,7 @@ export function DepthCalcPage() {
                         allPlanGroups={planGroups}
                         farmName={currentFarm?.name}
                         tinSurface={tinSurface}
+                        endCollectorPlannedHeight={chartEndCollectorHeight}
                       />
                     </div>
                   </>
