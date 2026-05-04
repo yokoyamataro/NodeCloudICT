@@ -49,6 +49,17 @@ export interface StandardCrossSection {
 
 export const emptyStandardCrossSection = (): StandardCrossSection => ({ right: [], left: [] })
 
+/** 中間点（測点）。SP / BC / EC / IP などラベル付きで BP からの距離 + 個別断面を保持。 */
+export interface StationRow {
+  id: string
+  /** 表示ラベル（SP12.50 / BC34.20 / IP25.00 等） */
+  label: string
+  /** BP からの追加距離 (m) */
+  distance: number
+  /** 個別断面。null / 未指定なら標準断面を使用。 */
+  crossSection: StandardCrossSection | null
+}
+
 export interface OpenChannelRow {
   id: string
   farmId: string
@@ -58,6 +69,8 @@ export interface OpenChannelRow {
   alignmentPoints: AlignmentPoint[]
   /** 縦断線形（変化点列） */
   profilePoints: ProfilePoint[]
+  /** 中間点（測点）リスト */
+  stations: StationRow[]
   notes: string | null
 }
 
@@ -68,6 +81,7 @@ interface OpenChannelDb {
   standard_cross_section: StandardCrossSection | null
   alignment_points: AlignmentPoint[]
   profile_points: ProfilePoint[] | null
+  stations: StationRow[] | null
   notes: string | null
 }
 
@@ -88,6 +102,7 @@ function toRow(d: OpenChannelDb): OpenChannelRow {
     standardCrossSection: normalizeCrossSection(d.standard_cross_section),
     alignmentPoints: Array.isArray(d.alignment_points) ? d.alignment_points : [],
     profilePoints: Array.isArray(d.profile_points) ? d.profile_points : [],
+    stations: Array.isArray(d.stations) ? d.stations : [],
     notes: d.notes,
   }
 }
@@ -135,6 +150,7 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
         standard_cross_section: emptyStandardCrossSection(),
         alignment_points: [],
         profile_points: [],
+        stations: [],
         notes: null,
       }
       const { data, error } = await supabase
@@ -160,6 +176,7 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
         dbUpdates.standard_cross_section = updates.standardCrossSection
       if (updates.alignmentPoints !== undefined) dbUpdates.alignment_points = updates.alignmentPoints
       if (updates.profilePoints !== undefined) dbUpdates.profile_points = updates.profilePoints
+      if (updates.stations !== undefined) dbUpdates.stations = updates.stations
       if (updates.notes !== undefined) dbUpdates.notes = updates.notes
       // 楽観的更新
       set((s) => ({

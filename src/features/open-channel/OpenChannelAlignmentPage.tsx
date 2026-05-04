@@ -23,6 +23,7 @@ import {
   type CrossSectionElement,
   type SlopeUnit,
   type StandardCrossSection,
+  type StationRow,
   buildCrossSectionPath,
   formatSlope,
 } from '@/stores/openChannelStore'
@@ -33,6 +34,7 @@ import {
   buildSegments,
   pointAtDistance,
   getCurveMarkers,
+  getCornerIpStations,
   type AlignmentVertex,
 } from '@/lib/openChannel/alignment'
 
@@ -593,85 +595,110 @@ export function OpenChannelAlignmentPage() {
   const [stationDist, setStationDist] = useState<number>(0)
   const [stationPitch, setStationPitch] = useState<number>(20)
   const [includeEp, setIncludeEp] = useState<boolean>(true)
-  type Station = {
-    label: string
-    distance: number
-    x: number
-    y: number
-    lat: number
-    lng: number
-  }
-  const [stations, setStations] = useState<Station[]>([])
+  const [selectedStationId, setSelectedStationId] = useState<string | null>(null)
+
+  const stations: StationRow[] = selected?.stations ?? []
+  const selectedStation = stations.find((s) => s.id === selectedStationId) ?? null
 
   const formatSp = (d: number) => `SP${d.toFixed(2)}`
   const formatBc = (d: number) => `BC${d.toFixed(2)}`
   const formatEc = (d: number) => `EC${d.toFixed(2)}`
+  const formatIp = (d: number) => `IP${d.toFixed(2)}`
 
-  const computeStation = (distance: number, label: string): Station | null => {
-    const p = pointAtDistance(segments, distance)
-    if (!p) return null
-    const ll = converter.toLatLng(p.x, p.y)
-    return { label, distance, x: p.x, y: p.y, lat: ll.lat, lng: ll.lng }
+  const newStationId = () =>
+    `st-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  const newElementId = () =>
+    `e${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+
+  const cloneCrossSection = (cs: StandardCrossSection): StandardCrossSection => ({
+    right: cs.right.map((e) => ({ ...e, id: newElementId() })),
+    left: cs.left.map((e) => ({ ...e, id: newElementId() })),
+  })
+
+  const setStations = (next: StationRow[]) => {
+    if (!selected) return
+    updateChannel(selected.id, { stations: next })
   }
 
   const handleAddStation = () => {
-    if (segments.length === 0) return
+    if (!selected || segments.length === 0) return
     if (stationMode === 'sp') {
       const d = Math.max(0, Math.min(stationDist, totalLen))
-      const s = computeStation(d, formatSp(d))
-      if (s) setStations((prev) => [...prev, s])
+      const newRow: StationRow = {
+        id: newStationId(),
+        label: formatSp(d),
+        distance: d,
+        crossSection: null,
+      }
+      const next = [...stations, newRow].sort((a, b) => a.distance - b.distance)
+      setStations(next)
     } else {
       const pitch = stationPitch
       if (!Number.isFinite(pitch) || pitch <= 0) return
-      const out: Station[] = []
-      // BP (= SP0.00) からピッチ刻みで生成
+      const out: StationRow[] = []
+      const push = (label: string, distance: number) =>
+        out.push({ id: newStationId(), label, distance, crossSection: null })
+
       let d = 0
       while (d <= totalLen + 1e-6) {
         const dist = Math.min(d, totalLen)
-        const s = computeStation(dist, formatSp(dist))
-        if (s) out.push(s)
+        push(formatSp(dist), dist)
         d += pitch
       }
-      // EP がピッチに乗らなかった場合は末尾に追加
       if (includeEp) {
         const last = out.length > 0 ? out[out.length - 1].distance : -1
-        if (Math.abs(last - totalLen) > 1e-3) {
-          const ep = computeStation(totalLen, formatSp(totalLen))
-          if (ep) out.push(ep)
-        }
+        if (Math.abs(last - totalLen) > 1e-3) push(formatSp(totalLen), totalLen)
       }
-      // カーブ起終点 BC / EC を追加
       for (const m of getCurveMarkers(segments)) {
-        const s = computeStation(
-          m.distance,
-          m.kind === 'bc' ? formatBc(m.distance) : formatEc(m.distance),
-        )
-        if (s) out.push(s)
+        push(m.kind === 'bc' ? formatBc(m.distance) : formatEc(m.distance), m.distance)
       }
-      // 距離でソート + 同距離の SP/BC・EC は BC・EC を優先
+      for (const m of getCornerIpStations(alignmentXY)) {
+        push(formatIp(m.distance), m.distance)
+      }
+
+      // 距離でソート + 同距離の SP は IP/BC/EC を優先して重複排除
       out.sort((a, b) => a.distance - b.distance)
-      const merged: Station[] = []
+      const merged: StationRow[] = []
+      const isMarker = (label: string) =>
+        label.startsWith('BC') || label.startsWith('EC') || label.startsWith('IP')
       for (const s of out) {
         const prev = merged[merged.length - 1]
         if (prev && Math.abs(prev.distance - s.distance) < 5e-3) {
-          if (s.label.startsWith('BC') || s.label.startsWith('EC')) {
-            merged[merged.length - 1] = s
-          }
+          if (isMarker(s.label) && !isMarker(prev.label)) merged[merged.length - 1] = s
           continue
         }
         merged.push(s)
       }
-      setStations(merged)
+
+      // 既存の個別断面（crossSection != null）をラベル一致で引き継ぐ
+      const existingByLabel = new Map(stations.map((s) => [s.label, s]))
+      const final = merged.map((s) => {
+        const ex = existingByLabel.get(s.label)
+        if (ex && ex.crossSection) return { ...s, id: ex.id, crossSection: ex.crossSection }
+        return s
+      })
+      setStations(final)
     }
   }
 
-  const handleClearStations = () => setStations([])
-  const handleRemoveStation = (idx: number) =>
-    setStations((prev) => prev.filter((_, i) => i !== idx))
-
-  // 線形物を切り替えたら中間点はリセット
-  useEffect(() => {
+  const handleClearStations = () => {
     setStations([])
+    setSelectedStationId(null)
+  }
+  const handleRemoveStation = (id: string) => {
+    setStations(stations.filter((s) => s.id !== id))
+    if (selectedStationId === id) setSelectedStationId(null)
+  }
+  const handleUpdateStationCrossSection = (
+    id: string,
+    crossSection: StandardCrossSection | null,
+  ) => {
+    setStations(stations.map((s) => (s.id === id ? { ...s, crossSection } : s)))
+  }
+
+  // 線形物を切り替えたら中間点選択をリセット
+  useEffect(() => {
+    setSelectedStationId(null)
   }, [selectedId])
 
   if (!currentFarm) {
@@ -1116,27 +1143,55 @@ export function OpenChannelAlignmentPage() {
                             <th className="px-1 py-1 text-right">距離(m)</th>
                             <th className="px-1 py-1 text-right">X</th>
                             <th className="px-1 py-1 text-right">Y</th>
+                            <th className="px-1 py-1 w-8 text-center">断面</th>
                             <th className="px-1 py-1 w-8"></th>
                           </tr>
                         </thead>
                         <tbody>
-                          {stations.map((s, i) => (
-                            <tr key={`${s.label}-${i}`} className="border-t">
-                              <td className="px-1 py-1 text-center text-slate-500">{i + 1}</td>
-                              <td className="px-1 py-1 font-mono">{s.label}</td>
-                              <td className="px-1 py-1 text-right tabular-nums">{s.distance.toFixed(2)}</td>
-                              <td className="px-1 py-1 text-right tabular-nums">{s.x.toFixed(3)}</td>
-                              <td className="px-1 py-1 text-right tabular-nums">{s.y.toFixed(3)}</td>
-                              <td className="px-1 py-1 text-right">
-                                <button
-                                  onClick={() => handleRemoveStation(i)}
-                                  className="p-0.5 border rounded hover:bg-red-50 text-red-600"
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
+                          {stations.map((s, i) => {
+                            const p = pointAtDistance(segments, s.distance)
+                            const isSel = s.id === selectedStationId
+                            const hasOverride = s.crossSection != null
+                            return (
+                              <tr
+                                key={s.id}
+                                onClick={() =>
+                                  setSelectedStationId(isSel ? null : s.id)
+                                }
+                                className={`border-t cursor-pointer ${
+                                  isSel ? 'bg-blue-50' : 'hover:bg-slate-50'
+                                }`}
+                              >
+                                <td className="px-1 py-1 text-center text-slate-500">{i + 1}</td>
+                                <td className="px-1 py-1 font-mono">{s.label}</td>
+                                <td className="px-1 py-1 text-right tabular-nums">{s.distance.toFixed(2)}</td>
+                                <td className="px-1 py-1 text-right tabular-nums">{p ? p.x.toFixed(3) : '-'}</td>
+                                <td className="px-1 py-1 text-right tabular-nums">{p ? p.y.toFixed(3) : '-'}</td>
+                                <td className="px-1 py-1 text-center">
+                                  <span
+                                    className={`text-[10px] px-1 py-0.5 rounded ${
+                                      hasOverride
+                                        ? 'bg-amber-100 text-amber-700'
+                                        : 'bg-slate-100 text-slate-500'
+                                    }`}
+                                  >
+                                    {hasOverride ? '個別' : '標準'}
+                                  </span>
+                                </td>
+                                <td className="px-1 py-1 text-right">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      handleRemoveStation(s.id)
+                                    }}
+                                    className="p-0.5 border rounded hover:bg-red-50 text-red-600"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </button>
+                                </td>
+                              </tr>
+                            )
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -1148,6 +1203,87 @@ export function OpenChannelAlignmentPage() {
                         全クリア
                       </button>
                     </div>
+
+                    {selectedStation && (
+                      <div className="border rounded p-2 space-y-2 bg-slate-50">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-slate-700 text-xs font-mono">
+                            {selectedStation.label}
+                          </span>
+                          <span className="text-[10px] text-slate-500">の断面</span>
+                          <span
+                            className={`text-[10px] px-1.5 py-0.5 rounded ${
+                              selectedStation.crossSection
+                                ? 'bg-amber-100 text-amber-700'
+                                : 'bg-slate-200 text-slate-600'
+                            }`}
+                          >
+                            {selectedStation.crossSection ? '個別設定' : '標準を継承'}
+                          </span>
+                          <div className="ml-auto flex gap-1">
+                            {selectedStation.crossSection ? (
+                              <button
+                                onClick={() =>
+                                  handleUpdateStationCrossSection(selectedStation.id, null)
+                                }
+                                className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-600 hover:bg-slate-50"
+                              >
+                                標準に戻す
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() =>
+                                  handleUpdateStationCrossSection(
+                                    selectedStation.id,
+                                    cloneCrossSection(selected.standardCrossSection),
+                                  )
+                                }
+                                className="px-2 py-0.5 text-[11px] border rounded bg-blue-600 text-white hover:bg-blue-700"
+                              >
+                                個別設定（標準を取込）
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {selectedStation.crossSection ? (
+                          <>
+                            <CrossSectionSideEditor
+                              side="right"
+                              elements={selectedStation.crossSection.right}
+                              onChange={(els) =>
+                                handleUpdateStationCrossSection(selectedStation.id, {
+                                  ...selectedStation.crossSection!,
+                                  right: els,
+                                })
+                              }
+                            />
+                            <CrossSectionSideEditor
+                              side="left"
+                              elements={selectedStation.crossSection.left}
+                              onChange={(els) =>
+                                handleUpdateStationCrossSection(selectedStation.id, {
+                                  ...selectedStation.crossSection!,
+                                  left: els,
+                                })
+                              }
+                            />
+                            <div className="flex justify-center pt-1">
+                              <CrossSectionDiagram cs={selectedStation.crossSection} />
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="text-[11px] text-slate-500">
+                              この測点では標準断面がそのまま適用されます。「個別設定」で複製してカスタマイズできます。
+                            </div>
+                            <div className="flex justify-center pt-1">
+                              <CrossSectionDiagram cs={selected.standardCrossSection} />
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </>
                 )}
               </CollapsibleSection>
@@ -1180,18 +1316,34 @@ export function OpenChannelAlignmentPage() {
               {sampledLatLng.length >= 2 && (
                 <Polyline positions={sampledLatLng} pathOptions={{ color: '#0ea5e9', weight: 3 }} />
               )}
-              {stations.map((s, i) => (
-                <CircleMarker
-                  key={`station-${i}`}
-                  center={[s.lat, s.lng]}
-                  radius={4}
-                  pathOptions={{ color: '#7c3aed', fillColor: '#a78bfa', fillOpacity: 0.9, weight: 1.5 }}
-                >
-                  <Tooltip direction="bottom" offset={[0, 4]} className="!text-[10px]">
-                    {s.label}
-                  </Tooltip>
-                </CircleMarker>
-              ))}
+              {stations.map((s) => {
+                const p = pointAtDistance(segments, s.distance)
+                if (!p) return null
+                const ll = converter.toLatLng(p.x, p.y)
+                const isSel = s.id === selectedStationId
+                const hasOverride = s.crossSection != null
+                return (
+                  <CircleMarker
+                    key={s.id}
+                    center={[ll.lat, ll.lng]}
+                    radius={isSel ? 6 : 4}
+                    eventHandlers={{
+                      click: () => setSelectedStationId(isSel ? null : s.id),
+                    }}
+                    pathOptions={{
+                      color: '#fff',
+                      fillColor: hasOverride ? '#f59e0b' : '#a78bfa',
+                      fillOpacity: 0.95,
+                      weight: isSel ? 2 : 1.5,
+                    }}
+                  >
+                    <Tooltip direction="bottom" offset={[0, 4]} className="!text-[10px]">
+                      {s.label}
+                      {hasOverride ? ' (個別)' : ''}
+                    </Tooltip>
+                  </CircleMarker>
+                )
+              })}
               {controlMarkers.map((m) => {
                 const color = m.point.kind === 'bp' ? '#16a34a' : m.point.kind === 'ep' ? '#dc2626' : '#f59e0b'
                 return (

@@ -258,3 +258,37 @@ export function getCurveMarkers(segments: AlignmentSegment[]): CurveMarker[] {
   }
   return out
 }
+
+/**
+ * R=0（または未指定）で角折れとなっている IP の、BP からの追加距離を列挙する。
+ * 単曲線が当たっている IP（路線上の頂点を通らない）は対象外。
+ */
+export function getCornerIpStations(
+  vertices: AlignmentVertex[],
+): { vertexIndex: number; distance: number }[] {
+  const out: { vertexIndex: number; distance: number }[] = []
+  if (vertices.length < 2) return out
+  const arcMap = new Map<number, IpArc>()
+  for (const a of computeIpArcs(vertices)) arcMap.set(a.i, a)
+  let acc = 0
+  let cur: XY = { x: vertices[0].x, y: vertices[0].y }
+  for (let i = 1; i < vertices.length; i++) {
+    const arc = arcMap.get(i)
+    if (arc) {
+      acc += dist(cur, arc.tc)
+      acc += arc.radius * Math.abs(arc.dA)
+      cur = arc.ct
+      // 単曲線 IP は経路を通らないので除外
+      continue
+    }
+    const v = vertices[i]
+    const target: XY = { x: v.x, y: v.y }
+    acc += dist(cur, target)
+    cur = target
+    // BP/EP ではなく、kind が IP の頂点 = 折点
+    if (i < vertices.length - 1 && v.kind === 'ip') {
+      out.push({ vertexIndex: i, distance: acc })
+    }
+  }
+  return out
+}
