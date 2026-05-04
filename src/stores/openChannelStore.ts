@@ -65,6 +65,12 @@ export interface StationRow {
   crossSection: StandardCrossSection | null
 }
 
+/** 断面の右/左を判定する基準方向。
+ *  - 'forward': BP→EP を見て右/左（道路工事の慣習、デフォルト）
+ *  - 'reverse': EP→BP を見て右/左（河川工事の慣習）
+ */
+export type SideOrientation = 'forward' | 'reverse'
+
 export interface OpenChannelRow {
   id: string
   farmId: string
@@ -76,6 +82,8 @@ export interface OpenChannelRow {
   profilePoints: ProfilePoint[]
   /** 中間点（測点）リスト */
   stations: StationRow[]
+  /** 左右の基準方向 */
+  sideOrientation: SideOrientation
   notes: string | null
 }
 
@@ -87,6 +95,7 @@ interface OpenChannelDb {
   alignment_points: AlignmentPoint[]
   profile_points: ProfilePoint[] | null
   stations: StationRow[] | null
+  side_orientation: SideOrientation | null
   notes: string | null
 }
 
@@ -108,6 +117,7 @@ function toRow(d: OpenChannelDb): OpenChannelRow {
     alignmentPoints: Array.isArray(d.alignment_points) ? d.alignment_points : [],
     profilePoints: Array.isArray(d.profile_points) ? d.profile_points : [],
     stations: Array.isArray(d.stations) ? d.stations : [],
+    sideOrientation: d.side_orientation === 'reverse' ? 'reverse' : 'forward',
     notes: d.notes,
   }
 }
@@ -156,6 +166,7 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
         alignment_points: [],
         profile_points: [],
         stations: [],
+        side_orientation: 'forward',
         notes: null,
       }
       const { data, error } = await supabase
@@ -182,6 +193,7 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
       if (updates.alignmentPoints !== undefined) dbUpdates.alignment_points = updates.alignmentPoints
       if (updates.profilePoints !== undefined) dbUpdates.profile_points = updates.profilePoints
       if (updates.stations !== undefined) dbUpdates.stations = updates.stations
+      if (updates.sideOrientation !== undefined) dbUpdates.side_orientation = updates.sideOrientation
       if (updates.notes !== undefined) dbUpdates.notes = updates.notes
       // 楽観的更新
       set((s) => ({

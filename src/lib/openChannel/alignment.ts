@@ -154,6 +154,40 @@ export function alignmentTotalLength(vertices: AlignmentVertex[]): number {
 }
 
 /**
+ * 線形の起点 (BP) からの距離 d (m) における進行方向（単位接線ベクトル）を返す。
+ * 線形が空のとき null。
+ */
+export function tangentAtDistance(
+  segments: AlignmentSegment[],
+  distance: number,
+): XY | null {
+  if (segments.length === 0) return null
+  const target = Math.max(0, distance)
+  let acc = 0
+  for (let idx = 0; idx < segments.length; idx++) {
+    const s = segments[idx]
+    const isLast = idx === segments.length - 1
+    if (target <= acc + s.length + EPS || isLast) {
+      const local = target - acc
+      const t = s.length < EPS ? 0 : Math.max(0, Math.min(1, local / s.length))
+      if (s.kind === 'line') {
+        const dx = s.p1.x - s.p0.x
+        const dy = s.p1.y - s.p0.y
+        const m = Math.hypot(dx, dy)
+        if (m < EPS) return { x: 1, y: 0 }
+        return { x: dx / m, y: dy / m }
+      }
+      // 円弧の進行方向: pos(a) = C + R*(cos a, sin a), 単位接線 = sign(dA) * (-sin a, cos a)
+      const a = s.a0 + s.dA * t
+      const dir = s.dA >= 0 ? 1 : -1
+      return { x: -Math.sin(a) * dir, y: Math.cos(a) * dir }
+    }
+    acc += s.length
+  }
+  return null
+}
+
+/**
  * 線形の起点 (BP) からの距離 d (m) における点を返す。
  * 範囲外の場合は端にクランプ。線形が空のとき null。
  */

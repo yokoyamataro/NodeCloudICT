@@ -24,6 +24,7 @@ import {
   type SlopeUnit,
   type StandardCrossSection,
   type StationRow,
+  type SideOrientation,
   buildCrossSectionPath,
   formatSlope,
   elementStep,
@@ -34,10 +35,72 @@ import {
   alignmentTotalLength,
   buildSegments,
   pointAtDistance,
+  tangentAtDistance,
   getCurveMarkers,
   getCornerIpStations,
+  type AlignmentSegment,
   type AlignmentVertex,
 } from '@/lib/openChannel/alignment'
+
+/**
+ * 中間点 1 つの断面要素境界点を、平面座標 (x_north, y_east) にプロジェクションして返す。
+ *
+ * - sideOrientation='forward': BP→EP を見て右が +、左が -
+ * - sideOrientation='reverse': EP→BP を見て右が +、左が -
+ *
+ * 直立要素 (slopeUnit='vertical') は水平移動 0、平面位置は前頂点と一致するためスキップする。
+ */
+type StationVertex = {
+  x: number
+  y: number
+  offset: number // 中心からの符号付き水平距離 (m)、正=ユーザー視点の右
+  label: string
+  side: 'right' | 'left' | 'center'
+}
+
+function computeStationVertices(
+  station: StationRow,
+  standardCS: StandardCrossSection,
+  segments: AlignmentSegment[],
+  sideOrientation: SideOrientation,
+): StationVertex[] {
+  const cs = station.crossSection ?? standardCS
+  const center = pointAtDistance(segments, station.distance)
+  const tangent = tangentAtDistance(segments, station.distance)
+  if (!center || !tangent) return []
+  const sign = sideOrientation === 'forward' ? 1 : -1
+  // 進行方向の "右" 単位ベクトル（ユーザー視点）。
+  // (x=北, y=東) 系で進行方向 (tx, ty) の CCW 90° = (-ty, tx) が、地図上では進行方向の右。
+  const perp = { x: -tangent.y * sign, y: tangent.x * sign }
+  const out: StationVertex[] = [
+    { x: center.x, y: center.y, offset: 0, label: 'CL', side: 'center' },
+  ]
+  let cum = 0
+  for (let i = 0; i < cs.right.length; i++) {
+    const e = cs.right[i]
+    if (e.slopeUnit !== 'vertical') cum += e.width
+    out.push({
+      x: center.x + cum * perp.x,
+      y: center.y + cum * perp.y,
+      offset: cum,
+      label: e.name || `R${i + 1}`,
+      side: 'right',
+    })
+  }
+  cum = 0
+  for (let i = 0; i < cs.left.length; i++) {
+    const e = cs.left[i]
+    if (e.slopeUnit !== 'vertical') cum += e.width
+    out.push({
+      x: center.x - cum * perp.x,
+      y: center.y - cum * perp.y,
+      offset: -cum,
+      label: e.name || `L${i + 1}`,
+      side: 'left',
+    })
+  }
+  return out
+}
 
 /**
  * 数値入力（途中の "-" や "1." も受け入れる）。
@@ -765,6 +828,32 @@ export function OpenChannelAlignmentPage() {
     setSelectedStationId(null)
   }, [selectedId])
 
+  // 地図上の断面オーバーレイ表示モード
+  type OverlayMode = 'none' | 'selected' | 'all'
+  const [overlayMode, setOverlayMode] = useState<OverlayMode>('all')
+
+  // 各中間点の断面を平面に投影した頂点列をまとめて算出
+  const stationVertexLists = useMemo(() => {
+    if (!selected) return [] as { station: StationRow; vertices: StationVertex[] }[]
+    return stations.map((s) => ({
+      station: s,
+      vertices: computeStationVertices(
+        s,
+        selected.standardCrossSection,
+        segments,
+        selected.sideOrientation,
+      ),
+    }))
+  }, [selected, stations, segments])
+
+  // 表示対象を overlayMode で絞り込む
+  const visibleStationVertices = useMemo(() => {
+    if (overlayMode === 'none') return []
+    if (overlayMode === 'selected')
+      return stationVertexLists.filter((s) => s.station.id === selectedStationId)
+    return stationVertexLists
+  }, [stationVertexLists, overlayMode, selectedStationId])
+
   if (!currentFarm) {
     return (
       <div className="h-full flex flex-col">
@@ -841,6 +930,33 @@ export function OpenChannelAlignmentPage() {
                   <Trash2 className="h-3 w-3" />
                   この線形物を削除
                 </button>
+
+                {/* 左右の基準方向 */}
+                <div className="border-t pt-2">
+                  <div className="text-[11px] text-slate-500 mb-1">左右の基準方向</div>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => updateChannel(selected.id, { sideOrientation: 'forward' })}
+                      className={`flex-1 px-2 py-1 text-[11px] border rounded ${
+                        selected.sideOrientation === 'forward'
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white hover:bg-slate-50'
+                      }`}
+                    >
+                      起点→終点を見て（道路）
+                    </button>
+                    <button
+                      onClick={() => updateChannel(selected.id, { sideOrientation: 'reverse' })}
+                      className={`flex-1 px-2 py-1 text-[11px] border rounded ${
+                        selected.sideOrientation === 'reverse'
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white hover:bg-slate-50'
+                      }`}
+                    >
+                      終点→起点を見て（河川）
+                    </button>
+                  </div>
+                </div>
               </section>
 
               {/* 標準断面 */}
@@ -1259,10 +1375,26 @@ export function OpenChannelAlignmentPage() {
                         </tbody>
                       </table>
                     </div>
-                    <div className="flex justify-end">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-slate-500">地図に断面を表示:</span>
+                      <div className="flex gap-1">
+                        {(['none', 'selected', 'all'] as const).map((m) => (
+                          <button
+                            key={m}
+                            onClick={() => setOverlayMode(m)}
+                            className={`px-2 py-0.5 text-[11px] border rounded ${
+                              overlayMode === m
+                                ? 'bg-blue-600 text-white border-blue-600'
+                                : 'bg-white hover:bg-slate-50'
+                            }`}
+                          >
+                            {m === 'none' ? 'なし' : m === 'selected' ? '選択中' : '全て'}
+                          </button>
+                        ))}
+                      </div>
                       <button
                         onClick={handleClearStations}
-                        className="px-2 py-1 text-xs border rounded text-slate-600 hover:bg-slate-50"
+                        className="ml-auto px-2 py-1 text-xs border rounded text-slate-600 hover:bg-slate-50"
                       >
                         全クリア
                       </button>
@@ -1380,6 +1512,56 @@ export function OpenChannelAlignmentPage() {
               {sampledLatLng.length >= 2 && (
                 <Polyline positions={sampledLatLng} pathOptions={{ color: '#0ea5e9', weight: 3 }} />
               )}
+              {/* 中間点ごとの断面オーバーレイ */}
+              {visibleStationVertices.map(({ station, vertices }) => {
+                if (vertices.length < 2) return null
+                const isSel = station.id === selectedStationId
+                const positions: [number, number][] = vertices.map((v) => {
+                  const ll = converter.toLatLng(v.x, v.y)
+                  return [ll.lat, ll.lng]
+                })
+                const lineColor = isSel ? '#dc2626' : '#7c3aed'
+                const opacity = isSel ? 1 : 0.6
+                return (
+                  <div key={`cs-${station.id}`}>
+                    <Polyline
+                      positions={positions}
+                      pathOptions={{
+                        color: lineColor,
+                        weight: isSel ? 2.5 : 1.5,
+                        opacity,
+                      }}
+                    />
+                    {vertices.map((v, vi) => {
+                      const ll = converter.toLatLng(v.x, v.y)
+                      const fill =
+                        v.side === 'center'
+                          ? '#0ea5e9'
+                          : v.side === 'right'
+                          ? '#16a34a'
+                          : '#f59e0b'
+                      return (
+                        <CircleMarker
+                          key={`csv-${station.id}-${vi}`}
+                          center={[ll.lat, ll.lng]}
+                          radius={isSel ? 3.5 : 2.5}
+                          pathOptions={{
+                            color: '#fff',
+                            fillColor: fill,
+                            fillOpacity: opacity,
+                            weight: 1,
+                          }}
+                        >
+                          <Tooltip direction="right" offset={[4, 0]} className="!text-[10px]">
+                            {station.label} / {v.label}
+                            {v.side !== 'center' ? ` (${v.offset.toFixed(2)}m)` : ''}
+                          </Tooltip>
+                        </CircleMarker>
+                      )
+                    })}
+                  </div>
+                )
+              })}
               {stations.map((s) => {
                 const p = pointAtDistance(segments, s.distance)
                 if (!p) return null
