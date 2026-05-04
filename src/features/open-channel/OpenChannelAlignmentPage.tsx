@@ -41,26 +41,54 @@ import {
   type AlignmentSegment,
   type AlignmentVertex,
 } from '@/lib/openChannel/alignment'
+import { downloadSimaFile, type SimaExportPoint } from '@/lib/sima-parser'
+import { buildLandXml } from '@/lib/landxml/exporter'
+import type { TinPoint, TinTriangle, TinSurface } from '@/lib/landxml/surface'
 
 /**
- * 中間点 1 つの断面要素境界点を、平面座標 (x_north, y_east) にプロジェクションして返す。
+ * 中間点 1 つの断面要素境界点を、平面座標 (x_north, y_east) + 標高 z にプロジェクションして返す。
  *
  * - sideOrientation='forward': BP→EP を見て右が +、左が -
  * - sideOrientation='reverse': EP→BP を見て右が +、左が -
- *
- * 直立要素 (slopeUnit='vertical') は水平移動 0、平面位置は前頂点と一致するためスキップする。
+ * - 標高 z = 中心線床高（profile_points を線形補間） + 断面要素累積高さ
+ * - 直立要素 (slopeUnit='vertical') は水平移動 0 (前頂点と同じ平面位置に重なる)。
  */
 type StationVertex = {
   x: number
   y: number
+  z: number
   offset: number // 中心からの符号付き水平距離 (m)、正=ユーザー視点の右
+  localH: number // 中心床高からの局所高さ (m)
   label: string
   side: 'right' | 'left' | 'center'
+}
+
+function interpolateProfileZ(
+  profilePoints: ProfilePoint[],
+  distance: number,
+): number {
+  if (profilePoints.length === 0) return 0
+  const sorted = [...profilePoints].sort((a, b) => a.distance - b.distance)
+  if (distance <= sorted[0].distance) return sorted[0].floorHeight
+  const last = sorted[sorted.length - 1]
+  if (distance >= last.distance) return last.floorHeight
+  for (let i = 1; i < sorted.length; i++) {
+    const a = sorted[i - 1]
+    const b = sorted[i]
+    if (distance >= a.distance && distance <= b.distance) {
+      const dx = b.distance - a.distance
+      if (dx < 1e-9) return a.floorHeight
+      const t = (distance - a.distance) / dx
+      return a.floorHeight + (b.floorHeight - a.floorHeight) * t
+    }
+  }
+  return last.floorHeight
 }
 
 function computeStationVertices(
   station: StationRow,
   standardCS: StandardCrossSection,
+  profilePoints: ProfilePoint[],
   segments: AlignmentSegment[],
   sideOrientation: SideOrientation,
 ): StationVertex[] {
@@ -69,32 +97,51 @@ function computeStationVertices(
   const tangent = tangentAtDistance(segments, station.distance)
   if (!center || !tangent) return []
   const sign = sideOrientation === 'forward' ? 1 : -1
-  // 進行方向の "右" 単位ベクトル（ユーザー視点）。
-  // (x=北, y=東) 系で進行方向 (tx, ty) の CCW 90° = (-ty, tx) が、地図上では進行方向の右。
+  // (x=北, y=東) 系で進行方向 (tx, ty) の CCW 90° = (-ty, tx) が地図上の進行方向の右。
+  // sign=-1 で河川向き（EP→BP 視点の右 = BP→EP 視点の左）に反転。
   const perp = { x: -tangent.y * sign, y: tangent.x * sign }
+  const centerZ = interpolateProfileZ(profilePoints, station.distance)
   const out: StationVertex[] = [
-    { x: center.x, y: center.y, offset: 0, label: 'CL', side: 'center' },
+    {
+      x: center.x,
+      y: center.y,
+      z: centerZ,
+      offset: 0,
+      localH: 0,
+      label: 'CL',
+      side: 'center',
+    },
   ]
   let cum = 0
+  let localH = 0
   for (let i = 0; i < cs.right.length; i++) {
     const e = cs.right[i]
-    if (e.slopeUnit !== 'vertical') cum += e.width
+    const step = elementStep(e, 1)
+    cum += step.dx
+    localH += step.dy
     out.push({
       x: center.x + cum * perp.x,
       y: center.y + cum * perp.y,
+      z: centerZ + localH,
       offset: cum,
+      localH,
       label: e.name || `R${i + 1}`,
       side: 'right',
     })
   }
   cum = 0
+  localH = 0
   for (let i = 0; i < cs.left.length; i++) {
     const e = cs.left[i]
-    if (e.slopeUnit !== 'vertical') cum += e.width
+    const step = elementStep(e, -1)
+    cum += step.dx
+    localH += step.dy
     out.push({
-      x: center.x - cum * perp.x,
-      y: center.y - cum * perp.y,
-      offset: -cum,
+      x: center.x + cum * perp.x,
+      y: center.y + cum * perp.y,
+      z: centerZ + localH,
+      offset: cum,
+      localH,
       label: e.name || `L${i + 1}`,
       side: 'left',
     })
@@ -840,6 +887,7 @@ export function OpenChannelAlignmentPage() {
       vertices: computeStationVertices(
         s,
         selected.standardCrossSection,
+        selected.profilePoints,
         segments,
         selected.sideOrientation,
       ),
@@ -853,6 +901,143 @@ export function OpenChannelAlignmentPage() {
       return stationVertexLists.filter((s) => s.station.id === selectedStationId)
     return stationVertexLists
   }, [stationVertexLists, overlayMode, selectedStationId])
+
+  // ---- エクスポート ----
+
+  /**
+   * 各測点の断面頂点から TIN サーフェスを構築する。
+   *
+   * 断面ごとの頂点並び: [CL, R1, R2, ..., R_nR, L1, L2, ..., L_nL]
+   * 隣接する 2 測点の同じ要素番号 k のセル（CL→R1→R2... または CL→L1→L2...）を四角形 → 2 三角形に分割する。
+   * 個別断面で要素数が異なる測点間では、共通する分（min）までで打ち切る。
+   *
+   * 三角形の巻き向きは外積で判定し、平面 (x=北, y=東) の math-CCW 側を選ぶ
+   * （LandXML エクスポータ側で b/c を入替して上空視点 CCW に揃える）。
+   */
+  const stationTin = useMemo<TinSurface | null>(() => {
+    if (!selected) return null
+    const sorted = stationVertexLists
+      .filter((s) => s.vertices.length > 0)
+      .sort((a, b) => a.station.distance - b.station.distance)
+    if (sorted.length < 2) return null
+
+    const points: TinPoint[] = []
+    const stationPointIdx: number[][] = []
+    for (const sv of sorted) {
+      const idxs: number[] = []
+      for (const v of sv.vertices) {
+        idxs.push(points.length)
+        points.push({ x: v.x, y: v.y, z: v.z, source: 'plan' })
+      }
+      stationPointIdx.push(idxs)
+    }
+
+    const triangles: TinTriangle[] = []
+    const emitQuad = (iA: number, iA1: number, iB: number, iB1: number) => {
+      if (iA === iA1 || iB === iB1) return
+      const A = points[iA]
+      const A1 = points[iA1]
+      const B1 = points[iB1]
+      const cross = (A1.x - A.x) * (B1.y - A.y) - (A1.y - A.y) * (B1.x - A.x)
+      if (cross >= 0) {
+        triangles.push({ a: iA, b: iA1, c: iB1 })
+        triangles.push({ a: iA, b: iB1, c: iB })
+      } else {
+        triangles.push({ a: iA, b: iB1, c: iA1 })
+        triangles.push({ a: iA, b: iB, c: iB1 })
+      }
+    }
+
+    const csOf = (st: StationRow) =>
+      st.crossSection ?? selected.standardCrossSection
+
+    for (let s = 0; s < sorted.length - 1; s++) {
+      const A = sorted[s]
+      const B = sorted[s + 1]
+      const aR = csOf(A.station).right.length
+      const bR = csOf(B.station).right.length
+      const aL = csOf(A.station).left.length
+      const bL = csOf(B.station).left.length
+
+      // Right strip: CL→R1→...→R_min(aR,bR)
+      const nR = Math.min(aR, bR)
+      for (let k = 0; k < nR; k++) {
+        emitQuad(
+          stationPointIdx[s][k],
+          stationPointIdx[s][k + 1],
+          stationPointIdx[s + 1][k],
+          stationPointIdx[s + 1][k + 1],
+        )
+      }
+
+      // Left strip: CL→L1→L2→...
+      // 頂点並び [CL, R..., L...] のため L_i は index 1+aR+i-1 = aR+i (i は 1 始まり)
+      const nL = Math.min(aL, bL)
+      for (let k = 0; k < nL; k++) {
+        const iA = k === 0 ? stationPointIdx[s][0] : stationPointIdx[s][aR + k]
+        const iA1 = stationPointIdx[s][aR + k + 1]
+        const iB = k === 0 ? stationPointIdx[s + 1][0] : stationPointIdx[s + 1][bR + k]
+        const iB1 = stationPointIdx[s + 1][bR + k + 1]
+        emitQuad(iA, iA1, iB, iB1)
+      }
+    }
+
+    const zs = points.map((p) => p.z)
+    return {
+      points,
+      triangles,
+      stats: {
+        pointCount: points.length,
+        triangleCount: triangles.length,
+        zMin: zs.length > 0 ? Math.min(...zs) : 0,
+        zMax: zs.length > 0 ? Math.max(...zs) : 0,
+      },
+    }
+  }, [selected, stationVertexLists])
+
+  const handleExportSima = () => {
+    if (!selected || stationVertexLists.length === 0) return
+    const sorted = [...stationVertexLists].sort(
+      (a, b) => a.station.distance - b.station.distance,
+    )
+    const points: SimaExportPoint[] = []
+    for (const sv of sorted) {
+      for (const v of sv.vertices) {
+        points.push({
+          pointNumber: `${sv.station.label}_${v.label}`,
+          x: v.x,
+          y: v.y,
+          z: v.z,
+        })
+      }
+    }
+    if (points.length === 0) return
+    const safeName = selected.name.replace(/[^\w\-_]/g, '_')
+    downloadSimaFile(
+      { projectName: selected.name, zone, points },
+      `${safeName}_sections.sim`,
+    )
+  }
+
+  const handleExportLandXml = () => {
+    if (!selected || !stationTin) return
+    const xml = buildLandXml({
+      alignments: [],
+      surfaces: [{ name: selected.name, surface: stationTin }],
+      projectName: selected.name,
+      coordinateZoneName: `JGD2011 zone ${zone}`,
+    })
+    const blob = new Blob([xml], { type: 'application/xml;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const safeName = selected.name.replace(/[^\w\-_]/g, '_')
+    a.href = url
+    a.download = `${safeName}_surface.xml`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
 
   if (!currentFarm) {
     return (
@@ -1375,7 +1560,7 @@ export function OpenChannelAlignmentPage() {
                         </tbody>
                       </table>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-[11px] text-slate-500">地図に断面を表示:</span>
                       <div className="flex gap-1">
                         {(['none', 'selected', 'all'] as const).map((m) => (
@@ -1398,6 +1583,30 @@ export function OpenChannelAlignmentPage() {
                       >
                         全クリア
                       </button>
+                    </div>
+                    <div className="flex items-center gap-2 pt-1 border-t mt-1">
+                      <span className="text-[11px] text-slate-500">エクスポート:</span>
+                      <button
+                        onClick={handleExportSima}
+                        disabled={stationVertexLists.length === 0}
+                        className="px-2 py-1 text-xs border rounded bg-white hover:bg-slate-50 disabled:opacity-50"
+                        title="各測点の断面変化点を SIMA 座標として出力"
+                      >
+                        SIMA
+                      </button>
+                      <button
+                        onClick={handleExportLandXml}
+                        disabled={!stationTin || stationTin.triangles.length === 0}
+                        className="px-2 py-1 text-xs border rounded bg-white hover:bg-slate-50 disabled:opacity-50"
+                        title="隣接測点の同要素番号同士を結んで TIN を作成"
+                      >
+                        LandXML (TIN)
+                      </button>
+                      {stationTin && (
+                        <span className="text-[10px] text-slate-400 ml-auto">
+                          {stationTin.points.length} 点 / {stationTin.triangles.length} 三角形
+                        </span>
+                      )}
                     </div>
 
                     {selectedStation && (
