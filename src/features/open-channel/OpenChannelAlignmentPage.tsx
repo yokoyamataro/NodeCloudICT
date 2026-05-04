@@ -6,7 +6,7 @@
 // - 座標管理の点を参照する
 // - 地図で線形（直線 + 曲線）をプレビュー
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { MapContainer, TileLayer, Polyline, CircleMarker, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -26,6 +26,7 @@ import {
   type StationRow,
   buildCrossSectionPath,
   formatSlope,
+  elementStep,
 } from '@/stores/openChannelStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import {
@@ -37,6 +38,68 @@ import {
   getCornerIpStations,
   type AlignmentVertex,
 } from '@/lib/openChannel/alignment'
+
+/**
+ * 数値入力（途中の "-" や "1." も受け入れる）。
+ * 親 state には数値として確定した瞬間に通知し、表示は手元のテキストを優先する。
+ */
+function NumberInput({
+  value,
+  onChange,
+  step,
+  className,
+  disabled,
+  placeholder,
+}: {
+  value: number
+  onChange: (v: number) => void
+  step?: number
+  className?: string
+  disabled?: boolean
+  placeholder?: string
+}) {
+  const [text, setText] = useState<string>(() => String(value))
+  const lastEmitted = useRef<number>(value)
+
+  // 外部から value が変わったときは表示を同期（自分が onChange した結果と同値なら無視）
+  useEffect(() => {
+    if (value === lastEmitted.current) return
+    setText(String(value))
+    lastEmitted.current = value
+  }, [value])
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      step={step}
+      value={text}
+      placeholder={placeholder}
+      disabled={disabled}
+      className={className}
+      onChange={(e) => {
+        const t = e.target.value
+        setText(t)
+        if (t === '' || t === '-' || t === '.' || t === '-.') return
+        const v = parseFloat(t)
+        if (Number.isFinite(v)) {
+          lastEmitted.current = v
+          onChange(v)
+        }
+      }}
+      onBlur={() => {
+        const v = parseFloat(text)
+        if (Number.isFinite(v)) {
+          lastEmitted.current = v
+          onChange(v)
+          setText(String(v))
+        } else {
+          setText(String(value))
+        }
+      }}
+    />
+  )
+}
 
 /** タイトルのみで折りたたみ可能なセクション（開閉状態は localStorage に記憶可）。 */
 function CollapsibleSection({
@@ -144,16 +207,18 @@ function CrossSectionDiagram({ cs }: { cs: StandardCrossSection }) {
   let cy = 0
   for (const e of cs.right) {
     const from = { x: cx, y: cy }
-    cx += e.width
-    cy += e.width * (e.slopeUnit === 'percent' ? e.slopeValue / 100 : (Math.abs(e.slopeValue) < 1e-9 ? 0 : Math.sign(e.slopeValue) / Math.abs(e.slopeValue)))
+    const { dx, dy } = elementStep(e, 1)
+    cx += dx
+    cy += dy
     segs.push({ from, to: { x: cx, y: cy }, e })
   }
   cx = 0
   cy = 0
   for (const e of cs.left) {
     const from = { x: cx, y: cy }
-    cx += -e.width
-    cy += e.width * (e.slopeUnit === 'percent' ? e.slopeValue / 100 : (Math.abs(e.slopeValue) < 1e-9 ? 0 : Math.sign(e.slopeValue) / Math.abs(e.slopeValue)))
+    const { dx, dy } = elementStep(e, -1)
+    cx += dx
+    cy += dy
     segs.push({ from, to: { x: cx, y: cy }, e })
   }
 
@@ -374,58 +439,56 @@ function CrossSectionSideEditor({
               <th className="px-1 py-1 w-6 text-center">#</th>
               <th className="px-1 py-1 text-left">種別</th>
               <th className="px-1 py-1 text-right w-14">幅(m)</th>
-              <th className="px-1 py-1 text-right w-14">勾配</th>
-              <th className="px-1 py-1 text-center w-14">単位</th>
+              <th className="px-1 py-1 text-right w-16">勾配/高さ</th>
+              <th className="px-1 py-1 text-center w-16">単位</th>
               <th className="px-1 py-1 w-16"></th>
             </tr>
           </thead>
           <tbody>
-            {elements.map((el, i) => (
-              <tr key={el.id} className="border-t">
-                <td className="px-1 py-1 text-center text-slate-500">{i + 1}</td>
-                <td className="px-1 py-1">
-                  <input
-                    type="text"
-                    value={el.name}
-                    onChange={(e) => updateAt(i, { name: e.target.value })}
-                    placeholder="例: 床 / 法面 / 路面"
-                    className="w-full px-1 py-0.5 border rounded text-xs"
-                  />
-                </td>
-                <td className="px-1 py-1 text-right">
-                  <input
-                    type="number"
-                    step={0.05}
-                    value={el.width}
-                    onChange={(e) => {
-                      const v = parseFloat(e.target.value)
-                      if (Number.isFinite(v) && v >= 0) updateAt(i, { width: v })
-                    }}
-                    className="w-14 px-1 py-0.5 border rounded text-right text-xs"
-                  />
-                </td>
-                <td className="px-1 py-1 text-right">
-                  <input
-                    type="number"
-                    step={el.slopeUnit === 'percent' ? 0.1 : 0.05}
-                    value={el.slopeValue}
-                    onChange={(e) => {
-                      const v = parseFloat(e.target.value)
-                      if (Number.isFinite(v)) updateAt(i, { slopeValue: v })
-                    }}
-                    className="w-14 px-1 py-0.5 border rounded text-right text-xs"
-                  />
-                </td>
-                <td className="px-1 py-1 text-center">
-                  <select
-                    value={el.slopeUnit}
-                    onChange={(e) => updateAt(i, { slopeUnit: e.target.value as SlopeUnit })}
-                    className="px-1 py-0.5 border rounded text-xs"
-                  >
-                    <option value="ratio">1:i</option>
-                    <option value="percent">%</option>
-                  </select>
-                </td>
+            {elements.map((el, i) => {
+              const isVertical = el.slopeUnit === 'vertical'
+              return (
+                <tr key={el.id} className="border-t">
+                  <td className="px-1 py-1 text-center text-slate-500">{i + 1}</td>
+                  <td className="px-1 py-1">
+                    <input
+                      type="text"
+                      value={el.name}
+                      onChange={(e) => updateAt(i, { name: e.target.value })}
+                      placeholder="例: 床 / 法面 / 路面"
+                      className="w-full px-1 py-0.5 border rounded text-xs"
+                    />
+                  </td>
+                  <td className="px-1 py-1 text-right">
+                    <NumberInput
+                      step={0.05}
+                      value={isVertical ? 0 : el.width}
+                      disabled={isVertical}
+                      onChange={(v) => {
+                        if (v >= 0) updateAt(i, { width: v })
+                      }}
+                      className="w-14 px-1 py-0.5 border rounded text-right text-xs disabled:bg-slate-100 disabled:text-slate-400"
+                    />
+                  </td>
+                  <td className="px-1 py-1 text-right">
+                    <NumberInput
+                      step={el.slopeUnit === 'percent' ? 0.1 : 0.05}
+                      value={el.slopeValue}
+                      onChange={(v) => updateAt(i, { slopeValue: v })}
+                      className="w-16 px-1 py-0.5 border rounded text-right text-xs"
+                    />
+                  </td>
+                  <td className="px-1 py-1 text-center">
+                    <select
+                      value={el.slopeUnit}
+                      onChange={(e) => updateAt(i, { slopeUnit: e.target.value as SlopeUnit })}
+                      className="px-1 py-0.5 border rounded text-xs"
+                    >
+                      <option value="ratio">1:i</option>
+                      <option value="percent">%</option>
+                      <option value="vertical">直立 m</option>
+                    </select>
+                  </td>
                 <td className="px-1 py-1 text-right">
                   <div className="flex gap-0.5 justify-end">
                     <button
@@ -451,7 +514,8 @@ function CrossSectionSideEditor({
                   </div>
                 </td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       )}

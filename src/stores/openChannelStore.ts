@@ -19,17 +19,22 @@ export interface ProfilePoint {
   floorHeight: number
 }
 
-/** 勾配の表記単位 */
-export type SlopeUnit = 'ratio' | 'percent'
+/** 勾配の表記単位
+ *  - 'ratio'    : 1:i 表記（slopeValue=i, 符号で上下）
+ *  - 'percent'  : i % 表記（slopeValue=i, 符号で上下）
+ *  - 'vertical' : 直立（水平 0 のまま slopeValue 分だけ高さ変化、+ で上り、- で下り）
+ */
+export type SlopeUnit = 'ratio' | 'percent' | 'vertical'
 
 /**
  * 標準断面の 1 要素（中心からの 1 区間）。
  *
- * - `width` は水平方向の幅 (m, 正値)。
+ * - `width` は水平方向の幅 (m, 正値)。`slopeUnit='vertical'` のときは無視され 0 として扱う。
  * - `slopeValue` は数値で、符号は外側に向かう向きでの上下を表す:
  *   + = 上り（外側に向かって上がる）/ - = 下り。
  *   - `slopeUnit='ratio'`: 「1:value」と解釈。0 は不可（フラットは percent 0% を使用）。
  *   - `slopeUnit='percent'`: 「value %」と解釈（0% フラット）。
+ *   - `slopeUnit='vertical'`: 高さ (m) として解釈。dx=0, dy=slopeValue。
  * - `name` はラベル（床 / 法面 / 道路部 など）。色分け等の将来拡張用。
  */
 export interface CrossSectionElement {
@@ -203,11 +208,28 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
   },
 }))
 
-/** 要素 1 区間の "外側 1m あたり何 m 上昇するか"（符号付き）。 */
+/** 要素 1 区間の "外側 1m あたり何 m 上昇するか"（符号付き）。vertical 用ではない。 */
 export function elementSlopePerMeter(e: CrossSectionElement): number {
   if (e.slopeUnit === 'percent') return e.slopeValue / 100
-  if (Math.abs(e.slopeValue) < 1e-9) return 0
-  return Math.sign(e.slopeValue) * (1 / Math.abs(e.slopeValue))
+  if (e.slopeUnit === 'ratio') {
+    if (Math.abs(e.slopeValue) < 1e-9) return 0
+    return Math.sign(e.slopeValue) * (1 / Math.abs(e.slopeValue))
+  }
+  return 0 // vertical: 水平変化なし（dy は slopeValue を直接用いる）
+}
+
+/**
+ * 要素 1 区間の (dx, dy) を返す。`sideSign=+1` で右側、`-1` で左側。
+ *  - 'ratio' / 'percent': dx = sideSign * width, dy = width * slopeFactor
+ *  - 'vertical'         : dx = 0, dy = slopeValue
+ */
+export function elementStep(
+  e: CrossSectionElement,
+  sideSign: 1 | -1,
+): { dx: number; dy: number } {
+  if (e.slopeUnit === 'vertical') return { dx: 0, dy: e.slopeValue }
+  const slopeFactor = elementSlopePerMeter(e)
+  return { dx: sideSign * e.width, dy: e.width * slopeFactor }
 }
 
 /** 標準断面を、中心 (0,0) を含む 2D 折れ線（左端 → 右端）に展開する。 */
@@ -218,8 +240,9 @@ export function buildCrossSectionPath(cs: StandardCrossSection): { x: number; y:
   let cy = 0
   const leftPoints: { x: number; y: number }[] = []
   for (const e of cs.left) {
-    cx += -e.width
-    cy += e.width * elementSlopePerMeter(e)
+    const { dx, dy } = elementStep(e, -1)
+    cx += dx
+    cy += dy
     leftPoints.push({ x: cx, y: cy })
   }
   out.push(...leftPoints.reverse())
@@ -227,20 +250,26 @@ export function buildCrossSectionPath(cs: StandardCrossSection): { x: number; y:
   cx = 0
   cy = 0
   for (const e of cs.right) {
-    cx += e.width
-    cy += e.width * elementSlopePerMeter(e)
+    const { dx, dy } = elementStep(e, 1)
+    cx += dx
+    cy += dy
     out.push({ x: cx, y: cy })
   }
   return out
 }
 
-/** 勾配を人間可読な文字列に整形（例: "1:0.5"、"-2.0%"、"水平"）。 */
+/** 勾配を人間可読な文字列に整形。 */
 export function formatSlope(e: CrossSectionElement): string {
+  const trim = (n: number, d = 2) => n.toFixed(d).replace(/\.?0+$/, '')
+  if (e.slopeUnit === 'vertical') {
+    if (Math.abs(e.slopeValue) < 1e-9) return '直立0m'
+    return e.slopeValue > 0 ? `↑${trim(e.slopeValue)}m` : `↓${trim(-e.slopeValue)}m`
+  }
   if (e.slopeUnit === 'percent') {
     if (Math.abs(e.slopeValue) < 1e-9) return '0%'
-    return `${e.slopeValue >= 0 ? '+' : ''}${e.slopeValue.toFixed(2).replace(/\.?0+$/, '')}%`
+    return `${e.slopeValue >= 0 ? '+' : ''}${trim(e.slopeValue)}%`
   }
   if (Math.abs(e.slopeValue) < 1e-9) return '水平'
   const sign = e.slopeValue < 0 ? '↓' : '↑'
-  return `1:${Math.abs(e.slopeValue).toFixed(2).replace(/\.?0+$/, '')}${sign}`
+  return `1:${trim(Math.abs(e.slopeValue))}${sign}`
 }
