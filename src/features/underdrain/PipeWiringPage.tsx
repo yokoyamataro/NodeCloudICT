@@ -967,6 +967,15 @@ export function PipeWiringPage() {
     )
   }, [pipes, generatePointName])
 
+  // 吸水管の全構成点名を返す（C, B{n}..., A）
+  const getAbsorptionVertexNames = useCallback((pipeId: string): string[] => {
+    const pipe = pipes.find((p) => p.id === pipeId)
+    if (!pipe || pipe.vertices.length === 0) return []
+    return pipe.vertices.map((_, idx) =>
+      generatePointName(pipe.number, idx, pipe.vertices.length),
+    )
+  }, [pipes, generatePointName])
+
   // 集水合流管の接続測点名を取得（集水管の下流点）
   const getMergePointName = useCallback((collectorPipeId: string | null): string | null => {
     if (!collectorPipeId) return null
@@ -1916,10 +1925,16 @@ export function PipeWiringPage() {
                                 >
                                   {isAbsorptionSelecting ? '選択中' : '+'}
                                 </button>
-                                {/* 接続点名を吸水列の右端に表示 */}
+                                {/* 接続点名を吸水列の右端に表示
+                                    - 吸水端部 / 吸水合流: 吸水管の全構成点名（C, B1, ..., A）を列挙
+                                    - それ以外: 接続点（A）のみ */}
                                 {row.collectorPipe && row.absorptionPipes.length > 0 && (
                                   <span className="text-xs text-slate-500 ml-1">
-                                    {getConnectionPointName(row.absorptionPipes, row.collectorPipe) || '-'}
+                                    {(row.rowType === 'absorption_end' || row.rowType === 'absorption_merge')
+                                      ? row.absorptionPipes
+                                          .flatMap((id) => getAbsorptionVertexNames(id))
+                                          .join(' ') || '-'
+                                      : getConnectionPointName(row.absorptionPipes, row.collectorPipe) || '-'}
                                   </span>
                                 )}
                               </div>
