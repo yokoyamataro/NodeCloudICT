@@ -433,6 +433,8 @@ export function ProjectListPage() {
 
       <div className="flex-1 flex overflow-hidden">
         {expandedList ? (
+        /* 左半分: 圃場一覧表 */
+        <div className="w-1/2 border-r flex flex-col overflow-hidden">
           <ExpandedProjectTable
             projects={projects}
             farms={farms}
@@ -442,9 +444,9 @@ export function ProjectListPage() {
             onSelectFarm={(farm) => setFarmActionDialog(farm)}
             onNewProject={() => setShowNewProjectDialog(true)}
           />
+        </div>
         ) : (
-        <>
-        {/* 左側: プロジェクト・圃場ツリー */}
+        /* 左側: プロジェクト・圃場ツリー */
         <div className="w-80 border-r bg-white flex flex-col overflow-hidden">
           {/* ヘッダー */}
           <div className="p-3 border-b flex items-center justify-between gap-1">
@@ -616,8 +618,9 @@ export function ProjectListPage() {
           </div>
 
         </div>
+        )}
 
-        {/* 右側: 地図 */}
+        {/* 右側: 地図（一覧表示モード共通） */}
         <div className="flex-1 bg-slate-100 flex flex-col">
           {/* 凡例（工種フィルター） */}
           <div className="p-3 bg-white border-b flex flex-wrap gap-4 items-center">
@@ -751,8 +754,6 @@ export function ProjectListPage() {
             </MapContainer>
           )}
         </div>
-        </>
-        )}
       </div>
 
       {/* 圃場アクション選択ダイアログ */}
@@ -1438,16 +1439,25 @@ function ProjectTableGroup({
           const summary = farmWorkAreaSummary[farm.id] || {}
           const grandTotal = ALL_WORK_TYPES.reduce((s, wt) => s + (summary[wt] || 0), 0)
           return (
-            <tr key={farm.id} className="hover:bg-slate-50 cursor-pointer" onDoubleClick={() => onOpenFarm(farm)}>
+            <tr key={farm.id} className="hover:bg-slate-50">
               <td className="px-2 py-1.5 border-b border-r pl-8">
-                <button
-                  onClick={() => onSelectFarm(farm)}
-                  className="flex items-center gap-1 text-slate-700 hover:text-blue-600"
-                  title="クリックでアクション選択（ダブルクリックで圃場編集）"
-                >
-                  <FolderOpen className="h-3.5 w-3.5 text-slate-400" />
-                  <span>{farm.name}</span>
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => onOpenFarm(farm)}
+                    className="flex items-center gap-1 text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                    title="圃場編集画面を開く"
+                  >
+                    <FolderOpen className="h-3.5 w-3.5" />
+                    <span>{farm.name}</span>
+                  </button>
+                  <button
+                    onClick={() => onSelectFarm(farm)}
+                    className="ml-1 px-1.5 py-0.5 text-[10px] text-slate-500 border rounded hover:bg-slate-50"
+                    title="アクション選択"
+                  >
+                    …
+                  </button>
+                </div>
               </td>
               {ALL_WORK_TYPES.map((wt) => (
                 <td key={wt} className="px-2 py-1.5 border-b border-r text-right font-mono text-slate-600">

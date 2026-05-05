@@ -106,6 +106,8 @@ export interface SystemCalcResult {
   dominantByWiringId: Map<string, number | null>
   /** wiringRowId → 当該行の累加延長（系統先頭は null） */
   cumulativeByWiringId: Map<string, number | null>
+  /** wiringRowId → 当該行の区間延長（前行の集水点 → 当該行の集水点まで。系統先頭は null） */
+  sectionByWiringId: Map<string, number | null>
 }
 
 export function computeAllHydraulicLengths(
@@ -160,6 +162,7 @@ export function computeAllHydraulicLengths(
   // 反復: collector_merge は他系統の最終 cum を要求するため、最大数回ループしながら解決。
   const finalCumByKey = new Map<string, number | null>()
   const cumulativeByWiringId = new Map<string, number | null>()
+  const sectionByWiringId = new Map<string, number | null>()
   const maxIter = 6
 
   // 各系統の入力を作る
@@ -215,9 +218,29 @@ export function computeAllHydraulicLengths(
         const r = items[i].row
         if (r.wiringRowId) cumulativeByWiringId.set(r.wiringRowId, cumArr[i])
       }
+      // 各行の区間延長 = 前行の collectorSegmentToNext（outlet/connection は 0）
+      // 先頭行（i = 0）と collector_merge 行は null
+      for (let i = 0; i < items.length; i++) {
+        const r = items[i].row
+        if (!r.wiringRowId) continue
+        if (i === 0) {
+          sectionByWiringId.set(r.wiringRowId, null)
+          continue
+        }
+        if (r.wiringRowType === 'collector_merge') {
+          sectionByWiringId.set(r.wiringRowId, null)
+          continue
+        }
+        const prevInput = items[i - 1].input
+        const prevSegRaw = prevInput.collectorSegmentToNext ?? 0
+        const prevIsOutletOrConn =
+          prevInput.collectorPipeType === 'outlet' ||
+          prevInput.collectorPipeType === 'connection'
+        sectionByWiringId.set(r.wiringRowId, prevIsOutletOrConn ? 0 : prevSegRaw)
+      }
     }
     if (!changed) break
   }
 
-  return { dominantByWiringId, cumulativeByWiringId }
+  return { dominantByWiringId, cumulativeByWiringId, sectionByWiringId }
 }

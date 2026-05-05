@@ -2040,16 +2040,20 @@ export function PipeWiringPage() {
                                   {isCollectorSelecting ? '選択中' : '選択'}
                                 </button>
                               )}
-                              {/* 累加延長 */}
+                              {/* 区間延長 [Σ 累加延長] */}
                               {(() => {
                                 const cum = hydraulicLengths.cumulativeByWiringId.get(row.id)
-                                if (cum == null) return null
+                                const sec = hydraulicLengths.sectionByWiringId.get(row.id)
+                                if (cum == null && sec == null) return null
                                 return (
                                   <span
                                     className="text-xs text-emerald-700 font-mono ml-1"
-                                    title="累加延長"
+                                    title="区間延長 [Σ 累加延長]"
                                   >
-                                    [Σ {cum.toFixed(1)} m]
+                                    {sec != null ? sec.toFixed(1) : '-'}
+                                    {cum != null && (
+                                      <> [Σ {cum.toFixed(1)} m]</>
+                                    )}
                                   </span>
                                 )
                               })()}

@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { MapContainer, TileLayer, Polyline, Popup, CircleMarker, Marker, Polygon, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { useUnderdrainStore, EXTENDED_PIPE_TYPES } from '@/stores/underdrainStore'
+import { useUnderdrainStore, EXTENDED_PIPE_TYPES, type ExtendedPipeType } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useWorkAreaStore, type WorkAreaRow } from '@/stores/workAreaStore'
 import { useMapViewStore } from '@/stores/mapViewStore'
@@ -115,6 +115,17 @@ interface PipeLineData {
   color: string
   weight: number
   measuredLength: number | null
+  designLength: number | null
+  vertexLength: number
+}
+
+// 管種コード → 表示ラベル
+const PIPE_TYPE_LABEL: Record<string, string> = Object.fromEntries(
+  EXTENDED_PIPE_TYPES.map((t) => [t.value, t.label])
+)
+function pipeTypeLabel(type: string | null): string {
+  if (!type) return '未設定'
+  return PIPE_TYPE_LABEL[type as ExtendedPipeType] ?? type
 }
 
 // 地図の表示状態を管理するコンポーネント
@@ -403,6 +414,14 @@ export function PipeMap({
 
       if (positions.length < 2) return null
 
+      // 頂点座標から実延長を計算
+      let vertexLength = 0
+      for (let i = 1; i < pipe.vertices.length; i++) {
+        const a = pipe.vertices[i - 1]
+        const b = pipe.vertices[i]
+        vertexLength += Math.hypot(b.x - a.x, b.y - a.y)
+      }
+
       return {
         id: pipe.id,
         number: pipe.number,
@@ -412,6 +431,8 @@ export function PipeMap({
         color: PIPE_COLORS[pipe.pipeType || 'default'] || PIPE_COLORS.default,
         weight: getDiameterWeight(pipe.diameter),
         measuredLength: pipe.measuredLength,
+        designLength: pipe.designLength,
+        vertexLength,
       }
     })
     .filter((p): p is PipeLineData => p !== null)
@@ -485,6 +506,14 @@ export function PipeMap({
           return pipe.weight
         }
 
+        // ポップアップに表示する延長: 設計延長 > 実測延長 > 頂点座標から計算
+        const displayLength =
+          pipe.designLength != null && Number.isFinite(pipe.designLength)
+            ? { value: pipe.designLength, source: '設計' }
+            : pipe.measuredLength != null && Number.isFinite(pipe.measuredLength)
+            ? { value: pipe.measuredLength, source: '実測' }
+            : { value: pipe.vertexLength, source: '計算' }
+
         return (
           <Polyline
             key={pipe.id}
@@ -515,7 +544,30 @@ export function PipeMap({
                 })
               },
             }}
-          />
+          >
+            <Popup>
+              <div className="text-xs space-y-0.5">
+                <div className="font-bold text-sm" style={{ color: pipe.color }}>
+                  {pipe.number}
+                </div>
+                <div>
+                  <span className="text-slate-500">管種: </span>
+                  <span className="font-medium">{pipeTypeLabel(pipe.pipeType)}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500">延長: </span>
+                  <span className="font-mono">{displayLength.value.toFixed(2)} m</span>
+                  <span className="text-slate-400 ml-1">({displayLength.source})</span>
+                </div>
+                <div>
+                  <span className="text-slate-500">管径: </span>
+                  <span className="font-mono">
+                    {pipe.diameter != null ? `${pipe.diameter} mm` : '未設定'}
+                  </span>
+                </div>
+              </div>
+            </Popup>
+          </Polyline>
         )
       })}
 
