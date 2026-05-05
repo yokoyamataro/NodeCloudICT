@@ -4,6 +4,7 @@ import type { PlanGroup } from '@/stores/constructionPlanStore'
 import type { PipeRow } from '@/stores/underdrainStore'
 import type { Farm } from '@/stores/farmStore'
 import { exportHydraulicCalcSheet, type HydraulicCalcSettings } from '@/lib/hydraulicCalcExport'
+import { useHydraulicSettingsStore } from '@/stores/hydraulicSettingsStore'
 
 interface HydraulicCalcModalProps {
   open: boolean
@@ -14,11 +15,8 @@ interface HydraulicCalcModalProps {
 }
 
 export function HydraulicCalcModal({ open, onClose, planGroups, pipes, farm }: HydraulicCalcModalProps) {
-  const [plannedFlow, setPlannedFlow] = useState(30)
-  const [pipeInterval, setPipeInterval] = useState<10 | 12>(10)
-  const [absorptionPipeType, setAbsorptionPipeType] = useState<1 | 2>(2)
-  const [collectorPipeType, setCollectorPipeType] = useState<1 | 2>(2)
-  const [lengthDecimals, setLengthDecimals] = useState<0 | 1 | 2>(1)
+  const { getSettings } = useHydraulicSettingsStore()
+  const settings = getSettings(farm?.id ?? null)
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -28,15 +26,15 @@ export function HydraulicCalcModal({ open, onClose, planGroups, pipes, farm }: H
     setGenerating(true)
     setError(null)
     try {
-      const settings: HydraulicCalcSettings = {
-        plannedFlow,
-        pipeInterval,
-        absorptionPipeType,
-        collectorPipeType,
-        lengthDecimals,
+      const exportSettings: HydraulicCalcSettings = {
+        plannedFlow: settings.plannedFlow,
+        pipeInterval: settings.pipeInterval,
+        absorptionPipeType: settings.absorptionPipeType,
+        collectorPipeType: settings.collectorPipeType,
+        lengthDecimals: settings.lengthDecimals,
       }
       await exportHydraulicCalcSheet({
-        settings,
+        settings: exportSettings,
         planGroups,
         pipes,
         farm,
@@ -66,67 +64,26 @@ export function HydraulicCalcModal({ open, onClose, planGroups, pipes, farm }: H
           </button>
         </div>
 
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium mb-1">計画流量 (mm/day)</label>
-            <input
-              type="number"
-              step="0.1"
-              value={plannedFlow}
-              onChange={(e) => setPlannedFlow(parseFloat(e.target.value) || 0)}
-              className="w-full px-3 py-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+        <div className="space-y-2 text-sm">
+          <div className="text-xs text-slate-500">
+            水理計算の設定は配管系統画面右上の「設定」から変更できます。
           </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">配線間隔 (m)</label>
-            <select
-              value={pipeInterval}
-              onChange={(e) => setPipeInterval(parseInt(e.target.value) as 10 | 12)}
-              className="w-full px-3 py-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value={10}>10m</option>
-              <option value={12}>12m</option>
-            </select>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium mb-1">吸水管種</label>
-              <select
-                value={absorptionPipeType}
-                onChange={(e) => setAbsorptionPipeType(parseInt(e.target.value) as 1 | 2)}
-                className="w-full px-3 py-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value={1}>1: 素焼土管</option>
-                <option value={2}>2: 合成樹脂管</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">集水管種</label>
-              <select
-                value={collectorPipeType}
-                onChange={(e) => setCollectorPipeType(parseInt(e.target.value) as 1 | 2)}
-                className="w-full px-3 py-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value={1}>1: 素焼土管</option>
-                <option value={2}>2: 合成樹脂管</option>
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">実延長の丸め桁数</label>
-            <select
-              value={lengthDecimals}
-              onChange={(e) => setLengthDecimals(parseInt(e.target.value) as 0 | 1 | 2)}
-              className="w-full px-3 py-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value={0}>0 桁（整数）</option>
-              <option value={1}>1 桁（例: 12.3）</option>
-              <option value={2}>2 桁（例: 12.34）</option>
-            </select>
-          </div>
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-1 border rounded p-3 bg-slate-50">
+            <dt className="text-slate-600">計画流量</dt>
+            <dd className="font-mono text-right">{settings.plannedFlow} mm/day</dd>
+            <dt className="text-slate-600">配線間隔</dt>
+            <dd className="font-mono text-right">{settings.pipeInterval} m</dd>
+            <dt className="text-slate-600">吸水管種</dt>
+            <dd className="font-mono text-right">
+              {settings.absorptionPipeType}: {settings.absorptionPipeType === 1 ? '素焼土管' : '合成樹脂管'}
+            </dd>
+            <dt className="text-slate-600">集水管種</dt>
+            <dd className="font-mono text-right">
+              {settings.collectorPipeType}: {settings.collectorPipeType === 1 ? '素焼土管' : '合成樹脂管'}
+            </dd>
+            <dt className="text-slate-600">実延長の丸め</dt>
+            <dd className="font-mono text-right">{settings.lengthDecimals} 桁</dd>
+          </dl>
 
           {error && (
             <div className="p-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">

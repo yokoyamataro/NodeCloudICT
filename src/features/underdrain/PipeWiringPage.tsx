@@ -15,6 +15,7 @@ import {
   RefreshCw,
   PlusCircle,
   Trash2,
+  Settings,
 } from 'lucide-react'
 import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
@@ -22,8 +23,11 @@ import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { usePipeWiringStore, type CollectorTab, type WiringRow, type RowType } from '@/stores/pipeWiringStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
+import { useHydraulicSettingsStore } from '@/stores/hydraulicSettingsStore'
+import { computeAllHydraulicLengths } from '@/lib/hydraulicCalc'
 import { PipeMap, type SurveyPointData, type PipeChangePoint } from '@/components/map/PipeMap'
 import type { PipeVertex } from '@/types/database'
+import { HydraulicSettingsModal } from './HydraulicSettingsModal'
 
 // タブの種類
 type TabType = 'collector' | 'direct'
@@ -45,7 +49,16 @@ export function PipeWiringPage() {
     loading: wiringLoading,
     saving: wiringSaving,
   } = usePipeWiringStore()
-  const { fetchPlan } = useConstructionPlanStore()
+  const { fetchPlan, planGroups } = useConstructionPlanStore()
+  const { getSettings } = useHydraulicSettingsStore()
+  const hydraulicSettings = getSettings(currentFarm?.id ?? null)
+  const [showHydraulicSettings, setShowHydraulicSettings] = useState(false)
+
+  // 各 wiring 行に対する 支配延長 / 累加延長 を算出
+  const hydraulicLengths = useMemo(
+    () => computeAllHydraulicLengths(planGroups, pipes, hydraulicSettings.pipeInterval),
+    [planGroups, pipes, hydraulicSettings.pipeInterval],
+  )
 
   // 前の圃場IDを保持するref
   const prevFarmIdRef = useRef<string | null>(null)
@@ -1569,6 +1582,19 @@ export function PipeWiringPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {/* 水理計算 設定ボタン */}
+          {selectionMode === 'none' && (
+            <button
+              onClick={() => setShowHydraulicSettings(true)}
+              disabled={!currentFarm}
+              className="flex items-center gap-1.5 px-3 py-2 text-slate-600 border rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50"
+              title="水理計算 設定（計画流量 / 配線間隔 / 管種 等）"
+            >
+              <Settings className="h-4 w-4" />
+              <span className="text-sm">設定</span>
+            </button>
+          )}
+
           {/* 再読み込みボタン */}
           {selectionMode === 'none' && (
             <>
@@ -1937,6 +1963,19 @@ export function PipeWiringPage() {
                                       : getConnectionPointName(row.absorptionPipes, row.collectorPipe) || '-'}
                                   </span>
                                 )}
+                                {/* 支配延長 */}
+                                {(() => {
+                                  const dom = hydraulicLengths.dominantByWiringId.get(row.id)
+                                  if (dom == null) return null
+                                  return (
+                                    <span
+                                      className="text-xs text-blue-700 font-mono ml-1"
+                                      title="支配延長 = 実延長 + 配線間隔/4 - 接続補正"
+                                    >
+                                      [{dom.toFixed(1)} m]
+                                    </span>
+                                  )
+                                })()}
                               </div>
                             )}
                           </td>
@@ -2001,6 +2040,19 @@ export function PipeWiringPage() {
                                   {isCollectorSelecting ? '選択中' : '選択'}
                                 </button>
                               )}
+                              {/* 累加延長 */}
+                              {(() => {
+                                const cum = hydraulicLengths.cumulativeByWiringId.get(row.id)
+                                if (cum == null) return null
+                                return (
+                                  <span
+                                    className="text-xs text-emerald-700 font-mono ml-1"
+                                    title="累加延長"
+                                  >
+                                    [Σ {cum.toFixed(1)} m]
+                                  </span>
+                                )
+                              })()}
                             </div>
                           </td>
                           {/* 行操作ボタン */}
@@ -2242,6 +2294,12 @@ export function PipeWiringPage() {
         </div>
       )}
 
+      {/* 水理計算設定モーダル */}
+      <HydraulicSettingsModal
+        open={showHydraulicSettings}
+        onClose={() => setShowHydraulicSettings(false)}
+        farmId={currentFarm?.id ?? null}
+      />
     </div>
   )
 }
