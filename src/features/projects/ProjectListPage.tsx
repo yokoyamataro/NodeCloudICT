@@ -16,18 +16,24 @@ import {
   UserPlus,
   UserMinus,
   Crosshair,
-  Maximize2,
   Minimize2,
   Table as TableIcon,
   Edit,
   Map as MapIcon,
   Lock,
+  Play,
+  Check,
 } from 'lucide-react'
 import { MapContainer, TileLayer, Marker, Popup, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useFarmStore, type Farm, type FarmLocation } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
+import {
+  useWorkStatusStore,
+  type WorkStatus,
+  STATUS_LABEL,
+} from '@/stores/workStatusStore'
 import { JGD2011_ZONES } from '@/lib/coordinates'
 import { CurrentLocationLayer } from '@/components/map/CurrentLocationLayer'
 import type { Project, ProjectMemberRole } from '@/types/database'
@@ -136,8 +142,8 @@ export function ProjectListPage() {
   // 現在地表示トグル
   const [showCurrentLocation, setShowCurrentLocation] = useState(false)
 
-  // 一覧拡大表示モード
-  const [expandedList, setExpandedList] = useState(false)
+  // 一覧拡大表示モード（デフォルト: 一覧表＋地図の2分割）
+  const [expandedList, setExpandedList] = useState(true)
   const [showNewFarmDialog, setShowNewFarmDialog] = useState<string | null>(null) // project_id
   const [newProjectName, setNewProjectName] = useState('')
   const [newProjectDescription, setNewProjectDescription] = useState('')
@@ -164,11 +170,21 @@ export function ProjectListPage() {
   const [newMemberRole, setNewMemberRole] = useState<ProjectMemberRole>('viewer')
   const [addingMember, setAddingMember] = useState(false)
 
+  const fetchStatuses = useWorkStatusStore((s) => s.fetchStatuses)
+  const cycleStatus = useWorkStatusStore((s) => s.cycleStatus)
+  const statusByKey = useWorkStatusStore((s) => s.statusByKey)
+
   useEffect(() => {
     fetchProjects()
     fetchFarms()
     fetchUserRoles()
   }, [fetchProjects, fetchFarms, fetchUserRoles])
+
+  useEffect(() => {
+    if (farms.length > 0) {
+      fetchStatuses(farms.map((f) => f.id))
+    }
+  }, [farms, fetchStatuses])
 
   // 圃場クリック時のアクション選択ダイアログ
   const [farmActionDialog, setFarmActionDialog] = useState<Farm | null>(null)
@@ -439,6 +455,8 @@ export function ProjectListPage() {
             projects={projects}
             farms={farms}
             farmWorkAreaSummary={farmWorkAreaSummary}
+            statusByKey={statusByKey}
+            onCycleStatus={cycleStatus}
             onClose={() => setExpandedList(false)}
             onOpenFarm={handleOpenFarm}
             onSelectFarm={(farm) => setFarmActionDialog(farm)}
@@ -455,10 +473,10 @@ export function ProjectListPage() {
               <button
                 onClick={() => setExpandedList(true)}
                 className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50"
-                title="一覧を拡大表示"
+                title="一覧表表示に切り替え"
               >
-                <Maximize2 className="h-3 w-3" />
-                拡大
+                <TableIcon className="h-3 w-3" />
+                一覧表
               </button>
               <button
                 onClick={() => setShowNewProjectDialog(true)}
@@ -1257,11 +1275,97 @@ export function ProjectListPage() {
   )
 }
 
+// 状態のスタイル
+const STATUS_STYLE: Record<WorkStatus, { wrap: string; icon: React.ReactNode | null }> = {
+  not_started: { wrap: 'text-slate-500', icon: null },
+  in_progress: {
+    wrap: 'text-amber-700 bg-amber-50',
+    icon: <Play className="h-3 w-3 fill-current" />,
+  },
+  completed: {
+    wrap: 'text-emerald-700 bg-emerald-50',
+    icon: <Check className="h-3.5 w-3.5" strokeWidth={3} />,
+  },
+}
+
+// 圃場×工種の面積セル（状態マーク付き、クリックで状態を循環）
+function StatusAreaCell({
+  area,
+  status,
+  onCycle,
+}: {
+  area: number
+  status: WorkStatus
+  onCycle: () => void
+}) {
+  if (area <= 0) {
+    return (
+      <td className="px-2 py-1.5 border-b border-r text-right font-mono text-slate-300">—</td>
+    )
+  }
+  const style = STATUS_STYLE[status]
+  return (
+    <td className="px-1 py-1 border-b border-r">
+      <button
+        onClick={onCycle}
+        className={`w-full flex items-center justify-end gap-1 px-1.5 py-0.5 rounded font-mono text-xs hover:ring-1 hover:ring-slate-300 ${style.wrap}`}
+        title={`${STATUS_LABEL[status]}（クリックで切替）`}
+      >
+        {style.icon}
+        <span>{area.toFixed(2)}</span>
+      </button>
+    </td>
+  )
+}
+
+// プロジェクト工種別の進捗集計
+interface WorkTypeProgress {
+  totalArea: number
+  completedArea: number
+  inProgressArea: number
+  total: number
+  completed: number
+  inProgress: number
+}
+
+function computeProgress(
+  farms: Farm[],
+  workType: string,
+  farmWorkAreaSummary: Record<string, Record<string, number>>,
+  statusByKey: Map<string, WorkStatus>,
+): WorkTypeProgress {
+  const r: WorkTypeProgress = {
+    totalArea: 0,
+    completedArea: 0,
+    inProgressArea: 0,
+    total: 0,
+    completed: 0,
+    inProgress: 0,
+  }
+  for (const farm of farms) {
+    const area = farmWorkAreaSummary[farm.id]?.[workType] ?? 0
+    if (area <= 0) continue
+    r.totalArea += area
+    r.total += 1
+    const status = statusByKey.get(`${farm.id}:${workType}`) ?? 'not_started'
+    if (status === 'completed') {
+      r.completedArea += area
+      r.completed += 1
+    } else if (status === 'in_progress') {
+      r.inProgressArea += area
+      r.inProgress += 1
+    }
+  }
+  return r
+}
+
 // 一覧拡大表示: 工種別面積テーブル
 function ExpandedProjectTable({
   projects,
   farms,
   farmWorkAreaSummary,
+  statusByKey,
+  onCycleStatus,
   onClose,
   onOpenFarm,
   onSelectFarm,
@@ -1270,36 +1374,19 @@ function ExpandedProjectTable({
   projects: Project[]
   farms: Farm[]
   farmWorkAreaSummary: Record<string, Record<string, number>>
+  statusByKey: Map<string, WorkStatus>
+  onCycleStatus: (farmId: string, workType: string) => void
   onClose: () => void
   onOpenFarm: (farm: Farm) => void
   onSelectFarm: (farm: Farm) => void
   onNewProject: () => void
 }) {
-  // プロジェクトごとの工種別合計
-  const projectTotals = useMemo(() => {
-    const result: Record<string, Record<string, number>> = {}
-    for (const project of projects) {
-      const totals: Record<string, number> = {}
-      const projFarms = farms.filter((f) => f.project_id === project.id)
-      for (const farm of projFarms) {
-        const summary = farmWorkAreaSummary[farm.id] || {}
-        for (const wt of ALL_WORK_TYPES) {
-          if (summary[wt]) {
-            totals[wt] = (totals[wt] || 0) + summary[wt]
-          }
-        }
-      }
-      result[project.id] = totals
-    }
-    return result
-  }, [projects, farms, farmWorkAreaSummary])
-
   return (
     <div className="flex-1 flex flex-col bg-white overflow-hidden">
       {/* ヘッダー */}
       <div className="p-3 border-b flex items-center gap-2">
         <TableIcon className="h-4 w-4 text-slate-500" />
-        <span className="font-medium text-sm">プロジェクト一覧（工種別面積）</span>
+        <span className="font-medium text-sm">プロジェクト一覧（工種別面積・進捗）</span>
         <div className="ml-auto flex items-center gap-1">
           <button
             onClick={onNewProject}
@@ -1311,12 +1398,29 @@ function ExpandedProjectTable({
           <button
             onClick={onClose}
             className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50"
-            title="地図表示に戻す"
+            title="ツリー表示に戻す"
           >
             <Minimize2 className="h-3 w-3" />
-            地図表示
+            ツリー表示
           </button>
         </div>
+      </div>
+
+      {/* 凡例 */}
+      <div className="px-3 py-1.5 border-b bg-slate-50 flex items-center gap-3 text-[11px] text-slate-600">
+        <span className="font-medium">状態:</span>
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-slate-500">
+          未着手
+        </span>
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-amber-700 bg-amber-50">
+          <Play className="h-3 w-3 fill-current" />
+          進行中
+        </span>
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-emerald-700 bg-emerald-50">
+          <Check className="h-3.5 w-3.5" strokeWidth={3} />
+          完了
+        </span>
+        <span className="text-slate-400">（セルをクリックで状態を切替）</span>
       </div>
 
       {/* テーブル */}
@@ -1329,7 +1433,7 @@ function ExpandedProjectTable({
           <table className="w-full text-xs border-collapse">
             <thead className="bg-slate-100 sticky top-0 z-10">
               <tr>
-                <th className="px-2 py-2 border-b border-r text-left font-semibold text-slate-700" style={{ minWidth: 200 }}>
+                <th className="px-2 py-2 border-b border-r text-left font-semibold text-slate-700" style={{ minWidth: 180 }}>
                   工事名 / 圃場名
                 </th>
                 {ALL_WORK_TYPES.map((wt) => (
@@ -1347,32 +1451,19 @@ function ExpandedProjectTable({
                     </div>
                   </th>
                 ))}
-                <th className="px-2 py-2 border-b border-r text-right font-semibold text-slate-700 whitespace-nowrap bg-slate-200">
-                  合計 (ha)
-                </th>
-                {/* 進捗: 将来実装用プレースホルダ */}
-                <th
-                  className="px-2 py-2 border-b text-center font-semibold text-slate-500 whitespace-nowrap bg-slate-50"
-                  style={{ minWidth: 120 }}
-                  title="各工程の進捗状況（実装予定）"
-                >
-                  進捗
-                </th>
               </tr>
             </thead>
             <tbody>
               {projects.map((project) => {
                 const projFarms = farms.filter((f) => f.project_id === project.id)
-                const pTotals = projectTotals[project.id] || {}
-                const pGrandTotal = ALL_WORK_TYPES.reduce((s, wt) => s + (pTotals[wt] || 0), 0)
                 return (
                   <ProjectTableGroup
                     key={project.id}
                     project={project}
                     farms={projFarms}
                     farmWorkAreaSummary={farmWorkAreaSummary}
-                    projectTotals={pTotals}
-                    projectGrandTotal={pGrandTotal}
+                    statusByKey={statusByKey}
+                    onCycleStatus={onCycleStatus}
                     onOpenFarm={onOpenFarm}
                     onSelectFarm={onSelectFarm}
                   />
@@ -1390,24 +1481,32 @@ function ProjectTableGroup({
   project,
   farms,
   farmWorkAreaSummary,
-  projectTotals,
-  projectGrandTotal,
+  statusByKey,
+  onCycleStatus,
   onOpenFarm,
   onSelectFarm,
 }: {
   project: Project
   farms: Farm[]
   farmWorkAreaSummary: Record<string, Record<string, number>>
-  projectTotals: Record<string, number>
-  projectGrandTotal: number
+  statusByKey: Map<string, WorkStatus>
+  onCycleStatus: (farmId: string, workType: string) => void
   onOpenFarm: (farm: Farm) => void
   onSelectFarm: (farm: Farm) => void
 }) {
   const [expanded, setExpanded] = useState(true)
+  const progressByWorkType = useMemo(() => {
+    const m: Record<string, WorkTypeProgress> = {}
+    for (const wt of ALL_WORK_TYPES) {
+      m[wt] = computeProgress(farms, wt, farmWorkAreaSummary, statusByKey)
+    }
+    return m
+  }, [farms, farmWorkAreaSummary, statusByKey])
+
   return (
     <>
-      {/* プロジェクト行（合計） */}
-      <tr className="bg-blue-50 hover:bg-blue-100">
+      {/* プロジェクト行（工種別合計＋進捗） */}
+      <tr className="bg-blue-50 hover:bg-blue-100 align-top">
         <td className="px-2 py-1.5 border-b border-r">
           <button
             onClick={() => setExpanded((s) => !s)}
@@ -1423,21 +1522,37 @@ function ProjectTableGroup({
             <span className="text-xs text-slate-500 ml-1">（{farms.length}圃場）</span>
           </button>
         </td>
-        {ALL_WORK_TYPES.map((wt) => (
-          <td key={wt} className="px-2 py-1.5 border-b border-r text-right font-mono text-slate-700">
-            {projectTotals[wt] ? projectTotals[wt].toFixed(2) : '—'}
-          </td>
-        ))}
-        <td className="px-2 py-1.5 border-b border-r text-right font-mono font-semibold bg-blue-100">
-          {projectGrandTotal > 0 ? projectGrandTotal.toFixed(2) : '—'}
-        </td>
-        <td className="px-2 py-1.5 border-b text-center text-slate-400">—</td>
+        {ALL_WORK_TYPES.map((wt) => {
+          const p = progressByWorkType[wt]
+          if (p.totalArea <= 0) {
+            return (
+              <td key={wt} className="px-2 py-1.5 border-b border-r text-right font-mono text-slate-300">
+                —
+              </td>
+            )
+          }
+          const pct = (p.completedArea / p.totalArea) * 100
+          return (
+            <td key={wt} className="px-2 py-1 border-b border-r text-right font-mono">
+              <div className="text-slate-800 font-semibold">{p.totalArea.toFixed(2)}</div>
+              <div className="text-[10px] text-emerald-700 flex items-center justify-end gap-0.5">
+                <Check className="h-2.5 w-2.5" strokeWidth={3} />
+                {p.completedArea.toFixed(2)}（{pct.toFixed(0)}%）
+              </div>
+              {p.inProgressArea > 0 && (
+                <div className="text-[10px] text-amber-700 flex items-center justify-end gap-0.5">
+                  <Play className="h-2.5 w-2.5 fill-current" />
+                  {p.inProgressArea.toFixed(2)}
+                </div>
+              )}
+            </td>
+          )
+        })}
       </tr>
       {/* 圃場行 */}
       {expanded &&
         farms.map((farm) => {
           const summary = farmWorkAreaSummary[farm.id] || {}
-          const grandTotal = ALL_WORK_TYPES.reduce((s, wt) => s + (summary[wt] || 0), 0)
           return (
             <tr key={farm.id} className="hover:bg-slate-50">
               <td className="px-2 py-1.5 border-b border-r pl-8">
@@ -1459,15 +1574,18 @@ function ProjectTableGroup({
                   </button>
                 </div>
               </td>
-              {ALL_WORK_TYPES.map((wt) => (
-                <td key={wt} className="px-2 py-1.5 border-b border-r text-right font-mono text-slate-600">
-                  {summary[wt] ? summary[wt].toFixed(2) : '—'}
-                </td>
-              ))}
-              <td className="px-2 py-1.5 border-b border-r text-right font-mono text-slate-700 bg-slate-50">
-                {grandTotal > 0 ? grandTotal.toFixed(2) : '—'}
-              </td>
-              <td className="px-2 py-1.5 border-b text-center text-slate-400">—</td>
+              {ALL_WORK_TYPES.map((wt) => {
+                const area = summary[wt] ?? 0
+                const status = statusByKey.get(`${farm.id}:${wt}`) ?? 'not_started'
+                return (
+                  <StatusAreaCell
+                    key={wt}
+                    area={area}
+                    status={status}
+                    onCycle={() => onCycleStatus(farm.id, wt)}
+                  />
+                )
+              })}
             </tr>
           )
         })}
