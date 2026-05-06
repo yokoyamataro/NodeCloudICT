@@ -88,7 +88,7 @@ export const useWorkStatusStore = create<WorkStatusState>((set, get) => ({
       const { error } = await supabase
         .from('farm_work_status')
         .upsert(
-          { farm_id: farmId, work_type: workType, status },
+          { farm_id: farmId, work_type: workType, status } as never,
           { onConflict: 'farm_id,work_type' },
         )
       if (error) throw error
