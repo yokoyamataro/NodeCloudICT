@@ -213,6 +213,9 @@ export function CadAnalysisPage() {
   const [midpointPreview, setMidpointPreview] = useState<import('@/types/database').PipeVertex[]>([]) // プレビュー用の中間点
   const [isPreviewMode, setIsPreviewMode] = useState(false) // プレビューモード
 
+  // 距離指定での分割（始点側からの距離）
+  const [splitDistanceInput, setSplitDistanceInput] = useState<string>('')
+
   // テーブルの行へのref（選択時の自動スクロール用）
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({})
   const tableContainerRef = useRef<HTMLDivElement | null>(null)
@@ -542,6 +545,69 @@ export function CadAnalysisPage() {
     setSelectedPipeId(id)
   }
 
+  // 始点（vertices[0]）からの距離 d 上にある点を返す（範囲外は null）
+  const pointAtDistanceFromStart = (
+    vertices: import('@/types/database').PipeVertex[],
+    distance: number,
+  ): import('@/types/database').PipeVertex | null => {
+    if (vertices.length < 2 || !Number.isFinite(distance) || distance <= 0) return null
+    let acc = 0
+    for (let i = 0; i < vertices.length - 1; i++) {
+      const v1 = vertices[i]
+      const v2 = vertices[i + 1]
+      const segLen = Math.hypot(v2.x - v1.x, v2.y - v1.y)
+      if (segLen <= 0) continue
+      if (acc + segLen >= distance - 1e-9) {
+        const local = distance - acc
+        const t = Math.max(0, Math.min(1, local / segLen))
+        return {
+          x: v1.x + t * (v2.x - v1.x),
+          y: v1.y + t * (v2.y - v1.y),
+          z: v1.z != null && v2.z != null ? v1.z + t * (v2.z - v1.z) : v1.z ?? v2.z,
+        }
+      }
+      acc += segLen
+    }
+    return null
+  }
+
+  // 分割モード時、距離指定が有効なら仮の分割点を計算
+  const splitPipeForDistance = pipes.find((p) => p.id === selectedPipeId) || null
+  const splitPipeTotalLength = useMemo(() => {
+    if (!splitPipeForDistance) return 0
+    let total = 0
+    const vs = splitPipeForDistance.vertices
+    for (let i = 0; i < vs.length - 1; i++) {
+      total += Math.hypot(vs[i + 1].x - vs[i].x, vs[i + 1].y - vs[i].y)
+    }
+    return total
+  }, [splitPipeForDistance])
+  const splitDistanceValue = parseFloat(splitDistanceInput)
+  const splitPreviewPoint = useMemo<import('@/types/database').PipeVertex | null>(() => {
+    if (editMode !== 'split' || !splitPipeForDistance) return null
+    if (!Number.isFinite(splitDistanceValue) || splitDistanceValue <= 0) return null
+    if (splitDistanceValue >= splitPipeTotalLength) return null
+    return pointAtDistanceFromStart(splitPipeForDistance.vertices, splitDistanceValue)
+  }, [editMode, splitPipeForDistance, splitDistanceValue, splitPipeTotalLength])
+
+  // 距離指定の分割確定
+  const handleConfirmSplitByDistance = () => {
+    if (!selectedPipeId || !splitPreviewPoint) return
+    const result = splitPipeAtPoint(selectedPipeId, splitPreviewPoint)
+    if (result) {
+      setSplitDistanceInput('')
+      setEditMode('normal')
+      setSelectedPipeId(null)
+    } else {
+      alert('分割できませんでした（位置が管路上にありません）')
+    }
+  }
+
+  // 編集モード変更時に距離入力を初期化
+  useEffect(() => {
+    if (editMode !== 'split') setSplitDistanceInput('')
+  }, [editMode])
+
   // 頂点クリック処理（分割モード用）
   const handleVertexClick = (pipeId: string, vertexIndex: number) => {
     if (editMode !== 'split') return
@@ -858,11 +924,11 @@ export function CadAnalysisPage() {
 
           {/* 分割モードパネル */}
           {editMode === 'split' && (
-            <div className="p-3 bg-orange-50 border-b flex-shrink-0">
+            <div className="p-3 bg-orange-50 border-b flex-shrink-0 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium text-orange-800">
                   分割モード: {selectedPipeId
-                    ? `「${pipes.find(p => p.id === selectedPipeId)?.number}」の分割点をクリック`
+                    ? `「${pipes.find(p => p.id === selectedPipeId)?.number}」の分割点をクリック、または下で距離指定`
                     : '分割する管路を選択してください'}
                 </span>
                 <button
@@ -872,6 +938,37 @@ export function CadAnalysisPage() {
                   <X className="h-4 w-4" />
                 </button>
               </div>
+
+              {selectedPipeId && splitPipeForDistance && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-orange-700">始点側からの距離 (m):</span>
+                  <input
+                    type="number"
+                    step={0.1}
+                    min={0}
+                    max={splitPipeTotalLength}
+                    value={splitDistanceInput}
+                    onChange={(e) => setSplitDistanceInput(e.target.value)}
+                    placeholder={`0 〜 ${splitPipeTotalLength.toFixed(2)}`}
+                    className="px-2 py-1 border rounded text-xs w-32 text-right"
+                  />
+                  <span className="text-[11px] text-orange-600">
+                    総延長 {splitPipeTotalLength.toFixed(2)} m
+                  </span>
+                  {splitPreviewPoint && (
+                    <span className="text-[11px] text-emerald-700 font-mono">
+                      仮の点: ({splitPreviewPoint.x.toFixed(3)}, {splitPreviewPoint.y.toFixed(3)})
+                    </span>
+                  )}
+                  <button
+                    onClick={handleConfirmSplitByDistance}
+                    disabled={!splitPreviewPoint}
+                    className="px-3 py-1 text-xs bg-orange-600 text-white rounded hover:bg-orange-700 disabled:opacity-50"
+                  >
+                    確定して分割
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -1395,7 +1492,11 @@ export function CadAnalysisPage() {
               showSurveyPoints={showSurveyPoints}
               surveyPoints={surveyPointsData}
               editMode={editMode}
-              previewPoints={midpointPreview}
+              previewPoints={
+                splitPreviewPoint
+                  ? [...midpointPreview, splitPreviewPoint]
+                  : midpointPreview
+              }
               showZones={showZones}
               showCoordinates={showCoordinates}
             />
