@@ -6,6 +6,7 @@ import { useCoordinateStore } from '@/stores/coordinateStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
+import { useExportRouteStore } from '@/stores/exportRouteStore'
 import { PipeMap, type SurveyPointData, type BaseLayerType } from '@/components/map/PipeMap'
 
 // 測点命名設定
@@ -69,6 +70,10 @@ export function PipeCoordinateCalcPage() {
   const { currentFarm } = useFarmStore()
   const { projects } = useProjectListStore()
 
+  const fetchRoute = useExportRouteStore((s) => s.fetchRoute)
+  const saveRoute = useExportRouteStore((s) => s.saveRoute)
+  const savingRoute = useExportRouteStore((s) => s.saving)
+
   // プロジェクト選択時にデータを読み込む
   useEffect(() => {
     if (currentFarm) {
@@ -79,8 +84,14 @@ export function PipeCoordinateCalcPage() {
       }
       fetchPipes(currentFarm.id)
       fetchCoordinates(currentFarm.id)
+      // サーバ保存済みの順路を取得して反映
+      fetchRoute(currentFarm.id).then((points) => {
+        if (points && points.length > 0) {
+          setExportPoints(points)
+        }
+      })
     }
-  }, [currentFarm, projects, fetchPipes, fetchCoordinates])
+  }, [currentFarm, projects, fetchPipes, fetchCoordinates, fetchRoute])
 
   // 命名設定
   const [namingSettings, setNamingSettings] = useState<NamingSettings>({
@@ -699,12 +710,28 @@ export function PipeCoordinateCalcPage() {
                 {exportPoints.length > 0 && (
                   <>
                     <button
-                      onClick={saveExportPoints}
-                      className="flex items-center gap-1 px-2 py-1 text-sm border border-blue-300 text-blue-600 rounded hover:bg-blue-50"
-                      title="選択を保存"
+                      onClick={async () => {
+                        if (!currentFarm) {
+                          alert('圃場が選択されていません')
+                          return
+                        }
+                        const ok = await saveRoute(currentFarm.id, exportPoints)
+                        if (ok) alert('順路をサーバに保存しました（スマホ起工測量で利用されます）')
+                      }}
+                      disabled={savingRoute || !currentFarm}
+                      className="flex items-center gap-1 px-2 py-1 text-sm border border-emerald-400 bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50"
+                      title="順路をサーバに保存（スマホ起工測量で利用）"
                     >
                       <Save className="h-3 w-3" />
-                      保存
+                      {savingRoute ? '保存中…' : 'サーバ保存'}
+                    </button>
+                    <button
+                      onClick={saveExportPoints}
+                      className="flex items-center gap-1 px-2 py-1 text-sm border border-blue-300 text-blue-600 rounded hover:bg-blue-50"
+                      title="JSONファイルとしてダウンロード"
+                    >
+                      <Save className="h-3 w-3" />
+                      JSON
                     </button>
                     <button
                       onClick={clearExportPoints}
@@ -717,7 +744,7 @@ export function PipeCoordinateCalcPage() {
                 <button
                   onClick={loadExportPoints}
                   className="flex items-center gap-1 px-2 py-1 text-sm border border-slate-300 text-slate-600 rounded hover:bg-slate-50"
-                  title="選択を読み込み"
+                  title="JSONファイルから読み込み"
                 >
                   <FolderOpen className="h-3 w-3" />
                   読込

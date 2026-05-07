@@ -19,6 +19,7 @@ import {
   ChevronRight,
   FileText,
   Database,
+  Navigation2,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
@@ -27,6 +28,7 @@ import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore
 import { useUnderdrainStore, type PipeRow, PIPE_TYPE_NAMES } from '@/stores/underdrainStore'
 import { useStakingStore, type StakingRecord } from '@/stores/stakingStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
+import { useExportRouteStore, type RoutePoint } from '@/stores/exportRouteStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { parseLandXml } from '@/lib/landxml/parser'
 import { indexTin, queryZ, type TinIndex, type TinSurfaceLike } from '@/lib/landxml/tinInterpolation'
@@ -119,6 +121,74 @@ function FollowCurrent({
   return null
 }
 
+// ターゲット中心表示: 選択ターゲットが変わるたびにそこへパン
+function FollowTarget({
+  position,
+  enabled,
+}: {
+  position: [number, number] | null
+  enabled: boolean
+}) {
+  const map = useMap()
+  useEffect(() => {
+    if (!enabled || !position) return
+    map.setView(position, Math.max(map.getZoom(), 18), { animate: true })
+  }, [map, position, enabled])
+  return null
+}
+
+type MapFollowMode = 'target' | 'self' | 'off'
+
+const MAP_FOLLOW_LABEL: Record<MapFollowMode, string> = {
+  target: 'ターゲット中心',
+  self: '自己位置中心（追尾）',
+  off: '追尾なし',
+}
+
+const NEXT_FOLLOW_MODE: Record<MapFollowMode, MapFollowMode> = {
+  target: 'self',
+  self: 'off',
+  off: 'target',
+}
+
+// 方位センサーの値（真北からの時計回り角度）を取得
+// iOS: DeviceOrientationEvent.webkitCompassHeading（許可必須）
+// Android Chrome: deviceorientationabsolute / event.alpha（左回りなので 360 - alpha）
+function extractCompassHeading(e: DeviceOrientationEvent): number | null {
+  // iOS Safari は webkitCompassHeading を提供（時計回り）
+  const ios = (e as DeviceOrientationEvent & { webkitCompassHeading?: number })
+    .webkitCompassHeading
+  if (typeof ios === 'number' && Number.isFinite(ios)) return ios
+  // Android: 'deviceorientationabsolute' で alpha が真北基準。
+  // alpha は左回り（CCW）なので時計回りに直すため 360 - alpha
+  if (e.absolute && typeof e.alpha === 'number' && Number.isFinite(e.alpha)) {
+    return (360 - e.alpha) % 360
+  }
+  return null
+}
+
+// 方位コーンを描画する DivIcon を生成（heading: 度, 0=北, 時計回り）
+function createHeadingIcon(heading: number): L.DivIcon {
+  const svg = `
+    <svg width="80" height="80" viewBox="0 0 80 80"
+         style="transform: rotate(${heading}deg); transform-origin: 40px 40px;">
+      <defs>
+        <radialGradient id="cone" cx="50%" cy="100%" r="100%">
+          <stop offset="0%" stop-color="#2563eb" stop-opacity="0.7"/>
+          <stop offset="100%" stop-color="#2563eb" stop-opacity="0"/>
+        </radialGradient>
+      </defs>
+      <path d="M 40 40 L 16 4 A 36 36 0 0 1 64 4 Z" fill="url(#cone)" />
+    </svg>
+  `
+  return L.divIcon({
+    html: svg,
+    className: 'heading-cone',
+    iconSize: [80, 80],
+    iconAnchor: [40, 40],
+  })
+}
+
 export function MobileStakingPage() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
@@ -138,7 +208,10 @@ export function MobileStakingPage() {
   const [currentPos, setCurrentPos] = useState<[number, number] | null>(null)
   const [currentAcc, setCurrentAcc] = useState<number | null>(null)
   const [currentAlt, setCurrentAlt] = useState<number | null>(null)
-  const [follow, setFollow] = useState(true)
+  const [followMode, setFollowMode] = useState<MapFollowMode>('self')
+  const [heading, setHeading] = useState<number | null>(null)
+  const [headingEnabled, setHeadingEnabled] = useState(false)
+  const [headingError, setHeadingError] = useState<string | null>(null)
 
   // 設定・UI
   const [avgSeconds, setAvgSeconds] = useState(3)
@@ -256,6 +329,7 @@ export function MobileStakingPage() {
           fetchCoordinates(typedFarm.id),
           fetchPipes(typedFarm.id),
           fetchRecords(typedFarm.id),
+          useExportRouteStore.getState().fetchRoute(typedFarm.id),
         ])
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : '読み込み失敗')
@@ -267,6 +341,56 @@ export function MobileStakingPage() {
       cancelled = true
     }
   }, [farmId, setCurrentFarm, setZone, fetchCoordinates, fetchPipes, fetchRecords])
+
+  // 方位センサー（DeviceOrientation）リスナー
+  useEffect(() => {
+    if (!headingEnabled) return
+    if (typeof window === 'undefined') return
+
+    const handler = (e: DeviceOrientationEvent) => {
+      const h = extractCompassHeading(e)
+      if (h != null) setHeading(h)
+    }
+
+    // Android: deviceorientationabsolute が真北基準
+    window.addEventListener('deviceorientationabsolute', handler as EventListener)
+    // iOS: deviceorientation で webkitCompassHeading が取得可
+    window.addEventListener('deviceorientation', handler)
+    return () => {
+      window.removeEventListener('deviceorientationabsolute', handler as EventListener)
+      window.removeEventListener('deviceorientation', handler)
+    }
+  }, [headingEnabled])
+
+  // 方位 ON/OFF（iOS は requestPermission がユーザー操作下で必須）
+  const toggleHeading = async () => {
+    if (headingEnabled) {
+      setHeadingEnabled(false)
+      setHeading(null)
+      return
+    }
+    setHeadingError(null)
+    const proto = (
+      typeof DeviceOrientationEvent !== 'undefined' ? DeviceOrientationEvent : null
+    ) as (typeof DeviceOrientationEvent & {
+      requestPermission?: () => Promise<'granted' | 'denied'>
+    }) | null
+    if (proto && typeof proto.requestPermission === 'function') {
+      try {
+        const result = await proto.requestPermission()
+        if (result !== 'granted') {
+          setHeadingError('方位センサーの利用が許可されませんでした')
+          return
+        }
+      } catch (err) {
+        setHeadingError(
+          err instanceof Error ? err.message : '方位センサーの利用許可で失敗しました',
+        )
+        return
+      }
+    }
+    setHeadingEnabled(true)
+  }
 
   // 現在位置の監視
   useEffect(() => {
@@ -480,10 +604,39 @@ export function MobileStakingPage() {
     return out
   }, [coordinates, pipes, converter])
 
+  // 出力点選択（順路）に従ってターゲットを並べ替える。
+  // 順路にある点（x,y で一致判定）を先に並べ、無い点は元の順序で末尾へ。
+  // 順路が未保存の圃場では何もせずそのまま返す。
+  const route = useExportRouteStore((s) =>
+    farmId ? s.routesByFarmId.get(farmId) ?? null : null,
+  )
+  const orderedTargets = useMemo<StakingTarget[]>(() => {
+    if (!route || route.length === 0) return targets
+    const TOL = 0.1 // 10cm
+    const used = new Set<string>()
+    const ordered: StakingTarget[] = []
+    for (const rp of route as RoutePoint[]) {
+      const hit = targets.find(
+        (t) =>
+          !used.has(t.id) &&
+          Math.abs(t.x - rp.x) <= TOL &&
+          Math.abs(t.y - rp.y) <= TOL,
+      )
+      if (hit) {
+        ordered.push(hit)
+        used.add(hit.id)
+      }
+    }
+    for (const t of targets) {
+      if (!used.has(t.id)) ordered.push(t)
+    }
+    return ordered
+  }, [targets, route])
+
   const filteredTargets = useMemo(() => {
-    if (targetFilter === 'all') return targets
-    return targets.filter((t) => t.kind === targetFilter)
-  }, [targets, targetFilter])
+    if (targetFilter === 'all') return orderedTargets
+    return orderedTargets.filter((t) => t.kind === targetFilter)
+  }, [orderedTargets, targetFilter])
 
   const selectedTarget = useMemo(
     () => targets.find((t) => t.id === selectedTargetId) ?? null,
@@ -799,13 +952,39 @@ export function MobileStakingPage() {
         </button>
         <span className="font-medium truncate flex-1">{title}</span>
         <button
-          onClick={() => setFollow((v) => !v)}
-          className={`p-1.5 rounded ${
-            follow ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'
+          onClick={() => setFollowMode((m) => NEXT_FOLLOW_MODE[m])}
+          className={`flex items-center gap-1 px-2 py-1.5 rounded text-[11px] font-medium ${
+            followMode === 'target'
+              ? 'bg-emerald-600'
+              : followMode === 'self'
+              ? 'bg-blue-600'
+              : 'bg-slate-700 hover:bg-slate-600'
           }`}
-          title="現在地に追従"
+          title={`地図表示モード: ${MAP_FOLLOW_LABEL[followMode]}（クリックで切替）`}
         >
           <Crosshair className="h-4 w-4" />
+          <span className="hidden sm:inline">{MAP_FOLLOW_LABEL[followMode]}</span>
+        </button>
+        <button
+          onClick={toggleHeading}
+          className={`p-1.5 rounded ${
+            headingEnabled
+              ? heading != null
+                ? 'bg-emerald-600'
+                : 'bg-amber-600'
+              : 'bg-slate-700 hover:bg-slate-600'
+          }`}
+          title={
+            headingError
+              ? `方位エラー: ${headingError}`
+              : headingEnabled
+              ? heading != null
+                ? `方位 ${heading.toFixed(0)}°（クリックでOFF）`
+                : '方位センサー待機中'
+              : '方位センサーをON'
+          }
+        >
+          <Navigation2 className="h-4 w-4" />
         </button>
         <button
           onClick={() => setShowLabels((v) => !v)}
@@ -956,7 +1135,13 @@ export function MobileStakingPage() {
             maxNativeZoom={18}
           />
           <FitOnce bounds={currentPos ? null : allBounds} />
-          <FollowCurrent position={currentPos} enabled={follow} />
+          <FollowCurrent position={currentPos} enabled={followMode === 'self'} />
+          <FollowTarget
+            position={
+              selectedTarget ? [selectedTarget.lat, selectedTarget.lng] : null
+            }
+            enabled={followMode === 'target'}
+          />
 
           {/* 配線ライン（吸水=青・集水=緑、選択中はオレンジ）
               タップ判定を確実にするため、透明な太い「ヒットレイヤ」を上に重ねる */}
@@ -1050,6 +1235,14 @@ export function MobileStakingPage() {
                     fillOpacity: 0.15,
                     weight: 1,
                   }}
+                />
+              )}
+              {headingEnabled && heading != null && (
+                <Marker
+                  position={currentPos}
+                  icon={createHeadingIcon(heading)}
+                  interactive={false}
+                  keyboard={false}
                 />
               )}
               <CircleMarker
