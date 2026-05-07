@@ -234,8 +234,9 @@ export interface ProjectMember {
   role: ProjectMemberRole
   created_at: string
   updated_at: string
-  // JOINで取得する場合のユーザー情報（オプション）
-  email?: string
+  // get_project_members RPC で auth.users から付与される（オプション）
+  email?: string | null
+  display_name?: string | null
 }
 
 // NodeCloud-Design用圃場

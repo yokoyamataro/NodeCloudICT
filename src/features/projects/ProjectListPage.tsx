@@ -458,7 +458,6 @@ export function ProjectListPage() {
             statusByKey={statusByKey}
             onSetStatus={setWorkStatus}
             onClose={() => setExpandedList(false)}
-            onOpenFarm={handleOpenFarm}
             onSelectFarm={(farm) => setFarmActionDialog(farm)}
             onNewProject={() => setShowNewProjectDialog(true)}
           />
@@ -1234,8 +1233,13 @@ export function ProjectListPage() {
                       key={member.id}
                       className="flex items-center justify-between p-3 border rounded-lg bg-white"
                     >
-                      <div>
-                        <div className="text-sm font-medium">{member.email || member.user_id}</div>
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium truncate" title={member.email ?? undefined}>
+                          {member.display_name || member.email || member.user_id}
+                        </div>
+                        {member.display_name && member.email && (
+                          <div className="text-[11px] text-slate-500 truncate">{member.email}</div>
+                        )}
                         <div className="text-xs text-muted-foreground">
                           {member.role === 'owner' && 'オーナー'}
                           {member.role === 'editor' && '編集者'}
@@ -1436,7 +1440,6 @@ function ExpandedProjectTable({
   statusByKey,
   onSetStatus,
   onClose,
-  onOpenFarm,
   onSelectFarm,
   onNewProject,
 }: {
@@ -1446,7 +1449,6 @@ function ExpandedProjectTable({
   statusByKey: Map<string, WorkStatus>
   onSetStatus: (farmId: string, workType: string, status: WorkStatus) => void
   onClose: () => void
-  onOpenFarm: (farm: Farm) => void
   onSelectFarm: (farm: Farm) => void
   onNewProject: () => void
 }) {
@@ -1551,7 +1553,6 @@ function ExpandedProjectTable({
                     farmWorkAreaSummary={farmWorkAreaSummary}
                     statusByKey={statusByKey}
                     onOpenStatusMenu={openMenu}
-                    onOpenFarm={onOpenFarm}
                     onSelectFarm={onSelectFarm}
                   />
                 )
@@ -1583,7 +1584,6 @@ function ProjectTableGroup({
   farmWorkAreaSummary,
   statusByKey,
   onOpenStatusMenu,
-  onOpenFarm,
   onSelectFarm,
 }: {
   project: Project
@@ -1596,7 +1596,6 @@ function ProjectTableGroup({
     workType: string,
     current: WorkStatus,
   ) => void
-  onOpenFarm: (farm: Farm) => void
   onSelectFarm: (farm: Farm) => void
 }) {
   const [expanded, setExpanded] = useState(true)
@@ -1668,14 +1667,7 @@ function ProjectTableGroup({
             <tr key={farm.id} className="hover:bg-slate-50">
               <td className="px-2 py-1.5 border-b border-r pl-8">
                 <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => onOpenFarm(farm)}
-                    className="flex items-center gap-1 text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
-                    title="圃場編集画面を開く"
-                  >
-                    <FolderOpen className="h-3.5 w-3.5" />
-                    <span>{farm.name}</span>
-                  </button>
+                  <span className="text-slate-700">{farm.name}</span>
                   <button
                     onClick={() => onSelectFarm(farm)}
                     className="ml-1 px-1.5 py-0.5 text-[10px] text-slate-500 border rounded hover:bg-slate-50"
