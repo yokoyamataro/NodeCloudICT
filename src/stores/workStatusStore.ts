@@ -29,6 +29,7 @@ interface WorkStatusState {
   statusByKey: Map<string, WorkStatus>
   loading: boolean
   error: string | null
+  alertedOnce: boolean
 
   fetchStatuses: (farmIds: string[]) => Promise<void>
   setStatus: (farmId: string, workType: string, status: WorkStatus) => Promise<void>
@@ -93,13 +94,33 @@ export const useWorkStatusStore = create<WorkStatusState>((set, get) => ({
         )
       if (error) throw error
     } catch (err) {
-      // ロールバック
-      set({
-        statusByKey: prev,
-        error: err instanceof Error ? err.message : '工程状態の更新に失敗しました',
+      // ロールバック + 詳細をコンソールに出して原因特定を容易にする
+      // よくある原因:
+      //   - farm_work_status テーブルに対する RLS が有効化されているがポリシー未設定
+      //   - anon/authenticated ロールに INSERT/UPDATE 権限が無い
+      //   - マイグレーション未適用
+      console.error('[workStatusStore] setStatus failed', {
+        farmId,
+        workType,
+        status,
+        error: err,
       })
+      const message =
+        err instanceof Error
+          ? err.message
+          : typeof err === 'object' && err !== null
+          ? JSON.stringify(err)
+          : '工程状態の更新に失敗しました'
+      set({ statusByKey: prev, error: message })
+      // 1 度だけアラートして利用者に気付きを促す（他の状態変更は console のみ）
+      if (typeof window !== 'undefined' && !get().alertedOnce) {
+        set({ alertedOnce: true })
+        alert(`工程状態を保存できませんでした: ${message}`)
+      }
     }
   },
+
+  alertedOnce: false,
 
   cycleStatus: async (farmId, workType) => {
     const current = get().getStatus(farmId, workType)
