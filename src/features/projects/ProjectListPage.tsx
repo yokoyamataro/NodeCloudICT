@@ -142,8 +142,8 @@ export function ProjectListPage() {
   // 現在地表示トグル
   const [showCurrentLocation, setShowCurrentLocation] = useState(false)
 
-  // 一覧拡大表示モード（デフォルト: 一覧表＋地図の2分割）
-  const [expandedList, setExpandedList] = useState(true)
+  // 一覧拡大表示モード（デフォルト: 従来のツリー+地図）
+  const [expandedList, setExpandedList] = useState(false)
   const [showNewFarmDialog, setShowNewFarmDialog] = useState<string | null>(null) // project_id
   const [newProjectName, setNewProjectName] = useState('')
   const [newProjectDescription, setNewProjectDescription] = useState('')
@@ -171,7 +171,7 @@ export function ProjectListPage() {
   const [addingMember, setAddingMember] = useState(false)
 
   const fetchStatuses = useWorkStatusStore((s) => s.fetchStatuses)
-  const cycleStatus = useWorkStatusStore((s) => s.cycleStatus)
+  const setWorkStatus = useWorkStatusStore((s) => s.setStatus)
   const statusByKey = useWorkStatusStore((s) => s.statusByKey)
 
   useEffect(() => {
@@ -456,7 +456,7 @@ export function ProjectListPage() {
             farms={farms}
             farmWorkAreaSummary={farmWorkAreaSummary}
             statusByKey={statusByKey}
-            onCycleStatus={cycleStatus}
+            onSetStatus={setWorkStatus}
             onClose={() => setExpandedList(false)}
             onOpenFarm={handleOpenFarm}
             onSelectFarm={(farm) => setFarmActionDialog(farm)}
@@ -1277,26 +1277,26 @@ export function ProjectListPage() {
 
 // 状態のスタイル
 const STATUS_STYLE: Record<WorkStatus, { wrap: string; icon: React.ReactNode | null }> = {
-  not_started: { wrap: 'text-slate-500', icon: null },
+  not_started: { wrap: '', icon: null },
   in_progress: {
-    wrap: 'text-amber-700 bg-amber-50',
-    icon: <Play className="h-3 w-3 fill-current" />,
+    wrap: 'bg-amber-50 text-amber-700',
+    icon: <Play className="h-3 w-3 fill-current shrink-0" />,
   },
   completed: {
-    wrap: 'text-emerald-700 bg-emerald-50',
-    icon: <Check className="h-3.5 w-3.5" strokeWidth={3} />,
+    wrap: 'bg-emerald-50 text-emerald-700',
+    icon: <Check className="h-3.5 w-3.5 shrink-0" strokeWidth={3} />,
   },
 }
 
-// 圃場×工種の面積セル（状態マーク付き、クリックで状態を循環）
+// 圃場×工種の面積セル（状態マーク付き、右クリックで状態選択メニュー）
 function StatusAreaCell({
   area,
   status,
-  onCycle,
+  onContextMenu,
 }: {
   area: number
   status: WorkStatus
-  onCycle: () => void
+  onContextMenu: (e: React.MouseEvent) => void
 }) {
   if (area <= 0) {
     return (
@@ -1305,16 +1305,85 @@ function StatusAreaCell({
   }
   const style = STATUS_STYLE[status]
   return (
-    <td className="px-1 py-1 border-b border-r">
-      <button
-        onClick={onCycle}
-        className={`w-full flex items-center justify-end gap-1 px-1.5 py-0.5 rounded font-mono text-xs hover:ring-1 hover:ring-slate-300 ${style.wrap}`}
-        title={`${STATUS_LABEL[status]}（クリックで切替）`}
-      >
+    <td
+      className={`px-2 py-1.5 border-b border-r font-mono text-slate-700 cursor-context-menu ${style.wrap}`}
+      onContextMenu={onContextMenu}
+      title={`${STATUS_LABEL[status]}（右クリックで変更）`}
+    >
+      <div className="flex items-center justify-end gap-1">
         {style.icon}
         <span>{area.toFixed(2)}</span>
-      </button>
+      </div>
     </td>
+  )
+}
+
+// 状態選択コンテキストメニュー
+function StatusContextMenu({
+  x,
+  y,
+  current,
+  onSelect,
+  onClose,
+}: {
+  x: number
+  y: number
+  current: WorkStatus
+  onSelect: (status: WorkStatus) => void
+  onClose: () => void
+}) {
+  useEffect(() => {
+    const handler = () => onClose()
+    const escHandler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    // 次の tick で登録（メニュー開いた直後の click を拾わない）
+    const t = setTimeout(() => {
+      window.addEventListener('click', handler)
+      window.addEventListener('contextmenu', handler)
+      window.addEventListener('keydown', escHandler)
+    }, 0)
+    return () => {
+      clearTimeout(t)
+      window.removeEventListener('click', handler)
+      window.removeEventListener('contextmenu', handler)
+      window.removeEventListener('keydown', escHandler)
+    }
+  }, [onClose])
+
+  // 画面端ではみ出さないよう調整
+  const left = Math.min(x, window.innerWidth - 180)
+  const top = Math.min(y, window.innerHeight - 140)
+
+  const items: WorkStatus[] = ['not_started', 'in_progress', 'completed']
+  return (
+    <div
+      className="fixed bg-white shadow-xl rounded-md border z-[2000] py-1 min-w-[160px]"
+      style={{ left, top }}
+      onClick={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      {items.map((s) => {
+        const style = STATUS_STYLE[s]
+        return (
+          <button
+            key={s}
+            onClick={() => onSelect(s)}
+            className={`flex items-center gap-2 px-3 py-1.5 text-sm w-full text-left hover:bg-slate-100 ${
+              current === s ? 'font-semibold' : ''
+            }`}
+          >
+            <span className="w-4 inline-flex items-center justify-center">
+              {style.icon}
+            </span>
+            <span>{STATUS_LABEL[s]}</span>
+            {current === s && (
+              <span className="ml-auto text-[10px] text-slate-400">現在</span>
+            )}
+          </button>
+        )
+      })}
+    </div>
   )
 }
 
@@ -1365,7 +1434,7 @@ function ExpandedProjectTable({
   farms,
   farmWorkAreaSummary,
   statusByKey,
-  onCycleStatus,
+  onSetStatus,
   onClose,
   onOpenFarm,
   onSelectFarm,
@@ -1375,12 +1444,30 @@ function ExpandedProjectTable({
   farms: Farm[]
   farmWorkAreaSummary: Record<string, Record<string, number>>
   statusByKey: Map<string, WorkStatus>
-  onCycleStatus: (farmId: string, workType: string) => void
+  onSetStatus: (farmId: string, workType: string, status: WorkStatus) => void
   onClose: () => void
   onOpenFarm: (farm: Farm) => void
   onSelectFarm: (farm: Farm) => void
   onNewProject: () => void
 }) {
+  const [menu, setMenu] = useState<{
+    x: number
+    y: number
+    farmId: string
+    workType: string
+    current: WorkStatus
+  } | null>(null)
+
+  const openMenu = (
+    e: React.MouseEvent,
+    farmId: string,
+    workType: string,
+    current: WorkStatus,
+  ) => {
+    e.preventDefault()
+    setMenu({ x: e.clientX, y: e.clientY, farmId, workType, current })
+  }
+
   return (
     <div className="flex-1 flex flex-col bg-white overflow-hidden">
       {/* ヘッダー */}
@@ -1420,7 +1507,7 @@ function ExpandedProjectTable({
           <Check className="h-3.5 w-3.5" strokeWidth={3} />
           完了
         </span>
-        <span className="text-slate-400">（セルをクリックで状態を切替）</span>
+        <span className="text-slate-400">（セルを右クリックで状態を変更）</span>
       </div>
 
       {/* テーブル */}
@@ -1463,7 +1550,7 @@ function ExpandedProjectTable({
                     farms={projFarms}
                     farmWorkAreaSummary={farmWorkAreaSummary}
                     statusByKey={statusByKey}
-                    onCycleStatus={onCycleStatus}
+                    onOpenStatusMenu={openMenu}
                     onOpenFarm={onOpenFarm}
                     onSelectFarm={onSelectFarm}
                   />
@@ -1473,6 +1560,19 @@ function ExpandedProjectTable({
           </table>
         )}
       </div>
+
+      {menu && (
+        <StatusContextMenu
+          x={menu.x}
+          y={menu.y}
+          current={menu.current}
+          onSelect={(status) => {
+            onSetStatus(menu.farmId, menu.workType, status)
+            setMenu(null)
+          }}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </div>
   )
 }
@@ -1482,7 +1582,7 @@ function ProjectTableGroup({
   farms,
   farmWorkAreaSummary,
   statusByKey,
-  onCycleStatus,
+  onOpenStatusMenu,
   onOpenFarm,
   onSelectFarm,
 }: {
@@ -1490,7 +1590,12 @@ function ProjectTableGroup({
   farms: Farm[]
   farmWorkAreaSummary: Record<string, Record<string, number>>
   statusByKey: Map<string, WorkStatus>
-  onCycleStatus: (farmId: string, workType: string) => void
+  onOpenStatusMenu: (
+    e: React.MouseEvent,
+    farmId: string,
+    workType: string,
+    current: WorkStatus,
+  ) => void
   onOpenFarm: (farm: Farm) => void
   onSelectFarm: (farm: Farm) => void
 }) {
@@ -1506,7 +1611,7 @@ function ProjectTableGroup({
   return (
     <>
       {/* プロジェクト行（工種別合計＋進捗） */}
-      <tr className="bg-blue-50 hover:bg-blue-100 align-top">
+      <tr className="bg-blue-50 hover:bg-blue-100">
         <td className="px-2 py-1.5 border-b border-r">
           <button
             onClick={() => setExpanded((s) => !s)}
@@ -1533,16 +1638,22 @@ function ProjectTableGroup({
           }
           const pct = (p.completedArea / p.totalArea) * 100
           return (
-            <td key={wt} className="px-2 py-1 border-b border-r text-right font-mono">
+            <td key={wt} className="px-2 py-1.5 border-b border-r text-right font-mono">
               <div className="text-slate-800 font-semibold">{p.totalArea.toFixed(2)}</div>
-              <div className="text-[10px] text-emerald-700 flex items-center justify-end gap-0.5">
-                <Check className="h-2.5 w-2.5" strokeWidth={3} />
-                {p.completedArea.toFixed(2)}（{pct.toFixed(0)}%）
-              </div>
-              {p.inProgressArea > 0 && (
-                <div className="text-[10px] text-amber-700 flex items-center justify-end gap-0.5">
-                  <Play className="h-2.5 w-2.5 fill-current" />
-                  {p.inProgressArea.toFixed(2)}
+              {(p.completedArea > 0 || p.inProgressArea > 0) && (
+                <div className="flex items-center justify-end gap-2 text-[10px] mt-0.5">
+                  {p.completedArea > 0 && (
+                    <span className="inline-flex items-center gap-0.5 text-emerald-700">
+                      <Check className="h-2.5 w-2.5" strokeWidth={3} />
+                      {p.completedArea.toFixed(2)}（{pct.toFixed(0)}%）
+                    </span>
+                  )}
+                  {p.inProgressArea > 0 && (
+                    <span className="inline-flex items-center gap-0.5 text-amber-700">
+                      <Play className="h-2.5 w-2.5 fill-current" />
+                      {p.inProgressArea.toFixed(2)}
+                    </span>
+                  )}
                 </div>
               )}
             </td>
@@ -1582,7 +1693,7 @@ function ProjectTableGroup({
                     key={wt}
                     area={area}
                     status={status}
-                    onCycle={() => onCycleStatus(farm.id, wt)}
+                    onContextMenu={(e) => onOpenStatusMenu(e, farm.id, wt, status)}
                   />
                 )
               })}
