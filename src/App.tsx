@@ -22,6 +22,7 @@ import { DepthCalcPage } from '@/features/underdrain/DepthCalcPage'
 import { LandXMLPage } from '@/features/underdrain/LandXMLPage'
 import { CadExportPage } from '@/features/underdrain/CadExportPage'
 import { ReportsPage } from '@/features/underdrain/ReportsPage'
+import { StakingRecordsPage } from '@/features/underdrain/StakingRecordsPage'
 // 新規工種
 import { SoilImportWorkAreaPage } from '@/features/soil-import/SoilImportWorkAreaPage'
 import { SoilImportStripPlanPage } from '@/features/soil-import/SoilImportStripPlanPage'
@@ -148,7 +149,7 @@ function AppRoutes() {
           <Route path="hydraulics" element={<PlaceholderPage title="水理計算" />} />
           <Route path="cad-export" element={<CadExportPage />} />
           <Route path="landxml" element={<LandXMLPage />} />
-          <Route path="field-data" element={<PlaceholderPage title="現場データ" />} />
+          <Route path="field-data" element={<StakingRecordsPage />} />
           <Route path="reports" element={<ReportsPage />} />
         </Route>
         {/* 客土工事 */}

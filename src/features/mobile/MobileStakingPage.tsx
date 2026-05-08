@@ -265,6 +265,7 @@ export function MobileStakingPage() {
     'all' | 'coordinate' | 'pipe_vertex' | 'route'
   >('all')
   const [showLabels, setShowLabels] = useState(false)
+  const [showRouteLine, setShowRouteLine] = useState(true)
 
   // 施工管理モード用：中心線形 / 床掘 TIN / 現況 TIN
   const { fetchPlan } = useConstructionPlanStore()
@@ -1206,8 +1207,8 @@ export function MobileStakingPage() {
             ]
           })}
 
-          {/* ルートのポリライン（ルートフィルタ選択時のみ） */}
-          {targetFilter === 'route' && filteredTargets.length >= 2 && (
+          {/* ルートのポリライン（ルートフィルタ選択時かつ表示ON時のみ） */}
+          {targetFilter === 'route' && showRouteLine && filteredTargets.length >= 2 && (
             <Polyline
               positions={filteredTargets.map((t) => [t.lat, t.lng] as [number, number])}
               pathOptions={{
@@ -1532,6 +1533,19 @@ export function MobileStakingPage() {
                     <span className="ml-1 text-[10px] opacity-80">({routeTargetIds.size})</span>
                   )}
                 </button>
+                {targetFilter === 'route' && (
+                  <button
+                    onClick={() => setShowRouteLine((v) => !v)}
+                    className={`px-2 py-0.5 rounded border ${
+                      showRouteLine
+                        ? 'bg-orange-100 border-orange-400 text-orange-700'
+                        : 'border-slate-300 text-slate-500'
+                    }`}
+                    title={showRouteLine ? 'ルート線を非表示' : 'ルート線を表示'}
+                  >
+                    線 {showRouteLine ? 'ON' : 'OFF'}
+                  </button>
+                )}
               </div>
               <button
                 onClick={() => setShowTargetList(false)}

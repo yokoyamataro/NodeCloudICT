@@ -81,7 +81,7 @@ const navigation: NavGroup[] = [
       { name: '水理計算', href: '/underdrain/hydraulics', icon: Droplets },
       { name: 'CAD転記', href: '/underdrain/cad-export', icon: PenTool },
       { name: 'LandXML出力', href: '/underdrain/landxml', icon: FileOutput },
-      { name: '現場データ', href: '/underdrain/field-data', icon: Eye },
+      { name: '現場データ（起工測量記録）', href: '/underdrain/field-data', icon: Eye },
       { name: '帳票作成', href: '/underdrain/reports', icon: FileText },
     ],
   },
