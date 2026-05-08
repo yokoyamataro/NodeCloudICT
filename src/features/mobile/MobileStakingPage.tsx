@@ -613,6 +613,7 @@ export function MobileStakingPage() {
     farmId ? s.routesByFarmId.get(farmId) ?? null : null,
   )
   // ルート順に並べた targets と、ルートに含まれる ID 集合を返す。
+  // ルート点はルート点名（座標計算で集約された名前）で name を上書きする。
   // ルート未保存（または空）なら ordered=targets / routeIds=空集合。
   const { orderedTargets, routeTargetIds } = useMemo(() => {
     if (!route || route.length === 0) {
@@ -629,7 +630,7 @@ export function MobileStakingPage() {
           Math.abs(t.y - rp.y) <= TOL,
       )
       if (hit) {
-        ordered.push(hit)
+        ordered.push({ ...hit, name: rp.name })
         used.add(hit.id)
       }
     }
@@ -647,9 +648,10 @@ export function MobileStakingPage() {
     return orderedTargets.filter((t) => t.kind === targetFilter)
   }, [orderedTargets, routeTargetIds, targetFilter])
 
+  // ルート点はルート点名（座標計算で集約された名前）で上書き済みの orderedTargets を使う
   const selectedTarget = useMemo(
-    () => targets.find((t) => t.id === selectedTargetId) ?? null,
-    [targets, selectedTargetId],
+    () => orderedTargets.find((t) => t.id === selectedTargetId) ?? null,
+    [orderedTargets, selectedTargetId],
   )
 
   const distanceToTarget = useMemo(() => {
@@ -1203,6 +1205,19 @@ export function MobileStakingPage() {
               />,
             ]
           })}
+
+          {/* ルートのポリライン（ルートフィルタ選択時のみ） */}
+          {targetFilter === 'route' && filteredTargets.length >= 2 && (
+            <Polyline
+              positions={filteredTargets.map((t) => [t.lat, t.lng] as [number, number])}
+              pathOptions={{
+                color: '#f97316',
+                weight: 3,
+                opacity: 0.9,
+                dashArray: '8 6',
+              }}
+            />
+          )}
 
           {/* ターゲット */}
           {filteredTargets.map((t) => {
