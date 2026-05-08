@@ -1199,43 +1199,72 @@ export function MobileStakingPage() {
           {filteredTargets.map((t) => {
             const isSelected = t.id === selectedTargetId
             const isStaked = stakedTargetIds.has(t.id)
-            // 色: 測設済 = 灰、座標管理 = 青、暗渠頂点 = 緑
-            const fillColor = isStaked
-              ? '#94a3b8'
-              : t.kind === 'coordinate'
-                ? '#3b82f6'
-                : '#22c55e'
-            const size = isSelected ? 16 : 10
+            // 色: 座標管理 = 青、暗渠頂点 = 緑（測設済みは緑チェックマーカーで上書き）
+            const fillColor = t.kind === 'coordinate' ? '#3b82f6' : '#22c55e'
+            const size = isSelected ? 18 : 12
+            // 測設済みのマーカー: 白丸 + 緑チェック。選択中は二重リング。
+            const stakedHtml = `<div style="
+              position: relative;
+              width: ${size + 8}px;
+              height: ${size + 8}px;
+            ">
+              <div style="
+                position:absolute; inset:0;
+                background:#ffffff;
+                border:2px solid #16a34a;
+                border-radius:50%;
+                box-shadow:0 1px 3px rgba(0,0,0,0.35);
+                ${isSelected ? 'box-shadow:0 0 0 3px rgba(34,197,94,0.35),0 1px 3px rgba(0,0,0,0.35);' : ''}
+              "></div>
+              <svg viewBox="0 0 24 24" width="${size + 8}" height="${size + 8}"
+                style="position:absolute; inset:0;" fill="none"
+                stroke="#16a34a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 12 10 16 18 8" />
+              </svg>
+            </div>`
+            const normalHtml = `<div style="
+              width:${size}px;
+              height:${size}px;
+              background:${fillColor};
+              border:2px solid white;
+              border-radius:50%;
+              box-shadow:0 1px 3px rgba(0,0,0,0.4);
+            "></div>`
+            const iconSize = isStaked ? size + 8 : size
             return (
               <Marker
                 key={t.id}
                 position={[t.lat, t.lng]}
                 icon={L.divIcon({
                   className: 'staking-target',
-                  html: `<div style="
-                    width:${size}px;
-                    height:${size}px;
-                    background:${fillColor};
-                    border:2px solid white;
-                    border-radius:50%;
-                    box-shadow:0 1px 3px rgba(0,0,0,0.4);
-                    ${isStaked ? 'opacity:0.7;' : ''}
-                  "></div>`,
-                  iconSize: [size, size],
-                  iconAnchor: [size / 2, size / 2],
+                  html: isStaked ? stakedHtml : normalHtml,
+                  iconSize: [iconSize, iconSize],
+                  iconAnchor: [iconSize / 2, iconSize / 2],
                 })}
                 eventHandlers={{
                   click: () => setSelectedTargetId(t.id),
                 }}
               >
                 <Tooltip
-                  key={`tip-${showLabels ? 'on' : 'off'}`}
+                  key={`tip-${showLabels ? 'on' : 'off'}-${isStaked ? 'st' : 'no'}`}
                   direction="top"
                   offset={[0, -6]}
                   permanent={showLabels}
-                  className={isStaked ? 'staking-label-staked' : undefined}
                 >
-                  {isStaked ? `✓ ${t.name}` : t.name}
+                  <span
+                    style={
+                      isStaked
+                        ? {
+                            color: '#16a34a',
+                            fontWeight: 600,
+                            textDecoration: 'line-through',
+                            textDecorationColor: 'rgba(22,163,74,0.5)',
+                          }
+                        : undefined
+                    }
+                  >
+                    {isStaked ? `✓ ${t.name}` : t.name}
+                  </span>
                 </Tooltip>
               </Marker>
             )
@@ -1429,6 +1458,10 @@ export function MobileStakingPage() {
           <div className="absolute inset-x-0 bottom-0 z-[1000] bg-white border-t shadow-xl max-h-[50%] flex flex-col">
             <div className="px-3 py-2 border-b flex items-center gap-2 text-sm">
               <span className="font-semibold">ターゲット</span>
+              <span className="text-xs text-emerald-700 font-medium">
+                測設済 {filteredTargets.filter((t) => stakedTargetIds.has(t.id)).length}
+                <span className="text-slate-400"> / {filteredTargets.length}</span>
+              </span>
               <div className="ml-2 flex gap-1 text-xs">
                 <button
                   onClick={() => setTargetFilter('all')}
@@ -1472,6 +1505,7 @@ export function MobileStakingPage() {
                       ? distanceMeters({ lat: currentPos[0], lng: currentPos[1] }, { lat: t.lat, lng: t.lng })
                       : null
                     const isSelected = t.id === selectedTargetId
+                    const isStaked = stakedTargetIds.has(t.id)
                     return (
                       <li
                         key={t.id}
@@ -1480,16 +1514,40 @@ export function MobileStakingPage() {
                           setShowTargetList(false)
                         }}
                         className={`px-3 py-2 cursor-pointer flex items-center gap-2 ${
-                          isSelected ? 'bg-blue-50' : 'hover:bg-slate-50'
+                          isSelected
+                            ? 'bg-blue-50'
+                            : isStaked
+                            ? 'bg-emerald-50/60 hover:bg-emerald-100/60'
+                            : 'hover:bg-slate-50'
                         }`}
                       >
+                        {isStaked ? (
+                          <svg
+                            viewBox="0 0 24 24"
+                            className="w-4 h-4 flex-shrink-0 text-emerald-600"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth={3}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <polyline points="6 12 10 16 18 8" />
+                          </svg>
+                        ) : (
+                          <span
+                            className="w-2 h-2 rounded-full flex-shrink-0"
+                            style={{
+                              backgroundColor: t.kind === 'coordinate' ? '#3b82f6' : '#22c55e',
+                            }}
+                          />
+                        )}
                         <span
-                          className="w-2 h-2 rounded-full flex-shrink-0"
-                          style={{
-                            backgroundColor: t.kind === 'coordinate' ? '#3b82f6' : '#22c55e',
-                          }}
-                        />
-                        <span className="flex-1 font-medium">{t.name}</span>
+                          className={`flex-1 font-medium ${
+                            isStaked ? 'text-emerald-700 line-through decoration-emerald-400' : ''
+                          }`}
+                        >
+                          {t.name}
+                        </span>
                         <span className="text-xs text-slate-500">
                           {t.kind === 'coordinate'
                             ? '座標'
