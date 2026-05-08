@@ -261,7 +261,9 @@ export function MobileStakingPage() {
   const [showSettings, setShowSettings] = useState(false)
   const [showTargetList, setShowTargetList] = useState(false)
   const [showRecordList, setShowRecordList] = useState(false)
-  const [targetFilter, setTargetFilter] = useState<'all' | 'coordinate' | 'pipe_vertex'>('all')
+  const [targetFilter, setTargetFilter] = useState<
+    'all' | 'coordinate' | 'pipe_vertex' | 'route'
+  >('all')
   const [showLabels, setShowLabels] = useState(false)
 
   // 施工管理モード用：中心線形 / 床掘 TIN / 現況 TIN
@@ -610,8 +612,12 @@ export function MobileStakingPage() {
   const route = useExportRouteStore((s) =>
     farmId ? s.routesByFarmId.get(farmId) ?? null : null,
   )
-  const orderedTargets = useMemo<StakingTarget[]>(() => {
-    if (!route || route.length === 0) return targets
+  // ルート順に並べた targets と、ルートに含まれる ID 集合を返す。
+  // ルート未保存（または空）なら ordered=targets / routeIds=空集合。
+  const { orderedTargets, routeTargetIds } = useMemo(() => {
+    if (!route || route.length === 0) {
+      return { orderedTargets: targets, routeTargetIds: new Set<string>() }
+    }
     const TOL = 0.1 // 10cm
     const used = new Set<string>()
     const ordered: StakingTarget[] = []
@@ -630,13 +636,16 @@ export function MobileStakingPage() {
     for (const t of targets) {
       if (!used.has(t.id)) ordered.push(t)
     }
-    return ordered
+    return { orderedTargets: ordered, routeTargetIds: used }
   }, [targets, route])
 
   const filteredTargets = useMemo(() => {
     if (targetFilter === 'all') return orderedTargets
+    if (targetFilter === 'route') {
+      return orderedTargets.filter((t) => routeTargetIds.has(t.id))
+    }
     return orderedTargets.filter((t) => t.kind === targetFilter)
-  }, [orderedTargets, targetFilter])
+  }, [orderedTargets, routeTargetIds, targetFilter])
 
   const selectedTarget = useMemo(
     () => targets.find((t) => t.id === selectedTargetId) ?? null,
@@ -1486,6 +1495,27 @@ export function MobileStakingPage() {
                   }`}
                 >
                   暗渠頂点
+                </button>
+                <button
+                  onClick={() => routeTargetIds.size > 0 && setTargetFilter('route')}
+                  disabled={routeTargetIds.size === 0}
+                  className={`px-2 py-0.5 rounded border ${
+                    targetFilter === 'route'
+                      ? 'bg-orange-600 text-white border-orange-600'
+                      : routeTargetIds.size === 0
+                      ? 'opacity-40 cursor-not-allowed'
+                      : ''
+                  }`}
+                  title={
+                    routeTargetIds.size === 0
+                      ? 'PC の座標計算で順路をサーバ保存すると有効になります'
+                      : `保存済み順路の点のみを順番通りに表示（${routeTargetIds.size}点）`
+                  }
+                >
+                  ルート
+                  {routeTargetIds.size > 0 && (
+                    <span className="ml-1 text-[10px] opacity-80">({routeTargetIds.size})</span>
+                  )}
                 </button>
               </div>
               <button
