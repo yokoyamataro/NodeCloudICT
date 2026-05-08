@@ -841,13 +841,30 @@ export function MobileStakingPage() {
       freePointName = input.trim() || defaultName
     }
 
+    // 測設記録の点名: 元の点名に "G" を前置。
+    // 同じターゲット（farmId + surveyCategory + targetRefId + vertexIndex）に対する
+    // 記録が既にある場合は "_2", "_3" ... を末尾に付与する。
+    let stakeRecordName: string | null = null
+    if (isStake && selectedTarget) {
+      const base = `G${selectedTarget.name}`
+      const existing = records.filter(
+        (r) =>
+          r.farmId === farmId &&
+          r.surveyCategory === surveyCategory &&
+          r.targetType === selectedTarget.kind &&
+          r.targetRefId === selectedTarget.refId &&
+          r.targetVertexIndex === selectedTarget.vertexIndex,
+      ).length
+      stakeRecordName = existing === 0 ? base : `${base}_${existing + 1}`
+    }
+
     const saved = await addRecord({
       farmId,
       surveyCategory,
       targetType: isStake ? selectedTarget!.kind : 'free',
       targetRefId: isStake ? selectedTarget!.refId : null,
       targetVertexIndex: isStake ? selectedTarget!.vertexIndex : null,
-      targetName: isStake ? selectedTarget!.name : freePointName,
+      targetName: isStake ? stakeRecordName : freePointName,
       targetX: isStake ? selectedTarget!.x : null,
       targetY: isStake ? selectedTarget!.y : null,
       targetZ: isStake ? selectedTarget!.z : null,
@@ -863,12 +880,8 @@ export function MobileStakingPage() {
       let msg: string
       if (isStake && selectedTarget) {
         msg =
-          `${selectedTarget.name} を測設しました\n` +
+          `${stakeRecordName} を測設しました（ターゲット: ${selectedTarget.name}）\n` +
           `誤差 ${dist!.toFixed(3)} m / 精度 ${maxAcc.toFixed(3)} m / ${samples.length} サンプル`
-        // 次のターゲットへ自動遷移（filteredTargets の次の要素）
-        const idx = filteredTargets.findIndex((t) => t.id === selectedTarget.id)
-        const next = idx >= 0 ? filteredTargets[idx + 1] : null
-        setSelectedTargetId(next?.id ?? null)
       } else if (selectedTarget && dist !== null) {
         msg =
           `${freePointName} を新点として記録しました（誤差 ${dist.toFixed(3)} m）\n` +
@@ -878,7 +891,13 @@ export function MobileStakingPage() {
           `${freePointName} を新点として記録しました\n` +
           `精度 ${maxAcc.toFixed(3)} m / ${samples.length} サンプル`
       }
+      // alert はブロッキング。OK 押下後にターゲットを次の順路点へ進める。
       alert(msg)
+      if (isStake && selectedTarget) {
+        const idx = filteredTargets.findIndex((t) => t.id === selectedTarget.id)
+        const next = idx >= 0 ? filteredTargets[idx + 1] : null
+        setSelectedTargetId(next?.id ?? null)
+      }
     }
   }
 
