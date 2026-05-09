@@ -1040,8 +1040,21 @@ export function DepthCalcPage() {
           systemMap[systemIndex] = { rows: [], endType: null }
         }
         systemMap[systemIndex].rows.push(row)
-        if (row.isSystemEnd && row.systemEndType) {
-          systemMap[systemIndex].endType = row.systemEndType
+        if (row.isSystemEnd) {
+          // wiringRowType を優先して終端タイプを判定（古い保存データの systemEndType が
+          // 'outlet' のまま残っていても、collector_junction なら 'merge' に上書きする）。
+          let endType: 'outlet' | 'merge' | null = row.systemEndType
+          if (
+            row.wiringRowType === 'collector_junction' ||
+            row.wiringRowType === 'collector_merge'
+          ) {
+            endType = 'merge'
+          } else if (row.wiringRowType === 'outlet') {
+            endType = 'outlet'
+          }
+          if (endType) {
+            systemMap[systemIndex].endType = endType
+          }
         }
       }
 

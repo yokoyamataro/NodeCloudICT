@@ -153,8 +153,7 @@ export function CrossSectionChart({
       // 旗上げラベル:
       // - 合流行（mergeSystemIndex あり）: 合流先系統の末端集水管（例: R2, S19）
       // - 系統終端のみの行（落口/合流点 = 吸水なし・isSystemEnd）: 旗上げなし
-      // - それ以外（吸水行・集水変化点など）: 集水点の測点名（例: K8A.S2A）。
-      //   配線番号は重複しがちなので、固有な測点名で識別する。
+      // - それ以外（吸水行・集水変化点など）: 配線番号（吸水管 K8 / 集水管 S2 等）
       let flagPipeNumber: string | null = null
       if (row.mergeSystemIndex != null) {
         flagPipeNumber = resolveMergeTargetPipeNumber(row) ?? row.pipeNumber
@@ -165,7 +164,7 @@ export function CrossSectionChart({
       ) {
         flagPipeNumber = null
       } else {
-        flagPipeNumber = row.collectorPoint?.pointName ?? row.pipeNumber
+        flagPipeNumber = row.pipeNumber
       }
 
       // 集水帯用: 集水管番号
