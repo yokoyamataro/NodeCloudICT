@@ -1486,23 +1486,8 @@ export function DepthCalcPage() {
                     ref={tableContentRef}
                     className="border border-t-0 rounded-b-lg bg-white shadow-sm p-2"
                   >
-                    {(() => {
-                      // 吸水スコープ選択時は前後 1 行ずつ＋自身の計 3 行のみ表示。
-                      // 集水スコープのときは全行表示。
-                      let startIdx = 0
-                      let endIdx = activeTab.rows.length
-                      if (typeof chartScope === 'number') {
-                        startIdx = Math.max(0, chartScope - 1)
-                        endIdx = Math.min(activeTab.rows.length, chartScope + 2)
-                      }
-                      return activeTab.rows
-                        .slice(startIdx, endIdx)
-                        .map((row, i) => renderRow(row, activeTab.rows, startIdx + i))
-                    })()}
-                    {typeof chartScope === 'number' && activeTab.rows.length > 3 && (
-                      <div className="text-center text-[11px] text-slate-400 py-1">
-                        ※ 選択中の吸水を中心に 3 行のみ表示しています（断面切替で他の行へ）
-                      </div>
+                    {activeTab.rows.map((row, idx) =>
+                      renderRow(row, activeTab.rows, idx),
                     )}
                   </div>
                 ) : (

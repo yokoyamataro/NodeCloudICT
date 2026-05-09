@@ -150,11 +150,11 @@ export function CrossSectionChart({
         ? row.absorptionPoints[0].plannedHeight
         : null
 
-      // 旗上げラベル: 施工計画表の左端ヘッダと一致させる
+      // 旗上げラベル:
       // - 合流行（mergeSystemIndex あり）: 合流先系統の末端集水管（例: R2, S19）
       // - 系統終端のみの行（落口/合流点 = 吸水なし・isSystemEnd）: 旗上げなし
-      //   （表では「落口」「合流点」ラベルが表示されるだけなのでチャートの旗も省略）
-      // - それ以外（吸水行・集水変化点など）: row.pipeNumber をそのまま
+      // - それ以外（吸水行・集水変化点など）: 集水点の測点名（例: K8A.S2A）。
+      //   配線番号は重複しがちなので、固有な測点名で識別する。
       let flagPipeNumber: string | null = null
       if (row.mergeSystemIndex != null) {
         flagPipeNumber = resolveMergeTargetPipeNumber(row) ?? row.pipeNumber
@@ -165,7 +165,7 @@ export function CrossSectionChart({
       ) {
         flagPipeNumber = null
       } else {
-        flagPipeNumber = row.pipeNumber
+        flagPipeNumber = row.collectorPoint?.pointName ?? row.pipeNumber
       }
 
       // 集水帯用: 集水管番号
@@ -1050,13 +1050,13 @@ export function CrossSectionChart({
             )
           })()}
 
-          {/* 集水番号の帯（X軸下、各区間ごと） */}
+          {/* 集水帯（X軸下、各区間ごと）。バンド開始点の測点名を表示する。 */}
           {(() => {
             if (sectionData.length === 0) return null
             const bands: Array<{
               startIdx: number
               endIdx: number
-              pipeNumber: string
+              label: string
             }> = []
             let bandStart = 0
             for (let i = 1; i <= sectionData.length; i++) {
@@ -1069,10 +1069,16 @@ export function CrossSectionChart({
               ) {
                 // バンド確定
                 if (prev.collectorPipeNumber) {
+                  // バンド開始点の測点名（例: O1C.S2A）。空ならフォールバックで集水管番号。
+                  const startPoint = sectionData[bandStart]
+                  const label =
+                    startPoint.pointName && startPoint.pointName.trim() !== ''
+                      ? startPoint.pointName
+                      : prev.collectorPipeNumber
                   bands.push({
                     startIdx: bandStart,
                     endIdx: i - 1,
-                    pipeNumber: prev.collectorPipeNumber,
+                    label,
                   })
                 }
                 bandStart = i
@@ -1108,9 +1114,9 @@ export function CrossSectionChart({
                     y={bandTop + bandHeight / 2 + 1}
                     textAnchor="middle"
                     dominantBaseline="middle"
-                    className="fill-blue-800 text-[16px] font-semibold"
+                    className="fill-blue-800 text-[14px] font-semibold"
                   >
-                    {b.pipeNumber}
+                    {b.label}
                   </text>
                 </g>
               )
