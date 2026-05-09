@@ -355,23 +355,27 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
         for (let i = 0; i < rows.length; i++) {
           const row = rows[i]
 
-          // 落口行（吸水が空で集水がある rowType=outlet/collector_junction の行）の場合
+          // 系統終端行（吸水が空で集水がある rowType=outlet/collector_junction の行）の場合
           // ※ collector_change は系統途中の変化点であり、系統終端ではないため除外する
+          // - rowType='outlet' → 落口で系統終端
+          // - rowType='collector_junction' → 集水合流点で系統終端（merge）
           if (
             row.absorptionPipes.length === 0
             && row.collectorPipe
             && !row.isMergePipe
             && (row.rowType === 'outlet' || row.rowType === 'collector_junction')
           ) {
+            const endType: 'outlet' | 'merge' =
+              row.rowType === 'collector_junction' ? 'merge' : 'outlet'
             // 前の行があれば、それを系統終端としてマーク
             if (i > 0) {
               const prevRow = rows[i - 1]
               if (!prevRow.isMergePipe && prevRow.absorptionPipes.length > 0) {
-                systemInfo.set(prevRow.id, { systemIndex: currentSystemIndex, isSystemEnd: true, systemEndType: 'outlet' })
+                systemInfo.set(prevRow.id, { systemIndex: currentSystemIndex, isSystemEnd: true, systemEndType: endType })
               }
             }
             // この collector-only 行自身も現在の系統の終端として登録（次系統に漏らさない）
-            systemInfo.set(row.id, { systemIndex: currentSystemIndex, isSystemEnd: true, systemEndType: 'outlet' })
+            systemInfo.set(row.id, { systemIndex: currentSystemIndex, isSystemEnd: true, systemEndType: endType })
             currentSystemIndex++
             continue
           }
