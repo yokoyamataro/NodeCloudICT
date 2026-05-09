@@ -358,20 +358,50 @@ export function SurveyImportPage() {
   // インポートを確定（Supabaseに保存）
   // importZOffset を z に加算してから保存することで、SIM 取込の段階で
   // 高さを恒久的に補正する。取込後は補正不要。
+  // 設計座標と点名が一致する場合は対応する設計点に紐付け、
+  // 一致しない場合は「その他」として新規登録する。
   const confirmImport = async () => {
-    const newData: Omit<SurveyDataRow, 'id'>[] = importedData.map((c) => ({
-      pointNumber: c.pointNumber,
-      x: c.x,
-      y: c.y,
-      z: c.z !== null ? c.z + importZOffset : null,
-      matchedPointId: null,
-      matchedPointType: null,
-      matchDistance: null,
-      category: 'other' as TabType,
-      dzRaw: null,
-      dzCalibrated: null,
-      notes: null,
-    }))
+    const newData: Omit<SurveyDataRow, 'id'>[] = importedData.map((c) => {
+      const correctedZ = c.z !== null ? c.z + importZOffset : null
+      // 点名で設計点を検索
+      const dp = designPoints.find((d) => d.name === c.pointNumber)
+      if (dp) {
+        const distance = Math.hypot(c.x - dp.x, c.y - dp.y)
+        const dzRaw =
+          correctedZ !== null && dp.z !== null ? correctedZ - dp.z : null
+        const dzCalibrated =
+          dzRaw !== null && calibration.isEnabled
+            ? dzRaw - calibration.dzOffset
+            : dzRaw
+        return {
+          pointNumber: c.pointNumber,
+          x: c.x,
+          y: c.y,
+          z: correctedZ,
+          matchedPointId: dp.id,
+          matchedPointType: dp.source,
+          matchDistance: distance,
+          category: dp.type,
+          dzRaw,
+          dzCalibrated,
+          notes: null,
+        }
+      }
+      // 不一致: その他として新規登録
+      return {
+        pointNumber: c.pointNumber,
+        x: c.x,
+        y: c.y,
+        z: correctedZ,
+        matchedPointId: null,
+        matchedPointType: null,
+        matchDistance: null,
+        category: 'other' as TabType,
+        dzRaw: null,
+        dzCalibrated: null,
+        notes: null,
+      }
+    })
 
     await importSurveyData(newData)
     setIsImportModalOpen(false)
@@ -1144,23 +1174,60 @@ export function SurveyImportPage() {
                     <th className="px-3 py-2 text-right font-medium">Y</th>
                     <th className="px-3 py-2 text-right font-medium">Z (生)</th>
                     <th className="px-3 py-2 text-right font-medium">Z (補正後)</th>
+                    <th className="px-3 py-2 text-right font-medium text-emerald-700">設計Z</th>
+                    <th className="px-3 py-2 text-right font-medium text-emerald-700">ΔZ</th>
+                    <th className="px-3 py-2 text-left font-medium">登録先</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {importedData.map((coord, i) => (
-                    <tr key={i} className="hover:bg-slate-50">
-                      <td className="px-3 py-1.5 font-mono text-xs">{coord.index}</td>
-                      <td className="px-3 py-1.5 font-mono">{coord.pointNumber}</td>
-                      <td className="px-3 py-1.5 text-right font-mono">{coord.x.toFixed(3)}</td>
-                      <td className="px-3 py-1.5 text-right font-mono">{coord.y.toFixed(3)}</td>
-                      <td className="px-3 py-1.5 text-right font-mono text-slate-500">
-                        {coord.z?.toFixed(3) ?? '-'}
-                      </td>
-                      <td className="px-3 py-1.5 text-right font-mono font-semibold">
-                        {coord.z !== null ? (coord.z + importZOffset).toFixed(3) : '-'}
-                      </td>
-                    </tr>
-                  ))}
+                  {importedData.map((coord, i) => {
+                    const dp = designPoints.find((d) => d.name === coord.pointNumber)
+                    const designZ = dp?.z ?? null
+                    const correctedZ =
+                      coord.z !== null ? coord.z + importZOffset : null
+                    const dz =
+                      correctedZ !== null && designZ !== null
+                        ? correctedZ - designZ
+                        : null
+                    const categoryLabel = dp ? TAB_LABELS[dp.type] : 'その他（新規）'
+                    return (
+                      <tr key={i} className={`hover:bg-slate-50 ${dp ? '' : 'bg-amber-50/40'}`}>
+                        <td className="px-3 py-1.5 font-mono text-xs">{coord.index}</td>
+                        <td className="px-3 py-1.5 font-mono">{coord.pointNumber}</td>
+                        <td className="px-3 py-1.5 text-right font-mono">{coord.x.toFixed(3)}</td>
+                        <td className="px-3 py-1.5 text-right font-mono">{coord.y.toFixed(3)}</td>
+                        <td className="px-3 py-1.5 text-right font-mono text-slate-500">
+                          {coord.z?.toFixed(3) ?? '-'}
+                        </td>
+                        <td className="px-3 py-1.5 text-right font-mono font-semibold">
+                          {correctedZ !== null ? correctedZ.toFixed(3) : '-'}
+                        </td>
+                        <td className="px-3 py-1.5 text-right font-mono text-emerald-700">
+                          {designZ !== null ? designZ.toFixed(3) : '—'}
+                        </td>
+                        <td
+                          className={`px-3 py-1.5 text-right font-mono ${
+                            dz !== null && Math.abs(dz) > 0.05
+                              ? 'text-orange-600 font-semibold'
+                              : 'text-slate-500'
+                          }`}
+                        >
+                          {dz !== null ? (dz > 0 ? '+' : '') + dz.toFixed(3) : '—'}
+                        </td>
+                        <td className="px-3 py-1.5">
+                          <span
+                            className={`text-xs px-1.5 py-0.5 rounded ${
+                              dp
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {categoryLabel}
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
