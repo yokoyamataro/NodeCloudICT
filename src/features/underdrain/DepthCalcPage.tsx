@@ -1680,6 +1680,30 @@ export function DepthCalcPage() {
                     chartLabel = `吸水: ${r.pipeNumber ?? '?'}`
                     chartEndCollectorHeight = r.collectorPoint?.plannedHeight ?? null
                   }
+                } else {
+                  // 集水スコープ: 系統が他系統に合流している場合、
+                  // 合流先系統の最終集水点の計画高を右端に表示する。
+                  // mergeSystemIndex を持つ行を探し、対応する系統の末尾集水点を参照。
+                  const mergeRow = systemData.rows.find(
+                    (r) => r.mergeSystemIndex != null,
+                  )
+                  if (mergeRow?.mergeSystemIndex != null) {
+                    const targetSystemIndex = mergeRow.mergeSystemIndex
+                    // 同じグループ内で targetSystemIndex を持ち、自身は merge 行ではない
+                    // 行を抽出し、最後の collectorPoint.plannedHeight を取得
+                    const targetRows = groupData.rows.filter(
+                      (r) =>
+                        r.systemIndex === targetSystemIndex &&
+                        r.mergeSystemIndex == null,
+                    )
+                    for (let i = targetRows.length - 1; i >= 0; i--) {
+                      const tr = targetRows[i]
+                      if (tr.collectorPoint?.plannedHeight != null) {
+                        chartEndCollectorHeight = tr.collectorPoint.plannedHeight
+                        break
+                      }
+                    }
+                  }
                 }
 
                 // 系統内ドロップダウン用（吸水→集水 の順）

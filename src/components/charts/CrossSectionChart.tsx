@@ -791,26 +791,56 @@ export function CrossSectionChart({
               <g key={idx}>
                 {/* 現況点マーカー */}
                 {point.groundHeight !== null && (
-                  <circle
-                    cx={x}
-                    cy={yScale(point.groundHeight)}
-                    r={5}
-                    fill="#92400e"
-                    stroke="white"
-                    strokeWidth="1.5"
-                  />
+                  <>
+                    <circle
+                      cx={x}
+                      cy={yScale(point.groundHeight)}
+                      r={5}
+                      fill="#92400e"
+                      stroke="white"
+                      strokeWidth="1.5"
+                    />
+                    <text
+                      x={x + 7}
+                      y={yScale(point.groundHeight) - 6}
+                      className="fill-amber-800 text-[11px] font-medium"
+                      style={{
+                        paintOrder: 'stroke',
+                        stroke: 'white',
+                        strokeWidth: 3,
+                        strokeLinejoin: 'round',
+                      }}
+                    >
+                      {point.groundHeight.toFixed(3)}
+                    </text>
+                  </>
                 )}
 
                 {/* 計画点マーカー */}
                 {point.plannedHeight !== null && (
-                  <circle
-                    cx={x}
-                    cy={yScale(point.plannedHeight)}
-                    r={5}
-                    fill="#2563eb"
-                    stroke="white"
-                    strokeWidth="1.5"
-                  />
+                  <>
+                    <circle
+                      cx={x}
+                      cy={yScale(point.plannedHeight)}
+                      r={5}
+                      fill="#2563eb"
+                      stroke="white"
+                      strokeWidth="1.5"
+                    />
+                    <text
+                      x={x + 7}
+                      y={yScale(point.plannedHeight) + 14}
+                      className="fill-blue-700 text-[11px] font-medium"
+                      style={{
+                        paintOrder: 'stroke',
+                        stroke: 'white',
+                        strokeWidth: 3,
+                        strokeLinejoin: 'round',
+                      }}
+                    >
+                      {point.plannedHeight.toFixed(3)}
+                    </text>
+                  </>
                 )}
 
                 {/* 吸水接続マーク（丸） */}
@@ -836,6 +866,20 @@ export function CrossSectionChart({
                         strokeDasharray="4,3"
                       />
                     )}
+                    <text
+                      x={x - 7}
+                      y={yScale(point.absorptionPlannedHeight) + 4}
+                      textAnchor="end"
+                      className="fill-green-700 text-[11px] font-medium"
+                      style={{
+                        paintOrder: 'stroke',
+                        stroke: 'white',
+                        strokeWidth: 3,
+                        strokeLinejoin: 'round',
+                      }}
+                    >
+                      {point.absorptionPlannedHeight.toFixed(3)}
+                    </text>
                   </g>
                 )}
 
@@ -858,6 +902,20 @@ export function CrossSectionChart({
                         />
                       )
                     })()}
+                    <text
+                      x={x - 10}
+                      y={yScale(point.absorptionUpstreamPlannedHeight) - 8}
+                      textAnchor="end"
+                      className="fill-green-700 text-[11px] font-medium"
+                      style={{
+                        paintOrder: 'stroke',
+                        stroke: 'white',
+                        strokeWidth: 3,
+                        strokeLinejoin: 'round',
+                      }}
+                    >
+                      {point.absorptionUpstreamPlannedHeight.toFixed(3)}
+                    </text>
                   </g>
                 )}
 
