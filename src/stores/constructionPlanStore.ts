@@ -103,8 +103,12 @@ interface ConstructionPlanState {
   // 自動計算
   recalculateCutDepthAndSlope: () => void
 
-  // 自動計画高計算
-  autoCalculatePlannedHeights: (params: AutoCalcParams) => void
+  // 自動計画高計算。scope 未指定時は全グループ・全系統を対象。
+  // scope を渡すと指定グループの指定系統のみ計算する。
+  autoCalculatePlannedHeights: (
+    params: AutoCalcParams,
+    scope?: { groupIndex: number; systemIndex: number },
+  ) => void
 
   // 変更フラグのクリア
   markSaved: () => void
@@ -1362,11 +1366,14 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
     })
   },
 
-  autoCalculatePlannedHeights: (params: AutoCalcParams) => {
+  autoCalculatePlannedHeights: (params: AutoCalcParams, scope) => {
     const { kh, sh, istd } = params
 
     set(state => {
-      const newGroups = state.planGroups.map(group => {
+      const newGroups = state.planGroups.map((group, gi) => {
+        // scope 指定時、対象外グループはそのまま返す
+        if (scope && gi !== scope.groupIndex) return group
+
         // 系統ごとにグループ化
         const systemMap: Record<number, PlanRow[]> = {}
         for (const row of group.rows) {
@@ -1379,6 +1386,8 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
         const updatedRows = [...group.rows]
 
         for (const sysIdx in systemMap) {
+          // scope 指定時、対象外系統はスキップ
+          if (scope && parseInt(sysIdx) !== scope.systemIndex) continue
           const systemRows = systemMap[sysIdx]
 
           // 系統内の行を上流から下流の順で処理

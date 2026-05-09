@@ -99,10 +99,8 @@ export function DepthCalcPage() {
   // 設定パネルの表示状態
   const [showCalcSettings, setShowCalcSettings] = useState(false)
 
-  // 自動計算実行
-  const handleAutoCalculate = useCallback(() => {
-    autoCalculatePlannedHeights(calcParams)
-  }, [autoCalculatePlannedHeights, calcParams])
+  // 自動計算の対象スコープ: 'system' = 現在の系統のみ / 'all' = 全系統
+  const [autoCalcScope, setAutoCalcScope] = useState<'system' | 'all'>('system')
 
   // 行ごとの折りたたみ状態（地盤高より下の行を隠す）
   const [collapsedRows, setCollapsedRows] = useState<Set<string>>(new Set())
@@ -158,6 +156,18 @@ export function DepthCalcPage() {
 
   // 断面図のスコープ（'collector' = 系統全体の集水 / number = 系統内 row index の吸水）
   const [chartScope, setChartScope] = useState<'collector' | number>('collector')
+
+  // 自動計画の実行: scope に応じて現系統のみ / 全系統 を計算
+  const handleAutoCalculate = useCallback(() => {
+    if (autoCalcScope === 'system' && selectedSystem) {
+      autoCalculatePlannedHeights(calcParams, {
+        groupIndex: selectedSystem.groupIndex,
+        systemIndex: selectedSystem.systemIndex,
+      })
+    } else {
+      autoCalculatePlannedHeights(calcParams)
+    }
+  }, [autoCalculatePlannedHeights, calcParams, autoCalcScope, selectedSystem])
 
   // 地図上の管路クリック: 該当の系統タブへ切替・断面スコープを切替・表をスクロール
   const handleMapPipeSelect = useCallback((pipeId: string) => {
@@ -1216,16 +1226,33 @@ export function DepthCalcPage() {
                   >
                     <Settings className="h-4 w-4" />
                   </button>
-                  {/* 自動切深計画 */}
-                  <button
-                    onClick={handleAutoCalculate}
-                    disabled={saving}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors disabled:opacity-50 whitespace-nowrap"
-                    title="計画高を自動計算"
-                  >
-                    <Calculator className="h-4 w-4" />
-                    自動計画
-                  </button>
+                  {/* 自動切深計画 + 対象スコープ */}
+                  <div className="flex items-stretch border border-amber-500 rounded-lg overflow-hidden">
+                    <button
+                      onClick={handleAutoCalculate}
+                      disabled={saving}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm bg-amber-500 text-white hover:bg-amber-600 transition-colors disabled:opacity-50 whitespace-nowrap"
+                      title={
+                        autoCalcScope === 'system'
+                          ? '現系統のみ計画高を自動計算'
+                          : '全系統の計画高を自動計算'
+                      }
+                    >
+                      <Calculator className="h-4 w-4" />
+                      自動計画
+                    </button>
+                    <select
+                      value={autoCalcScope}
+                      onChange={(e) =>
+                        setAutoCalcScope(e.target.value as 'system' | 'all')
+                      }
+                      className="text-xs bg-amber-50 px-1.5 border-l border-amber-500 text-amber-800 focus:outline-none whitespace-nowrap"
+                      title="自動計画の対象範囲"
+                    >
+                      <option value="system">現系統</option>
+                      <option value="all">全系統</option>
+                    </select>
+                  </div>
                   {/* 連続勾配 */}
                   <button
                     onClick={() => setContinuousOpen(true)}
