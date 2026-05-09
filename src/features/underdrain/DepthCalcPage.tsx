@@ -36,7 +36,7 @@ interface ContinuousSlopeRow {
   cumulativeDistance: number // 始点からの累積距離（m）
 }
 import { useFarmStore } from '@/stores/farmStore'
-import { useUnderdrainStore, PIPE_TYPE_NAMES } from '@/stores/underdrainStore'
+import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useSurveyStore } from '@/stores/surveyStore'
 import { usePipeWiringStore } from '@/stores/pipeWiringStore'
 // generatePlanFromWiring は配管系統ストアの in-memory state を参照する。
@@ -143,6 +143,8 @@ export function DepthCalcPage() {
   const [bottomHeightPx, setBottomHeightPx] = useState(280)
   const horizontalContainerRef = useRef<HTMLDivElement>(null)
   const mainContainerRef = useRef<HTMLDivElement>(null)
+  // 表本文（行が並ぶスクロール領域）への参照。地図クリックでこの中をスクロール。
+  const tableContentRef = useRef<HTMLDivElement | null>(null)
 
   // 確認ダイアログ
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
@@ -158,6 +160,95 @@ export function DepthCalcPage() {
   const [chartScope, setChartScope] = useState<'collector' | number>('collector')
   // 系統が変わったら集水に戻す
   useEffect(() => { setChartScope('collector') }, [selectedSystem?.groupIndex, selectedSystem?.systemIndex])
+
+  // 地図上の管路クリック: 該当の系統タブへ切替・断面スコープを切替・表をスクロール
+  const handleMapPipeSelect = useCallback((pipeId: string) => {
+    setFocusedPipeId(pipeId)
+    // planGroups の中からこの管路を含む行を検索
+    let foundGroupIndex = -1
+    let foundSystemIndex: number | null = null
+    let foundRowId: string | null = null
+    let foundRowIdxInSystem = -1
+    let foundAsAbsorption = false
+    outer: for (let gi = 0; gi < planGroups.length; gi++) {
+      const g = planGroups[gi]
+      // システム別に行をまとめて、行 index を確実に拾う
+      const bySystem = new Map<number, PlanRow[]>()
+      for (const r of g.rows) {
+        const sys = r.systemIndex ?? 1
+        const arr = bySystem.get(sys) ?? []
+        arr.push(r)
+        bySystem.set(sys, arr)
+      }
+      // 吸水管としてのマッチを優先（個別の断面が見られる）
+      for (const [sysIdx, rows] of bySystem) {
+        for (let i = 0; i < rows.length; i++) {
+          if (rows[i].absorptionPipeId === pipeId) {
+            foundGroupIndex = gi
+            foundSystemIndex = sysIdx
+            foundRowId = rows[i].id
+            foundRowIdxInSystem = i
+            foundAsAbsorption = true
+            break outer
+          }
+        }
+      }
+      // 集水管としてのマッチ（系統全体の集水断面に合わせる）
+      for (const [sysIdx, rows] of bySystem) {
+        for (let i = 0; i < rows.length; i++) {
+          if (rows[i].collectorPipeId === pipeId) {
+            foundGroupIndex = gi
+            foundSystemIndex = sysIdx
+            foundRowId = rows[i].id
+            foundRowIdxInSystem = i
+            foundAsAbsorption = false
+            break outer
+          }
+        }
+      }
+    }
+
+    if (foundGroupIndex >= 0 && foundSystemIndex !== null) {
+      setSelectedSystem({ groupIndex: foundGroupIndex, systemIndex: foundSystemIndex })
+      setChartScope(foundAsAbsorption ? foundRowIdxInSystem : 'collector')
+      // 行へスクロール（タブ切替後の DOM 反映を待つ）
+      if (foundRowId) {
+        const rid = foundRowId
+        setTimeout(() => {
+          const container = tableContentRef.current
+          if (!container) return
+          const el = container.querySelector(
+            `[data-row-id="${CSS.escape(rid)}"]`,
+          ) as HTMLElement | null
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          }
+        }, 50)
+      }
+    }
+  }, [planGroups])
+
+  // 地図でハイライト表示する管路 ID
+  // - 吸水スコープのとき: その吸水管のみ
+  // - 集水スコープのとき: 選択中の系統に含まれる全ての集水管・吸水管
+  const mapHighlightPipeIds = useMemo<Set<string>>(() => {
+    const set = new Set<string>()
+    if (!selectedSystem) return set
+    const group = planGroups[selectedSystem.groupIndex]
+    if (!group) return set
+    const rows = group.rows.filter((r) => (r.systemIndex ?? 1) === selectedSystem.systemIndex)
+    if (typeof chartScope === 'number') {
+      const r = rows[chartScope]
+      if (r?.absorptionPipeId) set.add(r.absorptionPipeId)
+      return set
+    }
+    // 系統全体
+    for (const r of rows) {
+      if (r.absorptionPipeId) set.add(r.absorptionPipeId)
+      if (r.collectorPipeId) set.add(r.collectorPipeId)
+    }
+    return set
+  }, [selectedSystem, chartScope, planGroups])
 
   // LandXML TIN サーフェス（縦断図に断面表示）
   const [tinSurface, setTinSurface] = useState<ParsedSurface | null>(null)
@@ -373,7 +464,13 @@ export function DepthCalcPage() {
     if (isMergeRow) {
       const refCount = mergedLast3Points.length
       return (
-        <div key={row.id} className="border rounded-lg mb-2 bg-purple-50 overflow-x-auto">
+        <div
+          key={row.id}
+          data-row-id={row.id}
+          data-absorption-pipe-id={row.absorptionPipeId ?? undefined}
+          data-collector-pipe-id={row.collectorPipeId ?? undefined}
+          className="border rounded-lg mb-2 bg-purple-50 overflow-x-auto"
+        >
           <table className="w-full text-xs border-collapse">
             <colgroup>
               <col className="w-[60px]" />
@@ -582,7 +679,13 @@ export function DepthCalcPage() {
     }
 
     return (
-      <div key={row.id} className="border rounded-lg mb-2 bg-white overflow-x-auto">
+      <div
+        key={row.id}
+        data-row-id={row.id}
+        data-absorption-pipe-id={row.absorptionPipeId ?? undefined}
+        data-collector-pipe-id={row.collectorPipeId ?? undefined}
+        className="border rounded-lg mb-2 bg-white overflow-x-auto"
+      >
         <table className="w-full text-xs border-collapse">
           <colgroup>
             <col className="w-[60px]" />
@@ -1334,7 +1437,10 @@ export function DepthCalcPage() {
 
                 {/* アクティブなタブの内容 */}
                 {activeTab ? (
-                  <div className="border border-t-0 rounded-b-lg bg-white shadow-sm p-2">
+                  <div
+                    ref={tableContentRef}
+                    className="border border-t-0 rounded-b-lg bg-white shadow-sm p-2"
+                  >
                     {activeTab.rows.map((row, idx) => renderRow(row, activeTab.rows, idx))}
                   </div>
                 ) : (
@@ -1401,117 +1507,12 @@ export function DepthCalcPage() {
             </button>
             <PipeMap
               selectedPipeId={focusedPipeId}
+              highlightPipeIds={mapHighlightPipeIds}
               focusedPipeId={null}
               showLabels={true}
               showDirection={true}
-              onPipeSelect={(id) =>
-                setFocusedPipeId((prev) => (prev === id ? null : id))
-              }
+              onPipeSelect={(id) => handleMapPipeSelect(id)}
             />
-            {/* 選択中の管路情報パネル */}
-            {focusedPipeId && (() => {
-              const pipe = pipes.find((p) => p.id === focusedPipeId)
-              if (!pipe) return null
-              const typeLabel = pipe.pipeType ? PIPE_TYPE_NAMES[pipe.pipeType] : '-'
-              // この管路に関連する施工計画ポイントを集める
-              type PointInfo = {
-                pointName: string
-                groundHeight: number | null
-                plannedHeight: number | null
-                cutDepth: number | null
-                segmentDistance: number | null
-                segmentSlope: string | null
-                manualSlope: string | null
-                kind: 'absorption' | 'collector'
-              }
-              const points: PointInfo[] = []
-              for (const g of planGroups) {
-                for (const r of g.rows) {
-                  if (r.absorptionPipeId === focusedPipeId) {
-                    for (const p of r.absorptionPoints) {
-                      points.push({
-                        pointName: p.pointName,
-                        groundHeight: p.groundHeight,
-                        plannedHeight: p.plannedHeight,
-                        cutDepth: p.cutDepth,
-                        segmentDistance: p.segmentDistance,
-                        segmentSlope: p.segmentSlope,
-                        manualSlope: p.manualSlope ?? null,
-                        kind: 'absorption',
-                      })
-                    }
-                  }
-                  if (r.collectorPipeId === focusedPipeId && r.collectorPoint) {
-                    points.push({
-                      pointName: r.collectorPoint.pointName,
-                      groundHeight: r.collectorPoint.groundHeight,
-                      plannedHeight: r.collectorPoint.plannedHeight,
-                      cutDepth: r.collectorPoint.cutDepth,
-                      segmentDistance: r.collectorPoint.segmentDistance,
-                      segmentSlope: r.collectorPoint.segmentSlope,
-                      manualSlope: r.collectorPoint.manualSlope ?? null,
-                      kind: 'collector',
-                    })
-                  }
-                }
-              }
-              return (
-                <div className="absolute top-12 left-2 z-[1000] bg-white/95 border rounded-lg shadow-lg p-2 text-xs max-w-[60%] max-h-[60%] overflow-auto">
-                  <div className="flex items-center justify-between gap-2 mb-1 pb-1 border-b">
-                    <div>
-                      <span className="font-bold text-slate-800">{pipe.number}</span>
-                      <span className="ml-2 text-slate-500">{typeLabel}</span>
-                      {pipe.diameter && <span className="ml-2 text-slate-500">φ{pipe.diameter}mm</span>}
-                    </div>
-                    <button
-                      onClick={() => setFocusedPipeId(null)}
-                      className="text-slate-400 hover:text-slate-700 px-1"
-                      title="閉じる"
-                    >
-                      ×
-                    </button>
-                  </div>
-                  {points.length === 0 ? (
-                    <div className="text-slate-400">この管路の施工計画データがありません</div>
-                  ) : (
-                    <table className="w-full text-[11px]">
-                      <thead>
-                        <tr className="text-slate-500">
-                          <th className="text-left font-normal pr-2">点名</th>
-                          <th className="text-right font-normal pr-2">地盤高</th>
-                          <th className="text-right font-normal pr-2 text-red-600">計画高</th>
-                          <th className="text-right font-normal pr-2 text-blue-600">切深</th>
-                          <th className="text-right font-normal pr-2">区間距離</th>
-                          <th className="text-right font-normal text-green-700">勾配</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {points.map((p, i) => (
-                          <tr key={i} className="border-t">
-                            <td className="pr-2 font-mono">{p.pointName || '-'}</td>
-                            <td className="pr-2 text-right font-mono">
-                              {p.groundHeight != null ? p.groundHeight.toFixed(3) : '-'}
-                            </td>
-                            <td className="pr-2 text-right font-mono text-red-600">
-                              {p.plannedHeight != null ? p.plannedHeight.toFixed(3) : '-'}
-                            </td>
-                            <td className="pr-2 text-right font-mono text-blue-600">
-                              {p.cutDepth != null ? p.cutDepth.toFixed(3) : '-'}
-                            </td>
-                            <td className="pr-2 text-right font-mono">
-                              {p.segmentDistance != null ? p.segmentDistance.toFixed(1) : '-'}
-                            </td>
-                            <td className="text-right font-mono text-green-700">
-                              {p.manualSlope ?? p.segmentSlope ?? "-"}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-              )
-            })()}
           </div>
         </div>
 
@@ -1649,11 +1650,46 @@ export function DepthCalcPage() {
                   }
                 }
 
+                // 断面の前/次ナビゲーション用に選択肢一覧を構築
+                const scopeOptions: Array<{
+                  value: 'collector' | number
+                  label: string
+                }> = [
+                  {
+                    value: 'collector',
+                    label: `集水（系統 ${systemData.systemIndex}）`,
+                  },
+                  ...absorptionRows.map(({ row, idx }) => ({
+                    value: idx as number,
+                    label: `吸水: ${row.pipeNumber ?? '?'}`,
+                  })),
+                ]
+                const currentIdx = scopeOptions.findIndex(
+                  (o) => o.value === chartScope,
+                )
+                const goPrev = () => {
+                  if (currentIdx <= 0) return
+                  setChartScope(scopeOptions[currentIdx - 1].value)
+                }
+                const goNext = () => {
+                  if (currentIdx < 0 || currentIdx >= scopeOptions.length - 1) return
+                  setChartScope(scopeOptions[currentIdx + 1].value)
+                }
+
                 return (
                   <>
                     {/* 断面スコープ切替 */}
-                    <div className="px-2 pt-1 pb-1 border-b bg-white flex items-center gap-2 text-xs flex-shrink-0">
-                      <span className="text-slate-600">断面:</span>
+                    <div className="px-2 pt-1 pb-1 border-b bg-white flex items-center gap-1 text-xs flex-shrink-0">
+                      <span className="text-slate-600 mr-1">断面:</span>
+                      <button
+                        type="button"
+                        onClick={goPrev}
+                        disabled={currentIdx <= 0}
+                        className="px-2 py-0.5 border rounded hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                        title="前の断面へ"
+                      >
+                        ◀ 前
+                      </button>
                       <select
                         value={typeof chartScope === 'number' ? `abs-${chartScope}` : 'collector'}
                         onChange={(e) => {
@@ -1670,7 +1706,19 @@ export function DepthCalcPage() {
                           </option>
                         ))}
                       </select>
-                      {chartLabel && <span className="text-slate-500">{chartLabel}</span>}
+                      <button
+                        type="button"
+                        onClick={goNext}
+                        disabled={currentIdx < 0 || currentIdx >= scopeOptions.length - 1}
+                        className="px-2 py-0.5 border rounded hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                        title="次の断面へ"
+                      >
+                        次 ▶
+                      </button>
+                      <span className="text-[10px] text-slate-400 ml-1">
+                        {currentIdx >= 0 ? `${currentIdx + 1} / ${scopeOptions.length}` : ''}
+                      </span>
+                      {chartLabel && <span className="text-slate-500 ml-2">{chartLabel}</span>}
                     </div>
                     <div className="flex-1 overflow-hidden">
                       <CrossSectionChart

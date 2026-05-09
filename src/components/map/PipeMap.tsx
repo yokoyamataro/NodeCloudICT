@@ -219,6 +219,7 @@ interface PipeMapProps {
   selectedPipeId?: string | null
   selectedPipeIds?: Set<string>
   assignedPipeIds?: Set<string>  // 設定済み管路（黄色表示用）
+  highlightPipeIds?: Set<string> // コンテキスト強調表示（例: 選択中の系統全体）
   focusedPipeId?: string | null  // フォーカス対象の管路（中央拡大表示）
   onPipeSelect?: (id: string, ctrlKey?: boolean) => void
   onVertexClick?: (pipeId: string, vertexIndex: number) => void
@@ -378,6 +379,7 @@ export function PipeMap({
   selectedPipeId,
   selectedPipeIds = new Set(),
   assignedPipeIds = new Set(),
+  highlightPipeIds = new Set(),
   focusedPipeId = null,
   onPipeSelect,
   onVertexClick,
@@ -488,13 +490,16 @@ export function PipeMap({
         const isSelected = pipe.id === selectedPipeId
         const isMultiSelected = selectedPipeIds.has(pipe.id)
         const isAssigned = assignedPipeIds.has(pipe.id)
+        const isHighlighted = highlightPipeIds.has(pipe.id)
         const MERGE_SELECTED_COLOR = '#a855f7' // 紫色（結合選択用）
         const ASSIGNED_COLOR = '#eab308' // 黄色（設定済み管路用）
+        const HIGHLIGHT_COLOR = '#0ea5e9' // 水色（系統等の強調表示用）
 
         // 色の決定
         const getColor = () => {
           if (isSelected) return SELECTED_COLOR
           if (editMode === 'merge' && isMultiSelected) return MERGE_SELECTED_COLOR
+          if (isHighlighted) return HIGHLIGHT_COLOR
           if (isAssigned) return ASSIGNED_COLOR
           return pipe.color
         }
@@ -503,6 +508,7 @@ export function PipeMap({
         const getWeight = () => {
           if (isSelected) return pipe.weight + 2
           if (editMode === 'merge' && isMultiSelected) return pipe.weight + 2
+          if (isHighlighted) return pipe.weight + 2
           return pipe.weight
         }
 
