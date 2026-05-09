@@ -779,8 +779,8 @@ export function CadAnalysisPage() {
         left={
         <div className="flex-1 flex flex-col border-r min-h-0">
           {/* ツールバー */}
-          <div className="p-3 border-b bg-slate-50 flex-shrink-0">
-            <div className="flex items-center gap-2">
+          <div className="p-2 border-b bg-slate-50 flex-shrink-0">
+            <div className="flex items-center gap-1 flex-wrap">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -790,71 +790,77 @@ export function CadAnalysisPage() {
               />
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="flex items-center gap-2 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 whitespace-nowrap"
+                title="DXF ファイルをインポート"
               >
                 <Upload className="h-4 w-4" />
-                DXFインポート
+                DXF
               </button>
               {pipes.length > 0 && !isBulkEditMode && editMode === 'normal' && autoConnectMode === 'idle' && (
                 <>
+                  <div className="w-px h-6 bg-slate-300 mx-0.5" />
+                  {/* 編集モード */}
                   <button
                     onClick={startBulkEdit}
-                    className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white"
+                    className="p-2 text-slate-600 border border-transparent rounded hover:bg-white hover:border-slate-300"
+                    title="一括訂正（管種・管径・連番をまとめて設定）"
                   >
-                    <Edit3 className="h-3.5 w-3.5" />
-                    一括訂正
+                    <Edit3 className="h-4 w-4" />
                   </button>
                   <button
                     onClick={() => { setEditMode('merge'); clearPipeSelection() }}
-                    className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white"
-                    title="複数の管路を結合"
+                    className="p-2 text-slate-600 border border-transparent rounded hover:bg-white hover:border-slate-300"
+                    title="結合（隣接管路を 1 本にまとめる）"
                   >
-                    <Merge className="h-3.5 w-3.5" />
-                    結合
+                    <Merge className="h-4 w-4" />
                   </button>
                   <button
                     onClick={() => { setEditMode('split'); setSelectedPipeId(null) }}
-                    className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white"
-                    title="管路を分割"
+                    className="p-2 text-slate-600 border border-transparent rounded hover:bg-white hover:border-slate-300"
+                    title="分割（管路を頂点・距離・合流点で分ける）"
                   >
-                    <Split className="h-3.5 w-3.5" />
-                    分割
+                    <Split className="h-4 w-4" />
                   </button>
+
+                  <div className="w-px h-6 bg-slate-300 mx-0.5" />
+                  {/* 自動処理 */}
                   <button
                     onClick={startAutoConnect}
-                    className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white bg-green-50 border-green-400 text-green-700 hover:bg-green-100"
-                    title="落口を選択して接続関係を自動設定"
+                    className="flex items-center gap-1 px-2 py-1.5 text-sm border border-green-400 bg-green-50 text-green-700 rounded hover:bg-green-100 whitespace-nowrap"
+                    title="自動接続（落口を選択して接続関係と上下流方向を自動設定）"
                   >
-                    <Link2 className="h-3.5 w-3.5" />
+                    <Link2 className="h-4 w-4" />
                     自動接続
                   </button>
                   <button
                     onClick={() => setShowMidpointModal(true)}
-                    className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white"
-                    title="長い区間に自動で中間点を設置"
+                    className="p-2 text-slate-600 border border-transparent rounded hover:bg-white hover:border-slate-300"
+                    title="中間点（長い区間に自動で中間点を設置）"
                   >
-                    <MapPin className="h-3.5 w-3.5" />
-                    中間点
+                    <MapPin className="h-4 w-4" />
                   </button>
+
+                  <div className="w-px h-6 bg-slate-300 mx-0.5" />
+                  {/* 出力 / 危険 */}
                   <button
                     onClick={handleExportCSV}
-                    className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white"
+                    className="p-2 text-slate-600 border border-transparent rounded hover:bg-white hover:border-slate-300"
+                    title="CSV 出力"
                   >
-                    <Download className="h-3.5 w-3.5" />
-                    CSV出力
+                    <Download className="h-4 w-4" />
                   </button>
                   <button
                     onClick={clearPipes}
-                    className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-white text-red-600"
+                    className="p-2 text-red-600 border border-transparent rounded hover:bg-red-50 hover:border-red-300"
+                    title="全削除（取込済みの管路をすべて削除）"
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    全削除
+                    <Trash2 className="h-4 w-4" />
                   </button>
                 </>
               )}
               {lastImportFile && !isBulkEditMode && (
-                <span className="ml-auto text-xs text-muted-foreground">
-                  最終インポート: {lastImportFile}
+                <span className="ml-auto text-xs text-muted-foreground truncate max-w-[200px]" title={lastImportFile}>
+                  最終: {lastImportFile}
                 </span>
               )}
             </div>
@@ -1421,68 +1427,68 @@ export function CadAnalysisPage() {
         }
         right={
         <div className="flex-1 h-full overflow-hidden flex flex-col">
-          {/* 地図上部のツールバー */}
-          <div className="p-2 bg-white border-b flex items-center gap-2 flex-shrink-0">
+          {/* 地図上部のツールバー（アイコン中心の表示トグル） */}
+          <div className="p-2 bg-white border-b flex items-center gap-1 flex-shrink-0">
             <button
               onClick={() => setShowLabels(!showLabels)}
-              className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 ${
-                showLabels ? 'bg-blue-100 border-blue-400 text-blue-700' : ''
+              className={`p-2 border rounded hover:bg-slate-50 ${
+                showLabels ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-transparent text-slate-600'
               }`}
+              title="番号表示"
             >
-              <Tag className="h-3.5 w-3.5" />
-              番号表示
+              <Tag className="h-4 w-4" />
             </button>
             <button
               onClick={() => setShowDirection(!showDirection)}
-              className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 ${
-                showDirection ? 'bg-blue-100 border-blue-400 text-blue-700' : ''
+              className={`p-2 border rounded hover:bg-slate-50 ${
+                showDirection ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-transparent text-slate-600'
               }`}
+              title="方向表示"
             >
-              <Navigation className="h-3.5 w-3.5" />
-              方向表示
+              <Navigation className="h-4 w-4" />
             </button>
             <button
               onClick={() => setShowSurveyPoints(!showSurveyPoints)}
-              className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 ${
-                showSurveyPoints ? 'bg-green-100 border-green-400 text-green-700' : ''
+              className={`p-2 border rounded hover:bg-slate-50 ${
+                showSurveyPoints ? 'bg-green-100 border-green-400 text-green-700' : 'border-transparent text-slate-600'
               }`}
+              title="測点表示"
             >
-              <Target className="h-3.5 w-3.5" />
-              測点表示
+              <Target className="h-4 w-4" />
             </button>
-            <div className="border-l h-6 mx-1" />
+            <div className="w-px h-6 bg-slate-300 mx-0.5" />
             <button
               onClick={() => setShowZones(!showZones)}
-              className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 ${
-                showZones ? 'bg-purple-100 border-purple-400 text-purple-700' : ''
+              className={`p-2 border rounded hover:bg-slate-50 ${
+                showZones ? 'bg-purple-100 border-purple-400 text-purple-700' : 'border-transparent text-slate-600'
               }`}
+              title="区域表示"
             >
-              <Square className="h-3.5 w-3.5" />
-              区域
+              <Square className="h-4 w-4" />
             </button>
             <button
               onClick={() => setShowCoordinates(!showCoordinates)}
-              className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 ${
-                showCoordinates ? 'bg-orange-100 border-orange-400 text-orange-700' : ''
+              className={`p-2 border rounded hover:bg-slate-50 ${
+                showCoordinates ? 'bg-orange-100 border-orange-400 text-orange-700' : 'border-transparent text-slate-600'
               }`}
+              title="座標管理点表示"
             >
-              <Map className="h-3.5 w-3.5" />
-              座標
+              <Map className="h-4 w-4" />
             </button>
-            <div className="border-l h-6 mx-1" />
+            <div className="w-px h-6 bg-slate-300 mx-0.5" />
             <button
               onClick={() => setIsFullscreen(true)}
-              className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
+              className="p-2 border border-transparent text-slate-600 rounded hover:bg-slate-50 hover:border-slate-300"
               title="全画面表示"
             >
-              <Maximize2 className="h-3.5 w-3.5" />
+              <Maximize2 className="h-4 w-4" />
             </button>
             <button
               onClick={() => window.print()}
-              className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
+              className="p-2 border border-transparent text-slate-600 rounded hover:bg-slate-50 hover:border-slate-300"
               title="印刷"
             >
-              <Printer className="h-3.5 w-3.5" />
+              <Printer className="h-4 w-4" />
             </button>
           </div>
           {/* 地図 */}
