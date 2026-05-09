@@ -446,31 +446,34 @@ export function DepthCalcPage() {
           : null
       : null
 
-    // 集水合流行の場合、合流先系統の最下流 3 点と末尾集水管の番号を取得
+    // 集水合流行の場合、合流先系統の最下流 3 点と末尾集水管の番号を取得。
+    // systemIndex はグループ（集水暗渠1, 2, ...）ごとにローカル連番なので、
+    // 必ず「合流元の行と同じグループ」の中から検索する。
     const isMergeRow = row.mergeSystemIndex !== null && row.mergeSystemIndex !== undefined
     const mergedLast3Points: PlanPoint[] = []
     let refEndPipeNumber: string | null = null
     if (isMergeRow && row.mergeSystemIndex !== null && row.mergeSystemIndex !== undefined) {
-      for (const g of planGroups) {
-        const targetRows = g.rows.filter(
-          (r) => r.systemIndex === row.mergeSystemIndex && r.mergeSystemIndex == null
+      const sameGroup = planGroups.find(
+        (g) => g.groupType === row.groupType && g.groupIndex === row.groupIndex,
+      )
+      if (sameGroup) {
+        const targetRows = sameGroup.rows.filter(
+          (r) => r.systemIndex === row.mergeSystemIndex && r.mergeSystemIndex == null,
         )
-        if (targetRows.length === 0) continue
         const allCollectorPoints: PlanPoint[] = []
         for (const tr of targetRows) {
           if (tr.collectorPoint) allCollectorPoints.push(tr.collectorPoint)
         }
-        if (allCollectorPoints.length === 0) continue
-        mergedLast3Points.push(...allCollectorPoints.slice(-3))
-        // 合流先系統の末尾集水管番号を取得
-        for (let i = targetRows.length - 1; i >= 0; i--) {
-          const tr = targetRows[i]
-          if (tr.collectorPipeId) {
-            refEndPipeNumber = pipeNumberById.get(tr.collectorPipeId) ?? null
-            break
+        if (allCollectorPoints.length > 0) {
+          mergedLast3Points.push(...allCollectorPoints.slice(-3))
+          for (let i = targetRows.length - 1; i >= 0; i--) {
+            const tr = targetRows[i]
+            if (tr.collectorPipeId) {
+              refEndPipeNumber = pipeNumberById.get(tr.collectorPipeId) ?? null
+              break
+            }
           }
         }
-        break
       }
     }
 

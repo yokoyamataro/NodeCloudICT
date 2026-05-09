@@ -92,23 +92,29 @@ export function CrossSectionChart({
     setWidthScale(1.0)
   }, [])
 
-  // 合流先系統の末端集水管の番号を取得（DepthCalcPage の refEndPipeNumber と同じロジック）
-  // systemIndex はグループごとにローカル連番なので、最初に一致したグループの結果を採用する（first-match-wins）
+  // 合流先系統の末端集水管の番号を取得。
+  // systemIndex はグループごとにローカル連番なので、必ず合流元の行と「同じグループ」内で
+  // 検索する。例: 集水暗渠2 系統3 の合流先 1/2 は 集水暗渠2 の 系統1/2 を指す。
   const resolveMergeTargetPipeNumber = useMemo(() => {
-    return (mergeSystemIndex: number): string | null => {
+    return (sourceRow: PlanRow): string | null => {
       if (!allPlanGroups || !pipeNumberById) return null
-      for (const g of allPlanGroups) {
-        const targetRows = g.rows.filter(
-          (r) => r.systemIndex === mergeSystemIndex && r.mergeSystemIndex == null,
-        )
-        if (targetRows.length === 0) continue
-        for (let i = targetRows.length - 1; i >= 0; i--) {
-          const tr = targetRows[i]
-          if (tr.collectorPipeId) {
-            return pipeNumberById.get(tr.collectorPipeId) ?? null
-          }
+      if (sourceRow.mergeSystemIndex == null) return null
+      const g = allPlanGroups.find(
+        (grp) =>
+          grp.groupType === sourceRow.groupType &&
+          grp.groupIndex === sourceRow.groupIndex,
+      )
+      if (!g) return null
+      const targetRows = g.rows.filter(
+        (r) =>
+          r.systemIndex === sourceRow.mergeSystemIndex &&
+          r.mergeSystemIndex == null,
+      )
+      for (let i = targetRows.length - 1; i >= 0; i--) {
+        const tr = targetRows[i]
+        if (tr.collectorPipeId) {
+          return pipeNumberById.get(tr.collectorPipeId) ?? null
         }
-        return null
       }
       return null
     }
@@ -151,7 +157,7 @@ export function CrossSectionChart({
       // - それ以外（吸水行・集水変化点など）: row.pipeNumber をそのまま
       let flagPipeNumber: string | null = null
       if (row.mergeSystemIndex != null) {
-        flagPipeNumber = resolveMergeTargetPipeNumber(row.mergeSystemIndex) ?? row.pipeNumber
+        flagPipeNumber = resolveMergeTargetPipeNumber(row) ?? row.pipeNumber
       } else if (
         row.isSystemEnd &&
         row.absorptionPoints.length === 0 &&

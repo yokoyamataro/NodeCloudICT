@@ -32,24 +32,31 @@ interface SectionPoint {
 
 const HORIZONTAL_SCALE = 1000
 
+// systemIndex はグループ（集水暗渠1, 2, ...）ごとにローカル連番なので、
+// 合流元の行と同じグループ (groupType, groupIndex) 内のみで合流先系統を検索する。
 function resolveMergeTargetPipeNumber(
-  mergeSystemIndex: number,
+  sourceRow: PlanRow,
   allPlanGroups: PlanGroup[] | undefined,
   pipeNumberById: Map<string, string> | undefined,
 ): string | null {
   if (!allPlanGroups || !pipeNumberById) return null
-  for (const g of allPlanGroups) {
-    const targetRows = g.rows.filter(
-      (r) => r.systemIndex === mergeSystemIndex && r.mergeSystemIndex == null,
-    )
-    if (targetRows.length === 0) continue
-    for (let i = targetRows.length - 1; i >= 0; i--) {
-      const tr = targetRows[i]
-      if (tr.collectorPipeId) {
-        return pipeNumberById.get(tr.collectorPipeId) ?? null
-      }
+  if (sourceRow.mergeSystemIndex == null) return null
+  const g = allPlanGroups.find(
+    (grp) =>
+      grp.groupType === sourceRow.groupType &&
+      grp.groupIndex === sourceRow.groupIndex,
+  )
+  if (!g) return null
+  const targetRows = g.rows.filter(
+    (r) =>
+      r.systemIndex === sourceRow.mergeSystemIndex &&
+      r.mergeSystemIndex == null,
+  )
+  for (let i = targetRows.length - 1; i >= 0; i--) {
+    const tr = targetRows[i]
+    if (tr.collectorPipeId) {
+      return pipeNumberById.get(tr.collectorPipeId) ?? null
     }
-    return null
   }
   return null
 }
@@ -84,7 +91,7 @@ function buildSectionData(
       flagPipeNumber = row.pipeNumber
     } else if (row.mergeSystemIndex != null) {
       flagPipeNumber = resolveMergeTargetPipeNumber(
-        row.mergeSystemIndex,
+        row,
         allPlanGroups,
         pipeNumberById,
       )
