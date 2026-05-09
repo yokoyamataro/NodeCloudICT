@@ -968,11 +968,13 @@ export function CrossSectionChart({
             )
           })}
 
-          {/* 右端に集水管の計画高（吸水断面で集水合流位置を示す）*/}
+          {/* 右端に集水管の計画高（吸水断面で集水合流位置 / 集水断面で合流先系統を示す）*/}
           {endCollectorPlannedHeight != null && sectionData.length > 0 && (() => {
             const last = sectionData[sectionData.length - 1]
             const x = xScale(last.distance)
             const y = yScale(endCollectorPlannedHeight)
+            // 同じ x にある計画高ラベル（x+7, plannedY+14）と重ならないよう、
+            // 合流先ラベルはマーカーの左側に配置する。
             return (
               <g>
                 <circle
@@ -984,11 +986,18 @@ export function CrossSectionChart({
                   strokeWidth="1.5"
                 />
                 <text
-                  x={x + 8}
+                  x={x - 9}
                   y={y - 6}
-                  className="fill-red-700 text-[12px] font-medium"
+                  textAnchor="end"
+                  className="fill-red-700 text-[12px] font-semibold"
+                  style={{
+                    paintOrder: 'stroke',
+                    stroke: 'white',
+                    strokeWidth: 3,
+                    strokeLinejoin: 'round',
+                  }}
                 >
-                  集水 {endCollectorPlannedHeight.toFixed(3)}m
+                  合流先 {endCollectorPlannedHeight.toFixed(3)}m
                 </text>
               </g>
             )
