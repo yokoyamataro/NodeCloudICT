@@ -13,7 +13,7 @@ import {
   Loader2,
 } from 'lucide-react'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
-import { useCoordinateStore } from '@/stores/coordinateStore'
+import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { useSurveyStore, type SurveyDataRow } from '@/stores/surveyStore'
 import { useGlobalSaveRegistry } from '@/stores/globalSaveRegistry'
@@ -56,7 +56,7 @@ interface MatchResult {
 
 export function SurveyImportPage() {
   const { pipes, fetchPipes, updatePipe } = useUnderdrainStore()
-  const { coordinates, fetchCoordinates } = useCoordinateStore()
+  const { coordinates, fetchCoordinates, importCoordinates } = useCoordinateStore()
   const { currentFarm } = useFarmStore()
   const {
     surveyData,
@@ -439,6 +439,28 @@ export function SurveyImportPage() {
     })
 
     await importSurveyData(newData)
+
+    // 設計座標と一致しなかった「その他」の点は、座標管理にも現況点として登録する。
+    // 既存の座標管理に同じ点番号が登録済みの場合は重複登録を避ける。
+    const existingPointNumbers = new Set(coordinates.map((c) => c.pointNumber))
+    const otherCoords = newData
+      .filter(
+        (d) => d.category === 'other' && !existingPointNumbers.has(d.pointNumber),
+      )
+      .map((d) => ({
+        pointNumber: d.pointNumber,
+        x: d.x,
+        y: d.y,
+        z: d.z,
+        // CoordinateType（database.ts）には 'current' が無いが、
+        // lib/coordinates.ts 側の COORDINATE_TYPE_NAMES では 'current' = '現況' として
+        // 取り扱われる。DB の coordinate_type は TEXT 制約なし。
+        type: 'current' as unknown as CoordinateRow['type'],
+      }))
+    if (otherCoords.length > 0) {
+      await importCoordinates(otherCoords)
+    }
+
     setIsImportModalOpen(false)
     setImportedData([])
     setImportZOffset(0)

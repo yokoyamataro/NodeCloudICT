@@ -56,6 +56,11 @@ export function DepthCalcPage() {
   const { fetchPipes, pipes } = useUnderdrainStore()
   const { fetchSurveyData } = useSurveyStore()
   const { fetchWiring, saveWiring, hasChanges: hasWiringChanges } = usePipeWiringStore()
+  // 配管系統の生データ（wiringRowId → rowType / isMergePipe / mergeSystemIndex の最新状態）
+  // groupedBySystem 等で planGroups の wiringRowType が古い／未設定でも、
+  // 最新の wiring 行から終端種別を決定するために購読する。
+  const wiringCollectorTabs = usePipeWiringStore((s) => s.collectorTabs)
+  const wiringDirectRows = usePipeWiringStore((s) => s.directRows)
 
   // 管路ID → 管路番号のルックアップ
   const pipeNumberById = useMemo(() => {
@@ -1029,6 +1034,25 @@ export function DepthCalcPage() {
   }
 
   // 系統ごとにグループ化されたデータを計算
+  // wiringRowId → 最新の wiring 行（rowType / isMergePipe）のルックアップ。
+  // PlanRow.wiringRowType は fetchPlan 時点で確定するため、配管系統データが
+  // 後から読み込まれた場合や編集された場合に古い値が残ることがある。
+  // 終端種別判定はこちらの最新値を優先する。
+  const wiringRowLookup = useMemo(() => {
+    const map = new Map<string, { rowType: string | null; isMergePipe: boolean }>()
+    const all = [
+      ...wiringCollectorTabs.flatMap((t) => t.rows),
+      ...wiringDirectRows,
+    ]
+    for (const wr of all) {
+      map.set(wr.id, {
+        rowType: wr.rowType ?? null,
+        isMergePipe: !!wr.isMergePipe,
+      })
+    }
+    return map
+  }, [wiringCollectorTabs, wiringDirectRows])
+
   const groupedBySystem = useMemo(() => {
     return planGroups.map(group => {
       // 系統インデックスごとに行をグループ化
@@ -1041,15 +1065,19 @@ export function DepthCalcPage() {
         }
         systemMap[systemIndex].rows.push(row)
         if (row.isSystemEnd) {
-          // wiringRowType を優先して終端タイプを判定（古い保存データの systemEndType が
-          // 'outlet' のまま残っていても、collector_junction なら 'merge' に上書きする）。
+          // 最新の wiring 行を優先（古い planRow.wiringRowType を補完）
+          const wr = row.wiringRowId ? wiringRowLookup.get(row.wiringRowId) : undefined
+          const wiringRowType = wr?.rowType ?? row.wiringRowType ?? null
+          const isMergePipe = wr?.isMergePipe ?? false
           let endType: 'outlet' | 'merge' | null = row.systemEndType
           if (
-            row.wiringRowType === 'collector_junction' ||
-            row.wiringRowType === 'collector_merge'
+            wiringRowType === 'collector_junction' ||
+            wiringRowType === 'collector_merge' ||
+            isMergePipe ||
+            row.mergeSystemIndex != null
           ) {
             endType = 'merge'
-          } else if (row.wiringRowType === 'outlet') {
+          } else if (wiringRowType === 'outlet') {
             endType = 'outlet'
           }
           if (endType) {
@@ -1069,7 +1097,7 @@ export function DepthCalcPage() {
         systems,
       }
     })
-  }, [planGroups])
+  }, [planGroups, wiringRowLookup])
 
   // 全グループ × 全系統のフラットなタブリストを計算
   const flatTabs = useMemo(() => {
@@ -1709,25 +1737,25 @@ export function DepthCalcPage() {
                     chartEndCollectorHeight = r.collectorPoint?.plannedHeight ?? null
                   }
                 } else if (systemData.endType === 'merge') {
-                  // 集水スコープかつ系統が他系統に合流している場合のみ、
-                  // 合流先系統の最終集水点の計画高を右端に表示する。
+                  // 集水スコープかつ系統が他系統に合流している場合、合流先計画高を右端に表示する。
                   // 落口で終わる系統には合流先がないため表示しない。
-                  const mergeRow = systemData.rows.find(
-                    (r) => r.mergeSystemIndex != null,
-                  )
-                  if (mergeRow?.mergeSystemIndex != null) {
-                    const targetSystemIndex = mergeRow.mergeSystemIndex
-                    // 同じグループ内で targetSystemIndex を持ち、自身は merge 行ではない
-                    // 行を抽出し、最後の collectorPoint.plannedHeight を取得
-                    const targetRows = groupData.rows.filter(
-                      (r) =>
-                        r.systemIndex === targetSystemIndex &&
-                        r.mergeSystemIndex == null,
-                    )
-                    for (let i = targetRows.length - 1; i >= 0; i--) {
-                      const tr = targetRows[i]
-                      if (tr.collectorPoint?.plannedHeight != null) {
-                        chartEndCollectorHeight = tr.collectorPoint.plannedHeight
+                  // 接続先計画高は「同一グループ内の他系統で、本系統末端の集水点と同じ座標を持つ
+                  // 集水点の計画高」として座標一致で求める（mergeSystemIndex に依存せず、
+                  // collector_junction だけで終わる系統にも対応）。
+                  const lastWithCollector = [...systemData.rows]
+                    .reverse()
+                    .find((r) => r.collectorPoint != null)
+                  const junction = lastWithCollector?.collectorPoint
+                  if (junction) {
+                    const TOL = 0.5 // 50cm
+                    for (const other of groupData.rows) {
+                      if (other.systemIndex === systemData.systemIndex) continue
+                      if (!other.collectorPoint) continue
+                      if (other.collectorPoint.plannedHeight == null) continue
+                      const dx = other.collectorPoint.x - junction.x
+                      const dy = other.collectorPoint.y - junction.y
+                      if (Math.hypot(dx, dy) <= TOL) {
+                        chartEndCollectorHeight = other.collectorPoint.plannedHeight
                         break
                       }
                     }
