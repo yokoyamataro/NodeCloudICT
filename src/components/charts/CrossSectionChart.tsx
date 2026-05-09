@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from 'react'
+import { useMemo, useState, useCallback, useEffect, useRef } from 'react'
 import type { PlanRow, PlanGroup } from '@/stores/constructionPlanStore'
 import { exportCrossSectionDxf } from '@/lib/crossSectionDxfExport'
 import type { ParsedSurface } from '@/lib/landxml/parser'
@@ -17,6 +17,9 @@ interface CrossSectionChartProps {
   tinSurface?: ParsedSurface | null
   // 吸水断面で右端（集水合流位置）に集水管の計画高を点で重ねる場合に指定
   endCollectorPlannedHeight?: number | null
+  // 計画高の編集コールバック。pointId（PlanPoint.id）と新しい計画高を受け取る。
+  // 未指定時は計画点が編集不可（マウス操作なし）。
+  onPlannedHeightChange?: (pointId: string, newHeight: number) => void
 }
 
 // 断面図の点データ（集水管の点のみ）
@@ -26,6 +29,8 @@ interface SectionPoint {
   plannedHeight: number | null // 計画高
   pointName: string // 測点名
   rowIndex: number // 元の行インデックス
+  // 編集用に PlanPoint.id を保持（onPlannedHeightChange に渡す）
+  pointId: string
   // 吸水接続情報
   // 合流行の場合は「合流先系統の末端集水管の番号」（例: S4）を入れる
   absorptionPipeNumber: string | null
@@ -47,6 +52,7 @@ export function CrossSectionChart({
   farmName,
   tinSurface,
   endCollectorPlannedHeight,
+  onPlannedHeightChange,
 }: CrossSectionChartProps) {
   // 標高スケールのズーム倍率（1.0が基準、大きいほど拡大）
   const [heightScale, setHeightScale] = useState(1.0)
@@ -178,6 +184,7 @@ export function CrossSectionChart({
         plannedHeight: row.collectorPoint.plannedHeight,
         pointName: row.collectorPoint.pointName,
         rowIndex: rowIdx,
+        pointId: row.collectorPoint.id,
         absorptionPipeNumber: flagPipeNumber,
         absorptionPlannedHeight: absorptionDownstreamHeight,
         absorptionUpstreamPlannedHeight: absorptionUpstreamHeight,
@@ -340,6 +347,66 @@ export function CrossSectionChart({
     if (range === 0) return chartHeight / 2
     return padding.top + (1 - (height - minHeight) / range) * (chartHeight - padding.top - padding.bottom)
   }
+
+  // yScale の逆関数（pixel → 標高）。ドラッグ操作で計画高を更新する際に使う。
+  const yToHeight = useCallback(
+    (yPixel: number): number => {
+      const range = maxHeight - minHeight
+      if (range === 0) return minHeight
+      const usable = chartHeight - padding.top - padding.bottom
+      const ratio = 1 - (yPixel - padding.top) / usable
+      return minHeight + range * ratio
+    },
+    [maxHeight, minHeight, chartHeight, padding.top, padding.bottom],
+  )
+
+  // SVG 要素への ref（マウス座標を SVG 座標に変換するため）
+  const svgRef = useRef<SVGSVGElement | null>(null)
+
+  // ドラッグ中の点（再描画トリガ用に state も持つ）
+  const dragRef = useRef<{ pointId: string } | null>(null)
+  const [draggingPointId, setDraggingPointId] = useState<string | null>(null)
+
+  // クリックで開く計画高の編集ポップアップ
+  const [editPopup, setEditPopup] = useState<{
+    pointId: string
+    x: number
+    y: number
+    initialHeight: number
+  } | null>(null)
+  const [editValue, setEditValue] = useState('')
+
+  // SVG 内のローカル Y 座標を取得
+  const getSvgY = useCallback((clientY: number): number | null => {
+    if (!svgRef.current) return null
+    const rect = svgRef.current.getBoundingClientRect()
+    return clientY - rect.top
+  }, [])
+
+  // ドラッグ中のグローバル mousemove / mouseup ハンドラ
+  useEffect(() => {
+    if (!onPlannedHeightChange) return
+    const onMove = (e: MouseEvent) => {
+      if (!dragRef.current) return
+      const y = getSvgY(e.clientY)
+      if (y == null) return
+      const h = Math.max(minHeight, Math.min(maxHeight, yToHeight(y)))
+      onPlannedHeightChange(dragRef.current.pointId, h)
+    }
+    const onUp = () => {
+      if (!dragRef.current) return
+      dragRef.current = null
+      setDraggingPointId(null)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [onPlannedHeightChange, getSvgY, yToHeight, minHeight, maxHeight])
 
   // パスデータを生成（現況線）
   const groundPath = useMemo(() => {
@@ -577,6 +644,7 @@ export function CrossSectionChart({
           onWheel={handleWheel}
         >
         <svg
+          ref={svgRef}
           width={chartWidth}
           height={chartHeight}
           className="min-w-full cursor-ns-resize"
@@ -821,32 +889,74 @@ export function CrossSectionChart({
                   </>
                 )}
 
-                {/* 計画点マーカー */}
-                {point.plannedHeight !== null && (
-                  <>
-                    <circle
-                      cx={x}
-                      cy={yScale(point.plannedHeight)}
-                      r={5}
-                      fill="#2563eb"
-                      stroke="white"
-                      strokeWidth="1.5"
-                    />
-                    <text
-                      x={x + 7}
-                      y={yScale(point.plannedHeight) + 14}
-                      className="fill-blue-700 text-[11px] font-medium"
-                      style={{
-                        paintOrder: 'stroke',
-                        stroke: 'white',
-                        strokeWidth: 3,
-                        strokeLinejoin: 'round',
-                      }}
-                    >
-                      {point.plannedHeight.toFixed(3)}
-                    </text>
-                  </>
-                )}
+                {/* 計画点マーカー（編集コールバック有効時はドラッグ + 左クリックで編集） */}
+                {point.plannedHeight !== null && (() => {
+                  const editable = !!onPlannedHeightChange
+                  const isDragging =
+                    editable && draggingPointId === point.pointId
+                  const cy = yScale(point.plannedHeight)
+                  return (
+                    <>
+                      {/* ドラッグ用のヒットエリア（円より大きく取る） */}
+                      {editable && (
+                        <circle
+                          cx={x}
+                          cy={cy}
+                          r={11}
+                          fill="transparent"
+                          style={{ cursor: 'ns-resize' }}
+                          onMouseDown={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            dragRef.current = { pointId: point.pointId }
+                            setDraggingPointId(point.pointId)
+                            document.body.style.cursor = 'ns-resize'
+                            document.body.style.userSelect = 'none'
+                          }}
+                          onClick={(e) => {
+                            // ドラッグ後の click は無視されるよう、わずかに離れた場合のみ反応
+                            if (dragRef.current) return
+                            e.stopPropagation()
+                            const rect = svgRef.current?.getBoundingClientRect()
+                            if (!rect) return
+                            setEditPopup({
+                              pointId: point.pointId,
+                              x: e.clientX - rect.left,
+                              y: cy - 8,
+                              initialHeight: point.plannedHeight!,
+                            })
+                            setEditValue(point.plannedHeight!.toFixed(3))
+                          }}
+                        >
+                          <title>左クリック: 数値入力 / 上下ドラッグ: 計画高変更</title>
+                        </circle>
+                      )}
+                      <circle
+                        cx={x}
+                        cy={cy}
+                        r={isDragging ? 7 : 5}
+                        fill={isDragging ? '#1d4ed8' : '#2563eb'}
+                        stroke="white"
+                        strokeWidth="1.5"
+                        pointerEvents="none"
+                      />
+                      <text
+                        x={x + 7}
+                        y={cy + 14}
+                        className="fill-blue-700 text-[11px] font-medium"
+                        style={{
+                          paintOrder: 'stroke',
+                          stroke: 'white',
+                          strokeWidth: 3,
+                          strokeLinejoin: 'round',
+                          pointerEvents: 'none',
+                        }}
+                      >
+                        {point.plannedHeight.toFixed(3)}
+                      </text>
+                    </>
+                  )
+                })()}
 
                 {/* 吸水接続マーク（丸） */}
                 {point.absorptionPlannedHeight !== null && (
@@ -1123,6 +1233,54 @@ export function CrossSectionChart({
           })()}
 
         </svg>
+        {/* 計画高 編集ポップアップ */}
+        {editPopup && onPlannedHeightChange && (() => {
+          const commit = () => {
+            const v = parseFloat(editValue)
+            if (Number.isFinite(v)) {
+              onPlannedHeightChange(editPopup.pointId, v)
+            }
+            setEditPopup(null)
+          }
+          return (
+            <div
+              className="absolute z-20 bg-white border border-blue-400 rounded shadow-lg px-2 py-1 flex items-center gap-1"
+              style={{
+                left: Math.max(4, editPopup.x - 80),
+                top: Math.max(4, editPopup.y - 40),
+              }}
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <span className="text-[11px] text-slate-500">計画高</span>
+              <input
+                type="number"
+                step={0.001}
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commit()
+                  if (e.key === 'Escape') setEditPopup(null)
+                }}
+                onWheel={(e) => e.currentTarget.blur()}
+                autoFocus
+                className="w-24 px-1.5 py-0.5 text-sm border rounded text-right font-mono"
+              />
+              <button
+                onClick={commit}
+                className="px-2 py-0.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                OK
+              </button>
+              <button
+                onClick={() => setEditPopup(null)}
+                className="px-1.5 py-0.5 text-xs text-slate-500 hover:bg-slate-100 rounded"
+              >
+                ×
+              </button>
+            </div>
+          )
+        })()}
         </div>
       </div>
     </div>

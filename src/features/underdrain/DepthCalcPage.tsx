@@ -1859,6 +1859,20 @@ export function DepthCalcPage() {
                         farmName={currentFarm?.name}
                         tinSurface={tinSurface}
                         endCollectorPlannedHeight={chartEndCollectorHeight}
+                        onPlannedHeightChange={(pointId, h) => {
+                          // pointId は PlanPoint.id（UUID）。全グループから所有行を逆引きする
+                          for (const g of planGroups) {
+                            for (const r of g.rows) {
+                              if (
+                                r.collectorPoint?.id === pointId ||
+                                r.absorptionPoints.some((p) => p.id === pointId)
+                              ) {
+                                updatePlannedHeight(r.id, pointId, h)
+                                return
+                              }
+                            }
+                          }
+                        }}
                       />
                     </div>
                   </>
