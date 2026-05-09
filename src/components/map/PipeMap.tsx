@@ -493,7 +493,7 @@ export function PipeMap({
         const isHighlighted = highlightPipeIds.has(pipe.id)
         const MERGE_SELECTED_COLOR = '#a855f7' // 紫色（結合選択用）
         const ASSIGNED_COLOR = '#eab308' // 黄色（設定済み管路用）
-        const HIGHLIGHT_COLOR = '#0ea5e9' // 水色（系統等の強調表示用）
+        const HIGHLIGHT_COLOR = '#f97316' // オレンジ（系統等の強調表示用）
 
         // 色の決定
         const getColor = () => {

@@ -485,11 +485,12 @@ export function DepthCalcPage() {
             <thead>
               <tr className="bg-purple-100">
                 <th
-                  className="px-1.5 py-1 text-left font-medium border whitespace-nowrap text-purple-700"
+                  className="px-1.5 py-0.5 text-left font-medium border whitespace-nowrap text-purple-700"
                   colSpan={refCount > 0 ? 1 : 1}
+                  title="集水合流"
                 >
                   {refEndPipeNumber || row.pipeNumber || '-'}
-                  <div className="mt-0.5 text-[10px] text-purple-600 font-normal">集水合流</div>
+                  <span className="ml-0.5 text-[9px] text-purple-400">●</span>
                 </th>
                 <th className="border-0 bg-transparent"></th>
                 {refCount > 0 ? (
@@ -700,13 +701,14 @@ export function DepthCalcPage() {
           <thead>
             <tr className="bg-slate-100">
               <th
-                className={`px-1.5 py-1 text-left font-medium border whitespace-nowrap ${
+                className={`px-1.5 py-0.5 text-left font-medium border whitespace-nowrap ${
                   terminalLabel
                     ? row.systemEndType === 'outlet'
                       ? 'text-orange-700'
                       : 'text-purple-700'
                     : 'text-blue-700'
                 }`}
+                title={typeLabel && !terminalLabel ? typeLabel : undefined}
               >
                 <button
                   type="button"
@@ -720,12 +722,10 @@ export function DepthCalcPage() {
                     <ChevronDown className="h-3 w-3" />
                   )}
                   {terminalLabel ?? row.pipeNumber ?? '-'}
+                  {typeLabel && !terminalLabel && (
+                    <span className="ml-0.5 text-[9px] text-slate-400">●</span>
+                  )}
                 </button>
-                {typeLabel && !terminalLabel && (
-                  <div className="mt-0.5 text-[10px] text-slate-500 font-normal">
-                    {typeLabel}
-                  </div>
-                )}
               </th>
               <th className="border-0 bg-transparent"></th>
               {row.absorptionPoints.map(p => (
@@ -1362,78 +1362,51 @@ export function DepthCalcPage() {
               </div>
             ) : (
               <div>
-                {/* 1段目: 集水暗渠/直落暗渠タブ */}
+                {/* 統合タブ: グループ番号-系統番号（例: 1-1, 1-2, 2-1） */}
                 <div className="flex items-end gap-1 border-b border-slate-300 overflow-x-auto">
-                  {groupedBySystem.map((group, gi) => {
-                    const isActive = selectedSystem?.groupIndex === gi
+                  {flatTabs.map((tab) => {
+                    const isActive =
+                      selectedSystem?.groupIndex === tab.groupIndex &&
+                      selectedSystem?.systemIndex === tab.systemIndex
+                    const group = groupedBySystem[tab.groupIndex]
+                    const isDirect = group?.groupType === 'direct'
+                    const colorClass = isActive
+                      ? isDirect
+                        ? 'bg-amber-100 border-amber-400 text-amber-900 font-bold'
+                        : tab.endType === 'outlet'
+                          ? 'bg-orange-100 border-orange-400 text-orange-800 font-bold'
+                          : tab.endType === 'merge'
+                            ? 'bg-purple-100 border-purple-400 text-purple-800 font-bold'
+                            : 'bg-blue-100 border-blue-400 text-blue-900 font-bold'
+                      : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+                    const title =
+                      `${group?.name ?? ''} 系統${tab.systemIndex}` +
+                      (tab.endType === 'outlet'
+                        ? '（落口）'
+                        : tab.endType === 'merge'
+                          ? '（合流）'
+                          : '')
                     return (
                       <button
-                        key={`grp-${gi}`}
+                        key={tab.key}
                         type="button"
-                        onClick={() => {
-                          const firstSystem = group.systems[0]
-                          if (firstSystem) {
-                            setSelectedSystem({
-                              groupIndex: gi,
-                              systemIndex: firstSystem.systemIndex,
-                            })
-                          }
-                        }}
-                        className={`px-4 py-2 text-sm rounded-t-lg border border-b-0 whitespace-nowrap transition-colors ${
-                          isActive
-                            ? group.groupType === 'direct'
-                              ? 'bg-amber-100 border-amber-400 text-amber-900 font-bold'
-                              : 'bg-blue-100 border-blue-400 text-blue-900 font-bold'
-                            : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
-                        }`}
+                        title={title}
+                        onClick={() =>
+                          setSelectedSystem({
+                            groupIndex: tab.groupIndex,
+                            systemIndex: tab.systemIndex,
+                          })
+                        }
+                        className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded-t-lg border border-b-0 whitespace-nowrap transition-colors ${colorClass}`}
                       >
-                        {group.name}
+                        <span className="font-mono">
+                          {tab.groupIndex + 1}-{tab.systemIndex}
+                        </span>
+                        <span className="text-[10px] text-slate-500">({tab.rows.length})</span>
                       </button>
                     )
                   })}
                 </div>
-
-                {/* 2段目: 系統タブ */}
-                {selectedSystem && groupedBySystem[selectedSystem.groupIndex] && (
-                  <div className="flex items-end gap-1 border-b border-slate-200 overflow-x-auto px-2 py-1 bg-slate-50">
-                    {groupedBySystem[selectedSystem.groupIndex].systems.map((system) => {
-                      const isActive = selectedSystem.systemIndex === system.systemIndex
-                      const endLabel =
-                        system.endType === 'outlet'
-                          ? '落口'
-                          : system.endType === 'merge'
-                            ? '合流'
-                            : null
-                      return (
-                        <button
-                          key={`sys-${system.systemIndex}`}
-                          type="button"
-                          onClick={() =>
-                            setSelectedSystem({
-                              groupIndex: selectedSystem.groupIndex,
-                              systemIndex: system.systemIndex,
-                            })
-                          }
-                          className={`flex items-center gap-2 px-3 py-1.5 text-sm rounded-t-lg border border-b-0 whitespace-nowrap transition-colors ${
-                            isActive
-                              ? system.endType === 'outlet'
-                                ? 'bg-orange-100 border-orange-300 text-orange-800 font-medium'
-                                : system.endType === 'merge'
-                                  ? 'bg-purple-100 border-purple-300 text-purple-800 font-medium'
-                                  : 'bg-white border-slate-300 text-slate-800 font-medium'
-                              : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-100'
-                          }`}
-                        >
-                          <span>
-                            系統{system.systemIndex}
-                            {endLabel && `（${endLabel}）`}
-                          </span>
-                          <span className="text-xs text-slate-500">({system.rows.length})</span>
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
 
                 {/* アクティブなタブの内容 */}
                 {activeTab ? (
@@ -1441,7 +1414,24 @@ export function DepthCalcPage() {
                     ref={tableContentRef}
                     className="border border-t-0 rounded-b-lg bg-white shadow-sm p-2"
                   >
-                    {activeTab.rows.map((row, idx) => renderRow(row, activeTab.rows, idx))}
+                    {(() => {
+                      // 吸水スコープ選択時は前後 1 行ずつ＋自身の計 3 行のみ表示。
+                      // 集水スコープのときは全行表示。
+                      let startIdx = 0
+                      let endIdx = activeTab.rows.length
+                      if (typeof chartScope === 'number') {
+                        startIdx = Math.max(0, chartScope - 1)
+                        endIdx = Math.min(activeTab.rows.length, chartScope + 2)
+                      }
+                      return activeTab.rows
+                        .slice(startIdx, endIdx)
+                        .map((row, i) => renderRow(row, activeTab.rows, startIdx + i))
+                    })()}
+                    {typeof chartScope === 'number' && activeTab.rows.length > 3 && (
+                      <div className="text-center text-[11px] text-slate-400 py-1">
+                        ※ 選択中の吸水を中心に 3 行のみ表示しています（断面切替で他の行へ）
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="p-8 text-center text-slate-400 text-sm">
