@@ -8,6 +8,7 @@ import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useExportRouteStore } from '@/stores/exportRouteStore'
 import { PipeMap, type SurveyPointData, type BaseLayerType } from '@/components/map/PipeMap'
+import { ResizableSplit } from '@/components/layout/ResizableSplit'
 
 // 測点命名設定
 interface NamingSettings {
@@ -577,9 +578,14 @@ export function PipeCoordinateCalcPage() {
       </div>
 
       {/* メインコンテンツ */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* 左側: 座標一覧 */}
-        <div className="w-1/2 flex flex-col overflow-hidden border-r">
+      <ResizableSplit
+        storageKey="pipe-coordinate-calc"
+        defaultLeft={620}
+        minLeft={320}
+        maxLeft={1400}
+        className="flex-1"
+        left={
+        <div className="flex-1 flex flex-col overflow-hidden border-r">
           {/* 統計情報と出力ボタン */}
           <div className="p-3 bg-slate-50 border-b text-sm flex items-center justify-between">
             <div className="flex items-center gap-4">
@@ -943,8 +949,9 @@ export function PipeCoordinateCalcPage() {
           </div>
         </div>
 
-        {/* 右側: 地図 */}
-        <div className="w-1/2 flex flex-col bg-slate-100">
+        }
+        right={
+        <div className="flex-1 flex flex-col bg-slate-100">
           {/* 地図表示ボタン */}
           <div className="p-2 bg-white border-b flex items-center gap-2">
             <button
@@ -1039,7 +1046,8 @@ export function PipeCoordinateCalcPage() {
             />
           </div>
         </div>
-      </div>
+        }
+      />
     </div>
   )
 }

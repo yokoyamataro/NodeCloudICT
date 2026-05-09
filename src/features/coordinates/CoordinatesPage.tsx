@@ -6,6 +6,7 @@ import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useGlobalSaveRegistry } from '@/stores/globalSaveRegistry'
 import { CoordinateMap, type BaseLayerType } from '@/components/map/CoordinateMap'
+import { ResizableSplit } from '@/components/layout/ResizableSplit'
 import { loadSimaFile, downloadSimaFile } from '@/lib/sima-parser'
 import { PageHeader } from '@/components/layout/PageHeader'
 import type { CoordinateType } from '@/types/database'
@@ -615,6 +616,7 @@ export function CoordinatesPage() {
         </div>
         <div className="flex-1">
           <CoordinateMap
+            key={currentFarm?.id ?? 'no-farm'}
             selectedPointId={selectedPointId}
             onPointSelect={handlePointClick}
             showLabels={showLabels}
@@ -787,9 +789,14 @@ export function CoordinatesPage() {
       <PageHeader title="座標管理" subtitle="平面直角座標の登録" />
 
       {/* メインコンテンツ */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* 左側: テーブル/フォーム */}
-        <div className="w-1/2 flex flex-col overflow-hidden border-r">
+      <ResizableSplit
+        storageKey="coordinates"
+        defaultLeft={620}
+        minLeft={320}
+        maxLeft={1400}
+        className="flex-1"
+        left={
+        <div className="flex-1 flex flex-col overflow-hidden border-r">
           <div className="flex-1 flex flex-col overflow-hidden">
               {/* 設定パネル */}
               <div className="p-4 border-b bg-slate-50">
@@ -943,8 +950,9 @@ export function CoordinatesPage() {
             </div>
         </div>
 
-        {/* 右側: 地図 */}
-        <div className="w-1/2 bg-slate-100 flex flex-col relative">
+        }
+        right={
+        <div className="flex-1 bg-slate-100 flex flex-col relative">
           {/* 表示設定パネル */}
           <div className="p-2 bg-white border-b flex items-center gap-4 flex-wrap">
             <button
@@ -1001,6 +1009,7 @@ export function CoordinatesPage() {
           </div>
           <div className="flex-1 relative">
             <CoordinateMap
+              key={currentFarm?.id ?? 'no-farm'}
               selectedPointId={selectedPointId}
               onPointSelect={handlePointClick}
               showLabels={showLabels}
@@ -1100,7 +1109,8 @@ export function CoordinatesPage() {
             )}
           </div>
         </div>
-      </div>
+        }
+      />
 
       {/* 貼り付けモーダル */}
       <PasteModal

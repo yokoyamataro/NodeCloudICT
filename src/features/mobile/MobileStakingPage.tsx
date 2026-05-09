@@ -121,7 +121,7 @@ function FollowCurrent({
   return null
 }
 
-// ターゲット中心表示: 選択ターゲットが変わるたびにそこへパン
+// ターゲット中心表示: enabled=true のとき選択ターゲットが変わるたびに中心化
 function FollowTarget({
   position,
   enabled,
@@ -134,6 +134,25 @@ function FollowTarget({
     if (!enabled || !position) return
     map.setView(position, Math.max(map.getZoom(), 18), { animate: true })
   }, [map, position, enabled])
+  return null
+}
+
+// 「ターゲット選択時に一度だけ中心化」: フォローモードに関係なく
+// 選択 ID が変わったタイミングで 1 回だけパンする。
+function CenterOnSelect({
+  targetId,
+  position,
+}: {
+  targetId: string | null
+  position: [number, number] | null
+}) {
+  const map = useMap()
+  useEffect(() => {
+    if (!targetId || !position) return
+    map.setView(position, Math.max(map.getZoom(), 18), { animate: true })
+    // position も依存に入れているが、同一 targetId の場合 position は不変なので
+    // 実質 targetId 変化時だけ発火する。
+  }, [map, targetId, position])
   return null
 }
 
@@ -1172,6 +1191,13 @@ export function MobileStakingPage() {
               selectedTarget ? [selectedTarget.lat, selectedTarget.lng] : null
             }
             enabled={followMode === 'target'}
+          />
+          {/* ターゲット選択時はモードに関わらず 1 度だけ中心化 */}
+          <CenterOnSelect
+            targetId={selectedTarget?.id ?? null}
+            position={
+              selectedTarget ? [selectedTarget.lat, selectedTarget.lng] : null
+            }
           />
 
           {/* 配線ライン（吸水=青・集水=緑、選択中はオレンジ）

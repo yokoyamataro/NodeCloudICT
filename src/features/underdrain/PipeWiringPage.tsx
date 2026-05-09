@@ -26,6 +26,7 @@ import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import { useHydraulicSettingsStore } from '@/stores/hydraulicSettingsStore'
 import { computeAllHydraulicLengths } from '@/lib/hydraulicCalc'
 import { PipeMap, type SurveyPointData, type PipeChangePoint } from '@/components/map/PipeMap'
+import { ResizableSplit } from '@/components/layout/ResizableSplit'
 import type { PipeVertex } from '@/types/database'
 import { HydraulicSettingsModal } from './HydraulicSettingsModal'
 
@@ -1652,9 +1653,14 @@ export function PipeWiringPage() {
       </div>
 
       {/* メインコンテンツ */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* 左側: 配線テーブル */}
-        <div className="w-1/2 flex flex-col overflow-hidden border-r">
+      <ResizableSplit
+        storageKey="pipe-wiring"
+        defaultLeft={620}
+        minLeft={320}
+        maxLeft={1400}
+        className="flex-1"
+        left={
+        <div className="flex-1 flex flex-col overflow-hidden border-r">
           {/* タブヘッダー */}
           <div className="border-b bg-white flex items-center">
             {/* 集水暗渠タブ */}
@@ -2163,8 +2169,9 @@ export function PipeWiringPage() {
           </div>
         </div>
 
-        {/* 右側: 地図 */}
-        <div className="w-1/2 flex flex-col bg-slate-100">
+        }
+        right={
+        <div className="flex-1 flex flex-col bg-slate-100">
           {/* 地図表示ボタン */}
           <div className="p-2 bg-white border-b flex items-center gap-2">
             <button
@@ -2233,7 +2240,8 @@ export function PipeWiringPage() {
             />
           </div>
         </div>
-      </div>
+        }
+      />
 
       {/* 続けるか確認ダイアログ / 落口確認ダイアログ */}
       {showContinueDialog && pendingCollectorPipeId && (

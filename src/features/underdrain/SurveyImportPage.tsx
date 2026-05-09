@@ -20,6 +20,7 @@ import { useGlobalSaveRegistry } from '@/stores/globalSaveRegistry'
 import { loadSimaFile, type SimaCoordinate } from '@/lib/sima-parser'
 import type { SurveyCategory } from '@/types/database'
 import { PipeMap, type SurveyPointData } from '@/components/map/PipeMap'
+import { ResizableSplit } from '@/components/layout/ResizableSplit'
 import { TinElevationDialog, type TinElevationPoint } from '@/components/landxml/TinElevationDialog'
 
 // タブの種類
@@ -763,7 +764,13 @@ export function SurveyImportPage() {
 
       {/* メインコンテンツ: 表（左）+ 地図（右） */}
       {!loading && (
-        <div className="flex-1 flex overflow-hidden min-h-0">
+        <ResizableSplit
+          storageKey="survey-import"
+          defaultLeft={720}
+          minLeft={360}
+          maxLeft={1500}
+          className="flex-1 min-h-0"
+          left={
           <div className="flex-1 overflow-auto min-w-0">
           <table className="w-full text-sm">
             <thead className="bg-slate-100 sticky top-0 z-10">
@@ -1059,10 +1066,12 @@ export function SurveyImportPage() {
             </tbody>
           </table>
           </div>
-          {/* 右側: 地図（実測点 + 配管のみ。座標管理点は表示しない）
-              isolation: isolate で leaflet の高 z-index を内部に閉じ込める */}
+          }
+          right={
+          /* 右側: 地図（実測点 + 配管のみ。座標管理点は表示しない）
+             isolation: isolate で leaflet の高 z-index を内部に閉じ込める */
           <div
-            className="w-[45%] min-w-[360px] border-l flex flex-col relative z-0"
+            className="flex-1 border-l flex flex-col relative z-0"
             style={{ isolation: 'isolate' }}
           >
             <PipeMap
@@ -1075,7 +1084,8 @@ export function SurveyImportPage() {
               focusedPipeId={null}
             />
           </div>
-        </div>
+          }
+        />
       )}
 
       {/* SIMインポートモーダル */}

@@ -94,7 +94,8 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
   error: null,
 
   fetchCoordinates: async (farmId: string) => {
-    set({ loading: true, error: null })
+    // 圃場切替時に旧データを即時クリアしておく（地図初期化が古い座標で走るのを防ぐ）
+    set({ loading: true, error: null, coordinates: [] })
     try {
       const { data, error } = await supabase
         .from('design_coordinates')

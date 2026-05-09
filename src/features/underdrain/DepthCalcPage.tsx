@@ -1035,26 +1035,26 @@ export function DepthCalcPage() {
                   <button
                     onClick={() => setShowGenerateConfirm(true)}
                     disabled={saving}
-                    className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 whitespace-nowrap"
                     title="配管系統から系統を読み込み（地盤高は読み込まれません）"
                   >
                     <RefreshCw className="h-4 w-4" />
-                    配管系統から系統読込
+                    系統読込
                   </button>
                   {/* 地盤高読込 */}
                   <button
                     onClick={() => reloadGroundHeights()}
                     disabled={saving}
-                    className="flex items-center gap-2 px-3 py-2 bg-sky-600 text-white rounded-lg hover:bg-sky-700 transition-colors disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm bg-sky-600 text-white rounded-lg hover:bg-sky-700 transition-colors disabled:opacity-50 whitespace-nowrap"
                     title="測量データから地盤高を読み込み"
                   >
                     <Mountain className="h-4 w-4" />
-                    地盤高読込
+                    地盤高
                   </button>
                   {/* 自動計算設定 */}
                   <button
                     onClick={() => setShowCalcSettings(!showCalcSettings)}
-                    className={`flex items-center gap-2 px-3 py-2 border rounded-lg transition-colors ${
+                    className={`flex items-center gap-1.5 px-2 py-1.5 border rounded-lg transition-colors ${
                       showCalcSettings
                         ? 'bg-amber-100 border-amber-300 text-amber-700'
                         : 'text-slate-600 hover:bg-slate-50'
@@ -1067,17 +1067,17 @@ export function DepthCalcPage() {
                   <button
                     onClick={handleAutoCalculate}
                     disabled={saving}
-                    className="flex items-center gap-2 px-3 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors disabled:opacity-50 whitespace-nowrap"
                     title="計画高を自動計算"
                   >
                     <Calculator className="h-4 w-4" />
-                    自動切深計画
+                    自動計画
                   </button>
                   {/* 連続勾配 */}
                   <button
                     onClick={() => setContinuousOpen(true)}
                     disabled={saving || !selectedSystem}
-                    className="flex items-center gap-2 px-3 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors disabled:opacity-50 whitespace-nowrap"
                     title="複数区間にわたって一定の勾配を設定"
                   >
                     <Ruler className="h-4 w-4" />
@@ -1087,15 +1087,15 @@ export function DepthCalcPage() {
                   <button
                     onClick={() => setShowHydraulicModal(true)}
                     disabled={saving || planGroups.length === 0}
-                    className="flex items-center gap-2 px-3 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50 whitespace-nowrap"
                     title="水理計算書を作成"
                   >
                     <FileSpreadsheet className="h-4 w-4" />
-                    水理計算出力
+                    水理計算
                   </button>
                   {/* 全系統 DXF 一括出力 */}
-                  <div className="flex items-center gap-1 px-2 py-1 border rounded-lg">
-                    <span className="text-xs text-slate-600">縦尺:</span>
+                  <div className="flex items-center gap-1 px-1.5 py-0.5 border rounded-lg whitespace-nowrap">
+                    <span className="text-xs text-slate-600">縦尺</span>
                     <select
                       value={allDxfVScale}
                       onChange={(e) =>
@@ -1115,7 +1115,7 @@ export function DepthCalcPage() {
                       title="全系統の縦断図を 1 つの DXF に縦並びで出力"
                     >
                       <FileSpreadsheet className="h-4 w-4" />
-                      全系統 DXF
+                      DXF
                     </button>
                   </div>
                   <div className="w-px h-6 bg-slate-300" />

@@ -17,6 +17,7 @@ import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useAlignmentStore } from '@/stores/alignmentStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
+import { ResizableSplit } from '@/components/layout/ResizableSplit'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useSurveyStore } from '@/stores/surveyStore'
 import { parseLandXml, type ParsedSurface } from '@/lib/landxml/parser'
@@ -490,9 +491,14 @@ export function LandXMLPage() {
         </div>
       </div>
 
-      <div className="flex-1 flex overflow-hidden">
-        {/* 左: 操作＋リスト */}
-        <div className="w-[420px] border-r bg-white flex flex-col overflow-hidden">
+      <ResizableSplit
+        storageKey="landxml"
+        defaultLeft={520}
+        minLeft={320}
+        maxLeft={900}
+        className="flex-1"
+        left={
+        <div className="flex-1 border-r bg-white flex flex-col overflow-hidden">
           {/* 施工計画由来の線形 */}
           <div className="px-3 py-2 border-b bg-emerald-50">
             <div className="flex items-center gap-2">
@@ -1170,7 +1176,8 @@ export function LandXMLPage() {
           </div>
         </div>
 
-        {/* 右: 地図 */}
+        }
+        right={
         <div className="flex-1 relative">
           <MapContainer
             center={mapCenter}
@@ -1324,7 +1331,8 @@ export function LandXMLPage() {
             </div>
           )}
         </div>
-      </div>
+        }
+      />
     </div>
   )
 }

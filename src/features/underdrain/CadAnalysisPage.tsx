@@ -12,6 +12,7 @@ import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { PipeMap, type SurveyPointData } from '@/components/map/PipeMap'
+import { ResizableSplit } from '@/components/layout/ResizableSplit'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { comparePipeNumbers } from '@/lib/pipeSort'
 import type { PipeType, PipeVertex } from '@/types/database'
@@ -769,9 +770,14 @@ export function CadAnalysisPage() {
     <div className="h-full flex flex-col">
       <PageHeader title="CAD解析" subtitle="DXFファイルから管路データを抽出・登録" />
 
-      <div className="flex-1 flex min-h-0 overflow-hidden">
-        {/* 左側: データ管理 */}
-        <div className="w-1/2 flex flex-col border-r min-h-0">
+      <ResizableSplit
+        storageKey="cad-analysis"
+        defaultLeft={620}
+        minLeft={320}
+        maxLeft={1400}
+        className="flex-1 min-h-0"
+        left={
+        <div className="flex-1 flex flex-col border-r min-h-0">
           {/* ツールバー */}
           <div className="p-3 border-b bg-slate-50 flex-shrink-0">
             <div className="flex items-center gap-2">
@@ -1412,8 +1418,9 @@ export function CadAnalysisPage() {
           )}
         </div>
 
-        {/* 右側: 地図表示（画面高さに固定） */}
-        <div className="w-1/2 h-full overflow-hidden flex flex-col">
+        }
+        right={
+        <div className="flex-1 h-full overflow-hidden flex flex-col">
           {/* 地図上部のツールバー */}
           <div className="p-2 bg-white border-b flex items-center gap-2 flex-shrink-0">
             <button
@@ -1502,7 +1509,8 @@ export function CadAnalysisPage() {
             />
           </div>
         </div>
-      </div>
+        }
+      />
 
       {/* プレビューモードパネル */}
       {isPreviewMode && midpointPreview.length > 0 && (

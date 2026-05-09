@@ -33,6 +33,8 @@ import {
   Home,
   ExternalLink,
   Smartphone,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
@@ -257,7 +259,25 @@ export function AppLayout() {
 
   // トップページかつプロジェクト・圃場未選択の場合は左メニューを非表示
   const isTopPage = location.pathname === '/'
-  const showSidebar = !(isTopPage && !currentFarm)
+  const allowSidebar = !(isTopPage && !currentFarm)
+
+  // ユーザー操作で折りたたみ可能。状態は localStorage に永続化。
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    return window.localStorage.getItem('nodecloud_sidebar_collapsed') === '1'
+  })
+  const toggleSidebar = () => {
+    setSidebarCollapsed((v) => {
+      const next = !v
+      try {
+        window.localStorage.setItem('nodecloud_sidebar_collapsed', next ? '1' : '0')
+      } catch {
+        // ignore
+      }
+      return next
+    })
+  }
+  const showSidebar = allowSidebar && !sidebarCollapsed
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
@@ -266,6 +286,19 @@ export function AppLayout() {
         <div className="px-4 py-3 flex items-center justify-between">
           {/* タイトル部分 */}
           <div className="flex items-center gap-3">
+            {allowSidebar && (
+              <button
+                onClick={toggleSidebar}
+                className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+                title={sidebarCollapsed ? 'サイドバーを開く' : 'サイドバーを折りたたむ'}
+              >
+                {sidebarCollapsed ? (
+                  <PanelLeftOpen className="h-5 w-5" />
+                ) : (
+                  <PanelLeftClose className="h-5 w-5" />
+                )}
+              </button>
+            )}
             <h1 className="text-xl font-bold">NodeCloud</h1>
             <span className="text-sm text-slate-400">農業土木ICT設計システム</span>
             <span className="text-xs text-slate-500">{__BUILD_TIME__}</span>
