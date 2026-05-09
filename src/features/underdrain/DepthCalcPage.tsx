@@ -158,8 +158,6 @@ export function DepthCalcPage() {
 
   // 断面図のスコープ（'collector' = 系統全体の集水 / number = 系統内 row index の吸水）
   const [chartScope, setChartScope] = useState<'collector' | number>('collector')
-  // 系統が変わったら集水に戻す
-  useEffect(() => { setChartScope('collector') }, [selectedSystem?.groupIndex, selectedSystem?.systemIndex])
 
   // 地図上の管路クリック: 該当の系統タブへ切替・断面スコープを切替・表をスクロール
   const handleMapPipeSelect = useCallback((pipeId: string) => {
@@ -227,6 +225,22 @@ export function DepthCalcPage() {
       }
     }
   }, [planGroups])
+
+  // 系統タブを切り替える共通処理。新系統の最初の吸水（無ければ集水）を選択する。
+  const switchToSystem = useCallback(
+    (groupIndex: number, systemIndex: number) => {
+      setSelectedSystem({ groupIndex, systemIndex })
+      const group = planGroups[groupIndex]
+      if (!group) {
+        setChartScope('collector')
+        return
+      }
+      const rows = group.rows.filter((r) => (r.systemIndex ?? 1) === systemIndex)
+      const firstAbs = rows.findIndex((r) => r.absorptionPoints.length >= 2)
+      setChartScope(firstAbs >= 0 ? firstAbs : 'collector')
+    },
+    [planGroups],
+  )
 
   // 地図でハイライト表示する管路 ID
   // - 吸水スコープのとき: その吸水管のみ
@@ -1058,6 +1072,42 @@ export function DepthCalcPage() {
     return tabs
   }, [groupedBySystem])
 
+  // 系統内の吸水行 → 同系統の集水 を 1 つの「断面」として、
+  // 全タブを順に並べたグローバルなセクション一覧。前/次ボタンと縦断図タブで共有する。
+  type GlobalScope = {
+    groupIndex: number
+    systemIndex: number
+    scope: 'collector' | number
+    label: string
+    tabKey: string
+  }
+  const globalScopes = useMemo<GlobalScope[]>(() => {
+    const list: GlobalScope[] = []
+    for (const tab of flatTabs) {
+      const absorptionRows = tab.rows
+        .map((r, i) => ({ row: r, idx: i }))
+        .filter(({ row }) => row.absorptionPoints.length >= 2)
+      // 吸水 → 集水 の順
+      for (const { row, idx } of absorptionRows) {
+        list.push({
+          groupIndex: tab.groupIndex,
+          systemIndex: tab.systemIndex,
+          scope: idx,
+          label: `吸水: ${row.pipeNumber ?? '?'}`,
+          tabKey: tab.key,
+        })
+      }
+      list.push({
+        groupIndex: tab.groupIndex,
+        systemIndex: tab.systemIndex,
+        scope: 'collector',
+        label: `集水（系統${tab.systemIndex}）`,
+        tabKey: tab.key,
+      })
+    }
+    return list
+  }, [flatTabs])
+
   // タブが読み込まれたら最初のタブをアクティブに（未選択時のみ）
   useEffect(() => {
     if (flatTabs.length === 0) return
@@ -1068,12 +1118,9 @@ export function DepthCalcPage() {
           t.groupIndex === selectedSystem.groupIndex && t.systemIndex === selectedSystem.systemIndex
       )
     if (!exists) {
-      setSelectedSystem({
-        groupIndex: flatTabs[0].groupIndex,
-        systemIndex: flatTabs[0].systemIndex,
-      })
+      switchToSystem(flatTabs[0].groupIndex, flatTabs[0].systemIndex)
     }
-  }, [flatTabs, selectedSystem])
+  }, [flatTabs, selectedSystem, switchToSystem])
 
   // 現在アクティブなタブ
   const activeTab =
@@ -1391,12 +1438,7 @@ export function DepthCalcPage() {
                         key={tab.key}
                         type="button"
                         title={title}
-                        onClick={() =>
-                          setSelectedSystem({
-                            groupIndex: tab.groupIndex,
-                            systemIndex: tab.systemIndex,
-                          })
-                        }
+                        onClick={() => switchToSystem(tab.groupIndex, tab.systemIndex)}
                         className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded-t-lg border border-b-0 whitespace-nowrap transition-colors ${colorClass}`}
                       >
                         <span className="font-mono">
@@ -1640,41 +1682,81 @@ export function DepthCalcPage() {
                   }
                 }
 
-                // 断面の前/次ナビゲーション用に選択肢一覧を構築
+                // 系統内ドロップダウン用（吸水→集水 の順）
                 const scopeOptions: Array<{
                   value: 'collector' | number
                   label: string
                 }> = [
-                  {
-                    value: 'collector',
-                    label: `集水（系統 ${systemData.systemIndex}）`,
-                  },
                   ...absorptionRows.map(({ row, idx }) => ({
                     value: idx as number,
                     label: `吸水: ${row.pipeNumber ?? '?'}`,
                   })),
+                  {
+                    value: 'collector',
+                    label: `集水（系統 ${systemData.systemIndex}）`,
+                  },
                 ]
-                const currentIdx = scopeOptions.findIndex(
-                  (o) => o.value === chartScope,
+                // グローバル位置 (1-1 abs1, 1-1 abs2, 1-1 col, 1-2 abs1 ... の通し順)
+                const globalIdx = globalScopes.findIndex(
+                  (g) =>
+                    g.groupIndex === selectedSystem.groupIndex &&
+                    g.systemIndex === selectedSystem.systemIndex &&
+                    g.scope === chartScope,
                 )
                 const goPrev = () => {
-                  if (currentIdx <= 0) return
-                  setChartScope(scopeOptions[currentIdx - 1].value)
+                  if (globalIdx <= 0) return
+                  const g = globalScopes[globalIdx - 1]
+                  setSelectedSystem({ groupIndex: g.groupIndex, systemIndex: g.systemIndex })
+                  setChartScope(g.scope)
                 }
                 const goNext = () => {
-                  if (currentIdx < 0 || currentIdx >= scopeOptions.length - 1) return
-                  setChartScope(scopeOptions[currentIdx + 1].value)
+                  if (globalIdx < 0 || globalIdx >= globalScopes.length - 1) return
+                  const g = globalScopes[globalIdx + 1]
+                  setSelectedSystem({ groupIndex: g.groupIndex, systemIndex: g.systemIndex })
+                  setChartScope(g.scope)
                 }
 
                 return (
                   <>
+                    {/* 縦断図用 系統タブ（表側と同じ 1-1, 1-2, ... 形式） */}
+                    <div className="flex items-end gap-1 border-b border-slate-300 overflow-x-auto px-2 pt-1 bg-slate-50 flex-shrink-0">
+                      {flatTabs.map((t) => {
+                        const isActive =
+                          selectedSystem.groupIndex === t.groupIndex &&
+                          selectedSystem.systemIndex === t.systemIndex
+                        const g = groupedBySystem[t.groupIndex]
+                        const isDirect = g?.groupType === 'direct'
+                        const cls = isActive
+                          ? isDirect
+                            ? 'bg-amber-100 border-amber-400 text-amber-900 font-bold'
+                            : t.endType === 'outlet'
+                              ? 'bg-orange-100 border-orange-400 text-orange-800 font-bold'
+                              : t.endType === 'merge'
+                                ? 'bg-purple-100 border-purple-400 text-purple-800 font-bold'
+                                : 'bg-blue-100 border-blue-400 text-blue-900 font-bold'
+                          : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-100'
+                        return (
+                          <button
+                            key={`chart-tab-${t.key}`}
+                            type="button"
+                            onClick={() => switchToSystem(t.groupIndex, t.systemIndex)}
+                            className={`px-2.5 py-1 text-xs rounded-t-md border border-b-0 whitespace-nowrap transition-colors ${cls}`}
+                            title={`${groupedBySystem[t.groupIndex]?.name ?? ''} 系統${t.systemIndex}`}
+                          >
+                            <span className="font-mono">
+                              {t.groupIndex + 1}-{t.systemIndex}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
                     {/* 断面スコープ切替 */}
                     <div className="px-2 pt-1 pb-1 border-b bg-white flex items-center gap-1 text-xs flex-shrink-0">
                       <span className="text-slate-600 mr-1">断面:</span>
                       <button
                         type="button"
                         onClick={goPrev}
-                        disabled={currentIdx <= 0}
+                        disabled={globalIdx <= 0}
                         className="px-2 py-0.5 border rounded hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
                         title="前の断面へ"
                       >
@@ -1689,24 +1771,26 @@ export function DepthCalcPage() {
                         }}
                         className="px-2 py-0.5 border rounded"
                       >
-                        <option value="collector">集水（系統 {systemData.systemIndex}）</option>
-                        {absorptionRows.map(({ row, idx }) => (
-                          <option key={row.id} value={`abs-${idx}`}>
-                            吸水: {row.pipeNumber ?? '?'}
+                        {scopeOptions.map((opt) => (
+                          <option
+                            key={opt.value === 'collector' ? 'collector' : `abs-${opt.value}`}
+                            value={opt.value === 'collector' ? 'collector' : `abs-${opt.value}`}
+                          >
+                            {opt.label}
                           </option>
                         ))}
                       </select>
                       <button
                         type="button"
                         onClick={goNext}
-                        disabled={currentIdx < 0 || currentIdx >= scopeOptions.length - 1}
+                        disabled={globalIdx < 0 || globalIdx >= globalScopes.length - 1}
                         className="px-2 py-0.5 border rounded hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
                         title="次の断面へ"
                       >
                         次 ▶
                       </button>
                       <span className="text-[10px] text-slate-400 ml-1">
-                        {currentIdx >= 0 ? `${currentIdx + 1} / ${scopeOptions.length}` : ''}
+                        {globalIdx >= 0 ? `${globalIdx + 1} / ${globalScopes.length}` : ''}
                       </span>
                       {chartLabel && <span className="text-slate-500 ml-2">{chartLabel}</span>}
                     </div>
