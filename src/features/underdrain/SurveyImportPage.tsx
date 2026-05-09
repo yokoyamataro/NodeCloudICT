@@ -296,10 +296,40 @@ export function SurveyImportPage() {
     return results
   }, [designPoints, surveyData, calibration, localMatches, calcDistance])
 
+  // 設計点に紐付かない category='other' の測量データ（SIM 取込で点名が一致しなかったもの）を
+  // 「その他」タブに合成行として挿入する。
+  const orphanOtherResults = useMemo<MatchResult[]>(() => {
+    const matchedSurveyIds = new Set<string>(
+      matchResults
+        .map((r) => r.surveyData?.id)
+        .filter((id): id is string => !!id),
+    )
+    return surveyData
+      .filter((s) => s.category === 'other' && !matchedSurveyIds.has(s.id))
+      .map((s) => ({
+        designPoint: {
+          id: `survey-${s.id}`,
+          name: s.pointNumber,
+          x: s.x,
+          y: s.y,
+          z: s.z,
+          type: 'other' as TabType,
+          source: 'coordinate' as const,
+        },
+        surveyData: s,
+        matchCandidates: [],
+        distance: 0,
+        dzRaw: null,
+        dzCalibrated: null,
+      }))
+  }, [matchResults, surveyData])
+
   // タブ別にフィルタリング
   const filteredResults = useMemo(() => {
-    return matchResults.filter((r) => r.designPoint.type === activeTab)
-  }, [matchResults, activeTab])
+    const base = matchResults.filter((r) => r.designPoint.type === activeTab)
+    if (activeTab !== 'other') return base
+    return [...base, ...orphanOtherResults]
+  }, [matchResults, orphanOtherResults, activeTab])
 
   // 各タブの統計
   const tabStats = useMemo(() => {
@@ -314,9 +344,14 @@ export function SurveyImportPage() {
       stats[r.designPoint.type].total++
       if (r.surveyData) stats[r.designPoint.type].matched++
     }
+    // 設計点に紐付かない「その他」測量データ
+    for (const r of orphanOtherResults) {
+      stats.other.total++
+      if (r.surveyData) stats.other.matched++
+    }
 
     return stats
-  }, [matchResults])
+  }, [matchResults, orphanOtherResults])
 
   // 基準点の標高差から補正量を計算
   const recalculateCalibration = useCallback(() => {
