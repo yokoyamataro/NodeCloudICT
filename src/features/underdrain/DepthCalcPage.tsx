@@ -241,20 +241,13 @@ export function DepthCalcPage() {
     }
   }, [planGroups])
 
-  // 系統タブを切り替える共通処理。新系統の最初の吸水（無ければ集水）を選択する。
+  // 系統タブを切り替える共通処理。新系統では既定で集水スコープを表示する。
   const switchToSystem = useCallback(
     (groupIndex: number, systemIndex: number) => {
       setSelectedSystem({ groupIndex, systemIndex })
-      const group = planGroups[groupIndex]
-      if (!group) {
-        setChartScope('collector')
-        return
-      }
-      const rows = group.rows.filter((r) => (r.systemIndex ?? 1) === systemIndex)
-      const firstAbs = rows.findIndex((r) => r.absorptionPoints.length >= 2)
-      setChartScope(firstAbs >= 0 ? firstAbs : 'collector')
+      setChartScope('collector')
     },
-    [planGroups],
+    [],
   )
 
   // 地図でハイライト表示する管路 ID
@@ -1141,7 +1134,14 @@ export function DepthCalcPage() {
       const absorptionRows = tab.rows
         .map((r, i) => ({ row: r, idx: i }))
         .filter(({ row }) => row.absorptionPoints.length >= 2)
-      // 吸水 → 集水 の順
+      // 集水 → 吸水 の順
+      list.push({
+        groupIndex: tab.groupIndex,
+        systemIndex: tab.systemIndex,
+        scope: 'collector',
+        label: `集水（系統${tab.systemIndex}）`,
+        tabKey: tab.key,
+      })
       for (const { row, idx } of absorptionRows) {
         list.push({
           groupIndex: tab.groupIndex,
@@ -1151,13 +1151,6 @@ export function DepthCalcPage() {
           tabKey: tab.key,
         })
       }
-      list.push({
-        groupIndex: tab.groupIndex,
-        systemIndex: tab.systemIndex,
-        scope: 'collector',
-        label: `集水（系統${tab.systemIndex}）`,
-        tabKey: tab.key,
-      })
     }
     return list
   }, [flatTabs])
@@ -1801,21 +1794,21 @@ export function DepthCalcPage() {
                   }
                 }
 
-                // 系統内ドロップダウン用（吸水→集水 の順）
+                // 系統内ドロップダウン用（集水→吸水 の順）
                 const scopeOptions: Array<{
                   value: 'collector' | number
                   label: string
                 }> = [
-                  ...absorptionRows.map(({ row, idx }) => ({
-                    value: idx as number,
-                    label: `吸水: ${row.pipeNumber ?? '?'}`,
-                  })),
                   {
                     value: 'collector',
                     label: `集水（系統 ${systemData.systemIndex}）`,
                   },
+                  ...absorptionRows.map(({ row, idx }) => ({
+                    value: idx as number,
+                    label: `吸水: ${row.pipeNumber ?? '?'}`,
+                  })),
                 ]
-                // グローバル位置 (1-1 abs1, 1-1 abs2, 1-1 col, 1-2 abs1 ... の通し順)
+                // グローバル位置 (1-1 col, 1-1 abs1, 1-1 abs2, 1-2 col ... の通し順)
                 const globalIdx = globalScopes.findIndex(
                   (g) =>
                     g.groupIndex === selectedSystem.groupIndex &&
