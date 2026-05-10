@@ -1762,6 +1762,45 @@ export function DepthCalcPage() {
                   }
                 }
 
+                // 受け側集水: 同グループ内の他系統で endType==='merge' のものを探し、
+                // その最終集水点と本系統の各行の集水点が同座標 (50cm 以内) なら、
+                // 流入系統として記録。流入高 < 本系統の計画高 なら逆勾配。
+                const mergeInflowsByRowId = new Map<
+                  string,
+                  Array<{ height: number; systemLabel: string; isReverseSlope: boolean }>
+                >()
+                if (typeof chartScope !== 'number') {
+                  const TOL = 0.5
+                  const otherSystems = groupData.systems.filter(
+                    (s) =>
+                      s.systemIndex !== systemData.systemIndex &&
+                      s.endType === 'merge',
+                  )
+                  for (const row of systemData.rows) {
+                    if (!row.collectorPoint) continue
+                    for (const other of otherSystems) {
+                      const lastWithCollector = [...other.rows]
+                        .reverse()
+                        .find((r) => r.collectorPoint != null)
+                      const otherPt = lastWithCollector?.collectorPoint
+                      if (!otherPt || otherPt.plannedHeight == null) continue
+                      const dx = otherPt.x - row.collectorPoint.x
+                      const dy = otherPt.y - row.collectorPoint.y
+                      if (Math.hypot(dx, dy) > TOL) continue
+                      const myHeight = row.collectorPoint.plannedHeight
+                      const isReverseSlope =
+                        myHeight != null && otherPt.plannedHeight < myHeight
+                      const list = mergeInflowsByRowId.get(row.id) ?? []
+                      list.push({
+                        height: otherPt.plannedHeight,
+                        systemLabel: `${selectedSystem.groupIndex + 1}-${other.systemIndex}`,
+                        isReverseSlope,
+                      })
+                      mergeInflowsByRowId.set(row.id, list)
+                    }
+                  }
+                }
+
                 // 系統内ドロップダウン用（吸水→集水 の順）
                 const scopeOptions: Array<{
                   value: 'collector' | number
@@ -1887,6 +1926,7 @@ export function DepthCalcPage() {
                         farmName={currentFarm?.name}
                         tinSurface={tinSurface}
                         endCollectorPlannedHeight={chartEndCollectorHeight}
+                        mergeInflowsByRowId={mergeInflowsByRowId}
                         onPlannedHeightChange={(pointId, h) => {
                           // pointId は PlanPoint.id（UUID）。全グループから所有行を逆引きする
                           for (const g of planGroups) {

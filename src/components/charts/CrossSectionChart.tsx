@@ -20,6 +20,9 @@ interface CrossSectionChartProps {
   // 計画高の編集コールバック。pointId（PlanPoint.id）と新しい計画高を受け取る。
   // 未指定時は計画点が編集不可（マウス操作なし）。
   onPlannedHeightChange?: (pointId: string, newHeight: number) => void
+  // 受け側集水の各行に対して、流入してくる他系統の最終集水点情報。
+  // rowId をキーに、複数の流入を配列で持つ（1 点に複数系統が合流するケース対応）。
+  mergeInflowsByRowId?: Map<string, Array<{ height: number; systemLabel: string; isReverseSlope: boolean }>>
 }
 
 // 断面図の点データ（集水管の点のみ）
@@ -31,6 +34,8 @@ interface SectionPoint {
   rowIndex: number // 元の行インデックス
   // 編集用に PlanPoint.id を保持（onPlannedHeightChange に渡す）
   pointId: string
+  // mergeInflows の検索用に PlanRow.id を保持
+  rowId: string
   // 吸水接続情報
   // 合流行の場合は「合流先系統の末端集水管の番号」（例: S4）を入れる
   absorptionPipeNumber: string | null
@@ -53,6 +58,7 @@ export function CrossSectionChart({
   tinSurface,
   endCollectorPlannedHeight,
   onPlannedHeightChange,
+  mergeInflowsByRowId,
 }: CrossSectionChartProps) {
   // 標高スケールのズーム倍率（1.0が基準、大きいほど拡大）
   const [heightScale, setHeightScale] = useState(1.0)
@@ -185,6 +191,7 @@ export function CrossSectionChart({
         pointName: row.collectorPoint.pointName,
         rowIndex: rowIdx,
         pointId: row.collectorPoint.id,
+        rowId: row.id,
         absorptionPipeNumber: flagPipeNumber,
         absorptionPlannedHeight: absorptionDownstreamHeight,
         absorptionUpstreamPlannedHeight: absorptionUpstreamHeight,
@@ -997,6 +1004,47 @@ export function CrossSectionChart({
                     </text>
                   </g>
                 )}
+
+                {/* 流入する他系統の合流点計画高（受け側集水のとき） */}
+                {(() => {
+                  const inflows = mergeInflowsByRowId?.get(point.rowId)
+                  if (!inflows || inflows.length === 0) return null
+                  return inflows.map((inflow, j) => {
+                    const cy = yScale(inflow.height)
+                    const size = 6
+                    const fill = inflow.isReverseSlope ? '#dc2626' : '#7c3aed'
+                    const labelColor = inflow.isReverseSlope
+                      ? 'fill-red-700'
+                      : 'fill-purple-700'
+                    // 複数流入時は y 方向にずらして重ね合いを避ける
+                    const yOffset = j * 14
+                    return (
+                      <g key={`inflow-${j}`}>
+                        <polygon
+                          points={`${x - size},${cy - size} ${x + size},${cy - size} ${x},${cy + size}`}
+                          fill={fill}
+                          stroke="white"
+                          strokeWidth="1.5"
+                        />
+                        <text
+                          x={x - 9}
+                          y={cy - 8 - yOffset}
+                          textAnchor="end"
+                          className={`${labelColor} text-[11px] font-semibold`}
+                          style={{
+                            paintOrder: 'stroke',
+                            stroke: 'white',
+                            strokeWidth: 3,
+                            strokeLinejoin: 'round',
+                          }}
+                        >
+                          {inflow.isReverseSlope ? '⚠ 逆勾配 ' : '流入 '}
+                          {inflow.systemLabel} {inflow.height.toFixed(3)}m
+                        </text>
+                      </g>
+                    )
+                  })
+                })()}
 
                 {/* 吸水上流部マーク（▼ 三角形） */}
                 {point.absorptionUpstreamPlannedHeight !== null && (
