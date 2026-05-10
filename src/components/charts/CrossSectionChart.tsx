@@ -968,6 +968,33 @@ export function CrossSectionChart({
 
             return (
               <g key={idx}>
+                {/* ホバー検出用の透明な太い縦線（マーカー類より「下」に配置して、
+                   マーカーへの mousedown / click を奪わないようにする） */}
+                <line
+                  x1={x}
+                  y1={padding.top - 4}
+                  x2={x}
+                  y2={chartHeight - padding.bottom + 4}
+                  stroke="transparent"
+                  strokeWidth="20"
+                  style={{ cursor: 'pointer' }}
+                  onMouseEnter={() => setHoveredIdx(idx)}
+                  onMouseLeave={() => setHoveredIdx((cur) => (cur === idx ? null : cur))}
+                />
+                {/* ホバー時のハイライト縦線 */}
+                {hoveredIdx === idx && (
+                  <line
+                    x1={x}
+                    y1={padding.top - 4}
+                    x2={x}
+                    y2={chartHeight - padding.bottom + 4}
+                    stroke="#16a34a"
+                    strokeWidth="1.5"
+                    strokeDasharray="3,3"
+                    pointerEvents="none"
+                  />
+                )}
+
                 {/* 現況点マーカー */}
                 {point.groundHeight !== null && (
                   <>
@@ -1232,31 +1259,6 @@ export function CrossSectionChart({
                   strokeWidth="1"
                 />
 
-                {/* ホバー検出用の透明な太い縦線（チャート全体を覆う） */}
-                <line
-                  x1={x}
-                  y1={padding.top - 4}
-                  x2={x}
-                  y2={chartHeight - padding.bottom + 4}
-                  stroke="transparent"
-                  strokeWidth="20"
-                  style={{ cursor: 'pointer' }}
-                  onMouseEnter={() => setHoveredIdx(idx)}
-                  onMouseLeave={() => setHoveredIdx((cur) => (cur === idx ? null : cur))}
-                />
-                {/* ホバー時のハイライト縦線 */}
-                {hoveredIdx === idx && (
-                  <line
-                    x1={x}
-                    y1={padding.top - 4}
-                    x2={x}
-                    y2={chartHeight - padding.bottom + 4}
-                    stroke="#16a34a"
-                    strokeWidth="1.5"
-                    strokeDasharray="3,3"
-                    pointerEvents="none"
-                  />
-                )}
               </g>
             )
           })}
