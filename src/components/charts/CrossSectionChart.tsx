@@ -373,6 +373,8 @@ export function CrossSectionChart({
   // ドラッグ中の点（再描画トリガ用に state も持つ）
   const dragRef = useRef<{ pointId: string } | null>(null)
   const [draggingPointId, setDraggingPointId] = useState<string | null>(null)
+  // ドラッグ後の click を抑制するためのフラグ（mousemove で true になり、次の click で消費）
+  const suppressNextClickRef = useRef(false)
 
   // クリックで開く計画高の編集ポップアップ
   const [editPopup, setEditPopup] = useState<{
@@ -382,6 +384,63 @@ export function CrossSectionChart({
     initialHeight: number
   } | null>(null)
   const [editValue, setEditValue] = useState('')
+
+  // 凡例の位置オフセット（top, right からの相対 px）。localStorage に永続化。
+  const LEGEND_STORAGE_KEY = 'nodecloud_chart_legend_offset'
+  const [legendOffset, setLegendOffset] = useState<{ top: number; right: number }>(() => {
+    if (typeof window === 'undefined') return { top: 8, right: 8 }
+    try {
+      const saved = window.localStorage.getItem(LEGEND_STORAGE_KEY)
+      if (saved) {
+        const parsed = JSON.parse(saved) as { top: number; right: number }
+        if (
+          Number.isFinite(parsed.top) &&
+          Number.isFinite(parsed.right)
+        ) {
+          return parsed
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return { top: 8, right: 8 }
+  })
+  const legendDragRef = useRef<{
+    startMouseX: number
+    startMouseY: number
+    startTop: number
+    startRight: number
+  } | null>(null)
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!legendDragRef.current) return
+      const dx = e.clientX - legendDragRef.current.startMouseX
+      const dy = e.clientY - legendDragRef.current.startMouseY
+      // 右端基準なので、マウスが右に動いたら right が小さくなる
+      const next = {
+        top: Math.max(0, legendDragRef.current.startTop + dy),
+        right: Math.max(0, legendDragRef.current.startRight - dx),
+      }
+      setLegendOffset(next)
+    }
+    const onUp = () => {
+      if (!legendDragRef.current) return
+      legendDragRef.current = null
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      try {
+        window.localStorage.setItem(LEGEND_STORAGE_KEY, JSON.stringify(legendOffset))
+      } catch {
+        // ignore
+      }
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [legendOffset])
 
   // SVG 内のローカル Y 座標を取得
   const getSvgY = useCallback((clientY: number): number | null => {
@@ -395,6 +454,8 @@ export function CrossSectionChart({
     if (!onPlannedHeightChange) return
     const onMove = (e: MouseEvent) => {
       if (!dragRef.current) return
+      // 動いた=ドラッグなので、次の click は抑制する
+      suppressNextClickRef.current = true
       const y = getSvgY(e.clientY)
       if (y == null) return
       const h = Math.max(minHeight, Math.min(maxHeight, yToHeight(y)))
@@ -610,8 +671,30 @@ export function CrossSectionChart({
 
       {/* SVG断面図（凡例はスクロール外に固定表示） */}
       <div className="flex-1 relative overflow-hidden bg-white">
-        {/* 凡例（右上に固定、スクロールの影響を受けない） */}
-        <div className="absolute top-2 right-2 z-10 bg-white border border-slate-200 rounded shadow-sm p-2 text-[14px] space-y-1 pointer-events-none">
+        {/* 凡例（ドラッグで移動可能・位置は localStorage に保存） */}
+        <div
+          className="absolute z-10 bg-white border border-slate-200 rounded shadow-sm text-[14px] select-none"
+          style={{ top: legendOffset.top, right: legendOffset.right }}
+        >
+          {/* ドラッグハンドル */}
+          <div
+            className="px-2 py-0.5 bg-slate-100 border-b border-slate-200 rounded-t text-[10px] text-slate-500 cursor-move flex items-center justify-between gap-2"
+            onMouseDown={(e) => {
+              e.preventDefault()
+              legendDragRef.current = {
+                startMouseX: e.clientX,
+                startMouseY: e.clientY,
+                startTop: legendOffset.top,
+                startRight: legendOffset.right,
+              }
+              document.body.style.cursor = 'move'
+              document.body.style.userSelect = 'none'
+            }}
+            title="ドラッグで凡例を移動"
+          >
+            <span>≡ 凡例</span>
+          </div>
+          <div className="p-2 space-y-1 pointer-events-none">
           <div className="flex items-center gap-2">
             <svg width="24" height="10" className="flex-shrink-0">
               <line x1="2" y1="5" x2="22" y2="5" stroke="#92400e" strokeWidth="2" />
@@ -643,6 +726,7 @@ export function CrossSectionChart({
               <line x1="2" y1="5" x2="22" y2="5" stroke="#16a34a" strokeWidth="1.5" strokeDasharray="4,3" />
             </svg>
             <span className="text-slate-700">吸水接続</span>
+          </div>
           </div>
         </div>
 
@@ -896,6 +980,32 @@ export function CrossSectionChart({
                   </>
                 )}
 
+                {/* 切深ラベル（地盤高 - 計画高）。地盤と計画の中間に縦書き表示 */}
+                {point.groundHeight !== null && point.plannedHeight !== null && (() => {
+                  const gy = yScale(point.groundHeight)
+                  const py = yScale(point.plannedHeight)
+                  const cutDepth = point.groundHeight - point.plannedHeight
+                  if (Math.abs(py - gy) < 22) return null // 重なるほど近い場合は省略
+                  const midY = (gy + py) / 2
+                  return (
+                    <text
+                      x={x - 4}
+                      y={midY + 4}
+                      textAnchor="end"
+                      className="fill-cyan-700 text-[11px] font-semibold"
+                      style={{
+                        paintOrder: 'stroke',
+                        stroke: 'white',
+                        strokeWidth: 3,
+                        strokeLinejoin: 'round',
+                        pointerEvents: 'none',
+                      }}
+                    >
+                      切深 {cutDepth.toFixed(3)}
+                    </text>
+                  )
+                })()}
+
                 {/* 計画点マーカー（編集コールバック有効時はドラッグ + 左クリックで編集） */}
                 {point.plannedHeight !== null && (() => {
                   const editable = !!onPlannedHeightChange
@@ -921,8 +1031,11 @@ export function CrossSectionChart({
                             document.body.style.userSelect = 'none'
                           }}
                           onClick={(e) => {
-                            // ドラッグ後の click は無視されるよう、わずかに離れた場合のみ反応
-                            if (dragRef.current) return
+                            // ドラッグ操作後（mousemove で suppress フラグが立った）は無視
+                            if (suppressNextClickRef.current) {
+                              suppressNextClickRef.current = false
+                              return
+                            }
                             e.stopPropagation()
                             const rect = svgRef.current?.getBoundingClientRect()
                             if (!rect) return
