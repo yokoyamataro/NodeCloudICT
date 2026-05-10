@@ -1124,7 +1124,7 @@ export function CrossSectionChart({
 
                 {/* 吸水接続マーク（丸） */}
                 {point.absorptionPlannedHeight !== null && (
-                  <g>
+                  <g pointerEvents="none">
                     <circle
                       cx={x}
                       cy={yScale(point.absorptionPlannedHeight)}
@@ -1176,7 +1176,7 @@ export function CrossSectionChart({
                     // 複数流入時は y 方向にずらして重ね合いを避ける
                     const yOffset = j * 14
                     return (
-                      <g key={`inflow-${j}`}>
+                      <g key={`inflow-${j}`} pointerEvents="none">
                         <polygon
                           points={`${x - size},${cy - size} ${x + size},${cy - size} ${x},${cy + size}`}
                           fill={fill}
@@ -1205,7 +1205,7 @@ export function CrossSectionChart({
 
                 {/* 吸水上流部マーク（▼ 三角形） */}
                 {point.absorptionUpstreamPlannedHeight !== null && (
-                  <g>
+                  <g pointerEvents="none">
                     {(() => {
                       const cx = x
                       const cy = yScale(point.absorptionUpstreamPlannedHeight)
