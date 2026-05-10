@@ -20,13 +20,14 @@ interface PointData {
   cutDepth: number | null
 }
 
-// 配管ID × 頂点インデックス → PlanPoint のルックアップを構築
+// 配管ID × 頂点インデックス → PlanPoint のルックアップを構築。
+// 集水管は座標一致（最も近い頂点を採用）、許容 0.01m (1cm)。
 function buildPlanLookup(
   planGroups: PlanGroup[],
   pipes: PipeRow[],
 ): Map<string, Map<number, PlanPoint>> {
   const map = new Map<string, Map<number, PlanPoint>>()
-  const EPS = 1e-4
+  const EPS = 0.01 // 1cm
   for (const group of planGroups) {
     for (const row of group.rows) {
       // 吸水管: 順に対応
@@ -41,20 +42,23 @@ function buildPlanLookup(
           map.set(row.absorptionPipeId, inner)
         }
       }
-      // 集水管: 座標マッチで頂点を検出
+      // 集水管: 座標一致で最も近い頂点に紐付け（許容 1cm）
       if (row.collectorPipeId && row.collectorPoint) {
         const pipe = pipes.find((p) => p.id === row.collectorPipeId)
         if (pipe) {
           const inner = map.get(row.collectorPipeId) ?? new Map<number, PlanPoint>()
+          let bestIdx = -1
+          let bestDist = Infinity
           for (let i = 0; i < pipe.vertices.length; i++) {
             const v = pipe.vertices[i]
-            if (
-              Math.abs(v.x - row.collectorPoint.x) < EPS &&
-              Math.abs(v.y - row.collectorPoint.y) < EPS
-            ) {
-              inner.set(i, row.collectorPoint)
-              break
+            const d = Math.hypot(v.x - row.collectorPoint.x, v.y - row.collectorPoint.y)
+            if (d < bestDist) {
+              bestDist = d
+              bestIdx = i
             }
+          }
+          if (bestIdx >= 0 && bestDist <= EPS) {
+            inner.set(bestIdx, row.collectorPoint)
           }
           map.set(row.collectorPipeId, inner)
         }
@@ -66,10 +70,13 @@ function buildPlanLookup(
 
 function pointFromPlan(pp: PlanPoint | undefined | null): PointData {
   if (!pp) return { groundHeight: null, cutDepth: null }
-  return {
-    groundHeight: pp.groundHeight ?? null,
-    cutDepth: pp.cutDepth ?? null,
+  const ground = pp.groundHeight ?? null
+  let cutDepth = pp.cutDepth ?? null
+  // 切深が未計算でも、地盤高と計画高があれば算出
+  if (cutDepth == null && ground != null && pp.plannedHeight != null) {
+    cutDepth = ground - pp.plannedHeight
   }
+  return { groundHeight: ground, cutDepth }
 }
 
 // 測定結果一覧表 Excel 生成
@@ -170,13 +177,38 @@ export async function exportMeasurementResult({
         ws.getCell(j + 3, 16).value = round(aZ, 2)                              // P{j+3}
       }
     } else {
-      if (aData.groundHeight != null) {
-        ws.getCell(j, 16).value = round(aData.groundHeight, 2)                  // P{j}: 地盤高
+      // 集水管の A 点: 施工計画に無ければ頂点 z を地盤高として転記
+      const aGround =
+        aData.groundHeight ?? pipe.vertices[vLast]?.z ?? null
+      if (aGround != null) {
+        ws.getCell(j, 16).value = round(aGround, 2)                             // P{j}: 地盤高
       }
       if (aData.cutDepth != null) {
         ws.getCell(j + 3, 18).value = round(aData.cutDepth, 3)                  // R{j+3}: 切深
       }
     }
+  }
+
+  // テンプレートが保持している定義済み名前 (Defined Names) を全削除する。
+  // ExcelJS が #REF! を含む不正な参照式を round-trip で書き戻してしまい、
+  // Excel が「削除されたレコード: 名前付き範囲」エラーを出すのを防ぐ。
+  try {
+    const wbAny = workbook as unknown as {
+      definedNames?: { model?: { name: string }[]; remove?: (name: string) => void }
+    }
+    const dn = wbAny.definedNames
+    if (dn) {
+      const names: string[] = (dn.model ?? []).map((m) => m.name)
+      for (const n of names) {
+        try {
+          dn.remove?.(n)
+        } catch {
+          // 一部の名前で remove が失敗してもエラーにしない
+        }
+      }
+    }
+  } catch {
+    // ignore
   }
 
   // ダウンロード
