@@ -369,6 +369,47 @@ export function CrossSectionChart({
 
   // SVG 要素への ref（マウス座標を SVG 座標に変換するため）
   const svgRef = useRef<SVGSVGElement | null>(null)
+  // スクロールコンテナへの ref（背景ドラッグでの横スクロールに使用）
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+  // 背景ドラッグでパン中の状態
+  const panRef = useRef<{ startX: number; startScrollLeft: number } | null>(null)
+  const [isPanning, setIsPanning] = useState(false)
+
+  // 背景ドラッグでのパン: マウスダウン時、対象が SVG / グリッド線 / TIN パスなど
+  // 「背景」要素であればパンを開始する。マーカー類は stopPropagation していて
+  // ここまで来ない。
+  const handlePanStart = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return // 左クリックのみ
+    if (!scrollContainerRef.current) return
+    panRef.current = {
+      startX: e.clientX,
+      startScrollLeft: scrollContainerRef.current.scrollLeft,
+    }
+    setIsPanning(true)
+    document.body.style.cursor = 'grabbing'
+    document.body.style.userSelect = 'none'
+  }, [])
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!panRef.current || !scrollContainerRef.current) return
+      const dx = e.clientX - panRef.current.startX
+      scrollContainerRef.current.scrollLeft = panRef.current.startScrollLeft - dx
+    }
+    const onUp = () => {
+      if (!panRef.current) return
+      panRef.current = null
+      setIsPanning(false)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [])
 
   // ドラッグ中の点（再描画トリガ用に state も持つ）
   const dragRef = useRef<{ pointId: string } | null>(null)
@@ -384,6 +425,24 @@ export function CrossSectionChart({
     initialHeight: number
   } | null>(null)
   const [editValue, setEditValue] = useState('')
+
+  // 凡例の最小化状態。localStorage に永続化。
+  const LEGEND_COLLAPSED_KEY = 'nodecloud_chart_legend_collapsed'
+  const [legendCollapsed, setLegendCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    return window.localStorage.getItem(LEGEND_COLLAPSED_KEY) === '1'
+  })
+  const toggleLegendCollapsed = () => {
+    setLegendCollapsed((v) => {
+      const next = !v
+      try {
+        window.localStorage.setItem(LEGEND_COLLAPSED_KEY, next ? '1' : '0')
+      } catch {
+        // ignore
+      }
+      return next
+    })
+  }
 
   // 凡例の位置オフセット（top, right からの相対 px）。localStorage に永続化。
   const LEGEND_STORAGE_KEY = 'nodecloud_chart_legend_offset'
@@ -691,24 +750,39 @@ export function CrossSectionChart({
           className="absolute z-10 bg-white border border-slate-200 rounded shadow-sm text-[14px] select-none"
           style={{ top: legendOffset.top, right: legendOffset.right }}
         >
-          {/* ドラッグハンドル */}
+          {/* ドラッグハンドル + 最小化ボタン */}
           <div
-            className="px-2 py-0.5 bg-slate-100 border-b border-slate-200 rounded-t text-[10px] text-slate-500 cursor-move flex items-center justify-between gap-2"
-            onMouseDown={(e) => {
-              e.preventDefault()
-              legendDragRef.current = {
-                startMouseX: e.clientX,
-                startMouseY: e.clientY,
-                startTop: legendOffset.top,
-                startRight: legendOffset.right,
-              }
-              document.body.style.cursor = 'move'
-              document.body.style.userSelect = 'none'
-            }}
-            title="ドラッグで凡例を移動"
+            className={`px-2 py-0.5 bg-slate-100 border-slate-200 rounded-t text-[10px] text-slate-500 flex items-center justify-between gap-2 ${
+              legendCollapsed ? 'rounded-b' : 'border-b'
+            }`}
           >
-            <span>≡ 凡例</span>
+            <div
+              className="flex-1 cursor-move"
+              onMouseDown={(e) => {
+                e.preventDefault()
+                legendDragRef.current = {
+                  startMouseX: e.clientX,
+                  startMouseY: e.clientY,
+                  startTop: legendOffset.top,
+                  startRight: legendOffset.right,
+                }
+                document.body.style.cursor = 'move'
+                document.body.style.userSelect = 'none'
+              }}
+              title="ドラッグで凡例を移動"
+            >
+              ≡ 凡例
+            </div>
+            <button
+              type="button"
+              onClick={toggleLegendCollapsed}
+              className="px-1 hover:bg-slate-200 rounded text-slate-600"
+              title={legendCollapsed ? '凡例を展開' : '凡例を最小化'}
+            >
+              {legendCollapsed ? '▢' : '−'}
+            </button>
           </div>
+          {!legendCollapsed && (
           <div className="p-2 space-y-1 pointer-events-none">
           <div className="flex items-center gap-2">
             <svg width="24" height="10" className="flex-shrink-0">
@@ -743,9 +817,11 @@ export function CrossSectionChart({
             <span className="text-slate-700">吸水接続</span>
           </div>
           </div>
+          )}
         </div>
 
         <div
+          ref={scrollContainerRef}
           className="absolute inset-0 overflow-x-auto overflow-y-hidden"
           onWheel={handleWheel}
         >
@@ -753,7 +829,8 @@ export function CrossSectionChart({
           ref={svgRef}
           width={chartWidth}
           height={chartHeight}
-          className="min-w-full cursor-ns-resize"
+          className={`min-w-full ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
+          onMouseDown={handlePanStart}
         >
           {/* 背景グリッド */}
           <g className="grid">
