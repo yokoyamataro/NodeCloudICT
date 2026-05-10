@@ -1199,26 +1199,24 @@ export function DepthCalcPage() {
   return (
     <div className="h-full flex flex-col">
       {/* ヘッダー */}
-      <div className="p-4 border-b bg-white flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold flex items-center gap-2">
-            <Ruler className="h-5 w-5" />
-            施工計画
-            {reverseSlopeErrorCount > 0 && (
-              <span
-                className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full bg-red-100 text-red-700 border border-red-300"
-                title="計画高の逆勾配エラーがあります（赤セルを確認してください）"
-              >
-                <AlertTriangle className="h-3 w-3" />
-                逆勾配 {reverseSlopeErrorCount} 件
-              </span>
-            )}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            配管系統から施工計画を作成し、計画高と切深を設定
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+      <div className="px-3 py-2 border-b bg-white flex items-center gap-2 flex-wrap">
+        <h1
+          className="text-base font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0"
+          title="配管系統から施工計画を作成し、計画高と切深を設定"
+        >
+          <Ruler className="h-4 w-4" />
+          施工計画
+          {reverseSlopeErrorCount > 0 && (
+            <span
+              className="ml-1 inline-flex items-center gap-1 px-1.5 py-0.5 text-[11px] rounded-full bg-red-100 text-red-700 border border-red-300 whitespace-nowrap"
+              title="計画高の逆勾配エラーがあります（赤セルを確認してください）"
+            >
+              <AlertTriangle className="h-3 w-3" />
+              逆勾配 {reverseSlopeErrorCount}
+            </span>
+          )}
+        </h1>
+        <div className="flex items-center gap-2 flex-wrap ml-auto">
           {loading ? (
             <div className="flex items-center gap-2 px-4 py-2 text-slate-400">
               <Loader2 className="h-4 w-4 animate-spin" />
