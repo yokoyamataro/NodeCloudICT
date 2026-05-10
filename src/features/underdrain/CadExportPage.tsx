@@ -223,6 +223,58 @@ function buildTextLines(
 
   const planLookup = buildPlanLookup(planGroups, pipes)
 
+  // 集水管同士で同一座標に頂点がある場合は 1 件にまとめる（例: S26A と S25C が同位置 →
+  // S26A.S25C として 1 行出力）。事前に重複位置を検出し、2 件目以降をスキップ + 1 件目の
+  // 点名を結合名で上書きするマップを構築する。
+  const POS_EPS_MM = 1 // 1mm 以内を同一点とみなす
+  const collectorPositionKey = (x: number, y: number) =>
+    `${Math.round(x * 1000)}_${Math.round(y * 1000)}`
+  const collectorPositions = new Map<
+    string,
+    Array<{ pipeId: string; vertexIdx: number; pointName: string }>
+  >()
+  for (const pipe of pipes) {
+    if (pipe.pipeType === 'branch') continue
+    const planForPipe = planLookup.get(pipe.id)
+    for (let i = 0; i < pipe.vertices.length; i++) {
+      const v = pipe.vertices[i]
+      const pp = planForPipe?.get(i) ?? null
+      const pointName =
+        pp !== null
+          ? pp.pointName
+          : generatePointName(pipe.number, i, pipe.vertices.length)
+      const key = collectorPositionKey(v.x, v.y)
+      const list = collectorPositions.get(key) ?? []
+      list.push({ pipeId: pipe.id, vertexIdx: i, pointName })
+      collectorPositions.set(key, list)
+    }
+  }
+  void POS_EPS_MM
+  const collectorSkipKeys = new Set<string>()
+  const collectorMergedName = new Map<string, string>()
+  for (const [, list] of collectorPositions) {
+    if (list.length <= 1) continue
+    // 各点名を "." で分割し、重複なしで順序保持しながら結合
+    const seen = new Set<string>()
+    const parts: string[] = []
+    for (const item of list) {
+      const tokens = (item.pointName || '').split('.').filter((s) => s.length > 0)
+      for (const t of tokens) {
+        if (!seen.has(t)) {
+          seen.add(t)
+          parts.push(t)
+        }
+      }
+    }
+    const merged = parts.join('.')
+    const first = list[0]
+    collectorMergedName.set(`${first.pipeId}|${first.vertexIdx}`, merged)
+    for (let i = 1; i < list.length; i++) {
+      const skip = list[i]
+      collectorSkipKeys.add(`${skip.pipeId}|${skip.vertexIdx}`)
+    }
+  }
+
   for (const pipe of pipes) {
     if (pipe.vertices.length === 0) continue
 
@@ -238,6 +290,9 @@ function buildTextLines(
     const total = pipe.vertices.length
 
     for (let i = 0; i < total; i++) {
+      // 集水管同一点の重複は 2 件目以降をスキップ
+      if (!isAbsorption && collectorSkipKeys.has(`${pipe.id}|${i}`)) continue
+
       const v = pipe.vertices[i]
       const pp = planForPipe?.get(i) ?? null
       const { px: x1, py: y1 } = toPaperCoords(v.x, v.y, level)
@@ -257,7 +312,11 @@ function buildTextLines(
       }
 
       // 施工計画に対応行がある場合は空文字でもそのまま使う（縦断変化点＝A/B/Cラベルなしの吸水合流点）
-      const pointName = pp !== null ? pp.pointName : generatePointName(pipe.number, i, total)
+      const rawPointName = pp !== null ? pp.pointName : generatePointName(pipe.number, i, total)
+      // 集水管同一点で結合されている場合は結合名で上書き
+      const pointName = !isAbsorption
+        ? collectorMergedName.get(`${pipe.id}|${i}`) ?? rawPointName
+        : rawPointName
       const gh = pp?.groundHeight ?? v.z ?? null
       const ph = pp?.plannedHeight ?? null
       const cd =

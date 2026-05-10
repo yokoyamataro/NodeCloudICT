@@ -372,7 +372,12 @@ export function CrossSectionChart({
   // スクロールコンテナへの ref（背景ドラッグでの横スクロールに使用）
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   // 背景ドラッグでパン中の状態
-  const panRef = useRef<{ startX: number; startScrollLeft: number } | null>(null)
+  const panRef = useRef<{
+    startX: number
+    startY: number
+    startScrollLeft: number
+    startScrollTop: number
+  } | null>(null)
   const [isPanning, setIsPanning] = useState(false)
 
   // 背景ドラッグでのパン: マウスダウン時、対象が SVG / グリッド線 / TIN パスなど
@@ -383,7 +388,9 @@ export function CrossSectionChart({
     if (!scrollContainerRef.current) return
     panRef.current = {
       startX: e.clientX,
+      startY: e.clientY,
       startScrollLeft: scrollContainerRef.current.scrollLeft,
+      startScrollTop: scrollContainerRef.current.scrollTop,
     }
     setIsPanning(true)
     document.body.style.cursor = 'grabbing'
@@ -394,7 +401,9 @@ export function CrossSectionChart({
     const onMove = (e: MouseEvent) => {
       if (!panRef.current || !scrollContainerRef.current) return
       const dx = e.clientX - panRef.current.startX
+      const dy = e.clientY - panRef.current.startY
       scrollContainerRef.current.scrollLeft = panRef.current.startScrollLeft - dx
+      scrollContainerRef.current.scrollTop = panRef.current.startScrollTop - dy
     }
     const onUp = () => {
       if (!panRef.current) return
@@ -532,7 +541,9 @@ export function CrossSectionChart({
       const y = getSvgY(e.clientY)
       if (y == null) return
       const { min, max } = minMaxRef.current
-      const h = Math.max(min, Math.min(max, yToHeightRef.current(y)))
+      const raw = Math.max(min, Math.min(max, yToHeightRef.current(y)))
+      // ドラッグはセンチ単位 (0.01m) でスナップ
+      const h = Math.round(raw * 100) / 100
       cb(dragRef.current.pointId, h)
     }
     const onUp = () => {
@@ -880,7 +891,7 @@ export function CrossSectionChart({
 
         <div
           ref={scrollContainerRef}
-          className="absolute inset-0 overflow-x-auto overflow-y-hidden"
+          className="absolute inset-0 overflow-auto"
           onWheel={handleWheel}
         >
         <svg
@@ -1169,18 +1180,22 @@ export function CrossSectionChart({
                   </>
                 )}
 
-                {/* 切深ラベル（地盤高 - 計画高）。地盤と計画の中間に縦書き表示 */}
+                {/* 切深ラベル（地盤高 - 計画高）。地盤と計画の中間に 90° 回転して表示
+                   （-90° 回転で「左が数字の上」になる） */}
                 {point.groundHeight !== null && point.plannedHeight !== null && cutDepthVisibleSet.has(idx) && (() => {
                   const gy = yScale(point.groundHeight)
                   const py = yScale(point.plannedHeight)
                   const cutDepth = point.groundHeight - point.plannedHeight
                   if (Math.abs(py - gy) < 22) return null // 重なるほど近い場合は省略
                   const midY = (gy + py) / 2
+                  const cx = x - 6
                   return (
                     <text
-                      x={x - 4}
-                      y={midY + 4}
-                      textAnchor="end"
+                      x={cx}
+                      y={midY}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      transform={`rotate(-90, ${cx}, ${midY})`}
                       className="fill-cyan-700 text-[11px] font-semibold"
                       style={{
                         paintOrder: 'stroke',
