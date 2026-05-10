@@ -643,6 +643,64 @@ export function CrossSectionChart({
     return slopes
   }, [sectionData])
 
+  // ラベル表示の混雑回避: 隣接ラベルが近い場合は省略するためのインデックス集合を作成
+  const MIN_LABEL_GAP_PX = 36
+  // x スケール用の生計算（useMemo 内で xScale 関数を呼ばないため）
+  const computeX = useCallback(
+    (distance: number) => {
+      if (totalDistance === 0) return padding.left
+      return padding.left + (distance / totalDistance) * (chartWidth - padding.left - padding.right)
+    },
+    [totalDistance, padding.left, padding.right, chartWidth],
+  )
+  const cutDepthVisibleSet = useMemo(() => {
+    const set = new Set<number>()
+    let lastX = -Infinity
+    for (let i = 0; i < sectionData.length; i++) {
+      const p = sectionData[i]
+      if (p.groundHeight == null || p.plannedHeight == null) continue
+      const x = computeX(p.distance)
+      if (x - lastX >= MIN_LABEL_GAP_PX) {
+        set.add(i)
+        lastX = x
+      }
+    }
+    return set
+  }, [sectionData, computeX])
+  const slopeVisibleSet = useMemo(() => {
+    const set = new Set<number>()
+    let lastMidX = -Infinity
+    for (let i = 0; i < slopeData.length; i++) {
+      const s = slopeData[i]
+      const p1 = sectionData[s.startIdx]
+      const p2 = sectionData[s.endIdx]
+      if (!p1 || !p2) continue
+      const midX = (computeX(p1.distance) + computeX(p2.distance)) / 2
+      if (midX - lastMidX >= MIN_LABEL_GAP_PX) {
+        set.add(i)
+        lastMidX = midX
+      }
+    }
+    return set
+  }, [slopeData, sectionData, computeX])
+  // 流入ラベルも同様に間引き（複数ある場合は最初の 1 件だけ表示判定の対象に）
+  const mergeInflowVisibleSet = useMemo(() => {
+    const set = new Set<number>()
+    if (!mergeInflowsByRowId || mergeInflowsByRowId.size === 0) return set
+    let lastX = -Infinity
+    for (let i = 0; i < sectionData.length; i++) {
+      const p = sectionData[i]
+      const inflows = mergeInflowsByRowId.get(p.rowId)
+      if (!inflows || inflows.length === 0) continue
+      const x = computeX(p.distance)
+      if (x - lastX >= MIN_LABEL_GAP_PX) {
+        set.add(i)
+        lastX = x
+      }
+    }
+    return set
+  }, [sectionData, mergeInflowsByRowId, computeX])
+
   if (sectionData.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-slate-400 text-sm">
@@ -951,6 +1009,8 @@ export function CrossSectionChart({
 
           {/* 勾配ラベル */}
           {showSlope && slopeData.map((slope, idx) => {
+            // 隣接ラベルが近接する場合は省略
+            if (!slopeVisibleSet.has(idx)) return null
             const p1 = sectionData[slope.startIdx]
             const p2 = sectionData[slope.endIdx]
             if (p1.plannedHeight === null || p2.plannedHeight === null) return null
@@ -1110,7 +1170,7 @@ export function CrossSectionChart({
                 )}
 
                 {/* 切深ラベル（地盤高 - 計画高）。地盤と計画の中間に縦書き表示 */}
-                {point.groundHeight !== null && point.plannedHeight !== null && (() => {
+                {point.groundHeight !== null && point.plannedHeight !== null && cutDepthVisibleSet.has(idx) && (() => {
                   const gy = yScale(point.groundHeight)
                   const py = yScale(point.plannedHeight)
                   const cutDepth = point.groundHeight - point.plannedHeight
@@ -1253,6 +1313,8 @@ export function CrossSectionChart({
                 {(() => {
                   const inflows = mergeInflowsByRowId?.get(point.rowId)
                   if (!inflows || inflows.length === 0) return null
+                  // 隣接する流入点のラベルが近接する場合はテキストを省略（マーカーは常に描画）
+                  const showLabel = mergeInflowVisibleSet.has(idx)
                   return inflows.map((inflow, j) => {
                     const cy = yScale(inflow.height)
                     const size = 6
@@ -1260,7 +1322,6 @@ export function CrossSectionChart({
                     const labelColor = inflow.isReverseSlope
                       ? 'fill-red-700'
                       : 'fill-purple-700'
-                    // 複数流入時は y 方向にずらして重ね合いを避ける
                     const yOffset = j * 14
                     return (
                       <g key={`inflow-${j}`} pointerEvents="none">
@@ -1270,21 +1331,23 @@ export function CrossSectionChart({
                           stroke="white"
                           strokeWidth="1.5"
                         />
-                        <text
-                          x={x - 9}
-                          y={cy - 8 - yOffset}
-                          textAnchor="end"
-                          className={`${labelColor} text-[11px] font-semibold`}
-                          style={{
-                            paintOrder: 'stroke',
-                            stroke: 'white',
-                            strokeWidth: 3,
-                            strokeLinejoin: 'round',
-                          }}
-                        >
-                          {inflow.isReverseSlope ? '⚠ 逆勾配 ' : '流入 '}
-                          {inflow.systemLabel} {inflow.height.toFixed(3)}m
-                        </text>
+                        {showLabel && (
+                          <text
+                            x={x - 9}
+                            y={cy - 8 - yOffset}
+                            textAnchor="end"
+                            className={`${labelColor} text-[11px] font-semibold`}
+                            style={{
+                              paintOrder: 'stroke',
+                              stroke: 'white',
+                              strokeWidth: 3,
+                              strokeLinejoin: 'round',
+                            }}
+                          >
+                            {inflow.isReverseSlope ? '⚠ 逆勾配 ' : '流入 '}
+                            {inflow.systemLabel} {inflow.height.toFixed(3)}m
+                          </text>
+                        )}
                       </g>
                     )
                   })
