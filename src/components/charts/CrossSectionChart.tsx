@@ -830,8 +830,18 @@ export function CrossSectionChart({
           width={chartWidth}
           height={chartHeight}
           className={`min-w-full ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
-          onMouseDown={handlePanStart}
         >
+          {/* パン操作用の透明背景。SVG 要素そのものは visiblePainted のため空白で
+             イベントを受けないため、全面に透明 rect を敷く。マーカー類はこれより後に
+             描画されるので、操作優先度はマーカー > 背景パンとなる。 */}
+          <rect
+            x={0}
+            y={0}
+            width={chartWidth}
+            height={chartHeight}
+            fill="transparent"
+            onMouseDown={handlePanStart}
+          />
           {/* 背景グリッド */}
           <g className="grid">
             {yTicks.map(tick => (
