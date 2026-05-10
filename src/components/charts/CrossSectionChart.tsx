@@ -449,17 +449,32 @@ export function CrossSectionChart({
     return clientY - rect.top
   }, [])
 
-  // ドラッグ中のグローバル mousemove / mouseup ハンドラ
+  // 最新値を保持する ref（useEffect の依存をマウント 1 回に絞るため）
+  const onPlannedHeightChangeRef = useRef(onPlannedHeightChange)
   useEffect(() => {
-    if (!onPlannedHeightChange) return
+    onPlannedHeightChangeRef.current = onPlannedHeightChange
+  }, [onPlannedHeightChange])
+  const yToHeightRef = useRef(yToHeight)
+  useEffect(() => {
+    yToHeightRef.current = yToHeight
+  }, [yToHeight])
+  const minMaxRef = useRef({ min: minHeight, max: maxHeight })
+  useEffect(() => {
+    minMaxRef.current = { min: minHeight, max: maxHeight }
+  }, [minHeight, maxHeight])
+
+  // ドラッグ中のグローバル mousemove / mouseup ハンドラ（マウント時に 1 度だけ登録）
+  useEffect(() => {
     const onMove = (e: MouseEvent) => {
       if (!dragRef.current) return
-      // 動いた=ドラッグなので、次の click は抑制する
+      const cb = onPlannedHeightChangeRef.current
+      if (!cb) return
       suppressNextClickRef.current = true
       const y = getSvgY(e.clientY)
       if (y == null) return
-      const h = Math.max(minHeight, Math.min(maxHeight, yToHeight(y)))
-      onPlannedHeightChange(dragRef.current.pointId, h)
+      const { min, max } = minMaxRef.current
+      const h = Math.max(min, Math.min(max, yToHeightRef.current(y)))
+      cb(dragRef.current.pointId, h)
     }
     const onUp = () => {
       if (!dragRef.current) return
@@ -474,7 +489,7 @@ export function CrossSectionChart({
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
     }
-  }, [onPlannedHeightChange, getSvgY, yToHeight, minHeight, maxHeight])
+  }, [getSvgY])
 
   // パスデータを生成（現況線）
   const groundPath = useMemo(() => {
@@ -1001,7 +1016,7 @@ export function CrossSectionChart({
                         pointerEvents: 'none',
                       }}
                     >
-                      切深 {cutDepth.toFixed(3)}
+                      {cutDepth.toFixed(3)}
                     </text>
                   )
                 })()}
@@ -1012,54 +1027,56 @@ export function CrossSectionChart({
                   const isDragging =
                     editable && draggingPointId === point.pointId
                   const cy = yScale(point.plannedHeight)
+                  // 編集可: マーカーを少し大きくして、自身が直接マウスイベントを受ける
+                  const r = editable ? (isDragging ? 9 : 7) : 5
                   return (
                     <>
-                      {/* ドラッグ用のヒットエリア（円より大きく取る） */}
-                      {editable && (
-                        <circle
-                          cx={x}
-                          cy={cy}
-                          r={11}
-                          fill="transparent"
-                          style={{ cursor: 'ns-resize' }}
-                          onMouseDown={(e) => {
-                            e.preventDefault()
-                            e.stopPropagation()
-                            dragRef.current = { pointId: point.pointId }
-                            setDraggingPointId(point.pointId)
-                            document.body.style.cursor = 'ns-resize'
-                            document.body.style.userSelect = 'none'
-                          }}
-                          onClick={(e) => {
-                            // ドラッグ操作後（mousemove で suppress フラグが立った）は無視
-                            if (suppressNextClickRef.current) {
-                              suppressNextClickRef.current = false
-                              return
-                            }
-                            e.stopPropagation()
-                            const rect = svgRef.current?.getBoundingClientRect()
-                            if (!rect) return
-                            setEditPopup({
-                              pointId: point.pointId,
-                              x: e.clientX - rect.left,
-                              y: cy - 8,
-                              initialHeight: point.plannedHeight!,
-                            })
-                            setEditValue(point.plannedHeight!.toFixed(3))
-                          }}
-                        >
-                          <title>左クリック: 数値入力 / 上下ドラッグ: 計画高変更</title>
-                        </circle>
-                      )}
                       <circle
                         cx={x}
                         cy={cy}
-                        r={isDragging ? 7 : 5}
+                        r={r}
                         fill={isDragging ? '#1d4ed8' : '#2563eb'}
                         stroke="white"
                         strokeWidth="1.5"
-                        pointerEvents="none"
-                      />
+                        style={editable ? { cursor: 'ns-resize' } : undefined}
+                        onMouseDown={
+                          editable
+                            ? (e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                suppressNextClickRef.current = false
+                                dragRef.current = { pointId: point.pointId }
+                                setDraggingPointId(point.pointId)
+                                document.body.style.cursor = 'ns-resize'
+                                document.body.style.userSelect = 'none'
+                              }
+                            : undefined
+                        }
+                        onClick={
+                          editable
+                            ? (e) => {
+                                if (suppressNextClickRef.current) {
+                                  suppressNextClickRef.current = false
+                                  return
+                                }
+                                e.stopPropagation()
+                                const rect = svgRef.current?.getBoundingClientRect()
+                                if (!rect) return
+                                setEditPopup({
+                                  pointId: point.pointId,
+                                  x: e.clientX - rect.left,
+                                  y: cy - 8,
+                                  initialHeight: point.plannedHeight!,
+                                })
+                                setEditValue(point.plannedHeight!.toFixed(3))
+                              }
+                            : undefined
+                        }
+                      >
+                        {editable && (
+                          <title>上下ドラッグで計画高変更 / クリックで数値入力</title>
+                        )}
+                      </circle>
                       <text
                         x={x + 7}
                         y={cy + 14}
