@@ -1504,7 +1504,7 @@ export function CrossSectionChart({
             )
           })()}
 
-          {/* 集水帯（X軸下、各区間ごと）。バンド開始点の測点名を表示する。 */}
+          {/* 集水帯（X軸下、各区間ごと）。バンドのラベルは集水管の番号（例: S6） */}
           {(() => {
             if (sectionData.length === 0) return null
             const bands: Array<{
@@ -1523,16 +1523,10 @@ export function CrossSectionChart({
               ) {
                 // バンド確定
                 if (prev.collectorPipeNumber) {
-                  // バンド開始点の測点名（例: O1C.S2A）。空ならフォールバックで集水管番号。
-                  const startPoint = sectionData[bandStart]
-                  const label =
-                    startPoint.pointName && startPoint.pointName.trim() !== ''
-                      ? startPoint.pointName
-                      : prev.collectorPipeNumber
                   bands.push({
                     startIdx: bandStart,
                     endIdx: i - 1,
-                    label,
+                    label: prev.collectorPipeNumber,
                   })
                 }
                 bandStart = i
