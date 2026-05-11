@@ -458,12 +458,18 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
               : null
             const idx = prevEndVertex ? findMatchingVertexIndex(collectorPipe, prevEndVertex) : 0
             const v = collectorPipe.vertices[idx]
-            return {
-              x: v.x,
-              y: v.y,
-              z: v.z,
-              name: generatePointName(collectorPipe.number, idx, collectorPipe.vertices.length),
+            // 配管系統と整合: 新集水管の上流端 (vertex 0) で接続する場合は
+            // 「PrevA CurrC」形式（例: S26A S27C）に結合
+            let name = generatePointName(collectorPipe.number, idx, collectorPipe.vertices.length)
+            if (idx === 0 && prevPipe && prevPipe.vertices.length > 0) {
+              const prevEndName = generatePointName(
+                prevPipe.number,
+                prevPipe.vertices.length - 1,
+                prevPipe.vertices.length,
+              )
+              name = `${prevEndName} ${name}`
             }
+            return { x: v.x, y: v.y, z: v.z, name }
           }
           // 管が変わらない場合: 測点なし
           return null
@@ -684,12 +690,11 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
             const rowType = wiringRow.rowType
 
             let targetVertex: PipeVertex | null = null
-            let collectorPointName = ''
+            let resolvedIdx = -1
 
             if (collectorPipe.vertices.length > 0) {
               if (rowType === 'collector_change' || rowType === 'collector_merge') {
                 // ★ 配管系統側で保存された collectorVertexIdx があればそれを最優先で使う
-                //   （一括設定の意図した頂点をそのまま反映）
                 const explicitIdx = (wiringRow as { collectorVertexIdx?: number }).collectorVertexIdx
                 if (
                   explicitIdx !== undefined &&
@@ -698,11 +703,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                   explicitIdx < collectorPipe.vertices.length
                 ) {
                   targetVertex = collectorPipe.vertices[explicitIdx]
-                  collectorPointName = generatePointName(
-                    collectorPipe.number,
-                    explicitIdx,
-                    collectorPipe.vertices.length,
-                  )
+                  resolvedIdx = explicitIdx
                 }
                 // フォールバック: 前の行の集水点の次の頂点
                 if (!targetVertex) {
@@ -718,7 +719,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                         if (dist < 0.5) {
                           if (i + 1 < collectorPipe.vertices.length) {
                             targetVertex = collectorPipe.vertices[i + 1]
-                            collectorPointName = generatePointName(collectorPipe.number, i + 1, collectorPipe.vertices.length)
+                            resolvedIdx = i + 1
                           }
                           break
                         }
@@ -738,13 +739,40 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                     ? findMatchingVertexIndex(collectorPipe, prevEndVertex)
                     : 0
                   targetVertex = collectorPipe.vertices[idx]
-                  collectorPointName = generatePointName(collectorPipe.number, idx, collectorPipe.vertices.length)
+                  resolvedIdx = idx
                 }
               } else {
                 // outlet / collector_junction / rowType未設定: 集水管の最下流点
                 const lastIdx = collectorPipe.vertices.length - 1
                 targetVertex = collectorPipe.vertices[lastIdx]
-                collectorPointName = generatePointName(collectorPipe.number, lastIdx, collectorPipe.vertices.length)
+                resolvedIdx = lastIdx
+              }
+            }
+
+            // 測点名: 解決した頂点が新しい集水管の上流端 (vertex 0) で、
+            // 前 wiring 行が別の集水管を使っていた場合は「PrevA CurrC」形式に結合する
+            // （配管系統の表示と整合）
+            let collectorPointName = ''
+            if (targetVertex && resolvedIdx >= 0) {
+              collectorPointName = generatePointName(
+                collectorPipe.number,
+                resolvedIdx,
+                collectorPipe.vertices.length,
+              )
+              if (
+                resolvedIdx === 0 &&
+                prevCollectorPipeId &&
+                prevCollectorPipeId !== wiringRow.collectorPipe
+              ) {
+                const prevPipe = pipes.find((p) => p.id === prevCollectorPipeId)
+                if (prevPipe && prevPipe.vertices.length > 0) {
+                  const prevEndName = generatePointName(
+                    prevPipe.number,
+                    prevPipe.vertices.length - 1,
+                    prevPipe.vertices.length,
+                  )
+                  collectorPointName = `${prevEndName} ${collectorPointName}`
+                }
               }
             }
 
