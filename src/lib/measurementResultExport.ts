@@ -4,7 +4,7 @@
 
 import ExcelJS from 'exceljs'
 import { PIPE_TYPE_NAMES, type PipeRow } from '@/stores/underdrainStore'
-import type { PlanGroup, PlanPoint } from '@/stores/constructionPlanStore'
+import type { PlanGroup, PlanRow, PlanPoint } from '@/stores/constructionPlanStore'
 import { comparePipeNumbers } from './pipeSort'
 
 export interface MeasurementHeader {
@@ -20,52 +20,32 @@ interface PointData {
   cutDepth: number | null
 }
 
-// 配管ID × 頂点インデックス → PlanPoint のルックアップを構築。
-// 集水管は座標一致（最も近い頂点を採用）、許容 0.01m (1cm)。
-function buildPlanLookup(
-  planGroups: PlanGroup[],
-  pipes: PipeRow[],
-): Map<string, Map<number, PlanPoint>> {
-  const map = new Map<string, Map<number, PlanPoint>>()
-  const EPS = 0.01 // 1cm
+// 吸水管 ID → その吸水管の PlanRow を返す（最初に見つかった行を採用）
+function findAbsorptionRow(planGroups: PlanGroup[], pipeId: string): PlanRow | null {
   for (const group of planGroups) {
     for (const row of group.rows) {
-      // 吸水管: 順に対応
-      if (row.absorptionPipeId) {
-        const pipe = pipes.find((p) => p.id === row.absorptionPipeId)
-        if (pipe) {
-          const inner = map.get(row.absorptionPipeId) ?? new Map<number, PlanPoint>()
-          const limit = Math.min(row.absorptionPoints.length, pipe.vertices.length)
-          for (let i = 0; i < limit; i++) {
-            inner.set(i, row.absorptionPoints[i])
-          }
-          map.set(row.absorptionPipeId, inner)
-        }
-      }
-      // 集水管: 座標一致で最も近い頂点に紐付け（許容 1cm）
-      if (row.collectorPipeId && row.collectorPoint) {
-        const pipe = pipes.find((p) => p.id === row.collectorPipeId)
-        if (pipe) {
-          const inner = map.get(row.collectorPipeId) ?? new Map<number, PlanPoint>()
-          let bestIdx = -1
-          let bestDist = Infinity
-          for (let i = 0; i < pipe.vertices.length; i++) {
-            const v = pipe.vertices[i]
-            const d = Math.hypot(v.x - row.collectorPoint.x, v.y - row.collectorPoint.y)
-            if (d < bestDist) {
-              bestDist = d
-              bestIdx = i
-            }
-          }
-          if (bestIdx >= 0 && bestDist <= EPS) {
-            inner.set(bestIdx, row.collectorPoint)
-          }
-          map.set(row.collectorPipeId, inner)
-        }
+      if (row.absorptionPipeId === pipeId && row.absorptionPoints.length > 0) {
+        return row
       }
     }
   }
-  return map
+  return null
+}
+
+// 全 PlanRow の collectorPoint を集める（pipeId で絞らない）。
+// 中間集水管の A 点は「次の集水管の C 点」と同じ位置で、次の管側の行に
+// 「{prev}A {curr}C」形式で保存されているため、collectorPipeId で絞ると拾えない。
+// 測点名で C/B/A を判定するため、全体を一括収集する。
+function collectAllCollectorPoints(planGroups: PlanGroup[]): PlanPoint[] {
+  const points: PlanPoint[] = []
+  for (const group of planGroups) {
+    for (const row of group.rows) {
+      if (row.collectorPoint) {
+        points.push(row.collectorPoint)
+      }
+    }
+  }
+  return points
 }
 
 function pointFromPlan(pp: PlanPoint | undefined | null): PointData {
@@ -77,6 +57,11 @@ function pointFromPlan(pp: PlanPoint | undefined | null): PointData {
     cutDepth = ground - pp.plannedHeight
   }
   return { groundHeight: ground, cutDepth }
+}
+
+// 正規表現用エスケープ
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 // 測定結果一覧表 Excel 生成
@@ -109,9 +94,6 @@ export async function exportMeasurementResult({
   // 配管を数字でソート（頭文字・末尾文字を無視）
   const sortedPipes = [...pipes].sort((a, b) => comparePipeNumbers(a.number, b.number))
 
-  // 施工計画ルックアップ
-  const lookup = buildPlanLookup(planGroups, pipes)
-
   // 各管路を 4 行ブロックに書き込み
   // i1 = 3 から開始（旧マクロの配線表）、j = (i1-2)*4 + 7
   // i1=3 → j=11。以降 i1++ ごとに j が 4 ずつ増える。
@@ -120,18 +102,58 @@ export async function exportMeasurementResult({
     const i1 = idx + 3
     const j = (i1 - 2) * 4 + 7
 
-    const pipeLookup = lookup.get(pipe.id)
-    const vLast = pipe.vertices.length - 1
-    const cData = pointFromPlan(pipeLookup?.get(0))
-    const aData = pointFromPlan(pipeLookup?.get(vLast))
-    // 中間点は B として扱う（vertex 1 を採用、なければ null）
-    const hasMiddle = pipe.vertices.length > 2
-    const bData: PointData = hasMiddle
-      ? pointFromPlan(pipeLookup?.get(Math.floor(pipe.vertices.length / 2)))
-      : { groundHeight: null, cutDepth: null }
-
     // 落口判定: pipeType が 'outlet'
     const isOutlet = pipe.pipeType === 'outlet'
+    const isAbsorption = pipe.pipeType === 'branch'
+
+    let cData: PointData = { groundHeight: null, cutDepth: null }
+    let bData: PointData = { groundHeight: null, cutDepth: null }
+    let aData: PointData = { groundHeight: null, cutDepth: null }
+    // 落口の P{j+3} に計画高を出すために、A 点の元 PlanPoint も保持する
+    let aPointRaw: PlanPoint | null = null
+
+    if (isAbsorption) {
+      // 吸水: 施工計画の絶対点 absorptionPoints をそのまま使用
+      // pts[0] = C（最上流）, pts[N-1] = A（最下流）, 中間は B
+      const row = findAbsorptionRow(planGroups, pipe.id)
+      if (row && row.absorptionPoints.length > 0) {
+        const pts = row.absorptionPoints
+        const N = pts.length
+        cData = pointFromPlan(pts[0])
+        aData = pointFromPlan(pts[N - 1])
+        aPointRaw = pts[N - 1]
+        if (N >= 3) {
+          // テンプレートは B が 1 列のみ。多点管では中央付近の点を採用。
+          bData = pointFromPlan(pts[Math.floor((N - 1) / 2)])
+        }
+      }
+    } else {
+      // 集水・落口: 施工計画の全 collectorPoint から、測点名でマッチ。
+      // 中間管の A 点は次の管の C 点と同じで、次の管側の行に
+      // 「{prev}A {curr}C」形式で保存されているため pipeId で絞らない。
+      // 名前は generatePointName と整合し:
+      // - C: `{number}C` または `... {number}C` の末尾形式
+      // - A: `{number}A` または `{number}A ...` の先頭形式（次管 C 点と共有）
+      // - B: `{number}B{数字}`（中間点）
+      const pts = collectAllCollectorPoints(planGroups)
+      const num = pipe.number
+      const numEsc = escapeRegExp(num)
+      const matchC = pts.find(
+        (p) => p.pointName === `${num}C` || p.pointName.endsWith(` ${num}C`),
+      )
+      const matchA = pts.find(
+        (p) => p.pointName === `${num}A` || p.pointName.startsWith(`${num}A `),
+      )
+      const bPts = pts.filter((p) =>
+        new RegExp(`(^|\\s)${numEsc}B\\d+($|\\s)`).test(p.pointName),
+      )
+      cData = pointFromPlan(matchC)
+      aData = pointFromPlan(matchA)
+      aPointRaw = matchA ?? null
+      if (bPts.length > 0) {
+        bData = pointFromPlan(bPts[Math.floor(bPts.length / 2)])
+      }
+    }
 
     // 管種ラベル
     const pipeTypeLabel = isOutlet
@@ -169,12 +191,14 @@ export async function exportMeasurementResult({
     }
 
     // 下流 A
+    const vLast = pipe.vertices.length - 1
     if (isOutlet) {
-      // 落口: 管種セルに「落口」既に書き込み済み。
-      // PtA(2)（旧マクロ）の相当値として、A の頂点 z（地盤高）があればそれを P{j+3} に転記。
-      const aZ = pipe.vertices[vLast]?.z
-      if (aZ != null) {
-        ws.getCell(j + 3, 16).value = round(aZ, 2)                              // P{j+3}
+      // 落口: 旧マクロ仕様で、A 点の計画高（管底高）を P{j+3} に出力。
+      // 計画高が無ければ地盤高、それも無ければ頂点 z にフォールバック。
+      const aValue =
+        aPointRaw?.plannedHeight ?? aData.groundHeight ?? pipe.vertices[vLast]?.z ?? null
+      if (aValue != null) {
+        ws.getCell(j + 3, 16).value = round(aValue, 2)                          // P{j+3}
       }
     } else {
       // 集水管の A 点: 施工計画に無ければ頂点 z を地盤高として転記
