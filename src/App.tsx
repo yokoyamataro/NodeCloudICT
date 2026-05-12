@@ -146,7 +146,6 @@ function AppRoutes() {
           <Route path="pipe-wiring" element={<PipeWiringPage />} />
           <Route path="survey-import" element={<SurveyImportPage />} />
           <Route path="depth-calc" element={<DepthCalcPage />} />
-          <Route path="hydraulics" element={<PlaceholderPage title="水理計算" />} />
           <Route path="cad-export" element={<CadExportPage />} />
           <Route path="landxml" element={<LandXMLPage />} />
           <Route path="field-data" element={<StakingRecordsPage />} />

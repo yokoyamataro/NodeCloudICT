@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { FileText, Download, Loader2 } from 'lucide-react'
+import { FileText, Download, Loader2, FileSpreadsheet, Droplets } from 'lucide-react'
 import { useFarmStore } from '@/stores/farmStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import { exportMeasurementResult } from '@/lib/measurementResultExport'
+import { HydraulicCalcModal } from './HydraulicCalcModal'
 
 export function ReportsPage() {
   const { currentFarm } = useFarmStore()
@@ -16,6 +17,7 @@ export function ReportsPage() {
   const [spacing, setSpacing] = useState<number>(12)
   const [exporting, setExporting] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [showHydraulicModal, setShowHydraulicModal] = useState(false)
 
   useEffect(() => {
     if (!currentFarm) return
@@ -23,29 +25,24 @@ export function ReportsPage() {
     fetchPlan(currentFarm.id)
   }, [currentFarm, fetchPipes, fetchPlan])
 
-  // デフォルト値を圃場名で
   useEffect(() => {
     if (currentFarm && !farmNumber) {
       setFarmNumber(currentFarm.name)
     }
   }, [currentFarm, farmNumber])
 
-  const canExport = pipes.length > 0 && !exporting && !planLoading
+  const canExportMeasurement = pipes.length > 0 && !exporting && !planLoading
+  const canExportHydraulic = planGroups.length > 0 && !planLoading
 
-  const handleExport = async () => {
-    if (!canExport) return
+  const handleExportMeasurement = async () => {
+    if (!canExportMeasurement) return
     setExporting(true)
     setErrorMsg(null)
     try {
       await exportMeasurementResult({
         pipes,
         planGroups,
-        header: {
-          farmNumber,
-          area,
-          beneficiary,
-          spacing,
-        },
+        header: { farmNumber, area, beneficiary, spacing },
         farmName: currentFarm?.name,
       })
     } catch (err) {
@@ -60,19 +57,57 @@ export function ReportsPage() {
       <div className="p-4 border-b bg-white">
         <h1 className="text-xl font-bold flex items-center gap-2">
           <FileText className="h-5 w-5" />
-          帳票作成
+          計算書作成
         </h1>
         <p className="text-sm text-muted-foreground">
-          施工計画および配管データから各種帳票を出力します
+          施工計画から水理計算書・測定結果一覧表を出力します
         </p>
       </div>
 
       <div className="flex-1 overflow-auto p-4 space-y-4">
+        {/* 水理計算書 */}
+        <section className="bg-white border rounded-lg p-4">
+          <h2 className="text-sm font-bold mb-3 flex items-center gap-2">
+            <Droplets className="h-4 w-4 text-emerald-600" />
+            水理計算書
+          </h2>
+          <div className="text-xs text-slate-600 mb-3">
+            配管系統と施工計画から、計画流量・配線間隔・管種を用いて水理計算書（Excel）を出力します。
+            計算条件は配管系統の「設定」から変更できます。
+          </div>
+          <div className="text-xs text-slate-600 mb-2">
+            {planLoading ? (
+              <span className="inline-flex items-center gap-1">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                施工計画を読み込み中...
+              </span>
+            ) : planGroups.length === 0 ? (
+              <span className="text-red-600">
+                施工計画がありません。施工計画ページで生成してください。
+              </span>
+            ) : (
+              <span>施工計画グループ {planGroups.length} 件</span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowHydraulicModal(true)}
+            disabled={!canExportHydraulic}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            水理計算書を出力（Excel）
+          </button>
+        </section>
+
         {/* 測定結果一覧表 */}
         <section className="bg-white border rounded-lg p-4">
-          <h2 className="text-sm font-bold mb-3">測定結果一覧表</h2>
+          <h2 className="text-sm font-bold mb-3 flex items-center gap-2">
+            <FileText className="h-4 w-4 text-blue-600" />
+            測定結果一覧表
+          </h2>
           <div className="text-xs text-slate-600 mb-3">
-            配管（すべての配線）の 上下端（必要に応じて中間）の現況高と切深を様式に転記します。
+            配管（すべての配線）の上下端（必要に応じて中間）の現況高と切深を様式に転記します。
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm mb-3">
@@ -131,8 +166,8 @@ export function ReportsPage() {
 
           <button
             type="button"
-            onClick={handleExport}
-            disabled={!canExport}
+            onClick={handleExportMeasurement}
+            disabled={!canExportMeasurement}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
           >
             {exporting ? (
@@ -144,6 +179,14 @@ export function ReportsPage() {
           </button>
         </section>
       </div>
+
+      <HydraulicCalcModal
+        open={showHydraulicModal}
+        onClose={() => setShowHydraulicModal(false)}
+        planGroups={planGroups}
+        pipes={pipes}
+        farm={currentFarm}
+      />
     </div>
   )
 }

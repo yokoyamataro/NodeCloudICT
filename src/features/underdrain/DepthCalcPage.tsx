@@ -12,11 +12,8 @@ import {
   Calculator,
   Maximize2,
   X,
-  FileSpreadsheet,
   Mountain,
 } from 'lucide-react'
-import { HydraulicCalcModal } from './HydraulicCalcModal'
-import { exportAllCrossSectionsDxf } from '@/lib/crossSectionDxfExport'
 
 // 区間勾配の任意設定ダイアログ用ターゲット
 interface SlopeEditTarget {
@@ -112,12 +109,6 @@ export function DepthCalcPage() {
 
   // 全画面表示パネル
   const [fullscreenPanel, setFullscreenPanel] = useState<'table' | 'map' | 'chart' | null>(null)
-
-  // 水理計算書モーダル
-  const [showHydraulicModal, setShowHydraulicModal] = useState(false)
-
-  // 全系統 DXF 一括出力用の縦縮尺
-  const [allDxfVScale, setAllDxfVScale] = useState<100 | 200 | 500 | 1000>(200)
 
   // 区間勾配の任意設定ダイアログ
   const [slopeEdit, setSlopeEdit] = useState<SlopeEditTarget | null>(null)
@@ -1178,23 +1169,6 @@ export function DepthCalcPage() {
         t.systemIndex === selectedSystem.systemIndex,
     ) ?? null
 
-  // 全系統の縦断図を 1 つの DXF に一括出力（縦並び）
-  const handleAllDxfExport = () => {
-    if (flatTabs.length === 0) return
-    exportAllCrossSectionsDxf({
-      systems: flatTabs.map((t) => ({
-        systemRows: t.rows,
-        systemIndex: t.systemIndex,
-        endType: t.endType,
-        groupName: t.groupName,
-      })),
-      verticalScale: allDxfVScale,
-      pipeNumberById,
-      pipeDiameterById,
-      allPlanGroups: planGroups,
-      farmName: currentFarm?.name,
-    })
-  }
 
   return (
     <div className="h-full flex flex-col">
@@ -1295,41 +1269,6 @@ export function DepthCalcPage() {
                     <Ruler className="h-4 w-4" />
                     連続勾配
                   </button>
-                  {/* 水理計算出力 */}
-                  <button
-                    onClick={() => setShowHydraulicModal(true)}
-                    disabled={saving || planGroups.length === 0}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50 whitespace-nowrap"
-                    title="水理計算書を作成"
-                  >
-                    <FileSpreadsheet className="h-4 w-4" />
-                    水理計算
-                  </button>
-                  {/* 全系統 DXF 一括出力 */}
-                  <div className="flex items-center gap-1 px-1.5 py-0.5 border rounded-lg whitespace-nowrap">
-                    <span className="text-xs text-slate-600">縦尺</span>
-                    <select
-                      value={allDxfVScale}
-                      onChange={(e) =>
-                        setAllDxfVScale(parseInt(e.target.value, 10) as 100 | 200 | 500 | 1000)
-                      }
-                      className="px-1 py-0.5 text-xs border rounded bg-white"
-                    >
-                      <option value={100}>1/100</option>
-                      <option value={200}>1/200</option>
-                      <option value={500}>1/500</option>
-                      <option value={1000}>1/1000</option>
-                    </select>
-                    <button
-                      onClick={handleAllDxfExport}
-                      disabled={saving || planGroups.length === 0}
-                      className="flex items-center gap-1 px-2 py-1 bg-sky-600 text-white rounded hover:bg-sky-700 transition-colors disabled:opacity-50 text-sm"
-                      title="全系統の縦断図を 1 つの DXF に縦並びで出力"
-                    >
-                      <FileSpreadsheet className="h-4 w-4" />
-                      DXF
-                    </button>
-                  </div>
                   <div className="w-px h-6 bg-slate-300" />
                   <button
                     onClick={() => currentFarm && fetchPlan(currentFarm.id)}
@@ -2095,14 +2034,6 @@ export function DepthCalcPage() {
         </div>
       )}
 
-      {/* 水理計算書モーダル */}
-      <HydraulicCalcModal
-        open={showHydraulicModal}
-        onClose={() => setShowHydraulicModal(false)}
-        planGroups={planGroups}
-        pipes={pipes}
-        farm={currentFarm}
-      />
     </div>
   )
 }

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { PenTool, Download, FileText, Loader2 } from 'lucide-react'
+import { PenTool, Download, FileText, Loader2, FileSpreadsheet } from 'lucide-react'
 import Encoding from 'encoding-japanese'
 import { useFarmStore } from '@/stores/farmStore'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
-import { useConstructionPlanStore, type PlanGroup, type PlanPoint } from '@/stores/constructionPlanStore'
+import { useConstructionPlanStore, type PlanGroup, type PlanPoint, type PlanRow } from '@/stores/constructionPlanStore'
 import type { PipeRow } from '@/stores/underdrainStore'
+import { exportAllCrossSectionsDxf } from '@/lib/crossSectionDxfExport'
 
 // 図面レベル（座標変換用パラメータ）
 interface DrawingLevel {
@@ -516,6 +517,8 @@ export function CadExportPage() {
   const [colStdDepth, setColStdDepth] = useState<number>(0.9)
   const [pipeNumberSize, setPipeNumberSize] = useState<number>(2.5)
   const [preview, setPreview] = useState<string>('')
+  // 縦断図 DXF 一括出力
+  const [dxfVScale, setDxfVScale] = useState<100 | 200 | 500 | 1000>(200)
 
   useEffect(() => {
     if (!currentFarm) return
@@ -566,6 +569,62 @@ export function CadExportPage() {
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
+  }
+
+  // 縦断図用の補助マップ
+  const pipeNumberById = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const p of pipes) m.set(p.id, p.number)
+    return m
+  }, [pipes])
+  const pipeDiameterById = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const p of pipes) if (p.diameter != null) m.set(p.id, p.diameter)
+    return m
+  }, [pipes])
+
+  // 全系統 × 全行のフラットなタブリスト（縦断図 DXF 用）
+  const flatTabs = useMemo(() => {
+    const tabs: Array<{
+      systemRows: PlanRow[]
+      systemIndex: number
+      endType: 'outlet' | 'merge' | null
+      groupName: string
+    }> = []
+    for (const group of planGroups) {
+      const bySys = new Map<number, { rows: PlanRow[]; endType: 'outlet' | 'merge' | null }>()
+      for (const r of group.rows) {
+        const k = r.systemIndex ?? 1
+        const cur = bySys.get(k) ?? { rows: [], endType: null }
+        cur.rows.push(r)
+        if (r.isSystemEnd && r.systemEndType) cur.endType = r.systemEndType
+        bySys.set(k, cur)
+      }
+      for (const [systemIndex, info] of bySys) {
+        tabs.push({
+          systemRows: info.rows,
+          systemIndex,
+          endType: info.endType,
+          groupName: group.name,
+        })
+      }
+    }
+    return tabs
+  }, [planGroups])
+
+  const handleAllDxfExport = () => {
+    if (flatTabs.length === 0) {
+      alert('施工計画がありません。施工計画ページで生成してください。')
+      return
+    }
+    exportAllCrossSectionsDxf({
+      systems: flatTabs,
+      verticalScale: dxfVScale,
+      pipeNumberById,
+      pipeDiameterById,
+      allPlanGroups: planGroups,
+      farmName: currentFarm?.name,
+    })
   }
 
   return (
@@ -710,6 +769,50 @@ export function CadExportPage() {
             >
               <Download className="h-4 w-4" />
               TrendOne アスキー出力（Shift-JIS）
+            </button>
+          </div>
+        </section>
+
+        {/* 縦断図 DXF 一括出力 */}
+        <section className="bg-white border rounded-lg p-4">
+          <h2 className="text-sm font-bold mb-3 flex items-center gap-2">
+            <FileSpreadsheet className="h-4 w-4 text-sky-600" />
+            縦断図 DXF 一括出力
+          </h2>
+          <div className="text-xs text-slate-600 mb-3">
+            全系統の集水縦断図を 1 つの DXF ファイルに縦並びで出力します。
+          </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <label className="flex items-center gap-2 text-sm">
+              <span className="text-slate-600">縦縮尺</span>
+              <select
+                value={dxfVScale}
+                onChange={(e) =>
+                  setDxfVScale(parseInt(e.target.value, 10) as 100 | 200 | 500 | 1000)
+                }
+                className="px-2 py-1 text-sm border rounded bg-white"
+              >
+                <option value={100}>1/100</option>
+                <option value={200}>1/200</option>
+                <option value={500}>1/500</option>
+                <option value={1000}>1/1000</option>
+              </select>
+            </label>
+            <span className="text-xs text-slate-600">
+              {planLoading
+                ? '施工計画を読み込み中...'
+                : flatTabs.length === 0
+                ? '施工計画がありません'
+                : `系統 ${flatTabs.length} 件`}
+            </span>
+            <button
+              type="button"
+              onClick={handleAllDxfExport}
+              disabled={flatTabs.length === 0 || planLoading}
+              className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white rounded hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+            >
+              <Download className="h-4 w-4" />
+              縦断図 DXF を出力
             </button>
           </div>
         </section>
