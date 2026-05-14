@@ -6,6 +6,7 @@ import { AppLayout } from '@/components/layout/AppLayout'
 import { LoginPage } from '@/features/auth/LoginPage'
 import { ShareFarmViewPage } from '@/features/share/ShareFarmViewPage'
 import { ProjectListPage } from '@/features/projects/ProjectListPage'
+import { ProjectChooserPage } from '@/features/projects/ProjectChooserPage'
 import { CoordinatesPage } from '@/features/coordinates/CoordinatesPage'
 import { SiteMapWindowPage } from '@/features/coordinates/SiteMapWindowPage'
 // スマホ画面
@@ -140,7 +141,8 @@ function AppRoutes() {
             </ProtectedRoute>
           }
         >
-        <Route index element={<ProjectListPage />} />
+        <Route index element={<ProjectChooserPage />} />
+        <Route path="projects/:projectId" element={<ProjectListPage />} />
         <Route path="coordinates" element={<CoordinatesPage />} />
         {/* 暗渠工事 */}
         <Route path="underdrain">

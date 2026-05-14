@@ -724,9 +724,9 @@ export function CoordinatesPage() {
                 <th className="px-2 py-2 text-right font-medium">X (m)</th>
                 <th className="px-2 py-2 text-right font-medium">Y (m)</th>
                 <th className="px-2 py-2 text-right font-medium">Z (m)</th>
+                <th className="px-2 py-2 text-left font-medium">種類</th>
                 <th className="px-2 py-2 text-right font-medium">緯度</th>
                 <th className="px-2 py-2 text-right font-medium">経度</th>
-                <th className="px-2 py-2 text-left font-medium">種類</th>
                 <th className="px-2 py-2 w-8"></th>
               </tr>
             </thead>
@@ -782,12 +782,6 @@ export function CoordinatesPage() {
                       placeholder="-"
                     />
                   </td>
-                  <td className="px-2 py-1 text-right text-xs text-muted-foreground font-mono">
-                    {coord.lat?.toFixed(6) ?? '-'}
-                  </td>
-                  <td className="px-2 py-1 text-right text-xs text-muted-foreground font-mono">
-                    {coord.lng?.toFixed(6) ?? '-'}
-                  </td>
                   <td className="px-2 py-1">
                     <select
                       value={coord.type}
@@ -799,6 +793,12 @@ export function CoordinatesPage() {
                         <option key={opt.code} value={opt.code}>{opt.label}</option>
                       ))}
                     </select>
+                  </td>
+                  <td className="px-2 py-1 text-right text-xs text-muted-foreground font-mono">
+                    {coord.lat?.toFixed(6) ?? '-'}
+                  </td>
+                  <td className="px-2 py-1 text-right text-xs text-muted-foreground font-mono">
+                    {coord.lng?.toFixed(6) ?? '-'}
                   </td>
                   <td className="px-2 py-1">
                     <button
@@ -890,9 +890,9 @@ export function CoordinatesPage() {
                       <th className="px-2 py-2 text-right font-medium">X (m)</th>
                       <th className="px-2 py-2 text-right font-medium">Y (m)</th>
                       <th className="px-2 py-2 text-right font-medium">Z (m)</th>
+                      <th className="px-2 py-2 text-left font-medium">種類</th>
                       <th className="px-2 py-2 text-right font-medium">緯度</th>
                       <th className="px-2 py-2 text-right font-medium">経度</th>
-                      <th className="px-2 py-2 text-left font-medium">種類</th>
                       <th className="px-2 py-2 w-8"></th>
                     </tr>
                   </thead>
@@ -948,12 +948,6 @@ export function CoordinatesPage() {
                             placeholder="-"
                           />
                         </td>
-                        <td className="px-2 py-1 text-right text-xs text-muted-foreground font-mono">
-                          {coord.lat?.toFixed(6) ?? '-'}
-                        </td>
-                        <td className="px-2 py-1 text-right text-xs text-muted-foreground font-mono">
-                          {coord.lng?.toFixed(6) ?? '-'}
-                        </td>
                         <td className="px-2 py-1">
                           <select
                             value={coord.type}
@@ -965,6 +959,12 @@ export function CoordinatesPage() {
                               <option key={opt.code} value={opt.code}>{opt.label}</option>
                             ))}
                           </select>
+                        </td>
+                        <td className="px-2 py-1 text-right text-xs text-muted-foreground font-mono">
+                          {coord.lat?.toFixed(6) ?? '-'}
+                        </td>
+                        <td className="px-2 py-1 text-right text-xs text-muted-foreground font-mono">
+                          {coord.lng?.toFixed(6) ?? '-'}
                         </td>
                         <td className="px-2 py-1">
                           <button

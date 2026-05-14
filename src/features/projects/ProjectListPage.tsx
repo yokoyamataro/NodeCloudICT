@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import {
   Plus,
   FolderOpen,
@@ -23,6 +23,7 @@ import {
   Lock,
   Play,
   Check,
+  ArrowLeft,
 } from 'lucide-react'
 import { MapContainer, TileLayer, Marker, Popup, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
@@ -102,8 +103,9 @@ function FocusOnFarm({ location }: { location: { lat: number; lng: number } | nu
 
 export function ProjectListPage() {
   const navigate = useNavigate()
+  const { projectId: routeProjectId } = useParams<{ projectId: string }>()
   const {
-    farms,
+    farms: allFarms,
     loading: farmsLoading,
     error: farmsError,
     fetchFarms,
@@ -115,7 +117,7 @@ export function ProjectListPage() {
     fetchWorkAreaPolygons,
   } = useFarmStore()
   const {
-    projects,
+    projects: allProjects,
     loading: projectsLoading,
     error: projectsError,
     fetchProjects,
@@ -131,6 +133,16 @@ export function ProjectListPage() {
     userRolesByProject,
     fetchUserRoles,
   } = useProjectListStore()
+
+  // URL の projectId に該当する工事だけに絞り込む
+  const projects = useMemo(
+    () => (routeProjectId ? allProjects.filter((p) => p.id === routeProjectId) : allProjects),
+    [allProjects, routeProjectId],
+  )
+  const farms = useMemo(
+    () => (routeProjectId ? allFarms.filter((f) => f.project_id === routeProjectId) : allFarms),
+    [allFarms, routeProjectId],
+  )
 
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
   const [selectedFarm, setSelectedFarm] = useState<Farm | null>(null)
@@ -467,7 +479,18 @@ export function ProjectListPage() {
         <div className="w-80 border-r bg-white flex flex-col overflow-hidden">
           {/* ヘッダー */}
           <div className="p-3 border-b flex items-center justify-between gap-1">
-            <span className="font-medium text-sm">プロジェクト</span>
+            {routeProjectId ? (
+              <button
+                onClick={() => navigate('/')}
+                className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50"
+                title="工事一覧に戻る"
+              >
+                <ArrowLeft className="h-3 w-3" />
+                工事一覧
+              </button>
+            ) : (
+              <span className="font-medium text-sm">プロジェクト</span>
+            )}
             <div className="flex items-center gap-1">
               <button
                 onClick={() => setExpandedList(true)}
@@ -477,13 +500,15 @@ export function ProjectListPage() {
                 <TableIcon className="h-3 w-3" />
                 一覧表
               </button>
-              <button
-                onClick={() => setShowNewProjectDialog(true)}
-                className="flex items-center gap-1 px-2 py-1 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90"
-              >
-                <Plus className="h-3 w-3" />
-                追加
-              </button>
+              {!routeProjectId && (
+                <button
+                  onClick={() => setShowNewProjectDialog(true)}
+                  className="flex items-center gap-1 px-2 py-1 text-xs bg-primary text-primary-foreground rounded hover:bg-primary/90"
+                >
+                  <Plus className="h-3 w-3" />
+                  追加
+                </button>
+              )}
             </div>
           </div>
 
