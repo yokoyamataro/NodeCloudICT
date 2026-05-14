@@ -1280,22 +1280,26 @@ export function MobileStakingPage() {
                 }}
               >
                 <Tooltip
-                  key={`tip-${showLabels ? 'on' : 'off'}-${isStaked ? 'st' : 'no'}`}
+                  key={`tip-${showLabels ? 'on' : 'off'}-${isStaked ? 'st' : 'no'}-${isSelected ? 'sel' : 'norm'}`}
+                  className="staking-label-tooltip"
                   direction="top"
                   offset={[0, -6]}
                   permanent={showLabels}
+                  opacity={1}
                 >
                   <span
-                    style={
-                      isStaked
+                    style={{
+                      color: fillColor,
+                      // 白フチ（4 方向 + 斜め）でマーカーと同色文字を地図上で読みやすく
+                      textShadow:
+                        '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff',
+                      ...(isStaked
                         ? {
-                            color: '#16a34a',
-                            fontWeight: 600,
                             textDecoration: 'line-through',
-                            textDecorationColor: 'rgba(22,163,74,0.5)',
+                            textDecorationColor: 'rgba(22,163,74,0.7)',
                           }
-                        : undefined
-                    }
+                        : {}),
+                    }}
                   >
                     {isStaked ? `✓ ${t.name}` : t.name}
                   </span>

@@ -104,6 +104,21 @@ input[type="number"] {
   border-top-color: #3b82f6 !important;
 }
 
+/* 起工測量のターゲットラベル: 吹き出しではなく色付き文字＋白フチで表示 */
+.staking-label-tooltip {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  white-space: nowrap !important;
+}
+
+.staking-label-tooltip::before {
+  display: none !important;
+}
+
 /* カスタムマーカー（デフォルトのLeafletマーカースタイルを上書き） */
 .custom-marker {
   background: transparent !important;
