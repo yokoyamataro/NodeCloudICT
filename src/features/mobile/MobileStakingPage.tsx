@@ -121,53 +121,36 @@ function FollowCurrent({
   return null
 }
 
-// ターゲット中心表示: enabled=true のとき選択ターゲットが変わるたびに中心化
-function FollowTarget({
-  position,
-  enabled,
-}: {
-  position: [number, number] | null
-  enabled: boolean
-}) {
-  const map = useMap()
-  useEffect(() => {
-    if (!enabled || !position) return
-    map.setView(position, Math.max(map.getZoom(), 18), { animate: true })
-  }, [map, position, enabled])
-  return null
-}
-
 // 「ターゲット選択時に一度だけ中心化」: フォローモードに関係なく
-// 選択 ID が変わったタイミングで 1 回だけパンする。
+// 選択 ID が変わったタイミングで 1 回だけパン＋ズームする。
+// targetId のみを依存に持ち、同一ターゲット中の再レンダリングでは発火しない。
 function CenterOnSelect({
   targetId,
-  position,
+  positionRef,
 }: {
   targetId: string | null
-  position: [number, number] | null
+  positionRef: React.MutableRefObject<[number, number] | null>
 }) {
   const map = useMap()
   useEffect(() => {
-    if (!targetId || !position) return
-    map.setView(position, Math.max(map.getZoom(), 18), { animate: true })
-    // position も依存に入れているが、同一 targetId の場合 position は不変なので
-    // 実質 targetId 変化時だけ発火する。
-  }, [map, targetId, position])
+    if (!targetId) return
+    const p = positionRef.current
+    if (!p) return
+    map.setView(p, Math.max(map.getZoom(), 18), { animate: true })
+  }, [map, targetId, positionRef])
   return null
 }
 
-type MapFollowMode = 'target' | 'self' | 'off'
+type MapFollowMode = 'self' | 'off'
 
 const MAP_FOLLOW_LABEL: Record<MapFollowMode, string> = {
-  target: 'ターゲット中心',
   self: '自己位置中心（追尾）',
   off: '追尾なし',
 }
 
 const NEXT_FOLLOW_MODE: Record<MapFollowMode, MapFollowMode> = {
-  target: 'self',
   self: 'off',
-  off: 'target',
+  off: 'self',
 }
 
 // 方位センサーの値（真北からの時計回り角度）を取得
@@ -674,6 +657,14 @@ export function MobileStakingPage() {
     [orderedTargets, selectedTargetId],
   )
 
+  // CenterOnSelect 用: ターゲット位置は ref で渡し、ID 変更時のみ中心化する
+  const selectedTargetPosRef = useRef<[number, number] | null>(null)
+  useEffect(() => {
+    selectedTargetPosRef.current = selectedTarget
+      ? [selectedTarget.lat, selectedTarget.lng]
+      : null
+  }, [selectedTarget])
+
   const distanceToTarget = useMemo(() => {
     if (!currentPos || !selectedTarget) return null
     return distanceMeters(
@@ -1004,9 +995,7 @@ export function MobileStakingPage() {
         <button
           onClick={() => setFollowMode((m) => NEXT_FOLLOW_MODE[m])}
           className={`flex items-center gap-1 px-2 py-1.5 rounded text-[11px] font-medium ${
-            followMode === 'target'
-              ? 'bg-emerald-600'
-              : followMode === 'self'
+            followMode === 'self'
               ? 'bg-blue-600'
               : 'bg-slate-700 hover:bg-slate-600'
           }`}
@@ -1186,18 +1175,10 @@ export function MobileStakingPage() {
           />
           <FitOnce bounds={currentPos ? null : allBounds} />
           <FollowCurrent position={currentPos} enabled={followMode === 'self'} />
-          <FollowTarget
-            position={
-              selectedTarget ? [selectedTarget.lat, selectedTarget.lng] : null
-            }
-            enabled={followMode === 'target'}
-          />
-          {/* ターゲット選択時はモードに関わらず 1 度だけ中心化 */}
+          {/* ターゲット選択時はモードに関わらず 1 度だけ中心化（継続的な追尾はしない） */}
           <CenterOnSelect
             targetId={selectedTarget?.id ?? null}
-            position={
-              selectedTarget ? [selectedTarget.lat, selectedTarget.lng] : null
-            }
+            positionRef={selectedTargetPosRef}
           />
 
           {/* 配線ライン（吸水=青・集水=緑、選択中はオレンジ）
@@ -1250,10 +1231,11 @@ export function MobileStakingPage() {
           {filteredTargets.map((t) => {
             const isSelected = t.id === selectedTargetId
             const isStaked = stakedTargetIds.has(t.id)
-            // 色: 座標管理 = 青、暗渠頂点 = 緑（測設済みは緑チェックマーカーで上書き）
-            const fillColor = t.kind === 'coordinate' ? '#3b82f6' : '#22c55e'
+            // 色: 選択中 = オレンジ、座標管理 = 青、暗渠頂点 = 緑（測設済みは緑チェックマーカーで上書き）
+            const baseColor = t.kind === 'coordinate' ? '#3b82f6' : '#22c55e'
+            const fillColor = isSelected ? '#f97316' : baseColor
             const size = isSelected ? 18 : 12
-            // 測設済みのマーカー: 白丸 + 緑チェック。選択中は二重リング。
+            // 測設済みのマーカー: 白丸 + 緑チェック。選択中はオレンジリング。
             const stakedHtml = `<div style="
               position: relative;
               width: ${size + 8}px;
@@ -1262,14 +1244,14 @@ export function MobileStakingPage() {
               <div style="
                 position:absolute; inset:0;
                 background:#ffffff;
-                border:2px solid #16a34a;
+                border:2px solid ${isSelected ? '#f97316' : '#16a34a'};
                 border-radius:50%;
                 box-shadow:0 1px 3px rgba(0,0,0,0.35);
-                ${isSelected ? 'box-shadow:0 0 0 3px rgba(34,197,94,0.35),0 1px 3px rgba(0,0,0,0.35);' : ''}
+                ${isSelected ? 'box-shadow:0 0 0 3px rgba(249,115,22,0.4),0 1px 3px rgba(0,0,0,0.35);' : ''}
               "></div>
               <svg viewBox="0 0 24 24" width="${size + 8}" height="${size + 8}"
                 style="position:absolute; inset:0;" fill="none"
-                stroke="#16a34a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+                stroke="${isSelected ? '#f97316' : '#16a34a'}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="6 12 10 16 18 8" />
               </svg>
             </div>`
@@ -1280,6 +1262,7 @@ export function MobileStakingPage() {
               border:2px solid white;
               border-radius:50%;
               box-shadow:0 1px 3px rgba(0,0,0,0.4);
+              ${isSelected ? 'box-shadow:0 0 0 3px rgba(249,115,22,0.4),0 1px 3px rgba(0,0,0,0.4);' : ''}
             "></div>`
             const iconSize = isStaked ? size + 8 : size
             return (
