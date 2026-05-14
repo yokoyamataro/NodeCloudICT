@@ -29,7 +29,7 @@ import { useUnderdrainStore, type PipeRow, PIPE_TYPE_NAMES } from '@/stores/unde
 import { useStakingStore, type StakingRecord } from '@/stores/stakingStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import { useExportRouteStore, type RoutePoint } from '@/stores/exportRouteStore'
-import { CoordinateConverter } from '@/lib/coordinates'
+import { CoordinateConverter, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 import { parseLandXml } from '@/lib/landxml/parser'
 import { indexTin, queryZ, type TinIndex, type TinSurfaceLike } from '@/lib/landxml/tinInterpolation'
 import { buildTrenchTin } from '@/lib/landxml/surface'
@@ -50,6 +50,10 @@ interface StakingTarget {
   /** lat/lng（地図表示用） */
   lat: number
   lng: number
+  /** 点種コード（coordinate: 'control'/'boundary'/'current' 等、pipe_vertex: PipeType） */
+  subType: string
+  /** 点種の表示名 */
+  subTypeLabel: string
 }
 
 // Haversine 距離（m）
@@ -266,6 +270,8 @@ export function MobileStakingPage() {
   const [targetFilter, setTargetFilter] = useState<
     'all' | 'coordinate' | 'pipe_vertex' | 'route'
   >('all')
+  // 非表示にする点種コードの集合（地図マーカー＆リスト両方に効く）
+  const [hiddenSubTypes, setHiddenSubTypes] = useState<Set<string>>(new Set())
   const [showLabels, setShowLabels] = useState(false)
   const [showRouteLine, setShowRouteLine] = useState(true)
 
@@ -565,6 +571,7 @@ export function MobileStakingPage() {
     const out: StakingTarget[] = []
     for (const c of coordinates as CoordinateRow[]) {
       if (c.lat == null || c.lng == null) continue
+      const sub = (c.type ?? 'other') as string
       out.push({
         id: `c-${c.id}`,
         kind: 'coordinate',
@@ -576,9 +583,16 @@ export function MobileStakingPage() {
         z: c.z,
         lat: c.lat,
         lng: c.lng,
+        subType: sub,
+        subTypeLabel:
+          (COORDINATE_TYPE_NAMES as Record<string, string>)[sub] ?? sub,
       })
     }
     for (const pipe of pipes as PipeRow[]) {
+      const pType = pipe.pipeType ?? 'unknown'
+      const pLabel = pipe.pipeType
+        ? PIPE_TYPE_NAMES[pipe.pipeType]
+        : '管種未設定'
       for (let i = 0; i < pipe.vertices.length; i++) {
         const v = pipe.vertices[i]
         try {
@@ -600,6 +614,8 @@ export function MobileStakingPage() {
             z: v.z,
             lat,
             lng,
+            subType: pType,
+            subTypeLabel: pLabel,
           })
         } catch {
           // skip
@@ -644,11 +660,31 @@ export function MobileStakingPage() {
   }, [targets, route])
 
   const filteredTargets = useMemo(() => {
-    if (targetFilter === 'all') return orderedTargets
+    let base = orderedTargets
     if (targetFilter === 'route') {
-      return orderedTargets.filter((t) => routeTargetIds.has(t.id))
+      base = orderedTargets.filter((t) => routeTargetIds.has(t.id))
+    } else if (targetFilter !== 'all') {
+      base = orderedTargets.filter((t) => t.kind === targetFilter)
     }
-    return orderedTargets.filter((t) => t.kind === targetFilter)
+    if (hiddenSubTypes.size === 0) return base
+    return base.filter((t) => !hiddenSubTypes.has(t.subType))
+  }, [orderedTargets, routeTargetIds, targetFilter, hiddenSubTypes])
+
+  // 現在表示候補（major filter 適用後）における点種ごとの件数を集計
+  const subTypeStats = useMemo(() => {
+    let base = orderedTargets
+    if (targetFilter === 'route') {
+      base = orderedTargets.filter((t) => routeTargetIds.has(t.id))
+    } else if (targetFilter !== 'all') {
+      base = orderedTargets.filter((t) => t.kind === targetFilter)
+    }
+    const map = new Map<string, { label: string; count: number; kind: TargetKind }>()
+    for (const t of base) {
+      const cur = map.get(t.subType)
+      if (cur) cur.count++
+      else map.set(t.subType, { label: t.subTypeLabel, count: 1, kind: t.kind })
+    }
+    return Array.from(map.entries()).map(([code, v]) => ({ code, ...v }))
   }, [orderedTargets, routeTargetIds, targetFilter])
 
   // ルート点はルート点名（座標計算で集約された名前）で上書き済みの orderedTargets を使う
@@ -1567,6 +1603,48 @@ export function MobileStakingPage() {
                 閉じる
               </button>
             </div>
+            {/* 点種フィルタ（チップ式トグル）: タップで該当点種をマーカー＆リストから非表示 */}
+            {subTypeStats.length > 1 && (
+              <div className="px-3 py-1.5 border-b bg-slate-50 flex items-center gap-1 flex-wrap text-[11px]">
+                <span className="text-slate-500 mr-1">点種:</span>
+                {subTypeStats.map((s) => {
+                  const hidden = hiddenSubTypes.has(s.code)
+                  const onCls =
+                    s.kind === 'coordinate'
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-emerald-600 text-white border-emerald-600'
+                  const offCls = 'bg-white text-slate-400 border-slate-300 line-through'
+                  return (
+                    <button
+                      key={s.code}
+                      onClick={() =>
+                        setHiddenSubTypes((prev) => {
+                          const next = new Set(prev)
+                          if (next.has(s.code)) next.delete(s.code)
+                          else next.add(s.code)
+                          return next
+                        })
+                      }
+                      className={`px-1.5 py-0.5 rounded border font-medium ${
+                        hidden ? offCls : onCls
+                      }`}
+                      title={hidden ? `${s.label} を表示` : `${s.label} を非表示`}
+                    >
+                      {s.label}
+                      <span className="ml-1 text-[10px] opacity-80">({s.count})</span>
+                    </button>
+                  )
+                })}
+                {hiddenSubTypes.size > 0 && (
+                  <button
+                    onClick={() => setHiddenSubTypes(new Set())}
+                    className="ml-1 px-1.5 py-0.5 text-slate-600 hover:text-slate-900 underline"
+                  >
+                    全て表示
+                  </button>
+                )}
+              </div>
+            )}
             <div className="flex-1 overflow-auto">
               {filteredTargets.length === 0 ? (
                 <div className="p-4 text-center text-xs text-slate-400">該当なし</div>
