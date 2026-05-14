@@ -14,7 +14,7 @@ import {
   COORDINATE_TYPE_NAMES,
   type CoordinateType,
 } from '@/lib/coordinates'
-import { type PipeType } from '@/stores/underdrainStore'
+import type { PipeType } from '@/types/database'
 
 interface ShareCoordinate {
   id: string
@@ -78,9 +78,13 @@ export function ShareFarmViewPage() {
     if (!farmId) return
     let cancelled = false
     setLoading(true)
-    supabase
-      .rpc('get_shared_farm_view', { p_farm_id: farmId })
-      .then(({ data: rpcData, error: rpcError }) => {
+    ;(
+      supabase.rpc as unknown as (
+        fn: string,
+        args: Record<string, unknown>,
+      ) => Promise<{ data: unknown; error: { message: string } | null }>
+    )('get_shared_farm_view', { p_farm_id: farmId }).then(
+      ({ data: rpcData, error: rpcError }) => {
         if (cancelled) return
         if (rpcError) {
           setError(rpcError.message)
@@ -95,7 +99,8 @@ export function ShareFarmViewPage() {
         }
         setData(view)
         setLoading(false)
-      })
+      },
+    )
     return () => {
       cancelled = true
     }

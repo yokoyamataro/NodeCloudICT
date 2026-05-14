@@ -32,28 +32,33 @@ export const useCoordinatePointTypeStore = create<State>((set, get) => ({
   fetchForProject: async (projectId) => {
     set({ loading: true, error: null })
     try {
-      const { data, error } = await supabase
-        .from('coordinate_point_types')
+      // Database 型に未登録のテーブルのため `from(...)` を string キャストで呼び出す
+      const { data, error } = await (
+        supabase.from('coordinate_point_types' as never) as unknown as {
+          select: (cols: string) => {
+            eq: (col: string, val: string) => {
+              order: (col: string, opts: { ascending: boolean }) => {
+                order: (col: string, opts: { ascending: boolean }) => Promise<{
+                  data: RawPointTypeRow[] | null
+                  error: { message: string } | null
+                }>
+              }
+            }
+          }
+        }
+      )
         .select('id, project_id, code, label, sort_order')
         .eq('project_id', projectId)
         .order('sort_order', { ascending: true })
         .order('created_at', { ascending: true })
       if (error) throw error
-      const rows: CoordinatePointType[] = (data ?? []).map(
-        (r: {
-          id: string
-          project_id: string
-          code: string
-          label: string
-          sort_order: number
-        }) => ({
-          id: r.id,
-          projectId: r.project_id,
-          code: r.code,
-          label: r.label,
-          sortOrder: r.sort_order,
-        }),
-      )
+      const rows: CoordinatePointType[] = (data ?? []).map((r) => ({
+        id: r.id,
+        projectId: r.project_id,
+        code: r.code,
+        label: r.label,
+        sortOrder: r.sort_order,
+      }))
       const next = new Map(get().byProject)
       next.set(projectId, rows)
       set({ byProject: next, loading: false })
@@ -79,17 +84,29 @@ export const useCoordinatePointTypeStore = create<State>((set, get) => ({
     const nextOrder = existing.length > 0
       ? Math.max(...existing.map((t) => t.sortOrder)) + 1
       : 0
-    const { data, error } = await supabase
-      .from('coordinate_point_types')
-      .insert({
-        project_id: projectId,
-        code: trimmedCode,
-        label: trimmedLabel,
-        sort_order: nextOrder,
-      })
+    const payload = {
+      project_id: projectId,
+      code: trimmedCode,
+      label: trimmedLabel,
+      sort_order: nextOrder,
+    }
+    const { data, error } = await (
+      supabase.from('coordinate_point_types' as never) as unknown as {
+        insert: (row: typeof payload) => {
+          select: (cols: string) => {
+            single: () => Promise<{
+              data: RawPointTypeRow | null
+              error: { message: string } | null
+            }>
+          }
+        }
+      }
+    )
+      .insert(payload)
       .select('id, project_id, code, label, sort_order')
       .single()
     if (error) throw error
+    if (!data) throw new Error('追加結果を取得できませんでした')
     const row: CoordinatePointType = {
       id: data.id,
       projectId: data.project_id,
@@ -106,13 +123,27 @@ export const useCoordinatePointTypeStore = create<State>((set, get) => ({
     const trimmedCode = code.trim()
     const trimmedLabel = label.trim()
     if (!trimmedCode || !trimmedLabel) throw new Error('コードと表示名を入力してください')
-    const { data, error } = await supabase
-      .from('coordinate_point_types')
-      .update({ code: trimmedCode, label: trimmedLabel })
+    const payload = { code: trimmedCode, label: trimmedLabel }
+    const { data, error } = await (
+      supabase.from('coordinate_point_types' as never) as unknown as {
+        update: (row: typeof payload) => {
+          eq: (col: string, val: string) => {
+            select: (cols: string) => {
+              single: () => Promise<{
+                data: RawPointTypeRow | null
+                error: { message: string } | null
+              }>
+            }
+          }
+        }
+      }
+    )
+      .update(payload)
       .eq('id', id)
       .select('id, project_id, code, label, sort_order')
       .single()
     if (error) throw error
+    if (!data) throw new Error('更新結果を取得できませんでした')
     const projectId: string = data.project_id
     const list = get().byProject.get(projectId) ?? []
     const updated = list.map((t) =>
@@ -126,12 +157,30 @@ export const useCoordinatePointTypeStore = create<State>((set, get) => ({
   },
 
   removeType: async (id) => {
-    const { data: existing } = await supabase
-      .from('coordinate_point_types')
+    const { data: existing } = await (
+      supabase.from('coordinate_point_types' as never) as unknown as {
+        select: (cols: string) => {
+          eq: (col: string, val: string) => {
+            single: () => Promise<{
+              data: { project_id: string } | null
+              error: { message: string } | null
+            }>
+          }
+        }
+      }
+    )
       .select('project_id')
       .eq('id', id)
       .single()
-    const { error } = await supabase.from('coordinate_point_types').delete().eq('id', id)
+    const { error } = await (
+      supabase.from('coordinate_point_types' as never) as unknown as {
+        delete: () => {
+          eq: (col: string, val: string) => Promise<{ error: { message: string } | null }>
+        }
+      }
+    )
+      .delete()
+      .eq('id', id)
     if (error) throw error
     if (existing?.project_id) {
       const list = get().byProject.get(existing.project_id) ?? []
@@ -144,6 +193,14 @@ export const useCoordinatePointTypeStore = create<State>((set, get) => ({
     }
   },
 }))
+
+interface RawPointTypeRow {
+  id: string
+  project_id: string
+  code: string
+  label: string
+  sort_order: number
+}
 
 // プロジェクトの全点種オプション（既定 + カスタム）を返す
 export function getCoordinateTypeOptions(
