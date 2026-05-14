@@ -20,6 +20,7 @@ import {
   FileText,
   Database,
   Navigation2,
+  Share2,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
@@ -29,7 +30,11 @@ import { useUnderdrainStore, type PipeRow, PIPE_TYPE_NAMES } from '@/stores/unde
 import { useStakingStore, type StakingRecord } from '@/stores/stakingStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import { useExportRouteStore, type RoutePoint } from '@/stores/exportRouteStore'
-import { CoordinateConverter, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
+import { CoordinateConverter } from '@/lib/coordinates'
+import {
+  useCoordinatePointTypeStore,
+  getCoordinateTypeLabel,
+} from '@/stores/coordinatePointTypeStore'
 import { parseLandXml } from '@/lib/landxml/parser'
 import { indexTin, queryZ, type TinIndex, type TinSurfaceLike } from '@/lib/landxml/tinInterpolation'
 import { buildTrenchTin } from '@/lib/landxml/surface'
@@ -201,6 +206,10 @@ export function MobileStakingPage() {
   const farmId = params.get('farmId')
 
   const { setCurrentFarm } = useFarmStore()
+  const {
+    byProject: pointTypesByProject,
+    fetchForProject: fetchPointTypes,
+  } = useCoordinatePointTypeStore()
   const { setZone, fetchCoordinates, coordinates } = useCoordinateStore()
   const { fetchPipes, pipes } = useUnderdrainStore()
   const { records, fetchRecords, addRecord, deleteRecord, saving } = useStakingStore()
@@ -209,6 +218,12 @@ export function MobileStakingPage() {
   const [project, setProject] = useState<Project | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const projectId = farm?.project_id ?? null
+
+  // プロジェクトのカスタム点種を取得
+  useEffect(() => {
+    if (projectId) fetchPointTypes(projectId)
+  }, [projectId, fetchPointTypes])
 
   // 現在位置（geolocation）
   const [currentPos, setCurrentPos] = useState<[number, number] | null>(null)
@@ -292,6 +307,8 @@ export function MobileStakingPage() {
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null)
   // 選択中の配線（タップでハイライト＋情報表示）
   const [selectedPipeId, setSelectedPipeId] = useState<string | null>(null)
+  // 共有リンクのトースト表示
+  const [shareToast, setShareToast] = useState<string | null>(null)
 
   // 記録状態
   const [recording, setRecording] = useState(false)
@@ -584,8 +601,7 @@ export function MobileStakingPage() {
         lat: c.lat,
         lng: c.lng,
         subType: sub,
-        subTypeLabel:
-          (COORDINATE_TYPE_NAMES as Record<string, string>)[sub] ?? sub,
+        subTypeLabel: getCoordinateTypeLabel(sub, projectId, pointTypesByProject),
       })
     }
     for (const pipe of pipes as PipeRow[]) {
@@ -623,7 +639,7 @@ export function MobileStakingPage() {
       }
     }
     return out
-  }, [coordinates, pipes, converter])
+  }, [coordinates, pipes, converter, projectId, pointTypesByProject])
 
   // 出力点選択（順路）に従ってターゲットを並べ替える。
   // 順路にある点（x,y で一致判定）を先に並べ、無い点は元の順序で末尾へ。
@@ -981,6 +997,34 @@ export function MobileStakingPage() {
     }
   }, [])
 
+  // 公開ビュー URL を取得して共有 or クリップボードコピー
+  const handleShare = async () => {
+    if (!farmId) return
+    const url = `${window.location.origin}/share/farm/${farmId}`
+    const shareTitle = farm?.name ? `圃場「${farm.name}」` : '圃場の起工測量データ'
+    const navAny = navigator as Navigator & {
+      share?: (data: { title?: string; text?: string; url?: string }) => Promise<void>
+    }
+    try {
+      if (navAny.share) {
+        await navAny.share({ title: shareTitle, url })
+        setShareToast('共有メニューを開きました')
+      } else {
+        await navigator.clipboard.writeText(url)
+        setShareToast('共有リンクをコピーしました')
+      }
+    } catch {
+      // share がキャンセル等で失敗してもコピーは試みる
+      try {
+        await navigator.clipboard.writeText(url)
+        setShareToast('共有リンクをコピーしました')
+      } catch {
+        setShareToast(url)
+      }
+    }
+    window.setTimeout(() => setShareToast(null), 3500)
+  }
+
   const mapCenter: [number, number] = currentPos
     ? currentPos
     : allBounds
@@ -1083,6 +1127,13 @@ export function MobileStakingPage() {
           )}
         </button>
         <button
+          onClick={handleShare}
+          className="p-1.5 rounded bg-slate-700 hover:bg-slate-600"
+          title="共有リンクを発行（他社にLINE等で送信）"
+        >
+          <Share2 className="h-4 w-4" />
+        </button>
+        <button
           onClick={() => setShowSettings((v) => !v)}
           className="p-1.5 rounded bg-slate-700 hover:bg-slate-600"
           title="設定"
@@ -1090,6 +1141,12 @@ export function MobileStakingPage() {
           <Settings className="h-4 w-4" />
         </button>
       </div>
+      {/* 共有結果トースト */}
+      {shareToast && (
+        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-[2000] px-3 py-2 bg-slate-900 text-white text-xs rounded shadow-lg">
+          {shareToast}
+        </div>
+      )}
 
       {/* 画面モード（起工 / 出来形 / 施工管理）切替 */}
       <div className="px-2 py-1 bg-slate-700 text-white flex items-center gap-1 text-xs border-b border-slate-600">

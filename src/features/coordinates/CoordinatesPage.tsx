@@ -1,10 +1,14 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { Upload, Download, Plus, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown } from 'lucide-react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { Upload, Download, Plus, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Settings } from 'lucide-react'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useGlobalSaveRegistry } from '@/stores/globalSaveRegistry'
+import {
+  useCoordinatePointTypeStore,
+  getCoordinateTypeOptions,
+} from '@/stores/coordinatePointTypeStore'
 import { CoordinateMap, type BaseLayerType } from '@/components/map/CoordinateMap'
 import { ResizableSplit } from '@/components/layout/ResizableSplit'
 import { loadSimaFile, downloadSimaFile } from '@/lib/sima-parser'
@@ -92,11 +96,13 @@ function NumberInput({
 function PasteModal({
   isOpen,
   onClose,
-  onPaste
+  onPaste,
+  typeOptions,
 }: {
   isOpen: boolean
   onClose: () => void
   onPaste: (text: string, type: CoordinateType) => void
+  typeOptions: { code: string; label: string }[]
 }) {
   const [pasteText, setPasteText] = useState('')
   const [pasteType, setPasteType] = useState<CoordinateType>('boundary')
@@ -123,8 +129,8 @@ function PasteModal({
             onChange={(e) => setPasteType(e.target.value as CoordinateType)}
             className="w-full px-3 py-2 border rounded"
           >
-            {Object.entries(COORDINATE_TYPE_NAMES).map(([type, name]) => (
-              <option key={type} value={type}>{name}</option>
+            {typeOptions.map((opt) => (
+              <option key={opt.code} value={opt.code}>{opt.label}</option>
             ))}
           </select>
         </div>
@@ -164,6 +170,7 @@ function PasteModal({
 export function CoordinatesPage() {
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
   const [showLabels, setShowLabels] = useState(true)
+  // 表示する点種（既定 + カスタム）。カスタム点種が増えたら自動で表示集合にも追加
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(
     new Set(Object.keys(COORDINATE_TYPE_NAMES))
   )
@@ -222,6 +229,38 @@ export function CoordinatesPage() {
   const projectZone = currentFarm
     ? projects.find((p) => p.id === currentFarm.project_id)?.coordinate_zone ?? null
     : null
+
+  // プロジェクト単位のカスタム点種
+  const projectId = currentFarm?.project_id ?? null
+  const {
+    byProject: pointTypesByProject,
+    fetchForProject: fetchPointTypes,
+    addType: addPointType,
+    removeType: removePointType,
+  } = useCoordinatePointTypeStore()
+  useEffect(() => {
+    if (projectId) fetchPointTypes(projectId)
+  }, [projectId, fetchPointTypes])
+  const typeOptions = useMemo(
+    () => getCoordinateTypeOptions(projectId, pointTypesByProject),
+    [projectId, pointTypesByProject],
+  )
+  const [showPointTypeModal, setShowPointTypeModal] = useState(false)
+
+  // 新しく追加されたカスタム点種は既定で表示する
+  useEffect(() => {
+    setVisibleTypes((prev) => {
+      let changed = false
+      const next = new Set(prev)
+      for (const opt of typeOptions) {
+        if (!next.has(opt.code)) {
+          next.add(opt.code)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [typeOptions])
 
   // 圃場選択時にデータを読み込む
   useEffect(() => {
@@ -324,8 +363,9 @@ export function CoordinatesPage() {
     if (targets.length === 0) return
     const header = '点番号,X,Y,Z,緯度,経度,種類\n'
     const rows = targets.map(c => {
-      // 型の互換性のため、古い型の値をフォールバック
-      const typeName = COORDINATE_TYPE_NAMES[c.type as keyof typeof COORDINATE_TYPE_NAMES] || '不明'
+      // 既定 + カスタム点種のラベルを参照
+      const typeName =
+        typeOptions.find((o) => o.code === c.type)?.label ?? c.type ?? '不明'
       return `${c.pointNumber},${c.x},${c.y},${c.z ?? ''},${c.lat ?? ''},${c.lng ?? ''},${typeName}`
     }).join('\n')
 
@@ -583,26 +623,33 @@ export function CoordinatesPage() {
             {showLabels ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
             点名
           </button>
-          <div className="flex items-center gap-2">
-            {Object.entries(COORDINATE_TYPE_NAMES).map(([type, name]) => (
-              <label key={type} className="flex items-center gap-1 text-xs cursor-pointer">
+          <div className="flex items-center gap-2 flex-wrap">
+            {typeOptions.map((opt) => (
+              <label key={opt.code} className="flex items-center gap-1 text-xs cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={visibleTypes.has(type)}
+                  checked={visibleTypes.has(opt.code)}
                   onChange={(e) => {
                     const newTypes = new Set(visibleTypes)
                     if (e.target.checked) {
-                      newTypes.add(type)
+                      newTypes.add(opt.code)
                     } else {
-                      newTypes.delete(type)
+                      newTypes.delete(opt.code)
                     }
                     setVisibleTypes(newTypes)
                   }}
                   className="h-3 w-3"
                 />
-                {name}
+                {opt.label}
               </label>
             ))}
+            <button
+              onClick={() => setShowPointTypeModal(true)}
+              className="ml-1 p-0.5 text-slate-500 hover:text-slate-800 rounded"
+              title="点種を管理"
+            >
+              <Settings className="h-3.5 w-3.5" />
+            </button>
           </div>
           <select
             value={baseLayer}
@@ -650,9 +697,9 @@ export function CoordinatesPage() {
                 onChange={(e) => setSelectedType(e.target.value as CoordinateType)}
                 className="w-full px-2 py-1.5 text-sm border rounded"
               >
-                {Object.entries(COORDINATE_TYPE_NAMES).map(([type, name]) => (
-                  <option key={type} value={type}>
-                    {name}
+                {typeOptions.map((opt) => (
+                  <option key={opt.code} value={opt.code}>
+                    {opt.label}
                   </option>
                 ))}
               </select>
@@ -748,8 +795,8 @@ export function CoordinatesPage() {
                       onClick={(e) => e.stopPropagation()}
                       className="px-1 py-0.5 border rounded text-xs"
                     >
-                      {Object.entries(COORDINATE_TYPE_NAMES).map(([type, name]) => (
-                        <option key={type} value={type}>{name}</option>
+                      {typeOptions.map((opt) => (
+                        <option key={opt.code} value={opt.code}>{opt.label}</option>
                       ))}
                     </select>
                   </td>
@@ -814,9 +861,9 @@ export function CoordinatesPage() {
                       onChange={(e) => setSelectedType(e.target.value as CoordinateType)}
                       className="w-full px-2 py-1.5 text-sm border rounded"
                     >
-                      {Object.entries(COORDINATE_TYPE_NAMES).map(([type, name]) => (
-                        <option key={type} value={type}>
-                          {name}
+                      {typeOptions.map((opt) => (
+                        <option key={opt.code} value={opt.code}>
+                          {opt.label}
                         </option>
                       ))}
                     </select>
@@ -914,8 +961,8 @@ export function CoordinatesPage() {
                             onClick={(e) => e.stopPropagation()}
                             className="px-1 py-0.5 border rounded text-xs"
                           >
-                            {Object.entries(COORDINATE_TYPE_NAMES).map(([type, name]) => (
-                              <option key={type} value={type}>{name}</option>
+                            {typeOptions.map((opt) => (
+                              <option key={opt.code} value={opt.code}>{opt.label}</option>
                             ))}
                           </select>
                         </td>
@@ -976,26 +1023,33 @@ export function CoordinatesPage() {
               {showLabels ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
               点名
             </button>
-            <div className="flex items-center gap-2">
-              {Object.entries(COORDINATE_TYPE_NAMES).map(([type, name]) => (
-                <label key={type} className="flex items-center gap-1 text-xs cursor-pointer">
+            <div className="flex items-center gap-2 flex-wrap">
+              {typeOptions.map((opt) => (
+                <label key={opt.code} className="flex items-center gap-1 text-xs cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={visibleTypes.has(type)}
+                    checked={visibleTypes.has(opt.code)}
                     onChange={(e) => {
                       const newTypes = new Set(visibleTypes)
                       if (e.target.checked) {
-                        newTypes.add(type)
+                        newTypes.add(opt.code)
                       } else {
-                        newTypes.delete(type)
+                        newTypes.delete(opt.code)
                       }
                       setVisibleTypes(newTypes)
                     }}
                     className="h-3 w-3"
                   />
-                  {name}
+                  {opt.label}
                 </label>
               ))}
+              <button
+                onClick={() => setShowPointTypeModal(true)}
+                className="ml-1 p-0.5 text-slate-500 hover:text-slate-800 rounded"
+                title="点種を管理"
+              >
+                <Settings className="h-3.5 w-3.5" />
+              </button>
             </div>
             <select
               value={baseLayer}
@@ -1117,7 +1171,153 @@ export function CoordinatesPage() {
         isOpen={showPasteModal}
         onClose={() => setShowPasteModal(false)}
         onPaste={handleModalPaste}
+        typeOptions={typeOptions}
       />
+
+      {/* 点種管理モーダル */}
+      <PointTypeManagerModal
+        isOpen={showPointTypeModal}
+        onClose={() => setShowPointTypeModal(false)}
+        projectId={projectId}
+        customTypes={projectId ? pointTypesByProject.get(projectId) ?? [] : []}
+        onAdd={async (code, label) => {
+          if (!projectId) return
+          await addPointType(projectId, code, label)
+        }}
+        onRemove={async (id) => removePointType(id)}
+      />
+    </div>
+  )
+}
+
+// 点種管理モーダル
+function PointTypeManagerModal({
+  isOpen,
+  onClose,
+  projectId,
+  customTypes,
+  onAdd,
+  onRemove,
+}: {
+  isOpen: boolean
+  onClose: () => void
+  projectId: string | null
+  customTypes: { id: string; code: string; label: string }[]
+  onAdd: (code: string, label: string) => Promise<void>
+  onRemove: (id: string) => Promise<void>
+}) {
+  const [code, setCode] = useState('')
+  const [label, setLabel] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  if (!isOpen) return null
+
+  const handleAdd = async () => {
+    if (!projectId) {
+      setError('プロジェクトが選択されていません')
+      return
+    }
+    setSubmitting(true)
+    setError(null)
+    try {
+      await onAdd(code, label)
+      setCode('')
+      setLabel('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '追加に失敗しました')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center" style={{ zIndex: 9999 }}>
+      <div className="bg-white rounded-lg p-6 w-full max-w-lg" style={{ zIndex: 10000 }}>
+        <h3 className="text-lg font-semibold mb-1">点種の管理</h3>
+        <p className="text-xs text-slate-500 mb-4">
+          プロジェクト内の全圃場に共通して使われます。
+        </p>
+
+        {/* 既定 + カスタムの一覧 */}
+        <div className="mb-4 border rounded divide-y text-sm">
+          {Object.entries(COORDINATE_TYPE_NAMES).map(([c, n]) => (
+            <div key={c} className="px-3 py-1.5 flex items-center gap-2">
+              <span className="font-medium flex-1">{n}</span>
+              <span className="text-xs text-slate-400 font-mono">{c}</span>
+              <span className="text-xs text-slate-400 ml-2">既定</span>
+            </div>
+          ))}
+          {customTypes.length === 0 && (
+            <div className="px-3 py-2 text-xs text-slate-400">
+              （カスタム点種なし）
+            </div>
+          )}
+          {customTypes.map((t) => (
+            <div key={t.id} className="px-3 py-1.5 flex items-center gap-2">
+              <span className="font-medium flex-1">{t.label}</span>
+              <span className="text-xs text-slate-400 font-mono">{t.code}</span>
+              <button
+                onClick={() => {
+                  if (confirm(`点種「${t.label}」を削除しますか？\n（既存座標の点種コードはそのまま残ります）`)) {
+                    onRemove(t.id).catch((e) => setError(e instanceof Error ? e.message : '削除失敗'))
+                  }
+                }}
+                className="ml-2 p-1 text-red-600 hover:bg-red-50 rounded"
+                title="削除"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {/* 追加フォーム */}
+        <div className="border rounded p-3 mb-3 bg-slate-50">
+          <h4 className="text-sm font-medium mb-2">点種を追加</h4>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">表示名</label>
+              <input
+                type="text"
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="例: 杭"
+                className="w-full px-2 py-1 text-sm border rounded"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-600 mb-1">コード（英数）</label>
+              <input
+                type="text"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder="例: stake"
+                className="w-full px-2 py-1 text-sm border rounded font-mono"
+              />
+            </div>
+          </div>
+          {error && <div className="text-xs text-red-600 mt-2">{error}</div>}
+          <div className="flex justify-end mt-2">
+            <button
+              onClick={handleAdd}
+              disabled={submitting || !code.trim() || !label.trim() || !projectId}
+              className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+            >
+              追加
+            </button>
+          </div>
+        </div>
+
+        <div className="flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-4 py-1.5 text-sm border rounded hover:bg-gray-50"
+          >
+            閉じる
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

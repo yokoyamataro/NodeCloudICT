@@ -4,6 +4,7 @@ import { getDisplayModeOverride, isMobileDevice } from '@/lib/displayMode'
 import { AuthProvider, useAuth } from '@/contexts/AuthContext'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { LoginPage } from '@/features/auth/LoginPage'
+import { ShareFarmViewPage } from '@/features/share/ShareFarmViewPage'
 import { ProjectListPage } from '@/features/projects/ProjectListPage'
 import { CoordinatesPage } from '@/features/coordinates/CoordinatesPage'
 import { SiteMapWindowPage } from '@/features/coordinates/SiteMapWindowPage'
@@ -63,7 +64,8 @@ function MobileAutoRedirect() {
     if (
       path === '/login' ||
       path === '/site-map' ||
-      path.startsWith('/mobile')
+      path.startsWith('/mobile') ||
+      path.startsWith('/share')
     ) {
       return
     }
@@ -86,6 +88,8 @@ function AppRoutes() {
   return (
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        {/* 公開共有ビュー: 認証不要・読み取り専用 */}
+        <Route path="/share/farm/:farmId" element={<ShareFarmViewPage />} />
         {/* 別ウィンドウ: 現場地図のみ全画面表示（AppLayout を介さない） */}
         <Route
           path="/site-map"
