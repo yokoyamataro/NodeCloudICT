@@ -202,33 +202,11 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
       coordinates: state.coordinates.map((c) => (c.id === id ? updated : c)),
     })
 
-    // 保存モードをチェック
-    const saveMode = useSettingsStore.getState().saveMode
-    if (saveMode === 'manual') {
-      // 手動保存モード: 変更を記録
-      const newPendingChanges = new Map(state.pendingChanges)
-      newPendingChanges.set(id, updated)
-      set({ pendingChanges: newPendingChanges })
-      useSettingsStore.getState().setHasUnsavedChanges(true)
-    } else {
-      // 自動保存モード: 即座にSupabaseに保存
-      const dbField = field === 'pointNumber' ? 'point_number' : field === 'type' ? 'coordinate_type' : field
-      const updateData: Record<string, unknown> = { [dbField]: value }
-      if (field === 'x' || field === 'y') {
-        updateData.latitude = updated.lat
-        updateData.longitude = updated.lng
-      }
-
-      supabase
-        .from('design_coordinates')
-        .update(updateData as never)
-        .eq('id', id)
-        .then(({ error }) => {
-          if (error) {
-            set({ error: error.message })
-          }
-        })
-    }
+    // 手動保存モードに統一: 変更を pendingChanges に積み、保存ボタンを有効化
+    const newPendingChanges = new Map(state.pendingChanges)
+    newPendingChanges.set(id, updated)
+    set({ pendingChanges: newPendingChanges })
+    useSettingsStore.getState().setHasUnsavedChanges(true)
   },
 
   deleteCoordinate: async (id) => {

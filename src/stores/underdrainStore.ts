@@ -234,37 +234,11 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
       pipes: state.pipes.map((p) => (p.id === id ? updated : p)),
     })
 
-    // 保存モードをチェック
-    const saveMode = useSettingsStore.getState().saveMode
-    if (saveMode === 'manual') {
-      // 手動保存モード: 変更を記録
-      const newPendingPipeChanges = new Map(state.pendingPipeChanges)
-      newPendingPipeChanges.set(id, updated)
-      set({ pendingPipeChanges: newPendingPipeChanges })
-      useSettingsStore.getState().setHasUnsavedChanges(true)
-    } else {
-      // 自動保存モード: 即座にSupabaseに保存
-      const dbUpdates: Record<string, unknown> = {}
-      if (updates.number !== undefined) dbUpdates.number = updates.number
-      if (updates.layerName !== undefined) dbUpdates.layer_name = updates.layerName
-      if (updates.pipeType !== undefined) dbUpdates.pipe_type = updates.pipeType
-      if (updates.diameter !== undefined) dbUpdates.diameter = updates.diameter
-      if (updates.designLength !== undefined) dbUpdates.design_length = updates.designLength
-      if (updates.measuredLength !== undefined) dbUpdates.measured_length = updates.measuredLength
-      if (updates.vertices !== undefined) dbUpdates.vertices = updates.vertices
-      if (updates.connectionTo !== undefined) dbUpdates.connection_to = updates.connectionTo
-      if (updates.notes !== undefined) dbUpdates.notes = updates.notes
-
-      supabase
-        .from('design_pipes')
-        .update(dbUpdates as never)
-        .eq('id', id)
-        .then(({ error }) => {
-          if (error) {
-            set({ error: error.message })
-          }
-        })
-    }
+    // 手動保存モードに統一: 変更を pendingPipeChanges に積み、保存ボタンを有効化
+    const newPendingPipeChanges = new Map(state.pendingPipeChanges)
+    newPendingPipeChanges.set(id, updated)
+    set({ pendingPipeChanges: newPendingPipeChanges })
+    useSettingsStore.getState().setHasUnsavedChanges(true)
   },
 
   deletePipe: async (id) => {
