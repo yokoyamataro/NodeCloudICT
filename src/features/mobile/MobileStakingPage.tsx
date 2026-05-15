@@ -21,6 +21,9 @@ import {
   Database,
   Navigation2,
   Share2,
+  Check,
+  ClipboardList,
+  Filter,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
@@ -132,21 +135,23 @@ function FollowCurrent({
 
 // 「ターゲット選択時に一度だけ中心化」: フォローモードに関係なく
 // 選択 ID が変わったタイミングで 1 回だけパン＋ズームする。
-// targetId のみを依存に持ち、同一ターゲット中の再レンダリングでは発火しない。
+// target を毎レンダリング受け取り、id 変化時に最新位置を参照する。
+// （ref 経由は子 effect が親 effect より先に走り旧位置を読む不具合があるため避ける）
 function CenterOnSelect({
-  targetId,
-  positionRef,
+  target,
 }: {
-  targetId: string | null
-  positionRef: React.MutableRefObject<[number, number] | null>
+  target: { id: string; lat: number; lng: number } | null
 }) {
   const map = useMap()
+  const targetRef = useRef(target)
+  targetRef.current = target
+  const targetId = target?.id ?? null
   useEffect(() => {
     if (!targetId) return
-    const p = positionRef.current
-    if (!p) return
-    map.setView(p, Math.max(map.getZoom(), 18), { animate: true })
-  }, [map, targetId, positionRef])
+    const t = targetRef.current
+    if (!t || t.id !== targetId) return
+    map.setView([t.lat, t.lng], Math.max(map.getZoom(), 18), { animate: true })
+  }, [map, targetId])
   return null
 }
 
@@ -287,6 +292,8 @@ export function MobileStakingPage() {
   >('all')
   // 非表示にする点種コードの集合（地図マーカー＆リスト両方に効く）
   const [hiddenSubTypes, setHiddenSubTypes] = useState<Set<string>>(new Set())
+  // フィルタパネル（点種チップ＋種別ボタン）の表示
+  const [showFilterPanel, setShowFilterPanel] = useState(false)
   const [showLabels, setShowLabels] = useState(false)
   const [showRouteLine, setShowRouteLine] = useState(true)
 
@@ -709,13 +716,6 @@ export function MobileStakingPage() {
     [orderedTargets, selectedTargetId],
   )
 
-  // CenterOnSelect 用: ターゲット位置は ref で渡し、ID 変更時のみ中心化する
-  const selectedTargetPosRef = useRef<[number, number] | null>(null)
-  useEffect(() => {
-    selectedTargetPosRef.current = selectedTarget
-      ? [selectedTarget.lat, selectedTarget.lng]
-      : null
-  }, [selectedTarget])
 
   const distanceToTarget = useMemo(() => {
     if (!currentPos || !selectedTarget) return null
@@ -975,6 +975,50 @@ export function MobileStakingPage() {
     }
   }
 
+  // 記録せずに測設済としてマークする（or マーク解除）
+  // measuredXY = targetXY、notes='manual_mark' の擬似レコードで stakedTargetIds に乗せる
+  const handleToggleManualStaked = async (target: StakingTarget) => {
+    if (!farmId) return
+    const existing = records.find(
+      (r) =>
+        r.notes === 'manual_mark' &&
+        r.farmId === farmId &&
+        r.surveyCategory === surveyCategory &&
+        r.targetType === target.kind &&
+        r.targetRefId === target.refId &&
+        r.targetVertexIndex === target.vertexIndex,
+    )
+    if (existing) {
+      if (!confirm(`${target.name} の測設済マークを解除しますか？`)) return
+      await deleteRecord(existing.id)
+      return
+    }
+    // 既に GPS で測設済みの場合は手動マークしない（記録が重複してしまうため）
+    if (stakedTargetIds.has(target.id)) {
+      alert(`${target.name} は既に測設済みです。`)
+      return
+    }
+    if (!confirm(`${target.name} を記録なしで測設済としてマークしますか？`)) return
+    await addRecord({
+      farmId,
+      surveyCategory,
+      targetType: target.kind,
+      targetRefId: target.refId,
+      targetVertexIndex: target.vertexIndex,
+      targetName: `G${target.name}`,
+      targetX: target.x,
+      targetY: target.y,
+      targetZ: target.z,
+      measuredX: target.x,
+      measuredY: target.y,
+      measuredZ: target.z,
+      accuracy: null,
+      sampleCount: 0,
+      durationSeconds: null,
+      notes: 'manual_mark',
+    })
+  }
+
   const cancelRecording = () => {
     if (recTimerRef.current != null) {
       window.clearTimeout(recTimerRef.current)
@@ -1115,6 +1159,27 @@ export function MobileStakingPage() {
           <Tag className="h-4 w-4" />
         </button>
         <button
+          onClick={() => setShowFilterPanel((v) => !v)}
+          className={`p-1.5 rounded relative ${
+            showFilterPanel || hiddenSubTypes.size > 0 || targetFilter !== 'all'
+              ? 'bg-blue-600'
+              : 'bg-slate-700 hover:bg-slate-600'
+          }`}
+          title="点種フィルタ"
+        >
+          <Filter className="h-4 w-4" />
+          {(hiddenSubTypes.size > 0 || targetFilter !== 'all') && (
+            <span className="absolute -top-1 -right-1 bg-amber-400 w-2 h-2 rounded-full" />
+          )}
+        </button>
+        <button
+          onClick={() => navigate(`/mobile/points?farmId=${farmId ?? ''}`)}
+          className="p-1.5 rounded bg-slate-700 hover:bg-slate-600"
+          title="測点一覧を開く"
+        >
+          <ClipboardList className="h-4 w-4" />
+        </button>
+        <button
           onClick={() => setShowRecordList((v) => !v)}
           className="p-1.5 rounded bg-slate-700 hover:bg-slate-600 relative"
           title="記録一覧"
@@ -1178,6 +1243,89 @@ export function MobileStakingPage() {
           施工管理
         </button>
       </div>
+
+      {/* 点種フィルタ（ヘッダの Filter アイコンで開閉） */}
+      {showFilterPanel && (
+        <div className="bg-white border-b">
+          <div className="px-2 py-1.5 flex items-center gap-1 flex-wrap text-[11px]">
+            <span className="text-slate-500 mr-1">種別:</span>
+            <button
+              onClick={() => setTargetFilter('all')}
+              className={`px-2 py-0.5 rounded border ${
+                targetFilter === 'all' ? 'bg-slate-800 text-white border-slate-800' : ''
+              }`}
+            >
+              全て
+            </button>
+            <button
+              onClick={() => setTargetFilter('coordinate')}
+              className={`px-2 py-0.5 rounded border ${
+                targetFilter === 'coordinate' ? 'bg-blue-600 text-white border-blue-600' : ''
+              }`}
+            >
+              座標
+            </button>
+            <button
+              onClick={() => setTargetFilter('pipe_vertex')}
+              className={`px-2 py-0.5 rounded border ${
+                targetFilter === 'pipe_vertex' ? 'bg-emerald-600 text-white border-emerald-600' : ''
+              }`}
+            >
+              暗渠頂点
+            </button>
+            {routeTargetIds.size > 0 && (
+              <button
+                onClick={() => setTargetFilter('route')}
+                className={`px-2 py-0.5 rounded border ${
+                  targetFilter === 'route'
+                    ? 'bg-orange-600 text-white border-orange-600'
+                    : ''
+                }`}
+              >
+                ルート({routeTargetIds.size})
+              </button>
+            )}
+          </div>
+          {subTypeStats.length > 1 && (
+            <div className="px-2 pb-1.5 flex items-center gap-1 flex-wrap text-[11px]">
+              <span className="text-slate-500 mr-1">点種:</span>
+              {subTypeStats.map((s) => {
+                const hidden = hiddenSubTypes.has(s.code)
+                const onCls =
+                  s.kind === 'coordinate'
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-emerald-600 text-white border-emerald-600'
+                const offCls = 'bg-white text-slate-400 border-slate-300 line-through'
+                return (
+                  <button
+                    key={s.code}
+                    onClick={() =>
+                      setHiddenSubTypes((prev) => {
+                        const next = new Set(prev)
+                        if (next.has(s.code)) next.delete(s.code)
+                        else next.add(s.code)
+                        return next
+                      })
+                    }
+                    className={`px-1.5 py-0.5 rounded border font-medium ${hidden ? offCls : onCls}`}
+                  >
+                    {s.label}
+                    <span className="ml-1 text-[10px] opacity-80">({s.count})</span>
+                  </button>
+                )
+              })}
+              {hiddenSubTypes.size > 0 && (
+                <button
+                  onClick={() => setHiddenSubTypes(new Set())}
+                  className="ml-1 px-1.5 py-0.5 text-slate-600 hover:text-slate-900 underline"
+                >
+                  全て表示
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 施工管理モードのデータ取込バー */}
       {screenMode === 'construction' && (
@@ -1270,8 +1418,15 @@ export function MobileStakingPage() {
           <FollowCurrent position={currentPos} enabled={followMode === 'self'} />
           {/* ターゲット選択時はモードに関わらず 1 度だけ中心化（継続的な追尾はしない） */}
           <CenterOnSelect
-            targetId={selectedTarget?.id ?? null}
-            positionRef={selectedTargetPosRef}
+            target={
+              selectedTarget
+                ? {
+                    id: selectedTarget.id,
+                    lat: selectedTarget.lat,
+                    lng: selectedTarget.lng,
+                  }
+                : null
+            }
           />
 
           {/* 配線ライン（吸水=青・集水=緑、選択中はオレンジ）
@@ -1879,14 +2034,33 @@ export function MobileStakingPage() {
         {/* 記録ボタン */}
         <div className="mt-2 flex gap-2">
           {!recording ? (
-            <button
-              onClick={startRecording}
-              disabled={saving || !currentPos}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed font-bold"
-            >
-              <CircleIcon className="h-5 w-5" />
-              記録 ({avgSeconds} 秒平均)
-            </button>
+            <>
+              <button
+                onClick={startRecording}
+                disabled={saving || !currentPos}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed font-bold"
+              >
+                <CircleIcon className="h-5 w-5" />
+                記録 ({avgSeconds} 秒平均)
+              </button>
+              {selectedTarget && (() => {
+                const isStaked = stakedTargetIds.has(selectedTarget.id)
+                return (
+                  <button
+                    onClick={() => handleToggleManualStaked(selectedTarget)}
+                    disabled={saving}
+                    className={`px-3 py-3 rounded-lg font-bold disabled:opacity-50 ${
+                      isStaked
+                        ? 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                        : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                    }`}
+                    title={isStaked ? '測設済マークを解除' : '記録せず測設済にマーク'}
+                  >
+                    <Check className="h-5 w-5" />
+                  </button>
+                )
+              })()}
+            </>
           ) : (
             <>
               <div className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-amber-500 text-white rounded-lg font-bold">
