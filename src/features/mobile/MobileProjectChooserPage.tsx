@@ -11,7 +11,8 @@ import { setDisplayModeOverride } from '@/lib/displayMode'
 
 export function MobileProjectChooserPage() {
   const navigate = useNavigate()
-  const { signOut } = useAuth()
+  const { signOut, user } = useAuth()
+  const userLabel = user?.email ? user.email.split('@')[0] : ''
   const { projects, loading, error, fetchProjects } = useProjectListStore()
   const { farms, fetchFarms } = useFarmStore()
 
@@ -46,8 +47,13 @@ export function MobileProjectChooserPage() {
   return (
     <div className="mobile-screen flex flex-col bg-slate-50">
       <div className="px-3 py-2 bg-slate-800 text-white flex items-center gap-2 text-sm">
-        <span className="font-medium">工事一覧（スマホ）</span>
-        <div className="ml-auto flex items-center gap-2">
+        <span className="font-medium flex-1">工事一覧（スマホ）</span>
+        {userLabel && (
+          <span className="text-[11px] text-slate-300 truncate max-w-[6rem]" title={user?.email ?? ''}>
+            {userLabel}
+          </span>
+        )}
+        <div className="flex items-center gap-2">
           <button
             onClick={handleGoPC}
             className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-500 hover:bg-slate-700"

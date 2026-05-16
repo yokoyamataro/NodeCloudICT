@@ -34,6 +34,7 @@ import { useUnderdrainStore, type PipeRow, PIPE_TYPE_NAMES } from '@/stores/unde
 import { useStakingStore, type StakingRecord } from '@/stores/stakingStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import { useExportRouteStore, type RoutePoint } from '@/stores/exportRouteStore'
+import { useAuth } from '@/contexts/AuthContext'
 import { CoordinateConverter } from '@/lib/coordinates'
 import {
   useCoordinatePointTypeStore,
@@ -220,6 +221,8 @@ export function MobileStakingPage() {
   const { setZone, fetchCoordinates, coordinates, importCoordinates } = useCoordinateStore()
   const { fetchPipes, pipes } = useUnderdrainStore()
   const { records, fetchRecords, addRecord, deleteRecord, saving } = useStakingStore()
+  const { user } = useAuth()
+  const userLabel = user?.email ? user.email.split('@')[0] : ''
 
   const [farm, setFarm] = useState<Farm | null>(null)
   const [project, setProject] = useState<Project | null>(null)
@@ -1203,6 +1206,11 @@ export function MobileStakingPage() {
           <ArrowLeft className="h-4 w-4" />
         </button>
         <span className="font-medium truncate flex-1">{title}</span>
+        {userLabel && (
+          <span className="text-[11px] text-slate-300 truncate max-w-[6rem]" title={user?.email ?? ''}>
+            {userLabel}
+          </span>
+        )}
         <button
           onClick={() => setFollowMode((m) => NEXT_FOLLOW_MODE[m])}
           className={`flex items-center gap-1 px-2 py-1.5 rounded text-[11px] font-medium ${
@@ -1443,47 +1451,6 @@ export function MobileStakingPage() {
           )}
         </>
       )}
-
-      {/* 精度インジケータ */}
-      <div
-        className="px-3 py-1 text-xs flex items-center gap-2 bg-slate-100 border-b"
-        style={{ color: accuracyColor(currentAcc) }}
-      >
-        <Radio className="h-3.5 w-3.5" />
-        <span className="font-mono">
-          精度: {currentAcc != null ? `${currentAcc.toFixed(3)} m` : '未取得'}
-        </span>
-        {currentAlt != null && (() => {
-          // 楕円体高 → 標高補正のリアルタイム表示
-          let H: number | null = null
-          if (currentPos) {
-            if (useGeoidCorrection && geoidGrid) {
-              // 直接 lookup（同期）
-              const rRow = (geoidGrid.latMax - currentPos[0]) / geoidGrid.dLat
-              const rCol = (currentPos[1] - geoidGrid.lonMin) / geoidGrid.dLon
-              if (rRow >= 0 && rCol >= 0 && rRow < geoidGrid.nrows && rCol < geoidGrid.ncols) {
-                const r0 = Math.floor(rRow), c0 = Math.floor(rCol)
-                const r1 = Math.min(r0 + 1, geoidGrid.nrows - 1)
-                const c1 = Math.min(c0 + 1, geoidGrid.ncols - 1)
-                const tr = rRow - r0, tc = rCol - c0
-                const v00 = geoidGrid.values[r0 * geoidGrid.ncols + c0]
-                const v01 = geoidGrid.values[r0 * geoidGrid.ncols + c1]
-                const v10 = geoidGrid.values[r1 * geoidGrid.ncols + c0]
-                const v11 = geoidGrid.values[r1 * geoidGrid.ncols + c1]
-                const N = (v00 * (1 - tc) + v01 * tc) * (1 - tr) + (v10 * (1 - tc) + v11 * tc) * tr
-                if (Number.isFinite(N)) H = currentAlt - N - antennaHeight
-              }
-            } else {
-              H = currentAlt - antennaHeight
-            }
-          }
-          return (
-            <span className="ml-auto text-slate-600 font-mono text-xs">
-              {H != null ? `標高 ${H.toFixed(3)} m` : `楕円体 ${currentAlt.toFixed(3)} m`}
-            </span>
-          )
-        })()}
-      </div>
 
       {/* 地図 */}
       <div className="flex-1 relative">
@@ -2097,8 +2064,8 @@ export function MobileStakingPage() {
           </button>
         )}
 
-        {/* 現在地 XYZ */}
-        <div className="mt-1 text-[11px] font-mono text-slate-600 flex items-center gap-3 border-t pt-1">
+        {/* 現在地 XYZ + 精度 */}
+        <div className="mt-1 text-[11px] font-mono text-slate-600 flex items-center gap-3 border-t pt-1 flex-wrap">
           <span className="text-slate-500">現在地</span>
           {currentXY ? (
             <>
@@ -2111,8 +2078,35 @@ export function MobileStakingPage() {
               <span>
                 Z:{' '}
                 <span className="text-slate-800">
-                  {currentAlt != null ? currentAlt.toFixed(3) : '-'}
+                  {(() => {
+                    if (currentAlt == null) return '-'
+                    // 楕円体高 → 標高（ジオイド補正 + アンテナ高）
+                    let H: number | null = null
+                    if (currentPos && useGeoidCorrection && geoidGrid) {
+                      const rRow = (geoidGrid.latMax - currentPos[0]) / geoidGrid.dLat
+                      const rCol = (currentPos[1] - geoidGrid.lonMin) / geoidGrid.dLon
+                      if (rRow >= 0 && rCol >= 0 && rRow < geoidGrid.nrows && rCol < geoidGrid.ncols) {
+                        const r0 = Math.floor(rRow), c0 = Math.floor(rCol)
+                        const r1 = Math.min(r0 + 1, geoidGrid.nrows - 1)
+                        const c1 = Math.min(c0 + 1, geoidGrid.ncols - 1)
+                        const tr = rRow - r0, tc = rCol - c0
+                        const v00 = geoidGrid.values[r0 * geoidGrid.ncols + c0]
+                        const v01 = geoidGrid.values[r0 * geoidGrid.ncols + c1]
+                        const v10 = geoidGrid.values[r1 * geoidGrid.ncols + c0]
+                        const v11 = geoidGrid.values[r1 * geoidGrid.ncols + c1]
+                        const N = (v00 * (1 - tc) + v01 * tc) * (1 - tr) + (v10 * (1 - tc) + v11 * tc) * tr
+                        if (Number.isFinite(N)) H = currentAlt - N - antennaHeight
+                      }
+                    } else if (currentPos) {
+                      H = currentAlt - antennaHeight
+                    }
+                    return (H ?? currentAlt).toFixed(3)
+                  })()}
                 </span>
+              </span>
+              <span className="inline-flex items-center gap-1" style={{ color: accuracyColor(currentAcc) }}>
+                <Radio className="h-3 w-3" />
+                {currentAcc != null ? `${currentAcc.toFixed(3)} m` : '未取得'}
               </span>
             </>
           ) : (

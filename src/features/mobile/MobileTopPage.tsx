@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Loader2, Monitor, LogOut, Map as MapIcon, Navigation, X, Crosshair, ClipboardList, ArrowLeft } from 'lucide-react'
+import { Loader2, Monitor, LogOut, Navigation, X, Crosshair, ClipboardList, ArrowLeft } from 'lucide-react'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useAuth } from '@/contexts/AuthContext'
@@ -47,7 +47,8 @@ function FitBounds({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
 export function MobileTopPage() {
   const navigate = useNavigate()
   const { projectId: routeProjectId } = useParams<{ projectId: string }>()
-  const { signOut } = useAuth()
+  const { signOut, user } = useAuth()
+  const userLabel = user?.email ? user.email.split('@')[0] : ''
   const {
     farms: allFarms,
     loading: farmsLoading,
@@ -100,11 +101,6 @@ export function MobileTopPage() {
     setActionFarm(farm)
   }
 
-  const handleOpenMap = (farm: Farm) => {
-    setActionFarm(null)
-    navigate(`/mobile/map?farmId=${farm.id}`)
-  }
-
   const handleOpenStaking = (farm: Farm) => {
     setActionFarm(null)
     navigate(`/mobile/staking?farmId=${farm.id}`)
@@ -153,6 +149,11 @@ export function MobileTopPage() {
         <span className="font-medium truncate flex-1">
           {currentProject ? currentProject.name : '圃場一覧（スマホ）'}
         </span>
+        {userLabel && (
+          <span className="text-[11px] text-slate-300 truncate max-w-[6rem]" title={user?.email ?? ''}>
+            {userLabel}
+          </span>
+        )}
         <button
           onClick={handleGoPC}
           className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-500 hover:bg-slate-700"
@@ -245,13 +246,6 @@ export function MobileTopPage() {
               </button>
             </div>
             <div className="space-y-2">
-              <button
-                onClick={() => handleOpenMap(actionFarm)}
-                className="w-full flex items-center gap-3 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
-              >
-                <MapIcon className="h-5 w-5" />
-                地図を見る
-              </button>
               <button
                 onClick={() => handleOpenStaking(actionFarm)}
                 className="w-full flex items-center gap-3 px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium"
