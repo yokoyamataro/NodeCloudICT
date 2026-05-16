@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Loader2, Monitor, LogOut, Navigation, X, Crosshair, ClipboardList, ArrowLeft } from 'lucide-react'
+import { Loader2, Monitor, LogOut, Navigation, X, Crosshair, ArrowLeft } from 'lucide-react'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useAuth } from '@/contexts/AuthContext'
@@ -252,16 +252,6 @@ export function MobileTopPage() {
               >
                 <Crosshair className="h-5 w-5" />
                 工事測量（RTK-GNSS）
-              </button>
-              <button
-                onClick={() => {
-                  setActionFarm(null)
-                  navigate(`/mobile/points?farmId=${actionFarm.id}`)
-                }}
-                className="w-full flex items-center gap-3 px-4 py-3 bg-slate-700 text-white rounded-lg hover:bg-slate-800 text-sm font-medium"
-              >
-                <ClipboardList className="h-5 w-5" />
-                測点一覧
               </button>
               <button
                 onClick={() => handleOpenDirections(actionFarm)}

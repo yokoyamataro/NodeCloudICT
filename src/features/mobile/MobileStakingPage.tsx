@@ -22,7 +22,6 @@ import {
   Navigation2,
   Share2,
   Check,
-  ClipboardList,
   Filter,
   Camera,
 } from 'lucide-react'
@@ -1268,13 +1267,6 @@ export function MobileStakingPage() {
           )}
         </button>
         <button
-          onClick={() => navigate(`/mobile/points?farmId=${farmId ?? ''}`)}
-          className="p-1.5 rounded bg-slate-700 hover:bg-slate-600"
-          title="測点一覧を開く"
-        >
-          <ClipboardList className="h-4 w-4" />
-        </button>
-        <button
           onClick={() => setShowRecordList((v) => !v)}
           className="p-1.5 rounded bg-slate-700 hover:bg-slate-600 relative"
           title="記録一覧"
@@ -2008,15 +2000,6 @@ export function MobileStakingPage() {
       {/* 下部パネル（施工管理モードでは非表示） */}
       {screenMode !== 'construction' && (
       <div className="border-t bg-white px-3 py-2 text-sm">
-        {/* 現在地を記録（ターゲット選択や測設判定を介さず、常に新点として保存） */}
-        <button
-          onClick={() => startRecording({ forceFreePoint: true })}
-          disabled={saving || !currentPos || recording}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 mb-2 bg-slate-700 text-white rounded-lg hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
-        >
-          <CircleIcon className="h-4 w-4" />
-          現在地を記録（{avgSeconds} 秒平均）
-        </button>
         {selectedTarget ? (
           <div className="flex items-center gap-3">
             <button
