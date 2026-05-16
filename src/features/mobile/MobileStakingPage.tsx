@@ -243,18 +243,18 @@ export function MobileStakingPage() {
 
   // 設定・UI
   const [avgSeconds, setAvgSeconds] = useState(3)
-  // 画面モード（起工 / 出来形 / 施工管理）— localStorage で永続化
+  // 画面モード: 起工測量のみに統一（出来形 / 施工管理 タブは削除）
+  // 旧 localStorage の値が残っていても無視して 'initial' 固定で扱う。
+  // 型は union のままにして既存の `screenMode === 'construction'` 等を
+  // 残しても TS 警告にならないようにする（条件は常に false で評価される）
   type ScreenMode = 'initial' | 'asbuilt' | 'construction'
-  const [screenMode, setScreenMode] = useState<ScreenMode>(() => {
-    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('survey:screenMode') : null
-    if (saved === 'asbuilt' || saved === 'construction') return saved
-    return 'initial'
-  })
+  const [screenMode] = useState<ScreenMode>('initial')
+  // 旧キーの掃除（マウント時に一度だけ）
   useEffect(() => {
-    try { localStorage.setItem('survey:screenMode', screenMode) } catch { /* ignore */ }
-  }, [screenMode])
-  // 保存記録に紐付ける区分（施工管理時は記録自体を行わない）
-  const surveyCategory: 'initial' | 'asbuilt' = screenMode === 'asbuilt' ? 'asbuilt' : 'initial'
+    try { localStorage.removeItem('survey:screenMode') } catch { /* ignore */ }
+  }, [])
+  // 保存記録に紐付ける区分（常に 起工測量）
+  const surveyCategory: 'initial' | 'asbuilt' = 'initial'
   // アンテナ高 (m)。RTK ローバーのアンテナ位相中心〜地表（測点）までの高さ
   const [antennaHeight, setAntennaHeight] = useState<number>(() => {
     const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('rtk:antennaHeight') : null
@@ -1323,37 +1323,6 @@ export function MobileStakingPage() {
           onSelect={handleConfirmPhotoCategory}
         />
       )}
-
-      {/* 画面モード（起工 / 出来形 / 施工管理）切替 */}
-      <div className="px-2 py-1 bg-slate-700 text-white flex items-center gap-1 text-xs border-b border-slate-600">
-        <button
-          onClick={() => setScreenMode('initial')}
-          disabled={recording}
-          className={`flex-1 px-2 py-1 rounded ${
-            screenMode === 'initial' ? 'bg-blue-600 font-medium' : 'bg-slate-600 hover:bg-slate-500'
-          }`}
-        >
-          起工測量
-        </button>
-        <button
-          onClick={() => setScreenMode('asbuilt')}
-          disabled={recording}
-          className={`flex-1 px-2 py-1 rounded ${
-            screenMode === 'asbuilt' ? 'bg-emerald-600 font-medium' : 'bg-slate-600 hover:bg-slate-500'
-          }`}
-        >
-          出来形測量
-        </button>
-        <button
-          onClick={() => setScreenMode('construction')}
-          disabled={recording}
-          className={`flex-1 px-2 py-1 rounded ${
-            screenMode === 'construction' ? 'bg-cyan-600 font-medium' : 'bg-slate-600 hover:bg-slate-500'
-          }`}
-        >
-          施工管理
-        </button>
-      </div>
 
       {/* 点種フィルタ（ヘッダの Filter アイコンで開閉） */}
       {showFilterPanel && (
