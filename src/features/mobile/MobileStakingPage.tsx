@@ -1153,12 +1153,11 @@ export function MobileStakingPage() {
     )
   }
 
-  const title = project ? `${project.name} / ${farm?.name}` : (farm?.name ?? '工事測量')
 
   return (
     <div className="mobile-screen flex flex-col">
-      {/* ヘッダー */}
-      <div className="px-2 py-2 bg-slate-800 text-white flex items-center gap-2 text-sm">
+      {/* ヘッダー（1 行目: 戻る・工事名・圃場名・ユーザー名） */}
+      <div className="px-2 py-1.5 bg-slate-800 text-white flex items-center gap-2 text-sm">
         <button
           onClick={() => navigate('/mobile')}
           className="flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-700"
@@ -1166,12 +1165,24 @@ export function MobileStakingPage() {
         >
           <ArrowLeft className="h-4 w-4" />
         </button>
-        <span className="font-medium truncate flex-1">{title}</span>
+        <div className="flex-1 min-w-0 flex items-baseline gap-2">
+          {project && (
+            <span className="text-[11px] text-slate-300 truncate max-w-[40%]" title={project.name}>
+              {project.name}
+            </span>
+          )}
+          <span className="font-medium truncate flex-1" title={farm?.name ?? ''}>
+            {farm?.name ?? '工事測量'}
+          </span>
+        </div>
         {userLabel && (
           <span className="text-[11px] text-slate-300 truncate max-w-[6rem]" title={user?.email ?? ''}>
             {userLabel}
           </span>
         )}
+      </div>
+      {/* ヘッダー（2 行目: ツールボタン群） */}
+      <div className="px-2 py-1.5 bg-slate-800 text-white flex items-center gap-2 text-sm border-t border-slate-700">
         <button
           onClick={() => setFollowMode((m) => NEXT_FOLLOW_MODE[m])}
           className={`flex items-center gap-1 px-2 py-1.5 rounded text-[11px] font-medium ${
