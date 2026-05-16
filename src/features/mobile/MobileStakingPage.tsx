@@ -217,7 +217,7 @@ export function MobileStakingPage() {
     byProject: pointTypesByProject,
     fetchForProject: fetchPointTypes,
   } = useCoordinatePointTypeStore()
-  const { setZone, fetchCoordinates, coordinates } = useCoordinateStore()
+  const { setZone, fetchCoordinates, coordinates, importCoordinates } = useCoordinateStore()
   const { fetchPipes, pipes } = useUnderdrainStore()
   const { records, fetchRecords, addRecord, deleteRecord, saving } = useStakingStore()
   const { user } = useAuth()
@@ -329,6 +329,11 @@ export function MobileStakingPage() {
   const [selectedPipeId, setSelectedPipeId] = useState<string | null>(null)
   // 共有リンクのトースト表示
   const [shareToast, setShareToast] = useState<string | null>(null)
+  // 誤差超過時の選択モーダル: 計測完了時に resolver を保持して回答を待つ
+  const [errorChoice, setErrorChoice] = useState<{
+    distance: number
+    resolve: (choice: 'stake' | 'free' | 'cancel') => void
+  } | null>(null)
 
   // 記録状態
   const [recording, setRecording] = useState(false)
@@ -909,7 +914,7 @@ export function MobileStakingPage() {
 
     const { x, y } = converter.toXY(avgLat, avgLng)
 
-    // 内部フラグは互換のため残すが、現状は新点フォールバックを行わない
+    // 互換用フラグ（将来再利用に備えて残置）
     recForceFreeRef.current = false
 
     if (!selectedTarget) {
@@ -917,7 +922,6 @@ export function MobileStakingPage() {
       return
     }
 
-    // ターゲットとの距離が許容外なら記録しない（新点フォールバックは廃止）
     const dX = selectedTarget.x != null ? x - selectedTarget.x : null
     const dY = selectedTarget.y != null ? y - selectedTarget.y : null
     const dist = dX != null && dY != null ? Math.hypot(dX, dY) : null
@@ -925,19 +929,21 @@ export function MobileStakingPage() {
       alert('ターゲットの座標が無いため照合できません。')
       return
     }
+
+    // 誤差超過時はユーザーに 3 択（そのまま測設 / 新点 / キャンセル）を聞く
+    let mode: 'stake' | 'free' = 'stake'
     if (dist > STAKE_TOLERANCE_M) {
-      alert(
-        `誤差が大きすぎます（${dist.toFixed(3)} m / 許容 ${STAKE_TOLERANCE_M.toFixed(2)} m）。\n` +
-          'ターゲット位置に近づいて再度記録してください。',
-      )
-      return
+      const choice = await new Promise<'stake' | 'free' | 'cancel'>((resolve) => {
+        setErrorChoice({ distance: dist, resolve })
+      })
+      if (choice === 'cancel') return
+      mode = choice
     }
 
-    // 測設記録の点名: 元の点名に "G" を前置。
-    // 同じターゲット（farmId + surveyCategory + targetRefId + vertexIndex）に対する
-    // 記録が既にある場合は "_2", "_3" ... を末尾に付与する。
-    let stakeRecordName: string | null = null
-    {
+    if (mode === 'stake') {
+      // 測設記録の点名: 元の点名に "G" を前置。
+      // 同じターゲット（farmId + surveyCategory + targetRefId + vertexIndex）に対する
+      // 記録が既にある場合は "_2", "_3" ... を末尾に付与する。
       const base = `G${selectedTarget.name}`
       const existing = records.filter(
         (r) =>
@@ -947,19 +953,57 @@ export function MobileStakingPage() {
           r.targetRefId === selectedTarget.refId &&
           r.targetVertexIndex === selectedTarget.vertexIndex,
       ).length
-      stakeRecordName = existing === 0 ? base : `${base}_${existing + 1}`
+      const stakeRecordName = existing === 0 ? base : `${base}_${existing + 1}`
+
+      const saved = await addRecord({
+        farmId,
+        surveyCategory,
+        targetType: selectedTarget.kind,
+        targetRefId: selectedTarget.refId,
+        targetVertexIndex: selectedTarget.vertexIndex,
+        targetName: stakeRecordName,
+        targetX: selectedTarget.x,
+        targetY: selectedTarget.y,
+        targetZ: selectedTarget.z,
+        measuredX: x,
+        measuredY: y,
+        measuredZ: avgAlt,
+        accuracy: maxAcc || null,
+        sampleCount: samples.length,
+        durationSeconds: avgSeconds,
+        notes: null,
+      })
+      if (saved) {
+        alert(
+          `${stakeRecordName} を測設しました（ターゲット: ${selectedTarget.name}）\n` +
+            `誤差 ${dist.toFixed(3)} m / 精度 ${maxAcc.toFixed(3)} m / ${samples.length} サンプル`,
+        )
+        const idx = filteredTargets.findIndex((t) => t.id === selectedTarget.id)
+        const next = idx >= 0 ? filteredTargets[idx + 1] : null
+        setSelectedTargetId(next?.id ?? null)
+      }
+      return
     }
 
+    // mode === 'free' : 新点として記録（点名は入力）
+    const freeCount = records.filter((r) => r.targetType === 'free').length
+    const defaultName = `新点-${freeCount + 1}`
+    const input = window.prompt(
+      `新点として記録します（誤差 ${dist.toFixed(3)} m）。\n点名を入力してください:`,
+      defaultName,
+    )
+    if (input === null) return
+    const freePointName = input.trim() || defaultName
     const saved = await addRecord({
       farmId,
       surveyCategory,
-      targetType: selectedTarget.kind,
-      targetRefId: selectedTarget.refId,
-      targetVertexIndex: selectedTarget.vertexIndex,
-      targetName: stakeRecordName,
-      targetX: selectedTarget.x,
-      targetY: selectedTarget.y,
-      targetZ: selectedTarget.z,
+      targetType: 'free',
+      targetRefId: null,
+      targetVertexIndex: null,
+      targetName: freePointName,
+      targetX: null,
+      targetY: null,
+      targetZ: null,
       measuredX: x,
       measuredY: y,
       measuredZ: avgAlt,
@@ -969,14 +1013,27 @@ export function MobileStakingPage() {
       notes: null,
     })
     if (saved) {
-      const msg =
-        `${stakeRecordName} を測設しました（ターゲット: ${selectedTarget.name}）\n` +
-        `誤差 ${dist.toFixed(3)} m / 精度 ${maxAcc.toFixed(3)} m / ${samples.length} サンプル`
-      // alert はブロッキング。OK 押下後にターゲットを次の順路点へ進める。
-      alert(msg)
-      const idx = filteredTargets.findIndex((t) => t.id === selectedTarget.id)
-      const next = idx >= 0 ? filteredTargets[idx + 1] : null
-      setSelectedTargetId(next?.id ?? null)
+      // 新点は座標管理にも 現況点 として自動登録（重複点番号があればスキップ）
+      const exists = coordinates.some((c) => c.pointNumber === freePointName)
+      if (!exists) {
+        try {
+          await importCoordinates([
+            {
+              pointNumber: freePointName,
+              x,
+              y,
+              z: avgAlt,
+              type: 'current' as unknown as CoordinateRow['type'],
+            },
+          ])
+        } catch {
+          // 座標登録に失敗しても staking_records は保存済みなので致命ではない
+        }
+      }
+      alert(
+        `${freePointName} を新点として記録しました\n` +
+          `精度 ${maxAcc.toFixed(3)} m / ${samples.length} サンプル`,
+      )
     }
   }
 
@@ -1295,6 +1352,48 @@ export function MobileStakingPage() {
           onCancel={handleCancelPhoto}
           onSelect={handleConfirmPhotoCategory}
         />
+      )}
+      {/* 誤差超過時の選択モーダル */}
+      {errorChoice && (
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3000]">
+          <div className="bg-white w-full sm:max-w-sm rounded-t-xl sm:rounded-xl shadow-xl p-4">
+            <h3 className="text-base font-bold mb-1">位置がずれています</h3>
+            <p className="text-sm text-slate-600 mb-3">
+              ターゲットから <span className="font-mono font-bold">{errorChoice.distance.toFixed(3)} m</span>{' '}
+              離れています（許容 {STAKE_TOLERANCE_M.toFixed(2)} m）。<br />
+              どのように記録しますか？
+            </p>
+            <div className="space-y-2">
+              <button
+                onClick={() => {
+                  errorChoice.resolve('stake')
+                  setErrorChoice(null)
+                }}
+                className="w-full px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium"
+              >
+                そのまま測設として記録
+              </button>
+              <button
+                onClick={() => {
+                  errorChoice.resolve('free')
+                  setErrorChoice(null)
+                }}
+                className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
+              >
+                新点として記録
+              </button>
+              <button
+                onClick={() => {
+                  errorChoice.resolve('cancel')
+                  setErrorChoice(null)
+                }}
+                className="w-full px-4 py-2 border rounded-lg hover:bg-slate-50 text-sm"
+              >
+                キャンセル
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 点種フィルタ（ヘッダの Filter アイコンで開閉） */}
