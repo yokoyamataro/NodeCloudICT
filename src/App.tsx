@@ -11,6 +11,7 @@ import { CoordinatesPage } from '@/features/coordinates/CoordinatesPage'
 import { SiteMapWindowPage } from '@/features/coordinates/SiteMapWindowPage'
 // スマホ画面
 import { MobileTopPage } from '@/features/mobile/MobileTopPage'
+import { MobileProjectChooserPage } from '@/features/mobile/MobileProjectChooserPage'
 import { MobileDetailMapPage } from '@/features/mobile/MobileDetailMapPage'
 import { MobileStakingPage } from '@/features/mobile/MobileStakingPage'
 import { MobilePointListPage } from '@/features/mobile/MobilePointListPage'
@@ -104,6 +105,14 @@ function AppRoutes() {
         {/* スマホ画面（AppLayout を介さない、ボタンで切替） */}
         <Route
           path="/mobile"
+          element={
+            <ProtectedRoute>
+              <MobileProjectChooserPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/mobile/farms/:projectId"
           element={
             <ProtectedRoute>
               <MobileTopPage />

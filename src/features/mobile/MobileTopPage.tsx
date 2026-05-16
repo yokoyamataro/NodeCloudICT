@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Loader2, Monitor, LogOut, Map as MapIcon, Navigation, X, Crosshair, ClipboardList } from 'lucide-react'
+import { Loader2, Monitor, LogOut, Map as MapIcon, Navigation, X, Crosshair, ClipboardList, ArrowLeft } from 'lucide-react'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
+import { useProjectListStore } from '@/stores/projectListStore'
 import { useAuth } from '@/contexts/AuthContext'
 import { CurrentLocationLayer } from '@/components/map/CurrentLocationLayer'
 import { setDisplayModeOverride } from '@/lib/displayMode'
@@ -45,22 +46,35 @@ function FitBounds({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
 
 export function MobileTopPage() {
   const navigate = useNavigate()
+  const { projectId: routeProjectId } = useParams<{ projectId: string }>()
   const { signOut } = useAuth()
   const {
-    farms,
+    farms: allFarms,
     loading: farmsLoading,
     fetchFarms,
     farmLocations,
     workAreaPolygons,
     fetchWorkAreaPolygons,
   } = useFarmStore()
+  const { projects, fetchProjects } = useProjectListStore()
 
   // 圃場クリック時のアクション選択ダイアログ
   const [actionFarm, setActionFarm] = useState<Farm | null>(null)
 
   useEffect(() => {
     fetchFarms()
-  }, [fetchFarms])
+    fetchProjects()
+  }, [fetchFarms, fetchProjects])
+
+  // URL の projectId に該当する工事の圃場のみ表示
+  const farms = useMemo(
+    () => (routeProjectId ? allFarms.filter((f) => f.project_id === routeProjectId) : allFarms),
+    [allFarms, routeProjectId],
+  )
+  const currentProject = useMemo(
+    () => (routeProjectId ? projects.find((p) => p.id === routeProjectId) : null),
+    [projects, routeProjectId],
+  )
 
   useEffect(() => {
     if (farms.length > 0) fetchWorkAreaPolygons()
@@ -127,24 +141,33 @@ export function MobileTopPage() {
   return (
     <div className="mobile-screen flex flex-col">
       <div className="px-3 py-2 bg-slate-800 text-white flex items-center gap-2 text-sm">
-        <span className="font-medium">圃場一覧（スマホ）</span>
-        <div className="ml-auto flex items-center gap-2">
+        {routeProjectId && (
           <button
-            onClick={handleGoPC}
-            className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-500 hover:bg-slate-700"
-            title="PC表示へ切替"
+            onClick={() => navigate('/mobile')}
+            className="p-1 rounded hover:bg-slate-700"
+            title="工事一覧"
           >
-            <Monitor className="h-3.5 w-3.5" />
-            PC表示
+            <ArrowLeft className="h-4 w-4" />
           </button>
-          <button
-            onClick={handleSignOut}
-            className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-500 hover:bg-slate-700"
-            title="ログアウト"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-          </button>
-        </div>
+        )}
+        <span className="font-medium truncate flex-1">
+          {currentProject ? currentProject.name : '圃場一覧（スマホ）'}
+        </span>
+        <button
+          onClick={handleGoPC}
+          className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-500 hover:bg-slate-700"
+          title="PC表示へ切替"
+        >
+          <Monitor className="h-3.5 w-3.5" />
+          PC表示
+        </button>
+        <button
+          onClick={handleSignOut}
+          className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-500 hover:bg-slate-700"
+          title="ログアウト"
+        >
+          <LogOut className="h-3.5 w-3.5" />
+        </button>
       </div>
 
       <div className="flex-1 relative">

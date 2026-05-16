@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Upload, Download, Plus, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Settings } from 'lucide-react'
+import { Upload, Download, Plus, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Settings, Camera } from 'lucide-react'
+import { CoordinatePhotoModal } from './CoordinatePhotoModal'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
@@ -246,6 +247,9 @@ export function CoordinatesPage() {
     [projectId, pointTypesByProject],
   )
   const [showPointTypeModal, setShowPointTypeModal] = useState(false)
+
+  // 写真モーダル: 開いている座標 ID
+  const [photoCoordId, setPhotoCoordId] = useState<string | null>(null)
 
   // 新しく追加されたカスタム点種は既定で表示する
   useEffect(() => {
@@ -798,7 +802,7 @@ export function CoordinatesPage() {
                 <th className="px-0.5 py-2 text-left font-medium">種類</th>
                 <th className="px-0.5 py-2 text-right font-medium">緯度</th>
                 <th className="px-0.5 py-2 text-right font-medium">経度</th>
-                <th className="px-1 py-2 w-8"></th>
+                <th className="px-1 py-2 w-16"></th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -871,7 +875,17 @@ export function CoordinatesPage() {
                   <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono">
                     {coord.lng?.toFixed(6) ?? '-'}
                   </td>
-                  <td className="px-1 py-0.5">
+                  <td className="px-1 py-0.5 flex items-center gap-0.5">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setPhotoCoordId(coord.id)
+                      }}
+                      className="p-1 text-blue-600 hover:bg-blue-50 rounded"
+                      title="写真"
+                    >
+                      <Camera className="h-3.5 w-3.5" />
+                    </button>
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
@@ -965,7 +979,7 @@ export function CoordinatesPage() {
                       <th className="px-0.5 py-2 text-left font-medium">種類</th>
                       <th className="px-0.5 py-2 text-right font-medium">緯度</th>
                       <th className="px-0.5 py-2 text-right font-medium">経度</th>
-                      <th className="px-1 py-2 w-8"></th>
+                      <th className="px-1 py-2 w-16"></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -1258,6 +1272,20 @@ export function CoordinatesPage() {
         }}
         onRemove={async (id) => removePointType(id)}
       />
+
+      {/* 写真モーダル */}
+      {photoCoordId && projectId && (() => {
+        const target = coordinates.find((c) => c.id === photoCoordId)
+        return (
+          <CoordinatePhotoModal
+            open={!!photoCoordId}
+            onClose={() => setPhotoCoordId(null)}
+            projectId={projectId}
+            coordinateId={photoCoordId}
+            pointNumber={target?.pointNumber ?? '-'}
+          />
+        )
+      })()}
     </div>
   )
 }

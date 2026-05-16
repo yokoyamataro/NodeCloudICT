@@ -24,6 +24,7 @@ import {
   Check,
   ClipboardList,
   Filter,
+  Camera,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
@@ -38,6 +39,7 @@ import {
   useCoordinatePointTypeStore,
   getCoordinateTypeLabel,
 } from '@/stores/coordinatePointTypeStore'
+import { useAttachmentStore } from '@/stores/attachmentStore'
 import { parseLandXml } from '@/lib/landxml/parser'
 import { indexTin, queryZ, type TinIndex, type TinSurfaceLike } from '@/lib/landxml/tinInterpolation'
 import { buildTrenchTin } from '@/lib/landxml/surface'
@@ -294,6 +296,15 @@ export function MobileStakingPage() {
   const [hiddenSubTypes, setHiddenSubTypes] = useState<Set<string>>(new Set())
   // フィルタパネル（点種チップ＋種別ボタン）の表示
   const [showFilterPanel, setShowFilterPanel] = useState(false)
+  // 写真撮影フロー: 撮影された File を保持しカテゴリ選択モーダルを開く
+  const photoInputRef = useRef<HTMLInputElement>(null)
+  const [pendingPhoto, setPendingPhoto] = useState<{
+    file: File
+    target: StakingTarget
+  } | null>(null)
+  const [photoUploading, setPhotoUploading] = useState(false)
+  const [photoToast, setPhotoToast] = useState<string | null>(null)
+  const { uploadPhoto } = useAttachmentStore()
   const [showLabels, setShowLabels] = useState(false)
   const [showRouteLine, setShowRouteLine] = useState(true)
 
@@ -1041,6 +1052,51 @@ export function MobileStakingPage() {
     }
   }, [])
 
+  // 写真撮影フロー
+  const handleOpenCameraForSelected = () => {
+    if (!selectedTarget) return
+    photoInputRef.current?.click()
+  }
+  const handlePhotoFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !selectedTarget) return
+    setPendingPhoto({ file, target: selectedTarget })
+  }
+  const handleCancelPhoto = () => setPendingPhoto(null)
+  const handleConfirmPhotoCategory = async (category: string) => {
+    if (!pendingPhoto || !farm?.project_id) return
+    if (pendingPhoto.target.kind !== 'coordinate') {
+      // 暗渠頂点向けは将来対応。ここでは座標のみ。
+      alert('現状は座標管理点の写真のみ登録できます。')
+      setPendingPhoto(null)
+      return
+    }
+    setPhotoUploading(true)
+    try {
+      const saved = await uploadPhoto({
+        projectId: farm.project_id,
+        entityType: 'coordinate',
+        entityId: pendingPhoto.target.refId,
+        file: pendingPhoto.file,
+        category,
+        takenAt: new Date(),
+        lat: currentPos?.[0] ?? null,
+        lng: currentPos?.[1] ?? null,
+      })
+      if (saved) {
+        setPhotoToast(`${category} の写真を登録しました`)
+        window.setTimeout(() => setPhotoToast(null), 2500)
+      } else {
+        setPhotoToast('登録に失敗しました')
+        window.setTimeout(() => setPhotoToast(null), 3000)
+      }
+    } finally {
+      setPhotoUploading(false)
+      setPendingPhoto(null)
+    }
+  }
+
   // 公開ビュー URL を取得して共有 or クリップボードコピー
   const handleShare = async () => {
     if (!farmId) return
@@ -1211,6 +1267,30 @@ export function MobileStakingPage() {
         <div className="absolute top-14 left-1/2 -translate-x-1/2 z-[2000] px-3 py-2 bg-slate-900 text-white text-xs rounded shadow-lg">
           {shareToast}
         </div>
+      )}
+      {/* 写真トースト */}
+      {photoToast && (
+        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-[2000] px-3 py-2 bg-slate-900 text-white text-xs rounded shadow-lg">
+          {photoToast}
+        </div>
+      )}
+      {/* 写真入力（不可視） */}
+      <input
+        ref={photoInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handlePhotoFileSelected}
+        className="hidden"
+      />
+      {/* カテゴリ選択モーダル */}
+      {pendingPhoto && (
+        <PhotoCategoryModal
+          targetName={pendingPhoto.target.name}
+          uploading={photoUploading}
+          onCancel={handleCancelPhoto}
+          onSelect={handleConfirmPhotoCategory}
+        />
       )}
 
       {/* 画面モード（起工 / 出来形 / 施工管理）切替 */}
@@ -2046,18 +2126,34 @@ export function MobileStakingPage() {
               {selectedTarget && (() => {
                 const isStaked = stakedTargetIds.has(selectedTarget.id)
                 return (
-                  <button
-                    onClick={() => handleToggleManualStaked(selectedTarget)}
-                    disabled={saving}
-                    className={`px-3 py-3 rounded-lg font-bold disabled:opacity-50 ${
-                      isStaked
-                        ? 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-                        : 'bg-emerald-600 text-white hover:bg-emerald-700'
-                    }`}
-                    title={isStaked ? '測設済マークを解除' : '記録せず測設済にマーク'}
-                  >
-                    <Check className="h-5 w-5" />
-                  </button>
+                  <>
+                    {selectedTarget.kind === 'coordinate' && (
+                      <button
+                        onClick={handleOpenCameraForSelected}
+                        disabled={photoUploading}
+                        className="px-3 py-3 rounded-lg font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                        title="写真撮影"
+                      >
+                        {photoUploading ? (
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                        ) : (
+                          <Camera className="h-5 w-5" />
+                        )}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleToggleManualStaked(selectedTarget)}
+                      disabled={saving}
+                      className={`px-3 py-3 rounded-lg font-bold disabled:opacity-50 ${
+                        isStaked
+                          ? 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                          : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                      }`}
+                      title={isStaked ? '測設済マークを解除' : '記録せず測設済にマーク'}
+                    >
+                      <Check className="h-5 w-5" />
+                    </button>
+                  </>
                 )
               })()}
             </>
@@ -2164,6 +2260,92 @@ function RecordList({
         )
       })}
     </ul>
+  )
+}
+
+// 撮影後カテゴリ選択モーダル: 遠景 / 近景 / 任意（名称入力）
+function PhotoCategoryModal({
+  targetName,
+  uploading,
+  onCancel,
+  onSelect,
+}: {
+  targetName: string
+  uploading: boolean
+  onCancel: () => void
+  onSelect: (category: string) => void
+}) {
+  const [customMode, setCustomMode] = useState(false)
+  const [customName, setCustomName] = useState('')
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3000]">
+      <div className="bg-white w-full sm:max-w-sm rounded-t-xl sm:rounded-xl shadow-xl p-4">
+        <div className="mb-3">
+          <div className="text-xs text-slate-500">写真の種別</div>
+          <div className="text-base font-bold truncate">{targetName}</div>
+        </div>
+        {customMode ? (
+          <div className="space-y-2">
+            <input
+              type="text"
+              autoFocus
+              value={customName}
+              onChange={(e) => setCustomName(e.target.value)}
+              placeholder="任意の名称（例: 起点付近、施工状況）"
+              className="w-full px-3 py-2 border rounded text-sm"
+              disabled={uploading}
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => setCustomMode(false)}
+                disabled={uploading}
+                className="flex-1 px-3 py-2 text-sm border rounded hover:bg-slate-50"
+              >
+                戻る
+              </button>
+              <button
+                onClick={() => customName.trim() && onSelect(customName.trim())}
+                disabled={uploading || !customName.trim()}
+                className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+              >
+                {uploading ? '登録中…' : '登録'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <button
+              onClick={() => onSelect('遠景')}
+              disabled={uploading}
+              className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
+            >
+              遠景
+            </button>
+            <button
+              onClick={() => onSelect('近景')}
+              disabled={uploading}
+              className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
+            >
+              近景
+            </button>
+            <button
+              onClick={() => setCustomMode(true)}
+              disabled={uploading}
+              className="w-full px-4 py-3 border border-blue-300 text-blue-700 rounded-lg hover:bg-blue-50 disabled:opacity-50 text-sm font-medium"
+            >
+              任意（名称入力）
+            </button>
+            <button
+              onClick={onCancel}
+              disabled={uploading}
+              className="w-full px-4 py-2 border rounded-lg hover:bg-slate-50 text-sm"
+            >
+              キャンセル
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 
