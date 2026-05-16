@@ -334,6 +334,9 @@ export function MobileStakingPage() {
   const recSamplesRef = useRef<Array<{ lat: number; lng: number; alt: number | null; acc: number | null }>>([])
   const recTimerRef = useRef<number | null>(null)
   const recCleanupRef = useRef<(() => void) | null>(null)
+  // 「現在地を記録」ボタンで起動した場合は、ターゲット測設判定をスキップして
+  // 必ず新点として保存する
+  const recForceFreeRef = useRef<boolean>(false)
 
   // データ読込
   useEffect(() => {
@@ -815,7 +818,7 @@ export function MobileStakingPage() {
   }, [targets, records])
 
   // 記録開始
-  const startRecording = () => {
+  const startRecording = (opts: { forceFreePoint?: boolean } = {}) => {
     if (recording) return
     if (!('geolocation' in navigator)) {
       alert('Geolocation が利用できません')
@@ -824,6 +827,7 @@ export function MobileStakingPage() {
     if (!farmId) return
     recSamplesRef.current = []
     setRecordedCount(0)
+    recForceFreeRef.current = !!opts.forceFreePoint
     setRecording(true)
 
     const watchId = navigator.geolocation.watchPosition(
@@ -903,11 +907,15 @@ export function MobileStakingPage() {
 
     const { x, y } = converter.toXY(avgLat, avgLng)
 
+    // 「現在地を記録」で起動した場合はターゲット測設判定をスキップ
+    const forceFree = recForceFreeRef.current
+    recForceFreeRef.current = false
+
     // ターゲットとの距離を測って許容内なら「測設」、そうでなければ「新点」として保存
-    const dX = selectedTarget?.x != null ? x - selectedTarget.x : null
-    const dY = selectedTarget?.y != null ? y - selectedTarget.y : null
+    const dX = !forceFree && selectedTarget?.x != null ? x - selectedTarget.x : null
+    const dY = !forceFree && selectedTarget?.y != null ? y - selectedTarget.y : null
     const dist = dX != null && dY != null ? Math.hypot(dX, dY) : null
-    const isStake = !!(selectedTarget && dist !== null && dist <= STAKE_TOLERANCE_M)
+    const isStake = !forceFree && !!(selectedTarget && dist !== null && dist <= STAKE_TOLERANCE_M)
 
     // 新点（free）の場合は点名を入力させる。キャンセルされたら保存しない。
     let freePointName: string | null = null
@@ -1042,6 +1050,7 @@ export function MobileStakingPage() {
     recSamplesRef.current = []
     setRecordedCount(0)
     setRecording(false)
+    recForceFreeRef.current = false
   }
 
   // アンマウント時のクリーンアップ
@@ -2041,6 +2050,15 @@ export function MobileStakingPage() {
       {/* 下部パネル（施工管理モードでは非表示） */}
       {screenMode !== 'construction' && (
       <div className="border-t bg-white px-3 py-2 text-sm">
+        {/* 現在地を記録（ターゲット選択や測設判定を介さず、常に新点として保存） */}
+        <button
+          onClick={() => startRecording({ forceFreePoint: true })}
+          disabled={saving || !currentPos || recording}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 mb-2 bg-slate-700 text-white rounded-lg hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+        >
+          <CircleIcon className="h-4 w-4" />
+          現在地を記録（{avgSeconds} 秒平均）
+        </button>
         {selectedTarget ? (
           <div className="flex items-center gap-3">
             <button
