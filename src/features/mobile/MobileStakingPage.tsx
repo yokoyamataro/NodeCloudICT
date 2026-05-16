@@ -217,7 +217,7 @@ export function MobileStakingPage() {
     byProject: pointTypesByProject,
     fetchForProject: fetchPointTypes,
   } = useCoordinatePointTypeStore()
-  const { setZone, fetchCoordinates, coordinates, importCoordinates } = useCoordinateStore()
+  const { setZone, fetchCoordinates, coordinates } = useCoordinateStore()
   const { fetchPipes, pipes } = useUnderdrainStore()
   const { records, fetchRecords, addRecord, deleteRecord, saving } = useStakingStore()
   const { user } = useAuth()
@@ -909,38 +909,35 @@ export function MobileStakingPage() {
 
     const { x, y } = converter.toXY(avgLat, avgLng)
 
-    // 「現在地を記録」で起動した場合はターゲット測設判定をスキップ
-    const forceFree = recForceFreeRef.current
+    // 内部フラグは互換のため残すが、現状は新点フォールバックを行わない
     recForceFreeRef.current = false
 
-    // ターゲットとの距離を測って許容内なら「測設」、そうでなければ「新点」として保存
-    const dX = !forceFree && selectedTarget?.x != null ? x - selectedTarget.x : null
-    const dY = !forceFree && selectedTarget?.y != null ? y - selectedTarget.y : null
-    const dist = dX != null && dY != null ? Math.hypot(dX, dY) : null
-    const isStake = !forceFree && !!(selectedTarget && dist !== null && dist <= STAKE_TOLERANCE_M)
+    if (!selectedTarget) {
+      alert('ターゲットが選択されていません。地図またはリストから選択してから記録してください。')
+      return
+    }
 
-    // 新点（free）の場合は点名を入力させる。キャンセルされたら保存しない。
-    let freePointName: string | null = null
-    if (!isStake) {
-      const freeCount = records.filter((r) => r.targetType === 'free').length
-      const defaultName = `新点-${freeCount + 1}`
-      const promptMsg =
-        selectedTarget && dist !== null
-          ? `誤差が大きいため新点として記録します（${dist.toFixed(3)} m）。\n点名を入力してください:`
-          : '新点として記録します。点名を入力してください:'
-      const input = window.prompt(promptMsg, defaultName)
-      if (input === null) {
-        // キャンセル → 保存中止
-        return
-      }
-      freePointName = input.trim() || defaultName
+    // ターゲットとの距離が許容外なら記録しない（新点フォールバックは廃止）
+    const dX = selectedTarget.x != null ? x - selectedTarget.x : null
+    const dY = selectedTarget.y != null ? y - selectedTarget.y : null
+    const dist = dX != null && dY != null ? Math.hypot(dX, dY) : null
+    if (dist === null) {
+      alert('ターゲットの座標が無いため照合できません。')
+      return
+    }
+    if (dist > STAKE_TOLERANCE_M) {
+      alert(
+        `誤差が大きすぎます（${dist.toFixed(3)} m / 許容 ${STAKE_TOLERANCE_M.toFixed(2)} m）。\n` +
+          'ターゲット位置に近づいて再度記録してください。',
+      )
+      return
     }
 
     // 測設記録の点名: 元の点名に "G" を前置。
     // 同じターゲット（farmId + surveyCategory + targetRefId + vertexIndex）に対する
     // 記録が既にある場合は "_2", "_3" ... を末尾に付与する。
     let stakeRecordName: string | null = null
-    if (isStake && selectedTarget) {
+    {
       const base = `G${selectedTarget.name}`
       const existing = records.filter(
         (r) =>
@@ -956,13 +953,13 @@ export function MobileStakingPage() {
     const saved = await addRecord({
       farmId,
       surveyCategory,
-      targetType: isStake ? selectedTarget!.kind : 'free',
-      targetRefId: isStake ? selectedTarget!.refId : null,
-      targetVertexIndex: isStake ? selectedTarget!.vertexIndex : null,
-      targetName: isStake ? stakeRecordName : freePointName,
-      targetX: isStake ? selectedTarget!.x : null,
-      targetY: isStake ? selectedTarget!.y : null,
-      targetZ: isStake ? selectedTarget!.z : null,
+      targetType: selectedTarget.kind,
+      targetRefId: selectedTarget.refId,
+      targetVertexIndex: selectedTarget.vertexIndex,
+      targetName: stakeRecordName,
+      targetX: selectedTarget.x,
+      targetY: selectedTarget.y,
+      targetZ: selectedTarget.z,
       measuredX: x,
       measuredY: y,
       measuredZ: avgAlt,
@@ -972,49 +969,14 @@ export function MobileStakingPage() {
       notes: null,
     })
     if (saved) {
-      let msg: string
-      if (isStake && selectedTarget) {
-        msg =
-          `${stakeRecordName} を測設しました（ターゲット: ${selectedTarget.name}）\n` +
-          `誤差 ${dist!.toFixed(3)} m / 精度 ${maxAcc.toFixed(3)} m / ${samples.length} サンプル`
-      } else if (selectedTarget && dist !== null) {
-        msg =
-          `${freePointName} を新点として記録しました（誤差 ${dist.toFixed(3)} m）\n` +
-          `精度 ${maxAcc.toFixed(3)} m / ${samples.length} サンプル`
-      } else {
-        msg =
-          `${freePointName} を新点として記録しました\n` +
-          `精度 ${maxAcc.toFixed(3)} m / ${samples.length} サンプル`
-      }
-
-      // 新点は座標管理にも 現況点 として自動登録（重複点番号があればスキップ）
-      if (!isStake && freePointName) {
-        const exists = coordinates.some((c) => c.pointNumber === freePointName)
-        if (!exists) {
-          try {
-            await importCoordinates([
-              {
-                pointNumber: freePointName,
-                x,
-                y,
-                z: avgAlt,
-                // CoordinateType の TEXT 値として 'current'（現況）を使う
-                type: 'current' as unknown as CoordinateRow['type'],
-              },
-            ])
-          } catch {
-            // 座標登録に失敗しても staking_records は保存済みなので致命ではない
-          }
-        }
-      }
-
+      const msg =
+        `${stakeRecordName} を測設しました（ターゲット: ${selectedTarget.name}）\n` +
+        `誤差 ${dist.toFixed(3)} m / 精度 ${maxAcc.toFixed(3)} m / ${samples.length} サンプル`
       // alert はブロッキング。OK 押下後にターゲットを次の順路点へ進める。
       alert(msg)
-      if (isStake && selectedTarget) {
-        const idx = filteredTargets.findIndex((t) => t.id === selectedTarget.id)
-        const next = idx >= 0 ? filteredTargets[idx + 1] : null
-        setSelectedTargetId(next?.id ?? null)
-      }
+      const idx = filteredTargets.findIndex((t) => t.id === selectedTarget.id)
+      const next = idx >= 0 ? filteredTargets[idx + 1] : null
+      setSelectedTargetId(next?.id ?? null)
     }
   }
 
