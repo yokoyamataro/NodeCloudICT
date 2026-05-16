@@ -805,7 +805,9 @@ export function MobileStakingPage() {
     return out
   }, [pipes, converter])
 
-  // 既に測設済み（記録の measuredXY とターゲット XY が許容範囲内で一致）のターゲット ID 集合
+  // 既に測設済みのターゲット ID 集合
+  // 同じ refId/vertexIndex で targetType が free 以外の記録があれば測設済みとみなす
+  // （許容超過で「そのまま測設」を選んだ場合も測設済みに含めるため、距離判定は行わない）
   const stakedTargetIds = useMemo(() => {
     const set = new Set<string>()
     for (const t of targets) {
@@ -814,10 +816,7 @@ export function MobileStakingPage() {
         if (r.targetType !== t.kind) return false
         if (r.targetRefId !== t.refId) return false
         if (t.kind === 'pipe_vertex' && r.targetVertexIndex !== t.vertexIndex) return false
-        if (r.targetX == null || r.targetY == null) return false
-        const dx = r.measuredX - r.targetX
-        const dy = r.measuredY - r.targetY
-        return Math.hypot(dx, dy) <= STAKE_TOLERANCE_M
+        return true
       })
       if (hit) set.add(t.id)
     }
