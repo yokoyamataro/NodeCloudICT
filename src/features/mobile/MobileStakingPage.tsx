@@ -217,7 +217,7 @@ export function MobileStakingPage() {
     byProject: pointTypesByProject,
     fetchForProject: fetchPointTypes,
   } = useCoordinatePointTypeStore()
-  const { setZone, fetchCoordinates, coordinates } = useCoordinateStore()
+  const { setZone, fetchCoordinates, coordinates, importCoordinates } = useCoordinateStore()
   const { fetchPipes, pipes } = useUnderdrainStore()
   const { records, fetchRecords, addRecord, deleteRecord, saving } = useStakingStore()
 
@@ -984,6 +984,28 @@ export function MobileStakingPage() {
           `${freePointName} を新点として記録しました\n` +
           `精度 ${maxAcc.toFixed(3)} m / ${samples.length} サンプル`
       }
+
+      // 新点は座標管理にも 現況点 として自動登録（重複点番号があればスキップ）
+      if (!isStake && freePointName) {
+        const exists = coordinates.some((c) => c.pointNumber === freePointName)
+        if (!exists) {
+          try {
+            await importCoordinates([
+              {
+                pointNumber: freePointName,
+                x,
+                y,
+                z: avgAlt,
+                // CoordinateType の TEXT 値として 'current'（現況）を使う
+                type: 'current' as unknown as CoordinateRow['type'],
+              },
+            ])
+          } catch {
+            // 座標登録に失敗しても staking_records は保存済みなので致命ではない
+          }
+        }
+      }
+
       // alert はブロッキング。OK 押下後にターゲットを次の順路点へ進める。
       alert(msg)
       if (isStake && selectedTarget) {
