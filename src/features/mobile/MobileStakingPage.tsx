@@ -24,6 +24,7 @@ import {
   Check,
   Filter,
   Camera,
+  Car,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
@@ -40,6 +41,7 @@ import {
   getCoordinateTypeLabel,
 } from '@/stores/coordinatePointTypeStore'
 import { CoordinatePhotoModal } from '@/features/coordinates/CoordinatePhotoModal'
+import { useAttachmentStore } from '@/stores/attachmentStore'
 import { parseLandXml } from '@/lib/landxml/parser'
 import { indexTin, queryZ, type TinIndex, type TinSurfaceLike } from '@/lib/landxml/tinInterpolation'
 import { buildTrenchTin } from '@/lib/landxml/surface'
@@ -218,6 +220,10 @@ export function MobileStakingPage() {
     fetchForProject: fetchPointTypes,
   } = useCoordinatePointTypeStore()
   const { setZone, fetchCoordinates, coordinates, importCoordinates } = useCoordinateStore()
+  const {
+    byEntity: attachmentsByEntity,
+    fetchByEntityIds: fetchAttachments,
+  } = useAttachmentStore()
   const { fetchPipes, pipes } = useUnderdrainStore()
   const { records, fetchRecords, addRecord, deleteRecord, saving } = useStakingStore()
   const { user } = useAuth()
@@ -390,6 +396,12 @@ export function MobileStakingPage() {
       cancelled = true
     }
   }, [farmId, setCurrentFarm, setZone, fetchCoordinates, fetchPipes, fetchRecords])
+
+  // 座標が読み込まれたら、写真の枚数を一括取得（カメラボタンのバッジ表示用）
+  useEffect(() => {
+    if (coordinates.length === 0) return
+    fetchAttachments('coordinate', coordinates.map((c) => c.id))
+  }, [coordinates, fetchAttachments])
 
   // 方位センサー（DeviceOrientation）リスナー
   useEffect(() => {
@@ -1189,6 +1201,30 @@ export function MobileStakingPage() {
             {farm?.name ?? '工事測量'}
           </span>
         </div>
+        {/* 道案内（Google マップ） — 圃場の中心座標へ */}
+        <button
+          onClick={() => {
+            // 座標の平均位置を目的地とする
+            const locs = coordinates.filter(
+              (c): c is typeof c & { lat: number; lng: number } =>
+                c.lat != null && c.lng != null,
+            )
+            if (locs.length === 0) {
+              alert('圃場の位置情報が取得できません')
+              return
+            }
+            const lat = locs.reduce((s, l) => s + l.lat, 0) / locs.length
+            const lng = locs.reduce((s, l) => s + l.lng, 0) / locs.length
+            window.open(
+              `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`,
+              '_blank',
+            )
+          }}
+          className="p-1.5 rounded hover:bg-slate-700"
+          title="道案内（Google マップ）"
+        >
+          <Car className="h-4 w-4" />
+        </button>
         {userLabel && (
           <span className="text-[11px] text-slate-300 truncate max-w-[6rem]" title={user?.email ?? ''}>
             {userLabel}
@@ -2126,15 +2162,24 @@ export function MobileStakingPage() {
               </button>
               {selectedTarget && (() => {
                 const isStaked = stakedTargetIds.has(selectedTarget.id)
+                const photoCount =
+                  selectedTarget.kind === 'coordinate'
+                    ? (attachmentsByEntity.get(`coordinate:${selectedTarget.refId}`)?.length ?? 0)
+                    : 0
                 return (
                   <>
                     {selectedTarget.kind === 'coordinate' && (
                       <button
                         onClick={handleOpenPhotoModal}
-                        className="px-3 py-3 rounded-lg font-bold bg-blue-600 text-white hover:bg-blue-700"
+                        className="relative px-3 py-3 rounded-lg font-bold bg-blue-600 text-white hover:bg-blue-700"
                         title="写真（撮影・閲覧）"
                       >
                         <Camera className="h-5 w-5" />
+                        {photoCount > 0 && (
+                          <span className="absolute -top-1 -right-1 bg-amber-400 text-slate-900 text-[10px] font-bold rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">
+                            {photoCount > 99 ? '99+' : photoCount}
+                          </span>
+                        )}
                       </button>
                     )}
                     <button
@@ -2142,10 +2187,10 @@ export function MobileStakingPage() {
                       disabled={saving}
                       className={`px-3 py-3 rounded-lg font-bold disabled:opacity-50 ${
                         isStaked
-                          ? 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-                          : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                          ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                          : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
                       }`}
-                      title={isStaked ? '測設済マークを解除' : '記録せず測設済にマーク'}
+                      title={isStaked ? '測設済（タップで解除）' : '記録せず測設済としてマーク'}
                     >
                       <Check className="h-5 w-5" />
                     </button>

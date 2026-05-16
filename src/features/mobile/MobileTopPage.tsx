@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Loader2, Monitor, LogOut, Navigation, X, Crosshair, ArrowLeft } from 'lucide-react'
+import { Loader2, Monitor, LogOut, ArrowLeft } from 'lucide-react'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useAuth } from '@/contexts/AuthContext'
@@ -59,9 +59,6 @@ export function MobileTopPage() {
   } = useFarmStore()
   const { projects, fetchProjects } = useProjectListStore()
 
-  // 圃場クリック時のアクション選択ダイアログ
-  const [actionFarm, setActionFarm] = useState<Farm | null>(null)
-
   useEffect(() => {
     fetchFarms()
     fetchProjects()
@@ -97,21 +94,9 @@ export function MobileTopPage() {
     return { lat: avgLat, lng: avgLng }
   }, [farmLocations])
 
+  // 圃場タップで直接工事測量画面へ
   const handleFarmClick = (farm: Farm) => {
-    setActionFarm(farm)
-  }
-
-  const handleOpenStaking = (farm: Farm) => {
-    setActionFarm(null)
     navigate(`/mobile/staking?farmId=${farm.id}`)
-  }
-
-  const handleOpenDirections = (farm: Farm) => {
-    const loc = farmLocations.get(farm.id)
-    if (!loc) return
-    setActionFarm(null)
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${loc.lat},${loc.lng}`
-    window.open(url, '_blank')
   }
 
   const handleGoPC = () => {
@@ -223,53 +208,6 @@ export function MobileTopPage() {
         )}
       </div>
 
-      {/* 圃場アクション選択 */}
-      {actionFarm && (
-        <div
-          className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-[2000]"
-          onClick={() => setActionFarm(null)}
-        >
-          <div
-            className="bg-white w-full sm:max-w-sm rounded-t-xl sm:rounded-xl shadow-xl p-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <div className="text-xs text-slate-500">圃場</div>
-                <div className="text-base font-bold">{actionFarm.name}</div>
-              </div>
-              <button
-                onClick={() => setActionFarm(null)}
-                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="space-y-2">
-              <button
-                onClick={() => handleOpenStaking(actionFarm)}
-                className="w-full flex items-center gap-3 px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium"
-              >
-                <Crosshair className="h-5 w-5" />
-                工事測量（RTK-GNSS）
-              </button>
-              <button
-                onClick={() => handleOpenDirections(actionFarm)}
-                className="w-full flex items-center gap-3 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium"
-              >
-                <Navigation className="h-5 w-5" />
-                道案内（Google マップ）
-              </button>
-              <button
-                onClick={() => setActionFarm(null)}
-                className="w-full px-4 py-2.5 border rounded-lg hover:bg-slate-50 text-sm"
-              >
-                キャンセル
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
