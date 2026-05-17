@@ -39,7 +39,7 @@ interface CoordinateState {
   addCoordinate: (type: CoordinateType) => Promise<void>
   updateCoordinate: (id: string, field: keyof CoordinateRow, value: string | number | null) => void
   deleteCoordinate: (id: string) => Promise<void>
-  importCoordinates: (coords: Omit<CoordinateRow, 'id' | 'lat' | 'lng'>[]) => Promise<void>
+  importCoordinates: (coords: Omit<CoordinateRow, 'id' | 'lat' | 'lng'>[]) => Promise<CoordinateRow[]>
   clearCoordinates: () => Promise<void>
   getCoordinateById: (id: string) => CoordinateRow | undefined
 
@@ -230,7 +230,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
     const farmId = getCurrentFarmId()
     if (!farmId) {
       set({ error: '圃場が選択されていません' })
-      return
+      return []
     }
 
     const state = get()
@@ -276,8 +276,10 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
       }))
 
       set({ coordinates: [...state.coordinates, ...newCoords] })
+      return newCoords
     } catch (err) {
       set({ error: err instanceof Error ? err.message : '座標のインポートに失敗しました' })
+      return []
     }
   },
 

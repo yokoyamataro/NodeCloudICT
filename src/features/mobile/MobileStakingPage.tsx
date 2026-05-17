@@ -342,6 +342,17 @@ export function MobileStakingPage() {
     target: StakingTarget
     resolve: () => void
   } | null>(null)
+  // 新点計測完了モーダル: 名前入力 + プレビュー + OK / 写真 / キャンセル
+  const [freePointDialog, setFreePointDialog] = useState<{
+    defaultName: string
+    x: number
+    y: number
+    z: number | null
+    distance: number | null
+    accuracy: number
+    sampleCount: number
+    antennaHeight: number
+  } | null>(null)
 
   // 記録状態
   const [recording, setRecording] = useState(false)
@@ -998,56 +1009,83 @@ export function MobileStakingPage() {
       return
     }
 
-    // mode === 'free' : 新点として記録（点名は入力）
+    // mode === 'free' : 新点計測完了モーダルを開いて確定を待つ
     const freeCount = records.filter((r) => r.targetType === 'free').length
     const defaultName = `新点-${freeCount + 1}`
-    const promptMsg =
-      dist != null
-        ? `新点として記録します（誤差 ${dist.toFixed(3)} m）。\n点名を入力してください:`
-        : '新点として記録します。点名を入力してください:'
-    const input = window.prompt(promptMsg, defaultName)
-    if (input === null) return
-    const freePointName = input.trim() || defaultName
+    setFreePointDialog({
+      defaultName,
+      x,
+      y,
+      z: avgAlt,
+      distance: dist,
+      accuracy: maxAcc,
+      sampleCount: samples.length,
+      antennaHeight,
+    })
+  }
+
+  // 新点モーダルからの確定処理（OK or 写真撮影）
+  const handleFreePointConfirm = async (name: string, openPhoto: boolean) => {
+    const d = freePointDialog
+    if (!d || !farmId) return
+    setFreePointDialog(null)
     const saved = await addRecord({
       farmId,
       surveyCategory,
       targetType: 'free',
       targetRefId: null,
       targetVertexIndex: null,
-      targetName: freePointName,
+      targetName: name,
       targetX: null,
       targetY: null,
       targetZ: null,
-      measuredX: x,
-      measuredY: y,
-      measuredZ: avgAlt,
-      accuracy: maxAcc || null,
-      sampleCount: samples.length,
+      measuredX: d.x,
+      measuredY: d.y,
+      measuredZ: d.z,
+      accuracy: d.accuracy || null,
+      sampleCount: d.sampleCount,
       durationSeconds: avgSeconds,
       notes: null,
     })
-    if (saved) {
-      // 新点は座標管理にも 現況点 として自動登録（重複点番号があればスキップ）
-      const exists = coordinates.some((c) => c.pointNumber === freePointName)
-      if (!exists) {
-        try {
-          await importCoordinates([
-            {
-              pointNumber: freePointName,
-              x,
-              y,
-              z: avgAlt,
-              type: 'current' as unknown as CoordinateRow['type'],
-            },
-          ])
-        } catch {
-          // 座標登録に失敗しても staking_records は保存済みなので致命ではない
-        }
+    if (!saved) return
+    // 座標管理に 現況点 として登録（重複点番号があればスキップ）
+    const exists = coordinates.some((c) => c.pointNumber === name)
+    let createdId: string | null = null
+    if (!exists) {
+      try {
+        const inserted = await importCoordinates([
+          {
+            pointNumber: name,
+            x: d.x,
+            y: d.y,
+            z: d.z,
+            type: 'current' as unknown as CoordinateRow['type'],
+          },
+        ])
+        if (inserted.length > 0) createdId = inserted[0].id
+      } catch {
+        // 座標登録失敗は致命ではない
       }
-      alert(
-        `${freePointName} を新点として記録しました\n` +
-          `精度 ${maxAcc.toFixed(3)} m / ${samples.length} サンプル`,
-      )
+    } else {
+      const hit = coordinates.find((c) => c.pointNumber === name)
+      createdId = hit?.id ?? null
+    }
+    if (openPhoto && createdId && farm?.project_id) {
+      // 写真モーダルを開くために、StakingTarget 形式に変換
+      setPhotoModalTarget({
+        id: `c-${createdId}`,
+        kind: 'coordinate',
+        refId: createdId,
+        vertexIndex: null,
+        name,
+        x: d.x,
+        y: d.y,
+        z: d.z,
+        lat: 0,
+        lng: 0,
+        subType: 'current',
+        subTypeLabel: '現況',
+      })
     }
   }
 
@@ -1419,6 +1457,14 @@ export function MobileStakingPage() {
           projectId={farm.project_id}
           coordinateId={photoModalTarget.refId}
           pointNumber={photoModalTarget.name}
+        />
+      )}
+      {/* 新点計測完了モーダル */}
+      {freePointDialog && (
+        <FreePointDialog
+          data={freePointDialog}
+          onConfirm={handleFreePointConfirm}
+          onCancel={() => setFreePointDialog(null)}
         />
       )}
       {/* 測設完了モーダル（OK の上に写真撮影ボタン） */}
@@ -2373,6 +2419,91 @@ function RecordList({
         )
       })}
     </ul>
+  )
+}
+
+// 新点計測完了モーダル
+function FreePointDialog({
+  data,
+  onConfirm,
+  onCancel,
+}: {
+  data: {
+    defaultName: string
+    x: number
+    y: number
+    z: number | null
+    distance: number | null
+    accuracy: number
+    sampleCount: number
+    antennaHeight: number
+  }
+  onConfirm: (name: string, openPhoto: boolean) => void
+  onCancel: () => void
+}) {
+  const [name, setName] = useState(data.defaultName)
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3000]">
+      <div className="bg-white w-full sm:max-w-sm rounded-t-xl sm:rounded-xl shadow-xl p-4">
+        <h3 className="text-base font-bold mb-3">新点計測完了</h3>
+
+        <label className="block text-xs text-slate-500 mb-1">点名</label>
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="w-full px-2 py-1.5 border rounded text-sm mb-3"
+          autoFocus
+        />
+
+        <div className="text-sm font-mono space-y-1 mb-3 bg-slate-50 rounded p-2">
+          <div>X = <span className="text-slate-800">{data.x.toFixed(3)}</span></div>
+          <div>Y = <span className="text-slate-800">{data.y.toFixed(3)}</span></div>
+          <div>Z = <span className="text-slate-800">{data.z != null ? data.z.toFixed(3) : '-'}</span></div>
+        </div>
+
+        <div className="text-[11px] text-slate-600 flex flex-wrap gap-x-3 gap-y-0.5 mb-4">
+          <span>
+            誤差 = <span className="font-mono">{data.distance != null ? `${data.distance.toFixed(3)} m` : '-'}</span>
+          </span>
+          <span>
+            アンテナ高 = <span className="font-mono">{data.antennaHeight.toFixed(3)} m</span>
+          </span>
+          <span>
+            精度 = <span className="font-mono">{data.accuracy.toFixed(3)} m</span>
+          </span>
+          <span>
+            サンプル = <span className="font-mono">{data.sampleCount}</span>
+          </span>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            <button
+              onClick={() => onConfirm(name.trim() || data.defaultName, false)}
+              disabled={!name.trim()}
+              className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
+            >
+              OK
+            </button>
+            <button
+              onClick={() => onConfirm(name.trim() || data.defaultName, true)}
+              disabled={!name.trim()}
+              className="px-4 py-2.5 bg-slate-700 text-white rounded-lg hover:bg-slate-800 disabled:opacity-50 flex items-center justify-center"
+              title="登録して写真撮影"
+            >
+              <Camera className="h-5 w-5" />
+            </button>
+          </div>
+          <button
+            onClick={onCancel}
+            className="w-full px-4 py-2 border rounded-lg hover:bg-slate-50 text-sm"
+          >
+            キャンセル
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
