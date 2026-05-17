@@ -928,30 +928,29 @@ export function MobileStakingPage() {
     // 互換用フラグ（将来再利用に備えて残置）
     recForceFreeRef.current = false
 
-    if (!selectedTarget) {
-      alert('ターゲットが選択されていません。地図またはリストから選択してから記録してください。')
-      return
-    }
-
-    const dX = selectedTarget.x != null ? x - selectedTarget.x : null
-    const dY = selectedTarget.y != null ? y - selectedTarget.y : null
-    const dist = dX != null && dY != null ? Math.hypot(dX, dY) : null
-    if (dist === null) {
-      alert('ターゲットの座標が無いため照合できません。')
-      return
-    }
-
-    // 誤差超過時はユーザーに 3 択（そのまま測設 / 新点 / キャンセル）を聞く
+    // ターゲット未選択時 or ターゲットに座標が無い場合 → 新点記録に直行
     let mode: 'stake' | 'free' = 'stake'
-    if (dist > STAKE_TOLERANCE_M) {
-      const choice = await new Promise<'stake' | 'free' | 'cancel'>((resolve) => {
-        setErrorChoice({ distance: dist, resolve })
-      })
-      if (choice === 'cancel') return
-      mode = choice
+    let dist: number | null = null
+    if (!selectedTarget) {
+      mode = 'free'
+    } else {
+      const dX = selectedTarget.x != null ? x - selectedTarget.x : null
+      const dY = selectedTarget.y != null ? y - selectedTarget.y : null
+      dist = dX != null && dY != null ? Math.hypot(dX, dY) : null
+      if (dist === null) {
+        // 座標欠落のターゲット → 新点扱い
+        mode = 'free'
+      } else if (dist > STAKE_TOLERANCE_M) {
+        // 誤差超過時はユーザーに 3 択を聞く
+        const choice = await new Promise<'stake' | 'free' | 'cancel'>((resolve) => {
+          setErrorChoice({ distance: dist as number, resolve })
+        })
+        if (choice === 'cancel') return
+        mode = choice
+      }
     }
 
-    if (mode === 'stake') {
+    if (mode === 'stake' && selectedTarget && dist != null) {
       // 測設記録の点名: 元の点名に "G" を前置。
       // 同じターゲット（farmId + surveyCategory + targetRefId + vertexIndex）に対する
       // 記録が既にある場合は "_2", "_3" ... を末尾に付与する。
@@ -1002,10 +1001,11 @@ export function MobileStakingPage() {
     // mode === 'free' : 新点として記録（点名は入力）
     const freeCount = records.filter((r) => r.targetType === 'free').length
     const defaultName = `新点-${freeCount + 1}`
-    const input = window.prompt(
-      `新点として記録します（誤差 ${dist.toFixed(3)} m）。\n点名を入力してください:`,
-      defaultName,
-    )
+    const promptMsg =
+      dist != null
+        ? `新点として記録します（誤差 ${dist.toFixed(3)} m）。\n点名を入力してください:`
+        : '新点として記録します。点名を入力してください:'
+    const input = window.prompt(promptMsg, defaultName)
     if (input === null) return
     const freePointName = input.trim() || defaultName
     const saved = await addRecord({
