@@ -309,7 +309,7 @@ export function MobileStakingPage() {
   const [showFilterPanel, setShowFilterPanel] = useState(false)
   // 写真モーダル: 選択中ターゲット（座標）の写真を閲覧／撮影できる
   const [photoModalTarget, setPhotoModalTarget] = useState<StakingTarget | null>(null)
-  const [showLabels, setShowLabels] = useState(false)
+  const [showLabels, setShowLabels] = useState(true)
   const [showRouteLine, setShowRouteLine] = useState(true)
 
   // 施工管理モード用：中心線形 / 床掘 TIN / 現況 TIN
@@ -1373,14 +1373,14 @@ export function MobileStakingPage() {
           className="p-1.5 rounded bg-slate-700 hover:bg-slate-600"
           title="SIMA インポート"
         >
-          <Upload className="h-4 w-4" />
+          <Download className="h-4 w-4" />
         </button>
         <button
           onClick={handleSimExport}
           className="p-1.5 rounded bg-slate-700 hover:bg-slate-600"
           title="SIMA エクスポート"
         >
-          <Download className="h-4 w-4" />
+          <Upload className="h-4 w-4" />
         </button>
         <button
           onClick={handleShare}
@@ -1404,10 +1404,12 @@ export function MobileStakingPage() {
         </div>
       )}
       {/* SIM 入力（不可視） */}
+      {/* モバイルでは accept フィルタが厳しいと .sim を選べないことがあるため
+          全ファイルから選択させる */}
       <input
         ref={simInputRef}
         type="file"
-        accept=".sim,.SIM,.smc,.SMC"
+        accept="*/*"
         onChange={handleSimImported}
         className="hidden"
       />
