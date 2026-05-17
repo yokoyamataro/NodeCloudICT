@@ -647,10 +647,8 @@ export function MobileStakingPage() {
       })
     }
     for (const pipe of pipes as PipeRow[]) {
-      const pType = pipe.pipeType ?? 'unknown'
-      const pLabel = pipe.pipeType
-        ? PIPE_TYPE_NAMES[pipe.pipeType]
-        : '管種未設定'
+      // 暗渠頂点は点種（基準点/外周点/現況）と並列で扱うため、管種別ではなく
+      // 一括で '_pipe_vertex' / '暗渠頂点' として 1 つの subType にまとめる
       for (let i = 0; i < pipe.vertices.length; i++) {
         const v = pipe.vertices[i]
         try {
@@ -672,8 +670,8 @@ export function MobileStakingPage() {
             z: v.z,
             lat,
             lng,
-            subType: pType,
-            subTypeLabel: pLabel,
+            subType: '_pipe_vertex',
+            subTypeLabel: '暗渠頂点',
           })
         } catch {
           // skip
@@ -1403,13 +1401,13 @@ export function MobileStakingPage() {
           {shareToast}
         </div>
       )}
-      {/* SIM 入力（不可視） */}
-      {/* モバイルでは accept フィルタが厳しいと .sim を選べないことがあるため
-          全ファイルから選択させる */}
+      {/* SIM 入力（不可視）
+          image MIME を含めると iOS で「写真ライブラリ」「写真撮影」が
+          選択肢に出てしまうため、非画像 MIME のみ指定してファイルピッカーに直行させる */}
       <input
         ref={simInputRef}
         type="file"
-        accept="*/*"
+        accept=".sim,.SIM,application/octet-stream,text/plain"
         onChange={handleSimImported}
         className="hidden"
       />
@@ -1503,86 +1501,61 @@ export function MobileStakingPage() {
         </div>
       )}
 
-      {/* 点種フィルタ（ヘッダの Filter アイコンで開閉） */}
+      {/* 点種フィルタ（ヘッダの Filter アイコンで開閉）
+          基準点 / 外周点 / 現況 / 暗渠頂点（あれば）を並列で表示 */}
       {showFilterPanel && (
         <div className="bg-white border-b">
           <div className="px-2 py-1.5 flex items-center gap-1 flex-wrap text-[11px]">
-            <span className="text-slate-500 mr-1">種別:</span>
-            <button
-              onClick={() => setTargetFilter('all')}
-              className={`px-2 py-0.5 rounded border ${
-                targetFilter === 'all' ? 'bg-slate-800 text-white border-slate-800' : ''
-              }`}
-            >
-              全て
-            </button>
-            <button
-              onClick={() => setTargetFilter('coordinate')}
-              className={`px-2 py-0.5 rounded border ${
-                targetFilter === 'coordinate' ? 'bg-blue-600 text-white border-blue-600' : ''
-              }`}
-            >
-              座標
-            </button>
-            <button
-              onClick={() => setTargetFilter('pipe_vertex')}
-              className={`px-2 py-0.5 rounded border ${
-                targetFilter === 'pipe_vertex' ? 'bg-emerald-600 text-white border-emerald-600' : ''
-              }`}
-            >
-              暗渠頂点
-            </button>
+            <span className="text-slate-500 mr-1">点種:</span>
+            {subTypeStats.map((s) => {
+              const hidden = hiddenSubTypes.has(s.code)
+              const onCls =
+                s.kind === 'coordinate'
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-emerald-600 text-white border-emerald-600'
+              const offCls = 'bg-white text-slate-400 border-slate-300 line-through'
+              return (
+                <button
+                  key={s.code}
+                  onClick={() =>
+                    setHiddenSubTypes((prev) => {
+                      const next = new Set(prev)
+                      if (next.has(s.code)) next.delete(s.code)
+                      else next.add(s.code)
+                      return next
+                    })
+                  }
+                  className={`px-1.5 py-0.5 rounded border font-medium ${hidden ? offCls : onCls}`}
+                >
+                  {s.label}
+                  <span className="ml-1 text-[10px] opacity-80">({s.count})</span>
+                </button>
+              )
+            })}
+            {/* ルート絞り込み（順路が登録済みの圃場でのみ表示） */}
             {routeTargetIds.size > 0 && (
               <button
-                onClick={() => setTargetFilter('route')}
-                className={`px-2 py-0.5 rounded border ${
+                onClick={() =>
+                  setTargetFilter((prev) => (prev === 'route' ? 'all' : 'route'))
+                }
+                className={`px-1.5 py-0.5 rounded border font-medium ml-1 ${
                   targetFilter === 'route'
                     ? 'bg-orange-600 text-white border-orange-600'
-                    : ''
+                    : 'bg-white text-orange-700 border-orange-400'
                 }`}
               >
-                ルート({routeTargetIds.size})
+                ルート ({routeTargetIds.size})
+              </button>
+            )}
+            {hiddenSubTypes.size > 0 && (
+              <button
+                onClick={() => setHiddenSubTypes(new Set())}
+                className="ml-1 px-1.5 py-0.5 text-slate-600 hover:text-slate-900 underline"
+              >
+                全て表示
               </button>
             )}
           </div>
-          {subTypeStats.length > 1 && (
-            <div className="px-2 pb-1.5 flex items-center gap-1 flex-wrap text-[11px]">
-              <span className="text-slate-500 mr-1">点種:</span>
-              {subTypeStats.map((s) => {
-                const hidden = hiddenSubTypes.has(s.code)
-                const onCls =
-                  s.kind === 'coordinate'
-                    ? 'bg-blue-600 text-white border-blue-600'
-                    : 'bg-emerald-600 text-white border-emerald-600'
-                const offCls = 'bg-white text-slate-400 border-slate-300 line-through'
-                return (
-                  <button
-                    key={s.code}
-                    onClick={() =>
-                      setHiddenSubTypes((prev) => {
-                        const next = new Set(prev)
-                        if (next.has(s.code)) next.delete(s.code)
-                        else next.add(s.code)
-                        return next
-                      })
-                    }
-                    className={`px-1.5 py-0.5 rounded border font-medium ${hidden ? offCls : onCls}`}
-                  >
-                    {s.label}
-                    <span className="ml-1 text-[10px] opacity-80">({s.count})</span>
-                  </button>
-                )
-              })}
-              {hiddenSubTypes.size > 0 && (
-                <button
-                  onClick={() => setHiddenSubTypes(new Set())}
-                  className="ml-1 px-1.5 py-0.5 text-slate-600 hover:text-slate-900 underline"
-                >
-                  全て表示
-                </button>
-              )}
-            </div>
-          )}
         </div>
       )}
 
@@ -1967,51 +1940,22 @@ export function MobileStakingPage() {
                 <span className="text-slate-400"> / {filteredTargets.length}</span>
               </span>
               <div className="ml-2 flex gap-1 text-xs">
-                <button
-                  onClick={() => setTargetFilter('all')}
-                  className={`px-2 py-0.5 rounded border ${
-                    targetFilter === 'all' ? 'bg-slate-800 text-white border-slate-800' : ''
-                  }`}
-                >
-                  全て
-                </button>
-                <button
-                  onClick={() => setTargetFilter('coordinate')}
-                  className={`px-2 py-0.5 rounded border ${
-                    targetFilter === 'coordinate' ? 'bg-blue-600 text-white border-blue-600' : ''
-                  }`}
-                >
-                  座標
-                </button>
-                <button
-                  onClick={() => setTargetFilter('pipe_vertex')}
-                  className={`px-2 py-0.5 rounded border ${
-                    targetFilter === 'pipe_vertex' ? 'bg-emerald-600 text-white border-emerald-600' : ''
-                  }`}
-                >
-                  暗渠頂点
-                </button>
-                <button
-                  onClick={() => routeTargetIds.size > 0 && setTargetFilter('route')}
-                  disabled={routeTargetIds.size === 0}
-                  className={`px-2 py-0.5 rounded border ${
-                    targetFilter === 'route'
-                      ? 'bg-orange-600 text-white border-orange-600'
-                      : routeTargetIds.size === 0
-                      ? 'opacity-40 cursor-not-allowed'
-                      : ''
-                  }`}
-                  title={
-                    routeTargetIds.size === 0
-                      ? 'PC の座標計算で順路をサーバ保存すると有効になります'
-                      : `保存済み順路の点のみを順番通りに表示（${routeTargetIds.size}点）`
-                  }
-                >
-                  ルート
-                  {routeTargetIds.size > 0 && (
+                {routeTargetIds.size > 0 && (
+                  <button
+                    onClick={() =>
+                      setTargetFilter((prev) => (prev === 'route' ? 'all' : 'route'))
+                    }
+                    className={`px-2 py-0.5 rounded border ${
+                      targetFilter === 'route'
+                        ? 'bg-orange-600 text-white border-orange-600'
+                        : ''
+                    }`}
+                    title={`保存済み順路の点のみを順番通りに表示（${routeTargetIds.size}点）`}
+                  >
+                    ルート
                     <span className="ml-1 text-[10px] opacity-80">({routeTargetIds.size})</span>
-                  )}
-                </button>
+                  </button>
+                )}
                 {targetFilter === 'route' && (
                   <button
                     onClick={() => setShowRouteLine((v) => !v)}
