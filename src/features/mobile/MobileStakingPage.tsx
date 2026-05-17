@@ -25,6 +25,8 @@ import {
   Filter,
   Camera,
   Car,
+  Upload,
+  Download,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
@@ -35,6 +37,7 @@ import { useStakingStore, type StakingRecord } from '@/stores/stakingStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import { useExportRouteStore, type RoutePoint } from '@/stores/exportRouteStore'
 import { useAuth } from '@/contexts/AuthContext'
+import { loadSimaFile, downloadSimaFile } from '@/lib/sima-parser'
 import { CoordinateConverter } from '@/lib/coordinates'
 import {
   useCoordinatePointTypeStore,
@@ -332,6 +335,12 @@ export function MobileStakingPage() {
   const [errorChoice, setErrorChoice] = useState<{
     distance: number
     resolve: (choice: 'stake' | 'free' | 'cancel') => void
+  } | null>(null)
+  // 測設完了モーダル: 結果メッセージ + 写真撮影 / OK
+  const [postStakeDialog, setPostStakeDialog] = useState<{
+    message: string
+    target: StakingTarget
+    resolve: () => void
   } | null>(null)
 
   // 記録状態
@@ -978,10 +987,13 @@ export function MobileStakingPage() {
         notes: null,
       })
       if (saved) {
-        alert(
+        const msg =
           `${stakeRecordName} を測設しました（ターゲット: ${selectedTarget.name}）\n` +
-            `誤差 ${dist.toFixed(3)} m / 精度 ${maxAcc.toFixed(3)} m / ${samples.length} サンプル`,
-        )
+          `誤差 ${dist.toFixed(3)} m / 精度 ${maxAcc.toFixed(3)} m / ${samples.length} サンプル`
+        // 結果モーダルを開いて OK を待つ（OK の上に「写真撮影」ボタンも表示）
+        await new Promise<void>((resolve) => {
+          setPostStakeDialog({ message: msg, target: selectedTarget, resolve })
+        })
         const idx = filteredTargets.findIndex((t) => t.id === selectedTarget.id)
         const next = idx >= 0 ? filteredTargets[idx + 1] : null
         setSelectedTargetId(next?.id ?? null)
@@ -1116,6 +1128,61 @@ export function MobileStakingPage() {
       return
     }
     setPhotoModalTarget(selectedTarget)
+  }
+
+  // SIM インポート
+  const simInputRef = useRef<HTMLInputElement>(null)
+  const handleOpenSimImport = () => simInputRef.current?.click()
+  const handleSimImported = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !farmId) return
+    try {
+      const result = await loadSimaFile(file)
+      const newCoords = result.coordinates.map((coord) => ({
+        pointNumber: coord.pointNumber,
+        x: coord.x,
+        y: coord.y,
+        z: coord.z,
+        type: 'boundary' as unknown as CoordinateRow['type'],
+      }))
+      await importCoordinates(newCoords)
+      const projectZone = project?.coordinate_zone ?? null
+      if (result.system !== null && projectZone !== null && result.system !== projectZone) {
+        alert(
+          `SIMA ファイルの座標系（第${result.system}系）が工事の座標系（第${projectZone}系）と異なります。\n` +
+            '座標値はそのまま読み込みました。',
+        )
+      } else {
+        alert(`${newCoords.length} 点をインポートしました`)
+      }
+    } catch (err) {
+      console.error('SIMA 読み込み失敗', err)
+      alert('SIMA ファイルの読み込みに失敗しました')
+    }
+  }
+
+  // SIM エクスポート（全座標を出力）
+  const handleSimExport = () => {
+    if (coordinates.length === 0) {
+      alert('エクスポートできる座標がありません')
+      return
+    }
+    const projectName = farm?.name || 'NoName'
+    const zoneNum = project?.coordinate_zone ?? 13
+    downloadSimaFile(
+      {
+        projectName,
+        zone: zoneNum,
+        points: coordinates.map((c) => ({
+          pointNumber: c.pointNumber,
+          x: c.x,
+          y: c.y,
+          z: c.z,
+        })),
+      },
+      `${projectName}_coordinates.sim`,
+    )
   }
 
   // 公開ビュー URL を取得して共有 or クリップボードコピー
@@ -1302,6 +1369,20 @@ export function MobileStakingPage() {
           )}
         </button>
         <button
+          onClick={handleOpenSimImport}
+          className="p-1.5 rounded bg-slate-700 hover:bg-slate-600"
+          title="SIMA インポート"
+        >
+          <Upload className="h-4 w-4" />
+        </button>
+        <button
+          onClick={handleSimExport}
+          className="p-1.5 rounded bg-slate-700 hover:bg-slate-600"
+          title="SIMA エクスポート"
+        >
+          <Download className="h-4 w-4" />
+        </button>
+        <button
           onClick={handleShare}
           className="p-1.5 rounded bg-slate-700 hover:bg-slate-600"
           title="共有リンクを発行（他社にLINE等で送信）"
@@ -1322,6 +1403,14 @@ export function MobileStakingPage() {
           {shareToast}
         </div>
       )}
+      {/* SIM 入力（不可視） */}
+      <input
+        ref={simInputRef}
+        type="file"
+        accept=".sim,.SIM,.smc,.SMC"
+        onChange={handleSimImported}
+        className="hidden"
+      />
       {/* 写真モーダル（撮影・閲覧） */}
       {photoModalTarget && farm?.project_id && (
         <CoordinatePhotoModal
@@ -1331,6 +1420,43 @@ export function MobileStakingPage() {
           coordinateId={photoModalTarget.refId}
           pointNumber={photoModalTarget.name}
         />
+      )}
+      {/* 測設完了モーダル（OK の上に写真撮影ボタン） */}
+      {postStakeDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3000]">
+          <div className="bg-white w-full sm:max-w-sm rounded-t-xl sm:rounded-xl shadow-xl p-4">
+            <h3 className="text-base font-bold mb-2">測設完了</h3>
+            <p className="text-sm text-slate-700 whitespace-pre-line mb-4">
+              {postStakeDialog.message}
+            </p>
+            <div className="space-y-2">
+              {postStakeDialog.target.kind === 'coordinate' && (
+                <button
+                  onClick={() => {
+                    // 写真モーダルを開く（測設モーダルは閉じる）
+                    const t = postStakeDialog.target
+                    postStakeDialog.resolve()
+                    setPostStakeDialog(null)
+                    setPhotoModalTarget(t)
+                  }}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
+                >
+                  <Camera className="h-5 w-5" />
+                  写真撮影
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  postStakeDialog.resolve()
+                  setPostStakeDialog(null)
+                }}
+                className="w-full px-4 py-2.5 bg-slate-200 hover:bg-slate-300 rounded-lg text-sm font-medium"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       {/* 誤差超過時の選択モーダル */}
       {errorChoice && (
