@@ -13,7 +13,7 @@ export function PageHeader({ title, subtitle, icon, actions }: PageHeaderProps) 
   const currentProject = useProjectListStore((state) => state.currentProject)
   const currentFarm = useFarmStore((state) => state.currentFarm)
 
-  // プロジェクト名と圃場名を取得
+  // プロジェクト名と工区名を取得
   const projectName = currentProject?.name || ''
   const farmName = currentFarm?.name || ''
 

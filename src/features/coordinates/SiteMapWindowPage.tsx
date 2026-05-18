@@ -91,7 +91,7 @@ export function SiteMapWindowPage() {
         ])
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : '圃場データの取得に失敗しました')
+          setError(err instanceof Error ? err.message : '工区データの取得に失敗しました')
         }
       } finally {
         if (!cancelled) setLoading(false)

@@ -67,7 +67,7 @@ interface SurveyState {
   }>) => Promise<void>
 }
 
-// 圃場IDを取得するヘルパー
+// 工区IDを取得するヘルパー
 const getCurrentFarmId = (): string | null => {
   return useFarmStore.getState().currentFarm?.id ?? null
 }
@@ -146,7 +146,7 @@ export const useSurveyStore = create<SurveyState>()((set, get) => ({
   importSurveyData: async (data) => {
     const farmId = getCurrentFarmId()
     if (!farmId) {
-      set({ error: '圃場が選択されていません' })
+      set({ error: '工区が選択されていません' })
       return
     }
 
@@ -208,7 +208,7 @@ export const useSurveyStore = create<SurveyState>()((set, get) => ({
   addSurveyData: async (data) => {
     const farmId = getCurrentFarmId()
     if (!farmId) {
-      set({ error: '圃場が選択されていません' })
+      set({ error: '工区が選択されていません' })
       return null
     }
 

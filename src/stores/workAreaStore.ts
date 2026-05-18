@@ -71,12 +71,12 @@ interface WorkAreaState {
   getWorkAreaById: (id: string) => WorkAreaRow | undefined
 }
 
-// 圃場IDを取得するヘルパー
+// 工区IDを取得するヘルパー
 const getCurrentFarmId = (): string | null => {
   return useFarmStore.getState().currentFarm?.id ?? null
 }
 
-// 座標系を取得するヘルパー（現在の圃場が属するプロジェクトの座標系を使う）
+// 座標系を取得するヘルパー（現在の工区が属するプロジェクトの座標系を使う）
 const getCurrentZone = (): number => {
   const currentFarm = useFarmStore.getState().currentFarm
   if (!currentFarm) return 13
@@ -210,7 +210,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
   addWorkArea: async (workType: WorkType) => {
     const farmId = getCurrentFarmId()
     if (!farmId) {
-      set({ error: '圃場が選択されていません' })
+      set({ error: '工区が選択されていません' })
       return null
     }
 

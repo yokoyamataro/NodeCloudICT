@@ -112,7 +112,7 @@ export function ReportsPage() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm mb-3">
             <LabeledInput
-              label="圃場番号"
+              label="工区番号"
               value={farmNumber}
               onChange={setFarmNumber}
             />

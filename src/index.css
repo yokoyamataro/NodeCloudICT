@@ -87,7 +87,7 @@ input[type="number"] {
   display: none !important;
 }
 
-/* 圃場名ラベル（プロジェクト一覧図） */
+/* 工区名ラベル（プロジェクト一覧図） */
 .farm-label-tooltip {
   background-color: rgba(255, 255, 255, 0.95) !important;
   border: 1px solid #3b82f6 !important;

@@ -1,5 +1,5 @@
 // トップページ: 工事（プロジェクト）を選択する画面
-// 工事を選択すると /projects/:projectId に遷移し、その工事配下の圃場一覧へ。
+// 工事を選択すると /projects/:projectId に遷移し、その工事配下の工区一覧へ。
 
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -104,7 +104,7 @@ export function ProjectChooserPage() {
                   <div className="flex items-center gap-3 text-xs text-slate-500 mt-2">
                     <span className="inline-flex items-center gap-1">
                       <MapPin className="h-3 w-3" />
-                      圃場 {count}
+                      工区 {count}
                     </span>
                     <span className="inline-flex items-center gap-1">
                       <Users className="h-3 w-3" />

@@ -60,7 +60,7 @@ export function MobileTopPage() {
   } = useFarmStore()
   const { projects, fetchProjects } = useProjectListStore()
 
-  // 新規圃場ダイアログ
+  // 新規工区ダイアログ
   const [showNewFarmDialog, setShowNewFarmDialog] = useState(false)
   const [newFarmName, setNewFarmName] = useState('')
   const [newFarmDescription, setNewFarmDescription] = useState('')
@@ -71,7 +71,7 @@ export function MobileTopPage() {
     fetchProjects()
   }, [fetchFarms, fetchProjects])
 
-  // URL の projectId に該当する工事の圃場のみ表示
+  // URL の projectId に該当する工事の工区のみ表示
   const farms = useMemo(
     () => (routeProjectId ? allFarms.filter((f) => f.project_id === routeProjectId) : allFarms),
     [allFarms, routeProjectId],
@@ -85,7 +85,7 @@ export function MobileTopPage() {
     if (farms.length > 0) fetchWorkAreaPolygons()
   }, [farms, fetchWorkAreaPolygons])
 
-  // 当該工事の圃場の位置情報のみ抽出
+  // 当該工事の工区の位置情報のみ抽出
   const projectFarmLocations = useMemo(() => {
     return farms
       .map((f) => farmLocations.get(f.id))
@@ -106,7 +106,7 @@ export function MobileTopPage() {
     return { lat: avgLat, lng: avgLng }
   }, [projectFarmLocations])
 
-  // 圃場タップで直接工事測量画面へ
+  // 工区タップで直接工事測量画面へ
   const handleFarmClick = (farm: Farm) => {
     navigate(`/mobile/staking?farmId=${farm.id}`)
   }
@@ -168,7 +168,7 @@ export function MobileTopPage() {
           </button>
         )}
         <span className="font-medium truncate flex-1">
-          {currentProject ? currentProject.name : '圃場一覧（スマホ）'}
+          {currentProject ? currentProject.name : '工区一覧（スマホ）'}
         </span>
         {userLabel && (
           <span className="text-[11px] text-slate-300 truncate max-w-[6rem]" title={user?.email ?? ''}>
@@ -196,7 +196,7 @@ export function MobileTopPage() {
       <div className="h-1/2 min-h-[200px] relative bg-slate-200">
         {projectFarmLocations.length === 0 ? (
           <div className="h-full flex items-center justify-center text-slate-500 text-sm">
-            位置情報のある圃場がありません
+            位置情報のある工区がありません
           </div>
         ) : (
           <MapContainer
@@ -247,11 +247,11 @@ export function MobileTopPage() {
         )}
       </div>
 
-      {/* 圃場一覧（下半分）+ 末尾に新規作成 */}
+      {/* 工区一覧（下半分）+ 末尾に新規作成 */}
       <div className="flex-1 overflow-auto bg-white border-t">
         {farms.length === 0 ? (
           <div className="p-4 text-center text-sm text-slate-500">
-            圃場がありません。下の「新規圃場を追加」から作成してください。
+            工区がありません。下の「新規工区を追加」から作成してください。
           </div>
         ) : (
           <ul className="divide-y">
@@ -280,26 +280,26 @@ export function MobileTopPage() {
             })}
           </ul>
         )}
-        {/* 新規圃場作成（一覧末尾） */}
+        {/* 新規工区作成（一覧末尾） */}
         {routeProjectId && (
           <button
             onClick={() => setShowNewFarmDialog(true)}
             className="w-full flex items-center justify-center gap-1 px-3 py-3 text-sm text-blue-600 border-t hover:bg-blue-50 active:bg-blue-100"
           >
             <Plus className="h-4 w-4" />
-            新規圃場を追加
+            新規工区を追加
           </button>
         )}
       </div>
 
-      {/* 新規圃場ダイアログ */}
+      {/* 新規工区ダイアログ */}
       {showNewFarmDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3000]">
           <div className="bg-white w-full sm:max-w-sm rounded-t-xl sm:rounded-xl shadow-xl p-4">
-            <h3 className="text-base font-semibold mb-3">新規圃場</h3>
+            <h3 className="text-base font-semibold mb-3">新規工区</h3>
             <div className="space-y-3 mb-4">
               <div>
-                <label className="block text-xs text-slate-600 mb-1">圃場名</label>
+                <label className="block text-xs text-slate-600 mb-1">工区名</label>
                 <input
                   type="text"
                   value={newFarmName}

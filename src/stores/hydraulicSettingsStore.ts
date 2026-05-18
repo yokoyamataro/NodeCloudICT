@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-/** 水理計算（許容勾配 / 水理計算書）に共通で使うパラメータ。圃場ごとに保持する。 */
+/** 水理計算（許容勾配 / 水理計算書）に共通で使うパラメータ。工区ごとに保持する。 */
 export interface HydraulicSettings {
   /** 計画流量 (mm/day) */
   plannedFlow: number

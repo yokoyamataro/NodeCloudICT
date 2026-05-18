@@ -166,7 +166,7 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
     getWorkAreasByType,
   } = useWorkAreaStore()
 
-  // 圃場が変更されたらデータを取得
+  // 工区が変更されたらデータを取得
   const farmId = currentFarm?.id
   useEffect(() => {
     console.log('[GenericWorkAreaPage] useEffect triggered:', { farmId, workType })
@@ -272,7 +272,7 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-center text-muted-foreground">
-          <p>圃場を選択してください</p>
+          <p>工区を選択してください</p>
         </div>
       </div>
     )

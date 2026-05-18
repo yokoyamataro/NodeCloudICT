@@ -61,7 +61,7 @@ export function PipeWiringPage() {
     [planGroups, pipes, hydraulicSettings.pipeInterval],
   )
 
-  // 前の圃場IDを保持するref
+  // 前の工区IDを保持するref
   const prevFarmIdRef = useRef<string | null>(null)
 
   // プロジェクト選択時にデータを読み込む

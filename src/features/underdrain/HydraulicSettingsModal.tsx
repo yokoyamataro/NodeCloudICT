@@ -6,7 +6,7 @@ import {
 
 /**
  * 水理計算（許容勾配 / 水理計算書）共通の設定モーダル。
- * 圃場ごとに設定を持ち、保存は localStorage（Zustand persist）。
+ * 工区ごとに設定を持ち、保存は localStorage（Zustand persist）。
  */
 export function HydraulicSettingsModal({
   open,
@@ -117,7 +117,7 @@ export function HydraulicSettingsModal({
 
           {!farmId && (
             <div className="p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
-              圃場が選択されていません。
+              工区が選択されていません。
             </div>
           )}
         </div>

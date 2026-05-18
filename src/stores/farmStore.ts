@@ -14,7 +14,7 @@ export interface Farm {
   updated_at: string
 }
 
-// 圃場の先頭座標情報
+// 工区の先頭座標情報
 export interface FarmLocation {
   farmId: string
   lat: number
@@ -66,18 +66,18 @@ async function fetchProjectZones(projectIds: string[]): Promise<Map<string, numb
 }
 
 interface FarmState {
-  // 圃場一覧
+  // 工区一覧
   farms: Farm[]
   loading: boolean
   error: string | null
 
-  // 圃場の位置情報（先頭座標）
+  // 工区の位置情報（先頭座標）
   farmLocations: Map<string, FarmLocation>
 
   // 工事区域ポリゴン
   workAreaPolygons: WorkAreaPolygon[]
 
-  // 現在の圃場
+  // 現在の工区
   currentFarm: Farm | null
   setCurrentFarm: (farm: Farm | null) => void
 
@@ -99,7 +99,7 @@ export const useFarmStore = create<FarmState>((set, get) => ({
   workAreaPolygons: [],
 
   setCurrentFarm: (farm) => {
-    // 圃場が変わったら地図の表示状態をリセット（座標にフィットさせる）
+    // 工区が変わったら地図の表示状態をリセット（座標にフィットさせる）
     const currentFarm = get().currentFarm
     if (farm?.id !== currentFarm?.id) {
       useMapViewStore.getState().resetView()
@@ -127,7 +127,7 @@ export const useFarmStore = create<FarmState>((set, get) => ({
       // 位置情報も取得
       get().fetchFarmLocations()
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : '圃場の取得に失敗しました', loading: false })
+      set({ error: err instanceof Error ? err.message : '工区の取得に失敗しました', loading: false })
     }
   },
 
@@ -136,7 +136,7 @@ export const useFarmStore = create<FarmState>((set, get) => ({
     if (farms.length === 0) return
 
     try {
-      // 各圃場の先頭座標を取得
+      // 各工区の先頭座標を取得
       const { data, error } = await supabase
         .from('design_coordinates')
         .select('id, farm_id, point_number, x, y')
@@ -148,7 +148,7 @@ export const useFarmStore = create<FarmState>((set, get) => ({
       // プロジェクトごとの座標系を取得
       const projectZones = await fetchProjectZones(farms.map(f => f.project_id))
 
-      // 圃場ごとに先頭の座標を取得
+      // 工区ごとに先頭の座標を取得
       const locations = new Map<string, FarmLocation>()
       const coordData = data as Array<{
         id: string
@@ -313,7 +313,7 @@ export const useFarmStore = create<FarmState>((set, get) => ({
 
       return data
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : '圃場の作成に失敗しました', loading: false })
+      set({ error: err instanceof Error ? err.message : '工区の作成に失敗しました', loading: false })
       return null
     }
   },
@@ -338,7 +338,7 @@ export const useFarmStore = create<FarmState>((set, get) => ({
         loading: false,
       }))
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : '圃場の更新に失敗しました', loading: false })
+      set({ error: err instanceof Error ? err.message : '工区の更新に失敗しました', loading: false })
     }
   },
 
@@ -358,7 +358,7 @@ export const useFarmStore = create<FarmState>((set, get) => ({
         loading: false,
       }))
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : '圃場の削除に失敗しました', loading: false })
+      set({ error: err instanceof Error ? err.message : '工区の削除に失敗しました', loading: false })
     }
   },
 }))

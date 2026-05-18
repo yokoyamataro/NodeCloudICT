@@ -1,4 +1,4 @@
-// モバイルのトップ画面: 工事（プロジェクト）を選んでから圃場一覧へ
+// モバイルのトップ画面: 工事（プロジェクト）を選んでから工区一覧へ
 // 選ぶと /mobile/farms/:projectId に遷移する。
 
 import { useEffect } from 'react'

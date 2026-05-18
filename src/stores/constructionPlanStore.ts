@@ -114,7 +114,7 @@ interface ConstructionPlanState {
   markSaved: () => void
 }
 
-// 圃場IDを取得するヘルパー
+// 工区IDを取得するヘルパー
 const getCurrentFarmId = (): string | null => {
   return useFarmStore.getState().currentFarm?.id ?? null
 }
@@ -297,7 +297,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
   generatePlanFromWiring: async () => {
     const farmId = getCurrentFarmId()
     if (!farmId) {
-      set({ error: '圃場が選択されていません' })
+      set({ error: '工区が選択されていません' })
       return
     }
 
@@ -1044,7 +1044,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
   savePlan: async () => {
     const farmId = getCurrentFarmId()
     if (!farmId) {
-      set({ error: '圃場が選択されていません' })
+      set({ error: '工区が選択されていません' })
       return
     }
 
@@ -1155,7 +1155,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
   reloadGroundHeights: async () => {
     const farmId = getCurrentFarmId()
     if (!farmId) {
-      set({ error: '圃場が選択されていません' })
+      set({ error: '工区が選択されていません' })
       return
     }
 

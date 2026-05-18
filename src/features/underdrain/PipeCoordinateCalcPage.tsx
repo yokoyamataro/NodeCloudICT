@@ -551,12 +551,12 @@ export function PipeCoordinateCalcPage() {
     XLSX.writeFile(wb, `${projectName}_座標一覧.xlsx`)
   }
 
-  // 圃場が選択されていない場合のエラー表示
+  // 工区が選択されていない場合のエラー表示
   if (!currentFarm) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-center text-muted-foreground">
-          <p>圃場を選択してください</p>
+          <p>工区を選択してください</p>
         </div>
       </div>
     )
@@ -718,7 +718,7 @@ export function PipeCoordinateCalcPage() {
                     <button
                       onClick={async () => {
                         if (!currentFarm) {
-                          alert('圃場が選択されていません')
+                          alert('工区が選択されていません')
                           return
                         }
                         const ok = await saveRoute(currentFarm.id, exportPoints)

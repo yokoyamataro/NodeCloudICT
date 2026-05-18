@@ -100,7 +100,7 @@ export function computeCumulativeLengths(
   return cum
 }
 
-/** 1 圃場の全プラングループから、各行の支配延長 / 累加延長を一括算出する。 */
+/** 1 工区の全プラングループから、各行の支配延長 / 累加延長を一括算出する。 */
 export interface SystemCalcResult {
   /** wiringRowId → 当該行の吸水支配延長（吸水なしは null） */
   dominantByWiringId: Map<string, number | null>

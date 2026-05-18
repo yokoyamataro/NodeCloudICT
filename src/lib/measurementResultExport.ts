@@ -8,7 +8,7 @@ import type { PlanGroup, PlanRow, PlanPoint } from '@/stores/constructionPlanSto
 import { comparePipeNumbers } from './pipeSort'
 
 export interface MeasurementHeader {
-  farmNumber: string // 圃場番号 → B3
+  farmNumber: string // 工区番号 → B3
   area: string // 面積 → F3
   beneficiary: string // 受益者名 → J3
   /** 配線間隔（m）。各管路の D{j} セルに書き込む。10 または 12 を想定 */

@@ -46,7 +46,7 @@ export type ExtendedPipeType = typeof EXTENDED_PIPE_TYPES[number]['value']
 // 管径の選択肢 (mm)
 export const PIPE_DIAMETERS = [60, 80, 90, 100, 125, 150, 200, 250] as const
 
-// 圃場IDを取得するヘルパー
+// 工区IDを取得するヘルパー
 const getCurrentFarmId = (): string | null => {
   return useFarmStore.getState().currentFarm?.id ?? null
 }
@@ -129,7 +129,7 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
   addPipe: async (pipe) => {
     const farmId = getCurrentFarmId()
     if (!farmId) {
-      set({ error: '圃場が選択されていません' })
+      set({ error: '工区が選択されていません' })
       return null
     }
 
@@ -178,7 +178,7 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
   addPipes: async (pipes) => {
     const farmId = getCurrentFarmId()
     if (!farmId) {
-      set({ error: '圃場が選択されていません' })
+      set({ error: '工区が選択されていません' })
       return
     }
 

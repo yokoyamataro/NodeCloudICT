@@ -119,7 +119,7 @@ export function StakingRecordsPage() {
   if (!currentFarm) {
     return (
       <div className="h-full flex items-center justify-center text-muted-foreground">
-        圃場を選択してください
+        工区を選択してください
       </div>
     )
   }

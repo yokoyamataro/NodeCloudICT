@@ -65,7 +65,7 @@ interface CoordinateState {
   saveRoute: () => Promise<void>
 }
 
-// 圃場IDを取得するヘルパー
+// 工区IDを取得するヘルパー
 const getCurrentFarmId = (): string | null => {
   return useFarmStore.getState().currentFarm?.id ?? null
 }
@@ -94,7 +94,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
   error: null,
 
   fetchCoordinates: async (farmId: string) => {
-    // 圃場切替時に旧データを即時クリアしておく（地図初期化が古い座標で走るのを防ぐ）
+    // 工区切替時に旧データを即時クリアしておく（地図初期化が古い座標で走るのを防ぐ）
     set({ loading: true, error: null, coordinates: [] })
     try {
       const { data, error } = await supabase
@@ -137,7 +137,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
   addCoordinate: async (type) => {
     const farmId = getCurrentFarmId()
     if (!farmId) {
-      set({ error: '圃場が選択されていません' })
+      set({ error: '工区が選択されていません' })
       return
     }
 
@@ -229,7 +229,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
   importCoordinates: async (coords) => {
     const farmId = getCurrentFarmId()
     if (!farmId) {
-      set({ error: '圃場が選択されていません' })
+      set({ error: '工区が選択されていません' })
       return []
     }
 

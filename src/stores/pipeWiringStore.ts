@@ -35,7 +35,7 @@ export interface CollectorTab {
   rows: WiringRow[]
 }
 
-// 圃場IDを取得するヘルパー
+// 工区IDを取得するヘルパー
 const getCurrentFarmId = (): string | null => {
   return useFarmStore.getState().currentFarm?.id ?? null
 }
@@ -415,7 +415,7 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
   saveWiring: async () => {
     const farmId = getCurrentFarmId()
     if (!farmId) {
-      set({ error: '圃場が選択されていません' })
+      set({ error: '工区が選択されていません' })
       return
     }
 

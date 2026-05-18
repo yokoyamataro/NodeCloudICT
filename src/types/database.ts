@@ -239,7 +239,7 @@ export interface ProjectMember {
   display_name?: string | null
 }
 
-// NodeCloud-Design用圃場
+// NodeCloud-Design用工区
 export interface Farm {
   id: string
   user_id: string

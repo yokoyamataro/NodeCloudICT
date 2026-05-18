@@ -1,6 +1,6 @@
 // 線形物（水路・道路）— 線形登録ページ
 //
-// - 圃場ごとに複数の線形物を登録可能
+// - 工区ごとに複数の線形物を登録可能
 // - 各線形物は平面線形（BP→IP→EP、IP は角 or 単曲線 R）+ 縦断 + 標準断面で定義
 // - 標準断面は中心から右/左に並ぶ要素列（幅・勾配[1:i または %]）
 // - 座標管理の点を参照する
@@ -1043,7 +1043,7 @@ export function OpenChannelAlignmentPage() {
     return (
       <div className="h-full flex flex-col">
         <PageHeader title="線形物 線形登録" subtitle="水路・道路など / 線形 + 標準断面" />
-        <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">圃場を選択してください</div>
+        <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">工区を選択してください</div>
       </div>
     )
   }

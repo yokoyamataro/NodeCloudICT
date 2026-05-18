@@ -1005,7 +1005,7 @@ export function SoilImportStripPlanPage() {
   // 保存
   const handleSave = async () => {
     if (!farmId || !selectedAreaId) {
-      alert('圃場と工事区域を選択してください')
+      alert('工区と工事区域を選択してください')
       return
     }
     setSaving(true)
@@ -1100,7 +1100,7 @@ export function SoilImportStripPlanPage() {
       <div className="h-full flex flex-col">
         <PageHeader title="帯置計画作成" subtitle="客土工事 / 帯置計画" />
         <div className="flex-1 flex items-center justify-center text-slate-500">
-          圃場を選択してください
+          工区を選択してください
         </div>
       </div>
     )

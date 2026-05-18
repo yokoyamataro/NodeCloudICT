@@ -160,7 +160,7 @@ export function AppLayout() {
   } = useConstructionPlanStore()
   const { registrations: globalSaveRegs } = useGlobalSaveRegistry()
 
-  // プロジェクト・圃場ストア（現在の表示用）
+  // プロジェクト・工区ストア（現在の表示用）
   const { currentProject } = useProjectListStore()
   const { currentFarm, setCurrentFarm } = useFarmStore()
 
@@ -193,7 +193,7 @@ export function AppLayout() {
       }
     }
 
-    // 状態をリセット（圃場を選択なしに戻す）
+    // 状態をリセット（工区を選択なしに戻す）
     setCurrentFarm(null)
 
     // トップページに遷移
@@ -255,7 +255,7 @@ export function AppLayout() {
     return location.pathname === href || location.pathname.startsWith(href + '/')
   }
 
-  // トップページかつプロジェクト・圃場未選択の場合は左メニューを非表示
+  // トップページかつプロジェクト・工区未選択の場合は左メニューを非表示
   const isTopPage = location.pathname === '/'
   const allowSidebar = !(isTopPage && !currentFarm)
 
@@ -300,7 +300,7 @@ export function AppLayout() {
             <h1 className="text-xl font-bold">NodeCloud</h1>
             <span className="text-sm text-slate-400">農業土木ICT設計システム</span>
             <span className="text-xs text-slate-500">{__BUILD_TIME__}</span>
-            {/* 工事名／圃場番号 */}
+            {/* 工事名／工区番号 */}
             {(currentProject || currentFarm) && (
               <span className="text-sm flex items-center">
                 {currentProject && (

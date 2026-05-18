@@ -755,12 +755,12 @@ export function CadAnalysisPage() {
     alert(`${results.length} 件の管路の接続関係を設定しました`)
   }
 
-  // 圃場が選択されていない場合のエラー表示
+  // 工区が選択されていない場合のエラー表示
   if (!currentFarm) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-center text-muted-foreground">
-          <p>圃場を選択してください</p>
+          <p>工区を選択してください</p>
         </div>
       </div>
     )

@@ -53,7 +53,7 @@ export function LandXMLPage() {
   const [pendingAlignments, setPendingAlignments] = useState<Alignment[] | null>(null)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
 
-  // 圃場読込時にデータ取得
+  // 工区読込時にデータ取得
   useEffect(() => {
     if (!currentFarm) return
     fetchAlignments(currentFarm.id)

@@ -1,4 +1,4 @@
-// 公開圃場ビュー: /share/farm/:farmId
+// 公開工区ビュー: /share/farm/:farmId
 // 認証不要で、起工測量の座標プロット＋点一覧を読み取り専用で表示する。
 // 受益者名等の個人情報は返さない（get_shared_farm_view 関数の責務）。
 
@@ -93,7 +93,7 @@ export function ShareFarmViewPage() {
         }
         const view = rpcData as ShareFarmView | null
         if (!view || !view.farm) {
-          setError('指定された圃場のデータが見つかりませんでした。')
+          setError('指定された工区のデータが見つかりませんでした。')
           setLoading(false)
           return
         }
@@ -222,7 +222,7 @@ export function ShareFarmViewPage() {
           <AlertTriangle className="h-10 w-10 text-amber-500 mx-auto mb-3" />
           <h1 className="text-lg font-semibold mb-2">表示できません</h1>
           <p className="text-sm text-slate-600">
-            {error ?? '指定された圃場が見つからないか、共有が無効です。'}
+            {error ?? '指定された工区が見つからないか、共有が無効です。'}
           </p>
         </div>
       </div>

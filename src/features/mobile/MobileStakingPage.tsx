@@ -694,7 +694,7 @@ export function MobileStakingPage() {
 
   // 出力点選択（順路）に従ってターゲットを並べ替える。
   // 順路にある点（x,y で一致判定）を先に並べ、無い点は元の順序で末尾へ。
-  // 順路が未保存の圃場では何もせずそのまま返す。
+  // 順路が未保存の工区では何もせずそのまま返す。
   const route = useExportRouteStore((s) =>
     farmId ? s.routesByFarmId.get(farmId) ?? null : null,
   )
@@ -1225,7 +1225,7 @@ export function MobileStakingPage() {
   const handleShare = async () => {
     if (!farmId) return
     const url = `${window.location.origin}/share/farm/${farmId}`
-    const shareTitle = farm?.name ? `圃場「${farm.name}」` : '圃場の起工測量データ'
+    const shareTitle = farm?.name ? `工区「${farm.name}」` : '工区の起工測量データ'
     const navAny = navigator as Navigator & {
       share?: (data: { title?: string; text?: string; url?: string }) => Promise<void>
     }
@@ -1285,7 +1285,7 @@ export function MobileStakingPage() {
 
   return (
     <div className="mobile-screen flex flex-col">
-      {/* ヘッダー（1 行目: 戻る・工事名・圃場名・ユーザー名） */}
+      {/* ヘッダー（1 行目: 戻る・工事名・工区名・ユーザー名） */}
       <div className="px-2 py-1.5 bg-slate-800 text-white flex items-center gap-2 text-sm">
         <button
           onClick={() => navigate('/mobile')}
@@ -1304,7 +1304,7 @@ export function MobileStakingPage() {
             {farm?.name ?? '工事測量'}
           </span>
         </div>
-        {/* 道案内（Google マップ） — 圃場の中心座標へ */}
+        {/* 道案内（Google マップ） — 工区の中心座標へ */}
         <button
           onClick={() => {
             // 座標の平均位置を目的地とする
@@ -1313,7 +1313,7 @@ export function MobileStakingPage() {
                 c.lat != null && c.lng != null,
             )
             if (locs.length === 0) {
-              alert('圃場の位置情報が取得できません')
+              alert('工区の位置情報が取得できません')
               return
             }
             const lat = locs.reduce((s, l) => s + l.lat, 0) / locs.length
@@ -1578,7 +1578,7 @@ export function MobileStakingPage() {
                 </button>
               )
             })}
-            {/* ルート絞り込み（順路が登録済みの圃場でのみ表示） */}
+            {/* ルート絞り込み（順路が登録済みの工区でのみ表示） */}
             {routeTargetIds.size > 0 && (
               <button
                 onClick={() =>

@@ -226,7 +226,7 @@ export function CoordinatesPage() {
   // 経路モード（クリックで経路に追加）
   const [routeMode, setRouteMode] = useState(false)
 
-  // 現在の圃場が属するプロジェクトの座標系
+  // 現在の工区が属するプロジェクトの座標系
   const projectZone = currentFarm
     ? projects.find((p) => p.id === currentFarm.project_id)?.coordinate_zone ?? null
     : null
@@ -266,7 +266,7 @@ export function CoordinatesPage() {
     })
   }, [typeOptions])
 
-  // 圃場選択時にデータを読み込む
+  // 工区選択時にデータを読み込む
   useEffect(() => {
     if (currentFarm && projectZone !== null) {
       // プロジェクトの座標系を設定
@@ -1336,7 +1336,7 @@ function PointTypeManagerModal({
       <div className="bg-white rounded-lg p-6 w-full max-w-lg" style={{ zIndex: 10000 }}>
         <h3 className="text-lg font-semibold mb-1">点種の管理</h3>
         <p className="text-xs text-slate-500 mb-4">
-          プロジェクト内の全圃場に共通して使われます。
+          プロジェクト内の全工区に共通して使われます。
         </p>
 
         {/* 既定 + カスタムの一覧 */}
