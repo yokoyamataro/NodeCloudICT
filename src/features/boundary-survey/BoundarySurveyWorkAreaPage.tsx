@@ -84,13 +84,15 @@ export function BoundarySurveyWorkAreaPage() {
           skippedPolygons++
           continue
         }
+        // 地番名（D00 の 3 列目）を優先して使用する。無ければ番号でフォールバック
+        const label = poly.parcelName || poly.parcelNumber || `画地${createdPolygons + 1}`
         const { error } = await supabase
           .from('design_work_areas')
           .insert({
             farm_id: currentFarm.id,
             work_type: 'boundary_survey',
-            zone_number: poly.parcelNumber || `B${createdPolygons + 1}`,
-            name: poly.parcelName || `画地${createdPolygons + 1}`,
+            zone_number: label,
+            name: label,
             point_ids: pointIds,
             area_sqm: null,
             area_ha: null,
@@ -131,17 +133,18 @@ export function BoundarySurveyWorkAreaPage() {
       // point_ids → 点名（pointNumber）
       const nameById = new Map<string, string>()
       for (const c of coordinates) nameById.set(c.id, c.pointNumber)
-      for (const a of areas) {
+      areas.forEach((a, idx) => {
         const pns = a.pointIds
           .map((id) => nameById.get(id))
           .filter((p): p is string => !!p)
-        if (pns.length < 3) continue
+        if (pns.length < 3) return
+        // 出力時の番号は連番、名称は地番名（zone_number/name は同じ地番名が入っている）
         polygons.push({
-          parcelNumber: a.zoneNumber || '',
-          parcelName: a.name || '',
+          parcelNumber: String(idx + 1),
+          parcelName: a.name || a.zoneNumber || `画地${idx + 1}`,
           pointNumbers: pns,
         })
-      }
+      })
       const projectName = currentFarm.name || 'NoName'
       downloadSimaFile(
         {
