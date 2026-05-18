@@ -85,21 +85,26 @@ export function MobileTopPage() {
     if (farms.length > 0) fetchWorkAreaPolygons()
   }, [farms, fetchWorkAreaPolygons])
 
+  // 当該工事の圃場の位置情報のみ抽出
+  const projectFarmLocations = useMemo(() => {
+    return farms
+      .map((f) => farmLocations.get(f.id))
+      .filter((l): l is NonNullable<typeof l> => l != null)
+  }, [farms, farmLocations])
+
   const allBounds = useMemo(() => {
-    const locs = Array.from(farmLocations.values())
-    if (locs.length === 0) return null
-    const lats = locs.map((l) => l.lat)
-    const lngs = locs.map((l) => l.lng)
+    if (projectFarmLocations.length === 0) return null
+    const lats = projectFarmLocations.map((l) => l.lat)
+    const lngs = projectFarmLocations.map((l) => l.lng)
     return L.latLngBounds([Math.min(...lats), Math.min(...lngs)], [Math.max(...lats), Math.max(...lngs)])
-  }, [farmLocations])
+  }, [projectFarmLocations])
 
   const mapCenter = useMemo(() => {
-    const locs = Array.from(farmLocations.values())
-    if (locs.length === 0) return { lat: 43.06, lng: 141.35 }
-    const avgLat = locs.reduce((s, l) => s + l.lat, 0) / locs.length
-    const avgLng = locs.reduce((s, l) => s + l.lng, 0) / locs.length
+    if (projectFarmLocations.length === 0) return { lat: 43.06, lng: 141.35 }
+    const avgLat = projectFarmLocations.reduce((s, l) => s + l.lat, 0) / projectFarmLocations.length
+    const avgLng = projectFarmLocations.reduce((s, l) => s + l.lng, 0) / projectFarmLocations.length
     return { lat: avgLat, lng: avgLng }
-  }, [farmLocations])
+  }, [projectFarmLocations])
 
   // 圃場タップで直接工事測量画面へ
   const handleFarmClick = (farm: Farm) => {
@@ -189,7 +194,7 @@ export function MobileTopPage() {
 
       {/* 地図（上半分） */}
       <div className="h-1/2 min-h-[200px] relative bg-slate-200">
-        {farmLocations.size === 0 ? (
+        {projectFarmLocations.length === 0 ? (
           <div className="h-full flex items-center justify-center text-slate-500 text-sm">
             位置情報のある圃場がありません
           </div>
@@ -208,18 +213,20 @@ export function MobileTopPage() {
             />
             {allBounds && <FitBounds bounds={allBounds} />}
             <CurrentLocationLayer />
-            {workAreaPolygons.map((polygon) => (
-              <Polygon
-                key={polygon.id}
-                positions={polygon.positions}
-                pathOptions={{
-                  color: WORK_TYPE_COLORS[polygon.workType] || '#22c55e',
-                  fillColor: WORK_TYPE_COLORS[polygon.workType] || '#22c55e',
-                  fillOpacity: 0.3,
-                  weight: 2,
-                }}
-              />
-            ))}
+            {workAreaPolygons
+              .filter((polygon) => farms.some((f) => f.id === polygon.farmId))
+              .map((polygon) => (
+                <Polygon
+                  key={polygon.id}
+                  positions={polygon.positions}
+                  pathOptions={{
+                    color: WORK_TYPE_COLORS[polygon.workType] || '#22c55e',
+                    fillColor: WORK_TYPE_COLORS[polygon.workType] || '#22c55e',
+                    fillOpacity: 0.3,
+                    weight: 2,
+                  }}
+                />
+              ))}
             {farms.map((farm) => {
               const location = farmLocations.get(farm.id)
               if (!location) return null
