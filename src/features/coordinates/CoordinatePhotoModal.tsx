@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Camera, Loader2, Trash2, Plus, X } from 'lucide-react'
 import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
+import { PhotoEditModal } from './PhotoEditModal'
 
 const DEFAULT_CATEGORIES = ['遠景', '近景'] as const
 
@@ -34,6 +35,8 @@ export function CoordinatePhotoModal({
   const [customName, setCustomName] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const pendingCategoryRef = useRef<string | null>(null)
+  // 編集対象（選択直後にここに入れて、編集モーダルで回転/トリミングしてからアップロードする）
+  const [editingFile, setEditingFile] = useState<{ file: File; category: string } | null>(null)
 
   useEffect(() => {
     if (open && coordinateId) {
@@ -59,26 +62,39 @@ export function CoordinatePhotoModal({
     fileInputRef.current?.click()
   }
 
-  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     e.target.value = ''
     const cat = pendingCategoryRef.current
     if (!file || !cat) return
+    // 回転 / トリミング編集モーダルを開く
+    setEditingFile({ file, category: cat })
+    pendingCategoryRef.current = null
+  }
+
+  // 編集モーダル確定後にアップロード
+  const handleEditConfirmed = async (blob: Blob, fileName: string) => {
+    if (!editingFile) return
+    const cat = editingFile.category
+    setEditingFile(null)
     setUploadingFor(cat)
     setError(null)
     try {
+      // Blob を File に包んで uploadPhoto（リサイズはストア側で再度かかる）
+      const editedFile = new File([blob], fileName.replace(/\.[^.]+$/, '') + '_edited.jpg', {
+        type: 'image/jpeg',
+      })
       const saved = await uploadPhoto({
         projectId,
         entityType: 'coordinate',
         entityId: coordinateId,
-        file,
+        file: editedFile,
         category: cat,
         takenAt: new Date(),
       })
       if (!saved) setError('写真の登録に失敗しました')
     } finally {
       setUploadingFor(null)
-      pendingCategoryRef.current = null
     }
   }
 
@@ -136,39 +152,25 @@ export function CoordinatePhotoModal({
                         {list.length}
                       </span>
                     </h4>
-                    <button
-                      onClick={() => handleUploadClick(category)}
-                      disabled={isUploading}
-                      className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-                    >
-                      {isUploading ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <Plus className="h-3 w-3" />
-                      )}
-                      追加
-                    </button>
                   </div>
-                  {list.length === 0 ? (
-                    <div className="text-xs text-slate-400 py-2 text-center">
-                      （写真なし）
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {list.map((p) => (
-                        <PhotoTile
-                          key={p.id}
-                          attachment={p}
-                          getSignedUrl={getSignedUrl}
-                          onDelete={() => {
-                            if (confirm('この写真を削除しますか？')) {
-                              removeAttachment(p.id)
-                            }
-                          }}
-                        />
-                      ))}
-                    </div>
-                  )}
+                  <div className="space-y-2">
+                    {list.map((p) => (
+                      <PhotoTile
+                        key={p.id}
+                        attachment={p}
+                        getSignedUrl={getSignedUrl}
+                        onDelete={() => {
+                          if (confirm('この写真を削除しますか？')) {
+                            removeAttachment(p.id)
+                          }
+                        }}
+                      />
+                    ))}
+                    <AddPhotoTile
+                      isUploading={isUploading}
+                      onClick={() => handleUploadClick(category)}
+                    />
+                  </div>
                 </section>
               )
             })}
@@ -188,39 +190,25 @@ export function CoordinatePhotoModal({
                         {list.length} 枚
                       </span>
                     </h4>
-                    <button
-                      onClick={() => handleUploadClick(category)}
-                      disabled={isUploading}
-                      className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-                    >
-                      {isUploading ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <Plus className="h-3 w-3" />
-                      )}
-                      追加
-                    </button>
                   </div>
-                  {list.length === 0 ? (
-                    <div className="text-xs text-slate-400 py-2 text-center">
-                      （写真なし）
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-2 gap-2">
-                      {list.map((p) => (
-                        <PhotoTile
-                          key={p.id}
-                          attachment={p}
-                          getSignedUrl={getSignedUrl}
-                          onDelete={() => {
-                            if (confirm('この写真を削除しますか？')) {
-                              removeAttachment(p.id)
-                            }
-                          }}
-                        />
-                      ))}
-                    </div>
-                  )}
+                  <div className="grid grid-cols-2 gap-2">
+                    {list.map((p) => (
+                      <PhotoTile
+                        key={p.id}
+                        attachment={p}
+                        getSignedUrl={getSignedUrl}
+                        onDelete={() => {
+                          if (confirm('この写真を削除しますか？')) {
+                            removeAttachment(p.id)
+                          }
+                        }}
+                      />
+                    ))}
+                    <AddPhotoTile
+                      isUploading={isUploading}
+                      onClick={() => handleUploadClick(category)}
+                    />
+                  </div>
                 </section>
               )
             })}
@@ -274,7 +262,40 @@ export function CoordinatePhotoModal({
           className="hidden"
         />
       </div>
+
+      {/* 写真編集（回転・トリミング）モーダル */}
+      {editingFile && (
+        <PhotoEditModal
+          file={editingFile.file}
+          onCancel={() => setEditingFile(null)}
+          onConfirm={handleEditConfirmed}
+        />
+      )}
     </div>
+  )
+}
+
+// サムネイル枠と同サイズの「写真追加」ボタン
+function AddPhotoTile({
+  onClick,
+  isUploading,
+}: {
+  onClick: () => void
+  isUploading: boolean
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={isUploading}
+      className="w-full aspect-square border-2 border-dashed border-blue-300 rounded bg-blue-50/40 hover:bg-blue-50 active:bg-blue-100 disabled:opacity-50 flex items-center justify-center text-blue-500 hover:text-blue-700 transition-colors"
+      title="写真を追加"
+    >
+      {isUploading ? (
+        <Loader2 className="h-10 w-10 animate-spin" />
+      ) : (
+        <Plus className="h-12 w-12 stroke-[1.5]" />
+      )}
+    </button>
   )
 }
 

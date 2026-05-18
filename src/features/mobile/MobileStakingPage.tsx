@@ -27,6 +27,7 @@ import {
   Car,
   Upload,
   Download,
+  ZoomIn,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
@@ -122,6 +123,69 @@ function FitOnce({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
     map.fitBounds(bounds, { padding: [30, 30], maxZoom: 20 })
     doneRef.current = true
   }, [map, bounds])
+  return null
+}
+
+// 地図ズームを親の state に流すヘルパー
+function ZoomWatcher({ onChange }: { onChange: (z: number) => void }) {
+  const map = useMap()
+  useEffect(() => {
+    onChange(map.getZoom())
+    const handler = () => onChange(map.getZoom())
+    map.on('zoomend', handler)
+    return () => {
+      map.off('zoomend', handler)
+    }
+  }, [map, onChange])
+  return null
+}
+
+// ターゲット動的ズーム
+// ターゲットを画面中心に置き、現在地も視野に収まるよう自動でズームを調整する。
+// ターゲットに近づくほど拡大され、概略誘導 → 精密誘導の連続的な体験を実現する。
+function DynamicTargetZoom({
+  target,
+  currentPos,
+  enabled,
+}: {
+  target: { id: string; lat: number; lng: number } | null
+  currentPos: [number, number] | null
+  enabled: boolean
+}) {
+  const map = useMap()
+  const lastZoomRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (!enabled || !target) return
+    const targetLL = L.latLng(target.lat, target.lng)
+    let desiredZoom: number
+    if (currentPos) {
+      const curLL = L.latLng(currentPos[0], currentPos[1])
+      const distance = targetLL.distanceTo(curLL) // meters
+      const size = map.getSize()
+      const halfMinDim = Math.max(40, Math.min(size.x, size.y) / 2 - 24) // 24px の余白
+      if (distance < 0.5) {
+        desiredZoom = 22
+      } else {
+        const metersPerPixelAtZ0 =
+          156543.03392 * Math.cos((target.lat * Math.PI) / 180)
+        const z = Math.floor(
+          Math.log2((metersPerPixelAtZ0 * halfMinDim) / distance),
+        )
+        desiredZoom = Math.max(15, Math.min(22, z))
+      }
+    } else {
+      desiredZoom = 19
+    }
+    // 1 ズーム以上変わるとき、または最初のときだけ setView でズームを反映
+    const cur = map.getZoom()
+    if (lastZoomRef.current == null || Math.abs(cur - desiredZoom) >= 1) {
+      map.setView(targetLL, desiredZoom, { animate: true })
+      lastZoomRef.current = desiredZoom
+    } else {
+      // ズームは変えずに中心だけターゲットへ寄せる（動きを抑える）
+      map.panTo(targetLL, { animate: true })
+    }
+  }, [map, enabled, target, currentPos])
   return null
 }
 
@@ -314,6 +378,22 @@ export function MobileStakingPage() {
   // 写真モーダル: 選択中ターゲット（座標）の写真を閲覧／撮影できる
   const [photoModalTarget, setPhotoModalTarget] = useState<StakingTarget | null>(null)
   const [showLabels, setShowLabels] = useState(true)
+  // ターゲット動的ズーム（ターゲットを中心にして、現在地も視野に収まるよう自動拡大縮小）
+  const [dynamicZoom, setDynamicZoom] = useState(false)
+  // 地図背景を白紙にする（航空写真タイルを非表示にして、点・線・ポリゴンだけを描画）
+  const [blankBackground, setBlankBackground] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('mobile:blankBackground') === '1'
+    } catch {
+      return false
+    }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('mobile:blankBackground', blankBackground ? '1' : '0') } catch { /* ignore */ }
+  }, [blankBackground])
+  // 点数が多いとラベル描画が重くなるため、低ズーム時は自動で非表示にする
+  const [mapZoom, setMapZoom] = useState(17)
+  const LABEL_MIN_ZOOM = 18
   const [showRouteLine, setShowRouteLine] = useState(true)
 
   // 施工管理モード用：中心線形 / 床掘 TIN / 現況 TIN
@@ -1364,6 +1444,15 @@ export function MobileStakingPage() {
           <span className="hidden sm:inline">{MAP_FOLLOW_LABEL[followMode]}</span>
         </button>
         <button
+          onClick={() => setDynamicZoom((v) => !v)}
+          className={`p-1.5 rounded ${
+            dynamicZoom ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'
+          }`}
+          title="ターゲット動的ズーム（ON: ターゲットを中心に距離に応じて自動拡大）"
+        >
+          <ZoomIn className="h-4 w-4" />
+        </button>
+        <button
           onClick={toggleHeading}
           className={`p-1.5 rounded ${
             headingEnabled
@@ -1392,6 +1481,17 @@ export function MobileStakingPage() {
           title="点名表示"
         >
           <Tag className="h-4 w-4" />
+        </button>
+        <button
+          onClick={() => setBlankBackground((v) => !v)}
+          className={`p-1.5 rounded text-[10px] font-bold w-7 flex items-center justify-center ${
+            blankBackground
+              ? 'bg-white text-slate-900 border border-slate-400'
+              : 'bg-slate-700 hover:bg-slate-600'
+          }`}
+          title={blankBackground ? '航空写真背景に戻す' : '背景を白紙にする'}
+        >
+          {blankBackground ? '写' : '白'}
         </button>
         <button
           onClick={() => setShowFilterPanel((v) => !v)}
@@ -1659,17 +1759,42 @@ export function MobileStakingPage() {
 
       {/* 地図 */}
       <div className="flex-1 relative">
-        <MapContainer center={mapCenter} zoom={17} maxZoom={22} className="h-full w-full">
-          <TileLayer
-            attribution='&copy; 国土地理院'
-            url="https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg"
-            maxZoom={22}
-            maxNativeZoom={18}
-          />
+        <MapContainer
+          center={mapCenter}
+          zoom={17}
+          maxZoom={22}
+          className="h-full w-full"
+          style={blankBackground ? { background: '#ffffff' } : undefined}
+        >
+          {!blankBackground && (
+            <TileLayer
+              attribution='&copy; 国土地理院'
+              url="https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg"
+              maxZoom={22}
+              maxNativeZoom={18}
+            />
+          )}
           <FitOnce bounds={currentPos ? null : allBounds} />
-          <FollowCurrent position={currentPos} enabled={followMode === 'self'} />
-          {/* ターゲット選択時はモードに関わらず 1 度だけ中心化（継続的な追尾はしない） */}
-          <CenterOnSelect
+          <FollowCurrent position={currentPos} enabled={followMode === 'self' && !dynamicZoom} />
+          <ZoomWatcher onChange={setMapZoom} />
+          {/* ターゲット選択時はモードに関わらず 1 度だけ中心化（継続的な追尾はしない）
+              動的ズーム時は DynamicTargetZoom 側で都度設定するためスキップ */}
+          {!dynamicZoom && (
+            <CenterOnSelect
+              target={
+                selectedTarget
+                  ? {
+                      id: selectedTarget.id,
+                      lat: selectedTarget.lat,
+                      lng: selectedTarget.lng,
+                    }
+                  : null
+              }
+            />
+          )}
+          {/* ターゲット動的ズーム（ON 時のみ） */}
+          <DynamicTargetZoom
+            enabled={dynamicZoom}
             target={
               selectedTarget
                 ? {
@@ -1679,6 +1804,7 @@ export function MobileStakingPage() {
                   }
                 : null
             }
+            currentPos={currentPos}
           />
 
           {/* 工事区域ポリゴン（境界測量=シアン 等） */}
@@ -1810,11 +1936,11 @@ export function MobileStakingPage() {
                 }}
               >
                 <Tooltip
-                  key={`tip-${showLabels ? 'on' : 'off'}-${isStaked ? 'st' : 'no'}-${isSelected ? 'sel' : 'norm'}`}
+                  key={`tip-${showLabels && mapZoom >= LABEL_MIN_ZOOM ? 'on' : 'off'}-${isStaked ? 'st' : 'no'}-${isSelected ? 'sel' : 'norm'}`}
                   className="staking-label-tooltip"
                   direction="top"
                   offset={[0, -6]}
-                  permanent={showLabels}
+                  permanent={showLabels && mapZoom >= LABEL_MIN_ZOOM}
                   opacity={1}
                 >
                   <span
@@ -2261,20 +2387,16 @@ export function MobileStakingPage() {
           </button>
         )}
 
-        {/* 現在地 XYZ + 精度 */}
-        <div className="mt-1 text-[11px] font-mono text-slate-600 flex items-center gap-3 border-t pt-1 flex-wrap">
+        {/* 現在地 XYZ + 精度（1 行で収めるため余白とコロンを詰める） */}
+        <div className="mt-1 text-[11px] font-mono text-slate-600 flex items-center gap-1.5 border-t pt-1 whitespace-nowrap overflow-hidden">
           <span className="text-slate-500">現在地</span>
           {currentXY ? (
             <>
+              <span>X<span className="text-slate-800 ml-0.5">{currentXY.x.toFixed(3)}</span></span>
+              <span>Y<span className="text-slate-800 ml-0.5">{currentXY.y.toFixed(3)}</span></span>
               <span>
-                X: <span className="text-slate-800">{currentXY.x.toFixed(3)}</span>
-              </span>
-              <span>
-                Y: <span className="text-slate-800">{currentXY.y.toFixed(3)}</span>
-              </span>
-              <span>
-                Z:{' '}
-                <span className="text-slate-800">
+                Z
+                <span className="text-slate-800 ml-0.5">
                   {(() => {
                     if (currentAlt == null) return '-'
                     // 楕円体高 → 標高（ジオイド補正 + アンテナ高）
@@ -2301,9 +2423,9 @@ export function MobileStakingPage() {
                   })()}
                 </span>
               </span>
-              <span className="inline-flex items-center gap-1" style={{ color: accuracyColor(currentAcc) }}>
+              <span className="inline-flex items-center gap-0.5 ml-auto" style={{ color: accuracyColor(currentAcc) }}>
                 <Radio className="h-3 w-3" />
-                {currentAcc != null ? `${currentAcc.toFixed(3)} m` : '未取得'}
+                {currentAcc != null ? currentAcc.toFixed(3) : '-'}
               </span>
             </>
           ) : (
