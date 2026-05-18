@@ -1,9 +1,9 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Loader2, Monitor, LogOut, ArrowLeft } from 'lucide-react'
+import { Loader2, Monitor, LogOut, ArrowLeft, MapPin, Plus } from 'lucide-react'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useAuth } from '@/contexts/AuthContext'
@@ -53,11 +53,18 @@ export function MobileTopPage() {
     farms: allFarms,
     loading: farmsLoading,
     fetchFarms,
+    createFarm,
     farmLocations,
     workAreaPolygons,
     fetchWorkAreaPolygons,
   } = useFarmStore()
   const { projects, fetchProjects } = useProjectListStore()
+
+  // 新規圃場ダイアログ
+  const [showNewFarmDialog, setShowNewFarmDialog] = useState(false)
+  const [newFarmName, setNewFarmName] = useState('')
+  const [newFarmDescription, setNewFarmDescription] = useState('')
+  const [creatingFarm, setCreatingFarm] = useState(false)
 
   useEffect(() => {
     fetchFarms()
@@ -97,6 +104,30 @@ export function MobileTopPage() {
   // 圃場タップで直接工事測量画面へ
   const handleFarmClick = (farm: Farm) => {
     navigate(`/mobile/staking?farmId=${farm.id}`)
+  }
+
+  const handleCreateNewFarm = async () => {
+    if (!routeProjectId) {
+      alert('工事が選択されていません')
+      return
+    }
+    if (!newFarmName.trim()) return
+    setCreatingFarm(true)
+    try {
+      const created = await createFarm(
+        routeProjectId,
+        newFarmName.trim(),
+        newFarmDescription.trim() || undefined,
+      )
+      setNewFarmName('')
+      setNewFarmDescription('')
+      setShowNewFarmDialog(false)
+      if (created) {
+        navigate(`/mobile/staking?farmId=${created.id}`)
+      }
+    } finally {
+      setCreatingFarm(false)
+    }
   }
 
   const handleGoPC = () => {
@@ -156,7 +187,8 @@ export function MobileTopPage() {
         </button>
       </div>
 
-      <div className="flex-1 relative">
+      {/* 地図（上半分） */}
+      <div className="h-1/2 min-h-[200px] relative bg-slate-200">
         {farmLocations.size === 0 ? (
           <div className="h-full flex items-center justify-center text-slate-500 text-sm">
             位置情報のある圃場がありません
@@ -208,6 +240,95 @@ export function MobileTopPage() {
         )}
       </div>
 
+      {/* 圃場一覧（下半分）+ 末尾に新規作成 */}
+      <div className="flex-1 overflow-auto bg-white border-t">
+        {farms.length === 0 ? (
+          <div className="p-4 text-center text-sm text-slate-500">
+            圃場がありません。下の「新規圃場を追加」から作成してください。
+          </div>
+        ) : (
+          <ul className="divide-y">
+            {farms.map((farm) => {
+              const location = farmLocations.get(farm.id)
+              return (
+                <li key={farm.id}>
+                  <button
+                    onClick={() => handleFarmClick(farm)}
+                    className="w-full flex items-center gap-2 px-3 py-3 text-left hover:bg-slate-50 active:bg-blue-50"
+                  >
+                    <MapPin
+                      className={`h-4 w-4 flex-shrink-0 ${
+                        location ? 'text-blue-600' : 'text-slate-300'
+                      }`}
+                    />
+                    <span className="flex-1 truncate font-medium">{farm.name}</span>
+                    {farm.description && (
+                      <span className="text-[11px] text-slate-400 truncate max-w-[40%]">
+                        {farm.description}
+                      </span>
+                    )}
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+        {/* 新規圃場作成（一覧末尾） */}
+        {routeProjectId && (
+          <button
+            onClick={() => setShowNewFarmDialog(true)}
+            className="w-full flex items-center justify-center gap-1 px-3 py-3 text-sm text-blue-600 border-t hover:bg-blue-50 active:bg-blue-100"
+          >
+            <Plus className="h-4 w-4" />
+            新規圃場を追加
+          </button>
+        )}
+      </div>
+
+      {/* 新規圃場ダイアログ */}
+      {showNewFarmDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3000]">
+          <div className="bg-white w-full sm:max-w-sm rounded-t-xl sm:rounded-xl shadow-xl p-4">
+            <h3 className="text-base font-semibold mb-3">新規圃場</h3>
+            <div className="space-y-3 mb-4">
+              <div>
+                <label className="block text-xs text-slate-600 mb-1">圃場名</label>
+                <input
+                  type="text"
+                  value={newFarmName}
+                  onChange={(e) => setNewFarmName(e.target.value)}
+                  className="w-full px-2 py-1.5 text-sm border rounded"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-600 mb-1">説明（任意）</label>
+                <textarea
+                  value={newFarmDescription}
+                  onChange={(e) => setNewFarmDescription(e.target.value)}
+                  className="w-full px-2 py-1.5 text-sm border rounded h-16"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowNewFarmDialog(false)}
+                disabled={creatingFarm}
+                className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={handleCreateNewFarm}
+                disabled={creatingFarm || !newFarmName.trim()}
+                className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+              >
+                {creatingFarm ? '作成中…' : '作成して開く'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
