@@ -123,21 +123,22 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
       const allPointIds = typedAreas.flatMap(a => a.point_ids || [])
       const uniquePointIds = [...new Set(allPointIds)]
 
-      // design_coordinatesから座標データを取得
+      // design_coordinatesから座標データを取得（id=in.(...) は URL 長制限があるため
+      // 100 件ごとにチャンク取得する）
       let coordinatesMap: Record<string, DesignCoordinate> = {}
       if (uniquePointIds.length > 0) {
-        const { data: coords, error: coordError } = await supabase
-          .from('design_coordinates')
-          .select('*')
-          .in('id', uniquePointIds)
-
-        if (coordError) throw coordError
-
-        const typedCoords = coords as DesignCoordinate[]
-        coordinatesMap = typedCoords.reduce((acc, c) => {
-          acc[c.id] = c
-          return acc
-        }, {} as Record<string, DesignCoordinate>)
+        const CHUNK = 100
+        for (let i = 0; i < uniquePointIds.length; i += CHUNK) {
+          const slice = uniquePointIds.slice(i, i + CHUNK)
+          const { data: coords, error: coordError } = await supabase
+            .from('design_coordinates')
+            .select('*')
+            .in('id', slice)
+          if (coordError) throw coordError
+          for (const c of (coords as DesignCoordinate[])) {
+            coordinatesMap[c.id] = c
+          }
+        }
       }
 
       const zone = getCurrentZone()
