@@ -29,6 +29,7 @@ import {
   Shovel,
   Gem,
   LandPlot,
+  Compass,
   Home,
   ExternalLink,
   Smartphone,
@@ -68,6 +69,14 @@ interface NavGroup {
 const navigation: NavGroup[] = [
   { name: 'トップ', href: '/', icon: Home },
   { name: '座標管理', href: '/coordinates', icon: Map },
+  {
+    name: '境界測量',
+    href: '/boundary-survey',
+    icon: Compass,
+    children: [
+      { name: '地番データ', href: '/boundary-survey/work-area', icon: Square },
+    ],
+  },
   {
     name: '暗渠工事',
     href: '/underdrain',

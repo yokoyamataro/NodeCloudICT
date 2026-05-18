@@ -64,6 +64,7 @@ const PIPE_COLORS: Record<string, string> = {
 
 // 工種ごとの色
 const WORK_TYPE_COLORS: Record<string, string> = {
+  boundary_survey: '#0ea5e9', // 境界測量: シアン
   underdrain: '#3b82f6',
   soil_import: '#f59e0b',
   simple_grading: '#8b5cf6',

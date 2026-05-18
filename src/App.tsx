@@ -26,6 +26,8 @@ import { LandXMLPage } from '@/features/underdrain/LandXMLPage'
 import { CadExportPage } from '@/features/underdrain/CadExportPage'
 import { ReportsPage } from '@/features/underdrain/ReportsPage'
 import { StakingRecordsPage } from '@/features/underdrain/StakingRecordsPage'
+// 境界測量
+import { BoundarySurveyWorkAreaPage } from '@/features/boundary-survey/BoundarySurveyWorkAreaPage'
 // 新規工種
 import { SoilImportWorkAreaPage } from '@/features/soil-import/SoilImportWorkAreaPage'
 import { SoilImportStripPlanPage } from '@/features/soil-import/SoilImportStripPlanPage'
@@ -153,6 +155,10 @@ function AppRoutes() {
         <Route index element={<ProjectChooserPage />} />
         <Route path="projects/:projectId" element={<ProjectListPage />} />
         <Route path="coordinates" element={<CoordinatesPage />} />
+        {/* 境界測量 */}
+        <Route path="boundary-survey">
+          <Route path="work-area" element={<BoundarySurveyWorkAreaPage />} />
+        </Route>
         {/* 暗渠工事 */}
         <Route path="underdrain">
           <Route path="work-area" element={<UnderdrainWorkAreaPage />} />

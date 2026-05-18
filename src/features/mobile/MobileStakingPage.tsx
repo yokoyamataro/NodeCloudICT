@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, Tooltip, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, Polygon, Tooltip, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import {
@@ -217,7 +217,11 @@ export function MobileStakingPage() {
   const [params] = useSearchParams()
   const farmId = params.get('farmId')
 
-  const { setCurrentFarm } = useFarmStore()
+  const {
+    setCurrentFarm,
+    workAreaPolygons,
+    fetchWorkAreaPolygons,
+  } = useFarmStore()
   const {
     byProject: pointTypesByProject,
     fetchForProject: fetchPointTypes,
@@ -422,6 +426,17 @@ export function MobileStakingPage() {
     if (coordinates.length === 0) return
     fetchAttachments('coordinate', coordinates.map((c) => c.id))
   }, [coordinates, fetchAttachments])
+
+  // 工事区域ポリゴン（境界測量含む）を取得
+  useEffect(() => {
+    if (farmId) fetchWorkAreaPolygons()
+  }, [farmId, fetchWorkAreaPolygons])
+
+  // 当該工区のポリゴンのみ
+  const farmPolygons = useMemo(
+    () => workAreaPolygons.filter((p) => p.farmId === farmId),
+    [workAreaPolygons, farmId],
+  )
 
   // 方位センサー（DeviceOrientation）リスナー
   useEffect(() => {
@@ -1665,6 +1680,36 @@ export function MobileStakingPage() {
                 : null
             }
           />
+
+          {/* 工事区域ポリゴン（境界測量=シアン 等） */}
+          {farmPolygons.map((polygon) => {
+            const color =
+              polygon.workType === 'boundary_survey'
+                ? '#0ea5e9'
+                : polygon.workType === 'underdrain'
+                ? '#3b82f6'
+                : polygon.workType === 'soil_import'
+                ? '#f59e0b'
+                : polygon.workType === 'simple_grading'
+                ? '#8b5cf6'
+                : polygon.workType === 'grading'
+                ? '#10b981'
+                : polygon.workType === 'subsoil'
+                ? '#ec4899'
+                : '#6b7280'
+            return (
+              <Polygon
+                key={polygon.id}
+                positions={polygon.positions}
+                pathOptions={{
+                  color,
+                  fillColor: color,
+                  fillOpacity: 0.18,
+                  weight: 2,
+                }}
+              />
+            )
+          })}
 
           {/* 配線ライン（吸水=青・集水=緑、選択中はオレンジ）
               タップ判定を確実にするため、透明な太い「ヒットレイヤ」を上に重ねる */}

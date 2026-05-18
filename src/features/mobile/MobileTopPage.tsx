@@ -11,6 +11,7 @@ import { CurrentLocationLayer } from '@/components/map/CurrentLocationLayer'
 import { setDisplayModeOverride } from '@/lib/displayMode'
 
 const WORK_TYPE_COLORS: Record<string, string> = {
+  boundary_survey: '#0ea5e9',
   underdrain: '#3b82f6',
   soil_import: '#f59e0b',
   simple_grading: '#8b5cf6',

@@ -143,9 +143,13 @@ function AreaCalculationSheet({
 // メイン工事区域ページコンポーネント
 interface GenericWorkAreaPageProps {
   workType: WorkType
+  /** ページ上の「工事区域」ラベルを差し替える（例: 境界測量では「地番データ」） */
+  areaLabel?: string
+  /** PageHeader 右側に表示する追加アクション（例: SIM 入出力ボタン） */
+  headerActions?: React.ReactNode
 }
 
-export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
+export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', headerActions }: GenericWorkAreaPageProps) {
   const [calculationSheet, setCalculationSheet] = useState<AreaCalculationSheetType | null>(null)
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
   const [editingAreaId, setEditingAreaId] = useState<string | null>(null)
@@ -281,8 +285,9 @@ export function GenericWorkAreaPage({ workType }: GenericWorkAreaPageProps) {
   return (
     <div className="h-full flex flex-col">
       <PageHeader
-        title={`${workTypeName} - 工事区域`}
-        subtitle={`座標管理に登録した座標を使って${workTypeName}の工事区域を設定・面積計算`}
+        title={`${workTypeName} - ${areaLabel}`}
+        subtitle={`座標管理に登録した座標を使って${workTypeName}の${areaLabel}を設定・面積計算`}
+        actions={headerActions}
       />
 
       {/* 区域編集中の案内 */}

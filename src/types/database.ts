@@ -11,6 +11,7 @@ export type Json =
 
 // 工種タイプ
 export type WorkType =
+  | 'boundary_survey' // 境界測量（地番データを管理）
   | 'underdrain'     // 暗渠工事
   | 'soil_import'    // 客土工事
   | 'simple_grading' // 簡易整地
@@ -21,6 +22,7 @@ export type WorkType =
 
 // 工種の表示名
 export const WORK_TYPE_NAMES: Record<WorkType, string> = {
+  boundary_survey: '境界測量',
   underdrain: '暗渠工事',
   soil_import: '客土工事',
   simple_grading: '簡易整地',

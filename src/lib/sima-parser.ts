@@ -16,8 +16,16 @@ export interface SimaCoordinate {
   z: number | null
 }
 
+// 画地（ポリゴン）レコード: D00,{番号},{名称},{フラグ}, ... B01 でポイント参照 ... D99
+export interface SimaPolygon {
+  parcelNumber: string // D00 の番号（例: 463）
+  parcelName: string   // D00 の名称（例: 1-2）
+  pointNumbers: string[] // B01 で参照される点名のリスト（順序付き）
+}
+
 export interface SimaParseResult {
   coordinates: SimaCoordinate[]
+  polygons: SimaPolygon[]
   projectName: string | null
   system: number | null // 座標系番号
 }
@@ -29,8 +37,10 @@ export interface SimaParseResult {
 export function parseSima(content: string): SimaParseResult {
   const lines = content.split(/\r?\n/).filter(line => line.trim())
   const coordinates: SimaCoordinate[] = []
+  const polygons: SimaPolygon[] = []
   let projectName: string | null = null
   let system: number | null = null
+  let currentPolygon: SimaPolygon | null = null
 
   for (const line of lines) {
     const parts = line.split(',')
@@ -75,11 +85,39 @@ export function parseSima(content: string): SimaParseResult {
           }
         }
         break
+
+      case 'D00':
+        // 画地開始: D00,{番号},{名称},{フラグ},
+        currentPolygon = {
+          parcelNumber: parts[1]?.trim() || '',
+          parcelName: parts[2]?.trim() || '',
+          pointNumbers: [],
+        }
+        break
+
+      case 'B01':
+        // 画地内の点参照: B01,{index},{点名},
+        if (currentPolygon) {
+          const pn = parts[2]?.trim() || parts[1]?.trim() || ''
+          if (pn) currentPolygon.pointNumbers.push(pn)
+        }
+        break
+
+      case 'D99':
+        // 画地終了
+        if (currentPolygon && currentPolygon.pointNumbers.length > 0) {
+          polygons.push(currentPolygon)
+        }
+        currentPolygon = null
+        break
+
+      // C03（距離・方向角）は B01 の補助情報なので無視（順序は B01 で確定）
     }
   }
 
   return {
     coordinates,
+    polygons,
     projectName,
     system,
   }
@@ -118,10 +156,18 @@ export interface SimaExportPoint {
   z: number | null
 }
 
+export interface SimaExportPolygon {
+  parcelNumber: string // 例: '463'
+  parcelName: string   // 例: '1-2'
+  pointNumbers: string[] // B01 で参照する点名のリスト（順序付き）
+}
+
 export interface SimaExportOptions {
   projectName: string
   zone: number // 平面直角座標系番号（1〜19）
   points: SimaExportPoint[]
+  /** 画地（ポリゴン）データ。出力時のみ Z00 /* 画地データ * / セクションを追記 */
+  polygons?: SimaExportPolygon[]
 }
 
 /**
@@ -137,8 +183,12 @@ export function buildSimaContent(opts: SimaExportOptions): string {
   lines.push(`Z01,${opts.zone},`)
   lines.push('A00,')
 
+  // 点名 → 1ベースの行番号（B01 参照用）
+  const pointIndexByName = new Map<string, number>()
   opts.points.forEach((p, idx) => {
-    const numStr = (idx + 1).toString().padStart(5, ' ')
+    const indexNum = idx + 1
+    pointIndexByName.set(p.pointNumber, indexNum)
+    const numStr = indexNum.toString().padStart(5, ' ')
     const paddedName = p.pointNumber.padEnd(20, ' ')
     const xStr = p.x.toFixed(3).padStart(10, ' ')
     const yStr = p.y.toFixed(3).padStart(10, ' ')
@@ -147,6 +197,24 @@ export function buildSimaContent(opts: SimaExportOptions): string {
   })
 
   lines.push('A99,')
+
+  // 画地データセクション
+  if (opts.polygons && opts.polygons.length > 0) {
+    lines.push('Z00, /* 画地データ */,')
+    for (const poly of opts.polygons) {
+      const numStr = poly.parcelNumber.toString().padStart(5, ' ')
+      const nameStr = poly.parcelName.padEnd(10, ' ')
+      lines.push(`D00,${numStr},${nameStr},1,`)
+      for (const pn of poly.pointNumbers) {
+        const idx = pointIndexByName.get(pn) ?? 0
+        const idxStr = idx.toString().padStart(5, ' ')
+        const paddedName = pn.padEnd(20, ' ')
+        lines.push(`B01,${idxStr},${paddedName},`)
+      }
+      lines.push('D99,')
+    }
+  }
+
   return lines.join('\r\n') + '\r\n'
 }
 

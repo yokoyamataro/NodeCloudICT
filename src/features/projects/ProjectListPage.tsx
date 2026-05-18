@@ -41,6 +41,7 @@ import type { Project, ProjectMemberRole } from '@/types/database'
 
 // 工種ごとのポリゴン色
 const WORK_TYPE_COLORS: Record<string, string> = {
+  boundary_survey: '#0ea5e9', // 境界測量: シアン
   underdrain: '#3b82f6',     // 暗渠工事: 青
   soil_import: '#f59e0b',    // 客土工事: オレンジ
   simple_grading: '#8b5cf6', // 簡易整地: 紫
@@ -51,6 +52,7 @@ const WORK_TYPE_COLORS: Record<string, string> = {
 
 // 工種名
 const WORK_TYPE_NAMES: Record<string, string> = {
+  boundary_survey: '境界測量',
   underdrain: '暗渠',
   soil_import: '客土',
   simple_grading: '簡易整地',
@@ -60,7 +62,7 @@ const WORK_TYPE_NAMES: Record<string, string> = {
 }
 
 // 全工種リスト
-const ALL_WORK_TYPES = ['underdrain', 'soil_import', 'simple_grading', 'grading', 'subsoil', 'stone_removal'] as const
+const ALL_WORK_TYPES = ['boundary_survey', 'underdrain', 'soil_import', 'simple_grading', 'grading', 'subsoil', 'stone_removal'] as const
 
 // カスタムマーカーアイコン
 const createMarkerIcon = (isSelected: boolean = false): L.DivIcon => {
