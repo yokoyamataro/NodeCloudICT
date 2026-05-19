@@ -39,6 +39,7 @@ interface CoordinateState {
   addCoordinate: (type: CoordinateType) => Promise<void>
   updateCoordinate: (id: string, field: keyof CoordinateRow, value: string | number | null) => void
   deleteCoordinate: (id: string) => Promise<void>
+  deleteCoordinates: (ids: string[]) => Promise<void>
   importCoordinates: (coords: Omit<CoordinateRow, 'id' | 'lat' | 'lng'>[]) => Promise<CoordinateRow[]>
   clearCoordinates: () => Promise<void>
   getCoordinateById: (id: string) => CoordinateRow | undefined
@@ -223,6 +224,28 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
       }))
     } catch (err) {
       set({ error: err instanceof Error ? err.message : '座標の削除に失敗しました' })
+    }
+  },
+
+  // 複数 ID を一括削除（in() は URL 長制限があるため 100 件ずつチャンク）
+  deleteCoordinates: async (ids) => {
+    if (ids.length === 0) return
+    try {
+      const CHUNK = 100
+      for (let i = 0; i < ids.length; i += CHUNK) {
+        const slice = ids.slice(i, i + CHUNK)
+        const { error } = await supabase
+          .from('design_coordinates')
+          .delete()
+          .in('id', slice)
+        if (error) throw error
+      }
+      const idSet = new Set(ids)
+      set((state) => ({
+        coordinates: state.coordinates.filter((c) => !idSet.has(c.id)),
+      }))
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : '座標の一括削除に失敗しました' })
     }
   },
 

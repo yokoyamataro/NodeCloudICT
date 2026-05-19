@@ -209,6 +209,7 @@ export function CoordinatesPage() {
     addCoordinate,
     updateCoordinate,
     deleteCoordinate,
+    deleteCoordinates,
     importCoordinates,
     selectedType,
     setSelectedType,
@@ -439,11 +440,8 @@ export function CoordinatesPage() {
   const handleBulkDelete = async () => {
     if (checkedIds.size === 0) return
     if (!confirm(`選択した ${checkedIds.size} 点を削除します。よろしいですか？`)) return
-    const ids = Array.from(checkedIds)
-    for (const id of ids) {
-      // eslint-disable-next-line no-await-in-loop
-      await deleteCoordinate(id)
-    }
+    // 1 件ずつではなく in() 一括削除（100 件チャンク）
+    await deleteCoordinates(Array.from(checkedIds))
     setCheckedIds(new Set())
   }
 
