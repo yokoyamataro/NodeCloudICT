@@ -315,7 +315,8 @@ export function MobileStakingPage() {
   const [currentPos, setCurrentPos] = useState<[number, number] | null>(null)
   const [currentAcc, setCurrentAcc] = useState<number | null>(null)
   const [currentAlt, setCurrentAlt] = useState<number | null>(null)
-  const [followMode, setFollowMode] = useState<MapFollowMode>('self')
+  // 既定: 自己位置追尾は OFF にして、まず工区全体が画面内に収まる初期表示にする
+  const [followMode, setFollowMode] = useState<MapFollowMode>('off')
   const [heading, setHeading] = useState<number | null>(null)
   const [headingEnabled, setHeadingEnabled] = useState(false)
   const [headingError, setHeadingError] = useState<string | null>(null)
@@ -378,6 +379,9 @@ export function MobileStakingPage() {
   // 写真モーダル: 選択中ターゲット（座標）の写真を閲覧／撮影できる
   const [photoModalTarget, setPhotoModalTarget] = useState<StakingTarget | null>(null)
   const [showLabels, setShowLabels] = useState(true)
+  // 地番名ラベル（境界測量ポリゴンの上に表示）。既定 OFF、低ズーム時は自動 OFF。
+  const [showParcelLabels, setShowParcelLabels] = useState(false)
+  const PARCEL_LABEL_MIN_ZOOM = 17
   // ターゲット動的ズーム（ターゲットを中心にして、現在地も視野に収まるよう自動拡大縮小）
   const [dynamicZoom, setDynamicZoom] = useState(false)
   // 地図ベースレイヤ（地理院の各種タイル / 背景なし）
@@ -915,15 +919,15 @@ export function MobileStakingPage() {
     }
   }, [currentPos, converter])
 
+  // 工区全体の bounds（自己位置は含めず、開いた直後の初期表示用）
   const allBounds = useMemo(() => {
     const all: [number, number][] = []
     for (const t of targets) all.push([t.lat, t.lng])
-    if (currentPos) all.push(currentPos)
     if (all.length === 0) return null
     const lats = all.map((p) => p[0])
     const lngs = all.map((p) => p[1])
     return L.latLngBounds([Math.min(...lats), Math.min(...lngs)], [Math.max(...lats), Math.max(...lngs)])
-  }, [targets, currentPos])
+  }, [targets])
 
   // 配線（吸水管・集水管）の線形を緯度経度ポリラインに変換
   const pipePolylines = useMemo(() => {
@@ -1516,6 +1520,15 @@ export function MobileStakingPage() {
           <Tag className="h-4 w-4" />
         </button>
         <button
+          onClick={() => setShowParcelLabels((v) => !v)}
+          className={`p-1.5 rounded text-[10px] font-bold w-7 flex items-center justify-center ${
+            showParcelLabels ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'
+          }`}
+          title={`地番名表示（ズーム ${PARCEL_LABEL_MIN_ZOOM} 以上で有効）`}
+        >
+          地
+        </button>
+        <button
           onClick={() => setShowFilterPanel((v) => !v)}
           className={`p-1.5 rounded relative ${
             showFilterPanel || hiddenSubTypes.size > 0 || targetFilter !== 'all'
@@ -1794,7 +1807,7 @@ export function MobileStakingPage() {
             maxZoom={22}
             maxNativeZoom={currentBase.maxNative ?? 18}
           />
-          <FitOnce bounds={currentPos ? null : allBounds} />
+          <FitOnce bounds={allBounds} />
           <FollowCurrent position={currentPos} enabled={followMode === 'self' && !dynamicZoom} />
           <ZoomWatcher onChange={setMapZoom} />
           {/* ターゲット選択時はモードに関わらず 1 度だけ中心化（継続的な追尾はしない）
@@ -1843,6 +1856,7 @@ export function MobileStakingPage() {
                 : polygon.workType === 'subsoil'
                 ? '#ec4899'
                 : '#6b7280'
+            const labelVisible = showParcelLabels && mapZoom >= PARCEL_LABEL_MIN_ZOOM
             return (
               <Polygon
                 key={polygon.id}
@@ -1853,7 +1867,28 @@ export function MobileStakingPage() {
                   fillOpacity: 0.18,
                   weight: 2,
                 }}
-              />
+              >
+                {polygon.name && (
+                  <Tooltip
+                    key={`pl-${labelVisible ? 'on' : 'off'}`}
+                    className="staking-label-tooltip"
+                    direction="center"
+                    permanent={labelVisible}
+                    opacity={1}
+                    sticky
+                  >
+                    <span
+                      style={{
+                        color,
+                        textShadow:
+                          '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff',
+                      }}
+                    >
+                      {polygon.name}
+                    </span>
+                  </Tooltip>
+                )}
+              </Polygon>
             )
           })}
 
@@ -1907,8 +1942,20 @@ export function MobileStakingPage() {
           {filteredTargets.map((t) => {
             const isSelected = t.id === selectedTargetId
             const isStaked = stakedTargetIds.has(t.id)
-            // 色: 選択中 = オレンジ、座標管理 = 青、暗渠頂点 = 緑（測設済みは緑チェックマーカーで上書き）
-            const baseColor = t.kind === 'coordinate' ? '#3b82f6' : '#22c55e'
+            // 色: 選択中 = オレンジ、座標は点種で色分け、暗渠頂点 = 緑
+            //   基準点(control) = 赤、外周点(boundary) = シアン、現況(current) = 青、その他 = 灰
+            let baseColor = '#3b82f6'
+            if (t.kind === 'pipe_vertex') {
+              baseColor = '#22c55e'
+            } else if (t.subType === 'control') {
+              baseColor = '#dc2626'
+            } else if (t.subType === 'boundary') {
+              baseColor = '#0ea5e9'
+            } else if (t.subType === 'current') {
+              baseColor = '#3b82f6'
+            } else {
+              baseColor = '#64748b'
+            }
             const fillColor = isSelected ? '#f97316' : baseColor
             const size = isSelected ? 18 : 12
             // 測設済みのマーカー: 白丸 + 緑チェック。選択中はオレンジリング。
