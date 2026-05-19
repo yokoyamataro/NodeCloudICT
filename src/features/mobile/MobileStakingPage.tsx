@@ -1958,36 +1958,50 @@ export function MobileStakingPage() {
             }
             const fillColor = isSelected ? '#f97316' : baseColor
             const size = isSelected ? 18 : 12
-            // 測設済みのマーカー: 白丸 + 緑チェック。選択中はオレンジリング。
+            // タップ判定領域（指でも確実に拾えるよう 32px の透明枠で囲む）
+            const HIT = 32
+            const stakedInnerSize = size + 8
             const stakedHtml = `<div style="
-              position: relative;
-              width: ${size + 8}px;
-              height: ${size + 8}px;
+              width:${HIT}px; height:${HIT}px;
+              display:flex; align-items:center; justify-content:center;
+              cursor:pointer;
             ">
               <div style="
-                position:absolute; inset:0;
-                background:#ffffff;
-                border:2px solid ${isSelected ? '#f97316' : '#16a34a'};
-                border-radius:50%;
-                box-shadow:0 1px 3px rgba(0,0,0,0.35);
-                ${isSelected ? 'box-shadow:0 0 0 3px rgba(249,115,22,0.4),0 1px 3px rgba(0,0,0,0.35);' : ''}
-              "></div>
-              <svg viewBox="0 0 24 24" width="${size + 8}" height="${size + 8}"
-                style="position:absolute; inset:0;" fill="none"
-                stroke="${isSelected ? '#f97316' : '#16a34a'}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="6 12 10 16 18 8" />
-              </svg>
+                position: relative;
+                width: ${stakedInnerSize}px;
+                height: ${stakedInnerSize}px;
+              ">
+                <div style="
+                  position:absolute; inset:0;
+                  background:#ffffff;
+                  border:2px solid ${isSelected ? '#f97316' : '#16a34a'};
+                  border-radius:50%;
+                  box-shadow:0 1px 3px rgba(0,0,0,0.35);
+                  ${isSelected ? 'box-shadow:0 0 0 3px rgba(249,115,22,0.4),0 1px 3px rgba(0,0,0,0.35);' : ''}
+                "></div>
+                <svg viewBox="0 0 24 24" width="${stakedInnerSize}" height="${stakedInnerSize}"
+                  style="position:absolute; inset:0;" fill="none"
+                  stroke="${isSelected ? '#f97316' : '#16a34a'}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="6 12 10 16 18 8" />
+                </svg>
+              </div>
             </div>`
             const normalHtml = `<div style="
-              width:${size}px;
-              height:${size}px;
-              background:${fillColor};
-              border:2px solid white;
-              border-radius:50%;
-              box-shadow:0 1px 3px rgba(0,0,0,0.4);
-              ${isSelected ? 'box-shadow:0 0 0 3px rgba(249,115,22,0.4),0 1px 3px rgba(0,0,0,0.4);' : ''}
-            "></div>`
-            const iconSize = isStaked ? size + 8 : size
+              width:${HIT}px; height:${HIT}px;
+              display:flex; align-items:center; justify-content:center;
+              cursor:pointer;
+            ">
+              <div style="
+                width:${size}px;
+                height:${size}px;
+                background:${fillColor};
+                border:2px solid white;
+                border-radius:50%;
+                box-shadow:0 1px 3px rgba(0,0,0,0.4);
+                ${isSelected ? 'box-shadow:0 0 0 3px rgba(249,115,22,0.4),0 1px 3px rgba(0,0,0,0.4);' : ''}
+              "></div>
+            </div>`
+            const iconSize = HIT
             return (
               <Marker
                 key={t.id}

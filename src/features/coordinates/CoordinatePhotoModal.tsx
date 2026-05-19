@@ -72,25 +72,22 @@ export function CoordinatePhotoModal({
     pendingCategoryRef.current = null
   }
 
-  // 編集モーダル確定後にアップロード
-  const handleEditConfirmed = async (blob: Blob, fileName: string) => {
+  // 編集モーダル確定後にアップロード（編集時点で 1600px / JPEG80% に縮小済みなので再エンコードしない）
+  const handleEditConfirmed = async (blob: Blob, _fileName: string) => {
     if (!editingFile) return
     const cat = editingFile.category
     setEditingFile(null)
     setUploadingFor(cat)
     setError(null)
     try {
-      // Blob を File に包んで uploadPhoto（リサイズはストア側で再度かかる）
-      const editedFile = new File([blob], fileName.replace(/\.[^.]+$/, '') + '_edited.jpg', {
-        type: 'image/jpeg',
-      })
       const saved = await uploadPhoto({
         projectId,
         entityType: 'coordinate',
         entityId: coordinateId,
-        file: editedFile,
+        file: blob,
         category: cat,
         takenAt: new Date(),
+        skipResize: true,
       })
       if (!saved) setError('写真の登録に失敗しました')
     } finally {
@@ -134,6 +131,12 @@ export function CoordinatePhotoModal({
         {error && (
           <div className="px-3 py-2 bg-red-50 text-xs text-red-600 border-b">
             {error}
+          </div>
+        )}
+        {uploadingFor && (
+          <div className="px-3 py-2 bg-blue-50 text-xs text-blue-700 border-b flex items-center gap-2">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            {uploadingFor} の写真をアップロード中…（しばらくお待ちください）
           </div>
         )}
 

@@ -66,28 +66,54 @@ export function PhotoEditModal({ file, onCancel, onConfirm }: PhotoEditModalProp
         unit: 'px' as const,
       }
       // ナチュラル単位
-      const cx = cropPx.x * scaleX
-      const cy = cropPx.y * scaleY
-      const cw = cropPx.width * scaleX
-      const ch = cropPx.height * scaleY
+      const cx = Math.round(cropPx.x * scaleX)
+      const cy = Math.round(cropPx.y * scaleY)
+      const cw = Math.round(cropPx.width * scaleX)
+      const ch = Math.round(cropPx.height * scaleY)
 
-      // 出力 Canvas（回転後のサイズ）
+      // 回転後の出力寸法を決定し、長辺 1600px に縮小（モバイルでの canvas/encode 負荷低減）
       const isQuarterTurn = rotation === 90 || rotation === 270
-      const outW = isQuarterTurn ? ch : cw
-      const outH = isQuarterTurn ? cw : ch
+      const finalW = isQuarterTurn ? ch : cw
+      const finalH = isQuarterTurn ? cw : ch
+      const MAX_LONG_EDGE = 1600
+      const scale = Math.min(1, MAX_LONG_EDGE / Math.max(finalW, finalH))
+      const outW = Math.max(1, Math.round(finalW * scale))
+      const outH = Math.max(1, Math.round(finalH * scale))
+
+      // ブラウザの hardware decode を活かして元 File から「クロップ＋縮小」を 1 ステップで実施。
+      // resizeWidth/Height は回転前のサイズに合わせる（回転後に outW/outH になる）
+      const preRotateW = isQuarterTurn ? outH : outW
+      const preRotateH = isQuarterTurn ? outW : outH
+      let bitmap: ImageBitmap
+      try {
+        bitmap = await createImageBitmap(file, cx, cy, cw, ch, {
+          resizeWidth: preRotateW,
+          resizeHeight: preRotateH,
+          resizeQuality: 'high',
+        })
+      } catch {
+        // 古い iOS Safari など対応外環境では img タグから drawImage で済ます
+        bitmap = await createImageBitmap(img, cx, cy, cw, ch, {
+          resizeWidth: preRotateW,
+          resizeHeight: preRotateH,
+          resizeQuality: 'high',
+        })
+      }
+
       const canvas = document.createElement('canvas')
-      canvas.width = Math.round(outW)
-      canvas.height = Math.round(outH)
+      canvas.width = outW
+      canvas.height = outH
       const ctx = canvas.getContext('2d')
       if (!ctx) throw new Error('Canvas 2D が取得できません')
 
-      // 中心を原点にして回転、クロップ領域を描画
+      // 中心原点で回転 → 縮小済み bitmap を貼り付け
       ctx.translate(canvas.width / 2, canvas.height / 2)
       ctx.rotate((rotation * Math.PI) / 180)
-      ctx.drawImage(img, cx, cy, cw, ch, -cw / 2, -ch / 2, cw, ch)
+      ctx.drawImage(bitmap, -preRotateW / 2, -preRotateH / 2)
+      bitmap.close?.()
 
       const blob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob(resolve, 'image/jpeg', 0.92),
+        canvas.toBlob(resolve, 'image/jpeg', 0.8),
       )
       if (!blob) throw new Error('画像のエンコードに失敗しました')
       onConfirm(blob, file.name)

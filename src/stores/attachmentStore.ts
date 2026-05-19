@@ -79,12 +79,16 @@ interface State {
     projectId: string
     entityType: AttachmentEntityType | string
     entityId: string
-    file: File
+    file: File | Blob
     category: string
     caption?: string | null
     takenAt?: Date | null
     lat?: number | null
     lng?: number | null
+    /** 既に縮小済みの Blob を渡す場合は true（再エンコードしない） */
+    skipResize?: boolean
+    /** 保存ファイル名（拡張子は .jpg を推奨）。省略時は uuid.jpg */
+    fileName?: string
   }) => Promise<Attachment | null>
   removeAttachment: (id: string) => Promise<void>
   getSignedUrl: (filePath: string) => Promise<string | null>
@@ -180,10 +184,14 @@ export const useAttachmentStore = create<State>((set, get) => ({
     takenAt = null,
     lat = null,
     lng = null,
+    skipResize = false,
   }) => {
     try {
-      // クライアント側で長辺 1600px / JPEG 80% にリサイズ
-      const resized = await resizeImage(file, { maxSize: 1600, quality: 0.8 })
+      // skipResize=true: 既に縮小済みの Blob を再エンコードせずそのまま使う
+      const uploadBlob: Blob = skipResize
+        ? file
+        : (await resizeImage(file, { maxSize: 1600, quality: 0.8 })).blob
+      const uploadMime = skipResize ? (file.type || 'image/jpeg') : 'image/jpeg'
       const ext = 'jpg'
       const uuid = (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`)
       const path = `${projectId}/${entityType}/${entityId}/${uuid}.${ext}`
@@ -191,8 +199,8 @@ export const useAttachmentStore = create<State>((set, get) => ({
       // Storage へアップロード
       const { error: uploadErr } = await supabase.storage
         .from('attachments')
-        .upload(path, resized.blob, {
-          contentType: resized.mime,
+        .upload(path, uploadBlob, {
+          contentType: uploadMime,
           cacheControl: '3600',
           upsert: false,
         })
@@ -207,8 +215,8 @@ export const useAttachmentStore = create<State>((set, get) => ({
         entity_type: entityType,
         entity_id: entityId,
         file_path: path,
-        mime: resized.mime,
-        byte_size: resized.blob.size,
+        mime: uploadMime,
+        byte_size: uploadBlob.size,
         category,
         caption,
         taken_at: takenAt ? takenAt.toISOString() : null,
