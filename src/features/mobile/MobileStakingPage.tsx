@@ -382,7 +382,7 @@ export function MobileStakingPage() {
   const [dynamicZoom, setDynamicZoom] = useState(false)
   // 地図ベースレイヤ（地理院の各種タイル / 背景なし）
   type BaseLayerKey = 'photo' | 'std' | 'pale' | 'blank' | 'none'
-  const BASE_LAYERS: Record<BaseLayerKey, { label: string; url: string | null; maxNative?: number }> = {
+  const BASE_LAYERS: Record<BaseLayerKey, { label: string; url: string; maxNative?: number }> = {
     photo: {
       label: '航空写真',
       url: 'https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg',
@@ -405,7 +405,10 @@ export function MobileStakingPage() {
     },
     none: {
       label: '背景なし',
-      url: null,
+      // 透明 1px 画像をタイルにすることで、TileLayer を unmount せず URL のみ更新する
+      // → 既存のポリゴンなどの上位レイヤを巻き込んで再描画されるのを防ぐ
+      url:
+        'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
     },
   }
   const [baseLayer, setBaseLayer] = useState<BaseLayerKey>(() => {
@@ -1785,15 +1788,12 @@ export function MobileStakingPage() {
           className="h-full w-full"
           style={baseLayer === 'none' ? { background: '#ffffff' } : undefined}
         >
-          {currentBase.url && (
-            <TileLayer
-              key={baseLayer}
-              attribution='&copy; 国土地理院'
-              url={currentBase.url}
-              maxZoom={22}
-              maxNativeZoom={currentBase.maxNative ?? 18}
-            />
-          )}
+          <TileLayer
+            attribution='&copy; 国土地理院'
+            url={currentBase.url ?? ''}
+            maxZoom={22}
+            maxNativeZoom={currentBase.maxNative ?? 18}
+          />
           <FitOnce bounds={currentPos ? null : allBounds} />
           <FollowCurrent position={currentPos} enabled={followMode === 'self' && !dynamicZoom} />
           <ZoomWatcher onChange={setMapZoom} />
