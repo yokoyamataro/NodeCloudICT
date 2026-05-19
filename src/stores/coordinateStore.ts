@@ -101,18 +101,29 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
     // 工区切替時に旧データを即時クリアしておく（地図初期化が古い座標で走るのを防ぐ）
     set({ loading: true, error: null, coordinates: [] })
     try {
-      const { data, error } = await supabase
-        .from('design_coordinates')
-        .select('*')
-        .eq('farm_id', farmId)
-        .order('point_number')
-
-      if (error) throw error
+      // Supabase は既定で 1 リクエスト 1000 行までなので range() でページング取得
+      const PAGE = 1000
+      const all: DesignCoordinate[] = []
+      let from = 0
+      // 安全弁: 最大 100 万行で打ち切り
+      while (from < 1_000_000) {
+        const { data, error } = await supabase
+          .from('design_coordinates')
+          .select('*')
+          .eq('farm_id', farmId)
+          .order('point_number')
+          .range(from, from + PAGE - 1)
+        if (error) throw error
+        const rows = (data || []) as DesignCoordinate[]
+        all.push(...rows)
+        if (rows.length < PAGE) break
+        from += PAGE
+      }
 
       const zone = get().zone
       const converter = new CoordinateConverter(zone)
 
-      const coordinates: CoordinateRow[] = ((data || []) as DesignCoordinate[]).map((row) => {
+      const coordinates: CoordinateRow[] = all.map((row) => {
         let lat = row.latitude
         let lng = row.longitude
         if (lat === null || lng === null) {

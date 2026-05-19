@@ -119,17 +119,22 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         return
       }
 
-      // design_coordinates は farm_id で 1 回だけ取得する
-      // （id=in.(...) は数百〜数千で URL が肥大化し、N チャンク × 往復で重い）
+      // design_coordinates は farm_id でページング取得（既定 1000 行/req のため）
       const coordinatesMap: Record<string, DesignCoordinate> = {}
       {
-        const { data: coords, error: coordError } = await supabase
-          .from('design_coordinates')
-          .select('*')
-          .eq('farm_id', farmId)
-        if (coordError) throw coordError
-        for (const c of (coords as DesignCoordinate[])) {
-          coordinatesMap[c.id] = c
+        const PAGE = 1000
+        let from = 0
+        while (from < 1_000_000) {
+          const { data: coords, error: coordError } = await supabase
+            .from('design_coordinates')
+            .select('*')
+            .eq('farm_id', farmId)
+            .range(from, from + PAGE - 1)
+          if (coordError) throw coordError
+          const rows = (coords || []) as DesignCoordinate[]
+          for (const c of rows) coordinatesMap[c.id] = c
+          if (rows.length < PAGE) break
+          from += PAGE
         }
       }
 
