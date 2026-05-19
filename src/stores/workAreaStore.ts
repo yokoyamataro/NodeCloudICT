@@ -119,25 +119,17 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         return
       }
 
-      // 全エリアのpoint_idsを収集
-      const allPointIds = typedAreas.flatMap(a => a.point_ids || [])
-      const uniquePointIds = [...new Set(allPointIds)]
-
-      // design_coordinatesから座標データを取得（id=in.(...) は URL 長制限があるため
-      // 100 件ごとにチャンク取得する）
-      let coordinatesMap: Record<string, DesignCoordinate> = {}
-      if (uniquePointIds.length > 0) {
-        const CHUNK = 100
-        for (let i = 0; i < uniquePointIds.length; i += CHUNK) {
-          const slice = uniquePointIds.slice(i, i + CHUNK)
-          const { data: coords, error: coordError } = await supabase
-            .from('design_coordinates')
-            .select('*')
-            .in('id', slice)
-          if (coordError) throw coordError
-          for (const c of (coords as DesignCoordinate[])) {
-            coordinatesMap[c.id] = c
-          }
+      // design_coordinates は farm_id で 1 回だけ取得する
+      // （id=in.(...) は数百〜数千で URL が肥大化し、N チャンク × 往復で重い）
+      const coordinatesMap: Record<string, DesignCoordinate> = {}
+      {
+        const { data: coords, error: coordError } = await supabase
+          .from('design_coordinates')
+          .select('*')
+          .eq('farm_id', farmId)
+        if (coordError) throw coordError
+        for (const c of (coords as DesignCoordinate[])) {
+          coordinatesMap[c.id] = c
         }
       }
 

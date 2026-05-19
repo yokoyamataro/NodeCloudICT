@@ -23,10 +23,12 @@ export function BoundarySurveyWorkAreaPage() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState<'import' | 'export' | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  // インポート進捗
+  const [progress, setProgress] = useState<{ phase: string; done: number; total: number } | null>(null)
 
   const { currentFarm } = useFarmStore()
   const { projects } = useProjectListStore()
-  const { coordinates, fetchCoordinates, importCoordinates } = useCoordinateStore()
+  const { coordinates, importCoordinates } = useCoordinateStore()
   const { workAreas, fetchWorkAreas } = useWorkAreaStore()
 
   const project = currentFarm
@@ -42,6 +44,7 @@ export function BoundarySurveyWorkAreaPage() {
     if (!file || !currentFarm) return
     setBusy('import')
     setMessage(null)
+    setProgress({ phase: 'ファイル解析中', done: 0, total: 0 })
     try {
       const result = await loadSimaFile(file)
 
@@ -59,50 +62,51 @@ export function BoundarySurveyWorkAreaPage() {
 
       let insertedCoords: CoordinateRow[] = []
       if (newCoords.length > 0) {
-        insertedCoords = await importCoordinates(newCoords)
+        setProgress({ phase: '座標を取り込み中', done: 0, total: newCoords.length })
+        insertedCoords = await importCoordinates(newCoords, (done, total) => {
+          setProgress({ phase: '座標を取り込み中', done, total })
+        })
       }
 
-      // 2) 全座標（既存 + 新規）から 点番号 → ID マップを作る
-      // 即時反映のために再 fetch する
-      await fetchCoordinates(currentFarm.id)
-      const fresh = useCoordinateStore.getState().coordinates
+      // 2) 既存 coordinates + insertedCoords で 点番号 → ID マップを構築（再 fetch 不要）
       const idByName = new Map<string, string>()
-      for (const c of fresh) idByName.set(c.pointNumber, c.id)
-      // insertedCoords は state 反映前の値の場合があるためフォールバック
-      for (const c of insertedCoords) {
-        if (!idByName.has(c.pointNumber)) idByName.set(c.pointNumber, c.id)
-      }
+      for (const c of coordinates) idByName.set(c.pointNumber, c.id)
+      for (const c of insertedCoords) idByName.set(c.pointNumber, c.id)
 
       // 3) 画地を design_work_areas に挿入（work_type='boundary_survey'）
       let createdPolygons = 0
       let skippedPolygons = 0
-      for (const poly of result.polygons) {
+      const polyTotal = result.polygons.length
+      setProgress({ phase: '画地を取り込み中', done: 0, total: polyTotal })
+      for (let i = 0; i < polyTotal; i++) {
+        const poly = result.polygons[i]
         const pointIds = poly.pointNumbers
           .map((pn) => idByName.get(pn))
           .filter((id): id is string => !!id)
         if (pointIds.length < 3) {
           skippedPolygons++
-          continue
+        } else {
+          const label = poly.parcelName || poly.parcelNumber || `画地${createdPolygons + 1}`
+          const { error } = await supabase
+            .from('design_work_areas')
+            .insert({
+              farm_id: currentFarm.id,
+              work_type: 'boundary_survey',
+              zone_number: label,
+              name: label,
+              point_ids: pointIds,
+              area_sqm: null,
+              area_ha: null,
+              perimeter_m: null,
+              notes: null,
+            } as never)
+          if (!error) createdPolygons++
+          else skippedPolygons++
         }
-        // 地番名（D00 の 3 列目）を優先して使用する。無ければ番号でフォールバック
-        const label = poly.parcelName || poly.parcelNumber || `画地${createdPolygons + 1}`
-        const { error } = await supabase
-          .from('design_work_areas')
-          .insert({
-            farm_id: currentFarm.id,
-            work_type: 'boundary_survey',
-            zone_number: label,
-            name: label,
-            point_ids: pointIds,
-            area_sqm: null,
-            area_ha: null,
-            perimeter_m: null,
-            notes: null,
-          } as never)
-        if (!error) createdPolygons++
-        else skippedPolygons++
+        setProgress({ phase: '画地を取り込み中', done: i + 1, total: polyTotal })
       }
 
+      setProgress({ phase: '工事区域を再読込中', done: 0, total: 0 })
       await fetchWorkAreas(currentFarm.id)
 
       const parts: string[] = []
@@ -115,6 +119,7 @@ export function BoundarySurveyWorkAreaPage() {
       setMessage(err instanceof Error ? err.message : 'インポートに失敗しました')
     } finally {
       setBusy(null)
+      setProgress(null)
     }
   }
 
@@ -179,7 +184,33 @@ export function BoundarySurveyWorkAreaPage() {
         areaLabel="地番データ"
         headerActions={
           <div className="flex items-center gap-2">
-            {message && (
+            {progress && (
+              <div className="flex items-center gap-2 text-xs text-slate-700">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" />
+                <span>
+                  {progress.phase}
+                  {progress.total > 0 && (
+                    <>
+                      <span className="font-mono ml-1">
+                        {progress.done.toLocaleString()} / {progress.total.toLocaleString()}
+                      </span>
+                      <span className="ml-1 text-slate-500">
+                        ({progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0}%)
+                      </span>
+                    </>
+                  )}
+                </span>
+                {progress.total > 0 && (
+                  <div className="w-32 h-2 bg-slate-200 rounded overflow-hidden">
+                    <div
+                      className="h-full bg-blue-600 transition-[width] duration-150"
+                      style={{ width: `${Math.min(100, (progress.done / progress.total) * 100)}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+            {!progress && message && (
               <span className="text-xs text-slate-600 max-w-[20rem] truncate" title={message}>
                 {message}
               </span>

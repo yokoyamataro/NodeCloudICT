@@ -40,7 +40,10 @@ interface CoordinateState {
   updateCoordinate: (id: string, field: keyof CoordinateRow, value: string | number | null) => void
   deleteCoordinate: (id: string) => Promise<void>
   deleteCoordinates: (ids: string[]) => Promise<void>
-  importCoordinates: (coords: Omit<CoordinateRow, 'id' | 'lat' | 'lng'>[]) => Promise<CoordinateRow[]>
+  importCoordinates: (
+    coords: Omit<CoordinateRow, 'id' | 'lat' | 'lng'>[],
+    onProgress?: (done: number, total: number) => void,
+  ) => Promise<CoordinateRow[]>
   clearCoordinates: () => Promise<void>
   getCoordinateById: (id: string) => CoordinateRow | undefined
 
@@ -249,7 +252,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
     }
   },
 
-  importCoordinates: async (coords) => {
+  importCoordinates: async (coords, onProgress) => {
     const farmId = getCurrentFarmId()
     if (!farmId) {
       set({ error: '工区が選択されていません' })
@@ -280,26 +283,35 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         }
       })
 
-      const { data, error } = await supabase
-        .from('design_coordinates')
-        .insert(insertData as never)
-        .select()
+      // 大量データ対応: 500 件ずつチャンクして INSERT し、進捗を通知
+      const CHUNK = 500
+      const allNew: CoordinateRow[] = []
+      const total = insertData.length
+      onProgress?.(0, total)
+      for (let i = 0; i < total; i += CHUNK) {
+        const slice = insertData.slice(i, i + CHUNK)
+        const { data, error } = await supabase
+          .from('design_coordinates')
+          .insert(slice as never)
+          .select()
+        if (error) throw error
+        for (const row of (data || []) as DesignCoordinate[]) {
+          allNew.push({
+            id: row.id,
+            pointNumber: row.point_number,
+            x: row.x,
+            y: row.y,
+            z: row.z,
+            lat: row.latitude,
+            lng: row.longitude,
+            type: row.coordinate_type as CoordinateType,
+          })
+        }
+        onProgress?.(Math.min(i + CHUNK, total), total)
+      }
 
-      if (error) throw error
-
-      const newCoords: CoordinateRow[] = ((data || []) as DesignCoordinate[]).map((row) => ({
-        id: row.id,
-        pointNumber: row.point_number,
-        x: row.x,
-        y: row.y,
-        z: row.z,
-        lat: row.latitude,
-        lng: row.longitude,
-        type: row.coordinate_type as CoordinateType,
-      }))
-
-      set({ coordinates: [...state.coordinates, ...newCoords] })
-      return newCoords
+      set({ coordinates: [...state.coordinates, ...allNew] })
+      return allNew
     } catch (err) {
       set({ error: err instanceof Error ? err.message : '座標のインポートに失敗しました' })
       return []
