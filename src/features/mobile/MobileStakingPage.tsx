@@ -380,17 +380,47 @@ export function MobileStakingPage() {
   const [showLabels, setShowLabels] = useState(true)
   // ターゲット動的ズーム（ターゲットを中心にして、現在地も視野に収まるよう自動拡大縮小）
   const [dynamicZoom, setDynamicZoom] = useState(false)
-  // 地図背景を白紙にする（航空写真タイルを非表示にして、点・線・ポリゴンだけを描画）
-  const [blankBackground, setBlankBackground] = useState<boolean>(() => {
+  // 地図ベースレイヤ（地理院の各種タイル / 背景なし）
+  type BaseLayerKey = 'photo' | 'std' | 'pale' | 'blank' | 'none'
+  const BASE_LAYERS: Record<BaseLayerKey, { label: string; url: string | null; maxNative?: number }> = {
+    photo: {
+      label: '航空写真',
+      url: 'https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg',
+      maxNative: 18,
+    },
+    std: {
+      label: '地理院地図',
+      url: 'https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',
+      maxNative: 18,
+    },
+    pale: {
+      label: '淡色地図',
+      url: 'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',
+      maxNative: 18,
+    },
+    blank: {
+      label: '白地図',
+      url: 'https://cyberjapandata.gsi.go.jp/xyz/blank/{z}/{x}/{y}.png',
+      maxNative: 14,
+    },
+    none: {
+      label: '背景なし',
+      url: null,
+    },
+  }
+  const [baseLayer, setBaseLayer] = useState<BaseLayerKey>(() => {
     try {
-      return localStorage.getItem('mobile:blankBackground') === '1'
+      const saved = localStorage.getItem('mobile:baseLayer') as BaseLayerKey | null
+      if (saved && BASE_LAYERS[saved]) return saved
     } catch {
-      return false
+      // ignore
     }
+    return 'photo'
   })
   useEffect(() => {
-    try { localStorage.setItem('mobile:blankBackground', blankBackground ? '1' : '0') } catch { /* ignore */ }
-  }, [blankBackground])
+    try { localStorage.setItem('mobile:baseLayer', baseLayer) } catch { /* ignore */ }
+  }, [baseLayer])
+  const currentBase = BASE_LAYERS[baseLayer]
   // 点数が多いとラベル描画が重くなるため、低ズーム時は自動で非表示にする
   const [mapZoom, setMapZoom] = useState(17)
   const LABEL_MIN_ZOOM = 18
@@ -1483,17 +1513,6 @@ export function MobileStakingPage() {
           <Tag className="h-4 w-4" />
         </button>
         <button
-          onClick={() => setBlankBackground((v) => !v)}
-          className={`p-1.5 rounded text-[10px] font-bold w-7 flex items-center justify-center ${
-            blankBackground
-              ? 'bg-white text-slate-900 border border-slate-400'
-              : 'bg-slate-700 hover:bg-slate-600'
-          }`}
-          title={blankBackground ? '航空写真背景に戻す' : '背景を白紙にする'}
-        >
-          {blankBackground ? '写' : '白'}
-        </button>
-        <button
           onClick={() => setShowFilterPanel((v) => !v)}
           className={`p-1.5 rounded relative ${
             showFilterPanel || hiddenSubTypes.size > 0 || targetFilter !== 'all'
@@ -1764,14 +1783,15 @@ export function MobileStakingPage() {
           zoom={17}
           maxZoom={22}
           className="h-full w-full"
-          style={blankBackground ? { background: '#ffffff' } : undefined}
+          style={baseLayer === 'none' ? { background: '#ffffff' } : undefined}
         >
-          {!blankBackground && (
+          {currentBase.url && (
             <TileLayer
+              key={baseLayer}
               attribution='&copy; 国土地理院'
-              url="https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg"
+              url={currentBase.url}
               maxZoom={22}
-              maxNativeZoom={18}
+              maxNativeZoom={currentBase.maxNative ?? 18}
             />
           )}
           <FitOnce bounds={currentPos ? null : allBounds} />
@@ -2018,6 +2038,24 @@ export function MobileStakingPage() {
             />
           ))}
         </MapContainer>
+
+        {/* ベースレイヤ切替（地理院の各種タイル + 背景なし） */}
+        <div className="absolute bottom-2 right-2 z-[1000] bg-white/95 border rounded shadow text-xs">
+          <select
+            value={baseLayer}
+            onChange={(e) => setBaseLayer(e.target.value as BaseLayerKey)}
+            className="px-2 py-1 bg-transparent outline-none"
+            title="背景レイヤ"
+          >
+            {(Object.entries(BASE_LAYERS) as [BaseLayerKey, typeof currentBase][]).map(
+              ([key, info]) => (
+                <option key={key} value={key}>
+                  {info.label}
+                </option>
+              ),
+            )}
+          </select>
+        </div>
 
         {/* 施工管理モード：ΔZ 大型表示 */}
         {screenMode === 'construction' && trenchDiff !== null && (

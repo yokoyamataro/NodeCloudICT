@@ -220,25 +220,25 @@ export const useFarmStore = create<FarmState>((set, get) => ({
           point_ids: string[] | null
         }> | null
 
-        // 全てのpoint_idsを収集
-        const allPointIds = (areasPointIds || []).flatMap(a => a.point_ids || [])
-        const uniquePointIds = [...new Set(allPointIds)]
-
-        // design_coordinatesから座標を取得
-        let coordsMap: Record<string, { x: number; y: number }> = {}
-        if (uniquePointIds.length > 0) {
-          const { data: coordsData, error: coordError } = await supabase
-            .from('design_coordinates')
-            .select('id, x, y')
-            .in('id', uniquePointIds)
-
-          if (coordError) throw coordError
-
-          const typedCoordsData = coordsData as Array<{ id: string; x: number; y: number }>
-          coordsMap = typedCoordsData.reduce((acc, c) => {
-            acc[c.id] = { x: c.x, y: c.y }
-            return acc
-          }, {} as Record<string, { x: number; y: number }>)
+        // design_coordinates は work_area が属する各 farm_id 単位でページング取得する
+        // （in('id', [...uuids]) は URL 長 + 1000 行上限の問題があるため使わない）
+        const coordsMap: Record<string, { x: number; y: number }> = {}
+        const farmIdsWithAreas = new Set(areas.map(a => a.farm_id))
+        const PAGE = 1000
+        for (const fid of farmIdsWithAreas) {
+          let from = 0
+          while (from < 1_000_000) {
+            const { data: coordsData, error: coordError } = await supabase
+              .from('design_coordinates')
+              .select('id, x, y')
+              .eq('farm_id', fid)
+              .range(from, from + PAGE - 1)
+            if (coordError) throw coordError
+            const rows = (coordsData || []) as Array<{ id: string; x: number; y: number }>
+            for (const c of rows) coordsMap[c.id] = { x: c.x, y: c.y }
+            if (rows.length < PAGE) break
+            from += PAGE
+          }
         }
 
         // プロジェクトごとの座標系を取得
