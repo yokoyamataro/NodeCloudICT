@@ -46,6 +46,7 @@ import {
 } from '@/stores/coordinatePointTypeStore'
 import { CoordinatePhotoModal } from '@/features/coordinates/CoordinatePhotoModal'
 import { useAttachmentStore } from '@/stores/attachmentStore'
+import { useOrthophotoStore } from '@/stores/orthophotoStore'
 import { parseLandXml } from '@/lib/landxml/parser'
 import { indexTin, queryZ, type TinIndex, type TinSurfaceLike } from '@/lib/landxml/tinInterpolation'
 import { buildTrenchTin } from '@/lib/landxml/surface'
@@ -295,6 +296,11 @@ export function MobileStakingPage() {
     byEntity: attachmentsByEntity,
     fetchByEntityIds: fetchAttachments,
   } = useAttachmentStore()
+  const {
+    byFarm: orthoByFarm,
+    fetchByFarm: fetchOrthos,
+    tileUrlTemplate: getOrthoUrl,
+  } = useOrthophotoStore()
   const { fetchPipes, pipes } = useUnderdrainStore()
   const { records, fetchRecords, addRecord, deleteRecord, saving } = useStakingStore()
   const { user } = useAuth()
@@ -548,6 +554,16 @@ export function MobileStakingPage() {
   useEffect(() => {
     if (farmId) fetchWorkAreaPolygons()
   }, [farmId, fetchWorkAreaPolygons])
+
+  // オルソ画像タイルセットを取得
+  useEffect(() => {
+    if (farmId) fetchOrthos(farmId)
+  }, [farmId, fetchOrthos])
+
+  const farmOrthos = useMemo(
+    () => (farmId ? orthoByFarm.get(farmId) ?? [] : []),
+    [orthoByFarm, farmId],
+  )
 
   // 当該工区のポリゴンのみ
   const farmPolygons = useMemo(
@@ -1807,6 +1823,22 @@ export function MobileStakingPage() {
             maxZoom={22}
             maxNativeZoom={currentBase.maxNative ?? 18}
           />
+          {/* オルソ画像（複数登録時は全て重ねる） */}
+          {farmOrthos.map((ortho) => (
+            <TileLayer
+              key={ortho.id}
+              url={getOrthoUrl(ortho)}
+              minZoom={ortho.minZoom}
+              maxZoom={22}
+              maxNativeZoom={ortho.maxZoom}
+              opacity={ortho.opacity}
+              bounds={[
+                [ortho.bounds.south, ortho.bounds.west],
+                [ortho.bounds.north, ortho.bounds.east],
+              ]}
+              zIndex={300}
+            />
+          ))}
           <FitOnce bounds={allBounds} />
           <FollowCurrent position={currentPos} enabled={followMode === 'self' && !dynamicZoom} />
           <ZoomWatcher onChange={setMapZoom} />

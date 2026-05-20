@@ -35,6 +35,7 @@ import {
   Smartphone,
   PanelLeftClose,
   PanelLeftOpen,
+  Image as ImageIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
@@ -69,6 +70,7 @@ interface NavGroup {
 const navigation: NavGroup[] = [
   { name: 'トップ', href: '/', icon: Home },
   { name: '座標管理', href: '/coordinates', icon: Map },
+  { name: 'オルソ画像', href: '/orthophoto', icon: ImageIcon },
   {
     name: '境界測量',
     href: '/boundary-survey',

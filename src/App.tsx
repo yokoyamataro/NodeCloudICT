@@ -28,6 +28,8 @@ import { ReportsPage } from '@/features/underdrain/ReportsPage'
 import { StakingRecordsPage } from '@/features/underdrain/StakingRecordsPage'
 // 境界測量
 import { BoundarySurveyWorkAreaPage } from '@/features/boundary-survey/BoundarySurveyWorkAreaPage'
+// オルソ画像
+import { OrthophotoPage } from '@/features/orthophoto/OrthophotoPage'
 // 新規工種
 import { SoilImportWorkAreaPage } from '@/features/soil-import/SoilImportWorkAreaPage'
 import { SoilImportStripPlanPage } from '@/features/soil-import/SoilImportStripPlanPage'
@@ -159,6 +161,8 @@ function AppRoutes() {
         <Route path="boundary-survey">
           <Route path="work-area" element={<BoundarySurveyWorkAreaPage />} />
         </Route>
+        {/* オルソ画像 */}
+        <Route path="orthophoto" element={<OrthophotoPage />} />
         {/* 暗渠工事 */}
         <Route path="underdrain">
           <Route path="work-area" element={<UnderdrainWorkAreaPage />} />
