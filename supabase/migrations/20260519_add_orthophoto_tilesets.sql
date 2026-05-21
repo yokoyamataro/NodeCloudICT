@@ -116,14 +116,13 @@ DROP POLICY IF EXISTS "orthophoto_tiles_insert" ON storage.objects;
 DROP POLICY IF EXISTS "orthophoto_tiles_update" ON storage.objects;
 DROP POLICY IF EXISTS "orthophoto_tiles_delete" ON storage.objects;
 
+-- 注: TO authenticated を付けると、Storage 側でリクエストが anon ロール扱いに
+--     なる環境で RLS 違反になる事例があったため、ロール制限なし(public)とする。
 CREATE POLICY "orthophoto_tiles_insert" ON storage.objects
-  FOR INSERT TO authenticated
-  WITH CHECK (bucket_id = 'orthophoto-tiles');
+  FOR INSERT WITH CHECK (bucket_id = 'orthophoto-tiles');
 
 CREATE POLICY "orthophoto_tiles_update" ON storage.objects
-  FOR UPDATE TO authenticated
-  USING (bucket_id = 'orthophoto-tiles');
+  FOR UPDATE USING (bucket_id = 'orthophoto-tiles');
 
 CREATE POLICY "orthophoto_tiles_delete" ON storage.objects
-  FOR DELETE TO authenticated
-  USING (bucket_id = 'orthophoto-tiles');
+  FOR DELETE USING (bucket_id = 'orthophoto-tiles');
