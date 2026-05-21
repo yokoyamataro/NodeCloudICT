@@ -8,12 +8,6 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
 import { useOrthophotoStore, tileBoundsLatLng } from '@/stores/orthophotoStore'
 
-// HTMLInputElement に webkitdirectory を追加するための型補強
-type DirInputProps = React.InputHTMLAttributes<HTMLInputElement> & {
-  webkitdirectory?: ''
-  directory?: ''
-}
-
 export function OrthophotoPage() {
   const { currentFarm } = useFarmStore()
   const { byFarm, fetchByFarm, createTileset, uploadTiles, deleteTileset } = useOrthophotoStore()
@@ -34,15 +28,33 @@ export function OrthophotoPage() {
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
+  // React は webkitdirectory を確実に適用しないことがあるため、ref で明示付与する
+  useEffect(() => {
+    const el = fileRef.current
+    if (el) {
+      el.setAttribute('webkitdirectory', '')
+      el.setAttribute('directory', '')
+      el.setAttribute('mozdirectory', '')
+    }
+  }, [])
+
   const handleChooseFolder = () => fileRef.current?.click()
 
   const handleFolderChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!currentFarm) return
     const list = e.target.files
-    e.target.value = ''
-    if (!list || list.length === 0) return
+    // 発火確認（DevTools コンソールで見えるはず）
+    console.log('[orthophoto] folder change fired. files=', list?.length ?? 0)
     setError(null)
     setMessage(null)
+    if (!currentFarm) {
+      setError('工区が選択されていません。工事 → 工区を開いてから実行してください。')
+      return
+    }
+    if (!list || list.length === 0) {
+      setError('ファイルが選択されませんでした（フォルダが空、または選択がキャンセルされました）。')
+      return
+    }
+    e.target.value = ''
     setBusy('parsing')
     try {
       // 1) 全ファイルから z/x/y.* のパターンに合うものを抽出
@@ -231,11 +243,11 @@ export function OrthophotoPage() {
               </span>
             )}
           </div>
+          {/* webkitdirectory は useEffect で ref 経由で付与する */}
           <input
             ref={fileRef}
             type="file"
             multiple
-            {...({ webkitdirectory: '', directory: '' } as DirInputProps)}
             onChange={handleFolderChosen}
             className="hidden"
           />
