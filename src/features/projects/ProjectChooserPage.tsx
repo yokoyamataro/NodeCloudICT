@@ -16,8 +16,9 @@ export function ProjectChooserPage() {
     error,
     fetchProjects,
     createProject,
+    setCurrentProject,
   } = useProjectListStore()
-  const { farms, fetchFarms } = useFarmStore()
+  const { farms, fetchFarms, setCurrentFarm } = useFarmStore()
   const [showNewDialog, setShowNewDialog] = useState(false)
   const [newName, setNewName] = useState('')
   const [newDescription, setNewDescription] = useState('')
@@ -27,7 +28,10 @@ export function ProjectChooserPage() {
   useEffect(() => {
     fetchProjects()
     fetchFarms()
-  }, [fetchProjects, fetchFarms])
+    // トップページに来た時点で選択状態を解除（リロードしてもトップのまま）
+    setCurrentFarm(null)
+    setCurrentProject(null)
+  }, [fetchProjects, fetchFarms, setCurrentFarm, setCurrentProject])
 
   const farmCountByProject = (projectId: string) =>
     farms.filter((f) => f.project_id === projectId).length

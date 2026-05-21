@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import { supabase } from '@/lib/supabase'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { useMapViewStore } from './mapViewStore'
@@ -90,7 +91,9 @@ interface FarmState {
   deleteFarm: (id: string) => Promise<void>
 }
 
-export const useFarmStore = create<FarmState>((set, get) => ({
+export const useFarmStore = create<FarmState>()(
+  persist(
+    (set, get) => ({
   farms: [],
   loading: false,
   error: null,
@@ -361,4 +364,11 @@ export const useFarmStore = create<FarmState>((set, get) => ({
       set({ error: err instanceof Error ? err.message : '工区の削除に失敗しました', loading: false })
     }
   },
-}))
+    }),
+    {
+      name: 'nodecloud-current-farm',
+      // 選択中の工区だけ永続化（一覧・位置情報・ポリゴンは毎回取り直す）
+      partialize: (state) => ({ currentFarm: state.currentFarm }),
+    },
+  ),
+)

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import { supabase } from '@/lib/supabase'
 import type { Project, ProjectMember, ProjectMemberRole } from '@/types/database'
 
@@ -39,7 +40,9 @@ interface ProjectListState {
   canDelete: () => boolean
 }
 
-export const useProjectListStore = create<ProjectListState>()((set, get) => ({
+export const useProjectListStore = create<ProjectListState>()(
+  persist(
+    (set, get) => ({
   projects: [],
   currentProject: null,
   loading: false,
@@ -294,4 +297,11 @@ export const useProjectListStore = create<ProjectListState>()((set, get) => ({
     const { currentUserRole } = get()
     return currentUserRole === 'owner'
   },
-}))
+    }),
+    {
+      name: 'nodecloud-current-project',
+      // 選択中の工事だけ永続化（一覧・メンバー・ロールは毎回取り直す）
+      partialize: (state) => ({ currentProject: state.currentProject }),
+    },
+  ),
+)

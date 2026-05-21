@@ -134,6 +134,7 @@ export function ProjectListPage() {
     removeMember,
     userRolesByProject,
     fetchUserRoles,
+    setCurrentProject,
   } = useProjectListStore()
 
   // URL の projectId に該当する工事だけに絞り込む
@@ -337,6 +338,9 @@ export function ProjectListPage() {
   }
 
   const handleOpenFarm = (farm: Farm) => {
+    // ヘッダー表示・リロード復帰のため、所属する工事も記憶しておく
+    const proj = allProjects.find((p) => p.id === farm.project_id)
+    if (proj) setCurrentProject(proj)
     setCurrentFarm(farm)
     navigate('/coordinates')
   }

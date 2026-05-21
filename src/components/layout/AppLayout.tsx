@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   Map,
@@ -172,8 +172,17 @@ export function AppLayout() {
   const { registrations: globalSaveRegs } = useGlobalSaveRegistry()
 
   // プロジェクト・工区ストア（現在の表示用）
-  const { currentProject } = useProjectListStore()
-  const { currentFarm, setCurrentFarm } = useFarmStore()
+  const { currentProject, projects, fetchProjects } = useProjectListStore()
+  const { currentFarm, setCurrentFarm, farms, fetchFarms } = useFarmStore()
+
+  // リロード時の復帰: currentProject/currentFarm は localStorage から復元されるが、
+  // 一覧（projects/farms）は揮発するため、座標系の解決などのために取り直す。
+  useEffect(() => {
+    if (projects.length === 0) fetchProjects()
+    if (farms.length === 0) fetchFarms()
+    // 初回マウント時のみ
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
