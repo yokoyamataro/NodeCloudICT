@@ -28,6 +28,7 @@ import {
   Upload,
   Download,
   ZoomIn,
+  Image as ImageIcon,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
@@ -387,6 +388,7 @@ export function MobileStakingPage() {
   const [showLabels, setShowLabels] = useState(true)
   // 地番名ラベル（境界測量ポリゴンの上に表示）。既定 OFF、低ズーム時は自動 OFF。
   const [showParcelLabels, setShowParcelLabels] = useState(false)
+  const [showOrtho, setShowOrtho] = useState(true)
   const PARCEL_LABEL_MIN_ZOOM = 17
   // ターゲット動的ズーム（ターゲットを中心にして、現在地も視野に収まるよう自動拡大縮小）
   const [dynamicZoom, setDynamicZoom] = useState(false)
@@ -1505,6 +1507,17 @@ export function MobileStakingPage() {
         >
           <ZoomIn className="h-4 w-4" />
         </button>
+        {farmOrthos.length > 0 && (
+          <button
+            onClick={() => setShowOrtho((v) => !v)}
+            className={`p-1.5 rounded ${
+              showOrtho ? 'bg-emerald-600' : 'bg-slate-700 hover:bg-slate-600'
+            }`}
+            title="オルソ画像の表示を切替"
+          >
+            <ImageIcon className="h-4 w-4" />
+          </button>
+        )}
         <button
           onClick={toggleHeading}
           className={`p-1.5 rounded ${
@@ -1824,7 +1837,7 @@ export function MobileStakingPage() {
             maxNativeZoom={currentBase.maxNative ?? 18}
           />
           {/* オルソ画像（複数登録時は全て重ねる） */}
-          {farmOrthos.map((ortho) => (
+          {showOrtho && farmOrthos.map((ortho) => (
             <TileLayer
               key={ortho.id}
               url={getOrthoUrl(ortho)}

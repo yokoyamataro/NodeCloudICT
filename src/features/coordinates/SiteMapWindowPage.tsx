@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Loader2, Layers, Crosshair } from 'lucide-react'
+import { Loader2, Layers, Crosshair, Image as ImageIcon } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
@@ -40,6 +40,7 @@ export function SiteMapWindowPage() {
     workAreas: true,
     route: true,
     currentLocation: false,
+    orthophoto: true,
   })
   const [showLayerPanel, setShowLayerPanel] = useState(true)
 
@@ -147,6 +148,18 @@ export function SiteMapWindowPage() {
 
         <div className="ml-auto flex items-center gap-3">
           <button
+            onClick={() => setLayers((prev) => ({ ...prev, orthophoto: !prev.orthophoto }))}
+            className={`flex items-center gap-1 px-2 py-1 text-xs rounded border ${
+              layers.orthophoto
+                ? 'bg-emerald-100 border-emerald-400 text-emerald-800 font-medium'
+                : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
+            }`}
+            title="オルソ画像の表示を切替"
+          >
+            <ImageIcon className="h-3 w-3" />
+            オルソ
+          </button>
+          <button
             onClick={() =>
               setLayers((prev) => ({ ...prev, currentLocation: !prev.currentLocation }))
             }
@@ -186,7 +199,7 @@ export function SiteMapWindowPage() {
       {/* 地図エリア */}
       <div className="flex-1 relative">
         {/* farmId が変わったら確実に再マウントして fitBounds を再実行 */}
-        <UnifiedFieldMap key={farmId ?? 'no-farm'} baseLayer={baseLayer} layers={layers} />
+        <UnifiedFieldMap key={farmId ?? 'no-farm'} baseLayer={baseLayer} layers={layers} farmId={farmId} />
 
         {/* レイヤーパネル（オーバーレイ） */}
         {showLayerPanel && (
@@ -239,6 +252,12 @@ export function SiteMapWindowPage() {
                 checked={layers.route}
                 onChange={() => toggleLayer('route')}
                 color="#2563eb"
+              />
+              <LayerCheckbox
+                label="オルソ画像"
+                checked={layers.orthophoto}
+                onChange={() => toggleLayer('orthophoto')}
+                color="#10b981"
               />
             </div>
           </div>

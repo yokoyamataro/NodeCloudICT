@@ -17,6 +17,7 @@ import { useWorkAreaStore, type WorkAreaPoint, type WorkAreaRow } from '@/stores
 import { useSurveyStore } from '@/stores/surveyStore'
 import { useMapViewStore } from '@/stores/mapViewStore'
 import { useConstructionPlanStore, type PlanPoint } from '@/stores/constructionPlanStore'
+import { useOrthophotoStore } from '@/stores/orthophotoStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { WORK_TYPE_NAMES, type WorkType } from '@/types/database'
 import { CurrentLocationLayer } from './CurrentLocationLayer'
@@ -32,11 +33,14 @@ export interface LayerVisibility {
   workAreas: boolean
   route: boolean
   currentLocation: boolean
+  orthophoto: boolean
 }
 
 interface UnifiedFieldMapProps {
   baseLayer?: BaseLayerType
   layers: LayerVisibility
+  /** オルソタイル取得用の工区ID（指定時のみオルソを読み込む） */
+  farmId?: string | null
 }
 
 // === 色/スタイル定義 ===
@@ -234,14 +238,28 @@ function MapBackgroundClick({ onClick }: { onClick: () => void }) {
 }
 
 
-export function UnifiedFieldMap({ baseLayer = 'osm', layers }: UnifiedFieldMapProps) {
+export function UnifiedFieldMap({ baseLayer = 'osm', layers, farmId }: UnifiedFieldMapProps) {
   const { coordinates, zone, route } = useCoordinateStore()
   const { pipes } = useUnderdrainStore()
   const workAreasByType = useWorkAreaStore((state) => state.workAreas)
   const { surveyData } = useSurveyStore()
   const planGroups = useConstructionPlanStore((s) => s.planGroups)
+  const {
+    byFarm: orthoByFarm,
+    fetchByFarm: fetchOrthos,
+    tileUrlTemplate: getOrthoUrl,
+  } = useOrthophotoStore()
 
   const converter = useMemo(() => new CoordinateConverter(zone), [zone])
+
+  // オルソタイルを工区単位で読み込む
+  useEffect(() => {
+    if (farmId) fetchOrthos(farmId)
+  }, [farmId, fetchOrthos])
+  const farmOrthos = useMemo(
+    () => (farmId ? orthoByFarm.get(farmId) ?? [] : []),
+    [orthoByFarm, farmId],
+  )
 
   // 選択中の配管（クリックで選択）
   const [selectedPipeId, setSelectedPipeId] = useState<string | null>(null)
@@ -424,6 +442,24 @@ export function UnifiedFieldMap({ baseLayer = 'osm', layers }: UnifiedFieldMapPr
           maxNativeZoom={18}
         />
       )}
+
+      {/* オルソ画像（登録分を重ねて表示） */}
+      {layers.orthophoto &&
+        farmOrthos.map((ortho) => (
+          <TileLayer
+            key={`ortho-${ortho.id}`}
+            url={getOrthoUrl(ortho)}
+            minZoom={ortho.minZoom}
+            maxZoom={22}
+            maxNativeZoom={ortho.maxZoom}
+            opacity={ortho.opacity}
+            bounds={[
+              [ortho.bounds.south, ortho.bounds.west],
+              [ortho.bounds.north, ortho.bounds.east],
+            ]}
+            zIndex={300}
+          />
+        ))}
 
       <FitBoundsOnce bounds={allBounds} />
       <MapViewPersist />

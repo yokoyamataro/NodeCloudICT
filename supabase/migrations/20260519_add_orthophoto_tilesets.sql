@@ -112,17 +112,50 @@ ON CONFLICT (id) DO NOTHING;
 --     不安定（RLS 違反になる）ため、シンプルにバケット単位の許可とする。
 --     どの工区のメタかは orthophoto_tilesets テーブル側の RLS で制御される。
 
+DROP POLICY IF EXISTS "orthophoto_tiles_select" ON storage.objects;
 DROP POLICY IF EXISTS "orthophoto_tiles_insert" ON storage.objects;
 DROP POLICY IF EXISTS "orthophoto_tiles_update" ON storage.objects;
 DROP POLICY IF EXISTS "orthophoto_tiles_delete" ON storage.objects;
 
--- 注: TO authenticated を付けると、Storage 側でリクエストが anon ロール扱いに
---     なる環境で RLS 違反になる事例があったため、ロール制限なし(public)とする。
+-- ★重要: 必ず TO authenticated で作ること。
+--   新APIキー方式（sb_publishable_… ＋ ES256 JWT）の環境では、ロール制限なし(public)
+--   で作ると Storage 側のアップロードが 403 "new row violates row-level security policy"
+--   で弾かれる。動作実績のある attachments バケットと同じく authenticated 指定にする。
+--   （閲覧自体はバケット public なので、書き込みポリシーが authenticated でも公開URLは読める）
+CREATE POLICY "orthophoto_tiles_select" ON storage.objects
+  FOR SELECT TO authenticated
+  USING (bucket_id = 'orthophoto-tiles');
+
 CREATE POLICY "orthophoto_tiles_insert" ON storage.objects
-  FOR INSERT WITH CHECK (bucket_id = 'orthophoto-tiles');
+  FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'orthophoto-tiles');
 
 CREATE POLICY "orthophoto_tiles_update" ON storage.objects
-  FOR UPDATE USING (bucket_id = 'orthophoto-tiles');
+  FOR UPDATE TO authenticated
+  USING (bucket_id = 'orthophoto-tiles')
+  WITH CHECK (bucket_id = 'orthophoto-tiles');
 
 CREATE POLICY "orthophoto_tiles_delete" ON storage.objects
-  FOR DELETE USING (bucket_id = 'orthophoto-tiles');
+  FOR DELETE TO authenticated
+  USING (bucket_id = 'orthophoto-tiles');
+
+-- ================================================================
+-- Storage v2: storage.prefixes（フォルダ階層メタ）の RLS
+--   新しい Supabase Storage は upload 時に storage.prefixes へも行を挿入する。
+--   このテーブルにも RLS があり、ポリシーが無いと
+--   "new row violates row-level security policy" になる
+--   （storage.objects 側を緩めても通らない真因がこれ）。
+--   テーブルが存在する環境でのみ、全許可ポリシーを付与する。
+-- ================================================================
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'storage' AND table_name = 'prefixes'
+  ) THEN
+    EXECUTE 'ALTER TABLE storage.prefixes ENABLE ROW LEVEL SECURITY';
+    EXECUTE 'DROP POLICY IF EXISTS "prefixes_all_access" ON storage.prefixes';
+    EXECUTE 'CREATE POLICY "prefixes_all_access" ON storage.prefixes
+             FOR ALL USING (true) WITH CHECK (true)';
+  END IF;
+END $$;

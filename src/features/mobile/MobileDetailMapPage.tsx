@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Loader2, ArrowLeft, Layers, Crosshair } from 'lucide-react'
+import { Loader2, ArrowLeft, Layers, Crosshair, Image as ImageIcon } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
@@ -39,6 +39,7 @@ export function MobileDetailMapPage() {
     workAreas: true,
     route: true,
     currentLocation: true,
+    orthophoto: true,
   })
   const [showLayerPanel, setShowLayerPanel] = useState(false)
 
@@ -155,6 +156,17 @@ export function MobileDetailMapPage() {
         </button>
         <span className="font-medium truncate flex-1">{title}</span>
         <button
+          onClick={() => setLayers((prev) => ({ ...prev, orthophoto: !prev.orthophoto }))}
+          className={`flex items-center gap-1 px-2 py-1 text-xs rounded border ${
+            layers.orthophoto
+              ? 'bg-emerald-600 border-emerald-400'
+              : 'bg-slate-700 border-slate-500 hover:bg-slate-600'
+          }`}
+          title="オルソ画像の表示を切替"
+        >
+          <ImageIcon className="h-3.5 w-3.5" />
+        </button>
+        <button
           onClick={() =>
             setLayers((prev) => ({ ...prev, currentLocation: !prev.currentLocation }))
           }
@@ -189,7 +201,7 @@ export function MobileDetailMapPage() {
       </div>
 
       <div className="flex-1 relative">
-        <UnifiedFieldMap key={farmId ?? 'no-farm'} baseLayer={baseLayer} layers={layers} />
+        <UnifiedFieldMap key={farmId ?? 'no-farm'} baseLayer={baseLayer} layers={layers} farmId={farmId} />
 
         {showLayerPanel && (
           <div className="absolute top-2 right-2 z-[1000] w-56 bg-white border border-slate-300 rounded shadow-lg">
@@ -207,6 +219,7 @@ export function MobileDetailMapPage() {
               <LayerCheckbox label="管の測点 (C/B/A)" checked={layers.pipeMeasurementPoints} onChange={() => toggleLayer('pipeMeasurementPoints')} color="#3b82f6" />
               <LayerCheckbox label="測点（測量）" checked={layers.surveyPoints} onChange={() => toggleLayer('surveyPoints')} color="#0ea5e9" />
               <LayerCheckbox label="経路" checked={layers.route} onChange={() => toggleLayer('route')} color="#2563eb" />
+              <LayerCheckbox label="オルソ画像" checked={layers.orthophoto} onChange={() => toggleLayer('orthophoto')} color="#10b981" />
             </div>
           </div>
         )}

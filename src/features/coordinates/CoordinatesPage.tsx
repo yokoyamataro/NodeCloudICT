@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Upload, Download, Plus, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Settings, Camera } from 'lucide-react'
+import { Upload, Download, Plus, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Settings, Camera, Image as ImageIcon } from 'lucide-react'
 import { CoordinatePhotoModal } from './CoordinatePhotoModal'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 import { useCoordinateStore } from '@/stores/coordinateStore'
@@ -176,6 +176,7 @@ export function CoordinatesPage() {
     new Set(Object.keys(COORDINATE_TYPE_NAMES))
   )
   const [baseLayer, setBaseLayer] = useState<BaseLayerType>('osm')
+  const [showOrtho, setShowOrtho] = useState(true)
   const [showPasteModal, setShowPasteModal] = useState(false)
 
   // チェックされた点のID（エクスポート対象）
@@ -695,6 +696,16 @@ export function CoordinatesPage() {
             {showLabels ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
             点名
           </button>
+          <button
+            onClick={() => setShowOrtho((v) => !v)}
+            className={`flex items-center gap-1 px-2 py-1 text-xs rounded border ${
+              showOrtho ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-gray-50 border-gray-300'
+            }`}
+            title="オルソ画像の表示を切替"
+          >
+            <ImageIcon className="h-3 w-3" />
+            オルソ
+          </button>
           <div className="flex items-center gap-2 flex-wrap">
             {typeOptions.map((opt) => (
               <label key={opt.code} className="flex items-center gap-1 text-xs cursor-pointer">
@@ -743,6 +754,8 @@ export function CoordinatesPage() {
             baseLayer={baseLayer}
             route={route}
             showRoute={true}
+            farmId={currentFarm?.id ?? null}
+            showOrtho={showOrtho}
           />
         </div>
       </div>
@@ -1107,6 +1120,16 @@ export function CoordinatesPage() {
               {showLabels ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
               点名
             </button>
+            <button
+              onClick={() => setShowOrtho((v) => !v)}
+              className={`flex items-center gap-1 px-2 py-1 text-xs rounded border ${
+                showOrtho ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-gray-50 border-gray-300'
+              }`}
+              title="オルソ画像の表示を切替"
+            >
+              <ImageIcon className="h-3 w-3" />
+              オルソ
+            </button>
             <div className="flex items-center gap-2 flex-wrap">
               {typeOptions.map((opt) => (
                 <label key={opt.code} className="flex items-center gap-1 text-xs cursor-pointer">
@@ -1155,6 +1178,8 @@ export function CoordinatesPage() {
               baseLayer={baseLayer}
               route={route}
               showRoute={true}
+              farmId={currentFarm?.id ?? null}
+              showOrtho={showOrtho}
             />
 
             {/* 経路パネル（地図右上にオーバーレイ） */}

@@ -4,6 +4,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useCoordinateStore, type CoordinateRow, type RoutePoint } from '@/stores/coordinateStore'
 import { useMapViewStore } from '@/stores/mapViewStore'
+import { useOrthophotoStore } from '@/stores/orthophotoStore'
 
 // デフォルトマーカーアイコンの修正（Leafletの既知の問題）
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
@@ -115,6 +116,9 @@ interface CoordinateMapProps {
   // 経路（順路）の描画
   route?: RoutePoint[]
   showRoute?: boolean
+  // オルソ画像
+  farmId?: string | null
+  showOrtho?: boolean
 }
 
 export function CoordinateMap({
@@ -127,8 +131,20 @@ export function CoordinateMap({
   editingExternalPolygonId,
   route = [],
   showRoute = false,
+  farmId,
+  showOrtho = true,
 }: CoordinateMapProps) {
   const { coordinates } = useCoordinateStore()
+  const {
+    byFarm: orthoByFarm,
+    fetchByFarm: fetchOrthos,
+    tileUrlTemplate: getOrthoUrl,
+  } = useOrthophotoStore()
+
+  useEffect(() => {
+    if (farmId) fetchOrthos(farmId)
+  }, [farmId, fetchOrthos])
+  const farmOrthos = farmId ? orthoByFarm.get(farmId) ?? [] : []
 
   // 有効な座標（緯度経度が計算済み）のみ表示
   const validCoordinates = coordinates.filter(
@@ -180,6 +196,24 @@ export function CoordinateMap({
           maxNativeZoom={18}
         />
       )}
+
+      {/* オルソ画像（登録分を重ねて表示） */}
+      {showOrtho &&
+        farmOrthos.map((ortho) => (
+          <TileLayer
+            key={`ortho-${ortho.id}`}
+            url={getOrthoUrl(ortho)}
+            minZoom={ortho.minZoom}
+            maxZoom={22}
+            maxNativeZoom={ortho.maxZoom}
+            opacity={ortho.opacity}
+            bounds={[
+              [ortho.bounds.south, ortho.bounds.west],
+              [ortho.bounds.north, ortho.bounds.east],
+            ]}
+            zIndex={300}
+          />
+        ))}
 
       <MapViewManager coordinates={validCoordinates} />
 

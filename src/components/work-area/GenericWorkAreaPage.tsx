@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Plus, Trash2, GripVertical, Calculator, Download, X } from 'lucide-react'
+import { Plus, Trash2, GripVertical, Calculator, Download, X, Image as ImageIcon } from 'lucide-react'
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
@@ -154,6 +154,7 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
   const [editingAreaId, setEditingAreaId] = useState<string | null>(null)
   const [pointNameInput, setPointNameInput] = useState<string>('')
+  const [showOrtho, setShowOrtho] = useState(true)
 
   const { currentFarm } = useFarmStore()
   const { coordinates, fetchCoordinates } = useCoordinateStore()
@@ -483,12 +484,26 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
         </div>
 
         {/* 右側: 地図 */}
-        <div className="w-1/2 bg-slate-100">
+        <div className="w-1/2 bg-slate-100 relative">
+          <button
+            onClick={() => setShowOrtho((v) => !v)}
+            className={`absolute top-2 right-2 z-[1000] flex items-center gap-1 px-2 py-1 text-xs rounded border shadow ${
+              showOrtho
+                ? 'bg-emerald-100 border-emerald-400 text-emerald-800 font-medium'
+                : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
+            }`}
+            title="オルソ画像の表示を切替"
+          >
+            <ImageIcon className="h-3 w-3" />
+            オルソ
+          </button>
           <CoordinateMap
             selectedPointId={selectedPointId}
             onPointSelect={handlePointClick}
             externalPolygons={externalPolygons}
             editingExternalPolygonId={editingAreaId}
+            farmId={farmId ?? null}
+            showOrtho={showOrtho}
           />
         </div>
       </div>
