@@ -79,7 +79,7 @@ interface State {
     tileset: OrthophotoTileset,
     files: Array<{ relPath: string; file: File }>,
     onProgress?: (done: number, total: number) => void,
-  ) => Promise<{ uploaded: number; failed: number }>
+  ) => Promise<{ uploaded: number; failed: number; firstError?: string }>
   deleteTileset: (id: string) => Promise<void>
   tileUrlTemplate: (tileset: OrthophotoTileset) => string
 }
@@ -175,6 +175,7 @@ export const useOrthophotoStore = create<State>((set, get) => ({
     const total = files.length
     let done = 0
     let failed = 0
+    let firstError: string | undefined
     const CONCURRENCY = 8
     onProgress?.(0, total)
 
@@ -192,7 +193,13 @@ export const useOrthophotoStore = create<State>((set, get) => ({
             cacheControl: '604800', // 7 日キャッシュ
             upsert: true,
           })
-        if (error) failed++
+        if (error) {
+          failed++
+          if (!firstError) {
+            firstError = error.message
+            console.error('[orthophoto] upload error', { path, error })
+          }
+        }
         done++
         onProgress?.(done, total)
       }
@@ -200,7 +207,7 @@ export const useOrthophotoStore = create<State>((set, get) => ({
     const workers: Promise<void>[] = []
     for (let i = 0; i < CONCURRENCY; i++) workers.push(worker())
     await Promise.all(workers)
-    return { uploaded: total - failed, failed }
+    return { uploaded: total - failed, failed, firstError }
   },
 
   deleteTileset: async (id) => {

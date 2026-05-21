@@ -183,14 +183,14 @@ export function OrthophotoPage() {
       // 4) Storage にアップロード
       const uploads = files.map((f) => ({ relPath: f.relPath, file: f.file }))
       setProgress({ done: 0, total: uploads.length })
-      const { uploaded, failed } = await uploadTiles(tileset, uploads, (done, total) => {
+      const { uploaded, failed, firstError } = await uploadTiles(tileset, uploads, (done, total) => {
         setProgress({ done, total })
       })
       setProgress(null)
       if (uploaded === 0 && failed > 0) {
         setError(
           `タイルのアップロードが全て失敗しました（${failed} 件）。` +
-            'Storage バケット orthophoto-tiles の作成・権限（マイグレーション実行）を確認してください。',
+            (firstError ? `エラー: ${firstError}` : 'バケット orthophoto-tiles の権限を確認してください。'),
         )
       } else {
         setMessage(
