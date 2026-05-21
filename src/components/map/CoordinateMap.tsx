@@ -46,6 +46,40 @@ function createColoredIcon(color: string, isSelected: boolean = false): L.DivIco
   })
 }
 
+// 辺長の端数処理
+export type EdgeRounding = 'round' | 'floor'
+
+export function formatEdgeLength(
+  length: number,
+  digits: number,
+  rounding: EdgeRounding,
+): string {
+  const f = Math.pow(10, digits)
+  const n = rounding === 'floor' ? Math.floor(length * f) / f : Math.round(length * f) / f
+  return n.toFixed(digits)
+}
+
+// 辺長ラベル用アイコン
+function createEdgeLengthIcon(label: string): L.DivIcon {
+  return L.divIcon({
+    className: 'edge-length-label',
+    html: `<div style="
+      background: rgba(255,255,255,0.85);
+      border: 1px solid #16a34a;
+      border-radius: 3px;
+      padding: 0 3px;
+      font-size: 10px;
+      font-weight: 600;
+      color: #166534;
+      white-space: nowrap;
+      transform: translate(-50%, -50%);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    ">${label} m</div>`,
+    iconSize: [0, 0],
+    iconAnchor: [0, 0],
+  })
+}
+
 // 地図の表示状態を管理するコンポーネント
 function MapViewManager({ coordinates }: { coordinates: CoordinateRow[] }) {
   const map = useMap()
@@ -103,6 +137,8 @@ export interface ExternalPolygon {
   name: string
   positions: [number, number][]
   isEditing?: boolean
+  /** 各辺の中点と辺長(m)。測量座標(X,Y)から算出した平面距離 */
+  edges?: Array<{ mid: [number, number]; length: number }>
 }
 
 interface CoordinateMapProps {
@@ -119,6 +155,10 @@ interface CoordinateMapProps {
   // オルソ画像
   farmId?: string | null
   showOrtho?: boolean
+  // 区域ポリゴンの辺長表示
+  showEdgeLengths?: boolean
+  edgeDigits?: number
+  edgeRounding?: EdgeRounding
 }
 
 export function CoordinateMap({
@@ -133,6 +173,9 @@ export function CoordinateMap({
   showRoute = false,
   farmId,
   showOrtho = true,
+  showEdgeLengths = false,
+  edgeDigits = 2,
+  edgeRounding = 'round',
 }: CoordinateMapProps) {
   const { coordinates } = useCoordinateStore()
   const {
@@ -235,6 +278,20 @@ export function CoordinateMap({
           />
         )
       })}
+
+      {/* 区域ポリゴンの辺長ラベル（測量座標から算出した平面距離） */}
+      {showEdgeLengths &&
+        externalPolygons.map((polygon) =>
+          (polygon.edges ?? []).map((edge, i) => (
+            <Marker
+              key={`edge-${polygon.id}-${i}`}
+              position={edge.mid}
+              icon={createEdgeLengthIcon(formatEdgeLength(edge.length, edgeDigits, edgeRounding))}
+              interactive={false}
+              zIndexOffset={500}
+            />
+          )),
+        )}
 
       {/* 経路: down セグメントのみポリラインで結線 */}
       {showRoute && route.length > 1 && (() => {

@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Plus, Trash2, GripVertical, Calculator, Download, X, Image as ImageIcon } from 'lucide-react'
+import { Plus, Trash2, GripVertical, Calculator, Download, X, Image as ImageIcon, Ruler } from 'lucide-react'
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
-import { CoordinateMap, type ExternalPolygon } from '@/components/map/CoordinateMap'
+import { CoordinateMap, type ExternalPolygon, type EdgeRounding } from '@/components/map/CoordinateMap'
 import { PageHeader } from '@/components/layout/PageHeader'
 import type { WorkType, AreaCalculationSheet as AreaCalculationSheetType } from '@/types/database'
 import { WORK_TYPE_NAMES } from '@/types/database'
@@ -155,6 +155,21 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   const [editingAreaId, setEditingAreaId] = useState<string | null>(null)
   const [pointNameInput, setPointNameInput] = useState<string>('')
   const [showOrtho, setShowOrtho] = useState(true)
+  const [showEdgeLengths, setShowEdgeLengths] = useState(false)
+  // 辺長の桁数・端数処理（localStorage に保存して維持）
+  const [edgeDigits, setEdgeDigits] = useState<number>(() => {
+    const v = Number(localStorage.getItem('edgeLength:digits'))
+    return v === 3 ? 3 : 2
+  })
+  const [edgeRounding, setEdgeRounding] = useState<EdgeRounding>(() =>
+    localStorage.getItem('edgeLength:rounding') === 'floor' ? 'floor' : 'round',
+  )
+  useEffect(() => {
+    localStorage.setItem('edgeLength:digits', String(edgeDigits))
+  }, [edgeDigits])
+  useEffect(() => {
+    localStorage.setItem('edgeLength:rounding', edgeRounding)
+  }, [edgeRounding])
 
   const { currentFarm } = useFarmStore()
   const { coordinates, fetchCoordinates } = useCoordinateStore()
@@ -264,13 +279,22 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   // 区域ポリゴンを生成
   const externalPolygons: ExternalPolygon[] = areas
     .filter(area => area.points.length >= 3)
-    .map(area => ({
-      id: area.id,
-      name: area.name,
-      positions: area.points
-        .filter(p => p.lat !== null && p.lng !== null)
-        .map(p => [p.lat!, p.lng!] as [number, number]),
-    }))
+    .map(area => {
+      const pts = area.points.filter(p => p.lat !== null && p.lng !== null)
+      const positions = pts.map(p => [p.lat!, p.lng!] as [number, number])
+      // 各辺の中点(緯度経度)と辺長(測量座標 X,Y からの平面距離 m)。閉合辺(最終点→始点)も含む
+      const edges: ExternalPolygon['edges'] = []
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i]
+        const b = pts[(i + 1) % pts.length]
+        const dx = b.x - a.x
+        const dy = b.y - a.y
+        const length = Math.sqrt(dx * dx + dy * dy)
+        const mid: [number, number] = [(a.lat! + b.lat!) / 2, (a.lng! + b.lng!) / 2]
+        edges.push({ mid, length })
+      }
+      return { id: area.id, name: area.name, positions, edges }
+    })
     .filter(p => p.positions.length >= 3)
 
   if (!currentFarm) {
@@ -485,18 +509,54 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
 
         {/* 右側: 地図 */}
         <div className="w-1/2 bg-slate-100 relative">
-          <button
-            onClick={() => setShowOrtho((v) => !v)}
-            className={`absolute top-2 right-2 z-[1000] flex items-center gap-1 px-2 py-1 text-xs rounded border shadow ${
-              showOrtho
-                ? 'bg-emerald-100 border-emerald-400 text-emerald-800 font-medium'
-                : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
-            }`}
-            title="オルソ画像の表示を切替"
-          >
-            <ImageIcon className="h-3 w-3" />
-            オルソ
-          </button>
+          <div className="absolute top-2 right-2 z-[1000] flex items-center gap-2">
+            <button
+              onClick={() => setShowEdgeLengths((v) => !v)}
+              className={`flex items-center gap-1 px-2 py-1 text-xs rounded border shadow ${
+                showEdgeLengths
+                  ? 'bg-emerald-100 border-emerald-400 text-emerald-800 font-medium'
+                  : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
+              }`}
+              title="各辺の辺長（点間距離）の表示を切替"
+            >
+              <Ruler className="h-3 w-3" />
+              辺長
+            </button>
+            {showEdgeLengths && (
+              <div className="flex items-center gap-1 px-1.5 py-1 text-xs rounded border border-slate-300 bg-white shadow">
+                <select
+                  value={edgeDigits}
+                  onChange={(e) => setEdgeDigits(Number(e.target.value))}
+                  className="bg-transparent outline-none"
+                  title="小数点以下の桁数"
+                >
+                  <option value={2}>2桁</option>
+                  <option value={3}>3桁</option>
+                </select>
+                <select
+                  value={edgeRounding}
+                  onChange={(e) => setEdgeRounding(e.target.value as EdgeRounding)}
+                  className="bg-transparent outline-none"
+                  title="端数処理"
+                >
+                  <option value="round">四捨五入</option>
+                  <option value="floor">切捨</option>
+                </select>
+              </div>
+            )}
+            <button
+              onClick={() => setShowOrtho((v) => !v)}
+              className={`flex items-center gap-1 px-2 py-1 text-xs rounded border shadow ${
+                showOrtho
+                  ? 'bg-emerald-100 border-emerald-400 text-emerald-800 font-medium'
+                  : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
+              }`}
+              title="オルソ画像の表示を切替"
+            >
+              <ImageIcon className="h-3 w-3" />
+              オルソ
+            </button>
+          </div>
           <CoordinateMap
             selectedPointId={selectedPointId}
             onPointSelect={handlePointClick}
@@ -504,6 +564,9 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
             editingExternalPolygonId={editingAreaId}
             farmId={farmId ?? null}
             showOrtho={showOrtho}
+            showEdgeLengths={showEdgeLengths}
+            edgeDigits={edgeDigits}
+            edgeRounding={edgeRounding}
           />
         </div>
       </div>
