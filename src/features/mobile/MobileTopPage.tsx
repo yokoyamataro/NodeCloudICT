@@ -203,13 +203,13 @@ export function MobileTopPage() {
           <MapContainer
             center={[mapCenter.lat, mapCenter.lng]}
             zoom={12}
-            maxZoom={22}
+            maxZoom={24}
             className="h-full w-full"
           >
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              maxZoom={22}
+              maxZoom={24}
               maxNativeZoom={19}
             />
             {allBounds && <FitBounds bounds={allBounds} />}

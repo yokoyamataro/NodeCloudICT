@@ -450,7 +450,7 @@ export function PipeMap({
     <MapContainer
       center={initialCenter}
       zoom={15}
-      maxZoom={22}
+      maxZoom={24}
       className={`h-full w-full ${isBulkEditMode ? 'cursor-crosshair' : ''}`}
       style={{ minHeight: '400px' }}
     >
@@ -458,7 +458,7 @@ export function PipeMap({
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          maxZoom={22}
+          maxZoom={24}
           maxNativeZoom={19}
         />
       )}
@@ -466,7 +466,7 @@ export function PipeMap({
         <TileLayer
           attribution='&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>'
           url="https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg"
-          maxZoom={22}
+          maxZoom={24}
           maxNativeZoom={18}
         />
       )}
@@ -474,7 +474,7 @@ export function PipeMap({
         <TileLayer
           attribution='&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>'
           url="https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png"
-          maxZoom={22}
+          maxZoom={24}
           maxNativeZoom={18}
         />
       )}

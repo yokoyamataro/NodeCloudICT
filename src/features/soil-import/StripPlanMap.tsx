@@ -185,7 +185,7 @@ export function StripPlanMap({
     <MapContainer
       center={initialCenter}
       zoom={17}
-      maxZoom={22}
+      maxZoom={24}
       className="h-full w-full"
       style={{
         minHeight: '400px',
@@ -196,7 +196,7 @@ export function StripPlanMap({
         <TileLayer
           attribution='&copy; OpenStreetMap contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          maxZoom={22}
+          maxZoom={24}
           maxNativeZoom={19}
         />
       )}
@@ -204,7 +204,7 @@ export function StripPlanMap({
         <TileLayer
           attribution='&copy; 国土地理院'
           url="https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg"
-          maxZoom={22}
+          maxZoom={24}
           maxNativeZoom={18}
         />
       )}
@@ -212,7 +212,7 @@ export function StripPlanMap({
         <TileLayer
           attribution='&copy; 国土地理院'
           url="https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png"
-          maxZoom={22}
+          maxZoom={24}
           maxNativeZoom={18}
         />
       )}

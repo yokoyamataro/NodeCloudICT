@@ -1826,14 +1826,14 @@ export function MobileStakingPage() {
         <MapContainer
           center={mapCenter}
           zoom={17}
-          maxZoom={22}
+          maxZoom={24}
           className="h-full w-full"
           style={baseLayer === 'none' ? { background: '#ffffff' } : undefined}
         >
           <TileLayer
             attribution='&copy; 国土地理院'
             url={currentBase.url ?? ''}
-            maxZoom={22}
+            maxZoom={24}
             maxNativeZoom={currentBase.maxNative ?? 18}
           />
           {/* オルソ画像（複数登録時は全て重ねる） */}
@@ -1842,7 +1842,7 @@ export function MobileStakingPage() {
               key={ortho.id}
               url={getOrthoUrl(ortho)}
               minZoom={ortho.minZoom}
-              maxZoom={22}
+              maxZoom={24}
               maxNativeZoom={ortho.maxZoom}
               opacity={ortho.opacity}
               bounds={[

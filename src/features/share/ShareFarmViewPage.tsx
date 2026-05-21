@@ -253,7 +253,7 @@ export function ShareFarmViewPage() {
         <MapContainer
           center={mapCenter}
           zoom={17}
-          maxZoom={22}
+          maxZoom={24}
           bounds={bounds ?? undefined}
           className="h-full w-full"
           style={{ minHeight: 320 }}
@@ -261,7 +261,7 @@ export function ShareFarmViewPage() {
           <TileLayer
             attribution='&copy; 国土地理院'
             url="https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg"
-            maxZoom={22}
+            maxZoom={24}
             maxNativeZoom={18}
           />
 

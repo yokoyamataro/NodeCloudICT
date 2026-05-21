@@ -431,11 +431,11 @@ export function MobileUnderdrainConstructionPage() {
       )}
 
       <div className="flex-1 relative">
-        <MapContainer center={initialCenter} zoom={pos ? 18 : 14} maxZoom={22} className="h-full w-full">
+        <MapContainer center={initialCenter} zoom={pos ? 18 : 14} maxZoom={24} className="h-full w-full">
           <TileLayer
             attribution='&copy; 国土地理院'
             url="https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg"
-            maxZoom={22}
+            maxZoom={24}
             maxNativeZoom={18}
           />
           <FollowCurrent position={pos} enabled={follow} />

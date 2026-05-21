@@ -1709,11 +1709,11 @@ export function OpenChannelAlignmentPage() {
         {/* 右: 地図 */}
         <div className="flex-1 flex flex-col">
           <div className="flex-1 relative">
-            <MapContainer center={[43.06, 141.35]} zoom={13} maxZoom={22} className="h-full w-full">
+            <MapContainer center={[43.06, 141.35]} zoom={13} maxZoom={24} className="h-full w-full">
               <TileLayer
                 attribution='&copy; 国土地理院'
                 url="https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg"
-                maxZoom={22}
+                maxZoom={24}
                 maxNativeZoom={18}
               />
               {sampledLatLng.length >= 2 && <FitBounds positions={sampledLatLng} />}

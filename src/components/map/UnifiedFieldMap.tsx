@@ -417,12 +417,12 @@ export function UnifiedFieldMap({ baseLayer = 'osm', layers, farmId }: UnifiedFi
     : defaultCenter
 
   return (
-    <MapContainer center={initialCenter} zoom={15} maxZoom={22} className="h-full w-full">
+    <MapContainer center={initialCenter} zoom={15} maxZoom={24} className="h-full w-full">
       {baseLayer === 'osm' && (
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          maxZoom={22}
+          maxZoom={24}
           maxNativeZoom={19}
         />
       )}
@@ -430,7 +430,7 @@ export function UnifiedFieldMap({ baseLayer = 'osm', layers, farmId }: UnifiedFi
         <TileLayer
           attribution='&copy; 国土地理院'
           url="https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg"
-          maxZoom={22}
+          maxZoom={24}
           maxNativeZoom={18}
         />
       )}
@@ -438,7 +438,7 @@ export function UnifiedFieldMap({ baseLayer = 'osm', layers, farmId }: UnifiedFi
         <TileLayer
           attribution='&copy; 国土地理院'
           url="https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png"
-          maxZoom={22}
+          maxZoom={24}
           maxNativeZoom={18}
         />
       )}
@@ -450,7 +450,7 @@ export function UnifiedFieldMap({ baseLayer = 'osm', layers, farmId }: UnifiedFi
             key={`ortho-${ortho.id}`}
             url={getOrthoUrl(ortho)}
             minZoom={ortho.minZoom}
-            maxZoom={22}
+            maxZoom={24}
             maxNativeZoom={ortho.maxZoom}
             opacity={ortho.opacity}
             bounds={[
