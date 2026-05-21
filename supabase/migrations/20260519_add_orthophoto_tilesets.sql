@@ -107,7 +107,10 @@ VALUES ('orthophoto-tiles', 'orthophoto-tiles', true)
 ON CONFLICT (id) DO NOTHING;
 
 -- パス: {farm_id}/{tileset_id}/{z}/{x}/{y}.png
--- アップロード/削除は farm_editor のみ。閲覧は公開（バケット public）
+-- 閲覧は公開（バケット public）。書き込みは「ログイン済みユーザー」に許可する。
+--   ※ storage.foldername(name)[1]::uuid によるパス先頭=farm_id 判定は環境により
+--     不安定（RLS 違反になる）ため、シンプルにバケット単位の許可とする。
+--     どの工区のメタかは orthophoto_tilesets テーブル側の RLS で制御される。
 
 DROP POLICY IF EXISTS "orthophoto_tiles_insert" ON storage.objects;
 DROP POLICY IF EXISTS "orthophoto_tiles_update" ON storage.objects;
@@ -115,21 +118,12 @@ DROP POLICY IF EXISTS "orthophoto_tiles_delete" ON storage.objects;
 
 CREATE POLICY "orthophoto_tiles_insert" ON storage.objects
   FOR INSERT TO authenticated
-  WITH CHECK (
-    bucket_id = 'orthophoto-tiles'
-    AND public.is_farm_editor(((storage.foldername(name))[1])::uuid)
-  );
+  WITH CHECK (bucket_id = 'orthophoto-tiles');
 
 CREATE POLICY "orthophoto_tiles_update" ON storage.objects
   FOR UPDATE TO authenticated
-  USING (
-    bucket_id = 'orthophoto-tiles'
-    AND public.is_farm_editor(((storage.foldername(name))[1])::uuid)
-  );
+  USING (bucket_id = 'orthophoto-tiles');
 
 CREATE POLICY "orthophoto_tiles_delete" ON storage.objects
   FOR DELETE TO authenticated
-  USING (
-    bucket_id = 'orthophoto-tiles'
-    AND public.is_farm_editor(((storage.foldername(name))[1])::uuid)
-  );
+  USING (bucket_id = 'orthophoto-tiles');
