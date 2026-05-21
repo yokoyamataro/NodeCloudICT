@@ -28,7 +28,7 @@ export function OrthophotoPage() {
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
-  // React は webkitdirectory を確実に適用しないことがあるため、ref で明示付与する
+  // 入力フォールバック用の webkitdirectory 属性付与
   useEffect(() => {
     const el = fileRef.current
     if (el) {
@@ -38,23 +38,76 @@ export function OrthophotoPage() {
     }
   }, [])
 
-  const handleChooseFolder = () => fileRef.current?.click()
+  // フォルダ選択: File System Access API が使えればそれを優先、なければ input
+  const handleChooseFolder = async () => {
+    setError(null)
+    setMessage(null)
+    const w = window as unknown as {
+      showDirectoryPicker?: () => Promise<FileSystemDirectoryHandle>
+    }
+    if (typeof w.showDirectoryPicker === 'function') {
+      try {
+        const dir = await w.showDirectoryPicker()
+        setBusy('parsing')
+        const collected: Array<{ relPath: string; file: File }> = []
+        // 再帰的に全ファイルを収集
+        const recurse = async (handle: FileSystemDirectoryHandle, prefix: string) => {
+          // @ts-expect-error values() は型定義に無い場合がある
+          for await (const entry of handle.values()) {
+            if (entry.kind === 'file') {
+              const fh = entry as FileSystemFileHandle
+              const file = await fh.getFile()
+              collected.push({ relPath: prefix + entry.name, file })
+            } else if (entry.kind === 'directory') {
+              await recurse(entry as FileSystemDirectoryHandle, prefix + entry.name + '/')
+            }
+          }
+        }
+        await recurse(dir, '')
+        console.log('[orthophoto] showDirectoryPicker collected', collected.length)
+        await processFiles(collected)
+      } catch (err) {
+        // ユーザーキャンセルは無視
+        if ((err as DOMException)?.name === 'AbortError') {
+          setBusy(null)
+          return
+        }
+        console.error(err)
+        setError(err instanceof Error ? err.message : 'フォルダの読み取りに失敗しました')
+        setBusy(null)
+      }
+      return
+    }
+    // フォールバック: input(webkitdirectory)
+    fileRef.current?.click()
+  }
 
   const handleFolderChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const list = e.target.files
-    // 発火確認（DevTools コンソールで見えるはず）
     console.log('[orthophoto] folder change fired. files=', list?.length ?? 0)
-    setError(null)
-    setMessage(null)
-    if (!currentFarm) {
-      setError('工区が選択されていません。工事 → 工区を開いてから実行してください。')
-      return
-    }
+    e.target.value = ''
     if (!list || list.length === 0) {
       setError('ファイルが選択されませんでした（フォルダが空、または選択がキャンセルされました）。')
       return
     }
-    e.target.value = ''
+    const collected: Array<{ relPath: string; file: File }> = []
+    for (let i = 0; i < list.length; i++) {
+      const f = list[i]
+      const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name
+      collected.push({ relPath: rel, file: f })
+    }
+    await processFiles(collected)
+  }
+
+  // 収集したファイル群を解析してアップロード
+  const processFiles = async (collected: Array<{ relPath: string; file: File }>) => {
+    setError(null)
+    setMessage(null)
+    if (!currentFarm) {
+      setError('工区が選択されていません。工事 → 工区を開いてから実行してください。')
+      setBusy(null)
+      return
+    }
     setBusy('parsing')
     try {
       // 1) 全ファイルから z/x/y.* のパターンに合うものを抽出
@@ -64,9 +117,8 @@ export function OrthophotoPage() {
       let tileFormat = 'png'
       const xByZ = new Map<number, { min: number; max: number }>()
       const yByZ = new Map<number, { min: number; max: number }>()
-      for (let i = 0; i < list.length; i++) {
-        const f = list[i]
-        const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name
+      for (const { relPath, file: f } of collected) {
+        const rel = relPath
         // 末尾 2 〜 3 セグメントが {z}/{x}/{y}.{ext} になっているものを採用
         const m = rel.match(/(?:^|\/)(\d+)\/(\d+)\/(\d+)\.(png|jpg|jpeg|webp)$/i)
         if (!m) continue
@@ -75,7 +127,6 @@ export function OrthophotoPage() {
         const y = parseInt(m[3], 10)
         const ext = m[4].toLowerCase()
         tileFormat = ext === 'jpeg' ? 'jpg' : ext
-        // 保存先は基準パスからの相対（z/x/y.ext）に正規化
         const normRel = `${z}/${x}/${y}.${ext}`
         files.push({ relPath: normRel, file: f, z, x, y })
         if (z < minZoom) minZoom = z
@@ -91,7 +142,7 @@ export function OrthophotoPage() {
       }
       if (files.length === 0) {
         setError(
-          `{z}/{x}/{y}.png 形式のタイルが見つかりませんでした（選択ファイル数: ${list.length}）。` +
+          `{z}/{x}/{y}.png 形式のタイルが見つかりませんでした（選択ファイル数: ${collected.length}）。` +
             'QGIS の「Generate XYZ tiles (Directory)」で出力したフォルダを丸ごと選択してください。',
         )
         setBusy(null)
