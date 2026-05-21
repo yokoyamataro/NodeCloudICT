@@ -3,7 +3,7 @@ import { Plus, Trash2, GripVertical, Calculator, Download, X, Image as ImageIcon
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
-import { CoordinateMap, type ExternalPolygon, type EdgeRounding } from '@/components/map/CoordinateMap'
+import { CoordinateMap, type ExternalPolygon, type EdgeRounding, type BaseLayerType } from '@/components/map/CoordinateMap'
 import { PageHeader } from '@/components/layout/PageHeader'
 import type { WorkType, AreaCalculationSheet as AreaCalculationSheetType } from '@/types/database'
 import { WORK_TYPE_NAMES } from '@/types/database'
@@ -156,6 +156,9 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   const [pointNameInput, setPointNameInput] = useState<string>('')
   const [showOrtho, setShowOrtho] = useState(true)
   const [showEdgeLengths, setShowEdgeLengths] = useState(false)
+  const [baseLayer, setBaseLayer] = useState<BaseLayerType>('osm')
+  // 辺長の桁数・端数設定は境界測量のみ。それ以外は 2桁・四捨五入 固定
+  const isBoundarySurvey = workType === 'boundary_survey'
   // 辺長の桁数・端数処理（localStorage に保存して維持）
   const [edgeDigits, setEdgeDigits] = useState<number>(() => {
     const v = Number(localStorage.getItem('edgeLength:digits'))
@@ -282,7 +285,9 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
     .map(area => {
       const pts = area.points.filter(p => p.lat !== null && p.lng !== null)
       const positions = pts.map(p => [p.lat!, p.lng!] as [number, number])
-      // 各辺の中点(緯度経度)と辺長(測量座標 X,Y からの平面距離 m)。閉合辺(最終点→始点)も含む
+      // 各辺の中点(緯度経度)・辺長(測量座標 X,Y からの平面距離 m)・画面上の傾き(deg)。
+      // 閉合辺(最終点→始点)も含む。X=北(上)/Y=東(右) を画面座標(東→右, 北→上)に対応させ、
+      // CSS rotate 用の角度を atan2(-dX, dY) で求め、文字が逆さにならないよう ±90° に正規化。
       const edges: ExternalPolygon['edges'] = []
       for (let i = 0; i < pts.length; i++) {
         const a = pts[i]
@@ -291,7 +296,10 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
         const dy = b.y - a.y
         const length = Math.sqrt(dx * dx + dy * dy)
         const mid: [number, number] = [(a.lat! + b.lat!) / 2, (a.lng! + b.lng!) / 2]
-        edges.push({ mid, length })
+        let angle = (Math.atan2(-dx, dy) * 180) / Math.PI
+        if (angle > 90) angle -= 180
+        else if (angle < -90) angle += 180
+        edges.push({ mid, length, angle })
       }
       return { id: area.id, name: area.name, positions, edges }
     })
@@ -522,7 +530,7 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
               <Ruler className="h-3 w-3" />
               辺長
             </button>
-            {showEdgeLengths && (
+            {showEdgeLengths && isBoundarySurvey && (
               <div className="flex items-center gap-1 px-1.5 py-1 text-xs rounded border border-slate-300 bg-white shadow">
                 <select
                   value={edgeDigits}
@@ -556,17 +564,28 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
               <ImageIcon className="h-3 w-3" />
               オルソ
             </button>
+            <select
+              value={baseLayer}
+              onChange={(e) => setBaseLayer(e.target.value as BaseLayerType)}
+              className="px-2 py-1 text-xs border border-slate-300 rounded bg-white shadow"
+              title="背景地図"
+            >
+              <option value="osm">地図</option>
+              <option value="gsi-photo">航空写真</option>
+              <option value="gsi-std">地理院地図</option>
+            </select>
           </div>
           <CoordinateMap
             selectedPointId={selectedPointId}
             onPointSelect={handlePointClick}
             externalPolygons={externalPolygons}
             editingExternalPolygonId={editingAreaId}
+            baseLayer={baseLayer}
             farmId={farmId ?? null}
             showOrtho={showOrtho}
             showEdgeLengths={showEdgeLengths}
-            edgeDigits={edgeDigits}
-            edgeRounding={edgeRounding}
+            edgeDigits={isBoundarySurvey ? edgeDigits : 2}
+            edgeRounding={isBoundarySurvey ? edgeRounding : 'round'}
           />
         </div>
       </div>

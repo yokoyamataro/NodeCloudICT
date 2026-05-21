@@ -59,21 +59,17 @@ export function formatEdgeLength(
   return n.toFixed(digits)
 }
 
-// 辺長ラベル用アイコン
-function createEdgeLengthIcon(label: string): L.DivIcon {
+// 辺長ラベル用アイコン（背景なし・白縁取り・辺の傾きに合わせて回転）
+function createEdgeLengthIcon(label: string, angle: number): L.DivIcon {
   return L.divIcon({
     className: 'edge-length-label',
     html: `<div style="
-      background: rgba(255,255,255,0.85);
-      border: 1px solid #16a34a;
-      border-radius: 3px;
-      padding: 0 3px;
-      font-size: 10px;
-      font-weight: 600;
-      color: #166534;
+      transform: translate(-50%, -50%) rotate(${angle}deg);
+      font-size: 11px;
+      font-weight: 700;
+      color: #14532d;
       white-space: nowrap;
-      transform: translate(-50%, -50%);
-      box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+      text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 0 2px #fff;
     ">${label} m</div>`,
     iconSize: [0, 0],
     iconAnchor: [0, 0],
@@ -137,8 +133,8 @@ export interface ExternalPolygon {
   name: string
   positions: [number, number][]
   isEditing?: boolean
-  /** 各辺の中点と辺長(m)。測量座標(X,Y)から算出した平面距離 */
-  edges?: Array<{ mid: [number, number]; length: number }>
+  /** 各辺の中点・辺長(m)・画面上の傾き(deg)。測量座標(X,Y)から算出 */
+  edges?: Array<{ mid: [number, number]; length: number; angle: number }>
 }
 
 interface CoordinateMapProps {
@@ -286,7 +282,10 @@ export function CoordinateMap({
             <Marker
               key={`edge-${polygon.id}-${i}`}
               position={edge.mid}
-              icon={createEdgeLengthIcon(formatEdgeLength(edge.length, edgeDigits, edgeRounding))}
+              icon={createEdgeLengthIcon(
+                formatEdgeLength(edge.length, edgeDigits, edgeRounding),
+                edge.angle,
+              )}
               interactive={false}
               zIndexOffset={500}
             />
