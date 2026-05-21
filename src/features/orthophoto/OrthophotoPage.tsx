@@ -78,10 +78,14 @@ export function OrthophotoPage() {
         yByZ.set(z, yr)
       }
       if (files.length === 0) {
-        setError('{z}/{x}/{y}.png 形式のタイルが見つかりませんでした')
+        setError(
+          `{z}/{x}/{y}.png 形式のタイルが見つかりませんでした（選択ファイル数: ${list.length}）。` +
+            'QGIS の「Generate XYZ tiles (Directory)」で出力したフォルダを丸ごと選択してください。',
+        )
         setBusy(null)
         return
       }
+      console.log('[orthophoto] 検出タイル', { count: files.length, minZoom, maxZoom, tileFormat })
 
       // 2) 最深ズームのタイル範囲から地理境界を計算
       const xr = xByZ.get(maxZoom)!
@@ -107,7 +111,8 @@ export function OrthophotoPage() {
         opacity: opacity / 100,
       })
       if (!tileset) {
-        setError('タイルセット行の作成に失敗しました')
+        const se = useOrthophotoStore.getState().error
+        setError(`タイルセット行の作成に失敗しました${se ? `: ${se}` : '（権限・テーブル未作成の可能性）'}`)
         setBusy(null)
         return
       }
@@ -119,11 +124,20 @@ export function OrthophotoPage() {
         setProgress({ done, total })
       })
       setProgress(null)
-      setMessage(
-        `${uploaded.toLocaleString()} 件アップロード完了` +
-          (failed > 0 ? ` / ${failed} 件失敗` : ''),
-      )
+      if (uploaded === 0 && failed > 0) {
+        setError(
+          `タイルのアップロードが全て失敗しました（${failed} 件）。` +
+            'Storage バケット orthophoto-tiles の作成・権限（マイグレーション実行）を確認してください。',
+        )
+      } else {
+        setMessage(
+          `${uploaded.toLocaleString()} 件アップロード完了` +
+            (failed > 0 ? ` / ${failed} 件失敗` : ''),
+        )
+      }
       setName('')
+      // 一覧を確実に最新化
+      await fetchByFarm(currentFarm.id)
     } catch (err) {
       console.error(err)
       setError(err instanceof Error ? err.message : 'アップロードに失敗しました')
