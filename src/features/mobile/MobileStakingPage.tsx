@@ -116,6 +116,10 @@ function accuracyColor(acc: number | null): string {
   return '#ef4444' // red
 }
 
+// この精度(m)以下のときだけ「FIX相当」とみなし、地図の自動追従・動的ズームに使う。
+// これを超える（FIX解が外れて数m〜十数m飛ぶ）位置では地図を動かさず、画面を保持する。
+const FOLLOW_FIX_THRESHOLD_M = 1.0
+
 function FitOnce({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
   const map = useMap()
   const doneRef = useRef(false)
@@ -322,6 +326,9 @@ export function MobileStakingPage() {
   const [currentPos, setCurrentPos] = useState<[number, number] | null>(null)
   const [currentAcc, setCurrentAcc] = useState<number | null>(null)
   const [currentAlt, setCurrentAlt] = useState<number | null>(null)
+  // 地図追従用の「安定位置」: FIX相当の精度のときだけ更新する。
+  // FIX が外れている間は値が変わらないので、地図は最後の良好位置のまま保持される。
+  const [stablePos, setStablePos] = useState<[number, number] | null>(null)
   // 既定: 自己位置追尾は OFF にして、まず工区全体が画面内に収まる初期表示にする
   const [followMode, setFollowMode] = useState<MapFollowMode>('off')
   const [heading, setHeading] = useState<number | null>(null)
@@ -628,9 +635,14 @@ export function MobileStakingPage() {
     if (!('geolocation' in navigator)) return
     const id = navigator.geolocation.watchPosition(
       (pos) => {
-        setCurrentPos([pos.coords.latitude, pos.coords.longitude])
+        const ll: [number, number] = [pos.coords.latitude, pos.coords.longitude]
+        setCurrentPos(ll)
         setCurrentAcc(pos.coords.accuracy)
         setCurrentAlt(pos.coords.altitude)
+        // FIX相当の精度のときだけ追従用の安定位置を更新（外れたら据え置き）
+        if (pos.coords.accuracy != null && pos.coords.accuracy <= FOLLOW_FIX_THRESHOLD_M) {
+          setStablePos(ll)
+        }
       },
       () => {},
       { enableHighAccuracy: true, maximumAge: 500, timeout: 15000 },
@@ -1853,7 +1865,9 @@ export function MobileStakingPage() {
             />
           ))}
           <FitOnce bounds={allBounds} />
-          <FollowCurrent position={currentPos} enabled={followMode === 'self' && !dynamicZoom} />
+          {/* 追従は安定位置(stablePos)で行う。FIX が外れると stablePos が更新されないため
+              地図は最後の良好位置で止まり、外側へ大きくスクロールしない */}
+          <FollowCurrent position={stablePos} enabled={followMode === 'self' && !dynamicZoom} />
           <ZoomWatcher onChange={setMapZoom} />
           {/* ターゲット選択時はモードに関わらず 1 度だけ中心化（継続的な追尾はしない）
               動的ズーム時は DynamicTargetZoom 側で都度設定するためスキップ */}
@@ -1882,7 +1896,7 @@ export function MobileStakingPage() {
                   }
                 : null
             }
-            currentPos={currentPos}
+            currentPos={stablePos}
           />
 
           {/* 工事区域ポリゴン（境界測量=シアン 等） */}
