@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, Polygon, Tooltip, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, Polygon, Tooltip, Pane, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import {
@@ -2127,16 +2127,21 @@ export function MobileStakingPage() {
                   keyboard={false}
                 />
               )}
-              <CircleMarker
-                center={currentPos}
-                radius={6}
-                pathOptions={{
-                  color: accuracyColor(currentAcc),
-                  fillColor: '#2563eb',
-                  fillOpacity: 1,
-                  weight: 2,
-                }}
-              />
+              {/* 現在位置の青い点は専用ペイン(z-index 650)に置き、
+                  markerPane(600)のターゲット等より常に前面に表示する */}
+              <Pane name="current-pos" style={{ zIndex: 650 }}>
+                <CircleMarker
+                  center={currentPos}
+                  radius={6}
+                  pane="current-pos"
+                  pathOptions={{
+                    color: accuracyColor(currentAcc),
+                    fillColor: '#2563eb',
+                    fillOpacity: 1,
+                    weight: 2,
+                  }}
+                />
+              </Pane>
             </>
           )}
 
