@@ -414,6 +414,8 @@ export function MobileStakingPage() {
 
   // 選択中ターゲット
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null)
+  // 近接モードを手動で閉じたフラグ（範囲外に出ると解除して再表示できるようにする）
+  const [proximityCancelled, setProximityCancelled] = useState(false)
   // 選択中の配線（タップでハイライト＋情報表示）
   const [selectedPipeId, setSelectedPipeId] = useState<string | null>(null)
   // 共有リンクのトースト表示
@@ -905,6 +907,31 @@ export function MobileStakingPage() {
       return null
     }
   }, [currentPos, converter])
+
+  // 近接モード: 自己位置→ターゲットの相対位置（測量座標 X=北/Y=東 ベースで高精度）
+  const proximityRel = useMemo(() => {
+    if (!currentXY || !selectedTarget || selectedTarget.x == null || selectedTarget.y == null) {
+      return null
+    }
+    const dN = selectedTarget.x - currentXY.x // 北方向の差
+    const dE = selectedTarget.y - currentXY.y // 東方向の差
+    const dist = Math.hypot(dN, dE)
+    return { dN, dE, dist }
+  }, [currentXY, selectedTarget])
+
+  // 1m 以内 かつ 未キャンセル のとき近接モードを表示
+  const proximityActive = proximityRel != null && proximityRel.dist <= 1.0 && !proximityCancelled
+
+  // 範囲外（1.2m 超のヒステリシス）に出たらキャンセルを解除して再表示できるようにする
+  useEffect(() => {
+    if (proximityRel == null || proximityRel.dist > 1.2) {
+      setProximityCancelled(false)
+    }
+  }, [proximityRel])
+  // ターゲットを切り替えたらキャンセル状態をリセット
+  useEffect(() => {
+    setProximityCancelled(false)
+  }, [selectedTargetId])
 
   // 工区全体の bounds（自己位置は含めず、開いた直後の初期表示用）
   const allBounds = useMemo(() => {
@@ -2120,6 +2147,18 @@ export function MobileStakingPage() {
           ))}
         </MapContainer>
 
+        {/* 近接モード（1m 以内で地図表示から切替・精密誘導） */}
+        {proximityActive && proximityRel && selectedTarget && (
+          <ProximityGuide
+            dN={proximityRel.dN}
+            dE={proximityRel.dE}
+            dist={proximityRel.dist}
+            accuracy={currentAcc}
+            targetName={selectedTarget.name}
+            onCancel={() => setProximityCancelled(true)}
+          />
+        )}
+
         {/* 施工管理モード：ΔZ 大型表示 */}
         {screenMode === 'construction' && trenchDiff !== null && (
           <div className="absolute top-2 left-2 z-[1000] bg-white/95 border rounded-lg shadow-lg p-3 min-w-[180px]">
@@ -2694,6 +2733,120 @@ function RecordList({
         )
       })}
     </ul>
+  )
+}
+
+// 近接モード（精密誘導）: 地図に替えて自己位置中心のレーダー表示。
+// 1m 以内で起動し、10cm 以内では 10cm 幅へ自動でズームイン。
+function ProximityGuide({
+  dN,
+  dE,
+  dist,
+  accuracy,
+  targetName,
+  onCancel,
+}: {
+  dN: number // 北方向の差(m)
+  dE: number // 東方向の差(m)
+  dist: number // 距離(m)
+  accuracy: number | null
+  targetName: string
+  onCancel: () => void
+}) {
+  // スケール: 粗(半径1m) / 精(半径10cm)。ヒステリシスでちらつき防止
+  const [fine, setFine] = useState(dist <= 0.1)
+  useEffect(() => {
+    setFine((prev) => (prev ? dist <= 0.12 : dist <= 0.1))
+  }, [dist])
+
+  const U = 100 // SVG 上の表示半径（中心 100,100 → 端 100）
+  const viewRadiusM = fine ? 0.1 : 1.0
+  const unitsPerM = U / viewRadiusM
+  // 画面座標: 東→右(+x), 北→上(-y)
+  let ex = dE * unitsPerM
+  let ey = -dN * unitsPerM
+  const r = Math.hypot(ex, ey)
+  if (r > U && r > 0) {
+    ex = (ex / r) * U
+    ey = (ey / r) * U
+  }
+  const tx = 100 + ex
+  const ty = 100 + ey
+
+  const distLabel = dist < 1 ? `${(dist * 100).toFixed(1)} cm` : `${dist.toFixed(3)} m`
+  const rings = fine
+    ? [
+        { rM: 0.1, label: '10cm' },
+        { rM: 0.05, label: '5cm' },
+      ]
+    : [
+        { rM: 1.0, label: '1m' },
+        { rM: 0.5, label: '50cm' },
+      ]
+
+  return (
+    <div className="absolute inset-0 z-[1500] bg-white flex flex-col">
+      {/* ヘッダ */}
+      <div className="flex items-center justify-between px-3 py-2 border-b bg-slate-50">
+        <div className="text-sm min-w-0">
+          <span className="text-slate-500">近接モード</span>
+          <span className="ml-2 font-bold truncate">{targetName}</span>
+        </div>
+        <button
+          onClick={onCancel}
+          className="flex items-center gap-1 px-2 py-1 rounded border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 text-xs shrink-0"
+        >
+          <X className="h-4 w-4" /> 通常表示
+        </button>
+      </div>
+
+      {/* レーダー（自己位置中心） */}
+      <div className="flex-1 flex items-center justify-center p-3 min-h-0">
+        <svg
+          viewBox="0 0 200 200"
+          className="h-full"
+          style={{ aspectRatio: '1 / 1', maxWidth: '100%', maxHeight: '100%' }}
+        >
+          {/* 十字 + 北 */}
+          <line x1={100} y1={2} x2={100} y2={198} stroke="#e2e8f0" strokeWidth={0.5} />
+          <line x1={2} y1={100} x2={198} y2={100} stroke="#e2e8f0" strokeWidth={0.5} />
+          <text x={100} y={9} fill="#94a3b8" fontSize={6} textAnchor="middle">
+            N
+          </text>
+          {/* 距離リング */}
+          {rings.map((ring) => {
+            const rr = ring.rM * unitsPerM
+            if (rr > U + 0.5) return null
+            return (
+              <g key={ring.label}>
+                <circle cx={100} cy={100} r={rr} fill="none" stroke="#cbd5e1" strokeWidth={0.7} />
+                <text x={102} y={100 - rr + 6} fill="#94a3b8" fontSize={6}>
+                  {ring.label}
+                </text>
+              </g>
+            )
+          })}
+          {/* 中心→ターゲット線 */}
+          <line x1={100} y1={100} x2={tx} y2={ty} stroke="#f97316" strokeWidth={1} />
+          {/* ターゲット（十字マーカー） */}
+          <circle cx={tx} cy={ty} r={5} fill="#f97316" stroke="#fff" strokeWidth={1.4} />
+          <line x1={tx - 9} y1={ty} x2={tx + 9} y2={ty} stroke="#f97316" strokeWidth={0.8} />
+          <line x1={tx} y1={ty - 9} x2={tx} y2={ty + 9} stroke="#f97316" strokeWidth={0.8} />
+          {/* 自己位置（中心） */}
+          <circle cx={100} cy={100} r={3.5} fill="#2563eb" stroke="#fff" strokeWidth={1.4} />
+        </svg>
+      </div>
+
+      {/* 数値表示 */}
+      <div className="px-4 pb-3 pt-1 text-center border-t">
+        <div className="text-5xl font-mono font-bold tabular-nums text-slate-800">{distLabel}</div>
+        <div className="text-xs text-slate-500 mt-1">
+          {fine ? '精密モード（10cm 幅）' : '近接モード（1m 幅）'}
+          <span className="mx-1">/</span>
+          精度 {accuracy != null ? `${(accuracy * 100).toFixed(1)} cm` : '-'}
+        </div>
+      </div>
+    </div>
   )
 }
 
