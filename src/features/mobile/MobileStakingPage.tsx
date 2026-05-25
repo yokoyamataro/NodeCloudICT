@@ -22,13 +22,13 @@ import {
   Navigation2,
   Share2,
   Check,
-  Filter,
   Camera,
   Car,
   Upload,
   Download,
-  ZoomIn,
   Image as ImageIcon,
+  SlidersHorizontal,
+  X,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
@@ -44,6 +44,7 @@ import { CoordinateConverter } from '@/lib/coordinates'
 import {
   useCoordinatePointTypeStore,
   getCoordinateTypeLabel,
+  getCoordinateTypeOptions,
 } from '@/stores/coordinatePointTypeStore'
 import { CoordinatePhotoModal } from '@/features/coordinates/CoordinatePhotoModal'
 import { useAttachmentStore } from '@/stores/attachmentStore'
@@ -143,55 +144,6 @@ function ZoomWatcher({ onChange }: { onChange: (z: number) => void }) {
       map.off('zoomend', handler)
     }
   }, [map, onChange])
-  return null
-}
-
-// ターゲット動的ズーム
-// ターゲットを画面中心に置き、現在地も視野に収まるよう自動でズームを調整する。
-// ターゲットに近づくほど拡大され、概略誘導 → 精密誘導の連続的な体験を実現する。
-function DynamicTargetZoom({
-  target,
-  currentPos,
-  enabled,
-}: {
-  target: { id: string; lat: number; lng: number } | null
-  currentPos: [number, number] | null
-  enabled: boolean
-}) {
-  const map = useMap()
-  const lastZoomRef = useRef<number | null>(null)
-  useEffect(() => {
-    if (!enabled || !target) return
-    const targetLL = L.latLng(target.lat, target.lng)
-    let desiredZoom: number
-    if (currentPos) {
-      const curLL = L.latLng(currentPos[0], currentPos[1])
-      const distance = targetLL.distanceTo(curLL) // meters
-      const size = map.getSize()
-      const halfMinDim = Math.max(40, Math.min(size.x, size.y) / 2 - 24) // 24px の余白
-      if (distance < 0.5) {
-        desiredZoom = 22
-      } else {
-        const metersPerPixelAtZ0 =
-          156543.03392 * Math.cos((target.lat * Math.PI) / 180)
-        const z = Math.floor(
-          Math.log2((metersPerPixelAtZ0 * halfMinDim) / distance),
-        )
-        desiredZoom = Math.max(15, Math.min(22, z))
-      }
-    } else {
-      desiredZoom = 19
-    }
-    // 1 ズーム以上変わるとき、または最初のときだけ setView でズームを反映
-    const cur = map.getZoom()
-    if (lastZoomRef.current == null || Math.abs(cur - desiredZoom) >= 1) {
-      map.setView(targetLL, desiredZoom, { animate: true })
-      lastZoomRef.current = desiredZoom
-    } else {
-      // ズームは変えずに中心だけターゲットへ寄せる（動きを抑える）
-      map.panTo(targetLL, { animate: true })
-    }
-  }, [map, enabled, target, currentPos])
   return null
 }
 
@@ -388,8 +340,8 @@ export function MobileStakingPage() {
   >('all')
   // 非表示にする点種コードの集合（地図マーカー＆リスト両方に効く）
   const [hiddenSubTypes, setHiddenSubTypes] = useState<Set<string>>(new Set())
-  // フィルタパネル（点種チップ＋種別ボタン）の表示
-  const [showFilterPanel, setShowFilterPanel] = useState(false)
+  // 表示設定パネル（コンパス・点名・点種フィルタ・地番・背景地図）の表示
+  const [showDisplaySettings, setShowDisplaySettings] = useState(false)
   // 写真モーダル: 選択中ターゲット（座標）の写真を閲覧／撮影できる
   const [photoModalTarget, setPhotoModalTarget] = useState<StakingTarget | null>(null)
   const [showLabels, setShowLabels] = useState(true)
@@ -398,7 +350,6 @@ export function MobileStakingPage() {
   const [showOrtho, setShowOrtho] = useState(true)
   const PARCEL_LABEL_MIN_ZOOM = 17
   // ターゲット動的ズーム（ターゲットを中心にして、現在地も視野に収まるよう自動拡大縮小）
-  const [dynamicZoom, setDynamicZoom] = useState(false)
   // 地図ベースレイヤ（地理院の各種タイル / 背景なし）
   type BaseLayerKey = 'photo' | 'std' | 'pale' | 'blank' | 'none'
   const BASE_LAYERS: Record<BaseLayerKey, { label: string; url: string; maxNative?: number }> = {
@@ -916,6 +867,12 @@ export function MobileStakingPage() {
     return Array.from(map.entries()).map(([code, v]) => ({ code, ...v }))
   }, [orderedTargets, routeTargetIds, targetFilter])
 
+  // 新点記録時に選べる点種（既定 + プロジェクトのカスタム点種）
+  const typeOptions = useMemo(
+    () => getCoordinateTypeOptions(projectId, pointTypesByProject),
+    [projectId, pointTypesByProject],
+  )
+
   // ルート点はルート点名（座標計算で集約された名前）で上書き済みの orderedTargets を使う
   const selectedTarget = useMemo(
     () => orderedTargets.find((t) => t.id === selectedTargetId) ?? null,
@@ -1186,8 +1143,8 @@ export function MobileStakingPage() {
     })
   }
 
-  // 新点モーダルからの確定処理（OK or 写真撮影）
-  const handleFreePointConfirm = async (name: string, openPhoto: boolean) => {
+  // 新点モーダルからの確定処理（OK or 写真撮影）。type は登録する点種コード
+  const handleFreePointConfirm = async (name: string, type: string, openPhoto: boolean) => {
     const d = freePointDialog
     if (!d || !farmId) return
     setFreePointDialog(null)
@@ -1221,7 +1178,7 @@ export function MobileStakingPage() {
             x: d.x,
             y: d.y,
             z: d.z,
-            type: 'current' as unknown as CoordinateRow['type'],
+            type: type as unknown as CoordinateRow['type'],
           },
         ])
         if (inserted.length > 0) createdId = inserted[0].id
@@ -1245,8 +1202,8 @@ export function MobileStakingPage() {
         z: d.z,
         lat: 0,
         lng: 0,
-        subType: 'current',
-        subTypeLabel: '現況',
+        subType: type,
+        subTypeLabel: getCoordinateTypeLabel(type, projectId, pointTypesByProject),
       })
     }
   }
@@ -1510,15 +1467,6 @@ export function MobileStakingPage() {
           <Crosshair className="h-4 w-4" />
           <span className="hidden sm:inline">{MAP_FOLLOW_LABEL[followMode]}</span>
         </button>
-        <button
-          onClick={() => setDynamicZoom((v) => !v)}
-          className={`p-1.5 rounded ${
-            dynamicZoom ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'
-          }`}
-          title="ターゲット動的ズーム（ON: ターゲットを中心に距離に応じて自動拡大）"
-        >
-          <ZoomIn className="h-4 w-4" />
-        </button>
         {farmOrthos.length > 0 && (
           <button
             onClick={() => setShowOrtho((v) => !v)}
@@ -1531,55 +1479,14 @@ export function MobileStakingPage() {
           </button>
         )}
         <button
-          onClick={toggleHeading}
-          className={`p-1.5 rounded ${
-            headingEnabled
-              ? heading != null
-                ? 'bg-emerald-600'
-                : 'bg-amber-600'
-              : 'bg-slate-700 hover:bg-slate-600'
-          }`}
-          title={
-            headingError
-              ? `方位エラー: ${headingError}`
-              : headingEnabled
-              ? heading != null
-                ? `方位 ${heading.toFixed(0)}°（クリックでOFF）`
-                : '方位センサー待機中'
-              : '方位センサーをON'
-          }
-        >
-          <Navigation2 className="h-4 w-4" />
-        </button>
-        <button
-          onClick={() => setShowLabels((v) => !v)}
-          className={`p-1.5 rounded ${
-            showLabels ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'
-          }`}
-          title="点名表示"
-        >
-          <Tag className="h-4 w-4" />
-        </button>
-        <button
-          onClick={() => setShowParcelLabels((v) => !v)}
-          className={`p-1.5 rounded text-[10px] font-bold w-7 flex items-center justify-center ${
-            showParcelLabels ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'
-          }`}
-          title={`地番名表示（ズーム ${PARCEL_LABEL_MIN_ZOOM} 以上で有効）`}
-        >
-          地
-        </button>
-        <button
-          onClick={() => setShowFilterPanel((v) => !v)}
+          onClick={() => setShowDisplaySettings((v) => !v)}
           className={`p-1.5 rounded relative ${
-            showFilterPanel || hiddenSubTypes.size > 0 || targetFilter !== 'all'
-              ? 'bg-blue-600'
-              : 'bg-slate-700 hover:bg-slate-600'
+            showDisplaySettings ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'
           }`}
-          title="点種フィルタ"
+          title="表示設定（コンパス・点名・点種フィルタ・地番・背景地図）"
         >
-          <Filter className="h-4 w-4" />
-          {(hiddenSubTypes.size > 0 || targetFilter !== 'all') && (
+          <SlidersHorizontal className="h-4 w-4" />
+          {(hiddenSubTypes.size > 0 || targetFilter !== 'all' || headingEnabled) && (
             <span className="absolute -top-1 -right-1 bg-amber-400 w-2 h-2 rounded-full" />
           )}
         </button>
@@ -1654,6 +1561,7 @@ export function MobileStakingPage() {
       {freePointDialog && (
         <FreePointDialog
           data={freePointDialog}
+          typeOptions={typeOptions}
           onConfirm={handleFreePointConfirm}
           onCancel={() => setFreePointDialog(null)}
         />
@@ -1738,11 +1646,76 @@ export function MobileStakingPage() {
         </div>
       )}
 
-      {/* 点種フィルタ（ヘッダの Filter アイコンで開閉）
-          基準点 / 外周点 / 現況 / 暗渠頂点（あれば）を並列で表示 */}
-      {showFilterPanel && (
-        <div className="bg-white border-b">
-          <div className="px-2 py-1.5 flex items-center gap-1 flex-wrap text-[11px]">
+      {/* 表示設定パネル（表示アイコンで開閉）:
+          コンパス / 点名 / 地番 / 背景地図 / 点種フィルタ をまとめて設定 */}
+      {showDisplaySettings && (
+        <div className="bg-white border-b px-2 py-2 space-y-2">
+          {/* 表示トグル + 背景地図 */}
+          <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
+            <span className="text-slate-500 mr-1">表示:</span>
+            <button
+              onClick={toggleHeading}
+              className={`flex items-center gap-1 px-2 py-0.5 rounded border font-medium ${
+                headingEnabled
+                  ? heading != null
+                    ? 'bg-emerald-600 text-white border-emerald-600'
+                    : 'bg-amber-500 text-white border-amber-500'
+                  : 'bg-white text-slate-500 border-slate-300'
+              }`}
+              title={
+                headingError
+                  ? `方位エラー: ${headingError}`
+                  : headingEnabled
+                  ? heading != null
+                    ? `方位 ${heading.toFixed(0)}°（クリックでOFF）`
+                    : '方位センサー待機中'
+                  : '方位センサーをON'
+              }
+            >
+              <Navigation2 className="h-3.5 w-3.5" />
+              コンパス
+            </button>
+            <button
+              onClick={() => setShowLabels((v) => !v)}
+              className={`flex items-center gap-1 px-2 py-0.5 rounded border font-medium ${
+                showLabels
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-slate-500 border-slate-300'
+              }`}
+            >
+              <Tag className="h-3.5 w-3.5" />
+              点名
+            </button>
+            <button
+              onClick={() => setShowParcelLabels((v) => !v)}
+              className={`px-2 py-0.5 rounded border font-medium ${
+                showParcelLabels
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-slate-500 border-slate-300'
+              }`}
+              title={`地番名表示（ズーム ${PARCEL_LABEL_MIN_ZOOM} 以上で有効）`}
+            >
+              地番
+            </button>
+            <label className="flex items-center gap-1 ml-1">
+              <span className="text-slate-500">背景</span>
+              <select
+                value={baseLayer}
+                onChange={(e) => setBaseLayer(e.target.value as BaseLayerKey)}
+                className="px-1.5 py-0.5 border border-slate-300 rounded bg-white"
+              >
+                {(Object.entries(BASE_LAYERS) as [BaseLayerKey, typeof currentBase][]).map(
+                  ([key, info]) => (
+                    <option key={key} value={key}>
+                      {info.label}
+                    </option>
+                  ),
+                )}
+              </select>
+            </label>
+          </div>
+          {/* 点種フィルタ */}
+          <div className="flex items-center gap-1 flex-wrap text-[11px]">
             <span className="text-slate-500 mr-1">点種:</span>
             {subTypeStats.map((s) => {
               const hidden = hiddenSubTypes.has(s.code)
@@ -1867,26 +1840,10 @@ export function MobileStakingPage() {
           <FitOnce bounds={allBounds} />
           {/* 追従は安定位置(stablePos)で行う。FIX が外れると stablePos が更新されないため
               地図は最後の良好位置で止まり、外側へ大きくスクロールしない */}
-          <FollowCurrent position={stablePos} enabled={followMode === 'self' && !dynamicZoom} />
+          <FollowCurrent position={stablePos} enabled={followMode === 'self'} />
           <ZoomWatcher onChange={setMapZoom} />
-          {/* ターゲット選択時はモードに関わらず 1 度だけ中心化（継続的な追尾はしない）
-              動的ズーム時は DynamicTargetZoom 側で都度設定するためスキップ */}
-          {!dynamicZoom && (
-            <CenterOnSelect
-              target={
-                selectedTarget
-                  ? {
-                      id: selectedTarget.id,
-                      lat: selectedTarget.lat,
-                      lng: selectedTarget.lng,
-                    }
-                  : null
-              }
-            />
-          )}
-          {/* ターゲット動的ズーム（ON 時のみ） */}
-          <DynamicTargetZoom
-            enabled={dynamicZoom}
+          {/* ターゲット選択時はモードに関わらず 1 度だけ中心化（継続的な追尾はしない） */}
+          <CenterOnSelect
             target={
               selectedTarget
                 ? {
@@ -1896,7 +1853,6 @@ export function MobileStakingPage() {
                   }
                 : null
             }
-            currentPos={stablePos}
           />
 
           {/* 工事区域ポリゴン（境界測量=シアン 等） */}
@@ -2163,24 +2119,6 @@ export function MobileStakingPage() {
             />
           ))}
         </MapContainer>
-
-        {/* ベースレイヤ切替（地理院の各種タイル + 背景なし） */}
-        <div className="absolute bottom-2 right-2 z-[1000] bg-white/95 border rounded shadow text-xs">
-          <select
-            value={baseLayer}
-            onChange={(e) => setBaseLayer(e.target.value as BaseLayerKey)}
-            className="px-2 py-1 bg-transparent outline-none"
-            title="背景レイヤ"
-          >
-            {(Object.entries(BASE_LAYERS) as [BaseLayerKey, typeof currentBase][]).map(
-              ([key, info]) => (
-                <option key={key} value={key}>
-                  {info.label}
-                </option>
-              ),
-            )}
-          </select>
-        </div>
 
         {/* 施工管理モード：ΔZ 大型表示 */}
         {screenMode === 'construction' && trenchDiff !== null && (
@@ -2518,6 +2456,13 @@ export function MobileStakingPage() {
                 </span>
               </div>
             </button>
+            <button
+              onClick={() => setSelectedTargetId(null)}
+              className="p-1.5 rounded border border-slate-300 text-slate-500 hover:bg-slate-100 shrink-0"
+              title="ターゲットを解除"
+            >
+              <X className="h-4 w-4" />
+            </button>
             {distanceToTarget != null && bearingToTarget != null && (
               <div className="flex items-center gap-2">
                 {/* 矢印（北を 0° として時計回りに回転） */}
@@ -2755,6 +2700,7 @@ function RecordList({
 // 新点計測完了モーダル
 function FreePointDialog({
   data,
+  typeOptions,
   onConfirm,
   onCancel,
 }: {
@@ -2768,10 +2714,15 @@ function FreePointDialog({
     sampleCount: number
     antennaHeight: number
   }
-  onConfirm: (name: string, openPhoto: boolean) => void
+  typeOptions: { code: string; label: string; builtIn: boolean }[]
+  onConfirm: (name: string, type: string, openPhoto: boolean) => void
   onCancel: () => void
 }) {
   const [name, setName] = useState(data.defaultName)
+  // 既定の点種は「現況(current)」。無ければ先頭
+  const [type, setType] = useState<string>(
+    typeOptions.some((o) => o.code === 'current') ? 'current' : typeOptions[0]?.code ?? 'current',
+  )
   return (
     <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3000]">
       <div className="bg-white w-full sm:max-w-sm rounded-t-xl sm:rounded-xl shadow-xl p-4">
@@ -2785,6 +2736,19 @@ function FreePointDialog({
           className="w-full px-2 py-1.5 border rounded text-sm mb-3"
           autoFocus
         />
+
+        <label className="block text-xs text-slate-500 mb-1">点種</label>
+        <select
+          value={type}
+          onChange={(e) => setType(e.target.value)}
+          className="w-full px-2 py-1.5 border rounded text-sm mb-3 bg-white"
+        >
+          {typeOptions.map((o) => (
+            <option key={o.code} value={o.code}>
+              {o.label}
+            </option>
+          ))}
+        </select>
 
         <div className="text-sm font-mono space-y-1 mb-3 bg-slate-50 rounded p-2">
           <div>X = <span className="text-slate-800">{data.x.toFixed(3)}</span></div>
@@ -2810,14 +2774,14 @@ function FreePointDialog({
         <div className="space-y-2">
           <div className="flex gap-2">
             <button
-              onClick={() => onConfirm(name.trim() || data.defaultName, false)}
+              onClick={() => onConfirm(name.trim() || data.defaultName, type, false)}
               disabled={!name.trim()}
               className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
             >
               OK
             </button>
             <button
-              onClick={() => onConfirm(name.trim() || data.defaultName, true)}
+              onClick={() => onConfirm(name.trim() || data.defaultName, type, true)}
               disabled={!name.trim()}
               className="px-4 py-2.5 bg-slate-700 text-white rounded-lg hover:bg-slate-800 disabled:opacity-50 flex items-center justify-center"
               title="登録して写真撮影"
