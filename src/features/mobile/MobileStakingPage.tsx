@@ -29,6 +29,8 @@ import {
   Image as ImageIcon,
   SlidersHorizontal,
   X,
+  Volume2,
+  VolumeX,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
@@ -120,6 +122,45 @@ function accuracyColor(acc: number | null): string {
 // この精度(m)以下のときだけ「FIX相当」とみなし、地図の自動追従・動的ズームに使う。
 // これを超える（FIX解が外れて数m〜十数m飛ぶ）位置では地図を動かさず、画面を保持する。
 const FOLLOW_FIX_THRESHOLD_M = 1.0
+
+// 音声ガイダンス: RTK-FIX とみなす精度(3cm)
+const SOUND_FIX_ACCURACY_M = 0.03
+
+// 「ピッ」を count 回、短い間隔で鳴らす（Web Audio）
+function playBeeps(ctx: AudioContext, count: number) {
+  const now = ctx.currentTime
+  for (let i = 0; i < count; i++) {
+    const t = now + i * 0.14
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.type = 'square'
+    osc.frequency.value = 1400
+    gain.gain.setValueAtTime(0.0001, t)
+    gain.gain.exponentialRampToValueAtTime(0.3, t + 0.005)
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.08)
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.start(t)
+    osc.stop(t + 0.09)
+  }
+}
+
+// RTK が外れた時の警告音「ブーッ」（低く長い音）
+function playBuzzer(ctx: AudioContext) {
+  const t = ctx.currentTime
+  const osc = ctx.createOscillator()
+  const gain = ctx.createGain()
+  osc.type = 'sawtooth'
+  osc.frequency.value = 200
+  gain.gain.setValueAtTime(0.0001, t)
+  gain.gain.exponentialRampToValueAtTime(0.4, t + 0.02)
+  gain.gain.setValueAtTime(0.4, t + 0.4)
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.5)
+  osc.connect(gain)
+  gain.connect(ctx.destination)
+  osc.start(t)
+  osc.stop(t + 0.55)
+}
 
 function FitOnce({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
   const map = useMap()
@@ -933,6 +974,86 @@ export function MobileStakingPage() {
     setProximityCancelled(false)
   }, [selectedTargetId])
 
+  // ========== 音声ガイダンス ==========
+  // FIX 時: 1Hz で「ピッ」。ターゲット 1m 以内で「ピピ」、10cm 以内で「ピピピ」。
+  // FIX が外れた瞬間だけ「ブーッ」。
+  const [soundEnabled, setSoundEnabled] = useState(false)
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const soundAccRef = useRef<number | null>(null)
+  const soundDistRef = useRef<number | null>(null)
+  const prevFixRef = useRef<boolean>(false)
+  // 最新の精度・ターゲット距離をタイマーから参照できるよう ref に同期
+  useEffect(() => {
+    soundAccRef.current = currentAcc
+  }, [currentAcc])
+  useEffect(() => {
+    soundDistRef.current = proximityRel?.dist ?? null
+  }, [proximityRel])
+
+  // 1Hz ビープのループ
+  useEffect(() => {
+    if (!soundEnabled) return
+    const ctx = audioCtxRef.current
+    if (!ctx) return
+    prevFixRef.current = soundAccRef.current != null && soundAccRef.current <= SOUND_FIX_ACCURACY_M
+    const id = window.setInterval(() => {
+      const acc = soundAccRef.current
+      const fix = acc != null && acc <= SOUND_FIX_ACCURACY_M
+      if (!fix) return
+      const d = soundDistRef.current
+      let count = 1
+      if (d != null && d <= 0.1) count = 3
+      else if (d != null && d <= 1.0) count = 2
+      playBeeps(ctx, count)
+    }, 1000)
+    return () => window.clearInterval(id)
+  }, [soundEnabled])
+
+  // FIX→喪失の瞬間に警告音（ブーッ）を 1 回
+  const soundIsFix = currentAcc != null && currentAcc <= SOUND_FIX_ACCURACY_M
+  useEffect(() => {
+    if (!soundEnabled) {
+      prevFixRef.current = soundIsFix
+      return
+    }
+    if (prevFixRef.current && !soundIsFix) {
+      const ctx = audioCtxRef.current
+      if (ctx) playBuzzer(ctx)
+    }
+    prevFixRef.current = soundIsFix
+  }, [soundIsFix, soundEnabled])
+
+  // 音声 ON/OFF（ON 時はユーザー操作中に AudioContext を生成・再開）
+  const toggleSound = async () => {
+    if (soundEnabled) {
+      setSoundEnabled(false)
+      return
+    }
+    try {
+      const Ctor =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      if (!Ctor) {
+        alert('この端末は音声ガイダンスに対応していません')
+        return
+      }
+      const ctx = audioCtxRef.current ?? new Ctor()
+      audioCtxRef.current = ctx
+      await ctx.resume()
+      playBeeps(ctx, 1) // 起動確認音
+      setSoundEnabled(true)
+    } catch {
+      alert('音声を開始できませんでした')
+    }
+  }
+
+  // アンマウント時に AudioContext を閉じる
+  useEffect(() => {
+    return () => {
+      audioCtxRef.current?.close().catch(() => {})
+    }
+  }, [])
+
   // 工区全体の bounds（自己位置は含めず、開いた直後の初期表示用）
   const allBounds = useMemo(() => {
     const all: [number, number][] = []
@@ -1516,6 +1637,15 @@ export function MobileStakingPage() {
           {(hiddenSubTypes.size > 0 || targetFilter !== 'all' || headingEnabled) && (
             <span className="absolute -top-1 -right-1 bg-amber-400 w-2 h-2 rounded-full" />
           )}
+        </button>
+        <button
+          onClick={toggleSound}
+          className={`p-1.5 rounded ${
+            soundEnabled ? 'bg-emerald-600' : 'bg-slate-700 hover:bg-slate-600'
+          }`}
+          title="音声ガイダンス（FIX: ピッ / 1m以内: ピピ / 10cm以内: ピピピ、FIX喪失: ブーッ）"
+        >
+          {soundEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
         </button>
         <button
           onClick={() => setShowRecordList((v) => !v)}
