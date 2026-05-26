@@ -2915,16 +2915,16 @@ function ProximityGuide({
       ]
 
   return (
-    <div className="absolute inset-0 z-[1500] bg-white flex flex-col">
+    <div className="absolute inset-0 z-[1500] bg-black flex flex-col">
       {/* ヘッダ */}
-      <div className="flex items-center justify-between px-3 py-2 border-b bg-slate-50">
-        <div className="text-sm min-w-0">
-          <span className="text-slate-500">近接モード</span>
+      <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700 bg-slate-900">
+        <div className="text-sm min-w-0 text-slate-200">
+          <span className="text-slate-400">近接モード</span>
           <span className="ml-2 font-bold truncate">{targetName}</span>
         </div>
         <button
           onClick={onCancel}
-          className="flex items-center gap-1 px-2 py-1 rounded border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 text-xs shrink-0"
+          className="flex items-center gap-1 px-2 py-1 rounded border border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700 text-xs shrink-0"
         >
           <X className="h-4 w-4" /> 通常表示
         </button>
@@ -2938,39 +2938,53 @@ function ProximityGuide({
           style={{ aspectRatio: '1 / 1', maxWidth: '100%', maxHeight: '100%' }}
         >
           {/* 十字 + 北 */}
-          <line x1={100} y1={2} x2={100} y2={198} stroke="#e2e8f0" strokeWidth={0.5} />
-          <line x1={2} y1={100} x2={198} y2={100} stroke="#e2e8f0" strokeWidth={0.5} />
+          <line x1={100} y1={2} x2={100} y2={198} stroke="#334155" strokeWidth={0.6} />
+          <line x1={2} y1={100} x2={198} y2={100} stroke="#334155" strokeWidth={0.6} />
           <text x={100} y={9} fill="#94a3b8" fontSize={6} textAnchor="middle">
             N
           </text>
-          {/* 距離リング */}
-          {rings.map((ring) => {
+          {/* 距離リング（最外＝1m/10cm を太く強調） */}
+          {rings.map((ring, idx) => {
             const rr = ring.rM * unitsPerM
             if (rr > U + 0.5) return null
+            const primary = idx === 0
             return (
               <g key={ring.label}>
-                <circle cx={100} cy={100} r={rr} fill="none" stroke="#cbd5e1" strokeWidth={0.7} />
-                <text x={102} y={100 - rr + 6} fill="#94a3b8" fontSize={6}>
+                <circle
+                  cx={100}
+                  cy={100}
+                  r={rr}
+                  fill="none"
+                  stroke={primary ? '#38bdf8' : '#475569'}
+                  strokeWidth={primary ? 2.4 : 0.9}
+                />
+                <text
+                  x={102}
+                  y={100 - rr + 7}
+                  fill={primary ? '#7dd3fc' : '#94a3b8'}
+                  fontSize={primary ? 8 : 6}
+                  fontWeight={primary ? 700 : 400}
+                >
                   {ring.label}
                 </text>
               </g>
             )
           })}
           {/* 中心→ターゲット線 */}
-          <line x1={100} y1={100} x2={tx} y2={ty} stroke="#f97316" strokeWidth={1} />
+          <line x1={100} y1={100} x2={tx} y2={ty} stroke="#f97316" strokeWidth={1.2} />
           {/* ターゲット（十字マーカー） */}
-          <circle cx={tx} cy={ty} r={5} fill="#f97316" stroke="#fff" strokeWidth={1.4} />
+          <circle cx={tx} cy={ty} r={5} fill="#f97316" stroke="#000" strokeWidth={1.4} />
           <line x1={tx - 9} y1={ty} x2={tx + 9} y2={ty} stroke="#f97316" strokeWidth={0.8} />
           <line x1={tx} y1={ty - 9} x2={tx} y2={ty + 9} stroke="#f97316" strokeWidth={0.8} />
           {/* 自己位置（中心） */}
-          <circle cx={100} cy={100} r={3.5} fill="#2563eb" stroke="#fff" strokeWidth={1.4} />
+          <circle cx={100} cy={100} r={3.5} fill="#3b82f6" stroke="#fff" strokeWidth={1.4} />
         </svg>
       </div>
 
       {/* 数値表示 */}
-      <div className="px-4 pb-3 pt-1 text-center border-t">
-        <div className="text-5xl font-mono font-bold tabular-nums text-slate-800">{distLabel}</div>
-        <div className="text-xs text-slate-500 mt-1">
+      <div className="px-4 pb-3 pt-1 text-center border-t border-slate-700">
+        <div className="text-5xl font-mono font-bold tabular-nums text-white">{distLabel}</div>
+        <div className="text-xs text-slate-400 mt-1">
           {fine ? '精密モード（10cm 幅）' : '近接モード（1m 幅）'}
           <span className="mx-1">/</span>
           精度 {accuracy != null ? `${(accuracy * 100).toFixed(1)} cm` : '-'}
