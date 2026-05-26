@@ -145,6 +145,23 @@ function playBeeps(ctx: AudioContext, count: number) {
   }
 }
 
+// 正規表現用エスケープ
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+// {prefix}-{連番} の次の名前を返す。既存名から同 prefix の最大番号+1 を採番
+function nextNumberedName(prefix: string, existingNames: string[]): string {
+  const p = (prefix || '').trim() || '新点'
+  const re = new RegExp('^' + escapeRegExp(p) + '-(\\d+)$')
+  let max = 0
+  for (const n of existingNames) {
+    const m = n.match(re)
+    if (m) max = Math.max(max, parseInt(m[1], 10))
+  }
+  return `${p}-${max + 1}`
+}
+
 // RTK が外れた時の警告音「ブーッ」（低く長い音）
 function playBuzzer(ctx: AudioContext) {
   const t = ctx.currentTime
@@ -457,6 +474,24 @@ export function MobileStakingPage() {
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null)
   // 近接モードを手動で閉じたフラグ（範囲外に出ると解除して再表示できるようにする）
   const [proximityCancelled, setProximityCancelled] = useState(false)
+  // 新点名の頭文字（直近で使ったものを localStorage に保持してクイック選択）
+  const [recentPrefixes, setRecentPrefixes] = useState<string[]>(() => {
+    try {
+      const s = localStorage.getItem('staking:freePrefixes')
+      const arr = s ? JSON.parse(s) : null
+      if (Array.isArray(arr) && arr.length > 0) return arr.filter((x) => typeof x === 'string')
+    } catch { /* ignore */ }
+    return ['新点']
+  })
+  const pushRecentPrefix = (prefix: string) => {
+    const p = prefix.trim()
+    if (!p) return
+    setRecentPrefixes((prev) => {
+      const next = [p, ...prev.filter((x) => x !== p)].slice(0, 8)
+      try { localStorage.setItem('staking:freePrefixes', JSON.stringify(next)) } catch { /* ignore */ }
+      return next
+    })
+  }
   // 選択中の配線（タップでハイライト＋情報表示）
   const [selectedPipeId, setSelectedPipeId] = useState<string | null>(null)
   // 共有リンクのトースト表示
@@ -1291,11 +1326,17 @@ export function MobileStakingPage() {
     })
   }
 
-  // 新点モーダルからの確定処理（OK or 写真撮影）。type は登録する点種コード
-  const handleFreePointConfirm = async (name: string, type: string, openPhoto: boolean) => {
+  // 新点モーダルからの確定処理（OK or 写真撮影）。type は点種コード、prefix は頭文字
+  const handleFreePointConfirm = async (
+    name: string,
+    type: string,
+    prefix: string,
+    openPhoto: boolean,
+  ) => {
     const d = freePointDialog
     if (!d || !farmId) return
     setFreePointDialog(null)
+    pushRecentPrefix(prefix)
     const saved = await addRecord({
       farmId,
       surveyCategory,
@@ -1719,6 +1760,8 @@ export function MobileStakingPage() {
         <FreePointDialog
           data={freePointDialog}
           typeOptions={typeOptions}
+          recentPrefixes={recentPrefixes}
+          existingNames={coordinates.map((c) => c.pointNumber)}
           onConfirm={handleFreePointConfirm}
           onCancel={() => setFreePointDialog(null)}
         />
@@ -2998,6 +3041,8 @@ function ProximityGuide({
 function FreePointDialog({
   data,
   typeOptions,
+  recentPrefixes,
+  existingNames,
   onConfirm,
   onCancel,
 }: {
@@ -3012,18 +3057,53 @@ function FreePointDialog({
     antennaHeight: number
   }
   typeOptions: { code: string; label: string; builtIn: boolean }[]
-  onConfirm: (name: string, type: string, openPhoto: boolean) => void
+  recentPrefixes: string[]
+  existingNames: string[]
+  onConfirm: (name: string, type: string, prefix: string, openPhoto: boolean) => void
   onCancel: () => void
 }) {
-  const [name, setName] = useState(data.defaultName)
+  const initialPrefix = recentPrefixes[0] ?? '新点'
+  const [prefix, setPrefix] = useState(initialPrefix)
+  const [name, setName] = useState(() => nextNumberedName(initialPrefix, existingNames))
   // 既定の点種は「現況(current)」。無ければ先頭
   const [type, setType] = useState<string>(
     typeOptions.some((o) => o.code === 'current') ? 'current' : typeOptions[0]?.code ?? 'current',
   )
+  // 頭文字を変えたら点名を自動採番し直す
+  const applyPrefix = (p: string) => {
+    setPrefix(p)
+    setName(nextNumberedName(p, existingNames))
+  }
   return (
     <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3000]">
       <div className="bg-white w-full sm:max-w-sm rounded-t-xl sm:rounded-xl shadow-xl p-4">
         <h3 className="text-base font-bold mb-3">新点計測完了</h3>
+
+        <label className="block text-xs text-slate-500 mb-1">頭文字</label>
+        <input
+          type="text"
+          value={prefix}
+          onChange={(e) => applyPrefix(e.target.value)}
+          placeholder="例: 道路 / As / 側溝 / 境界杭"
+          className="w-full px-2 py-1.5 border rounded text-sm mb-1"
+        />
+        {recentPrefixes.length > 0 && (
+          <div className="flex flex-wrap gap-1 mb-3">
+            {recentPrefixes.map((p) => (
+              <button
+                key={p}
+                onClick={() => applyPrefix(p)}
+                className={`px-2 py-0.5 rounded border text-xs font-medium ${
+                  prefix === p
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+                }`}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        )}
 
         <label className="block text-xs text-slate-500 mb-1">点名</label>
         <input
@@ -3071,14 +3151,14 @@ function FreePointDialog({
         <div className="space-y-2">
           <div className="flex gap-2">
             <button
-              onClick={() => onConfirm(name.trim() || data.defaultName, type, false)}
+              onClick={() => onConfirm(name.trim() || data.defaultName, type, prefix, false)}
               disabled={!name.trim()}
               className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
             >
               OK
             </button>
             <button
-              onClick={() => onConfirm(name.trim() || data.defaultName, type, true)}
+              onClick={() => onConfirm(name.trim() || data.defaultName, type, prefix, true)}
               disabled={!name.trim()}
               className="px-4 py-2.5 bg-slate-700 text-white rounded-lg hover:bg-slate-800 disabled:opacity-50 flex items-center justify-center"
               title="登録して写真撮影"
