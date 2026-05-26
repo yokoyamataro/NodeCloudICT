@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Upload, Download, Plus, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Settings, Camera, Image as ImageIcon } from 'lucide-react'
+import { Upload, Download, Plus, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Settings, Camera, Image as ImageIcon, Loader2 } from 'lucide-react'
 import { CoordinatePhotoModal } from './CoordinatePhotoModal'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
+import { useAttachmentStore } from '@/stores/attachmentStore'
+import { generatePhotoBookExcel, PHOTO_BOOK_TEMPLATES, type PhotoBookTemplate } from '@/lib/photoBook'
 import { useGlobalSaveRegistry } from '@/stores/globalSaveRegistry'
 import {
   useCoordinatePointTypeStore,
@@ -202,6 +204,15 @@ export function CoordinatesPage() {
 
   const { currentFarm } = useFarmStore()
   const { projects } = useProjectListStore()
+  const { fetchByEntityIds: fetchAttachments, getSignedUrl } = useAttachmentStore()
+  // 写真帳出力の進捗（null=非実行）
+  const [photoExporting, setPhotoExporting] = useState<{ done: number; total: number } | null>(null)
+  // 写真帳ひな形の選択ダイアログ
+  const [showPhotoBookChooser, setShowPhotoBookChooser] = useState(false)
+  const [photoBookTemplateId, setPhotoBookTemplateId] = useState<string>(() => {
+    const saved = localStorage.getItem('photoBook:templateId')
+    return PHOTO_BOOK_TEMPLATES.some((t) => t.id === saved) ? (saved as string) : PHOTO_BOOK_TEMPLATES[0].id
+  })
   const {
     zone,
     setZone,
@@ -405,6 +416,84 @@ export function CoordinatesPage() {
 
   const handleExportExcel = () => {
     alert('Excel 出力は実装予定です')
+  }
+
+  // 写真帳（遠景・近景写真を貼り付けた Excel）を出力。ひな形を指定
+  const handleExportPhotoBook = async (template: PhotoBookTemplate) => {
+    const targets = getExportTargets()
+    if (targets.length === 0) {
+      alert('座標がありません')
+      return
+    }
+    setPhotoExporting({ done: 0, total: 0 })
+    try {
+      // 対象座標の写真をまとめて取得
+      await fetchAttachments('coordinate', targets.map((c) => c.id))
+      const byEntity = useAttachmentStore.getState().byEntity
+      const catOrder = ['遠景', '近景']
+      const points = targets
+        .map((c) => {
+          const photos = (byEntity.get(`coordinate:${c.id}`) ?? [])
+            .slice()
+            .sort((a, b) => {
+              const ai = catOrder.indexOf(a.category ?? '')
+              const bi = catOrder.indexOf(b.category ?? '')
+              const aa = ai === -1 ? 99 : ai
+              const bb = bi === -1 ? 99 : bi
+              if (aa !== bb) return aa - bb
+              return a.sortOrder - b.sortOrder
+            })
+            .map((a) => ({
+              category: a.category ?? '写真',
+              caption: a.caption,
+              takenAt: a.takenAt,
+              filePath: a.filePath,
+            }))
+          const typeLabel = typeOptions.find((o) => o.code === c.type)?.label
+          return { name: c.pointNumber, subtitle: typeLabel, photos }
+        })
+        .filter((p) => p.photos.length > 0)
+
+      if (points.length === 0) {
+        alert('写真が登録された座標がありません')
+        setPhotoExporting(null)
+        return
+      }
+
+      const resolveImage = async (filePath: string): Promise<ArrayBuffer | null> => {
+        try {
+          const url = await getSignedUrl(filePath)
+          if (!url) return null
+          const res = await fetch(url)
+          if (!res.ok) return null
+          return await res.arrayBuffer()
+        } catch {
+          return null
+        }
+      }
+
+      const projName = projects.find((p) => p.id === currentFarm?.project_id)?.name ?? ''
+      const farmName = currentFarm?.name ?? ''
+      const blob = await generatePhotoBookExcel({
+        title: `写真帳　${projName ? projName + ' / ' : ''}${farmName}`,
+        subtitle: `出力日: ${new Date().toLocaleDateString('ja-JP')}　／　点数: ${points.length}　／　ひな形: ${template.label}`,
+        points,
+        template,
+        resolveImage,
+        onProgress: (done, total) => setPhotoExporting({ done, total }),
+      })
+
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `写真帳_${farmName || 'export'}.xlsx`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      alert('写真帳の出力に失敗しました: ' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setPhotoExporting(null)
+    }
   }
 
   // チェック関連
@@ -657,6 +746,14 @@ export function CoordinatesPage() {
               </button>
               <button
                 type="button"
+                onClick={() => { setShowPhotoBookChooser(true); setOpenMenu(null) }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
+              >
+                <ImageIcon className="h-3.5 w-3.5" />
+                写真帳出力（Excel）
+              </button>
+              <button
+                type="button"
                 onClick={() => { handleExportExcel(); setOpenMenu(null) }}
                 className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100 text-slate-500"
               >
@@ -666,6 +763,80 @@ export function CoordinatesPage() {
             </div>
           )}
         </div>
+
+        {/* 写真帳ひな形の選択ダイアログ */}
+        {showPhotoBookChooser && (
+          <div className="fixed inset-0 z-[3000] bg-black/40 flex items-center justify-center p-4">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+              <div className="px-4 py-3 border-b flex items-center gap-2">
+                <ImageIcon className="h-4 w-4 text-blue-600" />
+                <span className="font-semibold text-sm">写真帳のひな形を選択</span>
+              </div>
+              <div className="p-3 space-y-2 max-h-[60vh] overflow-y-auto">
+                {PHOTO_BOOK_TEMPLATES.map((t) => (
+                  <label
+                    key={t.id}
+                    className={`flex items-start gap-2 p-2 rounded border cursor-pointer ${
+                      photoBookTemplateId === t.id
+                        ? 'border-blue-400 bg-blue-50'
+                        : 'border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="photoBookTemplate"
+                      checked={photoBookTemplateId === t.id}
+                      onChange={() => setPhotoBookTemplateId(t.id)}
+                      className="mt-0.5"
+                    />
+                    <div>
+                      <div className="text-sm font-medium">{t.label}</div>
+                      <div className="text-xs text-slate-500">{t.description}</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+              <div className="px-4 py-3 border-t flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowPhotoBookChooser(false)}
+                  className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
+                >
+                  キャンセル
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const tpl =
+                      PHOTO_BOOK_TEMPLATES.find((t) => t.id === photoBookTemplateId) ??
+                      PHOTO_BOOK_TEMPLATES[0]
+                    try { localStorage.setItem('photoBook:templateId', tpl.id) } catch { /* ignore */ }
+                    setShowPhotoBookChooser(false)
+                    handleExportPhotoBook(tpl)
+                  }}
+                  className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+                >
+                  出力
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 写真帳出力の進捗オーバーレイ */}
+        {photoExporting && (
+          <div className="fixed inset-0 z-[3000] bg-black/40 flex items-center justify-center">
+            <div className="bg-white rounded-lg shadow-xl p-5 w-72 text-center">
+              <Loader2 className="h-6 w-6 animate-spin text-blue-600 mx-auto mb-2" />
+              <div className="text-sm font-medium">写真帳を作成中…</div>
+              <div className="text-xs text-slate-500 mt-1">
+                {photoExporting.total > 0
+                  ? `${photoExporting.done} / ${photoExporting.total} 枚`
+                  : '写真を取得中…'}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 追加 */}
         <button
