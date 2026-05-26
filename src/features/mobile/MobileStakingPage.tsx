@@ -150,11 +150,20 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-// {prefix}-{連番} の次の名前を返す。既存名から同 prefix の最大番号+1 を採番
-function nextNumberedName(prefix: string, existingNames: string[]): string {
+// 新点の採番モード
+type NumberingMode = 'perPrefix' | 'global'
+
+// {prefix}-{連番} の次の名前を返す。
+//  perPrefix: 同じ頭文字ごとに採番（道路-1 の次に 境界-1）
+//  global:    頭文字をまたいだ通し番号（道路-1 の次に 境界-2、番号は重複しない）
+function nextNumberedName(
+  prefix: string,
+  existingNames: string[],
+  mode: NumberingMode = 'perPrefix',
+): string {
   const p = (prefix || '').trim() || '新点'
-  const re = new RegExp('^' + escapeRegExp(p) + '-(\\d+)$')
   let max = 0
+  const re = mode === 'global' ? /-(\d+)$/ : new RegExp('^' + escapeRegExp(p) + '-(\\d+)$')
   for (const n of existingNames) {
     const m = n.match(re)
     if (m) max = Math.max(max, parseInt(m[1], 10))
@@ -492,6 +501,13 @@ export function MobileStakingPage() {
       return next
     })
   }
+  // 新点の採番モード（設定で切替）
+  const [numberingMode, setNumberingMode] = useState<NumberingMode>(() =>
+    localStorage.getItem('staking:numberingMode') === 'global' ? 'global' : 'perPrefix',
+  )
+  useEffect(() => {
+    try { localStorage.setItem('staking:numberingMode', numberingMode) } catch { /* ignore */ }
+  }, [numberingMode])
   // 選択中の配線（タップでハイライト＋情報表示）
   const [selectedPipeId, setSelectedPipeId] = useState<string | null>(null)
   // 共有リンクのトースト表示
@@ -1762,6 +1778,7 @@ export function MobileStakingPage() {
           typeOptions={typeOptions}
           recentPrefixes={recentPrefixes}
           existingNames={coordinates.map((c) => c.pointNumber)}
+          numberingMode={numberingMode}
           onConfirm={handleFreePointConfirm}
           onCancel={() => setFreePointDialog(null)}
         />
@@ -2448,6 +2465,28 @@ export function MobileStakingPage() {
               標高 = 楕円体高 − ジオイド高 − アンテナ高
             </div>
 
+            <div className="border-t pt-2 mb-2">
+              <div className="text-xs text-slate-600 mb-1">新点の採番</div>
+              <label className="flex items-center gap-2 mb-1">
+                <input
+                  type="radio"
+                  name="numberingMode"
+                  checked={numberingMode === 'perPrefix'}
+                  onChange={() => setNumberingMode('perPrefix')}
+                />
+                <span className="text-xs">頭文字ごとに採番（道路-1 / 境界-1）</span>
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  name="numberingMode"
+                  checked={numberingMode === 'global'}
+                  onChange={() => setNumberingMode('global')}
+                />
+                <span className="text-xs">通し番号・重複なし（道路-1 / 境界-2）</span>
+              </label>
+            </div>
+
             <div className="text-xs text-slate-500 border-t pt-2">
               Mock Location 経由で RTK-GNSS の補正座標を取得できます。
             </div>
@@ -3059,12 +3098,13 @@ function FreePointDialog({
   typeOptions: { code: string; label: string; builtIn: boolean }[]
   recentPrefixes: string[]
   existingNames: string[]
+  numberingMode: NumberingMode
   onConfirm: (name: string, type: string, prefix: string, openPhoto: boolean) => void
   onCancel: () => void
 }) {
   const initialPrefix = recentPrefixes[0] ?? '新点'
   const [prefix, setPrefix] = useState(initialPrefix)
-  const [name, setName] = useState(() => nextNumberedName(initialPrefix, existingNames))
+  const [name, setName] = useState(() => nextNumberedName(initialPrefix, existingNames, numberingMode))
   // 既定の点種は「現況(current)」。無ければ先頭
   const [type, setType] = useState<string>(
     typeOptions.some((o) => o.code === 'current') ? 'current' : typeOptions[0]?.code ?? 'current',
@@ -3072,7 +3112,7 @@ function FreePointDialog({
   // 頭文字を変えたら点名を自動採番し直す
   const applyPrefix = (p: string) => {
     setPrefix(p)
-    setName(nextNumberedName(p, existingNames))
+    setName(nextNumberedName(p, existingNames, numberingMode))
   }
   return (
     <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3000]">
