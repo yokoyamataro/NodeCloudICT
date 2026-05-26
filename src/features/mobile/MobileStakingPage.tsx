@@ -3082,6 +3082,7 @@ function FreePointDialog({
   typeOptions,
   recentPrefixes,
   existingNames,
+  numberingMode,
   onConfirm,
   onCancel,
 }: {
