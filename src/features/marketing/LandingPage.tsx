@@ -137,7 +137,7 @@ export function LandingPage() {
               </div>
               <ul className="mt-4 space-y-1.5 text-sm text-slate-600">
                 <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />農業土木／地籍測量いずれかの機能</li>
-                <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />ユーザー3名（追加可能）</li>
+                <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />ユーザー最大10名まで</li>
                 <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />データ量：1GB（追加可能）</li>
                 <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />データは1年半保存（変更可能）</li>
               </ul>
