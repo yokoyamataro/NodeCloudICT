@@ -35,6 +35,7 @@ export function ApplyPage() {
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [agreed, setAgreed] = useState(false)
 
   const update = (k: keyof FormState, v: string) => setForm((p) => ({ ...p, [k]: v }))
 
@@ -206,9 +207,28 @@ export function ApplyPage() {
               />
             </Field>
 
+            <label className="flex items-start gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={agreed}
+                onChange={(e) => setAgreed(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                <Link to="/terms" target="_blank" className="text-blue-600 hover:underline">
+                  利用規約
+                </Link>
+                および
+                <Link to="/privacy" target="_blank" className="text-blue-600 hover:underline">
+                  プライバシーポリシー
+                </Link>
+                に同意します
+              </span>
+            </label>
+
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || !agreed}
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
             >
               {submitting && <Loader2 className="h-4 w-4 animate-spin" />}

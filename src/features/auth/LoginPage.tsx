@@ -31,7 +31,7 @@ export function LoginPage() {
       <div className="w-full max-w-md">
         <div className="bg-white rounded-lg shadow-lg p-8">
           <div className="text-center mb-8">
-            <h1 className="text-2xl font-bold text-slate-900">NodeCloud-農土クラウド-</h1>
+            <h1 className="text-2xl font-bold text-slate-900">NodeCloud</h1>
             <p className="text-sm text-slate-600 mt-1">ICT農業土木施工システム</p>
             <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-3 inline-block">
               開発中プロトタイプです

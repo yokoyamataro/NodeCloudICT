@@ -7,6 +7,8 @@ import { LoginPage } from '@/features/auth/LoginPage'
 import { ShareFarmViewPage } from '@/features/share/ShareFarmViewPage'
 import { LandingPage } from '@/features/marketing/LandingPage'
 import { ApplyPage } from '@/features/marketing/ApplyPage'
+import { TermsPage } from '@/features/marketing/TermsPage'
+import { PrivacyPage } from '@/features/marketing/PrivacyPage'
 import { AdminSignupsPage } from '@/features/admin/AdminSignupsPage'
 import { ProjectListPage } from '@/features/projects/ProjectListPage'
 import { ProjectChooserPage } from '@/features/projects/ProjectChooserPage'
@@ -78,6 +80,8 @@ function MobileAutoRedirect() {
       path === '/site-map' ||
       path === '/lp' ||
       path === '/apply' ||
+      path === '/terms' ||
+      path === '/privacy' ||
       path.startsWith('/admin') ||
       path.startsWith('/mobile') ||
       path.startsWith('/share')
@@ -125,6 +129,8 @@ function AppRoutes() {
         {/* 公開: 紹介・申し込みページ（認証不要） */}
         <Route path="/lp" element={<LandingPage />} />
         <Route path="/apply" element={<ApplyPage />} />
+        <Route path="/terms" element={<TermsPage />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
         {/* 管理者: 申し込み管理（要ログイン＋管理者メール） */}
         <Route
           path="/admin/signups"

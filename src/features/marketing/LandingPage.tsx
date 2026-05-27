@@ -5,7 +5,7 @@ import {
   Users,
   Image as ImageIcon,
   Compass,
-  Share2,
+  GitBranch,
   FileSpreadsheet,
   Check,
   ArrowRight,
@@ -13,34 +13,29 @@ import {
 
 const FEATURES: { icon: React.ComponentType<{ className?: string }>; title: string; desc: string }[] = [
   {
-    icon: Compass,
-    title: '起工測量の精密誘導',
-    desc: 'RTK-GNSS とスマホで測点まで誘導。1m以内で近接モード、10cmで精密モードに自動切替。',
-  },
-  {
     icon: Users,
     title: 'チーム編集',
-    desc: '社員同士や協力会社とシームレスでデータ共有。現場単位での共同作業が可能です。',
+    desc: '社員同士や協力会社と現場単位での共同作業が可能。関係者への限定的な公開も可能。',
+  },
+  {
+    icon: Compass,
+    title: '精密誘導・三次元計測',
+    desc: 'RTK-GNSS とスマホで測点まで cm 単位で精密誘導。起工測量や出来形測量に対応。',
   },
   {
     icon: MapPin,
     title: '座標・SIMA 入出力',
-    desc: '座標計算、SIMA／CSV の取込・出力に対応。境界測量の地番データも扱えます。',
+    desc: '平面直角座標系・ジオイド2024に対応。SIMA取込・出力可能。境界測量の地番SIMデータも扱えます。',
   },
   {
     icon: ImageIcon,
     title: 'オルソ画像背景＆写真帳',
-    desc: 'ドローンのオルソ画像を地図背景に。遠景・近景写真から写真帳(Excel)を自動作成。',
+    desc: 'ドローンのオルソ画像を図背景に。遠景・近景写真から写真帳(Excel)を自動作成。',
   },
   {
-    icon: Compass,
-    title: '境界測量（地番データ）',
-    desc: '地番ポリゴンの表示・辺長表示、SIMA 入出力。不動産・士業の業務にも対応。',
-  },
-  {
-    icon: Share2,
-    title: '簡単共有',
-    desc: '座標プロットや図面を公開URLで他社へ共有。LINE 等ですぐ送れます。',
+    icon: GitBranch,
+    title: '北海道の農業土木工事に対応',
+    desc: '暗渠排水の勾配計算や LandXML 三次元施工データを出力。各種帳票に対応。',
   },
 ]
 
@@ -50,7 +45,7 @@ export function LandingPage() {
       {/* ヘッダ */}
       <header className="border-b">
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="font-bold text-lg">NodeCloud <span className="text-sm font-normal text-slate-500">農土クラウド</span></div>
+          <div className="font-bold text-lg">NodeCloud</div>
           <div className="flex items-center gap-3 text-sm">
             <Link to="/login" className="text-slate-600 hover:text-slate-900">ログイン</Link>
             <Link to="/apply" className="px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700">
@@ -64,7 +59,7 @@ export function LandingPage() {
       <section className="bg-gradient-to-b from-slate-50 to-white">
         <div className="max-w-5xl mx-auto px-4 py-16 text-center">
           <h1 className="text-3xl sm:text-4xl font-bold leading-tight">
-            農業土木・測量の ICT を、<br className="sm:hidden" />スマホとクラウドで。
+            農業土木・地籍測量の DX を、<br className="sm:hidden" />スマホとクラウドで。
           </h1>
           <p className="mt-4 text-slate-600 max-w-2xl mx-auto">
             起工測量の精密誘導から、座標管理・SIMA入出力・写真帳・境界測量まで。
@@ -151,6 +146,10 @@ export function LandingPage() {
       </section>
 
       <footer className="max-w-5xl mx-auto px-4 py-8 text-center text-xs text-slate-400">
+        <div className="mb-2 flex items-center justify-center gap-3">
+          <Link to="/terms" className="hover:underline">利用規約</Link>
+          <Link to="/privacy" className="hover:underline">プライバシーポリシー</Link>
+        </div>
         © NodeCloud / 有限会社横山測量設計事務所
       </footer>
     </div>
