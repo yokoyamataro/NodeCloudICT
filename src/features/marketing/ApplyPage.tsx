@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase'
 interface FormState {
   companyName: string
   industry: string
+  industryOther: string
   postalCode: string
   address: string
   contactName: string
@@ -14,12 +15,15 @@ interface FormState {
   phone: string
   userCount: string
   planInterest: string
+  source: string
+  sourceOther: string
   message: string
 }
 
 const EMPTY: FormState = {
   companyName: '',
   industry: '',
+  industryOther: '',
   postalCode: '',
   address: '',
   contactName: '',
@@ -27,8 +31,23 @@ const EMPTY: FormState = {
   phone: '',
   userCount: '',
   planInterest: 'undecided',
+  source: '',
+  sourceOther: '',
   message: '',
 }
+
+const SOURCE_OPTIONS = ['弊社の営業', '新聞記事', '知人の紹介', '展示会', 'その他']
+
+const INDUSTRY_OPTIONS = [
+  '建設業',
+  '測量業',
+  '土地家屋調査士',
+  '行政書士',
+  '司法書士',
+  '不動産業',
+  '農業',
+  'その他',
+]
 
 export function ApplyPage() {
   const [form, setForm] = useState<FormState>(EMPTY)
@@ -39,6 +58,23 @@ export function ApplyPage() {
 
   const update = (k: keyof FormState, v: string) => setForm((p) => ({ ...p, [k]: v }))
 
+  // 郵便番号(7桁)から住所を自動入力（zipcloud・無料API）
+  const lookupAddress = async (zip: string) => {
+    const digits = zip.replace(/[^0-9]/g, '')
+    if (digits.length !== 7) return
+    try {
+      const res = await fetch(`https://zipcloud.ibsnet.co.jp/api/search?zipcode=${digits}`)
+      const json = await res.json()
+      const r = json?.results?.[0]
+      if (r) {
+        const addr = `${r.address1}${r.address2}${r.address3}`
+        setForm((p) => ({ ...p, address: addr }))
+      }
+    } catch {
+      /* 取得失敗時は手入力のまま */
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!form.companyName.trim() || !form.contactName.trim() || !form.email.trim()) return
@@ -47,7 +83,9 @@ export function ApplyPage() {
     try {
       const payload = {
         company_name: form.companyName.trim(),
-        industry: form.industry.trim() || null,
+        industry:
+          (form.industry === 'その他' ? form.industryOther.trim() || 'その他' : form.industry) ||
+          null,
         postal_code: form.postalCode.trim() || null,
         address: form.address.trim() || null,
         contact_name: form.contactName.trim(),
@@ -55,6 +93,8 @@ export function ApplyPage() {
         phone: form.phone.trim() || null,
         user_count: form.userCount ? parseInt(form.userCount, 10) : null,
         plan_interest: form.planInterest,
+        source:
+          (form.source === 'その他' ? form.sourceOther.trim() || 'その他' : form.source) || null,
         message: form.message.trim() || null,
       }
       const { error: insErr } = await (
@@ -121,25 +161,45 @@ export function ApplyPage() {
               />
             </Field>
             <Field label="業種">
-              <input
-                type="text"
+              <select
                 value={form.industry}
                 onChange={(e) => update('industry', e.target.value)}
                 className="form-input"
-                placeholder="例: 建設業 / 測量業 / 土地家屋調査士 / 不動産"
-              />
+              >
+                <option value="">選択してください</option>
+                {INDUSTRY_OPTIONS.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
             </Field>
-            <div className="grid grid-cols-[7rem_1fr] gap-3">
+            {form.industry === 'その他' && (
+              <Field label="業種（その他）">
+                <input
+                  type="text"
+                  value={form.industryOther}
+                  onChange={(e) => update('industryOther', e.target.value)}
+                  className="form-input"
+                  placeholder="業種をご記入ください"
+                />
+              </Field>
+            )}
+            <div className="grid grid-cols-[8rem_1fr] gap-3">
               <Field label="郵便番号">
                 <input
                   type="text"
                   value={form.postalCode}
-                  onChange={(e) => update('postalCode', e.target.value)}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    update('postalCode', v)
+                    if (v.replace(/[^0-9]/g, '').length === 7) lookupAddress(v)
+                  }}
                   className="form-input"
                   placeholder="123-4567"
                 />
               </Field>
-              <Field label="住所">
+              <Field label="住所（郵便番号で自動入力）">
                 <input
                   type="text"
                   value={form.address}
@@ -198,6 +258,31 @@ export function ApplyPage() {
                 </select>
               </Field>
             </div>
+            <Field label="NodeCloud をどこでお知りになりましたか">
+              <select
+                value={form.source}
+                onChange={(e) => update('source', e.target.value)}
+                className="form-input"
+              >
+                <option value="">選択してください</option>
+                {SOURCE_OPTIONS.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {form.source === 'その他' && (
+              <Field label="きっかけ（その他）">
+                <input
+                  type="text"
+                  value={form.sourceOther}
+                  onChange={(e) => update('sourceOther', e.target.value)}
+                  className="form-input"
+                  placeholder="差し支えなければご記入ください"
+                />
+              </Field>
+            )}
             <Field label="ご質問・ご要望">
               <textarea
                 value={form.message}

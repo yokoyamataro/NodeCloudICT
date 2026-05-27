@@ -18,6 +18,7 @@ interface SignupRequest {
   phone: string | null
   user_count: number | null
   plan_interest: string | null
+  source: string | null
   message: string | null
   status: string
   created_at: string
@@ -195,6 +196,7 @@ export function AdminSignupsPage() {
                   {r.industry && <span>業種: <b>{r.industry}</b></span>}
                   <span>想定人数: <b>{r.user_count ?? '-'}</b></span>
                   <span>興味プラン: <b>{r.plan_interest ? PLAN_LABEL[r.plan_interest] ?? r.plan_interest : '-'}</b></span>
+                  {r.source && <span>きっかけ: <b>{r.source}</b></span>}
                 </div>
                 {(r.postal_code || r.address) && (
                   <div className="mt-1 text-sm text-slate-600">
