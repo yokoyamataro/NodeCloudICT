@@ -125,7 +125,7 @@ export function LandingPage() {
               <ul className="mt-4 space-y-1.5 text-sm text-slate-600">
                 <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />全機能を利用可能</li>
                 <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />スマホ・PC 両対応</li>
-                <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />データ量：300MB〜</li>
+                <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />データ量：300MB（追加可能）</li>
               </ul>
             </div>
             {/* 1現場 */}
@@ -133,11 +133,12 @@ export function LandingPage() {
               <span className="absolute -top-3 left-4 bg-blue-600 text-white text-xs px-2 py-0.5 rounded">標準</span>
               <div className="text-sm text-slate-500">1現場でご利用</div>
               <div className="mt-1 text-3xl font-bold">
-                ¥100,000<span className="text-base font-normal text-slate-500">/現場〜</span>
+                ¥200,000<span className="text-base font-normal text-slate-500">/現場〜</span>
               </div>
               <ul className="mt-4 space-y-1.5 text-sm text-slate-600">
                 <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />農業土木／地籍測量いずれかの機能</li>
                 <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />ユーザー3名（追加可能）</li>
+                <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />データ量：1GB（追加可能）</li>
                 <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />データは1年半保存（変更可能）</li>
               </ul>
             </div>
