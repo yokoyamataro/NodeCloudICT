@@ -15,6 +15,9 @@ interface FormState {
   phone: string
   userCount: string
   planInterest: string
+  hasAndroid: string
+  hasDrogger: string
+  gnssCorrection: string
   source: string
   sourceOther: string
   message: string
@@ -31,12 +34,16 @@ const EMPTY: FormState = {
   phone: '',
   userCount: '',
   planInterest: 'undecided',
+  hasAndroid: '',
+  hasDrogger: '',
+  gnssCorrection: '',
   source: '',
   sourceOther: '',
   message: '',
 }
 
 const SOURCE_OPTIONS = ['弊社の営業', '新聞記事', '知人の紹介', '展示会', 'その他']
+const GNSS_OPTIONS = ['VRS', 'softbank(ichimil)', 'docomo', 'au', '固定局設置', '未定']
 
 const INDUSTRY_OPTIONS = [
   '建設業',
@@ -93,6 +100,9 @@ export function ApplyPage() {
         phone: form.phone.trim() || null,
         user_count: form.userCount ? parseInt(form.userCount, 10) : null,
         plan_interest: form.planInterest,
+        has_android: form.hasAndroid || null,
+        has_drogger: form.hasDrogger || null,
+        gnss_correction: form.gnssCorrection || null,
         source:
           (form.source === 'その他' ? form.sourceOther.trim() || 'その他' : form.source) || null,
         message: form.message.trim() || null,
@@ -255,6 +265,47 @@ export function ApplyPage() {
                   <option value="undecided">未定 / 相談したい</option>
                   <option value="civil">農業土木</option>
                   <option value="boundary">境界測量（不動産・士業）</option>
+                </select>
+              </Field>
+            </div>
+            <div className="pt-1 border-t">
+              <div className="text-xs font-medium text-slate-500 mb-2 mt-2">ご利用環境（任意）</div>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Android端末をお持ちですか">
+                  <select
+                    value={form.hasAndroid}
+                    onChange={(e) => update('hasAndroid', e.target.value)}
+                    className="form-input"
+                  >
+                    <option value="">選択してください</option>
+                    <option value="はい">はい</option>
+                    <option value="いいえ">いいえ</option>
+                  </select>
+                </Field>
+                <Field label="Drogger（GNSS受信機）をお持ちですか">
+                  <select
+                    value={form.hasDrogger}
+                    onChange={(e) => update('hasDrogger', e.target.value)}
+                    className="form-input"
+                  >
+                    <option value="">選択してください</option>
+                    <option value="はい">はい</option>
+                    <option value="いいえ">いいえ</option>
+                  </select>
+                </Field>
+              </div>
+              <Field label="GNSS補正情報は何を使用しますか">
+                <select
+                  value={form.gnssCorrection}
+                  onChange={(e) => update('gnssCorrection', e.target.value)}
+                  className="form-input"
+                >
+                  <option value="">選択してください</option>
+                  {GNSS_OPTIONS.map((o) => (
+                    <option key={o} value={o}>
+                      {o}
+                    </option>
+                  ))}
                 </select>
               </Field>
             </div>

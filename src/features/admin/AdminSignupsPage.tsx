@@ -18,6 +18,9 @@ interface SignupRequest {
   phone: string | null
   user_count: number | null
   plan_interest: string | null
+  has_android: string | null
+  has_drogger: string | null
+  gnss_correction: string | null
   source: string | null
   message: string | null
   status: string
@@ -197,6 +200,9 @@ export function AdminSignupsPage() {
                   <span>想定人数: <b>{r.user_count ?? '-'}</b></span>
                   <span>興味プラン: <b>{r.plan_interest ? PLAN_LABEL[r.plan_interest] ?? r.plan_interest : '-'}</b></span>
                   {r.source && <span>きっかけ: <b>{r.source}</b></span>}
+                  {r.has_android && <span>Android: <b>{r.has_android}</b></span>}
+                  {r.has_drogger && <span>Drogger: <b>{r.has_drogger}</b></span>}
+                  {r.gnss_correction && <span>補正: <b>{r.gnss_correction}</b></span>}
                 </div>
                 {(r.postal_code || r.address) && (
                   <div className="mt-1 text-sm text-slate-600">
