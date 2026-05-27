@@ -6,6 +6,7 @@ import {
   Image as ImageIcon,
   Compass,
   GitBranch,
+  Camera,
   FileSpreadsheet,
   Check,
   ArrowRight,
@@ -29,8 +30,13 @@ const FEATURES: { icon: React.ComponentType<{ className?: string }>; title: stri
   },
   {
     icon: ImageIcon,
-    title: 'ドローン画像を有効活用',
-    desc: 'ドローンのオルソ画像を背景に作図や計測が可能。スマホでも閲覧できます。',
+    title: 'ドローン画像の活用',
+    desc: '精密なドローンのオルソ画像をベースマップに使用し、作図・計測・共有ができます。',
+  },
+  {
+    icon: Camera,
+    title: '地籍測量のサポート',
+    desc: '境界杭の調査・写真撮影・写真帳作成までの一連の流れをサポートします。',
   },
   {
     icon: GitBranch,
