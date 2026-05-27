@@ -29,8 +29,8 @@ const FEATURES: { icon: React.ComponentType<{ className?: string }>; title: stri
   },
   {
     icon: ImageIcon,
-    title: 'オルソ画像背景＆写真帳',
-    desc: 'ドローンのオルソ画像を図背景に。遠景・近景写真から写真帳(Excel)を自動作成。',
+    title: 'ドローン画像を有効活用',
+    desc: 'ドローンのオルソ画像を背景に作図や計測が可能。スマホでも閲覧できます。',
   },
   {
     icon: GitBranch,
