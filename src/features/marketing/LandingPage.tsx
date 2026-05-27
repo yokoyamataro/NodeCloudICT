@@ -20,8 +20,8 @@ const FEATURES: { icon: React.ComponentType<{ className?: string }>; title: stri
   },
   {
     icon: Compass,
-    title: '精密誘導・三次元計測',
-    desc: 'RTK-GNSS とスマホで測点まで cm 単位で精密誘導。起工測量や出来形測量に対応。',
+    title: '精密誘導',
+    desc: '低価格RTK測量機とAndroidスマホで測点まで cm 単位で精密誘導。起工測量や出来形測量に対応。（別途RTK-GNSSの設定が必要です）',
   },
   {
     icon: MapPin,
