@@ -2,7 +2,7 @@
 import { Link } from 'react-router-dom'
 import {
   MapPin,
-  Volume2,
+  Users,
   Image as ImageIcon,
   Compass,
   Share2,
@@ -18,9 +18,9 @@ const FEATURES: { icon: React.ComponentType<{ className?: string }>; title: stri
     desc: 'RTK-GNSS とスマホで測点まで誘導。1m以内で近接モード、10cmで精密モードに自動切替。',
   },
   {
-    icon: Volume2,
-    title: '音声ガイダンス',
-    desc: 'FIX・距離に応じてビープ音で誘導。画面を見なくても接近度が分かります。',
+    icon: Users,
+    title: 'チーム編集',
+    desc: '社員同士や協力会社とシームレスでデータ共有。現場単位での共同作業が可能です。',
   },
   {
     icon: MapPin,
