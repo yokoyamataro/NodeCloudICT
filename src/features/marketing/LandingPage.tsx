@@ -112,7 +112,8 @@ export function LandingPage() {
           <h2 className="text-xl font-bold text-center mb-2">料金</h2>
           <div className="max-w-xl mx-auto mb-6 p-3 bg-emerald-50 border border-emerald-300 rounded-lg text-center text-emerald-800 text-sm">
             <b>2026年11月30日まで実証実験のため無償提供（先着30ユーザー限定）</b><br />
-            下記は2027年12月1日以降の予定料金（年額・請求書払い）です。
+            無償提供は利用状況を調査するためのものであり、自動的に有償プランへ移行することはありません。<br />
+            下記は2026年12月1日以降の予定料金（年額・請求書払い）です。
           </div>
           <div className="grid sm:grid-cols-3 gap-4 max-w-4xl mx-auto items-stretch">
             {/* 1ユーザー */}
