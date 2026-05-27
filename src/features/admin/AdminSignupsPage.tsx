@@ -10,6 +10,9 @@ import { isAdmin } from '@/lib/admin'
 interface SignupRequest {
   id: string
   company_name: string
+  industry: string | null
+  postal_code: string | null
+  address: string | null
   contact_name: string
   email: string
   phone: string | null
@@ -189,9 +192,15 @@ export function AdminSignupsPage() {
                   </div>
                 </div>
                 <div className="mt-2 text-sm text-slate-700 flex flex-wrap gap-x-4 gap-y-1">
+                  {r.industry && <span>業種: <b>{r.industry}</b></span>}
                   <span>想定人数: <b>{r.user_count ?? '-'}</b></span>
                   <span>興味プラン: <b>{r.plan_interest ? PLAN_LABEL[r.plan_interest] ?? r.plan_interest : '-'}</b></span>
                 </div>
+                {(r.postal_code || r.address) && (
+                  <div className="mt-1 text-sm text-slate-600">
+                    住所: {r.postal_code ? `〒${r.postal_code} ` : ''}{r.address ?? ''}
+                  </div>
+                )}
                 {r.message && (
                   <div className="mt-2 text-sm text-slate-600 bg-slate-50 rounded p-2 whitespace-pre-wrap">
                     {r.message}

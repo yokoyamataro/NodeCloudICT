@@ -70,6 +70,9 @@ export function LandingPage() {
             起工測量の精密誘導から、座標管理・SIMA入出力・写真帳・境界測量まで。
             高価な専用機材やソフトに頼らず、現場のスマホで完結します。
           </p>
+          <div className="mt-5 inline-block px-4 py-2 bg-emerald-50 border border-emerald-300 rounded-full text-emerald-800 text-sm font-medium">
+            🎁 2026年内は実証実験として<strong>無料</strong>でご利用いただけます
+          </div>
           <div className="mt-8 flex items-center justify-center gap-3">
             <Link
               to="/apply"
@@ -105,9 +108,13 @@ export function LandingPage() {
       {/* 料金 */}
       <section className="bg-slate-50 border-y">
         <div className="max-w-5xl mx-auto px-4 py-14">
-          <h2 className="text-xl font-bold text-center mb-2">料金（年額・請求書払い）</h2>
+          <h2 className="text-xl font-bold text-center mb-2">料金</h2>
+          <div className="max-w-xl mx-auto mb-4 p-3 bg-emerald-50 border border-emerald-300 rounded-lg text-center text-emerald-800 text-sm">
+            <b>2026年内は実証実験として無料</b>でご利用いただけます。<br />
+            下記は2027年以降の予定料金（年額・請求書払い・適格請求書対応）です。
+          </div>
           <p className="text-center text-sm text-slate-500 mb-8">
-            会社単位の基本料金＋ご利用人数。年1回のご請求（適格請求書対応）。
+            会社単位の基本料金＋ご利用人数。年1回のご請求。
           </p>
           <div className="grid sm:grid-cols-2 gap-4 max-w-2xl mx-auto">
             <div className="bg-white border rounded-lg p-6">

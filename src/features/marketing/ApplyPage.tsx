@@ -6,6 +6,9 @@ import { supabase } from '@/lib/supabase'
 
 interface FormState {
   companyName: string
+  industry: string
+  postalCode: string
+  address: string
   contactName: string
   email: string
   phone: string
@@ -16,6 +19,9 @@ interface FormState {
 
 const EMPTY: FormState = {
   companyName: '',
+  industry: '',
+  postalCode: '',
+  address: '',
   contactName: '',
   email: '',
   phone: '',
@@ -40,6 +46,9 @@ export function ApplyPage() {
     try {
       const payload = {
         company_name: form.companyName.trim(),
+        industry: form.industry.trim() || null,
+        postal_code: form.postalCode.trim() || null,
+        address: form.address.trim() || null,
         contact_name: form.contactName.trim(),
         email: form.email.trim(),
         phone: form.phone.trim() || null,
@@ -88,8 +97,11 @@ export function ApplyPage() {
         <div className="bg-white rounded-lg shadow-lg p-6">
           <h1 className="text-xl font-bold">お申し込み・お問い合わせ</h1>
           <p className="text-sm text-slate-600 mt-1">
-            下記をご記入ください。担当者より折り返しご連絡します（料金・契約のご案内）。
+            下記をご記入ください。担当者より折り返しご連絡します。
           </p>
+          <div className="mt-3 p-2.5 bg-emerald-50 border border-emerald-200 rounded text-sm text-emerald-800">
+            🎁 <b>2026年内は実証実験として無料</b>でご利用いただけます。
+          </div>
 
           {error && (
             <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-600">
@@ -107,6 +119,35 @@ export function ApplyPage() {
                 className="form-input"
               />
             </Field>
+            <Field label="業種">
+              <input
+                type="text"
+                value={form.industry}
+                onChange={(e) => update('industry', e.target.value)}
+                className="form-input"
+                placeholder="例: 建設業 / 測量業 / 土地家屋調査士 / 不動産"
+              />
+            </Field>
+            <div className="grid grid-cols-[7rem_1fr] gap-3">
+              <Field label="郵便番号">
+                <input
+                  type="text"
+                  value={form.postalCode}
+                  onChange={(e) => update('postalCode', e.target.value)}
+                  className="form-input"
+                  placeholder="123-4567"
+                />
+              </Field>
+              <Field label="住所">
+                <input
+                  type="text"
+                  value={form.address}
+                  onChange={(e) => update('address', e.target.value)}
+                  className="form-input"
+                  placeholder="都道府県市区町村〜"
+                />
+              </Field>
+            </div>
             <Field label="ご担当者名" required>
               <input
                 type="text"
