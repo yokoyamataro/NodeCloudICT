@@ -6,7 +6,7 @@ import {
   Image as ImageIcon,
   Compass,
   GitBranch,
-  Camera,
+  Milestone,
   FileSpreadsheet,
   Check,
   ArrowRight,
@@ -34,7 +34,7 @@ const FEATURES: { icon: React.ComponentType<{ className?: string }>; title: stri
     desc: '精密なドローンのオルソ画像をベースマップに使用し、作図・計測・共有ができます。',
   },
   {
-    icon: Camera,
+    icon: Milestone,
     title: '地籍測量のサポート',
     desc: '境界杭の調査・写真撮影・写真帳作成までの一連の流れをサポートします。',
   },
@@ -72,7 +72,7 @@ export function LandingPage() {
             高価な専用機材やソフトに頼らず、現場のスマホで完結します。
           </p>
           <div className="mt-5 inline-block px-4 py-2 bg-emerald-50 border border-emerald-300 rounded-full text-emerald-800 text-sm font-medium">
-            🎁 2026年内は実証実験として<strong>無料</strong>でご利用いただけます
+            🎁 2026年11月30日まで実証実験として<strong>無料</strong>（先着30ユーザー限定）
           </div>
           <div className="mt-8 flex items-center justify-center gap-3">
             <Link
@@ -110,35 +110,52 @@ export function LandingPage() {
       <section className="bg-slate-50 border-y">
         <div className="max-w-5xl mx-auto px-4 py-14">
           <h2 className="text-xl font-bold text-center mb-2">料金</h2>
-          <div className="max-w-xl mx-auto mb-4 p-3 bg-emerald-50 border border-emerald-300 rounded-lg text-center text-emerald-800 text-sm">
-            <b>2026年内は実証実験として無料</b>でご利用いただけます。<br />
-            下記は2027年以降の予定料金（年額・請求書払い・適格請求書対応）です。
+          <div className="max-w-xl mx-auto mb-6 p-3 bg-emerald-50 border border-emerald-300 rounded-lg text-center text-emerald-800 text-sm">
+            <b>2026年11月30日まで実証実験のため無償提供（先着30ユーザー限定）</b><br />
+            下記は2027年12月1日以降の予定料金（年額・請求書払い）です。
           </div>
-          <p className="text-center text-sm text-slate-500 mb-8">
-            会社単位の基本料金＋ご利用人数。年1回のご請求。
-          </p>
-          <div className="grid sm:grid-cols-2 gap-4 max-w-2xl mx-auto">
-            <div className="bg-white border rounded-lg p-6">
-              <div className="text-sm text-slate-500">1名でご利用</div>
-              <div className="mt-1 text-3xl font-bold">¥60,000<span className="text-base font-normal text-slate-500">/年</span></div>
+          <div className="grid sm:grid-cols-3 gap-4 max-w-4xl mx-auto items-stretch">
+            {/* 1ユーザー */}
+            <div className="bg-white border rounded-lg p-6 flex flex-col">
+              <div className="text-sm text-slate-500">1ユーザーでご利用</div>
+              <div className="mt-1 text-3xl font-bold">
+                ¥60,000<span className="text-base font-normal text-slate-500">/年〜</span>
+              </div>
               <ul className="mt-4 space-y-1.5 text-sm text-slate-600">
-                <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600" />全機能を利用可能</li>
-                <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600" />スマホ・PC 両対応</li>
+                <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />全機能を利用可能</li>
+                <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />スマホ・PC 両対応</li>
+                <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />データ量：300MB〜</li>
               </ul>
             </div>
-            <div className="bg-white border-2 border-blue-500 rounded-lg p-6 relative">
+            {/* 1現場 */}
+            <div className="bg-white border-2 border-blue-500 rounded-lg p-6 relative flex flex-col">
               <span className="absolute -top-3 left-4 bg-blue-600 text-white text-xs px-2 py-0.5 rounded">標準</span>
-              <div className="text-sm text-slate-500">〜4名でご利用</div>
-              <div className="mt-1 text-3xl font-bold">¥90,000<span className="text-base font-normal text-slate-500">/年</span></div>
+              <div className="text-sm text-slate-500">1現場でご利用</div>
+              <div className="mt-1 text-3xl font-bold">
+                ¥100,000<span className="text-base font-normal text-slate-500">/現場〜</span>
+              </div>
               <ul className="mt-4 space-y-1.5 text-sm text-slate-600">
-                <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600" />基本料金 ¥50,000＋¥10,000/人</li>
-                <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600" />複数名で同一データを共有</li>
+                <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />農業土木／地籍測量いずれかの機能</li>
+                <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />ユーザー3名（追加可能）</li>
+                <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />データは1年半保存（変更可能）</li>
               </ul>
             </div>
+            {/* 大規模 */}
+            <div className="bg-white border rounded-lg p-6 flex flex-col">
+              <div className="text-sm text-slate-500">大規模プロジェクトで利用</div>
+              <div className="mt-1 text-2xl font-bold">お問い合わせください</div>
+              <ul className="mt-4 space-y-1.5 text-sm text-slate-600">
+                <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />複数現場・多人数に対応</li>
+                <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />容量・保存期間を個別調整</li>
+              </ul>
+              <Link
+                to="/apply"
+                className="mt-4 inline-flex items-center justify-center gap-1 px-3 py-2 border border-blue-500 text-blue-600 rounded hover:bg-blue-50 text-sm font-medium"
+              >
+                お問い合わせ
+              </Link>
+            </div>
           </div>
-          <p className="text-center text-xs text-slate-400 mt-4">
-            ※ 導入記念価格です。5名以上・境界測量（個人情報対応）プラン等はお問い合わせください。
-          </p>
           <div className="text-center mt-8">
             <Link
               to="/apply"

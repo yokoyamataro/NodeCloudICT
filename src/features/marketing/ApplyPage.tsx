@@ -101,7 +101,7 @@ export function ApplyPage() {
             下記をご記入ください。担当者より折り返しご連絡します。
           </p>
           <div className="mt-3 p-2.5 bg-emerald-50 border border-emerald-200 rounded text-sm text-emerald-800">
-            🎁 <b>2026年内は実証実験として無料</b>でご利用いただけます。
+            🎁 <b>2026年11月30日まで実証実験のため無償提供</b>（先着30ユーザー限定）。
           </div>
 
           {error && (
