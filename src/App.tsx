@@ -7,6 +7,7 @@ import { LoginPage } from '@/features/auth/LoginPage'
 import { ShareFarmViewPage } from '@/features/share/ShareFarmViewPage'
 import { LandingPage } from '@/features/marketing/LandingPage'
 import { ApplyPage } from '@/features/marketing/ApplyPage'
+import { AdminSignupsPage } from '@/features/admin/AdminSignupsPage'
 import { ProjectListPage } from '@/features/projects/ProjectListPage'
 import { ProjectChooserPage } from '@/features/projects/ProjectChooserPage'
 import { CoordinatesPage } from '@/features/coordinates/CoordinatesPage'
@@ -66,14 +67,18 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function MobileAutoRedirect() {
   const location = useLocation()
   const navigate = useNavigate()
+  const { user } = useAuth()
 
   useEffect(() => {
+    // 未ログインは紹介(/)・ログイン・申込ページを見せたいので自動遷移しない
+    if (!user) return
     const path = location.pathname
     if (
       path === '/login' ||
       path === '/site-map' ||
       path === '/lp' ||
       path === '/apply' ||
+      path.startsWith('/admin') ||
       path.startsWith('/mobile') ||
       path.startsWith('/share')
     ) {
@@ -89,9 +94,28 @@ function MobileAutoRedirect() {
     if (isMobileDevice()) {
       navigate('/mobile', { replace: true })
     }
-  }, [location.pathname, navigate])
+  }, [location.pathname, navigate, user])
 
   return null
+}
+
+// ルート(/)のゲート: 未ログインは紹介ページ、ログイン済みはアプリ本体。
+function HomeGate() {
+  const { user, loading } = useAuth()
+  const location = useLocation()
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+      </div>
+    )
+  }
+  if (!user) {
+    // ルートは紹介ページ、それ以外の保護パスはログインへ
+    if (location.pathname === '/') return <LandingPage />
+    return <Navigate to="/login" replace />
+  }
+  return <AppLayout />
 }
 
 function AppRoutes() {
@@ -101,6 +125,15 @@ function AppRoutes() {
         {/* 公開: 紹介・申し込みページ（認証不要） */}
         <Route path="/lp" element={<LandingPage />} />
         <Route path="/apply" element={<ApplyPage />} />
+        {/* 管理者: 申し込み管理（要ログイン＋管理者メール） */}
+        <Route
+          path="/admin/signups"
+          element={
+            <ProtectedRoute>
+              <AdminSignupsPage />
+            </ProtectedRoute>
+          }
+        />
         {/* 公開共有ビュー: 認証不要・読み取り専用 */}
         <Route path="/share/farm/:farmId" element={<ShareFarmViewPage />} />
         {/* 別ウィンドウ: 現場地図のみ全画面表示（AppLayout を介さない） */}
@@ -153,14 +186,7 @@ function AppRoutes() {
             </ProtectedRoute>
           }
         />
-        <Route
-          path="/"
-          element={
-            <ProtectedRoute>
-              <AppLayout />
-            </ProtectedRoute>
-          }
-        >
+        <Route path="/" element={<HomeGate />}>
         <Route index element={<ProjectChooserPage />} />
         <Route path="projects/:projectId" element={<ProjectListPage />} />
         <Route path="coordinates" element={<CoordinatesPage />} />

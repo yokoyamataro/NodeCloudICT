@@ -39,6 +39,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
+import { isAdmin } from '@/lib/admin'
 import { setDisplayModeOverride } from '@/lib/displayMode'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
@@ -338,6 +339,17 @@ export function AppLayout() {
 
           {/* 右側：ログイン情報 */}
           <div className="flex items-center gap-4">
+            {/* 管理者: 申し込み管理 */}
+            {isAdmin(user?.email) && (
+              <Link
+                to="/admin/signups"
+                className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+                title="申し込み管理"
+              >
+                <User className="h-4 w-4" />
+                申込管理
+              </Link>
+            )}
             {/* スマホ画面へ切替 */}
             <button
               type="button"
