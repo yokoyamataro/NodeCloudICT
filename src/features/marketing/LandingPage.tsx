@@ -140,6 +140,7 @@ export function LandingPage() {
                 <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />ユーザー最大10名まで</li>
                 <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />データ量：1GB（追加可能）</li>
                 <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />データは1年半保存（変更可能）</li>
+                <li className="flex gap-2"><Check className="h-4 w-4 text-emerald-600 shrink-0" />RTK-GNSSキットレンタル可能</li>
               </ul>
             </div>
             {/* 大規模 */}
