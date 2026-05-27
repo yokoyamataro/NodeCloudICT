@@ -5,6 +5,8 @@ import { AuthProvider, useAuth } from '@/contexts/AuthContext'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { LoginPage } from '@/features/auth/LoginPage'
 import { ShareFarmViewPage } from '@/features/share/ShareFarmViewPage'
+import { LandingPage } from '@/features/marketing/LandingPage'
+import { ApplyPage } from '@/features/marketing/ApplyPage'
 import { ProjectListPage } from '@/features/projects/ProjectListPage'
 import { ProjectChooserPage } from '@/features/projects/ProjectChooserPage'
 import { CoordinatesPage } from '@/features/coordinates/CoordinatesPage'
@@ -70,6 +72,8 @@ function MobileAutoRedirect() {
     if (
       path === '/login' ||
       path === '/site-map' ||
+      path === '/lp' ||
+      path === '/apply' ||
       path.startsWith('/mobile') ||
       path.startsWith('/share')
     ) {
@@ -94,6 +98,9 @@ function AppRoutes() {
   return (
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        {/* 公開: 紹介・申し込みページ（認証不要） */}
+        <Route path="/lp" element={<LandingPage />} />
+        <Route path="/apply" element={<ApplyPage />} />
         {/* 公開共有ビュー: 認証不要・読み取り専用 */}
         <Route path="/share/farm/:farmId" element={<ShareFarmViewPage />} />
         {/* 別ウィンドウ: 現場地図のみ全画面表示（AppLayout を介さない） */}

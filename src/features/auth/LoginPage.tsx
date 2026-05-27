@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { LogIn, Loader2 } from 'lucide-react'
 
@@ -86,6 +86,17 @@ export function LoginPage() {
               ログイン
             </button>
           </form>
+
+          <div className="mt-5 pt-4 border-t text-center text-sm">
+            <span className="text-slate-500">初めての方は </span>
+            <Link to="/apply" className="text-blue-600 font-medium hover:underline">
+              新規お申し込み
+            </Link>
+            <span className="text-slate-400 mx-1">/</span>
+            <Link to="/lp" className="text-blue-600 hover:underline">
+              サービス紹介
+            </Link>
+          </div>
 
           <p className="mt-6 text-center text-xs text-slate-500">
             開発者：
