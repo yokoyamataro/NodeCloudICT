@@ -106,6 +106,7 @@ export function OrthophotoPage() {
   const [fontSize, setFontSize] = useState(14) // px
   const [currentLayer, setCurrentLayer] = useState('0')
   const [selectedAnnoId, setSelectedAnnoId] = useState<string | null>(null)
+  const [snapEnabled, setSnapEnabled] = useState(false)
   const [annotations, setAnnotationsState] = useState<Annotation[]>([])
   const [lastMeasure, setLastMeasure] = useState<MeasureGeom | null>(null)
   // コメント入力モーダル
@@ -158,6 +159,18 @@ export function OrthophotoPage() {
     for (const a of annotations) if (a.layer) set.add(a.layer)
     return Array.from(set).sort()
   }, [annotations])
+
+  // 図形以外のスナップ候補（座標管理の点 ＋ 区域の頂点）
+  const extraSnapPoints = useMemo<[number, number][]>(() => {
+    const out: [number, number][] = []
+    for (const c of coordinates) {
+      if (c.lat !== null && c.lng !== null) out.push([c.lat, c.lng])
+    }
+    for (const poly of workAreaPolygons) {
+      for (const p of poly.positions) out.push(p)
+    }
+    return out
+  }, [coordinates, workAreaPolygons])
 
   // 選択中アノテーション
   const selectedAnno = annotations.find((a) => a.id === selectedAnnoId) ?? null
@@ -525,6 +538,8 @@ export function OrthophotoPage() {
             onAddCoordinate={handleAddCoordinate}
             onRequestComment={(pos) => setPendingComment({ pos })}
             onSelect={(id) => setSelectedAnnoId(id)}
+            snapEnabled={snapEnabled}
+            extraSnapPoints={extraSnapPoints}
           />
         </CoordinateMap>
 
@@ -586,6 +601,17 @@ export function OrthophotoPage() {
                 ))}
               </datalist>
             </label>
+            <button
+              onClick={() => setSnapEnabled((v) => !v)}
+              className={`px-2 py-1 text-xs rounded border ${
+                snapEnabled
+                  ? 'bg-amber-100 border-amber-400 text-amber-800 font-medium'
+                  : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
+              }`}
+              title="ピック(スナップ): ONで近接する点や端部に吸着します"
+            >
+              {snapEnabled ? '🎯 ピックON' : '🎯 ピックOFF'}
+            </button>
             {annotations.length > 0 && (
               <button
                 onClick={() => {

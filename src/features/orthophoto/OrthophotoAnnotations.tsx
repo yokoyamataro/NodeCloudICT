@@ -44,6 +44,10 @@ interface Props {
   onRequestComment?: (pos: [number, number]) => void
   /** 選択ツール時、図形クリックで親に通知（インスペクタ表示用） */
   onSelect?: (id: string) => void
+  /** ピック（スナップ）モード: 近接する点・端部に吸着 */
+  snapEnabled?: boolean
+  /** 図形以外のスナップ候補（座標管理の点・区域の頂点など） */
+  extraSnapPoints?: [number, number][]
 }
 
 // ---- アイコン生成 ----
@@ -177,6 +181,8 @@ export function OrthophotoAnnotations({
   onAddCoordinate,
   onRequestComment,
   onSelect,
+  snapEnabled = false,
+  extraSnapPoints,
 }: Props) {
   const [tempVerts, setTempVerts] = useState<[number, number][]>([])
   const lastToolRef = useRef<ToolMode>(tool)
@@ -215,9 +221,42 @@ export function OrthophotoAnnotations({
     setTempVerts([])
   }
 
+  // 既存図形からスナップ候補（端部・頂点・中心）を収集
+  const annotationSnapPoints = (): [number, number][] => {
+    const out: [number, number][] = []
+    for (const a of annotations) {
+      if (a.kind === 'point' || a.kind === 'text' || a.kind === 'comment') out.push(a.pos)
+      else if (a.kind === 'line' || a.kind === 'polygon' || a.kind === 'dimension') {
+        for (const v of a.vertices) out.push(v)
+      } else if (a.kind === 'circle' || a.kind === 'arc') out.push(a.center)
+    }
+    return out
+  }
+  // クリック位置から最も近い候補（スクリーン上 12px 以内）を返す
+  const findSnap = (e: L.LeafletMouseEvent): [number, number] | null => {
+    const candidates: [number, number][] = [
+      ...annotationSnapPoints(),
+      ...(extraSnapPoints ?? []),
+      ...tempVerts,
+    ]
+    if (candidates.length === 0) return null
+    const cp = map.latLngToLayerPoint(e.latlng)
+    let best: { d: number; ll: [number, number] } | null = null
+    for (const c of candidates) {
+      const p = map.latLngToLayerPoint(L.latLng(c[0], c[1]))
+      const d = Math.hypot(p.x - cp.x, p.y - cp.y)
+      if (d <= 12 && (!best || d < best.d)) best = { d, ll: c }
+    }
+    return best ? best.ll : null
+  }
+
   useMapEvents({
     click(e) {
-      const ll: [number, number] = [e.latlng.lat, e.latlng.lng]
+      const raw: [number, number] = [e.latlng.lat, e.latlng.lng]
+      // ピック(スナップ)が ON で、作図/計測ツール中なら近接点に吸着
+      const isPlacing = tool !== 'none' && tool !== 'erase'
+      const snapped = snapEnabled && isPlacing ? findSnap(e) : null
+      const ll: [number, number] = snapped ?? raw
       switch (tool) {
         case 'point':
           setAnnotations([
