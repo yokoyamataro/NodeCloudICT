@@ -160,6 +160,12 @@ interface CoordinateMapProps {
   // 境界線（区域の辺）選択モード: 辺クリックで両端2点の座標IDを返す
   lineSelectMode?: boolean
   onLineSelect?: (id1: string, id2: string) => void
+  /**
+   * 座標マーカーを操作不能（クリック・hover無効）にする。
+   * オルソ画像ページのように地図を「下絵」として使い、クリックを地図側へ通したい場合に false 相当にする。
+   * デフォルト true（クリックで選択できる従来動作）
+   */
+  coordinatesInteractive?: boolean
   // MapContainer の子として追加レイヤを差し込む（作図・計測など）
   children?: React.ReactNode
 }
@@ -181,6 +187,7 @@ export function CoordinateMap({
   edgeRounding = 'round',
   lineSelectMode = false,
   onLineSelect,
+  coordinatesInteractive = true,
   children,
 }: CoordinateMapProps) {
   const { coordinates } = useCoordinateStore()
@@ -397,9 +404,10 @@ export function CoordinateMap({
             MARKER_COLORS[coord.type] || '#666',
             coord.id === selectedPointId
           )}
-          eventHandlers={{
+          interactive={coordinatesInteractive}
+          eventHandlers={coordinatesInteractive ? {
             click: () => onPointSelect?.(coord.id),
-          }}
+          } : undefined}
         >
           {showLabels && (
             <Tooltip

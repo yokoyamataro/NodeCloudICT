@@ -22,6 +22,7 @@ import {
   OrthophotoAnnotations,
   type ToolMode,
   type MeasureGeom,
+  type LineSeg,
   DRAW_TOOLS,
   MEASURE_TOOLS,
   formatMeasureValue,
@@ -107,21 +108,54 @@ export function OrthophotoPage() {
   const [currentLayer, setCurrentLayer] = useState('0')
   const [selectedAnnoId, setSelectedAnnoId] = useState<string | null>(null)
   const [snapEnabled, setSnapEnabled] = useState(false)
+  // 平行線ツール用
+  const [parallelRef, setParallelRef] = useState<LineSeg | null>(null)
+  const [parallelOffset, setParallelOffset] = useState<string>('')
+  // Undo 履歴（直近10件）
+  const [history, setHistory] = useState<Annotation[][]>([])
+  const HISTORY_LIMIT = 10
   const [annotations, setAnnotationsState] = useState<Annotation[]>([])
   const [lastMeasure, setLastMeasure] = useState<MeasureGeom | null>(null)
   // コメント入力モーダル
   const [pendingComment, setPendingComment] = useState<{ pos: [number, number] } | null>(null)
-  // 工区切替で読み込み・保存
+  // 工区切替で読み込み・保存（履歴もリセット）
   useEffect(() => {
     if (currentFarm) setAnnotationsState(loadAnnotations(currentFarm.id))
     else setAnnotationsState([])
     setLastMeasure(null)
     setTool('none')
+    setHistory([])
+    setParallelRef(null)
+    setParallelOffset('')
   }, [currentFarm])
+  // 履歴付きで annotations を更新（直前状態をスタックへ push、最新10件のみ保持）
   const setAnnotations = (next: Annotation[]) => {
+    setHistory((prev) => [...prev, annotations].slice(-HISTORY_LIMIT))
     setAnnotationsState(next)
     if (currentFarm) saveAnnotations(currentFarm.id, next)
   }
+  // 元に戻す（履歴の末尾を取り出して反映）
+  const undo = () => {
+    setHistory((prev) => {
+      if (prev.length === 0) return prev
+      const last = prev[prev.length - 1]
+      setAnnotationsState(last)
+      if (currentFarm) saveAnnotations(currentFarm.id, last)
+      return prev.slice(0, -1)
+    })
+  }
+  // Ctrl/Cmd + Z で undo
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault()
+        undo()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [annotations, history])
   // 計測用の座標変換（プロジェクト座標系）
   const converter = useMemo(() => new CoordinateConverter(projectZone ?? 13), [projectZone])
 
@@ -171,6 +205,19 @@ export function OrthophotoPage() {
     }
     return out
   }, [coordinates, workAreaPolygons])
+
+  // 平行線の参照線候補に区域の辺を含める
+  const extraLineSegments = useMemo<LineSeg[]>(() => {
+    const out: LineSeg[] = []
+    for (const poly of workAreaPolygons) {
+      const v = poly.positions
+      for (let i = 0; i < v.length; i++) {
+        const j = (i + 1) % v.length
+        out.push({ a: v[i], b: v[j] })
+      }
+    }
+    return out
+  }, [workAreaPolygons])
 
   // 選択中アノテーション
   const selectedAnno = annotations.find((a) => a.id === selectedAnnoId) ?? null
@@ -524,6 +571,7 @@ export function OrthophotoPage() {
           farmId={currentFarm.id}
           showOrtho
           externalPolygons={workAreaPolygons}
+          coordinatesInteractive={false}
         >
           <OrthophotoAnnotations
             tool={tool}
@@ -540,6 +588,10 @@ export function OrthophotoPage() {
             onSelect={(id) => setSelectedAnnoId(id)}
             snapEnabled={snapEnabled}
             extraSnapPoints={extraSnapPoints}
+            extraLineSegments={extraLineSegments}
+            parallelRef={parallelRef}
+            setParallelRef={setParallelRef}
+            parallelOffset={parallelOffset}
           />
         </CoordinateMap>
 
@@ -612,6 +664,15 @@ export function OrthophotoPage() {
             >
               {snapEnabled ? '🎯 ピックON' : '🎯 ピックOFF'}
             </button>
+            <button
+              onClick={undo}
+              disabled={history.length === 0}
+              className="px-2 py-1 text-xs rounded border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+              title={`元に戻す (Ctrl+Z) - 最大${HISTORY_LIMIT}回`}
+            >
+              ↶ 元に戻す
+              {history.length > 0 && <span className="ml-1 text-blue-600">({history.length})</span>}
+            </button>
             {annotations.length > 0 && (
               <button
                 onClick={() => {
@@ -656,6 +717,34 @@ export function OrthophotoPage() {
                 <span className="ml-2 text-slate-500">
                   {[...DRAW_TOOLS, ...MEASURE_TOOLS].find((t) => t.tool === tool)?.help ?? ''}
                 </span>
+              </div>
+            )}
+            {tool === 'parallel' && (
+              <div className="flex items-center gap-2">
+                <span className="text-slate-600 text-[11px]">
+                  {parallelRef
+                    ? '参照線を選択中 → クリック位置で平行線を引きます'
+                    : '基準となる線/辺をクリックしてください'}
+                </span>
+                <label className="flex items-center gap-1 text-slate-600">
+                  幅(m)
+                  <input
+                    type="number"
+                    step="0.001"
+                    value={parallelOffset}
+                    onChange={(e) => setParallelOffset(e.target.value)}
+                    placeholder="空欄なら通過点"
+                    className="w-20 px-1 py-0.5 border rounded text-right font-mono"
+                  />
+                </label>
+                {parallelRef && (
+                  <button
+                    onClick={() => setParallelRef(null)}
+                    className="px-2 py-0.5 text-[11px] border rounded hover:bg-slate-50"
+                  >
+                    線を選び直す
+                  </button>
+                )}
               </div>
             )}
             {lastMeasure && (
@@ -722,9 +811,7 @@ export function OrthophotoPage() {
           </label>
           <div className="flex justify-between mt-3 pt-2 border-t">
             <button
-              onClick={() => {
-                if (confirm('この図形を削除しますか？')) deleteAnnotation(selectedAnno.id)
-              }}
+              onClick={() => deleteAnnotation(selectedAnno.id)}
               className="px-2 py-1 text-xs border border-red-300 text-red-600 rounded hover:bg-red-50"
             >
               削除

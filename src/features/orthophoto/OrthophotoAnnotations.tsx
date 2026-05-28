@@ -15,11 +15,17 @@ export type ToolMode =
   | 'none'
   | 'point'
   | 'point-coord' // クリックを座標管理に新規登録
+  | 'parallel' // 平行線
   | AnnotationKind
   | 'measure-dist'
   | 'measure-area'
   | 'measure-perp'
   | 'erase'
+
+export interface LineSeg {
+  a: [number, number]
+  b: [number, number]
+}
 
 export interface MeasureGeom {
   kind: 'dist' | 'area' | 'perp'
@@ -48,6 +54,13 @@ interface Props {
   snapEnabled?: boolean
   /** 図形以外のスナップ候補（座標管理の点・区域の頂点など） */
   extraSnapPoints?: [number, number][]
+  /** 平行線ツールで参照可能な追加の線分（区域の辺など） */
+  extraLineSegments?: LineSeg[]
+  /** 平行線ツールの参照線（null=未選択） */
+  parallelRef?: LineSeg | null
+  setParallelRef?: (s: LineSeg | null) => void
+  /** 平行線ツールの幅指定（m）。空なら通過点モード */
+  parallelOffset?: string
 }
 
 // ---- アイコン生成 ----
@@ -183,6 +196,10 @@ export function OrthophotoAnnotations({
   onSelect,
   snapEnabled = false,
   extraSnapPoints,
+  extraLineSegments,
+  parallelRef = null,
+  setParallelRef,
+  parallelOffset = '',
 }: Props) {
   const [tempVerts, setTempVerts] = useState<[number, number][]>([])
   // マウス追従プレビュー位置（ラバーバンド用）
@@ -235,6 +252,42 @@ export function OrthophotoAnnotations({
     }
     return out
   }
+  // クリック位置から最も近い線分を返す（平行線ツール用）
+  const findNearestSegment = (e: L.LeafletMouseEvent): LineSeg | null => {
+    const candidates: LineSeg[] = []
+    for (const a of annotations) {
+      if (a.kind === 'line') {
+        for (let i = 0; i < a.vertices.length - 1; i++) {
+          candidates.push({ a: a.vertices[i], b: a.vertices[i + 1] })
+        }
+      } else if (a.kind === 'polygon') {
+        for (let i = 0; i < a.vertices.length; i++) {
+          const j = (i + 1) % a.vertices.length
+          candidates.push({ a: a.vertices[i], b: a.vertices[j] })
+        }
+      } else if (a.kind === 'dimension' && a.subKind === 'dist' && a.vertices.length >= 2) {
+        candidates.push({ a: a.vertices[0], b: a.vertices[1] })
+      }
+    }
+    for (const seg of extraLineSegments ?? []) candidates.push(seg)
+    const cp = map.latLngToLayerPoint(e.latlng)
+    let best: { d: number; seg: LineSeg } | null = null
+    for (const seg of candidates) {
+      const pa = map.latLngToLayerPoint(L.latLng(seg.a[0], seg.a[1]))
+      const pb = map.latLngToLayerPoint(L.latLng(seg.b[0], seg.b[1]))
+      const dx = pb.x - pa.x
+      const dy = pb.y - pa.y
+      const L2 = dx * dx + dy * dy
+      let t = L2 === 0 ? 0 : ((cp.x - pa.x) * dx + (cp.y - pa.y) * dy) / L2
+      t = Math.max(0, Math.min(1, t))
+      const fx = pa.x + t * dx
+      const fy = pa.y + t * dy
+      const dd = Math.hypot(cp.x - fx, cp.y - fy)
+      if (dd <= 12 && (!best || dd < best.d)) best = { d: dd, seg }
+    }
+    return best ? best.seg : null
+  }
+
   // クリック位置から最も近い候補（スクリーン上 12px 以内）を返す
   const findSnap = (e: L.LeafletMouseEvent): [number, number] | null => {
     const candidates: [number, number][] = [
@@ -294,31 +347,49 @@ export function OrthophotoAnnotations({
           break
         }
         case 'arc': {
+          // 3点（始点・中間・終点）を通る円弧 = 外接円
           const next = [...tempVerts, ll]
           if (next.length >= 3) {
-            const c = converter.toXY(next[0][0], next[0][1])
-            const p1 = converter.toXY(next[1][0], next[1][1])
-            const p2 = converter.toXY(next[2][0], next[2][1])
-            const r = Math.hypot(p1.x - c.x, p1.y - c.y)
-            let startDeg = (Math.atan2(p1.x - c.x, p1.y - c.y) * 180) / Math.PI
-            let endDeg = (Math.atan2(p2.x - c.x, p2.y - c.y) * 180) / Math.PI
-            startDeg = ((startDeg % 360) + 360) % 360
-            endDeg = ((endDeg % 360) + 360) % 360
-            // CCW での掃引角度（0..360）
-            let sweep = (((endDeg - startDeg) % 360) + 360) % 360
-            // 反対側にならないよう、常に短い側（minor arc）を採用
-            if (sweep > 180) {
-              const t = startDeg
-              startDeg = endDeg
-              endDeg = t
-              sweep = 360 - sweep
-            }
-            if (endDeg <= startDeg) endDeg += 360
-            void sweep
-            if (r > 0) {
+            const p1 = converter.toXY(next[0][0], next[0][1])
+            const p2 = converter.toXY(next[1][0], next[1][1])
+            const p3 = converter.toXY(next[2][0], next[2][1])
+            const ax = p2.x - p1.x, ay = p2.y - p1.y
+            const bx = p3.x - p1.x, by = p3.y - p1.y
+            const d = 2 * (ax * by - ay * bx)
+            if (Math.abs(d) > 1e-9) {
+              const ux = (by * (ax * ax + ay * ay) - ay * (bx * bx + by * by)) / d
+              const uy = (ax * (bx * bx + by * by) - bx * (ax * ax + ay * ay)) / d
+              const cx = p1.x + ux
+              const cy = p1.y + uy
+              const r = Math.hypot(ux, uy)
+              const ang = (p: { x: number; y: number }) =>
+                (((Math.atan2(p.x - cx, p.y - cy) * 180) / Math.PI) % 360 + 360) % 360
+              const a1 = ang(p1)
+              const aMid = ang(p2)
+              const a3 = ang(p3)
+              const sweepCCW = (((a3 - a1) % 360) + 360) % 360
+              const relMid = (((aMid - a1) % 360) + 360) % 360
+              let startDeg = a1
+              let endDeg = a3
+              // 中間点が CCW で a1→a3 の範囲外なら CW 方向 → start/end を入れ替え
+              if (relMid > sweepCCW) {
+                startDeg = a3
+                endDeg = a1
+              }
+              if (endDeg <= startDeg) endDeg += 360
+              const cll = converter.toLatLng(cx, cy)
               setAnnotations([
                 ...annotations,
-                { id: newAnnotationId(), kind: 'arc', center: next[0], radius: r, startDeg, endDeg, color, layer: currentLayer },
+                {
+                  id: newAnnotationId(),
+                  kind: 'arc',
+                  center: [cll.lat, cll.lng],
+                  radius: r,
+                  startDeg,
+                  endDeg,
+                  color,
+                  layer: currentLayer,
+                },
               ])
             }
             setTempVerts([])
@@ -362,6 +433,57 @@ export function OrthophotoAnnotations({
         case 'comment':
           onRequestComment?.(ll)
           break
+        case 'parallel': {
+          if (!parallelRef) {
+            const seg = findNearestSegment(e)
+            if (seg) setParallelRef?.(seg)
+            break
+          }
+          // 平行線を確定
+          const refA = converter.toXY(parallelRef.a[0], parallelRef.a[1])
+          const refB = converter.toXY(parallelRef.b[0], parallelRef.b[1])
+          const clickXY = converter.toXY(ll[0], ll[1])
+          const ABx = refB.x - refA.x
+          const ABy = refB.y - refA.y
+          const L = Math.hypot(ABx, ABy)
+          if (L === 0) break
+          // 右単位法線（x=N,y=E）: n = (-ABy/L, ABx/L)
+          const nx = -ABy / L
+          const ny = ABx / L
+          const offsetVal = parseFloat(parallelOffset)
+          let offX: number
+          let offY: number
+          if (Number.isFinite(offsetVal) && offsetVal > 0) {
+            // 数値オフセット: クリック側を符号で決定
+            const side = Math.sign((clickXY.x - refA.x) * nx + (clickXY.y - refA.y) * ny) || 1
+            offX = nx * offsetVal * side
+            offY = ny * offsetVal * side
+          } else {
+            // 通過点モード: クリック位置への垂線変位
+            const t = ((clickXY.x - refA.x) * ABx + (clickXY.y - refA.y) * ABy) / (L * L)
+            const fx = refA.x + t * ABx
+            const fy = refA.y + t * ABy
+            offX = clickXY.x - fx
+            offY = clickXY.y - fy
+          }
+          const aLL = converter.toLatLng(refA.x + offX, refA.y + offY)
+          const bLL = converter.toLatLng(refB.x + offX, refB.y + offY)
+          setAnnotations([
+            ...annotations,
+            {
+              id: newAnnotationId(),
+              kind: 'line',
+              vertices: [
+                [aLL.lat, aLL.lng],
+                [bLL.lat, bLL.lng],
+              ],
+              color,
+              layer: currentLayer,
+            },
+          ])
+          setParallelRef?.(null)
+          break
+        }
         default:
           break
       }
@@ -441,7 +563,6 @@ export function OrthophotoAnnotations({
 
   const handleDelete = (id: string) => {
     if (tool !== 'erase') return
-    if (!confirm('この図形を削除しますか？')) return
     setAnnotations(annotations.filter((a) => a.id !== id))
   }
   // 図形クリック時の挙動（選択ツール→インスペクタ、削除ツール→削除、その他→無視）
@@ -626,6 +747,53 @@ export function OrthophotoAnnotations({
         )
       })()}
 
+      {/* 平行線ツール: 参照線のハイライト＋仮の平行線プレビュー */}
+      {tool === 'parallel' && parallelRef && (
+        <>
+          <Polyline
+            positions={[parallelRef.a, parallelRef.b]}
+            pathOptions={{ color: '#f97316', weight: 4, opacity: 0.7 }}
+          />
+          {hoverPos &&
+            (() => {
+              const refA = converter.toXY(parallelRef.a[0], parallelRef.a[1])
+              const refB = converter.toXY(parallelRef.b[0], parallelRef.b[1])
+              const clickXY = converter.toXY(hoverPos[0], hoverPos[1])
+              const ABx = refB.x - refA.x
+              const ABy = refB.y - refA.y
+              const L = Math.hypot(ABx, ABy)
+              if (L === 0) return null
+              const nx = -ABy / L
+              const ny = ABx / L
+              const offsetVal = parseFloat(parallelOffset)
+              let offX: number
+              let offY: number
+              if (Number.isFinite(offsetVal) && offsetVal > 0) {
+                const side = Math.sign((clickXY.x - refA.x) * nx + (clickXY.y - refA.y) * ny) || 1
+                offX = nx * offsetVal * side
+                offY = ny * offsetVal * side
+              } else {
+                const t = ((clickXY.x - refA.x) * ABx + (clickXY.y - refA.y) * ABy) / (L * L)
+                const fx = refA.x + t * ABx
+                const fy = refA.y + t * ABy
+                offX = clickXY.x - fx
+                offY = clickXY.y - fy
+              }
+              const aLL = converter.toLatLng(refA.x + offX, refA.y + offY)
+              const bLL = converter.toLatLng(refB.x + offX, refB.y + offY)
+              return (
+                <Polyline
+                  positions={[
+                    [aLL.lat, aLL.lng],
+                    [bLL.lat, bLL.lng],
+                  ]}
+                  pathOptions={{ color, weight: 2, dashArray: '4,3' }}
+                />
+              )
+            })()}
+        </>
+      )}
+
       {/* 最新の計測結果ジオメトリ（クリアまたは寸法保存まで残す） */}
       {renderLastMeasure()}
     </>
@@ -642,17 +810,18 @@ export function formatMeasureValue(m: MeasureGeom): string {
 export const DRAW_TOOLS: { tool: ToolMode; label: string; help?: string }[] = [
   { tool: 'none', label: '選択' },
   { tool: 'point', label: '点' },
-  { tool: 'point-coord', label: '点(座標登録)', help: 'クリック位置を座標管理に追加' },
   { tool: 'line', label: '線', help: 'クリックで頂点 / ダブルクリックで終了' },
+  { tool: 'parallel', label: '平行線', help: '①参照線をクリック ②任意位置クリック（または平行幅を指定）' },
   { tool: 'polygon', label: '面', help: 'クリックで頂点 / ダブルクリックで閉じる' },
   { tool: 'circle', label: '円', help: '中心 → 半径点' },
-  { tool: 'arc', label: '円弧', help: '中心 → 始点 → 終点（CCW）' },
+  { tool: 'arc', label: '円弧', help: '始点 → 中間 → 終点（円周上の3点を通る）' },
   { tool: 'text', label: '文字', help: 'クリックで文字列を配置' },
   { tool: 'comment', label: 'コメント', help: 'クリックで吹き出しコメントを配置（@メンション可）' },
   { tool: 'erase', label: '削除', help: '図形クリックで削除' },
 ]
 
 export const MEASURE_TOOLS: { tool: ToolMode; label: string; help?: string }[] = [
+  { tool: 'point-coord', label: '点(座標登録)', help: 'クリック位置を座標管理に追加' },
   { tool: 'measure-dist', label: '距離', help: '2点クリック' },
   { tool: 'measure-area', label: '面積', help: 'クリックで頂点 / ダブルクリックで閉じる' },
   { tool: 'measure-perp', label: '垂線', help: '線の2点→対象1点の順にクリック' },

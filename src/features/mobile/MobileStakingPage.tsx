@@ -31,6 +31,7 @@ import {
   X,
   Volume2,
   VolumeX,
+  Calculator,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
@@ -49,6 +50,7 @@ import {
   getCoordinateTypeOptions,
 } from '@/stores/coordinatePointTypeStore'
 import { CoordinatePhotoModal } from '@/features/coordinates/CoordinatePhotoModal'
+import { CoordinateCalcModal } from '@/features/coordinates/CoordinateCalcModal'
 import { useAttachmentStore } from '@/stores/attachmentStore'
 import { useOrthophotoStore } from '@/stores/orthophotoStore'
 import { parseLandXml } from '@/lib/landxml/parser'
@@ -402,6 +404,10 @@ export function MobileStakingPage() {
   const [showSettings, setShowSettings] = useState(false)
   const [showTargetList, setShowTargetList] = useState(false)
   const [showRecordList, setShowRecordList] = useState(false)
+  // 座標計算（交点・線上）モーダル
+  const [showCalcModal, setShowCalcModal] = useState(false)
+  // 計算モーダルで地図から点選択中の割り当て関数
+  const [calcAssign, setCalcAssign] = useState<((id: string) => void) | null>(null)
   const [targetFilter, setTargetFilter] = useState<
     'all' | 'coordinate' | 'pipe_vertex' | 'route'
   >('all')
@@ -1696,6 +1702,13 @@ export function MobileStakingPage() {
           )}
         </button>
         <button
+          onClick={() => setShowCalcModal(true)}
+          className="p-1.5 rounded bg-slate-700 hover:bg-slate-600"
+          title="座標計算（交点・線上）"
+        >
+          <Calculator className="h-4 w-4" />
+        </button>
+        <button
           onClick={toggleSound}
           className={`p-1.5 rounded ${
             soundEnabled ? 'bg-emerald-600' : 'bg-slate-700 hover:bg-slate-600'
@@ -1769,6 +1782,32 @@ export function MobileStakingPage() {
           projectId={farm.project_id}
           coordinateId={photoModalTarget.refId}
           pointNumber={photoModalTarget.name}
+        />
+      )}
+      {/* 座標計算モーダル（交点・線上） */}
+      {showCalcModal && (
+        <CoordinateCalcModal
+          coordinates={coordinates
+            .filter((c) => Number.isFinite(c.x) && Number.isFinite(c.y))
+            .map((c) => ({ id: c.id, pointNumber: c.pointNumber, x: c.x, y: c.y }))}
+          typeOptions={typeOptions}
+          defaultType={'control'}
+          onAdd={(p) => {
+            importCoordinates([
+              {
+                pointNumber: p.pointNumber,
+                x: p.x,
+                y: p.y,
+                z: null,
+                type: p.type as CoordinateRow['type'],
+              },
+            ])
+          }}
+          onClose={() => {
+            setShowCalcModal(false)
+            setCalcAssign(null)
+          }}
+          onPickRequest={(fn) => setCalcAssign(() => fn)}
         />
       )}
       {/* 新点計測完了モーダル */}
@@ -2245,7 +2284,14 @@ export function MobileStakingPage() {
                   iconAnchor: [iconSize / 2, iconSize / 2],
                 })}
                 eventHandlers={{
-                  click: () => setSelectedTargetId(t.id),
+                  click: () => {
+                    // 座標計算で地図から点選択中なら、座標点に限り計算スロットへ割り当て
+                    if (calcAssign && t.kind === 'coordinate') {
+                      calcAssign(t.refId)
+                      return
+                    }
+                    setSelectedTargetId(t.id)
+                  },
                 }}
               >
                 <Tooltip
