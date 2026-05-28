@@ -1,18 +1,21 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Upload, Download, Plus, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Settings, Camera, Image as ImageIcon, Loader2 } from 'lucide-react'
+import { Upload, Download, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Settings, Camera, Image as ImageIcon, Loader2, Pencil, Calculator, Layers } from 'lucide-react'
 import { CoordinatePhotoModal } from './CoordinatePhotoModal'
+import { CoordinateCalcModal } from './CoordinateCalcModal'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useAttachmentStore } from '@/stores/attachmentStore'
+import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
+import { WORK_TYPE_NAMES, type WorkType } from '@/types/database'
 import { generatePhotoBookExcel, PHOTO_BOOK_TEMPLATES, type PhotoBookTemplate } from '@/lib/photoBook'
 import { useGlobalSaveRegistry } from '@/stores/globalSaveRegistry'
 import {
   useCoordinatePointTypeStore,
   getCoordinateTypeOptions,
 } from '@/stores/coordinatePointTypeStore'
-import { CoordinateMap, type BaseLayerType } from '@/components/map/CoordinateMap'
+import { CoordinateMap, type BaseLayerType, type ExternalPolygon } from '@/components/map/CoordinateMap'
 import { ResizableSplit } from '@/components/layout/ResizableSplit'
 import { loadSimaFile, downloadSimaFile } from '@/lib/sima-parser'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -205,6 +208,13 @@ export function CoordinatesPage() {
   const { currentFarm } = useFarmStore()
   const { projects } = useProjectListStore()
   const { fetchByEntityIds: fetchAttachments, getSignedUrl } = useAttachmentStore()
+  const { workAreas, fetchWorkAreas } = useWorkAreaStore()
+  // 座標計算モーダル
+  const [showCalcModal, setShowCalcModal] = useState(false)
+  // 区域の表示レイヤ（表示する工種コードの集合）
+  const [visibleWorkTypes, setVisibleWorkTypes] = useState<Set<string>>(new Set())
+  // 手入力・計算追加時に末尾行へスクロールするための ref
+  const lastRowRef = useRef<HTMLTableRowElement | null>(null)
   // 写真帳出力の進捗（null=非実行）
   const [photoExporting, setPhotoExporting] = useState<{ done: number; total: number } | null>(null)
   // 写真帳ひな形の選択ダイアログ
@@ -305,9 +315,72 @@ export function CoordinatesPage() {
     }
   }, [routeHasChanges])
 
+  // 手入力で1点追加し、末尾行へスクロール
   const handleAddCoordinate = () => {
     addCoordinate(selectedType)
+    setTimeout(() => lastRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60)
   }
+
+  // 座標計算の結果を新規点として追加
+  const handleCalcAdd = (p: { pointNumber: string; x: number; y: number; type: string }) => {
+    importCoordinates([
+      { pointNumber: p.pointNumber, x: p.x, y: p.y, z: null, type: p.type as CoordinateType },
+    ])
+    setTimeout(() => lastRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80)
+  }
+
+  // 区域（工事区域）を取得
+  useEffect(() => {
+    if (currentFarm) fetchWorkAreas(currentFarm.id)
+  }, [currentFarm, fetchWorkAreas])
+
+  // 区域が登録されている工種は既定で表示ON
+  const availableWorkTypes = useMemo(
+    () =>
+      (Object.entries(workAreas) as [string, { id: string }[] | undefined][])
+        .filter(([, a]) => a && a.length > 0)
+        .map(([wt]) => wt),
+    [workAreas],
+  )
+  useEffect(() => {
+    setVisibleWorkTypes((prev) => {
+      const next = new Set(prev)
+      let changed = false
+      for (const wt of availableWorkTypes) {
+        if (!next.has(wt)) {
+          next.add(wt)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [availableWorkTypes])
+
+  // 表示する区域ポリゴン（CoordinateMap の externalPolygons 用）
+  const workAreaPolygons = useMemo<ExternalPolygon[]>(() => {
+    const out: ExternalPolygon[] = []
+    for (const [wt, areas] of Object.entries(workAreas) as [
+      string,
+      { id: string; name: string; points: WorkAreaPoint[] }[] | undefined,
+    ][]) {
+      if (!areas || !visibleWorkTypes.has(wt)) continue
+      for (const area of areas) {
+        const positions = area.points
+          .filter((p) => p.lat !== null && p.lng !== null)
+          .map((p) => [p.lat as number, p.lng as number] as [number, number])
+        if (positions.length >= 3) out.push({ id: area.id, name: area.name, positions })
+      }
+    }
+    return out
+  }, [workAreas, visibleWorkTypes])
+
+  const toggleWorkType = (wt: string) =>
+    setVisibleWorkTypes((prev) => {
+      const next = new Set(prev)
+      if (next.has(wt)) next.delete(wt)
+      else next.add(wt)
+      return next
+    })
 
   const handleImportCSV = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -656,22 +729,51 @@ export function CoordinatesPage() {
     }
   }
 
-  // ツールバー（インポート / エクスポート / 追加）— hover の背景色だけビューで切り替え
+  // 区域（工事区域）の表示レイヤ切替チップ
+  const renderWorkAreaLayers = () => {
+    if (availableWorkTypes.length === 0) return null
+    return (
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-xs text-slate-500 flex items-center gap-1">
+          <Layers className="h-3 w-3" />
+          区域
+        </span>
+        {availableWorkTypes.map((wt) => {
+          const on = visibleWorkTypes.has(wt)
+          return (
+            <button
+              key={wt}
+              onClick={() => toggleWorkType(wt)}
+              className={`px-2 py-0.5 text-xs rounded border ${
+                on
+                  ? 'bg-emerald-600 text-white border-emerald-600'
+                  : 'bg-white text-slate-500 border-slate-300'
+              }`}
+            >
+              {WORK_TYPE_NAMES[wt as WorkType] ?? wt}
+            </button>
+          )
+        })}
+      </div>
+    )
+  }
+
+  // ツールバー（インポート / エクスポート / 手入力 / 座標計算）— hover の背景色だけビューで切り替え
   const renderToolbar = (hoverClass: 'hover:bg-gray-50' | 'hover:bg-white') => {
     const exportDisabled = coordinates.length === 0
     const exportCount = checkedIds.size === 0 ? coordinates.length : checkedIds.size
     return (
-      <div ref={menuRef} className="flex gap-2 mt-3">
-        {/* インポート */}
-        <div className="relative flex-1">
+      <div ref={menuRef} className="flex items-center gap-2 mt-3">
+        {/* インポート（アイコン） */}
+        <div className="relative">
           <button
             type="button"
             onClick={() => setOpenMenu(openMenu === 'import' ? null : 'import')}
-            className={`w-full flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded ${hoverClass}`}
+            title="インポート（貼り付け / SIMA / CSV）"
+            className={`flex items-center gap-0.5 px-2.5 py-1.5 text-sm border rounded ${hoverClass}`}
           >
-            <Upload className="h-3.5 w-3.5" />
-            インポート
-            <ChevronDown className="h-3.5 w-3.5" />
+            <Upload className="h-4 w-4" />
+            <ChevronDown className="h-3 w-3" />
           </button>
           {openMenu === 'import' && (
             <div className="absolute left-0 top-full mt-1 w-44 bg-white border rounded shadow-lg z-20">
@@ -711,20 +813,20 @@ export function CoordinatesPage() {
           )}
         </div>
 
-        {/* エクスポート */}
-        <div className="relative flex-1">
+        {/* エクスポート（アイコン） */}
+        <div className="relative">
           <button
             type="button"
             onClick={() => setOpenMenu(openMenu === 'export' ? null : 'export')}
             disabled={exportDisabled}
-            className={`w-full flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded ${hoverClass} disabled:opacity-50`}
+            title="エクスポート（CSV / SIMA / 写真帳）"
+            className={`flex items-center gap-0.5 px-2.5 py-1.5 text-sm border rounded ${hoverClass} disabled:opacity-50`}
           >
-            <Download className="h-3.5 w-3.5" />
-            エクスポート
+            <Download className="h-4 w-4" />
             {checkedIds.size > 0 && (
               <span className="text-xs text-blue-600">({exportCount})</span>
             )}
-            <ChevronDown className="h-3.5 w-3.5" />
+            <ChevronDown className="h-3 w-3" />
           </button>
           {openMenu === 'export' && !exportDisabled && (
             <div className="absolute left-0 top-full mt-1 w-44 bg-white border rounded shadow-lg z-20">
@@ -838,15 +940,38 @@ export function CoordinatesPage() {
           </div>
         )}
 
-        {/* 追加 */}
+        {/* 手入力 */}
         <button
           type="button"
           onClick={handleAddCoordinate}
+          className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded ${hoverClass}`}
+        >
+          <Pencil className="h-3.5 w-3.5" />
+          手入力
+        </button>
+
+        {/* 座標計算 */}
+        <button
+          type="button"
+          onClick={() => setShowCalcModal(true)}
           className="flex items-center gap-1 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90"
         >
-          <Plus className="h-3.5 w-3.5" />
-          追加
+          <Calculator className="h-3.5 w-3.5" />
+          座標計算
         </button>
+
+        {/* 座標計算モーダル */}
+        {showCalcModal && (
+          <CoordinateCalcModal
+            coordinates={coordinates
+              .filter((c) => Number.isFinite(c.x) && Number.isFinite(c.y))
+              .map((c) => ({ id: c.id, pointNumber: c.pointNumber, x: c.x, y: c.y }))}
+            typeOptions={typeOptions}
+            defaultType={selectedType}
+            onAdd={handleCalcAdd}
+            onClose={() => setShowCalcModal(false)}
+          />
+        )}
       </div>
     )
   }
@@ -905,6 +1030,7 @@ export function CoordinatesPage() {
               <Settings className="h-3.5 w-3.5" />
             </button>
           </div>
+          {renderWorkAreaLayers()}
           <select
             value={baseLayer}
             onChange={(e) => setBaseLayer(e.target.value as BaseLayerType)}
@@ -927,6 +1053,7 @@ export function CoordinatesPage() {
             showRoute={true}
             farmId={currentFarm?.id ?? null}
             showOrtho={showOrtho}
+            externalPolygons={workAreaPolygons}
           />
         </div>
       </div>
@@ -939,14 +1066,8 @@ export function CoordinatesPage() {
       <div className="h-screen flex flex-col">
         <div className="p-4 border-b bg-white">
           <h2 className="text-lg font-semibold mb-3">座標計算書</h2>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium mb-1">座標系（プロジェクト設定）</label>
-              <div className="w-full px-2 py-1.5 text-sm border rounded bg-slate-50 text-slate-700">
-                {JGD2011_ZONES[zone]?.name ?? `第${zone}系`}
-              </div>
-            </div>
-            <div>
+          <div>
+            <div className="max-w-xs">
               <label className="block text-xs font-medium mb-1">座標種類</label>
               <select
                 value={selectedType}
@@ -988,9 +1109,10 @@ export function CoordinatesPage() {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {coordinates.map((coord) => (
+              {coordinates.map((coord, idx) => (
                 <tr
                   key={coord.id}
+                  ref={idx === coordinates.length - 1 ? lastRowRef : null}
                   className={`hover:bg-slate-50 cursor-pointer ${
                     selectedPointId === coord.id ? 'bg-blue-50' : ''
                   }`}
@@ -1114,14 +1236,8 @@ export function CoordinatesPage() {
           <div className="flex-1 flex flex-col overflow-hidden">
               {/* 設定パネル */}
               <div className="p-4 border-b bg-slate-50">
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium mb-1">座標系（プロジェクト設定）</label>
-                    <div className="w-full px-2 py-1.5 text-sm border rounded bg-slate-50 text-slate-700">
-                      {JGD2011_ZONES[zone]?.name ?? `第${zone}系`}
-                    </div>
-                  </div>
-                  <div>
+                <div className="grid grid-cols-1 gap-3">
+                  <div className="max-w-xs">
                     <label className="block text-xs font-medium mb-1">座標種類</label>
                     <select
                       value={selectedType}
@@ -1165,9 +1281,10 @@ export function CoordinatesPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {coordinates.map((coord) => (
+                    {coordinates.map((coord, idx) => (
                       <tr
                         key={coord.id}
+                        ref={idx === coordinates.length - 1 ? lastRowRef : null}
                         className={`hover:bg-slate-50 cursor-pointer ${
                           selectedPointId === coord.id ? 'bg-blue-50' : ''
                         }`}
@@ -1329,6 +1446,7 @@ export function CoordinatesPage() {
                 <Settings className="h-3.5 w-3.5" />
               </button>
             </div>
+            {renderWorkAreaLayers()}
             <select
               value={baseLayer}
               onChange={(e) => setBaseLayer(e.target.value as BaseLayerType)}
@@ -1351,6 +1469,7 @@ export function CoordinatesPage() {
               showRoute={true}
               farmId={currentFarm?.id ?? null}
               showOrtho={showOrtho}
+              externalPolygons={workAreaPolygons}
             />
 
             {/* 経路パネル（地図右上にオーバーレイ） */}
