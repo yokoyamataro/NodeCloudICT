@@ -133,6 +133,8 @@ export interface ExternalPolygon {
   name: string
   positions: [number, number][]
   isEditing?: boolean
+  /** 各頂点に対応する座標ID（positions と同じ順序・長さ）。境界線選択で利用 */
+  pointIds?: string[]
   /** 各辺の中点・辺長(m)・画面上の傾き(deg)。測量座標(X,Y)から算出 */
   edges?: Array<{ mid: [number, number]; length: number; angle: number }>
 }
@@ -155,6 +157,9 @@ interface CoordinateMapProps {
   showEdgeLengths?: boolean
   edgeDigits?: number
   edgeRounding?: EdgeRounding
+  // 境界線（区域の辺）選択モード: 辺クリックで両端2点の座標IDを返す
+  lineSelectMode?: boolean
+  onLineSelect?: (id1: string, id2: string) => void
 }
 
 export function CoordinateMap({
@@ -172,6 +177,8 @@ export function CoordinateMap({
   showEdgeLengths = false,
   edgeDigits = 2,
   edgeRounding = 'round',
+  lineSelectMode = false,
+  onLineSelect,
 }: CoordinateMapProps) {
   const { coordinates } = useCoordinateStore()
   const {
@@ -274,6 +281,25 @@ export function CoordinateMap({
           />
         )
       })}
+
+      {/* 境界線選択モード: 各辺をクリック可能なポリラインで重ねる */}
+      {lineSelectMode &&
+        externalPolygons.map((polygon) => {
+          const ids = polygon.pointIds
+          if (!ids || ids.length !== polygon.positions.length) return null
+          const n = polygon.positions.length
+          return polygon.positions.map((pos, i) => {
+            const next = (i + 1) % n
+            return (
+              <Polyline
+                key={`pickedge-${polygon.id}-${i}`}
+                positions={[pos, polygon.positions[next]]}
+                pathOptions={{ color: '#2563eb', weight: 8, opacity: 0.45 }}
+                eventHandlers={{ click: () => onLineSelect?.(ids[i], ids[next]) }}
+              />
+            )
+          })
+        })}
 
       {/* 区域ポリゴンの辺長ラベル（測量座標から算出した平面距離） */}
       {showEdgeLengths &&

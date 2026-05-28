@@ -18,14 +18,17 @@ interface Props {
   onClose: () => void
   /** 地図からの点選択を要求する。assign に座標IDを渡すと確定。null でキャンセル/解除 */
   onPickRequest?: (assign: ((coordId: string) => void) | null) => void
+  /** 地図からの境界線選択を要求する。assign に辺の2点座標IDを渡すと確定。null でキャンセル/解除 */
+  onLineRequest?: (assign: ((id1: string, id2: string) => void) | null) => void
 }
 
 type Mode = 'intersection' | 'online'
 
-export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onAdd, onClose, onPickRequest }: Props) {
+export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onAdd, onClose, onPickRequest, onLineRequest }: Props) {
   const [mode, setMode] = useState<Mode>('intersection')
   // 地図から選択中のスロット名（null=通常表示）
   const [pickingLabel, setPickingLabel] = useState<string | null>(null)
+  const [pickingLineLabel, setPickingLineLabel] = useState<string | null>(null)
 
   // 交点計算用
   const [l1a, setL1a] = useState('')
@@ -89,6 +92,35 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
     onPickRequest?.(null)
   }
 
+  // 地図から境界線（辺）を選んで2点を一度に割り当て
+  const startLinePick = (label: string, setA: (v: string) => void, setB: (v: string) => void) => {
+    if (!onLineRequest) return
+    setPickingLineLabel(label)
+    onLineRequest((id1: string, id2: string) => {
+      setA(id1)
+      setB(id2)
+      setPickingLineLabel(null)
+      onLineRequest(null)
+    })
+  }
+  const cancelLinePick = () => {
+    setPickingLineLabel(null)
+    onLineRequest?.(null)
+  }
+
+  // 境界線選択ボタン（共通）
+  const LinePickButton = ({ label, setA, setB }: { label: string; setA: (v: string) => void; setB: (v: string) => void }) =>
+    onLineRequest ? (
+      <button
+        type="button"
+        onClick={() => startLinePick(label, setA, setB)}
+        className="w-full flex items-center justify-center gap-1 px-2 py-1 border border-dashed border-blue-400 rounded text-xs text-blue-600 hover:bg-blue-50"
+      >
+        <MapPin className="h-3.5 w-3.5" />
+        境界線を地図で選択（2点まとめて）
+      </button>
+    ) : null
+
   // 地図から点を選ぶピッカー（プルダウンは廃止）
   const PointSelect = ({ value, onChange, placeholder, label }: { value: string; onChange: (v: string) => void; placeholder: string; label: string }) => {
     const c = value ? byId.get(value) : null
@@ -123,6 +155,17 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
         <MapPin className="h-4 w-4" />
         <span>地図で「{pickingLabel}」の点をタップしてください</span>
         <button onClick={cancelPick} className="underline whitespace-nowrap">
+          キャンセル
+        </button>
+      </div>
+    )
+  }
+  if (pickingLineLabel) {
+    return (
+      <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[3000] bg-blue-600 text-white px-4 py-2 rounded-full shadow-lg text-sm flex items-center gap-3">
+        <MapPin className="h-4 w-4" />
+        <span>地図で「{pickingLineLabel}」の境界線（辺）をタップしてください</span>
+        <button onClick={cancelLinePick} className="underline whitespace-nowrap">
           キャンセル
         </button>
       </div>
@@ -170,6 +213,7 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
               ].map((ln) => (
                 <div key={ln.label} className="border rounded p-2 space-y-2">
                   <div className="text-xs font-medium text-slate-600">{ln.label}</div>
+                  <LinePickButton label={ln.label} setA={ln.sa} setB={ln.sb} />
                   <PointSelect value={ln.a} onChange={ln.sa} placeholder="始点を選択" label={`${ln.label} 始点`} />
                   <PointSelect value={ln.b} onChange={ln.sb} placeholder="終点を選択" label={`${ln.label} 終点`} />
                   <label className="flex items-center gap-2 text-xs">
@@ -191,6 +235,7 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
                 線（2点）を選び、起点から延長方向(+前方) ・ 左右(+右) にずらした点を計算します。
               </p>
               <div className="border rounded p-2 space-y-2">
+                <LinePickButton label="基準線（起点→方向先）" setA={setOa} setB={setOb} />
                 <PointSelect value={oa} onChange={setOa} placeholder="起点を選択" label="起点" />
                 <PointSelect value={ob} onChange={setOb} placeholder="方向先（終点）を選択" label="方向先" />
                 <div className="flex gap-3">

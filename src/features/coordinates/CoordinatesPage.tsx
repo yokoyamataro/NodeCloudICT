@@ -213,6 +213,8 @@ export function CoordinatesPage() {
   const [showCalcModal, setShowCalcModal] = useState(false)
   // 座標計算で地図から点選択中の割り当て関数（null=非選択中）
   const [calcAssign, setCalcAssign] = useState<((id: string) => void) | null>(null)
+  // 座標計算で境界線（辺）選択中の割り当て関数（2点の座標IDを返す）
+  const [calcLineAssign, setCalcLineAssign] = useState<((id1: string, id2: string) => void) | null>(null)
   // 区域の表示レイヤ（表示する工種コードの集合）
   const [visibleWorkTypes, setVisibleWorkTypes] = useState<Set<string>>(new Set())
   // 手入力・計算追加時に末尾行へスクロールするための ref
@@ -364,10 +366,16 @@ export function CoordinatesPage() {
     ][]) {
       if (!areas || !visibleWorkTypes.has(wt)) continue
       for (const area of areas) {
-        const positions = area.points
-          .filter((p) => p.lat !== null && p.lng !== null)
-          .map((p) => [p.lat as number, p.lng as number] as [number, number])
-        if (positions.length >= 3) out.push({ id: area.id, name: area.name, positions })
+        const pts = area.points.filter((p) => p.lat !== null && p.lng !== null)
+        const positions = pts.map((p) => [p.lat as number, p.lng as number] as [number, number])
+        if (positions.length >= 3) {
+          out.push({
+            id: area.id,
+            name: area.name,
+            positions,
+            pointIds: pts.map((p) => p.id),
+          })
+        }
       }
     }
     return out
@@ -1082,8 +1090,10 @@ export function CoordinatesPage() {
             onClose={() => {
               setShowCalcModal(false)
               setCalcAssign(null)
+              setCalcLineAssign(null)
             }}
             onPickRequest={(fn) => setCalcAssign(() => fn)}
+            onLineRequest={(fn) => setCalcLineAssign(() => fn)}
           />
         )}
       </div>
@@ -1168,6 +1178,8 @@ export function CoordinatesPage() {
             farmId={currentFarm?.id ?? null}
             showOrtho={showOrtho}
             externalPolygons={workAreaPolygons}
+            lineSelectMode={!!calcLineAssign}
+            onLineSelect={(a, b) => calcLineAssign?.(a, b)}
           />
         </div>
       </div>
@@ -1540,6 +1552,8 @@ export function CoordinatesPage() {
               farmId={currentFarm?.id ?? null}
               showOrtho={showOrtho}
               externalPolygons={workAreaPolygons}
+              lineSelectMode={!!calcLineAssign}
+              onLineSelect={(a, b) => calcLineAssign?.(a, b)}
             />
 
             {/* 経路パネル（地図右上にオーバーレイ） */}
