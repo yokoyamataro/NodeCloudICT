@@ -296,7 +296,7 @@ function createSurveyPointIcon(label: string, isSelected: boolean = false): L.Di
 function createCoordinateIcon(label: string, type: string, isSelected: boolean = false): L.DivIcon {
   const typeColors: Record<string, string> = {
     control: '#ef4444',     // 基準点: 赤
-    boundary: '#3b82f6',    // 外周点: 青
+    boundary: '#3b82f6',    // 境界点: 青
     underdrain: '#22c55e',  // 暗渠構成点: 緑
     soil_import: '#f59e0b', // 客土構成点: オレンジ
     stake: '#22c55e',       // 測点: 緑

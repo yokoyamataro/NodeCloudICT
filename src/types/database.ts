@@ -38,7 +38,7 @@ export type CoordinateType = 'control' | 'boundary' | 'underdrain' | 'soil_impor
 // 点種（座標の用途）
 export type PointType =
   | 'reference'      // 基準点
-  | 'outer_boundary' // 外周点
+  | 'outer_boundary' // 境界点
   | 'inner_boundary' // 内周点（島部分）
   | 'zone_vertex'    // 区域頂点
   | 'construction'   // 施工点

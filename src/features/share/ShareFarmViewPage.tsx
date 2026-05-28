@@ -414,7 +414,7 @@ export function ShareFarmViewPage() {
 function coordinateColor(type: string): string {
   const t = type as CoordinateType
   if (t === 'control') return '#ea580c' // 基準点 = オレンジ
-  if (t === 'boundary') return '#0ea5e9' // 外周点 = シアン
+  if (t === 'boundary') return '#0ea5e9' // 境界点 = シアン
   if (t === 'current') return '#22c55e' // 現況 = 緑
   return '#3b82f6'
 }

@@ -28,7 +28,7 @@ type TabType = SurveyCategory
 
 const TAB_LABELS: Record<TabType, string> = {
   control: '基準点',
-  boundary: '外周点',
+  boundary: '境界点',
   underdrain: '暗渠構成点',
   other: 'その他',
 }
@@ -1100,7 +1100,7 @@ export function SurveyImportPage() {
                         >
                           <option value="other">その他</option>
                           <option value="control">基準点</option>
-                          <option value="boundary">外周点</option>
+                          <option value="boundary">境界点</option>
                           <option value="underdrain">暗渠構成点</option>
                         </select>
                       </td>

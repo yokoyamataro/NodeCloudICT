@@ -78,6 +78,6 @@ export type CoordinateType = 'control' | 'boundary' | 'current'
 
 export const COORDINATE_TYPE_NAMES: Record<CoordinateType, string> = {
   control: '基準点',
-  boundary: '外周点',
+  boundary: '境界点',
   current: '現況',
 }

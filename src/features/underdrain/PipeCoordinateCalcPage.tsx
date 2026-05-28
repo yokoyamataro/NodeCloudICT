@@ -489,7 +489,7 @@ export function PipeCoordinateCalcPage() {
   // 点種の日本語名マップ
   const TYPE_NAMES: Record<string, string> = {
     control: '基準点',
-    boundary: '外周点',
+    boundary: '境界点',
     underdrain: '暗渠構成点',
     soil_import: '客土構成点',
     stake: '測点',

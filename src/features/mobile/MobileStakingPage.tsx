@@ -865,7 +865,7 @@ export function MobileStakingPage() {
       })
     }
     for (const pipe of pipes as PipeRow[]) {
-      // 暗渠頂点は点種（基準点/外周点/現況）と並列で扱うため、管種別ではなく
+      // 暗渠頂点は点種（基準点/境界点/現況）と並列で扱うため、管種別ではなく
       // 一括で '_pipe_vertex' / '暗渠頂点' として 1 つの subType にまとめる
       for (let i = 0; i < pipe.vertices.length; i++) {
         const v = pipe.vertices[i]
@@ -2175,7 +2175,7 @@ export function MobileStakingPage() {
             const isSelected = t.id === selectedTargetId
             const isStaked = stakedTargetIds.has(t.id)
             // 色: 選択中 = オレンジ、座標は点種で色分け、暗渠頂点 = 緑
-            //   基準点(control) = 赤、外周点(boundary) = シアン、現況(current) = 青、その他 = 灰
+            //   基準点(control) = 赤、境界点(boundary) = シアン、現況(current) = 青、その他 = 灰
             let baseColor = '#3b82f6'
             if (t.kind === 'pipe_vertex') {
               baseColor = '#22c55e'
