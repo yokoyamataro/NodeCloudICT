@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Upload, Download, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Settings, Camera, Image as ImageIcon, Loader2, Pencil, Calculator, Layers } from 'lucide-react'
+import { Upload, Download, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Settings, Camera, Image as ImageIcon, Loader2, Calculator, Layers } from 'lucide-react'
 import { CoordinatePhotoModal } from './CoordinatePhotoModal'
 import { CoordinateCalcModal } from './CoordinateCalcModal'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
@@ -211,10 +211,16 @@ export function CoordinatesPage() {
   const { workAreas, fetchWorkAreas } = useWorkAreaStore()
   // 座標計算モーダル
   const [showCalcModal, setShowCalcModal] = useState(false)
+  // 座標計算で地図から点選択中の割り当て関数（null=非選択中）
+  const [calcAssign, setCalcAssign] = useState<((id: string) => void) | null>(null)
   // 区域の表示レイヤ（表示する工種コードの集合）
   const [visibleWorkTypes, setVisibleWorkTypes] = useState<Set<string>>(new Set())
   // 手入力・計算追加時に末尾行へスクロールするための ref
   const lastRowRef = useRef<HTMLTableRowElement | null>(null)
+  // 末尾の空行（手入力用）
+  const [newRow, setNewRow] = useState<{ pointNumber: string; x: string; y: string; z: string; type: string }>(
+    { pointNumber: '', x: '', y: '', z: '', type: '' },
+  )
   // 写真帳出力の進捗（null=非実行）
   const [photoExporting, setPhotoExporting] = useState<{ done: number; total: number } | null>(null)
   // 写真帳ひな形の選択ダイアログ
@@ -228,7 +234,6 @@ export function CoordinatesPage() {
     setZone,
     coordinates,
     fetchCoordinates,
-    addCoordinate,
     updateCoordinate,
     deleteCoordinate,
     deleteCoordinates,
@@ -314,12 +319,6 @@ export function CoordinatesPage() {
       unregister('coordinate-route')
     }
   }, [routeHasChanges])
-
-  // 手入力で1点追加し、末尾行へスクロール
-  const handleAddCoordinate = () => {
-    addCoordinate(selectedType)
-    setTimeout(() => lastRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60)
-  }
 
   // 座標計算の結果を新規点として追加
   const handleCalcAdd = (p: { pointNumber: string; x: number; y: number; type: string }) => {
@@ -723,10 +722,114 @@ export function CoordinatesPage() {
 
   // 点がクリックされたとき
   const handlePointClick = (id: string) => {
+    // 座標計算で地図から点を選択中なら、その点を割り当てて通常選択はしない
+    if (calcAssign) {
+      calcAssign(id)
+      return
+    }
     setSelectedPointId(id)
     if (routeMode) {
       appendRoutePoint(id, 'down')
     }
+  }
+
+  // 末尾の空行に入力された値を新規座標として確定
+  const commitNewRow = () => {
+    const pn = newRow.pointNumber.trim()
+    const hasX = newRow.x.trim() !== ''
+    const hasY = newRow.y.trim() !== ''
+    if (!pn && !hasX && !hasY) return
+    const xv = parseFloat(newRow.x)
+    const yv = parseFloat(newRow.y)
+    const zv = parseFloat(newRow.z)
+    importCoordinates([
+      {
+        pointNumber: pn || `P${coordinates.length + 1}`,
+        x: Number.isFinite(xv) ? xv : 0,
+        y: Number.isFinite(yv) ? yv : 0,
+        z: newRow.z.trim() !== '' && Number.isFinite(zv) ? zv : null,
+        type: (newRow.type || selectedType) as CoordinateType,
+      },
+    ])
+    setNewRow({ pointNumber: '', x: '', y: '', z: '', type: newRow.type })
+    setTimeout(() => lastRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80)
+  }
+
+  // 末尾の入力用空行
+  const renderNewRow = () => {
+    const onKey = (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        commitNewRow()
+      }
+    }
+    const cell = 'px-0.5 py-0.5'
+    const inp = 'w-full px-1 py-0.5 border border-slate-200 rounded text-sm'
+    return (
+      <tr
+        className="bg-amber-50/40"
+        onBlur={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) commitNewRow()
+        }}
+      >
+        <td className="px-1 py-0.5 text-center text-slate-300">＋</td>
+        <td className={cell} onClick={(e) => e.stopPropagation()}>
+          <input
+            value={newRow.pointNumber}
+            onChange={(e) => setNewRow((r) => ({ ...r, pointNumber: e.target.value }))}
+            onKeyDown={onKey}
+            placeholder="点番号"
+            className={inp}
+          />
+        </td>
+        <td className={cell} onClick={(e) => e.stopPropagation()}>
+          <input
+            value={newRow.x}
+            onChange={(e) => setNewRow((r) => ({ ...r, x: e.target.value }))}
+            onKeyDown={onKey}
+            placeholder="X"
+            inputMode="decimal"
+            className={`${inp} text-right font-mono`}
+          />
+        </td>
+        <td className={cell} onClick={(e) => e.stopPropagation()}>
+          <input
+            value={newRow.y}
+            onChange={(e) => setNewRow((r) => ({ ...r, y: e.target.value }))}
+            onKeyDown={onKey}
+            placeholder="Y"
+            inputMode="decimal"
+            className={`${inp} text-right font-mono`}
+          />
+        </td>
+        <td className={cell} onClick={(e) => e.stopPropagation()}>
+          <input
+            value={newRow.z}
+            onChange={(e) => setNewRow((r) => ({ ...r, z: e.target.value }))}
+            onKeyDown={onKey}
+            placeholder="Z"
+            inputMode="decimal"
+            className={`${inp} text-right font-mono`}
+          />
+        </td>
+        <td className={cell} onClick={(e) => e.stopPropagation()}>
+          <select
+            value={newRow.type || selectedType}
+            onChange={(e) => setNewRow((r) => ({ ...r, type: e.target.value }))}
+            className={`${inp} bg-white`}
+          >
+            {typeOptions.map((o) => (
+              <option key={o.code} value={o.code}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </td>
+        <td className="px-0.5 py-0.5 text-right text-slate-300">-</td>
+        <td className="px-0.5 py-0.5 text-right text-slate-300">-</td>
+        <td className="px-1 py-0.5"></td>
+      </tr>
+    )
   }
 
   // 区域（工事区域）の表示レイヤ切替チップ
@@ -764,19 +867,35 @@ export function CoordinatesPage() {
     const exportCount = checkedIds.size === 0 ? coordinates.length : checkedIds.size
     return (
       <div ref={menuRef} className="flex items-center gap-2 mt-3">
-        {/* インポート（アイコン） */}
+        {/* 座標入力（貼り付け / SIMA / CSV） */}
         <div className="relative">
           <button
             type="button"
             onClick={() => setOpenMenu(openMenu === 'import' ? null : 'import')}
-            title="インポート（貼り付け / SIMA / CSV）"
-            className={`flex items-center gap-0.5 px-2.5 py-1.5 text-sm border rounded ${hoverClass}`}
+            title="座標入力（貼り付け / SIMA / CSV）"
+            className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded ${hoverClass}`}
           >
-            <Upload className="h-4 w-4" />
+            <Download className="h-4 w-4" />
+            座標入力
             <ChevronDown className="h-3 w-3" />
           </button>
           {openMenu === 'import' && (
-            <div className="absolute left-0 top-full mt-1 w-44 bg-white border rounded shadow-lg z-20">
+            <div className="absolute left-0 top-full mt-1 w-52 bg-white border rounded shadow-lg z-20">
+              {/* 取込時の点種を指定 */}
+              <div className="px-3 py-2 border-b">
+                <label className="block text-[11px] text-slate-500 mb-1">取り込む点種</label>
+                <select
+                  value={selectedType}
+                  onChange={(e) => setSelectedType(e.target.value as CoordinateType)}
+                  className="w-full px-2 py-1 text-sm border rounded bg-white"
+                >
+                  {typeOptions.map((opt) => (
+                    <option key={opt.code} value={opt.code}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <button
                 type="button"
                 onClick={() => { setShowPasteModal(true); setOpenMenu(null) }}
@@ -813,16 +932,17 @@ export function CoordinatesPage() {
           )}
         </div>
 
-        {/* エクスポート（アイコン） */}
+        {/* 座標出力（CSV / SIMA / 写真帳） */}
         <div className="relative">
           <button
             type="button"
             onClick={() => setOpenMenu(openMenu === 'export' ? null : 'export')}
             disabled={exportDisabled}
-            title="エクスポート（CSV / SIMA / 写真帳）"
-            className={`flex items-center gap-0.5 px-2.5 py-1.5 text-sm border rounded ${hoverClass} disabled:opacity-50`}
+            title="座標出力（CSV / SIMA / 写真帳）"
+            className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded ${hoverClass} disabled:opacity-50`}
           >
-            <Download className="h-4 w-4" />
+            <Upload className="h-4 w-4" />
+            座標出力
             {checkedIds.size > 0 && (
               <span className="text-xs text-blue-600">({exportCount})</span>
             )}
@@ -940,16 +1060,6 @@ export function CoordinatesPage() {
           </div>
         )}
 
-        {/* 手入力 */}
-        <button
-          type="button"
-          onClick={handleAddCoordinate}
-          className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded ${hoverClass}`}
-        >
-          <Pencil className="h-3.5 w-3.5" />
-          手入力
-        </button>
-
         {/* 座標計算 */}
         <button
           type="button"
@@ -969,7 +1079,11 @@ export function CoordinatesPage() {
             typeOptions={typeOptions}
             defaultType={selectedType}
             onAdd={handleCalcAdd}
-            onClose={() => setShowCalcModal(false)}
+            onClose={() => {
+              setShowCalcModal(false)
+              setCalcAssign(null)
+            }}
+            onPickRequest={(fn) => setCalcAssign(() => fn)}
           />
         )}
       </div>
@@ -1066,22 +1180,6 @@ export function CoordinatesPage() {
       <div className="h-screen flex flex-col">
         <div className="p-4 border-b bg-white">
           <h2 className="text-lg font-semibold mb-3">座標計算書</h2>
-          <div>
-            <div className="max-w-xs">
-              <label className="block text-xs font-medium mb-1">座標種類</label>
-              <select
-                value={selectedType}
-                onChange={(e) => setSelectedType(e.target.value as CoordinateType)}
-                className="w-full px-2 py-1.5 text-sm border rounded"
-              >
-                {typeOptions.map((opt) => (
-                  <option key={opt.code} value={opt.code}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
           {renderToolbar('hover:bg-gray-50')}
         </div>
         <div className="flex-1 overflow-auto">
@@ -1202,13 +1300,7 @@ export function CoordinatesPage() {
                   </td>
                 </tr>
               ))}
-              {coordinates.length === 0 && (
-                <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
-                    座標データがありません
-                  </td>
-                </tr>
-              )}
+              {renderNewRow()}
             </tbody>
           </table>
         </div>
@@ -1236,22 +1328,6 @@ export function CoordinatesPage() {
           <div className="flex-1 flex flex-col overflow-hidden">
               {/* 設定パネル */}
               <div className="p-4 border-b bg-slate-50">
-                <div className="grid grid-cols-1 gap-3">
-                  <div className="max-w-xs">
-                    <label className="block text-xs font-medium mb-1">座標種類</label>
-                    <select
-                      value={selectedType}
-                      onChange={(e) => setSelectedType(e.target.value as CoordinateType)}
-                      className="w-full px-2 py-1.5 text-sm border rounded"
-                    >
-                      {typeOptions.map((opt) => (
-                        <option key={opt.code} value={opt.code}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
                 {renderToolbar('hover:bg-white')}
               </div>
 
@@ -1364,13 +1440,7 @@ export function CoordinatesPage() {
                         </td>
                       </tr>
                     ))}
-                    {coordinates.length === 0 && (
-                      <tr>
-                        <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
-                          座標データがありません
-                        </td>
-                      </tr>
-                    )}
+                    {renderNewRow()}
                   </tbody>
                 </table>
               </div>

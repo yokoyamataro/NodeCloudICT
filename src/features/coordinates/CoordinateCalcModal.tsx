@@ -1,6 +1,6 @@
 // 座標計算モーダル: 交点計算 / 線上計算。既存座標から点・線を選び、結果を新規点として追加する。
 import { useMemo, useState } from 'react'
-import { X, Calculator } from 'lucide-react'
+import { X, Calculator, MapPin } from 'lucide-react'
 import { intersectionCalc, onLineCalc, type XY } from '@/lib/coordCalc'
 
 export interface CalcCoordinate {
@@ -16,12 +16,16 @@ interface Props {
   defaultType: string
   onAdd: (p: { pointNumber: string; x: number; y: number; type: string }) => void
   onClose: () => void
+  /** 地図からの点選択を要求する。assign に座標IDを渡すと確定。null でキャンセル/解除 */
+  onPickRequest?: (assign: ((coordId: string) => void) | null) => void
 }
 
 type Mode = 'intersection' | 'online'
 
-export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onAdd, onClose }: Props) {
+export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onAdd, onClose, onPickRequest }: Props) {
   const [mode, setMode] = useState<Mode>('intersection')
+  // 地図から選択中のスロット名（null=通常表示）
+  const [pickingLabel, setPickingLabel] = useState<string | null>(null)
 
   // 交点計算用
   const [l1a, setL1a] = useState('')
@@ -70,22 +74,59 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, l1a, l1b, l1off, l2a, l2b, l2off, oa, ob, ext, lat, byId])
 
-  const PointSelect = ({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) => (
-    <select value={value} onChange={(e) => onChange(e.target.value)} className="px-2 py-1 border rounded text-sm w-full bg-white">
-      <option value="">{placeholder}</option>
-      {coordinates.map((c) => (
-        <option key={c.id} value={c.id}>
-          {c.pointNumber}（{c.x.toFixed(2)}, {c.y.toFixed(2)}）
-        </option>
-      ))}
-    </select>
-  )
+  // 地図からの点選択を開始
+  const startPick = (label: string, onChange: (v: string) => void) => {
+    if (!onPickRequest) return
+    setPickingLabel(label)
+    onPickRequest((coordId: string) => {
+      onChange(coordId)
+      setPickingLabel(null)
+      onPickRequest(null)
+    })
+  }
+  const cancelPick = () => {
+    setPickingLabel(null)
+    onPickRequest?.(null)
+  }
+
+  // 地図から点を選ぶピッカー（プルダウンは廃止）
+  const PointSelect = ({ value, onChange, placeholder, label }: { value: string; onChange: (v: string) => void; placeholder: string; label: string }) => {
+    const c = value ? byId.get(value) : null
+    return (
+      <button
+        type="button"
+        onClick={() => startPick(label, onChange)}
+        className="w-full flex items-center justify-between gap-2 px-2 py-1.5 border rounded text-sm text-left hover:bg-blue-50"
+      >
+        <span className={c ? 'font-medium text-slate-800' : 'text-slate-400'}>
+          {c ? `${c.pointNumber}（${c.x.toFixed(2)}, ${c.y.toFixed(2)}）` : placeholder}
+        </span>
+        <span className="flex items-center gap-0.5 text-blue-600 text-xs whitespace-nowrap">
+          <MapPin className="h-3.5 w-3.5" />
+          地図で選択
+        </span>
+      </button>
+    )
+  }
 
   const handleAdd = () => {
     if (!result) return
     const pn = name.trim() || (mode === 'intersection' ? '交点' : '線上点')
     onAdd({ pointNumber: pn, x: result.x, y: result.y, type })
     onClose()
+  }
+
+  // 地図選択中は全画面を覆わず、上部バナーのみ表示（地図をクリック可能にする）
+  if (pickingLabel) {
+    return (
+      <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[3000] bg-blue-600 text-white px-4 py-2 rounded-full shadow-lg text-sm flex items-center gap-3">
+        <MapPin className="h-4 w-4" />
+        <span>地図で「{pickingLabel}」の点をタップしてください</span>
+        <button onClick={cancelPick} className="underline whitespace-nowrap">
+          キャンセル
+        </button>
+      </div>
+    )
   }
 
   return (
@@ -129,8 +170,8 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
               ].map((ln) => (
                 <div key={ln.label} className="border rounded p-2 space-y-2">
                   <div className="text-xs font-medium text-slate-600">{ln.label}</div>
-                  <PointSelect value={ln.a} onChange={ln.sa} placeholder="始点を選択" />
-                  <PointSelect value={ln.b} onChange={ln.sb} placeholder="終点を選択" />
+                  <PointSelect value={ln.a} onChange={ln.sa} placeholder="始点を選択" label={`${ln.label} 始点`} />
+                  <PointSelect value={ln.b} onChange={ln.sb} placeholder="終点を選択" label={`${ln.label} 終点`} />
                   <label className="flex items-center gap-2 text-xs">
                     右オフセット(m)
                     <input
@@ -150,8 +191,8 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
                 線（2点）を選び、起点から延長方向(+前方) ・ 左右(+右) にずらした点を計算します。
               </p>
               <div className="border rounded p-2 space-y-2">
-                <PointSelect value={oa} onChange={setOa} placeholder="起点を選択" />
-                <PointSelect value={ob} onChange={setOb} placeholder="方向先（終点）を選択" />
+                <PointSelect value={oa} onChange={setOa} placeholder="起点を選択" label="起点" />
+                <PointSelect value={ob} onChange={setOb} placeholder="方向先（終点）を選択" label="方向先" />
                 <div className="flex gap-3">
                   <label className="flex items-center gap-2 text-xs">
                     延長(m,+前)
