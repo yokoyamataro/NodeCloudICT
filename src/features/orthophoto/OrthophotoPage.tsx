@@ -17,6 +17,21 @@ import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import { useOrthophotoStore, tileBoundsLatLng } from '@/stores/orthophotoStore'
 import { CoordinateMap, type ExternalPolygon } from '@/components/map/CoordinateMap'
+import { CoordinateConverter } from '@/lib/coordinates'
+import {
+  OrthophotoAnnotations,
+  type ToolMode,
+  type MeasureResult,
+  TOOL_LIST,
+  formatMeasure,
+} from './OrthophotoAnnotations'
+import {
+  type Annotation,
+  loadAnnotations,
+  saveAnnotations,
+} from '@/lib/annotations'
+import { buildDxf, downloadDxf, type DxfEntity } from '@/lib/dxf'
+import { FileDown } from 'lucide-react'
 
 export function OrthophotoPage() {
   const { currentFarm } = useFarmStore()
@@ -76,6 +91,98 @@ export function OrthophotoPage() {
   // モーダル表示
   const [showUpload, setShowUpload] = useState(false)
   const [showList, setShowList] = useState(false)
+
+  // ===== 作図・計測 =====
+  const [tool, setTool] = useState<ToolMode>('none')
+  const [drawColor, setDrawColor] = useState('#dc2626')
+  const [annotations, setAnnotationsState] = useState<Annotation[]>([])
+  const [measureResult, setMeasureResult] = useState<MeasureResult | null>(null)
+  // 工区切替で読み込み・保存
+  useEffect(() => {
+    if (currentFarm) setAnnotationsState(loadAnnotations(currentFarm.id))
+    else setAnnotationsState([])
+    setMeasureResult(null)
+    setTool('none')
+  }, [currentFarm])
+  const setAnnotations = (next: Annotation[]) => {
+    setAnnotationsState(next)
+    if (currentFarm) saveAnnotations(currentFarm.id, next)
+  }
+  // 計測用の座標変換（プロジェクト座標系）
+  const converter = useMemo(() => new CoordinateConverter(projectZone ?? 13), [projectZone])
+
+  // DXF 出力（CAD慣例の X=東/Y=北 に変換して書き出す）
+  const handleDxfExport = () => {
+    if (annotations.length === 0) {
+      alert('出力する作図がありません')
+      return
+    }
+    const entities: DxfEntity[] = []
+    // lat/lng → 平面(X=北,Y=東) → DXF(X=東,Y=北)
+    const dxfXY = (lat: number, lng: number) => {
+      const p = converter.toXY(lat, lng)
+      return { x: p.y, y: p.x }
+    }
+    for (const a of annotations) {
+      switch (a.kind) {
+        case 'point': {
+          const p = dxfXY(a.pos[0], a.pos[1])
+          entities.push({ type: 'POINT', x: p.x, y: p.y, layer: 'POINT' })
+          break
+        }
+        case 'line': {
+          const v = a.vertices.map((vv) => dxfXY(vv[0], vv[1]))
+          for (let i = 0; i < v.length - 1; i++) {
+            entities.push({ type: 'LINE', x1: v[i].x, y1: v[i].y, x2: v[i + 1].x, y2: v[i + 1].y, layer: 'LINE' })
+          }
+          break
+        }
+        case 'polygon': {
+          const v = a.vertices.map((vv) => dxfXY(vv[0], vv[1]))
+          for (let i = 0; i < v.length; i++) {
+            const j = (i + 1) % v.length
+            entities.push({ type: 'LINE', x1: v[i].x, y1: v[i].y, x2: v[j].x, y2: v[j].y, layer: 'POLYGON' })
+          }
+          break
+        }
+        case 'circle': {
+          const c = dxfXY(a.center[0], a.center[1])
+          entities.push({ type: 'CIRCLE', cx: c.x, cy: c.y, r: a.radius, layer: 'CIRCLE' })
+          break
+        }
+        case 'arc': {
+          const c = dxfXY(a.center[0], a.center[1])
+          entities.push({
+            type: 'ARC',
+            cx: c.x,
+            cy: c.y,
+            r: a.radius,
+            startAngleDeg: a.startDeg,
+            endAngleDeg: a.endDeg,
+            layer: 'ARC',
+          })
+          break
+        }
+        case 'text':
+        case 'comment': {
+          const p = dxfXY(a.pos[0], a.pos[1])
+          entities.push({
+            type: 'TEXT',
+            x: p.x,
+            y: p.y,
+            text: a.text,
+            height: 0.5,
+            layer: a.kind === 'text' ? 'TEXT' : 'COMMENT',
+          })
+          break
+        }
+      }
+    }
+    const dxf = buildDxf(entities)
+    const farmName = currentFarm?.name || 'ortho'
+    const date = new Date().toISOString().slice(0, 10)
+    downloadDxf(dxf, `${farmName}_${date}.dxf`)
+  }
 
   // input(webkitdirectory) 属性付与
   useEffect(() => {
@@ -245,6 +352,16 @@ export function OrthophotoPage() {
   const headerActions = (
     <div className="flex items-center gap-2">
       <button
+        onClick={handleDxfExport}
+        disabled={annotations.length === 0}
+        className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
+        title="作図データをDXFで出力"
+      >
+        <FileDown className="h-4 w-4" />
+        DXF出力
+        {annotations.length > 0 && <span className="ml-1 text-xs text-blue-600">({annotations.length})</span>}
+      </button>
+      <button
         onClick={() => setShowList(true)}
         className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
         title="登録済みオルソ一覧"
@@ -268,14 +385,99 @@ export function OrthophotoPage() {
     <div className="h-full flex flex-col">
       <PageHeader title="オルソ画像" subtitle="ドローン等のオルソ画像（Web タイル）" actions={headerActions} />
 
-      {/* 大きな地図（オルソ＋座標＋区域） */}
+      {/* 大きな地図（オルソ＋座標＋区域＋作図） */}
       <div className="flex-1 relative">
         <CoordinateMap
           key={currentFarm.id}
           farmId={currentFarm.id}
           showOrtho
           externalPolygons={workAreaPolygons}
-        />
+        >
+          <OrthophotoAnnotations
+            tool={tool}
+            color={drawColor}
+            annotations={annotations}
+            setAnnotations={setAnnotations}
+            converter={converter}
+            measureResult={measureResult}
+            setMeasureResult={setMeasureResult}
+          />
+        </CoordinateMap>
+
+        {/* 作図ツールバー（左上オーバーレイ） */}
+        <div className="absolute top-2 left-2 z-[1000] bg-white/95 border rounded-lg shadow p-2 flex items-center gap-1 flex-wrap max-w-[calc(100%-1rem)]">
+          {TOOL_LIST.map((t) => {
+            const active = tool === t.tool
+            return (
+              <button
+                key={t.tool}
+                onClick={() => setTool(t.tool)}
+                className={`px-2 py-1 text-xs rounded border ${
+                  active
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                }`}
+                title={t.help ?? t.label}
+              >
+                {t.label}
+              </button>
+            )
+          })}
+          {/* 色選択 */}
+          <label className="flex items-center gap-1 ml-1 text-xs text-slate-600">
+            色
+            <input
+              type="color"
+              value={drawColor}
+              onChange={(e) => setDrawColor(e.target.value)}
+              className="w-7 h-6 p-0 border rounded cursor-pointer"
+            />
+          </label>
+          {/* 全消去 */}
+          {annotations.length > 0 && (
+            <button
+              onClick={() => {
+                if (confirm(`作図(${annotations.length}件)をすべて削除しますか？`)) {
+                  setAnnotations([])
+                }
+              }}
+              className="px-2 py-1 text-xs rounded border border-red-300 text-red-600 hover:bg-red-50"
+              title="作図を全消去"
+            >
+              全消去
+            </button>
+          )}
+        </div>
+
+        {/* ツールのヘルプ＋計測結果 */}
+        {(tool !== 'none' || measureResult) && (
+          <div className="absolute bottom-2 left-2 z-[1000] bg-white/95 border rounded-lg shadow px-3 py-2 text-xs space-y-1 max-w-[calc(100%-1rem)]">
+            {tool !== 'none' && (
+              <div className="text-slate-700">
+                <span className="font-semibold">
+                  {TOOL_LIST.find((t) => t.tool === tool)?.label ?? tool}
+                </span>
+                <span className="ml-2 text-slate-500">
+                  {TOOL_LIST.find((t) => t.tool === tool)?.help ?? ''}
+                </span>
+              </div>
+            )}
+            {measureResult && (
+              <div className="text-sm font-mono text-emerald-700">
+                {measureResult.kind === 'dist' && '距離: '}
+                {measureResult.kind === 'area' && '面積: '}
+                {measureResult.kind === 'perp' && '垂線長: '}
+                {formatMeasure(measureResult)}
+                <button
+                  onClick={() => setMeasureResult(null)}
+                  className="ml-2 text-xs text-slate-400 hover:text-slate-700"
+                >
+                  クリア
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* アップロードモーダル */}

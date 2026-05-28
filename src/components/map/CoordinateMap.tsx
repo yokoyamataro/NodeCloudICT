@@ -160,6 +160,8 @@ interface CoordinateMapProps {
   // 境界線（区域の辺）選択モード: 辺クリックで両端2点の座標IDを返す
   lineSelectMode?: boolean
   onLineSelect?: (id1: string, id2: string) => void
+  // MapContainer の子として追加レイヤを差し込む（作図・計測など）
+  children?: React.ReactNode
 }
 
 export function CoordinateMap({
@@ -179,6 +181,7 @@ export function CoordinateMap({
   edgeRounding = 'round',
   lineSelectMode = false,
   onLineSelect,
+  children,
 }: CoordinateMapProps) {
   const { coordinates } = useCoordinateStore()
   const {
@@ -410,6 +413,9 @@ export function CoordinateMap({
           )}
         </Marker>
       ))}
+
+      {/* 外部から差し込む追加レイヤ（オルソ画像ページの作図・計測など） */}
+      {children}
     </MapContainer>
   )
 }
