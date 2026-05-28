@@ -387,6 +387,14 @@ export function MobileStakingPage() {
   useEffect(() => {
     try { localStorage.setItem('rtk:useGeoid', useGeoidCorrection ? '1' : '0') } catch { /* ignore */ }
   }, [useGeoidCorrection])
+  // 三次元誘導（ターゲットとの比高表示）
+  const [use3dGuidance, setUse3dGuidance] = useState<boolean>(() => {
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('rtk:use3dGuidance') : null
+    return saved === '1'
+  })
+  useEffect(() => {
+    try { localStorage.setItem('rtk:use3dGuidance', use3dGuidance ? '1' : '0') } catch { /* ignore */ }
+  }, [use3dGuidance])
   // ジオイドグリッド（遅延読込）
   const [geoidGrid, setGeoidGrid] = useState<import('@/lib/geoid').GeoidGrid | null>(null)
   const [geoidLoading, setGeoidLoading] = useState(false)
@@ -1005,6 +1013,35 @@ export function MobileStakingPage() {
       return null
     }
   }, [currentPos, converter])
+
+  // 現在地の標高(H = 楕円体高 − ジオイド高 − アンテナ高)。利用不可なら null
+  const currentZ = useMemo<number | null>(() => {
+    if (currentAlt == null) return null
+    if (currentPos && useGeoidCorrection && geoidGrid) {
+      const rRow = (geoidGrid.latMax - currentPos[0]) / geoidGrid.dLat
+      const rCol = (currentPos[1] - geoidGrid.lonMin) / geoidGrid.dLon
+      if (rRow >= 0 && rCol >= 0 && rRow < geoidGrid.nrows && rCol < geoidGrid.ncols) {
+        const r0 = Math.floor(rRow), c0 = Math.floor(rCol)
+        const r1 = Math.min(r0 + 1, geoidGrid.nrows - 1)
+        const c1 = Math.min(c0 + 1, geoidGrid.ncols - 1)
+        const tr = rRow - r0, tc = rCol - c0
+        const v00 = geoidGrid.values[r0 * geoidGrid.ncols + c0]
+        const v01 = geoidGrid.values[r0 * geoidGrid.ncols + c1]
+        const v10 = geoidGrid.values[r1 * geoidGrid.ncols + c0]
+        const v11 = geoidGrid.values[r1 * geoidGrid.ncols + c1]
+        const N = (v00 * (1 - tc) + v01 * tc) * (1 - tr) + (v10 * (1 - tc) + v11 * tc) * tr
+        if (Number.isFinite(N)) return currentAlt - N - antennaHeight
+      }
+    }
+    if (currentPos) return currentAlt - antennaHeight
+    return null
+  }, [currentAlt, currentPos, useGeoidCorrection, geoidGrid, antennaHeight])
+
+  // ターゲットとの比高（現在地 − ターゲットZ）
+  const elevationDiff = useMemo<number | null>(() => {
+    if (!use3dGuidance || currentZ == null || !selectedTarget || selectedTarget.z == null) return null
+    return currentZ - selectedTarget.z
+  }, [use3dGuidance, currentZ, selectedTarget])
 
   // 近接モード: 自己位置→ターゲットの相対位置（測量座標 X=北/Y=東 ベースで高精度）
   const proximityRel = useMemo(() => {
@@ -2511,6 +2548,18 @@ export function MobileStakingPage() {
               標高 = 楕円体高 − ジオイド高 − アンテナ高
             </div>
 
+            <label className="flex items-center gap-2 mb-2 pt-2 border-t">
+              <input
+                type="checkbox"
+                checked={use3dGuidance}
+                onChange={(e) => setUse3dGuidance(e.target.checked)}
+              />
+              <span className="text-xs">三次元誘導（ターゲットとの比高を表示）</span>
+            </label>
+            <div className="text-[11px] text-slate-500 mb-2">
+              方位・距離の右に「↓現在地が高い／↑現在地が低い」を表示します。
+            </div>
+
             <div className="border-t pt-2 mb-2">
               <div className="text-xs text-slate-600 mb-1">新点の採番</div>
               <label className="flex items-center gap-2 mb-1">
@@ -2748,9 +2797,9 @@ export function MobileStakingPage() {
               <div className="text-xs text-slate-500">ターゲット</div>
               <div className="font-bold truncate">
                 {selectedTarget.name}
-                <span className="ml-2 text-xs text-slate-500 font-normal">
-                  {selectedTarget.kind === 'coordinate' ? '座標' : '暗渠頂点'}
-                </span>
+                {selectedTarget.kind !== 'coordinate' && (
+                  <span className="ml-2 text-xs text-slate-500 font-normal">暗渠頂点</span>
+                )}
               </div>
             </button>
             <button
@@ -2780,6 +2829,24 @@ export function MobileStakingPage() {
                       : `${distanceToTarget.toFixed(2)} m`}
                   </div>
                 </div>
+                {use3dGuidance && elevationDiff != null && (
+                  <div className="text-right border-l pl-2 ml-1">
+                    <div className="text-[10px] text-slate-500 leading-none">比高</div>
+                    <div className="font-mono font-bold text-lg leading-tight" style={{
+                      color: Math.abs(elevationDiff) < 0.005
+                        ? '#0f766e'
+                        : elevationDiff > 0
+                          ? '#b45309'
+                          : '#1d4ed8',
+                    }}>
+                      {Math.abs(elevationDiff) < 0.005
+                        ? '0.00 m'
+                        : elevationDiff > 0
+                          ? `↓${elevationDiff.toFixed(2)} m`
+                          : `↑${(-elevationDiff).toFixed(2)} m`}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
