@@ -343,6 +343,33 @@ export function OrthophotoAnnotations({
     }
   }, [map, tool])
 
+  // 作図・計測モードのときはクロスヘアカーソルにして位置を選びやすくする
+  // （選択／削除モードは標準のままにして既存の操作感を維持）
+  useEffect(() => {
+    const el = map.getContainer()
+    const drawingTools: ToolMode[] = [
+      'point',
+      'point-coord',
+      'line',
+      'polygon',
+      'circle',
+      'arc',
+      'text',
+      'comment',
+      'measure-dist',
+      'measure-area',
+      'measure-perp',
+    ]
+    if (drawingTools.includes(tool)) {
+      el.style.cursor = 'crosshair'
+    } else {
+      el.style.cursor = ''
+    }
+    return () => {
+      el.style.cursor = ''
+    }
+  }, [map, tool])
+
   const handleDelete = (id: string) => {
     if (tool !== 'erase') return
     if (!confirm('この図形を削除しますか？')) return
