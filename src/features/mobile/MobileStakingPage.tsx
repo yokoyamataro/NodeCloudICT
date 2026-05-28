@@ -416,6 +416,22 @@ export function MobileStakingPage() {
   const [showCalcModal, setShowCalcModal] = useState(false)
   // 計算モーダルで地図から点選択中の割り当て関数
   const [calcAssign, setCalcAssign] = useState<((id: string) => void) | null>(null)
+  // LANDXML モード（TIN を表示し、現在地との比高を常時表示）
+  const [landxmlMode, setLandxmlMode] = useState(false)
+  const prevBaseLayerRef = useRef<typeof baseLayer | null>(null)
+  const landxmlInputRef = useRef<HTMLInputElement>(null)
+  // LANDXML モード ON で背景を「背景なし」に、OFF で元に戻す
+  useEffect(() => {
+    if (landxmlMode) {
+      if (prevBaseLayerRef.current === null) prevBaseLayerRef.current = baseLayer
+      if (baseLayer !== 'none') setBaseLayer('none')
+    } else if (prevBaseLayerRef.current !== null) {
+      setBaseLayer(prevBaseLayerRef.current)
+      prevBaseLayerRef.current = null
+    }
+    // baseLayer はあえて依存に入れない（モード切替の前後のみ反映したい）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [landxmlMode])
   const [targetFilter, setTargetFilter] = useState<
     'all' | 'coordinate' | 'pipe_vertex' | 'route'
   >('all')
@@ -1788,6 +1804,13 @@ export function MobileStakingPage() {
           <Share2 className="h-4 w-4" />
         </button>
         <button
+          onClick={() => setLandxmlMode((v) => !v)}
+          className={`p-1.5 rounded ${landxmlMode ? 'bg-cyan-600' : 'bg-slate-700 hover:bg-slate-600'}`}
+          title="LANDXML モード（TIN表示・現在地との比高を表示）"
+        >
+          <FileText className="h-4 w-4" />
+        </button>
+        <button
           onClick={() => setShowSettings((v) => !v)}
           className="p-1.5 rounded bg-slate-700 hover:bg-slate-600"
           title="設定"
@@ -2402,7 +2425,7 @@ export function MobileStakingPage() {
           )}
 
           {/* 施工管理：床掘 TIN の三角形エッジ */}
-          {screenMode === 'construction' && trenchEdges.map((tri, i) => (
+          {(screenMode === 'construction' || landxmlMode) && trenchEdges.map((tri, i) => (
             <Polyline
               key={`trench-${i}`}
               positions={tri}
@@ -2430,6 +2453,82 @@ export function MobileStakingPage() {
             targetName={selectedTarget.name}
             onCancel={() => setProximityCancelled(true)}
           />
+        )}
+
+        {/* LANDXMLモード：TIN比高バナー（兼 LandXML 読込ボタン） */}
+        {landxmlMode && (
+          <div className="absolute top-2 left-2 z-[1000] bg-white/95 border rounded-lg shadow-lg p-3 min-w-[200px]">
+            <div className="flex items-center gap-1 text-[11px] text-slate-500 mb-1">
+              <FileText className="h-3 w-3 text-cyan-700" />
+              LANDXML
+            </div>
+            {!trenchSurface ? (
+              <>
+                <div className="text-xs text-slate-600 mb-2">三角面データを読み込んでください</div>
+                <label className="cursor-pointer">
+                  <input
+                    ref={landxmlInputRef}
+                    type="file"
+                    accept=".xml,.XML,.landxml,.LANDXML"
+                    onChange={handleLoadXml}
+                    className="hidden"
+                  />
+                  <span className="inline-flex items-center gap-1 px-2 py-1 bg-cyan-700 text-white text-xs rounded hover:bg-cyan-600">
+                    <Upload className="h-3 w-3" />
+                    LandXMLを選択
+                  </span>
+                </label>
+              </>
+            ) : (
+              <>
+                {dataSourceLabel && (
+                  <div className="text-[10px] text-slate-500 truncate max-w-[18rem]" title={dataSourceLabel}>
+                    {dataSourceLabel}
+                  </div>
+                )}
+                <div className="text-[11px] text-slate-500 mt-1">TIN との比高</div>
+                {trenchDiff !== null ? (
+                  <>
+                    <div className="text-2xl font-bold tabular-nums" style={{ color: diffColor(trenchDiff) }}>
+                      {trenchDiff >= 0 ? '↑' : '↓'}
+                      {Math.abs(trenchDiff).toFixed(3)} m
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">
+                      実標高 {selfElevation !== null ? selfElevation.toFixed(3) : '-'} ／ TIN {trenchZ !== null ? trenchZ.toFixed(3) : '-'}
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-xs text-slate-400">現在地が TIN 範囲外、または高さ取得待ち…</div>
+                )}
+                <div className="flex items-center gap-2 mt-2 border-t pt-2">
+                  <label className="cursor-pointer">
+                    <input
+                      ref={landxmlInputRef}
+                      type="file"
+                      accept=".xml,.XML,.landxml,.LANDXML"
+                      onChange={handleLoadXml}
+                      className="hidden"
+                    />
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 border border-slate-300 text-slate-600 text-[11px] rounded hover:bg-slate-50">
+                      <Upload className="h-3 w-3" />
+                      別のLandXML
+                    </span>
+                  </label>
+                  <button
+                    onClick={() => {
+                      setTrenchSurface(null)
+                      setGroundSurface(null)
+                      setAlignmentLines([])
+                      setDataSourceLabel(null)
+                    }}
+                    className="px-2 py-0.5 text-[11px] border rounded hover:bg-slate-50"
+                  >
+                    クリア
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         )}
 
         {/* 施工管理モード：ΔZ 大型表示 */}
