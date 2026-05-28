@@ -185,11 +185,14 @@ export function OrthophotoAnnotations({
   extraSnapPoints,
 }: Props) {
   const [tempVerts, setTempVerts] = useState<[number, number][]>([])
+  // マウス追従プレビュー位置（ラバーバンド用）
+  const [hoverPos, setHoverPos] = useState<[number, number] | null>(null)
   const lastToolRef = useRef<ToolMode>(tool)
   useEffect(() => {
     if (lastToolRef.current !== tool) {
       lastToolRef.current = tool
       setTempVerts([])
+      setHoverPos(null)
     }
   }, [tool])
 
@@ -301,7 +304,17 @@ export function OrthophotoAnnotations({
             let endDeg = (Math.atan2(p2.x - c.x, p2.y - c.y) * 180) / Math.PI
             startDeg = ((startDeg % 360) + 360) % 360
             endDeg = ((endDeg % 360) + 360) % 360
+            // CCW での掃引角度（0..360）
+            let sweep = (((endDeg - startDeg) % 360) + 360) % 360
+            // 反対側にならないよう、常に短い側（minor arc）を採用
+            if (sweep > 180) {
+              const t = startDeg
+              startDeg = endDeg
+              endDeg = t
+              sweep = 360 - sweep
+            }
             if (endDeg <= startDeg) endDeg += 360
+            void sweep
             if (r > 0) {
               setAnnotations([
                 ...annotations,
@@ -352,6 +365,23 @@ export function OrthophotoAnnotations({
         default:
           break
       }
+    },
+    mousemove(e) {
+      // 作図・計測モードのときだけ追従プレビュー位置を更新
+      const placing = tool !== 'none' && tool !== 'erase'
+      if (!placing) {
+        if (hoverPos !== null) setHoverPos(null)
+        return
+      }
+      let ll: [number, number] = [e.latlng.lat, e.latlng.lng]
+      if (snapEnabled) {
+        const snap = findSnap(e)
+        if (snap) ll = snap
+      }
+      setHoverPos(ll)
+    },
+    mouseout() {
+      setHoverPos(null)
     },
     dblclick() {
       if (tool === 'line') finalizeLine()
@@ -540,22 +570,61 @@ export function OrthophotoAnnotations({
         return null
       })}
 
-      {/* 作図中（途中）の表示 */}
-      {tempVerts.length > 0 && (
-        <>
-          {(tool === 'line' || tool === 'polygon' || tool === 'measure-area' || tool === 'measure-dist' || tool === 'measure-perp') && tempVerts.length >= 2 && (
-            <Polyline positions={tempVerts} pathOptions={{ color, weight: 2, dashArray: '4,3' }} />
-          )}
-          {tempVerts.map((v, i) => (
-            <CircleMarker
-              key={`tv-${i}`}
-              center={v}
-              radius={4}
-              pathOptions={{ color, fillColor: color, fillOpacity: 1, weight: 1 }}
-            />
-          ))}
-        </>
-      )}
+      {/* 作図中（途中）の表示 ＋ マウス追従プレビュー */}
+      {(() => {
+        const placing = tool !== 'none' && tool !== 'erase'
+        const hover = placing && hoverPos
+        // 線/面/計測の折れ線プレビュー: 既存の tempVerts + マウス位置
+        const previewVerts: [number, number][] =
+          hover && tempVerts.length >= 1 &&
+          (tool === 'line' || tool === 'polygon' || tool === 'measure-area' || tool === 'measure-dist' || tool === 'measure-perp')
+            ? [...tempVerts, hoverPos]
+            : tempVerts
+        return (
+          <>
+            {previewVerts.length >= 2 && (
+              <Polyline positions={previewVerts} pathOptions={{ color, weight: 2, dashArray: '4,3' }} />
+            )}
+            {/* 面: マウスから始点に戻る閉合プレビュー */}
+            {tool === 'polygon' && hover && tempVerts.length >= 2 && (
+              <Polyline positions={[hoverPos, tempVerts[0]]} pathOptions={{ color, weight: 1, dashArray: '2,3', opacity: 0.6 }} />
+            )}
+            {/* 円: 中心が決まっていればマウス位置までの半径で仮の円 */}
+            {tool === 'circle' && hover && tempVerts.length === 1 && (() => {
+              const cc = converter.toXY(tempVerts[0][0], tempVerts[0][1])
+              const hh = converter.toXY(hoverPos[0], hoverPos[1])
+              const r = Math.hypot(hh.x - cc.x, hh.y - cc.y)
+              return (
+                <>
+                  <Circle center={tempVerts[0]} radius={r} pathOptions={{ color, weight: 1, dashArray: '4,3', fillOpacity: 0.05 }} />
+                  <Polyline positions={[tempVerts[0], hoverPos]} pathOptions={{ color, weight: 1, dashArray: '2,3', opacity: 0.6 }} />
+                </>
+              )
+            })()}
+            {/* 円弧: 中心→マウスの仮半径線 */}
+            {tool === 'arc' && hover && tempVerts.length >= 1 && (
+              <Polyline positions={[tempVerts[0], hoverPos]} pathOptions={{ color, weight: 1, dashArray: '2,3', opacity: 0.6 }} />
+            )}
+            {/* 確定済みの頂点 */}
+            {tempVerts.map((v, i) => (
+              <CircleMarker
+                key={`tv-${i}`}
+                center={v}
+                radius={4}
+                pathOptions={{ color, fillColor: color, fillOpacity: 1, weight: 1 }}
+              />
+            ))}
+            {/* マウス追従の小マーカー（スナップ時は強調） */}
+            {hover && (
+              <CircleMarker
+                center={hoverPos}
+                radius={snapEnabled ? 5 : 3}
+                pathOptions={{ color, fillColor: '#fff', fillOpacity: 0.8, weight: 1.5 }}
+              />
+            )}
+          </>
+        )
+      })()}
 
       {/* 最新の計測結果ジオメトリ（クリアまたは寸法保存まで残す） */}
       {renderLastMeasure()}
