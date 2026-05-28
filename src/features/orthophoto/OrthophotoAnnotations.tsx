@@ -1,5 +1,6 @@
 // オルソ画像ページの作図・計測レイヤ。CoordinateMap の MapContainer の子として描画する。
-// 担当: 道具モードに応じた地図クリックの受付、作図中図形の表示、保存済み図形の描画、計測の表示。
+// 親側が tool / fontSize / lastMeasure / pending comment 等の状態を保持し、
+// 当コンポーネントは地図クリックの受付・図形描画を担当する。
 import { useEffect, useRef, useState } from 'react'
 import { Polyline, Polygon, Marker, CircleMarker, Circle, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
@@ -10,22 +11,39 @@ import {
   newAnnotationId,
 } from '@/lib/annotations'
 
-export type ToolMode = 'none' | AnnotationKind | 'measure-dist' | 'measure-area' | 'measure-perp' | 'erase'
+export type ToolMode =
+  | 'none'
+  | 'point'
+  | 'point-coord' // クリックを座標管理に新規登録
+  | AnnotationKind
+  | 'measure-dist'
+  | 'measure-area'
+  | 'measure-perp'
+  | 'erase'
 
-export interface MeasureResult {
+export interface MeasureGeom {
   kind: 'dist' | 'area' | 'perp'
-  value: number // メートル / 平方メートル
-  detail?: string // 補足表示
+  vertices: [number, number][]
+  value: number // m or m²
 }
 
 interface Props {
   tool: ToolMode
   color: string
+  fontSize: number
+  /** 作図時に付与するレイヤ名 */
+  currentLayer: string
   annotations: Annotation[]
   setAnnotations: (next: Annotation[]) => void
   converter: CoordinateConverter
-  measureResult: MeasureResult | null
-  setMeasureResult: (r: MeasureResult | null) => void
+  lastMeasure: MeasureGeom | null
+  setLastMeasure: (m: MeasureGeom | null) => void
+  /** 点(座標登録) ツールで呼び出される */
+  onAddCoordinate?: (lat: number, lng: number) => void
+  /** コメント道具で呼び出される（モーダル入力用） */
+  onRequestComment?: (pos: [number, number]) => void
+  /** 選択ツール時、図形クリックで親に通知（インスペクタ表示用） */
+  onSelect?: (id: string) => void
 }
 
 // ---- アイコン生成 ----
@@ -37,21 +55,46 @@ const dotIcon = (color: string) =>
     iconAnchor: [6, 6],
   })
 
-const textIcon = (text: string, color: string) =>
+const textIcon = (text: string, color: string, size: number) =>
   L.divIcon({
     className: 'anno-text',
-    html: `<div style="color:${color};font-weight:700;font-size:13px;text-shadow:-1px -1px 0 #fff,1px -1px 0 #fff,-1px 1px 0 #fff,1px 1px 0 #fff;white-space:nowrap;transform:translate(-50%,-50%)">${escapeHtml(text)}</div>`,
+    html: `<div style="
+      writing-mode:horizontal-tb;text-orientation:mixed;
+      color:${color};font-weight:700;font-size:${size}px;
+      text-shadow:-1px -1px 0 #fff,1px -1px 0 #fff,-1px 1px 0 #fff,1px 1px 0 #fff;
+      white-space:nowrap;transform:translate(-50%,-50%)
+    ">${escapeHtml(text)}</div>`,
     iconSize: [0, 0],
     iconAnchor: [0, 0],
   })
 
-const commentIcon = (text: string, color: string) =>
-  L.divIcon({
+// コメント: 横書き固定、改行・行送りは normal、@メンションは色付け
+const commentIcon = (text: string, color: string, size: number) => {
+  const html = escapeHtml(text).replace(/(@[\w぀-ヿ一-鿿._-]+)/g, '<span style="color:#2563eb;font-weight:600">$1</span>')
+  return L.divIcon({
     className: 'anno-comment',
-    html: `<div style="display:flex;flex-direction:column;align-items:flex-start;transform:translate(8px,-100%)">
-      <div style="background:#fff;border:1.5px solid ${color};border-radius:6px;padding:2px 6px;font-size:11px;line-height:1.3;color:#1f2937;max-width:220px;box-shadow:0 1px 3px rgba(0,0,0,.25);white-space:pre-wrap">${escapeHtml(text)}</div>
-      <div style="width:10px;height:10px;background:${color};border:1.5px solid #fff;border-radius:50%;margin-top:-4px;margin-left:-2px;box-shadow:0 1px 3px rgba(0,0,0,.4)"></div>
+    html: `<div style="display:flex;flex-direction:column;align-items:flex-start;transform:translate(8px,-100%);writing-mode:horizontal-tb;text-orientation:mixed">
+      <div style="background:#fff;border:1.5px solid ${color};border-radius:6px;padding:3px 7px;
+                   font-size:${size}px;line-height:1.4;color:#1f2937;max-width:280px;
+                   box-shadow:0 1px 3px rgba(0,0,0,.25);
+                   white-space:pre-wrap;word-break:break-word;writing-mode:horizontal-tb">${html}</div>
+      <div style="width:10px;height:10px;background:${color};border:1.5px solid #fff;border-radius:50%;
+                   margin-top:-4px;margin-left:-2px;box-shadow:0 1px 3px rgba(0,0,0,.4)"></div>
     </div>`,
+    iconSize: [0, 0],
+    iconAnchor: [0, 0],
+  })
+}
+
+const dimLabelIcon = (label: string, color: string, size: number) =>
+  L.divIcon({
+    className: 'anno-dim-label',
+    html: `<div style="
+      writing-mode:horizontal-tb;
+      background:rgba(255,255,255,.9);border:1px solid ${color};color:${color};
+      font-size:${size}px;font-weight:700;padding:1px 4px;border-radius:3px;
+      white-space:nowrap;transform:translate(-50%,-50%);box-shadow:0 1px 2px rgba(0,0,0,.2)
+    ">${escapeHtml(label)}</div>`,
     iconSize: [0, 0],
     iconAnchor: [0, 0],
   })
@@ -66,7 +109,6 @@ function planeDist(c: CoordinateConverter, a: [number, number], b: [number, numb
   const B = c.toXY(b[0], b[1])
   return Math.hypot(B.x - A.x, B.y - A.y)
 }
-
 function planeArea(c: CoordinateConverter, verts: [number, number][]): number {
   if (verts.length < 3) return 0
   const pts = verts.map((v) => c.toXY(v[0], v[1]))
@@ -78,7 +120,6 @@ function planeArea(c: CoordinateConverter, verts: [number, number][]): number {
   }
   return Math.abs(s) / 2
 }
-
 function perpDist(c: CoordinateConverter, a: [number, number], b: [number, number], p: [number, number]): number {
   const A = c.toXY(a[0], a[1])
   const B = c.toXY(b[0], b[1])
@@ -87,22 +128,57 @@ function perpDist(c: CoordinateConverter, a: [number, number], b: [number, numbe
   const dE = B.y - A.y
   const L = Math.hypot(dN, dE)
   if (L === 0) return 0
-  // 2D の外積の絶対値 / 線長
   return Math.abs((B.x - A.x) * (A.y - P.y) - (A.x - P.x) * (B.y - A.y)) / L
+}
+
+// 中点（lat/lng 平均で十分な精度・短距離）
+function midLatLng(a: [number, number], b: [number, number]): [number, number] {
+  return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]
+}
+// 重心
+function centroidLatLng(verts: [number, number][]): [number, number] {
+  let s0 = 0, s1 = 0
+  for (const v of verts) { s0 += v[0]; s1 += v[1] }
+  return [s0 / verts.length, s1 / verts.length]
+}
+// P から線AB に下ろした垂線の足
+function perpFoot(c: CoordinateConverter, a: [number, number], b: [number, number], p: [number, number]): [number, number] {
+  const A = c.toXY(a[0], a[1])
+  const B = c.toXY(b[0], b[1])
+  const P = c.toXY(p[0], p[1])
+  const ABx = B.x - A.x, ABy = B.y - A.y
+  const L2 = ABx * ABx + ABy * ABy
+  if (L2 === 0) return a
+  const t = ((P.x - A.x) * ABx + (P.y - A.y) * ABy) / L2
+  const Fx = A.x + t * ABx
+  const Fy = A.y + t * ABy
+  const ll = c.toLatLng(Fx, Fy)
+  return [ll.lat, ll.lng]
+}
+
+function fmtLen(v: number): string {
+  if (v < 1) return `${(v * 100).toFixed(1)} cm`
+  return `${v.toFixed(3)} m`
+}
+function fmtArea(v: number): string {
+  return `${v.toFixed(2)} m² (${(v / 10000).toFixed(4)} ha)`
 }
 
 export function OrthophotoAnnotations({
   tool,
   color,
+  fontSize,
+  currentLayer,
   annotations,
   setAnnotations,
   converter,
-  measureResult,
-  setMeasureResult,
+  lastMeasure,
+  setLastMeasure,
+  onAddCoordinate,
+  onRequestComment,
+  onSelect,
 }: Props) {
-  // 作図中の頂点（線・面・計測の途中状態）
   const [tempVerts, setTempVerts] = useState<[number, number][]>([])
-  // tool が変わったら途中状態をリセット
   const lastToolRef = useRef<ToolMode>(tool)
   useEffect(() => {
     if (lastToolRef.current !== tool) {
@@ -117,7 +193,7 @@ export function OrthophotoAnnotations({
     if (tempVerts.length >= 2) {
       setAnnotations([
         ...annotations,
-        { id: newAnnotationId(), kind: 'line', vertices: tempVerts, color },
+        { id: newAnnotationId(), kind: 'line', vertices: tempVerts, color, layer: currentLayer },
       ])
     }
     setTempVerts([])
@@ -126,7 +202,7 @@ export function OrthophotoAnnotations({
     if (tempVerts.length >= 3) {
       setAnnotations([
         ...annotations,
-        { id: newAnnotationId(), kind: 'polygon', vertices: tempVerts, color },
+        { id: newAnnotationId(), kind: 'polygon', vertices: tempVerts, color, layer: currentLayer },
       ])
     }
     setTempVerts([])
@@ -134,11 +210,7 @@ export function OrthophotoAnnotations({
   const finalizeMeasureArea = () => {
     if (tempVerts.length >= 3) {
       const a = planeArea(converter, tempVerts)
-      setMeasureResult({
-        kind: 'area',
-        value: a,
-        detail: `${tempVerts.length} 点`,
-      })
+      setLastMeasure({ kind: 'area', vertices: tempVerts, value: a })
     }
     setTempVerts([])
   }
@@ -150,8 +222,11 @@ export function OrthophotoAnnotations({
         case 'point':
           setAnnotations([
             ...annotations,
-            { id: newAnnotationId(), kind: 'point', pos: ll, color },
+            { id: newAnnotationId(), kind: 'point', pos: ll, color, layer: currentLayer },
           ])
+          break
+        case 'point-coord':
+          onAddCoordinate?.(ll[0], ll[1])
           break
         case 'line':
         case 'polygon':
@@ -167,7 +242,7 @@ export function OrthophotoAnnotations({
             if (r > 0) {
               setAnnotations([
                 ...annotations,
-                { id: newAnnotationId(), kind: 'circle', center: next[0], radius: r, color },
+                { id: newAnnotationId(), kind: 'circle', center: next[0], radius: r, color, layer: currentLayer },
               ])
             }
             setTempVerts([])
@@ -183,7 +258,6 @@ export function OrthophotoAnnotations({
             const p1 = converter.toXY(next[1][0], next[1][1])
             const p2 = converter.toXY(next[2][0], next[2][1])
             const r = Math.hypot(p1.x - c.x, p1.y - c.y)
-            // DXF互換: 東+X からCCW（角度=atan2(北, 東) → atan2(p.x-c.x, p.y-c.y)）
             let startDeg = (Math.atan2(p1.x - c.x, p1.y - c.y) * 180) / Math.PI
             let endDeg = (Math.atan2(p2.x - c.x, p2.y - c.y) * 180) / Math.PI
             startDeg = ((startDeg % 360) + 360) % 360
@@ -192,7 +266,7 @@ export function OrthophotoAnnotations({
             if (r > 0) {
               setAnnotations([
                 ...annotations,
-                { id: newAnnotationId(), kind: 'arc', center: next[0], radius: r, startDeg, endDeg, color },
+                { id: newAnnotationId(), kind: 'arc', center: next[0], radius: r, startDeg, endDeg, color, layer: currentLayer },
               ])
             }
             setTempVerts([])
@@ -205,7 +279,7 @@ export function OrthophotoAnnotations({
           const next = [...tempVerts, ll]
           if (next.length >= 2) {
             const d = planeDist(converter, next[0], next[1])
-            setMeasureResult({ kind: 'dist', value: d })
+            setLastMeasure({ kind: 'dist', vertices: next, value: d })
             setTempVerts([])
           } else {
             setTempVerts(next)
@@ -216,30 +290,26 @@ export function OrthophotoAnnotations({
           const next = [...tempVerts, ll]
           if (next.length >= 3) {
             const d = perpDist(converter, next[0], next[1], next[2])
-            setMeasureResult({ kind: 'perp', value: d })
+            setLastMeasure({ kind: 'perp', vertices: next, value: d })
             setTempVerts([])
           } else {
             setTempVerts(next)
           }
           break
         }
-        case 'text':
-        case 'comment': {
-          const text = window.prompt(
-            tool === 'text' ? '表示する文字列' : 'コメント',
-            '',
-          )
+        case 'text': {
+          const text = window.prompt('表示する文字列', '')
           if (text && text.trim()) {
             setAnnotations([
               ...annotations,
-              tool === 'text'
-                ? { id: newAnnotationId(), kind: 'text', pos: ll, text: text.trim(), color }
-                : { id: newAnnotationId(), kind: 'comment', pos: ll, text: text.trim(), color },
+              { id: newAnnotationId(), kind: 'text', pos: ll, text: text.trim(), color, size: fontSize, layer: currentLayer },
             ])
           }
-          // 連続入力できるよう道具は維持
           break
         }
+        case 'comment':
+          onRequestComment?.(ll)
+          break
         default:
           break
       }
@@ -251,12 +321,10 @@ export function OrthophotoAnnotations({
     },
   })
 
-  // 道具切替や ESC で作図を中断するためのキーリスナー
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setTempVerts([])
-      } else if (e.key === 'Enter') {
+      if (e.key === 'Escape') setTempVerts([])
+      else if (e.key === 'Enter') {
         if (tool === 'line') finalizeLine()
         else if (tool === 'polygon') finalizePolygon()
         else if (tool === 'measure-area') finalizeMeasureArea()
@@ -267,7 +335,6 @@ export function OrthophotoAnnotations({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tool, tempVerts, annotations, color])
 
-  // ダブルクリックでズームしないように
   useEffect(() => {
     if (tool === 'line' || tool === 'polygon' || tool === 'measure-area') {
       map.doubleClickZoom.disable()
@@ -276,56 +343,109 @@ export function OrthophotoAnnotations({
     }
   }, [map, tool])
 
-  // 注釈の削除（消去モード）
   const handleDelete = (id: string) => {
     if (tool !== 'erase') return
     if (!confirm('この図形を削除しますか？')) return
     setAnnotations(annotations.filter((a) => a.id !== id))
   }
-  const deletableProps = (id: string) =>
-    tool === 'erase'
-      ? { eventHandlers: { click: () => handleDelete(id) } }
-      : {}
+  // 図形クリック時の挙動（選択ツール→インスペクタ、削除ツール→削除、その他→無視）
+  const deletableProps = (id: string) => {
+    if (tool === 'erase') return { eventHandlers: { click: () => handleDelete(id) } }
+    if (tool === 'none' && onSelect) {
+      return {
+        eventHandlers: {
+          click: (e: L.LeafletMouseEvent) => {
+            L.DomEvent.stopPropagation(e)
+            onSelect(id)
+          },
+        },
+      }
+    }
+    return {}
+  }
 
-  // 残りの計測結果バナーを地図上に重ねるためのオフセット位置（地図中心）
-  void measureResult // 表示は親側で行う（地図上の値ラベルだけここで描く）
+  // 計測結果ジオメトリの描画
+  const renderLastMeasure = () => {
+    if (!lastMeasure) return null
+    const c = '#0ea5e9'
+    if (lastMeasure.kind === 'dist' && lastMeasure.vertices.length >= 2) {
+      const [a, b] = lastMeasure.vertices
+      return (
+        <>
+          <Polyline positions={[a, b]} pathOptions={{ color: c, weight: 2, dashArray: '6,4' }} />
+          <Marker position={midLatLng(a, b)} icon={dimLabelIcon(fmtLen(lastMeasure.value), c, fontSize)} interactive={false} />
+        </>
+      )
+    }
+    if (lastMeasure.kind === 'area' && lastMeasure.vertices.length >= 3) {
+      return (
+        <>
+          <Polygon positions={lastMeasure.vertices} pathOptions={{ color: c, fillColor: c, fillOpacity: 0.1, weight: 2, dashArray: '6,4' }} />
+          <Marker position={centroidLatLng(lastMeasure.vertices)} icon={dimLabelIcon(fmtArea(lastMeasure.value), c, fontSize)} interactive={false} />
+        </>
+      )
+    }
+    if (lastMeasure.kind === 'perp' && lastMeasure.vertices.length >= 3) {
+      const [a, b, p] = lastMeasure.vertices
+      const f = perpFoot(converter, a, b, p)
+      return (
+        <>
+          <Polyline positions={[a, b]} pathOptions={{ color: c, weight: 2, dashArray: '6,4' }} />
+          <Polyline positions={[p, f]} pathOptions={{ color: c, weight: 2 }} />
+          <Marker position={midLatLng(p, f)} icon={dimLabelIcon(fmtLen(lastMeasure.value), c, fontSize)} interactive={false} />
+        </>
+      )
+    }
+    return null
+  }
+
+  // 寸法線アノテーションの描画（複数要素を配列で返す）
+  const renderDimension = (a: Annotation & { kind: 'dimension' }): React.ReactNode => {
+    const sz = a.size ?? fontSize
+    if (a.subKind === 'dist' && a.vertices.length >= 2) {
+      const [p1, p2] = a.vertices
+      return [
+        <Polyline key={`${a.id}-l`} positions={[p1, p2]} pathOptions={{ color: a.color, weight: 2 }} {...deletableProps(a.id)} />,
+        <Marker key={`${a.id}-m`} position={midLatLng(p1, p2)} icon={dimLabelIcon(fmtLen(a.value), a.color, sz)} {...deletableProps(a.id)} />,
+      ]
+    }
+    if (a.subKind === 'area' && a.vertices.length >= 3) {
+      return [
+        <Polygon key={`${a.id}-p`} positions={a.vertices} pathOptions={{ color: a.color, fillColor: a.color, fillOpacity: 0.08, weight: 2 }} {...deletableProps(a.id)} />,
+        <Marker key={`${a.id}-m`} position={centroidLatLng(a.vertices)} icon={dimLabelIcon(fmtArea(a.value), a.color, sz)} {...deletableProps(a.id)} />,
+      ]
+    }
+    if (a.subKind === 'perp' && a.vertices.length >= 3) {
+      const [p1, p2, pp] = a.vertices
+      const f = perpFoot(converter, p1, p2, pp)
+      return [
+        <Polyline key={`${a.id}-l1`} positions={[p1, p2]} pathOptions={{ color: a.color, weight: 2 }} {...deletableProps(a.id)} />,
+        <Polyline key={`${a.id}-l2`} positions={[pp, f]} pathOptions={{ color: a.color, weight: 2 }} {...deletableProps(a.id)} />,
+        <Marker key={`${a.id}-m`} position={midLatLng(pp, f)} icon={dimLabelIcon(fmtLen(a.value), a.color, sz)} {...deletableProps(a.id)} />,
+      ]
+    }
+    return null
+  }
 
   return (
     <>
-      {/* 保存済み図形 */}
       {annotations.map((a) => {
         if (a.kind === 'point') {
           return <Marker key={a.id} position={a.pos} icon={dotIcon(a.color)} {...deletableProps(a.id)} />
         }
         if (a.kind === 'line') {
           return (
-            <Polyline
-              key={a.id}
-              positions={a.vertices}
-              pathOptions={{ color: a.color, weight: 3, opacity: 0.9 }}
-              {...deletableProps(a.id)}
-            />
+            <Polyline key={a.id} positions={a.vertices} pathOptions={{ color: a.color, weight: 3, opacity: 0.9 }} {...deletableProps(a.id)} />
           )
         }
         if (a.kind === 'polygon') {
           return (
-            <Polygon
-              key={a.id}
-              positions={a.vertices}
-              pathOptions={{ color: a.color, fillColor: a.color, fillOpacity: 0.2, weight: 2 }}
-              {...deletableProps(a.id)}
-            />
+            <Polygon key={a.id} positions={a.vertices} pathOptions={{ color: a.color, fillColor: a.color, fillOpacity: 0.2, weight: 2 }} {...deletableProps(a.id)} />
           )
         }
         if (a.kind === 'circle') {
           return (
-            <Circle
-              key={a.id}
-              center={a.center}
-              radius={a.radius}
-              pathOptions={{ color: a.color, fillColor: a.color, fillOpacity: 0.1, weight: 2 }}
-              {...deletableProps(a.id)}
-            />
+            <Circle key={a.id} center={a.center} radius={a.radius} pathOptions={{ color: a.color, fillColor: a.color, fillOpacity: 0.1, weight: 2 }} {...deletableProps(a.id)} />
           )
         }
         if (a.kind === 'arc') {
@@ -341,28 +461,23 @@ export function OrthophotoAnnotations({
             pts.push([ll.lat, ll.lng])
           }
           return (
-            <Polyline
-              key={a.id}
-              positions={pts}
-              pathOptions={{ color: a.color, weight: 2, opacity: 0.9 }}
-              {...deletableProps(a.id)}
-            />
+            <Polyline key={a.id} positions={pts} pathOptions={{ color: a.color, weight: 2, opacity: 0.9 }} {...deletableProps(a.id)} />
           )
         }
         if (a.kind === 'text') {
-          return <Marker key={a.id} position={a.pos} icon={textIcon(a.text, a.color)} {...deletableProps(a.id)} />
+          return <Marker key={a.id} position={a.pos} icon={textIcon(a.text, a.color, a.size ?? fontSize)} {...deletableProps(a.id)} />
         }
-        // comment
-        return <Marker key={a.id} position={a.pos} icon={commentIcon(a.text, a.color)} {...deletableProps(a.id)} />
+        if (a.kind === 'comment') {
+          return <Marker key={a.id} position={a.pos} icon={commentIcon(a.text, a.color, a.size ?? fontSize)} {...deletableProps(a.id)} />
+        }
+        if (a.kind === 'dimension') return renderDimension(a)
+        return null
       })}
 
       {/* 作図中（途中）の表示 */}
       {tempVerts.length > 0 && (
         <>
-          {(tool === 'line' || tool === 'measure-dist' || tool === 'measure-perp') && tempVerts.length >= 2 && (
-            <Polyline positions={tempVerts} pathOptions={{ color, weight: 2, dashArray: '4,3' }} />
-          )}
-          {(tool === 'polygon' || tool === 'measure-area') && tempVerts.length >= 2 && (
+          {(tool === 'line' || tool === 'polygon' || tool === 'measure-area' || tool === 'measure-dist' || tool === 'measure-perp') && tempVerts.length >= 2 && (
             <Polyline positions={tempVerts} pathOptions={{ color, weight: 2, dashArray: '4,3' }} />
           )}
           {tempVerts.map((v, i) => (
@@ -375,32 +490,35 @@ export function OrthophotoAnnotations({
           ))}
         </>
       )}
+
+      {/* 最新の計測結果ジオメトリ（クリアまたは寸法保存まで残す） */}
+      {renderLastMeasure()}
     </>
   )
 }
 
-// 計測結果のフォーマット（親で利用）
-export function formatMeasure(r: MeasureResult): string {
-  if (r.kind === 'area') {
-    const ha = r.value / 10000
-    return `${r.value.toFixed(2)} m² （${ha.toFixed(4)} ha）`
-  }
-  if (r.value < 1) return `${(r.value * 100).toFixed(1)} cm`
-  return `${r.value.toFixed(3)} m`
+// 計測値の表示用フォーマット（親で使う）
+export function formatMeasureValue(m: MeasureGeom): string {
+  if (m.kind === 'area') return fmtArea(m.value)
+  return fmtLen(m.value)
 }
 
-// ツール一覧（親のツールバーで利用）
-export const TOOL_LIST: { tool: ToolMode; label: string; help?: string }[] = [
+// ツール一覧（作図／計測）
+export const DRAW_TOOLS: { tool: ToolMode; label: string; help?: string }[] = [
   { tool: 'none', label: '選択' },
   { tool: 'point', label: '点' },
-  { tool: 'line', label: '線', help: 'クリックで頂点追加 / ダブルクリックで終了' },
-  { tool: 'polygon', label: '面', help: 'クリックで頂点追加 / ダブルクリックで閉じる' },
-  { tool: 'circle', label: '円', help: '中心 → 半径点 の順にクリック' },
-  { tool: 'arc', label: '円弧', help: '中心 → 始点 → 終点（CCW方向）の順にクリック' },
-  { tool: 'text', label: '文字', help: 'クリック位置に文字列を配置' },
-  { tool: 'comment', label: 'コメント', help: 'クリック位置にコメントを配置' },
-  { tool: 'measure-dist', label: '距離', help: '2点をクリック' },
+  { tool: 'point-coord', label: '点(座標登録)', help: 'クリック位置を座標管理に追加' },
+  { tool: 'line', label: '線', help: 'クリックで頂点 / ダブルクリックで終了' },
+  { tool: 'polygon', label: '面', help: 'クリックで頂点 / ダブルクリックで閉じる' },
+  { tool: 'circle', label: '円', help: '中心 → 半径点' },
+  { tool: 'arc', label: '円弧', help: '中心 → 始点 → 終点（CCW）' },
+  { tool: 'text', label: '文字', help: 'クリックで文字列を配置' },
+  { tool: 'comment', label: 'コメント', help: 'クリックで吹き出しコメントを配置（@メンション可）' },
+  { tool: 'erase', label: '削除', help: '図形クリックで削除' },
+]
+
+export const MEASURE_TOOLS: { tool: ToolMode; label: string; help?: string }[] = [
+  { tool: 'measure-dist', label: '距離', help: '2点クリック' },
   { tool: 'measure-area', label: '面積', help: 'クリックで頂点 / ダブルクリックで閉じる' },
   { tool: 'measure-perp', label: '垂線', help: '線の2点→対象1点の順にクリック' },
-  { tool: 'erase', label: '削除', help: '図形をクリックで削除' },
 ]

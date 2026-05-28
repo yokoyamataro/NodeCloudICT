@@ -1,12 +1,22 @@
 // オルソ画像上の作図（点・線・面・文字・コメント）データ。
 // 当面はブラウザの localStorage に工区IDごとに保存する（DBは将来対応）。
 
-export type AnnotationKind = 'point' | 'line' | 'polygon' | 'circle' | 'arc' | 'text' | 'comment'
+export type AnnotationKind =
+  | 'point'
+  | 'line'
+  | 'polygon'
+  | 'circle'
+  | 'arc'
+  | 'text'
+  | 'comment'
+  | 'dimension'
 
 export interface BaseAnnotation {
   id: string
   kind: AnnotationKind
   color: string
+  /** 任意のレイヤ名（DXF 出力時にも反映） */
+  layer?: string
 }
 export interface PointAnnotation extends BaseAnnotation {
   kind: 'point'
@@ -37,11 +47,22 @@ export interface TextAnnotation extends BaseAnnotation {
   kind: 'text'
   pos: [number, number]
   text: string
+  size?: number // px（既定 14）
 }
 export interface CommentAnnotation extends BaseAnnotation {
   kind: 'comment'
   pos: [number, number]
   text: string
+  size?: number // px（既定 12）
+  /** メンション対象（メールアドレスまたは表示名） */
+  mentions?: string[]
+}
+export interface DimensionAnnotation extends BaseAnnotation {
+  kind: 'dimension'
+  subKind: 'dist' | 'area' | 'perp'
+  vertices: [number, number][] // dist/perp: A,B(,P) ; area: polygon vertices
+  value: number // m or m²
+  size?: number // ラベル文字サイズ(px)
 }
 export type Annotation =
   | PointAnnotation
@@ -51,6 +72,7 @@ export type Annotation =
   | ArcAnnotation
   | TextAnnotation
   | CommentAnnotation
+  | DimensionAnnotation
 
 const key = (farmId: string) => `orthoAnnotations:${farmId}`
 

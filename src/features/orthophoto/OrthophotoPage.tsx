@@ -21,23 +21,28 @@ import { CoordinateConverter } from '@/lib/coordinates'
 import {
   OrthophotoAnnotations,
   type ToolMode,
-  type MeasureResult,
-  TOOL_LIST,
-  formatMeasure,
+  type MeasureGeom,
+  DRAW_TOOLS,
+  MEASURE_TOOLS,
+  formatMeasureValue,
 } from './OrthophotoAnnotations'
 import {
   type Annotation,
+  type DimensionAnnotation,
+  newAnnotationId,
   loadAnnotations,
   saveAnnotations,
 } from '@/lib/annotations'
 import { buildDxf, downloadDxf, type DxfEntity } from '@/lib/dxf'
 import { FileDown } from 'lucide-react'
+import type { CoordinateRow } from '@/stores/coordinateStore'
 
 export function OrthophotoPage() {
   const { currentFarm } = useFarmStore()
   const { projects } = useProjectListStore()
   const { byFarm, fetchByFarm, createTileset, uploadTiles, deleteTileset } = useOrthophotoStore()
-  const { setZone, fetchCoordinates } = useCoordinateStore()
+  const { setZone, fetchCoordinates, importCoordinates, coordinates, selectedType } = useCoordinateStore()
+  const { fetchMembers, members } = useProjectListStore()
   const { workAreas, fetchWorkAreas } = useWorkAreaStore()
   const tilesets = useMemo(
     () => (currentFarm ? byFarm.get(currentFarm.id) ?? [] : []),
@@ -49,7 +54,7 @@ export function OrthophotoPage() {
     ? projects.find((p) => p.id === currentFarm.project_id)?.coordinate_zone ?? null
     : null
 
-  // 工区切替時にオルソ・座標・区域をまとめて読み込み
+  // 工区切替時にオルソ・座標・区域・メンバー・点種をまとめて読み込み
   useEffect(() => {
     if (!currentFarm) return
     fetchByFarm(currentFarm.id)
@@ -58,7 +63,10 @@ export function OrthophotoPage() {
       setZone(projectZone)
       fetchCoordinates(currentFarm.id)
     }
-  }, [currentFarm, projectZone, fetchByFarm, fetchWorkAreas, setZone, fetchCoordinates])
+    if (currentFarm.project_id) {
+      fetchMembers(currentFarm.project_id)
+    }
+  }, [currentFarm, projectZone, fetchByFarm, fetchWorkAreas, setZone, fetchCoordinates, fetchMembers])
 
   // 区域ポリゴン（全工種を表示）
   const workAreaPolygons = useMemo<ExternalPolygon[]>(() => {
@@ -95,13 +103,18 @@ export function OrthophotoPage() {
   // ===== 作図・計測 =====
   const [tool, setTool] = useState<ToolMode>('none')
   const [drawColor, setDrawColor] = useState('#dc2626')
+  const [fontSize, setFontSize] = useState(14) // px
+  const [currentLayer, setCurrentLayer] = useState('0')
+  const [selectedAnnoId, setSelectedAnnoId] = useState<string | null>(null)
   const [annotations, setAnnotationsState] = useState<Annotation[]>([])
-  const [measureResult, setMeasureResult] = useState<MeasureResult | null>(null)
+  const [lastMeasure, setLastMeasure] = useState<MeasureGeom | null>(null)
+  // コメント入力モーダル
+  const [pendingComment, setPendingComment] = useState<{ pos: [number, number] } | null>(null)
   // 工区切替で読み込み・保存
   useEffect(() => {
     if (currentFarm) setAnnotationsState(loadAnnotations(currentFarm.id))
     else setAnnotationsState([])
-    setMeasureResult(null)
+    setLastMeasure(null)
     setTool('none')
   }, [currentFarm])
   const setAnnotations = (next: Annotation[]) => {
@@ -110,6 +123,53 @@ export function OrthophotoPage() {
   }
   // 計測用の座標変換（プロジェクト座標系）
   const converter = useMemo(() => new CoordinateConverter(projectZone ?? 13), [projectZone])
+
+  // 点(座標登録) ツール: クリック位置を座標管理に追加
+  const handleAddCoordinate = (lat: number, lng: number) => {
+    if (!currentFarm) return
+    const xy = converter.toXY(lat, lng)
+    const defaultName = `P${coordinates.length + 1}`
+    const name = window.prompt('点番号', defaultName)
+    if (name === null) return
+    const pn = name.trim() || defaultName
+    importCoordinates([{ pointNumber: pn, x: xy.x, y: xy.y, z: null, type: selectedType as CoordinateRow['type'] }])
+  }
+
+  // 計測結果を寸法線アノテーションとして保存
+  const handleKeepDimension = () => {
+    if (!lastMeasure) return
+    const dim: DimensionAnnotation = {
+      id: newAnnotationId(),
+      kind: 'dimension',
+      subKind: lastMeasure.kind,
+      vertices: lastMeasure.vertices,
+      value: lastMeasure.value,
+      color: drawColor,
+      size: fontSize,
+      layer: currentLayer,
+    }
+    setAnnotations([...annotations, dim])
+    setLastMeasure(null)
+  }
+
+  // 既存レイヤ名の一覧（候補表示用）
+  const existingLayers = useMemo(() => {
+    const set = new Set<string>(['0'])
+    for (const a of annotations) if (a.layer) set.add(a.layer)
+    return Array.from(set).sort()
+  }, [annotations])
+
+  // 選択中アノテーション
+  const selectedAnno = annotations.find((a) => a.id === selectedAnnoId) ?? null
+
+  // アノテーションのフィールドを更新
+  const updateAnnotation = (id: string, patch: Partial<Annotation>) => {
+    setAnnotations(annotations.map((a) => (a.id === id ? ({ ...a, ...patch } as Annotation) : a)))
+  }
+  const deleteAnnotation = (id: string) => {
+    setAnnotations(annotations.filter((a) => a.id !== id))
+    setSelectedAnnoId(null)
+  }
 
   // DXF 出力（CAD慣例の X=東/Y=北 に変換して書き出す）
   const handleDxfExport = () => {
@@ -124,16 +184,26 @@ export function OrthophotoPage() {
       return { x: p.y, y: p.x }
     }
     for (const a of annotations) {
+      // 種類別の既定レイヤ（ユーザー指定が無い場合のフォールバック）
+      const defaultLayer = (a.kind === 'point' ? 'POINT'
+        : a.kind === 'line' ? 'LINE'
+        : a.kind === 'polygon' ? 'POLYGON'
+        : a.kind === 'circle' ? 'CIRCLE'
+        : a.kind === 'arc' ? 'ARC'
+        : a.kind === 'text' ? 'TEXT'
+        : a.kind === 'comment' ? 'COMMENT'
+        : 'DIM')
+      const layer = a.layer && a.layer.trim() !== '' ? a.layer : defaultLayer
       switch (a.kind) {
         case 'point': {
           const p = dxfXY(a.pos[0], a.pos[1])
-          entities.push({ type: 'POINT', x: p.x, y: p.y, layer: 'POINT' })
+          entities.push({ type: 'POINT', x: p.x, y: p.y, layer })
           break
         }
         case 'line': {
           const v = a.vertices.map((vv) => dxfXY(vv[0], vv[1]))
           for (let i = 0; i < v.length - 1; i++) {
-            entities.push({ type: 'LINE', x1: v[i].x, y1: v[i].y, x2: v[i + 1].x, y2: v[i + 1].y, layer: 'LINE' })
+            entities.push({ type: 'LINE', x1: v[i].x, y1: v[i].y, x2: v[i + 1].x, y2: v[i + 1].y, layer })
           }
           break
         }
@@ -141,13 +211,13 @@ export function OrthophotoPage() {
           const v = a.vertices.map((vv) => dxfXY(vv[0], vv[1]))
           for (let i = 0; i < v.length; i++) {
             const j = (i + 1) % v.length
-            entities.push({ type: 'LINE', x1: v[i].x, y1: v[i].y, x2: v[j].x, y2: v[j].y, layer: 'POLYGON' })
+            entities.push({ type: 'LINE', x1: v[i].x, y1: v[i].y, x2: v[j].x, y2: v[j].y, layer })
           }
           break
         }
         case 'circle': {
           const c = dxfXY(a.center[0], a.center[1])
-          entities.push({ type: 'CIRCLE', cx: c.x, cy: c.y, r: a.radius, layer: 'CIRCLE' })
+          entities.push({ type: 'CIRCLE', cx: c.x, cy: c.y, r: a.radius, layer })
           break
         }
         case 'arc': {
@@ -159,7 +229,7 @@ export function OrthophotoPage() {
             r: a.radius,
             startAngleDeg: a.startDeg,
             endAngleDeg: a.endDeg,
-            layer: 'ARC',
+            layer,
           })
           break
         }
@@ -171,9 +241,58 @@ export function OrthophotoPage() {
             x: p.x,
             y: p.y,
             text: a.text,
-            height: 0.5,
-            layer: a.kind === 'text' ? 'TEXT' : 'COMMENT',
+            height: ((a.size ?? 14) / 28),
+            layer,
           })
+          break
+        }
+        case 'dimension': {
+          if (a.subKind === 'dist' && a.vertices.length >= 2) {
+            const [p1, p2] = a.vertices.map((v) => dxfXY(v[0], v[1]))
+            entities.push({ type: 'LINE', x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, layer })
+            entities.push({
+              type: 'TEXT',
+              x: (p1.x + p2.x) / 2,
+              y: (p1.y + p2.y) / 2,
+              text: a.value < 1 ? `${(a.value * 100).toFixed(1)} cm` : `${a.value.toFixed(3)} m`,
+              height: ((a.size ?? 14) / 28),
+              layer,
+            })
+          } else if (a.subKind === 'area' && a.vertices.length >= 3) {
+            const v = a.vertices.map((vv) => dxfXY(vv[0], vv[1]))
+            for (let i = 0; i < v.length; i++) {
+              const j = (i + 1) % v.length
+              entities.push({ type: 'LINE', x1: v[i].x, y1: v[i].y, x2: v[j].x, y2: v[j].y, layer })
+            }
+            const cx = v.reduce((s, p) => s + p.x, 0) / v.length
+            const cy = v.reduce((s, p) => s + p.y, 0) / v.length
+            entities.push({
+              type: 'TEXT',
+              x: cx,
+              y: cy,
+              text: `${a.value.toFixed(2)} m² (${(a.value / 10000).toFixed(4)} ha)`,
+              height: ((a.size ?? 14) / 28),
+              layer,
+            })
+          } else if (a.subKind === 'perp' && a.vertices.length >= 3) {
+            const [p1, p2, pp] = a.vertices.map((v) => dxfXY(v[0], v[1]))
+            entities.push({ type: 'LINE', x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, layer })
+            const ABx = p2.x - p1.x
+            const ABy = p2.y - p1.y
+            const L2 = ABx * ABx + ABy * ABy
+            const t = L2 === 0 ? 0 : ((pp.x - p1.x) * ABx + (pp.y - p1.y) * ABy) / L2
+            const Fx = p1.x + t * ABx
+            const Fy = p1.y + t * ABy
+            entities.push({ type: 'LINE', x1: pp.x, y1: pp.y, x2: Fx, y2: Fy, layer })
+            entities.push({
+              type: 'TEXT',
+              x: (pp.x + Fx) / 2,
+              y: (pp.y + Fy) / 2,
+              text: a.value < 1 ? `${(a.value * 100).toFixed(1)} cm` : `${a.value.toFixed(3)} m`,
+              height: ((a.size ?? 14) / 28),
+              layer,
+            })
+          }
           break
         }
       }
@@ -396,81 +515,141 @@ export function OrthophotoPage() {
           <OrthophotoAnnotations
             tool={tool}
             color={drawColor}
+            fontSize={fontSize}
+            currentLayer={currentLayer}
             annotations={annotations}
             setAnnotations={setAnnotations}
             converter={converter}
-            measureResult={measureResult}
-            setMeasureResult={setMeasureResult}
+            lastMeasure={lastMeasure}
+            setLastMeasure={setLastMeasure}
+            onAddCoordinate={handleAddCoordinate}
+            onRequestComment={(pos) => setPendingComment({ pos })}
+            onSelect={(id) => setSelectedAnnoId(id)}
           />
         </CoordinateMap>
 
-        {/* 作図ツールバー（左上オーバーレイ） */}
-        <div className="absolute top-2 left-2 z-[1000] bg-white/95 border rounded-lg shadow p-2 flex items-center gap-1 flex-wrap max-w-[calc(100%-1rem)]">
-          {TOOL_LIST.map((t) => {
-            const active = tool === t.tool
-            return (
+        {/* 作図ツールバー（左上オーバーレイ・上段=作図／下段=計測） */}
+        <div className="absolute top-2 left-2 z-[1000] bg-white/95 border rounded-lg shadow p-2 flex flex-col gap-1 max-w-[calc(100%-1rem)]">
+          {/* 上段: 作図 */}
+          <div className="flex items-center gap-1 flex-wrap">
+            <span className="text-[10px] text-slate-400 mr-1 select-none">作図</span>
+            {DRAW_TOOLS.map((t) => {
+              const active = tool === t.tool
+              return (
+                <button
+                  key={t.tool}
+                  onClick={() => setTool(t.tool)}
+                  className={`px-2 py-1 text-xs rounded border ${
+                    active ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                  }`}
+                  title={t.help ?? t.label}
+                >
+                  {t.label}
+                </button>
+              )
+            })}
+            <label className="flex items-center gap-1 ml-1 text-xs text-slate-600">
+              色
+              <input
+                type="color"
+                value={drawColor}
+                onChange={(e) => setDrawColor(e.target.value)}
+                className="w-7 h-6 p-0 border rounded cursor-pointer"
+              />
+            </label>
+            <label className="flex items-center gap-1 text-xs text-slate-600">
+              文字
+              <input
+                type="number"
+                min={8}
+                max={48}
+                value={fontSize}
+                onChange={(e) => setFontSize(Math.max(8, Math.min(48, parseInt(e.target.value, 10) || 14)))}
+                className="w-12 px-1 py-0.5 border rounded text-right font-mono"
+                title="文字・コメント・寸法ラベルのサイズ(px)"
+              />
+              px
+            </label>
+            <label className="flex items-center gap-1 text-xs text-slate-600">
+              レイヤ
+              <input
+                type="text"
+                value={currentLayer}
+                onChange={(e) => setCurrentLayer(e.target.value)}
+                list="ortho-layers"
+                className="w-24 px-1 py-0.5 border rounded font-mono"
+                title="作図時に付与するレイヤ名（DXF出力にも反映）"
+              />
+              <datalist id="ortho-layers">
+                {existingLayers.map((l) => (
+                  <option key={l} value={l} />
+                ))}
+              </datalist>
+            </label>
+            {annotations.length > 0 && (
               <button
-                key={t.tool}
-                onClick={() => setTool(t.tool)}
-                className={`px-2 py-1 text-xs rounded border ${
-                  active
-                    ? 'bg-blue-600 text-white border-blue-600'
-                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                }`}
-                title={t.help ?? t.label}
+                onClick={() => {
+                  if (confirm(`作図(${annotations.length}件)をすべて削除しますか？`)) setAnnotations([])
+                }}
+                className="px-2 py-1 text-xs rounded border border-red-300 text-red-600 hover:bg-red-50"
+                title="作図を全消去"
               >
-                {t.label}
+                全消去
               </button>
-            )
-          })}
-          {/* 色選択 */}
-          <label className="flex items-center gap-1 ml-1 text-xs text-slate-600">
-            色
-            <input
-              type="color"
-              value={drawColor}
-              onChange={(e) => setDrawColor(e.target.value)}
-              className="w-7 h-6 p-0 border rounded cursor-pointer"
-            />
-          </label>
-          {/* 全消去 */}
-          {annotations.length > 0 && (
-            <button
-              onClick={() => {
-                if (confirm(`作図(${annotations.length}件)をすべて削除しますか？`)) {
-                  setAnnotations([])
-                }
-              }}
-              className="px-2 py-1 text-xs rounded border border-red-300 text-red-600 hover:bg-red-50"
-              title="作図を全消去"
-            >
-              全消去
-            </button>
-          )}
+            )}
+          </div>
+          {/* 下段: 計測 */}
+          <div className="flex items-center gap-1 flex-wrap pt-1 border-t">
+            <span className="text-[10px] text-slate-400 mr-1 select-none">計測</span>
+            {MEASURE_TOOLS.map((t) => {
+              const active = tool === t.tool
+              return (
+                <button
+                  key={t.tool}
+                  onClick={() => setTool(t.tool)}
+                  className={`px-2 py-1 text-xs rounded border ${
+                    active ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                  }`}
+                  title={t.help ?? t.label}
+                >
+                  {t.label}
+                </button>
+              )
+            })}
+          </div>
         </div>
 
-        {/* ツールのヘルプ＋計測結果 */}
-        {(tool !== 'none' || measureResult) && (
+        {/* ツールヘルプ＋計測結果（左下） */}
+        {(tool !== 'none' || lastMeasure) && (
           <div className="absolute bottom-2 left-2 z-[1000] bg-white/95 border rounded-lg shadow px-3 py-2 text-xs space-y-1 max-w-[calc(100%-1rem)]">
             {tool !== 'none' && (
               <div className="text-slate-700">
                 <span className="font-semibold">
-                  {TOOL_LIST.find((t) => t.tool === tool)?.label ?? tool}
+                  {[...DRAW_TOOLS, ...MEASURE_TOOLS].find((t) => t.tool === tool)?.label ?? tool}
                 </span>
                 <span className="ml-2 text-slate-500">
-                  {TOOL_LIST.find((t) => t.tool === tool)?.help ?? ''}
+                  {[...DRAW_TOOLS, ...MEASURE_TOOLS].find((t) => t.tool === tool)?.help ?? ''}
                 </span>
               </div>
             )}
-            {measureResult && (
-              <div className="text-sm font-mono text-emerald-700">
-                {measureResult.kind === 'dist' && '距離: '}
-                {measureResult.kind === 'area' && '面積: '}
-                {measureResult.kind === 'perp' && '垂線長: '}
-                {formatMeasure(measureResult)}
+            {lastMeasure && (
+              <div className="flex items-center gap-2 text-sm font-mono text-emerald-700">
+                <span>
+                  {lastMeasure.kind === 'dist' && '距離: '}
+                  {lastMeasure.kind === 'area' && '面積: '}
+                  {lastMeasure.kind === 'perp' && '垂線長: '}
+                  {formatMeasureValue(lastMeasure)}
+                </span>
                 <button
-                  onClick={() => setMeasureResult(null)}
-                  className="ml-2 text-xs text-slate-400 hover:text-slate-700"
+                  onClick={handleKeepDimension}
+                  className="text-xs px-2 py-0.5 border border-emerald-300 text-emerald-700 rounded hover:bg-emerald-50"
+                  title="この計測を寸法線として作図に保存"
+                >
+                  寸法線として残す
+                </button>
+                <button
+                  onClick={() => setLastMeasure(null)}
+                  className="text-xs text-slate-400 hover:text-slate-700"
                 >
                   クリア
                 </button>
@@ -479,6 +658,89 @@ export function OrthophotoPage() {
           </div>
         )}
       </div>
+
+      {/* 図形インスペクタ（選択ツールで図形クリックすると表示） */}
+      {selectedAnno && (
+        <div className="absolute top-2 right-2 z-[1000] bg-white border rounded-lg shadow p-3 w-64 text-sm">
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-semibold">図形を編集</span>
+            <button
+              onClick={() => setSelectedAnnoId(null)}
+              className="text-slate-400 hover:text-slate-700"
+              title="閉じる"
+            >
+              ×
+            </button>
+          </div>
+          <div className="text-xs text-slate-500 mb-2">
+            種類: <b>{selectedAnno.kind}</b>
+          </div>
+          <label className="flex items-center justify-between gap-2 mb-2">
+            <span className="text-xs text-slate-600">色</span>
+            <input
+              type="color"
+              value={selectedAnno.color}
+              onChange={(e) => updateAnnotation(selectedAnno.id, { color: e.target.value })}
+              className="w-8 h-6 p-0 border rounded cursor-pointer"
+            />
+          </label>
+          <label className="flex items-center justify-between gap-2 mb-2">
+            <span className="text-xs text-slate-600">レイヤ</span>
+            <input
+              type="text"
+              value={selectedAnno.layer ?? '0'}
+              onChange={(e) => updateAnnotation(selectedAnno.id, { layer: e.target.value })}
+              list="ortho-layers"
+              className="flex-1 px-1 py-0.5 border rounded font-mono text-xs"
+            />
+          </label>
+          <div className="flex justify-between mt-3 pt-2 border-t">
+            <button
+              onClick={() => {
+                if (confirm('この図形を削除しますか？')) deleteAnnotation(selectedAnno.id)
+              }}
+              className="px-2 py-1 text-xs border border-red-300 text-red-600 rounded hover:bg-red-50"
+            >
+              削除
+            </button>
+            <button
+              onClick={() => setSelectedAnnoId(null)}
+              className="px-2 py-1 text-xs border border-slate-300 text-slate-600 rounded hover:bg-slate-50"
+            >
+              閉じる
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* コメント入力モーダル（メンバーをメンション可） */}
+      {pendingComment && (
+        <CommentInputModal
+          members={members.map((m) => ({
+            email: m.email ?? '',
+            name: m.display_name ?? m.email ?? '',
+          }))}
+          onCancel={() => setPendingComment(null)}
+          onConfirm={(text, mentions) => {
+            if (text.trim()) {
+              setAnnotations([
+                ...annotations,
+                {
+                  id: newAnnotationId(),
+                  kind: 'comment',
+                  pos: pendingComment.pos,
+                  text: text.trim(),
+                  color: drawColor,
+                  size: fontSize,
+                  layer: currentLayer,
+                  mentions,
+                },
+              ])
+            }
+            setPendingComment(null)
+          }}
+        />
+      )}
 
       {/* アップロードモーダル */}
       {showUpload && (
@@ -639,6 +901,108 @@ export function OrthophotoPage() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// =============================================
+// コメント入力モーダル（@メンション挿入対応）
+// =============================================
+function CommentInputModal({
+  members,
+  onConfirm,
+  onCancel,
+}: {
+  members: { email: string; name: string }[]
+  onConfirm: (text: string, mentions: string[]) => void
+  onCancel: () => void
+}) {
+  const [text, setText] = useState('')
+  const taRef = useRef<HTMLTextAreaElement | null>(null)
+
+  const insertMention = (name: string) => {
+    const ta = taRef.current
+    if (!ta) {
+      setText((t) => `${t}@${name} `)
+      return
+    }
+    const start = ta.selectionStart ?? text.length
+    const end = ta.selectionEnd ?? text.length
+    const before = text.slice(0, start)
+    const after = text.slice(end)
+    const insert = `${start > 0 && before[start - 1] !== ' ' ? ' ' : ''}@${name} `
+    const next = before + insert + after
+    setText(next)
+    // フォーカスとカーソル位置の復元
+    setTimeout(() => {
+      ta.focus()
+      const p = (before + insert).length
+      ta.setSelectionRange(p, p)
+    }, 0)
+  }
+
+  // 入力テキストから @名前 をスキャンしてメンションリストを構築
+  const computeMentions = (s: string): string[] => {
+    const set = new Set<string>()
+    const re = /@([^\s@]+)/g
+    let m: RegExpExecArray | null
+    while ((m = re.exec(s)) !== null) {
+      // メンバー名と前方一致するものを採用
+      const cand = m[1]
+      const hit = members.find((mm) => cand.startsWith(mm.name) || cand.startsWith(mm.email))
+      if (hit) set.add(hit.email || hit.name)
+    }
+    return Array.from(set)
+  }
+
+  return (
+    <div className="fixed inset-0 z-[3000] bg-black/40 flex items-center justify-center p-4">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+        <div className="px-4 py-3 border-b flex items-center gap-2">
+          <span className="font-semibold text-sm">コメントを入力</span>
+          <button onClick={onCancel} className="ml-auto text-slate-400 hover:text-slate-700">×</button>
+        </div>
+        <div className="p-4 space-y-2">
+          <textarea
+            ref={taRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={4}
+            placeholder="コメント内容（@名前 でメンバーをメンションできます）"
+            className="w-full px-2 py-1.5 border rounded text-sm"
+            autoFocus
+          />
+          {members.length > 0 && (
+            <div>
+              <div className="text-[11px] text-slate-500 mb-1">メンション挿入</div>
+              <div className="flex flex-wrap gap-1">
+                {members.map((m) => (
+                  <button
+                    key={m.email}
+                    onClick={() => insertMention(m.name || m.email)}
+                    className="px-2 py-0.5 text-xs rounded border border-blue-300 text-blue-700 hover:bg-blue-50"
+                    title={m.email}
+                  >
+                    @{m.name || m.email}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="px-4 py-3 border-t flex justify-end gap-2">
+          <button onClick={onCancel} className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50">
+            キャンセル
+          </button>
+          <button
+            onClick={() => onConfirm(text, computeMentions(text))}
+            disabled={!text.trim()}
+            className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+          >
+            追加
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
