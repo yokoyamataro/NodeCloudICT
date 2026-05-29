@@ -3427,8 +3427,11 @@ export function MobileStakingPage() {
             {/* 既知点による精度チェック喚起 */}
             <div className="border border-red-300 rounded-lg p-3 mb-4 bg-red-50">
               <div className="text-sm font-bold text-red-700 mb-1">⚠ 精度チェックのお願い</div>
-              <div className="text-xs text-red-700 leading-relaxed">
+              <div className="text-xs text-red-700 leading-relaxed mb-2">
                 必ず１点以上の既知点を計測し、精度チェックを行ってください。
+              </div>
+              <div className="text-xs text-red-700 leading-relaxed">
+                GNSS測位にはミスFIXが生じる可能性があります。適宜の方法で点検してください。
               </div>
             </div>
 
