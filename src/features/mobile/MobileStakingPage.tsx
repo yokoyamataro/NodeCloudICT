@@ -2713,20 +2713,10 @@ export function MobileStakingPage() {
                     {dataSourceLabel}
                   </div>
                 )}
-                <div className="text-[11px] text-slate-500 mt-1">TIN との比高</div>
-                {trenchDiff !== null ? (
-                  <>
-                    <div className="text-2xl font-bold tabular-nums" style={{ color: diffColor(trenchDiff) }}>
-                      {trenchDiff >= 0 ? '↑' : '↓'}
-                      {Math.abs(trenchDiff).toFixed(3)} m
-                    </div>
-                    <div className="text-[10px] text-slate-500 mt-0.5">
-                      実標高 {selfElevation !== null ? selfElevation.toFixed(3) : '-'} ／ TIN {trenchZ !== null ? trenchZ.toFixed(3) : '-'}
-                    </div>
-                  </>
-                ) : (
-                  <div className="text-xs text-slate-400">現在地が TIN 範囲外、または高さ取得待ち…</div>
-                )}
+                {/* TIN高・比高はターゲット行の上にコンパクト表示 */}
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-[10px] text-slate-500">TIN 読込済み</span>
+                </div>
                 <div className="flex items-center gap-2 mt-2 border-t pt-2">
                   <label className="cursor-pointer">
                     <input
@@ -3175,6 +3165,25 @@ export function MobileStakingPage() {
       {/* 下部パネル（施工管理モードでは非表示） */}
       {screenMode !== 'construction' && (
       <div className="border-t bg-white px-3 py-2 text-sm">
+        {/* LANDXML モード時：ターゲット行の上に TIN高 と 比高 のみコンパクト表示 */}
+        {landxmlMode && trenchSurface && (
+          <div className="flex items-center gap-3 mb-1 pb-1 border-b text-[12px] font-mono whitespace-nowrap">
+            <span className="text-[10px] text-slate-500 font-sans">LANDXML</span>
+            <span className="text-slate-500 text-[10px] font-sans">TIN高</span>
+            <span className="font-bold tabular-nums">
+              {trenchZ !== null ? `${trenchZ.toFixed(3)} m` : '-'}
+            </span>
+            <span className="text-slate-500 text-[10px] font-sans ml-1">比高</span>
+            {trenchDiff !== null ? (
+              <span className="font-bold tabular-nums" style={{ color: diffColor(trenchDiff) }}>
+                {trenchDiff >= 0 ? '↑' : '↓'}
+                {Math.abs(trenchDiff).toFixed(3)} m
+              </span>
+            ) : (
+              <span className="text-slate-400 text-[11px] font-sans">範囲外/取得待ち</span>
+            )}
+          </div>
+        )}
         {selectedTarget ? (
           <div className="flex items-center gap-3">
             <button
