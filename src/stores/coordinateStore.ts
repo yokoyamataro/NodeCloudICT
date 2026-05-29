@@ -15,6 +15,26 @@ export interface CoordinateRow {
   lat: number | null
   lng: number | null
   type: CoordinateType
+  /** 杭種（自由文字列。stakeTypes.ts のプリセットを推奨） */
+  stakeType: string | null
+  /** 作成日時 (ISO) */
+  createdAt: string | null
+  /** 最終更新日時 (ISO) */
+  updatedAt: string | null
+  /** 作成者 user_id */
+  createdBy: string | null
+  /** 最終更新者 user_id */
+  updatedBy: string | null
+}
+
+/** importCoordinates の入力。点番号/X/Y は必須、それ以外は任意。 */
+export interface ImportCoordinateInput {
+  pointNumber: string
+  x: number
+  y: number
+  z: number | null
+  type: CoordinateType
+  stakeType?: string | null
 }
 
 // 経路（順路）の方向
@@ -41,7 +61,7 @@ interface CoordinateState {
   deleteCoordinate: (id: string) => Promise<void>
   deleteCoordinates: (ids: string[]) => Promise<void>
   importCoordinates: (
-    coords: Omit<CoordinateRow, 'id' | 'lat' | 'lng'>[],
+    coords: ImportCoordinateInput[],
     onProgress?: (done: number, total: number) => void,
   ) => Promise<CoordinateRow[]>
   clearCoordinates: () => Promise<void>
@@ -140,6 +160,11 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
           lat,
           lng,
           type: row.coordinate_type as CoordinateType,
+          stakeType: row.stake_type ?? null,
+          createdAt: row.created_at ?? null,
+          updatedAt: row.updated_at ?? null,
+          createdBy: row.created_by ?? null,
+          updatedBy: row.updated_by ?? null,
         }
       })
 
@@ -160,6 +185,8 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
     const pointNumber = `P${state.coordinates.length + 1}`
 
     try {
+      const { data: { user } } = await supabase.auth.getUser()
+      const uid = user?.id ?? null
       const { data, error } = await supabase
         .from('design_coordinates')
         .insert({
@@ -169,8 +196,11 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
           y: 0,
           z: null,
           coordinate_type: type,
+          stake_type: null,
           latitude: null,
           longitude: null,
+          created_by: uid,
+          updated_by: uid,
         } as never)
         .select()
         .single()
@@ -187,6 +217,11 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         lat: null,
         lng: null,
         type: row.coordinate_type as CoordinateType,
+        stakeType: row.stake_type ?? null,
+        createdAt: row.created_at ?? null,
+        updatedAt: row.updated_at ?? null,
+        createdBy: row.created_by ?? null,
+        updatedBy: row.updated_by ?? null,
       }
 
       set({ coordinates: [...state.coordinates, newCoord] })
@@ -274,6 +309,8 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
     const converter = new CoordinateConverter(state.zone)
 
     try {
+      const { data: { user } } = await supabase.auth.getUser()
+      const uid = user?.id ?? null
       const insertData = coords.map((c) => {
         let lat: number | null = null
         let lng: number | null = null
@@ -289,8 +326,11 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
           y: c.y,
           z: c.z,
           coordinate_type: c.type,
+          stake_type: c.stakeType ?? null,
           latitude: lat,
           longitude: lng,
+          created_by: uid,
+          updated_by: uid,
         }
       })
 
@@ -316,6 +356,11 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
             lat: row.latitude,
             lng: row.longitude,
             type: row.coordinate_type as CoordinateType,
+            stakeType: row.stake_type ?? null,
+            createdAt: row.created_at ?? null,
+            updatedAt: row.updated_at ?? null,
+            createdBy: row.created_by ?? null,
+            updatedBy: row.updated_by ?? null,
           })
         }
         onProgress?.(Math.min(i + CHUNK, total), total)
@@ -370,6 +415,10 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
     if (!farmId) return
 
     try {
+      // 現在のログインユーザー（DB トリガでも自動設定されるが、念のためクライアントからも送る）
+      const { data: { user } } = await supabase.auth.getUser()
+      const uid = user?.id ?? null
+
       // 座標の変更を保存
       for (const [id, coord] of state.pendingChanges) {
         const { error } = await supabase
@@ -380,8 +429,11 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
             y: coord.y,
             z: coord.z,
             coordinate_type: coord.type,
+            stake_type: coord.stakeType,
             latitude: coord.lat,
             longitude: coord.lng,
+            updated_by: uid,
+            updated_at: new Date().toISOString(),
           } as never)
           .eq('id', id)
 

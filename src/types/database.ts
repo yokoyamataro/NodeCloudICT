@@ -266,9 +266,15 @@ export interface DesignCoordinate {
   latitude: number | null
   longitude: number | null
   coordinate_type: string
+  /** 杭種（木杭 / コンクリート杭 / プラ杭 / 金属鋲 / 金属標 / 石標 / 既設標 / 自由入力） */
+  stake_type: string | null
   notes: string | null
   created_at: string
   updated_at: string
+  /** 作成者 (auth.users.id)。Insert/Update トリガで自動設定される。 */
+  created_by: string | null
+  /** 最終更新者 (auth.users.id)。 */
+  updated_by: string | null
 }
 
 // 工種別工事区域

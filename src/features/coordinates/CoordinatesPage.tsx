@@ -20,6 +20,7 @@ import { ResizableSplit } from '@/components/layout/ResizableSplit'
 import { loadSimaFile, downloadSimaFile } from '@/lib/sima-parser'
 import { PageHeader } from '@/components/layout/PageHeader'
 import type { CoordinateType } from '@/types/database'
+import { STAKE_TYPE_OPTIONS } from '@/lib/stakeTypes'
 
 // 数値入力用コンポーネント（入力中はフォーマットしない）
 function NumberInput({
@@ -206,9 +207,31 @@ export function CoordinatesPage() {
   const viewMode = urlParams.get('view') // 'map' または 'table'
 
   const { currentFarm } = useFarmStore()
-  const { projects } = useProjectListStore()
+  const { projects, members, fetchMembers } = useProjectListStore()
   const { fetchByEntityIds: fetchAttachments, getSignedUrl } = useAttachmentStore()
   const { workAreas, fetchWorkAreas } = useWorkAreaStore()
+  // 更新者ID → 表示名（プロジェクトメンバーから引く）
+  const memberNameById = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const mb of members) {
+      const name = (mb.display_name && mb.display_name.trim()) || mb.email || mb.user_id
+      m.set(mb.user_id, name)
+    }
+    return m
+  }, [members])
+  // currentFarm.project_id が決まったらメンバーを取得（更新者名表示用）
+  useEffect(() => {
+    const pid = currentFarm?.project_id
+    if (pid) fetchMembers(pid)
+  }, [currentFarm?.project_id, fetchMembers])
+  // 更新日時を「YYYY-MM-DD HH:mm」のローカル時刻でコンパクト表示
+  const fmtDateTime = (iso: string | null): string => {
+    if (!iso) return '-'
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return '-'
+    const pad = (n: number) => n.toString().padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  }
   // 座標計算モーダル
   const [showCalcModal, setShowCalcModal] = useState(false)
   // 座標計算で地図から点選択中の割り当て関数（null=非選択中）
@@ -220,8 +243,10 @@ export function CoordinatesPage() {
   // 手入力・計算追加時に末尾行へスクロールするための ref
   const lastRowRef = useRef<HTMLTableRowElement | null>(null)
   // 末尾の空行（手入力用）
-  const [newRow, setNewRow] = useState<{ pointNumber: string; x: string; y: string; z: string; type: string }>(
-    { pointNumber: '', x: '', y: '', z: '', type: '' },
+  const [newRow, setNewRow] = useState<{
+    pointNumber: string; x: string; y: string; z: string; type: string; stakeType: string
+  }>(
+    { pointNumber: '', x: '', y: '', z: '', type: '', stakeType: '' },
   )
   // 写真帳出力の進捗（null=非実行）
   const [photoExporting, setPhotoExporting] = useState<{ done: number; total: number } | null>(null)
@@ -787,9 +812,10 @@ export function CoordinatesPage() {
         y: Number.isFinite(yv) ? yv : 0,
         z: newRow.z.trim() !== '' && Number.isFinite(zv) ? zv : null,
         type: (newRow.type || selectedType) as CoordinateType,
+        stakeType: newRow.stakeType.trim() !== '' ? newRow.stakeType : null,
       },
     ])
-    setNewRow({ pointNumber: '', x: '', y: '', z: '', type: newRow.type })
+    setNewRow({ pointNumber: '', x: '', y: '', z: '', type: newRow.type, stakeType: newRow.stakeType })
     setTimeout(() => lastRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80)
   }
 
@@ -863,8 +889,21 @@ export function CoordinatesPage() {
             ))}
           </select>
         </td>
+        {/* 杭種（自由入力 + データリスト候補） */}
+        <td className={cell} onClick={(e) => e.stopPropagation()}>
+          <input
+            list="stake-type-options"
+            value={newRow.stakeType}
+            onChange={(e) => setNewRow((r) => ({ ...r, stakeType: e.target.value }))}
+            onKeyDown={onKey}
+            placeholder="杭種"
+            className={`${inp} bg-white`}
+          />
+        </td>
         <td className="px-0.5 py-0.5 text-right text-slate-300">-</td>
         <td className="px-0.5 py-0.5 text-right text-slate-300">-</td>
+        <td className="px-0.5 py-0.5 text-slate-300">-</td>
+        <td className="px-0.5 py-0.5 text-slate-300">-</td>
         <td className="px-1 py-0.5"></td>
       </tr>
     )
@@ -1229,13 +1268,19 @@ export function CoordinatesPage() {
     // テーブルのみ表示
     return (
       <div className="h-screen flex flex-col">
+        {/* 杭種ドロップダウンの共有候補リスト */}
+        <datalist id="stake-type-options">
+          {STAKE_TYPE_OPTIONS.map((o) => (
+            <option key={o.label} value={o.label} />
+          ))}
+        </datalist>
         <div className="p-4 border-b bg-white">
           <h2 className="text-lg font-semibold mb-3">座標計算書</h2>
           {renderToolbar('hover:bg-gray-50')}
         </div>
         <div className="flex-1 overflow-auto">
           {renderBulkBar()}
-          <table className="w-full text-sm">
+          <table className="min-w-full w-max text-sm">
             <thead className="bg-slate-100 sticky top-0">
               <tr>
                 <th className="px-1 py-2 w-8 text-center">
@@ -1252,8 +1297,11 @@ export function CoordinatesPage() {
                 <th className="px-0.5 py-2 text-right font-medium">Y (m)</th>
                 <th className="px-0.5 py-2 text-right font-medium">Z (m)</th>
                 <th className="px-0.5 py-2 text-left font-medium">種類</th>
+                <th className="px-0.5 py-2 text-left font-medium">杭種</th>
                 <th className="px-0.5 py-2 text-right font-medium">緯度</th>
                 <th className="px-0.5 py-2 text-right font-medium">経度</th>
+                <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新者</th>
+                <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新日時</th>
                 <th className="px-1 py-2 w-16"></th>
               </tr>
             </thead>
@@ -1322,11 +1370,34 @@ export function CoordinatesPage() {
                       ))}
                     </select>
                   </td>
+                  {/* 杭種（自由入力 + 候補 datalist） */}
+                  <td className="px-0.5 py-0.5">
+                    <input
+                      list="stake-type-options"
+                      type="text"
+                      value={coord.stakeType ?? ''}
+                      onChange={(e) =>
+                        updateCoordinate(coord.id, 'stakeType', e.target.value || null)
+                      }
+                      onClick={(e) => e.stopPropagation()}
+                      placeholder="-"
+                      className="w-20 px-1 py-0.5 border rounded text-xs bg-white"
+                    />
+                  </td>
                   <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono">
                     {coord.lat?.toFixed(6) ?? '-'}
                   </td>
                   <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono">
                     {coord.lng?.toFixed(6) ?? '-'}
+                  </td>
+                  <td
+                    className="px-0.5 py-0.5 text-xs text-muted-foreground whitespace-nowrap max-w-[8rem] truncate"
+                    title={coord.updatedBy ? (memberNameById.get(coord.updatedBy) ?? coord.updatedBy) : ''}
+                  >
+                    {coord.updatedBy ? (memberNameById.get(coord.updatedBy) ?? '-') : '-'}
+                  </td>
+                  <td className="px-0.5 py-0.5 text-xs text-muted-foreground font-mono whitespace-nowrap">
+                    {fmtDateTime(coord.updatedAt)}
                   </td>
                   <td className="px-1 py-0.5 flex items-center gap-0.5">
                     <button
@@ -1365,6 +1436,12 @@ export function CoordinatesPage() {
   // 通常表示（左右分割）
   return (
     <div className="h-full flex flex-col">
+      {/* 杭種ドロップダウンの共有候補リスト */}
+      <datalist id="stake-type-options">
+        {STAKE_TYPE_OPTIONS.map((o) => (
+          <option key={o.label} value={o.label} />
+        ))}
+      </datalist>
       <PageHeader title="座標管理" subtitle="平面直角座標の登録" />
 
       {/* メインコンテンツ */}
@@ -1385,7 +1462,7 @@ export function CoordinatesPage() {
               {/* 座標テーブル */}
               <div className="flex-1 overflow-auto">
                 {renderBulkBar()}
-                <table className="w-full text-sm">
+                <table className="min-w-full w-max text-sm">
                   <thead className="bg-slate-100 sticky top-0">
                     <tr>
                       <th className="px-1 py-2 w-8 text-center">
@@ -1402,8 +1479,11 @@ export function CoordinatesPage() {
                       <th className="px-0.5 py-2 text-right font-medium">Y (m)</th>
                       <th className="px-0.5 py-2 text-right font-medium">Z (m)</th>
                       <th className="px-0.5 py-2 text-left font-medium">種類</th>
+                      <th className="px-0.5 py-2 text-left font-medium">杭種</th>
                       <th className="px-0.5 py-2 text-right font-medium">緯度</th>
                       <th className="px-0.5 py-2 text-right font-medium">経度</th>
+                      <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新者</th>
+                      <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新日時</th>
                       <th className="px-1 py-2 w-16"></th>
                     </tr>
                   </thead>
@@ -1472,11 +1552,34 @@ export function CoordinatesPage() {
                             ))}
                           </select>
                         </td>
+                        {/* 杭種 */}
+                        <td className="px-0.5 py-0.5">
+                          <input
+                            list="stake-type-options"
+                            type="text"
+                            value={coord.stakeType ?? ''}
+                            onChange={(e) =>
+                              updateCoordinate(coord.id, 'stakeType', e.target.value || null)
+                            }
+                            onClick={(e) => e.stopPropagation()}
+                            placeholder="-"
+                            className="w-20 px-1 py-0.5 border rounded text-xs bg-white"
+                          />
+                        </td>
                         <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono">
                           {coord.lat?.toFixed(6) ?? '-'}
                         </td>
                         <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono">
                           {coord.lng?.toFixed(6) ?? '-'}
+                        </td>
+                        <td
+                          className="px-0.5 py-0.5 text-xs text-muted-foreground whitespace-nowrap max-w-[7rem] truncate"
+                          title={coord.updatedBy ? (memberNameById.get(coord.updatedBy) ?? coord.updatedBy) : ''}
+                        >
+                          {coord.updatedBy ? (memberNameById.get(coord.updatedBy) ?? '-') : '-'}
+                        </td>
+                        <td className="px-0.5 py-0.5 text-xs text-muted-foreground font-mono whitespace-nowrap">
+                          {fmtDateTime(coord.updatedAt)}
                         </td>
                         <td className="px-1 py-0.5">
                           <button
