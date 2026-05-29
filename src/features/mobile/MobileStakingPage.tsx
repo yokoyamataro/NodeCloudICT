@@ -428,6 +428,9 @@ export function MobileStakingPage() {
   const [showSettings, setShowSettings] = useState(false)
   const [showTargetList, setShowTargetList] = useState(false)
   const [showRecordList, setShowRecordList] = useState(false)
+  // 現場を開いたときの開始前チェック（ジオイド補正・目標高(アンテナ高)・既知点精度確認の喚起）
+  // 工区IDごとにセッション中 1 回だけ表示する。
+  const [showStartupCheck, setShowStartupCheck] = useState(false)
   // 座標計算（交点・線上）モーダル
   const [showCalcModal, setShowCalcModal] = useState(false)
   // 計算モーダルで地図から点選択中の割り当て関数
@@ -660,6 +663,20 @@ export function MobileStakingPage() {
       cancelled = true
     }
   }, [farmId, setCurrentFarm, setZone, fetchCoordinates, fetchPipes, fetchRecords])
+
+  // 現場を開いた直後に「開始前チェック」モーダルを 1 回だけ表示する。
+  // ジオイド補正の有無 / 目標高(アンテナ高) を確認させ、既知点での精度チェックを促す。
+  useEffect(() => {
+    if (!farmId || loading || error) return
+    try {
+      const key = `mobile:startup-check:${farmId}`
+      if (sessionStorage.getItem(key) === '1') return
+      setShowStartupCheck(true)
+      sessionStorage.setItem(key, '1')
+    } catch {
+      setShowStartupCheck(true)
+    }
+  }, [farmId, loading, error])
 
   // 座標が読み込まれたら、写真の枚数を一括取得（カメラボタンのバッジ表示用）
   useEffect(() => {
@@ -3342,6 +3359,87 @@ export function MobileStakingPage() {
           )}
         </div>
       </div>
+      )}
+
+      {/* 現場開始前チェック（ジオイド補正・目標高 と既知点による精度チェックの喚起） */}
+      {showStartupCheck && (
+        <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center z-[3500]">
+          <div className="bg-white w-full sm:max-w-md rounded-t-xl sm:rounded-xl shadow-xl p-4 max-h-[95vh] overflow-auto">
+            <h3 className="text-base font-bold mb-2 text-slate-800">現場の開始前チェック</h3>
+            <p className="text-xs text-slate-600 mb-3">
+              観測を始める前に以下の設定をご確認ください。
+            </p>
+
+            {/* ジオイド補正 */}
+            <div className="border rounded-lg p-3 mb-3 bg-slate-50">
+              <div className="text-xs font-bold text-slate-700 mb-1.5">ジオイド補正</div>
+              <label className="flex items-center gap-2 mb-1">
+                <input
+                  type="checkbox"
+                  checked={useGeoidCorrection}
+                  onChange={(e) => setUseGeoidCorrection(e.target.checked)}
+                />
+                <span className="text-sm">ジオイド補正を有効化する</span>
+                <span
+                  className={`ml-auto text-[11px] px-1.5 py-0.5 rounded ${
+                    useGeoidCorrection ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                  }`}
+                >
+                  {useGeoidCorrection ? 'ON' : 'OFF'}
+                </span>
+              </label>
+              <div className="text-[11px] text-slate-500">
+                {useGeoidCorrection ? (
+                  <>
+                    {geoidLoading && '読込中…'}
+                    {!geoidLoading && geoidGrid && '✓ JPGEO2024 読込済み'}
+                    {!geoidLoading && !geoidGrid && !geoidError && '未読込'}
+                    {!geoidLoading && geoidError && (
+                      <span className="text-red-600">エラー: {geoidError}</span>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-amber-700">
+                    OFF のとき標高は楕円体高 − アンテナ高のみで計算されます。
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* 目標高(アンテナ高) */}
+            <div className="border rounded-lg p-3 mb-3 bg-slate-50">
+              <div className="text-xs font-bold text-slate-700 mb-1.5">目標高（アンテナ高） (m)</div>
+              <input
+                type="number"
+                step={0.01}
+                value={antennaHeight}
+                onChange={(e) => {
+                  const n = parseFloat(e.target.value)
+                  if (Number.isFinite(n)) setAntennaHeight(n)
+                }}
+                className="w-full px-2 py-1.5 border rounded text-right font-mono text-sm"
+              />
+              <div className="text-[11px] text-slate-500 mt-1">
+                ロッド/ポール先端からアンテナ位相中心までの高さ。
+              </div>
+            </div>
+
+            {/* 既知点による精度チェック喚起 */}
+            <div className="border border-red-300 rounded-lg p-3 mb-4 bg-red-50">
+              <div className="text-sm font-bold text-red-700 mb-1">⚠ 精度チェックのお願い</div>
+              <div className="text-xs text-red-700 leading-relaxed">
+                必ず１点以上の既知点を計測し、精度チェックを行ってください。
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowStartupCheck(false)}
+              className="w-full px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold"
+            >
+              確認した
+            </button>
+          </div>
+        </div>
       )}
     </div>
   )
