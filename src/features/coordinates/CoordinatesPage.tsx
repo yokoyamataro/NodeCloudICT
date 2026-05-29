@@ -498,6 +498,36 @@ export function CoordinatesPage() {
     alert('Excel 出力は実装予定です')
   }
 
+  // 選択座標を TSV（点名 / X / Y / Z）でクリップボードへコピー。
+  // ヘッダなし。Excel に貼り付けでセルに分解される。
+  const handleCopyTSV = async () => {
+    const targets = getExportTargets()
+    if (targets.length === 0) return
+    const fmt = (n: number | null | undefined) =>
+      n === null || n === undefined || !Number.isFinite(n) ? '' : String(n)
+    const tsv = targets
+      .map((c) => [c.pointNumber, fmt(c.x), fmt(c.y), fmt(c.z)].join('\t'))
+      .join('\r\n')
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(tsv)
+      } else {
+        // フォールバック（http コンテキスト等）
+        const ta = document.createElement('textarea')
+        ta.value = tsv
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      }
+      alert(`${targets.length} 点を TSV としてクリップボードにコピーしました。`)
+    } catch (e) {
+      alert('クリップボードへのコピーに失敗しました: ' + (e instanceof Error ? e.message : String(e)))
+    }
+  }
+
   // 写真帳（遠景・近景写真を貼り付けた Excel）を出力。ひな形を指定
   const handleExportPhotoBook = async (template: PhotoBookTemplate) => {
     const targets = getExportTargets()
@@ -965,6 +995,15 @@ export function CoordinatesPage() {
               >
                 <Download className="h-3.5 w-3.5" />
                 CSV出力
+              </button>
+              <button
+                type="button"
+                onClick={() => { handleCopyTSV(); setOpenMenu(null) }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
+                title="点名 / X / Y / Z を TSV でクリップボードへ"
+              >
+                <Clipboard className="h-3.5 w-3.5" />
+                TSVコピー（点名/X/Y/Z）
               </button>
               <button
                 type="button"
