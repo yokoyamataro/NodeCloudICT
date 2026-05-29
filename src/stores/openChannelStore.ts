@@ -9,6 +9,10 @@ export interface AlignmentPoint {
   kind: AlignmentPointKind
   /** IP の単曲線半径 (m)。0 または未指定で直角折れ */
   radius?: number
+  /** IP の IN 側クロソイドパラメータ A (m)。0/未指定で緩和曲線なし */
+  spiralAIn?: number
+  /** IP の OUT 側クロソイドパラメータ A (m)。0/未指定で緩和曲線なし */
+  spiralAOut?: number
 }
 
 /** 縦断線形の変化点 */

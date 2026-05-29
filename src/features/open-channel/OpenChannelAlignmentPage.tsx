@@ -43,6 +43,11 @@ import {
 } from '@/lib/openChannel/alignment'
 import { downloadSimaFile, type SimaExportPoint } from '@/lib/sima-parser'
 import { buildLandXml } from '@/lib/landxml/exporter'
+import type {
+  Alignment as LandXmlAlignment,
+  AlignmentSegment as LandXmlAlignmentSegment,
+} from '@/lib/landxml/types'
+import { clothoidPoint, clothoidPointOut } from '@/lib/clothoid'
 import type { TinPoint, TinTriangle, TinSurface } from '@/lib/landxml/surface'
 
 /**
@@ -668,7 +673,14 @@ export function OpenChannelAlignmentPage() {
     for (const p of selected.alignmentPoints) {
       const c = coordinates.find((cc) => cc.id === p.coordId)
       if (!c) continue
-      out.push({ x: c.x, y: c.y, kind: p.kind, radius: p.radius })
+      out.push({
+        x: c.x,
+        y: c.y,
+        kind: p.kind,
+        radius: p.radius,
+        spiralAIn: p.spiralAIn,
+        spiralAOut: p.spiralAOut,
+      })
     }
     return out
   }, [selected, coordinates])
@@ -1019,10 +1031,83 @@ export function OpenChannelAlignmentPage() {
     )
   }
 
+  // openChannel の AlignmentSegment を LandXML の AlignmentSegment 配列に変換
+  const buildLandXmlAlignment = (): LandXmlAlignment | null => {
+    if (!selected || segments.length === 0) return null
+    const out: LandXmlAlignmentSegment[] = []
+    for (const s of segments) {
+      if (s.kind === 'line') {
+        out.push({
+          type: 'line',
+          startX: s.p0.x,
+          startY: s.p0.y,
+          endX: s.p1.x,
+          endY: s.p1.y,
+          length: s.length,
+        })
+      } else if (s.kind === 'arc') {
+        const startX = s.center.x + s.radius * Math.cos(s.a0)
+        const startY = s.center.y + s.radius * Math.sin(s.a0)
+        const endA = s.a0 + s.dA
+        const endX = s.center.x + s.radius * Math.cos(endA)
+        const endY = s.center.y + s.radius * Math.sin(endA)
+        out.push({
+          type: 'curve',
+          startX,
+          startY,
+          endX,
+          endY,
+          length: s.length,
+          centerX: s.center.x,
+          centerY: s.center.y,
+          radius: s.radius,
+          rotation: s.dA >= 0 ? 'ccw' : 'cw',
+        })
+      } else {
+        // spiral
+        const R = (s.A * s.A) / s.length // L = A²/R → R = A²/L
+        const startRadius = s.direction === 'in' ? null : R
+        const endRadius = s.direction === 'in' ? R : null
+        // 終点を計算（局所座標 → ワールド変換）
+        const local =
+          s.direction === 'in'
+            ? clothoidPoint(s.length, s.A)
+            : clothoidPointOut(s.length, s.A, s.length)
+        const tx = s.tangent0.x
+        const ty = s.tangent0.y
+        const nxL = -ty
+        const nyL = tx
+        const yL = s.rotSign * local.y
+        const endX = s.p0.x + tx * local.x + nxL * yL
+        const endY = s.p0.y + ty * local.x + nyL * yL
+        out.push({
+          type: 'spiral',
+          startX: s.p0.x,
+          startY: s.p0.y,
+          endX,
+          endY,
+          length: s.length,
+          spiralType: 'clothoid',
+          startRadius,
+          endRadius,
+          spiralA: s.A,
+        })
+      }
+    }
+    return {
+      id: selected.id,
+      name: selected.name,
+      staStart: 0,
+      totalLength: totalLen,
+      segments: out,
+    }
+  }
+
   const handleExportLandXml = () => {
     if (!selected || !stationTin) return
+    const lAlign = buildLandXmlAlignment()
     const xml = buildLandXml({
-      alignments: [],
+      alignments: lAlign ? [lAlign] : [],
       surfaces: [{ name: selected.name, surface: stationTin }],
       projectName: selected.name,
       coordinateZoneName: `JGD2011 zone ${zone}`,
@@ -1189,6 +1274,18 @@ export function OpenChannelAlignmentPage() {
                           <th className="px-1 py-1 text-left">点名</th>
                           <th className="px-1 py-1 w-14">種別</th>
                           <th className="px-1 py-1 w-16 text-right">R (m)</th>
+                          <th
+                            className="px-1 py-1 w-14 text-right"
+                            title="クロソイドパラメータ A（IN 側）。L=A²/R で緩和曲線長を決定"
+                          >
+                            A<sub>IN</sub>
+                          </th>
+                          <th
+                            className="px-1 py-1 w-14 text-right"
+                            title="クロソイドパラメータ A（OUT 側）"
+                          >
+                            A<sub>OUT</sub>
+                          </th>
                           <th className="px-1 py-1 w-12"></th>
                         </tr>
                       </thead>
@@ -1221,6 +1318,50 @@ export function OpenChannelAlignmentPage() {
                                       handleChangePoint(i, { radius: Number.isFinite(v) && v > 0 ? v : undefined })
                                     }}
                                     className="w-14 px-1 py-0.5 border rounded text-right text-xs"
+                                  />
+                                ) : (
+                                  <span className="text-slate-300">—</span>
+                                )}
+                              </td>
+                              {/* A_IN */}
+                              <td className="px-1 py-1 text-right">
+                                {p.kind === 'ip' && p.radius && p.radius > 0 ? (
+                                  <input
+                                    type="number"
+                                    step={1}
+                                    min={0}
+                                    value={p.spiralAIn ?? 0}
+                                    onChange={(e) => {
+                                      const v = parseFloat(e.target.value)
+                                      handleChangePoint(i, {
+                                        spiralAIn: Number.isFinite(v) && v > 0 ? v : undefined,
+                                      })
+                                    }}
+                                    className="w-12 px-1 py-0.5 border rounded text-right text-xs"
+                                    placeholder="0"
+                                    title="0/空で緩和曲線なし"
+                                  />
+                                ) : (
+                                  <span className="text-slate-300">—</span>
+                                )}
+                              </td>
+                              {/* A_OUT */}
+                              <td className="px-1 py-1 text-right">
+                                {p.kind === 'ip' && p.radius && p.radius > 0 ? (
+                                  <input
+                                    type="number"
+                                    step={1}
+                                    min={0}
+                                    value={p.spiralAOut ?? 0}
+                                    onChange={(e) => {
+                                      const v = parseFloat(e.target.value)
+                                      handleChangePoint(i, {
+                                        spiralAOut: Number.isFinite(v) && v > 0 ? v : undefined,
+                                      })
+                                    }}
+                                    className="w-12 px-1 py-0.5 border rounded text-right text-xs"
+                                    placeholder="0"
+                                    title="0/空で緩和曲線なし"
                                   />
                                 ) : (
                                   <span className="text-slate-300">—</span>
@@ -1699,7 +1840,7 @@ export function OpenChannelAlignmentPage() {
                   <span className="font-mono tabular-nums">{totalLen.toFixed(2)} m</span>
                 </div>
                 <div className="text-[11px] text-slate-400">
-                  ※ 直線部分 + 単曲線 R 補間で算出（クロソイド非対応）
+                  ※ 直線・単曲線・クロソイド（IN/OUT 非対称対応）で算出。L = A² / R。
                 </div>
               </section>
             </>
