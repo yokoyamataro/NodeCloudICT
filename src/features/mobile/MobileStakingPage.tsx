@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, Polygon, Tooltip, Pane, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, Polygon, Tooltip, Pane, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import {
@@ -216,6 +216,22 @@ function ZoomWatcher({ onChange }: { onChange: (z: number) => void }) {
   return null
 }
 
+// 断面ピック用: アクティブ時のみ地図クリックを拾って親に通知
+function SectionPicker({
+  active,
+  onPick,
+}: {
+  active: boolean
+  onPick: (latlng: [number, number]) => void
+}) {
+  useMapEvents({
+    click(e) {
+      if (active) onPick([e.latlng.lat, e.latlng.lng])
+    },
+  })
+  return null
+}
+
 function FollowCurrent({
   position,
   enabled,
@@ -420,6 +436,23 @@ export function MobileStakingPage() {
   const [landxmlMode, setLandxmlMode] = useState(false)
   const prevBaseLayerRef = useRef<typeof baseLayer | null>(null)
   const landxmlInputRef = useRef<HTMLInputElement>(null)
+  // 断面（クロスセクション）
+  interface CrossSection {
+    id: string
+    name: string
+    a: [number, number]
+    b: [number, number]
+    direction: 'along' | 'perp'
+  }
+  const [sections, setSections] = useState<CrossSection[]>([])
+  const [activeSectionId, setActiveSectionId] = useState<string | null>(null)
+  const [sectionPickPts, setSectionPickPts] = useState<[number, number][]>([])
+  const [sectionDirection, setSectionDirection] = useState<'along' | 'perp'>('along')
+  const sectionPickingMode = landxmlMode && sectionPickPts.length < 2 && activeSectionId === 'pending'
+  const startNewSection = () => {
+    setActiveSectionId('pending')
+    setSectionPickPts([])
+  }
   // LANDXML モード ON で背景を「背景なし」に、OFF で元に戻す
   useEffect(() => {
     if (landxmlMode) {
@@ -872,6 +905,82 @@ export function MobileStakingPage() {
     return '#ef4444'
   }
   // ========== 施工管理モード関連 終 ==========
+
+  // ========== 断面（クロスセクション） ==========
+  const activeSection = useMemo(
+    () => sections.find((s) => s.id === activeSectionId && s.id !== 'pending') ?? null,
+    [sections, activeSectionId],
+  )
+
+  // 表示用の断面線（along/perp）の lat/lng 端点
+  const activeSectionLine = useMemo<[[number, number], [number, number]] | null>(() => {
+    if (!activeSection) return null
+    if (activeSection.direction === 'along') return [activeSection.a, activeSection.b]
+    const A0 = converter.toXY(activeSection.a[0], activeSection.a[1])
+    const B0 = converter.toXY(activeSection.b[0], activeSection.b[1])
+    const Mx = (A0.x + B0.x) / 2
+    const My = (A0.y + B0.y) / 2
+    const dN = B0.x - A0.x
+    const dE = B0.y - A0.y
+    const L = Math.hypot(dN, dE)
+    if (L === 0) return [activeSection.a, activeSection.b]
+    const half = L / 2
+    const nx = -dE / L
+    const ny = dN / L
+    const p1 = converter.toLatLng(Mx - nx * half, My - ny * half)
+    const p2 = converter.toLatLng(Mx + nx * half, My + ny * half)
+    return [
+      [p1.lat, p1.lng],
+      [p2.lat, p2.lng],
+    ]
+  }, [activeSection, converter])
+
+  // 断面プロファイル: TIN サンプル + 現況点（記録の射影）
+  const sectionProfile = useMemo(() => {
+    if (!activeSection) return null
+    const A0 = converter.toXY(activeSection.a[0], activeSection.a[1])
+    const B0 = converter.toXY(activeSection.b[0], activeSection.b[1])
+    let Ax: number, Ay: number, Bx: number, By: number
+    if (activeSection.direction === 'perp') {
+      const Mx = (A0.x + B0.x) / 2
+      const My = (A0.y + B0.y) / 2
+      const dN = B0.x - A0.x
+      const dE = B0.y - A0.y
+      const L0 = Math.hypot(dN, dE)
+      const half = L0 / 2
+      const nx = -dE / L0
+      const ny = dN / L0
+      Ax = Mx - nx * half; Ay = My - ny * half
+      Bx = Mx + nx * half; By = My + ny * half
+    } else {
+      Ax = A0.x; Ay = A0.y; Bx = B0.x; By = B0.y
+    }
+    const dx = Bx - Ax
+    const dy = By - Ay
+    const len = Math.hypot(dx, dy)
+    const N = 100
+    const tinPts: { d: number; z: number | null }[] = []
+    for (let i = 0; i <= N; i++) {
+      const t = i / N
+      const x = Ax + dx * t
+      const y = Ay + dy * t
+      const z = trenchIdx ? queryZ(trenchIdx, x, y) : null
+      tinPts.push({ d: t * len, z })
+    }
+    const L2 = dx * dx + dy * dy
+    const recPts: { d: number; z: number; name: string }[] = []
+    for (const r of records) {
+      if (r.measuredZ == null) continue
+      const t = ((r.measuredX - Ax) * dx + (r.measuredY - Ay) * dy) / L2
+      if (t < 0 || t > 1) continue
+      const fx = Ax + t * dx
+      const fy = Ay + t * dy
+      const dist = Math.hypot(r.measuredX - fx, r.measuredY - fy)
+      if (dist > 5) continue // 断面線から5m以内のみ
+      recPts.push({ d: t * len, z: r.measuredZ, name: r.targetName ?? '' })
+    }
+    return { length: len, tinPts, recPts }
+  }, [activeSection, converter, trenchIdx, records])
 
   // ターゲット一覧（座標管理 + 暗渠頂点）
   const targets = useMemo<StakingTarget[]>(() => {
@@ -1805,10 +1914,10 @@ export function MobileStakingPage() {
         </button>
         <button
           onClick={() => setLandxmlMode((v) => !v)}
-          className={`p-1.5 rounded ${landxmlMode ? 'bg-cyan-600' : 'bg-slate-700 hover:bg-slate-600'}`}
-          title="LANDXML モード（TIN表示・現在地との比高を表示）"
+          className={`px-2 py-1 rounded text-xs font-bold ${landxmlMode ? 'bg-cyan-600' : 'bg-slate-700 hover:bg-slate-600'}`}
+          title="3D（LANDXML）モード - TIN表示・比高・断面"
         >
-          <FileText className="h-4 w-4" />
+          3D
         </button>
         <button
           onClick={() => setShowSettings((v) => !v)}
@@ -2131,6 +2240,40 @@ export function MobileStakingPage() {
           className="h-full w-full"
           style={baseLayer === 'none' ? { background: '#ffffff' } : undefined}
         >
+          {/* 断面ピック中の仮マーカー */}
+          {sectionPickingMode && sectionPickPts.map((p, i) => (
+            <CircleMarker key={`spp-${i}`} center={p} radius={6} pathOptions={{ color: '#0891b2', fillColor: '#06b6d4', fillOpacity: 1, weight: 2 }} />
+          ))}
+          {/* アクティブ断面線 */}
+          {landxmlMode && activeSectionLine && (
+            <Polyline positions={activeSectionLine} pathOptions={{ color: '#0891b2', weight: 3, dashArray: '6,4' }} />
+          )}
+          <SectionPicker
+            active={sectionPickingMode}
+            onPick={(ll) => {
+              const next = [...sectionPickPts, ll]
+              setSectionPickPts(next)
+              if (next.length >= 2) {
+                const name = window.prompt('断面名', `断面-${sections.length + 1}`)
+                if (name === null) {
+                  setSectionPickPts([])
+                  setActiveSectionId(null)
+                  return
+                }
+                const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+                const s: CrossSection = {
+                  id,
+                  name: name.trim() || `断面-${sections.length + 1}`,
+                  a: next[0],
+                  b: next[1],
+                  direction: sectionDirection,
+                }
+                setSections((prev) => [...prev, s])
+                setActiveSectionId(id)
+                setSectionPickPts([])
+              }
+            }}
+          />
           <TileLayer
             attribution='&copy; 国土地理院'
             url={currentBase.url ?? ''}
@@ -2443,6 +2586,73 @@ export function MobileStakingPage() {
           ))}
         </MapContainer>
 
+        {/* 断面図（3Dモード + アクティブ断面） — 下半分にオーバーレイ */}
+        {landxmlMode && activeSection && sectionProfile && (() => {
+          const W = 600
+          const H = 200
+          const padL = 40, padR = 10, padT = 14, padB = 22
+          const PW = W - padL - padR
+          const PH = H - padT - padB
+          // y 範囲: TIN/recordsの値から決める
+          let zMin = Infinity, zMax = -Infinity
+          for (const p of sectionProfile.tinPts) if (p.z != null) { if (p.z < zMin) zMin = p.z; if (p.z > zMax) zMax = p.z }
+          for (const p of sectionProfile.recPts) { if (p.z < zMin) zMin = p.z; if (p.z > zMax) zMax = p.z }
+          if (!Number.isFinite(zMin) || !Number.isFinite(zMax)) { zMin = 0; zMax = 1 }
+          if (zMax - zMin < 0.5) { const m = (zMin + zMax) / 2; zMin = m - 0.25; zMax = m + 0.25 }
+          const xOf = (d: number) => padL + (d / sectionProfile.length) * PW
+          const yOf = (z: number) => padT + (1 - (z - zMin) / (zMax - zMin)) * PH
+          // TIN プロファイル パス
+          let path = ''
+          let started = false
+          for (const p of sectionProfile.tinPts) {
+            if (p.z == null) { started = false; continue }
+            const cmd = started ? 'L' : 'M'
+            path += `${cmd}${xOf(p.d).toFixed(1)},${yOf(p.z).toFixed(1)} `
+            started = true
+          }
+          // Y軸の目盛
+          const yTicks: number[] = []
+          const step = ((zMax - zMin) / 4)
+          for (let i = 0; i <= 4; i++) yTicks.push(zMin + step * i)
+          return (
+            <div className="absolute left-0 right-0 bottom-0 z-[1000] h-[42%] bg-white/95 border-t border-cyan-300 flex flex-col">
+              <div className="flex items-center justify-between px-2 py-1 border-b bg-cyan-50 text-xs">
+                <div>
+                  <span className="font-semibold text-cyan-800">{activeSection.name}</span>
+                  <span className="text-slate-500 ml-2">{activeSection.direction === 'along' ? '線上' : '直角'} / 距離 {sectionProfile.length.toFixed(2)} m / 記録 {sectionProfile.recPts.length} 点</span>
+                </div>
+                <button onClick={() => setActiveSectionId(null)} className="px-2 py-0.5 border rounded hover:bg-white">閉じる</button>
+              </div>
+              <div className="flex-1 overflow-hidden">
+                <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" className="w-full h-full">
+                  {/* 枠 */}
+                  <rect x={padL} y={padT} width={PW} height={PH} fill="#f8fafc" stroke="#cbd5e1" />
+                  {/* Y 目盛 */}
+                  {yTicks.map((z, i) => (
+                    <g key={i}>
+                      <line x1={padL} y1={yOf(z)} x2={padL + PW} y2={yOf(z)} stroke="#e2e8f0" strokeWidth={0.5} />
+                      <text x={padL - 3} y={yOf(z) + 3} fontSize={8} textAnchor="end" fill="#64748b">{z.toFixed(2)}</text>
+                    </g>
+                  ))}
+                  {/* X 軸ラベル */}
+                  <text x={padL} y={H - 6} fontSize={8} fill="#64748b">0 m</text>
+                  <text x={padL + PW} y={H - 6} fontSize={8} textAnchor="end" fill="#64748b">{sectionProfile.length.toFixed(1)} m</text>
+                  <text x={padL + PW / 2} y={H - 6} fontSize={8} textAnchor="middle" fill="#64748b">距離</text>
+                  {/* TIN プロファイル */}
+                  {path && <path d={path} fill="none" stroke="#0891b2" strokeWidth={1.5} />}
+                  {/* 現況点 */}
+                  {sectionProfile.recPts.map((p, i) => (
+                    <g key={i}>
+                      <circle cx={xOf(p.d)} cy={yOf(p.z)} r={3} fill="#f97316" stroke="#fff" strokeWidth={1} />
+                      <text x={xOf(p.d) + 4} y={yOf(p.z) - 4} fontSize={7} fill="#9a3412">{p.name}</text>
+                    </g>
+                  ))}
+                </svg>
+              </div>
+            </div>
+          )
+        })()}
+
         {/* 近接モード（1m 以内で地図表示から切替・精密誘導） */}
         {proximityActive && proximityRel && selectedTarget && (
           <ProximityGuide
@@ -2525,6 +2735,68 @@ export function MobileStakingPage() {
                   >
                     クリア
                   </button>
+                </div>
+                {/* 断面 */}
+                <div className="mt-2 pt-2 border-t">
+                  <div className="text-[11px] text-slate-500 mb-1">断面</div>
+                  <div className="flex flex-wrap items-center gap-1 mb-1">
+                    <select
+                      value={sectionDirection}
+                      onChange={(e) => setSectionDirection(e.target.value as 'along' | 'perp')}
+                      className="px-1 py-0.5 text-[11px] border rounded bg-white"
+                    >
+                      <option value="along">線上</option>
+                      <option value="perp">直角</option>
+                    </select>
+                    <button
+                      onClick={startNewSection}
+                      className="px-2 py-0.5 text-[11px] bg-cyan-700 text-white rounded hover:bg-cyan-600"
+                    >
+                      新規（2点）
+                    </button>
+                  </div>
+                  {sectionPickingMode && (
+                    <div className="text-[10px] text-cyan-700">
+                      地図で{sectionPickPts.length === 0 ? '1点目' : '2点目'}をタップ…
+                      <button
+                        onClick={() => {
+                          setSectionPickPts([])
+                          setActiveSectionId(null)
+                        }}
+                        className="ml-1 underline"
+                      >
+                        中止
+                      </button>
+                    </div>
+                  )}
+                  {sections.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1 mt-1">
+                      {sections.map((s) => (
+                        <button
+                          key={s.id}
+                          onClick={() => setActiveSectionId(s.id === activeSectionId ? null : s.id)}
+                          className={`px-1.5 py-0.5 text-[11px] rounded border ${
+                            s.id === activeSectionId
+                              ? 'bg-cyan-100 border-cyan-400 text-cyan-800'
+                              : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
+                          }`}
+                          title={`${s.direction === 'along' ? '線上' : '直角'}`}
+                        >
+                          {s.name}
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => {
+                          if (!confirm('全ての断面を削除しますか？')) return
+                          setSections([])
+                          setActiveSectionId(null)
+                        }}
+                        className="px-1.5 py-0.5 text-[11px] border border-red-200 text-red-600 rounded hover:bg-red-50"
+                      >
+                        全消去
+                      </button>
+                    </div>
+                  )}
                 </div>
               </>
             )}
