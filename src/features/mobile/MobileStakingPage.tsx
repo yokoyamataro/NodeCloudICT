@@ -54,6 +54,15 @@ import { CoordinateCalcModal } from '@/features/coordinates/CoordinateCalcModal'
 import { useAttachmentStore } from '@/stores/attachmentStore'
 import { useOrthophotoStore } from '@/stores/orthophotoStore'
 import { parseLandXml } from '@/lib/landxml/parser'
+import {
+  listLandxmlFiles,
+  getActiveLandxmlFile,
+  downloadLandxmlText,
+  uploadLandxmlFile,
+  setActiveLandxmlFile,
+  deleteLandxmlFile,
+  type LandxmlFileRow,
+} from '@/lib/landxmlFiles'
 import { indexTin, queryZ, type TinIndex, type TinSurfaceLike } from '@/lib/landxml/tinInterpolation'
 import { buildTrenchTin } from '@/lib/landxml/surface'
 import type { Alignment, AlignmentSegment } from '@/lib/landxml/types'
@@ -542,6 +551,12 @@ export function MobileStakingPage() {
   const [importing, setImporting] = useState(false)
   const xmlInputRef = useRef<HTMLInputElement>(null)
 
+  // 保存済み LandXML（工区別・履歴あり）
+  const [savedLandxmls, setSavedLandxmls] = useState<LandxmlFileRow[]>([])
+  const [activeLandxmlId, setActiveLandxmlId] = useState<string | null>(null)
+  const [landxmlBusy, setLandxmlBusy] = useState(false)
+  const [showLandxmlList, setShowLandxmlList] = useState(false)
+
   // 測設成功とみなす許容半径（m）
   const STAKE_TOLERANCE_M = 0.20
 
@@ -805,23 +820,128 @@ export function MobileStakingPage() {
     return lines
   }
 
+  // LandXML テキストをパースして TIN / 線形をセット
+  const applyLandxmlText = (text: string, displayName: string) => {
+    const result = parseLandXml(text, displayName)
+    const trenchSurf =
+      result.surfaces.find((s) => /trench|床掘|excav/i.test(s.name)) ??
+      result.surfaces[0] ??
+      null
+    const groundSurf = result.surfaces.find((s) => /ground|現況|terrain/i.test(s.name)) ?? null
+    setAlignmentLines(buildAlignmentLines(result.alignments, converter))
+    setTrenchSurface(trenchSurf)
+    setGroundSurface(groundSurf)
+    setDataSourceLabel(`LandXML: ${displayName}`)
+  }
+
+  // ローカルファイル選択 → パース → 自動で工区にアップロードして共有
   const handleLoadXml = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     setDataError(null)
+    setLandxmlBusy(true)
     try {
       const text = await file.text()
-      const result = parseLandXml(text, file.name)
-      const trenchSurf = result.surfaces.find((s) => /trench|床掘|excav/i.test(s.name)) ?? result.surfaces[0] ?? null
-      const groundSurf = result.surfaces.find((s) => /ground|現況|terrain/i.test(s.name)) ?? null
-      setAlignmentLines(buildAlignmentLines(result.alignments, converter))
-      setTrenchSurface(trenchSurf)
-      setGroundSurface(groundSurf)
-      setDataSourceLabel(`LandXML: ${file.name}`)
+      applyLandxmlText(text, file.name)
+      // 工区に自動アップロード（既存 active を退避し、新規 active に）
+      if (farmId) {
+        try {
+          const row = await uploadLandxmlFile({
+            farmId,
+            fileName: file.name,
+            content: text,
+            kind: 'design',
+          })
+          setActiveLandxmlId(row.id)
+          // 一覧を再取得
+          const list = await listLandxmlFiles(farmId)
+          setSavedLandxmls(list)
+        } catch (upErr) {
+          // アップロード失敗してもローカル読込は成功している。ユーザーには warning。
+          setDataError(
+            `読込は成功しましたが、サーバー保存に失敗しました: ${
+              upErr instanceof Error ? upErr.message : String(upErr)
+            }`,
+          )
+        }
+      }
     } catch (err) {
       setDataError(err instanceof Error ? err.message : 'LandXML 読込エラー')
     } finally {
+      setLandxmlBusy(false)
       e.target.value = ''
+    }
+  }
+
+  // 工区を開いたとき: 保存済み一覧を fetch し、active があれば自動読込
+  useEffect(() => {
+    if (!farmId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const list = await listLandxmlFiles(farmId)
+        if (cancelled) return
+        setSavedLandxmls(list)
+        // すでにメモリ上にロード済みなら何もしない
+        if (trenchSurface) return
+        const active = list.find((r) => r.isActive) ?? (await getActiveLandxmlFile(farmId))
+        if (!active || cancelled) return
+        setLandxmlBusy(true)
+        const text = await downloadLandxmlText(active.storagePath)
+        if (cancelled) return
+        applyLandxmlText(text, active.name)
+        setActiveLandxmlId(active.id)
+      } catch (err) {
+        if (!cancelled)
+          setDataError(
+            `保存済み LandXML の取得に失敗: ${err instanceof Error ? err.message : String(err)}`,
+          )
+      } finally {
+        if (!cancelled) setLandxmlBusy(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // 初回工区切替時のみ自動読込。trenchSurface が変わるたびに走らせないよう除外
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [farmId])
+
+  // 保存済み履歴から 1 件選んで active に切替＆ロード
+  const handleSelectSavedLandxml = async (row: LandxmlFileRow) => {
+    setDataError(null)
+    setLandxmlBusy(true)
+    try {
+      const text = await downloadLandxmlText(row.storagePath)
+      applyLandxmlText(text, row.name)
+      if (!row.isActive) await setActiveLandxmlFile(row)
+      setActiveLandxmlId(row.id)
+      if (farmId) setSavedLandxmls(await listLandxmlFiles(farmId))
+      setShowLandxmlList(false)
+    } catch (err) {
+      setDataError(err instanceof Error ? err.message : 'LandXMLの取得に失敗')
+    } finally {
+      setLandxmlBusy(false)
+    }
+  }
+
+  const handleDeleteSavedLandxml = async (row: LandxmlFileRow) => {
+    if (!confirm(`「${row.name}」を削除しますか？（端末からも工区からも消えます）`)) return
+    setLandxmlBusy(true)
+    try {
+      await deleteLandxmlFile(row)
+      if (farmId) setSavedLandxmls(await listLandxmlFiles(farmId))
+      if (row.id === activeLandxmlId) {
+        setActiveLandxmlId(null)
+        setTrenchSurface(null)
+        setGroundSurface(null)
+        setAlignmentLines([])
+        setDataSourceLabel(null)
+      }
+    } catch (err) {
+      setDataError(err instanceof Error ? err.message : '削除に失敗')
+    } finally {
+      setLandxmlBusy(false)
     }
   }
 
@@ -2691,20 +2811,33 @@ export function MobileStakingPage() {
             </div>
             {!trenchSurface ? (
               <>
-                <div className="text-xs text-slate-600 mb-2">三角面データを読み込んでください</div>
-                <label className="cursor-pointer">
-                  <input
-                    ref={landxmlInputRef}
-                    type="file"
-                    accept=".xml,.XML,.landxml,.LANDXML"
-                    onChange={handleLoadXml}
-                    className="hidden"
-                  />
-                  <span className="inline-flex items-center gap-1 px-2 py-1 bg-cyan-700 text-white text-xs rounded hover:bg-cyan-600">
-                    <Upload className="h-3 w-3" />
-                    LandXMLを選択
-                  </span>
-                </label>
+                <div className="text-xs text-slate-600 mb-2">
+                  {landxmlBusy ? '読込中…' : '三角面データを読み込んでください'}
+                </div>
+                <div className="flex flex-wrap items-center gap-1">
+                  <label className="cursor-pointer">
+                    <input
+                      ref={landxmlInputRef}
+                      type="file"
+                      accept=".xml,.XML,.landxml,.LANDXML"
+                      onChange={handleLoadXml}
+                      className="hidden"
+                    />
+                    <span className="inline-flex items-center gap-1 px-2 py-1 bg-cyan-700 text-white text-xs rounded hover:bg-cyan-600">
+                      <Upload className="h-3 w-3" />
+                      LandXMLを選択
+                    </span>
+                  </label>
+                  {savedLandxmls.length > 0 && (
+                    <button
+                      onClick={() => setShowLandxmlList(true)}
+                      className="inline-flex items-center gap-1 px-2 py-1 border border-cyan-700 text-cyan-700 text-xs rounded hover:bg-cyan-50"
+                    >
+                      <Database className="h-3 w-3" />
+                      保存済み ({savedLandxmls.length})
+                    </button>
+                  )}
+                </div>
               </>
             ) : (
               <>
@@ -2717,7 +2850,7 @@ export function MobileStakingPage() {
                 <div className="flex items-center gap-2 mt-1">
                   <span className="text-[10px] text-slate-500">TIN 読込済み</span>
                 </div>
-                <div className="flex items-center gap-2 mt-2 border-t pt-2">
+                <div className="flex items-center flex-wrap gap-2 mt-2 border-t pt-2">
                   <label className="cursor-pointer">
                     <input
                       ref={landxmlInputRef}
@@ -2731,17 +2864,33 @@ export function MobileStakingPage() {
                       別のLandXML
                     </span>
                   </label>
+                  {savedLandxmls.length > 0 && (
+                    <button
+                      onClick={() => setShowLandxmlList(true)}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 border border-cyan-700 text-cyan-700 text-[11px] rounded hover:bg-cyan-50"
+                    >
+                      <Database className="h-3 w-3" />
+                      履歴 ({savedLandxmls.length})
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       setTrenchSurface(null)
                       setGroundSurface(null)
                       setAlignmentLines([])
                       setDataSourceLabel(null)
+                      setActiveLandxmlId(null)
                     }}
                     className="px-2 py-0.5 text-[11px] border rounded hover:bg-slate-50"
                   >
                     クリア
                   </button>
+                  {landxmlBusy && (
+                    <span className="text-[10px] text-cyan-700 inline-flex items-center gap-1">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      処理中…
+                    </span>
+                  )}
                 </div>
                 {/* 断面 */}
                 <div className="mt-2 pt-2 border-t">
@@ -3368,6 +3517,70 @@ export function MobileStakingPage() {
           )}
         </div>
       </div>
+      )}
+
+      {/* 保存済み LandXML 一覧モーダル */}
+      {showLandxmlList && (
+        <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center z-[3500]">
+          <div className="bg-white w-full sm:max-w-md rounded-t-xl sm:rounded-xl shadow-xl p-3 max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-bold text-slate-800">保存済み LandXML</h3>
+              <button
+                onClick={() => setShowLandxmlList(false)}
+                className="p-1 text-slate-500 hover:bg-slate-100 rounded"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="text-[11px] text-slate-500 mb-2">
+              この工区にアップロード済みの LandXML 一覧。タップで切替（active になります）。
+            </div>
+            <div className="flex-1 overflow-auto border rounded divide-y">
+              {savedLandxmls.length === 0 ? (
+                <div className="p-3 text-xs text-slate-500">まだ保存されていません</div>
+              ) : (
+                savedLandxmls.map((row) => {
+                  const isActive = row.id === activeLandxmlId || row.isActive
+                  return (
+                    <div
+                      key={row.id}
+                      className={`p-2 flex items-start gap-2 ${
+                        isActive ? 'bg-cyan-50' : 'hover:bg-slate-50'
+                      }`}
+                    >
+                      <button
+                        onClick={() => handleSelectSavedLandxml(row)}
+                        className="flex-1 text-left"
+                        disabled={landxmlBusy}
+                      >
+                        <div className="text-sm font-medium truncate" title={row.name}>
+                          {isActive && (
+                            <span className="text-[10px] bg-cyan-600 text-white px-1 rounded mr-1">
+                              ACTIVE
+                            </span>
+                          )}
+                          {row.name}
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-0.5">
+                          {new Date(row.updatedAt).toLocaleString('ja-JP')}
+                          {row.sizeBytes != null && ` ・ ${Math.round(row.sizeBytes / 1024)} KB`}
+                        </div>
+                      </button>
+                      <button
+                        onClick={() => handleDeleteSavedLandxml(row)}
+                        className="p-1.5 text-red-500 hover:bg-red-50 rounded shrink-0"
+                        title="削除"
+                        disabled={landxmlBusy}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 現場開始前チェック（ジオイド補正・目標高 と既知点による精度チェックの喚起） */}
