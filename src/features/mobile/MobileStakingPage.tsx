@@ -444,10 +444,36 @@ export function MobileStakingPage() {
   const [showCalcModal, setShowCalcModal] = useState(false)
   // 計算モーダルで地図から点選択中の割り当て関数
   const [calcAssign, setCalcAssign] = useState<((id: string) => void) | null>(null)
-  // LANDXML モード（TIN を表示し、現在地との比高を常時表示）
-  const [landxmlMode, setLandxmlMode] = useState(false)
+  // 表示モード（MAP / 3D / 2D の組合せ、最大 2 つまで同時表示）
+  type ViewMode = 'map' | '3d' | '2d'
+  const [viewModes, setViewModes] = useState<Set<ViewMode>>(new Set<ViewMode>(['map']))
+  const showMap = viewModes.has('map')
+  const show3D = viewModes.has('3d')
+  const show2D = viewModes.has('2d')
+  // 既存コードの参照互換
+  const landxmlMode = show3D
   const prevBaseLayerRef = useRef<typeof baseLayer | null>(null)
   const landxmlInputRef = useRef<HTMLInputElement>(null)
+  // モード切替: クリックされたモードをトグル。最大 2 つ、最少 1 つ。
+  // 既に 2 つ ON のとき新しいモードを追加する場合は、クリックされたモード以外で
+  // 一番古いもの（= 直近に追加されていない方）を外す。
+  const toggleViewMode = (mode: ViewMode) => {
+    setViewModes((prev) => {
+      const next = new Set(prev)
+      if (next.has(mode)) {
+        if (next.size === 1) return prev
+        next.delete(mode)
+        return next
+      }
+      if (next.size >= 2) {
+        // 1 つ外す: 任意のひとつ（先に入っていた方）を落とす
+        const first = next.values().next().value as ViewMode | undefined
+        if (first) next.delete(first)
+      }
+      next.add(mode)
+      return next
+    })
+  }
   // 断面（クロスセクション）
   interface CrossSection {
     id: string
@@ -556,8 +582,26 @@ export function MobileStakingPage() {
   const [activeLandxmlId, setActiveLandxmlId] = useState<string | null>(null)
   const [landxmlBusy, setLandxmlBusy] = useState(false)
   const [showLandxmlList, setShowLandxmlList] = useState(false)
-  // 3D モード時の下半分断面パネル表示
-  const [showSectionPanel, setShowSectionPanel] = useState(false)
+  // 既存コードの参照互換（2D モード ⇔ 断面パネル表示）
+  const showSectionPanel = show2D
+  const setShowSectionPanel = (v: boolean | ((prev: boolean) => boolean)) => {
+    const next = typeof v === 'function' ? v(show2D) : v
+    setViewModes((prev) => {
+      const n = new Set(prev)
+      if (next) {
+        if (!n.has('2d')) {
+          if (n.size >= 2) {
+            const first = n.values().next().value as ViewMode | undefined
+            if (first) n.delete(first)
+          }
+          n.add('2d')
+        }
+      } else {
+        if (n.has('2d') && n.size > 1) n.delete('2d')
+      }
+      return n
+    })
+  }
 
   // 測設成功とみなす許容半径（m）
   const STAKE_TOLERANCE_M = 0.20
@@ -2051,13 +2095,31 @@ export function MobileStakingPage() {
         >
           <Share2 className="h-4 w-4" />
         </button>
-        <button
-          onClick={() => setLandxmlMode((v) => !v)}
-          className={`px-2 py-1 rounded text-xs font-bold ${landxmlMode ? 'bg-cyan-600' : 'bg-slate-700 hover:bg-slate-600'}`}
-          title="3D（LANDXML）モード - TIN表示・比高・断面"
-        >
-          3D
-        </button>
+        {/* MAP / 3D / 2D 切替（最大 2 同時、最少 1） */}
+        <div className="inline-flex rounded overflow-hidden border border-slate-600 text-xs font-bold">
+          {(['map', '3d', '2d'] as const).map((m) => {
+            const on = viewModes.has(m)
+            const label = m === 'map' ? 'MAP' : m === '3d' ? '3D' : '2D'
+            const title =
+              m === 'map'
+                ? '地図 + ターゲット'
+                : m === '3d'
+                  ? '3D（LANDXML）TIN + 比高'
+                  : '2D 断面プロファイル'
+            return (
+              <button
+                key={m}
+                onClick={() => toggleViewMode(m)}
+                className={`px-2 py-1 ${
+                  on ? 'bg-cyan-600 text-white' : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
+                }`}
+                title={title}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
         <button
           onClick={() => setShowSettings((v) => !v)}
           className="p-1.5 rounded bg-slate-700 hover:bg-slate-600"
@@ -2725,9 +2787,13 @@ export function MobileStakingPage() {
           ))}
         </MapContainer>
 
-        {/* 断面パネル（3Dモード + 断面表示ON） — ヘッダーに断面コントロール、本体にチャート */}
-        {landxmlMode && showSectionPanel && (
-          <div className="absolute left-0 right-0 bottom-0 z-[1000] h-[42%] bg-white/95 border-t border-cyan-300 flex flex-col">
+        {/* 2D（断面）パネル: MAP/3D と併用なら下半分、単独なら全画面 */}
+        {show2D && (
+          <div
+            className={`absolute left-0 right-0 z-[1000] bg-white/95 border-t border-cyan-300 flex flex-col ${
+              showMap || show3D ? 'h-[50%] bottom-0' : 'top-0 bottom-0'
+            }`}
+          >
             {/* ヘッダー: 方向・新規・断面一覧・全消去・閉じる */}
             <div className="flex items-center flex-wrap gap-1 px-2 py-1 border-b bg-cyan-50 text-[11px]">
               <span className="font-semibold text-cyan-800 mr-1">断面</span>
@@ -3179,9 +3245,9 @@ export function MobileStakingPage() {
 
       {/* 下部パネル（施工管理モードでは非表示） */}
       {screenMode !== 'construction' && (
-      <div className="border-t bg-white px-3 py-2 text-sm">
-        {/* 3Dモード: TIN高/比高 + 断面表示ボタン（ターゲット行を置き換える）*/}
-        {landxmlMode ? (
+      <div className="border-t bg-white px-3 py-2 text-sm space-y-1">
+        {/* 3D モード行: LANDXML/TIN高/比高 + 断面表示ボタン */}
+        {show3D && (
           <div className="flex items-center gap-3 flex-wrap">
             <span className="text-[10px] text-slate-500 font-sans">LANDXML</span>
             {trenchSurface ? (
@@ -3248,7 +3314,10 @@ export function MobileStakingPage() {
               </>
             )}
           </div>
-        ) : selectedTarget ? (
+        )}
+
+        {/* MAP モード行: ターゲット設定 → 誘導表示 */}
+        {showMap && (selectedTarget ? (
           <div className="flex items-center gap-3">
             <button
               onClick={() => setShowTargetList(true)}
@@ -3318,7 +3387,7 @@ export function MobileStakingPage() {
           >
             ターゲットを選択
           </button>
-        )}
+        ))}
 
         {/* 現在地 XYZ + 精度（1 行で収めるため余白とコロンを詰める） */}
         <div className="mt-1 text-[11px] font-mono text-slate-600 flex items-center gap-1.5 border-t pt-1 whitespace-nowrap overflow-hidden">
