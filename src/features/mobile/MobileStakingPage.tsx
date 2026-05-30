@@ -2039,7 +2039,7 @@ export function MobileStakingPage() {
           className={`p-1.5 rounded relative ${
             showDisplaySettings ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'
           }`}
-          title="表示設定（コンパス・点名・点種フィルタ・地番・背景地図）"
+          title="表示設定（コンパス・点名・点種フィルタ・地番）"
         >
           <SlidersHorizontal className="h-4 w-4" />
           {(hiddenSubTypes.size > 0 || targetFilter !== 'all' || headingEnabled) && (
@@ -2248,7 +2248,7 @@ export function MobileStakingPage() {
       )}
 
       {/* 表示設定パネル（表示アイコンで開閉）:
-          コンパス / 点名 / 地番 / 背景地図 / 点種フィルタ をまとめて設定 */}
+          コンパス / 点名 / 地番 / 点種フィルタ をまとめて設定 */}
       {showDisplaySettings && (
         <div className="bg-white border-b px-2 py-2 space-y-2">
           {/* 表示トグル + 背景地図 */}
@@ -2298,22 +2298,7 @@ export function MobileStakingPage() {
             >
               地番
             </button>
-            <label className="flex items-center gap-1 ml-1">
-              <span className="text-slate-500">背景</span>
-              <select
-                value={baseLayer}
-                onChange={(e) => setBaseLayer(e.target.value as BaseLayerKey)}
-                className="px-1.5 py-0.5 border border-slate-300 rounded bg-white"
-              >
-                {(Object.entries(BASE_LAYERS) as [BaseLayerKey, typeof currentBase][]).map(
-                  ([key, info]) => (
-                    <option key={key} value={key}>
-                      {info.label}
-                    </option>
-                  ),
-                )}
-              </select>
-            </label>
+            {/* 背景地図セレクタは地図右下（Leaflet 帰属の上）へ移動 */}
           </div>
           {/* 点種フィルタ */}
           <div className="flex items-center gap-1 flex-wrap text-[11px]">
@@ -2436,6 +2421,44 @@ export function MobileStakingPage() {
             )
           })}
         </div>
+
+        {/* 背景地図セレクタ（右下、Leaflet 帰属の上） */}
+        <div className="absolute bottom-5 right-1 z-[1000] flex items-center gap-1 px-1.5 py-0.5 rounded shadow border border-slate-300 bg-white/95 text-[11px]">
+          <span className="text-slate-500">背景</span>
+          <select
+            value={baseLayer}
+            onChange={(e) => {
+              const v = e.target.value
+              if (v.startsWith('ortho:')) {
+                // オルソ選択: ベースは「背景なし」にしてオルソを表示
+                setBaseLayer('none')
+                setShowOrtho(true)
+              } else {
+                setBaseLayer(v as BaseLayerKey)
+                setShowOrtho(false)
+              }
+            }}
+            className="px-1 py-0.5 border border-slate-300 rounded bg-white text-[11px]"
+          >
+            {(Object.entries(BASE_LAYERS) as [BaseLayerKey, typeof currentBase][]).map(
+              ([key, info]) => (
+                <option key={key} value={key}>
+                  {info.label}
+                </option>
+              ),
+            )}
+            {farmOrthos.length > 0 && (
+              <optgroup label="オルソ">
+                {farmOrthos.map((o) => (
+                  <option key={o.id} value={`ortho:${o.id}`}>
+                    {o.name || 'オルソ'}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+          </select>
+        </div>
+
         <MapContainer
           center={mapCenter}
           zoom={17}
