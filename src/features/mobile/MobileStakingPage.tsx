@@ -556,6 +556,8 @@ export function MobileStakingPage() {
   const [activeLandxmlId, setActiveLandxmlId] = useState<string | null>(null)
   const [landxmlBusy, setLandxmlBusy] = useState(false)
   const [showLandxmlList, setShowLandxmlList] = useState(false)
+  // 3D モード時の下半分断面パネル表示
+  const [showSectionPanel, setShowSectionPanel] = useState(false)
 
   // 測設成功とみなす許容半径（m）
   const STAKE_TOLERANCE_M = 0.20
@@ -2723,72 +2725,92 @@ export function MobileStakingPage() {
           ))}
         </MapContainer>
 
-        {/* 断面図（3Dモード + アクティブ断面） — 下半分にオーバーレイ */}
-        {landxmlMode && activeSection && sectionProfile && (() => {
-          const W = 600
-          const H = 200
-          const padL = 40, padR = 10, padT = 14, padB = 22
-          const PW = W - padL - padR
-          const PH = H - padT - padB
-          // y 範囲: TIN/recordsの値から決める
-          let zMin = Infinity, zMax = -Infinity
-          for (const p of sectionProfile.tinPts) if (p.z != null) { if (p.z < zMin) zMin = p.z; if (p.z > zMax) zMax = p.z }
-          for (const p of sectionProfile.recPts) { if (p.z < zMin) zMin = p.z; if (p.z > zMax) zMax = p.z }
-          if (!Number.isFinite(zMin) || !Number.isFinite(zMax)) { zMin = 0; zMax = 1 }
-          if (zMax - zMin < 0.5) { const m = (zMin + zMax) / 2; zMin = m - 0.25; zMax = m + 0.25 }
-          const xOf = (d: number) => padL + (d / sectionProfile.length) * PW
-          const yOf = (z: number) => padT + (1 - (z - zMin) / (zMax - zMin)) * PH
-          // TIN プロファイル パス
-          let path = ''
-          let started = false
-          for (const p of sectionProfile.tinPts) {
-            if (p.z == null) { started = false; continue }
-            const cmd = started ? 'L' : 'M'
-            path += `${cmd}${xOf(p.d).toFixed(1)},${yOf(p.z).toFixed(1)} `
-            started = true
-          }
-          // Y軸の目盛
-          const yTicks: number[] = []
-          const step = ((zMax - zMin) / 4)
-          for (let i = 0; i <= 4; i++) yTicks.push(zMin + step * i)
-          return (
-            <div className="absolute left-0 right-0 bottom-0 z-[1000] h-[42%] bg-white/95 border-t border-cyan-300 flex flex-col">
-              <div className="flex items-center justify-between px-2 py-1 border-b bg-cyan-50 text-xs">
-                <div>
-                  <span className="font-semibold text-cyan-800">{activeSection.name}</span>
-                  <span className="text-slate-500 ml-2">{activeSection.direction === 'along' ? '線上' : '直角'} / 距離 {sectionProfile.length.toFixed(2)} m / 記録 {sectionProfile.recPts.length} 点</span>
-                </div>
-                <button onClick={() => setActiveSectionId(null)} className="px-2 py-0.5 border rounded hover:bg-white">閉じる</button>
-              </div>
-              <div className="flex-1 overflow-hidden">
-                <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" className="w-full h-full">
-                  {/* 枠 */}
-                  <rect x={padL} y={padT} width={PW} height={PH} fill="#f8fafc" stroke="#cbd5e1" />
-                  {/* Y 目盛 */}
-                  {yTicks.map((z, i) => (
-                    <g key={i}>
-                      <line x1={padL} y1={yOf(z)} x2={padL + PW} y2={yOf(z)} stroke="#e2e8f0" strokeWidth={0.5} />
-                      <text x={padL - 3} y={yOf(z) + 3} fontSize={8} textAnchor="end" fill="#64748b">{z.toFixed(2)}</text>
-                    </g>
-                  ))}
-                  {/* X 軸ラベル */}
-                  <text x={padL} y={H - 6} fontSize={8} fill="#64748b">0 m</text>
-                  <text x={padL + PW} y={H - 6} fontSize={8} textAnchor="end" fill="#64748b">{sectionProfile.length.toFixed(1)} m</text>
-                  <text x={padL + PW / 2} y={H - 6} fontSize={8} textAnchor="middle" fill="#64748b">距離</text>
-                  {/* TIN プロファイル */}
-                  {path && <path d={path} fill="none" stroke="#0891b2" strokeWidth={1.5} />}
-                  {/* 現況点 */}
-                  {sectionProfile.recPts.map((p, i) => (
-                    <g key={i}>
-                      <circle cx={xOf(p.d)} cy={yOf(p.z)} r={3} fill="#f97316" stroke="#fff" strokeWidth={1} />
-                      <text x={xOf(p.d) + 4} y={yOf(p.z) - 4} fontSize={7} fill="#9a3412">{p.name}</text>
-                    </g>
-                  ))}
-                </svg>
-              </div>
+        {/* 断面パネル（3Dモード + 断面表示ON） — ヘッダーに断面コントロール、本体にチャート */}
+        {landxmlMode && showSectionPanel && (
+          <div className="absolute left-0 right-0 bottom-0 z-[1000] h-[42%] bg-white/95 border-t border-cyan-300 flex flex-col">
+            {/* ヘッダー: 方向・新規・断面一覧・全消去・閉じる */}
+            <div className="flex items-center flex-wrap gap-1 px-2 py-1 border-b bg-cyan-50 text-[11px]">
+              <span className="font-semibold text-cyan-800 mr-1">断面</span>
+              <select
+                value={sectionDirection}
+                onChange={(e) => setSectionDirection(e.target.value as 'along' | 'perp')}
+                className="px-1 py-0.5 text-[11px] border rounded bg-white"
+                title="2点を結ぶ線上 / 直角方向"
+              >
+                <option value="along">線上</option>
+                <option value="perp">直角</option>
+              </select>
+              <button
+                onClick={startNewSection}
+                className="px-2 py-0.5 text-[11px] bg-cyan-700 text-white rounded hover:bg-cyan-600"
+              >
+                新規（2点）
+              </button>
+              {sectionPickingMode && (
+                <span className="text-cyan-700">
+                  地図で{sectionPickPts.length === 0 ? '1点目' : '2点目'}をタップ…
+                  <button
+                    onClick={() => {
+                      setSectionPickPts([])
+                      setActiveSectionId(null)
+                    }}
+                    className="ml-1 underline"
+                  >
+                    中止
+                  </button>
+                </span>
+              )}
+              {sections.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => setActiveSectionId(s.id === activeSectionId ? null : s.id)}
+                  className={`px-1.5 py-0.5 text-[11px] rounded border ${
+                    s.id === activeSectionId
+                      ? 'bg-cyan-100 border-cyan-400 text-cyan-800'
+                      : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
+                  }`}
+                  title={s.direction === 'along' ? '線上' : '直角'}
+                >
+                  {s.name}
+                </button>
+              ))}
+              {sections.length > 0 && (
+                <button
+                  onClick={() => {
+                    if (!confirm('全ての断面を削除しますか？')) return
+                    setSections([])
+                    setActiveSectionId(null)
+                  }}
+                  className="px-1.5 py-0.5 text-[11px] border border-red-200 text-red-600 rounded hover:bg-red-50"
+                >
+                  全消去
+                </button>
+              )}
+              <button
+                onClick={() => setShowSectionPanel(false)}
+                className="ml-auto px-2 py-0.5 border rounded hover:bg-white"
+              >
+                閉じる
+              </button>
             </div>
-          )
-        })()}
+            {/* 本体: アクティブ断面のチャート or プレースホルダ */}
+            <div className="flex-1 overflow-hidden flex flex-col">
+              {activeSection && sectionProfile ? (
+                <ActiveSectionChart
+                  name={activeSection.name}
+                  direction={activeSection.direction}
+                  profile={sectionProfile}
+                />
+              ) : (
+                <div className="flex-1 flex items-center justify-center text-xs text-slate-500">
+                  「新規（2点）」で断面を作成、または上の一覧からタップして表示
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 旧: 単体チャート — 上のセクションパネル（ActiveSectionChart）に統合済 */}
 
         {/* 近接モード（1m 以内で地図表示から切替・精密誘導） */}
         {proximityActive && proximityRel && selectedTarget && (
@@ -2802,162 +2824,6 @@ export function MobileStakingPage() {
           />
         )}
 
-        {/* LANDXMLモード：TIN比高バナー（兼 LandXML 読込ボタン） */}
-        {landxmlMode && (
-          <div className="absolute top-2 left-2 z-[1000] bg-white/95 border rounded-lg shadow-lg p-3 min-w-[200px]">
-            <div className="flex items-center gap-1 text-[11px] text-slate-500 mb-1">
-              <FileText className="h-3 w-3 text-cyan-700" />
-              LANDXML
-            </div>
-            {!trenchSurface ? (
-              <>
-                <div className="text-xs text-slate-600 mb-2">
-                  {landxmlBusy ? '読込中…' : '三角面データを読み込んでください'}
-                </div>
-                <div className="flex flex-wrap items-center gap-1">
-                  <label className="cursor-pointer">
-                    <input
-                      ref={landxmlInputRef}
-                      type="file"
-                      accept=".xml,.XML,.landxml,.LANDXML"
-                      onChange={handleLoadXml}
-                      className="hidden"
-                    />
-                    <span className="inline-flex items-center gap-1 px-2 py-1 bg-cyan-700 text-white text-xs rounded hover:bg-cyan-600">
-                      <Upload className="h-3 w-3" />
-                      LandXMLを選択
-                    </span>
-                  </label>
-                  {savedLandxmls.length > 0 && (
-                    <button
-                      onClick={() => setShowLandxmlList(true)}
-                      className="inline-flex items-center gap-1 px-2 py-1 border border-cyan-700 text-cyan-700 text-xs rounded hover:bg-cyan-50"
-                    >
-                      <Database className="h-3 w-3" />
-                      保存済み ({savedLandxmls.length})
-                    </button>
-                  )}
-                </div>
-              </>
-            ) : (
-              <>
-                {dataSourceLabel && (
-                  <div className="text-[10px] text-slate-500 truncate max-w-[18rem]" title={dataSourceLabel}>
-                    {dataSourceLabel}
-                  </div>
-                )}
-                {/* TIN高・比高はターゲット行の上にコンパクト表示 */}
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-[10px] text-slate-500">TIN 読込済み</span>
-                </div>
-                <div className="flex items-center flex-wrap gap-2 mt-2 border-t pt-2">
-                  <label className="cursor-pointer">
-                    <input
-                      ref={landxmlInputRef}
-                      type="file"
-                      accept=".xml,.XML,.landxml,.LANDXML"
-                      onChange={handleLoadXml}
-                      className="hidden"
-                    />
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 border border-slate-300 text-slate-600 text-[11px] rounded hover:bg-slate-50">
-                      <Upload className="h-3 w-3" />
-                      別のLandXML
-                    </span>
-                  </label>
-                  {savedLandxmls.length > 0 && (
-                    <button
-                      onClick={() => setShowLandxmlList(true)}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 border border-cyan-700 text-cyan-700 text-[11px] rounded hover:bg-cyan-50"
-                    >
-                      <Database className="h-3 w-3" />
-                      履歴 ({savedLandxmls.length})
-                    </button>
-                  )}
-                  <button
-                    onClick={() => {
-                      setTrenchSurface(null)
-                      setGroundSurface(null)
-                      setAlignmentLines([])
-                      setDataSourceLabel(null)
-                      setActiveLandxmlId(null)
-                    }}
-                    className="px-2 py-0.5 text-[11px] border rounded hover:bg-slate-50"
-                  >
-                    クリア
-                  </button>
-                  {landxmlBusy && (
-                    <span className="text-[10px] text-cyan-700 inline-flex items-center gap-1">
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      処理中…
-                    </span>
-                  )}
-                </div>
-                {/* 断面 */}
-                <div className="mt-2 pt-2 border-t">
-                  <div className="text-[11px] text-slate-500 mb-1">断面</div>
-                  <div className="flex flex-wrap items-center gap-1 mb-1">
-                    <select
-                      value={sectionDirection}
-                      onChange={(e) => setSectionDirection(e.target.value as 'along' | 'perp')}
-                      className="px-1 py-0.5 text-[11px] border rounded bg-white"
-                    >
-                      <option value="along">線上</option>
-                      <option value="perp">直角</option>
-                    </select>
-                    <button
-                      onClick={startNewSection}
-                      className="px-2 py-0.5 text-[11px] bg-cyan-700 text-white rounded hover:bg-cyan-600"
-                    >
-                      新規（2点）
-                    </button>
-                  </div>
-                  {sectionPickingMode && (
-                    <div className="text-[10px] text-cyan-700">
-                      地図で{sectionPickPts.length === 0 ? '1点目' : '2点目'}をタップ…
-                      <button
-                        onClick={() => {
-                          setSectionPickPts([])
-                          setActiveSectionId(null)
-                        }}
-                        className="ml-1 underline"
-                      >
-                        中止
-                      </button>
-                    </div>
-                  )}
-                  {sections.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-1 mt-1">
-                      {sections.map((s) => (
-                        <button
-                          key={s.id}
-                          onClick={() => setActiveSectionId(s.id === activeSectionId ? null : s.id)}
-                          className={`px-1.5 py-0.5 text-[11px] rounded border ${
-                            s.id === activeSectionId
-                              ? 'bg-cyan-100 border-cyan-400 text-cyan-800'
-                              : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
-                          }`}
-                          title={`${s.direction === 'along' ? '線上' : '直角'}`}
-                        >
-                          {s.name}
-                        </button>
-                      ))}
-                      <button
-                        onClick={() => {
-                          if (!confirm('全ての断面を削除しますか？')) return
-                          setSections([])
-                          setActiveSectionId(null)
-                        }}
-                        className="px-1.5 py-0.5 text-[11px] border border-red-200 text-red-600 rounded hover:bg-red-50"
-                      >
-                        全消去
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        )}
 
         {/* 施工管理モード：ΔZ 大型表示 */}
         {screenMode === 'construction' && trenchDiff !== null && (
@@ -3314,26 +3180,75 @@ export function MobileStakingPage() {
       {/* 下部パネル（施工管理モードでは非表示） */}
       {screenMode !== 'construction' && (
       <div className="border-t bg-white px-3 py-2 text-sm">
-        {/* LANDXML モード時：ターゲット行の上に TIN高 と 比高 のみコンパクト表示 */}
-        {landxmlMode && trenchSurface && (
-          <div className="flex items-center gap-3 mb-1 pb-1 border-b text-[12px] font-mono whitespace-nowrap">
+        {/* 3Dモード: TIN高/比高 + 断面表示ボタン（ターゲット行を置き換える）*/}
+        {landxmlMode ? (
+          <div className="flex items-center gap-3 flex-wrap">
             <span className="text-[10px] text-slate-500 font-sans">LANDXML</span>
-            <span className="text-slate-500 text-[10px] font-sans">TIN高</span>
-            <span className="font-bold tabular-nums">
-              {trenchZ !== null ? `${trenchZ.toFixed(3)} m` : '-'}
-            </span>
-            <span className="text-slate-500 text-[10px] font-sans ml-1">比高</span>
-            {trenchDiff !== null ? (
-              <span className="font-bold tabular-nums" style={{ color: diffColor(trenchDiff) }}>
-                {trenchDiff >= 0 ? '↑' : '↓'}
-                {Math.abs(trenchDiff).toFixed(3)} m
-              </span>
+            {trenchSurface ? (
+              <>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-slate-500 text-[10px]">TIN高</span>
+                  <span className="font-mono font-bold text-base tabular-nums">
+                    {trenchZ !== null ? `${trenchZ.toFixed(3)} m` : '-'}
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-slate-500 text-[10px]">比高</span>
+                  {trenchDiff !== null ? (
+                    <span
+                      className="font-mono font-bold text-base tabular-nums"
+                      style={{ color: diffColor(trenchDiff) }}
+                    >
+                      {trenchDiff >= 0 ? '↑' : '↓'}
+                      {Math.abs(trenchDiff).toFixed(3)} m
+                    </span>
+                  ) : (
+                    <span className="text-slate-400 text-[11px]">範囲外/取得待ち</span>
+                  )}
+                </div>
+                <button
+                  onClick={() => setShowSectionPanel((v) => !v)}
+                  className={`ml-auto px-3 py-1 text-xs rounded font-bold ${
+                    showSectionPanel
+                      ? 'bg-cyan-700 text-white'
+                      : 'border border-cyan-700 text-cyan-700 hover:bg-cyan-50'
+                  }`}
+                  title="断面プロファイル表示"
+                >
+                  断面表示
+                </button>
+              </>
             ) : (
-              <span className="text-slate-400 text-[11px] font-sans">範囲外/取得待ち</span>
+              <>
+                <span className="text-xs text-slate-500">
+                  {landxmlBusy ? '読込中…' : '未読込'}
+                </span>
+                <label className="cursor-pointer ml-auto">
+                  <input
+                    ref={landxmlInputRef}
+                    type="file"
+                    accept=".xml,.XML,.landxml,.LANDXML"
+                    onChange={handleLoadXml}
+                    className="hidden"
+                  />
+                  <span className="inline-flex items-center gap-1 px-2 py-1 bg-cyan-700 text-white text-xs rounded hover:bg-cyan-600">
+                    <Upload className="h-3 w-3" />
+                    LandXMLを選択
+                  </span>
+                </label>
+                {savedLandxmls.length > 0 && (
+                  <button
+                    onClick={() => setShowLandxmlList(true)}
+                    className="inline-flex items-center gap-1 px-2 py-1 border border-cyan-700 text-cyan-700 text-xs rounded hover:bg-cyan-50"
+                  >
+                    <Database className="h-3 w-3" />
+                    履歴 ({savedLandxmls.length})
+                  </button>
+                )}
+              </>
             )}
           </div>
-        )}
-        {selectedTarget ? (
+        ) : selectedTarget ? (
           <div className="flex items-center gap-3">
             <button
               onClick={() => setShowTargetList(true)}
@@ -3667,6 +3582,74 @@ export function MobileStakingPage() {
         </div>
       )}
     </div>
+  )
+}
+
+// 断面プロファイルチャート（断面パネル内で使用）
+function ActiveSectionChart({
+  name,
+  direction,
+  profile,
+}: {
+  name: string
+  direction: 'along' | 'perp'
+  profile: {
+    length: number
+    tinPts: { d: number; z: number | null }[]
+    recPts: { d: number; z: number; name: string }[]
+  }
+}) {
+  const W = 600
+  const H = 200
+  const padL = 40, padR = 10, padT = 14, padB = 22
+  const PW = W - padL - padR
+  const PH = H - padT - padB
+  let zMin = Infinity, zMax = -Infinity
+  for (const p of profile.tinPts) if (p.z != null) { if (p.z < zMin) zMin = p.z; if (p.z > zMax) zMax = p.z }
+  for (const p of profile.recPts) { if (p.z < zMin) zMin = p.z; if (p.z > zMax) zMax = p.z }
+  if (!Number.isFinite(zMin) || !Number.isFinite(zMax)) { zMin = 0; zMax = 1 }
+  if (zMax - zMin < 0.5) { const m = (zMin + zMax) / 2; zMin = m - 0.25; zMax = m + 0.25 }
+  const xOf = (d: number) => padL + (d / profile.length) * PW
+  const yOf = (z: number) => padT + (1 - (z - zMin) / (zMax - zMin)) * PH
+  let path = ''
+  let started = false
+  for (const p of profile.tinPts) {
+    if (p.z == null) { started = false; continue }
+    const cmd = started ? 'L' : 'M'
+    path += `${cmd}${xOf(p.d).toFixed(1)},${yOf(p.z).toFixed(1)} `
+    started = true
+  }
+  const yTicks: number[] = []
+  const step = (zMax - zMin) / 4
+  for (let i = 0; i <= 4; i++) yTicks.push(zMin + step * i)
+  return (
+    <>
+      <div className="px-2 py-0.5 text-[10px] text-slate-500 border-b">
+        <span className="font-semibold text-slate-700">{name}</span>
+        <span className="ml-2">{direction === 'along' ? '線上' : '直角'} / 距離 {profile.length.toFixed(2)} m / 記録 {profile.recPts.length} 点</span>
+      </div>
+      <div className="flex-1 overflow-hidden">
+        <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" className="w-full h-full">
+          <rect x={padL} y={padT} width={PW} height={PH} fill="#f8fafc" stroke="#cbd5e1" />
+          {yTicks.map((z, i) => (
+            <g key={i}>
+              <line x1={padL} y1={yOf(z)} x2={padL + PW} y2={yOf(z)} stroke="#e2e8f0" strokeWidth={0.5} />
+              <text x={padL - 3} y={yOf(z) + 3} fontSize={8} textAnchor="end" fill="#64748b">{z.toFixed(2)}</text>
+            </g>
+          ))}
+          <text x={padL} y={H - 6} fontSize={8} fill="#64748b">0 m</text>
+          <text x={padL + PW} y={H - 6} fontSize={8} textAnchor="end" fill="#64748b">{profile.length.toFixed(1)} m</text>
+          <text x={padL + PW / 2} y={H - 6} fontSize={8} textAnchor="middle" fill="#64748b">距離</text>
+          {path && <path d={path} fill="none" stroke="#0891b2" strokeWidth={1.5} />}
+          {profile.recPts.map((p, i) => (
+            <g key={i}>
+              <circle cx={xOf(p.d)} cy={yOf(p.z)} r={3} fill="#f97316" stroke="#fff" strokeWidth={1} />
+              <text x={xOf(p.d) + 4} y={yOf(p.z) - 4} fontSize={7} fill="#9a3412">{p.name}</text>
+            </g>
+          ))}
+        </svg>
+      </div>
+    </>
   )
 }
 
