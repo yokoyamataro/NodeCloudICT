@@ -2095,31 +2095,6 @@ export function MobileStakingPage() {
         >
           <Share2 className="h-4 w-4" />
         </button>
-        {/* MAP / 3D / 2D 切替（最大 2 同時、最少 1） */}
-        <div className="inline-flex rounded overflow-hidden border border-slate-600 text-xs font-bold">
-          {(['map', '3d', '2d'] as const).map((m) => {
-            const on = viewModes.has(m)
-            const label = m === 'map' ? 'MAP' : m === '3d' ? '3D' : '2D'
-            const title =
-              m === 'map'
-                ? '地図 + ターゲット'
-                : m === '3d'
-                  ? '3D（LANDXML）TIN + 比高'
-                  : '2D 断面プロファイル'
-            return (
-              <button
-                key={m}
-                onClick={() => toggleViewMode(m)}
-                className={`px-2 py-1 ${
-                  on ? 'bg-cyan-600 text-white' : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
-                }`}
-                title={title}
-              >
-                {label}
-              </button>
-            )
-          })}
-        </div>
         <button
           onClick={() => setShowSettings((v) => !v)}
           className="p-1.5 rounded bg-slate-700 hover:bg-slate-600"
@@ -2434,6 +2409,33 @@ export function MobileStakingPage() {
 
       {/* 地図 */}
       <div className="flex-1 relative">
+        {/* MAP / 3D / 2D 切替（地図右上に縦並び、ズームコントロールの対側）*/}
+        <div className="absolute top-2 right-2 z-[1000] flex flex-col gap-0.5 rounded overflow-hidden shadow-md border border-slate-400 bg-white">
+          {(['map', '3d', '2d'] as const).map((m) => {
+            const on = viewModes.has(m)
+            const label = m === 'map' ? 'MAP' : m === '3d' ? '3D' : '2D'
+            const title =
+              m === 'map'
+                ? '地図 + ターゲット'
+                : m === '3d'
+                  ? '3D（LANDXML）TIN + 比高'
+                  : '2D 断面プロファイル'
+            return (
+              <button
+                key={m}
+                onClick={() => toggleViewMode(m)}
+                className={`px-2 py-1.5 text-xs font-bold leading-none ${
+                  on
+                    ? 'bg-cyan-600 text-white'
+                    : 'bg-white text-slate-700 hover:bg-slate-100'
+                }`}
+                title={title}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
         <MapContainer
           center={mapCenter}
           zoom={17}
