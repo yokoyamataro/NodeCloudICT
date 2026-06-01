@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, Polygon, Tooltip, Pane, useMap, useMapEvents } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, Polygon, Tooltip, Pane, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import {
@@ -225,21 +225,7 @@ function ZoomWatcher({ onChange }: { onChange: (z: number) => void }) {
   return null
 }
 
-// 断面ピック用: アクティブ時のみ地図クリックを拾って親に通知
-function SectionPicker({
-  active,
-  onPick,
-}: {
-  active: boolean
-  onPick: (latlng: [number, number]) => void
-}) {
-  useMapEvents({
-    click(e) {
-      if (active) onPick([e.latlng.lat, e.latlng.lng])
-    },
-  })
-  return null
-}
+// 旧: 地図クリックで断面 2 点を拾うピッカー（座標 2 点を選ぶ方式に変更したため未使用）
 
 function FollowCurrent({
   position,
@@ -484,12 +470,26 @@ export function MobileStakingPage() {
   }
   const [sections, setSections] = useState<CrossSection[]>([])
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null)
-  const [sectionPickPts, setSectionPickPts] = useState<[number, number][]>([])
+  /** 断面作成中に選択した座標 id（最大 2 件）。座標管理に登録された点から 2 点を選ぶ。 */
+  const [sectionPickIds, setSectionPickIds] = useState<string[]>([])
   const [sectionDirection, setSectionDirection] = useState<'along' | 'perp'>('along')
-  const sectionPickingMode = landxmlMode && sectionPickPts.length < 2 && activeSectionId === 'pending'
+  /** 断面から左右何 m 以内の現況点を断面チャートに重ねるか（既定 0.5m） */
+  const [sectionToleranceM, setSectionToleranceM] = useState<number>(() => {
+    try {
+      const s = localStorage.getItem('mobile:sectionTolM')
+      const n = s ? parseFloat(s) : NaN
+      return Number.isFinite(n) && n > 0 ? n : 0.5
+    } catch {
+      return 0.5
+    }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('mobile:sectionTolM', String(sectionToleranceM)) } catch { /* ignore */ }
+  }, [sectionToleranceM])
+  const sectionPickingMode = sectionPickIds.length < 2 && activeSectionId === 'pending'
   const startNewSection = () => {
     setActiveSectionId('pending')
-    setSectionPickPts([])
+    setSectionPickIds([])
   }
   // LANDXML モード ON で背景を「背景なし」に、OFF で元に戻す
   useEffect(() => {
@@ -1159,11 +1159,11 @@ export function MobileStakingPage() {
       const fx = Ax + t * dx
       const fy = Ay + t * dy
       const dist = Math.hypot(r.measuredX - fx, r.measuredY - fy)
-      if (dist > 5) continue // 断面線から5m以内のみ
+      if (dist > sectionToleranceM) continue // 断面線から ±sectionToleranceM 以内のみ
       recPts.push({ d: t * len, z: r.measuredZ, name: r.targetName ?? '' })
     }
     return { length: len, tinPts, recPts }
-  }, [activeSection, converter, trenchIdx, records])
+  }, [activeSection, converter, trenchIdx, records, sectionToleranceM])
 
   // ターゲット一覧（座標管理 + 暗渠頂点）
   const targets = useMemo<StakingTarget[]>(() => {
@@ -2394,8 +2394,9 @@ export function MobileStakingPage() {
 
       {/* 地図 */}
       <div className="flex-1 relative">
-        {/* MAP / 3D / 2D 切替（地図右上に縦並び、ズームコントロールの対側）*/}
-        <div className="absolute top-2 right-2 z-[1000] flex flex-col gap-0.5 rounded overflow-hidden shadow-md border border-slate-400 bg-white">
+        {/* MAP / 3D / 2D 切替（地図右上に縦並び、ズームコントロールの対側）
+            z は 2D パネル (z-[1000]) より高く、常に上に出す。 */}
+        <div className="absolute top-2 right-2 z-[1200] flex flex-col gap-0.5 rounded overflow-hidden shadow-md border border-slate-400 bg-white">
           {(['map', '3d', '2d'] as const).map((m) => {
             const on = viewModes.has(m)
             const label = m === 'map' ? 'MAP' : m === '3d' ? '3D' : '2D'
@@ -2466,40 +2467,23 @@ export function MobileStakingPage() {
           className="h-full w-full"
           style={baseLayer === 'none' ? { background: '#ffffff' } : undefined}
         >
-          {/* 断面ピック中の仮マーカー */}
-          {sectionPickingMode && sectionPickPts.map((p, i) => (
-            <CircleMarker key={`spp-${i}`} center={p} radius={6} pathOptions={{ color: '#0891b2', fillColor: '#06b6d4', fillOpacity: 1, weight: 2 }} />
-          ))}
+          {/* 断面ピック中の仮マーカー（座標管理から選択した点を強調） */}
+          {sectionPickingMode && sectionPickIds.map((id, i) => {
+            const c = coordinates.find((cc) => cc.id === id)
+            if (!c || c.lat == null || c.lng == null) return null
+            return (
+              <CircleMarker
+                key={`spp-${i}`}
+                center={[c.lat, c.lng]}
+                radius={8}
+                pathOptions={{ color: '#0891b2', fillColor: '#06b6d4', fillOpacity: 1, weight: 3 }}
+              />
+            )
+          })}
           {/* アクティブ断面線 */}
-          {landxmlMode && activeSectionLine && (
+          {(show3D || show2D) && activeSectionLine && (
             <Polyline positions={activeSectionLine} pathOptions={{ color: '#0891b2', weight: 3, dashArray: '6,4' }} />
           )}
-          <SectionPicker
-            active={sectionPickingMode}
-            onPick={(ll) => {
-              const next = [...sectionPickPts, ll]
-              setSectionPickPts(next)
-              if (next.length >= 2) {
-                const name = window.prompt('断面名', `断面-${sections.length + 1}`)
-                if (name === null) {
-                  setSectionPickPts([])
-                  setActiveSectionId(null)
-                  return
-                }
-                const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
-                const s: CrossSection = {
-                  id,
-                  name: name.trim() || `断面-${sections.length + 1}`,
-                  a: next[0],
-                  b: next[1],
-                  direction: sectionDirection,
-                }
-                setSections((prev) => [...prev, s])
-                setActiveSectionId(id)
-                setSectionPickPts([])
-              }
-            }}
-          />
           <TileLayer
             attribution='&copy; 国土地理院'
             url={currentBase.url ?? ''}
@@ -2839,10 +2823,10 @@ export function MobileStakingPage() {
               </button>
               {sectionPickingMode && (
                 <span className="text-cyan-700">
-                  地図で{sectionPickPts.length === 0 ? '1点目' : '2点目'}をタップ…
+                  座標から{sectionPickIds.length === 0 ? '1点目' : '2点目'}を選択…
                   <button
                     onClick={() => {
-                      setSectionPickPts([])
+                      setSectionPickIds([])
                       setActiveSectionId(null)
                     }}
                     className="ml-1 underline"
@@ -2851,6 +2835,23 @@ export function MobileStakingPage() {
                   </button>
                 </span>
               )}
+              {/* 断面と現況点の照合許容範囲（半幅）*/}
+              <label className="flex items-center gap-1 ml-1 text-slate-600">
+                <span>幅±</span>
+                <input
+                  type="number"
+                  step={0.1}
+                  min={0.05}
+                  value={sectionToleranceM}
+                  onChange={(e) => {
+                    const n = parseFloat(e.target.value)
+                    if (Number.isFinite(n) && n > 0) setSectionToleranceM(n)
+                  }}
+                  className="w-12 px-1 py-0.5 text-[11px] border rounded text-right"
+                  title="断面から左右何mまでの現況点を断面上に表示するか"
+                />
+                <span>m</span>
+              </label>
               {sections.map((s) => (
                 <button
                   key={s.id}
@@ -3526,6 +3527,96 @@ export function MobileStakingPage() {
           )}
         </div>
       </div>
+      )}
+
+      {/* 断面の 2 点を座標管理から選択するモーダル */}
+      {sectionPickingMode && (
+        <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center z-[3500]">
+          <div className="bg-white w-full sm:max-w-md rounded-t-xl sm:rounded-xl shadow-xl p-3 max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-bold text-slate-800">
+                断面の 2 点を座標から選択 ({sectionPickIds.length}/2)
+              </h3>
+              <button
+                onClick={() => {
+                  setSectionPickIds([])
+                  setActiveSectionId(null)
+                }}
+                className="p-1 text-slate-500 hover:bg-slate-100 rounded"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="text-[11px] text-slate-500 mb-2">
+              {sectionPickIds.length === 0 ? '1 点目を選んでください' : '2 点目を選んでください'}
+              ・方向: {sectionDirection === 'along' ? '線上' : '直角'}
+            </div>
+            <div className="flex-1 overflow-auto border rounded divide-y">
+              {(() => {
+                const list = (coordinates as CoordinateRow[]).filter(
+                  (c) => c.lat != null && c.lng != null,
+                )
+                if (list.length === 0)
+                  return <div className="p-3 text-xs text-slate-500">座標が登録されていません</div>
+                return list.map((c) => {
+                  const picked = sectionPickIds.includes(c.id)
+                  const disabled = picked
+                  return (
+                    <button
+                      key={c.id}
+                      disabled={disabled}
+                      onClick={() => {
+                        const next = [...sectionPickIds, c.id]
+                        if (next.length < 2) {
+                          setSectionPickIds(next)
+                          return
+                        }
+                        const a = coordinates.find((cc) => cc.id === next[0])
+                        const b = coordinates.find((cc) => cc.id === next[1])
+                        if (
+                          !a || !b ||
+                          a.lat == null || a.lng == null ||
+                          b.lat == null || b.lng == null
+                        ) {
+                          setSectionPickIds([])
+                          setActiveSectionId(null)
+                          return
+                        }
+                        const suggested = `${a.pointNumber}-${b.pointNumber}`
+                        const name = window.prompt('断面名', suggested)
+                        if (name === null) {
+                          setSectionPickIds([])
+                          setActiveSectionId(null)
+                          return
+                        }
+                        const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+                        const s: CrossSection = {
+                          id,
+                          name: name.trim() || suggested,
+                          a: [a.lat, a.lng],
+                          b: [b.lat, b.lng],
+                          direction: sectionDirection,
+                        }
+                        setSections((prev) => [...prev, s])
+                        setActiveSectionId(id)
+                        setSectionPickIds([])
+                      }}
+                      className={`w-full text-left p-2 flex items-center gap-2 text-sm ${
+                        picked ? 'bg-cyan-50 text-cyan-800' : 'hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className="font-medium flex-1 truncate">{c.pointNumber}</span>
+                      <span className="text-[10px] text-slate-500 font-mono">
+                        X{c.x.toFixed(2)} Y{c.y.toFixed(2)}
+                      </span>
+                      {picked && <span className="text-[10px] text-cyan-700">選択済</span>}
+                    </button>
+                  )
+                })
+              })()}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 保存済み LandXML 一覧モーダル */}
