@@ -846,34 +846,34 @@ export function CoordinatesPage() {
             className={inp}
           />
         </td>
-        <td className={cell} onClick={(e) => e.stopPropagation()}>
+        <td className="px-0 py-0.5 w-28" onClick={(e) => e.stopPropagation()}>
           <input
             value={newRow.x}
             onChange={(e) => setNewRow((r) => ({ ...r, x: e.target.value }))}
             onKeyDown={onKey}
             placeholder="X"
             inputMode="decimal"
-            className={`${inp} text-right font-mono`}
+            className="w-full px-2 py-0.5 border border-slate-200 rounded text-right text-sm font-mono"
           />
         </td>
-        <td className={cell} onClick={(e) => e.stopPropagation()}>
+        <td className="px-0 py-0.5 w-28" onClick={(e) => e.stopPropagation()}>
           <input
             value={newRow.y}
             onChange={(e) => setNewRow((r) => ({ ...r, y: e.target.value }))}
             onKeyDown={onKey}
             placeholder="Y"
             inputMode="decimal"
-            className={`${inp} text-right font-mono`}
+            className="w-full px-2 py-0.5 border border-slate-200 rounded text-right text-sm font-mono"
           />
         </td>
-        <td className={cell} onClick={(e) => e.stopPropagation()}>
+        <td className="px-0 py-0.5 w-20" onClick={(e) => e.stopPropagation()}>
           <input
             value={newRow.z}
             onChange={(e) => setNewRow((r) => ({ ...r, z: e.target.value }))}
             onKeyDown={onKey}
             placeholder="Z"
             inputMode="decimal"
-            className={`${inp} text-right font-mono`}
+            className="w-full px-2 py-0.5 border border-slate-200 rounded text-right text-sm font-mono"
           />
         </td>
         <td className={cell} onClick={(e) => e.stopPropagation()}>
@@ -1293,9 +1293,9 @@ export function CoordinatesPage() {
                   />
                 </th>
                 <th className="px-0.5 py-2 text-left font-medium">点番号</th>
-                <th className="px-0.5 py-2 text-right font-medium">X (m)</th>
-                <th className="px-0.5 py-2 text-right font-medium">Y (m)</th>
-                <th className="px-0.5 py-2 text-right font-medium">Z (m)</th>
+                <th className="pr-2 pl-1 py-2 text-right font-medium w-28">X (m)</th>
+                <th className="pr-2 pl-1 py-2 text-right font-medium w-28">Y (m)</th>
+                <th className="pr-2 pl-1 py-2 text-right font-medium w-20">Z (m)</th>
                 <th className="px-0.5 py-2 text-left font-medium">種類</th>
                 <th className="px-0.5 py-2 text-left font-medium">杭種</th>
                 <th className="px-0.5 py-2 text-right font-medium">緯度</th>
@@ -1333,28 +1333,28 @@ export function CoordinatesPage() {
                       className="w-full min-w-[6rem] px-1 py-0.5 border rounded text-sm"
                     />
                   </td>
-                  <td className="px-0.5 py-0.5">
+                  <td className="px-0 py-0.5 w-28">
                     <NumberInput
                       value={coord.x}
                       onChange={(v) => updateCoordinate(coord.id, 'x', v ?? 0)}
                       onClick={(e) => e.stopPropagation()}
-                      className="w-24 px-1 py-0.5 border rounded text-right text-sm"
+                      className="w-full px-2 py-0.5 border rounded text-right text-sm font-mono"
                     />
                   </td>
-                  <td className="px-0.5 py-0.5">
+                  <td className="px-0 py-0.5 w-28">
                     <NumberInput
                       value={coord.y}
                       onChange={(v) => updateCoordinate(coord.id, 'y', v ?? 0)}
                       onClick={(e) => e.stopPropagation()}
-                      className="w-24 px-1 py-0.5 border rounded text-right text-sm"
+                      className="w-full px-2 py-0.5 border rounded text-right text-sm font-mono"
                     />
                   </td>
-                  <td className="px-0.5 py-0.5">
+                  <td className="px-0 py-0.5 w-20">
                     <NumberInput
                       value={coord.z}
                       onChange={(v) => updateCoordinate(coord.id, 'z', v)}
                       onClick={(e) => e.stopPropagation()}
-                      className="w-20 px-1 py-0.5 border rounded text-right text-sm"
+                      className="w-full px-2 py-0.5 border rounded text-right text-sm font-mono"
                       placeholder="-"
                     />
                   </td>
@@ -1475,9 +1475,9 @@ export function CoordinatesPage() {
                         />
                       </th>
                       <th className="px-0.5 py-2 text-left font-medium">点番号</th>
-                      <th className="px-0.5 py-2 text-right font-medium">X (m)</th>
-                      <th className="px-0.5 py-2 text-right font-medium">Y (m)</th>
-                      <th className="px-0.5 py-2 text-right font-medium">Z (m)</th>
+                      <th className="pr-2 pl-1 py-2 text-right font-medium w-28">X (m)</th>
+                      <th className="pr-2 pl-1 py-2 text-right font-medium w-28">Y (m)</th>
+                      <th className="pr-2 pl-1 py-2 text-right font-medium w-20">Z (m)</th>
                       <th className="px-0.5 py-2 text-left font-medium">種類</th>
                       <th className="px-0.5 py-2 text-left font-medium">杭種</th>
                       <th className="px-0.5 py-2 text-right font-medium">緯度</th>
@@ -1515,28 +1515,28 @@ export function CoordinatesPage() {
                             className="w-full min-w-[6rem] px-1 py-0.5 border rounded text-sm"
                           />
                         </td>
-                        <td className="px-0.5 py-0.5">
+                        <td className="px-0 py-0.5 w-28">
                           <NumberInput
                             value={coord.x}
                             onChange={(v) => updateCoordinate(coord.id, 'x', v ?? 0)}
                             onClick={(e) => e.stopPropagation()}
-                            className="w-24 px-1 py-0.5 border rounded text-right text-sm"
+                            className="w-full px-2 py-0.5 border rounded text-right text-sm font-mono"
                           />
                         </td>
-                        <td className="px-0.5 py-0.5">
+                        <td className="px-0 py-0.5 w-28">
                           <NumberInput
                             value={coord.y}
                             onChange={(v) => updateCoordinate(coord.id, 'y', v ?? 0)}
                             onClick={(e) => e.stopPropagation()}
-                            className="w-24 px-1 py-0.5 border rounded text-right text-sm"
+                            className="w-full px-2 py-0.5 border rounded text-right text-sm font-mono"
                           />
                         </td>
-                        <td className="px-0.5 py-0.5">
+                        <td className="px-0 py-0.5 w-20">
                           <NumberInput
                             value={coord.z}
                             onChange={(v) => updateCoordinate(coord.id, 'z', v)}
                             onClick={(e) => e.stopPropagation()}
-                            className="w-20 px-1 py-0.5 border rounded text-right text-sm"
+                            className="w-full px-2 py-0.5 border rounded text-right text-sm font-mono"
                             placeholder="-"
                           />
                         </td>
