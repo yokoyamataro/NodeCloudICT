@@ -1292,7 +1292,7 @@ export function CoordinatesPage() {
                     aria-label="全選択"
                   />
                 </th>
-                <th className="px-0.5 py-2 text-left font-medium">点番号</th>
+                <th className="px-0.5 py-2 text-left font-medium w-20">点番号</th>
                 <th className="pr-2 pl-1 py-2 text-right font-medium w-28">X (m)</th>
                 <th className="pr-2 pl-1 py-2 text-right font-medium w-28">Y (m)</th>
                 <th className="pr-2 pl-1 py-2 text-right font-medium w-20">Z (m)</th>
@@ -1330,7 +1330,7 @@ export function CoordinatesPage() {
                       value={coord.pointNumber}
                       onChange={(e) => updateCoordinate(coord.id, 'pointNumber', e.target.value)}
                       onClick={(e) => e.stopPropagation()}
-                      className="w-full min-w-[6rem] px-1 py-0.5 border rounded text-sm"
+                      className="w-full px-1 py-0.5 border rounded text-sm"
                     />
                   </td>
                   <td className="px-0 py-0.5 w-28">
@@ -1474,7 +1474,7 @@ export function CoordinatesPage() {
                           aria-label="全選択"
                         />
                       </th>
-                      <th className="px-0.5 py-2 text-left font-medium">点番号</th>
+                      <th className="px-0.5 py-2 text-left font-medium w-20">点番号</th>
                       <th className="pr-2 pl-1 py-2 text-right font-medium w-28">X (m)</th>
                       <th className="pr-2 pl-1 py-2 text-right font-medium w-28">Y (m)</th>
                       <th className="pr-2 pl-1 py-2 text-right font-medium w-20">Z (m)</th>
@@ -1512,7 +1512,7 @@ export function CoordinatesPage() {
                             value={coord.pointNumber}
                             onChange={(e) => updateCoordinate(coord.id, 'pointNumber', e.target.value)}
                             onClick={(e) => e.stopPropagation()}
-                            className="w-full min-w-[6rem] px-1 py-0.5 border rounded text-sm"
+                            className="w-full px-1 py-0.5 border rounded text-sm"
                           />
                         </td>
                         <td className="px-0 py-0.5 w-28">
