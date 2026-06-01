@@ -99,6 +99,25 @@ function NumberInput({
   )
 }
 
+// 写真列のカウントセル: 枚数（0 でも）を表示し、クリックで写真モーダルを開く
+function PhotoCountCell({ count, onClick }: { count: number; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title="写真を表示・追加"
+      className={`relative inline-flex items-center justify-center gap-1 px-2 py-0.5 rounded border text-xs ${
+        count > 0
+          ? 'bg-blue-50 border-blue-300 text-blue-700 hover:bg-blue-100'
+          : 'border-slate-200 text-slate-400 hover:bg-slate-50'
+      }`}
+    >
+      <Camera className="h-3 w-3" />
+      <span className="font-medium">{count > 99 ? '99+' : count}</span>
+    </button>
+  )
+}
+
 // 貼り付けモーダルコンポーネント
 function PasteModal({
   isOpen,
@@ -209,6 +228,7 @@ export function CoordinatesPage() {
   const { currentFarm } = useFarmStore()
   const { projects, members, fetchMembers } = useProjectListStore()
   const { fetchByEntityIds: fetchAttachments, getSignedUrl } = useAttachmentStore()
+  const attachmentsByEntity = useAttachmentStore((s) => s.byEntity)
   const { workAreas, fetchWorkAreas } = useWorkAreaStore()
   // 更新者ID → 表示名（プロジェクトメンバーから引く）
   const memberNameById = useMemo(() => {
@@ -332,6 +352,12 @@ export function CoordinatesPage() {
       fetchRoute(currentFarm.id)
     }
   }, [currentFarm, projectZone, setZone, fetchCoordinates, fetchRoute])
+
+  // 座標が読み込まれたら、写真の枚数を一括取得（写真列のカウント表示用）
+  useEffect(() => {
+    if (coordinates.length === 0) return
+    fetchAttachments('coordinate', coordinates.map((c) => c.id))
+  }, [coordinates, fetchAttachments])
 
   // グローバル保存レジストリに経路保存を登録
   const routeSaveRef = useRef(saveRoute)
@@ -900,6 +926,7 @@ export function CoordinatesPage() {
             className={`${inp} bg-white`}
           />
         </td>
+        <td className="px-0.5 py-0.5 text-center text-slate-300">-</td>
         <td className="px-0.5 py-0.5 text-right text-slate-300">-</td>
         <td className="px-0.5 py-0.5 text-right text-slate-300">-</td>
         <td className="px-0.5 py-0.5 text-slate-300">-</td>
@@ -1298,6 +1325,7 @@ export function CoordinatesPage() {
                 <th className="pr-2 pl-1 py-2 text-right font-medium w-20">Z (m)</th>
                 <th className="px-0.5 py-2 text-left font-medium">種類</th>
                 <th className="px-0.5 py-2 text-left font-medium">杭種</th>
+                <th className="px-0.5 py-2 text-center font-medium w-12">写真</th>
                 <th className="px-0.5 py-2 text-right font-medium">緯度</th>
                 <th className="px-0.5 py-2 text-right font-medium">経度</th>
                 <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新者</th>
@@ -1384,6 +1412,12 @@ export function CoordinatesPage() {
                       className="w-20 px-1 py-0.5 border rounded text-xs bg-white"
                     />
                   </td>
+                  <td className="px-0.5 py-0.5 text-center" onClick={(e) => e.stopPropagation()}>
+                    <PhotoCountCell
+                      count={attachmentsByEntity.get(`coordinate:${coord.id}`)?.length ?? 0}
+                      onClick={() => setPhotoCoordId(coord.id)}
+                    />
+                  </td>
                   <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono">
                     {coord.lat?.toFixed(6) ?? '-'}
                   </td>
@@ -1399,17 +1433,7 @@ export function CoordinatesPage() {
                   <td className="px-0.5 py-0.5 text-xs text-muted-foreground font-mono whitespace-nowrap">
                     {fmtDateTime(coord.updatedAt)}
                   </td>
-                  <td className="px-1 py-0.5 flex items-center gap-0.5">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setPhotoCoordId(coord.id)
-                      }}
-                      className="p-1 text-blue-600 hover:bg-blue-50 rounded"
-                      title="写真"
-                    >
-                      <Camera className="h-3.5 w-3.5" />
-                    </button>
+                  <td className="px-1 py-0.5">
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
@@ -1480,6 +1504,7 @@ export function CoordinatesPage() {
                       <th className="pr-2 pl-1 py-2 text-right font-medium w-20">Z (m)</th>
                       <th className="px-0.5 py-2 text-left font-medium">種類</th>
                       <th className="px-0.5 py-2 text-left font-medium">杭種</th>
+                      <th className="px-0.5 py-2 text-center font-medium w-12">写真</th>
                       <th className="px-0.5 py-2 text-right font-medium">緯度</th>
                       <th className="px-0.5 py-2 text-right font-medium">経度</th>
                       <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新者</th>
@@ -1564,6 +1589,12 @@ export function CoordinatesPage() {
                             onClick={(e) => e.stopPropagation()}
                             placeholder="-"
                             className="w-20 px-1 py-0.5 border rounded text-xs bg-white"
+                          />
+                        </td>
+                        <td className="px-0.5 py-0.5 text-center" onClick={(e) => e.stopPropagation()}>
+                          <PhotoCountCell
+                            count={attachmentsByEntity.get(`coordinate:${coord.id}`)?.length ?? 0}
+                            onClick={() => setPhotoCoordId(coord.id)}
                           />
                         </td>
                         <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono">
