@@ -1339,7 +1339,7 @@ export function CoordinatesPage() {
                   key={coord.id}
                   ref={idx === coordinates.length - 1 ? lastRowRef : null}
                   className={`hover:bg-slate-50 cursor-pointer ${
-                    selectedPointId === coord.id ? 'bg-blue-50' : ''
+                    selectedPointId === coord.id ? 'bg-blue-200 hover:bg-blue-200' : ''
                   }`}
                   onClick={() => handlePointClick(coord.id)}
                 >
@@ -1518,7 +1518,7 @@ export function CoordinatesPage() {
                         key={coord.id}
                         ref={idx === coordinates.length - 1 ? lastRowRef : null}
                         className={`hover:bg-slate-50 cursor-pointer ${
-                          selectedPointId === coord.id ? 'bg-blue-50' : ''
+                          selectedPointId === coord.id ? 'bg-blue-200 hover:bg-blue-200' : ''
                         }`}
                         onClick={() => handlePointClick(coord.id)}
                       >
