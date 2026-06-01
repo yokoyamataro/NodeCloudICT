@@ -2777,21 +2777,21 @@ export function MobileStakingPage() {
             </>
           )}
 
-          {/* 施工管理：床掘 TIN の三角形エッジ */}
+          {/* LANDXML / 施工管理：床掘 TIN の三角形エッジ */}
           {(screenMode === 'construction' || landxmlMode) && trenchEdges.map((tri, i) => (
             <Polyline
               key={`trench-${i}`}
               positions={tri}
-              pathOptions={{ color: '#06b6d4', weight: 0.5, opacity: 0.5 }}
+              pathOptions={{ color: '#0891b2', weight: 2, opacity: 0.85 }}
             />
           ))}
 
-          {/* 施工管理：中心線形 */}
-          {screenMode === 'construction' && alignmentLines.map((line, i) => (
+          {/* LANDXML / 施工管理：中心線形 */}
+          {(screenMode === 'construction' || landxmlMode) && alignmentLines.map((line, i) => (
             <Polyline
               key={`align-${i}`}
               positions={line}
-              pathOptions={{ color: '#1d4ed8', weight: 3, opacity: 0.9 }}
+              pathOptions={{ color: '#1d4ed8', weight: 5, opacity: 0.95 }}
             />
           ))}
         </MapContainer>
