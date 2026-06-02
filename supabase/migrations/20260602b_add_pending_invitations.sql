@@ -16,6 +16,9 @@
 -- ========================================================================
 -- 1. pending_invitations テーブル
 -- ========================================================================
+-- email は呼び出し元（Edge Function `invite-member`）で必ず小文字に正規化
+-- して保存する。テーブル側にもトリガで lower() を強制し、UNIQUE 制約を素直に
+-- (project_id, email) で張る（PostgREST の onConflict も使いやすい形）。
 CREATE TABLE IF NOT EXISTS public.pending_invitations (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   project_id uuid NOT NULL REFERENCES public.projects(id) ON DELETE CASCADE,
@@ -23,11 +26,27 @@ CREATE TABLE IF NOT EXISTS public.pending_invitations (
   role text NOT NULL CHECK (role IN ('owner', 'editor', 'viewer')),
   invited_by uuid REFERENCES auth.users(id) ON DELETE SET NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (project_id, lower(email))  -- 同じ project に同じメールは 1 件まで
+  UNIQUE (project_id, email)
 );
 
-CREATE INDEX IF NOT EXISTS idx_pending_invitations_email_lower
-  ON public.pending_invitations ((lower(email)));
+-- INSERT/UPDATE 時に email を必ず小文字化する保険トリガ
+CREATE OR REPLACE FUNCTION public.pending_invitations_lower_email()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.email := lower(NEW.email);
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_pending_invitations_lower_email ON public.pending_invitations;
+CREATE TRIGGER trg_pending_invitations_lower_email
+  BEFORE INSERT OR UPDATE ON public.pending_invitations
+  FOR EACH ROW EXECUTE FUNCTION public.pending_invitations_lower_email();
+
+CREATE INDEX IF NOT EXISTS idx_pending_invitations_email
+  ON public.pending_invitations (email);
 
 ALTER TABLE public.pending_invitations ENABLE ROW LEVEL SECURITY;
 
@@ -57,16 +76,18 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  -- 新規ユーザーのメールに紐づく招待を project_members に転記
+  -- 新規ユーザーのメールに紐づく招待を project_members に転記。
+  -- pending_invitations.email は BEFORE INSERT トリガで小文字に正規化済みのため
+  -- 検索側だけ lower() を当てれば十分。
   INSERT INTO public.project_members (project_id, user_id, role)
   SELECT pi.project_id, NEW.id, pi.role
   FROM public.pending_invitations pi
-  WHERE lower(pi.email) = lower(NEW.email)
+  WHERE pi.email = lower(NEW.email)
   ON CONFLICT (project_id, user_id) DO NOTHING;
 
   -- 取り込んだ招待行を削除
   DELETE FROM public.pending_invitations
-  WHERE lower(email) = lower(NEW.email);
+  WHERE email = lower(NEW.email);
 
   RETURN NEW;
 END;
