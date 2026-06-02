@@ -21,8 +21,13 @@ interface PreparedAttachment {
 
 type Variant = 'pc' | 'mobile'
 
+// 一時的に UI から隠す（モーダル本体・Edge Function はそのまま残しているので
+// このフラグを true に戻すだけで全ヘッダーに復活する）。
+const FEEDBACK_BUTTON_VISIBLE = false
+
 export function FeedbackButton({ variant = 'pc' }: { variant?: Variant }) {
   const [open, setOpen] = useState(false)
+  if (!FEEDBACK_BUTTON_VISIBLE) return null
   return (
     <>
       <button
