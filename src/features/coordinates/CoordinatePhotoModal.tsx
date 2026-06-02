@@ -3,7 +3,7 @@
 // 既定で「遠景」「近景」のスロットがあり、任意のラベルでも追加可能。
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Camera, Loader2, Trash2, Plus, X } from 'lucide-react'
+import { Camera, Loader2, Trash2, Plus, X, Replace } from 'lucide-react'
 import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
 import { PhotoEditModal } from './PhotoEditModal'
 
@@ -35,8 +35,12 @@ export function CoordinatePhotoModal({
   const [customName, setCustomName] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const pendingCategoryRef = useRef<string | null>(null)
+  // 差し替え対象の attachment.id（アップロード成功後に削除する）
+  const pendingReplaceIdRef = useRef<string | null>(null)
   // 編集対象（選択直後にここに入れて、編集モーダルで回転/トリミングしてからアップロードする）
-  const [editingFile, setEditingFile] = useState<{ file: File; category: string } | null>(null)
+  const [editingFile, setEditingFile] = useState<
+    { file: File; category: string; replacingId?: string } | null
+  >(null)
 
   useEffect(() => {
     if (open && coordinateId) {
@@ -59,6 +63,13 @@ export function CoordinatePhotoModal({
 
   const handleUploadClick = (category: string) => {
     pendingCategoryRef.current = category
+    pendingReplaceIdRef.current = null
+    fileInputRef.current?.click()
+  }
+
+  const handleReplaceClick = (category: string, attachmentId: string) => {
+    pendingCategoryRef.current = category
+    pendingReplaceIdRef.current = attachmentId
     fileInputRef.current?.click()
   }
 
@@ -68,14 +79,20 @@ export function CoordinatePhotoModal({
     const cat = pendingCategoryRef.current
     if (!file || !cat) return
     // 回転 / トリミング編集モーダルを開く
-    setEditingFile({ file, category: cat })
+    setEditingFile({
+      file,
+      category: cat,
+      replacingId: pendingReplaceIdRef.current ?? undefined,
+    })
     pendingCategoryRef.current = null
+    pendingReplaceIdRef.current = null
   }
 
   // 編集モーダル確定後にアップロード（編集時点で 1600px / JPEG80% に縮小済みなので再エンコードしない）
   const handleEditConfirmed = async (blob: Blob, _fileName: string) => {
     if (!editingFile) return
     const cat = editingFile.category
+    const replacingId = editingFile.replacingId
     setEditingFile(null)
     setUploadingFor(cat)
     setError(null)
@@ -89,7 +106,12 @@ export function CoordinatePhotoModal({
         takenAt: new Date(),
         skipResize: true,
       })
-      if (!saved) setError('写真の登録に失敗しました')
+      if (!saved) {
+        setError('写真の登録に失敗しました')
+      } else if (replacingId) {
+        // 新規アップロード成功後に旧写真を削除（失敗してもユーザーは新規分は確認できる）
+        await removeAttachment(replacingId)
+      }
     } finally {
       setUploadingFor(null)
     }
@@ -146,6 +168,9 @@ export function CoordinatePhotoModal({
             {DEFAULT_CATEGORIES.map((category) => {
               const list = grouped.get(category) ?? []
               const isUploading = uploadingFor === category
+              // 遠景・近景は通常 1 枚なので、すでに登録済みなら追加ボタンは出さず
+              // タイル側の「差し替え」ボタンで置き換える運用にする。
+              const hasPhoto = list.length > 0
               return (
                 <section key={category} className="border rounded-lg p-2 flex flex-col">
                   <div className="flex items-center justify-between mb-2">
@@ -167,12 +192,15 @@ export function CoordinatePhotoModal({
                             removeAttachment(p.id)
                           }
                         }}
+                        onReplace={() => handleReplaceClick(category, p.id)}
                       />
                     ))}
-                    <AddPhotoTile
-                      isUploading={isUploading}
-                      onClick={() => handleUploadClick(category)}
-                    />
+                    {!hasPhoto && (
+                      <AddPhotoTile
+                        isUploading={isUploading}
+                        onClick={() => handleUploadClick(category)}
+                      />
+                    )}
                   </div>
                 </section>
               )
@@ -306,10 +334,12 @@ function PhotoTile({
   attachment,
   getSignedUrl,
   onDelete,
+  onReplace,
 }: {
   attachment: Attachment
   getSignedUrl: (path: string) => Promise<string | null>
   onDelete: () => void
+  onReplace?: () => void
 }) {
   const [url, setUrl] = useState<string | null>(null)
   useEffect(() => {
@@ -336,13 +366,24 @@ function PhotoTile({
           </div>
         )}
       </a>
-      <button
-        onClick={onDelete}
-        className="absolute top-1 right-1 p-1 bg-white/90 text-red-600 rounded shadow opacity-0 group-hover:opacity-100 hover:bg-white transition"
-        title="削除"
-      >
-        <Trash2 className="h-3 w-3" />
-      </button>
+      <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition">
+        {onReplace && (
+          <button
+            onClick={onReplace}
+            className="p-1 bg-white/90 text-blue-600 rounded shadow hover:bg-white"
+            title="差し替え"
+          >
+            <Replace className="h-3 w-3" />
+          </button>
+        )}
+        <button
+          onClick={onDelete}
+          className="p-1 bg-white/90 text-red-600 rounded shadow hover:bg-white"
+          title="削除"
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
+      </div>
     </div>
   )
 }
