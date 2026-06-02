@@ -106,7 +106,8 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* 料金 */}
+      {/* 料金（未定のため非表示） */}
+      {false && (
       <section className="bg-slate-50 border-y">
         <div className="max-w-5xl mx-auto px-4 py-14">
           <h2 className="text-xl font-bold text-center mb-2">料金</h2>
@@ -170,6 +171,7 @@ export function LandingPage() {
           </div>
         </div>
       </section>
+      )}
 
       <footer className="max-w-5xl mx-auto px-4 py-8 text-center text-xs text-slate-400">
         <div className="mb-2 flex items-center justify-center gap-3">
