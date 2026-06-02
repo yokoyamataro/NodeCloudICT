@@ -4,6 +4,7 @@ import { getDisplayModeOverride, isMobileDevice } from '@/lib/displayMode'
 import { AuthProvider, useAuth } from '@/contexts/AuthContext'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { LoginPage } from '@/features/auth/LoginPage'
+import { AcceptInvitePage } from '@/features/auth/AcceptInvitePage'
 import { ShareFarmViewPage } from '@/features/share/ShareFarmViewPage'
 import { LandingPage } from '@/features/marketing/LandingPage'
 import { ApplyPage } from '@/features/marketing/ApplyPage'
@@ -82,6 +83,7 @@ function MobileAutoRedirect() {
       path === '/apply' ||
       path === '/terms' ||
       path === '/privacy' ||
+      path === '/accept-invite' ||
       path.startsWith('/admin') ||
       path.startsWith('/mobile') ||
       path.startsWith('/share')
@@ -126,6 +128,8 @@ function AppRoutes() {
   return (
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        {/* 招待リンク受領（Supabase Auth がセッション付きでここへ戻す） */}
+        <Route path="/accept-invite" element={<AcceptInvitePage />} />
         {/* 公開: 紹介・申し込みページ（認証不要） */}
         <Route path="/lp" element={<LandingPage />} />
         <Route path="/apply" element={<ApplyPage />} />

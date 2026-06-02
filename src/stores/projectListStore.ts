@@ -28,7 +28,13 @@ interface ProjectListState {
   deleteProject: (id: string) => Promise<void>
 
   // メンバー操作
-  addMember: (projectId: string, email: string, role: ProjectMemberRole) => Promise<boolean>
+  // - inviteMember: 招待リンク経由でメンバーを追加。既存ユーザーなら即追加、
+  //   未登録なら invite メール送信。Edge Function `invite-member` を呼ぶ。
+  inviteMember: (projectId: string, email: string, role: ProjectMemberRole) => Promise<{
+    ok: boolean
+    mode?: 'added_existing' | 'invited'
+    error?: string
+  }>
   updateMemberRole: (memberId: string, role: ProjectMemberRole) => Promise<void>
   removeMember: (memberId: string) => Promise<void>
 
@@ -209,41 +215,53 @@ export const useProjectListStore = create<ProjectListState>()(
     }
   },
 
-  addMember: async (projectId, email, role) => {
+  inviteMember: async (projectId, email, role) => {
     try {
-      // メールアドレスからユーザーIDを取得するため、RPC関数を使用
-      // 注: セキュリティ上、auth.usersへの直接アクセスはできないため、
-      // RPC関数をSupabaseで作成する必要がある
-      const { data: userData, error: userError } = await supabase.rpc('get_user_id_by_email', {
-        user_email: email,
-      } as never)
-
-      if (userError || !userData) {
-        set({ error: 'ユーザーが見つかりません' })
-        return false
+      // 認証トークンを取り出して Edge Function を呼ぶ
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData.session?.access_token
+      if (!token) {
+        const msg = 'ログインセッションがありません'
+        set({ error: msg })
+        return { ok: false, error: msg }
       }
 
-      const { error } = await supabase.from('project_members').insert({
-        project_id: projectId,
-        user_id: userData,
-        role,
-      } as never)
+      const { data, error } = await supabase.functions.invoke('invite-member', {
+        body: { project_id: projectId, email, role },
+      })
 
       if (error) {
-        if (error.code === '23505') {
-          set({ error: 'このユーザーは既にメンバーです' })
-        } else {
-          throw error
+        // Edge Function 側 4xx/5xx は error.context に response が入っている
+        let msg = error.message || 'メンバー招待に失敗しました'
+        const ctx = (error as unknown as { context?: { body?: string } }).context
+        if (ctx?.body) {
+          try {
+            const parsed = JSON.parse(ctx.body) as { error?: string }
+            if (parsed.error) msg = parsed.error
+          } catch {
+            // ignore parse error
+          }
         }
-        return false
+        set({ error: msg })
+        return { ok: false, error: msg }
       }
 
-      // メンバー一覧を再取得
-      await get().fetchMembers(projectId)
-      return true
+      const result = (data ?? {}) as { ok?: boolean; mode?: 'added_existing' | 'invited' }
+      if (!result.ok) {
+        set({ error: 'メンバー招待に失敗しました' })
+        return { ok: false, error: 'メンバー招待に失敗しました' }
+      }
+
+      // 既存ユーザー追加の場合のみ即座にメンバー一覧を再取得
+      // （未登録招待は signup 後にトリガで反映される）
+      if (result.mode === 'added_existing') {
+        await get().fetchMembers(projectId)
+      }
+      return { ok: true, mode: result.mode }
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : 'メンバーの追加に失敗しました' })
-      return false
+      const msg = err instanceof Error ? err.message : 'メンバー招待に失敗しました'
+      set({ error: msg })
+      return { ok: false, error: msg }
     }
   },
 

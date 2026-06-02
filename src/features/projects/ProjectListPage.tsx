@@ -129,7 +129,7 @@ export function ProjectListPage() {
     members,
     membersLoading,
     fetchMembers,
-    addMember,
+    inviteMember,
     updateMemberRole,
     removeMember,
     userRolesByProject,
@@ -184,6 +184,11 @@ export function ProjectListPage() {
   const [newMemberEmail, setNewMemberEmail] = useState('')
   const [newMemberRole, setNewMemberRole] = useState<ProjectMemberRole>('viewer')
   const [addingMember, setAddingMember] = useState(false)
+  // 招待結果のフィードバック表示
+  const [inviteFeedback, setInviteFeedback] = useState<{
+    kind: 'invited' | 'added'
+    email: string
+  } | null>(null)
 
   const fetchStatuses = useWorkStatusStore((s) => s.fetchStatuses)
   const setWorkStatus = useWorkStatusStore((s) => s.setStatus)
@@ -417,13 +422,18 @@ export function ProjectListPage() {
     fetchMembers(project.id)
   }
 
-  // メンバー追加
+  // メンバー招待（招待リンクをメール送信。既存ユーザーなら即追加）
   const handleAddMember = async () => {
     if (!showMemberDialog || !newMemberEmail.trim()) return
     setAddingMember(true)
-    const success = await addMember(showMemberDialog.id, newMemberEmail, newMemberRole)
+    setInviteFeedback(null)
+    const result = await inviteMember(showMemberDialog.id, newMemberEmail.trim(), newMemberRole)
     setAddingMember(false)
-    if (success) {
+    if (result.ok) {
+      setInviteFeedback({
+        kind: result.mode === 'added_existing' ? 'added' : 'invited',
+        email: newMemberEmail.trim(),
+      })
       setNewMemberEmail('')
       setNewMemberRole('viewer')
     }
@@ -1196,7 +1206,10 @@ export function ProjectListPage() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-bold">メンバー管理</h2>
               <button
-                onClick={() => setShowMemberDialog(null)}
+                onClick={() => {
+                  setShowMemberDialog(null)
+                  setInviteFeedback(null)
+                }}
                 className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded transition-colors"
               >
                 <X className="h-5 w-5" />
@@ -1204,12 +1217,15 @@ export function ProjectListPage() {
             </div>
             <p className="text-sm text-muted-foreground mb-4">{showMemberDialog.name}</p>
 
-            {/* メンバー追加フォーム */}
+            {/* メンバー招待フォーム */}
             <div className="border rounded-lg p-4 mb-4 bg-slate-50">
               <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
                 <UserPlus className="h-4 w-4" />
-                メンバーを追加
+                メンバーを招待
               </h3>
+              <p className="text-xs text-slate-500 mb-3">
+                招待リンクをメールで送信します。受け取った人がリンクから自分でパスワードを設定すると、自動的にこのプロジェクトに参加します。
+              </p>
               <div className="space-y-3">
                 <div>
                   <label className="block text-xs text-muted-foreground mb-1">メールアドレス</label>
@@ -1238,8 +1254,15 @@ export function ProjectListPage() {
                   className="w-full px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   {addingMember && <Loader2 className="h-4 w-4 animate-spin" />}
-                  追加
+                  招待を送る
                 </button>
+                {inviteFeedback && (
+                  <div className="p-2 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-700">
+                    {inviteFeedback.kind === 'invited'
+                      ? `招待メールを ${inviteFeedback.email} に送信しました。受信者がリンクを踏んでパスワード設定するとメンバーに加わります。`
+                      : `${inviteFeedback.email} は既に登録済みだったため、メンバーに追加しました。`}
+                  </div>
+                )}
               </div>
             </div>
 
