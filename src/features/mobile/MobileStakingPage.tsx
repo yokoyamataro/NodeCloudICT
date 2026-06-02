@@ -725,19 +725,8 @@ export function MobileStakingPage() {
     }
   }, [farmId, setCurrentFarm, setZone, fetchCoordinates, fetchPipes, fetchRecords])
 
-  // 現場を開いた直後に「開始前チェック」モーダルを 1 回だけ表示する。
-  // ジオイド補正の有無 / 目標高(アンテナ高) を確認させ、既知点での精度チェックを促す。
-  useEffect(() => {
-    if (!farmId || loading || error) return
-    try {
-      const key = `mobile:startup-check:${farmId}`
-      if (sessionStorage.getItem(key) === '1') return
-      setShowStartupCheck(true)
-      sessionStorage.setItem(key, '1')
-    } catch {
-      setShowStartupCheck(true)
-    }
-  }, [farmId, loading, error])
+  // 「開始前チェック」モーダルは startRecording 内で初回押下時に出す。
+  // （工区を開いた時点では出さず、実際に観測を始めようとしたタイミングで喚起する）
 
   // 座標が読み込まれたら、写真の枚数を一括取得（カメラボタンのバッジ表示用）
   useEffect(() => {
@@ -1523,6 +1512,19 @@ export function MobileStakingPage() {
       return
     }
     if (!farmId) return
+    // 初回押下時のみ「開始前チェック」モーダルを出して観測は止める。
+    // 工区ごとにセッション中 1 回だけ。ユーザーが「確認した」で閉じてから
+    // もう一度記録ボタンを押すと観測が始まる。
+    try {
+      const key = `mobile:startup-check:${farmId}`
+      if (sessionStorage.getItem(key) !== '1') {
+        setShowStartupCheck(true)
+        sessionStorage.setItem(key, '1')
+        return
+      }
+    } catch {
+      // sessionStorage が使えない環境ではチェックを省いてそのまま進む
+    }
     recSamplesRef.current = []
     setRecordedCount(0)
     recForceFreeRef.current = !!opts.forceFreePoint
