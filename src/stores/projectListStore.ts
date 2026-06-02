@@ -267,14 +267,37 @@ export const useProjectListStore = create<ProjectListState>()(
 
   removeMember: async (memberId) => {
     const state = get()
+    const target = state.members.find((m) => m.id === memberId)
     try {
-      const { error } = await supabase.from('project_members').delete().eq('id', memberId)
+      // .select() を付けて削除された行を返してもらう。
+      // RLS で弾かれた場合はエラーにならず data が空配列で返るので、それを検知して
+      // 「権限がない」エラーとして UI に出す。
+      const { data, error } = await supabase
+        .from('project_members')
+        .delete()
+        .eq('id', memberId)
+        .select()
 
       if (error) throw error
 
+      if (!data || (data as unknown[]).length === 0) {
+        set({
+          error:
+            'メンバーを削除する権限がありません（プロジェクト作成者のみ削除できます）',
+        })
+        return
+      }
+
+      // 楽観的にローカルを更新
       set({
         members: state.members.filter((m) => m.id !== memberId),
       })
+
+      // サーバから再取得して整合（楽観更新だけだと、別タブや権限不足で実際は
+      // 残っているケースを次回再表示で取り違える可能性があるため）
+      if (target?.project_id) {
+        await get().fetchMembers(target.project_id)
+      }
     } catch (err) {
       set({ error: err instanceof Error ? err.message : 'メンバーの削除に失敗しました' })
     }
