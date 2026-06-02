@@ -277,9 +277,9 @@ export function AppLayout() {
     return location.pathname === href || location.pathname.startsWith(href + '/')
   }
 
-  // トップページかつプロジェクト・工区未選択の場合は左メニューを非表示
-  const isTopPage = location.pathname === '/'
-  const allowSidebar = !(isTopPage && !currentFarm)
+  // 工事 → 工区 → 細部編集 の順で開く運用なので、工区が未選択のうちは
+  // 左メニュー（黒いサイドバー）自体を出さない。工区を選んでから初めて表示する。
+  const allowSidebar = !!currentFarm
 
   // ユーザー操作で折りたたみ可能。状態は localStorage に永続化。
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
