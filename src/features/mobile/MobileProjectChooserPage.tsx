@@ -8,6 +8,7 @@ import { useProjectListStore } from '@/stores/projectListStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { useAuth } from '@/contexts/AuthContext'
 import { setDisplayModeOverride } from '@/lib/displayMode'
+import { FeedbackButton } from '@/components/layout/FeedbackButton'
 
 export function MobileProjectChooserPage() {
   const navigate = useNavigate()
@@ -54,6 +55,7 @@ export function MobileProjectChooserPage() {
           </span>
         )}
         <div className="flex items-center gap-2">
+          <FeedbackButton variant="mobile" />
           <button
             onClick={handleGoPC}
             className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-500 hover:bg-slate-700"

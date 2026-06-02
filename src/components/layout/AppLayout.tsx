@@ -54,6 +54,7 @@ import {
 } from '@/stores/globalSaveRegistry'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useFarmStore } from '@/stores/farmStore'
+import { FeedbackButton } from '@/components/layout/FeedbackButton'
 
 interface NavItem {
   name: string
@@ -350,6 +351,9 @@ export function AppLayout() {
                 申込管理
               </Link>
             )}
+            {/* 意見・要望メール */}
+            <FeedbackButton variant="pc" />
+
             {/* スマホ画面へ切替 */}
             <button
               type="button"

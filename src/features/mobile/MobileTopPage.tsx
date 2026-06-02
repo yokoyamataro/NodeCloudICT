@@ -9,6 +9,7 @@ import { useProjectListStore } from '@/stores/projectListStore'
 import { useAuth } from '@/contexts/AuthContext'
 import { CurrentLocationLayer } from '@/components/map/CurrentLocationLayer'
 import { setDisplayModeOverride } from '@/lib/displayMode'
+import { FeedbackButton } from '@/components/layout/FeedbackButton'
 
 const WORK_TYPE_COLORS: Record<string, string> = {
   boundary_survey: '#0ea5e9',
@@ -176,6 +177,7 @@ export function MobileTopPage() {
             {userLabel}
           </span>
         )}
+        <FeedbackButton variant="mobile" />
         <button
           onClick={handleGoPC}
           className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-500 hover:bg-slate-700"

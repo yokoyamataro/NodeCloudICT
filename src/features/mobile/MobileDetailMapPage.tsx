@@ -11,6 +11,7 @@ import { useSurveyStore } from '@/stores/surveyStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import { UnifiedFieldMap, type BaseLayerType, type LayerVisibility } from '@/components/map/UnifiedFieldMap'
 import type { Project } from '@/types/database'
+import { FeedbackButton } from '@/components/layout/FeedbackButton'
 
 export function MobileDetailMapPage() {
   const navigate = useNavigate()
@@ -198,6 +199,7 @@ export function MobileDetailMapPage() {
           <option value="gsi-photo">航空写真</option>
           <option value="gsi-std">地理院地図</option>
         </select>
+        <FeedbackButton variant="mobile" />
       </div>
 
       <div className="flex-1 relative">

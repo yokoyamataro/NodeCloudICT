@@ -52,6 +52,7 @@ import {
 import { CoordinatePhotoModal } from '@/features/coordinates/CoordinatePhotoModal'
 import { CoordinateCalcModal } from '@/features/coordinates/CoordinateCalcModal'
 import { useAttachmentStore } from '@/stores/attachmentStore'
+import { FeedbackButton } from '@/components/layout/FeedbackButton'
 import { useOrthophotoStore } from '@/stores/orthophotoStore'
 import { parseLandXml } from '@/lib/landxml/parser'
 import {
@@ -2010,6 +2011,7 @@ export function MobileStakingPage() {
             {userLabel}
           </span>
         )}
+        <FeedbackButton variant="mobile" />
       </div>
       {/* ヘッダー（2 行目: ツールボタン群） */}
       <div className="px-2 py-1.5 bg-slate-800 text-white flex items-center gap-2 text-sm border-t border-slate-700">

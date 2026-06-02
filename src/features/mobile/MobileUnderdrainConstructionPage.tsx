@@ -23,6 +23,7 @@ import { indexTin, queryZ, type TinIndex, type TinSurfaceLike } from '@/lib/land
 import { buildTrenchTin } from '@/lib/landxml/surface'
 import type { Alignment, AlignmentSegment } from '@/lib/landxml/types'
 import type { Project } from '@/types/database'
+import { FeedbackButton } from '@/components/layout/FeedbackButton'
 
 function FollowCurrent({ position, enabled }: { position: [number, number] | null; enabled: boolean }) {
   const map = useMap()
@@ -409,6 +410,7 @@ export function MobileUnderdrainConstructionPage() {
           >
             <Settings className="h-3.5 w-3.5" />
           </button>
+          <FeedbackButton variant="mobile" />
         </div>
       </div>
 
