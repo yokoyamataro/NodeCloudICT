@@ -876,8 +876,8 @@ export function ProjectListPage() {
                 <FocusOnFarm location={selectedFarmLocation} />
               )}
               {showCurrentLocation && <CurrentLocationLayer />}
-              {/* 工事区域ポリゴン（フィルタリング済み） */}
-              {filteredPolygons.map((polygon) => (
+              {/* 工事区域ポリゴン（地籍測量モードでは非表示。マーカー + 名称だけにする） */}
+              {!isCadastral && filteredPolygons.map((polygon) => (
                 <Polygon
                   key={polygon.id}
                   positions={polygon.positions}
@@ -889,10 +889,15 @@ export function ProjectListPage() {
                   }}
                 />
               ))}
-              {/* 工区マーカー */}
+              {/* 工区マーカー（地籍測量モードでは状態フィルタで絞り込み） */}
               {farms.map((farm) => {
                 const location = farmLocations.get(farm.id)
                 if (!location) return null
+                if (isCadastral) {
+                  const status =
+                    statusByKey.get(`${farm.id}:boundary_survey`) ?? 'not_started'
+                  if (!visibleStatuses.has(status)) return null
+                }
                 const isSelected = selectedFarm?.id === farm.id
                 const areaSummary = farmWorkAreaSummary[farm.id] || {}
 
