@@ -3,7 +3,7 @@
 // 既定で「遠景」「近景」のスロットがあり、任意のラベルでも追加可能。
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Camera, Loader2, Trash2, Plus, X, Replace } from 'lucide-react'
+import { Camera, Loader2, Trash2, Plus, X, Replace, Image as ImageIcon } from 'lucide-react'
 import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
 import { PhotoEditModal } from './PhotoEditModal'
 
@@ -33,7 +33,9 @@ export function CoordinatePhotoModal({
   const [error, setError] = useState<string | null>(null)
   const [customMode, setCustomMode] = useState(false)
   const [customName, setCustomName] = useState('')
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  // 撮影（カメラ直起動）と画像から選択（ファイル選択）で input を分け、属性 capture の有無で挙動を切り替える。
+  const cameraInputRef = useRef<HTMLInputElement>(null)
+  const pickerInputRef = useRef<HTMLInputElement>(null)
   const pendingCategoryRef = useRef<string | null>(null)
   // 差し替え対象の attachment.id（アップロード成功後に削除する）
   const pendingReplaceIdRef = useRef<string | null>(null)
@@ -61,16 +63,23 @@ export function CoordinatePhotoModal({
     return map
   }, [photos])
 
-  const handleUploadClick = (category: string) => {
+  const handleCaptureClick = (category: string) => {
     pendingCategoryRef.current = category
     pendingReplaceIdRef.current = null
-    fileInputRef.current?.click()
+    cameraInputRef.current?.click()
   }
 
+  const handlePickClick = (category: string) => {
+    pendingCategoryRef.current = category
+    pendingReplaceIdRef.current = null
+    pickerInputRef.current?.click()
+  }
+
+  // 差し替えは「撮影」を優先する（既存写真を撮り直すケースが多いため）
   const handleReplaceClick = (category: string, attachmentId: string) => {
     pendingCategoryRef.current = category
     pendingReplaceIdRef.current = attachmentId
-    fileInputRef.current?.click()
+    cameraInputRef.current?.click()
   }
 
   const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -117,10 +126,18 @@ export function CoordinatePhotoModal({
     }
   }
 
-  const handleAddCustom = () => {
+  const handleAddCustomCapture = () => {
     const name = customName.trim()
     if (!name) return
-    handleUploadClick(name)
+    handleCaptureClick(name)
+    setCustomMode(false)
+    setCustomName('')
+  }
+
+  const handleAddCustomPick = () => {
+    const name = customName.trim()
+    if (!name) return
+    handlePickClick(name)
     setCustomMode(false)
     setCustomName('')
   }
@@ -198,7 +215,8 @@ export function CoordinatePhotoModal({
                     {!hasPhoto && (
                       <AddPhotoTile
                         isUploading={isUploading}
-                        onClick={() => handleUploadClick(category)}
+                        onCapture={() => handleCaptureClick(category)}
+                        onPick={() => handlePickClick(category)}
                       />
                     )}
                   </div>
@@ -235,10 +253,13 @@ export function CoordinatePhotoModal({
                         }}
                       />
                     ))}
-                    <AddPhotoTile
-                      isUploading={isUploading}
-                      onClick={() => handleUploadClick(category)}
-                    />
+                    <div className="col-span-2">
+                      <AddPhotoTile
+                        isUploading={isUploading}
+                        onCapture={() => handleCaptureClick(category)}
+                        onPick={() => handlePickClick(category)}
+                      />
+                    </div>
                   </div>
                 </section>
               )
@@ -257,11 +278,20 @@ export function CoordinatePhotoModal({
                   className="flex-1 px-2 py-1 border rounded text-sm"
                 />
                 <button
-                  onClick={handleAddCustom}
+                  onClick={handleAddCustomCapture}
                   disabled={!customName.trim()}
-                  className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                  className="flex items-center gap-1 px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                 >
-                  撮影 / 選択
+                  <Camera className="h-3.5 w-3.5" />
+                  撮影
+                </button>
+                <button
+                  onClick={handleAddCustomPick}
+                  disabled={!customName.trim()}
+                  className="flex items-center gap-1 px-3 py-1 text-sm border border-blue-600 text-blue-700 rounded hover:bg-blue-50 disabled:opacity-50"
+                >
+                  <ImageIcon className="h-3.5 w-3.5" />
+                  画像から選択
                 </button>
                 <button
                   onClick={() => {
@@ -286,15 +316,21 @@ export function CoordinatePhotoModal({
         </div>
 
         {/*
-          capture="environment" を付けると Android Chrome/WebView は
-          ファイル選択ではなく直接背面カメラを起動する（iOS Safari も同様）。
-          PC ブラウザはこの属性を無視するので従来通りファイル選択が出る。
+          「撮影」用: capture="environment" でモバイルは背面カメラ直起動。PC は無視されファイル選択になる。
+          「画像から選択」用: capture を付けないので、モバイルでもギャラリーが開き既存写真を選べる。
         */}
         <input
-          ref={fileInputRef}
+          ref={cameraInputRef}
           type="file"
           accept="image/*"
           capture="environment"
+          onChange={handleFileSelected}
+          className="hidden"
+        />
+        <input
+          ref={pickerInputRef}
+          type="file"
+          accept="image/*"
           onChange={handleFileSelected}
           className="hidden"
         />
@@ -312,27 +348,42 @@ export function CoordinatePhotoModal({
   )
 }
 
-// サムネイル枠と同サイズの「写真追加」ボタン
+// 「撮影」と「画像から選択」の 2 ボタンを横並びにした追加タイル。
 function AddPhotoTile({
-  onClick,
+  onCapture,
+  onPick,
   isUploading,
 }: {
-  onClick: () => void
+  onCapture: () => void
+  onPick: () => void
   isUploading: boolean
 }) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={isUploading}
-      className="w-full aspect-square border-2 border-dashed border-blue-300 rounded bg-blue-50/40 hover:bg-blue-50 active:bg-blue-100 disabled:opacity-50 flex items-center justify-center text-blue-500 hover:text-blue-700 transition-colors"
-      title="写真を追加"
-    >
-      {isUploading ? (
+  if (isUploading) {
+    return (
+      <div className="w-full aspect-square border-2 border-dashed border-blue-300 rounded bg-blue-50/40 flex items-center justify-center text-blue-500">
         <Loader2 className="h-10 w-10 animate-spin" />
-      ) : (
-        <Plus className="h-12 w-12 stroke-[1.5]" />
-      )}
-    </button>
+      </div>
+    )
+  }
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      <button
+        onClick={onCapture}
+        className="aspect-square border-2 border-dashed border-blue-300 rounded bg-blue-50/40 hover:bg-blue-50 active:bg-blue-100 flex flex-col items-center justify-center gap-1 text-blue-600 hover:text-blue-700 transition-colors"
+        title="撮影"
+      >
+        <Camera className="h-7 w-7 stroke-[1.5]" />
+        <span className="text-xs font-medium">撮影</span>
+      </button>
+      <button
+        onClick={onPick}
+        className="aspect-square border-2 border-dashed border-blue-300 rounded bg-blue-50/40 hover:bg-blue-50 active:bg-blue-100 flex flex-col items-center justify-center gap-1 text-blue-600 hover:text-blue-700 transition-colors"
+        title="画像から選択"
+      >
+        <ImageIcon className="h-7 w-7 stroke-[1.5]" />
+        <span className="text-xs font-medium">画像から選択</span>
+      </button>
+    </div>
   )
 }
 
