@@ -354,14 +354,18 @@ export function ProjectListPage() {
     setSelectedFarm(farm)
   }
 
-  // 未分類工事の現場を開こうとしているときの保留情報。種別を選んだ後に navigate する。
-  const [pendingOpenFarm, setPendingOpenFarm] = useState<Farm | null>(null)
+  // 種別選択ダイアログの保留情報。
+  // - openAfter があれば、分類後にその工区を開く（現場へ進む）
+  // - openAfter が無ければ、分類だけ行う（工区が無い工事でも使える）
+  const [categoryPrompt, setCategoryPrompt] = useState<
+    { projectId: string; openAfter?: Farm } | null
+  >(null)
 
   const handleOpenFarm = (farm: Farm) => {
     const proj = allProjects.find((p) => p.id === farm.project_id)
     // 未分類の工事は、ここで種別（地籍測量 / 土木工事）を決めてもらう
     if (proj && proj.category == null) {
-      setPendingOpenFarm(farm)
+      setCategoryPrompt({ projectId: proj.id, openAfter: farm })
       return
     }
     // ヘッダー表示・リロード復帰のため、所属する工事も記憶しておく
@@ -370,21 +374,28 @@ export function ProjectListPage() {
     navigate('/coordinates')
   }
 
+  // バナーから「種別を選択」を押したとき: 工区が無くても分類だけ行える
+  const handleClassifyProject = (projectId: string) => {
+    setCategoryPrompt({ projectId })
+  }
+
   // 種別選択ダイアログで「決定」されたとき
   const handleConfirmPendingCategory = async (category: ProjectCategory) => {
-    const farm = pendingOpenFarm
-    if (!farm) return
-    const proj = allProjects.find((p) => p.id === farm.project_id)
+    const prompt = categoryPrompt
+    if (!prompt) return
+    const proj = allProjects.find((p) => p.id === prompt.projectId)
     if (!proj) {
-      setPendingOpenFarm(null)
+      setCategoryPrompt(null)
       return
     }
     await updateProject(proj.id, { category })
-    setPendingOpenFarm(null)
-    // 分類後そのまま現場を開く
-    setCurrentProject({ ...proj, category })
-    setCurrentFarm(farm)
-    navigate('/coordinates')
+    setCategoryPrompt(null)
+    // openAfter があればそのまま現場へ、無ければこの画面に留まる
+    if (prompt.openAfter) {
+      setCurrentProject({ ...proj, category })
+      setCurrentFarm(prompt.openAfter)
+      navigate('/coordinates')
+    }
   }
 
   const handleDeleteProject = async (e: React.MouseEvent, id: string) => {
@@ -504,11 +515,32 @@ export function ProjectListPage() {
     )
   }
 
+  // 表示中の工事（routeProjectId 指定時のみ）が未分類かを判定
+  const currentRouteProject = routeProjectId
+    ? allProjects.find((p) => p.id === routeProjectId) ?? null
+    : null
+  const isCurrentProjectUncategorized =
+    currentRouteProject != null && currentRouteProject.category == null
+
   return (
     <div className="h-full flex flex-col">
       {error && (
         <div className="p-3 bg-red-50 border-b border-red-200 text-sm text-red-600">
           {error}
+        </div>
+      )}
+
+      {isCurrentProjectUncategorized && currentRouteProject && (
+        <div className="px-3 py-2 bg-amber-50 border-b border-amber-200 text-xs text-amber-800 flex items-center gap-2">
+          <span className="flex-1">
+            この工事の種別が未設定です。種別を設定すると左メニューが工事に合った内容になります。
+          </span>
+          <button
+            onClick={() => handleClassifyProject(currentRouteProject.id)}
+            className="px-3 py-1 text-xs bg-amber-600 text-white rounded hover:bg-amber-700"
+          >
+            種別を選択
+          </button>
         </div>
       )}
 
@@ -1367,9 +1399,11 @@ export function ProjectListPage() {
         </div>
       )}
 
-      {/* 未分類工事の種別選択ダイアログ。現場（工区）を開くときに呼ばれる */}
-      {pendingOpenFarm && (() => {
-        const proj = allProjects.find((p) => p.id === pendingOpenFarm.project_id)
+      {/* 未分類工事の種別選択ダイアログ。
+          openAfter 付き: 工区を開くフロー中（分類後そのまま現場へ）
+          openAfter 無し: バナーから「種別を選択」を押したとき（分類のみ） */}
+      {categoryPrompt && (() => {
+        const proj = allProjects.find((p) => p.id === categoryPrompt.projectId)
         return (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]">
             <div className="bg-white rounded-lg p-5 w-full max-w-md">
@@ -1398,7 +1432,7 @@ export function ProjectListPage() {
               </div>
               <div className="flex justify-end">
                 <button
-                  onClick={() => setPendingOpenFarm(null)}
+                  onClick={() => setCategoryPrompt(null)}
                   className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
                 >
                   キャンセル
