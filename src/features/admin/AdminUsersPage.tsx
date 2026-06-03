@@ -35,15 +35,17 @@ export function AdminUsersPage() {
     setLoading(true)
     setError(null)
     try {
-      // admin_list_users は database.ts に未登録 RPC のため、型アサーションで呼ぶ
-      const callRpc = supabase.rpc as unknown as (
-        fn: string,
-      ) => Promise<{
-        data: AdminUserRow[] | null
-        error: { message: string } | null
-      }>
+      // admin_list_users は database.ts に未登録 RPC のため、型アサーションで呼ぶ。
+      // supabase.rpc は this 必須なので、変数に代入せず、必ず supabase.rpc(...) の形で呼ぶ。
       const [usersRes, orgsRes] = await Promise.all([
-        callRpc('admin_list_users'),
+        (
+          supabase.rpc as unknown as (
+            fn: string,
+          ) => Promise<{
+            data: AdminUserRow[] | null
+            error: { message: string } | null
+          }>
+        )('admin_list_users'),
         supabase.from('organizations').select('*').order('name'),
       ])
       if (usersRes.error) throw usersRes.error
