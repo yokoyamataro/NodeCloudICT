@@ -223,26 +223,34 @@ export function ProjectListPage() {
     }
   }, [projects, expandedProjects.size])
 
-  // 全工区の位置情報から地図の境界を計算
+  // 地図に出す対象の工区位置（routeProjectId があれば当該工事の工区だけ、無ければ全工区）
+  const scopedFarmLocations = useMemo(() => {
+    const locs: FarmLocation[] = []
+    for (const f of farms) {
+      const loc = farmLocations.get(f.id)
+      if (loc) locs.push(loc)
+    }
+    return locs
+  }, [farms, farmLocations])
+
+  // 工区の位置情報から地図の境界を計算
   const allBounds = useMemo(() => {
-    const allLocations = Array.from(farmLocations.values())
-    if (allLocations.length === 0) return null
-    const lats = allLocations.map((loc) => loc.lat)
-    const lngs = allLocations.map((loc) => loc.lng)
+    if (scopedFarmLocations.length === 0) return null
+    const lats = scopedFarmLocations.map((loc) => loc.lat)
+    const lngs = scopedFarmLocations.map((loc) => loc.lng)
     return L.latLngBounds(
       [Math.min(...lats), Math.min(...lngs)],
       [Math.max(...lats), Math.max(...lngs)]
     )
-  }, [farmLocations])
+  }, [scopedFarmLocations])
 
   // 地図の中心
   const mapCenter = useMemo(() => {
-    const allLocations = Array.from(farmLocations.values())
-    if (allLocations.length === 0) return { lat: 43.06, lng: 141.35 } // 北海道
-    const avgLat = allLocations.reduce((sum, loc) => sum + loc.lat, 0) / allLocations.length
-    const avgLng = allLocations.reduce((sum, loc) => sum + loc.lng, 0) / allLocations.length
+    if (scopedFarmLocations.length === 0) return { lat: 43.06, lng: 141.35 } // 北海道
+    const avgLat = scopedFarmLocations.reduce((sum, loc) => sum + loc.lat, 0) / scopedFarmLocations.length
+    const avgLng = scopedFarmLocations.reduce((sum, loc) => sum + loc.lng, 0) / scopedFarmLocations.length
     return { lat: avgLat, lng: avgLng }
-  }, [farmLocations])
+  }, [scopedFarmLocations])
 
   // 選択された工区の位置
   const selectedFarmLocation = useMemo(() => {
@@ -250,10 +258,13 @@ export function ProjectListPage() {
     return farmLocations.get(selectedFarm.id) || null
   }, [selectedFarm, farmLocations])
 
-  // フィルタリングされたポリゴン
+  // フィルタリングされたポリゴン（工種フィルタ + 当該工事の工区のみ）
   const filteredPolygons = useMemo(() => {
-    return workAreaPolygons.filter(p => visibleWorkTypes.has(p.workType))
-  }, [workAreaPolygons, visibleWorkTypes])
+    const farmIdSet = new Set(farms.map((f) => f.id))
+    return workAreaPolygons.filter(
+      (p) => visibleWorkTypes.has(p.workType) && farmIdSet.has(p.farmId),
+    )
+  }, [workAreaPolygons, visibleWorkTypes, farms])
 
   // 工区ごとの工種別面積を計算（ポップアップ用）
   const farmWorkAreaSummary = useMemo(() => {
