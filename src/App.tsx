@@ -11,6 +11,8 @@ import { ApplyPage } from '@/features/marketing/ApplyPage'
 import { TermsPage } from '@/features/marketing/TermsPage'
 import { PrivacyPage } from '@/features/marketing/PrivacyPage'
 import { AdminSignupsPage } from '@/features/admin/AdminSignupsPage'
+import { AdminUsersPage } from '@/features/admin/AdminUsersPage'
+import { AdminOrganizationsPage } from '@/features/admin/AdminOrganizationsPage'
 import { ProjectListPage } from '@/features/projects/ProjectListPage'
 import { ProjectChooserPage } from '@/features/projects/ProjectChooserPage'
 import { CoordinatesPage } from '@/features/coordinates/CoordinatesPage'
@@ -141,6 +143,24 @@ function AppRoutes() {
           element={
             <ProtectedRoute>
               <AdminSignupsPage />
+            </ProtectedRoute>
+          }
+        />
+        {/* 管理者: ユーザー管理 */}
+        <Route
+          path="/admin/users"
+          element={
+            <ProtectedRoute>
+              <AdminUsersPage />
+            </ProtectedRoute>
+          }
+        />
+        {/* 管理者: 組織管理 */}
+        <Route
+          path="/admin/organizations"
+          element={
+            <ProtectedRoute>
+              <AdminOrganizationsPage />
             </ProtectedRoute>
           }
         />

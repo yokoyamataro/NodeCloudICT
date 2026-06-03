@@ -213,6 +213,35 @@ export interface OrthoLayer {
 // プロジェクトメンバーのロール
 export type ProjectMemberRole = 'owner' | 'editor' | 'viewer'
 
+// 所属組織（契約・請求の単位として使う「会社」マスタ）
+export interface Organization {
+  id: string
+  name: string
+  note: string | null
+  created_at: string
+  updated_at: string
+}
+
+// アカウント単位の付加情報（auth.users と 1:1）
+export interface Profile {
+  user_id: string
+  full_name: string | null
+  organization_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+// サイトオーナー用ユーザー一覧（admin_list_users RPC の戻り値）
+export interface AdminUserRow {
+  user_id: string
+  email: string
+  full_name: string | null
+  organization_id: string | null
+  organization_name: string | null
+  last_sign_in_at: string | null
+  created_at: string
+}
+
 // 工事の種別。地籍測量 / 土木工事。NULL は既存データの未分類（工区を開くときに分類する）。
 export type ProjectCategory = 'cadastral' | 'civil'
 

@@ -341,16 +341,32 @@ export function AppLayout() {
 
           {/* 右側：ログイン情報 */}
           <div className="flex items-center gap-4">
-            {/* 管理者: 申し込み管理 */}
+            {/* 管理者: 各種管理画面 */}
             {isAdmin(user?.email) && (
-              <Link
-                to="/admin/signups"
-                className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
-                title="申し込み管理"
-              >
-                <User className="h-4 w-4" />
-                申込管理
-              </Link>
+              <>
+                <Link
+                  to="/admin/users"
+                  className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+                  title="ユーザー管理"
+                >
+                  <User className="h-4 w-4" />
+                  ユーザー
+                </Link>
+                <Link
+                  to="/admin/organizations"
+                  className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+                  title="組織管理"
+                >
+                  組織
+                </Link>
+                <Link
+                  to="/admin/signups"
+                  className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+                  title="申し込み管理"
+                >
+                  申込
+                </Link>
+              </>
             )}
             {/* 意見・要望メール */}
             <FeedbackButton variant="pc" />
