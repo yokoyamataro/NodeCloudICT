@@ -4004,7 +4004,7 @@ function ProximityGuide({
           <text x={100} y={9} fill="#94a3b8" fontSize={6} textAnchor="middle">
             N
           </text>
-          {/* 距離リング（最外＝1m/10cm を太く強調） */}
+          {/* 距離リング（最外＝1m/10cm を太く強調 / 内側＝50cm/5cm も視認できる太さに） */}
           {rings.map((ring, idx) => {
             const rr = ring.rM * unitsPerM
             if (rr > U + 0.5) return null
@@ -4016,15 +4016,15 @@ function ProximityGuide({
                   cy={100}
                   r={rr}
                   fill="none"
-                  stroke={primary ? '#38bdf8' : '#475569'}
-                  strokeWidth={primary ? 2.4 : 0.9}
+                  stroke={primary ? '#38bdf8' : '#94a3b8'}
+                  strokeWidth={primary ? 2.4 : 1.8}
                 />
                 <text
                   x={102}
                   y={100 - rr + 7}
-                  fill={primary ? '#7dd3fc' : '#94a3b8'}
-                  fontSize={primary ? 8 : 6}
-                  fontWeight={primary ? 700 : 400}
+                  fill={primary ? '#7dd3fc' : '#cbd5e1'}
+                  fontSize={primary ? 8 : 7}
+                  fontWeight={primary ? 700 : 600}
                 >
                   {ring.label}
                 </text>

@@ -285,10 +285,16 @@ export function CoordinatePhotoModal({
           </section>
         </div>
 
+        {/*
+          capture="environment" を付けると Android Chrome/WebView は
+          ファイル選択ではなく直接背面カメラを起動する（iOS Safari も同様）。
+          PC ブラウザはこの属性を無視するので従来通りファイル選択が出る。
+        */}
         <input
           ref={fileInputRef}
           type="file"
           accept="image/*"
+          capture="environment"
           onChange={handleFileSelected}
           className="hidden"
         />
