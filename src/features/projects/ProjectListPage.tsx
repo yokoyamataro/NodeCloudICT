@@ -987,6 +987,52 @@ export function ProjectListPage() {
                 </button>
               </div>
               <div className="space-y-2">
+                {/* 地籍測量の工事では、境界測量の状態（未着手・進行中・完了）を
+                    このダイアログから直接切り替えられるようにする */}
+                {project?.category === 'cadastral' && (() => {
+                  const currentStatus =
+                    statusByKey.get(`${farm.id}:boundary_survey`) ?? 'not_started'
+                  const canChangeStatus = !canEditExplicitViewer && canEdit
+                  const STATUS_BTN: Record<WorkStatus, { active: string; idle: string }> = {
+                    not_started: {
+                      active: 'bg-slate-500 text-white border-slate-600',
+                      idle: 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200',
+                    },
+                    in_progress: {
+                      active: 'bg-amber-500 text-white border-amber-600',
+                      idle: 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100',
+                    },
+                    completed: {
+                      active: 'bg-emerald-600 text-white border-emerald-700',
+                      idle: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100',
+                    },
+                  }
+                  return (
+                    <div>
+                      <div className="text-xs text-slate-500 mb-1">境界測量の状態</div>
+                      <div className="grid grid-cols-3 gap-2">
+                        {(['not_started', 'in_progress', 'completed'] as const).map((s) => {
+                          const active = currentStatus === s
+                          const style = STATUS_BTN[s]
+                          return (
+                            <button
+                              key={s}
+                              disabled={!canChangeStatus}
+                              onClick={() => setWorkStatus(farm.id, 'boundary_survey', s)}
+                              className={`px-2 py-2 text-xs font-medium rounded-lg border-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                                active ? style.active : style.idle
+                              }`}
+                              title={canChangeStatus ? '' : '閲覧権限では変更できません'}
+                            >
+                              {STATUS_LABEL[s]}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })()}
+
                 <button
                   disabled={canEditExplicitViewer || !canEdit}
                   onClick={() => {
