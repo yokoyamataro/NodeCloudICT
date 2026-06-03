@@ -79,9 +79,9 @@ const navigation: NavGroup[] = [
     icon: Compass,
     children: [
       { name: '地番データ', href: '/boundary-survey/work-area', icon: Square },
-      { name: 'オルソ画像・簡易作図', href: '/orthophoto', icon: ImageIcon },
     ],
   },
+  { name: 'オルソ画像・簡易作図', href: '/orthophoto', icon: ImageIcon },
   {
     name: '暗渠工事',
     href: '/underdrain',
