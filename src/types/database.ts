@@ -213,6 +213,14 @@ export interface OrthoLayer {
 // プロジェクトメンバーのロール
 export type ProjectMemberRole = 'owner' | 'editor' | 'viewer'
 
+// 工事の種別。地籍測量 / 土木工事。NULL は既存データの未分類（工区を開くときに分類する）。
+export type ProjectCategory = 'cadastral' | 'civil'
+
+export const PROJECT_CATEGORY_LABEL: Record<ProjectCategory, string> = {
+  cadastral: '地籍測量',
+  civil: '土木工事',
+}
+
 // NodeCloud-Design用プロジェクト
 export interface Project {
   id: string
@@ -224,6 +232,7 @@ export interface Project {
   client: string | null          // 発注者
   contractor: string | null      // 受託者
   coordinate_zone: number        // 座標系（平面直角座標系の系番号、デフォルト13系）
+  category: ProjectCategory | null  // 工事種別（NULL は未分類）
   created_at: string
   updated_at: string
 }

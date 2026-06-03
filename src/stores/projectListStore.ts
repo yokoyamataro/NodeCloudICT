@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { supabase } from '@/lib/supabase'
-import type { Project, ProjectMember, ProjectMemberRole } from '@/types/database'
+import type { Project, ProjectCategory, ProjectMember, ProjectMemberRole } from '@/types/database'
 
 interface ProjectListState {
   projects: Project[]
@@ -23,8 +23,8 @@ interface ProjectListState {
   fetchMembers: (projectId: string) => Promise<void>
 
   // プロジェクト操作
-  createProject: (name: string, description?: string, coordinateZone?: number) => Promise<Project | null>
-  updateProject: (id: string, updates: Partial<Pick<Project, 'name' | 'description' | 'start_date' | 'end_date' | 'client' | 'contractor' | 'coordinate_zone'>>) => Promise<void>
+  createProject: (name: string, description?: string, coordinateZone?: number, category?: ProjectCategory | null) => Promise<Project | null>
+  updateProject: (id: string, updates: Partial<Pick<Project, 'name' | 'description' | 'start_date' | 'end_date' | 'client' | 'contractor' | 'coordinate_zone' | 'category'>>) => Promise<void>
   deleteProject: (id: string) => Promise<void>
 
   // メンバー操作
@@ -136,7 +136,7 @@ export const useProjectListStore = create<ProjectListState>()(
     }
   },
 
-  createProject: async (name, description, coordinateZone = 13) => {
+  createProject: async (name, description, coordinateZone = 13, category = null) => {
     set({ error: null })
     try {
       const { data: userData } = await supabase.auth.getUser()
@@ -152,6 +152,7 @@ export const useProjectListStore = create<ProjectListState>()(
           name,
           description: description || null,
           coordinate_zone: coordinateZone,
+          category,
         } as never)
         .select()
         .single()

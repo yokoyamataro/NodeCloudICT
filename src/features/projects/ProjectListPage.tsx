@@ -37,7 +37,8 @@ import {
 } from '@/stores/workStatusStore'
 import { JGD2011_ZONES } from '@/lib/coordinates'
 import { CurrentLocationLayer } from '@/components/map/CurrentLocationLayer'
-import type { Project, ProjectMemberRole } from '@/types/database'
+import type { Project, ProjectCategory, ProjectMemberRole } from '@/types/database'
+import { PROJECT_CATEGORY_LABEL } from '@/types/database'
 
 // 工種ごとのポリゴン色
 const WORK_TYPE_COLORS: Record<string, string> = {
@@ -353,10 +354,35 @@ export function ProjectListPage() {
     setSelectedFarm(farm)
   }
 
+  // 未分類工事の現場を開こうとしているときの保留情報。種別を選んだ後に navigate する。
+  const [pendingOpenFarm, setPendingOpenFarm] = useState<Farm | null>(null)
+
   const handleOpenFarm = (farm: Farm) => {
-    // ヘッダー表示・リロード復帰のため、所属する工事も記憶しておく
     const proj = allProjects.find((p) => p.id === farm.project_id)
+    // 未分類の工事は、ここで種別（地籍測量 / 土木工事）を決めてもらう
+    if (proj && proj.category == null) {
+      setPendingOpenFarm(farm)
+      return
+    }
+    // ヘッダー表示・リロード復帰のため、所属する工事も記憶しておく
     if (proj) setCurrentProject(proj)
+    setCurrentFarm(farm)
+    navigate('/coordinates')
+  }
+
+  // 種別選択ダイアログで「決定」されたとき
+  const handleConfirmPendingCategory = async (category: ProjectCategory) => {
+    const farm = pendingOpenFarm
+    if (!farm) return
+    const proj = allProjects.find((p) => p.id === farm.project_id)
+    if (!proj) {
+      setPendingOpenFarm(null)
+      return
+    }
+    await updateProject(proj.id, { category })
+    setPendingOpenFarm(null)
+    // 分類後そのまま現場を開く
+    setCurrentProject({ ...proj, category })
     setCurrentFarm(farm)
     navigate('/coordinates')
   }
@@ -1340,6 +1366,48 @@ export function ProjectListPage() {
           </div>
         </div>
       )}
+
+      {/* 未分類工事の種別選択ダイアログ。現場（工区）を開くときに呼ばれる */}
+      {pendingOpenFarm && (() => {
+        const proj = allProjects.find((p) => p.id === pendingOpenFarm.project_id)
+        return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]">
+            <div className="bg-white rounded-lg p-5 w-full max-w-md">
+              <h3 className="text-base font-semibold mb-1">工事種別の選択</h3>
+              <div className="text-xs text-slate-500 mb-4">
+                {proj?.name ?? '(工事)'} の種別が未設定です。地籍測量と土木工事のどちらかを選んでください。
+                左メニューに表示される機能が種別ごとに切り替わります（後から変更も可）。
+              </div>
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                {(['cadastral', 'civil'] as const).map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => handleConfirmPendingCategory(c)}
+                    className="border rounded-lg p-4 hover:border-blue-400 hover:bg-blue-50 text-center transition-colors"
+                  >
+                    <div className="text-base font-semibold text-slate-800">
+                      {PROJECT_CATEGORY_LABEL[c]}
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-1">
+                      {c === 'cadastral'
+                        ? '境界測量・座標管理など'
+                        : '暗渠・客土・整地など'}
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <div className="flex justify-end">
+                <button
+                  onClick={() => setPendingOpenFarm(null)}
+                  className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
+                >
+                  キャンセル
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

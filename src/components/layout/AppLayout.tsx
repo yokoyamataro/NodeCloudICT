@@ -55,6 +55,7 @@ import {
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
+import { isNavVisibleForCategory } from '@/lib/projectCategory'
 
 interface NavItem {
   name: string
@@ -477,7 +478,11 @@ export function AppLayout() {
           </div>
           <nav className="flex-1 p-4 overflow-y-auto">
           <ul className="space-y-1">
-              {navigation.map((item) => {
+              {navigation
+                .filter((item) =>
+                  isNavVisibleForCategory(item.href, currentProject?.category ?? null),
+                )
+                .map((item) => {
                 const hasChildren = item.children && item.children.length > 0
                 const isExpanded = expandedGroups.has(item.name)
                 const isActive = isActiveLink(item.href)
