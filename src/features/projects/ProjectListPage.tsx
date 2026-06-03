@@ -65,6 +65,13 @@ const WORK_TYPE_NAMES: Record<string, string> = {
 // 全工種リスト
 const ALL_WORK_TYPES = ['boundary_survey', 'underdrain', 'soil_import', 'simple_grading', 'grading', 'subsoil', 'stone_removal'] as const
 
+// 地籍測量モードでの状態フィルタ用スウォッチ色
+const STATUS_FILTER_COLOR: Record<'not_started' | 'in_progress' | 'completed', string> = {
+  not_started: '#94a3b8', // slate-400
+  in_progress: '#f59e0b', // amber-500
+  completed: '#10b981',   // emerald-500
+}
+
 // カスタムマーカーアイコン
 const createMarkerIcon = (isSelected: boolean = false): L.DivIcon => {
   return L.divIcon({
@@ -154,6 +161,10 @@ export function ProjectListPage() {
 
   // 工種フィルター（表示する工種のSet）
   const [visibleWorkTypes, setVisibleWorkTypes] = useState<Set<string>>(new Set(ALL_WORK_TYPES))
+  // 地籍測量モードで使う状態フィルター（表示する状態のSet）
+  const [visibleStatuses, setVisibleStatuses] = useState<Set<WorkStatus>>(
+    new Set<WorkStatus>(['not_started', 'in_progress', 'completed']),
+  )
 
   // 現在地表示トグル
   const [showCurrentLocation, setShowCurrentLocation] = useState(false)
@@ -259,13 +270,31 @@ export function ProjectListPage() {
     return farmLocations.get(selectedFarm.id) || null
   }, [selectedFarm, farmLocations])
 
-  // フィルタリングされたポリゴン（工種フィルタ + 当該工事の工区のみ）
+  // 表示中の工事（routeProjectId 指定時のみ）
+  const currentRouteProject = routeProjectId
+    ? allProjects.find((p) => p.id === routeProjectId) ?? null
+    : null
+  const isCurrentProjectUncategorized =
+    currentRouteProject != null && currentRouteProject.category == null
+  // 地籍測量モード: 工種が境界測量のみなので一覧表 / 工種フィルターを出さず、
+  // 代わりに状態（未着手・進行中・完了）でフィルターする
+  const isCadastral = currentRouteProject?.category === 'cadastral'
+
+  // フィルタリングされたポリゴン
+  // - 共通: 当該工事の工区のみ
+  // - 地籍測量モード: 状態フィルタ（未着手・進行中・完了）で絞る
+  // - それ以外: 工種フィルタで絞る
   const filteredPolygons = useMemo(() => {
     const farmIdSet = new Set(farms.map((f) => f.id))
-    return workAreaPolygons.filter(
-      (p) => visibleWorkTypes.has(p.workType) && farmIdSet.has(p.farmId),
-    )
-  }, [workAreaPolygons, visibleWorkTypes, farms])
+    return workAreaPolygons.filter((p) => {
+      if (!farmIdSet.has(p.farmId)) return false
+      if (isCadastral) {
+        const status = statusByKey.get(`${p.farmId}:${p.workType}`) ?? 'not_started'
+        return visibleStatuses.has(status)
+      }
+      return visibleWorkTypes.has(p.workType)
+    })
+  }, [workAreaPolygons, visibleWorkTypes, visibleStatuses, farms, isCadastral, statusByKey])
 
   // 工区ごとの工種別面積を計算（ポップアップ用）
   const farmWorkAreaSummary = useMemo(() => {
@@ -307,6 +336,18 @@ export function ProjectListPage() {
         next.delete(workType)
       } else {
         next.add(workType)
+      }
+      return next
+    })
+  }
+
+  const toggleStatus = (status: WorkStatus) => {
+    setVisibleStatuses((prev) => {
+      const next = new Set(prev)
+      if (next.has(status)) {
+        next.delete(status)
+      } else {
+        next.add(status)
       }
       return next
     })
@@ -515,12 +556,10 @@ export function ProjectListPage() {
     )
   }
 
-  // 表示中の工事（routeProjectId 指定時のみ）が未分類かを判定
-  const currentRouteProject = routeProjectId
-    ? allProjects.find((p) => p.id === routeProjectId) ?? null
-    : null
-  const isCurrentProjectUncategorized =
-    currentRouteProject != null && currentRouteProject.category == null
+  // 地籍測量モードに切り替わったら拡大表示は強制的に閉じる
+  useEffect(() => {
+    if (isCadastral) setExpandedList(false)
+  }, [isCadastral])
 
   return (
     <div className="h-full flex flex-col">
@@ -577,14 +616,17 @@ export function ProjectListPage() {
               <span className="font-medium text-sm">プロジェクト</span>
             )}
             <div className="flex items-center gap-1">
-              <button
-                onClick={() => setExpandedList(true)}
-                className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50"
-                title="一覧表表示に切り替え"
-              >
-                <TableIcon className="h-3 w-3" />
-                一覧表
-              </button>
+              {/* 地籍測量は工種が境界測量のみで一覧表の意義が薄いので非表示 */}
+              {!isCadastral && (
+                <button
+                  onClick={() => setExpandedList(true)}
+                  className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50"
+                  title="一覧表表示に切り替え"
+                >
+                  <TableIcon className="h-3 w-3" />
+                  一覧表
+                </button>
+              )}
               {!routeProjectId && (
                 <button
                   onClick={() => setShowNewProjectDialog(true)}
@@ -749,27 +791,53 @@ export function ProjectListPage() {
 
         {/* 右側: 地図（一覧表示モード共通） */}
         <div className="flex-1 bg-slate-100 flex flex-col">
-          {/* 凡例（工種フィルター） */}
+          {/* 凡例（地籍測量モードは状態フィルター、それ以外は工種フィルター） */}
           <div className="p-3 bg-white border-b flex flex-wrap gap-4 items-center">
-            <span className="text-sm font-medium text-muted-foreground">工種:</span>
-            {ALL_WORK_TYPES.map(workType => (
-              <label
-                key={workType}
-                className="flex items-center gap-2 cursor-pointer text-sm px-2 py-1 rounded hover:bg-slate-50"
-              >
-                <input
-                  type="checkbox"
-                  checked={visibleWorkTypes.has(workType)}
-                  onChange={() => toggleWorkType(workType)}
-                  className="h-4 w-4"
-                />
-                <span
-                  className="w-4 h-4 rounded"
-                  style={{ backgroundColor: WORK_TYPE_COLORS[workType] }}
-                />
-                <span className="font-medium">{WORK_TYPE_NAMES[workType]}</span>
-              </label>
-            ))}
+            {isCadastral ? (
+              <>
+                <span className="text-sm font-medium text-muted-foreground">状態:</span>
+                {(['not_started', 'in_progress', 'completed'] as const).map((status) => (
+                  <label
+                    key={status}
+                    className="flex items-center gap-2 cursor-pointer text-sm px-2 py-1 rounded hover:bg-slate-50"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={visibleStatuses.has(status)}
+                      onChange={() => toggleStatus(status)}
+                      className="h-4 w-4"
+                    />
+                    <span
+                      className="w-4 h-4 rounded"
+                      style={{ backgroundColor: STATUS_FILTER_COLOR[status] }}
+                    />
+                    <span className="font-medium">{STATUS_LABEL[status]}</span>
+                  </label>
+                ))}
+              </>
+            ) : (
+              <>
+                <span className="text-sm font-medium text-muted-foreground">工種:</span>
+                {ALL_WORK_TYPES.map(workType => (
+                  <label
+                    key={workType}
+                    className="flex items-center gap-2 cursor-pointer text-sm px-2 py-1 rounded hover:bg-slate-50"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={visibleWorkTypes.has(workType)}
+                      onChange={() => toggleWorkType(workType)}
+                      className="h-4 w-4"
+                    />
+                    <span
+                      className="w-4 h-4 rounded"
+                      style={{ backgroundColor: WORK_TYPE_COLORS[workType] }}
+                    />
+                    <span className="font-medium">{WORK_TYPE_NAMES[workType]}</span>
+                  </label>
+                ))}
+              </>
+            )}
             <button
               type="button"
               onClick={() => setShowCurrentLocation((s) => !s)}
