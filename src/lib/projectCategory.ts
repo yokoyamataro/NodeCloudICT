@@ -13,8 +13,10 @@ const HIDDEN_BY_CATEGORY: Record<ProjectCategory, readonly string[]> = {
     '/simple-grading',
     '/grading',
     '/subsoil',
+    '/stone-removal',
   ],
-  // 土木工事では境界測量を出さない
+  // 土木工事では境界測量を出さない（オルソ画像・簡易作図は境界測量の子メニューに
+  // 入れているので、土木工事では同時に消える点に注意）
   civil: ['/boundary-survey'],
 }
 

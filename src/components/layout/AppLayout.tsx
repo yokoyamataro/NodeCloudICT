@@ -73,13 +73,13 @@ interface NavGroup {
 const navigation: NavGroup[] = [
   { name: 'トップ', href: '/', icon: Home },
   { name: '座標管理', href: '/coordinates', icon: Map },
-  { name: 'オルソ画像・簡易作図', href: '/orthophoto', icon: ImageIcon },
   {
     name: '境界測量',
     href: '/boundary-survey',
     icon: Compass,
     children: [
       { name: '地番データ', href: '/boundary-survey/work-area', icon: Square },
+      { name: 'オルソ画像・簡易作図', href: '/orthophoto', icon: ImageIcon },
     ],
   },
   {
