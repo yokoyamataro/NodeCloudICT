@@ -7,6 +7,7 @@ import { useParcelStore } from '@/stores/parcelStore'
 import { CoordinateMap, type ExternalPolygon, type EdgeRounding, type BaseLayerType } from '@/components/map/CoordinateMap'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { CadastralRowFields } from '@/features/boundary-survey/CadastralRowFields'
+import { CadastralHeader } from '@/features/boundary-survey/CadastralHeader'
 import {
   CadastralColumnPicker,
   useCadastralVisibleColumns,
@@ -392,7 +393,23 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
               区域がありません。「区域追加」ボタンで追加してください。
             </div>
           ) : (
-            <div className="flex-1 overflow-auto space-y-2">
+            <div
+              className={
+                isBoundarySurvey
+                  ? 'flex-1 overflow-auto border rounded-lg bg-white'
+                  : 'flex-1 overflow-auto space-y-2'
+              }
+            >
+              {/* 地籍: 1 つの表に統合するため、列見出しを先頭に出して横スクロール領域でラップ */}
+              {isBoundarySurvey && (
+                <div className="overflow-x-auto">
+                  <div className="min-w-max">
+                    <CadastralHeader visibleColumns={visibleColumns} />
+                  </div>
+                </div>
+              )}
+              <div className={isBoundarySurvey ? 'overflow-x-auto' : ''}>
+                <div className={isBoundarySurvey ? 'min-w-max' : ''}>
               {areas.map((area) => {
                 const isEditing = editingAreaId === area.id
                 const areaPoints = getAreaPoints(area.id)
@@ -400,11 +417,19 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                 return (
                   <div
                     key={area.id}
-                    className={`border rounded-lg bg-white ${isEditing ? 'ring-2 ring-primary' : ''}`}
+                    className={
+                      isBoundarySurvey
+                        ? ''
+                        : `border rounded-lg bg-white ${isEditing ? 'ring-2 ring-primary' : ''}`
+                    }
                   >
-                    {/* 区域ヘッダー */}
+                    {/* 区域ヘッダー（地籍は表の行スタイル、土木はカードヘッダー） */}
                     <div
-                      className={`p-3 flex items-center gap-3 cursor-pointer hover:bg-slate-50 ${isEditing ? 'bg-blue-50' : ''}`}
+                      className={
+                        isBoundarySurvey
+                          ? `flex items-center gap-1 px-3 py-2 border-b cursor-pointer hover:bg-slate-50 ${isEditing ? 'bg-blue-50' : ''}`
+                          : `p-3 flex items-center gap-3 cursor-pointer hover:bg-slate-50 ${isEditing ? 'bg-blue-50' : ''}`
+                      }
                       onClick={() => setEditingAreaId(isEditing ? null : area.id)}
                     >
                       {isBoundarySurvey ? (
@@ -432,14 +457,20 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                         </div>
                       )}
 
-                      <div className="flex items-center gap-1">
+                      <div
+                        className={
+                          isBoundarySurvey
+                            ? 'w-16 flex items-center justify-center gap-0.5'
+                            : 'flex items-center gap-1'
+                        }
+                      >
                         <button
                           onClick={(e) => {
                             e.stopPropagation()
                             handleCalculateArea(area.id)
                           }}
                           disabled={area.points.length < 3}
-                          className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="flex items-center gap-1 px-1.5 py-1 text-xs border rounded hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
                           title="面積計算"
                         >
                           <Calculator className="h-3.5 w-3.5" />
@@ -546,6 +577,8 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                   </div>
                 )
               })}
+                </div>
+              </div>
             </div>
           )}
         </div>

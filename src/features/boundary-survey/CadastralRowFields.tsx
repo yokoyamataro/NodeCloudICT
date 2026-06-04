@@ -71,7 +71,8 @@ const num = (s: string): number | null => {
   return Number.isFinite(n) ? n : null
 }
 
-const WIDTH: Record<CadastralColumnKey, string> = {
+// 各列の幅クラス。CadastralHeader と CadastralRowFields で共有して見出しと行を揃える。
+export const CADASTRAL_COLUMN_WIDTH: Record<CadastralColumnKey, string> = {
   parcel_number: 'w-28',
   registered_land_category: 'w-24',
   registered_area_sqm: 'w-24',
@@ -229,31 +230,12 @@ export function CadastralRowFields({ area, visibleColumns }: Props) {
   }
 
   return (
-    <div className="flex-1 overflow-x-auto" onClick={stop}>
-      <div className="flex items-center gap-1 text-xs whitespace-nowrap min-w-max">
-        {CADASTRAL_COLUMN_KEYS.filter((k) => visibleColumns.has(k)).map((key) => (
-          <Cell key={key} label={CADASTRAL_COLUMN_LABELS[key]} width={WIDTH[key]}>
-            {cellFor(key)}
-          </Cell>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function Cell({
-  label,
-  width,
-  children,
-}: {
-  label: string
-  width: string
-  children: React.ReactNode
-}) {
-  return (
-    <div className={`flex flex-col ${width}`}>
-      <span className="text-[10px] text-slate-500 leading-none px-1 pb-0.5">{label}</span>
-      {children}
+    <div className="flex items-center gap-1 text-xs whitespace-nowrap" onClick={stop}>
+      {CADASTRAL_COLUMN_KEYS.filter((k) => visibleColumns.has(k)).map((key) => (
+        <div key={key} className={CADASTRAL_COLUMN_WIDTH[key]}>
+          {cellFor(key)}
+        </div>
+      ))}
     </div>
   )
 }
