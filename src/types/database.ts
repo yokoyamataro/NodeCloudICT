@@ -233,12 +233,21 @@ export interface Profile {
 
 // 地籍（境界測量）の地番属性。ポリゴン形状は design_work_areas 側に残しているので
 // 1:1 のサイドカーテーブル parcels(work_area_id UNIQUE) と対応する。
-// 今後、所有者・地目・登記簿面積などを段階的に追加していく。
+//
+// 地目は 23 地目（不動産登記規則 第99条）から選ぶ運用。値の正確な集合は
+// src/lib/landCategory.ts と DB 側 CHECK 制約で同期している。
 export interface Parcel {
   id: string
   work_area_id: string
   parcel_number: string | null
   notes: string | null
+  registered_land_category: string | null
+  registered_area_sqm: number | null
+  updated_land_category: string | null
+  updated_area_sqm: number | null
+  owner_address: string | null
+  owner_name: string | null
+  attended_at: string | null
   created_at: string
   updated_at: string
 }
