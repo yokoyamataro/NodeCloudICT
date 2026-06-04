@@ -139,42 +139,50 @@ export const useFarmStore = create<FarmState>()(
     if (farms.length === 0) return
 
     try {
-      // 各工区の先頭座標を取得
-      const { data, error } = await supabase
-        .from('design_coordinates')
-        .select('id, farm_id, point_number, x, y')
-        .in('farm_id', farms.map(f => f.id))
-        .order('point_number')
+      // 工区ごとの先頭座標 1 行だけを RPC で取得する。
+      // 生の .from('design_coordinates').in(...) だと Supabase の db-max-rows
+      // （既定 1000）に引っかかって、座標数の多いプロジェクトで後ろの工区が
+      // 結果から欠落してしまうため、DISTINCT ON を行う SQL 関数を経由する。
+      const { data, error } = await (
+        supabase.rpc as unknown as (
+          fn: string,
+          args: { p_farm_ids: string[] },
+        ) => Promise<{
+          data: Array<{ farm_id: string; point_number: string; x: number; y: number }> | null
+          error: { message: string } | null
+        }>
+      )('get_farm_first_coords', { p_farm_ids: farms.map((f) => f.id) })
 
       if (error) throw error
 
       // プロジェクトごとの座標系を取得
       const projectZones = await fetchProjectZones(farms.map(f => f.project_id))
 
-      // 工区ごとに先頭の座標を取得
-      const locations = new Map<string, FarmLocation>()
-      const coordData = data as Array<{
-        id: string
-        farm_id: string
-        point_number: string
-        x: number
-        y: number
-      }> | null
-
-      for (const farm of farms) {
-        const coords = (coordData || []).filter(c => c.farm_id === farm.id)
-        if (coords.length > 0) {
-          const firstCoord = coords[0]
-          const zone = projectZones.get(farm.project_id) ?? 13
-          const converter = new CoordinateConverter(zone)
-          const { lat, lng } = converter.toLatLng(firstCoord.x, firstCoord.y)
-          locations.set(farm.id, {
-            farmId: farm.id,
-            lat,
-            lng,
-            pointNumber: firstCoord.point_number,
+      // RPC は工区ごとに 1 行を返す前提だが、保険として Map で集約
+      const byFarmId = new Map<string, { point_number: string; x: number; y: number }>()
+      for (const row of data ?? []) {
+        if (!byFarmId.has(row.farm_id)) {
+          byFarmId.set(row.farm_id, {
+            point_number: row.point_number,
+            x: row.x,
+            y: row.y,
           })
         }
+      }
+
+      const locations = new Map<string, FarmLocation>()
+      for (const farm of farms) {
+        const head = byFarmId.get(farm.id)
+        if (!head) continue
+        const zone = projectZones.get(farm.project_id) ?? 13
+        const converter = new CoordinateConverter(zone)
+        const { lat, lng } = converter.toLatLng(head.x, head.y)
+        locations.set(farm.id, {
+          farmId: farm.id,
+          lat,
+          lng,
+          pointNumber: head.point_number,
+        })
       }
 
       set({ farmLocations: locations })
