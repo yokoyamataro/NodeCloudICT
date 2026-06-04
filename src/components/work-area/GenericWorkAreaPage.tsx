@@ -6,7 +6,7 @@ import { useFarmStore } from '@/stores/farmStore'
 import { useParcelStore } from '@/stores/parcelStore'
 import { CoordinateMap, type ExternalPolygon, type EdgeRounding, type BaseLayerType } from '@/components/map/CoordinateMap'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { ParcelAttributesPanel } from '@/features/boundary-survey/ParcelAttributesPanel'
+import { CadastralRowFields } from '@/features/boundary-survey/CadastralRowFields'
 import type { WorkType, AreaCalculationSheet as AreaCalculationSheetType } from '@/types/database'
 import { WORK_TYPE_NAMES } from '@/types/database'
 import { exportAreaCalculationToCSV } from '@/lib/area-calculation'
@@ -393,25 +393,30 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                       className={`p-3 flex items-center gap-3 cursor-pointer hover:bg-slate-50 ${isEditing ? 'bg-blue-50' : ''}`}
                       onClick={() => setEditingAreaId(isEditing ? null : area.id)}
                     >
-                      <div className="flex-1 grid grid-cols-3 gap-2 text-sm">
-                        <input
-                          type="text"
-                          value={area.zoneNumber}
-                          onChange={(e) => {
-                            e.stopPropagation()
-                            updateWorkArea(area.id, { zoneNumber: e.target.value })
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                          className="px-2 py-1 border rounded"
-                          placeholder="区域番号"
-                        />
-                        <div className="px-2 py-1 text-muted-foreground">
-                          {area.points.length} 点
+                      {isBoundarySurvey ? (
+                        // 地籍: 地番属性も含めて 1 行に横並びで inline 編集
+                        <CadastralRowFields area={area} />
+                      ) : (
+                        <div className="flex-1 grid grid-cols-3 gap-2 text-sm">
+                          <input
+                            type="text"
+                            value={area.zoneNumber}
+                            onChange={(e) => {
+                              e.stopPropagation()
+                              updateWorkArea(area.id, { zoneNumber: e.target.value })
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            className="px-2 py-1 border rounded"
+                            placeholder="区域番号"
+                          />
+                          <div className="px-2 py-1 text-muted-foreground">
+                            {area.points.length} 点
+                          </div>
+                          <div className="px-2 py-1">
+                            {area.areaHa !== null ? `${area.areaHa.toFixed(4)} ha` : '-'}
+                          </div>
                         </div>
-                        <div className="px-2 py-1">
-                          {area.areaHa !== null ? `${area.areaHa.toFixed(4)} ha` : '-'}
-                        </div>
-                      </div>
+                      )}
 
                       <div className="flex items-center gap-1">
                         <button
@@ -524,10 +529,6 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                       </div>
                     )}
 
-                    {/* 地籍: 地番属性パネル（編集中の地番のみ表示） */}
-                    {isEditing && isBoundarySurvey && (
-                      <ParcelAttributesPanel workAreaId={area.id} />
-                    )}
                   </div>
                 )
               })}
