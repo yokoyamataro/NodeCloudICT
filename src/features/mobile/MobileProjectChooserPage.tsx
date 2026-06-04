@@ -48,30 +48,29 @@ export function MobileProjectChooserPage() {
   return (
     <div className="mobile-screen flex flex-col bg-slate-50">
       <div className="px-3 py-2 bg-slate-800 text-white flex items-center gap-2 text-sm">
-        <span className="font-medium flex-1">工事一覧（スマホ）</span>
+        <span className="font-medium">工事一覧（スマホ）</span>
+        <button
+          onClick={handleGoPC}
+          className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-500 hover:bg-slate-700"
+          title="PC表示へ切替"
+        >
+          <Monitor className="h-3.5 w-3.5" />
+          PC表示
+        </button>
+        <div className="flex-1" />
         {userLabel && (
           <span className="text-[11px] text-slate-300 truncate max-w-[6rem]" title={user?.email ?? ''}>
             {userLabel}
           </span>
         )}
-        <div className="flex items-center gap-2">
-          <FeedbackButton variant="mobile" />
-          <button
-            onClick={handleGoPC}
-            className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-500 hover:bg-slate-700"
-            title="PC表示へ切替"
-          >
-            <Monitor className="h-3.5 w-3.5" />
-            PC表示
-          </button>
-          <button
-            onClick={handleSignOut}
-            className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-500 hover:bg-slate-700"
-            title="ログアウト"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-          </button>
-        </div>
+        <FeedbackButton variant="mobile" />
+        <button
+          onClick={handleSignOut}
+          className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-500 hover:bg-slate-700"
+          title="ログアウト"
+        >
+          <LogOut className="h-3.5 w-3.5" />
+        </button>
       </div>
 
       {error && (

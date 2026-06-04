@@ -169,15 +169,9 @@ export function MobileTopPage() {
             <ArrowLeft className="h-4 w-4" />
           </button>
         )}
-        <span className="font-medium truncate flex-1">
+        <span className="font-medium truncate">
           {currentProject ? currentProject.name : '工区一覧（スマホ）'}
         </span>
-        {userLabel && (
-          <span className="text-[11px] text-slate-300 truncate max-w-[6rem]" title={user?.email ?? ''}>
-            {userLabel}
-          </span>
-        )}
-        <FeedbackButton variant="mobile" />
         <button
           onClick={handleGoPC}
           className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-500 hover:bg-slate-700"
@@ -186,6 +180,13 @@ export function MobileTopPage() {
           <Monitor className="h-3.5 w-3.5" />
           PC表示
         </button>
+        <div className="flex-1" />
+        {userLabel && (
+          <span className="text-[11px] text-slate-300 truncate max-w-[6rem]" title={user?.email ?? ''}>
+            {userLabel}
+          </span>
+        )}
+        <FeedbackButton variant="mobile" />
         <button
           onClick={handleSignOut}
           className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-500 hover:bg-slate-700"

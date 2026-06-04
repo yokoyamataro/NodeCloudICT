@@ -320,9 +320,23 @@ export function AppLayout() {
                 )}
               </button>
             )}
-            <h1 className="text-xl font-bold">NodeCloud</h1>
-            <span className="text-sm text-slate-400">農業土木ICT設計システム</span>
-            <span className="text-xs text-slate-500">{__BUILD_TIME__}</span>
+            <div className="flex flex-col leading-none">
+              <h1 className="text-xl font-bold">NodeCloud</h1>
+              <span className="text-[10px] text-slate-500 mt-0.5">{__BUILD_TIME__}</span>
+            </div>
+            {/* スマホ画面へ切替（タイトル直右） */}
+            <button
+              type="button"
+              onClick={() => {
+                setDisplayModeOverride('mobile')
+                navigate('/mobile')
+              }}
+              className="flex items-center gap-1 px-2 py-1 text-xs text-slate-300 hover:text-white hover:bg-slate-800 rounded border border-slate-700 transition-colors"
+              title="スマホ画面へ切替"
+            >
+              <Smartphone className="h-3.5 w-3.5" />
+              スマホ表示
+            </button>
             {/* 工事名／工区番号 */}
             {(currentProject || currentFarm) && (
               <span className="text-sm flex items-center">
@@ -370,20 +384,6 @@ export function AppLayout() {
             )}
             {/* 意見・要望メール */}
             <FeedbackButton variant="pc" />
-
-            {/* スマホ画面へ切替 */}
-            <button
-              type="button"
-              onClick={() => {
-                setDisplayModeOverride('mobile')
-                navigate('/mobile')
-              }}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
-              title="スマホ画面へ切替"
-            >
-              <Smartphone className="h-4 w-4" />
-              スマホ表示
-            </button>
 
             {/* 現場の地図を別ウィンドウで全画面表示 */}
             {currentFarm && (
