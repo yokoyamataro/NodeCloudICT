@@ -20,7 +20,7 @@ export const CADASTRAL_COLUMN_KEYS = [
   'owner_address',
   'attended_at',
   'points_count',
-  'area_ha',
+  'computed_area_sqm',
 ] as const
 
 export type CadastralColumnKey = (typeof CADASTRAL_COLUMN_KEYS)[number]
@@ -35,7 +35,7 @@ export const CADASTRAL_COLUMN_LABELS: Record<CadastralColumnKey, string> = {
   owner_address: '所有者住所',
   attended_at: '立会日時',
   points_count: '点数',
-  area_ha: '面積(ha)',
+  computed_area_sqm: '直角座標法面積(m²)',
 }
 
 // 既定で全列表示
@@ -82,7 +82,12 @@ export const CADASTRAL_COLUMN_WIDTH: Record<CadastralColumnKey, string> = {
   owner_address: 'w-48',
   attended_at: 'w-44',
   points_count: 'w-12',
-  area_ha: 'w-20',
+  computed_area_sqm: 'w-28',
+}
+
+// 第 3 位以下切捨 → 小数 2 桁で表示
+function truncate2(n: number): string {
+  return (Math.floor(n * 100) / 100).toFixed(2)
 }
 
 export function CadastralRowFields({ area, visibleColumns }: Props) {
@@ -220,10 +225,10 @@ export function CadastralRowFields({ area, visibleColumns }: Props) {
         return (
           <div className="px-1.5 py-1 text-center text-slate-600">{area.points.length}</div>
         )
-      case 'area_ha':
+      case 'computed_area_sqm':
         return (
           <div className="px-1.5 py-1 text-right font-mono text-slate-700">
-            {area.areaHa !== null ? area.areaHa.toFixed(4) : '-'}
+            {area.areaSqm !== null ? truncate2(area.areaSqm) : '-'}
           </div>
         )
     }

@@ -779,18 +779,16 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
 
                 {area.areaSqm !== null && (
                   <div className="p-2 bg-green-50 border border-green-200 rounded text-xs">
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <span className="text-muted-foreground">面積:</span>{' '}
-                        <span className="font-medium">{area.areaSqm.toFixed(2)} m²</span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">面積:</span>{' '}
-                        <span className="font-medium">{area.areaHa?.toFixed(4)} ha</span>
+                        <span className="text-muted-foreground">直角座標法面積:</span>{' '}
+                        <span className="font-medium font-mono">
+                          {(Math.floor(area.areaSqm * 100) / 100).toFixed(2)} m²
+                        </span>
                       </div>
                       <div>
                         <span className="text-muted-foreground">周長:</span>{' '}
-                        <span className="font-medium">{area.perimeterM?.toFixed(2)} m</span>
+                        <span className="font-medium font-mono">{area.perimeterM?.toFixed(2)} m</span>
                       </div>
                     </div>
                   </div>

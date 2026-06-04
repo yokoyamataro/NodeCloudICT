@@ -18,8 +18,12 @@ function load(): Set<CadastralColumnKey> {
     if (!raw) return new Set(DEFAULT_VISIBLE_COLUMNS)
     const arr = JSON.parse(raw) as unknown
     if (!Array.isArray(arr)) return new Set(DEFAULT_VISIBLE_COLUMNS)
-    const valid = arr.filter((k): k is CadastralColumnKey =>
-      (CADASTRAL_COLUMN_KEYS as readonly string[]).includes(k),
+    // 旧キー 'area_ha'（hectare 表示）→ 'computed_area_sqm'（m² 表示）に読み替え
+    const migrated = (arr as unknown[]).map((k) =>
+      k === 'area_ha' ? 'computed_area_sqm' : k,
+    )
+    const valid = migrated.filter((k): k is CadastralColumnKey =>
+      (CADASTRAL_COLUMN_KEYS as readonly string[]).includes(k as string),
     )
     // 空配列で全部消えるのは事故っぽいので、最低 1 列は残す
     return valid.length > 0 ? new Set(valid) : new Set(DEFAULT_VISIBLE_COLUMNS)
