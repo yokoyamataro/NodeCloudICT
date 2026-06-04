@@ -23,6 +23,7 @@ import { MobileProjectChooserPage } from '@/features/mobile/MobileProjectChooser
 import { MobileDetailMapPage } from '@/features/mobile/MobileDetailMapPage'
 import { MobileStakingPage } from '@/features/mobile/MobileStakingPage'
 import { MobileUnderdrainConstructionPage } from '@/features/mobile/MobileUnderdrainConstructionPage'
+import { MobileParcelsPage } from '@/features/mobile/MobileParcelsPage'
 // 暗渠工事
 import { UnderdrainWorkAreaPage } from '@/features/underdrain/UnderdrainWorkAreaPage'
 import { CadAnalysisPage } from '@/features/underdrain/CadAnalysisPage'
@@ -213,6 +214,14 @@ function AppRoutes() {
           element={
             <ProtectedRoute>
               <MobileUnderdrainConstructionPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/mobile/parcels"
+          element={
+            <ProtectedRoute>
+              <MobileParcelsPage />
             </ProtectedRoute>
           }
         />
