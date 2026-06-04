@@ -3,8 +3,10 @@ import { Plus, Trash2, GripVertical, Calculator, Download, X, Image as ImageIcon
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
+import { useParcelStore } from '@/stores/parcelStore'
 import { CoordinateMap, type ExternalPolygon, type EdgeRounding, type BaseLayerType } from '@/components/map/CoordinateMap'
 import { PageHeader } from '@/components/layout/PageHeader'
+import { ParcelAttributesPanel } from '@/features/boundary-survey/ParcelAttributesPanel'
 import type { WorkType, AreaCalculationSheet as AreaCalculationSheetType } from '@/types/database'
 import { WORK_TYPE_NAMES } from '@/types/database'
 import { exportAreaCalculationToCSV } from '@/lib/area-calculation'
@@ -202,6 +204,19 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   const areas = getWorkAreasByType(workType)
   console.log('[GenericWorkAreaPage] areas:', { workType, areasCount: areas.length, areas: areas.map(a => ({ id: a.id, name: a.name })) })
   const workTypeName = WORK_TYPE_NAMES[workType]
+
+  // 地籍モードでは、表示中の地番（design_work_areas）に対応する parcels を一括取得
+  const fetchParcels = useParcelStore((s) => s.fetchByWorkAreaIds)
+  const clearParcels = useParcelStore((s) => s.clear)
+  useEffect(() => {
+    if (!isBoundarySurvey) {
+      clearParcels()
+      return
+    }
+    fetchParcels(areas.map((a) => a.id))
+    // areas の id 集合が変わったときだけ再 fetch（中身編集での無駄打ち防止）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isBoundarySurvey, areas.map((a) => a.id).join(','), fetchParcels])
 
   // 区域の構成点情報を座標一覧から取得
   const getAreaPoints = (areaId: string): (WorkAreaPoint & { coord?: CoordinateRow })[] => {
@@ -507,6 +522,11 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                           </div>
                         )}
                       </div>
+                    )}
+
+                    {/* 地籍: 地番属性パネル（編集中の地番のみ表示） */}
+                    {isEditing && isBoundarySurvey && (
+                      <ParcelAttributesPanel workAreaId={area.id} />
                     )}
                   </div>
                 )
