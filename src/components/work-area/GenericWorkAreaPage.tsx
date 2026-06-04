@@ -7,6 +7,10 @@ import { useParcelStore } from '@/stores/parcelStore'
 import { CoordinateMap, type ExternalPolygon, type EdgeRounding, type BaseLayerType } from '@/components/map/CoordinateMap'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { CadastralRowFields } from '@/features/boundary-survey/CadastralRowFields'
+import {
+  CadastralColumnPicker,
+  useCadastralVisibleColumns,
+} from '@/features/boundary-survey/CadastralColumnPicker'
 import type { WorkType, AreaCalculationSheet as AreaCalculationSheetType } from '@/types/database'
 import { WORK_TYPE_NAMES } from '@/types/database'
 import { exportAreaCalculationToCSV } from '@/lib/area-calculation'
@@ -208,6 +212,8 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   // 地籍モードでは、表示中の地番（design_work_areas）に対応する parcels を一括取得
   const fetchParcels = useParcelStore((s) => s.fetchByWorkAreaIds)
   const clearParcels = useParcelStore((s) => s.clear)
+  // 地番一覧の表示列（地籍時のみ使用）。localStorage に保存される
+  const [visibleColumns, setVisibleColumns] = useCadastralVisibleColumns()
   useEffect(() => {
     if (!isBoundarySurvey) {
       clearParcels()
@@ -361,16 +367,24 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
       <div className="flex-1 flex overflow-hidden">
         {/* 左側: 区域一覧 */}
         <div className="w-1/2 flex flex-col overflow-hidden border-r p-4">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-4 gap-2">
             <h3 className="text-lg font-semibold">区域登録</h3>
-            <button
-              onClick={handleAddArea}
-              disabled={loading || coordinates.length === 0}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Plus className="h-4 w-4" />
-              区域追加
-            </button>
+            <div className="flex items-center gap-2">
+              {isBoundarySurvey && (
+                <CadastralColumnPicker
+                  visible={visibleColumns}
+                  onChange={setVisibleColumns}
+                />
+              )}
+              <button
+                onClick={handleAddArea}
+                disabled={loading || coordinates.length === 0}
+                className="flex items-center gap-2 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Plus className="h-4 w-4" />
+                区域追加
+              </button>
+            </div>
           </div>
 
           {areas.length === 0 ? (
@@ -394,8 +408,8 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                       onClick={() => setEditingAreaId(isEditing ? null : area.id)}
                     >
                       {isBoundarySurvey ? (
-                        // 地籍: 地番属性も含めて 1 行に横並びで inline 編集
-                        <CadastralRowFields area={area} />
+                        // 地籍: 地番属性も含めて 1 行に横並びで inline 編集（表示列はピッカーで絞れる）
+                        <CadastralRowFields area={area} visibleColumns={visibleColumns} />
                       ) : (
                         <div className="flex-1 grid grid-cols-3 gap-2 text-sm">
                           <input

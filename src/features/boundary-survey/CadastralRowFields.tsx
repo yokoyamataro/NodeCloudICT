@@ -2,16 +2,50 @@
 // GenericWorkAreaPage の行ヘッダーで通常の 3 列（区域番号 / 点数 / 面積）の
 // 代わりに使う。inline 編集で onBlur 時に parcels テーブルへ upsert する。
 //
-// 編集中の地番だけでなく、行を開いていなくても表内でそのまま編集できる。
-// 数値・日付の入力はローカルドラフトに溜め、onBlur で保存。
+// 表示する列は visibleColumns で絞れる（地番リスト上部の列選択ボタンと連動）。
 
 import { useEffect, useState } from 'react'
 import type { WorkAreaRow } from '@/stores/workAreaStore'
 import { useParcelStore, type ParcelEditableFields } from '@/stores/parcelStore'
 import { LAND_CATEGORIES } from '@/lib/landCategory'
 
+// 列の正準キー。表示順を兼ねる。
+export const CADASTRAL_COLUMN_KEYS = [
+  'parcel_number',
+  'registered_land_category',
+  'registered_area_sqm',
+  'updated_land_category',
+  'updated_area_sqm',
+  'owner_name',
+  'owner_address',
+  'attended_at',
+  'points_count',
+  'area_ha',
+] as const
+
+export type CadastralColumnKey = (typeof CADASTRAL_COLUMN_KEYS)[number]
+
+export const CADASTRAL_COLUMN_LABELS: Record<CadastralColumnKey, string> = {
+  parcel_number: '地番',
+  registered_land_category: '登記地目',
+  registered_area_sqm: '登記地積(m²)',
+  updated_land_category: '変更地目',
+  updated_area_sqm: '変更地積(m²)',
+  owner_name: '所有者氏名',
+  owner_address: '所有者住所',
+  attended_at: '立会日時',
+  points_count: '点数',
+  area_ha: '面積(ha)',
+}
+
+// 既定で全列表示
+export const DEFAULT_VISIBLE_COLUMNS: ReadonlySet<CadastralColumnKey> = new Set(
+  CADASTRAL_COLUMN_KEYS,
+)
+
 interface Props {
   area: WorkAreaRow
+  visibleColumns: ReadonlySet<CadastralColumnKey>
 }
 
 // timestamptz → datetime-local 文字列
@@ -37,7 +71,20 @@ const num = (s: string): number | null => {
   return Number.isFinite(n) ? n : null
 }
 
-export function CadastralRowFields({ area }: Props) {
+const WIDTH: Record<CadastralColumnKey, string> = {
+  parcel_number: 'w-28',
+  registered_land_category: 'w-24',
+  registered_area_sqm: 'w-24',
+  updated_land_category: 'w-24',
+  updated_area_sqm: 'w-24',
+  owner_name: 'w-32',
+  owner_address: 'w-48',
+  attended_at: 'w-44',
+  points_count: 'w-12',
+  area_ha: 'w-20',
+}
+
+export function CadastralRowFields({ area, visibleColumns }: Props) {
   const parcel = useParcelStore((s) => s.byWorkAreaId.get(area.id))
   const upsertParcel = useParcelStore((s) => s.upsertParcel)
 
@@ -73,10 +120,10 @@ export function CadastralRowFields({ area }: Props) {
   // セルが行クリックの展開を発火しないように stopPropagation
   const stop = (e: React.SyntheticEvent) => e.stopPropagation()
 
-  return (
-    <div className="flex-1 overflow-x-auto" onClick={stop}>
-      <div className="flex items-center gap-1 text-xs whitespace-nowrap min-w-max">
-        <Cell label="地番" width="w-28">
+  const cellFor = (key: CadastralColumnKey): React.ReactNode => {
+    switch (key) {
+      case 'parcel_number':
+        return (
           <input
             type="text"
             value={parcelNumber}
@@ -86,8 +133,9 @@ export function CadastralRowFields({ area }: Props) {
             className="w-full px-1.5 py-1 border rounded text-sm"
             placeholder="地番"
           />
-        </Cell>
-        <Cell label="登記地目" width="w-24">
+        )
+      case 'registered_land_category':
+        return (
           <LandCategoryCell
             value={regCategory}
             onChange={(v) => {
@@ -96,8 +144,9 @@ export function CadastralRowFields({ area }: Props) {
             }}
             onClick={stop}
           />
-        </Cell>
-        <Cell label="登記地積(m²)" width="w-24">
+        )
+      case 'registered_area_sqm':
+        return (
           <input
             type="number"
             step="0.0001"
@@ -108,8 +157,9 @@ export function CadastralRowFields({ area }: Props) {
             onBlur={() => save({ registered_area_sqm: num(regArea) })}
             className="w-full px-1.5 py-1 border rounded text-right font-mono text-sm"
           />
-        </Cell>
-        <Cell label="変更地目" width="w-24">
+        )
+      case 'updated_land_category':
+        return (
           <LandCategoryCell
             value={updCategory}
             onChange={(v) => {
@@ -118,8 +168,9 @@ export function CadastralRowFields({ area }: Props) {
             }}
             onClick={stop}
           />
-        </Cell>
-        <Cell label="変更地積(m²)" width="w-24">
+        )
+      case 'updated_area_sqm':
+        return (
           <input
             type="number"
             step="0.0001"
@@ -130,8 +181,9 @@ export function CadastralRowFields({ area }: Props) {
             onBlur={() => save({ updated_area_sqm: num(updArea) })}
             className="w-full px-1.5 py-1 border rounded text-right font-mono text-sm"
           />
-        </Cell>
-        <Cell label="所有者氏名" width="w-32">
+        )
+      case 'owner_name':
+        return (
           <input
             type="text"
             value={ownerName}
@@ -140,8 +192,9 @@ export function CadastralRowFields({ area }: Props) {
             onBlur={() => save({ owner_name: ownerName.trim() || null })}
             className="w-full px-1.5 py-1 border rounded text-sm"
           />
-        </Cell>
-        <Cell label="所有者住所" width="w-48">
+        )
+      case 'owner_address':
+        return (
           <input
             type="text"
             value={ownerAddress}
@@ -150,8 +203,9 @@ export function CadastralRowFields({ area }: Props) {
             onBlur={() => save({ owner_address: ownerAddress.trim() || null })}
             className="w-full px-1.5 py-1 border rounded text-sm"
           />
-        </Cell>
-        <Cell label="立会日時" width="w-44">
+        )
+      case 'attended_at':
+        return (
           <input
             type="datetime-local"
             value={attendedAt}
@@ -160,15 +214,28 @@ export function CadastralRowFields({ area }: Props) {
             onBlur={() => save({ attended_at: fromLocalInput(attendedAt) })}
             className="w-full px-1.5 py-1 border rounded text-sm"
           />
-        </Cell>
-        <Cell label="点数" width="w-12">
+        )
+      case 'points_count':
+        return (
           <div className="px-1.5 py-1 text-center text-slate-600">{area.points.length}</div>
-        </Cell>
-        <Cell label="面積(ha)" width="w-20">
+        )
+      case 'area_ha':
+        return (
           <div className="px-1.5 py-1 text-right font-mono text-slate-700">
             {area.areaHa !== null ? area.areaHa.toFixed(4) : '-'}
           </div>
-        </Cell>
+        )
+    }
+  }
+
+  return (
+    <div className="flex-1 overflow-x-auto" onClick={stop}>
+      <div className="flex items-center gap-1 text-xs whitespace-nowrap min-w-max">
+        {CADASTRAL_COLUMN_KEYS.filter((k) => visibleColumns.has(k)).map((key) => (
+          <Cell key={key} label={CADASTRAL_COLUMN_LABELS[key]} width={WIDTH[key]}>
+            {cellFor(key)}
+          </Cell>
+        ))}
       </div>
     </div>
   )
