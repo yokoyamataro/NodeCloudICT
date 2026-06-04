@@ -355,7 +355,16 @@ export function AppLayout() {
 
           {/* 右側：ログイン情報 */}
           <div className="flex items-center gap-4">
-            {/* 管理者: 各種管理画面 */}
+            {/* 全認証ユーザー: 自分の子ユーザー管理 */}
+            <Link
+              to="/team"
+              className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+              title="子ユーザー管理"
+            >
+              <User className="h-4 w-4" />
+              子ユーザー
+            </Link>
+            {/* サイトオーナー: 各種管理画面 */}
             {isAdmin(user?.email) && (
               <>
                 <Link
@@ -363,7 +372,6 @@ export function AppLayout() {
                   className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
                   title="ユーザー管理"
                 >
-                  <User className="h-4 w-4" />
                   ユーザー
                 </Link>
                 <Link

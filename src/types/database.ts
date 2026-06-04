@@ -222,11 +222,20 @@ export interface Organization {
   updated_at: string
 }
 
+// プラン種別（profiles.plan）
+export type AccountPlan = 'cadastral' | 'civil' | 'total'
+
 // アカウント単位の付加情報（auth.users と 1:1）
 export interface Profile {
   user_id: string
   full_name: string | null
   organization_id: string | null
+  // 階層: 親 (admin) が NULL、子ユーザーは親の uid を持つ
+  parent_user_id: string | null
+  // 利用可能プラン（地籍 / 土木 / トータル）
+  plan: AccountPlan | null
+  // 親が抱えられる子ユーザー数の上限（NULL = 無制限）
+  child_user_limit: number | null
   created_at: string
   updated_at: string
 }
@@ -259,8 +268,35 @@ export interface AdminUserRow {
   full_name: string | null
   organization_id: string | null
   organization_name: string | null
+  parent_user_id: string | null
+  parent_email: string | null
+  plan: AccountPlan | null
+  child_user_limit: number | null
+  child_user_count: number
   last_sign_in_at: string | null
   created_at: string
+}
+
+// 親（admin）用: 自分の子ユーザー一覧
+export interface ChildUserRow {
+  user_id: string
+  email: string
+  full_name: string | null
+  organization_id: string | null
+  organization_name: string | null
+  last_sign_in_at: string | null
+  created_at: string
+}
+
+// 親（admin）用: 自分のサマリ
+export interface AdminSummary {
+  user_id: string
+  email: string
+  full_name: string | null
+  plan: AccountPlan | null
+  child_user_limit: number | null
+  child_user_count: number
+  parent_user_id: string | null
 }
 
 // 工事の種別。地籍測量 / 土木工事。NULL は既存データの未分類（工区を開くときに分類する）。
