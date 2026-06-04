@@ -231,6 +231,18 @@ export interface Profile {
   updated_at: string
 }
 
+// 地籍（境界測量）の地番属性。ポリゴン形状は design_work_areas 側に残しているので
+// 1:1 のサイドカーテーブル parcels(work_area_id UNIQUE) と対応する。
+// 今後、所有者・地目・登記簿面積などを段階的に追加していく。
+export interface Parcel {
+  id: string
+  work_area_id: string
+  parcel_number: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
 // サイトオーナー用ユーザー一覧（admin_list_users RPC の戻り値）
 export interface AdminUserRow {
   user_id: string
