@@ -108,15 +108,9 @@ export function MobileTopPage() {
     return { lat: avgLat, lng: avgLng }
   }, [projectFarmLocations])
 
-  // 工区タップで直接、種別に応じた画面へ遷移
-  // 地籍測量 → 地番一覧（構成点登録）、それ以外 → 工事測量
+  // 工区タップで直接工事測量画面へ（地籍・土木とも共通）
   const handleFarmClick = (farm: Farm) => {
-    const proj = projects.find((p) => p.id === farm.project_id)
-    if (proj?.category === 'cadastral') {
-      navigate(`/mobile/parcels?farmId=${farm.id}`)
-    } else {
-      navigate(`/mobile/staking?farmId=${farm.id}`)
-    }
+    navigate(`/mobile/staking?farmId=${farm.id}`)
   }
 
   const handleCreateNewFarm = async () => {
