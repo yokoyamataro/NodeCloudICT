@@ -294,7 +294,7 @@ export function BoundarySurveyWorkAreaPage() {
       )}
       <GenericWorkAreaPage
         workType="boundary_survey"
-        areaLabel="地番データ"
+        areaLabel="地番管理"
         headerActions={
           <div className="flex items-center gap-2">
             {/* 工区あたりの使用量 (上限の何 % か) */}

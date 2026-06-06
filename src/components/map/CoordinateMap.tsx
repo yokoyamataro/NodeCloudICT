@@ -132,6 +132,7 @@ function HighDensityList<T>({
   items,
   threshold,
   zoomMin,
+  labelZoomMin,
   getLatLng,
   getPolygonPositions,
   render,
@@ -141,11 +142,18 @@ function HighDensityList<T>({
   threshold: number
   /** ゲート時、この zoom 以上のときだけ描画する */
   zoomMin: number
+  /**
+   * ラベル（点名・地番名など）はマーカー描画より重いので、件数が多いときは
+   * さらに高いズーム以上でのみ表示したい。
+   * render 関数の第 2 引数 ctx.showLabel に「現在ラベル表示してよいか」を渡す。
+   * 未指定なら常に true。
+   */
+  labelZoomMin?: number
   /** 点項目用: 単一の (lat, lng) を返す */
   getLatLng?: (item: T) => [number, number]
   /** ポリゴン項目用: positions を返す（バウンディングボックス判定用） */
   getPolygonPositions?: (item: T) => [number, number][]
-  render: (item: T) => React.ReactNode
+  render: (item: T, ctx: { showLabel: boolean }) => React.ReactNode
 }) {
   const map = useMap()
   const [zoom, setZoom] = useState<number>(() => map.getZoom())
@@ -182,7 +190,11 @@ function HighDensityList<T>({
         return true
       })
 
-  return <>{visible.map(render)}</>
+  // 件数が少ない (~threshold 未満) 場合はラベルも常に許可。
+  // 多い場合は labelZoomMin 以上でのみ許可。
+  const showLabel = !isDense || labelZoomMin == null || zoom >= labelZoomMin
+  const ctx = { showLabel }
+  return <>{visible.map((it) => render(it, ctx))}</>
 }
 
 // 背景地図の種類
@@ -338,13 +350,15 @@ export function CoordinateMap({
       <MapViewManager coordinates={validCoordinates} />
 
       {/* 外部から渡されたポリゴン（workAreaStore など）。地番ポリゴンは
-          4000+ になるので、500 件超なら zoom 16 以上 + 画面内のみ描画する */}
+          4000+ になるので、500 件超なら zoom 16 以上 + 画面内のみ描画する。
+          ラベル（地番名）はさらに重いので zoom 17 以上に絞る。 */}
       <HighDensityList
         items={externalPolygons.filter((p) => p.positions.length >= 3)}
         threshold={500}
         zoomMin={16}
+        labelZoomMin={17}
         getPolygonPositions={(p) => p.positions}
-        render={(polygon) => {
+        render={(polygon, { showLabel }) => {
           const isEditing = polygon.id === editingExternalPolygonId
           return (
             <Polygon
@@ -358,7 +372,7 @@ export function CoordinateMap({
                 dashArray: isEditing ? '5, 5' : undefined,
               }}
             >
-              {showPolygonLabels && polygon.name && (
+              {showPolygonLabels && showLabel && polygon.name && (
                 <Tooltip
                   permanent
                   direction="center"
@@ -475,13 +489,15 @@ export function CoordinateMap({
         )
       })}
 
-      {/* 座標マーカー: 件数が多い (1000+) ときは zoom 17 以上 + 画面内のみ描画 */}
+      {/* 座標マーカー: 件数が多い (1000+) ときは zoom 17 以上 + 画面内のみ描画。
+          ラベル（点名）はマーカー自体より重いので zoom 19 以上に絞る。 */}
       <HighDensityList
         items={displayCoordinates}
         threshold={1000}
         zoomMin={17}
+        labelZoomMin={19}
         getLatLng={(c) => [c.lat, c.lng]}
-        render={(coord) => (
+        render={(coord, { showLabel }) => (
           <Marker
             key={coord.id}
             position={[coord.lat, coord.lng]}
@@ -494,7 +510,7 @@ export function CoordinateMap({
               click: () => onPointSelect?.(coord.id),
             } : undefined}
           >
-            {showLabels && (
+            {showLabels && showLabel && (
               <Tooltip
                 permanent
                 direction="top"

@@ -73,14 +73,8 @@ interface NavGroup {
 const navigation: NavGroup[] = [
   { name: '工区選択に戻る', href: '/', icon: Home },
   { name: '座標管理', href: '/coordinates', icon: Map },
-  {
-    name: '境界測量',
-    href: '/boundary-survey',
-    icon: Compass,
-    children: [
-      { name: '地番データ', href: '/boundary-survey/work-area', icon: Square },
-    ],
-  },
+  // 地籍測量: 「地番管理」をフラットに 1 つだけ出す（中身は地番データ画面）
+  { name: '地番管理', href: '/boundary-survey/work-area', icon: Compass },
   { name: 'オルソ画像・簡易作図', href: '/orthophoto', icon: ImageIcon },
   {
     name: '暗渠工事',

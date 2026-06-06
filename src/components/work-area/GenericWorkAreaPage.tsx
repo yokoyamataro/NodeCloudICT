@@ -357,8 +357,12 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   return (
     <div className="h-full flex flex-col">
       <PageHeader
-        title={`${workTypeName} - ${areaLabel}`}
-        subtitle={`座標管理に登録した座標を使って${workTypeName}の${areaLabel}を設定・面積計算`}
+        title={isBoundarySurvey ? areaLabel : `${workTypeName} - ${areaLabel}`}
+        subtitle={
+          isBoundarySurvey
+            ? `座標管理に登録した座標を使って${areaLabel}を設定・面積計算`
+            : `座標管理に登録した座標を使って${workTypeName}の${areaLabel}を設定・面積計算`
+        }
         actions={headerActions}
       />
 
