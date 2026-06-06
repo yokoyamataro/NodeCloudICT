@@ -209,6 +209,45 @@ export function BoundarySurveyWorkAreaPage() {
 
   return (
     <>
+      {/* 取り込み進捗の中央オーバーレイ。ヘッダー内の進捗表示は小さくて
+          埋もれがちなので、取り込み中だけ全画面の半透明オーバーレイで
+          現在のフェーズ・件数・%・プログレスバーをはっきり出す。 */}
+      {progress && (
+        <div className="fixed inset-0 z-[9999] bg-black/30 flex items-center justify-center pointer-events-none">
+          <div className="bg-white rounded-lg shadow-xl border w-full max-w-md p-5 mx-4 pointer-events-auto">
+            <div className="flex items-center gap-2 mb-3">
+              <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
+              <div className="text-base font-semibold">{progress.phase}</div>
+            </div>
+            {progress.total > 0 ? (
+              <>
+                <div className="flex items-baseline gap-2 mb-2">
+                  <span className="text-3xl font-mono font-bold tabular-nums">
+                    {progress.done.toLocaleString()}
+                  </span>
+                  <span className="text-sm text-slate-500">
+                    / {progress.total.toLocaleString()} 件
+                  </span>
+                  <span className="ml-auto text-sm text-slate-500">
+                    {Math.round((progress.done / progress.total) * 100)}%
+                  </span>
+                </div>
+                <div className="w-full h-3 bg-slate-200 rounded overflow-hidden">
+                  <div
+                    className="h-full bg-blue-600 transition-[width] duration-150"
+                    style={{ width: `${Math.min(100, (progress.done / progress.total) * 100)}%` }}
+                  />
+                </div>
+              </>
+            ) : (
+              <div className="text-sm text-slate-500">処理中…</div>
+            )}
+            <div className="text-[11px] text-slate-400 mt-3">
+              画面は閉じないでください
+            </div>
+          </div>
+        </div>
+      )}
       <GenericWorkAreaPage
         workType="boundary_survey"
         areaLabel="地番データ"
