@@ -124,31 +124,65 @@ function MapViewManager({ coordinates }: { coordinates: CoordinateRow[] }) {
   return null
 }
 
-// 件数が多いとき、一定ズーム以上でのみ children を描画するゲート。
-// React が 10000+ の Marker / Polygon を一気にマウントすると詰まるので、
-// 拡大時のみ描画する運用にする。
-function HighDensityGate({
-  count,
+// 件数が多いときに「画面内 (ビューポート) のものだけ + 一定ズーム以上で
+// のみ」描画する高密度レンダラ。React で 10000+ の Marker / Polygon を
+// 一気にマウントすると詰まるので、拡大して画面内に絞り込んだ時のみ
+// 子要素を描画する。
+function HighDensityList<T>({
+  items,
   threshold,
   zoomMin,
-  children,
+  getLatLng,
+  getPolygonPositions,
+  render,
 }: {
-  count: number
-  /** この件数を超えるときだけゲートを有効化する */
+  items: T[]
+  /** この件数を超えるときだけ閾値・ビューポート絞り込みを有効化する */
   threshold: number
   /** ゲート時、この zoom 以上のときだけ描画する */
   zoomMin: number
-  children: React.ReactNode
+  /** 点項目用: 単一の (lat, lng) を返す */
+  getLatLng?: (item: T) => [number, number]
+  /** ポリゴン項目用: positions を返す（バウンディングボックス判定用） */
+  getPolygonPositions?: (item: T) => [number, number][]
+  render: (item: T) => React.ReactNode
 }) {
   const map = useMap()
   const [zoom, setZoom] = useState<number>(() => map.getZoom())
+  const [bounds, setBounds] = useState<L.LatLngBounds>(() => map.getBounds())
   useMapEvents({
     zoomend() {
       setZoom(map.getZoom())
+      setBounds(map.getBounds())
+    },
+    moveend() {
+      setBounds(map.getBounds())
     },
   })
-  if (count > threshold && zoom < zoomMin) return null
-  return <>{children}</>
+
+  const isDense = items.length > threshold
+  if (isDense && zoom < zoomMin) return null
+
+  // 件数が多いときだけビューポート culling を効かせる
+  const visible = !isDense
+    ? items
+    : items.filter((it) => {
+        if (getLatLng) {
+          const [lat, lng] = getLatLng(it)
+          return bounds.contains([lat, lng])
+        }
+        if (getPolygonPositions) {
+          const ps = getPolygonPositions(it)
+          // 1 点でも画面内ならポリゴンとして可視扱い（粗い判定だが十分速い）
+          for (const [lat, lng] of ps) {
+            if (bounds.contains([lat, lng])) return true
+          }
+          return false
+        }
+        return true
+      })
+
+  return <>{visible.map(render)}</>
 }
 
 // 背景地図の種類
@@ -301,10 +335,13 @@ export function CoordinateMap({
       <MapViewManager coordinates={validCoordinates} />
 
       {/* 外部から渡されたポリゴン（workAreaStore など）。地番ポリゴンは
-          4000+ になるので、500 件超なら zoom 16 以上で描画する */}
-      <HighDensityGate count={externalPolygons.length} threshold={500} zoomMin={16}>
-        {externalPolygons.map(polygon => {
-          if (polygon.positions.length < 3) return null
+          4000+ になるので、500 件超なら zoom 16 以上 + 画面内のみ描画する */}
+      <HighDensityList
+        items={externalPolygons.filter((p) => p.positions.length >= 3)}
+        threshold={500}
+        zoomMin={16}
+        getPolygonPositions={(p) => p.positions}
+        render={(polygon) => {
           const isEditing = polygon.id === editingExternalPolygonId
           return (
             <Polygon
@@ -319,8 +356,8 @@ export function CoordinateMap({
               }}
             />
           )
-        })}
-      </HighDensityGate>
+        }}
+      />
 
       {/* 境界線選択モード: 各辺をクリック可能なポリラインで重ねる */}
       {lineSelectMode &&
@@ -425,9 +462,13 @@ export function CoordinateMap({
         )
       })}
 
-      {/* 座標マーカー: 件数が多い (1000+) ときは zoom 17 以上で描画 */}
-      <HighDensityGate count={displayCoordinates.length} threshold={1000} zoomMin={17}>
-        {displayCoordinates.map(coord => (
+      {/* 座標マーカー: 件数が多い (1000+) ときは zoom 17 以上 + 画面内のみ描画 */}
+      <HighDensityList
+        items={displayCoordinates}
+        threshold={1000}
+        zoomMin={17}
+        getLatLng={(c) => [c.lat, c.lng]}
+        render={(coord) => (
           <Marker
             key={coord.id}
             position={[coord.lat, coord.lng]}
@@ -451,8 +492,8 @@ export function CoordinateMap({
               </Tooltip>
             )}
           </Marker>
-        ))}
-      </HighDensityGate>
+        )}
+      />
 
       {/* 外部から差し込む追加レイヤ（オルソ画像ページの作図・計測など） */}
       {children}
