@@ -823,6 +823,19 @@ export function CoordinatesPage() {
     }
   }
 
+  // selectedPointId が変わったら、座標一覧の該当行が画面外にあれば
+  // スクロールして表示する（地図のマーカークリックで選択された時など）。
+  // 一覧内クリックで選んだ場合は block: 'nearest' なのでほぼ無視される。
+  useEffect(() => {
+    if (!selectedPointId) return
+    const row = document.querySelector(
+      `[data-coord-row-id="${CSS.escape(selectedPointId)}"]`,
+    )
+    if (row instanceof HTMLElement) {
+      row.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }
+  }, [selectedPointId])
+
   // 末尾の空行に入力された値を新規座標として確定
   const commitNewRow = () => {
     const pn = newRow.pointNumber.trim()
@@ -1339,6 +1352,7 @@ export function CoordinatesPage() {
                 <tr
                   key={coord.id}
                   ref={idx === coordinates.length - 1 ? lastRowRef : null}
+                  data-coord-row-id={coord.id}
                   className={`hover:bg-slate-50 cursor-pointer ${
                     selectedPointId === coord.id ? 'bg-blue-200 hover:bg-blue-200' : ''
                   }`}

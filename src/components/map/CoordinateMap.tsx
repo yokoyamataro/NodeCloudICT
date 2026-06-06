@@ -522,16 +522,16 @@ export function CoordinateMap({
               click: () => onPointSelect?.(coord.id),
             } : undefined}
           >
-            {showLabels && showLabel && (
-              <Tooltip
-                permanent
-                direction="top"
-                offset={[0, -8]}
-                className="point-label-tooltip"
-              >
-                {coord.pointNumber}
-              </Tooltip>
-            )}
+            {/* showLabels && showLabel が true なら常時表示、false ならホバー
+                時のみ点名を出す（Tooltip 自体はマーカー上に常駐させておく） */}
+            <Tooltip
+              permanent={showLabels && showLabel}
+              direction="top"
+              offset={[0, -8]}
+              className="point-label-tooltip"
+            >
+              {coord.pointNumber}
+            </Tooltip>
           </Marker>
         )}
       />
