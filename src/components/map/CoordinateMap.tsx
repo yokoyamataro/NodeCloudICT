@@ -218,6 +218,8 @@ interface CoordinateMapProps {
   showEdgeLengths?: boolean
   edgeDigits?: number
   edgeRounding?: EdgeRounding
+  // 区域ポリゴンの「名前」をポリゴン中央にラベルとして表示する（地番名など）
+  showPolygonLabels?: boolean
   // 境界線（区域の辺）選択モード: 辺クリックで両端2点の座標IDを返す
   lineSelectMode?: boolean
   onLineSelect?: (id1: string, id2: string) => void
@@ -246,6 +248,7 @@ export function CoordinateMap({
   showEdgeLengths = false,
   edgeDigits = 2,
   edgeRounding = 'round',
+  showPolygonLabels = false,
   lineSelectMode = false,
   onLineSelect,
   coordinatesInteractive = true,
@@ -354,7 +357,17 @@ export function CoordinateMap({
                 weight: isEditing ? 3 : 2,
                 dashArray: isEditing ? '5, 5' : undefined,
               }}
-            />
+            >
+              {showPolygonLabels && polygon.name && (
+                <Tooltip
+                  permanent
+                  direction="center"
+                  className="polygon-label-tooltip"
+                >
+                  {polygon.name}
+                </Tooltip>
+              )}
+            </Polygon>
           )
         }}
       />

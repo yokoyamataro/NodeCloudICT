@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Plus, Trash2, GripVertical, Calculator, Download, X, Image as ImageIcon, Ruler, Pencil } from 'lucide-react'
+import { Plus, Trash2, GripVertical, Calculator, Download, X, Image as ImageIcon, Ruler, Pencil, Tag, Hash } from 'lucide-react'
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
@@ -166,6 +166,19 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   const [baseLayer, setBaseLayer] = useState<BaseLayerType>('osm')
   // 辺長の桁数・端数設定は境界測量のみ。それ以外は 2桁・四捨五入 固定
   const isBoundarySurvey = workType === 'boundary_survey'
+  // 点名 / 地番名の地図ラベル表示切替（localStorage に保存して維持）
+  const [showPointLabels, setShowPointLabels] = useState<boolean>(
+    () => localStorage.getItem('boundarySurvey:showPointLabels') !== '0',
+  )
+  const [showPolygonLabels, setShowPolygonLabels] = useState<boolean>(
+    () => localStorage.getItem('boundarySurvey:showPolygonLabels') !== '0',
+  )
+  useEffect(() => {
+    localStorage.setItem('boundarySurvey:showPointLabels', showPointLabels ? '1' : '0')
+  }, [showPointLabels])
+  useEffect(() => {
+    localStorage.setItem('boundarySurvey:showPolygonLabels', showPolygonLabels ? '1' : '0')
+  }, [showPolygonLabels])
   // 辺長の桁数・端数処理（localStorage に保存して維持）
   const [edgeDigits, setEdgeDigits] = useState<number>(() => {
     const v = Number(localStorage.getItem('edgeLength:digits'))
@@ -211,6 +224,7 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   // 地籍モードでは、表示中の地番（design_work_areas）に対応する parcels を一括取得
   const fetchParcels = useParcelStore((s) => s.fetchByWorkAreaIds)
   const clearParcels = useParcelStore((s) => s.clear)
+  const parcelByWorkAreaId = useParcelStore((s) => s.byWorkAreaId)
   // 地番一覧の表示列（地籍時のみ使用）。localStorage に保存される
   const [visibleColumns, setVisibleColumns] = useCadastralVisibleColumns()
   useEffect(() => {
@@ -321,7 +335,12 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
         else if (angle < -90) angle += 180
         edges.push({ mid, length, angle })
       }
-      return { id: area.id, name: area.name, positions, edges }
+      // 地番ラベルは parcels.parcel_number を優先。SIMA 由来の area.zoneNumber/name を
+      // 編集前のフォールバックに使う。
+      const labelName = isBoundarySurvey
+        ? parcelByWorkAreaId.get(area.id)?.parcel_number || area.zoneNumber || area.name
+        : area.name
+      return { id: area.id, name: labelName, positions, edges }
     })
     .filter(p => p.positions.length >= 3)
 
@@ -606,6 +625,35 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
         {/* 右側: 地図 */}
         <div className="w-1/2 bg-slate-100 relative">
           <div className="absolute top-2 right-2 z-[1000] flex items-center gap-2">
+            {/* 地籍時のみ: 点名 / 地番名のラベル表示切替 */}
+            {isBoundarySurvey && (
+              <>
+                <button
+                  onClick={() => setShowPointLabels((v) => !v)}
+                  className={`flex items-center gap-1 px-2 py-1 text-xs rounded border shadow ${
+                    showPointLabels
+                      ? 'bg-emerald-100 border-emerald-400 text-emerald-800 font-medium'
+                      : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
+                  }`}
+                  title="点名の表示を切替"
+                >
+                  <Hash className="h-3 w-3" />
+                  点名
+                </button>
+                <button
+                  onClick={() => setShowPolygonLabels((v) => !v)}
+                  className={`flex items-center gap-1 px-2 py-1 text-xs rounded border shadow ${
+                    showPolygonLabels
+                      ? 'bg-emerald-100 border-emerald-400 text-emerald-800 font-medium'
+                      : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
+                  }`}
+                  title="地番名の表示を切替"
+                >
+                  <Tag className="h-3 w-3" />
+                  地番名
+                </button>
+              </>
+            )}
             <button
               onClick={() => setShowEdgeLengths((v) => !v)}
               className={`flex items-center gap-1 px-2 py-1 text-xs rounded border shadow ${
@@ -674,6 +722,8 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
             showEdgeLengths={showEdgeLengths}
             edgeDigits={isBoundarySurvey ? edgeDigits : 2}
             edgeRounding={isBoundarySurvey ? edgeRounding : 'round'}
+            showLabels={isBoundarySurvey ? showPointLabels : undefined}
+            showPolygonLabels={isBoundarySurvey ? showPolygonLabels : false}
           />
         </div>
       </div>

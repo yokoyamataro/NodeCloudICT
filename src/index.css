@@ -87,6 +87,23 @@ input[type="number"] {
   display: none !important;
 }
 
+/* 地図上の地番（ポリゴン）名ラベル */
+.polygon-label-tooltip {
+  background-color: rgba(255, 255, 255, 0.85) !important;
+  border: 1px solid #22c55e !important;
+  border-radius: 3px !important;
+  padding: 1px 6px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: #166534 !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2) !important;
+  white-space: nowrap !important;
+}
+
+.polygon-label-tooltip::before {
+  display: none !important;
+}
+
 /* 工区名ラベル（プロジェクト一覧図） */
 .farm-label-tooltip {
   background-color: rgba(255, 255, 255, 0.95) !important;
