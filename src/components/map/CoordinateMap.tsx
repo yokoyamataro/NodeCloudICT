@@ -296,8 +296,20 @@ export function CoordinateMap({
       ? [validCoordinates[0].lat, validCoordinates[0].lng] as [number, number]
       : defaultCenter
 
+  // ズームレベル表示（+/- ボタン直下に出すための state）。初期値は MapContainer の zoom と同じ
+  const [currentZoom, setCurrentZoom] = useState<number>(15)
+
   return (
-    <MapContainer
+    <div className="relative h-full w-full">
+      {/* +/- ボタン直下のズーム値表示。Leaflet の zoom control が
+          top:10px + 60px (2 ボタン分) 程度なので、その下に余白少しで配置 */}
+      <div
+        className="absolute left-[10px] top-[78px] z-[1000] w-[30px] h-[30px] flex items-center justify-center bg-white border border-slate-300 rounded text-xs font-mono font-bold text-slate-700 shadow select-none"
+        title="現在のズームレベル"
+      >
+        {Math.round(currentZoom)}
+      </div>
+      <MapContainer
       center={initialCenter}
       zoom={15}
       maxZoom={24}
@@ -526,6 +538,25 @@ export function CoordinateMap({
 
       {/* 外部から差し込む追加レイヤ（オルソ画像ページの作図・計測など） */}
       {children}
+
+      {/* ズームレベルを上の表示用 state に伝搬する不可視トラッカ */}
+      <ZoomTracker onChange={setCurrentZoom} />
     </MapContainer>
+    </div>
   )
+}
+
+// MapContainer の中で useMapEvents をフックし、ズーム値を親 state に伝える。
+// 自身は何も描画しない。
+function ZoomTracker({ onChange }: { onChange: (zoom: number) => void }) {
+  const map = useMap()
+  useEffect(() => {
+    onChange(map.getZoom())
+  }, [map, onChange])
+  useMapEvents({
+    zoomend() {
+      onChange(map.getZoom())
+    },
+  })
+  return null
 }
