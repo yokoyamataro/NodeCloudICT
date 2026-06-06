@@ -199,7 +199,6 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   // 工区が変更されたらデータを取得
   const farmId = currentFarm?.id
   useEffect(() => {
-    console.log('[GenericWorkAreaPage] useEffect triggered:', { farmId, workType })
     if (farmId) {
       fetchWorkAreas(farmId)
       fetchCoordinates(farmId)
@@ -207,7 +206,6 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   }, [farmId, workType, fetchWorkAreas, fetchCoordinates])
 
   const areas = getWorkAreasByType(workType)
-  console.log('[GenericWorkAreaPage] areas:', { workType, areasCount: areas.length, areas: areas.map(a => ({ id: a.id, name: a.name })) })
   const workTypeName = WORK_TYPE_NAMES[workType]
 
   // 地籍モードでは、表示中の地番（design_work_areas）に対応する parcels を一括取得
