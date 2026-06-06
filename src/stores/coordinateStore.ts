@@ -54,6 +54,8 @@ interface CoordinateState {
   // 座標データ
   coordinates: CoordinateRow[]
   loading: boolean
+  /** 大量データ取得時に done/total を出すための進捗。loading=false に戻ったときに null。 */
+  loadingProgress: { done: number; total: number } | null
   error: string | null
   fetchCoordinates: (farmId: string) => Promise<void>
   addCoordinate: (type: CoordinateType) => Promise<void>
@@ -116,12 +118,26 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
   // 座標データ
   coordinates: [],
   loading: false,
+  loadingProgress: null,
   error: null,
 
   fetchCoordinates: async (farmId: string) => {
     // 工区切替時に旧データを即時クリアしておく（地図初期化が古い座標で走るのを防ぐ）
-    set({ loading: true, error: null, coordinates: [] })
+    set({ loading: true, error: null, coordinates: [], loadingProgress: null })
     try {
+      // 総件数を先に取って、ページング中に done/total を伝えられるようにする
+      let totalCount = 0
+      {
+        const { count } = await supabase
+          .from('design_coordinates')
+          .select('id', { count: 'exact', head: true })
+          .eq('farm_id', farmId)
+        totalCount = count ?? 0
+      }
+      if (totalCount > 0) {
+        set({ loadingProgress: { done: 0, total: totalCount } })
+      }
+
       // Supabase は既定で 1 リクエスト 1000 行までなので range() でページング取得
       const PAGE = 1000
       const all: DesignCoordinate[] = []
@@ -137,6 +153,9 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         if (error) throw error
         const rows = (data || []) as DesignCoordinate[]
         all.push(...rows)
+        if (totalCount > 0) {
+          set({ loadingProgress: { done: all.length, total: totalCount } })
+        }
         if (rows.length < PAGE) break
         from += PAGE
       }
@@ -169,9 +188,13 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         }
       })
 
-      set({ coordinates, loading: false })
+      set({ coordinates, loading: false, loadingProgress: null })
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : '座標の取得に失敗しました', loading: false })
+      set({
+        error: err instanceof Error ? err.message : '座標の取得に失敗しました',
+        loading: false,
+        loadingProgress: null,
+      })
     }
   },
 

@@ -281,6 +281,7 @@ export function CoordinatesPage() {
     setZone,
     coordinates,
     fetchCoordinates,
+    loadingProgress: coordLoadingProgress,
     updateCoordinate,
     deleteCoordinate,
     deleteCoordinates,
@@ -1466,7 +1467,34 @@ export function CoordinatesPage() {
           <option key={o.label} value={o.label} />
         ))}
       </datalist>
-      <PageHeader title="座標管理" subtitle="平面直角座標の登録" />
+      <PageHeader
+        title="座標管理"
+        subtitle="平面直角座標の登録"
+        actions={
+          coordLoadingProgress && coordLoadingProgress.total > 0 ? (
+            <div className="flex items-center gap-2 text-xs text-slate-700">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" />
+              <span>
+                座標を読込中
+                <span className="font-mono ml-1">
+                  {coordLoadingProgress.done.toLocaleString()} / {coordLoadingProgress.total.toLocaleString()}
+                </span>
+                <span className="ml-1 text-slate-500">
+                  ({Math.round((coordLoadingProgress.done / coordLoadingProgress.total) * 100)}%)
+                </span>
+              </span>
+              <div className="w-32 h-2 bg-slate-200 rounded overflow-hidden">
+                <div
+                  className="h-full bg-blue-600 transition-[width] duration-150"
+                  style={{
+                    width: `${Math.min(100, (coordLoadingProgress.done / coordLoadingProgress.total) * 100)}%`,
+                  }}
+                />
+              </div>
+            </div>
+          ) : undefined
+        }
+      />
 
       {/* メインコンテンツ */}
       <ResizableSplit
