@@ -39,3 +39,10 @@ sample/
 # Supabase migrations フォルダに混入した非 SQL ファイル（テストデータ等）
 supabase/migrations/*.xml
 supabase/migrations/*.XML
+
+# Supabase CLI のローカルキャッシュ（supabase link で生成される）
+supabase/.temp/
+
+# 検証用 SIMA データ（個人情報を含む可能性があるため共有しない）
+doc/*.sim
+doc/*.SIM
