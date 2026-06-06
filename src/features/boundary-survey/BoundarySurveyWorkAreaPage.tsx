@@ -225,7 +225,7 @@ export function BoundarySurveyWorkAreaPage() {
               ) : (
                 <Download className="h-4 w-4" />
               )}
-              SIMA 取込
+              地番SIM取り込み
             </button>
             <button
               onClick={handleExport}
