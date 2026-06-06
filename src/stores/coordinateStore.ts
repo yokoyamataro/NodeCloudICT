@@ -334,8 +334,12 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         }
       })
 
-      // 大量データ対応: 500 件ずつチャンクして INSERT し、進捗を通知
-      const CHUNK = 500
+      // 大量データ対応: 200 件ずつチャンクして INSERT し、進捗を通知。
+      // - 以前は CHUNK=500 + select() で全カラム取得していたが、大規模 SIM
+      //   （1 万点以上）で最後のチャンクが応答せず固まるケースが頻発した
+      //   ため、チャンクを小さくし、戻りも id / point_number のみに絞る
+      // - 状態に積む CoordinateRow は入力 + 返却 id を組み合わせて構築する
+      const CHUNK = 200
       const allNew: CoordinateRow[] = []
       const total = insertData.length
       onProgress?.(0, total)
@@ -344,26 +348,34 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         const { data, error } = await supabase
           .from('design_coordinates')
           .insert(slice as never)
-          .select()
+          .select('id, point_number')
         if (error) throw error
-        for (const row of (data || []) as DesignCoordinate[]) {
+        const idByPn = new Map<string, string>()
+        for (const row of (data || []) as Array<{ id: string; point_number: string }>) {
+          idByPn.set(row.point_number, row.id)
+        }
+        for (const src of slice) {
+          const id = idByPn.get(src.point_number)
+          if (!id) continue
           allNew.push({
-            id: row.id,
-            pointNumber: row.point_number,
-            x: row.x,
-            y: row.y,
-            z: row.z,
-            lat: row.latitude,
-            lng: row.longitude,
-            type: row.coordinate_type as CoordinateType,
-            stakeType: row.stake_type ?? null,
-            createdAt: row.created_at ?? null,
-            updatedAt: row.updated_at ?? null,
-            createdBy: row.created_by ?? null,
-            updatedBy: row.updated_by ?? null,
+            id,
+            pointNumber: src.point_number,
+            x: src.x,
+            y: src.y,
+            z: src.z,
+            lat: src.latitude,
+            lng: src.longitude,
+            type: src.coordinate_type as CoordinateType,
+            stakeType: src.stake_type ?? null,
+            createdAt: null,
+            updatedAt: null,
+            createdBy: src.created_by,
+            updatedBy: src.updated_by,
           })
         }
         onProgress?.(Math.min(i + CHUNK, total), total)
+        // UI が描画する機会を入れる（連続 await でも yield されるとは限らないので明示的に）
+        await new Promise<void>((resolve) => setTimeout(resolve, 0))
       }
 
       set({ coordinates: [...state.coordinates, ...allNew] })

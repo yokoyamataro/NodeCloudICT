@@ -74,12 +74,13 @@ export function BoundarySurveyWorkAreaPage() {
       for (const c of insertedCoords) idByName.set(c.pointNumber, c.id)
 
       // 3) 画地を design_work_areas に挿入（work_type='boundary_survey'）
-      // 大量地番対応: 200 件ずつチャンクして INSERT する。1 件ずつ逐次だと
-      // 数千件で実質ハング状態になるため。
+      // 大量地番対応: 100 件ずつチャンクして INSERT する。1 件ずつ逐次だと
+      // 数千件で実質ハング状態になるため。チャンクが大きすぎると最後の
+      // バッチで応答が返ってこないケースが出るので、座標と同じく小さめに。
       let createdPolygons = 0
       let skippedPolygons = 0
       const polyTotal = result.polygons.length
-      const POLY_CHUNK = 200
+      const POLY_CHUNK = 100
 
       // 構成点 3 点未満の画地はスキップ。残りを INSERT 行に整形
       const insertRows: Array<{
@@ -134,6 +135,8 @@ export function BoundarySurveyWorkAreaPage() {
           done: Math.min(i + POLY_CHUNK, insertRows.length),
           total: insertRows.length,
         })
+        // UI を描画する時間を明示的に確保
+        await new Promise<void>((resolve) => setTimeout(resolve, 0))
       }
 
       setProgress({ phase: '工事区域を再読込中', done: 0, total: 0 })
