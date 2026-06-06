@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react'
-import { MapContainer, TileLayer, Marker, Polygon, Polyline, useMap, Tooltip } from 'react-leaflet'
+import { useEffect, useRef, useState } from 'react'
+import { MapContainer, TileLayer, Marker, Polygon, Polyline, useMap, useMapEvents, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useCoordinateStore, type CoordinateRow, type RoutePoint } from '@/stores/coordinateStore'
@@ -122,6 +122,33 @@ function MapViewManager({ coordinates }: { coordinates: CoordinateRow[] }) {
   }, [coordinates, map, center, zoom, isInitialized])
 
   return null
+}
+
+// 件数が多いとき、一定ズーム以上でのみ children を描画するゲート。
+// React が 10000+ の Marker / Polygon を一気にマウントすると詰まるので、
+// 拡大時のみ描画する運用にする。
+function HighDensityGate({
+  count,
+  threshold,
+  zoomMin,
+  children,
+}: {
+  count: number
+  /** この件数を超えるときだけゲートを有効化する */
+  threshold: number
+  /** ゲート時、この zoom 以上のときだけ描画する */
+  zoomMin: number
+  children: React.ReactNode
+}) {
+  const map = useMap()
+  const [zoom, setZoom] = useState<number>(() => map.getZoom())
+  useMapEvents({
+    zoomend() {
+      setZoom(map.getZoom())
+    },
+  })
+  if (count > threshold && zoom < zoomMin) return null
+  return <>{children}</>
 }
 
 // 背景地図の種類
@@ -273,24 +300,27 @@ export function CoordinateMap({
 
       <MapViewManager coordinates={validCoordinates} />
 
-      {/* 外部から渡されたポリゴン（workAreaStoreなど） */}
-      {externalPolygons.map(polygon => {
-        if (polygon.positions.length < 3) return null
-        const isEditing = polygon.id === editingExternalPolygonId
-        return (
-          <Polygon
-            key={polygon.id}
-            positions={polygon.positions}
-            pathOptions={{
-              color: isEditing ? '#16a34a' : '#22c55e',
-              fillColor: isEditing ? '#16a34a' : '#22c55e',
-              fillOpacity: isEditing ? 0.3 : 0.2,
-              weight: isEditing ? 3 : 2,
-              dashArray: isEditing ? '5, 5' : undefined,
-            }}
-          />
-        )
-      })}
+      {/* 外部から渡されたポリゴン（workAreaStore など）。地番ポリゴンは
+          4000+ になるので、500 件超なら zoom 16 以上で描画する */}
+      <HighDensityGate count={externalPolygons.length} threshold={500} zoomMin={16}>
+        {externalPolygons.map(polygon => {
+          if (polygon.positions.length < 3) return null
+          const isEditing = polygon.id === editingExternalPolygonId
+          return (
+            <Polygon
+              key={polygon.id}
+              positions={polygon.positions}
+              pathOptions={{
+                color: isEditing ? '#16a34a' : '#22c55e',
+                fillColor: isEditing ? '#16a34a' : '#22c55e',
+                fillOpacity: isEditing ? 0.3 : 0.2,
+                weight: isEditing ? 3 : 2,
+                dashArray: isEditing ? '5, 5' : undefined,
+              }}
+            />
+          )
+        })}
+      </HighDensityGate>
 
       {/* 境界線選択モード: 各辺をクリック可能なポリラインで重ねる */}
       {lineSelectMode &&
@@ -395,32 +425,34 @@ export function CoordinateMap({
         )
       })}
 
-      {/* 座標マーカー */}
-      {displayCoordinates.map(coord => (
-        <Marker
-          key={coord.id}
-          position={[coord.lat, coord.lng]}
-          icon={createColoredIcon(
-            MARKER_COLORS[coord.type] || '#666',
-            coord.id === selectedPointId
-          )}
-          interactive={coordinatesInteractive}
-          eventHandlers={coordinatesInteractive ? {
-            click: () => onPointSelect?.(coord.id),
-          } : undefined}
-        >
-          {showLabels && (
-            <Tooltip
-              permanent
-              direction="top"
-              offset={[0, -8]}
-              className="point-label-tooltip"
-            >
-              {coord.pointNumber}
-            </Tooltip>
-          )}
-        </Marker>
-      ))}
+      {/* 座標マーカー: 件数が多い (1000+) ときは zoom 17 以上で描画 */}
+      <HighDensityGate count={displayCoordinates.length} threshold={1000} zoomMin={17}>
+        {displayCoordinates.map(coord => (
+          <Marker
+            key={coord.id}
+            position={[coord.lat, coord.lng]}
+            icon={createColoredIcon(
+              MARKER_COLORS[coord.type] || '#666',
+              coord.id === selectedPointId
+            )}
+            interactive={coordinatesInteractive}
+            eventHandlers={coordinatesInteractive ? {
+              click: () => onPointSelect?.(coord.id),
+            } : undefined}
+          >
+            {showLabels && (
+              <Tooltip
+                permanent
+                direction="top"
+                offset={[0, -8]}
+                className="point-label-tooltip"
+              >
+                {coord.pointNumber}
+              </Tooltip>
+            )}
+          </Marker>
+        ))}
+      </HighDensityGate>
 
       {/* 外部から差し込む追加レイヤ（オルソ画像ページの作図・計測など） */}
       {children}
