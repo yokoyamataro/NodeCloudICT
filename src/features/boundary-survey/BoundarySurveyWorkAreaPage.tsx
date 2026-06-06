@@ -74,10 +74,25 @@ export function BoundarySurveyWorkAreaPage() {
       for (const c of insertedCoords) idByName.set(c.pointNumber, c.id)
 
       // 3) 画地を design_work_areas に挿入（work_type='boundary_survey'）
+      // 大量地番対応: 200 件ずつチャンクして INSERT する。1 件ずつ逐次だと
+      // 数千件で実質ハング状態になるため。
       let createdPolygons = 0
       let skippedPolygons = 0
       const polyTotal = result.polygons.length
-      setProgress({ phase: '画地を取り込み中', done: 0, total: polyTotal })
+      const POLY_CHUNK = 200
+
+      // 構成点 3 点未満の画地はスキップ。残りを INSERT 行に整形
+      const insertRows: Array<{
+        farm_id: string
+        work_type: string
+        zone_number: string
+        name: string
+        point_ids: string[]
+        area_sqm: null
+        area_ha: null
+        perimeter_m: null
+        notes: null
+      }> = []
       for (let i = 0; i < polyTotal; i++) {
         const poly = result.polygons[i]
         const pointIds = poly.pointNumbers
@@ -85,25 +100,40 @@ export function BoundarySurveyWorkAreaPage() {
           .filter((id): id is string => !!id)
         if (pointIds.length < 3) {
           skippedPolygons++
-        } else {
-          const label = poly.parcelName || poly.parcelNumber || `画地${createdPolygons + 1}`
-          const { error } = await supabase
-            .from('design_work_areas')
-            .insert({
-              farm_id: currentFarm.id,
-              work_type: 'boundary_survey',
-              zone_number: label,
-              name: label,
-              point_ids: pointIds,
-              area_sqm: null,
-              area_ha: null,
-              perimeter_m: null,
-              notes: null,
-            } as never)
-          if (!error) createdPolygons++
-          else skippedPolygons++
+          continue
         }
-        setProgress({ phase: '画地を取り込み中', done: i + 1, total: polyTotal })
+        const label = poly.parcelName || poly.parcelNumber || `画地${insertRows.length + 1}`
+        insertRows.push({
+          farm_id: currentFarm.id,
+          work_type: 'boundary_survey',
+          zone_number: label,
+          name: label,
+          point_ids: pointIds,
+          area_sqm: null,
+          area_ha: null,
+          perimeter_m: null,
+          notes: null,
+        })
+      }
+
+      setProgress({ phase: '画地を取り込み中', done: 0, total: insertRows.length })
+      for (let i = 0; i < insertRows.length; i += POLY_CHUNK) {
+        const slice = insertRows.slice(i, i + POLY_CHUNK)
+        const { error } = await supabase
+          .from('design_work_areas')
+          .insert(slice as never)
+        if (error) {
+          // チャンクごと失敗した分はスキップ扱いにして続行する（一部失敗で全停止しない）
+          console.error('画地 INSERT 失敗:', error)
+          skippedPolygons += slice.length
+        } else {
+          createdPolygons += slice.length
+        }
+        setProgress({
+          phase: '画地を取り込み中',
+          done: Math.min(i + POLY_CHUNK, insertRows.length),
+          total: insertRows.length,
+        })
       }
 
       setProgress({ phase: '工事区域を再読込中', done: 0, total: 0 })
