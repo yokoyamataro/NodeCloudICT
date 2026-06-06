@@ -541,6 +541,8 @@ export function CoordinateMap({
 
       {/* ズームレベルを上の表示用 state に伝搬する不可視トラッカ */}
       <ZoomTracker onChange={setCurrentZoom} />
+      {/* ホイールズームを 1 段ずつに制限 */}
+      <OneStepWheelZoom />
     </MapContainer>
     </div>
   )
@@ -558,5 +560,32 @@ function ZoomTracker({ onChange }: { onChange: (zoom: number) => void }) {
       onChange(map.getZoom())
     },
   })
+  return null
+}
+
+// Leaflet 標準のホイールズーム (deltaY を 60px / level で蓄積) は、
+// 高 DPI マウスや高速スクロールで 1 イベントに 2 段以上ズームしてしまうため、
+// 自前で「1 ホイールイベント = ±1 段」に置き換える。
+function OneStepWheelZoom() {
+  const map = useMap()
+  useEffect(() => {
+    map.scrollWheelZoom.disable()
+    const container = map.getContainer()
+    let lastTime = 0
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      // 高頻度スクロール（トラックパッドなど）の連発を間引く
+      const now = Date.now()
+      if (now - lastTime < 80) return
+      lastTime = now
+      if (e.deltaY < 0) map.zoomIn(1, { animate: true })
+      else if (e.deltaY > 0) map.zoomOut(1, { animate: true })
+    }
+    container.addEventListener('wheel', onWheel, { passive: false })
+    return () => {
+      container.removeEventListener('wheel', onWheel)
+      map.scrollWheelZoom.enable()
+    }
+  }, [map])
   return null
 }
