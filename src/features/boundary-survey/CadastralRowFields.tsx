@@ -94,8 +94,15 @@ export function CadastralRowFields({ area, visibleColumns }: Props) {
   const parcel = useParcelStore((s) => s.byWorkAreaId.get(area.id))
   const upsertParcel = useParcelStore((s) => s.upsertParcel)
 
+  // 地番名のフォールバック: parcels.parcel_number が空のときは
+  // design_work_areas.zoneNumber → name の順に拾う
+  // （SIMA インポートで地番ラベルは zoneNumber に入っているため）
+  const parcelNumberFallback = area.zoneNumber || area.name || ''
+
   // 各セルのローカルドラフト。parcel が変わった（外部更新・初回 fetch）ら同期。
-  const [parcelNumber, setParcelNumber] = useState(parcel?.parcel_number ?? '')
+  const [parcelNumber, setParcelNumber] = useState(
+    parcel?.parcel_number ?? parcelNumberFallback,
+  )
   const [regCategory, setRegCategory] = useState(parcel?.registered_land_category ?? '')
   const [regArea, setRegArea] = useState(
     parcel?.registered_area_sqm == null ? '' : String(parcel.registered_area_sqm),
@@ -109,7 +116,7 @@ export function CadastralRowFields({ area, visibleColumns }: Props) {
   const [attendedAt, setAttendedAt] = useState(toLocalInput(parcel?.attended_at ?? null))
 
   useEffect(() => {
-    setParcelNumber(parcel?.parcel_number ?? '')
+    setParcelNumber(parcel?.parcel_number ?? parcelNumberFallback)
     setRegCategory(parcel?.registered_land_category ?? '')
     setRegArea(parcel?.registered_area_sqm == null ? '' : String(parcel.registered_area_sqm))
     setUpdCategory(parcel?.updated_land_category ?? '')
@@ -117,7 +124,7 @@ export function CadastralRowFields({ area, visibleColumns }: Props) {
     setOwnerName(parcel?.owner_name ?? '')
     setOwnerAddress(parcel?.owner_address ?? '')
     setAttendedAt(toLocalInput(parcel?.attended_at ?? null))
-  }, [parcel])
+  }, [parcel, parcelNumberFallback])
 
   const save = (patch: Partial<ParcelEditableFields>) => {
     void upsertParcel(area.id, patch)
