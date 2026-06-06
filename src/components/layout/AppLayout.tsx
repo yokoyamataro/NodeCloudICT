@@ -71,7 +71,7 @@ interface NavGroup {
 }
 
 const navigation: NavGroup[] = [
-  { name: 'トップ', href: '/', icon: Home },
+  { name: '工区選択に戻る', href: '/', icon: Home },
   { name: '座標管理', href: '/coordinates', icon: Map },
   {
     name: '境界測量',
@@ -202,25 +202,25 @@ export function AppLayout() {
   // 各ストアのエラーを集約
   const anyError = coordinateError || pipeError || wiringError || workAreaError || planError || saveError
 
-  // トップページに戻る処理
+  // 工区選択に戻る処理（現在の工事の工区一覧へ）
+  // currentProject が分かっていればその工区一覧へ、無ければトップへフォールバック
   const handleGoToTop = () => {
-    // 既にトップページなら何もしない
-    if (location.pathname === '/') {
+    const targetPath = currentProject ? `/projects/${currentProject.id}` : '/'
+    if (location.pathname === targetPath) {
       return
     }
 
     // 未保存データがある場合は確認
     if (hasAnyUnsavedChanges) {
-      if (!confirm('未保存の変更があります。破棄してトップページに戻りますか？')) {
+      if (!confirm('未保存の変更があります。破棄して工区選択に戻りますか？')) {
         return
       }
     }
 
-    // 状態をリセット（工区を選択なしに戻す）
+    // 状態をリセット（工区を選択なしに戻す）。currentProject は維持して工区一覧を引かせる
     setCurrentFarm(null)
 
-    // トップページに遷移
-    navigate('/')
+    navigate(targetPath)
   }
 
   const handleSignOut = async () => {
@@ -560,14 +560,12 @@ export function AppLayout() {
                         )}
                       </>
                     ) : (
-                      item.name === 'トップ' ? (
+                      item.name === '工区選択に戻る' ? (
                         <button
                           onClick={handleGoToTop}
                           className={cn(
                             'w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors text-left',
-                            location.pathname === '/'
-                              ? 'bg-slate-800 text-white'
-                              : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                            'text-slate-300 hover:bg-slate-800 hover:text-white'
                           )}
                         >
                           <item.icon className="h-5 w-5" />
