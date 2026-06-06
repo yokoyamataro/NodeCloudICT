@@ -45,6 +45,15 @@ interface WorkAreaState {
   hasChanges: boolean
   pendingWorkAreaIds: string[]
 
+  /**
+   * 直近で fetchWorkAreas を完了させた farm の id。
+   * 同じ farm で再度 fetchWorkAreas が呼ばれたらキャッシュを使う。
+   * 編集系アクションはローカル state を更新するので整合性は保てる。
+   * 明示的に再取得したいときは invalidateCache() を使う。
+   */
+  loadedFarmId: string | null
+  invalidateCache: () => void
+
   // データ取得
   fetchWorkAreas: (farmId: string) => Promise<void>
 
@@ -92,9 +101,13 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
   error: null,
   hasChanges: false,
   pendingWorkAreaIds: [],
+  loadedFarmId: null,
+  invalidateCache: () => set({ loadedFarmId: null }),
 
   fetchWorkAreas: async (farmId: string) => {
-    set({ loading: true, error: null })
+    // 同じ farm でロード済みならキャッシュを使う
+    if (get().loadedFarmId === farmId) return
+    set({ loading: true, error: null, loadedFarmId: null })
     try {
       // 工事区域を取得（既定 1000 行/req の壁に当たるのでページング）
       const typedAreas: DesignWorkArea[] = []
@@ -118,7 +131,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
       }
 
       if (typedAreas.length === 0) {
-        set({ workAreas: {}, loading: false, hasChanges: false, pendingWorkAreaIds: [] })
+        set({ workAreas: {}, loading: false, hasChanges: false, pendingWorkAreaIds: [], loadedFarmId: farmId })
         return
       }
 
@@ -192,7 +205,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         workAreasRecord[area.work_type]!.push(workAreaRow)
       }
 
-      set({ workAreas: workAreasRecord, loading: false, hasChanges: false, pendingWorkAreaIds: [] })
+      set({ workAreas: workAreasRecord, loading: false, hasChanges: false, pendingWorkAreaIds: [], loadedFarmId: farmId })
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : '工事区域の取得に失敗しました',

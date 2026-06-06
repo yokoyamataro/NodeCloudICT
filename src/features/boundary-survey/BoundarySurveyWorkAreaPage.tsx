@@ -28,8 +28,17 @@ export function BoundarySurveyWorkAreaPage() {
 
   const { currentFarm } = useFarmStore()
   const { projects } = useProjectListStore()
-  const { coordinates, importCoordinates, fetchCoordinates } = useCoordinateStore()
-  const { workAreas, fetchWorkAreas } = useWorkAreaStore()
+  const {
+    coordinates,
+    importCoordinates,
+    fetchCoordinates,
+    invalidateCache: invalidateCoordCache,
+  } = useCoordinateStore()
+  const {
+    workAreas,
+    fetchWorkAreas,
+    invalidateCache: invalidateWorkAreaCache,
+  } = useWorkAreaStore()
 
   const project = currentFarm
     ? projects.find((p) => p.id === currentFarm.project_id)
@@ -179,8 +188,11 @@ export function BoundarySurveyWorkAreaPage() {
       }
 
       setProgress({ phase: '工事区域を再読込中', done: 0, total: 0 })
+      // SIMA 取り込みでサーバ側に大量行が追加されたので、両ストアの
+      // キャッシュを無効化して最新を取り直す
+      invalidateCoordCache()
+      invalidateWorkAreaCache()
       await fetchWorkAreas(currentFarm.id)
-      // インポート中ストアに積まなかった座標を取り直す
       await fetchCoordinates(currentFarm.id)
 
       const parts: string[] = []

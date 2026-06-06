@@ -57,6 +57,14 @@ interface CoordinateState {
   /** 大量データ取得時に done/total を出すための進捗。loading=false に戻ったときに null。 */
   loadingProgress: { done: number; total: number } | null
   error: string | null
+  /**
+   * 直近で fetchCoordinates を完了させた farm の id。
+   * 同じ farm で再度 fetchCoordinates が呼ばれてもキャッシュを使い、サーバへ問い合わせない。
+   * 編集系アクション (add/update/delete/import) はローカル state に反映するので、
+   * キャッシュを通しても整合性は保てる。明示的に再取得したいときは invalidateCache() を使う。
+   */
+  loadedFarmId: string | null
+  invalidateCache: () => void
   fetchCoordinates: (farmId: string) => Promise<void>
   addCoordinate: (type: CoordinateType) => Promise<void>
   updateCoordinate: (id: string, field: keyof CoordinateRow, value: string | number | null) => void
@@ -119,11 +127,15 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
   coordinates: [],
   loading: false,
   loadingProgress: null,
+  loadedFarmId: null,
+  invalidateCache: () => set({ loadedFarmId: null }),
   error: null,
 
   fetchCoordinates: async (farmId: string) => {
+    // 同じ farm でロード済みならキャッシュを使う（明示的な invalidateCache を経由するまで再取得しない）
+    if (get().loadedFarmId === farmId) return
     // 工区切替時に旧データを即時クリアしておく（地図初期化が古い座標で走るのを防ぐ）
-    set({ loading: true, error: null, coordinates: [], loadingProgress: null })
+    set({ loading: true, error: null, coordinates: [], loadingProgress: null, loadedFarmId: null })
     try {
       // 総件数を先に取って、ページング中に done/total を伝えられるようにする
       let totalCount = 0
@@ -188,12 +200,13 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         }
       })
 
-      set({ coordinates, loading: false, loadingProgress: null })
+      set({ coordinates, loading: false, loadingProgress: null, loadedFarmId: farmId })
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : '座標の取得に失敗しました',
         loading: false,
         loadingProgress: null,
+        loadedFarmId: null,
       })
     }
   },
