@@ -28,7 +28,7 @@ export function BoundarySurveyWorkAreaPage() {
 
   const { currentFarm } = useFarmStore()
   const { projects } = useProjectListStore()
-  const { coordinates, importCoordinates } = useCoordinateStore()
+  const { coordinates, importCoordinates, fetchCoordinates } = useCoordinateStore()
   const { workAreas, fetchWorkAreas } = useWorkAreaStore()
 
   const project = currentFarm
@@ -63,9 +63,16 @@ export function BoundarySurveyWorkAreaPage() {
       let insertedCoords: CoordinateRow[] = []
       if (newCoords.length > 0) {
         setProgress({ phase: '座標を取り込み中', done: 0, total: newCoords.length })
-        insertedCoords = await importCoordinates(newCoords, (done, total) => {
-          setProgress({ phase: '座標を取り込み中', done, total })
-        })
+        // skipStateUpdate=true: インポート中はストアに 11k+ の座標を入れない
+        // （CoordinateMap が全 marker をレンダーして JS スレッドが詰まるのを防ぐ）。
+        // 取り込み完了後に fetchCoordinates で 1 度だけ反映する
+        insertedCoords = await importCoordinates(
+          newCoords,
+          (done, total) => {
+            setProgress({ phase: '座標を取り込み中', done, total })
+          },
+          { skipStateUpdate: true },
+        )
       }
 
       // 2) 既存 coordinates + insertedCoords で 点番号 → ID マップを構築（再 fetch 不要）
@@ -141,6 +148,8 @@ export function BoundarySurveyWorkAreaPage() {
 
       setProgress({ phase: '工事区域を再読込中', done: 0, total: 0 })
       await fetchWorkAreas(currentFarm.id)
+      // インポート中ストアに積まなかった座標を取り直す
+      await fetchCoordinates(currentFarm.id)
 
       const parts: string[] = []
       parts.push(`座標 ${newCoords.length} 点を追加（既存 ${result.coordinates.length - newCoords.length} 点はスキップ）`)

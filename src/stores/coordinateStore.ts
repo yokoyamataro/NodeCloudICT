@@ -63,6 +63,7 @@ interface CoordinateState {
   importCoordinates: (
     coords: ImportCoordinateInput[],
     onProgress?: (done: number, total: number) => void,
+    options?: { skipStateUpdate?: boolean },
   ) => Promise<CoordinateRow[]>
   clearCoordinates: () => Promise<void>
   getCoordinateById: (id: string) => CoordinateRow | undefined
@@ -298,7 +299,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
     }
   },
 
-  importCoordinates: async (coords, onProgress) => {
+  importCoordinates: async (coords, onProgress, options) => {
     const farmId = getCurrentFarmId()
     if (!farmId) {
       set({ error: '工区が選択されていません' })
@@ -378,7 +379,12 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         await new Promise<void>((resolve) => setTimeout(resolve, 0))
       }
 
-      set({ coordinates: [...state.coordinates, ...allNew] })
+      // skipStateUpdate=true のときはここでストアを更新しない
+      // （巨大インポートで全 marker を一気にレンダーすると JS スレッドが詰まるので、
+      //  呼び出し元が最後に fetchCoordinates で取り直す運用にする）
+      if (!options?.skipStateUpdate) {
+        set({ coordinates: [...state.coordinates, ...allNew] })
+      }
       return allNew
     } catch (err) {
       set({ error: err instanceof Error ? err.message : '座標のインポートに失敗しました' })
