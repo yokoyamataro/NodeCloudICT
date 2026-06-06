@@ -96,23 +96,26 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
   fetchWorkAreas: async (farmId: string) => {
     set({ loading: true, error: null })
     try {
-      // 工事区域を取得
-      const { data: areas, error: areaError } = await supabase
-        .from('design_work_areas')
-        .select('*')
-        .eq('farm_id', farmId)
-        .order('work_type')
-        .order('zone_number')
-
-      if (areaError) throw areaError
-
-      const typedAreas = areas as DesignWorkArea[]
-
-      console.log('[workAreaStore] fetchWorkAreas - areas from DB:', {
-        farmId,
-        areasCount: typedAreas.length,
-        areas: typedAreas.map(a => ({ id: a.id, work_type: a.work_type, name: a.name, point_ids: a.point_ids })),
-      })
+      // 工事区域を取得（既定 1000 行/req の壁に当たるのでページング）
+      const typedAreas: DesignWorkArea[] = []
+      {
+        const PAGE = 1000
+        let from = 0
+        while (from < 1_000_000) {
+          const { data: areas, error: areaError } = await supabase
+            .from('design_work_areas')
+            .select('*')
+            .eq('farm_id', farmId)
+            .order('work_type')
+            .order('zone_number')
+            .range(from, from + PAGE - 1)
+          if (areaError) throw areaError
+          const rows = (areas || []) as DesignWorkArea[]
+          typedAreas.push(...rows)
+          if (rows.length < PAGE) break
+          from += PAGE
+        }
+      }
 
       if (typedAreas.length === 0) {
         set({ workAreas: {}, loading: false, hasChanges: false, pendingWorkAreaIds: [] })
@@ -189,13 +192,6 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         workAreasRecord[area.work_type]!.push(workAreaRow)
       }
 
-      console.log('[workAreaStore] fetchWorkAreas result:', {
-        farmId,
-        areasCount: typedAreas.length,
-        workAreasRecord: Object.fromEntries(
-          Object.entries(workAreasRecord).map(([k, v]) => [k, v?.map(a => ({ id: a.id, name: a.name, pointsCount: a.points.length }))])
-        ),
-      })
       set({ workAreas: workAreasRecord, loading: false, hasChanges: false, pendingWorkAreaIds: [] })
     } catch (err) {
       set({
