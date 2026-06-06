@@ -98,6 +98,16 @@ export function LoginPage() {
             </Link>
           </div>
 
+          <div className="mt-3 text-center text-xs">
+            <Link to="/terms" className="text-slate-500 hover:text-slate-700 hover:underline">
+              利用規約
+            </Link>
+            <span className="text-slate-300 mx-2">|</span>
+            <Link to="/privacy" className="text-slate-500 hover:text-slate-700 hover:underline">
+              プライバシーポリシー
+            </Link>
+          </div>
+
           <p className="mt-6 text-center text-xs text-slate-500">
             開発者：
             <a
