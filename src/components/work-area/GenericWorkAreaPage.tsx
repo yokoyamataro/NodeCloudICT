@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Plus, Trash2, GripVertical, Calculator, Download, X, Image as ImageIcon, Ruler, Pencil, Tag, Hash } from 'lucide-react'
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
@@ -16,6 +16,7 @@ import {
 import type { WorkType, AreaCalculationSheet as AreaCalculationSheetType } from '@/types/database'
 import { WORK_TYPE_NAMES } from '@/types/database'
 import { exportAreaCalculationToCSV } from '@/lib/area-calculation'
+import { compareByLocationAndParcel } from '@/lib/parcelSort'
 
 // 面積計算簿コンポーネント
 function AreaCalculationSheet({
@@ -226,6 +227,27 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   const fetchParcels = useParcelStore((s) => s.fetchByWorkAreaIds)
   const clearParcels = useParcelStore((s) => s.clear)
   const parcelByWorkAreaId = useParcelStore((s) => s.byWorkAreaId)
+
+  // 地籍モード: 所在 → 地番(親番-小番) の自然順で並べ替えた区域一覧。
+  // それ以外（土木工種）は元順を維持する。
+  const sortedAreas = useMemo(() => {
+    if (!isBoundarySurvey) return areas
+    return [...areas].sort((a, b) => {
+      const pa = parcelByWorkAreaId.get(a.id)
+      const pb = parcelByWorkAreaId.get(b.id)
+      return compareByLocationAndParcel(
+        {
+          location: pa?.location ?? null,
+          // parcels 行がまだ無い場合は SIMA 由来の zoneNumber/name を地番代わりに
+          parcel_number: pa?.parcel_number ?? a.zoneNumber ?? a.name ?? null,
+        },
+        {
+          location: pb?.location ?? null,
+          parcel_number: pb?.parcel_number ?? b.zoneNumber ?? b.name ?? null,
+        },
+      )
+    })
+  }, [isBoundarySurvey, areas, parcelByWorkAreaId])
   // 地籍モード: 工区に紐づく地権者と、地番への割り当てを取得
   const fetchLandownersByFarm = useLandownerStore((s) => s.fetchByFarm)
   const refetchLandownerAssignments = useLandownerStore((s) => s.fetchAssignmentsByFarm)
@@ -448,7 +470,7 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
               )}
               <div className={isBoundarySurvey ? 'overflow-x-auto' : ''}>
                 <div className={isBoundarySurvey ? 'min-w-max' : ''}>
-              {areas.map((area) => {
+              {sortedAreas.map((area) => {
                 const isEditing = editingAreaId === area.id
                 const areaPoints = getAreaPoints(area.id)
 

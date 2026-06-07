@@ -259,6 +259,8 @@ export interface Profile {
 export interface Parcel {
   id: string
   work_area_id: string
+  /** 所在（例: A市B町一丁目）。並び順のキーにも使う */
+  location: string | null
   parcel_number: string | null
   notes: string | null
   registered_land_category: string | null

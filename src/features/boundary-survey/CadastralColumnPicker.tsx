@@ -32,6 +32,11 @@ function load(): Set<CadastralColumnKey> {
     const valid = migrated.filter((k): k is CadastralColumnKey =>
       (CADASTRAL_COLUMN_KEYS as readonly string[]).includes(k as string),
     )
+    // 既存ユーザの保存に含まれない新規追加列は自動で有効化する
+    //   ・'location'（所在）— 並び順のキーになるので既定で見せたい
+    if (valid.length > 0 && !valid.includes('location')) {
+      valid.unshift('location')
+    }
     // 空配列で全部消えるのは事故っぽいので、最低 1 列は残す
     return valid.length > 0 ? new Set(valid) : new Set(DEFAULT_VISIBLE_COLUMNS)
   } catch {

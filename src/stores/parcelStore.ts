@@ -16,6 +16,7 @@ import type { Parcel } from '@/types/database'
 interface RawParcel {
   id: string
   work_area_id: string
+  location: string | null
   parcel_number: string | null
   notes: string | null
   registered_land_category: string | null
@@ -31,6 +32,7 @@ interface RawParcel {
 const toParcel = (r: RawParcel): Parcel => ({
   id: r.id,
   work_area_id: r.work_area_id,
+  location: r.location,
   parcel_number: r.parcel_number,
   notes: r.notes,
   registered_land_category: r.registered_land_category,
@@ -45,6 +47,7 @@ const toParcel = (r: RawParcel): Parcel => ({
 
 export type ParcelEditableFields = Pick<
   Parcel,
+  | 'location'
   | 'parcel_number'
   | 'notes'
   | 'registered_land_category'
@@ -102,6 +105,7 @@ export const useParcelStore = create<ParcelState>((set, get) => ({
     const optimistic: Parcel = {
       id: prev?.id ?? 'pending',
       work_area_id: workAreaId,
+      location: fields.location ?? prev?.location ?? null,
       parcel_number: fields.parcel_number ?? prev?.parcel_number ?? null,
       notes: fields.notes ?? prev?.notes ?? null,
       registered_land_category:

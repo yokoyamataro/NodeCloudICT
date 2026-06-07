@@ -12,6 +12,7 @@ import { LAND_CATEGORIES } from '@/lib/landCategory'
 
 // 列の正準キー。表示順を兼ねる。
 export const CADASTRAL_COLUMN_KEYS = [
+  'location',
   'parcel_number',
   'registered_land_category',
   'registered_area_sqm',
@@ -27,6 +28,7 @@ export const CADASTRAL_COLUMN_KEYS = [
 export type CadastralColumnKey = (typeof CADASTRAL_COLUMN_KEYS)[number]
 
 export const CADASTRAL_COLUMN_LABELS: Record<CadastralColumnKey, string> = {
+  location: '所在',
   parcel_number: '地番',
   registered_land_category: '登記地目',
   registered_area_sqm: '登記地積(m²)',
@@ -59,6 +61,7 @@ const num = (s: string): number | null => {
 
 // 各列の幅クラス。CadastralHeader と CadastralRowFields で共有して見出しと行を揃える。
 export const CADASTRAL_COLUMN_WIDTH: Record<CadastralColumnKey, string> = {
+  location: 'w-40',
   parcel_number: 'w-28',
   registered_land_category: 'w-24',
   registered_area_sqm: 'w-24',
@@ -86,6 +89,7 @@ export function CadastralRowFields({ area, visibleColumns }: Props) {
   const parcelNumberFallback = area.zoneNumber || area.name || ''
 
   // 各セルのローカルドラフト。parcel が変わった（外部更新・初回 fetch）ら同期。
+  const [location, setLocation] = useState(parcel?.location ?? '')
   const [parcelNumber, setParcelNumber] = useState(
     parcel?.parcel_number ?? parcelNumberFallback,
   )
@@ -101,6 +105,7 @@ export function CadastralRowFields({ area, visibleColumns }: Props) {
   const [ownerAddress, setOwnerAddress] = useState(parcel?.registered_owner_address ?? '')
 
   useEffect(() => {
+    setLocation(parcel?.location ?? '')
     setParcelNumber(parcel?.parcel_number ?? parcelNumberFallback)
     setRegCategory(parcel?.registered_land_category ?? '')
     setRegArea(parcel?.registered_area_sqm == null ? '' : String(parcel.registered_area_sqm))
@@ -130,6 +135,18 @@ export function CadastralRowFields({ area, visibleColumns }: Props) {
 
   const cellFor = (key: CadastralColumnKey): React.ReactNode => {
     switch (key) {
+      case 'location':
+        return (
+          <input
+            type="text"
+            value={location}
+            onChange={(e) => setLocation(e.target.value)}
+            onClick={stop}
+            onBlur={() => save({ location: location.trim() || null })}
+            className="w-full px-1.5 py-1 border rounded text-sm"
+            placeholder="A市B町一丁目"
+          />
+        )
       case 'parcel_number':
         return (
           <input
