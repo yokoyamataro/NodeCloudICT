@@ -220,6 +220,10 @@ export function ProjectListPage() {
 
   // 工区クリック時のアクション選択ダイアログ
   const [farmActionDialog, setFarmActionDialog] = useState<Farm | null>(null)
+  // 工区削除中の進捗
+  const [farmDeleteProgress, setFarmDeleteProgress] = useState<
+    { phase: string; done?: number; total?: number } | null
+  >(null)
 
   // 工区が読み込まれたらポリゴンデータを取得
   useEffect(() => {
@@ -461,11 +465,23 @@ export function ProjectListPage() {
 
   const handleDeleteFarm = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
-    if (confirm('この工区を削除しますか？関連するすべてのデータが削除されます。')) {
-      await deleteFarm(id)
-      if (selectedFarm?.id === id) {
-        setSelectedFarm(null)
-      }
+    if (
+      !confirm(
+        'この工区を削除しますか？\n\n座標・地番ポリゴン・地番属性・写真・LandXML・オルソタイルなど、関連するすべてのデータと Storage ファイルが削除されます。\nこの操作は取り消せません。',
+      )
+    ) {
+      return
+    }
+    try {
+      setFarmDeleteProgress({ phase: '関連データを集約中' })
+      await deleteFarm(id, (phase, done, total) => {
+        setFarmDeleteProgress({ phase, done, total })
+      })
+      if (selectedFarm?.id === id) setSelectedFarm(null)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '工区の削除に失敗しました')
+    } finally {
+      setFarmDeleteProgress(null)
     }
   }
 
@@ -1521,6 +1537,42 @@ export function ProjectListPage() {
       {/* 未分類工事の種別選択ダイアログ。
           openAfter 付き: 工区を開くフロー中（分類後そのまま現場へ）
           openAfter 無し: バナーから「種別を選択」を押したとき（分類のみ） */}
+      {farmDeleteProgress && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[10000] p-4">
+          <div className="bg-white rounded-lg shadow-xl border w-full max-w-md p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <Loader2 className="h-5 w-5 animate-spin text-red-600" />
+              <div className="text-base font-semibold">工区を削除中</div>
+            </div>
+            <div className="text-sm text-slate-700 mb-2">{farmDeleteProgress.phase}</div>
+            {farmDeleteProgress.total != null && farmDeleteProgress.total > 0 && (
+              <>
+                <div className="flex items-baseline gap-2 mb-2">
+                  <span className="text-2xl font-mono font-bold tabular-nums">
+                    {(farmDeleteProgress.done ?? 0).toLocaleString()}
+                  </span>
+                  <span className="text-sm text-slate-500">
+                    / {farmDeleteProgress.total.toLocaleString()} 件
+                  </span>
+                  <span className="ml-auto text-sm text-slate-500">
+                    {Math.round(((farmDeleteProgress.done ?? 0) / farmDeleteProgress.total) * 100)}%
+                  </span>
+                </div>
+                <div className="w-full h-3 bg-slate-200 rounded overflow-hidden">
+                  <div
+                    className="h-full bg-red-600 transition-[width] duration-150"
+                    style={{
+                      width: `${Math.min(100, ((farmDeleteProgress.done ?? 0) / farmDeleteProgress.total) * 100)}%`,
+                    }}
+                  />
+                </div>
+              </>
+            )}
+            <div className="text-[11px] text-slate-400 mt-3">画面は閉じないでください</div>
+          </div>
+        </div>
+      )}
+
       {categoryPrompt && (() => {
         const proj = allProjects.find((p) => p.id === categoryPrompt.projectId)
         return (

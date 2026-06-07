@@ -88,7 +88,10 @@ interface FarmState {
   fetchWorkAreaPolygons: () => Promise<void>
   createFarm: (projectId: string, name: string, description?: string) => Promise<Farm | null>
   updateFarm: (id: string, updates: Partial<Pick<Farm, 'name' | 'description'>>) => Promise<void>
-  deleteFarm: (id: string) => Promise<void>
+  deleteFarm: (
+    id: string,
+    onProgress?: (phase: string, done?: number, total?: number) => void,
+  ) => Promise<void>
 }
 
 export const useFarmStore = create<FarmState>()(
@@ -353,15 +356,143 @@ export const useFarmStore = create<FarmState>()(
     }
   },
 
-  deleteFarm: async (id) => {
+  deleteFarm: async (id, onProgress) => {
     set({ loading: true, error: null })
     try {
-      const { error } = await supabase
-        .from('farms')
-        .delete()
-        .eq('id', id)
+      // 1. 関連する design_coordinates / design_work_areas / design_pipes の ID を集める。
+      //    attachments は entity_type/entity_id で参照しているので、これらの ID を経由して
+      //    attachments を引く必要がある。
+      onProgress?.('関連データを集約中')
+      const [coordsRes, wareasRes, pipesRes] = await Promise.all([
+        supabase.from('design_coordinates').select('id').eq('farm_id', id),
+        supabase.from('design_work_areas').select('id').eq('farm_id', id),
+        supabase.from('design_pipes').select('id').eq('farm_id', id),
+      ])
+      const coordIds = ((coordsRes.data ?? []) as { id: string }[]).map((r) => r.id)
+      const wareaIds = ((wareasRes.data ?? []) as { id: string }[]).map((r) => r.id)
+      const pipeIds = ((pipesRes.data ?? []) as { id: string }[]).map((r) => r.id)
 
-      if (error) throw error
+      // 2. 関連 attachments を 1 つの配列にまとめる
+      const collectAttachments = async (entityType: string, entityIds: string[]) => {
+        const result: { id: string; file_path: string }[] = []
+        if (entityIds.length === 0) return result
+        for (let i = 0; i < entityIds.length; i += 500) {
+          const slice = entityIds.slice(i, i + 500)
+          const { data, error } = await supabase
+            .from('attachments')
+            .select('id, file_path')
+            .eq('entity_type', entityType)
+            .in('entity_id', slice)
+          if (error) throw error
+          for (const a of (data ?? []) as { id: string; file_path: string }[]) {
+            result.push(a)
+          }
+        }
+        return result
+      }
+      const allAttachments = [
+        ...(await collectAttachments('coordinate', coordIds)),
+        ...(await collectAttachments('work_area', wareaIds)),
+        ...(await collectAttachments('pipe', pipeIds)),
+        ...(await collectAttachments('farm', [id])),
+      ]
+
+      // 3. attachments の Storage 実体を削除
+      if (allAttachments.length > 0) {
+        onProgress?.('写真ファイルを削除中', 0, allAttachments.length)
+        const paths = allAttachments.map((a) => a.file_path)
+        const CHUNK = 100
+        for (let i = 0; i < paths.length; i += CHUNK) {
+          const slice = paths.slice(i, i + CHUNK)
+          // 失敗してもメタは消す（孤児ファイル < 孤児メタ）
+          await supabase.storage.from('attachments').remove(slice)
+          onProgress?.('写真ファイルを削除中', Math.min(i + CHUNK, paths.length), paths.length)
+        }
+
+        // 4. attachments の DB 行も削除
+        onProgress?.('写真メタを削除中', 0, allAttachments.length)
+        const attIds = allAttachments.map((a) => a.id)
+        for (let i = 0; i < attIds.length; i += 500) {
+          const slice = attIds.slice(i, i + 500)
+          const { error: delErr } = await supabase
+            .from('attachments')
+            .delete()
+            .in('id', slice)
+          if (delErr) throw delErr
+          onProgress?.('写真メタを削除中', Math.min(i + 500, attIds.length), attIds.length)
+        }
+      }
+
+      // 5. LandXML の Storage 実体を削除（DB 行は farms 削除時の CASCADE で消える）
+      const { data: lxRows } = await supabase
+        .from('landxml_files')
+        .select('storage_path')
+        .eq('farm_id', id)
+      const lxPaths = ((lxRows ?? []) as { storage_path: string }[]).map((r) => r.storage_path)
+      if (lxPaths.length > 0) {
+        onProgress?.('LandXML ファイルを削除中', 0, lxPaths.length)
+        for (let i = 0; i < lxPaths.length; i += 100) {
+          const slice = lxPaths.slice(i, i + 100)
+          await supabase.storage.from('landxml').remove(slice)
+          onProgress?.('LandXML ファイルを削除中', Math.min(i + 100, lxPaths.length), lxPaths.length)
+        }
+      }
+
+      // 6. オルソタイルの Storage 実体（DB 行は CASCADE）
+      const { data: orthoRows } = await supabase
+        .from('orthophoto_tilesets')
+        .select('storage_path')
+        .eq('farm_id', id)
+      const orthoPrefixes = ((orthoRows ?? []) as { storage_path: string }[]).map(
+        (r) => r.storage_path,
+      )
+      if (orthoPrefixes.length > 0) {
+        onProgress?.('オルソ画像タイルを削除中', 0, orthoPrefixes.length)
+        // 各タイルセット配下を再帰列挙して remove
+        const listAllFiles = async (prefix: string): Promise<string[]> => {
+          const all: string[] = []
+          const walk = async (current: string) => {
+            let offset = 0
+            const LIMIT = 100
+            // eslint-disable-next-line no-constant-condition
+            while (true) {
+              const { data, error } = await supabase.storage
+                .from('orthophoto-tiles')
+                .list(current, { limit: LIMIT, offset })
+              if (error) throw error
+              if (!data || data.length === 0) break
+              for (const item of data) {
+                if (!item.name) continue
+                const full = current ? `${current}/${item.name}` : item.name
+                if (item.id === null) {
+                  // フォルダ: 再帰
+                  await walk(full)
+                } else {
+                  all.push(full)
+                }
+              }
+              if (data.length < LIMIT) break
+              offset += data.length
+            }
+          }
+          await walk(prefix)
+          return all
+        }
+        for (let i = 0; i < orthoPrefixes.length; i++) {
+          const prefix = orthoPrefixes[i]
+          const files = await listAllFiles(prefix)
+          for (let j = 0; j < files.length; j += 100) {
+            const slice = files.slice(j, j + 100)
+            await supabase.storage.from('orthophoto-tiles').remove(slice)
+          }
+          onProgress?.('オルソ画像タイルを削除中', i + 1, orthoPrefixes.length)
+        }
+      }
+
+      // 7. 最後に工区を削除（残りの DB 関連行は CASCADE で消える）
+      onProgress?.('工区を削除中')
+      const { error: delFarmErr } = await supabase.from('farms').delete().eq('id', id)
+      if (delFarmErr) throw delFarmErr
 
       set((state) => ({
         farms: state.farms.filter((f) => f.id !== id),
@@ -370,6 +501,7 @@ export const useFarmStore = create<FarmState>()(
       }))
     } catch (err) {
       set({ error: err instanceof Error ? err.message : '工区の削除に失敗しました', loading: false })
+      throw err
     }
   },
     }),
