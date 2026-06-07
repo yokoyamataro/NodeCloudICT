@@ -168,6 +168,8 @@ export function CadastralRowFields({ area, visibleColumns }: Props) {
             onChange={(e) => setRegArea(e.target.value)}
             onClick={stop}
             onBlur={() => save({ registered_area_sqm: num(regArea) })}
+            // フォーカス中のホイール操作で数値が勝手に増減するのを防ぐ
+            onWheel={(e) => e.currentTarget.blur()}
             className="w-full px-1.5 py-1 border rounded text-right font-mono text-sm"
           />
         )
@@ -192,6 +194,7 @@ export function CadastralRowFields({ area, visibleColumns }: Props) {
             onChange={(e) => setUpdArea(e.target.value)}
             onClick={stop}
             onBlur={() => save({ updated_area_sqm: num(updArea) })}
+            onWheel={(e) => e.currentTarget.blur()}
             className="w-full px-1.5 py-1 border rounded text-right font-mono text-sm"
           />
         )
