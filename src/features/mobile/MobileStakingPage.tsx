@@ -3552,20 +3552,12 @@ export function MobileStakingPage() {
                                 }
                               />
                               <ParcelAttrRow
-                                label="所有者氏名"
-                                value={attrs?.owner_name ?? null}
+                                label="登記所有者氏名"
+                                value={attrs?.registered_owner_name ?? null}
                               />
                               <ParcelAttrRow
-                                label="所有者住所"
-                                value={attrs?.owner_address ?? null}
-                              />
-                              <ParcelAttrRow
-                                label="立会日時"
-                                value={
-                                  attrs?.attended_at
-                                    ? new Date(attrs.attended_at).toLocaleString('ja-JP')
-                                    : null
-                                }
+                                label="登記所有者住所"
+                                value={attrs?.registered_owner_address ?? null}
                               />
                               <div className="text-[10px] text-slate-400 pt-1">
                                 属性の編集は PC 画面で

@@ -265,11 +265,68 @@ export interface Parcel {
   registered_area_sqm: number | null
   updated_land_category: string | null
   updated_area_sqm: number | null
-  owner_address: string | null
-  owner_name: string | null
-  attended_at: string | null
+  /** 登記簿上の所有者住所（旧 owner_address） */
+  registered_owner_address: string | null
+  /** 登記簿上の所有者氏名（旧 owner_name） */
+  registered_owner_name: string | null
   created_at: string
   updated_at: string
+}
+
+// 地権者の通知方法
+export type LandownerNotificationMethod =
+  | 'direct_visit'
+  | 'mail'
+  | 'phone'
+  | 'agent'
+
+export const LANDOWNER_NOTIFICATION_LABEL: Record<LandownerNotificationMethod, string> = {
+  direct_visit: '直接訪問',
+  mail: '郵送',
+  phone: '電話',
+  agent: '代理人',
+}
+
+// 地権者の立会状況
+export type LandownerAttendanceStatus =
+  | 'not_attended'
+  | 'field_confirmed'
+  | 'document_confirmed'
+  | 'rejected'
+
+export const LANDOWNER_ATTENDANCE_LABEL: Record<LandownerAttendanceStatus, string> = {
+  not_attended: '未立会',
+  field_confirmed: '現地立会確認済',
+  document_confirmed: '書面確認済',
+  rejected: '不承諾',
+}
+
+// 地権者（工区単位で管理）。地番との関係は parcel_landowners 多対多関連で表現する。
+export interface Landowner {
+  id: string
+  farm_id: string
+  full_name: string
+  postal_code: string | null
+  address: string | null
+  phone: string | null
+  agent_name: string | null
+  agent_address: string | null
+  agent_phone: string | null
+  agent_relation: string | null
+  primary_attendance_at: string | null
+  secondary_attendance_at: string | null
+  notification_method: LandownerNotificationMethod | null
+  attendance_status: LandownerAttendanceStatus
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+// 地番と地権者の M:N 関連
+export interface ParcelLandowner {
+  parcel_id: string
+  landowner_id: string
+  created_at: string
 }
 
 // サイトオーナー用ユーザー一覧（admin_list_users RPC の戻り値）

@@ -4,6 +4,7 @@ import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { useParcelStore } from '@/stores/parcelStore'
+import { useLandownerStore } from '@/stores/landownerStore'
 import { CoordinateMap, type ExternalPolygon, type EdgeRounding, type BaseLayerType } from '@/components/map/CoordinateMap'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { CadastralRowFields } from '@/features/boundary-survey/CadastralRowFields'
@@ -225,6 +226,9 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   const fetchParcels = useParcelStore((s) => s.fetchByWorkAreaIds)
   const clearParcels = useParcelStore((s) => s.clear)
   const parcelByWorkAreaId = useParcelStore((s) => s.byWorkAreaId)
+  // 地籍モード: 工区に紐づく地権者と、地番への割り当てを取得
+  const fetchLandownersByFarm = useLandownerStore((s) => s.fetchByFarm)
+  const refetchLandownerAssignments = useLandownerStore((s) => s.fetchAssignmentsByFarm)
   // 地番一覧の表示列（地籍時のみ使用）。localStorage に保存される
   const [visibleColumns, setVisibleColumns] = useCadastralVisibleColumns()
   useEffect(() => {
@@ -236,6 +240,19 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
     // areas の id 集合が変わったときだけ再 fetch（中身編集での無駄打ち防止）
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isBoundarySurvey, areas.map((a) => a.id).join(','), fetchParcels])
+
+  // 地籍モード: 工区が変わったら地権者一覧を取り直す
+  useEffect(() => {
+    if (!isBoundarySurvey || !farmId) return
+    void fetchLandownersByFarm(farmId)
+  }, [isBoundarySurvey, farmId, fetchLandownersByFarm])
+
+  // 地番（parcels）の id 集合が変わったら、地権者の割り当てだけ取り直す
+  useEffect(() => {
+    if (!isBoundarySurvey || !farmId) return
+    void refetchLandownerAssignments(farmId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isBoundarySurvey, farmId, Array.from(parcelByWorkAreaId.values()).map((p) => p.id).join(',')])
 
   // 区域の構成点情報を座標一覧から取得
   const getAreaPoints = (areaId: string): (WorkAreaPoint & { coord?: CoordinateRow })[] => {

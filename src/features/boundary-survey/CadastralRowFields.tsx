@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react'
 import type { WorkAreaRow } from '@/stores/workAreaStore'
 import { useParcelStore, type ParcelEditableFields } from '@/stores/parcelStore'
+import { useLandownerStore } from '@/stores/landownerStore'
 import { LAND_CATEGORIES } from '@/lib/landCategory'
 
 // 列の正準キー。表示順を兼ねる。
@@ -16,9 +17,9 @@ export const CADASTRAL_COLUMN_KEYS = [
   'registered_area_sqm',
   'updated_land_category',
   'updated_area_sqm',
-  'owner_name',
-  'owner_address',
-  'attended_at',
+  'registered_owner_name',
+  'registered_owner_address',
+  'landowners',
   'points_count',
   'computed_area_sqm',
 ] as const
@@ -31,9 +32,9 @@ export const CADASTRAL_COLUMN_LABELS: Record<CadastralColumnKey, string> = {
   registered_area_sqm: '登記地積(m²)',
   updated_land_category: '変更地目',
   updated_area_sqm: '変更地積(m²)',
-  owner_name: '所有者氏名',
-  owner_address: '所有者住所',
-  attended_at: '立会日時',
+  registered_owner_name: '登記所有者氏名',
+  registered_owner_address: '登記所有者住所',
+  landowners: '地権者',
   points_count: '点数',
   computed_area_sqm: '直角座標法面積(m²)',
 }
@@ -49,21 +50,6 @@ interface Props {
 }
 
 // timestamptz → datetime-local 文字列
-function toLocalInput(iso: string | null): string {
-  if (!iso) return ''
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ''
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
-function fromLocalInput(s: string): string | null {
-  if (!s) return null
-  const d = new Date(s)
-  if (Number.isNaN(d.getTime())) return null
-  return d.toISOString()
-}
-
 const num = (s: string): number | null => {
   const t = s.trim()
   if (!t) return null
@@ -78,9 +64,9 @@ export const CADASTRAL_COLUMN_WIDTH: Record<CadastralColumnKey, string> = {
   registered_area_sqm: 'w-24',
   updated_land_category: 'w-24',
   updated_area_sqm: 'w-24',
-  owner_name: 'w-32',
-  owner_address: 'w-48',
-  attended_at: 'w-44',
+  registered_owner_name: 'w-32',
+  registered_owner_address: 'w-48',
+  landowners: 'w-44',
   points_count: 'w-12',
   computed_area_sqm: 'w-28',
 }
@@ -111,9 +97,8 @@ export function CadastralRowFields({ area, visibleColumns }: Props) {
   const [updArea, setUpdArea] = useState(
     parcel?.updated_area_sqm == null ? '' : String(parcel.updated_area_sqm),
   )
-  const [ownerName, setOwnerName] = useState(parcel?.owner_name ?? '')
-  const [ownerAddress, setOwnerAddress] = useState(parcel?.owner_address ?? '')
-  const [attendedAt, setAttendedAt] = useState(toLocalInput(parcel?.attended_at ?? null))
+  const [ownerName, setOwnerName] = useState(parcel?.registered_owner_name ?? '')
+  const [ownerAddress, setOwnerAddress] = useState(parcel?.registered_owner_address ?? '')
 
   useEffect(() => {
     setParcelNumber(parcel?.parcel_number ?? parcelNumberFallback)
@@ -121,10 +106,20 @@ export function CadastralRowFields({ area, visibleColumns }: Props) {
     setRegArea(parcel?.registered_area_sqm == null ? '' : String(parcel.registered_area_sqm))
     setUpdCategory(parcel?.updated_land_category ?? '')
     setUpdArea(parcel?.updated_area_sqm == null ? '' : String(parcel.updated_area_sqm))
-    setOwnerName(parcel?.owner_name ?? '')
-    setOwnerAddress(parcel?.owner_address ?? '')
-    setAttendedAt(toLocalInput(parcel?.attended_at ?? null))
+    setOwnerName(parcel?.registered_owner_name ?? '')
+    setOwnerAddress(parcel?.registered_owner_address ?? '')
   }, [parcel, parcelNumberFallback])
+
+  // 地番に割り当てられた地権者（複数可）
+  const landownersOfFarm = useLandownerStore((s) => s.landowners)
+  const assignmentMap = useLandownerStore((s) => s.landownersByParcelId)
+  const setParcelAssignment = useLandownerStore((s) => s.setParcelAssignment)
+  const parcelId = parcel?.id ?? null
+  const assignedIds = parcelId ? assignmentMap.get(parcelId) ?? [] : []
+  const assignedNames = assignedIds
+    .map((id) => landownersOfFarm.find((l) => l.id === id)?.full_name ?? '')
+    .filter(Boolean)
+  const [assignOpen, setAssignOpen] = useState(false)
 
   const save = (patch: Partial<ParcelEditableFields>) => {
     void upsertParcel(area.id, patch)
@@ -198,38 +193,45 @@ export function CadastralRowFields({ area, visibleColumns }: Props) {
             className="w-full px-1.5 py-1 border rounded text-right font-mono text-sm"
           />
         )
-      case 'owner_name':
+      case 'registered_owner_name':
         return (
           <input
             type="text"
             value={ownerName}
             onChange={(e) => setOwnerName(e.target.value)}
             onClick={stop}
-            onBlur={() => save({ owner_name: ownerName.trim() || null })}
+            onBlur={() => save({ registered_owner_name: ownerName.trim() || null })}
             className="w-full px-1.5 py-1 border rounded text-sm"
           />
         )
-      case 'owner_address':
+      case 'registered_owner_address':
         return (
           <input
             type="text"
             value={ownerAddress}
             onChange={(e) => setOwnerAddress(e.target.value)}
             onClick={stop}
-            onBlur={() => save({ owner_address: ownerAddress.trim() || null })}
+            onBlur={() => save({ registered_owner_address: ownerAddress.trim() || null })}
             className="w-full px-1.5 py-1 border rounded text-sm"
           />
         )
-      case 'attended_at':
+      case 'landowners':
         return (
-          <input
-            type="datetime-local"
-            value={attendedAt}
-            onChange={(e) => setAttendedAt(e.target.value)}
-            onClick={stop}
-            onBlur={() => save({ attended_at: fromLocalInput(attendedAt) })}
-            className="w-full px-1.5 py-1 border rounded text-sm"
-          />
+          <button
+            type="button"
+            onClick={(e) => {
+              stop(e)
+              setAssignOpen(true)
+            }}
+            className="w-full px-1.5 py-1 border rounded text-left text-sm bg-white hover:bg-slate-50 truncate"
+            title={assignedNames.join('、') || 'クリックして地権者を割り当て'}
+          >
+            {assignedNames.length === 0 ? (
+              <span className="text-slate-400">割当なし</span>
+            ) : (
+              assignedNames.join('、')
+            )}
+          </button>
         )
       case 'points_count':
         return (
@@ -245,12 +247,123 @@ export function CadastralRowFields({ area, visibleColumns }: Props) {
   }
 
   return (
-    <div className="flex items-center gap-1 text-xs whitespace-nowrap" onClick={stop}>
-      {CADASTRAL_COLUMN_KEYS.filter((k) => visibleColumns.has(k)).map((key) => (
-        <div key={key} className={CADASTRAL_COLUMN_WIDTH[key]}>
-          {cellFor(key)}
+    <>
+      <div className="flex items-center gap-1 text-xs whitespace-nowrap" onClick={stop}>
+        {CADASTRAL_COLUMN_KEYS.filter((k) => visibleColumns.has(k)).map((key) => (
+          <div key={key} className={CADASTRAL_COLUMN_WIDTH[key]}>
+            {cellFor(key)}
+          </div>
+        ))}
+      </div>
+      {assignOpen && parcelId && (
+        <LandownerAssignModal
+          parcelLabel={parcel?.parcel_number || area.zoneNumber || area.name || '(無題)'}
+          landowners={landownersOfFarm}
+          assignedIds={assignedIds}
+          onClose={() => setAssignOpen(false)}
+          onSave={async (ids) => {
+            await setParcelAssignment(parcelId, ids)
+            setAssignOpen(false)
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+// 地番に紐づける地権者をチェックボックスで選ぶモーダル
+function LandownerAssignModal({
+  parcelLabel,
+  landowners,
+  assignedIds,
+  onClose,
+  onSave,
+}: {
+  parcelLabel: string
+  landowners: Array<{ id: string; full_name: string }>
+  assignedIds: string[]
+  onClose: () => void
+  onSave: (ids: string[]) => Promise<void> | void
+}) {
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(assignedIds))
+  const [saving, setSaving] = useState(false)
+  const toggle = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[80vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-4 py-3 border-b">
+          <h3 className="text-base font-semibold">地番「{parcelLabel}」の地権者</h3>
+          <div className="text-xs text-slate-500 mt-1">
+            共有名義の場合は複数選択できます。
+          </div>
         </div>
-      ))}
+        <div className="flex-1 overflow-auto p-2">
+          {landowners.length === 0 ? (
+            <div className="p-6 text-center text-xs text-slate-500">
+              地権者がまだ登録されていません。地権者管理から追加してください。
+            </div>
+          ) : (
+            <ul className="space-y-1">
+              {landowners.map((lo) => {
+                const on = selected.has(lo.id)
+                return (
+                  <li key={lo.id}>
+                    <label
+                      className={`flex items-center gap-2 px-3 py-2 rounded cursor-pointer text-sm ${
+                        on ? 'bg-blue-50 text-blue-800' : 'hover:bg-slate-50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        onChange={() => toggle(lo.id)}
+                        className="h-4 w-4"
+                      />
+                      <span className="flex-1 truncate">{lo.full_name}</span>
+                    </label>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
+        <div className="px-4 py-3 border-t flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            disabled={saving}
+            className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={async () => {
+              setSaving(true)
+              try {
+                await onSave(Array.from(selected))
+              } finally {
+                setSaving(false)
+              }
+            }}
+            disabled={saving}
+            className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+          >
+            {saving ? '保存中…' : '保存'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

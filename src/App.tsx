@@ -38,6 +38,7 @@ import { ReportsPage } from '@/features/underdrain/ReportsPage'
 import { StakingRecordsPage } from '@/features/underdrain/StakingRecordsPage'
 // 境界測量
 import { BoundarySurveyWorkAreaPage } from '@/features/boundary-survey/BoundarySurveyWorkAreaPage'
+import { LandownersPage } from '@/features/boundary-survey/LandownersPage'
 // オルソ画像
 import { OrthophotoPage } from '@/features/orthophoto/OrthophotoPage'
 // 新規工種
@@ -243,6 +244,7 @@ function AppRoutes() {
         {/* 境界測量 */}
         <Route path="boundary-survey">
           <Route path="work-area" element={<BoundarySurveyWorkAreaPage />} />
+          <Route path="landowners" element={<LandownersPage />} />
         </Route>
         {/* オルソ画像 */}
         <Route path="orthophoto" element={<OrthophotoPage />} />

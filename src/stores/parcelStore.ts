@@ -22,9 +22,8 @@ interface RawParcel {
   registered_area_sqm: number | null
   updated_land_category: string | null
   updated_area_sqm: number | null
-  owner_address: string | null
-  owner_name: string | null
-  attended_at: string | null
+  registered_owner_address: string | null
+  registered_owner_name: string | null
   created_at: string
   updated_at: string
 }
@@ -38,9 +37,8 @@ const toParcel = (r: RawParcel): Parcel => ({
   registered_area_sqm: r.registered_area_sqm,
   updated_land_category: r.updated_land_category,
   updated_area_sqm: r.updated_area_sqm,
-  owner_address: r.owner_address,
-  owner_name: r.owner_name,
-  attended_at: r.attended_at,
+  registered_owner_address: r.registered_owner_address,
+  registered_owner_name: r.registered_owner_name,
   created_at: r.created_at,
   updated_at: r.updated_at,
 })
@@ -53,9 +51,8 @@ export type ParcelEditableFields = Pick<
   | 'registered_area_sqm'
   | 'updated_land_category'
   | 'updated_area_sqm'
-  | 'owner_address'
-  | 'owner_name'
-  | 'attended_at'
+  | 'registered_owner_address'
+  | 'registered_owner_name'
 >
 
 interface ParcelState {
@@ -113,9 +110,9 @@ export const useParcelStore = create<ParcelState>((set, get) => ({
       updated_land_category:
         fields.updated_land_category ?? prev?.updated_land_category ?? null,
       updated_area_sqm: fields.updated_area_sqm ?? prev?.updated_area_sqm ?? null,
-      owner_address: fields.owner_address ?? prev?.owner_address ?? null,
-      owner_name: fields.owner_name ?? prev?.owner_name ?? null,
-      attended_at: fields.attended_at ?? prev?.attended_at ?? null,
+      registered_owner_address:
+        fields.registered_owner_address ?? prev?.registered_owner_address ?? null,
+      registered_owner_name: fields.registered_owner_name ?? prev?.registered_owner_name ?? null,
       created_at: prev?.created_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }

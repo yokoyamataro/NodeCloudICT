@@ -187,7 +187,7 @@ export function BoundarySurveyWorkAreaPage() {
       const parcelUpserts: Array<{
         work_area_id: string
         parcel_number: string
-        owner_name: string | null
+        registered_owner_name: string | null
         registered_area_sqm: number | null
       }> = []
       for (let i = 0; i < insertRows.length; i += POLY_CHUNK) {
@@ -209,7 +209,7 @@ export function BoundarySurveyWorkAreaPage() {
             parcelUpserts.push({
               work_area_id: rows[j].id,
               parcel_number: m.label,
-              owner_name: m.ownerName,
+              registered_owner_name: m.ownerName,
               registered_area_sqm: m.registeredAreaSqm,
             })
           }

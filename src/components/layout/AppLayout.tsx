@@ -36,6 +36,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Image as ImageIcon,
+  Users,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
@@ -73,8 +74,9 @@ interface NavGroup {
 const navigation: NavGroup[] = [
   { name: '工区選択に戻る', href: '/', icon: Home },
   { name: '座標管理', href: '/coordinates', icon: Map },
-  // 地籍測量: 「地番管理」をフラットに 1 つだけ出す（中身は地番データ画面）
+  // 地籍測量: 「地番管理」と「地権者管理」をフラットに並べる
   { name: '地番管理', href: '/boundary-survey/work-area', icon: Compass },
+  { name: '地権者管理', href: '/boundary-survey/landowners', icon: Users },
   { name: 'オルソ画像・簡易作図', href: '/orthophoto', icon: ImageIcon },
   {
     name: '暗渠工事',

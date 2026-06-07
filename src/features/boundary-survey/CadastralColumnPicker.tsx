@@ -18,10 +18,17 @@ function load(): Set<CadastralColumnKey> {
     if (!raw) return new Set(DEFAULT_VISIBLE_COLUMNS)
     const arr = JSON.parse(raw) as unknown
     if (!Array.isArray(arr)) return new Set(DEFAULT_VISIBLE_COLUMNS)
-    // 旧キー 'area_ha'（hectare 表示）→ 'computed_area_sqm'（m² 表示）に読み替え
-    const migrated = (arr as unknown[]).map((k) =>
-      k === 'area_ha' ? 'computed_area_sqm' : k,
-    )
+    // 旧キーの読み替え:
+    //   'area_ha' → 'computed_area_sqm'（m² 表示）
+    //   'owner_name' / 'owner_address' → 'registered_owner_*'（登記簿側にリネーム）
+    //   'attended_at' は廃止 → 'landowners' に置き換え（地権者欄）
+    const migrated = (arr as unknown[]).map((k) => {
+      if (k === 'area_ha') return 'computed_area_sqm'
+      if (k === 'owner_name') return 'registered_owner_name'
+      if (k === 'owner_address') return 'registered_owner_address'
+      if (k === 'attended_at') return 'landowners'
+      return k
+    })
     const valid = migrated.filter((k): k is CadastralColumnKey =>
       (CADASTRAL_COLUMN_KEYS as readonly string[]).includes(k as string),
     )
