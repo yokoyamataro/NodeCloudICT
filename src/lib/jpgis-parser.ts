@@ -125,6 +125,26 @@ export function parseJpgisXml(xmlText: string): JpgisParseResult {
     curves.set(id, { from, to })
   }
 
+  // ---- GM_OrientableCurve: id (`_crv...`) -> 元 curve の primitiveId + orientation ----
+  // 一部のサーフェスはこの逆向き curve を generator として参照する。
+  // primitive を辿って元の GM_Curve を見つけ、orientation が '-' なら from/to を入れ替える。
+  const orientableCurves = new Map<
+    string,
+    { primitiveId: string; orientation: '+' | '-' }
+  >()
+  const ocNodes = doc.getElementsByTagName('jps:GM_OrientableCurve')
+  for (let i = 0; i < ocNodes.length; i++) {
+    const node = ocNodes[i]
+    const id = node.getAttribute('id')
+    if (!id) continue
+    const primNode = node.getElementsByTagName('jps:primitive')[0]
+    const primitiveId = primNode?.getAttribute('idref') ?? ''
+    if (!primitiveId) continue
+    const orientText = firstChildText(node, 'jps:orientation') ?? '+'
+    const orientation: '+' | '-' = orientText === '-' ? '-' : '+'
+    orientableCurves.set(id, { primitiveId, orientation })
+  }
+
   // ---- GM_Surface: id -> [curveId...] (外周構成順) ----
   const surfaces = new Map<string, string[]>()
   const surfaceNodes = doc.getElementsByTagName('jps:GM_Surface')
@@ -174,13 +194,25 @@ export function parseJpgisXml(xmlText: string): JpgisParseResult {
     const surfaceCurves = surfaces.get(kakuchi.surfaceId)
     if (!surfaceCurves || surfaceCurves.length === 0) continue
 
-    // Curve を順番に辿り、各曲線の始点を polygon 頂点として集める
-    // 末尾の曲線の終点は最初の頂点と一致する想定なので追加しない（閉じた多角形）
+    // Curve を順番に辿り、各曲線の始点を polygon 頂点として集める。
+    // 末尾の曲線の終点は最初の頂点と一致する想定なので追加しない（閉じた多角形）。
+    // generator の idref は GM_Curve だけでなく GM_OrientableCurve (`_crv...`) も指す
+    // ことがあるので、見つからなければ OrientableCurve 経由で本体 curve を辿り、
+    // orientation が '-' のときは from/to を入れ替える。
     const pointNumbers: string[] = []
     for (const curveId of surfaceCurves) {
-      const curve = curves.get(curveId)
+      let curve = curves.get(curveId)
+      let reversed = false
+      if (!curve) {
+        const oc = orientableCurves.get(curveId)
+        if (oc) {
+          curve = curves.get(oc.primitiveId)
+          reversed = oc.orientation === '-'
+        }
+      }
       if (!curve) continue
-      const startPoint = points.get(curve.from)
+      const startId = reversed ? curve.to : curve.from
+      const startPoint = points.get(startId)
       if (startPoint) pointNumbers.push(startPoint.pointNumber)
     }
     if (pointNumbers.length < 3) continue
