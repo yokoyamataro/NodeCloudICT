@@ -382,6 +382,13 @@ export function AppLayout() {
                 >
                   申込
                 </Link>
+                <Link
+                  to="/admin/announcements"
+                  className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+                  title="お知らせ管理"
+                >
+                  お知らせ
+                </Link>
               </>
             )}
             {/* 意見・要望メール */}

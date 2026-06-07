@@ -213,6 +213,17 @@ export interface OrthoLayer {
 // プロジェクトメンバーのロール
 export type ProjectMemberRole = 'owner' | 'editor' | 'viewer'
 
+// 開発者からのお知らせ
+export interface Announcement {
+  id: string
+  title: string
+  body: string
+  published_at: string
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
 // 所属組織（契約・請求の単位として使う「会社」マスタ）
 export interface Organization {
   id: string

@@ -11,6 +11,7 @@ import { useFarmStore } from '@/stores/farmStore'
 import { JGD2011_ZONES } from '@/lib/coordinates'
 import type { ProjectCategory } from '@/types/database'
 import { PROJECT_CATEGORY_LABEL } from '@/types/database'
+import { AnnouncementsSection } from '@/features/announcements/AnnouncementsSection'
 
 type Tab = ProjectCategory | 'uncategorized'
 
@@ -108,7 +109,10 @@ export function ProjectChooserPage() {
   }
 
   return (
-    <div className="h-full flex flex-col bg-slate-50">
+    <div className="h-full flex flex-col bg-slate-50 overflow-auto">
+      {/* お知らせ（未読のみ常時表示・既読は折りたたみ） */}
+      <AnnouncementsSection />
+
       {/* タイトル + 種別ごとの新規作成ボタン */}
       <div className="p-4 bg-white border-b flex items-center gap-3 flex-wrap">
         <Folder className="h-5 w-5 text-blue-600" />

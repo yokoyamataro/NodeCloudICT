@@ -13,6 +13,7 @@ import { PrivacyPage } from '@/features/marketing/PrivacyPage'
 import { AdminSignupsPage } from '@/features/admin/AdminSignupsPage'
 import { AdminUsersPage } from '@/features/admin/AdminUsersPage'
 import { AdminOrganizationsPage } from '@/features/admin/AdminOrganizationsPage'
+import { AdminAnnouncementsPage } from '@/features/admin/AdminAnnouncementsPage'
 import { TeamPage } from '@/features/team/TeamPage'
 import { ProjectListPage } from '@/features/projects/ProjectListPage'
 import { ProjectChooserPage } from '@/features/projects/ProjectChooserPage'
@@ -162,6 +163,15 @@ function AppRoutes() {
           element={
             <ProtectedRoute>
               <AdminOrganizationsPage />
+            </ProtectedRoute>
+          }
+        />
+        {/* 管理者: お知らせ管理 */}
+        <Route
+          path="/admin/announcements"
+          element={
+            <ProtectedRoute>
+              <AdminAnnouncementsPage />
             </ProtectedRoute>
           }
         />
