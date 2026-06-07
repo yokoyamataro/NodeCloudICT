@@ -14,6 +14,7 @@ const HIDDEN_BY_CATEGORY: Record<ProjectCategory, readonly string[]> = {
     '/grading',
     '/subsoil',
     '/stone-removal',
+    '/open-channel',
   ],
   // 土木工事では境界測量を出さない
   civil: ['/boundary-survey'],
