@@ -869,10 +869,12 @@ export function MobileStakingPage() {
     fetchAttachments('coordinate', coordinates.map((c) => c.id))
   }, [coordinates, fetchAttachments])
 
-  // 工事区域ポリゴン（境界測量含む）を取得
+  // 工事区域ポリゴン（境界測量含む）を取得。
+  // farm 単体ロード（URL 直アクセス）で farms 配列が未取得の状態でも
+  // currentFarm を頼りにポリゴンを取れるように、farm がセットされてから走らせる。
   useEffect(() => {
-    if (farmId) fetchWorkAreaPolygons()
-  }, [farmId, fetchWorkAreaPolygons])
+    if (farmId && farm) fetchWorkAreaPolygons()
+  }, [farmId, farm, fetchWorkAreaPolygons])
 
   // オルソ画像タイルセットを取得
   useEffect(() => {

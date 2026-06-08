@@ -195,8 +195,15 @@ export const useFarmStore = create<FarmState>()(
   },
 
   fetchWorkAreaPolygons: async () => {
-    const { farms } = get()
-    if (farms.length === 0) {
+    // farms 配列が空でも currentFarm が立っていれば、そのファームだけを対象に
+    // ポリゴンを取りに行く。
+    // 例えばモバイルから直接 staking 画面へ来た場合は fetchFarms() が呼ばれて
+    // おらず farms が空のままで、地番ポリゴンが一切表示されない不具合があった。
+    const { farms, currentFarm } = get()
+    const targetFarms = farms.length > 0
+      ? farms
+      : (currentFarm ? [currentFarm] : [])
+    if (targetFarms.length === 0) {
       set({ workAreaPolygons: [] })
       return
     }
@@ -208,7 +215,7 @@ export const useFarmStore = create<FarmState>()(
       const { data: areasData, error: areaError } = await supabase
         .from('design_work_areas')
         .select('id, farm_id, work_type, zone_number, name')
-        .in('farm_id', farms.map(f => f.id))
+        .in('farm_id', targetFarms.map(f => f.id))
 
       if (areaError) throw areaError
 
@@ -261,10 +268,10 @@ export const useFarmStore = create<FarmState>()(
         }
 
         // プロジェクトごとの座標系を取得
-        const projectZones = await fetchProjectZones(farms.map(f => f.project_id))
+        const projectZones = await fetchProjectZones(targetFarms.map(f => f.project_id))
 
         for (const area of areas) {
-          const farm = farms.find(f => f.id === area.farm_id)
+          const farm = targetFarms.find(f => f.id === area.farm_id)
           if (!farm) continue
 
           const areaPointIds = areasPointIds?.find(a => a.id === area.id)?.point_ids || []
