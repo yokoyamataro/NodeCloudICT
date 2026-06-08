@@ -279,6 +279,7 @@ export function LandownerRowFields({ landowner, visibleColumns, onDelete }: RowP
         return (
           <input
             type="datetime-local"
+            step={300}
             value={primaryAt}
             onChange={(e) => setPrimaryAt(e.target.value)}
             onBlur={() => {
@@ -293,6 +294,7 @@ export function LandownerRowFields({ landowner, visibleColumns, onDelete }: RowP
         return (
           <input
             type="datetime-local"
+            step={300}
             value={secondaryAt}
             onChange={(e) => setSecondaryAt(e.target.value)}
             onBlur={() => {
