@@ -92,26 +92,6 @@ function parseFromFileName(name: string): { location: string | null; parcelNumbe
   }
 }
 
-// 全角コロン(：) と : を統一
-const COLON_RE = /[：:]/g
-
-// 地積文字列 ("１３２：２３" や "２３００：") を ㎡ 数値へ
-//   "１３２：２３" → 132.23
-//   "２３００："   → 2300.00
-//   "２０２３６："  → 20236
-function parseArea(text: string): number | null {
-  const t = toHalfDigits(text.replace(/[,，]/g, '')).replace(COLON_RE, ':')
-  const m = t.match(/(\d+):(\d*)/)
-  if (!m) return null
-  const whole = Number(m[1])
-  if (!Number.isFinite(whole)) return null
-  const decText = m[2] ?? ''
-  if (!decText) return whole
-  const dec = Number(decText)
-  if (!Number.isFinite(dec)) return whole
-  return whole + dec / Math.pow(10, decText.length)
-}
-
 // pdfjs のページ TextContent から「行」を組み立てる。
 // X/Y 座標で並べ替え、Y が近いものを同じ行とみなす。
 async function extractLinesFromPdf(file: File): Promise<string[]> {
@@ -142,168 +122,166 @@ async function extractLinesFromPdf(file: File): Promise<string[]> {
   return allLines
 }
 
-// 行をセクション (表題部 / 甲区 / 乙区) に分割
-interface Sections {
-  title: string[]
-  ko: string[]
-  otsu: string[]
-}
+// 不動産登記規則 第99条の 23 地目
+const KNOWN_LAND_CATEGORIES = [
+  '田', '畑', '宅地', '学校用地', '鉄道用地', '塩田', '鉱泉地', '池沼',
+  '山林', '牧場', '原野', '墓地', '境内地', '運河用地', '水道用地',
+  '用悪水路', 'ため池', '堤', '井溝', '保安林', '公衆用道路', '公園',
+  '雑種地',
+]
 
-function splitSections(lines: string[]): Sections {
-  const isTitleHeader = (l: string) => /表[\s　]*題[\s　]*部/.test(l)
-  const isKoHeader = (l: string) =>
-    /権[\s　]*利[\s　]*部[\s\S]*甲[\s　]*区/.test(l) ||
-    /\(\s*甲\s*区\s*\)/.test(l)
-  const isOtsuHeader = (l: string) =>
-    /権[\s　]*利[\s　]*部[\s\S]*乙[\s　]*区/.test(l) ||
-    /\(\s*乙\s*区\s*\)/.test(l)
-
-  let mode: 'pre' | 'title' | 'ko' | 'otsu' = 'pre'
-  const out: Sections = { title: [], ko: [], otsu: [] }
-  for (const line of lines) {
-    if (isOtsuHeader(line)) {
-      mode = 'otsu'
-      continue
-    }
-    if (isKoHeader(line)) {
-      mode = 'ko'
-      continue
-    }
-    if (isTitleHeader(line)) {
-      mode = 'title'
-      continue
-    }
-    if (mode === 'title') out.title.push(line)
-    else if (mode === 'ko') out.ko.push(line)
-    else if (mode === 'otsu') out.otsu.push(line)
-  }
-  return out
-}
-
-// 表題部から所在 / 地番 / 地目 / 地積 を抜く
-//   各列の最後に出てきた非空セルを採用する（履歴行は最新で上書きされていく前提）
-function parseTitleSection(
-  lines: string[],
-): { location: string | null; parcelNumber: string | null; landCategory: string | null; areaSqm: number | null } {
-  let location: string | null = null
-  let parcelNumber: string | null = null
-  let landCategory: string | null = null
-  let areaSqm: number | null = null
-
-  for (const raw of lines) {
-    // 所在行: "所　在│{location}│..." を拾う
-    if (/所[\s　]*在/.test(raw) && location == null) {
-      // 「所在」より右、罫線で区切られた次のセルが location
-      const m = raw.match(/所[\s　]*在[\s　│|｜]+([^│|｜]+)/)
-      if (m) {
-        const v = normalizeLocation(m[1])
-        if (v) location = v
-      }
-    }
-
-    // 表行: │ で分割して「地番 / 地目 / 地積」列を見る
-    if (/[│|｜]/.test(raw)) {
-      const cols = raw.split(/[│|｜]/).map((c) => c.trim())
-      // 罫線テキストに含まれる空白セルを取り除いたあと、
-      // 「番」が含まれる先頭セルを地番、「地目」候補（漢字 1〜3 字）を地目、
-      // 「：」を含むセルを地積とみなす（位置はテーブルによって若干ズレるため）
-      for (const c of cols) {
-        if (!c) continue
-        if (/[０-９]+番[０-９]*$/.test(c) || /^\d+(-\d+)?$/.test(c)) {
-          // 地番
-          parcelNumber = normalizeParcelNumber(c)
-        } else if (/^[一-鿿]{1,4}$/.test(c)) {
-          // 地目候補（純漢字のみ）。短い (1〜4 字) のセルを地目として更新
-          // 「①変更」「③錯誤」などのノイズを避けるため数字や記号を除外
-          landCategory = c
-        } else {
-          const a = parseArea(c)
-          if (a != null) areaSqm = a
-        }
-      }
-    }
-  }
-
-  return { location, parcelNumber, landCategory, areaSqm }
-}
-
-// 名前候補のセグメントを 1 文字ずつの全角空白区切りからまとめる
-// "元　木　祐　二" → "元木祐二"
-// "株　式　会　社　元　木　金　物　店" → "株式会社元木金物店"
-function joinSpacedName(s: string): string {
-  return s.replace(/[\s　│|｜]/g, '')
-}
-
-// 甲区から現在の所有者を抜く。
-// 順位番号の大きい所有権移転 / 所有権保存を「現在」とみなす。
-//
-// 1 エントリの構造（典型例）:
-//   ┃3        │所有権移転     │令和X年...│原因  令和X年...信託
-//   ┃         │               │第Z号     │所有者  斜里郡斜里町港町１番地４４
-//   ┃         │               │          │　元　木　祐　二
-//
-// → address: "斜里郡斜里町港町１番地４４", name: "元木祐二"
-function parseKoSection(lines: string[]): ParsedOwner[] {
-  // まず entries（順位番号で区切られたブロック）に分割
-  type Entry = { rank: number; purpose: string; body: string[] }
-  const entries: Entry[] = []
-  let cur: Entry | null = null
-  for (const raw of lines) {
-    const cols = raw.split(/[│|｜]/).map((c) => c.trim())
-    // 行頭セルが数字なら新規エントリ
-    const head = cols[0]
-    if (head && /^\d+$|^[０-９]+$/.test(toHalfDigits(head).trim())) {
-      if (cur) entries.push(cur)
-      cur = {
-        rank: Number(toHalfDigits(head).trim()),
-        purpose: cols[1] ?? '',
-        body: [raw],
-      }
-    } else if (cur) {
-      cur.body.push(raw)
-      if (!cur.purpose && cols[1]) cur.purpose = cols[1]
-    }
-  }
-  if (cur) entries.push(cur)
-
-  // 「所有権移転 / 所有権保存」のエントリのみ採用
-  const ownerEntries = entries.filter(
-    (e) => /所有権移転/.test(e.purpose) || /所有権保存/.test(e.purpose),
+// テキスト中に出てきた地目のうち、もっとも最後（≒最新）のものを返す。
+// 罫線・改行に依存せず、文字列全体を走査する。
+function findLastLandCategory(text: string): string | null {
+  // 長いものから優先（"雑種地" を "山林" の前に試す）
+  const cats = [...KNOWN_LAND_CATEGORIES].sort((a, b) => b.length - a.length)
+  const re = new RegExp(
+    '(' + cats.map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')',
+    'g',
   )
-  if (ownerEntries.length === 0) return []
-  ownerEntries.sort((a, b) => b.rank - a.rank)
-  const latest = ownerEntries[0]
-
-  // body の各行から、右端セル（権利者その他の事項）を抜き出して所有者を組み立てる
-  const rightCells: string[] = []
-  for (const raw of latest.body) {
-    const cols = raw.split(/[│|｜]/).map((c) => c.trim())
-    const last = cols[cols.length - 1]
-    if (last) rightCells.push(last)
+  let last: string | null = null
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    const cat = m[1]
+    const before = text[m.index - 1] ?? ' '
+    const after = text[m.index + cat.length] ?? ' '
+    // 漢字に挟まれた偶発一致は捨てる
+    if (/[一-龥]/.test(before) || /[一-龥]/.test(after)) continue
+    last = cat
   }
-  // "所有者　{addressLine}" を見つけ、続く非空行を住所/氏名として組み立てる
+  return last
+}
+
+// テキスト中の「(数字):(数字)」パターンのうち、最後（最新）のものを ㎡ 値で返す。
+// 例: "２０２３６：", "２３００：", "１３２：２３"
+function findLastAreaPattern(text: string): number | null {
+  const normalized = toHalfDigits(text.replace(/[,，]/g, '')).replace(/[：:]/g, ':')
+  const re = /(\d{1,7}):(\d{0,2})(?!\d)/g
+  let last: number | null = null
+  let m: RegExpExecArray | null
+  while ((m = re.exec(normalized)) !== null) {
+    const whole = Number(m[1])
+    if (!Number.isFinite(whole)) continue
+    // 単独 ":" は除外（whole が空のはずなので来ない）
+    const decText = m[2]
+    const decDigits = decText.length
+    const dec = decText ? Number(decText) : 0
+    if (!Number.isFinite(dec)) continue
+    last = whole + (decDigits > 0 ? dec / Math.pow(10, decDigits) : 0)
+  }
+  return last
+}
+
+// 所在行を全文から取り出す（罫線なしでも動く）。
+function extractLocation(text: string): string | null {
+  // "所　　在　{location}" 形式（pdfjs が罫線を落とした場合の保険）
+  const m =
+    text.match(/所[\s　]*在[\s　│|｜]+([^\n│|｜]+)/) ||
+    text.match(/所[\s　]*在[\s　]+([^\n]+)/)
+  if (!m) return null
+  const v = normalizeLocation(m[1])
+  return v || null
+}
+
+// 地番を全文から取り出す（フォールバック用）。
+function extractParcelNumber(text: string): string | null {
+  // "４３０番１" のような最後の出現を取る
+  const re = /([０-９0-9]+)番([０-９0-9]+)?/g
+  let last: { main: string; sub: string | null } | null = null
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    last = { main: toHalfDigits(m[1]), sub: m[2] ? toHalfDigits(m[2]) : null }
+  }
+  if (!last) return null
+  return last.sub ? `${last.main}-${last.sub}` : last.main
+}
+
+// 全角空白区切りの名前を結合
+//   "元　木　祐　二" → "元木祐二"
+//   "株　式　会　社　元　木　金　物　店" → "株式会社元木金物店"
+function joinSpacedName(s: string): string {
+  return s.replace(/[\s　│|｜┃]/g, '')
+}
+
+// 甲区テキストから所有者ブロックを抽出する。
+// 各「所有者 / 共有者」記述の後ろの「住所...氏名」をひとまとめにする。
+//
+// 罫線（│, ┃）が pdfjs で落ちる PDF にも対応するため、テキスト全体を
+// 走査して "所有者[空白]+...次の停止語まで" を捕まえる方針にする。
+function extractOwners(text: string): ParsedOwner[] {
+  // 「所有者」/ 「共有者」が始まりのキー。
+  // 信託の「受託者」は所有者ではない（信託目録）ので除外。
+  // 停止語: 次の所有者宣言、原因/順位/持分/信託(目録は除く)/権利部/乙区
+  const stopRe =
+    '所有者|共有者|受託者|原因[\\s　]|順位[\\s　]*番号|順位[０-９0-9]+番|持分|信託(?!目)|乙[\\s　]*区|権[\\s　]*利[\\s　]*部'
+  const ownerRe = new RegExp(
+    '(?:所有者|共有者)[\\s　]+([\\s\\S]+?)(?=' + stopRe + ')',
+    'g',
+  )
+  const blocks: string[] = []
+  let m: RegExpExecArray | null
+  while ((m = ownerRe.exec(text)) !== null) {
+    blocks.push(m[1])
+  }
+  if (blocks.length === 0) return []
+
+  // 最後のブロックを「現在」として採用
+  const block = blocks[blocks.length - 1]
+  return parseOwnerBlock(block)
+}
+
+// 1 つの所有者ブロックを「住所 ＋ 氏名（1 名以上）」に分解する。
+function parseOwnerBlock(block: string): ParsedOwner[] {
+  // 改行で分割し、罫線・余分な空白を取り除く
+  const rawLines = block
+    .split(/\r?\n/)
+    .map((l) => l.replace(/[│|｜┃┠┨┘┌┐┴┬┤├┼━─\s]+/g, ' ').trim())
+    .filter((l) => l && !/^[\s　]*$/.test(l))
+  if (rawLines.length === 0) return []
+
+  // 住所継続を判定するヒント:
+  //   末尾が「丁目」「番」「号」「番地」「市」「町」「村」「区」「県」「府」「都」など → 続く
+  //   名前候補: 全角空白で文字が区切られている / "株式会社" などの会社接頭・接尾
+  const continuesAddress = (s: string) => {
+    return /(?:丁目|番地|番|号|市|町|村|区|郡|条|大字|字|地番|府|県|都|道|外|地)$/.test(
+      s.replace(/[\s　]+$/, ''),
+    )
+  }
+
+  // 末尾から名前候補を探す: 最後の非住所行を名前とする
   const owners: ParsedOwner[] = []
-  for (let i = 0; i < rightCells.length; i++) {
-    const m = rightCells[i].match(/^(?:所有者|共有者|受託者)[\s　]+(.*)$/)
-    if (!m) continue
-    let address = m[1].trim()
-    // 住所が次の行に続く場合がある（「番地」で終わるなど）
-    let name = ''
-    for (let j = i + 1; j < rightCells.length; j++) {
-      const next = rightCells[j]
-      // 別の所有者ブロックや「順位」「原因」「持分」が来たら停止
-      if (/^(?:所有者|共有者|受託者|原因|順位|持分|信託)/.test(next)) break
-      if (/[\s　]/.test(next) && /^[一-鿿゠-ヿ぀-ゟＡ-Ｚ]/.test(next)) {
-        // 名前候補（全角空白区切りの漢字列）
-        name = joinSpacedName(next)
-        i = j
-        break
-      } else {
-        // 住所継続
-        address += next
-      }
+  // 単純化: 最後の 1 名のみ抜く（共有は今後の改善対象）
+  // 住所 = 最後の行を除いた全行を連結
+  // 氏名 = 最後の行
+  let addressLines: string[] = []
+  let name: string | null = null
+  for (const line of rawLines) {
+    if (name) break
+    // 「順位N番の登記を移記」「平成X年法務省令...」などの注記は除外
+    if (/順位[０-９0-9]+番の登記/.test(line)) continue
+    if (/法務省令/.test(line)) continue
+    if (/移記$/.test(line)) continue
+    if (/[平令昭]和?[０-９0-9一二三四五六七八九十元]+年/.test(line) && !/^[一-龥ぁ-んァ-ヶＡ-Ｚ々]/.test(line)) {
+      // 日付行はスキップ
+      continue
     }
-    if (name) owners.push({ address: normalizeLocation(address), fullName: name })
+    addressLines.push(line)
+  }
+  // 最後の行を名前候補とする
+  if (addressLines.length >= 1) {
+    const lastIdx = addressLines.length - 1
+    // 末尾が住所継続パターンなら、その行も含めて名前は無し
+    if (continuesAddress(addressLines[lastIdx])) {
+      // 名前が見つからない → 諦め
+    } else {
+      name = joinSpacedName(addressLines[lastIdx])
+      addressLines = addressLines.slice(0, -1)
+    }
+  }
+
+  const address = addressLines.join('').replace(/[\s　]/g, '')
+  if (name && name.length > 0) {
+    owners.push({ address, fullName: name })
   }
   return owners
 }
@@ -313,25 +291,54 @@ export async function parseRegistryPdf(file: File): Promise<ParsedRegistry> {
   const lines = await extractLinesFromPdf(file)
   const rawText = lines.join('\n')
 
-  const sections = splitSections(lines)
-  const title = parseTitleSection(sections.title)
-  const owners = parseKoSection(sections.ko)
+  // 表題部 / 甲区 / 乙区 のセクション境界を見つけて、地目・地積は
+  // 「権利部の前」、所有者は「甲区」だけを対象にスキャンする。
+  // 区切り語が見つからない壊れた抽出にも対応するため、見つからない時は
+  // 全文を対象にする。
+  const koMatch = rawText.match(/権[\s　]*利[\s　]*部[\s\S]{0,30}甲[\s　]*区/)
+  const otsuMatch = rawText.match(/権[\s　]*利[\s　]*部[\s\S]{0,30}乙[\s　]*区/)
+  const koIdx = koMatch ? rawText.indexOf(koMatch[0]) : -1
+  const otsuIdx = otsuMatch ? rawText.indexOf(otsuMatch[0]) : -1
+
+  const titleText = koIdx >= 0 ? rawText.substring(0, koIdx) : rawText
+  const koText =
+    koIdx >= 0
+      ? rawText.substring(koIdx, otsuIdx > koIdx ? otsuIdx : rawText.length)
+      : rawText
+
+  // 所在
+  let location = extractLocation(titleText) ?? extractLocation(rawText)
+  if (!location) location = fileMeta.location
+
+  // 地番（ファイル名を優先、なければテキストから）
+  let parcelNumber = fileMeta.parcelNumber
+  if (!parcelNumber) {
+    const fromText = extractParcelNumber(titleText)
+    if (fromText) parcelNumber = fromText
+  }
+
+  // 地目: 表題部内の既知地目の最後の出現
+  const landCategory = findLastLandCategory(titleText)
+
+  // 地積: 表題部内の (digits):(digits) パターンの最後の出現
+  const areaSqm = findLastAreaPattern(titleText)
+
+  // 所有者: 甲区を走査
+  const owners = extractOwners(koText)
 
   const warnings: string[] = []
-  const location = title.location ?? fileMeta.location
-  const parcelNumber = title.parcelNumber ?? fileMeta.parcelNumber
   if (!location) warnings.push('所在を抽出できませんでした')
   if (!parcelNumber) warnings.push('地番を抽出できませんでした')
-  if (!title.landCategory) warnings.push('地目を抽出できませんでした')
-  if (title.areaSqm == null) warnings.push('地積を抽出できませんでした')
+  if (!landCategory) warnings.push('地目を抽出できませんでした')
+  if (areaSqm == null) warnings.push('地積を抽出できませんでした')
   if (owners.length === 0) warnings.push('所有者を抽出できませんでした')
 
   return {
     fileName: file.name,
     location,
     parcelNumber,
-    landCategory: title.landCategory,
-    areaSqm: title.areaSqm,
+    landCategory,
+    areaSqm,
     owners,
     warnings,
     rawText,
