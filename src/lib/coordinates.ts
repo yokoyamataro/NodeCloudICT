@@ -74,10 +74,28 @@ export class CoordinateConverter {
 }
 
 // 座標の種類
-export type CoordinateType = 'control' | 'boundary' | 'current'
+// 基本3種 + 地籍測量で使う 7 種類。
+export type CoordinateType =
+  | 'control'
+  | 'boundary'
+  | 'current'
+  | 'existing_control'   // 既設基準点
+  | 'new_control'        // 新設基準点
+  | 'map_xml'            // 地図XML
+  | 'national_survey'    // 国調成果
+  | 'cadastral_diagram'  // 地積測量図
+  | 'witness'            // 立会点
+  | 'confirmed_boundary' // 確定筆界点
 
 export const COORDINATE_TYPE_NAMES: Record<CoordinateType, string> = {
   control: '基準点',
   boundary: '境界点',
   current: '現況',
+  existing_control: '既設基準点',
+  new_control: '新設基準点',
+  map_xml: '地図XML',
+  national_survey: '国調成果',
+  cadastral_diagram: '地積測量図',
+  witness: '立会点',
+  confirmed_boundary: '確定筆界点',
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Upload, Download, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Settings, Camera, Image as ImageIcon, Loader2, Calculator, Layers } from 'lucide-react'
+import { Upload, Download, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Settings, Camera, Image as ImageIcon, Loader2, Calculator, Layers, Filter, Check } from 'lucide-react'
 import { CoordinatePhotoModal } from './CoordinatePhotoModal'
 import { CoordinateCalcModal } from './CoordinateCalcModal'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
@@ -207,8 +207,8 @@ export function CoordinatesPage() {
   // チェックされた点のID（エクスポート対象）
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set())
 
-  // ツールバーのドロップダウンメニュー（インポート / エクスポート）
-  const [openMenu, setOpenMenu] = useState<'import' | 'export' | null>(null)
+  // ツールバーのドロップダウンメニュー（インポート / エクスポート / 点種フィルター）
+  const [openMenu, setOpenMenu] = useState<'import' | 'export' | 'typeFilter' | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!openMenu) return
@@ -341,6 +341,12 @@ export function CoordinatesPage() {
       return changed ? next : prev
     })
   }, [typeOptions])
+
+  // 点種フィルターを適用した表示用座標。表とマップで共有する。
+  const filteredCoordinates = useMemo(
+    () => coordinates.filter((c) => visibleTypes.has(c.type)),
+    [coordinates, visibleTypes],
+  )
 
   // 工区選択時にデータを読み込む
   useEffect(() => {
@@ -1197,6 +1203,89 @@ export function CoordinatesPage() {
           座標計算
         </button>
 
+        {/* 点種フィルター（表と地図の両方に効く） */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setOpenMenu(openMenu === 'typeFilter' ? null : 'typeFilter')}
+            title="点種でフィルタ（表と地図の両方）"
+            className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded ${hoverClass}`}
+          >
+            <Filter className="h-3.5 w-3.5" />
+            点種フィルター ({visibleTypes.size}/{typeOptions.length})
+            <ChevronDown className="h-3 w-3" />
+          </button>
+          {openMenu === 'typeFilter' && (
+            <div className="absolute left-0 top-full mt-1 w-64 bg-white border rounded shadow-lg z-20 p-2">
+              <div className="flex items-center justify-between mb-2 pb-2 border-b">
+                <span className="text-xs font-medium text-slate-600">表示する点種</span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setVisibleTypes(new Set(typeOptions.map((o) => o.code)))}
+                    className="text-[10px] px-1.5 py-0.5 border rounded hover:bg-slate-50"
+                  >
+                    全選択
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setVisibleTypes(new Set(typeOptions[0] ? [typeOptions[0].code] : []))
+                    }
+                    className="text-[10px] px-1.5 py-0.5 border rounded hover:bg-slate-50"
+                  >
+                    全解除
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowPointTypeModal(true)
+                      setOpenMenu(null)
+                    }}
+                    title="点種を管理（追加/編集）"
+                    className="ml-1 p-0.5 text-slate-500 hover:text-slate-800 rounded"
+                  >
+                    <Settings className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+              <div className="space-y-0.5 max-h-72 overflow-auto">
+                {typeOptions.map((opt) => {
+                  const on = visibleTypes.has(opt.code)
+                  return (
+                    <button
+                      key={opt.code}
+                      type="button"
+                      onClick={() => {
+                        const next = new Set(visibleTypes)
+                        if (next.has(opt.code)) next.delete(opt.code)
+                        else next.add(opt.code)
+                        // 全 OFF を避ける（最低 1 つは残す）
+                        if (next.size === 0) return
+                        setVisibleTypes(next)
+                      }}
+                      className={`w-full flex items-center gap-2 px-2 py-1 text-xs rounded ${
+                        on ? 'bg-blue-50 text-blue-800' : 'text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span
+                        className={`flex items-center justify-center w-4 h-4 border rounded ${
+                          on
+                            ? 'bg-blue-600 border-blue-600 text-white'
+                            : 'border-slate-300'
+                        }`}
+                      >
+                        {on && <Check className="h-3 w-3" />}
+                      </span>
+                      <span>{opt.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* 座標計算モーダル */}
         {showCalcModal && (
           <CoordinateCalcModal
@@ -1245,34 +1334,6 @@ export function CoordinatesPage() {
             <ImageIcon className="h-3 w-3" />
             オルソ
           </button>
-          <div className="flex items-center gap-2 flex-wrap">
-            {typeOptions.map((opt) => (
-              <label key={opt.code} className="flex items-center gap-1 text-xs cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={visibleTypes.has(opt.code)}
-                  onChange={(e) => {
-                    const newTypes = new Set(visibleTypes)
-                    if (e.target.checked) {
-                      newTypes.add(opt.code)
-                    } else {
-                      newTypes.delete(opt.code)
-                    }
-                    setVisibleTypes(newTypes)
-                  }}
-                  className="h-3 w-3"
-                />
-                {opt.label}
-              </label>
-            ))}
-            <button
-              onClick={() => setShowPointTypeModal(true)}
-              className="ml-1 p-0.5 text-slate-500 hover:text-slate-800 rounded"
-              title="点種を管理"
-            >
-              <Settings className="h-3.5 w-3.5" />
-            </button>
-          </div>
           {renderWorkAreaLayers()}
           <select
             value={baseLayer}
@@ -1348,10 +1409,10 @@ export function CoordinatesPage() {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {coordinates.map((coord, idx) => (
+              {filteredCoordinates.map((coord, idx) => (
                 <tr
                   key={coord.id}
-                  ref={idx === coordinates.length - 1 ? lastRowRef : null}
+                  ref={idx === filteredCoordinates.length - 1 ? lastRowRef : null}
                   data-coord-row-id={coord.id}
                   className={`hover:bg-slate-50 cursor-pointer ${
                     selectedPointId === coord.id ? 'bg-blue-200 hover:bg-blue-200' : ''
@@ -1555,10 +1616,10 @@ export function CoordinatesPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {coordinates.map((coord, idx) => (
+                    {filteredCoordinates.map((coord, idx) => (
                       <tr
                         key={coord.id}
-                        ref={idx === coordinates.length - 1 ? lastRowRef : null}
+                        ref={idx === filteredCoordinates.length - 1 ? lastRowRef : null}
                         className={`hover:bg-slate-50 cursor-pointer ${
                           selectedPointId === coord.id ? 'bg-blue-200 hover:bg-blue-200' : ''
                         }`}
@@ -1715,34 +1776,6 @@ export function CoordinatesPage() {
               <ImageIcon className="h-3 w-3" />
               オルソ
             </button>
-            <div className="flex items-center gap-2 flex-wrap">
-              {typeOptions.map((opt) => (
-                <label key={opt.code} className="flex items-center gap-1 text-xs cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={visibleTypes.has(opt.code)}
-                    onChange={(e) => {
-                      const newTypes = new Set(visibleTypes)
-                      if (e.target.checked) {
-                        newTypes.add(opt.code)
-                      } else {
-                        newTypes.delete(opt.code)
-                      }
-                      setVisibleTypes(newTypes)
-                    }}
-                    className="h-3 w-3"
-                  />
-                  {opt.label}
-                </label>
-              ))}
-              <button
-                onClick={() => setShowPointTypeModal(true)}
-                className="ml-1 p-0.5 text-slate-500 hover:text-slate-800 rounded"
-                title="点種を管理"
-              >
-                <Settings className="h-3.5 w-3.5" />
-              </button>
-            </div>
             {renderWorkAreaLayers()}
             <select
               value={baseLayer}
