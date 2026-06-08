@@ -635,6 +635,15 @@ export function MobileStakingPage() {
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null)
   // 近接モードを手動で閉じたフラグ（範囲外に出ると解除して再表示できるようにする）
   const [proximityCancelled, setProximityCancelled] = useState(false)
+  // 1m 以内に重なっているターゲットをタップした際の選択シート。
+  //   mode='select'  : 通常選択（setSelectedTargetId）
+  //   mode='assign'  : 座標計算で点を割り当て中（calcAssign）
+  const [overlapPicker, setOverlapPicker] = useState<{
+    candidates: StakingTarget[]
+    mode: 'select' | 'assign'
+  } | null>(null)
+  // 重なり判定の閾値（世界座標 m）。
+  const OVERLAP_TOL_M = 1.0
   // 新点名の頭文字（直近で使ったものを localStorage に保持してクイック選択）
   const [recentPrefixes, setRecentPrefixes] = useState<string[]>(() => {
     try {
@@ -2286,6 +2295,23 @@ export function MobileStakingPage() {
           onPickRequest={(fn) => setCalcAssign(() => fn)}
         />
       )}
+      {/* 重なりターゲット選択シート（1m 以内に複数あるときに開く） */}
+      {overlapPicker && (
+        <OverlapTargetPicker
+          candidates={overlapPicker.candidates}
+          selectedId={selectedTargetId}
+          onPick={(id) => {
+            const picked = overlapPicker.candidates.find((c) => c.id === id)
+            if (overlapPicker.mode === 'assign' && calcAssign && picked?.kind === 'coordinate') {
+              calcAssign(picked.refId)
+            } else {
+              setSelectedTargetId(id)
+            }
+            setOverlapPicker(null)
+          }}
+          onCancel={() => setOverlapPicker(null)}
+        />
+      )}
       {/* 新点計測完了モーダル */}
       {freePointDialog && (
         <FreePointDialog
@@ -2829,12 +2855,26 @@ export function MobileStakingPage() {
                 })}
                 eventHandlers={{
                   click: () => {
+                    // 1m 以内の重なりターゲットを集める（自分も含む）。
+                    // 2 件以上ならどれを選ぶか聞くシートを出す。
+                    const nearby = filteredTargets.filter(
+                      (other) => Math.hypot(other.x - t.x, other.y - t.y) <= OVERLAP_TOL_M,
+                    )
                     // 座標計算で地図から点選択中なら、座標点に限り計算スロットへ割り当て
                     if (calcAssign && t.kind === 'coordinate') {
-                      calcAssign(t.refId)
+                      const assignable = nearby.filter((c) => c.kind === 'coordinate')
+                      if (assignable.length <= 1) {
+                        calcAssign(t.refId)
+                        return
+                      }
+                      setOverlapPicker({ candidates: assignable, mode: 'assign' })
                       return
                     }
-                    setSelectedTargetId(t.id)
+                    if (nearby.length <= 1) {
+                      setSelectedTargetId(t.id)
+                      return
+                    }
+                    setOverlapPicker({ candidates: nearby, mode: 'select' })
                   },
                 }}
               >
@@ -4396,6 +4436,72 @@ function ProximityGuide({
 }
 
 // 新点計測完了モーダル
+// 重なりターゲット選択シート。1m 以内に複数のターゲットが集まっている
+// 場所をタップしたときに、候補一覧から確実に 1 点を選ばせる。
+function OverlapTargetPicker({
+  candidates,
+  selectedId,
+  onPick,
+  onCancel,
+}: {
+  candidates: StakingTarget[]
+  selectedId: string | null
+  onPick: (id: string) => void
+  onCancel: () => void
+}) {
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3000]"
+      onClick={onCancel}
+    >
+      <div
+        className="bg-white w-full sm:max-w-sm rounded-t-xl sm:rounded-xl shadow-xl overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-4 py-3 border-b">
+          <h3 className="text-base font-bold">重なっている点</h3>
+          <div className="text-xs text-slate-500 mt-0.5">
+            1m 以内に {candidates.length} 件あります。選んでください。
+          </div>
+        </div>
+        <ul className="max-h-[60vh] overflow-auto">
+          {candidates.map((t) => {
+            const isCurrent = t.id === selectedId
+            return (
+              <li key={t.id}>
+                <button
+                  onClick={() => onPick(t.id)}
+                  className={`w-full text-left px-4 py-2.5 border-b last:border-b-0 ${
+                    isCurrent ? 'bg-blue-50' : 'hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-sm">{t.name}</span>
+                    {isCurrent && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600 text-white">
+                        選択中
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-0.5 font-mono">
+                    {t.subTypeLabel} · X={t.x.toFixed(3)}, Y={t.y.toFixed(3)}
+                  </div>
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+        <button
+          onClick={onCancel}
+          className="w-full px-4 py-3 text-sm text-slate-600 border-t hover:bg-slate-50"
+        >
+          キャンセル
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function FreePointDialog({
   data,
   typeOptions,
