@@ -558,9 +558,34 @@ export function MobileStakingPage() {
   const [showDisplaySettings, setShowDisplaySettings] = useState(false)
   // 写真モーダル: 選択中ターゲット（座標）の写真を閲覧／撮影できる
   const [photoModalTarget, setPhotoModalTarget] = useState<StakingTarget | null>(null)
-  const [showLabels, setShowLabels] = useState(true)
+  const [showLabels, setShowLabels] = useState(
+    () => localStorage.getItem('mobile:staking:showLabels') !== '0',
+  )
+  useEffect(() => {
+    try { localStorage.setItem('mobile:staking:showLabels', showLabels ? '1' : '0') } catch { /* ignore */ }
+  }, [showLabels])
+  // 測点（マーカー）全体の表示 ON/OFF。既定 ON。
+  // 点種別フィルタ (hiddenSubTypes) の親トグル。
+  const [showTargets, setShowTargets] = useState(
+    () => localStorage.getItem('mobile:staking:showTargets') !== '0',
+  )
+  useEffect(() => {
+    try { localStorage.setItem('mobile:staking:showTargets', showTargets ? '1' : '0') } catch { /* ignore */ }
+  }, [showTargets])
+  // 地番ポリゴンの表示 ON/OFF。既定 ON。
+  const [showParcelPolygons, setShowParcelPolygons] = useState(
+    () => localStorage.getItem('mobile:staking:showParcelPolygons') !== '0',
+  )
+  useEffect(() => {
+    try { localStorage.setItem('mobile:staking:showParcelPolygons', showParcelPolygons ? '1' : '0') } catch { /* ignore */ }
+  }, [showParcelPolygons])
   // 地番名ラベル（境界測量ポリゴンの上に表示）。既定 OFF、低ズーム時は自動 OFF。
-  const [showParcelLabels, setShowParcelLabels] = useState(false)
+  const [showParcelLabels, setShowParcelLabels] = useState(
+    () => localStorage.getItem('mobile:staking:showParcelLabels') === '1',
+  )
+  useEffect(() => {
+    try { localStorage.setItem('mobile:staking:showParcelLabels', showParcelLabels ? '1' : '0') } catch { /* ignore */ }
+  }, [showParcelLabels])
   const [showOrtho, setShowOrtho] = useState(true)
   const PARCEL_LABEL_MIN_ZOOM = 17
   // ターゲット動的ズーム（ターゲットを中心にして、現在地も視野に収まるよう自動拡大縮小）
@@ -2432,110 +2457,156 @@ export function MobileStakingPage() {
       )}
 
       {/* 表示設定パネル（表示アイコンで開閉）:
-          コンパス / 点名 / 地番 / 点種フィルタ をまとめて設定 */}
+          コンパス / 測点（+点種別） / 点名 / 地番（ポリゴン） / 地番名 のチェックリスト */}
       {showDisplaySettings && (
-        <div className="bg-white border-b px-2 py-2 space-y-2">
-          {/* 表示トグル + 背景地図 */}
-          <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
-            <span className="text-slate-500 mr-1">表示:</span>
-            <button
-              onClick={toggleHeading}
-              className={`flex items-center gap-1 px-2 py-0.5 rounded border font-medium ${
-                headingEnabled
-                  ? heading != null
-                    ? 'bg-emerald-600 text-white border-emerald-600'
-                    : 'bg-amber-500 text-white border-amber-500'
-                  : 'bg-white text-slate-500 border-slate-300'
-              }`}
-              title={
-                headingError
-                  ? `方位エラー: ${headingError}`
-                  : headingEnabled
-                  ? heading != null
-                    ? `方位 ${heading.toFixed(0)}°（クリックでOFF）`
-                    : '方位センサー待機中'
-                  : '方位センサーをON'
-              }
-            >
-              <Navigation2 className="h-3.5 w-3.5" />
-              コンパス
-            </button>
-            <button
-              onClick={() => setShowLabels((v) => !v)}
-              className={`flex items-center gap-1 px-2 py-0.5 rounded border font-medium ${
-                showLabels
-                  ? 'bg-blue-600 text-white border-blue-600'
-                  : 'bg-white text-slate-500 border-slate-300'
-              }`}
-            >
-              <Tag className="h-3.5 w-3.5" />
-              点名
-            </button>
-            <button
-              onClick={() => setShowParcelLabels((v) => !v)}
-              className={`px-2 py-0.5 rounded border font-medium ${
-                showParcelLabels
-                  ? 'bg-blue-600 text-white border-blue-600'
-                  : 'bg-white text-slate-500 border-slate-300'
-              }`}
-              title={`地番名表示（ズーム ${PARCEL_LABEL_MIN_ZOOM} 以上で有効）`}
-            >
-              地番
-            </button>
-            {/* 背景地図セレクタは地図右下（Leaflet 帰属の上）へ移動 */}
-          </div>
-          {/* 点種フィルタ */}
-          <div className="flex items-center gap-1 flex-wrap text-[11px]">
-            <span className="text-slate-500 mr-1">点種:</span>
-            {subTypeStats.map((s) => {
-              const hidden = hiddenSubTypes.has(s.code)
-              const onCls =
-                s.kind === 'coordinate'
-                  ? 'bg-blue-600 text-white border-blue-600'
-                  : 'bg-emerald-600 text-white border-emerald-600'
-              const offCls = 'bg-white text-slate-400 border-slate-300 line-through'
-              return (
+        <div className="bg-white border-b px-3 py-2 text-sm space-y-1.5">
+          {/* コンパス */}
+          <label
+            className="flex items-center gap-2 cursor-pointer"
+            title={
+              headingError
+                ? `方位エラー: ${headingError}`
+                : headingEnabled
+                ? heading != null
+                  ? `方位 ${heading.toFixed(0)}°`
+                  : '方位センサー待機中'
+                : '方位センサーをON'
+            }
+          >
+            <input
+              type="checkbox"
+              checked={headingEnabled}
+              onChange={toggleHeading}
+              className="h-4 w-4"
+            />
+            <Navigation2 className="h-3.5 w-3.5 text-slate-500" />
+            <span>コンパス</span>
+            {headingEnabled && heading != null && (
+              <span className="ml-1 text-[11px] text-emerald-700">
+                {heading.toFixed(0)}°
+              </span>
+            )}
+          </label>
+
+          {/* 測点（マーカー） + 点種別ネスト */}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showTargets}
+              onChange={() => setShowTargets((v) => !v)}
+              className="h-4 w-4"
+            />
+            <span>測点</span>
+            <span className="text-[11px] text-slate-500">
+              ({filteredTargets.length})
+            </span>
+          </label>
+          {showTargets && subTypeStats.length > 0 && (
+            <div className="pl-7 space-y-1 text-xs">
+              {subTypeStats.map((s) => {
+                const visible = !hiddenSubTypes.has(s.code)
+                return (
+                  <label
+                    key={s.code}
+                    className="flex items-center gap-2 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={visible}
+                      onChange={() =>
+                        setHiddenSubTypes((prev) => {
+                          const next = new Set(prev)
+                          if (next.has(s.code)) next.delete(s.code)
+                          else next.add(s.code)
+                          return next
+                        })
+                      }
+                      className="h-3.5 w-3.5"
+                    />
+                    <span>{s.label}</span>
+                    <span className="text-[10px] text-slate-500">
+                      ({s.count})
+                    </span>
+                  </label>
+                )
+              })}
+              {/* ルート絞り込み（順路が登録済みの工区でのみ） */}
+              {routeTargetIds.size > 0 && (
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={targetFilter === 'route'}
+                    onChange={() =>
+                      setTargetFilter((prev) => (prev === 'route' ? 'all' : 'route'))
+                    }
+                    className="h-3.5 w-3.5"
+                  />
+                  <span className="text-orange-700">ルートのみ</span>
+                  <span className="text-[10px] text-slate-500">
+                    ({routeTargetIds.size})
+                  </span>
+                </label>
+              )}
+              {hiddenSubTypes.size > 0 && (
                 <button
-                  key={s.code}
-                  onClick={() =>
-                    setHiddenSubTypes((prev) => {
-                      const next = new Set(prev)
-                      if (next.has(s.code)) next.delete(s.code)
-                      else next.add(s.code)
-                      return next
-                    })
-                  }
-                  className={`px-1.5 py-0.5 rounded border font-medium ${hidden ? offCls : onCls}`}
+                  type="button"
+                  onClick={() => setHiddenSubTypes(new Set())}
+                  className="text-[11px] text-blue-600 hover:underline"
                 >
-                  {s.label}
-                  <span className="ml-1 text-[10px] opacity-80">({s.count})</span>
+                  全ての点種を表示
                 </button>
-              )
-            })}
-            {/* ルート絞り込み（順路が登録済みの工区でのみ表示） */}
-            {routeTargetIds.size > 0 && (
-              <button
-                onClick={() =>
-                  setTargetFilter((prev) => (prev === 'route' ? 'all' : 'route'))
-                }
-                className={`px-1.5 py-0.5 rounded border font-medium ml-1 ${
-                  targetFilter === 'route'
-                    ? 'bg-orange-600 text-white border-orange-600'
-                    : 'bg-white text-orange-700 border-orange-400'
-                }`}
-              >
-                ルート ({routeTargetIds.size})
-              </button>
+              )}
+            </div>
+          )}
+
+          {/* 点名 */}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showLabels}
+              onChange={() => setShowLabels((v) => !v)}
+              className="h-4 w-4"
+            />
+            <Tag className="h-3.5 w-3.5 text-slate-500" />
+            <span>点名</span>
+            {showLabels && mapZoom < LABEL_MIN_ZOOM && (
+              <span className="text-[10px] text-slate-400">
+                ズーム {LABEL_MIN_ZOOM} 以上で表示
+              </span>
             )}
-            {hiddenSubTypes.size > 0 && (
-              <button
-                onClick={() => setHiddenSubTypes(new Set())}
-                className="ml-1 px-1.5 py-0.5 text-slate-600 hover:text-slate-900 underline"
-              >
-                全て表示
-              </button>
+          </label>
+
+          {/* 地番（ポリゴン） */}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showParcelPolygons}
+              onChange={() => setShowParcelPolygons((v) => !v)}
+              className="h-4 w-4"
+            />
+            <span>地番（ポリゴン）</span>
+            {farmPolygons.length > 0 && (
+              <span className="text-[11px] text-slate-500">
+                ({farmPolygons.length})
+              </span>
             )}
-          </div>
+          </label>
+
+          {/* 地番名 */}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showParcelLabels}
+              onChange={() => setShowParcelLabels((v) => !v)}
+              className="h-4 w-4"
+            />
+            <span>地番名</span>
+            {showParcelLabels && mapZoom < PARCEL_LABEL_MIN_ZOOM && (
+              <span className="text-[10px] text-slate-400">
+                ズーム {PARCEL_LABEL_MIN_ZOOM} 以上で表示
+              </span>
+            )}
+          </label>
         </div>
       )}
 
@@ -2709,8 +2780,8 @@ export function MobileStakingPage() {
             }
           />
 
-          {/* 工事区域ポリゴン（境界測量=シアン 等） */}
-          {farmPolygons.map((polygon) => {
+          {/* 工事区域ポリゴン（境界測量=シアン 等）。showParcelPolygons でまとめて非表示にできる */}
+          {showParcelPolygons && farmPolygons.map((polygon) => {
             const color =
               polygon.workType === 'boundary_survey'
                 ? '#0ea5e9'
@@ -2807,8 +2878,8 @@ export function MobileStakingPage() {
             />
           )}
 
-          {/* ターゲット */}
-          {(() => {
+          {/* ターゲット（測点マーカー） */}
+          {showTargets && (() => {
             // 点名ラベルは ON でも「画面内のマーカーだけ」に絞る。
             // 数千点を一気に permanent tooltip にすると DOM ノードが爆増して
             // 地図 (および同時に描画する地番ポリゴン) ごと固まるため。
