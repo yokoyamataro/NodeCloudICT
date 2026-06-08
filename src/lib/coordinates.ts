@@ -74,7 +74,7 @@ export class CoordinateConverter {
 }
 
 // 座標の種類
-// 基本3種 + 地籍測量で使う 7 種類。
+// 基本3種 + 地籍測量で使う 7 種類 + 実測点。
 export type CoordinateType =
   | 'control'
   | 'boundary'
@@ -86,6 +86,7 @@ export type CoordinateType =
   | 'cadastral_diagram'  // 地積測量図
   | 'witness'            // 立会点
   | 'confirmed_boundary' // 確定筆界点
+  | 'measured'           // 実測点
 
 export const COORDINATE_TYPE_NAMES: Record<CoordinateType, string> = {
   control: '基準点',
@@ -98,4 +99,5 @@ export const COORDINATE_TYPE_NAMES: Record<CoordinateType, string> = {
   cadastral_diagram: '地積測量図',
   witness: '立会点',
   confirmed_boundary: '確定筆界点',
+  measured: '実測点',
 }
