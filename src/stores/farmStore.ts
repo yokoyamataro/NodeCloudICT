@@ -242,10 +242,15 @@ export const useFarmStore = create<FarmState>()(
         for (const fid of farmIdsWithAreas) {
           let from = 0
           while (from < 1_000_000) {
+            // ORDER BY を付けないとページ境界でロウがこぼれ、ポリゴン
+            // の構成点不足 (< 3 点) で polygon が丸ごと捨てられるため、
+            // 2000 点規模で地番が画面に出なくなる。id 順で安定ページング
+            // する。
             const { data: coordsData, error: coordError } = await supabase
               .from('design_coordinates')
               .select('id, x, y')
               .eq('farm_id', fid)
+              .order('id')
               .range(from, from + PAGE - 1)
             if (coordError) throw coordError
             const rows = (coordsData || []) as Array<{ id: string; x: number; y: number }>

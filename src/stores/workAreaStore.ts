@@ -136,6 +136,9 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
       }
 
       // design_coordinates は farm_id でページング取得（既定 1000 行/req のため）
+      // 安定ページングのため id 昇順で取得する。
+      // （ORDER BY なしだとページ境界で行が抜け、地番ポリゴンの構成点
+      //   不足で polygon が捨てられて画面に地番が出なくなる）
       const coordinatesMap: Record<string, DesignCoordinate> = {}
       {
         const PAGE = 1000
@@ -145,6 +148,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
             .from('design_coordinates')
             .select('*')
             .eq('farm_id', farmId)
+            .order('id')
             .range(from, from + PAGE - 1)
           if (coordError) throw coordError
           const rows = (coords || []) as DesignCoordinate[]
