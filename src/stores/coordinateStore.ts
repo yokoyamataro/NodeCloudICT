@@ -35,6 +35,8 @@ export interface ImportCoordinateInput {
   z: number | null
   type: CoordinateType
   stakeType?: string | null
+  /** 備考。スマホ計測由来か等の出所を入れる用途に使う（例: 'mobile_measurement'） */
+  notes?: string | null
 }
 
 // 経路（順路）の方向
@@ -366,6 +368,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
           stake_type: c.stakeType ?? null,
           latitude: lat,
           longitude: lng,
+          notes: c.notes ?? null,
           created_by: uid,
           updated_by: uid,
         }
