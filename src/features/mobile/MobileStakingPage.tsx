@@ -231,6 +231,27 @@ function ZoomWatcher({ onChange }: { onChange: (z: number) => void }) {
   return null
 }
 
+// 地図の現在の表示範囲を親の state に流す。
+// 大量マーカーの permanent tooltip を「画面内のものだけ」に絞るのに使う。
+function BoundsWatcher({
+  onChange,
+}: {
+  onChange: (b: L.LatLngBounds | null) => void
+}) {
+  const map = useMap()
+  useEffect(() => {
+    const update = () => onChange(map.getBounds())
+    update()
+    map.on('moveend', update)
+    map.on('zoomend', update)
+    return () => {
+      map.off('moveend', update)
+      map.off('zoomend', update)
+    }
+  }, [map, onChange])
+  return null
+}
+
 // 旧: 地図クリックで断面 2 点を拾うピッカー（座標 2 点を選ぶ方式に変更したため未使用）
 
 function FollowCurrent({
@@ -590,6 +611,10 @@ export function MobileStakingPage() {
   // 点数が多いとラベル描画が重くなるため、低ズーム時は自動で非表示にする
   const [mapZoom, setMapZoom] = useState(17)
   const LABEL_MIN_ZOOM = 18
+  // 地図の表示範囲（マーカーラベルの可視範囲カリングに使う）。
+  // 大量点（数千点）で permanent tooltip を全 marker に付けると固まるため、
+  // 画面に映っているマーカーだけ label を出すようにする。
+  const [mapBounds, setMapBounds] = useState<L.LatLngBounds | null>(null)
   const [showRouteLine, setShowRouteLine] = useState(true)
 
   // 施工管理モード用：中心線形 / 床掘 TIN / 現況 TIN
@@ -2668,6 +2693,7 @@ export function MobileStakingPage() {
               地図は最後の良好位置で止まり、外側へ大きくスクロールしない */}
           <FollowCurrent position={stablePos} enabled={followMode === 'self'} />
           <ZoomWatcher onChange={setMapZoom} />
+          <BoundsWatcher onChange={setMapBounds} />
           {/* ターゲット選択時はモードに関わらず 1 度だけ中心化（継続的な追尾はしない） */}
           <CenterOnSelect
             target={
@@ -2780,9 +2806,19 @@ export function MobileStakingPage() {
           )}
 
           {/* ターゲット */}
-          {filteredTargets.map((t) => {
+          {(() => {
+            // 点名ラベルは ON でも「画面内のマーカーだけ」に絞る。
+            // 数千点を一気に permanent tooltip にすると DOM ノードが爆増して
+            // 地図 (および同時に描画する地番ポリゴン) ごと固まるため。
+            const labelsActive = showLabels && mapZoom >= LABEL_MIN_ZOOM
+            const labelBounds =
+              labelsActive && mapBounds ? mapBounds.pad(0.15) : null
+            return filteredTargets.map((t) => {
             const isSelected = t.id === selectedTargetId
             const isStaked = stakedTargetIds.has(t.id)
+            const showLabel =
+              labelsActive &&
+              (labelBounds == null || labelBounds.contains([t.lat, t.lng]))
             // 色: 選択中 = オレンジ、座標は点種で色分け、暗渠頂点 = 緑
             //   基準点(control) = 赤、境界点(boundary) = シアン、現況(current) = 青、その他 = 灰
             let baseColor = '#3b82f6'
@@ -2878,34 +2914,37 @@ export function MobileStakingPage() {
                   },
                 }}
               >
-                <Tooltip
-                  key={`tip-${showLabels && mapZoom >= LABEL_MIN_ZOOM ? 'on' : 'off'}-${isStaked ? 'st' : 'no'}-${isSelected ? 'sel' : 'norm'}`}
-                  className="staking-label-tooltip"
-                  direction="top"
-                  offset={[0, -6]}
-                  permanent={showLabels && mapZoom >= LABEL_MIN_ZOOM}
-                  opacity={1}
-                >
-                  <span
-                    style={{
-                      color: fillColor,
-                      // 白フチ（4 方向 + 斜め）でマーカーと同色文字を地図上で読みやすく
-                      textShadow:
-                        '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff',
-                      ...(isStaked
-                        ? {
-                            textDecoration: 'line-through',
-                            textDecorationColor: 'rgba(22,163,74,0.7)',
-                          }
-                        : {}),
-                    }}
+                {showLabel && (
+                  <Tooltip
+                    key={`tip-${isStaked ? 'st' : 'no'}-${isSelected ? 'sel' : 'norm'}`}
+                    className="staking-label-tooltip"
+                    direction="top"
+                    offset={[0, -6]}
+                    permanent
+                    opacity={1}
                   >
-                    {isStaked ? `✓ ${t.name}` : t.name}
-                  </span>
-                </Tooltip>
+                    <span
+                      style={{
+                        color: fillColor,
+                        // 白フチ（4 方向 + 斜め）でマーカーと同色文字を地図上で読みやすく
+                        textShadow:
+                          '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff',
+                        ...(isStaked
+                          ? {
+                              textDecoration: 'line-through',
+                              textDecorationColor: 'rgba(22,163,74,0.7)',
+                            }
+                          : {}),
+                      }}
+                    >
+                      {isStaked ? `✓ ${t.name}` : t.name}
+                    </span>
+                  </Tooltip>
+                )}
               </Marker>
             )
-          })}
+          })
+          })()}
 
           {/* 地番編集モード: 当該工区の全座標にタップ可能なマーカーを重ねる。
               当該地番に含まれる点は赤、未割当は青。マーカータップで追加 / 削除をトグル */}
