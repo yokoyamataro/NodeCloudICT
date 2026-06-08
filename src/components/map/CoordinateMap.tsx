@@ -390,7 +390,15 @@ export function CoordinateMap({
                   direction="center"
                   className="polygon-label-tooltip"
                 >
-                  {polygon.name}
+                  <span
+                    style={{
+                      color: isEditing ? '#15803d' : '#15803d',
+                      textShadow:
+                        '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff',
+                    }}
+                  >
+                    {polygon.name}
+                  </span>
                 </Tooltip>
               )}
             </Polygon>
@@ -523,14 +531,23 @@ export function CoordinateMap({
             } : undefined}
           >
             {/* showLabels && showLabel が true なら常時表示、false ならホバー
-                時のみ点名を出す（Tooltip 自体はマーカー上に常駐させておく） */}
+                時のみ点名を出す（Tooltip 自体はマーカー上に常駐させておく）。
+                スマホと同じく、マーカー色 + 白フチで地図上に読みやすく表示 */}
             <Tooltip
               permanent={showLabels && showLabel}
               direction="top"
               offset={[0, -8]}
               className="point-label-tooltip"
             >
-              {coord.pointNumber}
+              <span
+                style={{
+                  color: MARKER_COLORS[coord.type] || '#666',
+                  textShadow:
+                    '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff',
+                }}
+              >
+                {coord.pointNumber}
+              </span>
             </Tooltip>
           </Marker>
         )}

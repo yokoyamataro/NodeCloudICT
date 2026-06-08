@@ -136,6 +136,24 @@ input[type="number"] {
   display: none !important;
 }
 
+/* PC 座標管理マップの点名ラベル / ポリゴンラベルも、スマホと同じく
+   背景なし・色付き文字＋白フチで表示する */
+.point-label-tooltip,
+.polygon-label-tooltip {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  white-space: nowrap !important;
+}
+
+.point-label-tooltip::before,
+.polygon-label-tooltip::before {
+  display: none !important;
+}
+
 /* カスタムマーカー（デフォルトのLeafletマーカースタイルを上書き） */
 .custom-marker {
   background: transparent !important;
