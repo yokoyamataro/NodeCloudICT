@@ -43,6 +43,8 @@ supabase/migrations/*.XML
 # Supabase CLI のローカルキャッシュ（supabase link で生成される）
 supabase/.temp/
 
-# 検証用 SIMA データ（個人情報を含む可能性があるため共有しない）
+# 検証用 SIMA / 登記情報 PDF（個人情報を含む可能性があるため共有しない）
 doc/*.sim
 doc/*.SIM
+doc/*.pdf
+doc/*.PDF

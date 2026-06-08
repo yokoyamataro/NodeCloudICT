@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Plus, Trash2, GripVertical, Calculator, Download, X, Image as ImageIcon, Ruler, Pencil, Tag, Hash } from 'lucide-react'
+import { Plus, Trash2, GripVertical, Calculator, Download, X, Image as ImageIcon, Ruler, Pencil, Tag, Hash, FileText } from 'lucide-react'
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
@@ -23,6 +23,7 @@ import {
   getCoordinateTypeOptions,
 } from '@/stores/coordinatePointTypeStore'
 import { PointTypeFilterButton } from '@/features/coordinates/PointTypeFilterButton'
+import { RegistryPdfImportModal } from '@/features/boundary-survey/RegistryPdfImportModal'
 
 // 面積計算簿コンポーネント
 function AreaCalculationSheet({
@@ -275,6 +276,8 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   const refetchLandownerAssignments = useLandownerStore((s) => s.fetchAssignmentsByFarm)
   // 地番一覧の表示列（地籍時のみ使用）。localStorage に保存される
   const [visibleColumns, setVisibleColumns] = useCadastralVisibleColumns()
+  // 登記情報 PDF 取込モーダル
+  const [showRegistryImport, setShowRegistryImport] = useState(false)
   useEffect(() => {
     if (!isBoundarySurvey) {
       clearParcels()
@@ -460,6 +463,15 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                     visible={visibleColumns}
                     onChange={setVisibleColumns}
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowRegistryImport(true)}
+                    title="登記情報 PDF から登記地目 / 地積 / 所有者を取り込む"
+                    className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50"
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    登記PDF取込
+                  </button>
                 </>
               )}
               <button
@@ -923,6 +935,14 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
           </div>
         )
       })()}
+
+      {/* 登記情報 PDF 取込モーダル */}
+      {showRegistryImport && isBoundarySurvey && (
+        <RegistryPdfImportModal
+          areas={sortedAreas}
+          onClose={() => setShowRegistryImport(false)}
+        />
+      )}
     </div>
   )
 }
