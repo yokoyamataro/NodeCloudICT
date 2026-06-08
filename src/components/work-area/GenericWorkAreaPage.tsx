@@ -17,6 +17,12 @@ import type { WorkType, AreaCalculationSheet as AreaCalculationSheetType } from 
 import { WORK_TYPE_NAMES } from '@/types/database'
 import { exportAreaCalculationToCSV } from '@/lib/area-calculation'
 import { compareByLocationAndParcel } from '@/lib/parcelSort'
+import { useMapViewStore } from '@/stores/mapViewStore'
+import {
+  useCoordinatePointTypeStore,
+  getCoordinateTypeOptions,
+} from '@/stores/coordinatePointTypeStore'
+import { PointTypeFilterButton } from '@/features/coordinates/PointTypeFilterButton'
 
 // 面積計算簿コンポーネント
 function AreaCalculationSheet({
@@ -163,9 +169,13 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
   const [editingAreaId, setEditingAreaId] = useState<string | null>(null)
   const [pointNameInput, setPointNameInput] = useState<string>('')
-  const [showOrtho, setShowOrtho] = useState(true)
+  // オルソ表示・背景地図・点種フィルタは座標管理と mapViewStore で共有
+  const showOrtho = useMapViewStore((s) => s.showOrtho)
+  const setShowOrtho = useMapViewStore((s) => s.setShowOrtho)
+  const baseLayer = useMapViewStore((s) => s.baseLayer)
+  const setBaseLayer = useMapViewStore((s) => s.setBaseLayer)
+  const visibleTypes = useMapViewStore((s) => s.visibleTypes)
   const [showEdgeLengths, setShowEdgeLengths] = useState(false)
-  const [baseLayer, setBaseLayer] = useState<BaseLayerType>('osm')
   // 辺長の桁数・端数設定は境界測量のみ。それ以外は 2桁・四捨五入 固定
   const isBoundarySurvey = workType === 'boundary_survey'
   // 点名 / 地番名の地図ラベル表示切替（localStorage に保存して維持）
@@ -227,6 +237,18 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   const fetchParcels = useParcelStore((s) => s.fetchByWorkAreaIds)
   const clearParcels = useParcelStore((s) => s.clear)
   const parcelByWorkAreaId = useParcelStore((s) => s.byWorkAreaId)
+
+  // 地籍モード: 点種フィルター用の選択肢（既定 + プロジェクトのカスタム）
+  const projectId = currentFarm?.project_id ?? null
+  const pointTypesByProject = useCoordinatePointTypeStore((s) => s.byProject)
+  const fetchPointTypes = useCoordinatePointTypeStore((s) => s.fetchForProject)
+  useEffect(() => {
+    if (isBoundarySurvey && projectId) void fetchPointTypes(projectId)
+  }, [isBoundarySurvey, projectId, fetchPointTypes])
+  const typeOptions = useMemo(
+    () => getCoordinateTypeOptions(projectId, pointTypesByProject),
+    [projectId, pointTypesByProject],
+  )
 
   // 地籍モード: 所在 → 地番(親番-小番) の自然順で並べ替えた区域一覧。
   // それ以外（土木工種）は元順を維持する。
@@ -432,10 +454,13 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
             <h3 className="text-lg font-semibold">区域登録</h3>
             <div className="flex items-center gap-2">
               {isBoundarySurvey && (
-                <CadastralColumnPicker
-                  visible={visibleColumns}
-                  onChange={setVisibleColumns}
-                />
+                <>
+                  <PointTypeFilterButton typeOptions={typeOptions} />
+                  <CadastralColumnPicker
+                    visible={visibleColumns}
+                    onChange={setVisibleColumns}
+                  />
+                </>
               )}
               <button
                 onClick={handleAddArea}
@@ -732,7 +757,7 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
               </div>
             )}
             <button
-              onClick={() => setShowOrtho((v) => !v)}
+              onClick={() => setShowOrtho(!showOrtho)}
               className={`flex items-center gap-1 px-2 py-1 text-xs rounded border shadow ${
                 showOrtho
                   ? 'bg-emerald-100 border-emerald-400 text-emerald-800 font-medium'
@@ -767,6 +792,7 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
             edgeRounding={isBoundarySurvey ? edgeRounding : 'round'}
             showLabels={isBoundarySurvey ? showPointLabels : undefined}
             showPolygonLabels={isBoundarySurvey ? showPolygonLabels : false}
+            visibleTypes={isBoundarySurvey ? visibleTypes : undefined}
           />
         </div>
       </div>

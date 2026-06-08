@@ -1,6 +1,11 @@
 import { create } from 'zustand'
+import type { BaseLayerType } from '@/components/map/CoordinateMap'
+import { COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 
 // 地図の表示状態（タブ間で共有）
+// ・center / zoom: 異なる地図コンポーネント間で位置を同期
+// ・visibleTypes / showOrtho / baseLayer: 座標管理 ↔ 地番管理 で
+//   フィルタや背景レイヤーが巻き戻らないように共有 + localStorage 永続化
 interface MapViewState {
   // 地図の中心位置
   center: [number, number] | null
@@ -15,22 +20,124 @@ interface MapViewState {
   setInitialized: (value: boolean) => void
   // リセット（プロジェクト切り替え時）
   resetView: () => void
+
+  // ── 表示設定（座標管理 / 地番管理 で共有） ─────────────────────
+  /** 点種フィルタ。空集合は許容しない（最低 1 件残す） */
+  visibleTypes: Set<string>
+  /** オルソ画像レイヤーの表示 ON/OFF */
+  showOrtho: boolean
+  /** 背景地図の種類 */
+  baseLayer: BaseLayerType
+
+  setVisibleTypes: (next: Set<string>) => void
+  /** 1 件トグル。結果が空集合なら無視 */
+  toggleVisibleType: (code: string) => void
+  setShowOrtho: (v: boolean) => void
+  setBaseLayer: (l: BaseLayerType) => void
 }
 
-export const useMapViewStore = create<MapViewState>()((set) => ({
-  center: null,
-  zoom: null,
-  isInitialized: false,
+const SETTINGS_KEY = 'mapView:settings:v1'
+const DEFAULT_VISIBLE = new Set<string>(Object.keys(COORDINATE_TYPE_NAMES))
 
-  setView: (center, zoom) => {
-    set({ center, zoom, isInitialized: true })
-  },
+interface PersistShape {
+  visibleTypes?: string[]
+  showOrtho?: boolean
+  baseLayer?: BaseLayerType
+}
 
-  setInitialized: (value) => {
-    set({ isInitialized: value })
-  },
+function loadSettings(): {
+  visibleTypes: Set<string>
+  showOrtho: boolean
+  baseLayer: BaseLayerType
+} {
+  if (typeof window === 'undefined') {
+    return { visibleTypes: new Set(DEFAULT_VISIBLE), showOrtho: true, baseLayer: 'osm' }
+  }
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_KEY)
+    if (!raw) {
+      return { visibleTypes: new Set(DEFAULT_VISIBLE), showOrtho: true, baseLayer: 'osm' }
+    }
+    const parsed = JSON.parse(raw) as PersistShape
+    const vt =
+      Array.isArray(parsed.visibleTypes) && parsed.visibleTypes.length > 0
+        ? new Set(parsed.visibleTypes.filter((s): s is string => typeof s === 'string'))
+        : new Set<string>(DEFAULT_VISIBLE)
+    const baseLayer: BaseLayerType =
+      parsed.baseLayer === 'gsi-photo' || parsed.baseLayer === 'gsi-std' ? parsed.baseLayer : 'osm'
+    return {
+      visibleTypes: vt,
+      showOrtho: typeof parsed.showOrtho === 'boolean' ? parsed.showOrtho : true,
+      baseLayer,
+    }
+  } catch {
+    return { visibleTypes: new Set(DEFAULT_VISIBLE), showOrtho: true, baseLayer: 'osm' }
+  }
+}
 
-  resetView: () => {
-    set({ center: null, zoom: null, isInitialized: false })
-  },
-}))
+function saveSettings(
+  visibleTypes: Set<string>,
+  showOrtho: boolean,
+  baseLayer: BaseLayerType,
+) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(
+      SETTINGS_KEY,
+      JSON.stringify({ visibleTypes: Array.from(visibleTypes), showOrtho, baseLayer }),
+    )
+  } catch {
+    /* ignore quota errors */
+  }
+}
+
+export const useMapViewStore = create<MapViewState>()((set, get) => {
+  const initial = loadSettings()
+  return {
+    center: null,
+    zoom: null,
+    isInitialized: false,
+
+    setView: (center, zoom) => {
+      set({ center, zoom, isInitialized: true })
+    },
+
+    setInitialized: (value) => {
+      set({ isInitialized: value })
+    },
+
+    resetView: () => {
+      set({ center: null, zoom: null, isInitialized: false })
+    },
+
+    visibleTypes: initial.visibleTypes,
+    showOrtho: initial.showOrtho,
+    baseLayer: initial.baseLayer,
+
+    setVisibleTypes: (next) => {
+      if (next.size === 0) return
+      set({ visibleTypes: next })
+      const s = get()
+      saveSettings(next, s.showOrtho, s.baseLayer)
+    },
+    toggleVisibleType: (code) => {
+      const next = new Set(get().visibleTypes)
+      if (next.has(code)) next.delete(code)
+      else next.add(code)
+      if (next.size === 0) return
+      set({ visibleTypes: next })
+      const s = get()
+      saveSettings(next, s.showOrtho, s.baseLayer)
+    },
+    setShowOrtho: (v) => {
+      set({ showOrtho: v })
+      const s = get()
+      saveSettings(s.visibleTypes, v, s.baseLayer)
+    },
+    setBaseLayer: (l) => {
+      set({ baseLayer: l })
+      const s = get()
+      saveSettings(s.visibleTypes, s.showOrtho, l)
+    },
+  }
+})
