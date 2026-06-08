@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Upload, Download, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Camera, Image as ImageIcon, Loader2, Calculator, Layers } from 'lucide-react'
+import { Upload, Download, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Camera, Image as ImageIcon, Loader2, Calculator, Layers, Check } from 'lucide-react'
 import { PointTypeFilterButton } from './PointTypeFilterButton'
 import { CoordinatePhotoModal } from './CoordinatePhotoModal'
 import { CoordinateCalcModal } from './CoordinateCalcModal'
@@ -7,6 +7,7 @@ import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { useMapViewStore } from '@/stores/mapViewStore'
+import { useStakingStore } from '@/stores/stakingStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useAttachmentStore } from '@/stores/attachmentStore'
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
@@ -350,6 +351,20 @@ export function CoordinatesPage() {
     [coordinates, visibleTypes],
   )
 
+  // スマホから記録された staking_records を取得し、「設置済」フラグに使う
+  const stakingRecords = useStakingStore((s) => s.records)
+  const fetchStakingRecords = useStakingStore((s) => s.fetchRecords)
+  // 座標 ID → 設置済 (この coord に紐づく staking_records が 1 件でもあるか)
+  const stakedCoordIds = useMemo(() => {
+    const set = new Set<string>()
+    for (const r of stakingRecords) {
+      if (r.targetType === 'coordinate' && r.targetRefId) {
+        set.add(r.targetRefId)
+      }
+    }
+    return set
+  }, [stakingRecords])
+
   // 工区選択時にデータを読み込む
   useEffect(() => {
     if (currentFarm && projectZone !== null) {
@@ -359,8 +374,10 @@ export function CoordinatesPage() {
       fetchCoordinates(currentFarm.id)
       // 経路を読み込む
       fetchRoute(currentFarm.id)
+      // スマホ実測の状態
+      fetchStakingRecords(currentFarm.id)
     }
-  }, [currentFarm, projectZone, setZone, fetchCoordinates, fetchRoute])
+  }, [currentFarm, projectZone, setZone, fetchCoordinates, fetchRoute, fetchStakingRecords])
 
   // 座標が読み込まれたら、写真の枚数を一括取得（写真列のカウント表示用）
   useEffect(() => {
@@ -1326,6 +1343,7 @@ export function CoordinatesPage() {
                 <th className="pr-2 pl-1 py-2 text-right font-medium w-20">Z (m)</th>
                 <th className="px-0.5 py-2 text-left font-medium">種類</th>
                 <th className="px-0.5 py-2 text-left font-medium">杭種</th>
+                <th className="px-0.5 py-2 text-center font-medium w-12" title="スマホで現地計測済み">設置</th>
                 <th className="px-0.5 py-2 text-center font-medium w-12">写真</th>
                 <th className="px-0.5 py-2 text-right font-medium">緯度</th>
                 <th className="px-0.5 py-2 text-right font-medium">経度</th>
@@ -1413,6 +1431,21 @@ export function CoordinatesPage() {
                       placeholder="-"
                       className="w-20 px-1 py-0.5 border rounded text-xs bg-white"
                     />
+                  </td>
+                  <td
+                    className="px-0.5 py-0.5 text-center"
+                    onClick={(e) => e.stopPropagation()}
+                    title={
+                      stakedCoordIds.has(coord.id)
+                        ? 'スマホで現地計測済み'
+                        : '未計測'
+                    }
+                  >
+                    {stakedCoordIds.has(coord.id) ? (
+                      <Check className="h-4 w-4 text-emerald-600 inline-block" />
+                    ) : (
+                      <span className="text-slate-300">–</span>
+                    )}
                   </td>
                   <td className="px-0.5 py-0.5 text-center" onClick={(e) => e.stopPropagation()}>
                     <PhotoCountCell
@@ -1533,6 +1566,7 @@ export function CoordinatesPage() {
                       <th className="pr-2 pl-1 py-2 text-right font-medium w-20">Z (m)</th>
                       <th className="px-0.5 py-2 text-left font-medium">種類</th>
                       <th className="px-0.5 py-2 text-left font-medium">杭種</th>
+                      <th className="px-0.5 py-2 text-center font-medium w-12" title="スマホで現地計測済み">設置</th>
                       <th className="px-0.5 py-2 text-center font-medium w-12">写真</th>
                       <th className="px-0.5 py-2 text-right font-medium">緯度</th>
                       <th className="px-0.5 py-2 text-right font-medium">経度</th>
@@ -1619,6 +1653,21 @@ export function CoordinatesPage() {
                             placeholder="-"
                             className="w-20 px-1 py-0.5 border rounded text-xs bg-white"
                           />
+                        </td>
+                        <td
+                          className="px-0.5 py-0.5 text-center"
+                          onClick={(e) => e.stopPropagation()}
+                          title={
+                            stakedCoordIds.has(coord.id)
+                              ? 'スマホで現地計測済み'
+                              : '未計測'
+                          }
+                        >
+                          {stakedCoordIds.has(coord.id) ? (
+                            <Check className="h-4 w-4 text-emerald-600 inline-block" />
+                          ) : (
+                            <span className="text-slate-300">–</span>
+                          )}
                         </td>
                         <td className="px-0.5 py-0.5 text-center" onClick={(e) => e.stopPropagation()}>
                           <PhotoCountCell
