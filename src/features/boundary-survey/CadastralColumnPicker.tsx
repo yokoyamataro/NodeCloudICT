@@ -11,6 +11,33 @@ import {
 } from './CadastralRowFields'
 
 const STORAGE_KEY = 'cadastral:visibleColumns'
+// 新規追加列を 1 回だけ自動有効化するためのマイグレーション済みフラグ。
+// （これがないとユーザーが該当列を外しても、リロードのたびに復活してしまう）
+const MIGRATION_KEY = 'cadastral:visibleColumns:migrations'
+
+interface MigrationState {
+  location?: boolean
+}
+
+function readMigrations(): MigrationState {
+  try {
+    const raw = localStorage.getItem(MIGRATION_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as unknown
+    if (parsed && typeof parsed === 'object') return parsed as MigrationState
+    return {}
+  } catch {
+    return {}
+  }
+}
+
+function writeMigrations(state: MigrationState) {
+  try {
+    localStorage.setItem(MIGRATION_KEY, JSON.stringify(state))
+  } catch {
+    /* ignore */
+  }
+}
 
 function load(): Set<CadastralColumnKey> {
   try {
@@ -32,10 +59,12 @@ function load(): Set<CadastralColumnKey> {
     const valid = migrated.filter((k): k is CadastralColumnKey =>
       (CADASTRAL_COLUMN_KEYS as readonly string[]).includes(k as string),
     )
-    // 既存ユーザの保存に含まれない新規追加列は自動で有効化する
-    //   ・'location'（所在）— 並び順のキーになるので既定で見せたい
-    if (valid.length > 0 && !valid.includes('location')) {
-      valid.unshift('location')
+    // 新規追加列の自動有効化は「初回だけ」やる。
+    // 既にマイグレーション済みなら、ユーザーが外した状態を尊重する。
+    const migrations = readMigrations()
+    if (valid.length > 0 && !migrations.location) {
+      if (!valid.includes('location')) valid.unshift('location')
+      writeMigrations({ ...migrations, location: true })
     }
     // 空配列で全部消えるのは事故っぽいので、最低 1 列は残す
     return valid.length > 0 ? new Set(valid) : new Set(DEFAULT_VISIBLE_COLUMNS)
