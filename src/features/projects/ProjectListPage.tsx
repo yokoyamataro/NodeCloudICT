@@ -24,6 +24,7 @@ import {
   Play,
   Check,
   ArrowLeft,
+  Mail,
 } from 'lucide-react'
 import { MapContainer, TileLayer, Marker, Popup, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
@@ -37,6 +38,7 @@ import {
 } from '@/stores/workStatusStore'
 import { JGD2011_ZONES } from '@/lib/coordinates'
 import { CurrentLocationLayer } from '@/components/map/CurrentLocationLayer'
+import { useAuth } from '@/contexts/AuthContext'
 import type { Project, ProjectCategory, ProjectMemberRole } from '@/types/database'
 import { PROJECT_CATEGORY_LABEL } from '@/types/database'
 
@@ -144,6 +146,7 @@ export function ProjectListPage() {
     fetchUserRoles,
     setCurrentProject,
   } = useProjectListStore()
+  const { user: authUser } = useAuth()
 
   // URL の projectId に該当する工事だけに絞り込む
   const projects = useMemo(
@@ -1472,10 +1475,55 @@ export function ProjectListPage() {
 
             {/* メンバー一覧 */}
             <div>
-              <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
-                <Users className="h-4 w-4" />
-                現在のメンバー
-              </h3>
+              <div className="flex items-center justify-between mb-3 gap-2">
+                <h3 className="text-sm font-medium flex items-center gap-2">
+                  <Users className="h-4 w-4" />
+                  現在のメンバー
+                </h3>
+                {(() => {
+                  // 自分以外のメンバー（email あり）に mailto: でまとめて送る。
+                  // 件名 = "NodeCloud: {業務名}"、本文先頭に業務 URL を入れる。
+                  const recipients = members
+                    .map((m) => m.email)
+                    .filter((e): e is string => !!e && e !== authUser?.email)
+                  const disabled = recipients.length === 0 || !showMemberDialog
+                  const handleMailAll = () => {
+                    if (!showMemberDialog || recipients.length === 0) return
+                    const projectUrl = `${window.location.origin}/projects/${showMemberDialog.id}`
+                    const subject = `NodeCloud: ${showMemberDialog.name}`
+                    const body =
+                      `NodeCloud の業務「${showMemberDialog.name}」についてご連絡します。\n\n` +
+                      `業務 URL: ${projectUrl}\n\n` +
+                      `---\nこのメールは NodeCloud から共有メンバー宛に下書きされました。\n`
+                    const href =
+                      `mailto:${recipients.join(',')}` +
+                      `?subject=${encodeURIComponent(subject)}` +
+                      `&body=${encodeURIComponent(body)}`
+                    window.location.href = href
+                  }
+                  return (
+                    <button
+                      type="button"
+                      onClick={handleMailAll}
+                      disabled={disabled}
+                      title={
+                        disabled
+                          ? '送信先のメールアドレスがありません'
+                          : `${recipients.length} 件のアドレス宛にメール下書きを開きます`
+                      }
+                      className="flex items-center gap-1 px-2.5 py-1 text-xs border rounded hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <Mail className="h-3.5 w-3.5" />
+                      全員にメール
+                      {recipients.length > 0 && (
+                        <span className="text-[10px] text-slate-500">
+                          ({recipients.length})
+                        </span>
+                      )}
+                    </button>
+                  )
+                })()}
+              </div>
               {membersLoading ? (
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
