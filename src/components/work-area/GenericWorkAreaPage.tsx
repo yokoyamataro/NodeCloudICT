@@ -414,13 +414,35 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
 
     if (editingAreaId) {
       const editingArea = areas.find((a) => a.id === editingAreaId)
-      const constituentIds = editingArea?.pointIds ?? []
+      if (!editingArea) return
+      const constituentIds = editingArea.pointIds
       const coord = coordinates.find((c) => c.id === id)
       if (!coord) return
-      // 既に構成点に入っていれば「選択」、入っていなければ「追加」
-      if (constituentIds.includes(coord.id)) {
+
+      const isConstituent = constituentIds.includes(coord.id)
+
+      // ケース①: クリックされた点が既に構成点 → 選択（次のクリックで置換可）
+      if (isConstituent) {
         setSelectedConstituentPointId(coord.id)
-      } else {
+        return
+      }
+
+      // ケース②: 構成点が選択されている状態で別座標 → 置換確定
+      if (selectedConstituentPointId) {
+        const idx = constituentIds.indexOf(selectedConstituentPointId)
+        if (idx === -1) {
+          // セレクト中の点が既に構成点から外れていたら、ただ追加
+          setSelectedConstituentPointId(null)
+          addPoint(editingAreaId, {
+            id: coord.id,
+            pointNumber: coord.pointNumber,
+            x: coord.x,
+            y: coord.y,
+            z: coord.z,
+          })
+          return
+        }
+        // points 配列に新座標を入れてから順序を入れ替え
         addPoint(editingAreaId, {
           id: coord.id,
           pointNumber: coord.pointNumber,
@@ -428,7 +450,22 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
           y: coord.y,
           z: coord.z,
         })
+        const newOrder = constituentIds.map((pid, i) =>
+          i === idx ? coord.id : pid,
+        )
+        reorderPoints(editingAreaId, newOrder)
+        setSelectedConstituentPointId(coord.id)
+        return
       }
+
+      // ケース③: 何も選択していない + 構成点でない → 末尾に追加（従来）
+      addPoint(editingAreaId, {
+        id: coord.id,
+        pointNumber: coord.pointNumber,
+        x: coord.x,
+        y: coord.y,
+        z: coord.z,
+      })
     }
   }
 
@@ -454,59 +491,23 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
     return () => window.removeEventListener('keydown', onKey)
   }, [editingAreaId, selectedConstituentPointId, removePoint])
 
-  // ドラッグ中のプレビュー位置（ポリゴンが追従して再描画される）。
-  // type='constituent' の idx は構成点リストの index、
-  // type='midpoint' の idx は新しい構成点を挿入する index。
+  // 中点 + をドラッグ中のプレビュー位置（ポリゴンが追従して再描画される）。
   const [dragPreview, setDragPreview] = useState<
-    | { type: 'constituent'; idx: number; lat: number; lng: number }
-    | { type: 'midpoint'; idx: number; lat: number; lng: number }
+    | { idx: number; lat: number; lng: number }
     | null
   >(null)
-  // ドラッグハンドルの再マウントキー。ドロップ完了 / 失敗時に bump して
-  // ハンドル位置を元の構成点位置へリセットする。
-  const [handleResetKey, setHandleResetKey] = useState(0)
-
-  const handleConstituentDrag = (idx: number, lat: number, lng: number) => {
-    setDragPreview({ type: 'constituent', idx, lat, lng })
-  }
+  // 中点 + ハンドルの再マウントキー。ドロップ完了 / 失敗時に bump して
+  // 中点 + の位置を辺の中点へ戻す。
+  const [midpointResetKey, setMidpointResetKey] = useState(0)
 
   const handleMidpointDrag = (insertAfterIdx: number, lat: number, lng: number) => {
-    setDragPreview({ type: 'midpoint', idx: insertAfterIdx, lat, lng })
-  }
-
-  // 構成点ハンドルをドラッグ → 最寄りの座標へ置換
-  const handleConstituentDragEnd = (idx: number, lat: number, lng: number) => {
-    setDragPreview(null)
-    setHandleResetKey((k) => k + 1)
-    if (!editingAreaId) return
-    const editingArea = areas.find((a) => a.id === editingAreaId)
-    if (!editingArea) return
-    const originalCoordId = editingArea.pointIds[idx]
-    if (!originalCoordId) return
-    const nearest = findNearestCoord(coordinates, lat, lng, 5)
-    // ドロップ先が無い・同じ座標・既に構成点に含まれる → 何もしない
-    if (!nearest || nearest.id === originalCoordId) return
-    if (editingArea.pointIds.includes(nearest.id)) return
-    // 旧 ID を新 ID で置換（順序保持）。reorderPoints の前に addPoint で
-    // 新座標を points 配列へ入れておく必要がある
-    addPoint(editingAreaId, {
-      id: nearest.id,
-      pointNumber: nearest.pointNumber,
-      x: nearest.x,
-      y: nearest.y,
-      z: nearest.z,
-    })
-    const newOrder = editingArea.pointIds.map((pid, i) =>
-      i === idx ? nearest.id : pid,
-    )
-    reorderPoints(editingAreaId, newOrder)
-    setSelectedConstituentPointId(nearest.id)
+    setDragPreview({ idx: insertAfterIdx, lat, lng })
   }
 
   // 中点 + をドラッグ → 最寄りの座標を挿入
   const handleMidpointDragEnd = (insertAfterIdx: number, lat: number, lng: number) => {
     setDragPreview(null)
-    setHandleResetKey((k) => k + 1)
+    setMidpointResetKey((k) => k + 1)
     if (!editingAreaId) return
     const editingArea = areas.find((a) => a.id === editingAreaId)
     if (!editingArea) return
@@ -546,24 +547,14 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
     .map(area => {
       const pts = area.points.filter(p => p.lat !== null && p.lng !== null)
       let positions = pts.map(p => [p.lat!, p.lng!] as [number, number])
-      // 編集中ポリゴンで dragPreview があれば、ポリゴンを追従させる
-      if (
-        dragPreview &&
-        editingAreaId === area.id &&
-        positions.length >= 1
-      ) {
-        if (dragPreview.type === 'constituent' && dragPreview.idx < positions.length) {
-          positions = positions.map((p, i) =>
-            i === dragPreview.idx ? [dragPreview.lat, dragPreview.lng] : p,
-          )
-        } else if (dragPreview.type === 'midpoint') {
-          const insertAt = Math.min(Math.max(dragPreview.idx, 0), positions.length)
-          positions = [
-            ...positions.slice(0, insertAt),
-            [dragPreview.lat, dragPreview.lng],
-            ...positions.slice(insertAt),
-          ]
-        }
+      // 編集中ポリゴンで 中点 + ドラッグ中なら、新規挿入位置を含めて追従描画
+      if (dragPreview && editingAreaId === area.id && positions.length >= 1) {
+        const insertAt = Math.min(Math.max(dragPreview.idx, 0), positions.length)
+        positions = [
+          ...positions.slice(0, insertAt),
+          [dragPreview.lat, dragPreview.lng],
+          ...positions.slice(insertAt),
+        ]
       }
       // 各辺の中点(緯度経度)・辺長(測量座標 X,Y からの平面距離 m)・画面上の傾き(deg)。
       // 閉合辺(最終点→始点)も含む。X=北(上)/Y=東(右) を画面座標(東→右, 北→上)に対応させ、
@@ -800,6 +791,25 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                         <div className="text-xs text-muted-foreground mb-2">
                           構成点（地図上の点をクリックして追加、ドラッグで順序変更）
                         </div>
+                        {isBoundarySurvey && (
+                          <div className="mb-2 px-2 py-1.5 text-[11px] rounded border bg-white">
+                            {selectedConstituentPointId ? (
+                              <span className="text-orange-700">
+                                <span className="font-semibold">選択中:</span>{' '}
+                                {coordinates.find((c) => c.id === selectedConstituentPointId)?.pointNumber ?? ''}
+                                {' — '}
+                                <span className="text-slate-600">
+                                  別の座標をクリックで <b>置換</b>、または <kbd className="px-1 bg-slate-100 border rounded">Del</kbd> /
+                                  <kbd className="px-1 bg-slate-100 border rounded">Backspace</kbd> で削除
+                                </span>
+                              </span>
+                            ) : (
+                              <span className="text-slate-500">
+                                構成点をクリックすると選択。中点の <span className="text-emerald-700 font-semibold">+</span> をドラッグして座標へドロップで挿入。
+                              </span>
+                            )}
+                          </div>
+                        )}
                         {areaPoints.length === 0 ? (
                           <div className="py-4 text-center text-sm text-muted-foreground border border-dashed rounded">
                             点を選択してください
@@ -1001,11 +1011,9 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                 : undefined
             }
             selectedConstituentPointId={selectedConstituentPointId}
-            onConstituentDrag={editingAreaId ? handleConstituentDrag : undefined}
-            onConstituentDragEnd={editingAreaId ? handleConstituentDragEnd : undefined}
             onMidpointDrag={editingAreaId ? handleMidpointDrag : undefined}
             onMidpointDragEnd={editingAreaId ? handleMidpointDragEnd : undefined}
-            constituentHandleResetKey={handleResetKey}
+            midpointResetKey={midpointResetKey}
           />
         </div>
       </div>
