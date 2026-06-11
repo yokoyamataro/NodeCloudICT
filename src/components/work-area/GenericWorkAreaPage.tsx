@@ -499,6 +499,18 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   // 中点 + ハンドルの再マウントキー。ドロップ完了 / 失敗時に bump して
   // 中点 + の位置を辺の中点へ戻す。
   const [midpointResetKey, setMidpointResetKey] = useState(0)
+  // 構成点を選択してから次のクリックで置換確定するまでの間、
+  // 地図上のマウス位置でポリゴンを追従させるためのホバープレビュー
+  const [hoverPos, setHoverPos] = useState<{ lat: number; lng: number } | null>(null)
+  const handleMapMouseMove = (lat: number, lng: number) => {
+    if (!selectedConstituentPointId) return
+    setHoverPos({ lat, lng })
+  }
+  const handleMapMouseLeave = () => setHoverPos(null)
+  // 選択が解除された / 編集を抜けたら hoverPos もクリア
+  useEffect(() => {
+    if (!editingAreaId || !selectedConstituentPointId) setHoverPos(null)
+  }, [editingAreaId, selectedConstituentPointId])
 
   const handleMidpointDrag = (insertAfterIdx: number, lat: number, lng: number) => {
     setDragPreview({ idx: insertAfterIdx, lat, lng })
@@ -547,14 +559,27 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
     .map(area => {
       const pts = area.points.filter(p => p.lat !== null && p.lng !== null)
       let positions = pts.map(p => [p.lat!, p.lng!] as [number, number])
-      // 編集中ポリゴンで 中点 + ドラッグ中なら、新規挿入位置を含めて追従描画
-      if (dragPreview && editingAreaId === area.id && positions.length >= 1) {
-        const insertAt = Math.min(Math.max(dragPreview.idx, 0), positions.length)
-        positions = [
-          ...positions.slice(0, insertAt),
-          [dragPreview.lat, dragPreview.lng],
-          ...positions.slice(insertAt),
-        ]
+      // 編集中ポリゴンのプレビュー追従:
+      //   ① 構成点を選択中 + マウスが地図上にある
+      //      → 選択構成点の位置を hoverPos に置き換えてポリゴンを追従させる
+      //   ② 中点 + をドラッグ中 → 新規挿入位置を含めて描画
+      if (editingAreaId === area.id && positions.length >= 1) {
+        const constituentIds = area.pointIds
+        if (selectedConstituentPointId && hoverPos) {
+          const idx = constituentIds.indexOf(selectedConstituentPointId)
+          if (idx >= 0 && idx < positions.length) {
+            positions = positions.map((p, i) =>
+              i === idx ? [hoverPos.lat, hoverPos.lng] : p,
+            )
+          }
+        } else if (dragPreview) {
+          const insertAt = Math.min(Math.max(dragPreview.idx, 0), positions.length)
+          positions = [
+            ...positions.slice(0, insertAt),
+            [dragPreview.lat, dragPreview.lng],
+            ...positions.slice(insertAt),
+          ]
+        }
       }
       // 各辺の中点(緯度経度)・辺長(測量座標 X,Y からの平面距離 m)・画面上の傾き(deg)。
       // 閉合辺(最終点→始点)も含む。X=北(上)/Y=東(右) を画面座標(東→右, 北→上)に対応させ、
@@ -1014,6 +1039,12 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
             onMidpointDrag={editingAreaId ? handleMidpointDrag : undefined}
             onMidpointDragEnd={editingAreaId ? handleMidpointDragEnd : undefined}
             midpointResetKey={midpointResetKey}
+            onMapMouseMove={
+              editingAreaId && selectedConstituentPointId
+                ? handleMapMouseMove
+                : undefined
+            }
+            onMapMouseLeave={selectedConstituentPointId ? handleMapMouseLeave : undefined}
           />
         </div>
       </div>

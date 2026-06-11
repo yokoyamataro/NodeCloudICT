@@ -237,6 +237,11 @@ interface CoordinateMapProps {
   onMidpointDragEnd?: (insertAfterIdx: number, lat: number, lng: number) => void
   /** 中点 + ハンドルの再マウントキー（drop 後に bump して位置リセット） */
   midpointResetKey?: number
+  /** 地図上の mousemove。構成点クリック → 別座標クリックの間にポリゴンを
+   *  追従させる用途で使う（リアルタイムプレビュー） */
+  onMapMouseMove?: (lat: number, lng: number) => void
+  /** 地図エリアからマウスが外れたときに呼ぶ（プレビュー解除用） */
+  onMapMouseLeave?: () => void
   // 経路（順路）の描画
   route?: RoutePoint[]
   showRoute?: boolean
@@ -278,6 +283,8 @@ export function CoordinateMap({
   onMidpointDrag,
   onMidpointDragEnd,
   midpointResetKey = 0,
+  onMapMouseMove,
+  onMapMouseLeave,
   route = [],
   showRoute = false,
   farmId,
@@ -610,6 +617,12 @@ export function CoordinateMap({
       {/* 外部から差し込む追加レイヤ（オルソ画像ページの作図・計測など） */}
       {children}
 
+      {/* マウス位置を親へ伝える不可視トラッカ（クリック確定までの
+          ポリゴン追従プレビュー用）。コールバックが無いときは null を返すだけ */}
+      {(onMapMouseMove || onMapMouseLeave) && (
+        <MouseMoveTracker onMove={onMapMouseMove} onLeave={onMapMouseLeave} />
+      )}
+
       {/* ズームレベルを上の表示用 state に伝搬する不可視トラッカ */}
       <ZoomTracker onChange={setCurrentZoom} />
       {/* ホイールズームを 1 段ずつに制限 */}
@@ -678,6 +691,30 @@ function MidpointPlusLayer({
     )
   }
   return <>{out}</>
+}
+
+// マウス位置を親へ伝える不可視トラッカ。mousemove は throttle (16ms ≒ 60fps)。
+function MouseMoveTracker({
+  onMove,
+  onLeave,
+}: {
+  onMove?: (lat: number, lng: number) => void
+  onLeave?: () => void
+}) {
+  const last = useRef(0)
+  useMapEvents({
+    mousemove(e) {
+      if (!onMove) return
+      const now = performance.now()
+      if (now - last.current < 16) return
+      last.current = now
+      onMove(e.latlng.lat, e.latlng.lng)
+    },
+    mouseout() {
+      onLeave?.()
+    },
+  })
+  return null
 }
 
 // MapContainer の中で useMapEvents をフックし、ズーム値を親 state に伝える。
