@@ -217,6 +217,8 @@ interface CoordinateMapProps {
   onPointSelect?: (id: string) => void
   showLabels?: boolean
   visibleTypes?: Set<string>
+  /** 設置状態フィルタ（地籍測量のワークフロー） */
+  visibleStakeStatuses?: Set<string>
   baseLayer?: BaseLayerType
   externalPolygons?: ExternalPolygon[]
   editingExternalPolygonId?: string | null
@@ -253,6 +255,7 @@ export function CoordinateMap({
   onPointSelect,
   showLabels = true,
   visibleTypes,
+  visibleStakeStatuses,
   baseLayer = 'osm',
   externalPolygons = [],
   editingExternalPolygonId,
@@ -289,10 +292,12 @@ export function CoordinateMap({
       c.lat !== null && c.lng !== null
   )
 
-  // 表示対象の座標をフィルタリング
-  const displayCoordinates = visibleTypes
-    ? validCoordinates.filter(c => visibleTypes.has(c.type))
-    : validCoordinates
+  // 表示対象の座標をフィルタリング（点種 + 設置状態）
+  const displayCoordinates = validCoordinates.filter((c) => {
+    if (visibleTypes && !visibleTypes.has(c.type)) return false
+    if (visibleStakeStatuses && !visibleStakeStatuses.has(c.stakeStatus)) return false
+    return true
+  })
 
   // 初期中心（座標がない場合は東京）
   const defaultCenter: [number, number] = [35.6762, 139.6503]

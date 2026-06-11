@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Upload, Download, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Camera, Image as ImageIcon, Loader2, Calculator, Layers, Check } from 'lucide-react'
 import { PointTypeFilterButton } from './PointTypeFilterButton'
+import { StakeStatusFilterButton } from './StakeStatusFilterButton'
 import { CoordinatePhotoModal } from './CoordinatePhotoModal'
 import { CoordinateCalcModal } from './CoordinateCalcModal'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
@@ -249,6 +250,7 @@ export function CoordinatesPage() {
   const [showPolygonLabels, setShowPolygonLabels] = useState(true)
   // 点種フィルタ・オルソ表示・背景地図は地番管理と共有する mapViewStore に保持
   const visibleTypes = useMapViewStore((s) => s.visibleTypes)
+  const visibleStakeStatuses = useMapViewStore((s) => s.visibleStakeStatuses)
   const setVisibleTypes = useMapViewStore((s) => s.setVisibleTypes)
   const baseLayer = useMapViewStore((s) => s.baseLayer)
   const setBaseLayer = useMapViewStore((s) => s.setBaseLayer)
@@ -400,8 +402,11 @@ export function CoordinatesPage() {
 
   // 点種フィルターを適用した表示用座標。表とマップで共有する。
   const filteredCoordinates = useMemo(
-    () => coordinates.filter((c) => visibleTypes.has(c.type)),
-    [coordinates, visibleTypes],
+    () =>
+      coordinates.filter(
+        (c) => visibleTypes.has(c.type) && visibleStakeStatuses.has(c.stakeStatus),
+      ),
+    [coordinates, visibleTypes, visibleStakeStatuses],
   )
 
   // スマホから記録された staking_records を取得し、「設置済」フラグに使う
@@ -1295,6 +1300,9 @@ export function CoordinatesPage() {
           onOpenManageModal={() => setShowPointTypeModal(true)}
         />
 
+        {/* 設置状態フィルター */}
+        <StakeStatusFilterButton hoverClass={hoverClass} />
+
         {/* 座標計算モーダル */}
         {showCalcModal && (
           <CoordinateCalcModal
@@ -1371,6 +1379,7 @@ export function CoordinatesPage() {
             onPointSelect={handlePointClick}
             showLabels={showLabels}
             visibleTypes={visibleTypes}
+            visibleStakeStatuses={visibleStakeStatuses}
             baseLayer={baseLayer}
             route={route}
             showRoute={true}
@@ -1841,6 +1850,7 @@ export function CoordinatesPage() {
               onPointSelect={handlePointClick}
               showLabels={showLabels}
               visibleTypes={visibleTypes}
+              visibleStakeStatuses={visibleStakeStatuses}
               baseLayer={baseLayer}
               route={route}
               showRoute={true}

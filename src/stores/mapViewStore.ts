@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { BaseLayerType } from '@/components/map/CoordinateMap'
 import { COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
+import { STAKE_STATUS_OPTIONS, type StakeStatus } from '@/types/database'
 
 // 地図の表示状態（タブ間で共有）
 // ・center / zoom: 異なる地図コンポーネント間で位置を同期
@@ -24,6 +25,8 @@ interface MapViewState {
   // ── 表示設定（座標管理 / 地番管理 で共有） ─────────────────────
   /** 点種フィルタ。空集合は許容しない（最低 1 件残す） */
   visibleTypes: Set<string>
+  /** 設置状態フィルタ（地籍測量のワークフロー）。空集合は許容しない */
+  visibleStakeStatuses: Set<StakeStatus>
   /** オルソ画像レイヤーの表示 ON/OFF */
   showOrtho: boolean
   /** 背景地図の種類 */
@@ -32,51 +35,70 @@ interface MapViewState {
   setVisibleTypes: (next: Set<string>) => void
   /** 1 件トグル。結果が空集合なら無視 */
   toggleVisibleType: (code: string) => void
+  setVisibleStakeStatuses: (next: Set<StakeStatus>) => void
+  toggleVisibleStakeStatus: (status: StakeStatus) => void
   setShowOrtho: (v: boolean) => void
   setBaseLayer: (l: BaseLayerType) => void
 }
 
 const SETTINGS_KEY = 'mapView:settings:v1'
 const DEFAULT_VISIBLE = new Set<string>(Object.keys(COORDINATE_TYPE_NAMES))
+const DEFAULT_VISIBLE_STATUSES = new Set<StakeStatus>(STAKE_STATUS_OPTIONS)
 
 interface PersistShape {
   visibleTypes?: string[]
+  visibleStakeStatuses?: string[]
   showOrtho?: boolean
   baseLayer?: BaseLayerType
 }
 
 function loadSettings(): {
   visibleTypes: Set<string>
+  visibleStakeStatuses: Set<StakeStatus>
   showOrtho: boolean
   baseLayer: BaseLayerType
 } {
-  if (typeof window === 'undefined') {
-    return { visibleTypes: new Set(DEFAULT_VISIBLE), showOrtho: true, baseLayer: 'osm' }
+  const fallback = {
+    visibleTypes: new Set(DEFAULT_VISIBLE),
+    visibleStakeStatuses: new Set(DEFAULT_VISIBLE_STATUSES),
+    showOrtho: true,
+    baseLayer: 'osm' as BaseLayerType,
   }
+  if (typeof window === 'undefined') return fallback
   try {
     const raw = window.localStorage.getItem(SETTINGS_KEY)
-    if (!raw) {
-      return { visibleTypes: new Set(DEFAULT_VISIBLE), showOrtho: true, baseLayer: 'osm' }
-    }
+    if (!raw) return fallback
     const parsed = JSON.parse(raw) as PersistShape
     const vt =
       Array.isArray(parsed.visibleTypes) && parsed.visibleTypes.length > 0
         ? new Set(parsed.visibleTypes.filter((s): s is string => typeof s === 'string'))
         : new Set<string>(DEFAULT_VISIBLE)
+    // 設置状態は STAKE_STATUS_OPTIONS のいずれかのみ受け付ける
+    const validStatusSet = new Set<string>(STAKE_STATUS_OPTIONS)
+    const vss =
+      Array.isArray(parsed.visibleStakeStatuses) && parsed.visibleStakeStatuses.length > 0
+        ? new Set(
+            parsed.visibleStakeStatuses.filter(
+              (s): s is StakeStatus => typeof s === 'string' && validStatusSet.has(s),
+            ),
+          )
+        : new Set<StakeStatus>(DEFAULT_VISIBLE_STATUSES)
     const baseLayer: BaseLayerType =
       parsed.baseLayer === 'gsi-photo' || parsed.baseLayer === 'gsi-std' ? parsed.baseLayer : 'osm'
     return {
       visibleTypes: vt,
+      visibleStakeStatuses: vss.size > 0 ? vss : new Set(DEFAULT_VISIBLE_STATUSES),
       showOrtho: typeof parsed.showOrtho === 'boolean' ? parsed.showOrtho : true,
       baseLayer,
     }
   } catch {
-    return { visibleTypes: new Set(DEFAULT_VISIBLE), showOrtho: true, baseLayer: 'osm' }
+    return fallback
   }
 }
 
 function saveSettings(
   visibleTypes: Set<string>,
+  visibleStakeStatuses: Set<StakeStatus>,
   showOrtho: boolean,
   baseLayer: BaseLayerType,
 ) {
@@ -84,7 +106,12 @@ function saveSettings(
   try {
     window.localStorage.setItem(
       SETTINGS_KEY,
-      JSON.stringify({ visibleTypes: Array.from(visibleTypes), showOrtho, baseLayer }),
+      JSON.stringify({
+        visibleTypes: Array.from(visibleTypes),
+        visibleStakeStatuses: Array.from(visibleStakeStatuses),
+        showOrtho,
+        baseLayer,
+      }),
     )
   } catch {
     /* ignore quota errors */
@@ -111,6 +138,7 @@ export const useMapViewStore = create<MapViewState>()((set, get) => {
     },
 
     visibleTypes: initial.visibleTypes,
+    visibleStakeStatuses: initial.visibleStakeStatuses,
     showOrtho: initial.showOrtho,
     baseLayer: initial.baseLayer,
 
@@ -118,7 +146,7 @@ export const useMapViewStore = create<MapViewState>()((set, get) => {
       if (next.size === 0) return
       set({ visibleTypes: next })
       const s = get()
-      saveSettings(next, s.showOrtho, s.baseLayer)
+      saveSettings(next, s.visibleStakeStatuses, s.showOrtho, s.baseLayer)
     },
     toggleVisibleType: (code) => {
       const next = new Set(get().visibleTypes)
@@ -127,17 +155,32 @@ export const useMapViewStore = create<MapViewState>()((set, get) => {
       if (next.size === 0) return
       set({ visibleTypes: next })
       const s = get()
-      saveSettings(next, s.showOrtho, s.baseLayer)
+      saveSettings(next, s.visibleStakeStatuses, s.showOrtho, s.baseLayer)
+    },
+    setVisibleStakeStatuses: (next) => {
+      if (next.size === 0) return
+      set({ visibleStakeStatuses: next })
+      const s = get()
+      saveSettings(s.visibleTypes, next, s.showOrtho, s.baseLayer)
+    },
+    toggleVisibleStakeStatus: (status) => {
+      const next = new Set(get().visibleStakeStatuses)
+      if (next.has(status)) next.delete(status)
+      else next.add(status)
+      if (next.size === 0) return
+      set({ visibleStakeStatuses: next })
+      const s = get()
+      saveSettings(s.visibleTypes, next, s.showOrtho, s.baseLayer)
     },
     setShowOrtho: (v) => {
       set({ showOrtho: v })
       const s = get()
-      saveSettings(s.visibleTypes, v, s.baseLayer)
+      saveSettings(s.visibleTypes, s.visibleStakeStatuses, v, s.baseLayer)
     },
     setBaseLayer: (l) => {
       set({ baseLayer: l })
       const s = get()
-      saveSettings(s.visibleTypes, s.showOrtho, l)
+      saveSettings(s.visibleTypes, s.visibleStakeStatuses, s.showOrtho, l)
     },
   }
 })

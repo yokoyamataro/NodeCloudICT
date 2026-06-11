@@ -23,6 +23,7 @@ import {
   getCoordinateTypeOptions,
 } from '@/stores/coordinatePointTypeStore'
 import { PointTypeFilterButton } from '@/features/coordinates/PointTypeFilterButton'
+import { StakeStatusFilterButton } from '@/features/coordinates/StakeStatusFilterButton'
 import { RegistryPdfImportModal } from '@/features/boundary-survey/RegistryPdfImportModal'
 
 // 面積計算簿コンポーネント
@@ -179,6 +180,7 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   const baseLayer = useMapViewStore((s) => s.baseLayer)
   const setBaseLayer = useMapViewStore((s) => s.setBaseLayer)
   const visibleTypes = useMapViewStore((s) => s.visibleTypes)
+  const visibleStakeStatuses = useMapViewStore((s) => s.visibleStakeStatuses)
   const [showEdgeLengths, setShowEdgeLengths] = useState(false)
   // 辺長の桁数・端数設定は境界測量のみ。それ以外は 2桁・四捨五入 固定
   const isBoundarySurvey = workType === 'boundary_survey'
@@ -476,6 +478,7 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
               {isBoundarySurvey && (
                 <>
                   <PointTypeFilterButton typeOptions={typeOptions} />
+                  <StakeStatusFilterButton />
                   <CadastralColumnPicker
                     visible={visibleColumns}
                     onChange={setVisibleColumns}
@@ -826,6 +829,7 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
             showLabels={isBoundarySurvey ? showPointLabels : undefined}
             showPolygonLabels={isBoundarySurvey ? showPolygonLabels : false}
             visibleTypes={isBoundarySurvey ? visibleTypes : undefined}
+            visibleStakeStatuses={isBoundarySurvey ? visibleStakeStatuses : undefined}
           />
         </div>
       </div>
