@@ -40,6 +40,7 @@ import { supabase } from '@/lib/supabase'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
+import { useMapViewStore } from '@/stores/mapViewStore'
 import { useUnderdrainStore, type PipeRow, PIPE_TYPE_NAMES } from '@/stores/underdrainStore'
 import { useStakingStore, type StakingRecord } from '@/stores/stakingStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
@@ -97,6 +98,8 @@ interface StakingTarget {
   subType: string
   /** 点種の表示名 */
   subTypeLabel: string
+  /** 設置状態（coordinate のみ。pipe_vertex は 'none' 相当） */
+  stakeStatus: StakeStatus
 }
 
 // Haversine 距離（m）
@@ -362,6 +365,10 @@ export function MobileStakingPage() {
   } = useCoordinatePointTypeStore()
   const { setZone, fetchCoordinates, coordinates, importCoordinates, setStakeStatus } =
     useCoordinateStore()
+  // 設置状態フィルタ（PC と共有。localStorage 永続化）
+  const visibleStakeStatuses = useMapViewStore((s) => s.visibleStakeStatuses)
+  const toggleVisibleStakeStatus = useMapViewStore((s) => s.toggleVisibleStakeStatus)
+  const setVisibleStakeStatuses = useMapViewStore((s) => s.setVisibleStakeStatuses)
   // 地籍工事の地番編集モード用
   const {
     workAreas: workAreasAll,
@@ -1341,6 +1348,7 @@ export function MobileStakingPage() {
         lng: c.lng,
         subType: sub,
         subTypeLabel: getCoordinateTypeLabel(sub, projectId, pointTypesByProject),
+        stakeStatus: c.stakeStatus,
       })
     }
     for (const pipe of pipes as PipeRow[]) {
@@ -1369,6 +1377,7 @@ export function MobileStakingPage() {
             lng,
             subType: '_pipe_vertex',
             subTypeLabel: '暗渠頂点',
+            stakeStatus: 'none',
           })
         } catch {
           // skip
@@ -1419,9 +1428,15 @@ export function MobileStakingPage() {
     } else if (targetFilter !== 'all') {
       base = orderedTargets.filter((t) => t.kind === targetFilter)
     }
-    if (hiddenSubTypes.size === 0) return base
-    return base.filter((t) => !hiddenSubTypes.has(t.subType))
-  }, [orderedTargets, routeTargetIds, targetFilter, hiddenSubTypes])
+    return base.filter((t) => {
+      if (hiddenSubTypes.has(t.subType)) return false
+      // 設置状態フィルタは coordinate にのみ適用（pipe_vertex は対象外）
+      if (t.kind === 'coordinate' && !visibleStakeStatuses.has(t.stakeStatus)) {
+        return false
+      }
+      return true
+    })
+  }, [orderedTargets, routeTargetIds, targetFilter, hiddenSubTypes, visibleStakeStatuses])
 
   // 現在表示候補（major filter 適用後）における点種ごとの件数を集計
   const subTypeStats = useMemo(() => {
@@ -1940,6 +1955,7 @@ export function MobileStakingPage() {
         lng: 0,
         subType: type,
         subTypeLabel: getCoordinateTypeLabel(type, projectId, pointTypesByProject),
+        stakeStatus: 'none',
       })
     }
   }
@@ -2562,6 +2578,45 @@ export function MobileStakingPage() {
                   全ての点種を表示
                 </button>
               )}
+
+              {/* 設置状態フィルタ。PC と mapViewStore で共有 */}
+              <div className="border-t pt-1 mt-1">
+                <div className="text-[10px] text-slate-500 mb-1">
+                  設置状態 ({visibleStakeStatuses.size}/{STAKE_STATUS_OPTIONS.length})
+                </div>
+                {STAKE_STATUS_OPTIONS.map((s) => {
+                  const on = visibleStakeStatuses.has(s)
+                  return (
+                    <label
+                      key={s}
+                      className="flex items-center gap-2 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        onChange={() => toggleVisibleStakeStatus(s)}
+                        className="h-3.5 w-3.5"
+                      />
+                      <span
+                        className={`px-1.5 py-0.5 text-[10px] font-medium border rounded ${STAKE_STATUS_BADGE[s]}`}
+                      >
+                        {STAKE_STATUS_LABEL[s]}
+                      </span>
+                    </label>
+                  )
+                })}
+                {visibleStakeStatuses.size < STAKE_STATUS_OPTIONS.length && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setVisibleStakeStatuses(new Set(STAKE_STATUS_OPTIONS))
+                    }
+                    className="text-[11px] text-blue-600 hover:underline"
+                  >
+                    全ての設置状態を表示
+                  </button>
+                )}
+              </div>
             </div>
           )}
 
