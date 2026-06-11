@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
-import type { CoordinateType, DesignCoordinate } from '@/types/database'
+import type { CoordinateType, DesignCoordinate, StakeStatus } from '@/types/database'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { useFarmStore } from './farmStore'
 import { useSettingsStore } from './settingsStore'
@@ -17,6 +17,8 @@ export interface CoordinateRow {
   type: CoordinateType
   /** 杭種（自由文字列。stakeTypes.ts のプリセットを推奨） */
   stakeType: string | null
+  /** 設置状態（地籍測量モードの杭設置ワークフロー）。既定 'none' */
+  stakeStatus: StakeStatus
   /** 作成日時 (ISO) */
   createdAt: string | null
   /** 最終更新日時 (ISO) */
@@ -79,6 +81,8 @@ interface CoordinateState {
   ) => Promise<CoordinateRow[]>
   clearCoordinates: () => Promise<void>
   getCoordinateById: (id: string) => CoordinateRow | undefined
+  /** 設置状態を即時 DB に反映（楽観 + サーバ更新。pendingChanges は通さない） */
+  setStakeStatus: (id: string, status: StakeStatus) => Promise<void>
 
   // フィルタリング
   selectedType: CoordinateType
@@ -195,6 +199,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
           lng,
           type: row.coordinate_type as CoordinateType,
           stakeType: row.stake_type ?? null,
+          stakeStatus: (row.stake_status ?? 'none') as StakeStatus,
           createdAt: row.created_at ?? null,
           updatedAt: row.updated_at ?? null,
           createdBy: row.created_by ?? null,
@@ -257,6 +262,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         lng: null,
         type: row.coordinate_type as CoordinateType,
         stakeType: row.stake_type ?? null,
+        stakeStatus: (row.stake_status ?? 'none') as StakeStatus,
         createdAt: row.created_at ?? null,
         updatedAt: row.updated_at ?? null,
         createdBy: row.created_by ?? null,
@@ -312,6 +318,34 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
       }))
     } catch (err) {
       set({ error: err instanceof Error ? err.message : '座標の削除に失敗しました' })
+    }
+  },
+
+  // 設置状態を即時 DB に反映。スマホ起工測量の現場操作からも呼ばれる想定なので、
+  // pendingChanges (手動保存ボタン待ち) は通さず楽観 + サーバ更新の即時反映にする。
+  setStakeStatus: async (id, status) => {
+    const prev = get().coordinates.find((c) => c.id === id)
+    if (!prev) return
+    // 楽観反映
+    set((state) => ({
+      coordinates: state.coordinates.map((c) =>
+        c.id === id ? { ...c, stakeStatus: status } : c,
+      ),
+    }))
+    try {
+      const { error } = await supabase
+        .from('design_coordinates')
+        .update({ stake_status: status } as never)
+        .eq('id', id)
+      if (error) throw error
+    } catch (err) {
+      // ロールバック
+      set((state) => ({
+        coordinates: state.coordinates.map((c) =>
+          c.id === id ? { ...c, stakeStatus: prev.stakeStatus } : c,
+        ),
+        error: err instanceof Error ? err.message : '設置状態の保存に失敗しました',
+      }))
     }
   },
 
@@ -407,6 +441,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
             lng: src.longitude,
             type: src.coordinate_type as CoordinateType,
             stakeType: src.stake_type ?? null,
+            stakeStatus: 'none',
             createdAt: null,
             updatedAt: null,
             createdBy: src.created_by,
@@ -487,6 +522,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
             z: coord.z,
             coordinate_type: coord.type,
             stake_type: coord.stakeType,
+            stake_status: coord.stakeStatus,
             latitude: coord.lat,
             longitude: coord.lng,
             updated_by: uid,

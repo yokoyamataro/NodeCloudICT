@@ -40,6 +40,44 @@ export const WORK_TYPE_NAMES: Record<WorkType, string> = {
 // カスタム点種コード（任意文字列）も入り得るため string に開放する。
 export type CoordinateType = string
 
+// 杭設置ワークフローの状態（地籍測量モードで使用）。
+// design_coordinates.stake_status に格納。既定は 'none'。
+export type StakeStatus =
+  | 'none'        // なし
+  | 'needed'      // 要設置
+  | 'temporary'   // 仮杭設置
+  | 'permanent'   // 本杭設置
+  | 'existing'    // 既設採用
+  | 'impossible'  // 設置不可
+
+export const STAKE_STATUS_OPTIONS: StakeStatus[] = [
+  'none',
+  'needed',
+  'temporary',
+  'permanent',
+  'existing',
+  'impossible',
+]
+
+export const STAKE_STATUS_LABEL: Record<StakeStatus, string> = {
+  none: 'なし',
+  needed: '要設置',
+  temporary: '仮杭設置',
+  permanent: '本杭設置',
+  existing: '既設採用',
+  impossible: '設置不可',
+}
+
+// バッジ用の Tailwind 配色。背景 / 文字 / 枠線を一括で。
+export const STAKE_STATUS_BADGE: Record<StakeStatus, string> = {
+  none: 'bg-slate-100 text-slate-500 border-slate-200',
+  needed: 'bg-amber-50 text-amber-700 border-amber-300',
+  temporary: 'bg-blue-50 text-blue-700 border-blue-300',
+  permanent: 'bg-emerald-50 text-emerald-700 border-emerald-300',
+  existing: 'bg-teal-50 text-teal-700 border-teal-300',
+  impossible: 'bg-red-50 text-red-700 border-red-300',
+}
+
 // 点種（座標の用途）
 export type PointType =
   | 'reference'      // 基準点
@@ -438,6 +476,8 @@ export interface DesignCoordinate {
   coordinate_type: string
   /** 杭種（木杭 / コンクリート杭 / プラ杭 / 金属鋲 / 金属標 / 石標 / 既設標 / 自由入力） */
   stake_type: string | null
+  /** 設置状態（地籍測量モード）。'none' | 'needed' | 'temporary' | 'permanent' | 'existing' | 'impossible' */
+  stake_status: StakeStatus
   notes: string | null
   created_at: string
   updated_at: string

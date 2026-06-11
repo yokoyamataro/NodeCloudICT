@@ -22,7 +22,12 @@ import { CoordinateMap, type BaseLayerType, type ExternalPolygon } from '@/compo
 import { ResizableSplit } from '@/components/layout/ResizableSplit'
 import { loadSimaFile, downloadSimaFile } from '@/lib/sima-parser'
 import { PageHeader } from '@/components/layout/PageHeader'
-import type { CoordinateType } from '@/types/database'
+import type { CoordinateType, StakeStatus } from '@/types/database'
+import {
+  STAKE_STATUS_OPTIONS,
+  STAKE_STATUS_LABEL,
+  STAKE_STATUS_BADGE,
+} from '@/types/database'
 import { STAKE_TYPE_OPTIONS } from '@/lib/stakeTypes'
 
 // 数値入力用コンポーネント（入力中はフォーマットしない）
@@ -118,6 +123,46 @@ function PhotoCountCell({ count, onClick }: { count: number; onClick: () => void
       <Camera className="h-3 w-3" />
       <span className="font-medium">{count > 99 ? '99+' : count}</span>
     </button>
+  )
+}
+
+// 設置状態のセレクトセル。色付きバッジで現在状態を示し、クリックで切替。
+function StakeStatusCell({
+  value,
+  onChange,
+  measured,
+}: {
+  value: StakeStatus
+  onChange: (next: StakeStatus) => void
+  /** スマホで実測済 (staking_records にレコード有) 。バッジ右に小印で示す */
+  measured: boolean
+}) {
+  return (
+    <div className="flex items-center justify-center gap-1">
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as StakeStatus)}
+        onClick={(e) => e.stopPropagation()}
+        title={
+          measured
+            ? `${STAKE_STATUS_LABEL[value]}（スマホで実測済）`
+            : STAKE_STATUS_LABEL[value]
+        }
+        className={`px-1.5 py-0.5 text-[11px] font-medium border rounded cursor-pointer focus:ring-1 focus:ring-blue-400 focus:outline-none ${STAKE_STATUS_BADGE[value]}`}
+      >
+        {STAKE_STATUS_OPTIONS.map((s) => (
+          <option key={s} value={s}>
+            {STAKE_STATUS_LABEL[s]}
+          </option>
+        ))}
+      </select>
+      {measured && (
+        <Check
+          className="h-3 w-3 text-emerald-500"
+          aria-label="スマホで実測済み"
+        />
+      )}
+    </div>
   )
 }
 
@@ -301,6 +346,7 @@ export function CoordinatesPage() {
     moveRoutePoint,
     clearRoute,
     saveRoute,
+    setStakeStatus,
   } = useCoordinateStore()
 
   // 経路モード（クリックで経路に追加）
@@ -1343,7 +1389,7 @@ export function CoordinatesPage() {
                 <th className="pr-2 pl-1 py-2 text-right font-medium w-20">Z (m)</th>
                 <th className="px-0.5 py-2 text-left font-medium">種類</th>
                 <th className="px-0.5 py-2 text-left font-medium">杭種</th>
-                <th className="px-0.5 py-2 text-center font-medium w-12" title="スマホで現地計測済み">設置</th>
+                <th className="px-0.5 py-2 text-center font-medium w-28" title="杭設置のワークフロー状態">設置</th>
                 <th className="px-0.5 py-2 text-center font-medium w-12">写真</th>
                 <th className="px-0.5 py-2 text-right font-medium">緯度</th>
                 <th className="px-0.5 py-2 text-right font-medium">経度</th>
@@ -1432,20 +1478,12 @@ export function CoordinatesPage() {
                       className="w-20 px-1 py-0.5 border rounded text-xs bg-white"
                     />
                   </td>
-                  <td
-                    className="px-0.5 py-0.5 text-center"
-                    onClick={(e) => e.stopPropagation()}
-                    title={
-                      stakedCoordIds.has(coord.id)
-                        ? 'スマホで現地計測済み'
-                        : '未計測'
-                    }
-                  >
-                    {stakedCoordIds.has(coord.id) ? (
-                      <Check className="h-4 w-4 text-emerald-600 inline-block" />
-                    ) : (
-                      <span className="text-slate-300">–</span>
-                    )}
+                  <td className="px-0.5 py-0.5" onClick={(e) => e.stopPropagation()}>
+                    <StakeStatusCell
+                      value={coord.stakeStatus}
+                      onChange={(next) => void setStakeStatus(coord.id, next)}
+                      measured={stakedCoordIds.has(coord.id)}
+                    />
                   </td>
                   <td className="px-0.5 py-0.5 text-center" onClick={(e) => e.stopPropagation()}>
                     <PhotoCountCell
@@ -1566,7 +1604,7 @@ export function CoordinatesPage() {
                       <th className="pr-2 pl-1 py-2 text-right font-medium w-20">Z (m)</th>
                       <th className="px-0.5 py-2 text-left font-medium">種類</th>
                       <th className="px-0.5 py-2 text-left font-medium">杭種</th>
-                      <th className="px-0.5 py-2 text-center font-medium w-12" title="スマホで現地計測済み">設置</th>
+                      <th className="px-0.5 py-2 text-center font-medium w-28" title="杭設置のワークフロー状態">設置</th>
                       <th className="px-0.5 py-2 text-center font-medium w-12">写真</th>
                       <th className="px-0.5 py-2 text-right font-medium">緯度</th>
                       <th className="px-0.5 py-2 text-right font-medium">経度</th>
@@ -1654,20 +1692,12 @@ export function CoordinatesPage() {
                             className="w-20 px-1 py-0.5 border rounded text-xs bg-white"
                           />
                         </td>
-                        <td
-                          className="px-0.5 py-0.5 text-center"
-                          onClick={(e) => e.stopPropagation()}
-                          title={
-                            stakedCoordIds.has(coord.id)
-                              ? 'スマホで現地計測済み'
-                              : '未計測'
-                          }
-                        >
-                          {stakedCoordIds.has(coord.id) ? (
-                            <Check className="h-4 w-4 text-emerald-600 inline-block" />
-                          ) : (
-                            <span className="text-slate-300">–</span>
-                          )}
+                        <td className="px-0.5 py-0.5" onClick={(e) => e.stopPropagation()}>
+                          <StakeStatusCell
+                            value={coord.stakeStatus}
+                            onChange={(next) => void setStakeStatus(coord.id, next)}
+                            measured={stakedCoordIds.has(coord.id)}
+                          />
                         </td>
                         <td className="px-0.5 py-0.5 text-center" onClick={(e) => e.stopPropagation()}>
                           <PhotoCountCell

@@ -72,7 +72,12 @@ import {
 import { indexTin, queryZ, type TinIndex, type TinSurfaceLike } from '@/lib/landxml/tinInterpolation'
 import { buildTrenchTin } from '@/lib/landxml/surface'
 import type { Alignment, AlignmentSegment } from '@/lib/landxml/types'
-import type { Project } from '@/types/database'
+import type { Project, StakeStatus } from '@/types/database'
+import {
+  STAKE_STATUS_OPTIONS,
+  STAKE_STATUS_LABEL,
+  STAKE_STATUS_BADGE,
+} from '@/types/database'
 
 type TargetKind = 'coordinate' | 'pipe_vertex'
 
@@ -355,7 +360,8 @@ export function MobileStakingPage() {
     byProject: pointTypesByProject,
     fetchForProject: fetchPointTypes,
   } = useCoordinatePointTypeStore()
-  const { setZone, fetchCoordinates, coordinates, importCoordinates } = useCoordinateStore()
+  const { setZone, fetchCoordinates, coordinates, importCoordinates, setStakeStatus } =
+    useCoordinateStore()
   // 地籍工事の地番編集モード用
   const {
     workAreas: workAreasAll,
@@ -3854,6 +3860,28 @@ export function MobileStakingPage() {
                 )}
               </div>
             </button>
+            {/* 設置状態セレクタ（座標点のみ。PC の表と同じ enum で揃える） */}
+            {selectedTarget.kind === 'coordinate' &&
+              (() => {
+                const coord = coordinates.find((c) => c.id === selectedTarget.refId)
+                if (!coord) return null
+                return (
+                  <select
+                    value={coord.stakeStatus}
+                    onChange={(e) =>
+                      void setStakeStatus(coord.id, e.target.value as StakeStatus)
+                    }
+                    title={`設置状態: ${STAKE_STATUS_LABEL[coord.stakeStatus]}`}
+                    className={`shrink-0 px-1.5 py-1 text-xs font-medium border rounded ${STAKE_STATUS_BADGE[coord.stakeStatus]}`}
+                  >
+                    {STAKE_STATUS_OPTIONS.map((s) => (
+                      <option key={s} value={s}>
+                        {STAKE_STATUS_LABEL[s]}
+                      </option>
+                    ))}
+                  </select>
+                )
+              })()}
             <button
               onClick={() => setSelectedTargetId(null)}
               className="p-1.5 rounded border border-slate-300 text-slate-500 hover:bg-slate-100 shrink-0"
