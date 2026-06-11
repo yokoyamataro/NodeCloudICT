@@ -479,6 +479,12 @@ export function CoordinatesPage() {
     ],
   )
 
+  // 地図のマーカーに同じフィルタを効かせるための ID 集合（杭種・写真有無等も含む）
+  const filteredCoordinateIdSet = useMemo(
+    () => new Set(filteredCoordinates.map((c) => c.id)),
+    [filteredCoordinates],
+  )
+
   // 表に表示する座標の最終リスト。
   // 順指定モード中: orderedIds の順番で先頭に並べ、残りは元順で末尾にグレー表示
   const displayCoordinates = useMemo(() => {
@@ -1537,6 +1543,7 @@ export function CoordinatesPage() {
             showLabels={showLabels}
             visibleTypes={visibleTypes}
             visibleStakeStatuses={visibleStakeStatuses}
+            displayCoordinateIds={filteredCoordinateIdSet}
             baseLayer={baseLayer}
             route={route}
             showRoute={true}
@@ -2212,6 +2219,7 @@ export function CoordinatesPage() {
               showLabels={showLabels}
               visibleTypes={visibleTypes}
               visibleStakeStatuses={visibleStakeStatuses}
+            displayCoordinateIds={filteredCoordinateIdSet}
               baseLayer={baseLayer}
               route={route}
               showRoute={true}

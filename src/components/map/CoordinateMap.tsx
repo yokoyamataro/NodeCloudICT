@@ -219,6 +219,10 @@ interface CoordinateMapProps {
   visibleTypes?: Set<string>
   /** 設置状態フィルタ（地籍測量のワークフロー） */
   visibleStakeStatuses?: Set<string>
+  /** 親側で計算済みの「表示する座標 ID 集合」。
+   *  指定すると visibleTypes / visibleStakeStatuses に加えてこの集合とも
+   *  AND を取って絞り込む。親が複数のフィルタ条件をまとめて反映したい時に使う。 */
+  displayCoordinateIds?: Set<string>
   baseLayer?: BaseLayerType
   externalPolygons?: ExternalPolygon[]
   editingExternalPolygonId?: string | null
@@ -271,6 +275,7 @@ export function CoordinateMap({
   showLabels = true,
   visibleTypes,
   visibleStakeStatuses,
+  displayCoordinateIds,
   baseLayer = 'osm',
   externalPolygons = [],
   editingExternalPolygonId,
@@ -317,6 +322,7 @@ export function CoordinateMap({
   const displayCoordinates = validCoordinates.filter((c) => {
     if (visibleTypes && !visibleTypes.has(c.type)) return false
     if (visibleStakeStatuses && !visibleStakeStatuses.has(c.stakeStatus)) return false
+    if (displayCoordinateIds && !displayCoordinateIds.has(c.id)) return false
     return true
   })
 
