@@ -11,6 +11,7 @@ import { useStakingStore } from '@/stores/stakingStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useAttachmentStore } from '@/stores/attachmentStore'
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
+import { useParcelStore } from '@/stores/parcelStore'
 import { WORK_TYPE_NAMES, type WorkType } from '@/types/database'
 import { generatePhotoBookExcel, PHOTO_BOOK_TEMPLATES, type PhotoBookTemplate } from '@/lib/photoBook'
 import { useGlobalSaveRegistry } from '@/stores/globalSaveRegistry'
@@ -244,6 +245,8 @@ function PasteModal({
 export function CoordinatesPage() {
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
   const [showLabels, setShowLabels] = useState(true)
+  // 地図上に地番（ポリゴン）名を表示するか。地番一覧と揃えるため既定 ON。
+  const [showPolygonLabels, setShowPolygonLabels] = useState(true)
   // 点種フィルタ・オルソ表示・背景地図は地番管理と共有する mapViewStore に保持
   const visibleTypes = useMapViewStore((s) => s.visibleTypes)
   const setVisibleTypes = useMapViewStore((s) => s.setVisibleTypes)
@@ -279,6 +282,10 @@ export function CoordinatesPage() {
   const { fetchByEntityIds: fetchAttachments, getSignedUrl } = useAttachmentStore()
   const attachmentsByEntity = useAttachmentStore((s) => s.byEntity)
   const { workAreas, fetchWorkAreas } = useWorkAreaStore()
+  // 地番ラベル用に parcels を引いておく（境界測量の workArea 単位）。
+  // 表示は polygon name のフォールバックチェーン: parcel_number > zoneNumber > name。
+  const parcelByWorkAreaId = useParcelStore((s) => s.byWorkAreaId)
+  const fetchParcels = useParcelStore((s) => s.fetchByWorkAreaIds)
   // 更新者ID → 表示名（プロジェクトメンバーから引く）
   const memberNameById = useMemo(() => {
     const m = new Map<string, string>()
@@ -458,6 +465,15 @@ export function CoordinatesPage() {
     if (currentFarm) fetchWorkAreas(currentFarm.id)
   }, [currentFarm, fetchWorkAreas])
 
+  // 境界測量の地番（parcels）を一括取得しておく。地図上のポリゴン名に使う
+  const boundaryAreaIds = useMemo(() => {
+    const arr = workAreas['boundary_survey'] ?? []
+    return arr.map((a) => a.id)
+  }, [workAreas])
+  useEffect(() => {
+    if (boundaryAreaIds.length > 0) void fetchParcels(boundaryAreaIds)
+  }, [boundaryAreaIds.join(','), fetchParcels])
+
   // 区域が登録されている工種は既定で表示ON
   const availableWorkTypes = useMemo(
     () =>
@@ -485,16 +501,20 @@ export function CoordinatesPage() {
     const out: ExternalPolygon[] = []
     for (const [wt, areas] of Object.entries(workAreas) as [
       string,
-      { id: string; name: string; points: WorkAreaPoint[] }[] | undefined,
+      { id: string; name: string; zoneNumber: string; points: WorkAreaPoint[] }[] | undefined,
     ][]) {
       if (!areas || !visibleWorkTypes.has(wt)) continue
       for (const area of areas) {
         const pts = area.points.filter((p) => p.lat !== null && p.lng !== null)
         const positions = pts.map((p) => [p.lat as number, p.lng as number] as [number, number])
         if (positions.length >= 3) {
+          // ポリゴン名のフォールバック: 地番(parcels) > zoneNumber > name
+          // 境界測量は parcels.parcel_number、それ以外は zoneNumber か name を使う
+          const parcelNumber = parcelByWorkAreaId.get(area.id)?.parcel_number ?? null
+          const label = parcelNumber || area.zoneNumber || area.name || ''
           out.push({
             id: area.id,
-            name: area.name,
+            name: label,
             positions,
             pointIds: pts.map((p) => p.id),
           })
@@ -502,7 +522,7 @@ export function CoordinatesPage() {
       }
     }
     return out
-  }, [workAreas, visibleWorkTypes])
+  }, [workAreas, visibleWorkTypes, parcelByWorkAreaId])
 
   const toggleWorkType = (wt: string) =>
     setVisibleWorkTypes((prev) => {
@@ -1314,6 +1334,16 @@ export function CoordinatesPage() {
             点名
           </button>
           <button
+            onClick={() => setShowPolygonLabels(!showPolygonLabels)}
+            title="地番名（ポリゴン名）の表示を切替"
+            className={`flex items-center gap-1 px-2 py-1 text-xs rounded border ${
+              showPolygonLabels ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-gray-50 border-gray-300'
+            }`}
+          >
+            {showPolygonLabels ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+            地番名
+          </button>
+          <button
             onClick={() => setShowOrtho(!showOrtho)}
             className={`flex items-center gap-1 px-2 py-1 text-xs rounded border ${
               showOrtho ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-gray-50 border-gray-300'
@@ -1347,6 +1377,7 @@ export function CoordinatesPage() {
             farmId={currentFarm?.id ?? null}
             showOrtho={showOrtho}
             externalPolygons={workAreaPolygons}
+            showPolygonLabels={showPolygonLabels}
             lineSelectMode={!!calcLineAssign}
             onLineSelect={(a, b) => calcLineAssign?.(a, b)}
           />
@@ -1773,6 +1804,16 @@ export function CoordinatesPage() {
               点名
             </button>
             <button
+              onClick={() => setShowPolygonLabels(!showPolygonLabels)}
+              title="地番名（ポリゴン名）の表示を切替"
+              className={`flex items-center gap-1 px-2 py-1 text-xs rounded border ${
+                showPolygonLabels ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-gray-50 border-gray-300'
+              }`}
+            >
+              {showPolygonLabels ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+              地番名
+            </button>
+            <button
               onClick={() => setShowOrtho(!showOrtho)}
               className={`flex items-center gap-1 px-2 py-1 text-xs rounded border ${
                 showOrtho ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-gray-50 border-gray-300'
@@ -1806,6 +1847,7 @@ export function CoordinatesPage() {
               farmId={currentFarm?.id ?? null}
               showOrtho={showOrtho}
               externalPolygons={workAreaPolygons}
+              showPolygonLabels={showPolygonLabels}
               lineSelectMode={!!calcLineAssign}
               onLineSelect={(a, b) => calcLineAssign?.(a, b)}
             />
