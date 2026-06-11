@@ -65,7 +65,7 @@ export function StakeStatusFilterButton({
         )}
       </button>
       {open && (
-        <div className="absolute left-0 top-full mt-1 w-56 bg-white border rounded shadow-lg z-20 p-2">
+        <div className="absolute left-0 top-full mt-1 w-56 bg-white border rounded shadow-lg z-40 p-2">
           <div className="flex items-center justify-between mb-2 pb-2 border-b">
             <span className="text-xs font-medium text-slate-600">表示する設置状態</span>
             <div className="flex items-center gap-1">

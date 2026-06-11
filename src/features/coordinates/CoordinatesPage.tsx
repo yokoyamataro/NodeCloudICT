@@ -6,6 +6,7 @@ import {
   PhotoCountFilterButton,
   type PhotoCountFilter,
 } from './PhotoCountFilterButton'
+import { StakeTypeFilterButton } from './StakeTypeFilterButton'
 import { CoordinatePhotoModal } from './CoordinatePhotoModal'
 import { CoordinateCalcModal } from './CoordinateCalcModal'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
@@ -257,6 +258,8 @@ export function CoordinatesPage() {
   const visibleStakeStatuses = useMapViewStore((s) => s.visibleStakeStatuses)
   // 写真の撮影枚数フィルタ（ローカル state。地図側には反映しない）
   const [photoCountFilter, setPhotoCountFilter] = useState<PhotoCountFilter>('all')
+  // 杭種フィルタ。'' は「未設定」を表す。option は coords + プリセット + 未設定。
+  const [visibleStakeTypes, setVisibleStakeTypes] = useState<Set<string>>(new Set())
   const setVisibleTypes = useMapViewStore((s) => s.setVisibleTypes)
   const baseLayer = useMapViewStore((s) => s.baseLayer)
   const setBaseLayer = useMapViewStore((s) => s.setBaseLayer)
@@ -406,12 +409,39 @@ export function CoordinatesPage() {
     if (changed) setVisibleTypes(next)
   }, [typeOptions, setVisibleTypes])
 
+  // 杭種フィルターの選択肢: '未設定' + プリセット + 現在使われているカスタム値
+  const stakeTypeOptions = useMemo(() => {
+    const set = new Set<string>([''])
+    for (const c of coordinates) set.add(c.stakeType || '')
+    for (const p of STAKE_TYPE_OPTIONS) set.add(p.label)
+    return Array.from(set).map((code) => ({
+      code,
+      label: code === '' ? '未設定' : code,
+    }))
+  }, [coordinates])
+
+  // 新しく出現した杭種は既定で表示（全選択）する
+  useEffect(() => {
+    setVisibleStakeTypes((prev) => {
+      const next = new Set(prev)
+      let changed = false
+      for (const opt of stakeTypeOptions) {
+        if (!next.has(opt.code)) {
+          next.add(opt.code)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [stakeTypeOptions])
+
   // 点種フィルターを適用した表示用座標。表とマップで共有する。
   const filteredCoordinates = useMemo(
     () =>
       coordinates.filter((c) => {
         if (!visibleTypes.has(c.type)) return false
         if (!visibleStakeStatuses.has(c.stakeStatus)) return false
+        if (!visibleStakeTypes.has(c.stakeType || '')) return false
         if (photoCountFilter !== 'all') {
           const photoCount = attachmentsByEntity.get(`coordinate:${c.id}`)?.length ?? 0
           if (photoCountFilter === 'with' && photoCount === 0) return false
@@ -419,7 +449,14 @@ export function CoordinatesPage() {
         }
         return true
       }),
-    [coordinates, visibleTypes, visibleStakeStatuses, photoCountFilter, attachmentsByEntity],
+    [
+      coordinates,
+      visibleTypes,
+      visibleStakeStatuses,
+      visibleStakeTypes,
+      photoCountFilter,
+      attachmentsByEntity,
+    ],
   )
 
   // スマホから記録された staking_records を取得し、「設置済」フラグに使う
@@ -1107,7 +1144,7 @@ export function CoordinatesPage() {
             <ChevronDown className="h-3 w-3" />
           </button>
           {openMenu === 'import' && (
-            <div className="absolute left-0 top-full mt-1 w-52 bg-white border rounded shadow-lg z-20">
+            <div className="absolute left-0 top-full mt-1 w-52 bg-white border rounded shadow-lg z-40">
               {/* 取込時の点種を指定 */}
               <div className="px-3 py-2 border-b">
                 <label className="block text-[11px] text-slate-500 mb-1">取り込む点種</label>
@@ -1176,7 +1213,7 @@ export function CoordinatesPage() {
             <ChevronDown className="h-3 w-3" />
           </button>
           {openMenu === 'export' && !exportDisabled && (
-            <div className="absolute left-0 top-full mt-1 w-44 bg-white border rounded shadow-lg z-20">
+            <div className="absolute left-0 top-full mt-1 w-44 bg-white border rounded shadow-lg z-40">
               <button
                 type="button"
                 onClick={() => { handleExportCSV(); setOpenMenu(null) }}
@@ -1443,7 +1480,17 @@ export function CoordinatesPage() {
                     />
                   </div>
                 </th>
-                <th className="px-0.5 py-2 text-left font-medium">杭種</th>
+                <th className="px-0.5 py-2 text-left font-medium">
+                  <div className="flex items-center gap-1">
+                    <span>杭種</span>
+                    <StakeTypeFilterButton
+                      compact
+                      options={stakeTypeOptions}
+                      visible={visibleStakeTypes}
+                      onChange={setVisibleStakeTypes}
+                    />
+                  </div>
+                </th>
                 <th className="px-0.5 py-2 text-center font-medium w-28" title="杭設置のワークフロー状態">
                   <div className="flex items-center justify-center gap-1">
                     <span>設置</span>
@@ -1690,7 +1737,17 @@ export function CoordinatesPage() {
                           />
                         </div>
                       </th>
-                      <th className="px-0.5 py-2 text-left font-medium">杭種</th>
+                      <th className="px-0.5 py-2 text-left font-medium">
+                  <div className="flex items-center gap-1">
+                    <span>杭種</span>
+                    <StakeTypeFilterButton
+                      compact
+                      options={stakeTypeOptions}
+                      visible={visibleStakeTypes}
+                      onChange={setVisibleStakeTypes}
+                    />
+                  </div>
+                </th>
                       <th className="px-0.5 py-2 text-center font-medium w-28" title="杭設置のワークフロー状態">
                         <div className="flex items-center justify-center gap-1">
                           <span>設置</span>

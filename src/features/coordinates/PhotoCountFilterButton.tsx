@@ -69,7 +69,7 @@ export function PhotoCountFilterButton({
         )}
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 w-40 bg-white border rounded shadow-lg z-30 p-1">
+        <div className="absolute right-0 top-full mt-1 w-40 bg-white border rounded shadow-lg z-40 p-1">
           {OPTIONS.map((opt) => {
             const on = opt.value === value
             return (
