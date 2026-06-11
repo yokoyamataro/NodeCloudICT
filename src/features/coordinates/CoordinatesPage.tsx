@@ -10,7 +10,7 @@ import { StakeTypeFilterButton } from './StakeTypeFilterButton'
 import { CoordinatePhotoModal } from './CoordinatePhotoModal'
 import { CoordinateCalcModal } from './CoordinateCalcModal'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
-import { useCoordinateStore } from '@/stores/coordinateStore'
+import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { useMapViewStore } from '@/stores/mapViewStore'
 import { useStakingStore } from '@/stores/stakingStore'
@@ -260,6 +260,22 @@ export function CoordinatesPage() {
   const [photoCountFilter, setPhotoCountFilter] = useState<PhotoCountFilter>('all')
   // 杭種フィルタ。'' は「未設定」を表す。option は coords + プリセット + 未設定。
   const [visibleStakeTypes, setVisibleStakeTypes] = useState<Set<string>>(new Set())
+  // 座標出力の 2 段階フロー:
+  //   ① 出力モード選択（全点 / 表示点 / 表示点順指定）
+  //   ② フォーマット選択（CSV / SIMA / TSV / 写真帳 / Excel）
+  // exportSource はモード選択後にセットされ、フォーマット選択時に消費する
+  type ExportSource = 'all' | 'visible' | 'visible-ordered'
+  const [exportSource, setExportSource] = useState<ExportSource | null>(null)
+  // 順指定モード中: 地図クリックで orderedIds に追加 / 表でドラッグ並べ替え
+  const [orderSelectMode, setOrderSelectMode] = useState(false)
+  const [orderedIds, setOrderedIds] = useState<string[]>([])
+  // ドラッグ並べ替え中の行 ID
+  const [draggingOrderId, setDraggingOrderId] = useState<string | null>(null)
+  const resetExportFlow = () => {
+    setExportSource(null)
+    setOrderSelectMode(false)
+    setOrderedIds([])
+  }
   const setVisibleTypes = useMapViewStore((s) => s.setVisibleTypes)
   const baseLayer = useMapViewStore((s) => s.baseLayer)
   const setBaseLayer = useMapViewStore((s) => s.setBaseLayer)
@@ -435,6 +451,10 @@ export function CoordinatesPage() {
     })
   }, [stakeTypeOptions])
 
+  // 表に表示する座標の最終リスト。
+  // orderSelectMode 中は orderedIds の順番で先頭に並べ、残りは元順で末尾に。
+  // それ以外は filteredCoordinates をそのまま。
+  // （useMemo 定義は filteredCoordinates / orderedIds 定義の後）
   // 点種フィルターを適用した表示用座標。表とマップで共有する。
   const filteredCoordinates = useMemo(
     () =>
@@ -458,6 +478,21 @@ export function CoordinatesPage() {
       attachmentsByEntity,
     ],
   )
+
+  // 表に表示する座標の最終リスト。
+  // 順指定モード中: orderedIds の順番で先頭に並べ、残りは元順で末尾にグレー表示
+  const displayCoordinates = useMemo(() => {
+    if (!orderSelectMode) return filteredCoordinates
+    const orderedSet = new Set(orderedIds)
+    const byId = new Map(filteredCoordinates.map((c) => [c.id, c]))
+    const orderedCoords: CoordinateRow[] = []
+    for (const id of orderedIds) {
+      const c = byId.get(id)
+      if (c) orderedCoords.push(c)
+    }
+    const rest = filteredCoordinates.filter((c) => !orderedSet.has(c.id))
+    return [...orderedCoords, ...rest]
+  }, [orderSelectMode, filteredCoordinates, orderedIds])
 
   // スマホから記録された staking_records を取得し、「設置済」フラグに使う
   const stakingRecords = useStakingStore((s) => s.records)
@@ -647,8 +682,20 @@ export function CoordinatesPage() {
     event.target.value = ''
   }
 
-  // エクスポート対象：チェックがあれば選択分のみ、無ければ全件
-  const getExportTargets = () => {
+  // エクスポート対象:
+  //   exportSource='all'              → 全座標
+  //   exportSource='visible'          → フィルタ後の表示座標
+  //   exportSource='visible-ordered'  → orderedIds の順番で並べた表示座標
+  //   exportSource=null               → 念のためチェック済 or 全件（旧挙動）
+  const getExportTargets = (): CoordinateRow[] => {
+    if (exportSource === 'all') return coordinates
+    if (exportSource === 'visible-ordered') {
+      const byId = new Map(coordinates.map((c) => [c.id, c]))
+      return orderedIds
+        .map((id) => byId.get(id))
+        .filter((c): c is CoordinateRow => !!c)
+    }
+    if (exportSource === 'visible') return filteredCoordinates
     if (checkedIds.size === 0) return coordinates
     return coordinates.filter((c) => checkedIds.has(c.id))
   }
@@ -963,6 +1010,17 @@ export function CoordinatesPage() {
       calcAssign(id)
       return
     }
+    // 出力順指定モード中: 表示点のみ orderedIds にトグル
+    if (orderSelectMode) {
+      const inFiltered = filteredCoordinates.some((c) => c.id === id)
+      setOrderedIds((prev) => {
+        if (prev.includes(id)) return prev.filter((x) => x !== id)
+        if (!inFiltered) return prev
+        return [...prev, id]
+      })
+      setSelectedPointId(id)
+      return
+    }
     setSelectedPointId(id)
     if (routeMode) {
       appendRoutePoint(id, 'down')
@@ -1213,48 +1271,104 @@ export function CoordinatesPage() {
             <ChevronDown className="h-3 w-3" />
           </button>
           {openMenu === 'export' && !exportDisabled && (
-            <div className="absolute left-0 top-full mt-1 w-44 bg-white border rounded shadow-lg z-40">
-              <button
-                type="button"
-                onClick={() => { handleExportCSV(); setOpenMenu(null) }}
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
-              >
-                <Download className="h-3.5 w-3.5" />
-                CSV出力
-              </button>
-              <button
-                type="button"
-                onClick={() => { handleCopyTSV(); setOpenMenu(null) }}
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
-                title="点名 / X / Y / Z を TSV でクリップボードへ"
-              >
-                <Clipboard className="h-3.5 w-3.5" />
-                TSVコピー（点名/X/Y/Z）
-              </button>
-              <button
-                type="button"
-                onClick={() => { handleExportSIMA(); setOpenMenu(null) }}
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
-              >
-                <Download className="h-3.5 w-3.5" />
-                SIMA出力
-              </button>
-              <button
-                type="button"
-                onClick={() => { setShowPhotoBookChooser(true); setOpenMenu(null) }}
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
-              >
-                <ImageIcon className="h-3.5 w-3.5" />
-                写真帳出力（Excel）
-              </button>
-              <button
-                type="button"
-                onClick={() => { handleExportExcel(); setOpenMenu(null) }}
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100 text-slate-500"
-              >
-                <Download className="h-3.5 w-3.5" />
-                EXCEL出力（実装予定）
-              </button>
+            <div className="absolute left-0 top-full mt-1 w-60 bg-white border rounded shadow-lg z-40">
+              {/* 2 段階フロー: 出力方法 → 出力フォーマット */}
+              {!exportSource ? (
+                <>
+                  <div className="px-3 py-2 bg-slate-50 border-b text-[11px] text-slate-500">
+                    出力方法を選択
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setExportSource('all')}
+                    className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm text-left hover:bg-slate-100"
+                  >
+                    <span>全点出力</span>
+                    <span className="text-xs text-slate-400">{coordinates.length} 件</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setExportSource('visible')}
+                    className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm text-left hover:bg-slate-100"
+                  >
+                    <span>表示点出力</span>
+                    <span className="text-xs text-slate-400">{filteredCoordinates.length} 件</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpenMenu(null)
+                      setOrderSelectMode(true)
+                      setOrderedIds([])
+                    }}
+                    className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm text-left hover:bg-slate-100"
+                  >
+                    <span>表示点出力（順指定）</span>
+                    <span className="text-xs text-slate-400">マップで選択</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="px-3 py-2 bg-slate-50 border-b text-[11px] text-slate-500 flex items-center justify-between">
+                    <span>
+                      {exportSource === 'all'
+                        ? `全点 ${coordinates.length} 件`
+                        : exportSource === 'visible-ordered'
+                        ? `順指定 ${orderedIds.length} 件`
+                        : `表示点 ${filteredCoordinates.length} 件`}{' '}
+                      → フォーマット
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setExportSource(null)}
+                      className="text-blue-600 hover:underline"
+                    >
+                      戻る
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { handleExportCSV(); setOpenMenu(null); resetExportFlow() }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    CSV出力
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { handleCopyTSV(); setOpenMenu(null); resetExportFlow() }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
+                    title="点名 / X / Y / Z を TSV でクリップボードへ"
+                  >
+                    <Clipboard className="h-3.5 w-3.5" />
+                    TSVコピー（点名/X/Y/Z）
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { handleExportSIMA(); setOpenMenu(null); resetExportFlow() }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    SIMA出力
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowPhotoBookChooser(true); setOpenMenu(null) }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
+                  >
+                    <ImageIcon className="h-3.5 w-3.5" />
+                    写真帳出力（Excel）
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { handleExportExcel(); setOpenMenu(null); resetExportFlow() }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100 text-slate-500"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    EXCEL出力（実装予定）
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -1515,35 +1629,75 @@ export function CoordinatesPage() {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {filteredCoordinates.map((coord, idx) => (
+              {displayCoordinates.map((coord, idx) => {
+                const orderIdx = orderSelectMode ? orderedIds.indexOf(coord.id) : -1
+                const isOrdered = orderIdx >= 0
+                const isInactiveInOrder = orderSelectMode && !isOrdered
+                const rowBg = selectedPointId === coord.id
+                  ? 'bg-blue-200'
+                  : isOrdered
+                  ? 'bg-amber-50'
+                  : isInactiveInOrder
+                  ? 'bg-slate-50'
+                  : 'bg-white'
+                return (
                 <tr
                   key={coord.id}
-                  ref={idx === filteredCoordinates.length - 1 ? lastRowRef : null}
+                  ref={idx === displayCoordinates.length - 1 ? lastRowRef : null}
                   data-coord-row-id={coord.id}
-                  className={`hover:bg-slate-50 cursor-pointer ${
-                    selectedPointId === coord.id ? 'bg-blue-200 hover:bg-blue-200' : 'bg-white'
+                  draggable={isOrdered}
+                  onDragStart={(e) => {
+                    setDraggingOrderId(coord.id)
+                    e.dataTransfer.effectAllowed = 'move'
+                  }}
+                  onDragOver={(e) => {
+                    if (isOrdered && draggingOrderId) e.preventDefault()
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    if (!draggingOrderId || draggingOrderId === coord.id) return
+                    setOrderedIds((prev) => {
+                      const fromIdx = prev.indexOf(draggingOrderId)
+                      const toIdx = prev.indexOf(coord.id)
+                      if (fromIdx < 0 || toIdx < 0) return prev
+                      const next = [...prev]
+                      const [moved] = next.splice(fromIdx, 1)
+                      next.splice(toIdx, 0, moved)
+                      return next
+                    })
+                    setDraggingOrderId(null)
+                  }}
+                  onDragEnd={() => setDraggingOrderId(null)}
+                  className={`cursor-pointer ${rowBg} ${
+                    selectedPointId === coord.id ? 'hover:bg-blue-200' : 'hover:bg-slate-100'
+                  } ${isInactiveInOrder ? 'opacity-60' : ''} ${
+                    isOrdered ? 'cursor-move' : ''
                   }`}
                   onClick={() => handlePointClick(coord.id)}
                 >
                   <td
-                    className={`px-1 py-0.5 text-center sticky left-0 z-10 ${
-                      selectedPointId === coord.id ? 'bg-blue-200' : 'bg-white'
-                    }`}
+                    className={`px-1 py-0.5 text-center sticky left-0 z-10 ${rowBg}`}
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <input
-                      type="checkbox"
-                      checked={checkedIds.has(coord.id)}
-                      onChange={() => toggleCheck(coord.id)}
-                      className="cursor-pointer"
-                      aria-label={`${coord.pointNumber} を選択`}
-                    />
+                    {orderSelectMode ? (
+                      isOrdered ? (
+                        <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
+                          {orderIdx + 1}
+                        </span>
+                      ) : (
+                        <span className="text-slate-300 text-xs">–</span>
+                      )
+                    ) : (
+                      <input
+                        type="checkbox"
+                        checked={checkedIds.has(coord.id)}
+                        onChange={() => toggleCheck(coord.id)}
+                        className="cursor-pointer"
+                        aria-label={`${coord.pointNumber} を選択`}
+                      />
+                    )}
                   </td>
-                  <td
-                    className={`px-0.5 py-0.5 sticky left-8 z-10 ${
-                      selectedPointId === coord.id ? 'bg-blue-200' : 'bg-white'
-                    }`}
-                  >
+                  <td className={`px-0.5 py-0.5 sticky left-8 z-10 ${rowBg}`}>
                     <input
                       type="text"
                       value={coord.pointNumber}
@@ -1643,7 +1797,8 @@ export function CoordinatesPage() {
                     </button>
                   </td>
                 </tr>
-              ))}
+                )
+              })}
               {renderNewRow()}
             </tbody>
           </table>
@@ -1692,6 +1847,44 @@ export function CoordinatesPage() {
           ) : undefined
         }
       />
+
+      {/* 順指定モード: 上部バナーで操作案内と件数・完了/キャンセル */}
+      {orderSelectMode && (
+        <div className="bg-amber-50 border-b border-amber-300 px-4 py-2 flex items-center gap-3 text-sm">
+          <span className="font-semibold text-amber-800">順指定モード</span>
+          <span className="text-slate-700">
+            {orderedIds.length} 件選択
+          </span>
+          <span className="text-xs text-slate-500">
+            地図のマーカーをクリックで追加 / 表の行をドラッグで順序入替
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setOrderSelectMode(false)
+                setOrderedIds([])
+                setExportSource(null)
+              }}
+              className="px-2 py-1 text-xs border rounded hover:bg-slate-100"
+            >
+              キャンセル
+            </button>
+            <button
+              type="button"
+              disabled={orderedIds.length === 0}
+              onClick={() => {
+                setOrderSelectMode(false)
+                setExportSource('visible-ordered')
+                setOpenMenu('export')
+              }}
+              className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+            >
+              完了 → 出力 ({orderedIds.length})
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* メインコンテンツ */}
       <ResizableSplit
@@ -1772,35 +1965,75 @@ export function CoordinatesPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {filteredCoordinates.map((coord, idx) => (
+                    {displayCoordinates.map((coord, idx) => {
+                      const orderIdx = orderSelectMode ? orderedIds.indexOf(coord.id) : -1
+                      const isOrdered = orderIdx >= 0
+                      const isInactiveInOrder = orderSelectMode && !isOrdered
+                      const rowBg = selectedPointId === coord.id
+                        ? 'bg-blue-200'
+                        : isOrdered
+                        ? 'bg-amber-50'
+                        : isInactiveInOrder
+                        ? 'bg-slate-50'
+                        : 'bg-white'
+                      return (
                       <tr
                         key={coord.id}
-                        ref={idx === filteredCoordinates.length - 1 ? lastRowRef : null}
+                        ref={idx === displayCoordinates.length - 1 ? lastRowRef : null}
                         data-coord-row-id={coord.id}
-                        className={`hover:bg-slate-50 cursor-pointer ${
-                          selectedPointId === coord.id ? 'bg-blue-200 hover:bg-blue-200' : 'bg-white'
+                        draggable={isOrdered}
+                        onDragStart={(e) => {
+                          setDraggingOrderId(coord.id)
+                          e.dataTransfer.effectAllowed = 'move'
+                        }}
+                        onDragOver={(e) => {
+                          if (isOrdered && draggingOrderId) e.preventDefault()
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault()
+                          if (!draggingOrderId || draggingOrderId === coord.id) return
+                          setOrderedIds((prev) => {
+                            const fromIdx = prev.indexOf(draggingOrderId)
+                            const toIdx = prev.indexOf(coord.id)
+                            if (fromIdx < 0 || toIdx < 0) return prev
+                            const next = [...prev]
+                            const [moved] = next.splice(fromIdx, 1)
+                            next.splice(toIdx, 0, moved)
+                            return next
+                          })
+                          setDraggingOrderId(null)
+                        }}
+                        onDragEnd={() => setDraggingOrderId(null)}
+                        className={`cursor-pointer ${rowBg} ${
+                          selectedPointId === coord.id ? 'hover:bg-blue-200' : 'hover:bg-slate-100'
+                        } ${isInactiveInOrder ? 'opacity-60' : ''} ${
+                          isOrdered ? 'cursor-move' : ''
                         }`}
                         onClick={() => handlePointClick(coord.id)}
                       >
                         <td
-                          className={`px-1 py-0.5 text-center sticky left-0 z-10 ${
-                            selectedPointId === coord.id ? 'bg-blue-200' : 'bg-white'
-                          }`}
+                          className={`px-1 py-0.5 text-center sticky left-0 z-10 ${rowBg}`}
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <input
-                            type="checkbox"
-                            checked={checkedIds.has(coord.id)}
-                            onChange={() => toggleCheck(coord.id)}
-                            className="cursor-pointer"
-                            aria-label={`${coord.pointNumber} を選択`}
-                          />
+                          {orderSelectMode ? (
+                            isOrdered ? (
+                              <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
+                                {orderIdx + 1}
+                              </span>
+                            ) : (
+                              <span className="text-slate-300 text-xs">–</span>
+                            )
+                          ) : (
+                            <input
+                              type="checkbox"
+                              checked={checkedIds.has(coord.id)}
+                              onChange={() => toggleCheck(coord.id)}
+                              className="cursor-pointer"
+                              aria-label={`${coord.pointNumber} を選択`}
+                            />
+                          )}
                         </td>
-                        <td
-                          className={`px-0.5 py-0.5 sticky left-8 z-10 ${
-                            selectedPointId === coord.id ? 'bg-blue-200' : 'bg-white'
-                          }`}
-                        >
+                        <td className={`px-0.5 py-0.5 sticky left-8 z-10 ${rowBg}`}>
                           <input
                             type="text"
                             value={coord.pointNumber}
@@ -1900,7 +2133,8 @@ export function CoordinatesPage() {
                           </button>
                         </td>
                       </tr>
-                    ))}
+                      )
+                    })}
                     {renderNewRow()}
                   </tbody>
                 </table>
