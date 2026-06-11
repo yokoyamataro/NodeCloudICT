@@ -454,11 +454,35 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
     return () => window.removeEventListener('keydown', onKey)
   }, [editingAreaId, selectedConstituentPointId, removePoint])
 
-  // 構成点マーカーをドラッグ → 最寄りの座標へ置換
-  const handleConstituentDragEnd = (originalCoordId: string, lat: number, lng: number) => {
+  // ドラッグ中のプレビュー位置（ポリゴンが追従して再描画される）。
+  // type='constituent' の idx は構成点リストの index、
+  // type='midpoint' の idx は新しい構成点を挿入する index。
+  const [dragPreview, setDragPreview] = useState<
+    | { type: 'constituent'; idx: number; lat: number; lng: number }
+    | { type: 'midpoint'; idx: number; lat: number; lng: number }
+    | null
+  >(null)
+  // ドラッグハンドルの再マウントキー。ドロップ完了 / 失敗時に bump して
+  // ハンドル位置を元の構成点位置へリセットする。
+  const [handleResetKey, setHandleResetKey] = useState(0)
+
+  const handleConstituentDrag = (idx: number, lat: number, lng: number) => {
+    setDragPreview({ type: 'constituent', idx, lat, lng })
+  }
+
+  const handleMidpointDrag = (insertAfterIdx: number, lat: number, lng: number) => {
+    setDragPreview({ type: 'midpoint', idx: insertAfterIdx, lat, lng })
+  }
+
+  // 構成点ハンドルをドラッグ → 最寄りの座標へ置換
+  const handleConstituentDragEnd = (idx: number, lat: number, lng: number) => {
+    setDragPreview(null)
+    setHandleResetKey((k) => k + 1)
     if (!editingAreaId) return
     const editingArea = areas.find((a) => a.id === editingAreaId)
     if (!editingArea) return
+    const originalCoordId = editingArea.pointIds[idx]
+    if (!originalCoordId) return
     const nearest = findNearestCoord(coordinates, lat, lng, 5)
     // ドロップ先が無い・同じ座標・既に構成点に含まれる → 何もしない
     if (!nearest || nearest.id === originalCoordId) return
@@ -472,8 +496,8 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
       y: nearest.y,
       z: nearest.z,
     })
-    const newOrder = editingArea.pointIds.map((pid) =>
-      pid === originalCoordId ? nearest.id : pid,
+    const newOrder = editingArea.pointIds.map((pid, i) =>
+      i === idx ? nearest.id : pid,
     )
     reorderPoints(editingAreaId, newOrder)
     setSelectedConstituentPointId(nearest.id)
@@ -481,6 +505,8 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
 
   // 中点 + をドラッグ → 最寄りの座標を挿入
   const handleMidpointDragEnd = (insertAfterIdx: number, lat: number, lng: number) => {
+    setDragPreview(null)
+    setHandleResetKey((k) => k + 1)
     if (!editingAreaId) return
     const editingArea = areas.find((a) => a.id === editingAreaId)
     if (!editingArea) return
@@ -519,7 +545,26 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
     .filter(area => area.points.length >= 3)
     .map(area => {
       const pts = area.points.filter(p => p.lat !== null && p.lng !== null)
-      const positions = pts.map(p => [p.lat!, p.lng!] as [number, number])
+      let positions = pts.map(p => [p.lat!, p.lng!] as [number, number])
+      // 編集中ポリゴンで dragPreview があれば、ポリゴンを追従させる
+      if (
+        dragPreview &&
+        editingAreaId === area.id &&
+        positions.length >= 1
+      ) {
+        if (dragPreview.type === 'constituent' && dragPreview.idx < positions.length) {
+          positions = positions.map((p, i) =>
+            i === dragPreview.idx ? [dragPreview.lat, dragPreview.lng] : p,
+          )
+        } else if (dragPreview.type === 'midpoint') {
+          const insertAt = Math.min(Math.max(dragPreview.idx, 0), positions.length)
+          positions = [
+            ...positions.slice(0, insertAt),
+            [dragPreview.lat, dragPreview.lng],
+            ...positions.slice(insertAt),
+          ]
+        }
+      }
       // 各辺の中点(緯度経度)・辺長(測量座標 X,Y からの平面距離 m)・画面上の傾き(deg)。
       // 閉合辺(最終点→始点)も含む。X=北(上)/Y=東(右) を画面座標(東→右, 北→上)に対応させ、
       // CSS rotate 用の角度を atan2(-dX, dY) で求め、文字が逆さにならないよう ±90° に正規化。
@@ -956,8 +1001,11 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                 : undefined
             }
             selectedConstituentPointId={selectedConstituentPointId}
+            onConstituentDrag={editingAreaId ? handleConstituentDrag : undefined}
             onConstituentDragEnd={editingAreaId ? handleConstituentDragEnd : undefined}
+            onMidpointDrag={editingAreaId ? handleMidpointDrag : undefined}
             onMidpointDragEnd={editingAreaId ? handleMidpointDragEnd : undefined}
+            constituentHandleResetKey={handleResetKey}
           />
         </div>
       </div>

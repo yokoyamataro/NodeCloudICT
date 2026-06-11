@@ -230,12 +230,18 @@ interface CoordinateMapProps {
   editingConstituentPointIds?: string[]
   /** クリック選択された構成点 ID（オレンジ色で強調） */
   selectedConstituentPointId?: string | null
-  /** 構成点マーカーをドラッグして別位置へドロップしたときに呼ぶ。
+  /** 構成点をドラッグ中（リアルタイム） */
+  onConstituentDrag?: (idx: number, lat: number, lng: number) => void
+  /** 構成点をドラッグして別位置へドロップしたときに呼ぶ。
    *  親側で「最寄り座標」を判定して reorderPoints する */
-  onConstituentDragEnd?: (originalCoordId: string, lat: number, lng: number) => void
+  onConstituentDragEnd?: (idx: number, lat: number, lng: number) => void
+  /** 中点+ボタンをドラッグ中（リアルタイム） */
+  onMidpointDrag?: (insertAfterIdx: number, lat: number, lng: number) => void
   /** 中点+ボタンをドラッグして別位置へドロップしたときに呼ぶ。
    *  insertAfterIdx は元の構成点リストの index で、その点と次の点の間に挿入する想定 */
   onMidpointDragEnd?: (insertAfterIdx: number, lat: number, lng: number) => void
+  /** ハンドルの再マウントキー（drop 後に bump して位置リセット） */
+  constituentHandleResetKey?: number
   // 経路（順路）の描画
   route?: RoutePoint[]
   showRoute?: boolean
@@ -274,8 +280,11 @@ export function CoordinateMap({
   selectedExternalPolygonId,
   editingConstituentPointIds,
   selectedConstituentPointId,
+  onConstituentDrag,
   onConstituentDragEnd,
+  onMidpointDrag,
   onMidpointDragEnd,
+  constituentHandleResetKey = 0,
   route = [],
   showRoute = false,
   farmId,
@@ -540,19 +549,11 @@ export function CoordinateMap({
         )
       })}
 
-      {/* 構成点編集モード: 中点 + マーカーをドラッグで挿入。
-          ドラッグ完了で親の onMidpointDragEnd が呼ばれる */}
-      {editingConstituentPointIds && editingConstituentPointIds.length >= 2 && onMidpointDragEnd && (
-        <MidpointPlusLayer
-          constituentIds={editingConstituentPointIds}
-          coordinates={validCoordinates}
-          onDragEnd={onMidpointDragEnd}
-        />
-      )}
-
       {/* 座標マーカー: 件数が多い (1000+) ときは zoom 17 以上 + 画面内のみ描画。
           ラベル（点名）はマーカー自体より重いので zoom 19 以上に絞る。
-          編集モードでは、構成点はドラッグ可能で、選択中はオレンジ強調 */}
+          編集モードで構成点は「選択中ならオレンジ強調」だが、マーカー自体は
+          ドラッグできない（元の点と点名はその場に固定）。
+          ドラッグは別レイヤの透明ハンドル (ConstituentHandlesLayer) で行う */}
       <HighDensityList
         items={displayCoordinates}
         threshold={1000}
@@ -560,32 +561,21 @@ export function CoordinateMap({
         labelZoomMin={19}
         getLatLng={(c) => [c.lat, c.lng]}
         render={(coord, { showLabel }) => {
-          const isConstituent = editingConstituentPointIds?.includes(coord.id) ?? false
           const isSelectedConstituent = coord.id === selectedConstituentPointId
           const isSelectedRegular = coord.id === selectedPointId
           const baseColor = MARKER_COLORS[coord.type] || '#666'
           const iconColor = isSelectedConstituent ? '#f97316' : baseColor
-          const draggable = isConstituent && !!onConstituentDragEnd
           return (
           <Marker
-            key={`${coord.id}-${draggable ? 'd' : 's'}`}
+            key={coord.id}
             position={[coord.lat, coord.lng]}
             icon={createColoredIcon(
               iconColor,
               isSelectedConstituent || isSelectedRegular,
             )}
             interactive={coordinatesInteractive}
-            draggable={draggable}
             eventHandlers={coordinatesInteractive ? {
               click: () => onPointSelect?.(coord.id),
-              ...(draggable && onConstituentDragEnd
-                ? {
-                    dragend: (e: { target: { getLatLng: () => { lat: number; lng: number } } }) => {
-                      const ll = e.target.getLatLng()
-                      onConstituentDragEnd(coord.id, ll.lat, ll.lng)
-                    },
-                  }
-                : {}),
             } : undefined}
           >
             {/* showLabels && showLabel が true なら常時表示、false ならホバー
@@ -611,6 +601,33 @@ export function CoordinateMap({
         )
         }}
       />
+
+      {/* 構成点編集モード: 構成点ハンドル + 中点 + ボタン。
+          ハンドルをドラッグすると onConstituentDrag (リアルタイム) と
+          onConstituentDragEnd (ドロップ) が親に通知される。元の点と点名は
+          動かない（HighDensityList の通常マーカーは draggable=false のまま）。 */}
+      {editingConstituentPointIds && editingConstituentPointIds.length > 0 &&
+        (onConstituentDragEnd || onMidpointDragEnd) && (
+        <>
+          <ConstituentHandlesLayer
+            constituentIds={editingConstituentPointIds}
+            coordinates={validCoordinates}
+            selectedId={selectedConstituentPointId ?? null}
+            onDrag={onConstituentDrag}
+            onDragEnd={onConstituentDragEnd}
+            resetKey={constituentHandleResetKey}
+          />
+          {editingConstituentPointIds.length >= 2 && onMidpointDragEnd && (
+            <MidpointPlusLayer
+              constituentIds={editingConstituentPointIds}
+              coordinates={validCoordinates}
+              onDrag={onMidpointDrag}
+              onDragEnd={onMidpointDragEnd}
+              resetKey={constituentHandleResetKey}
+            />
+          )}
+        </>
+      )}
 
       {/* 外部から差し込む追加レイヤ（オルソ画像ページの作図・計測など） */}
       {children}
@@ -642,11 +659,15 @@ const MIDPOINT_PLUS_ICON = L.divIcon({
 function MidpointPlusLayer({
   constituentIds,
   coordinates,
+  onDrag,
   onDragEnd,
+  resetKey,
 }: {
   constituentIds: string[]
   coordinates: Array<CoordinateRow & { lat: number; lng: number }>
+  onDrag?: (insertAfterIdx: number, lat: number, lng: number) => void
   onDragEnd: (insertAfterIdx: number, lat: number, lng: number) => void
+  resetKey: number
 }) {
   const coordById = new Map(coordinates.map((c) => [c.id, c]))
   const out: React.ReactElement[] = []
@@ -659,15 +680,96 @@ function MidpointPlusLayer({
     const midLng = (a.lng + b.lng) / 2
     out.push(
       <Marker
-        key={`midplus-${i}-${a.id}`}
+        key={`midplus-${i}-${a.id}-${resetKey}`}
         position={[midLat, midLng]}
         icon={MIDPOINT_PLUS_ICON}
         draggable
         zIndexOffset={500}
         eventHandlers={{
+          drag: (e: { target: { getLatLng: () => { lat: number; lng: number } } }) => {
+            if (!onDrag) return
+            const ll = e.target.getLatLng()
+            onDrag(i + 1, ll.lat, ll.lng)
+          },
           dragend: (e: { target: { getLatLng: () => { lat: number; lng: number } } }) => {
             const ll = e.target.getLatLng()
             onDragEnd(i + 1, ll.lat, ll.lng)
+          },
+        }}
+      />,
+    )
+  }
+  return <>{out}</>
+}
+
+// 構成点ハンドル。透明（淡色）の小さな円を構成点の上に重ね、ドラッグして
+// 位置を動かす。元の点（点名 tooltip 付きのマーカー）はそのまま残るので、
+// ドラッグしても点名は移動せず、ハンドルだけが動く。
+const CONSTITUENT_HANDLE_ICON = L.divIcon({
+  className: 'constituent-handle',
+  html:
+    '<div style="' +
+    'width:18px;height:18px;border-radius:50%;' +
+    'background:rgba(249,115,22,0.45);' +
+    'border:2px solid rgba(249,115,22,0.95);' +
+    'box-shadow:0 1px 3px rgba(0,0,0,0.25);' +
+    'cursor:grab;"></div>',
+  iconSize: [18, 18],
+  iconAnchor: [9, 9],
+})
+
+const CONSTITUENT_HANDLE_ICON_SELECTED = L.divIcon({
+  className: 'constituent-handle-selected',
+  html:
+    '<div style="' +
+    'width:22px;height:22px;border-radius:50%;' +
+    'background:rgba(249,115,22,0.65);' +
+    'border:3px solid #f97316;' +
+    'box-shadow:0 1px 4px rgba(0,0,0,0.35);' +
+    'cursor:grab;"></div>',
+  iconSize: [22, 22],
+  iconAnchor: [11, 11],
+})
+
+function ConstituentHandlesLayer({
+  constituentIds,
+  coordinates,
+  selectedId,
+  onDrag,
+  onDragEnd,
+  resetKey,
+}: {
+  constituentIds: string[]
+  coordinates: Array<CoordinateRow & { lat: number; lng: number }>
+  selectedId: string | null
+  onDrag?: (idx: number, lat: number, lng: number) => void
+  onDragEnd?: (idx: number, lat: number, lng: number) => void
+  resetKey: number
+}) {
+  const coordById = new Map(coordinates.map((c) => [c.id, c]))
+  const out: React.ReactElement[] = []
+  for (let i = 0; i < constituentIds.length; i++) {
+    const id = constituentIds[i]
+    const c = coordById.get(id)
+    if (!c) continue
+    const isSelected = id === selectedId
+    out.push(
+      <Marker
+        key={`ch-${i}-${id}-${resetKey}`}
+        position={[c.lat, c.lng]}
+        icon={isSelected ? CONSTITUENT_HANDLE_ICON_SELECTED : CONSTITUENT_HANDLE_ICON}
+        draggable={!!onDragEnd}
+        zIndexOffset={600}
+        eventHandlers={{
+          drag: (e: { target: { getLatLng: () => { lat: number; lng: number } } }) => {
+            if (!onDrag) return
+            const ll = e.target.getLatLng()
+            onDrag(i, ll.lat, ll.lng)
+          },
+          dragend: (e: { target: { getLatLng: () => { lat: number; lng: number } } }) => {
+            if (!onDragEnd) return
+            const ll = e.target.getLatLng()
+            onDragEnd(i, ll.lat, ll.lng)
           },
         }}
       />,
