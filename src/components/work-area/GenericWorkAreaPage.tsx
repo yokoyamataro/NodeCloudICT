@@ -629,8 +629,10 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                       </div>
                     </div>
 
-                    {/* 編集中の区域: 構成点リスト（土木のみインライン展開。地籍はモーダル表示） */}
-                    {isEditing && !isBoundarySurvey && (
+                    {/* 編集中の区域: 構成点リスト（インライン展開）。
+                        地籍も同じ場所に出すことで、モーダルが地図クリックを
+                        塞いで点が選べない問題を避ける */}
+                    {isEditing && (
                       <div className="border-t px-3 py-2 bg-slate-50">
                         <div className="text-xs text-muted-foreground mb-2">
                           構成点（地図上の点をクリックして追加、ドラッグで順序変更）
@@ -841,125 +843,6 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
           onClose={() => setCalculationSheet(null)}
         />
       )}
-
-      {/* 地籍: 構成点編集モーダル（編集ボタン押下で開く） */}
-      {isBoundarySurvey && editingAreaId && (() => {
-        const area = areas.find((a) => a.id === editingAreaId)
-        if (!area) return null
-        const areaPoints = getAreaPoints(area.id)
-        const close = () => setEditingAreaId(null)
-        return (
-          <div
-            className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] p-4"
-            onClick={close}
-          >
-            <div
-              className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="px-4 py-3 border-b flex items-center gap-2">
-                <Pencil className="h-4 w-4 text-blue-600" />
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-base font-semibold truncate">
-                    構成点編集: {area.zoneNumber || area.name || '(無題)'}
-                  </h3>
-                  <div className="text-xs text-slate-500">
-                    地図上の点をクリックして追加、ドラッグで順序変更
-                  </div>
-                </div>
-                <button
-                  onClick={close}
-                  className="p-1 text-slate-400 hover:text-slate-700 rounded"
-                  title="閉じる"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-              <div className="flex-1 overflow-auto p-4 space-y-3">
-                {areaPoints.length === 0 ? (
-                  <div className="py-4 text-center text-sm text-muted-foreground border border-dashed rounded">
-                    点を選択してください
-                  </div>
-                ) : (
-                  <ul className="space-y-1">
-                    {areaPoints.map((point, index) => (
-                      <li
-                        key={point.id}
-                        draggable
-                        onDragStart={(e) => handleDragStart(e, point.id)}
-                        onDragOver={handleDragOver}
-                        onDrop={(e) => handleDrop(e, area.id, index)}
-                        className="flex items-center gap-2 px-2 py-1.5 text-sm bg-white border rounded cursor-move hover:bg-slate-50"
-                      >
-                        <GripVertical className="h-3.5 w-3.5 text-muted-foreground" />
-                        <span className="w-5 text-xs text-muted-foreground">{index + 1}.</span>
-                        <span className="font-medium">{point.pointNumber}</span>
-                        <span className="text-xs text-muted-foreground">
-                          ({point.x.toFixed(1)}, {point.y.toFixed(1)})
-                        </span>
-                        <button
-                          onClick={() => removePoint(area.id, point.id)}
-                          className="ml-auto p-0.5 text-red-500 hover:bg-red-50 rounded"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={pointNameInput}
-                    onChange={(e) => setPointNameInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault()
-                        handleAddPointByName(area.id)
-                      }
-                    }}
-                    placeholder="点名を入力 (例: K1)"
-                    className="flex-1 px-2 py-1 text-sm border rounded"
-                  />
-                  <button
-                    onClick={() => handleAddPointByName(area.id)}
-                    disabled={!pointNameInput.trim()}
-                    className="px-3 py-1 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    追加
-                  </button>
-                </div>
-
-                {area.areaSqm !== null && (
-                  <div className="p-2 bg-green-50 border border-green-200 rounded text-xs">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <span className="text-muted-foreground">直角座標法面積:</span>{' '}
-                        <span className="font-medium font-mono">
-                          {(Math.floor(area.areaSqm * 100) / 100).toFixed(2)} m²
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">周長:</span>{' '}
-                        <span className="font-medium font-mono">{area.perimeterM?.toFixed(2)} m</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div className="px-4 py-2 border-t flex justify-end">
-                <button
-                  onClick={close}
-                  className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
-                >
-                  閉じる
-                </button>
-              </div>
-            </div>
-          </div>
-        )
-      })()}
 
       {/* 登記情報 PDF 取込モーダル */}
       {showRegistryImport && isBoundarySurvey && (
