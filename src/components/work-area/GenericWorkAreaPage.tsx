@@ -491,6 +491,24 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
     return () => window.removeEventListener('keydown', onKey)
   }, [editingAreaId, selectedConstituentPointId, removePoint])
 
+  // ESC で構成点編集を終了（地番管理の編集モード全体を抜ける）
+  useEffect(() => {
+    if (!editingAreaId) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      const t = e.target as HTMLElement | null
+      const tag = t?.tagName?.toLowerCase()
+      if (tag === 'input' || tag === 'textarea' || t?.isContentEditable) return
+      e.preventDefault()
+      setEditingAreaId(null)
+      setSelectedConstituentPointId(null)
+      setHoverPos(null)
+      setDragPreview(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [editingAreaId])
+
   // 中点 + をドラッグ中のプレビュー位置（ポリゴンが追従して再描画される）。
   const [dragPreview, setDragPreview] = useState<
     | { idx: number; lat: number; lng: number }
@@ -813,8 +831,13 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                         塞いで点が選べない問題を避ける */}
                     {isEditing && (
                       <div className="border-t px-3 py-2 bg-slate-50">
-                        <div className="text-xs text-muted-foreground mb-2">
-                          構成点（地図上の点をクリックして追加、ドラッグで順序変更）
+                        <div className="text-xs text-muted-foreground mb-2 flex items-center gap-2">
+                          <span>構成点（地図上の点をクリックして追加、ドラッグで順序変更）</span>
+                          {isBoundarySurvey && (
+                            <span className="ml-auto text-[10px] text-slate-400">
+                              <kbd className="px-1 bg-slate-100 border rounded">Esc</kbd> で編集終了
+                            </span>
+                          )}
                         </div>
                         {isBoundarySurvey && (
                           <div className="mb-2 px-2 py-1.5 text-[11px] rounded border bg-white">
