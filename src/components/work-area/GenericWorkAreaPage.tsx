@@ -454,7 +454,11 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
           i === idx ? coord.id : pid,
         )
         reorderPoints(editingAreaId, newOrder)
-        setSelectedConstituentPointId(coord.id)
+        // 置換確定後は選択解除 → ポリゴンが新位置にロックされ
+        // マウス移動で追従し続けることがなくなる。
+        // もう一度動かしたければ、新しい構成点を再クリックしてもらう
+        setSelectedConstituentPointId(null)
+        setHoverPos(null)
         return
       }
 
