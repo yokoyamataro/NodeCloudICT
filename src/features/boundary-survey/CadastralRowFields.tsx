@@ -74,6 +74,51 @@ export const CADASTRAL_COLUMN_WIDTH: Record<CadastralColumnKey, string> = {
   computed_area_sqm: 'w-28',
 }
 
+// 同上を px 換算（sticky-left の left 値計算に使う）
+const CADASTRAL_COLUMN_WIDTH_PX: Record<CadastralColumnKey, number> = {
+  location: 160,
+  parcel_number: 112,
+  registered_land_category: 96,
+  registered_area_sqm: 96,
+  updated_land_category: 96,
+  updated_area_sqm: 96,
+  registered_owner_name: 128,
+  registered_owner_address: 192,
+  landowners: 176,
+  points_count: 48,
+  computed_area_sqm: 112,
+}
+// gap-1 = 4px、行 px-3 padding = 12px、leading 編集 ボタン = 40px (w-10)
+const CADASTRAL_GAP_PX = 4
+const CADASTRAL_ROW_PAD_LEFT_PX = 12
+const CADASTRAL_LEADING_WIDTH_PX = 40
+
+/** 指定列の sticky-left オフセットを返す。
+ *  leading（編集ボタン）+ それより左にある可視列の幅を合算する。 */
+export function cadastralStickyLeftPx(
+  key: CadastralColumnKey,
+  visibleColumns: ReadonlySet<CadastralColumnKey>,
+): number {
+  let offset =
+    CADASTRAL_ROW_PAD_LEFT_PX +
+    CADASTRAL_LEADING_WIDTH_PX +
+    CADASTRAL_GAP_PX
+  for (const k of CADASTRAL_COLUMN_KEYS) {
+    if (k === key) return offset
+    if (visibleColumns.has(k)) {
+      offset += CADASTRAL_COLUMN_WIDTH_PX[k] + CADASTRAL_GAP_PX
+    }
+  }
+  return offset
+}
+
+// sticky-left を適用する列の集合。左端の数列を常に見えるようにする。
+// 編集ボタンは行の外側で別途 sticky 化されている。
+export const CADASTRAL_STICKY_COLUMNS = new Set<CadastralColumnKey>([
+  'location',
+  'parcel_number',
+])
+
 // 第 3 位以下切捨 → 小数 2 桁で表示
 function truncate2(n: number): string {
   return (Math.floor(n * 100) / 100).toFixed(2)
@@ -266,11 +311,24 @@ export function CadastralRowFields({ area, visibleColumns }: Props) {
   return (
     <>
       <div className="flex items-center gap-1 text-xs whitespace-nowrap" onClick={stop}>
-        {CADASTRAL_COLUMN_KEYS.filter((k) => visibleColumns.has(k)).map((key) => (
-          <div key={key} className={CADASTRAL_COLUMN_WIDTH[key]}>
-            {cellFor(key)}
-          </div>
-        ))}
+        {CADASTRAL_COLUMN_KEYS.filter((k) => visibleColumns.has(k)).map((key) => {
+          const isSticky = CADASTRAL_STICKY_COLUMNS.has(key)
+          return (
+            <div
+              key={key}
+              className={`${CADASTRAL_COLUMN_WIDTH[key]} shrink-0 ${
+                isSticky ? 'sticky z-10 bg-white' : ''
+              }`}
+              style={
+                isSticky
+                  ? { left: cadastralStickyLeftPx(key, visibleColumns) + 'px' }
+                  : undefined
+              }
+            >
+              {cellFor(key)}
+            </div>
+          )
+        })}
       </div>
       {assignOpen && parcelId && (
         <LandownerAssignModal

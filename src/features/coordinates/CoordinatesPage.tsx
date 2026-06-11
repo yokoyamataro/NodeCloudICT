@@ -1412,9 +1412,9 @@ export function CoordinatesPage() {
         <div className="flex-1 overflow-auto">
           {renderBulkBar()}
           <table className="min-w-full w-max text-sm">
-            <thead className="bg-slate-100 sticky top-0">
+            <thead className="bg-slate-100 sticky top-0 z-30">
               <tr>
-                <th className="px-1 py-2 w-8 text-center">
+                <th className="px-1 py-2 w-8 text-center sticky left-0 z-30 bg-slate-100">
                   <input
                     type="checkbox"
                     checked={allChecked}
@@ -1423,7 +1423,7 @@ export function CoordinatesPage() {
                     aria-label="全選択"
                   />
                 </th>
-                <th className="px-0.5 py-2 text-left font-medium w-20">点番号</th>
+                <th className="px-0.5 py-2 text-left font-medium w-20 sticky left-8 z-30 bg-slate-100">点番号</th>
                 <th className="pr-2 pl-1 py-2 text-right font-medium w-28">X (m)</th>
                 <th className="pr-2 pl-1 py-2 text-right font-medium w-28">Y (m)</th>
                 <th className="pr-2 pl-1 py-2 text-right font-medium w-20">Z (m)</th>
@@ -1445,11 +1445,16 @@ export function CoordinatesPage() {
                   ref={idx === filteredCoordinates.length - 1 ? lastRowRef : null}
                   data-coord-row-id={coord.id}
                   className={`hover:bg-slate-50 cursor-pointer ${
-                    selectedPointId === coord.id ? 'bg-blue-200 hover:bg-blue-200' : ''
+                    selectedPointId === coord.id ? 'bg-blue-200 hover:bg-blue-200' : 'bg-white'
                   }`}
                   onClick={() => handlePointClick(coord.id)}
                 >
-                  <td className="px-1 py-0.5 text-center" onClick={(e) => e.stopPropagation()}>
+                  <td
+                    className={`px-1 py-0.5 text-center sticky left-0 z-10 ${
+                      selectedPointId === coord.id ? 'bg-blue-200' : 'bg-white'
+                    }`}
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     <input
                       type="checkbox"
                       checked={checkedIds.has(coord.id)}
@@ -1458,7 +1463,11 @@ export function CoordinatesPage() {
                       aria-label={`${coord.pointNumber} を選択`}
                     />
                   </td>
-                  <td className="px-0.5 py-0.5">
+                  <td
+                    className={`px-0.5 py-0.5 sticky left-8 z-10 ${
+                      selectedPointId === coord.id ? 'bg-blue-200' : 'bg-white'
+                    }`}
+                  >
                     <input
                       type="text"
                       value={coord.pointNumber}
@@ -1627,9 +1636,9 @@ export function CoordinatesPage() {
               <div className="flex-1 overflow-auto">
                 {renderBulkBar()}
                 <table className="min-w-full w-max text-sm">
-                  <thead className="bg-slate-100 sticky top-0">
+                  <thead className="bg-slate-100 sticky top-0 z-30">
                     <tr>
-                      <th className="px-1 py-2 w-8 text-center">
+                      <th className="px-1 py-2 w-8 text-center sticky left-0 z-30 bg-slate-100">
                         <input
                           type="checkbox"
                           checked={allChecked}
@@ -1638,7 +1647,7 @@ export function CoordinatesPage() {
                           aria-label="全選択"
                         />
                       </th>
-                      <th className="px-0.5 py-2 text-left font-medium w-20">点番号</th>
+                      <th className="px-0.5 py-2 text-left font-medium w-20 sticky left-8 z-30 bg-slate-100">点番号</th>
                       <th className="pr-2 pl-1 py-2 text-right font-medium w-28">X (m)</th>
                       <th className="pr-2 pl-1 py-2 text-right font-medium w-28">Y (m)</th>
                       <th className="pr-2 pl-1 py-2 text-right font-medium w-20">Z (m)</th>
@@ -1660,11 +1669,16 @@ export function CoordinatesPage() {
                         ref={idx === filteredCoordinates.length - 1 ? lastRowRef : null}
                         data-coord-row-id={coord.id}
                         className={`hover:bg-slate-50 cursor-pointer ${
-                          selectedPointId === coord.id ? 'bg-blue-200 hover:bg-blue-200' : ''
+                          selectedPointId === coord.id ? 'bg-blue-200 hover:bg-blue-200' : 'bg-white'
                         }`}
                         onClick={() => handlePointClick(coord.id)}
                       >
-                        <td className="px-1 py-0.5 text-center" onClick={(e) => e.stopPropagation()}>
+                        <td
+                          className={`px-1 py-0.5 text-center sticky left-0 z-10 ${
+                            selectedPointId === coord.id ? 'bg-blue-200' : 'bg-white'
+                          }`}
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           <input
                             type="checkbox"
                             checked={checkedIds.has(coord.id)}
@@ -1673,7 +1687,11 @@ export function CoordinatesPage() {
                             aria-label={`${coord.pointNumber} を選択`}
                           />
                         </td>
-                        <td className="px-0.5 py-0.5">
+                        <td
+                          className={`px-0.5 py-0.5 sticky left-8 z-10 ${
+                            selectedPointId === coord.id ? 'bg-blue-200' : 'bg-white'
+                          }`}
+                        >
                           <input
                             type="text"
                             value={coord.pointNumber}

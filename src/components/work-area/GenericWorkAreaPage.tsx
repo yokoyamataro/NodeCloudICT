@@ -696,16 +696,14 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                   : 'flex-1 overflow-auto space-y-2'
               }
             >
-              {/* 地籍: 1 つの表に統合するため、列見出しを先頭に出して横スクロール領域でラップ */}
-              {isBoundarySurvey && (
-                <div className="overflow-x-auto">
-                  <div className="min-w-max">
-                    <CadastralHeader visibleColumns={visibleColumns} leadingWidth="w-10" />
-                  </div>
-                </div>
-              )}
-              <div className={isBoundarySurvey ? 'overflow-x-auto' : ''}>
-                <div className={isBoundarySurvey ? 'min-w-max' : ''}>
+              {/* 地籍: ヘッダー + 行を同じ横スクロール領域に入れる。
+                  sticky 列（編集 / 地番）が両側で同期するため、見出しと行で
+                  別々の overflow-x-auto を持たせない。 */}
+              <div className={isBoundarySurvey ? 'min-w-max' : ''}>
+                {isBoundarySurvey && (
+                  <CadastralHeader visibleColumns={visibleColumns} leadingWidth="w-10" />
+                )}
+                <div>
               {sortedAreas.map((area) => {
                 const isEditing = editingAreaId === area.id
                 const isSelected = !isEditing && selectedAreaId === area.id
@@ -735,17 +733,19 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                       }
                     >
                       {isBoundarySurvey && (
-                        // 行頭の「構成点編集」ボタン
+                        // 行頭の「構成点編集」ボタン。横スクロール時も見えるよう sticky
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation()
                             setEditingAreaId(area.id)
                           }}
-                          className={`w-10 flex items-center justify-center py-1 rounded border ${
+                          className={`w-10 shrink-0 flex items-center justify-center py-1 rounded border sticky left-3 z-10 ${
                             isEditing
                               ? 'bg-blue-600 border-blue-600 text-white'
-                              : 'border-slate-300 text-slate-600 hover:bg-slate-100'
+                              : isSelected
+                              ? 'bg-orange-50 border-slate-300 text-slate-600 hover:bg-orange-100'
+                              : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'
                           }`}
                           title="構成点を編集"
                         >
