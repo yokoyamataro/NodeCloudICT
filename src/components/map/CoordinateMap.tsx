@@ -225,6 +225,17 @@ interface CoordinateMapProps {
   /** ポリゴンクリックで親に通知（地番管理で一覧スクロール+選択ハイライトに使う） */
   onPolygonSelect?: (id: string) => void
   selectedExternalPolygonId?: string | null
+  /** 編集中ポリゴンの構成点 ID 一覧（順序付き）。指定するとマーカーがドラッグ可能になり、
+   *  辺の中点には + ボタン（ドラッグで挿入）が出る */
+  editingConstituentPointIds?: string[]
+  /** クリック選択された構成点 ID（オレンジ色で強調） */
+  selectedConstituentPointId?: string | null
+  /** 構成点マーカーをドラッグして別位置へドロップしたときに呼ぶ。
+   *  親側で「最寄り座標」を判定して reorderPoints する */
+  onConstituentDragEnd?: (originalCoordId: string, lat: number, lng: number) => void
+  /** 中点+ボタンをドラッグして別位置へドロップしたときに呼ぶ。
+   *  insertAfterIdx は元の構成点リストの index で、その点と次の点の間に挿入する想定 */
+  onMidpointDragEnd?: (insertAfterIdx: number, lat: number, lng: number) => void
   // 経路（順路）の描画
   route?: RoutePoint[]
   showRoute?: boolean
@@ -261,6 +272,10 @@ export function CoordinateMap({
   editingExternalPolygonId,
   onPolygonSelect,
   selectedExternalPolygonId,
+  editingConstituentPointIds,
+  selectedConstituentPointId,
+  onConstituentDragEnd,
+  onMidpointDragEnd,
   route = [],
   showRoute = false,
   farmId,
@@ -525,25 +540,52 @@ export function CoordinateMap({
         )
       })}
 
+      {/* 構成点編集モード: 中点 + マーカーをドラッグで挿入。
+          ドラッグ完了で親の onMidpointDragEnd が呼ばれる */}
+      {editingConstituentPointIds && editingConstituentPointIds.length >= 2 && onMidpointDragEnd && (
+        <MidpointPlusLayer
+          constituentIds={editingConstituentPointIds}
+          coordinates={validCoordinates}
+          onDragEnd={onMidpointDragEnd}
+        />
+      )}
+
       {/* 座標マーカー: 件数が多い (1000+) ときは zoom 17 以上 + 画面内のみ描画。
-          ラベル（点名）はマーカー自体より重いので zoom 19 以上に絞る。 */}
+          ラベル（点名）はマーカー自体より重いので zoom 19 以上に絞る。
+          編集モードでは、構成点はドラッグ可能で、選択中はオレンジ強調 */}
       <HighDensityList
         items={displayCoordinates}
         threshold={1000}
         zoomMin={17}
         labelZoomMin={19}
         getLatLng={(c) => [c.lat, c.lng]}
-        render={(coord, { showLabel }) => (
+        render={(coord, { showLabel }) => {
+          const isConstituent = editingConstituentPointIds?.includes(coord.id) ?? false
+          const isSelectedConstituent = coord.id === selectedConstituentPointId
+          const isSelectedRegular = coord.id === selectedPointId
+          const baseColor = MARKER_COLORS[coord.type] || '#666'
+          const iconColor = isSelectedConstituent ? '#f97316' : baseColor
+          const draggable = isConstituent && !!onConstituentDragEnd
+          return (
           <Marker
-            key={coord.id}
+            key={`${coord.id}-${draggable ? 'd' : 's'}`}
             position={[coord.lat, coord.lng]}
             icon={createColoredIcon(
-              MARKER_COLORS[coord.type] || '#666',
-              coord.id === selectedPointId
+              iconColor,
+              isSelectedConstituent || isSelectedRegular,
             )}
             interactive={coordinatesInteractive}
+            draggable={draggable}
             eventHandlers={coordinatesInteractive ? {
               click: () => onPointSelect?.(coord.id),
+              ...(draggable && onConstituentDragEnd
+                ? {
+                    dragend: (e: { target: { getLatLng: () => { lat: number; lng: number } } }) => {
+                      const ll = e.target.getLatLng()
+                      onConstituentDragEnd(coord.id, ll.lat, ll.lng)
+                    },
+                  }
+                : {}),
             } : undefined}
           >
             {/* showLabels && showLabel が true なら常時表示、false ならホバー
@@ -566,7 +608,8 @@ export function CoordinateMap({
               </span>
             </Tooltip>
           </Marker>
-        )}
+        )
+        }}
       />
 
       {/* 外部から差し込む追加レイヤ（オルソ画像ページの作図・計測など） */}
@@ -579,6 +622,58 @@ export function CoordinateMap({
     </MapContainer>
     </div>
   )
+}
+
+// 構成点編集中の各辺の中点に "+" マーカーを描画。
+// マーカーをドラッグして座標上にドロップすると、その中点の位置（=次の辺の前）に
+// 新しい構成点を挿入できる。
+const MIDPOINT_PLUS_ICON = L.divIcon({
+  className: 'midpoint-plus',
+  html:
+    '<div style="' +
+    'background:#fff;color:#16a34a;border:2px solid #16a34a;' +
+    'border-radius:50%;width:20px;height:20px;display:flex;align-items:center;' +
+    'justify-content:center;font-size:14px;font-weight:bold;cursor:grab;' +
+    'box-shadow:0 2px 4px rgba(0,0,0,0.2);">+</div>',
+  iconSize: [20, 20],
+  iconAnchor: [10, 10],
+})
+
+function MidpointPlusLayer({
+  constituentIds,
+  coordinates,
+  onDragEnd,
+}: {
+  constituentIds: string[]
+  coordinates: Array<CoordinateRow & { lat: number; lng: number }>
+  onDragEnd: (insertAfterIdx: number, lat: number, lng: number) => void
+}) {
+  const coordById = new Map(coordinates.map((c) => [c.id, c]))
+  const out: React.ReactElement[] = []
+  const n = constituentIds.length
+  for (let i = 0; i < n; i++) {
+    const a = coordById.get(constituentIds[i])
+    const b = coordById.get(constituentIds[(i + 1) % n])
+    if (!a || !b) continue
+    const midLat = (a.lat + b.lat) / 2
+    const midLng = (a.lng + b.lng) / 2
+    out.push(
+      <Marker
+        key={`midplus-${i}-${a.id}`}
+        position={[midLat, midLng]}
+        icon={MIDPOINT_PLUS_ICON}
+        draggable
+        zIndexOffset={500}
+        eventHandlers={{
+          dragend: (e: { target: { getLatLng: () => { lat: number; lng: number } } }) => {
+            const ll = e.target.getLatLng()
+            onDragEnd(i + 1, ll.lat, ll.lng)
+          },
+        }}
+      />,
+    )
+  }
+  return <>{out}</>
 }
 
 // MapContainer の中で useMapEvents をフックし、ズーム値を親 state に伝える。

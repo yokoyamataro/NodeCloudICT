@@ -26,6 +26,41 @@ import { PointTypeFilterButton } from '@/features/coordinates/PointTypeFilterBut
 import { StakeStatusFilterButton } from '@/features/coordinates/StakeStatusFilterButton'
 import { RegistryPdfImportModal } from '@/features/boundary-survey/RegistryPdfImportModal'
 
+// Haversine 距離 (m)
+function haversineMeters(a: [number, number], b: [number, number]): number {
+  const R = 6371000
+  const toRad = (d: number) => (d * Math.PI) / 180
+  const dLat = toRad(b[0] - a[0])
+  const dLng = toRad(b[1] - a[1])
+  const lat1 = toRad(a[0])
+  const lat2 = toRad(b[0])
+  const x =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2
+  const c = 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x))
+  return R * c
+}
+
+// ドロップ地点の lat/lng から最寄りの座標を返す（threshold 内のみ）
+function findNearestCoord(
+  coords: Array<CoordinateRow>,
+  lat: number,
+  lng: number,
+  thresholdMeters: number,
+): CoordinateRow | null {
+  let nearest: CoordinateRow | null = null
+  let minDist = Infinity
+  for (const c of coords) {
+    if (c.lat == null || c.lng == null) continue
+    const dist = haversineMeters([lat, lng], [c.lat, c.lng])
+    if (dist < minDist) {
+      minDist = dist
+      nearest = c
+    }
+  }
+  return nearest && minDist <= thresholdMeters ? nearest : null
+}
+
 // 面積計算簿コンポーネント
 function AreaCalculationSheet({
   sheet,
@@ -169,6 +204,8 @@ interface GenericWorkAreaPageProps {
 export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', headerActions }: GenericWorkAreaPageProps) {
   const [calculationSheet, setCalculationSheet] = useState<AreaCalculationSheetType | null>(null)
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
+  // 編集中ポリゴン: 選択中の構成点 ID（DEL/BACKSPACE で削除する対象）
+  const [selectedConstituentPointId, setSelectedConstituentPointId] = useState<string | null>(null)
   const [editingAreaId, setEditingAreaId] = useState<string | null>(null)
   // 地図のポリゴンクリックで一覧をスクロール/ハイライトするための状態
   // （editingAreaId とは別概念。編集モードに入らずに「選択」だけする）
@@ -375,13 +412,94 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   const handlePointClick = (id: string) => {
     setSelectedPointId(id)
 
-    // 区域編集中なら、その区域に点を追加
     if (editingAreaId) {
-      const coord = coordinates.find(c => c.id === id)
-      if (coord) {
-        addPoint(editingAreaId, { id: coord.id, pointNumber: coord.pointNumber, x: coord.x, y: coord.y, z: coord.z })
+      const editingArea = areas.find((a) => a.id === editingAreaId)
+      const constituentIds = editingArea?.pointIds ?? []
+      const coord = coordinates.find((c) => c.id === id)
+      if (!coord) return
+      // 既に構成点に入っていれば「選択」、入っていなければ「追加」
+      if (constituentIds.includes(coord.id)) {
+        setSelectedConstituentPointId(coord.id)
+      } else {
+        addPoint(editingAreaId, {
+          id: coord.id,
+          pointNumber: coord.pointNumber,
+          x: coord.x,
+          y: coord.y,
+          z: coord.z,
+        })
       }
     }
+  }
+
+  // 編集を抜けたら選択もクリア
+  useEffect(() => {
+    if (!editingAreaId) setSelectedConstituentPointId(null)
+  }, [editingAreaId])
+
+  // DEL / BACKSPACE で選択中の構成点を削除
+  useEffect(() => {
+    if (!editingAreaId || !selectedConstituentPointId) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return
+      // 入力フィールドにフォーカスがあるときはスルー
+      const t = e.target as HTMLElement | null
+      const tag = t?.tagName?.toLowerCase()
+      if (tag === 'input' || tag === 'textarea' || t?.isContentEditable) return
+      e.preventDefault()
+      removePoint(editingAreaId, selectedConstituentPointId)
+      setSelectedConstituentPointId(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [editingAreaId, selectedConstituentPointId, removePoint])
+
+  // 構成点マーカーをドラッグ → 最寄りの座標へ置換
+  const handleConstituentDragEnd = (originalCoordId: string, lat: number, lng: number) => {
+    if (!editingAreaId) return
+    const editingArea = areas.find((a) => a.id === editingAreaId)
+    if (!editingArea) return
+    const nearest = findNearestCoord(coordinates, lat, lng, 5)
+    // ドロップ先が無い・同じ座標・既に構成点に含まれる → 何もしない
+    if (!nearest || nearest.id === originalCoordId) return
+    if (editingArea.pointIds.includes(nearest.id)) return
+    // 旧 ID を新 ID で置換（順序保持）。reorderPoints の前に addPoint で
+    // 新座標を points 配列へ入れておく必要がある
+    addPoint(editingAreaId, {
+      id: nearest.id,
+      pointNumber: nearest.pointNumber,
+      x: nearest.x,
+      y: nearest.y,
+      z: nearest.z,
+    })
+    const newOrder = editingArea.pointIds.map((pid) =>
+      pid === originalCoordId ? nearest.id : pid,
+    )
+    reorderPoints(editingAreaId, newOrder)
+    setSelectedConstituentPointId(nearest.id)
+  }
+
+  // 中点 + をドラッグ → 最寄りの座標を挿入
+  const handleMidpointDragEnd = (insertAfterIdx: number, lat: number, lng: number) => {
+    if (!editingAreaId) return
+    const editingArea = areas.find((a) => a.id === editingAreaId)
+    if (!editingArea) return
+    const nearest = findNearestCoord(coordinates, lat, lng, 5)
+    if (!nearest) return
+    if (editingArea.pointIds.includes(nearest.id)) return
+    addPoint(editingAreaId, {
+      id: nearest.id,
+      pointNumber: nearest.pointNumber,
+      x: nearest.x,
+      y: nearest.y,
+      z: nearest.z,
+    })
+    const newOrder = [
+      ...editingArea.pointIds.slice(0, insertAfterIdx),
+      nearest.id,
+      ...editingArea.pointIds.slice(insertAfterIdx),
+    ]
+    reorderPoints(editingAreaId, newOrder)
   }
 
   // 点名入力から座標を追加
@@ -832,6 +950,14 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
             showPolygonLabels={isBoundarySurvey ? showPolygonLabels : false}
             visibleTypes={isBoundarySurvey ? visibleTypes : undefined}
             visibleStakeStatuses={isBoundarySurvey ? visibleStakeStatuses : undefined}
+            editingConstituentPointIds={
+              editingAreaId
+                ? areas.find((a) => a.id === editingAreaId)?.pointIds
+                : undefined
+            }
+            selectedConstituentPointId={selectedConstituentPointId}
+            onConstituentDragEnd={editingAreaId ? handleConstituentDragEnd : undefined}
+            onMidpointDragEnd={editingAreaId ? handleMidpointDragEnd : undefined}
           />
         </div>
       </div>
