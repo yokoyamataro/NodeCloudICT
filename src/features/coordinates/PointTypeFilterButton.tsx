@@ -19,12 +19,15 @@ interface Props {
   onOpenManageModal?: () => void
   /** ボタンの見た目用 hover クラス（ツールバーの背景と揃える） */
   hoverClass?: string
+  /** 表ヘッダ等の狭い場所に収める時のコンパクト表示。フィルタ Icon と件数のみ */
+  compact?: boolean
 }
 
 export function PointTypeFilterButton({
   typeOptions,
   onOpenManageModal,
   hoverClass = 'hover:bg-slate-50',
+  compact = false,
 }: Props) {
   const visibleTypes = useMapViewStore((s) => s.visibleTypes)
   const setVisibleTypes = useMapViewStore((s) => s.setVisibleTypes)
@@ -42,17 +45,30 @@ export function PointTypeFilterButton({
     return () => document.removeEventListener('mousedown', onClick)
   }, [open])
 
+  const isAllOn = visibleTypes.size === typeOptions.length
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative inline-block align-middle" ref={ref}>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
         title="点種でフィルタ（表と地図の両方）"
-        className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded ${hoverClass}`}
+        className={
+          compact
+            ? `inline-flex items-center gap-0.5 px-1 py-0.5 text-[10px] rounded border ${hoverClass} ${
+                isAllOn ? 'text-slate-400 border-slate-200' : 'text-blue-700 border-blue-300 bg-blue-50'
+              }`
+            : `flex items-center gap-1 px-3 py-1.5 text-sm border rounded ${hoverClass}`
+        }
       >
-        <Filter className="h-3.5 w-3.5" />
-        点種フィルター ({visibleTypes.size}/{typeOptions.length})
-        <ChevronDown className="h-3 w-3" />
+        <Filter className={compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
+        {compact ? (
+          <span className="font-mono">{visibleTypes.size}/{typeOptions.length}</span>
+        ) : (
+          <>
+            点種フィルター ({visibleTypes.size}/{typeOptions.length})
+            <ChevronDown className="h-3 w-3" />
+          </>
+        )}
       </button>
       {open && (
         <div className="absolute left-0 top-full mt-1 w-64 bg-white border rounded shadow-lg z-20 p-2">

@@ -2,6 +2,10 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Upload, Download, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Camera, Image as ImageIcon, Loader2, Calculator, Layers, Check } from 'lucide-react'
 import { PointTypeFilterButton } from './PointTypeFilterButton'
 import { StakeStatusFilterButton } from './StakeStatusFilterButton'
+import {
+  PhotoCountFilterButton,
+  type PhotoCountFilter,
+} from './PhotoCountFilterButton'
 import { CoordinatePhotoModal } from './CoordinatePhotoModal'
 import { CoordinateCalcModal } from './CoordinateCalcModal'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
@@ -251,6 +255,8 @@ export function CoordinatesPage() {
   // 点種フィルタ・オルソ表示・背景地図は地番管理と共有する mapViewStore に保持
   const visibleTypes = useMapViewStore((s) => s.visibleTypes)
   const visibleStakeStatuses = useMapViewStore((s) => s.visibleStakeStatuses)
+  // 写真の撮影枚数フィルタ（ローカル state。地図側には反映しない）
+  const [photoCountFilter, setPhotoCountFilter] = useState<PhotoCountFilter>('all')
   const setVisibleTypes = useMapViewStore((s) => s.setVisibleTypes)
   const baseLayer = useMapViewStore((s) => s.baseLayer)
   const setBaseLayer = useMapViewStore((s) => s.setBaseLayer)
@@ -403,10 +409,17 @@ export function CoordinatesPage() {
   // 点種フィルターを適用した表示用座標。表とマップで共有する。
   const filteredCoordinates = useMemo(
     () =>
-      coordinates.filter(
-        (c) => visibleTypes.has(c.type) && visibleStakeStatuses.has(c.stakeStatus),
-      ),
-    [coordinates, visibleTypes, visibleStakeStatuses],
+      coordinates.filter((c) => {
+        if (!visibleTypes.has(c.type)) return false
+        if (!visibleStakeStatuses.has(c.stakeStatus)) return false
+        if (photoCountFilter !== 'all') {
+          const photoCount = attachmentsByEntity.get(`coordinate:${c.id}`)?.length ?? 0
+          if (photoCountFilter === 'with' && photoCount === 0) return false
+          if (photoCountFilter === 'without' && photoCount > 0) return false
+        }
+        return true
+      }),
+    [coordinates, visibleTypes, visibleStakeStatuses, photoCountFilter, attachmentsByEntity],
   )
 
   // スマホから記録された staking_records を取得し、「設置済」フラグに使う
@@ -1293,15 +1306,8 @@ export function CoordinatesPage() {
           座標計算
         </button>
 
-        {/* 点種フィルター（表と地図の両方に効く。地番管理とも mapViewStore で共有） */}
-        <PointTypeFilterButton
-          typeOptions={typeOptions}
-          hoverClass={hoverClass}
-          onOpenManageModal={() => setShowPointTypeModal(true)}
-        />
-
-        {/* 設置状態フィルター */}
-        <StakeStatusFilterButton hoverClass={hoverClass} />
+        {/* フィルターは各列のヘッダーへ移動した。
+            点種・設置状態・写真の絞り込みは表の <th> 内のアイコンから操作する */}
 
         {/* 座標計算モーダル */}
         {showCalcModal && (
@@ -1427,10 +1433,33 @@ export function CoordinatesPage() {
                 <th className="pr-2 pl-1 py-2 text-right font-medium w-28">X (m)</th>
                 <th className="pr-2 pl-1 py-2 text-right font-medium w-28">Y (m)</th>
                 <th className="pr-2 pl-1 py-2 text-right font-medium w-20">Z (m)</th>
-                <th className="px-0.5 py-2 text-left font-medium">種類</th>
+                <th className="px-0.5 py-2 text-left font-medium">
+                  <div className="flex items-center gap-1">
+                    <span>種類</span>
+                    <PointTypeFilterButton
+                      compact
+                      typeOptions={typeOptions}
+                      onOpenManageModal={() => setShowPointTypeModal(true)}
+                    />
+                  </div>
+                </th>
                 <th className="px-0.5 py-2 text-left font-medium">杭種</th>
-                <th className="px-0.5 py-2 text-center font-medium w-28" title="杭設置のワークフロー状態">設置</th>
-                <th className="px-0.5 py-2 text-center font-medium w-12">写真</th>
+                <th className="px-0.5 py-2 text-center font-medium w-28" title="杭設置のワークフロー状態">
+                  <div className="flex items-center justify-center gap-1">
+                    <span>設置</span>
+                    <StakeStatusFilterButton compact />
+                  </div>
+                </th>
+                <th className="px-0.5 py-2 text-center font-medium w-16">
+                  <div className="flex items-center justify-center gap-1">
+                    <span>写真</span>
+                    <PhotoCountFilterButton
+                      compact
+                      value={photoCountFilter}
+                      onChange={setPhotoCountFilter}
+                    />
+                  </div>
+                </th>
                 <th className="px-0.5 py-2 text-right font-medium">緯度</th>
                 <th className="px-0.5 py-2 text-right font-medium">経度</th>
                 <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新者</th>
@@ -1651,10 +1680,33 @@ export function CoordinatesPage() {
                       <th className="pr-2 pl-1 py-2 text-right font-medium w-28">X (m)</th>
                       <th className="pr-2 pl-1 py-2 text-right font-medium w-28">Y (m)</th>
                       <th className="pr-2 pl-1 py-2 text-right font-medium w-20">Z (m)</th>
-                      <th className="px-0.5 py-2 text-left font-medium">種類</th>
+                      <th className="px-0.5 py-2 text-left font-medium">
+                        <div className="flex items-center gap-1">
+                          <span>種類</span>
+                          <PointTypeFilterButton
+                            compact
+                            typeOptions={typeOptions}
+                            onOpenManageModal={() => setShowPointTypeModal(true)}
+                          />
+                        </div>
+                      </th>
                       <th className="px-0.5 py-2 text-left font-medium">杭種</th>
-                      <th className="px-0.5 py-2 text-center font-medium w-28" title="杭設置のワークフロー状態">設置</th>
-                      <th className="px-0.5 py-2 text-center font-medium w-12">写真</th>
+                      <th className="px-0.5 py-2 text-center font-medium w-28" title="杭設置のワークフロー状態">
+                        <div className="flex items-center justify-center gap-1">
+                          <span>設置</span>
+                          <StakeStatusFilterButton compact />
+                        </div>
+                      </th>
+                      <th className="px-0.5 py-2 text-center font-medium w-16">
+                        <div className="flex items-center justify-center gap-1">
+                          <span>写真</span>
+                          <PhotoCountFilterButton
+                            compact
+                            value={photoCountFilter}
+                            onChange={setPhotoCountFilter}
+                          />
+                        </div>
+                      </th>
                       <th className="px-0.5 py-2 text-right font-medium">緯度</th>
                       <th className="px-0.5 py-2 text-right font-medium">経度</th>
                       <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新者</th>
