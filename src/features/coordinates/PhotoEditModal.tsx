@@ -128,7 +128,13 @@ export function PhotoEditModal({ file, onCancel, onConfirm, headerNote }: PhotoE
   }
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[9999]">
+    // 親モーダル (CoordinatePhotoModal) は backdrop click で閉じる作りなので、
+    // PhotoEditModal 内のクリックがそこまで伝播しないように stopPropagation。
+    // これがないと「写真を 1 枚アップロード → 親モーダルが閉じてしまう」現象になる。
+    <div
+      className="fixed inset-0 bg-black/70 flex items-center justify-center z-[9999]"
+      onClick={(e) => e.stopPropagation()}
+    >
       <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[95vh] flex flex-col">
         <div className="px-4 py-2 border-b flex items-center gap-2">
           <h3 className="text-base font-semibold flex-1">写真を編集</h3>
