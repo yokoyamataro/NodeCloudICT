@@ -1618,6 +1618,7 @@ export function CoordinatesPage() {
                       <tr
                         key={coord.id}
                         ref={idx === filteredCoordinates.length - 1 ? lastRowRef : null}
+                        data-coord-row-id={coord.id}
                         className={`hover:bg-slate-50 cursor-pointer ${
                           selectedPointId === coord.id ? 'bg-blue-200 hover:bg-blue-200' : ''
                         }`}

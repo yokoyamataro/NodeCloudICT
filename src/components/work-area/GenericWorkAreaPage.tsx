@@ -169,6 +169,9 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   const [calculationSheet, setCalculationSheet] = useState<AreaCalculationSheetType | null>(null)
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
   const [editingAreaId, setEditingAreaId] = useState<string | null>(null)
+  // 地図のポリゴンクリックで一覧をスクロール/ハイライトするための状態
+  // （editingAreaId とは別概念。編集モードに入らずに「選択」だけする）
+  const [selectedAreaId, setSelectedAreaId] = useState<string | null>(null)
   const [pointNameInput, setPointNameInput] = useState<string>('')
   // オルソ表示・背景地図・点種フィルタは座標管理と mapViewStore で共有
   const showOrtho = useMapViewStore((s) => s.showOrtho)
@@ -278,6 +281,20 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   const [visibleColumns, setVisibleColumns] = useCadastralVisibleColumns()
   // 登記情報 PDF 取込モーダル
   const [showRegistryImport, setShowRegistryImport] = useState(false)
+
+  // 地図のポリゴンクリックで selectedAreaId が変わったら、一覧の該当行を
+  // 画面内へスクロールする。一覧内クリックでも block: 'nearest' なので
+  // 既に見えている場合はほぼノーオプ。
+  useEffect(() => {
+    if (!selectedAreaId) return
+    const row = document.querySelector(
+      `[data-area-row-id="${CSS.escape(selectedAreaId)}"]`,
+    )
+    if (row instanceof HTMLElement) {
+      row.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }
+  }, [selectedAreaId])
+
   useEffect(() => {
     if (!isBoundarySurvey) {
       clearParcels()
@@ -509,11 +526,13 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                 <div className={isBoundarySurvey ? 'min-w-max' : ''}>
               {sortedAreas.map((area) => {
                 const isEditing = editingAreaId === area.id
+                const isSelected = !isEditing && selectedAreaId === area.id
                 const areaPoints = getAreaPoints(area.id)
 
                 return (
                   <div
                     key={area.id}
+                    data-area-row-id={area.id}
                     className={
                       isBoundarySurvey
                         ? ''
@@ -524,12 +543,12 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                     <div
                       className={
                         isBoundarySurvey
-                          ? `flex items-center gap-1 px-3 py-2 border-b hover:bg-slate-50 ${isEditing ? 'bg-blue-50' : ''}`
+                          ? `flex items-center gap-1 px-3 py-2 border-b hover:bg-slate-50 ${isEditing ? 'bg-blue-50' : isSelected ? 'bg-orange-50' : ''}`
                           : `p-3 flex items-center gap-3 cursor-pointer hover:bg-slate-50 ${isEditing ? 'bg-blue-50' : ''}`
                       }
                       onClick={
                         isBoundarySurvey
-                          ? undefined
+                          ? () => setSelectedAreaId(area.id)
                           : () => setEditingAreaId(isEditing ? null : area.id)
                       }
                     >
@@ -796,6 +815,8 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
             onPointSelect={handlePointClick}
             externalPolygons={externalPolygons}
             editingExternalPolygonId={editingAreaId}
+            selectedExternalPolygonId={isBoundarySurvey ? selectedAreaId : null}
+            onPolygonSelect={isBoundarySurvey ? setSelectedAreaId : undefined}
             baseLayer={baseLayer}
             farmId={farmId ?? null}
             showOrtho={showOrtho}

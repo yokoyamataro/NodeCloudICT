@@ -220,6 +220,9 @@ interface CoordinateMapProps {
   baseLayer?: BaseLayerType
   externalPolygons?: ExternalPolygon[]
   editingExternalPolygonId?: string | null
+  /** ポリゴンクリックで親に通知（地番管理で一覧スクロール+選択ハイライトに使う） */
+  onPolygonSelect?: (id: string) => void
+  selectedExternalPolygonId?: string | null
   // 経路（順路）の描画
   route?: RoutePoint[]
   showRoute?: boolean
@@ -253,6 +256,8 @@ export function CoordinateMap({
   baseLayer = 'osm',
   externalPolygons = [],
   editingExternalPolygonId,
+  onPolygonSelect,
+  selectedExternalPolygonId,
   route = [],
   showRoute = false,
   farmId,
@@ -372,17 +377,23 @@ export function CoordinateMap({
         getPolygonPositions={(p) => p.positions}
         render={(polygon, { showLabel }) => {
           const isEditing = polygon.id === editingExternalPolygonId
+          const isSelected = !isEditing && polygon.id === selectedExternalPolygonId
           return (
             <Polygon
               key={polygon.id}
               positions={polygon.positions}
               pathOptions={{
-                color: isEditing ? '#16a34a' : '#22c55e',
-                fillColor: isEditing ? '#16a34a' : '#22c55e',
-                fillOpacity: isEditing ? 0.3 : 0.2,
-                weight: isEditing ? 3 : 2,
+                color: isEditing ? '#16a34a' : isSelected ? '#f97316' : '#22c55e',
+                fillColor: isEditing ? '#16a34a' : isSelected ? '#f97316' : '#22c55e',
+                fillOpacity: isEditing ? 0.3 : isSelected ? 0.35 : 0.2,
+                weight: isEditing ? 3 : isSelected ? 3 : 2,
                 dashArray: isEditing ? '5, 5' : undefined,
               }}
+              eventHandlers={
+                onPolygonSelect
+                  ? { click: () => onPolygonSelect(polygon.id) }
+                  : undefined
+              }
             >
               {showPolygonLabels && showLabel && polygon.name && (
                 <Tooltip
