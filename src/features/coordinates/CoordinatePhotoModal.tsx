@@ -39,10 +39,14 @@ export function CoordinatePhotoModal({
   const pendingCategoryRef = useRef<string | null>(null)
   // 差し替え対象の attachment.id（アップロード成功後に削除する）
   const pendingReplaceIdRef = useRef<string | null>(null)
-  // 編集対象（選択直後にここに入れて、編集モーダルで回転/トリミングしてからアップロードする）
-  const [editingFile, setEditingFile] = useState<
-    { file: File; category: string; replacingId?: string } | null
-  >(null)
+  // 編集キュー。複数ファイルをまとめて選んだとき、先頭から 1 つずつ
+  // 編集モーダルで処理する。先頭以外はキューに残ったまま、確定/キャンセル
+  // 後に次のファイルへ進む。先頭が editingFile としてレンダリングされる。
+  const [editingQueue, setEditingQueue] = useState<
+    { file: File; category: string; replacingId?: string }[]
+  >([])
+  const editingFile = editingQueue[0] ?? null
+  const remainingCount = editingQueue.length
 
   useEffect(() => {
     if (open && coordinateId) {
@@ -83,26 +87,33 @@ export function CoordinatePhotoModal({
   }
 
   const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
+    const files = Array.from(e.target.files ?? [])
     e.target.value = ''
     const cat = pendingCategoryRef.current
-    if (!file || !cat) return
-    // 回転 / トリミング編集モーダルを開く
-    setEditingFile({
-      file,
+    if (files.length === 0 || !cat) return
+    // 差し替えモードは 1 枚しか受け付けない（1 枚 → 1 枚で置換）
+    const replacingId = pendingReplaceIdRef.current ?? undefined
+    const targetFiles = replacingId ? files.slice(0, 1) : files
+    const items = targetFiles.map((f) => ({
+      file: f,
       category: cat,
-      replacingId: pendingReplaceIdRef.current ?? undefined,
-    })
+      replacingId,
+    }))
+    // 続けて選んだ場合は末尾に追加してキューを伸ばす
+    setEditingQueue((prev) => [...prev, ...items])
     pendingCategoryRef.current = null
     pendingReplaceIdRef.current = null
   }
 
-  // 編集モーダル確定後にアップロード（編集時点で 1600px / JPEG80% に縮小済みなので再エンコードしない）
+  // 編集モーダル確定後にアップロード（編集時点で 1600px / JPEG80% に縮小済みなので再エンコードしない）。
+  // キューに次の写真が残っていれば、確定後そのまま次の編集モーダルが開く。
   const handleEditConfirmed = async (blob: Blob, _fileName: string) => {
-    if (!editingFile) return
-    const cat = editingFile.category
-    const replacingId = editingFile.replacingId
-    setEditingFile(null)
+    const cur = editingQueue[0]
+    if (!cur) return
+    const cat = cur.category
+    const replacingId = cur.replacingId
+    // キューを 1 件進める。次の編集モーダルが自動で開く
+    setEditingQueue((prev) => prev.slice(1))
     setUploadingFor(cat)
     setError(null)
     try {
@@ -124,6 +135,12 @@ export function CoordinatePhotoModal({
     } finally {
       setUploadingFor(null)
     }
+  }
+
+  // 編集モーダルのキャンセル: 現在の 1 枚だけスキップして次へ。
+  // 全部キャンセルしたければ続けて Esc を連打する運用。
+  const handleEditCancelled = () => {
+    setEditingQueue((prev) => prev.slice(1))
   }
 
   const handleAddCustomCapture = () => {
@@ -331,17 +348,23 @@ export function CoordinatePhotoModal({
           ref={pickerInputRef}
           type="file"
           accept="image/*"
+          multiple
           onChange={handleFileSelected}
           className="hidden"
         />
       </div>
 
-      {/* 写真編集（回転・トリミング）モーダル */}
+      {/* 写真編集（回転・トリミング）モーダル。キューに複数あれば 1 枚ずつ順に */}
       {editingFile && (
         <PhotoEditModal
           file={editingFile.file}
-          onCancel={() => setEditingFile(null)}
+          onCancel={handleEditCancelled}
           onConfirm={handleEditConfirmed}
+          headerNote={
+            remainingCount > 1
+              ? `残り ${remainingCount} 枚 — ${editingFile.category}`
+              : editingFile.category
+          }
         />
       )}
     </div>

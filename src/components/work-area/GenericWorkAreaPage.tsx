@@ -26,41 +26,6 @@ import { PointTypeFilterButton } from '@/features/coordinates/PointTypeFilterBut
 import { StakeStatusFilterButton } from '@/features/coordinates/StakeStatusFilterButton'
 import { RegistryPdfImportModal } from '@/features/boundary-survey/RegistryPdfImportModal'
 
-// Haversine 距離 (m)
-function haversineMeters(a: [number, number], b: [number, number]): number {
-  const R = 6371000
-  const toRad = (d: number) => (d * Math.PI) / 180
-  const dLat = toRad(b[0] - a[0])
-  const dLng = toRad(b[1] - a[1])
-  const lat1 = toRad(a[0])
-  const lat2 = toRad(b[0])
-  const x =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2
-  const c = 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x))
-  return R * c
-}
-
-// ドロップ地点の lat/lng から最寄りの座標を返す（threshold 内のみ）
-function findNearestCoord(
-  coords: Array<CoordinateRow>,
-  lat: number,
-  lng: number,
-  thresholdMeters: number,
-): CoordinateRow | null {
-  let nearest: CoordinateRow | null = null
-  let minDist = Infinity
-  for (const c of coords) {
-    if (c.lat == null || c.lng == null) continue
-    const dist = haversineMeters([lat, lng], [c.lat, c.lng])
-    if (dist < minDist) {
-      minDist = dist
-      nearest = c
-    }
-  }
-  return nearest && minDist <= thresholdMeters ? nearest : null
-}
-
 // 面積計算簿コンポーネント
 function AreaCalculationSheet({
   sheet,
@@ -206,6 +171,9 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
   // 編集中ポリゴン: 選択中の構成点 ID（DEL/BACKSPACE で削除する対象）
   const [selectedConstituentPointId, setSelectedConstituentPointId] = useState<string | null>(null)
+  // 中点 + を click したあと、座標 click で確定するまでの「挿入待機」状態。
+  // 値がある間は地図のマウス位置に追従してポリゴンがプレビューされる。
+  const [pendingInsertIdx, setPendingInsertIdx] = useState<number | null>(null)
   const [editingAreaId, setEditingAreaId] = useState<string | null>(null)
   // 地図のポリゴンクリックで一覧をスクロール/ハイライトするための状態
   // （editingAreaId とは別概念。編集モードに入らずに「選択」だけする）
@@ -421,8 +389,31 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
 
       const isConstituent = constituentIds.includes(coord.id)
 
+      // ケース⓪: 中点 + クリックで挿入待機中 → ここで確定
+      if (pendingInsertIdx != null && !isConstituent) {
+        addPoint(editingAreaId, {
+          id: coord.id,
+          pointNumber: coord.pointNumber,
+          x: coord.x,
+          y: coord.y,
+          z: coord.z,
+        })
+        const insertAt = Math.min(Math.max(pendingInsertIdx, 0), constituentIds.length)
+        const newOrder = [
+          ...constituentIds.slice(0, insertAt),
+          coord.id,
+          ...constituentIds.slice(insertAt),
+        ]
+        reorderPoints(editingAreaId, newOrder)
+        setPendingInsertIdx(null)
+        setHoverPos(null)
+        return
+      }
+
       // ケース①: クリックされた点が既に構成点 → 選択（次のクリックで置換可）
       if (isConstituent) {
+        // 挿入待機中なら一旦解除（構成点には挿入できないので）
+        setPendingInsertIdx(null)
         setSelectedConstituentPointId(coord.id)
         return
       }
@@ -495,7 +486,7 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
     return () => window.removeEventListener('keydown', onKey)
   }, [editingAreaId, selectedConstituentPointId, removePoint])
 
-  // ESC で構成点編集を終了（地番管理の編集モード全体を抜ける）
+  // ESC で「挿入待機 → 構成点選択 → 編集モード」を段階的に解除
   useEffect(() => {
     if (!editingAreaId) return
     const onKey = (e: KeyboardEvent) => {
@@ -504,63 +495,49 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
       const tag = t?.tagName?.toLowerCase()
       if (tag === 'input' || tag === 'textarea' || t?.isContentEditable) return
       e.preventDefault()
+      if (pendingInsertIdx != null) {
+        setPendingInsertIdx(null)
+        setHoverPos(null)
+        return
+      }
+      if (selectedConstituentPointId) {
+        setSelectedConstituentPointId(null)
+        setHoverPos(null)
+        return
+      }
       setEditingAreaId(null)
       setSelectedConstituentPointId(null)
       setHoverPos(null)
-      setDragPreview(null)
+      setPendingInsertIdx(null)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [editingAreaId])
+  }, [editingAreaId, pendingInsertIdx, selectedConstituentPointId])
 
-  // 中点 + をドラッグ中のプレビュー位置（ポリゴンが追従して再描画される）。
-  const [dragPreview, setDragPreview] = useState<
-    | { idx: number; lat: number; lng: number }
-    | null
-  >(null)
-  // 中点 + ハンドルの再マウントキー。ドロップ完了 / 失敗時に bump して
-  // 中点 + の位置を辺の中点へ戻す。
-  const [midpointResetKey, setMidpointResetKey] = useState(0)
   // 構成点を選択してから次のクリックで置換確定するまでの間、
   // 地図上のマウス位置でポリゴンを追従させるためのホバープレビュー
   const [hoverPos, setHoverPos] = useState<{ lat: number; lng: number } | null>(null)
   const handleMapMouseMove = (lat: number, lng: number) => {
-    if (!selectedConstituentPointId) return
+    if (!selectedConstituentPointId && pendingInsertIdx == null) return
     setHoverPos({ lat, lng })
   }
   const handleMapMouseLeave = () => setHoverPos(null)
-  // 選択が解除された / 編集を抜けたら hoverPos もクリア
+  // 選択 or 挿入待機が解除されたら hoverPos もクリア
   useEffect(() => {
-    if (!editingAreaId || !selectedConstituentPointId) setHoverPos(null)
-  }, [editingAreaId, selectedConstituentPointId])
+    if (!editingAreaId) {
+      setHoverPos(null)
+      setPendingInsertIdx(null)
+      return
+    }
+    if (!selectedConstituentPointId && pendingInsertIdx == null) {
+      setHoverPos(null)
+    }
+  }, [editingAreaId, selectedConstituentPointId, pendingInsertIdx])
 
-  const handleMidpointDrag = (insertAfterIdx: number, lat: number, lng: number) => {
-    setDragPreview({ idx: insertAfterIdx, lat, lng })
-  }
-
-  // 中点 + をドラッグ → 最寄りの座標を挿入
-  const handleMidpointDragEnd = (insertAfterIdx: number, lat: number, lng: number) => {
-    setDragPreview(null)
-    setMidpointResetKey((k) => k + 1)
-    if (!editingAreaId) return
-    const editingArea = areas.find((a) => a.id === editingAreaId)
-    if (!editingArea) return
-    const nearest = findNearestCoord(coordinates, lat, lng, 5)
-    if (!nearest) return
-    if (editingArea.pointIds.includes(nearest.id)) return
-    addPoint(editingAreaId, {
-      id: nearest.id,
-      pointNumber: nearest.pointNumber,
-      x: nearest.x,
-      y: nearest.y,
-      z: nearest.z,
-    })
-    const newOrder = [
-      ...editingArea.pointIds.slice(0, insertAfterIdx),
-      nearest.id,
-      ...editingArea.pointIds.slice(insertAfterIdx),
-    ]
-    reorderPoints(editingAreaId, newOrder)
+  // 中点 + クリック: 挿入待機モードへ。構成点選択中だった場合は解除して切替
+  const handleMidpointClick = (insertAfterIdx: number) => {
+    setSelectedConstituentPointId(null)
+    setPendingInsertIdx(insertAfterIdx)
   }
 
   // 点名入力から座標を追加
@@ -583,8 +560,9 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
       let positions = pts.map(p => [p.lat!, p.lng!] as [number, number])
       // 編集中ポリゴンのプレビュー追従:
       //   ① 構成点を選択中 + マウスが地図上にある
-      //      → 選択構成点の位置を hoverPos に置き換えてポリゴンを追従させる
-      //   ② 中点 + をドラッグ中 → 新規挿入位置を含めて描画
+      //      → 選択構成点の位置を hoverPos に置き換えてポリゴンを追従
+      //   ② 中点 + クリックで挿入待機中 + マウスが地図上にある
+      //      → hoverPos を挿入位置として描画
       if (editingAreaId === area.id && positions.length >= 1) {
         const constituentIds = area.pointIds
         if (selectedConstituentPointId && hoverPos) {
@@ -594,11 +572,11 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
               i === idx ? [hoverPos.lat, hoverPos.lng] : p,
             )
           }
-        } else if (dragPreview) {
-          const insertAt = Math.min(Math.max(dragPreview.idx, 0), positions.length)
+        } else if (pendingInsertIdx != null && hoverPos) {
+          const insertAt = Math.min(Math.max(pendingInsertIdx, 0), positions.length)
           positions = [
             ...positions.slice(0, insertAt),
-            [dragPreview.lat, dragPreview.lng],
+            [hoverPos.lat, hoverPos.lng],
             ...positions.slice(insertAt),
           ]
         }
@@ -845,7 +823,16 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                         </div>
                         {isBoundarySurvey && (
                           <div className="mb-2 px-2 py-1.5 text-[11px] rounded border bg-white">
-                            {selectedConstituentPointId ? (
+                            {pendingInsertIdx != null ? (
+                              <span className="text-emerald-700">
+                                <span className="font-semibold">挿入待機:</span>{' '}
+                                第 {pendingInsertIdx} 点目と {pendingInsertIdx + 1} 点目の間に挿入
+                                {' — '}
+                                <span className="text-slate-600">
+                                  挿入する座標をクリック、または <kbd className="px-1 bg-slate-100 border rounded">Esc</kbd> でキャンセル
+                                </span>
+                              </span>
+                            ) : selectedConstituentPointId ? (
                               <span className="text-orange-700">
                                 <span className="font-semibold">選択中:</span>{' '}
                                 {coordinates.find((c) => c.id === selectedConstituentPointId)?.pointNumber ?? ''}
@@ -857,7 +844,8 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                               </span>
                             ) : (
                               <span className="text-slate-500">
-                                構成点をクリックすると選択。中点の <span className="text-emerald-700 font-semibold">+</span> をドラッグして座標へドロップで挿入。
+                                構成点クリックで選択 → 別座標クリックで置換、または <kbd className="px-1 bg-slate-100 border rounded">Del</kbd> 削除。
+                                辺の中点 <span className="text-emerald-700 font-semibold">+</span> をクリック → 座標クリックで挿入。
                               </span>
                             )}
                           </div>
@@ -1063,15 +1051,18 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                 : undefined
             }
             selectedConstituentPointId={selectedConstituentPointId}
-            onMidpointDrag={editingAreaId ? handleMidpointDrag : undefined}
-            onMidpointDragEnd={editingAreaId ? handleMidpointDragEnd : undefined}
-            midpointResetKey={midpointResetKey}
+            onMidpointClick={editingAreaId ? handleMidpointClick : undefined}
+            activeMidpointIdx={pendingInsertIdx}
             onMapMouseMove={
-              editingAreaId && selectedConstituentPointId
+              editingAreaId && (selectedConstituentPointId || pendingInsertIdx != null)
                 ? handleMapMouseMove
                 : undefined
             }
-            onMapMouseLeave={selectedConstituentPointId ? handleMapMouseLeave : undefined}
+            onMapMouseLeave={
+              editingAreaId && (selectedConstituentPointId || pendingInsertIdx != null)
+                ? handleMapMouseLeave
+                : undefined
+            }
           />
         </div>
       </div>

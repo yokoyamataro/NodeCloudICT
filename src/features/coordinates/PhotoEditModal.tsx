@@ -11,9 +11,11 @@ interface PhotoEditModalProps {
   onCancel: () => void
   /** 編集結果の Blob と元のファイル名を返す */
   onConfirm: (blob: Blob, fileName: string) => void
+  /** ヘッダ右に出す注記（カテゴリ名、残り枚数など） */
+  headerNote?: string
 }
 
-export function PhotoEditModal({ file, onCancel, onConfirm }: PhotoEditModalProps) {
+export function PhotoEditModal({ file, onCancel, onConfirm, headerNote }: PhotoEditModalProps) {
   const [imgUrl, setImgUrl] = useState<string | null>(null)
   const [rotation, setRotation] = useState(0) // 度数（90 単位）
   const [crop, setCrop] = useState<Crop>()
@@ -130,6 +132,11 @@ export function PhotoEditModal({ file, onCancel, onConfirm }: PhotoEditModalProp
       <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[95vh] flex flex-col">
         <div className="px-4 py-2 border-b flex items-center gap-2">
           <h3 className="text-base font-semibold flex-1">写真を編集</h3>
+          {headerNote && (
+            <span className="text-xs text-slate-500 px-2 py-0.5 rounded bg-slate-100">
+              {headerNote}
+            </span>
+          )}
           <button
             onClick={onCancel}
             className="p-1 text-slate-400 hover:text-slate-700 rounded"

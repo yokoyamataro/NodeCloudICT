@@ -225,18 +225,16 @@ interface CoordinateMapProps {
   /** ポリゴンクリックで親に通知（地番管理で一覧スクロール+選択ハイライトに使う） */
   onPolygonSelect?: (id: string) => void
   selectedExternalPolygonId?: string | null
-  /** 編集中ポリゴンの構成点 ID 一覧（順序付き）。指定するとマーカーがドラッグ可能になり、
-   *  辺の中点には + ボタン（ドラッグで挿入）が出る */
+  /** 編集中ポリゴンの構成点 ID 一覧（順序付き）。指定すると辺の中点に
+   *  + ボタンが出る（click で挿入待機モード → 続けて座標 click で挿入確定） */
   editingConstituentPointIds?: string[]
   /** クリック選択された構成点 ID（オレンジ色で強調） */
   selectedConstituentPointId?: string | null
-  /** 中点+ボタンをドラッグ中（リアルタイム） */
-  onMidpointDrag?: (insertAfterIdx: number, lat: number, lng: number) => void
-  /** 中点+ボタンをドラッグして別位置へドロップしたときに呼ぶ。
+  /** 中点 + を click したときに呼ぶ。
    *  insertAfterIdx は元の構成点リストの index で、その点と次の点の間に挿入する想定 */
-  onMidpointDragEnd?: (insertAfterIdx: number, lat: number, lng: number) => void
-  /** 中点 + ハンドルの再マウントキー（drop 後に bump して位置リセット） */
-  midpointResetKey?: number
+  onMidpointClick?: (insertAfterIdx: number) => void
+  /** 挿入待機中の中点 + の index（緑で強調） */
+  activeMidpointIdx?: number | null
   /** 地図上の mousemove。構成点クリック → 別座標クリックの間にポリゴンを
    *  追従させる用途で使う（リアルタイムプレビュー） */
   onMapMouseMove?: (lat: number, lng: number) => void
@@ -280,9 +278,8 @@ export function CoordinateMap({
   selectedExternalPolygonId,
   editingConstituentPointIds,
   selectedConstituentPointId,
-  onMidpointDrag,
-  onMidpointDragEnd,
-  midpointResetKey = 0,
+  onMidpointClick,
+  activeMidpointIdx,
   onMapMouseMove,
   onMapMouseLeave,
   route = [],
@@ -602,15 +599,14 @@ export function CoordinateMap({
         }}
       />
 
-      {/* 構成点編集モード: 中点 + ボタンのみドラッグで挿入。
-          構成点の置換は click-click（元の点をクリック → 別の座標をクリック）で確定 */}
-      {editingConstituentPointIds && editingConstituentPointIds.length >= 2 && onMidpointDragEnd && (
+      {/* 構成点編集モード: 中点 + を click で「挿入待機」、次に座標を click で確定。
+          構成点の置換も click-click（元の点をクリック → 別の座標をクリック）。 */}
+      {editingConstituentPointIds && editingConstituentPointIds.length >= 2 && onMidpointClick && (
         <MidpointPlusLayer
           constituentIds={editingConstituentPointIds}
           coordinates={validCoordinates}
-          onDrag={onMidpointDrag}
-          onDragEnd={onMidpointDragEnd}
-          resetKey={midpointResetKey}
+          onClick={onMidpointClick}
+          activeIdx={activeMidpointIdx ?? null}
         />
       )}
 
@@ -633,32 +629,41 @@ export function CoordinateMap({
 }
 
 // 構成点編集中の各辺の中点に "+" マーカーを描画。
-// マーカーをドラッグして座標上にドロップすると、その中点の位置（=次の辺の前）に
-// 新しい構成点を挿入できる。
+// click すると親が「挿入待機モード」へ。次に座標 click で確定挿入する。
 const MIDPOINT_PLUS_ICON = L.divIcon({
   className: 'midpoint-plus',
   html:
     '<div style="' +
     'background:#fff;color:#16a34a;border:2px solid #16a34a;' +
     'border-radius:50%;width:20px;height:20px;display:flex;align-items:center;' +
-    'justify-content:center;font-size:14px;font-weight:bold;cursor:grab;' +
+    'justify-content:center;font-size:14px;font-weight:bold;cursor:pointer;' +
     'box-shadow:0 2px 4px rgba(0,0,0,0.2);">+</div>',
   iconSize: [20, 20],
   iconAnchor: [10, 10],
 })
 
+const MIDPOINT_PLUS_ICON_ACTIVE = L.divIcon({
+  className: 'midpoint-plus-active',
+  html:
+    '<div style="' +
+    'background:#16a34a;color:#fff;border:3px solid #15803d;' +
+    'border-radius:50%;width:24px;height:24px;display:flex;align-items:center;' +
+    'justify-content:center;font-size:16px;font-weight:bold;cursor:crosshair;' +
+    'box-shadow:0 2px 6px rgba(0,0,0,0.35);">+</div>',
+  iconSize: [24, 24],
+  iconAnchor: [12, 12],
+})
+
 function MidpointPlusLayer({
   constituentIds,
   coordinates,
-  onDrag,
-  onDragEnd,
-  resetKey,
+  onClick,
+  activeIdx,
 }: {
   constituentIds: string[]
   coordinates: Array<CoordinateRow & { lat: number; lng: number }>
-  onDrag?: (insertAfterIdx: number, lat: number, lng: number) => void
-  onDragEnd: (insertAfterIdx: number, lat: number, lng: number) => void
-  resetKey: number
+  onClick: (insertAfterIdx: number) => void
+  activeIdx: number | null
 }) {
   const coordById = new Map(coordinates.map((c) => [c.id, c]))
   const out: React.ReactElement[] = []
@@ -669,23 +674,16 @@ function MidpointPlusLayer({
     if (!a || !b) continue
     const midLat = (a.lat + b.lat) / 2
     const midLng = (a.lng + b.lng) / 2
+    const insertAfterIdx = i + 1
+    const isActive = insertAfterIdx === activeIdx
     out.push(
       <Marker
-        key={`midplus-${i}-${a.id}-${resetKey}`}
+        key={`midplus-${i}-${a.id}`}
         position={[midLat, midLng]}
-        icon={MIDPOINT_PLUS_ICON}
-        draggable
+        icon={isActive ? MIDPOINT_PLUS_ICON_ACTIVE : MIDPOINT_PLUS_ICON}
         zIndexOffset={500}
         eventHandlers={{
-          drag: (e: { target: { getLatLng: () => { lat: number; lng: number } } }) => {
-            if (!onDrag) return
-            const ll = e.target.getLatLng()
-            onDrag(i + 1, ll.lat, ll.lng)
-          },
-          dragend: (e: { target: { getLatLng: () => { lat: number; lng: number } } }) => {
-            const ll = e.target.getLatLng()
-            onDragEnd(i + 1, ll.lat, ll.lng)
-          },
+          click: () => onClick(insertAfterIdx),
         }}
       />,
     )
