@@ -223,6 +223,9 @@ interface CoordinateMapProps {
    *  指定すると visibleTypes / visibleStakeStatuses に加えてこの集合とも
    *  AND を取って絞り込む。親が複数のフィルタ条件をまとめて反映したい時に使う。 */
   displayCoordinateIds?: Set<string>
+  /** オレンジ色で強調する座標 ID 集合（出力順指定モード等で使う）。
+   *  指定された ID のマーカーは色をオレンジに置き換え、リング付きで大きめに描画する */
+  orangeCoordIds?: Set<string>
   baseLayer?: BaseLayerType
   externalPolygons?: ExternalPolygon[]
   editingExternalPolygonId?: string | null
@@ -276,6 +279,7 @@ export function CoordinateMap({
   visibleTypes,
   visibleStakeStatuses,
   displayCoordinateIds,
+  orangeCoordIds,
   baseLayer = 'osm',
   externalPolygons = [],
   editingExternalPolygonId,
@@ -566,15 +570,16 @@ export function CoordinateMap({
         render={(coord, { showLabel }) => {
           const isSelectedConstituent = coord.id === selectedConstituentPointId
           const isSelectedRegular = coord.id === selectedPointId
+          const isOrange = orangeCoordIds?.has(coord.id) ?? false
           const baseColor = MARKER_COLORS[coord.type] || '#666'
-          const iconColor = isSelectedConstituent ? '#f97316' : baseColor
+          const iconColor = isSelectedConstituent || isOrange ? '#f97316' : baseColor
           return (
           <Marker
             key={coord.id}
             position={[coord.lat, coord.lng]}
             icon={createColoredIcon(
               iconColor,
-              isSelectedConstituent || isSelectedRegular,
+              isSelectedConstituent || isSelectedRegular || isOrange,
             )}
             interactive={coordinatesInteractive}
             eventHandlers={coordinatesInteractive ? {

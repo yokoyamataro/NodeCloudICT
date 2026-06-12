@@ -485,6 +485,12 @@ export function CoordinatesPage() {
     [filteredCoordinates],
   )
 
+  // 出力順指定モード中、orderedIds に入っている座標をマーカーでオレンジ強調
+  const orangeCoordIds = useMemo<Set<string> | undefined>(() => {
+    if (!orderSelectMode || orderedIds.length === 0) return undefined
+    return new Set(orderedIds)
+  }, [orderSelectMode, orderedIds])
+
   // 表に表示する座標の最終リスト。
   // 順指定モード中: orderedIds の順番で先頭に並べ、残りは元順で末尾にグレー表示
   const displayCoordinates = useMemo(() => {
@@ -1544,6 +1550,7 @@ export function CoordinatesPage() {
             visibleTypes={visibleTypes}
             visibleStakeStatuses={visibleStakeStatuses}
             displayCoordinateIds={filteredCoordinateIdSet}
+            orangeCoordIds={orangeCoordIds}
             baseLayer={baseLayer}
             route={route}
             showRoute={true}
@@ -2220,6 +2227,7 @@ export function CoordinatesPage() {
               visibleTypes={visibleTypes}
               visibleStakeStatuses={visibleStakeStatuses}
             displayCoordinateIds={filteredCoordinateIdSet}
+            orangeCoordIds={orangeCoordIds}
               baseLayer={baseLayer}
               route={route}
               showRoute={true}
