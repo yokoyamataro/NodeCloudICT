@@ -265,17 +265,16 @@ export function CoordinatesPage() {
   //   ② フォーマット選択（CSV / SIMA / TSV / 写真帳 / Excel）
   // exportSource はモード選択後にセットされ、フォーマット選択時に消費する
   type ExportSource = 'all' | 'visible' | 'visible-ordered'
+  type ExportFormat = 'csv' | 'tsv' | 'sima' | 'photobook' | 'excel'
   const [exportSource, setExportSource] = useState<ExportSource | null>(null)
+  // フォーマット選択を先にする 2 段階フローに変更。
+  // ① 座標出力ボタン → ② 出力フォーマット → ③ 出力対象（全/表示/順指定）
+  const [pendingFormat, setPendingFormat] = useState<ExportFormat | null>(null)
   // 順指定モード中: 地図クリックで orderedIds に追加 / 表でドラッグ並べ替え
   const [orderSelectMode, setOrderSelectMode] = useState(false)
   const [orderedIds, setOrderedIds] = useState<string[]>([])
   // ドラッグ並べ替え中の行 ID
   const [draggingOrderId, setDraggingOrderId] = useState<string | null>(null)
-  const resetExportFlow = () => {
-    setExportSource(null)
-    setOrderSelectMode(false)
-    setOrderedIds([])
-  }
   const setVisibleTypes = useMapViewStore((s) => s.setVisibleTypes)
   const baseLayer = useMapViewStore((s) => s.baseLayer)
   const setBaseLayer = useMapViewStore((s) => s.setBaseLayer)
@@ -695,25 +694,25 @@ export function CoordinatesPage() {
   }
 
   // エクスポート対象:
-  //   exportSource='all'              → 全座標
-  //   exportSource='visible'          → フィルタ後の表示座標
-  //   exportSource='visible-ordered'  → orderedIds の順番で並べた表示座標
-  //   exportSource=null               → 念のためチェック済 or 全件（旧挙動）
-  const getExportTargets = (): CoordinateRow[] => {
-    if (exportSource === 'all') return coordinates
-    if (exportSource === 'visible-ordered') {
+  //   source='all'              → 全座標
+  //   source='visible'          → フィルタ後の表示座標
+  //   source='visible-ordered'  → orderedIds の順番で並べた表示座標
+  //   source=null               → 念のためチェック済 or 全件（旧挙動）
+  const getExportTargets = (source: ExportSource | null = exportSource): CoordinateRow[] => {
+    if (source === 'all') return coordinates
+    if (source === 'visible-ordered') {
       const byId = new Map(coordinates.map((c) => [c.id, c]))
       return orderedIds
         .map((id) => byId.get(id))
         .filter((c): c is CoordinateRow => !!c)
     }
-    if (exportSource === 'visible') return filteredCoordinates
+    if (source === 'visible') return filteredCoordinates
     if (checkedIds.size === 0) return coordinates
     return coordinates.filter((c) => checkedIds.has(c.id))
   }
 
-  const handleExportCSV = () => {
-    const targets = getExportTargets()
+  const handleExportCSV = (source?: ExportSource) => {
+    const targets = getExportTargets(source)
     if (targets.length === 0) return
     const header = '点番号,X,Y,Z,緯度,経度,種類\n'
     const rows = targets.map(c => {
@@ -732,8 +731,8 @@ export function CoordinatesPage() {
     URL.revokeObjectURL(url)
   }
 
-  const handleExportSIMA = () => {
-    const targets = getExportTargets()
+  const handleExportSIMA = (source?: ExportSource) => {
+    const targets = getExportTargets(source)
     if (targets.length === 0) return
     const projectName = currentFarm?.name || 'NoName'
     downloadSimaFile(
@@ -757,8 +756,8 @@ export function CoordinatesPage() {
 
   // 選択座標を TSV（点名 / X / Y / Z）でクリップボードへコピー。
   // ヘッダなし。Excel に貼り付けでセルに分解される。
-  const handleCopyTSV = async () => {
-    const targets = getExportTargets()
+  const handleCopyTSV = async (source?: ExportSource) => {
+    const targets = getExportTargets(source)
     if (targets.length === 0) return
     const fmt = (n: number | null | undefined) =>
       n === null || n === undefined || !Number.isFinite(n) ? '' : String(n)
@@ -861,6 +860,26 @@ export function CoordinatesPage() {
     } finally {
       setPhotoExporting(null)
     }
+  }
+
+  // フォーマット + 対象 を確定して実際の出力を実行する。
+  // 写真帳のときはテンプレ選択モーダルを開く流れになるため、exportSource を
+  // 設定したまま chooser を開き、handleExportPhotoBook が読む。
+  const executeExport = (format: ExportFormat, source: ExportSource) => {
+    if (format === 'photobook') {
+      setExportSource(source)
+      setShowPhotoBookChooser(true)
+      setOpenMenu(null)
+      setPendingFormat(null)
+      return
+    }
+    if (format === 'csv') handleExportCSV(source)
+    else if (format === 'tsv') void handleCopyTSV(source)
+    else if (format === 'sima') handleExportSIMA(source)
+    else if (format === 'excel') handleExportExcel()
+    setOpenMenu(null)
+    setPendingFormat(null)
+    setExportSource(null)
   }
 
   // チェック関連
@@ -1284,15 +1303,76 @@ export function CoordinatesPage() {
           </button>
           {openMenu === 'export' && !exportDisabled && (
             <div className="absolute left-0 top-full mt-1 w-60 bg-white border rounded shadow-lg z-40">
-              {/* 2 段階フロー: 出力方法 → 出力フォーマット */}
-              {!exportSource ? (
+              {/* 2 段階フロー: ① 出力フォーマット → ② 出力対象（全点 / 表示点 / 順指定） */}
+              {!pendingFormat ? (
                 <>
                   <div className="px-3 py-2 bg-slate-50 border-b text-[11px] text-slate-500">
-                    出力方法を選択
+                    出力フォーマットを選択
                   </div>
                   <button
                     type="button"
-                    onClick={() => setExportSource('all')}
+                    onClick={() => setPendingFormat('csv')}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    CSV出力
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPendingFormat('tsv')}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
+                    title="点名 / X / Y / Z を TSV でクリップボードへ"
+                  >
+                    <Clipboard className="h-3.5 w-3.5" />
+                    TSVコピー（点名/X/Y/Z）
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPendingFormat('sima')}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    SIMA出力
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPendingFormat('photobook')}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
+                  >
+                    <ImageIcon className="h-3.5 w-3.5" />
+                    写真帳出力（Excel）
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPendingFormat('excel')}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100 text-slate-500"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    EXCEL出力（実装予定）
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="px-3 py-2 bg-slate-50 border-b text-[11px] text-slate-500 flex items-center justify-between">
+                    <span>
+                      {pendingFormat === 'csv' && 'CSV出力'}
+                      {pendingFormat === 'tsv' && 'TSVコピー'}
+                      {pendingFormat === 'sima' && 'SIMA出力'}
+                      {pendingFormat === 'photobook' && '写真帳出力'}
+                      {pendingFormat === 'excel' && 'EXCEL出力'}
+                      {' '}→ 対象を選択
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPendingFormat(null)}
+                      className="text-blue-600 hover:underline"
+                    >
+                      戻る
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => executeExport(pendingFormat, 'all')}
                     className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm text-left hover:bg-slate-100"
                   >
                     <span>全点出力</span>
@@ -1300,7 +1380,7 @@ export function CoordinatesPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setExportSource('visible')}
+                    onClick={() => executeExport(pendingFormat, 'visible')}
                     className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm text-left hover:bg-slate-100"
                   >
                     <span>表示点出力</span>
@@ -1317,67 +1397,6 @@ export function CoordinatesPage() {
                   >
                     <span>表示点出力（順指定）</span>
                     <span className="text-xs text-slate-400">マップで選択</span>
-                  </button>
-                </>
-              ) : (
-                <>
-                  <div className="px-3 py-2 bg-slate-50 border-b text-[11px] text-slate-500 flex items-center justify-between">
-                    <span>
-                      {exportSource === 'all'
-                        ? `全点 ${coordinates.length} 件`
-                        : exportSource === 'visible-ordered'
-                        ? `順指定 ${orderedIds.length} 件`
-                        : `表示点 ${filteredCoordinates.length} 件`}{' '}
-                      → フォーマット
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setExportSource(null)}
-                      className="text-blue-600 hover:underline"
-                    >
-                      戻る
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => { handleExportCSV(); setOpenMenu(null); resetExportFlow() }}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    CSV出力
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { handleCopyTSV(); setOpenMenu(null); resetExportFlow() }}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
-                    title="点名 / X / Y / Z を TSV でクリップボードへ"
-                  >
-                    <Clipboard className="h-3.5 w-3.5" />
-                    TSVコピー（点名/X/Y/Z）
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { handleExportSIMA(); setOpenMenu(null); resetExportFlow() }}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    SIMA出力
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setShowPhotoBookChooser(true); setOpenMenu(null) }}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
-                  >
-                    <ImageIcon className="h-3.5 w-3.5" />
-                    写真帳出力（Excel）
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { handleExportExcel(); setOpenMenu(null); resetExportFlow() }}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100 text-slate-500"
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    EXCEL出力（実装予定）
                   </button>
                 </>
               )}
@@ -1879,6 +1898,7 @@ export function CoordinatesPage() {
                 setOrderSelectMode(false)
                 setOrderedIds([])
                 setExportSource(null)
+                setPendingFormat(null)
               }}
               className="px-2 py-1 text-xs border rounded hover:bg-slate-100"
             >
@@ -1886,11 +1906,11 @@ export function CoordinatesPage() {
             </button>
             <button
               type="button"
-              disabled={orderedIds.length === 0}
+              disabled={orderedIds.length === 0 || !pendingFormat}
               onClick={() => {
+                if (!pendingFormat) return
                 setOrderSelectMode(false)
-                setExportSource('visible-ordered')
-                setOpenMenu('export')
+                executeExport(pendingFormat, 'visible-ordered')
               }}
               className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
             >
