@@ -7,7 +7,14 @@ import { useParcelStore } from '@/stores/parcelStore'
 import { useLandownerStore } from '@/stores/landownerStore'
 import { CoordinateMap, type ExternalPolygon, type EdgeRounding, type BaseLayerType } from '@/components/map/CoordinateMap'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { CadastralRowFields } from '@/features/boundary-survey/CadastralRowFields'
+import {
+  CadastralRowFields,
+  CADASTRAL_COLUMN_KEYS,
+  CADASTRAL_COLUMN_WIDTH,
+  CADASTRAL_STICKY_COLUMNS,
+  cadastralStickyLeftPx,
+  type CadastralColumnKey,
+} from '@/features/boundary-survey/CadastralRowFields'
 import { CadastralHeader } from '@/features/boundary-survey/CadastralHeader'
 import {
   CadastralColumnPicker,
@@ -248,6 +255,7 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   const fetchParcels = useParcelStore((s) => s.fetchByWorkAreaIds)
   const clearParcels = useParcelStore((s) => s.clear)
   const parcelByWorkAreaId = useParcelStore((s) => s.byWorkAreaId)
+  const upsertParcel = useParcelStore((s) => s.upsertParcel)
 
   // 地籍モード: 点種フィルター用の選択肢（既定 + プロジェクトのカスタム）
   const projectId = currentFarm?.project_id ?? null
@@ -933,6 +941,19 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                   </div>
                 )
               })}
+              {/* 地籍: 最下行は常に空の入力行。地番を入力 → Enter / Blur で確定し
+                  新規 work_area + parcels を作る。 */}
+              {isBoundarySurvey && (
+                <NewCadastralAreaRow
+                  visibleColumns={visibleColumns}
+                  onCreate={async (parcelNumber) => {
+                    const newArea = await addWorkArea('boundary_survey')
+                    if (newArea) {
+                      await upsertParcel(newArea.id, { parcel_number: parcelNumber })
+                    }
+                  }}
+                />
+              )}
                 </div>
               </div>
             </div>
@@ -1082,6 +1103,83 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
           onClose={() => setShowRegistryImport(false)}
         />
       )}
+    </div>
+  )
+}
+
+// 地番管理の最下行に常に出す「新規地番」入力行。
+// 地番欄に文字を入れて Enter / フォーカスアウトで確定 → addWorkArea +
+// upsertParcel で新規 work_area + parcels を作る。確定後は空に戻る。
+function NewCadastralAreaRow({
+  visibleColumns,
+  onCreate,
+}: {
+  visibleColumns: ReadonlySet<CadastralColumnKey>
+  onCreate: (parcelNumber: string) => Promise<void>
+}) {
+  const [parcelNum, setParcelNum] = useState('')
+  const [saving, setSaving] = useState(false)
+  const commit = async () => {
+    const t = parcelNum.trim()
+    if (!t || saving) return
+    setSaving(true)
+    try {
+      await onCreate(t)
+      setParcelNum('')
+    } finally {
+      setSaving(false)
+    }
+  }
+  return (
+    <div className="flex items-center gap-1 px-3 py-2 border-b bg-amber-50/40">
+      <div
+        className="w-10 shrink-0 flex items-center justify-center py-1 rounded border border-dashed border-slate-300 sticky left-3 z-10 bg-amber-50/80"
+        title="地番を入力して Enter で追加"
+      >
+        <Plus className="h-3.5 w-3.5 text-slate-400" />
+      </div>
+      <div className="flex items-center gap-1 text-xs whitespace-nowrap">
+        {CADASTRAL_COLUMN_KEYS.filter((k) => visibleColumns.has(k)).map((key) => {
+          const isParcel = key === 'parcel_number'
+          const isSticky = CADASTRAL_STICKY_COLUMNS.has(key)
+          return (
+            <div
+              key={key}
+              className={`${CADASTRAL_COLUMN_WIDTH[key]} shrink-0 ${
+                isSticky ? 'sticky z-10 bg-amber-50/80' : ''
+              }`}
+              style={
+                isSticky
+                  ? { left: cadastralStickyLeftPx(key, visibleColumns) + 'px' }
+                  : undefined
+              }
+            >
+              {isParcel ? (
+                <input
+                  type="text"
+                  value={parcelNum}
+                  onChange={(e) => setParcelNum(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      void commit()
+                    }
+                  }}
+                  onBlur={() => void commit()}
+                  disabled={saving}
+                  placeholder="地番を入力"
+                  className={`w-full px-1.5 py-1 border rounded text-sm ${
+                    saving ? 'opacity-50' : ''
+                  }`}
+                />
+              ) : (
+                <span className="text-[10px] text-slate-300">—</span>
+              )}
+            </div>
+          )
+        })}
+      </div>
+      <div className="w-16 shrink-0" />
     </div>
   )
 }

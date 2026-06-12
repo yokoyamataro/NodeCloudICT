@@ -12,7 +12,11 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
 import { useLandownerStore } from '@/stores/landownerStore'
 import type { Landowner } from '@/types/database'
-import { LandownerHeader, LandownerRowFields } from './LandownerRowFields'
+import {
+  LandownerHeader,
+  LandownerRowFields,
+  NewLandownerRow,
+} from './LandownerRowFields'
 import {
   LandownerColumnPicker,
   useLandownerVisibleColumns,
@@ -120,12 +124,6 @@ export function LandownersPage() {
             <Loader2 className="h-5 w-5 animate-spin mr-2" />
             読み込み中…
           </div>
-        ) : filtered.length === 0 ? (
-          <div className="p-8 text-center text-sm text-slate-500">
-            {landowners.length === 0
-              ? '地権者がまだ登録されていません。「地権者を追加」から登録してください。'
-              : '該当する地権者がいません'}
-          </div>
         ) : (
           <div className="bg-white border rounded-lg overflow-x-auto">
             <table className="w-full text-sm">
@@ -139,8 +137,23 @@ export function LandownersPage() {
                     onDelete={handleDelete}
                   />
                 ))}
+                {/* 最下行は常に空。氏名を入力 → Enter / 別欄に移動で確定 */}
+                {!filter && (
+                  <NewLandownerRow
+                    visibleColumns={visible}
+                    onCreate={async (fullName) => {
+                      if (!farmId) return
+                      await createLandowner(farmId, { full_name: fullName })
+                    }}
+                  />
+                )}
               </tbody>
             </table>
+            {filtered.length === 0 && filter && (
+              <div className="p-6 text-center text-xs text-slate-400 border-t">
+                「{filter}」に該当する地権者はいません
+              </div>
+            )}
           </div>
         )}
       </div>

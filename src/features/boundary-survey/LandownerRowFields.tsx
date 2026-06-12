@@ -3,7 +3,7 @@
 // 表示する列は visibleColumns で絞れる（地番一覧と同じ仕組み）。
 
 import { useEffect, useState } from 'react'
-import { Trash2 } from 'lucide-react'
+import { Trash2, Plus } from 'lucide-react'
 import { useLandownerStore } from '@/stores/landownerStore'
 import type {
   Landowner,
@@ -391,5 +391,60 @@ export function LandownerHeader({ visibleColumns }: HeaderProps) {
         <th className="text-left px-2 py-2 w-12"></th>
       </tr>
     </thead>
+  )
+}
+
+// 末尾の入力用空行。氏名を入れて Enter / Blur で確定 → 新規地権者作成。
+// 作成後は氏名欄が空に戻り、続けて次の地権者を入力できる。
+interface NewRowProps {
+  visibleColumns: ReadonlySet<LandownerColumnKey>
+  onCreate: (fullName: string) => Promise<void>
+}
+
+export function NewLandownerRow({ visibleColumns, onCreate }: NewRowProps) {
+  const [name, setName] = useState('')
+  const [saving, setSaving] = useState(false)
+  const commit = async () => {
+    const trimmed = name.trim()
+    if (!trimmed || saving) return
+    setSaving(true)
+    try {
+      await onCreate(trimmed)
+      setName('')
+    } finally {
+      setSaving(false)
+    }
+  }
+  return (
+    <tr className="border-t bg-amber-50/40">
+      {LANDOWNER_COLUMN_KEYS.filter((k) => visibleColumns.has(k)).map((key) => (
+        <td key={key} className={`px-1 py-1 align-middle ${LANDOWNER_COLUMN_WIDTH[key]}`}>
+          {key === 'full_name' ? (
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  void commit()
+                }
+              }}
+              onBlur={() => void commit()}
+              disabled={saving}
+              placeholder="新規地権者の氏名を入力"
+              className={`${CELL_INPUT_CLASS} placeholder:text-slate-400 ${
+                saving ? 'opacity-50' : ''
+              }`}
+            />
+          ) : (
+            <span className="text-[10px] text-slate-300">—</span>
+          )}
+        </td>
+      ))}
+      <td className="px-2 py-1 w-12 align-middle text-center text-slate-400">
+        <Plus className="h-3.5 w-3.5 inline-block" />
+      </td>
+    </tr>
   )
 }
