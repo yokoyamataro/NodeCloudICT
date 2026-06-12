@@ -819,7 +819,14 @@ export function CoordinatesPage() {
               filePath: a.filePath,
             }))
           const typeLabel = typeOptions.find((o) => o.code === c.type)?.label
-          return { name: c.pointNumber, subtitle: typeLabel, photos }
+          const statusLabel = STAKE_STATUS_LABEL[c.stakeStatus] ?? null
+          return {
+            name: c.pointNumber,
+            subtitle: typeLabel,
+            stakeType: c.stakeType ?? null,
+            stakeStatus: statusLabel,
+            photos,
+          }
         })
         .filter((p) => p.photos.length > 0)
 

@@ -14,6 +14,10 @@ export interface PhotoBookPoint {
   name: string
   /** 点種名など補足（ヘッダに括弧書き） */
   subtitle?: string
+  /** 杭種（標準ひな形のメタ行に表示） */
+  stakeType?: string | null
+  /** 設置状況ラベル（標準ひな形のメタ行に表示） */
+  stakeStatus?: string | null
   photos: PhotoBookPhoto[]
 }
 
@@ -102,6 +106,15 @@ function fmtDate(iso: string | null): string {
   return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
+// 年月日のみ（時刻なし）
+function fmtDateOnly(iso: string | null): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())}`
+}
+
 export async function generatePhotoBookExcel(opts: PhotoBookOptions): Promise<Blob> {
   const { template: tpl } = opts
   const wb = new ExcelJS.Workbook()
@@ -133,6 +146,14 @@ export async function generatePhotoBookExcel(opts: PhotoBookOptions): Promise<Bl
   let done = 0
   opts.onProgress?.(0, total)
 
+  // 'standard' ひな形は専用レイアウト:
+  //   ヘッダ: 点名（点種）
+  //   1行目: 杭種　/　設置状況
+  //   2行目〜: 写真（横 perRow 列）
+  //   写真下: 撮影年月日（時刻なし）
+  //   その下: 備考
+  const isStandard = tpl.id === 'standard'
+
   for (let pi = 0; pi < opts.points.length; pi++) {
     const point = opts.points[pi]
     // 点ヘッダ
@@ -143,15 +164,36 @@ export async function generatePhotoBookExcel(opts: PhotoBookOptions): Promise<Bl
     hc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFEFEF' } }
     r++
 
+    if (isStandard) {
+      // メタ行（杭種 / 設置状況）— 全列をマージして 1 行で表示
+      ws.mergeCells(`A${r}:${lastColLetter}${r}`)
+      const meta = ws.getCell(`A${r}`)
+      const stakeType = point.stakeType?.trim() || '—'
+      const stakeStatus = point.stakeStatus?.trim() || '—'
+      meta.value = `杭種: ${stakeType}　／　設置状況: ${stakeStatus}`
+      meta.font = { size: 10 }
+      r++
+    }
+
     const photos = point.photos
     for (let i = 0; i < photos.length; i += tpl.perRow) {
       const rowPhotos = photos.slice(i, i + tpl.perRow)
-      // ラベル行（カテゴリ + 撮影日）
-      rowPhotos.forEach((ph, j) => {
-        const cell = ws.getCell(r, j * 2 + 1)
-        cell.value = `${ph.category}${ph.takenAt ? '　' + fmtDate(ph.takenAt) : ''}`
-        cell.font = { bold: true, size: 10 }
-      })
+
+      if (!isStandard) {
+        // 既存ひな形: 画像の上にカテゴリ + 日時のラベル行
+        rowPhotos.forEach((ph, j) => {
+          const cell = ws.getCell(r, j * 2 + 1)
+          cell.value = `${ph.category}${ph.takenAt ? '　' + fmtDate(ph.takenAt) : ''}`
+          cell.font = { bold: true, size: 10 }
+        })
+      } else {
+        // 標準ひな形: 画像の上はカテゴリ名のみ（遠景 / 近景 等）
+        rowPhotos.forEach((ph, j) => {
+          const cell = ws.getCell(r, j * 2 + 1)
+          cell.value = ph.category
+          cell.font = { bold: true, size: 10 }
+        })
+      }
       const imgRow0 = r // 0-based アンカー → ラベル行の下に画像が出る
 
       for (let j = 0; j < rowPhotos.length; j++) {
@@ -172,15 +214,33 @@ export async function generatePhotoBookExcel(opts: PhotoBookOptions): Promise<Bl
       }
 
       r += IMG_ROWS
-      // キャプション行
-      rowPhotos.forEach((ph, j) => {
-        if (ph.caption) {
+
+      if (isStandard) {
+        // 撮影年月日（時刻なし）
+        rowPhotos.forEach((ph, j) => {
           const cell = ws.getCell(r, j * 2 + 1)
-          cell.value = ph.caption
+          cell.value = ph.takenAt ? `撮影: ${fmtDateOnly(ph.takenAt)}` : '撮影: —'
           cell.font = { size: 9 }
-        }
-      })
-      r += 2 // 余白
+        })
+        r++
+        // 備考
+        rowPhotos.forEach((ph, j) => {
+          const cell = ws.getCell(r, j * 2 + 1)
+          cell.value = ph.caption ? `備考: ${ph.caption}` : '備考:'
+          cell.font = { size: 9, color: { argb: 'FF555555' } }
+        })
+        r += 2 // 余白
+      } else {
+        // 既存ひな形: キャプション行のみ
+        rowPhotos.forEach((ph, j) => {
+          if (ph.caption) {
+            const cell = ws.getCell(r, j * 2 + 1)
+            cell.value = ph.caption
+            cell.font = { size: 9 }
+          }
+        })
+        r += 2 // 余白
+      }
     }
 
     if (tpl.pageBreakPerPoint && pi < opts.points.length - 1) {
