@@ -1,18 +1,42 @@
 // 撮影／選択した写真の回転とトリミングを行うモーダル
-// 確定で 回転 + トリミング を Canvas に焼き付けた Blob を返す。
+// 確定で 回転 + トリミング を Canvas に焼き付けた Blob と
+// メタ情報（撮影日 / 備考）を返す。
 
 import { useEffect, useRef, useState } from 'react'
 import ReactCrop, { type Crop, type PixelCrop, centerCrop, makeAspectCrop } from 'react-image-crop'
 import 'react-image-crop/dist/ReactCrop.css'
 import { RotateCcw, RotateCw, X, Check, Loader2 } from 'lucide-react'
+import { readExifDate } from '@/lib/readExifDate'
+
+export interface PhotoEditMeta {
+  /** 撮影日（EXIF があれば優先。ユーザは編集可能）。null は未指定 */
+  takenAt: Date | null
+  /** 備考。空文字は null として扱う */
+  caption: string | null
+}
 
 interface PhotoEditModalProps {
   file: File
   onCancel: () => void
-  /** 編集結果の Blob と元のファイル名を返す */
-  onConfirm: (blob: Blob, fileName: string) => void
+  /** 編集結果の Blob と元のファイル名 + メタを返す */
+  onConfirm: (blob: Blob, fileName: string, meta: PhotoEditMeta) => void
   /** ヘッダ右に出す注記（カテゴリ名、残り枚数など） */
   headerNote?: string
+}
+
+// HTML <input type="date"> に渡す YYYY-MM-DD 文字列に変換
+function toDateInputValue(d: Date | null): string {
+  if (!d || Number.isNaN(d.getTime())) return ''
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+function parseDateInputValue(s: string): Date | null {
+  if (!s) return null
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return null
+  const d = new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10))
+  return Number.isNaN(d.getTime()) ? null : d
 }
 
 export function PhotoEditModal({ file, onCancel, onConfirm, headerNote }: PhotoEditModalProps) {
@@ -22,11 +46,30 @@ export function PhotoEditModal({ file, onCancel, onConfirm, headerNote }: PhotoE
   const [completedCrop, setCompletedCrop] = useState<PixelCrop | null>(null)
   const [busy, setBusy] = useState(false)
   const imgRef = useRef<HTMLImageElement>(null)
+  // 撮影日: EXIF DateTimeOriginal を優先、なければアップロード日（今）。両方ユーザ編集可能。
+  const [takenAtStr, setTakenAtStr] = useState<string>(() => toDateInputValue(new Date()))
+  const [caption, setCaption] = useState<string>('')
+  const [exifLoaded, setExifLoaded] = useState(false)
 
   useEffect(() => {
     const url = URL.createObjectURL(file)
     setImgUrl(url)
     return () => URL.revokeObjectURL(url)
+  }, [file])
+
+  // ファイルから EXIF DateTimeOriginal を非同期で読み、取れたら反映。
+  // 取れなければアップロード日（初期値）のまま。
+  useEffect(() => {
+    let cancelled = false
+    setExifLoaded(false)
+    void readExifDate(file).then((d) => {
+      if (cancelled) return
+      if (d) setTakenAtStr(toDateInputValue(d))
+      setExifLoaded(true)
+    })
+    return () => {
+      cancelled = true
+    }
   }, [file])
 
   // 初期トリミング: 中央に画像全体
@@ -118,7 +161,10 @@ export function PhotoEditModal({ file, onCancel, onConfirm, headerNote }: PhotoE
         canvas.toBlob(resolve, 'image/jpeg', 0.8),
       )
       if (!blob) throw new Error('画像のエンコードに失敗しました')
-      onConfirm(blob, file.name)
+      onConfirm(blob, file.name, {
+        takenAt: parseDateInputValue(takenAtStr),
+        caption: caption.trim() ? caption.trim() : null,
+      })
     } catch (err) {
       console.error(err)
       alert(err instanceof Error ? err.message : '画像処理に失敗しました')
@@ -176,6 +222,30 @@ export function PhotoEditModal({ file, onCancel, onConfirm, headerNote }: PhotoE
           ) : (
             <Loader2 className="h-6 w-6 animate-spin text-slate-500" />
           )}
+        </div>
+
+        {/* メタ情報入力（撮影日 + 備考）。EXIF があれば撮影日にプリフィル済み。 */}
+        <div className="px-4 py-2 border-t bg-slate-50 grid grid-cols-[auto,1fr] gap-x-2 gap-y-1.5 items-center">
+          <label className="text-xs text-slate-600">撮影日</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={takenAtStr}
+              onChange={(e) => setTakenAtStr(e.target.value)}
+              className="px-2 py-1 text-sm border rounded"
+            />
+            <span className="text-[10px] text-slate-400">
+              {exifLoaded ? '（EXIF が無い場合は本日）' : 'EXIF 読み取り中…'}
+            </span>
+          </div>
+          <label className="text-xs text-slate-600">備考</label>
+          <input
+            type="text"
+            value={caption}
+            onChange={(e) => setCaption(e.target.value)}
+            placeholder="任意のメモ（例: 杭頭飛び、コンクリート巻き 等）"
+            className="px-2 py-1 text-sm border rounded"
+          />
         </div>
 
         <div className="px-4 py-2 border-t flex items-center gap-2">

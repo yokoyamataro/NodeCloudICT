@@ -3,9 +3,10 @@
 // 既定で「遠景」「近景」のスロットがあり、任意のラベルでも追加可能。
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Camera, Loader2, Trash2, Plus, X, Replace, Image as ImageIcon } from 'lucide-react'
+import { Camera, Loader2, Plus, X, Image as ImageIcon } from 'lucide-react'
 import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
-import { PhotoEditModal } from './PhotoEditModal'
+import { PhotoEditModal, type PhotoEditMeta } from './PhotoEditModal'
+import { PhotoTileWithMeta } from './PhotoTileWithMeta'
 
 const DEFAULT_CATEGORIES = ['遠景', '近景'] as const
 
@@ -27,6 +28,7 @@ export function CoordinatePhotoModal({
     fetchByEntity,
     uploadPhoto,
     removeAttachment,
+    updateAttachment,
     getSignedUrl,
   } = useAttachmentStore()
   const [uploadingFor, setUploadingFor] = useState<string | null>(null)
@@ -107,7 +109,11 @@ export function CoordinatePhotoModal({
 
   // 編集モーダル確定後にアップロード（編集時点で 1600px / JPEG80% に縮小済みなので再エンコードしない）。
   // キューに次の写真が残っていれば、確定後そのまま次の編集モーダルが開く。
-  const handleEditConfirmed = async (blob: Blob, _fileName: string) => {
+  const handleEditConfirmed = async (
+    blob: Blob,
+    _fileName: string,
+    meta: PhotoEditMeta,
+  ) => {
     const cur = editingQueue[0]
     if (!cur) return
     const cat = cur.category
@@ -123,7 +129,8 @@ export function CoordinatePhotoModal({
         entityId: coordinateId,
         file: blob,
         category: cat,
-        takenAt: new Date(),
+        caption: meta.caption,
+        takenAt: meta.takenAt ?? new Date(),
         skipResize: true,
       })
       if (!saved) {
@@ -217,7 +224,7 @@ export function CoordinatePhotoModal({
                   </div>
                   <div className="space-y-2">
                     {list.map((p) => (
-                      <PhotoTile
+                      <PhotoTileWithMeta
                         key={p.id}
                         attachment={p}
                         getSignedUrl={getSignedUrl}
@@ -227,6 +234,7 @@ export function CoordinatePhotoModal({
                           }
                         }}
                         onReplace={() => handleReplaceClick(category, p.id)}
+                        onUpdate={(patch) => updateAttachment(p.id, patch)}
                       />
                     ))}
                     {!hasPhoto && (
@@ -259,7 +267,7 @@ export function CoordinatePhotoModal({
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     {list.map((p) => (
-                      <PhotoTile
+                      <PhotoTileWithMeta
                         key={p.id}
                         attachment={p}
                         getSignedUrl={getSignedUrl}
@@ -268,6 +276,7 @@ export function CoordinatePhotoModal({
                             removeAttachment(p.id)
                           }
                         }}
+                        onUpdate={(patch) => updateAttachment(p.id, patch)}
                       />
                     ))}
                     <div className="col-span-2">
@@ -410,73 +419,3 @@ function AddPhotoTile({
   )
 }
 
-function PhotoTile({
-  attachment,
-  getSignedUrl,
-  onDelete,
-  onReplace,
-}: {
-  attachment: Attachment
-  getSignedUrl: (path: string) => Promise<string | null>
-  onDelete: () => void
-  onReplace?: () => void
-}) {
-  const [url, setUrl] = useState<string | null>(null)
-  useEffect(() => {
-    let cancelled = false
-    getSignedUrl(attachment.filePath).then((u) => {
-      if (!cancelled) setUrl(u)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [attachment.filePath, getSignedUrl])
-  return (
-    <div className="relative group">
-      <a href={url ?? '#'} target="_blank" rel="noreferrer">
-        {url ? (
-          <img
-            src={url}
-            alt={attachment.caption ?? attachment.category ?? ''}
-            className="w-full aspect-square object-cover rounded border"
-          />
-        ) : (
-          <div className="w-full aspect-square bg-slate-100 rounded border flex items-center justify-center">
-            <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
-          </div>
-        )}
-      </a>
-      {/*
-        モバイル（タッチ端末）では hover が発火しないので常時表示。
-        PC ホバー時のみフェードインだと触れない端末で削除できなくなるため、
-        小さめのアイコンで常時表示する。
-      */}
-      <div className="absolute top-1 right-1 flex gap-1">
-        {onReplace && (
-          <button
-            onClick={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              onReplace()
-            }}
-            className="p-1.5 bg-white/95 text-blue-600 rounded shadow hover:bg-white active:bg-blue-50"
-            title="差し替え"
-          >
-            <Replace className="h-3.5 w-3.5" />
-          </button>
-        )}
-        <button
-          onClick={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            onDelete()
-          }}
-          className="p-1.5 bg-white/95 text-red-600 rounded shadow hover:bg-white active:bg-red-50"
-          title="削除"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
-      </div>
-    </div>
-  )
-}

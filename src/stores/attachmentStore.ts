@@ -91,6 +91,10 @@ interface State {
     fileName?: string
   }) => Promise<Attachment | null>
   removeAttachment: (id: string) => Promise<void>
+  updateAttachment: (
+    id: string,
+    patch: { takenAt?: Date | null; caption?: string | null },
+  ) => Promise<void>
   getSignedUrl: (filePath: string) => Promise<string | null>
 }
 
@@ -280,6 +284,56 @@ export const useAttachmentStore = create<State>((set, get) => ({
       set({ byEntity: next })
     } catch (err) {
       set({ error: err instanceof Error ? err.message : '写真の削除に失敗しました' })
+    }
+  },
+
+  updateAttachment: async (id, patch) => {
+    const all = Array.from(get().byEntity.values()).flat()
+    const target = all.find((a) => a.id === id)
+    if (!target) return
+    const payload: Record<string, string | null> = {}
+    if (Object.prototype.hasOwnProperty.call(patch, 'takenAt')) {
+      payload.taken_at = patch.takenAt ? patch.takenAt.toISOString() : null
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'caption')) {
+      payload.caption = patch.caption ?? null
+    }
+    if (Object.keys(payload).length === 0) return
+    try {
+      const { error } = await (
+        supabase.from('attachments' as never) as unknown as {
+          update: (p: typeof payload) => {
+            eq: (c: string, v: string) => Promise<{ error: { message: string } | null }>
+          }
+        }
+      )
+        .update(payload)
+        .eq('id', id)
+      if (error) throw error
+      // ローカルにも反映
+      const next = new Map(get().byEntity)
+      const k = entityKey(target.entityType, target.entityId)
+      next.set(
+        k,
+        (next.get(k) ?? []).map((a) =>
+          a.id === id
+            ? {
+                ...a,
+                takenAt: Object.prototype.hasOwnProperty.call(patch, 'takenAt')
+                  ? patch.takenAt
+                    ? patch.takenAt.toISOString()
+                    : null
+                  : a.takenAt,
+                caption: Object.prototype.hasOwnProperty.call(patch, 'caption')
+                  ? patch.caption ?? null
+                  : a.caption,
+              }
+            : a,
+        ),
+      )
+      set({ byEntity: next })
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : '写真の更新に失敗しました' })
     }
   },
 
