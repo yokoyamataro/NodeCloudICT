@@ -8,6 +8,7 @@ import {
 } from './PhotoCountFilterButton'
 import { StakeTypeFilterButton } from './StakeTypeFilterButton'
 import { CoordinatePhotoModal } from './CoordinatePhotoModal'
+import { CoordinatePhotoPanel } from './CoordinatePhotoPanel'
 import { CoordinateCalcModal } from './CoordinateCalcModal'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
@@ -409,6 +410,8 @@ export function CoordinatesPage() {
 
   // 写真モーダル: 開いている座標 ID
   const [photoCoordId, setPhotoCoordId] = useState<string | null>(null)
+  // 地図右下の折りたたみ写真パネルの開閉
+  const [photoPanelOpen, setPhotoPanelOpen] = useState(false)
 
   // 新しく追加されたカスタム点種は既定で表示する
   useEffect(() => {
@@ -2347,6 +2350,19 @@ export function CoordinatesPage() {
                 </div>
               </div>
             )}
+
+            {/* 地図右下: 折りたたみ式の写真パネル。開くと地図の下半分を覆う */}
+            <CoordinatePhotoPanel
+              open={photoPanelOpen}
+              onToggle={() => setPhotoPanelOpen((v) => !v)}
+              projectId={projectId}
+              coordinateId={selectedPointId}
+              pointNumber={
+                selectedPointId
+                  ? coordinates.find((c) => c.id === selectedPointId)?.pointNumber ?? null
+                  : null
+              }
+            />
           </div>
         </div>
         }
