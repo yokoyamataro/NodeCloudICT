@@ -571,16 +571,17 @@ export function CoordinateMap({
           const isSelectedConstituent = coord.id === selectedConstituentPointId
           const isSelectedRegular = coord.id === selectedPointId
           const isOrange = orangeCoordIds?.has(coord.id) ?? false
+          const isHighlighted = isSelectedConstituent || isSelectedRegular || isOrange
           const baseColor = MARKER_COLORS[coord.type] || '#666'
           const iconColor = isSelectedConstituent || isOrange ? '#f97316' : baseColor
           return (
           <Marker
             key={coord.id}
             position={[coord.lat, coord.lng]}
-            icon={createColoredIcon(
-              iconColor,
-              isSelectedConstituent || isSelectedRegular || isOrange,
-            )}
+            icon={createColoredIcon(iconColor, isHighlighted)}
+            // 重なっているとき、ハイライト中のマーカーを必ず最前面に出して
+            // 後ろに隠れて見えなくなる現象を防ぐ
+            zIndexOffset={isHighlighted ? 1000 : 0}
             interactive={coordinatesInteractive}
             eventHandlers={coordinatesInteractive ? {
               click: () => onPointSelect?.(coord.id),
