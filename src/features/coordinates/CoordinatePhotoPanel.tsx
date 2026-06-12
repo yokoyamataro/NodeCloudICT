@@ -525,22 +525,30 @@ function PhotoTile({
           </div>
         )}
       </a>
-      <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition">
+      <div className="absolute top-1 right-1 flex gap-1">
         {onReplace && (
           <button
-            onClick={onReplace}
-            className="p-1 bg-white/90 text-blue-600 rounded shadow hover:bg-white"
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onReplace()
+            }}
+            className="p-1.5 bg-white/95 text-blue-600 rounded shadow hover:bg-white active:bg-blue-50"
             title="差し替え"
           >
-            <Replace className="h-3 w-3" />
+            <Replace className="h-3.5 w-3.5" />
           </button>
         )}
         <button
-          onClick={onDelete}
-          className="p-1 bg-white/90 text-red-600 rounded shadow hover:bg-white"
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onDelete()
+          }}
+          className="p-1.5 bg-white/95 text-red-600 rounded shadow hover:bg-white active:bg-red-50"
           title="削除"
         >
-          <Trash2 className="h-3 w-3" />
+          <Trash2 className="h-3.5 w-3.5" />
         </button>
       </div>
     </div>
