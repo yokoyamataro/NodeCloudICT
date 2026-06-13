@@ -88,10 +88,10 @@ const CADASTRAL_COLUMN_WIDTH_PX: Record<CadastralColumnKey, number> = {
   points_count: 48,
   computed_area_sqm: 112,
 }
-// gap-1 = 4px、行 px-3 padding = 12px、leading 編集 ボタン = 40px (w-10)
+// gap-1 = 4px、行 px-3 padding = 12px、leading（編集 + PDF閲覧）= 80px (w-20)
 const CADASTRAL_GAP_PX = 4
 const CADASTRAL_ROW_PAD_LEFT_PX = 12
-const CADASTRAL_LEADING_WIDTH_PX = 40
+const CADASTRAL_LEADING_WIDTH_PX = 80
 
 /** 指定列の sticky-left オフセットを返す。
  *  leading（編集ボタン）+ それより左にある可視列の幅を合算する。 */

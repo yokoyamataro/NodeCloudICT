@@ -25,7 +25,11 @@ import { WORK_TYPE_NAMES } from '@/types/database'
 import { exportAreaCalculationToCSV } from '@/lib/area-calculation'
 import { compareByLocationAndParcel } from '@/lib/parcelSort'
 import { useMapViewStore } from '@/stores/mapViewStore'
-import { RegistryPdfImportModal } from '@/features/boundary-survey/RegistryPdfImportModal'
+import {
+  RegistryPdfImportModal,
+  REGISTRY_PDF_CATEGORY,
+} from '@/features/boundary-survey/RegistryPdfImportModal'
+import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
 
 // 面積計算簿コンポーネント
 function AreaCalculationSheet({
@@ -303,6 +307,42 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
     // areas の id 集合が変わったときだけ再 fetch（中身編集での無駄打ち防止）
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isBoundarySurvey, areas.map((a) => a.id).join(','), fetchParcels])
+
+  // 地籍モード: 各 work_area に紐づく添付ファイル（登記 PDF など）を一括取得。
+  // 行頭の「登記PDFを開く」ボタンの表示判定に使う。
+  const attachmentsByEntity = useAttachmentStore((s) => s.byEntity)
+  const fetchAttachmentsByEntityIds = useAttachmentStore((s) => s.fetchByEntityIds)
+  const getAttachmentSignedUrl = useAttachmentStore((s) => s.getSignedUrl)
+  useEffect(() => {
+    if (!isBoundarySurvey) return
+    if (areas.length === 0) return
+    void fetchAttachmentsByEntityIds('work_area', areas.map((a) => a.id))
+    // 行 ID 集合が変わったときだけ再 fetch
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isBoundarySurvey, areas.map((a) => a.id).join(','), fetchAttachmentsByEntityIds])
+
+  // areaId → 最新の登記 PDF attachment（同じ work_area に複数あれば作成日が最新のもの）
+  const registryPdfByAreaId = useMemo(() => {
+    const m = new Map<string, Attachment>()
+    if (!isBoundarySurvey) return m
+    for (const a of areas) {
+      const list = attachmentsByEntity.get(`work_area:${a.id}`) ?? []
+      const pdfs = list.filter((x) => x.category === REGISTRY_PDF_CATEGORY)
+      if (pdfs.length === 0) continue
+      pdfs.sort((p, q) => (q.createdAt ?? '').localeCompare(p.createdAt ?? ''))
+      m.set(a.id, pdfs[0])
+    }
+    return m
+  }, [isBoundarySurvey, areas, attachmentsByEntity])
+
+  const openRegistryPdf = async (att: Attachment) => {
+    const url = await getAttachmentSignedUrl(att.filePath)
+    if (!url) {
+      alert('PDF の取得に失敗しました（権限 / 保管状態を確認してください）')
+      return
+    }
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }
 
   // 地籍モード: 工区が変わったら地権者一覧を取り直す
   useEffect(() => {
@@ -696,7 +736,7 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                   別々の overflow-x-auto を持たせない。 */}
               <div className={isBoundarySurvey ? 'min-w-max' : ''}>
                 {isBoundarySurvey && (
-                  <CadastralHeader visibleColumns={visibleColumns} leadingWidth="w-10" />
+                  <CadastralHeader visibleColumns={visibleColumns} leadingWidth="w-20" />
                 )}
                 <div>
               {sortedAreas.map((area) => {
@@ -728,24 +768,50 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                       }
                     >
                       {isBoundarySurvey && (
-                        // 行頭の「構成点編集」ボタン。横スクロール時も見えるよう sticky
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setEditingAreaId(area.id)
-                          }}
-                          className={`w-10 shrink-0 flex items-center justify-center py-1 rounded border sticky left-3 z-10 ${
-                            isEditing
-                              ? 'bg-blue-600 border-blue-600 text-white'
-                              : isSelected
-                              ? 'bg-orange-50 border-slate-300 text-slate-600 hover:bg-orange-100'
-                              : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'
-                          }`}
-                          title="構成点を編集"
+                        // 行頭の「構成点編集」+「登記PDFを開く」。横スクロール時も見えるよう sticky で 2 ボタン
+                        <div
+                          className="w-20 shrink-0 flex items-center justify-center gap-1 sticky left-3 z-10"
+                          onClick={(e) => e.stopPropagation()}
                         >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setEditingAreaId(area.id)
+                            }}
+                            className={`w-9 h-7 flex items-center justify-center rounded border ${
+                              isEditing
+                                ? 'bg-blue-600 border-blue-600 text-white'
+                                : isSelected
+                                ? 'bg-orange-50 border-slate-300 text-slate-600 hover:bg-orange-100'
+                                : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'
+                            }`}
+                            title="構成点を編集"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          {(() => {
+                            const pdf = registryPdfByAreaId.get(area.id)
+                            return (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (pdf) void openRegistryPdf(pdf)
+                                }}
+                                disabled={!pdf}
+                                className={`w-9 h-7 flex items-center justify-center rounded border ${
+                                  pdf
+                                    ? 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'
+                                    : 'bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed'
+                                }`}
+                                title={pdf ? '登記PDFを別ウィンドウで開く' : '登記PDF未登録'}
+                              >
+                                <FileText className="h-3.5 w-3.5" />
+                              </button>
+                            )
+                          })()}
+                        </div>
                       )}
                       {isBoundarySurvey ? (
                         // 地籍: 地番属性も含めて 1 行に横並びで inline 編集（表示列はピッカーで絞れる）

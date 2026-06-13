@@ -90,6 +90,19 @@ interface State {
     /** 保存ファイル名（拡張子は .jpg を推奨）。省略時は uuid.jpg */
     fileName?: string
   }) => Promise<Attachment | null>
+  /** 写真以外のファイル（PDF 等）を Storage に上げ、attachments 行を作る。
+   *  写真と違い再エンコードや拡張子書き換えをしない（元 MIME / 元拡張子のまま保存）。 */
+  uploadFile: (params: {
+    projectId: string
+    entityType: AttachmentEntityType | string
+    entityId: string
+    file: File | Blob
+    /** 任意のラベル（例: 'registry_pdf'） */
+    category: string
+    caption?: string | null
+    /** 保存ファイル名（拡張子付き）。省略時は元 File.name → なければ uuid */
+    fileName?: string
+  }) => Promise<Attachment | null>
   removeAttachment: (id: string) => Promise<void>
   updateAttachment: (
     id: string,
@@ -257,6 +270,84 @@ export const useAttachmentStore = create<State>((set, get) => ({
       return saved
     } catch (err) {
       set({ error: err instanceof Error ? err.message : '写真のアップロードに失敗しました' })
+      return null
+    }
+  },
+
+  uploadFile: async ({
+    projectId,
+    entityType,
+    entityId,
+    file,
+    category,
+    caption = null,
+    fileName,
+  }) => {
+    try {
+      const sourceName =
+        fileName ||
+        (file instanceof File && file.name ? file.name : `${crypto.randomUUID?.() ?? Date.now()}.bin`)
+      // 拡張子は元ファイル名から取り出す（無ければ bin）
+      const dotIdx = sourceName.lastIndexOf('.')
+      const ext = dotIdx >= 0 ? sourceName.slice(dotIdx + 1).toLowerCase() : 'bin'
+      const mime = file instanceof File && file.type ? file.type : 'application/octet-stream'
+      const uuid = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+      // 同種カテゴリのファイル同士でぶつからないよう category を path に含める
+      const path = `${projectId}/${entityType}/${entityId}/${category}/${uuid}.${ext}`
+
+      const { error: uploadErr } = await supabase.storage
+        .from('attachments')
+        .upload(path, file, { contentType: mime, cacheControl: '3600', upsert: false })
+      if (uploadErr) throw uploadErr
+
+      const existing = get().byEntity.get(entityKey(entityType, entityId)) ?? []
+      const sortOrder = existing.length
+      const userRes = await supabase.auth.getUser()
+      const insertPayload = {
+        project_id: projectId,
+        entity_type: entityType,
+        entity_id: entityId,
+        file_path: path,
+        mime,
+        byte_size: file.size,
+        category,
+        caption,
+        taken_at: null,
+        lat: null,
+        lng: null,
+        sort_order: sortOrder,
+        created_by: userRes.data.user?.id ?? null,
+      }
+      const { data, error } = await (
+        supabase.from('attachments' as never) as unknown as {
+          insert: (p: typeof insertPayload) => {
+            select: (cols: string) => {
+              single: () => Promise<{
+                data: RawAttachmentRow | null
+                error: { message: string } | null
+              }>
+            }
+          }
+        }
+      )
+        .insert(insertPayload)
+        .select('*')
+        .single()
+      if (error) {
+        await supabase.storage.from('attachments').remove([path]).catch(() => {})
+        throw error
+      }
+      if (!data) throw new Error('保存結果が取得できません')
+      const saved = rowToAttachment(data)
+      const next = new Map(get().byEntity)
+      next.set(entityKey(entityType, entityId), [...existing, saved])
+      set({ byEntity: next })
+      return saved
+    } catch (err) {
+      const e = err as Partial<{ message: string }> | null
+      set({ error: e?.message || 'ファイルのアップロードに失敗しました' })
+      // eslint-disable-next-line no-console
+      console.error('[attachmentStore] uploadFile failed', err)
       return null
     }
   },

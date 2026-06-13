@@ -15,6 +15,11 @@ import {
 } from '@/lib/registryPdf'
 import type { WorkAreaRow } from '@/stores/workAreaStore'
 import { useParcelStore } from '@/stores/parcelStore'
+import { useAttachmentStore } from '@/stores/attachmentStore'
+import { useFarmStore } from '@/stores/farmStore'
+
+/** 登記簿 PDF を attachments に保存するときに使うカテゴリ名（後で行表示の検索キーに使う） */
+export const REGISTRY_PDF_CATEGORY = 'registry_pdf'
 
 interface Props {
   /** 当該工区の地番一覧（境界測量 work_areas） */
@@ -42,6 +47,8 @@ function normalize(s: string | null | undefined): string {
 export function RegistryPdfImportModal({ areas, onClose }: Props) {
   const parcelMap = useParcelStore((s) => s.byWorkAreaId)
   const upsertParcel = useParcelStore((s) => s.upsertParcel)
+  const uploadFile = useAttachmentStore((s) => s.uploadFile)
+  const projectId = useFarmStore((s) => s.currentFarm?.project_id ?? null)
 
   const [rows, setRows] = useState<ImportRow[]>([])
   const [applying, setApplying] = useState(false)
@@ -163,6 +170,25 @@ export function RegistryPdfImportModal({ areas, onClose }: Props) {
         if (saved) {
           ok++
           errorByRowId.set(row.id, null)
+          // 反映に成功した PDF だけ Storage にも保管する（後で行ボタンから閲覧）
+          if (projectId) {
+            const uploaded = await uploadFile({
+              projectId,
+              entityType: 'work_area',
+              entityId: areaId,
+              file: row.file,
+              category: REGISTRY_PDF_CATEGORY,
+              fileName: row.file.name,
+              caption: row.file.name,
+            })
+            if (!uploaded) {
+              // PDF アップロード失敗は致命ではないが、行に注意書きを残す
+              errorByRowId.set(
+                row.id,
+                'データは反映済みですが、PDF の保管に失敗しました（再実行で再保管されます）',
+              )
+            }
+          }
         } else {
           skipped++
           const reason = useParcelStore.getState().error || '不明なエラー（コンソール参照）'
