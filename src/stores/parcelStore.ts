@@ -144,15 +144,25 @@ export const useParcelStore = create<ParcelState>((set, get) => ({
       })
       return saved
     } catch (err) {
+      // PostgrestError (RLS / CHECK / 列なし 等) は Error インスタンスでないため
+      // err.message に直接アクセスして詳細を拾う。code / details / hint も含めて
+      // ユーザに見せる文言を組み立てる。
+      const e = err as
+        | (Partial<{ message: string; code: string; details: string; hint: string }> &
+            Record<string, unknown>)
+        | null
+      const parts = [e?.message, e?.details, e?.hint, e?.code ? `(code: ${e.code})` : null]
+        .filter((s): s is string => typeof s === 'string' && s.length > 0)
+      const message = parts.length > 0 ? parts.join(' — ') : 'parcels の保存に失敗しました'
+      // 開発者向け: 完全なエラーオブジェクトをコンソールに残す
+      // eslint-disable-next-line no-console
+      console.error('[parcelStore] upsertParcel failed', err, { workAreaId, fields })
       // ロールバック
       set((state) => {
         const next = new Map(state.byWorkAreaId)
         if (prev) next.set(workAreaId, prev)
         else next.delete(workAreaId)
-        return {
-          byWorkAreaId: next,
-          error: err instanceof Error ? err.message : 'parcels の保存に失敗しました',
-        }
+        return { byWorkAreaId: next, error: message }
       })
       return null
     }
