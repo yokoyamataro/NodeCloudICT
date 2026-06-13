@@ -25,12 +25,6 @@ import { WORK_TYPE_NAMES } from '@/types/database'
 import { exportAreaCalculationToCSV } from '@/lib/area-calculation'
 import { compareByLocationAndParcel } from '@/lib/parcelSort'
 import { useMapViewStore } from '@/stores/mapViewStore'
-import {
-  useCoordinatePointTypeStore,
-  getCoordinateTypeOptions,
-} from '@/stores/coordinatePointTypeStore'
-import { PointTypeFilterButton } from '@/features/coordinates/PointTypeFilterButton'
-import { StakeStatusFilterButton } from '@/features/coordinates/StakeStatusFilterButton'
 import { RegistryPdfImportModal } from '@/features/boundary-survey/RegistryPdfImportModal'
 
 // 面積計算簿コンポーネント
@@ -257,17 +251,7 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   const parcelByWorkAreaId = useParcelStore((s) => s.byWorkAreaId)
   const upsertParcel = useParcelStore((s) => s.upsertParcel)
 
-  // 地籍モード: 点種フィルター用の選択肢（既定 + プロジェクトのカスタム）
-  const projectId = currentFarm?.project_id ?? null
-  const pointTypesByProject = useCoordinatePointTypeStore((s) => s.byProject)
-  const fetchPointTypes = useCoordinatePointTypeStore((s) => s.fetchForProject)
-  useEffect(() => {
-    if (isBoundarySurvey && projectId) void fetchPointTypes(projectId)
-  }, [isBoundarySurvey, projectId, fetchPointTypes])
-  const typeOptions = useMemo(
-    () => getCoordinateTypeOptions(projectId, pointTypesByProject),
-    [projectId, pointTypesByProject],
-  )
+  // 点種フィルター UI は座標管理側に集約したため、ここでの一覧取得は不要。
 
   // 地籍モード: 所在 → 地番(親番-小番) の自然順で並べ替えた区域一覧。
   // それ以外（土木工種）は元順を維持する。
@@ -664,8 +648,8 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
             <div className="flex items-center gap-2">
               {isBoundarySurvey && (
                 <>
-                  <PointTypeFilterButton typeOptions={typeOptions} />
-                  <StakeStatusFilterButton />
+                  {/* 点種フィルター・設置状態フィルターは座標管理ページに集約。
+                      地番管理側では同じ設定が共有されるので、ここには出さない。 */}
                   <CadastralColumnPicker
                     visible={visibleColumns}
                     onChange={setVisibleColumns}
@@ -681,18 +665,21 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                   </button>
                 </>
               )}
-              <button
-                onClick={handleAddArea}
-                disabled={loading || coordinates.length === 0}
-                className="flex items-center gap-2 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Plus className="h-4 w-4" />
-                区域追加
-              </button>
+              {/* 地籍は最下行の空入力で追加するためボタン不要。他の工種では従来通り */}
+              {!isBoundarySurvey && (
+                <button
+                  onClick={handleAddArea}
+                  disabled={loading || coordinates.length === 0}
+                  className="flex items-center gap-2 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Plus className="h-4 w-4" />
+                  区域追加
+                </button>
+              )}
             </div>
           </div>
 
-          {areas.length === 0 ? (
+          {areas.length === 0 && !isBoundarySurvey ? (
             <div className="text-center py-8 text-muted-foreground border rounded-lg">
               区域がありません。「区域追加」ボタンで追加してください。
             </div>
