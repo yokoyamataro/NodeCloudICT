@@ -98,7 +98,7 @@ interface StakingTarget {
   subType: string
   /** 点種の表示名 */
   subTypeLabel: string
-  /** 設置状態（coordinate のみ。pipe_vertex は 'none' 相当） */
+  /** 設置状態（coordinate のみ。pipe_vertex は 'unset' 相当） */
   stakeStatus: StakeStatus
 }
 
@@ -1377,7 +1377,7 @@ export function MobileStakingPage() {
             lng,
             subType: '_pipe_vertex',
             subTypeLabel: '暗渠頂点',
-            stakeStatus: 'none',
+            stakeStatus: 'unset',
           })
         } catch {
           // skip
@@ -1955,7 +1955,7 @@ export function MobileStakingPage() {
         lng: 0,
         subType: type,
         subTypeLabel: getCoordinateTypeLabel(type, projectId, pointTypesByProject),
-        stakeStatus: 'none',
+        stakeStatus: 'unset',
       })
     }
   }

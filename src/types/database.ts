@@ -41,41 +41,48 @@ export const WORK_TYPE_NAMES: Record<WorkType, string> = {
 export type CoordinateType = string
 
 // 杭設置ワークフローの状態（地籍測量モードで使用）。
-// design_coordinates.stake_status に格納。既定は 'none'。
+// design_coordinates.stake_status に格納。既定は 'unset'（未設置）。
+//
+// 旧コード対応:
+//   none / needed      → unset（未設置）
+//   temporary          → temporary（仮杭）
+//   permanent          → new（新設）
+//   existing           → existing（既設）
+//   impossible         → skip（不設置）
 export type StakeStatus =
-  | 'none'        // なし
-  | 'needed'      // 要設置
-  | 'temporary'   // 仮杭設置
-  | 'permanent'   // 本杭設置
-  | 'existing'    // 既設採用
-  | 'impossible'  // 設置不可
+  | 'unset'       // 未設置（まだ設置していない／既定）
+  | 'temporary'   // 仮杭
+  | 'new'         // 新設（新たに本杭を設置）
+  | 'replaced'    // 入替（既設を撤去のうえ新設）
+  | 'existing'    // 既設（既設杭を採用）
+  | 'skip'        // 不設置（設置しない方針）
 
 export const STAKE_STATUS_OPTIONS: StakeStatus[] = [
-  'none',
-  'needed',
+  'unset',
   'temporary',
-  'permanent',
+  'new',
+  'replaced',
   'existing',
-  'impossible',
+  'skip',
 ]
 
 export const STAKE_STATUS_LABEL: Record<StakeStatus, string> = {
-  none: 'なし',
-  needed: '要設置',
-  temporary: '仮杭設置',
-  permanent: '本杭設置',
-  existing: '既設採用',
-  impossible: '設置不可',
+  unset: '未設置',
+  temporary: '仮杭',
+  new: '新設',
+  replaced: '入替',
+  existing: '既設',
+  skip: '不設置',
 }
 
 // バッジ用の Tailwind 配色。背景 / 文字 / 枠線を一括で。
 export const STAKE_STATUS_BADGE: Record<StakeStatus, string> = {
-  none: 'bg-slate-100 text-slate-500 border-slate-200',
-  needed: 'bg-amber-50 text-amber-700 border-amber-300',
+  unset: 'bg-slate-100 text-slate-500 border-slate-200',
   temporary: 'bg-blue-50 text-blue-700 border-blue-300',
-  permanent: 'bg-emerald-50 text-emerald-700 border-emerald-300',
+  new: 'bg-emerald-50 text-emerald-700 border-emerald-300',
+  replaced: 'bg-amber-50 text-amber-700 border-amber-300',
   existing: 'bg-teal-50 text-teal-700 border-teal-300',
-  impossible: 'bg-red-50 text-red-700 border-red-300',
+  skip: 'bg-red-50 text-red-700 border-red-300',
 }
 
 // 点種（座標の用途）
@@ -476,7 +483,7 @@ export interface DesignCoordinate {
   coordinate_type: string
   /** 杭種（木杭 / コンクリート杭 / プラ杭 / 金属鋲 / 金属標 / 石標 / 既設標 / 自由入力） */
   stake_type: string | null
-  /** 設置状態（地籍測量モード）。'none' | 'needed' | 'temporary' | 'permanent' | 'existing' | 'impossible' */
+  /** 設置状態（地籍測量モード）。'unset' | 'temporary' | 'new' | 'replaced' | 'existing' | 'skip' */
   stake_status: StakeStatus
   notes: string | null
   created_at: string
