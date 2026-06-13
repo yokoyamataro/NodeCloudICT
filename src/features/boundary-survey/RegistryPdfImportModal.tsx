@@ -31,6 +31,8 @@ interface ImportRow {
   /** 当てる先の area.id（自動候補 or ユーザ選択） */
   matchedAreaId: string | null
   apply: boolean
+  /** 反映時のエラーメッセージ（成功時は null） */
+  applyError: string | null
 }
 
 function normalize(s: string | null | undefined): string {
@@ -92,6 +94,7 @@ export function RegistryPdfImportModal({ areas, onClose }: Props) {
         error: null,
         matchedAreaId: null,
         apply: true,
+        applyError: null,
       })
     }
     setRows((prev) => [...prev, ...newRows])
@@ -123,6 +126,8 @@ export function RegistryPdfImportModal({ areas, onClose }: Props) {
     setApplying(true)
     let ok = 0
     let skipped = 0
+    // 行ごとに最終的なエラーメッセージをまとめてからまとめて反映する
+    const errorByRowId = new Map<string, string | null>()
     try {
       for (const row of toApply) {
         const parsed = row.parsed!
@@ -150,12 +155,34 @@ export function RegistryPdfImportModal({ areas, onClose }: Props) {
         }
         if (Object.keys(patch).length === 0) {
           skipped++
+          errorByRowId.set(row.id, '反映できる差分がありません')
           continue
         }
+        // upsertParcel は失敗時 null を返し、エラー文言は parcelStore.error に入る
         const saved = await upsertParcel(areaId, patch)
-        if (saved) ok++
-        else skipped++
+        if (saved) {
+          ok++
+          errorByRowId.set(row.id, null)
+        } else {
+          skipped++
+          const reason = useParcelStore.getState().error || '不明なエラー（コンソール参照）'
+          // コンソールには patch も出して原因切り分けしやすくする
+          // eslint-disable-next-line no-console
+          console.error('[RegistryPdfImport] upsertParcel failed', {
+            file: row.file.name,
+            workAreaId: areaId,
+            patch,
+            reason,
+          })
+          errorByRowId.set(row.id, reason)
+        }
       }
+      // 行ごとのエラーをまとめて state に反映
+      setRows((prev) =>
+        prev.map((r) =>
+          errorByRowId.has(r.id) ? { ...r, applyError: errorByRowId.get(r.id) ?? null } : r,
+        ),
+      )
       setApplyDone({ ok, skipped })
     } finally {
       setApplying(false)
@@ -346,6 +373,11 @@ function ImportRowView({
       {row.status === 'error' && (
         <div className="px-2 py-1 text-xs text-red-700 bg-red-50 rounded border border-red-200">
           {row.error || '解析に失敗しました'}
+        </div>
+      )}
+      {row.applyError && (
+        <div className="px-2 py-1 mt-1 text-xs text-red-700 bg-red-50 rounded border border-red-200">
+          反映エラー: {row.applyError}
         </div>
       )}
 
