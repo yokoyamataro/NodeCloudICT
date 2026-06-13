@@ -204,102 +204,91 @@ function joinSpacedName(s: string): string {
 }
 
 // 甲区テキストから所有者ブロックを抽出する。
-// 各「所有者 / 共有者」記述の後ろの「住所...氏名」をひとまとめにする。
 //
-// 罫線（│, ┃）が pdfjs で落ちる PDF にも対応するため、テキスト全体を
-// 走査して "所有者[空白]+...次の停止語まで" を捕まえる方針にする。
+// 登記簿の基本フォーマットは
+//
+//   所有者　{住所}
+//   {氏名（文字間に全角スペースが入ることがある）}
+//
+// なので、line-based に「所有者」始まりの行を見つけ、その住所と、
+// 次の非ノイズ行の氏名をペアにする。最後に登場するペアを「現在の所有者」
+// として採用する（複数登記の連続にも対応）。
 function extractOwners(text: string): ParsedOwner[] {
   // 末尾に出てくる注意書き（凡例）はオーナー名扱いされないよう、ここで切り捨てる。
-  //   *「登記の目的」欄に「相続人申告」と記載されている登記は、...
+  // 例:
+  //   *「登記の目的」欄に「相続人申告」と記載されている登記は、所有権の登記名義人（所有者）の相続人からの申出に基づき、登記官が職権で、...
   //   *下線のあるものは抹消事項であることを示す。
-  //   *「順位番号」欄... / *「権利者その他の事項」欄...
-  // のように先頭が「*」または「※」のフットノートが続くので、最初の出現で打ち切る。
-  const footerRe = /[*※][\s　]*(?:「|下線|順位|権利)/
-  const footerMatch = text.match(footerRe)
+  //
+  // pdfjs での抽出によっては先頭の「*」が全角「＊」になったり、別の Y 座標で
+  // 「*」と本文が別行になることがある。記号に頼らず、フッタにしか出てこない
+  // 特徴フレーズで切る。
+  const footerPhraseRe =
+    /(?:「[\s　]*登記の目的[\s　]*」|下線[\s　]*のあるもの|登記官[\s　]*が[\s　]*職権|相続人[\s　]*からの[\s　]*申出|権利[\s　]*関係を[\s　]*公示|抹消事項であることを示)/
+  const footerMatch = text.match(footerPhraseRe)
   if (footerMatch && footerMatch.index !== undefined) {
     text = text.slice(0, footerMatch.index)
   }
 
-  // 「所有者」/ 「共有者」が始まりのキー。
-  // 信託の「受託者」は所有者ではない（信託目録）ので除外。
-  // 停止語: 次の所有者宣言、原因/順位/持分/信託(目録は除く)/権利部/乙区
-  // 末尾の注意書き(*〜) も停止語に含める（フッタ削除で取りきれない揺れの保険）
-  const stopRe =
-    '所有者|共有者|受託者|原因[\\s　]|順位[\\s　]*番号|順位[０-９0-9]+番|持分|信託(?!目)|乙[\\s　]*区|権[\\s　]*利[\\s　]*部|[*※][\\s　]*[「下順権]'
-  const ownerRe = new RegExp(
-    '(?:所有者|共有者)[\\s　]+([\\s\\S]+?)(?=' + stopRe + ')',
-    'g',
-  )
-  const blocks: string[] = []
-  let m: RegExpExecArray | null
-  while ((m = ownerRe.exec(text)) !== null) {
-    blocks.push(m[1])
-  }
-  if (blocks.length === 0) return []
+  // 行ごとに整形（罫線除去・全半角空白の正規化）
+  const cleanLine = (l: string) =>
+    l
+      .replace(/[─-╿│|｜]+/g, ' ')
+      .replace(/[\s　]+/g, ' ')
+      .trim()
 
-  // 最後のブロックを「現在」として採用
-  const block = blocks[blocks.length - 1]
-  return parseOwnerBlock(block)
-}
-
-// 1 つの所有者ブロックを「住所 ＋ 氏名（1 名以上）」に分解する。
-function parseOwnerBlock(block: string): ParsedOwner[] {
-  // 改行で分割し、罫線・余分な空白を取り除く。
-  // 罫線は U+2500–U+257F の Box Drawing ブロックを丸ごと対象にする
-  // （└ ┘ ─ ━ ┴ ┬ ├ ┤ ┼ など、列挙漏れがあった文字も拾えるように）。
-  const rawLines = block
-    .split(/\r?\n/)
-    .map((l) => l.replace(/[─-╿│|｜\s]+/g, ' ').trim())
-    .filter((l) => l && !/^[\s　]*$/.test(l))
-  if (rawLines.length === 0) return []
-
-  // 住所継続を判定するヒント:
-  //   末尾が「丁目」「番」「号」「番地」「市」「町」「村」「区」「県」「府」「都」など → 続く
-  //   名前候補: 全角空白で文字が区切られている / "株式会社" などの会社接頭・接尾
-  const continuesAddress = (s: string) => {
-    return /(?:丁目|番地|番|号|市|町|村|区|郡|条|大字|字|地番|府|県|都|道|外|地)$/.test(
-      s.replace(/[\s　]+$/, ''),
-    )
+  // ノイズ行: 「順位N番の登記を移記」「平成X年法務省令...」「原因 ...」「移記」など
+  const isNoise = (l: string) => {
+    if (!l) return true
+    if (/^[*※＊]/.test(l)) return true
+    if (/順位[０-９0-9]+番の登記/.test(l)) return true
+    if (/法務省令/.test(l)) return true
+    if (/移記$/.test(l)) return true
+    if (/^(?:原因|順位|乙[\s　]*区|権[\s　]*利[\s　]*部|抹消|信託)/.test(l)) return true
+    // 「平成X年X月X日」のみの行
+    if (/^[平令昭]和?[０-９0-9一二三四五六七八九十元]+年/.test(l) && !/[一-龥ぁ-んァ-ヶ]{2,}/.test(l.replace(/[平令昭]和?[０-９0-9一二三四五六七八九十元年月日 　\d-]+/, ''))) return true
+    return false
   }
 
-  // 末尾から名前候補を探す: 最後の非住所行を名前とする
-  const owners: ParsedOwner[] = []
-  // 単純化: 最後の 1 名のみ抜く（共有は今後の改善対象）
-  // 住所 = 最後の行を除いた全行を連結
-  // 氏名 = 最後の行
-  let addressLines: string[] = []
-  let name: string | null = null
-  for (const line of rawLines) {
-    if (name) break
-    // 「順位N番の登記を移記」「平成X年法務省令...」などの注記は除外
-    if (/順位[０-９0-9]+番の登記/.test(line)) continue
-    if (/法務省令/.test(line)) continue
-    if (/移記$/.test(line)) continue
-    if (/[平令昭]和?[０-９0-9一二三四五六七八九十元]+年/.test(line) && !/^[一-龥ぁ-んァ-ヶＡ-Ｚ々]/.test(line)) {
-      // 日付行はスキップ
-      continue
+  // 住所行末尾が地名語で終わっていれば次の行は住所継続
+  const continuesAddress = (s: string) =>
+    /(?:丁目|番地|番|号|市|町|村|区|郡|条|大字|字|地番|府|県|都|道|外|地)$/.test(s)
+
+  const lines = text.split(/\r?\n/).map(cleanLine).filter((l) => l.length > 0)
+
+  const found: ParsedOwner[] = []
+  const ownerStartRe = /^(?:所有者|共有者)[\s　]+(.+)$/
+
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(ownerStartRe)
+    if (!m) continue
+    let address = m[1].replace(/[\s　]/g, '')
+    let name: string | null = null
+
+    let j = i + 1
+    while (j < lines.length) {
+      const next = lines[j]
+      // 次の所有者宣言が来たら終了（途中で名前が決まらなければ諦める）
+      if (/^(?:所有者|共有者|受託者)/.test(next)) break
+      if (isNoise(next)) {
+        j++
+        continue
+      }
+      // 住所継続パターン: 末尾が地名語 → 結合してさらに次へ
+      if (continuesAddress(address)) {
+        address += next.replace(/[\s　]/g, '')
+        j++
+        continue
+      }
+      // ここに到達した行を氏名とみなす（文字間スペースがあっても joinSpacedName で詰める）
+      name = joinSpacedName(next)
+      break
     }
-    // 「*」「※」で始まるフッタ注記はスキップ（extractOwners 側で切るが念のため）
-    if (/^[*※]/.test(line)) continue
-    addressLines.push(line)
-  }
-  // 最後の行を名前候補とする
-  if (addressLines.length >= 1) {
-    const lastIdx = addressLines.length - 1
-    // 末尾が住所継続パターンなら、その行も含めて名前は無し
-    if (continuesAddress(addressLines[lastIdx])) {
-      // 名前が見つからない → 諦め
-    } else {
-      name = joinSpacedName(addressLines[lastIdx])
-      addressLines = addressLines.slice(0, -1)
-    }
+
+    if (name) found.push({ address, fullName: name })
   }
 
-  const address = addressLines.join('').replace(/[\s　]/g, '')
-  if (name && name.length > 0) {
-    owners.push({ address, fullName: name })
-  }
-  return owners
+  // 最後のペアを「現在の所有者」として返す
+  return found.length > 0 ? [found[found.length - 1]] : []
 }
 
 export async function parseRegistryPdf(file: File): Promise<ParsedRegistry> {
