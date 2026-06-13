@@ -256,24 +256,31 @@ function extractOwners(text: string): ParsedOwner[] {
   const lines = text.split(/\r?\n/).map(cleanLine).filter((l) => l.length > 0)
 
   const found: ParsedOwner[] = []
-  const ownerStartRe = /^(?:所有者|共有者)[\s　]+(.+)$/
+  // pdfjs は同じ Y の他カラムテキスト（例: 「第1062号」）と「所有者」を
+  // 1 行にまとめがちなので、行頭固定にせず行のどこに出てきても拾う。
+  // 直前は行頭 or 空白 / 句読点 / 罫線（既に半角空白へ正規化済み）に限定。
+  const ownerInlineRe = /(?:^|[\s　、。│])((?:所有者|共有者))[\s　]*(.+)$/
 
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(ownerStartRe)
+    const m = lines[i].match(ownerInlineRe)
     if (!m) continue
-    let address = m[1].replace(/[\s　]/g, '')
+    // 「登記名義人（所有者）」のような誤マッチを避けるため、直後が `）` のときはスキップ
+    const tail = m[2]
+    if (tail.startsWith(')') || tail.startsWith('）')) continue
+    let address = tail.replace(/[\s　]/g, '')
+    if (!address) continue
     let name: string | null = null
 
     let j = i + 1
     while (j < lines.length) {
       const next = lines[j]
-      // 次の所有者宣言が来たら終了（途中で名前が決まらなければ諦める）
-      if (/^(?:所有者|共有者|受託者)/.test(next)) break
+      // 次の所有者宣言が来たら終了
+      if (/(?:^|[\s　])(?:所有者|共有者|受託者)/.test(next)) break
       if (isNoise(next)) {
         j++
         continue
       }
-      // 住所継続パターン: 末尾が地名語 → 結合してさらに次へ
+      // 住所継続: 末尾が地名語 → 結合してさらに次へ
       if (continuesAddress(address)) {
         address += next.replace(/[\s　]/g, '')
         j++
