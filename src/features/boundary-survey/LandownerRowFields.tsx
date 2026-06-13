@@ -18,6 +18,7 @@ import {
 // 列の正準キー。表示順を兼ねる。
 export const LANDOWNER_COLUMN_KEYS = [
   'full_name',
+  'owned_parcels',
   'postal_code',
   'address',
   'phone',
@@ -36,6 +37,7 @@ export type LandownerColumnKey = (typeof LANDOWNER_COLUMN_KEYS)[number]
 
 export const LANDOWNER_COLUMN_LABELS: Record<LandownerColumnKey, string> = {
   full_name: '氏名',
+  owned_parcels: '所有地',
   postal_code: '郵便番号',
   address: '住所',
   phone: '電話番号',
@@ -52,6 +54,7 @@ export const LANDOWNER_COLUMN_LABELS: Record<LandownerColumnKey, string> = {
 
 export const LANDOWNER_COLUMN_WIDTH: Record<LandownerColumnKey, string> = {
   full_name: 'w-32',
+  owned_parcels: 'w-40',
   postal_code: 'w-24',
   address: 'w-48',
   phone: 'w-32',
@@ -69,6 +72,7 @@ export const LANDOWNER_COLUMN_WIDTH: Record<LandownerColumnKey, string> = {
 // 既定で表示する列。詰めすぎないよう代理人住所 / 電話 / メモは初期非表示。
 export const DEFAULT_VISIBLE_LANDOWNER_COLUMNS: ReadonlySet<LandownerColumnKey> = new Set([
   'full_name',
+  'owned_parcels',
   'postal_code',
   'address',
   'phone',
@@ -124,9 +128,16 @@ interface RowProps {
   landowner: Landowner
   visibleColumns: ReadonlySet<LandownerColumnKey>
   onDelete: (landowner: Landowner) => void
+  /** この地権者が所有する地番の表示用ラベル（例: ['7-1', '374']）。空配列 / 未指定なら '—' */
+  ownedParcelLabels?: string[]
 }
 
-export function LandownerRowFields({ landowner, visibleColumns, onDelete }: RowProps) {
+export function LandownerRowFields({
+  landowner,
+  visibleColumns,
+  onDelete,
+  ownedParcelLabels,
+}: RowProps) {
   const updateLandowner = useLandownerStore((s) => s.updateLandowner)
 
   const [fullName, setFullName] = useState(landowner.full_name)
@@ -164,6 +175,21 @@ export function LandownerRowFields({ landowner, visibleColumns, onDelete }: RowP
 
   const renderCell = (key: LandownerColumnKey): React.ReactNode => {
     switch (key) {
+      case 'owned_parcels': {
+        // 読み取り専用。地番管理側で割り当てを編集する。
+        const labels = ownedParcelLabels ?? []
+        if (labels.length === 0) {
+          return <span className="text-[10px] text-slate-300 px-1.5">—</span>
+        }
+        return (
+          <div
+            className="text-xs text-slate-700 px-1.5 py-1 leading-tight truncate"
+            title={labels.join(' / ')}
+          >
+            {labels.join(' / ')}
+          </div>
+        )
+      }
       case 'full_name':
         return (
           <input

@@ -7,7 +7,7 @@
 // ・地番への割当は地番一覧側の「地権者」列モーダルから行う（このページでは行わない）
 
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Loader2 } from 'lucide-react'
+import { Plus, Loader2, Wand2 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
 import { useLandownerStore } from '@/stores/landownerStore'
@@ -21,6 +21,8 @@ import {
   LandownerColumnPicker,
   useLandownerVisibleColumns,
 } from './LandownerColumnPicker'
+import { supabase } from '@/lib/supabase'
+import { LandownerAutoImportModal, type FarmParcelRow } from './LandownerAutoImportModal'
 
 export function LandownersPage() {
   const { currentFarm } = useFarmStore()
@@ -31,15 +33,65 @@ export function LandownersPage() {
   const fetchByFarm = useLandownerStore((s) => s.fetchByFarm)
   const createLandowner = useLandownerStore((s) => s.createLandowner)
   const deleteLandowner = useLandownerStore((s) => s.deleteLandowner)
+  const landownersByParcelId = useLandownerStore((s) => s.landownersByParcelId)
   const error = useLandownerStore((s) => s.error)
 
   const [filter, setFilter] = useState('')
   const [adding, setAdding] = useState(false)
   const [visible, setVisible] = useLandownerVisibleColumns()
+  // 工区配下の地番一覧（自動取込モーダル / 所有地列の表示に使う）
+  const [farmParcels, setFarmParcels] = useState<FarmParcelRow[]>([])
+  const [showAutoImport, setShowAutoImport] = useState(false)
 
   useEffect(() => {
     if (farmId) void fetchByFarm(farmId)
   }, [farmId, fetchByFarm])
+
+  // 工区配下の parcels を取得（design_work_areas 経由）
+  const reloadFarmParcels = async (fid: string) => {
+    const { data, error: err } = await supabase
+      .from('parcels')
+      .select(
+        'id, parcel_number, location, registered_owner_name, registered_owner_address, work_area:design_work_areas!inner(farm_id)',
+      )
+      .eq('work_area.farm_id', fid)
+    if (err) {
+      console.error('[LandownersPage] parcels load failed', err)
+      setFarmParcels([])
+      return
+    }
+    const rows = ((data ?? []) as unknown) as FarmParcelRow[]
+    setFarmParcels(rows)
+  }
+  useEffect(() => {
+    if (!farmId) {
+      setFarmParcels([])
+      return
+    }
+    void reloadFarmParcels(farmId)
+  }, [farmId])
+
+  // landowner_id → 所有地ラベル配列。landownersByParcelId を反転して parcel_number を引く。
+  const ownedParcelLabelsByLandownerId = useMemo(() => {
+    const labelByParcelId = new Map<string, string>()
+    for (const p of farmParcels) {
+      const label = (p.parcel_number ?? '').trim() || '(未設定)'
+      labelByParcelId.set(p.id, label)
+    }
+    const out = new Map<string, string[]>()
+    for (const [parcelId, landownerIds] of landownersByParcelId) {
+      const label = labelByParcelId.get(parcelId)
+      if (!label) continue
+      for (const lid of landownerIds) {
+        const arr = out.get(lid) ?? []
+        arr.push(label)
+        out.set(lid, arr)
+      }
+    }
+    // 表示は地番のソート順で
+    for (const arr of out.values()) arr.sort((a, b) => a.localeCompare(b, 'ja'))
+    return out
+  }, [farmParcels, landownersByParcelId])
 
   const filtered = useMemo(() => {
     if (!filter) return landowners
@@ -97,6 +149,15 @@ export function LandownersPage() {
             />
             <LandownerColumnPicker visible={visible} onChange={setVisible} />
             <button
+              onClick={() => setShowAutoImport(true)}
+              disabled={!farmId}
+              className="flex items-center gap-1 px-3 py-1.5 text-sm border border-blue-600 text-blue-700 rounded hover:bg-blue-50 disabled:opacity-50"
+              title="地番管理に登録された所有者氏名 / 住所を取り込みます"
+            >
+              <Wand2 className="h-3.5 w-3.5" />
+              地番管理から自動取得
+            </button>
+            <button
               onClick={handleAdd}
               disabled={adding}
               className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
@@ -135,6 +196,7 @@ export function LandownersPage() {
                     landowner={lo}
                     visibleColumns={visible}
                     onDelete={handleDelete}
+                    ownedParcelLabels={ownedParcelLabelsByLandownerId.get(lo.id)}
                   />
                 ))}
                 {/* 最下行は常に空。氏名を入力 → Enter / 別欄に移動で確定 */}
@@ -157,6 +219,21 @@ export function LandownersPage() {
           </div>
         )}
       </div>
+
+      {showAutoImport && farmId && (
+        <LandownerAutoImportModal
+          farmId={farmId}
+          parcels={farmParcels}
+          existingLandowners={landowners}
+          onClose={() => setShowAutoImport(false)}
+          onApplied={async () => {
+            // landowners と parcel_landowners を取り直して画面を更新
+            useLandownerStore.getState().invalidateCache()
+            await fetchByFarm(farmId)
+            await reloadFarmParcels(farmId)
+          }}
+        />
+      )}
     </div>
   )
 }
