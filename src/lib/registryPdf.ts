@@ -209,11 +209,23 @@ function joinSpacedName(s: string): string {
 // 罫線（│, ┃）が pdfjs で落ちる PDF にも対応するため、テキスト全体を
 // 走査して "所有者[空白]+...次の停止語まで" を捕まえる方針にする。
 function extractOwners(text: string): ParsedOwner[] {
+  // 末尾に出てくる注意書き（凡例）はオーナー名扱いされないよう、ここで切り捨てる。
+  //   *「登記の目的」欄に「相続人申告」と記載されている登記は、...
+  //   *下線のあるものは抹消事項であることを示す。
+  //   *「順位番号」欄... / *「権利者その他の事項」欄...
+  // のように先頭が「*」または「※」のフットノートが続くので、最初の出現で打ち切る。
+  const footerRe = /[*※][\s　]*(?:「|下線|順位|権利)/
+  const footerMatch = text.match(footerRe)
+  if (footerMatch && footerMatch.index !== undefined) {
+    text = text.slice(0, footerMatch.index)
+  }
+
   // 「所有者」/ 「共有者」が始まりのキー。
   // 信託の「受託者」は所有者ではない（信託目録）ので除外。
   // 停止語: 次の所有者宣言、原因/順位/持分/信託(目録は除く)/権利部/乙区
+  // 末尾の注意書き(*〜) も停止語に含める（フッタ削除で取りきれない揺れの保険）
   const stopRe =
-    '所有者|共有者|受託者|原因[\\s　]|順位[\\s　]*番号|順位[０-９0-9]+番|持分|信託(?!目)|乙[\\s　]*区|権[\\s　]*利[\\s　]*部'
+    '所有者|共有者|受託者|原因[\\s　]|順位[\\s　]*番号|順位[０-９0-9]+番|持分|信託(?!目)|乙[\\s　]*区|権[\\s　]*利[\\s　]*部|[*※][\\s　]*[「下順権]'
   const ownerRe = new RegExp(
     '(?:所有者|共有者)[\\s　]+([\\s\\S]+?)(?=' + stopRe + ')',
     'g',
@@ -232,10 +244,12 @@ function extractOwners(text: string): ParsedOwner[] {
 
 // 1 つの所有者ブロックを「住所 ＋ 氏名（1 名以上）」に分解する。
 function parseOwnerBlock(block: string): ParsedOwner[] {
-  // 改行で分割し、罫線・余分な空白を取り除く
+  // 改行で分割し、罫線・余分な空白を取り除く。
+  // 罫線は U+2500–U+257F の Box Drawing ブロックを丸ごと対象にする
+  // （└ ┘ ─ ━ ┴ ┬ ├ ┤ ┼ など、列挙漏れがあった文字も拾えるように）。
   const rawLines = block
     .split(/\r?\n/)
-    .map((l) => l.replace(/[│|｜┃┠┨┘┌┐┴┬┤├┼━─\s]+/g, ' ').trim())
+    .map((l) => l.replace(/[─-╿│|｜\s]+/g, ' ').trim())
     .filter((l) => l && !/^[\s　]*$/.test(l))
   if (rawLines.length === 0) return []
 
@@ -265,6 +279,8 @@ function parseOwnerBlock(block: string): ParsedOwner[] {
       // 日付行はスキップ
       continue
     }
+    // 「*」「※」で始まるフッタ注記はスキップ（extractOwners 側で切るが念のため）
+    if (/^[*※]/.test(line)) continue
     addressLines.push(line)
   }
   // 最後の行を名前候補とする
