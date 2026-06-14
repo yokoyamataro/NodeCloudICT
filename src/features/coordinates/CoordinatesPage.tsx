@@ -413,7 +413,10 @@ export function CoordinatesPage() {
   // 地図右下の折りたたみ写真パネルの開閉
   const [photoPanelOpen, setPhotoPanelOpen] = useState(false)
 
-  // 新しく追加されたカスタム点種は既定で表示する
+  // 新しく追加されたカスタム点種は既定で表示する。
+  // 加えて、実データに存在する点種コードが visibleTypes に含まれていない場合も
+  // 自動で追加する（旧スキーマの 'reference' / 'outer_boundary' 等が
+  // フィルタで弾かれて全座標が見えなくなる事故を防ぐ）。
   useEffect(() => {
     const cur = useMapViewStore.getState().visibleTypes
     const next = new Set(cur)
@@ -424,8 +427,15 @@ export function CoordinatesPage() {
         changed = true
       }
     }
+    for (const c of coordinates) {
+      const code = c.type
+      if (code && !next.has(code)) {
+        next.add(code)
+        changed = true
+      }
+    }
     if (changed) setVisibleTypes(next)
-  }, [typeOptions, setVisibleTypes])
+  }, [typeOptions, coordinates, setVisibleTypes])
 
   // 杭種フィルターの選択肢: '未設定' + プリセット + 現在使われているカスタム値
   const stakeTypeOptions = useMemo(() => {

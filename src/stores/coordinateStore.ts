@@ -1,6 +1,26 @@
 import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
-import type { CoordinateType, DesignCoordinate, StakeStatus } from '@/types/database'
+import { STAKE_STATUS_OPTIONS, type CoordinateType, type DesignCoordinate, type StakeStatus } from '@/types/database'
+
+const VALID_STAKE_STATUS_SET = new Set<string>(STAKE_STATUS_OPTIONS)
+// 旧スキーマ値 → 新スキーマ値 のマップ。DB マイグレーション漏れに備えた
+// 防衛的フォールバック。マイグレーションを流していれば不要だが、
+// 残っていてもフロントで弾いてフィルタ崩壊を防ぐ。
+function normalizeStakeStatus(raw: string | null | undefined): StakeStatus {
+  if (raw == null) return 'unset'
+  if (VALID_STAKE_STATUS_SET.has(raw)) return raw as StakeStatus
+  switch (raw) {
+    case 'none':
+    case 'needed':
+      return 'unset'
+    case 'permanent':
+      return 'new'
+    case 'impossible':
+      return 'skip'
+    default:
+      return 'unset'
+  }
+}
 import { CoordinateConverter } from '@/lib/coordinates'
 import { useFarmStore } from './farmStore'
 import { useSettingsStore } from './settingsStore'
@@ -199,7 +219,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
           lng,
           type: row.coordinate_type as CoordinateType,
           stakeType: row.stake_type ?? null,
-          stakeStatus: (row.stake_status ?? 'unset') as StakeStatus,
+          stakeStatus: normalizeStakeStatus(row.stake_status),
           createdAt: row.created_at ?? null,
           updatedAt: row.updated_at ?? null,
           createdBy: row.created_by ?? null,
@@ -262,7 +282,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         lng: null,
         type: row.coordinate_type as CoordinateType,
         stakeType: row.stake_type ?? null,
-        stakeStatus: (row.stake_status ?? 'unset') as StakeStatus,
+        stakeStatus: normalizeStakeStatus(row.stake_status),
         createdAt: row.created_at ?? null,
         updatedAt: row.updated_at ?? null,
         createdBy: row.created_by ?? null,
