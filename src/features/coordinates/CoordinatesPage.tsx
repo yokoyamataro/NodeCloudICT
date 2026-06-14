@@ -1068,6 +1068,16 @@ export function CoordinatesPage() {
     }
   }, [coordinates.length, importCoordinates])
 
+  // 地図マーカーで Ctrl/⌘ + クリック されたときに 表のチェック状態をトグルする
+  const handlePointToggleCheck = (id: string) => {
+    setCheckedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
   // 点がクリックされたとき
   const handlePointClick = (id: string) => {
     // 座標計算で地図から点を選択中なら、その点を割り当てて通常選択はしない
@@ -1604,6 +1614,8 @@ export function CoordinatesPage() {
             visibleStakeStatuses={visibleStakeStatuses}
             displayCoordinateIds={filteredCoordinateIdSet}
             orangeCoordIds={orangeCoordIds}
+            checkedCoordIds={checkedIds}
+            onPointToggleCheck={handlePointToggleCheck}
             baseLayer={baseLayer}
             route={route}
             showRoute={true}
@@ -2285,6 +2297,8 @@ export function CoordinatesPage() {
               visibleStakeStatuses={visibleStakeStatuses}
             displayCoordinateIds={filteredCoordinateIdSet}
             orangeCoordIds={orangeCoordIds}
+            checkedCoordIds={checkedIds}
+            onPointToggleCheck={handlePointToggleCheck}
               baseLayer={baseLayer}
               route={route}
               showRoute={true}

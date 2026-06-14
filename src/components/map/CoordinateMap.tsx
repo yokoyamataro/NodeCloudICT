@@ -27,10 +27,21 @@ const MARKER_COLORS: Record<string, string> = {
   stake: '#22c55e',       // 測点: 緑（暗渠構成点と同じ）
 }
 
-// カスタムマーカーアイコンを作成
-function createColoredIcon(color: string, isSelected: boolean = false): L.DivIcon {
+// カスタムマーカーアイコンを作成。
+//   isSelected: 単一選択時に太い青枠で強調
+//   isChecked : 複数選択（チェックボックス系）でスカイブルーのハロー（外側リング）を出す
+function createColoredIcon(
+  color: string,
+  isSelected: boolean = false,
+  isChecked: boolean = false,
+): L.DivIcon {
   const size = isSelected ? 16 : 12
   const borderWidth = isSelected ? 3 : 2
+  // チェック中はマーカーの外周にスカイブルーのハロー（4px のアウターリング）を出す。
+  // box-shadow を 2 段重ねて、内側の白縁とは別の色で目立たせる。
+  const checkedHalo = isChecked
+    ? `0 0 0 4px #38bdf8, 0 0 0 5px rgba(255,255,255,0.9), 0 2px 4px rgba(0,0,0,0.3)`
+    : `0 2px 4px rgba(0,0,0,0.3)`
   return L.divIcon({
     className: 'custom-marker',
     html: `<div style="
@@ -39,7 +50,7 @@ function createColoredIcon(color: string, isSelected: boolean = false): L.DivIco
       height: ${size}px;
       border-radius: 50%;
       border: ${borderWidth}px solid ${isSelected ? '#1d4ed8' : 'white'};
-      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      box-shadow: ${checkedHalo};
     "></div>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
@@ -226,6 +237,13 @@ interface CoordinateMapProps {
   /** オレンジ色で強調する座標 ID 集合（出力順指定モード等で使う）。
    *  指定された ID のマーカーは色をオレンジに置き換え、リング付きで大きめに描画する */
   orangeCoordIds?: Set<string>
+  /** チェック中（表のチェックボックスで選択中）の座標 ID 集合。
+   *  指定された ID のマーカーはスカイブルーのハロー（外側リング）で強調表示し、
+   *  Ctrl/⌘ + クリックで onPointToggleCheck と連動して選択状態を切替できるようにする */
+  checkedCoordIds?: Set<string>
+  /** Ctrl/⌘ + マーカークリックで呼ぶ。指定すると複数選択 UI と連動。
+   *  未指定なら従来通り通常クリックで onPointSelect だけ呼ばれる */
+  onPointToggleCheck?: (id: string) => void
   baseLayer?: BaseLayerType
   externalPolygons?: ExternalPolygon[]
   editingExternalPolygonId?: string | null
@@ -280,6 +298,8 @@ export function CoordinateMap({
   visibleStakeStatuses,
   displayCoordinateIds,
   orangeCoordIds,
+  checkedCoordIds,
+  onPointToggleCheck,
   baseLayer = 'osm',
   externalPolygons = [],
   editingExternalPolygonId,
@@ -571,6 +591,7 @@ export function CoordinateMap({
           const isSelectedConstituent = coord.id === selectedConstituentPointId
           const isSelectedRegular = coord.id === selectedPointId
           const isOrange = orangeCoordIds?.has(coord.id) ?? false
+          const isChecked = checkedCoordIds?.has(coord.id) ?? false
           const isHighlighted = isSelectedConstituent || isSelectedRegular || isOrange
           const baseColor = MARKER_COLORS[coord.type] || '#666'
           const iconColor = isSelectedConstituent || isOrange ? '#f97316' : baseColor
@@ -578,13 +599,22 @@ export function CoordinateMap({
           <Marker
             key={coord.id}
             position={[coord.lat, coord.lng]}
-            icon={createColoredIcon(iconColor, isHighlighted)}
-            // 重なっているとき、ハイライト中のマーカーを必ず最前面に出して
+            icon={createColoredIcon(iconColor, isHighlighted, isChecked)}
+            // ハイライト中 / チェック中のマーカーを必ず最前面に出して、
             // 後ろに隠れて見えなくなる現象を防ぐ
-            zIndexOffset={isHighlighted ? 1000 : 0}
+            zIndexOffset={isHighlighted || isChecked ? 1000 : 0}
             interactive={coordinatesInteractive}
             eventHandlers={coordinatesInteractive ? {
-              click: () => onPointSelect?.(coord.id),
+              // Ctrl/⌘ + クリック で複数選択をトグル（ハンドラ指定時のみ）。
+              // 通常クリックは従来通り単一選択。
+              click: (e) => {
+                const orig = (e.originalEvent ?? null) as MouseEvent | null
+                if (onPointToggleCheck && orig && (orig.ctrlKey || orig.metaKey)) {
+                  onPointToggleCheck(coord.id)
+                  return
+                }
+                onPointSelect?.(coord.id)
+              },
             } : undefined}
           >
             {/* showLabels && showLabel が true なら常時表示、false ならホバー
