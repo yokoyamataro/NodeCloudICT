@@ -73,21 +73,28 @@ function loadSettings(): {
       Array.isArray(parsed.visibleTypes) && parsed.visibleTypes.length > 0
         ? new Set(parsed.visibleTypes.filter((s): s is string => typeof s === 'string'))
         : new Set<string>(DEFAULT_VISIBLE)
-    // 設置状態は STAKE_STATUS_OPTIONS のいずれかのみ受け付ける
+    // 設置状態は STAKE_STATUS_OPTIONS のいずれかのみ受け付ける。
+    // 旧スキーマ（'none' / 'needed' / 'permanent' / 'impossible' 等）が
+    // 残っていてフィルタで一部だけ落ちると、ユーザは新コード
+    // ('unset' / 'new' / 'replaced' / 'skip') を選んだ覚えがないのに
+    // それらの座標が見えなくなる。検知したら全表示に戻す。
     const validStatusSet = new Set<string>(STAKE_STATUS_OPTIONS)
+    const savedArr = Array.isArray(parsed.visibleStakeStatuses)
+      ? parsed.visibleStakeStatuses
+      : []
+    const filteredArr = savedArr.filter(
+      (s): s is StakeStatus => typeof s === 'string' && validStatusSet.has(s),
+    )
+    const schemaChanged = savedArr.length > 0 && filteredArr.length !== savedArr.length
     const vss =
-      Array.isArray(parsed.visibleStakeStatuses) && parsed.visibleStakeStatuses.length > 0
-        ? new Set(
-            parsed.visibleStakeStatuses.filter(
-              (s): s is StakeStatus => typeof s === 'string' && validStatusSet.has(s),
-            ),
-          )
-        : new Set<StakeStatus>(DEFAULT_VISIBLE_STATUSES)
+      schemaChanged || filteredArr.length === 0
+        ? new Set<StakeStatus>(DEFAULT_VISIBLE_STATUSES)
+        : new Set<StakeStatus>(filteredArr)
     const baseLayer: BaseLayerType =
       parsed.baseLayer === 'gsi-photo' || parsed.baseLayer === 'gsi-std' ? parsed.baseLayer : 'osm'
     return {
       visibleTypes: vt,
-      visibleStakeStatuses: vss.size > 0 ? vss : new Set(DEFAULT_VISIBLE_STATUSES),
+      visibleStakeStatuses: vss,
       showOrtho: typeof parsed.showOrtho === 'boolean' ? parsed.showOrtho : true,
       baseLayer,
     }
