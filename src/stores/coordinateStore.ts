@@ -2,6 +2,19 @@ import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
 import { STAKE_STATUS_OPTIONS, type CoordinateType, type DesignCoordinate, type StakeStatus } from '@/types/database'
 
+// PostgrestError は Error 継承ではないので instanceof Error が false になり、
+// fallback の固定文言で原因が握りつぶされる。message / details / hint / code を
+// 拾ってユーザ表示用の文字列にまとめる。
+function extractSupabaseErrorMessage(err: unknown, fallback: string): string {
+  const e = err as
+    | (Partial<{ message: string; code: string; details: string; hint: string }> &
+        Record<string, unknown>)
+    | null
+  const parts = [e?.message, e?.details, e?.hint, e?.code ? `(code: ${e.code})` : null]
+    .filter((s): s is string => typeof s === 'string' && s.length > 0)
+  return parts.length > 0 ? parts.join(' — ') : fallback
+}
+
 const VALID_STAKE_STATUS_SET = new Set<string>(STAKE_STATUS_OPTIONS)
 // 旧スキーマ値 → 新スキーマ値 のマップ。DB マイグレーション漏れに備えた
 // 防衛的フォールバック。マイグレーションを流していれば不要だが、
@@ -229,8 +242,10 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
 
       set({ coordinates, loading: false, loadingProgress: null, loadedFarmId: farmId })
     } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[coordinateStore] fetchCoordinates failed', err)
       set({
-        error: err instanceof Error ? err.message : '座標の取得に失敗しました',
+        error: extractSupabaseErrorMessage(err, '座標の取得に失敗しました'),
         loading: false,
         loadingProgress: null,
         loadedFarmId: null,
@@ -291,7 +306,9 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
 
       set({ coordinates: [...state.coordinates, newCoord] })
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : '座標の追加に失敗しました' })
+      // eslint-disable-next-line no-console
+      console.error('[coordinateStore] addCoordinate failed', err)
+      set({ error: extractSupabaseErrorMessage(err, '座標の追加に失敗しました') })
     }
   },
 
@@ -337,7 +354,9 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         coordinates: state.coordinates.filter((c) => c.id !== id),
       }))
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : '座標の削除に失敗しました' })
+      // eslint-disable-next-line no-console
+      console.error('[coordinateStore] deleteCoordinate failed', err)
+      set({ error: extractSupabaseErrorMessage(err, '座標の削除に失敗しました') })
     }
   },
 
@@ -359,12 +378,14 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         .eq('id', id)
       if (error) throw error
     } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[coordinateStore] setStakeStatus failed', err, { id, status })
       // ロールバック
       set((state) => ({
         coordinates: state.coordinates.map((c) =>
           c.id === id ? { ...c, stakeStatus: prev.stakeStatus } : c,
         ),
-        error: err instanceof Error ? err.message : '設置状態の保存に失敗しました',
+        error: extractSupabaseErrorMessage(err, '設置状態の保存に失敗しました'),
       }))
     }
   },
@@ -387,7 +408,9 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         coordinates: state.coordinates.filter((c) => !idSet.has(c.id)),
       }))
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : '座標の一括削除に失敗しました' })
+      // eslint-disable-next-line no-console
+      console.error('[coordinateStore] deleteCoordinates failed', err)
+      set({ error: extractSupabaseErrorMessage(err, '座標の一括削除に失敗しました') })
     }
   },
 
@@ -481,7 +504,9 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
       }
       return allNew
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : '座標のインポートに失敗しました' })
+      // eslint-disable-next-line no-console
+      console.error('[coordinateStore] importCoordinates failed', err)
+      set({ error: extractSupabaseErrorMessage(err, '座標のインポートに失敗しました') })
       return []
     }
   },
@@ -501,7 +526,9 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
 
       set({ coordinates: [] })
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : 'データの削除に失敗しました' })
+      // eslint-disable-next-line no-console
+      console.error('[coordinateStore] clearFarmData failed', err)
+      set({ error: extractSupabaseErrorMessage(err, 'データの削除に失敗しました') })
     }
   },
 
@@ -557,7 +584,11 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
       set({ pendingChanges: new Map() })
       useSettingsStore.getState().setHasUnsavedChanges(false)
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : '保存に失敗しました' })
+      // eslint-disable-next-line no-console
+      console.error('[coordinateStore] saveAllCoordinates failed', err, {
+        pendingCount: state.pendingChanges.size,
+      })
+      set({ error: extractSupabaseErrorMessage(err, '保存に失敗しました') })
     }
   },
 
