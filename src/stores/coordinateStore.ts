@@ -365,16 +365,17 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
   setStakeStatus: async (id, status) => {
     const prev = get().coordinates.find((c) => c.id === id)
     if (!prev) return
+    const safeStatus = normalizeStakeStatus(status)
     // 楽観反映
     set((state) => ({
       coordinates: state.coordinates.map((c) =>
-        c.id === id ? { ...c, stakeStatus: status } : c,
+        c.id === id ? { ...c, stakeStatus: safeStatus } : c,
       ),
     }))
     try {
       const { error } = await supabase
         .from('design_coordinates')
-        .update({ stake_status: status } as never)
+        .update({ stake_status: safeStatus } as never)
         .eq('id', id)
       if (error) throw error
     } catch (err) {
@@ -558,8 +559,10 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
       const { data: { user } } = await supabase.auth.getUser()
       const uid = user?.id ?? null
 
-      // 座標の変更を保存
+      // 座標の変更を保存。stake_status は CHECK 制約で新コードのみ許可されるため
+      // 保存直前に必ず normalize する（pendingChanges に古いコードが残っていても安全）。
       for (const [id, coord] of state.pendingChanges) {
+        const safeStakeStatus = normalizeStakeStatus(coord.stakeStatus)
         const { error } = await supabase
           .from('design_coordinates')
           .update({
@@ -569,7 +572,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
             z: coord.z,
             coordinate_type: coord.type,
             stake_type: coord.stakeType,
-            stake_status: coord.stakeStatus,
+            stake_status: safeStakeStatus,
             latitude: coord.lat,
             longitude: coord.lng,
             updated_by: uid,
@@ -580,8 +583,15 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         if (error) throw error
       }
 
-      // 変更をクリア
-      set({ pendingChanges: new Map() })
+      // 変更をクリアし、ローカルの coordinates も DB へ送ったのと同じ正規化後の
+      // stakeStatus に揃えておく（次回保存でも CHECK を踏まないように）
+      set((s) => ({
+        pendingChanges: new Map(),
+        coordinates: s.coordinates.map((c) => {
+          const ns = normalizeStakeStatus(c.stakeStatus)
+          return ns === c.stakeStatus ? c : { ...c, stakeStatus: ns }
+        }),
+      }))
       useSettingsStore.getState().setHasUnsavedChanges(false)
     } catch (err) {
       // eslint-disable-next-line no-console
