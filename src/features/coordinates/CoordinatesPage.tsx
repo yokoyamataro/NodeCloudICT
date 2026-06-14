@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Upload, Download, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Camera, Image as ImageIcon, Loader2, Calculator, Layers, Check } from 'lucide-react'
+import { Upload, Download, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Camera, Image as ImageIcon, Loader2, Calculator, Layers, Check, Pencil, X } from 'lucide-react'
 import { PointTypeFilterButton } from './PointTypeFilterButton'
 import { StakeStatusFilterButton } from './StakeStatusFilterButton'
 import {
@@ -285,6 +285,8 @@ export function CoordinatesPage() {
 
   // チェックされた点のID（エクスポート対象）
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set())
+  // 一括訂正モーダル
+  const [showBulkEditModal, setShowBulkEditModal] = useState(false)
 
   // ツールバーのドロップダウンメニュー（インポート / エクスポート / 点種フィルター）
   const [openMenu, setOpenMenu] = useState<'import' | 'export' | 'typeFilter' | null>(null)
@@ -941,11 +943,18 @@ export function CoordinatesPage() {
     setCheckedIds(new Set())
   }
 
-  // 選択点の点種を一括変更
-  const handleBulkSetType = (newType: string) => {
-    if (checkedIds.size === 0 || !newType) return
+  // 選択点に一括訂正を適用する。null=変更なし、undefined はキー自体を渡さない。
+  const applyBulkEdit = (patch: {
+    type?: string
+    stakeType?: string | null
+    stakeStatus?: StakeStatus
+  }) => {
+    if (checkedIds.size === 0) return
     for (const id of Array.from(checkedIds)) {
-      updateCoordinate(id, 'type', newType)
+      if (patch.type !== undefined) updateCoordinate(id, 'type', patch.type)
+      if (patch.stakeType !== undefined) updateCoordinate(id, 'stakeType', patch.stakeType)
+      if (patch.stakeStatus !== undefined)
+        updateCoordinate(id, 'stakeStatus', patch.stakeStatus)
     }
   }
 
@@ -956,20 +965,22 @@ export function CoordinatesPage() {
       <div className="px-3 py-1.5 bg-blue-50 border-b border-blue-200 flex items-center gap-2 text-xs">
         <span className="font-medium text-blue-700">{checkedIds.size} 点選択中</span>
         <span className="text-slate-300">|</span>
-        <span className="text-slate-600">点種を一括変更:</span>
-        <select
-          value=""
-          onChange={(e) => {
-            handleBulkSetType(e.target.value)
-            e.currentTarget.value = ''
-          }}
-          className="px-1.5 py-0.5 text-xs border rounded bg-white"
+        <button
+          onClick={() => setShowBulkEditModal(true)}
+          className="flex items-center gap-1 px-2 py-0.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+          title="選択中の点種 / 杭種 / 設置状態をまとめて変更"
         >
-          <option value="" disabled>選択...</option>
-          {typeOptions.map((opt) => (
-            <option key={opt.code} value={opt.code}>{opt.label}</option>
-          ))}
-        </select>
+          <Pencil className="h-3 w-3" />
+          一括訂正
+        </button>
+        <button
+          disabled
+          title="座標計算（一括）は実装予定です"
+          className="flex items-center gap-1 px-2 py-0.5 text-xs border border-slate-300 text-slate-400 rounded cursor-not-allowed"
+        >
+          <Calculator className="h-3 w-3" />
+          座標計算
+        </button>
         <button
           onClick={handleBulkDelete}
           className="ml-auto flex items-center gap-1 px-2 py-0.5 text-xs bg-red-600 text-white rounded hover:bg-red-700"
@@ -2385,6 +2396,20 @@ export function CoordinatesPage() {
         }
       />
 
+      {/* 一括訂正モーダル */}
+      {showBulkEditModal && (
+        <BulkEditModal
+          selectedCount={checkedIds.size}
+          typeOptions={typeOptions}
+          stakeTypeOptions={stakeTypeOptions}
+          onClose={() => setShowBulkEditModal(false)}
+          onApply={(patch) => {
+            applyBulkEdit(patch)
+            setShowBulkEditModal(false)
+          }}
+        />
+      )}
+
       {/* 貼り付けモーダル */}
       <PasteModal
         isOpen={showPasteModal}
@@ -2419,6 +2444,149 @@ export function CoordinatesPage() {
           />
         )
       })()}
+    </div>
+  )
+}
+
+// 一括訂正モーダル: 点種 / 杭種 / 設置 のそれぞれをプルダウンで選択し、
+// 「変更なし」のままなら更新しない。"適用" で選択された値を一括反映する。
+function BulkEditModal({
+  selectedCount,
+  typeOptions,
+  stakeTypeOptions,
+  onClose,
+  onApply,
+}: {
+  selectedCount: number
+  typeOptions: Array<{ code: string; label: string }>
+  stakeTypeOptions: Array<{ code: string; label: string }>
+  onClose: () => void
+  onApply: (patch: {
+    type?: string
+    stakeType?: string | null
+    stakeStatus?: StakeStatus
+  }) => void
+}) {
+  // '__nochange__' 番兵で「変更なし」を表現する。空文字列だと 杭種 の 未設定 (null) と
+  // 区別がつかないため。
+  const NOCHANGE = '__nochange__'
+  const NULLABLE = '__null__'
+  const [type, setType] = useState<string>(NOCHANGE)
+  const [stakeType, setStakeType] = useState<string>(NOCHANGE)
+  const [stakeStatus, setStakeStatus] = useState<string>(NOCHANGE)
+
+  const nothingSelected =
+    type === NOCHANGE && stakeType === NOCHANGE && stakeStatus === NOCHANGE
+
+  const apply = () => {
+    const patch: {
+      type?: string
+      stakeType?: string | null
+      stakeStatus?: StakeStatus
+    } = {}
+    if (type !== NOCHANGE) patch.type = type
+    if (stakeType !== NOCHANGE) {
+      patch.stakeType = stakeType === NULLABLE ? null : stakeType
+    }
+    if (stakeStatus !== NOCHANGE) patch.stakeStatus = stakeStatus as StakeStatus
+    if (Object.keys(patch).length === 0) {
+      onClose()
+      return
+    }
+    onApply(patch)
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-lg shadow-xl w-full max-w-md flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-4 py-3 border-b flex items-center gap-2">
+          <Pencil className="h-4 w-4 text-blue-600" />
+          <h3 className="flex-1 text-base font-semibold">一括訂正</h3>
+          <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-700 rounded">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="px-4 py-2 bg-blue-50 text-xs text-blue-700 border-b">
+          {selectedCount} 点を変更します。「変更なし」の項目は元の値が保持されます。
+        </div>
+
+        <div className="p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <label className="w-16 text-sm text-slate-600">点種</label>
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value)}
+              className="flex-1 px-2 py-1 text-sm border rounded bg-white"
+            >
+              <option value={NOCHANGE}>変更なし</option>
+              {typeOptions.map((opt) => (
+                <option key={opt.code} value={opt.code}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="w-16 text-sm text-slate-600">杭種</label>
+            <select
+              value={stakeType}
+              onChange={(e) => setStakeType(e.target.value)}
+              className="flex-1 px-2 py-1 text-sm border rounded bg-white"
+            >
+              <option value={NOCHANGE}>変更なし</option>
+              <option value={NULLABLE}>未設定</option>
+              {stakeTypeOptions
+                .filter((opt) => opt.code !== '')
+                .map((opt) => (
+                  <option key={opt.code} value={opt.code}>
+                    {opt.label}
+                  </option>
+                ))}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="w-16 text-sm text-slate-600">設置</label>
+            <select
+              value={stakeStatus}
+              onChange={(e) => setStakeStatus(e.target.value)}
+              className="flex-1 px-2 py-1 text-sm border rounded bg-white"
+            >
+              <option value={NOCHANGE}>変更なし</option>
+              {STAKE_STATUS_OPTIONS.map((s) => (
+                <option key={s} value={s}>
+                  {STAKE_STATUS_LABEL[s]}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="px-4 py-3 border-t flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={apply}
+            disabled={nothingSelected}
+            className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+          >
+            <Check className="h-3.5 w-3.5" />
+            適用
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
