@@ -1633,8 +1633,9 @@ export function CoordinatesPage() {
           <h2 className="text-lg font-semibold mb-3">座標計算書</h2>
           {renderToolbar('hover:bg-gray-50')}
         </div>
+        {/* 一括操作バーは表スクロールの外側に出す（下にスクロールしても表示し続ける） */}
+        {renderBulkBar()}
         <div className="flex-1 overflow-auto">
-          {renderBulkBar()}
           <table className="min-w-full w-max text-sm">
             <thead className="bg-slate-100 sticky top-0 z-30">
               <tr>
@@ -1969,9 +1970,11 @@ export function CoordinatesPage() {
                 {renderToolbar('hover:bg-white')}
               </div>
 
+              {/* 一括操作バーは表スクロールの外側に出す（下にスクロールしても表示し続ける） */}
+              {renderBulkBar()}
+
               {/* 座標テーブル */}
               <div className="flex-1 overflow-auto">
-                {renderBulkBar()}
                 <table className="min-w-full w-max text-sm">
                   <thead className="bg-slate-100 sticky top-0 z-30">
                     <tr>
