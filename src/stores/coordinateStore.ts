@@ -318,7 +318,14 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
     const coord = state.coordinates.find((c) => c.id === id)
     if (!coord) return
 
-    const updated = { ...coord, [field]: value }
+    // 旧スキーマの stake_status が残っていると次回保存で CHECK に弾かれるので、
+    // ここでも保険として正規化しておく（ロード時の normalize 前にセッションが
+    // 始まっているケースを救済）。
+    const normalizedBase = { ...coord, stakeStatus: normalizeStakeStatus(coord.stakeStatus) }
+    const updated =
+      field === 'stakeStatus'
+        ? { ...normalizedBase, stakeStatus: normalizeStakeStatus(value as string | null) }
+        : { ...normalizedBase, [field]: value }
 
     // X, Y が更新されたら緯度経度を再計算
     if (field === 'x' || field === 'y') {
