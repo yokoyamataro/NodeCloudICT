@@ -37,6 +37,7 @@ import {
   Plus,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import { playStartChime, playStopChime, unlockAudio } from '@/lib/beep'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
@@ -762,9 +763,14 @@ export function MobileStakingPage() {
   // 記録状態
   const [recording, setRecording] = useState(false)
   const [recordedCount, setRecordedCount] = useState(0)
+  const [rejectedCount, setRejectedCount] = useState(0)
   const recSamplesRef = useRef<Array<{ lat: number; lng: number; alt: number | null; acc: number | null }>>([])
   const recTimerRef = useRef<number | null>(null)
   const recCleanupRef = useRef<(() => void) | null>(null)
+  // 目標終了時刻（ms）。ノイズで棄却したサンプル分だけ後ろにずれる。
+  const recEndMsRef = useRef<number>(0)
+  // 終了監視用 interval。setTimeout で固定終了せず、棄却で延長できるようにする。
+  const recEndIntervalRef = useRef<number | null>(null)
   // 「現在地を記録」ボタンで起動した場合は、ターゲット測設判定をスキップして
   // 必ず新点として保存する
   const recForceFreeRef = useRef<boolean>(false)
@@ -1710,18 +1716,48 @@ export function MobileStakingPage() {
     }
     recSamplesRef.current = []
     setRecordedCount(0)
+    setRejectedCount(0)
     recForceFreeRef.current = !!opts.forceFreePoint
+    recEndMsRef.current = Date.now() + avgSeconds * 1000
     setRecording(true)
+    // 開始音（ユーザ操作直後なので AudioContext を resume してから鳴らす）
+    void unlockAudio().then(() => playStartChime())
+
+    // 1 サンプルあたりのおおよその間隔（GPS の watchPosition は機種で揺れるが
+    // ハイエンドで概ね 1 秒に 1 回）。棄却 1 回につきこの時間だけ終了時刻を後ろへ。
+    const REJECT_EXTEND_MS = 1000
 
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
-        recSamplesRef.current.push({
+        const sample = {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
           alt: pos.coords.altitude,
           acc: pos.coords.accuracy,
-        })
-        setRecordedCount(recSamplesRef.current.length)
+        }
+        const accepted = recSamplesRef.current
+        // 2 サンプル以上溜まったら、それまでの平均から 3cm 以上ずれた点はノイズ
+        // として棄却する。棄却した分だけ目標終了時刻を後ろへ延長して、
+        // 規定数の有効サンプルが揃うまで観測を継続する。
+        if (accepted.length >= 2) {
+          let sumLat = 0
+          let sumLng = 0
+          for (const p of accepted) {
+            sumLat += p.lat
+            sumLng += p.lng
+          }
+          const avgLat = sumLat / accepted.length
+          const avgLng = sumLng / accepted.length
+          const d = distanceMeters({ lat: sample.lat, lng: sample.lng }, { lat: avgLat, lng: avgLng })
+          if (d > 0.03) {
+            // 棄却して時間を延ばす
+            recEndMsRef.current += REJECT_EXTEND_MS
+            setRejectedCount((n) => n + 1)
+            return
+          }
+        }
+        accepted.push(sample)
+        setRecordedCount(accepted.length)
       },
       () => {},
       { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 },
@@ -1733,10 +1769,17 @@ export function MobileStakingPage() {
       } catch {
         // ignore
       }
+      if (recEndIntervalRef.current != null) {
+        window.clearInterval(recEndIntervalRef.current)
+        recEndIntervalRef.current = null
+      }
     }
-    recTimerRef.current = window.setTimeout(() => {
-      finishRecording()
-    }, avgSeconds * 1000)
+    // 終了時刻が動的に伸びるので setTimeout ではなく interval で監視する
+    recEndIntervalRef.current = window.setInterval(() => {
+      if (Date.now() >= recEndMsRef.current) {
+        void finishRecording()
+      }
+    }, 250)
   }
 
   // 記録終了・保存
@@ -1745,12 +1788,18 @@ export function MobileStakingPage() {
       window.clearTimeout(recTimerRef.current)
       recTimerRef.current = null
     }
+    if (recEndIntervalRef.current != null) {
+      window.clearInterval(recEndIntervalRef.current)
+      recEndIntervalRef.current = null
+    }
     if (recCleanupRef.current) {
       recCleanupRef.current()
       recCleanupRef.current = null
     }
     const samples = recSamplesRef.current
     setRecording(false)
+    // 終了音
+    playStopChime()
     if (samples.length === 0) {
       alert('位置情報が取得できませんでした')
       return
@@ -2009,12 +2058,17 @@ export function MobileStakingPage() {
       window.clearTimeout(recTimerRef.current)
       recTimerRef.current = null
     }
+    if (recEndIntervalRef.current != null) {
+      window.clearInterval(recEndIntervalRef.current)
+      recEndIntervalRef.current = null
+    }
     if (recCleanupRef.current) {
       recCleanupRef.current()
       recCleanupRef.current = null
     }
     recSamplesRef.current = []
     setRecordedCount(0)
+    setRejectedCount(0)
     setRecording(false)
     recForceFreeRef.current = false
   }
@@ -4102,7 +4156,12 @@ export function MobileStakingPage() {
             <>
               <div className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-amber-500 text-white rounded-lg font-bold">
                 <Loader2 className="h-5 w-5 animate-spin" />
-                記録中… {recordedCount} サンプル
+                <span>記録中… {recordedCount} サンプル</span>
+                {rejectedCount > 0 && (
+                  <span className="text-[11px] font-normal opacity-90">
+                    （ノイズ棄却 {rejectedCount} 件 / 時間延長中）
+                  </span>
+                )}
               </div>
               <button
                 onClick={cancelRecording}

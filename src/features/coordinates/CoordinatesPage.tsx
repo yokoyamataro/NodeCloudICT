@@ -267,7 +267,7 @@ export function CoordinatesPage() {
   //   ② フォーマット選択（CSV / SIMA / TSV / 写真帳 / Excel）
   // exportSource はモード選択後にセットされ、フォーマット選択時に消費する
   type ExportSource = 'all' | 'visible' | 'visible-ordered'
-  type ExportFormat = 'csv' | 'tsv' | 'sima' | 'photobook' | 'excel'
+  type ExportFormat = 'csv' | 'tsv' | 'sima' | 'photobook' | 'photos' | 'excel'
   const [exportSource, setExportSource] = useState<ExportSource | null>(null)
   // フォーマット選択を先にする 2 段階フローに変更。
   // ① 座標出力ボタン → ② 出力フォーマット → ③ 出力対象（全/表示/順指定）
@@ -802,6 +802,128 @@ export function CoordinatesPage() {
     }
   }
 
+  // 登録済み写真を JPG でダウンロード。
+  //   1 枚のみ → そのまま .jpg
+  //   2 枚以上 → ZIP に格納
+  // ファイル名は `{点名}_{写真種別}` (.jpg)。同じ (点名, 種別) で複数枚あれば連番。
+  const handleExportPhotos = async (source?: ExportSource) => {
+    const targets = getExportTargets(source ?? null)
+    if (targets.length === 0) {
+      alert('座標がありません')
+      return
+    }
+    setPhotoExporting({ done: 0, total: 0 })
+    try {
+      await fetchAttachments('coordinate', targets.map((c) => c.id))
+      const byEntity = useAttachmentStore.getState().byEntity
+      // 出力する写真リストを構築（点名 → 写真）
+      interface Item {
+        pointNumber: string
+        category: string
+        filePath: string
+      }
+      const items: Item[] = []
+      for (const c of targets) {
+        const photos = byEntity.get(`coordinate:${c.id}`) ?? []
+        for (const p of photos) {
+          items.push({
+            pointNumber: c.pointNumber,
+            category: p.category ?? '写真',
+            filePath: p.filePath,
+          })
+        }
+      }
+      if (items.length === 0) {
+        alert('写真が登録された座標がありません')
+        setPhotoExporting(null)
+        return
+      }
+
+      // ファイル名のサニタイズ（Windows/Mac で問題になる文字を _ へ）
+      const safe = (s: string) => s.replace(/[\\/:*?"<>|]/g, '_')
+
+      // 同じ (点名, 種別) 内で連番を振る
+      const seq = new Map<string, number>()
+      const named: Array<{ name: string; filePath: string }> = items.map((it) => {
+        const base = `${safe(it.pointNumber)}_${safe(it.category)}`
+        const n = (seq.get(base) ?? 0) + 1
+        seq.set(base, n)
+        const name = n === 1 ? `${base}.jpg` : `${base}_${n}.jpg`
+        return { name, filePath: it.filePath }
+      })
+
+      // 画像取得
+      setPhotoExporting({ done: 0, total: named.length })
+      const fetched: Array<{ name: string; blob: Blob | null }> = []
+      let done = 0
+      for (const it of named) {
+        try {
+          const url = await getSignedUrl(it.filePath)
+          if (!url) {
+            fetched.push({ name: it.name, blob: null })
+          } else {
+            const res = await fetch(url)
+            const blob = res.ok ? await res.blob() : null
+            fetched.push({ name: it.name, blob })
+          }
+        } catch {
+          fetched.push({ name: it.name, blob: null })
+        }
+        done++
+        setPhotoExporting({ done, total: named.length })
+      }
+      const usable = fetched.filter((x): x is { name: string; blob: Blob } => x.blob !== null)
+      if (usable.length === 0) {
+        alert('写真の取得に失敗しました')
+        setPhotoExporting(null)
+        return
+      }
+
+      const projName = projects.find((p) => p.id === currentFarm?.project_id)?.name ?? ''
+      const farmName = currentFarm?.name ?? ''
+      const baseDownloadName = `写真_${safe(farmName) || 'export'}`
+
+      if (usable.length === 1) {
+        // 1 枚 → そのまま JPG
+        const u = URL.createObjectURL(usable[0].blob)
+        const a = document.createElement('a')
+        a.href = u
+        a.download = usable[0].name
+        a.click()
+        URL.revokeObjectURL(u)
+      } else {
+        // 複数 → ZIP
+        const { default: JSZip } = await import('jszip')
+        const zip = new JSZip()
+        for (const f of usable) zip.file(f.name, f.blob)
+        // README として簡単なメタ情報も入れる
+        zip.file(
+          '_README.txt',
+          [
+            `工区: ${farmName}`,
+            projName ? `プロジェクト: ${projName}` : '',
+            `出力日: ${new Date().toLocaleString('ja-JP')}`,
+            `写真数: ${usable.length}`,
+            `命名規則: 点名_写真種別.jpg（同名複数は連番）`,
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        )
+        const blob = await zip.generateAsync({ type: 'blob' })
+        const u = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = u
+        a.download = `${baseDownloadName}.zip`
+        a.click()
+        URL.revokeObjectURL(u)
+      }
+    } catch (e) {
+      alert('写真出力に失敗しました: ' + (e instanceof Error ? e.message : String(e)))
+    } finally {
+      setPhotoExporting(null)
+    }
+  }
+
   // 写真帳（遠景・近景写真を貼り付けた Excel）を出力。ひな形を指定
   const handleExportPhotoBook = async (template: PhotoBookTemplate) => {
     const targets = getExportTargets()
@@ -901,6 +1023,7 @@ export function CoordinatesPage() {
     if (format === 'csv') handleExportCSV(source)
     else if (format === 'tsv') void handleCopyTSV(source)
     else if (format === 'sima') handleExportSIMA(source)
+    else if (format === 'photos') void handleExportPhotos(source)
     else if (format === 'excel') handleExportExcel()
     setOpenMenu(null)
     setPendingFormat(null)
@@ -1388,6 +1511,15 @@ export function CoordinatesPage() {
                   </button>
                   <button
                     type="button"
+                    onClick={() => setPendingFormat('photos')}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
+                    title="登録済み写真を JPG（複数は ZIP）でダウンロード"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    写真ダウンロード（JPG / ZIP）
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setPendingFormat('excel')}
                     className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100 text-slate-500"
                   >
@@ -1403,6 +1535,7 @@ export function CoordinatesPage() {
                       {pendingFormat === 'tsv' && 'TSVコピー'}
                       {pendingFormat === 'sima' && 'SIMA出力'}
                       {pendingFormat === 'photobook' && '写真帳出力'}
+                      {pendingFormat === 'photos' && '写真ダウンロード'}
                       {pendingFormat === 'excel' && 'EXCEL出力'}
                       {' '}→ 対象を選択
                     </span>
