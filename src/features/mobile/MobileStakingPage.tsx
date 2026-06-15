@@ -2637,7 +2637,8 @@ export function MobileStakingPage() {
             )}
           </label>
 
-          {/* 地番（ポリゴン） */}
+          {/* 地番（ポリゴン）。件数は常時表示して、取得失敗 (=0) と
+              トグル OFF を切り分けられるようにする */}
           <label className="flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"
@@ -2646,9 +2647,16 @@ export function MobileStakingPage() {
               className="h-4 w-4"
             />
             <span>地番（ポリゴン）</span>
-            {farmPolygons.length > 0 && (
-              <span className="text-[11px] text-slate-500">
-                ({farmPolygons.length})
+            <span
+              className={`text-[11px] ${
+                farmPolygons.length === 0 ? 'text-amber-600' : 'text-slate-500'
+              }`}
+            >
+              ({farmPolygons.length})
+            </span>
+            {farmPolygons.length === 0 && (
+              <span className="text-[10px] text-amber-600 ml-1">
+                取得 0 件
               </span>
             )}
           </label>

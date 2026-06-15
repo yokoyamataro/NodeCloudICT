@@ -301,9 +301,20 @@ export const useFarmStore = create<FarmState>()(
         }
       }
 
+      // 取得結果のサマリ（地番が出ない時の原因切り分け用）
+      const byType = new Map<string, number>()
+      for (const p of polygons) byType.set(p.workType, (byType.get(p.workType) ?? 0) + 1)
+      // eslint-disable-next-line no-console
+      console.info(
+        '[farmStore] fetchWorkAreaPolygons',
+        `total=${polygons.length}`,
+        Object.fromEntries(byType),
+        `targetFarms=${targetFarms.map((f) => f.id).join(',')}`,
+      )
       set({ workAreaPolygons: polygons })
     } catch (err) {
-      console.error('工事区域ポリゴンの取得に失敗:', err)
+      // eslint-disable-next-line no-console
+      console.error('[farmStore] fetchWorkAreaPolygons failed', err)
       set({ workAreaPolygons: [] })
     }
   },
