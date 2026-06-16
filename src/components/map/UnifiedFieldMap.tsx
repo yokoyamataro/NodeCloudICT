@@ -45,13 +45,20 @@ interface UnifiedFieldMapProps {
 
 // === 色/スタイル定義 ===
 
-// 座標種類ごとのマーカー色
+// 座標種類ごとのマーカー色（CoordinateMap と揃える）
 const COORDINATE_MARKER_COLORS: Record<string, string> = {
   control: '#ef4444',
   boundary: '#3b82f6',
+  current: '#14b8a6',
   underdrain: '#22c55e',
   soil_import: '#f59e0b',
   stake: '#22c55e',
+  map_xml: '#a855f7',
+  national_survey: '#d97706',
+  cadastral_diagram: '#0891b2',
+  witness: '#eab308',
+  confirmed_boundary: '#16a34a',
+  measured: '#ec4899',
 }
 
 // 管種ごとの色

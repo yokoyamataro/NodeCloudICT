@@ -18,13 +18,26 @@ L.Icon.Default.mergeOptions({
   shadowUrl: markerShadow,
 })
 
-// 座標種類ごとのマーカー色
+// 座標種類ごとのマーカー色（既定の組み込み点種に対する色割当て）。
+// 一目で点種が見分けられるよう、グレーフォールバックに頼らないで色を当てる。
 const MARKER_COLORS: Record<string, string> = {
-  control: '#ef4444',     // 基準点: 赤
-  boundary: '#3b82f6',    // 境界点: 青
-  underdrain: '#22c55e',  // 暗渠構成点: 緑
-  soil_import: '#f59e0b', // 客土構成点: オレンジ
-  stake: '#22c55e',       // 測点: 緑（暗渠構成点と同じ）
+  // 土木の基本 3 種
+  control: '#ef4444',           // 基準点: 赤
+  boundary: '#3b82f6',          // 境界点: 青
+  current: '#14b8a6',           // 現況: ティール
+
+  // 暗渠 / 客土 / 起工測点
+  underdrain: '#22c55e',        // 暗渠構成点: 緑
+  soil_import: '#f59e0b',       // 客土構成点: オレンジ
+  stake: '#22c55e',             // 測点: 緑（暗渠構成点と同じ）
+
+  // 地籍測量
+  map_xml: '#a855f7',           // 地図XML: 紫
+  national_survey: '#d97706',   // 国調成果: ダークオレンジ
+  cadastral_diagram: '#0891b2', // 地積測量図: シアン
+  witness: '#eab308',           // 立会点: 黄
+  confirmed_boundary: '#16a34a',// 確定筆界点: 深緑
+  measured: '#ec4899',          // 実測点: ピンク
 }
 
 // カスタムマーカーアイコンを作成。

@@ -74,13 +74,13 @@ export class CoordinateConverter {
 }
 
 // 座標の種類
-// 基本3種 + 地籍測量で使う 7 種類 + 実測点。
+// 基本3種 + 地籍測量で使う 5 種類 + 実測点。
+// 旧 'existing_control' / 'new_control' は 'control' に統合済み（DB 既存行は
+// 表示時に正規化、SQL マイグレーションで永続化する）。
 export type CoordinateType =
   | 'control'
   | 'boundary'
   | 'current'
-  | 'existing_control'   // 既設基準点
-  | 'new_control'        // 新設基準点
   | 'map_xml'            // 地図XML
   | 'national_survey'    // 国調成果
   | 'cadastral_diagram'  // 地積測量図
@@ -92,8 +92,6 @@ export const COORDINATE_TYPE_NAMES: Record<CoordinateType, string> = {
   control: '基準点',
   boundary: '境界点',
   current: '現況',
-  existing_control: '既設基準点',
-  new_control: '新設基準点',
   map_xml: '地図XML',
   national_survey: '国調成果',
   cadastral_diagram: '地積測量図',

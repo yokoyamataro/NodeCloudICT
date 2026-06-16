@@ -16,6 +16,15 @@ function extractSupabaseErrorMessage(err: unknown, fallback: string): string {
 }
 
 const VALID_STAKE_STATUS_SET = new Set<string>(STAKE_STATUS_OPTIONS)
+
+// 廃止された点種コードを現行コードへ正規化する。
+// DB 既存行が残っていても UI 側でフィルタ崩壊・色不明にならないように、
+// ロード時 / 保存時の両方で噛ませる。
+function normalizeCoordinateType(raw: string | null | undefined): string {
+  if (raw == null || raw === '') return 'control'
+  if (raw === 'existing_control' || raw === 'new_control') return 'control'
+  return raw
+}
 // 旧スキーマ値 → 新スキーマ値 のマップ。DB マイグレーション漏れに備えた
 // 防衛的フォールバック。マイグレーションを流していれば不要だが、
 // 残っていてもフロントで弾いてフィルタ崩壊を防ぐ。
@@ -230,7 +239,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
           z: row.z,
           lat,
           lng,
-          type: row.coordinate_type as CoordinateType,
+          type: normalizeCoordinateType(row.coordinate_type) as CoordinateType,
           stakeType: row.stake_type ?? null,
           stakeStatus: normalizeStakeStatus(row.stake_status),
           createdAt: row.created_at ?? null,
@@ -295,7 +304,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         z: row.z,
         lat: null,
         lng: null,
-        type: row.coordinate_type as CoordinateType,
+        type: normalizeCoordinateType(row.coordinate_type) as CoordinateType,
         stakeType: row.stake_type ?? null,
         stakeStatus: normalizeStakeStatus(row.stake_status),
         createdAt: row.created_at ?? null,
@@ -449,7 +458,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
           x: c.x,
           y: c.y,
           z: c.z,
-          coordinate_type: c.type,
+          coordinate_type: normalizeCoordinateType(c.type),
           stake_type: c.stakeType ?? null,
           latitude: lat,
           longitude: lng,
@@ -577,7 +586,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
             x: coord.x,
             y: coord.y,
             z: coord.z,
-            coordinate_type: coord.type,
+            coordinate_type: normalizeCoordinateType(coord.type),
             stake_type: coord.stakeType,
             stake_status: safeStakeStatus,
             latitude: coord.lat,

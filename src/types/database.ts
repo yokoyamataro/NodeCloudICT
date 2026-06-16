@@ -35,8 +35,8 @@ export const WORK_TYPE_NAMES: Record<WorkType, string> = {
 // 座標の種類（DB 上は TEXT で制約なし。実体は lib/coordinates.ts の組み込み点種
 // 一覧 + プロジェクトのカスタム点種コード）。
 // 既定の組み込み点種は 'control' | 'boundary' | 'current' に加え、地籍測量向けの
-// 'existing_control' / 'new_control' / 'map_xml' / 'national_survey' /
-// 'cadastral_diagram' / 'witness' / 'confirmed_boundary' の 7 種類。
+// 'map_xml' / 'national_survey' / 'cadastral_diagram' / 'witness' /
+// 'confirmed_boundary' / 'measured' の 6 種類。
 // カスタム点種コード（任意文字列）も入り得るため string に開放する。
 export type CoordinateType = string
 
