@@ -1908,6 +1908,30 @@ export function MobileStakingPage() {
         notes: null,
       })
       if (saved) {
+        // 座標管理にも自動登録（新点と同じ扱い）。
+        // 点種は「実測点 = measured」、出所が分かるよう notes に
+        // 'mobile_measurement' を入れる。同名が既に居る場合はスキップ。
+        const existsName = coordinates.some((c) => c.pointNumber === stakeRecordName)
+        if (!existsName) {
+          const inserted = await importCoordinates([
+            {
+              pointNumber: stakeRecordName,
+              x,
+              y,
+              z: avgAlt,
+              type: 'measured' as unknown as CoordinateRow['type'],
+              notes: 'mobile_measurement',
+            },
+          ])
+          if (inserted.length > 0) {
+            setShareToast(`${stakeRecordName} を座標管理にも登録`)
+            window.setTimeout(() => setShareToast(null), 2500)
+          } else {
+            const errMsg = useCoordinateStore.getState().error ?? '不明なエラー'
+            setShareToast(`${stakeRecordName} の座標管理登録に失敗: ${errMsg}`)
+            window.setTimeout(() => setShareToast(null), 4500)
+          }
+        }
         const msg =
           `${stakeRecordName} を測設しました（ターゲット: ${selectedTarget.name}）\n` +
           `誤差 ${dist.toFixed(3)} m / 精度 ${maxAcc.toFixed(3)} m / ${samples.length} サンプル`
