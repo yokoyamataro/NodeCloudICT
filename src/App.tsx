@@ -241,6 +241,8 @@ function AppRoutes() {
         <Route index element={<ProjectChooserPage />} />
         <Route path="projects/:projectId" element={<ProjectListPage />} />
         <Route path="coordinates" element={<CoordinatesPage />} />
+        {/* スマホで記録した測設記録の一覧（工区横断のトップレベル経路） */}
+        <Route path="staking-records" element={<StakingRecordsPage />} />
         {/* 境界測量 */}
         <Route path="boundary-survey">
           <Route path="work-area" element={<BoundarySurveyWorkAreaPage />} />

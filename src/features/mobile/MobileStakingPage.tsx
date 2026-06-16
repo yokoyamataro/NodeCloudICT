@@ -1867,7 +1867,7 @@ export function MobileStakingPage() {
     if (mode === 'stake' && selectedTarget && dist != null) {
       // 測設記録の点名: 元の点名に "G" を前置。
       // 同じターゲット（farmId + surveyCategory + targetRefId + vertexIndex）に対する
-      // 記録が既にある場合は "_2", "_3" ... を末尾に付与する。
+      // 記録が既にある場合は "_2" を末尾に付与する（2 回目まで）。
       const base = `G${selectedTarget.name}`
       const existing = records.filter(
         (r) =>
@@ -1877,6 +1877,15 @@ export function MobileStakingPage() {
           r.targetRefId === selectedTarget.refId &&
           r.targetVertexIndex === selectedTarget.vertexIndex,
       ).length
+      // 同じ点の実測は 2 回までに制限。3 回目以降は古い記録を削除してから再測する運用に。
+      const MAX_PER_TARGET = 2
+      if (existing >= MAX_PER_TARGET) {
+        alert(
+          `${selectedTarget.name} は既に ${existing} 回 実測済みです（上限 ${MAX_PER_TARGET} 回）。\n` +
+            `古い記録を「測設記録」画面で削除してから再測してください。`,
+        )
+        return
+      }
       const stakeRecordName = existing === 0 ? base : `${base}_${existing + 1}`
 
       const saved = await addRecord({
