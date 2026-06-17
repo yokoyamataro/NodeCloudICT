@@ -422,10 +422,16 @@ export function CoordinatesPage() {
   // 加えて、実データに存在する点種コードが visibleTypes に含まれていない場合も
   // 自動で追加する（旧スキーマの 'reference' / 'outer_boundary' 等が
   // フィルタで弾かれて全座標が見えなくなる事故を防ぐ）。
+  // 空文字 '' (点種未指定) も既定で表示集合に含めて、空の座標が
+  // フィルタで隠れないようにする。
   useEffect(() => {
     const cur = useMapViewStore.getState().visibleTypes
     const next = new Set(cur)
     let changed = false
+    if (!next.has('')) {
+      next.add('')
+      changed = true
+    }
     for (const opt of typeOptions) {
       if (!next.has(opt.code)) {
         next.add(opt.code)
@@ -433,8 +439,8 @@ export function CoordinatesPage() {
       }
     }
     for (const c of coordinates) {
-      const code = c.type
-      if (code && !next.has(code)) {
+      const code = c.type ?? ''
+      if (!next.has(code)) {
         next.add(code)
         changed = true
       }
@@ -1253,7 +1259,9 @@ export function CoordinatesPage() {
         x: Number.isFinite(xv) ? xv : 0,
         y: Number.isFinite(yv) ? yv : 0,
         z: newRow.z.trim() !== '' && Number.isFinite(zv) ? zv : null,
-        type: (newRow.type || selectedType) as CoordinateType,
+        // 既定は空。ユーザが点種を選ばなかった場合は '' のまま保存して、
+        // 後から座標管理画面で個別に設定できるようにする。
+        type: (newRow.type ?? '') as CoordinateType,
         stakeType: newRow.stakeType.trim() !== '' ? newRow.stakeType : null,
       },
     ])
@@ -1320,10 +1328,12 @@ export function CoordinatesPage() {
         </td>
         <td className={cell} onClick={(e) => e.stopPropagation()}>
           <select
-            value={newRow.type || selectedType}
+            value={newRow.type}
             onChange={(e) => setNewRow((r) => ({ ...r, type: e.target.value }))}
             className={`${inp} bg-white`}
           >
+            {/* 既定は空。点種を後から決める運用に対応 */}
+            <option value="">(空)</option>
             {typeOptions.map((o) => (
               <option key={o.code} value={o.code}>
                 {o.label}
@@ -1946,11 +1956,12 @@ export function CoordinatesPage() {
                   </td>
                   <td className="px-0.5 py-0.5">
                     <select
-                      value={coord.type}
+                      value={coord.type ?? ''}
                       onChange={(e) => updateCoordinate(coord.id, 'type', e.target.value)}
                       onClick={(e) => e.stopPropagation()}
                       className="px-1 py-0.5 border rounded text-xs"
                     >
+                      <option value="">(空)</option>
                       {typeOptions.map((opt) => (
                         <option key={opt.code} value={opt.code}>{opt.label}</option>
                       ))}
@@ -2285,11 +2296,12 @@ export function CoordinatesPage() {
                         </td>
                         <td className="px-0.5 py-0.5">
                           <select
-                            value={coord.type}
+                            value={coord.type ?? ''}
                             onChange={(e) => updateCoordinate(coord.id, 'type', e.target.value)}
                             onClick={(e) => e.stopPropagation()}
                             className="px-1 py-0.5 border rounded text-xs"
                           >
+                            <option value="">(空)</option>
                             {typeOptions.map((opt) => (
                               <option key={opt.code} value={opt.code}>{opt.label}</option>
                             ))}
@@ -2700,6 +2712,7 @@ function BulkEditModal({
               className="flex-1 px-2 py-1 text-sm border rounded bg-white"
             >
               <option value={NOCHANGE}>変更なし</option>
+              <option value="">(空)</option>
               {typeOptions.map((opt) => (
                 <option key={opt.code} value={opt.code}>
                   {opt.label}

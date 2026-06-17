@@ -41,16 +41,18 @@ export const WORK_TYPE_NAMES: Record<WorkType, string> = {
 export type CoordinateType = string
 
 // 杭設置ワークフローの状態（地籍測量モードで使用）。
-// design_coordinates.stake_status に格納。既定は 'unset'（未設置）。
+// design_coordinates.stake_status に格納。既定は '' (空 / 未指定)。
 //
 // 旧コード対応:
+//   ''(未指定)         → 既定値（フィルタ・新規行はここから始まる）
 //   none / needed      → unset（未設置）
 //   temporary          → temporary（仮杭）
 //   permanent          → new（新設）
 //   existing           → existing（既設）
 //   impossible         → skip（不設置）
 export type StakeStatus =
-  | 'unset'       // 未設置（まだ設置していない／既定）
+  | ''            // 未指定（既定）
+  | 'unset'       // 未設置（まだ設置していない）
   | 'temporary'   // 仮杭
   | 'new'         // 新設（新たに本杭を設置）
   | 'replaced'    // 入替（既設を撤去のうえ新設）
@@ -58,6 +60,7 @@ export type StakeStatus =
   | 'skip'        // 不設置（設置しない方針）
 
 export const STAKE_STATUS_OPTIONS: StakeStatus[] = [
+  '',
   'unset',
   'temporary',
   'new',
@@ -67,6 +70,7 @@ export const STAKE_STATUS_OPTIONS: StakeStatus[] = [
 ]
 
 export const STAKE_STATUS_LABEL: Record<StakeStatus, string> = {
+  '': '(空)',
   unset: '未設置',
   temporary: '仮杭',
   new: '新設',
@@ -77,6 +81,7 @@ export const STAKE_STATUS_LABEL: Record<StakeStatus, string> = {
 
 // バッジ用の Tailwind 配色。背景 / 文字 / 枠線を一括で。
 export const STAKE_STATUS_BADGE: Record<StakeStatus, string> = {
+  '': 'bg-white text-slate-400 border-slate-200',
   unset: 'bg-slate-100 text-slate-500 border-slate-200',
   temporary: 'bg-blue-50 text-blue-700 border-blue-300',
   new: 'bg-emerald-50 text-emerald-700 border-emerald-300',

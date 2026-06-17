@@ -45,7 +45,13 @@ export function PointTypeFilterButton({
     return () => document.removeEventListener('mousedown', onClick)
   }, [open])
 
-  const isAllOn = visibleTypes.size === typeOptions.length
+  // 「(空)」= 点種未指定の座標もフィルタ対象に含めるため、選択肢の先頭に
+  // 仮想エントリを差し込む。値は空文字列。
+  const effectiveOptions: PointTypeOption[] = [
+    { code: '', label: '(空)', builtIn: true },
+    ...typeOptions,
+  ]
+  const isAllOn = visibleTypes.size === effectiveOptions.length
   return (
     <div className="relative inline-block align-middle" ref={ref}>
       <button
@@ -62,10 +68,10 @@ export function PointTypeFilterButton({
       >
         <Filter className={compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
         {compact ? (
-          <span className="font-mono">{visibleTypes.size}/{typeOptions.length}</span>
+          <span className="font-mono">{visibleTypes.size}/{effectiveOptions.length}</span>
         ) : (
           <>
-            点種フィルター ({visibleTypes.size}/{typeOptions.length})
+            点種フィルター ({visibleTypes.size}/{effectiveOptions.length})
             <ChevronDown className="h-3 w-3" />
           </>
         )}
@@ -77,7 +83,7 @@ export function PointTypeFilterButton({
             <div className="flex items-center gap-1">
               <button
                 type="button"
-                onClick={() => setVisibleTypes(new Set(typeOptions.map((o) => o.code)))}
+                onClick={() => setVisibleTypes(new Set(effectiveOptions.map((o) => o.code)))}
                 className="text-[10px] px-1.5 py-0.5 border rounded hover:bg-slate-50"
               >
                 全選択
@@ -85,7 +91,7 @@ export function PointTypeFilterButton({
               <button
                 type="button"
                 onClick={() =>
-                  setVisibleTypes(new Set(typeOptions[0] ? [typeOptions[0].code] : []))
+                  setVisibleTypes(new Set(effectiveOptions[0] ? [effectiveOptions[0].code] : []))
                 }
                 className="text-[10px] px-1.5 py-0.5 border rounded hover:bg-slate-50"
               >
@@ -107,7 +113,7 @@ export function PointTypeFilterButton({
             </div>
           </div>
           <div className="space-y-0.5 max-h-72 overflow-auto">
-            {typeOptions.map((opt) => {
+            {effectiveOptions.map((opt) => {
               const on = visibleTypes.has(opt.code)
               return (
                 <button

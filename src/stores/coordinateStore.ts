@@ -28,8 +28,10 @@ function normalizeCoordinateType(raw: string | null | undefined): string {
 // 旧スキーマ値 → 新スキーマ値 のマップ。DB マイグレーション漏れに備えた
 // 防衛的フォールバック。マイグレーションを流していれば不要だが、
 // 残っていてもフロントで弾いてフィルタ崩壊を防ぐ。
+// 既定値は '' (空 / 未指定) で、明示的に倒したケース（旧コード）だけ
+// 'unset' などの該当値に当てる。
 function normalizeStakeStatus(raw: string | null | undefined): StakeStatus {
-  if (raw == null) return 'unset'
+  if (raw == null || raw === '') return ''
   if (VALID_STAKE_STATUS_SET.has(raw)) return raw as StakeStatus
   switch (raw) {
     case 'none':
@@ -40,7 +42,7 @@ function normalizeStakeStatus(raw: string | null | undefined): StakeStatus {
     case 'impossible':
       return 'skip'
     default:
-      return 'unset'
+      return ''
   }
 }
 import { CoordinateConverter } from '@/lib/coordinates'
