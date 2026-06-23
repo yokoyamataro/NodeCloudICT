@@ -41,7 +41,7 @@ import { supabase } from '@/lib/supabase'
 import { playStartChime, playStopChime, unlockAudio } from '@/lib/beep'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useFarmMemoStore, EMPTY_FARM_MEMOS } from '@/stores/farmMemoStore'
-import { createMemoIcon, createPhotoIcon } from '@/components/map/CoordinateMap'
+import { createMemoIcon, PhotoMarker } from '@/components/map/CoordinateMap'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useMapViewStore } from '@/stores/mapViewStore'
@@ -393,6 +393,7 @@ export function MobileStakingPage() {
     byEntity: attachmentsByEntity,
     fetchByEntityIds: fetchAttachments,
     uploadPhoto,
+    getSignedUrl,
   } = useAttachmentStore()
   const {
     byFarm: orthoByFarm,
@@ -958,6 +959,8 @@ export function MobileStakingPage() {
       lat: number
       lng: number
       headingDeg: number | null
+      filePath: string
+      caption: string | null
     }>
     const list = attachmentsByEntity.get(`farm_photo:${farmId}`) ?? []
     return list
@@ -967,6 +970,8 @@ export function MobileStakingPage() {
         lat: a.lat as number,
         lng: a.lng as number,
         headingDeg: a.headingDeg,
+        filePath: a.filePath,
+        caption: a.caption,
       }))
   }, [farmId, attachmentsByEntity])
 
@@ -3128,14 +3133,9 @@ export function MobileStakingPage() {
             ) : null,
           )}
 
-          {/* 工区写真のマーカー（撮影位置 + 撮影方向） */}
+          {/* 工区写真のマーカー（カメラアイコン + 撮影方向 + タップでサムネ） */}
           {farmPhotos.map((p) => (
-            <Marker
-              key={`photo-${p.id}`}
-              position={[p.lat, p.lng]}
-              icon={createPhotoIcon(p.headingDeg)}
-              zIndexOffset={450}
-            />
+            <PhotoMarker key={`photo-${p.id}`} photo={p} getSignedUrl={getSignedUrl} />
           ))}
 
           {/* 地図の長押し / 右クリックで野帳作成。Leaflet の contextmenu

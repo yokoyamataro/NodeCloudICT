@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { MapContainer, TileLayer, Marker, Polygon, Polyline, useMap, useMapEvents, Tooltip } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Polygon, Polyline, useMap, useMapEvents, Tooltip, Popup } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useCoordinateStore, type CoordinateRow, type RoutePoint } from '@/stores/coordinateStore'
@@ -70,44 +70,37 @@ function createColoredIcon(
   })
 }
 
-// 工区写真のマーカーアイコン。カメラ風 + 撮影方向の三角形（heading 指定時のみ）。
+// 工区写真のマーカーアイコン。SVG カメラ + 撮影方向の「視野コーン」を一体で描く。
+// heading（0=北, 90=東 ...）が指定されていれば半透明の三角錐で「撮影方向」を表示。
+// 全体を SVG で組むことで、emoji や絵文字に依存せず端末横断で同じ見た目になる。
 export function createPhotoIcon(headingDeg: number | null): L.DivIcon {
-  const arrow =
+  const cone =
     headingDeg == null
       ? ''
-      : `<div style="
-          position: absolute;
-          top: -6px;
-          left: 50%;
-          width: 0;
-          height: 0;
-          transform: translate(-50%, -100%) rotate(${headingDeg}deg);
-          transform-origin: 50% calc(100% + 12px);
-          border-left: 6px solid transparent;
-          border-right: 6px solid transparent;
-          border-bottom: 12px solid #2563eb;
-          filter: drop-shadow(0 1px 1px rgba(0,0,0,0.3));
-        "></div>`
+      : `
+        <g transform="rotate(${headingDeg})">
+          <polygon points="0,-28 -14,-9 14,-9"
+            fill="rgba(37, 99, 235, 0.4)"
+            stroke="rgba(37, 99, 235, 0.8)"
+            stroke-width="1"
+            stroke-linejoin="round" />
+        </g>
+      `
+  // 中央 (0,0) に置いたカメラ本体 (rect) + 上の Hot shoe + レンズ (二重円)
   return L.divIcon({
     className: 'photo-marker',
-    html: `<div style="position: relative; width: 22px; height: 22px;">
-      ${arrow}
-      <div style="
-        width: 22px;
-        height: 22px;
-        background: #dbeafe;
-        border: 2px solid #1d4ed8;
-        border-radius: 50%;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 12px;
-        color: #1e3a8a;
-      ">📷</div>
-    </div>`,
-    iconSize: [22, 22],
-    iconAnchor: [11, 22],
+    html: `<svg viewBox="-22 -22 44 44" width="44" height="44"
+      style="filter: drop-shadow(0 2px 3px rgba(0,0,0,0.4));">
+      ${cone}
+      <rect x="-12" y="-9" width="24" height="18" rx="3"
+        fill="#1d4ed8" stroke="white" stroke-width="2" />
+      <rect x="-3" y="-13" width="9" height="5" rx="1"
+        fill="#1d4ed8" stroke="white" stroke-width="1.5" />
+      <circle cx="0" cy="1" r="6" fill="white" stroke="#1d4ed8" stroke-width="1.5" />
+      <circle cx="0" cy="1" r="3" fill="#1d4ed8" />
+    </svg>`,
+    iconSize: [44, 44],
+    iconAnchor: [22, 22],
   })
 }
 
@@ -197,6 +190,96 @@ function CoordinateMapLongPressBridge({
     },
   })
   return null
+}
+
+// 工区写真マーカー。カメラアイコン (createPhotoIcon) を表示し、クリックで
+// 写真のサムネを含む Popup を開く。signed URL は遅延取得で、popup が開いた
+// タイミングで初回ロードする。
+export function PhotoMarker({
+  photo,
+  getSignedUrl,
+  onClick,
+}: {
+  photo: {
+    id: string
+    lat: number
+    lng: number
+    headingDeg: number | null
+    filePath: string
+    caption?: string | null
+  }
+  getSignedUrl: (filePath: string) => Promise<string | null>
+  onClick?: (id: string) => void
+}) {
+  const [status, setStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle')
+  const [url, setUrl] = useState<string | null>(null)
+
+  const ensureUrl = async () => {
+    if (status === 'loading' || status === 'loaded') return
+    setStatus('loading')
+    try {
+      const u = await getSignedUrl(photo.filePath)
+      if (u) {
+        setUrl(u)
+        setStatus('loaded')
+      } else {
+        setStatus('error')
+      }
+    } catch {
+      setStatus('error')
+    }
+  }
+
+  return (
+    <Marker
+      position={[photo.lat, photo.lng]}
+      icon={createPhotoIcon(photo.headingDeg)}
+      zIndexOffset={450}
+      eventHandlers={{
+        click: () => {
+          onClick?.(photo.id)
+          void ensureUrl()
+        },
+      }}
+    >
+      <Popup minWidth={180} maxWidth={260}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {status === 'loading' && (
+            <div style={{ padding: '12px 0', textAlign: 'center', color: '#64748b' }}>
+              読み込み中…
+            </div>
+          )}
+          {status === 'error' && (
+            <div style={{ padding: '12px 0', textAlign: 'center', color: '#dc2626' }}>
+              写真を取得できませんでした
+            </div>
+          )}
+          {status === 'loaded' && url && (
+            <a href={url} target="_blank" rel="noreferrer">
+              <img
+                src={url}
+                alt=""
+                style={{
+                  display: 'block',
+                  maxWidth: '100%',
+                  maxHeight: 240,
+                  borderRadius: 4,
+                }}
+              />
+            </a>
+          )}
+          {photo.caption && (
+            <div style={{ fontSize: 11, color: '#475569' }}>{photo.caption}</div>
+          )}
+          {photo.headingDeg != null && (
+            <div style={{ fontSize: 10, color: '#94a3b8' }}>
+              方向 {photo.headingDeg.toFixed(0)}°
+            </div>
+          )}
+        </div>
+      </Popup>
+    </Marker>
+  )
 }
 
 function MapViewManager({ coordinates }: { coordinates: CoordinateRow[] }) {
@@ -365,13 +448,17 @@ interface CoordinateMapProps {
   }>
   /** メモマーカーをクリックしたとき */
   onMemoClick?: (memoId: string) => void
-  /** 工区写真（標準写真）のマーカー。撮影位置 + 撮影方向 */
+  /** 工区写真（標準写真）のマーカー。撮影位置 + 撮影方向 + サムネ用 filePath */
   farmPhotos?: Array<{
     id: string
     lat: number
     lng: number
     headingDeg: number | null
+    filePath: string
+    caption?: string | null
   }>
+  /** サムネ表示のため Popup から呼ぶ signed URL ヘルパ */
+  photoGetSignedUrl?: (filePath: string) => Promise<string | null>
   onPhotoClick?: (photoId: string) => void
   /** 地図の長押し（右クリック / モバイル長押し）で呼ぶ。野帳作成等に利用 */
   onMapLongPress?: (lat: number, lng: number) => void
@@ -434,6 +521,7 @@ export function CoordinateMap({
   farmMemos,
   onMemoClick,
   farmPhotos,
+  photoGetSignedUrl,
   onPhotoClick,
   onMapLongPress,
   baseLayer = 'osm',
@@ -694,16 +782,16 @@ export function CoordinateMap({
         </Marker>
       ))}
 
-      {/* 工区写真のマーカー（カメラアイコン + 撮影方向） */}
-      {farmPhotos?.map((p) => (
-        <Marker
-          key={`photo-${p.id}`}
-          position={[p.lat, p.lng]}
-          icon={createPhotoIcon(p.headingDeg)}
-          zIndexOffset={450}
-          eventHandlers={{ click: () => onPhotoClick?.(p.id) }}
-        />
-      ))}
+      {/* 工区写真のマーカー（カメラアイコン + 撮影方向 + クリックでサムネ） */}
+      {photoGetSignedUrl &&
+        farmPhotos?.map((p) => (
+          <PhotoMarker
+            key={`photo-${p.id}`}
+            photo={p}
+            getSignedUrl={photoGetSignedUrl}
+            onClick={onPhotoClick}
+          />
+        ))}
 
       {/* 長押し / 右クリック で野帳作成等のコールバックを発火 */}
       {onMapLongPress && <CoordinateMapLongPressBridge onLongPress={onMapLongPress} />}

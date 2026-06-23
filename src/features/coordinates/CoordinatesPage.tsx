@@ -583,13 +583,15 @@ export function CoordinatesPage() {
     }
   }, [currentFarm, projectZone, setZone, fetchCoordinates, fetchRoute, fetchStakingRecords, fetchFarmMemos, fetchAttachments])
 
-  // 工区写真（マーカー描画用）
+  // 工区写真（マーカー描画 + Popup サムネ用）
   const farmPhotosForMap = useMemo(() => {
     if (!currentFarm) return [] as Array<{
       id: string
       lat: number
       lng: number
       headingDeg: number | null
+      filePath: string
+      caption: string | null
     }>
     const list = attachmentsByEntity.get(`farm_photo:${currentFarm.id}`) ?? []
     return list
@@ -599,6 +601,8 @@ export function CoordinatesPage() {
         lat: a.lat as number,
         lng: a.lng as number,
         headingDeg: a.headingDeg,
+        filePath: a.filePath,
+        caption: a.caption,
       }))
   }, [currentFarm, attachmentsByEntity])
 
@@ -1807,7 +1811,7 @@ export function CoordinatesPage() {
             farmMemos={memosForMap}
             onMemoClick={() => navigate('/memos')}
             farmPhotos={farmPhotosForMap}
-            onPhotoClick={() => navigate('/memos')}
+            photoGetSignedUrl={getSignedUrl}
             onMapLongPress={() => navigate('/memos')}
             baseLayer={baseLayer}
             route={route}
@@ -2497,7 +2501,7 @@ export function CoordinatesPage() {
             farmMemos={memosForMap}
             onMemoClick={() => navigate('/memos')}
             farmPhotos={farmPhotosForMap}
-            onPhotoClick={() => navigate('/memos')}
+            photoGetSignedUrl={getSignedUrl}
             onMapLongPress={() => navigate('/memos')}
               baseLayer={baseLayer}
               route={route}
