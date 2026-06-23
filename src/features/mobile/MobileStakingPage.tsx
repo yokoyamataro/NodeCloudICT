@@ -59,6 +59,7 @@ import {
 import { CoordinatePhotoModal } from '@/features/coordinates/CoordinatePhotoModal'
 import { CoordinateCalcModal } from '@/features/coordinates/CoordinateCalcModal'
 import { useAttachmentStore } from '@/stores/attachmentStore'
+import { PhotoEditModal, type PhotoEditMeta } from '@/features/coordinates/PhotoEditModal'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useParcelStore } from '@/stores/parcelStore'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
@@ -390,6 +391,7 @@ export function MobileStakingPage() {
   const {
     byEntity: attachmentsByEntity,
     fetchByEntityIds: fetchAttachments,
+    uploadPhoto,
   } = useAttachmentStore()
   const {
     byFarm: orthoByFarm,
@@ -2442,13 +2444,37 @@ export function MobileStakingPage() {
           defaultLng={currentPos ? currentPos[1] : null}
           defaultHeading={heading}
           onCancel={() => setShowMemoModal(false)}
-          onSave={async (data) => {
+          onSave={async (data, photos) => {
             const saved = await createFarmMemo(farmId, data)
             setShowMemoModal(false)
-            if (saved) {
+            if (!saved) return
+            // 写真がある場合は memo を作った後、entity_type='farm_memo' で添付
+            const projectId = farm?.project_id
+            if (photos.length > 0 && projectId) {
+              setShareToast(`メモを保存しました（写真 ${photos.length} 枚アップロード中…）`)
+              let ok = 0
+              for (const p of photos) {
+                const r = await uploadPhoto({
+                  projectId,
+                  entityType: 'farm_memo',
+                  entityId: saved.id,
+                  file: p.blob,
+                  category: p.category,
+                  caption: p.caption,
+                  takenAt: p.takenAt ?? new Date(),
+                  skipResize: true,
+                })
+                if (r) ok++
+              }
+              setShareToast(
+                ok === photos.length
+                  ? `メモを保存（写真 ${ok} 枚）`
+                  : `メモを保存（写真 ${ok}/${photos.length} 枚成功）`,
+              )
+            } else {
               setShareToast('メモを保存しました')
-              window.setTimeout(() => setShareToast(null), 2500)
             }
+            window.setTimeout(() => setShareToast(null), 3000)
           }}
         />
       )}
@@ -5054,8 +5080,19 @@ function ParcelAttrRow({ label, value }: { label: string; value: string | null |
 }
 
 // メモ作成（スマホ）。
-//   現在地・現在方位を既定値として埋め、ユーザは本文を書いて保存するだけ。
-//   写真は保存後に「メモ」タブ等から追加してもらう想定（写真は後追いでも追える）。
+//   現在地・現在方位を既定値として埋め、本文 + 写真を 1 つの画面で完結する。
+//   ・撮影 / 画像から選択 のボタンでファイル選択 → PhotoEditModal で
+//     トリミング/回転/縮小 → 確定で内部のキューに保存（DB 反映は「保存」押下時）
+//   ・「保存」で onSave(data, photos) を呼ぶ。親側でメモを INSERT し、戻りの
+//     memo.id を entity_id に attachmentStore.uploadPhoto で写真を流す。
+interface QueuedPhoto {
+  blob: Blob
+  category: string
+  caption: string | null
+  takenAt: Date | null
+  previewUrl: string
+}
+
 function MobileMemoCreateModal({
   defaultLat,
   defaultLng,
@@ -5067,26 +5104,87 @@ function MobileMemoCreateModal({
   defaultLng: number | null
   defaultHeading: number | null
   onCancel: () => void
-  onSave: (data: {
-    content: string
-    lat: number | null
-    lng: number | null
-    headingDeg: number | null
-  }) => Promise<void>
+  onSave: (
+    data: {
+      content: string
+      lat: number | null
+      lng: number | null
+      headingDeg: number | null
+    },
+    photos: Array<{
+      blob: Blob
+      category: string
+      caption: string | null
+      takenAt: Date | null
+    }>,
+  ) => Promise<void>
 }) {
   const [content, setContent] = useState('')
   const [busy, setBusy] = useState(false)
+  const [photos, setPhotos] = useState<QueuedPhoto[]>([])
+  const [editingFile, setEditingFile] = useState<File | null>(null)
+  const cameraInputRef = useRef<HTMLInputElement>(null)
+  const pickerInputRef = useRef<HTMLInputElement>(null)
+
+  // 撮影 / 画像から選択 共通: ファイル選択 → 編集モーダルへ
+  const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] ?? null
+    e.target.value = ''
+    if (file) setEditingFile(file)
+  }
+
+  const handleEditConfirmed = (blob: Blob, _fileName: string, meta: PhotoEditMeta) => {
+    const url = URL.createObjectURL(blob)
+    setPhotos((prev) => [
+      ...prev,
+      {
+        blob,
+        category: '現場',
+        caption: meta.caption,
+        takenAt: meta.takenAt ?? null,
+        previewUrl: url,
+      },
+    ])
+    setEditingFile(null)
+  }
+
+  const handleEditCancelled = () => setEditingFile(null)
+
+  const removePhoto = (idx: number) => {
+    setPhotos((prev) => {
+      URL.revokeObjectURL(prev[idx].previewUrl)
+      return prev.filter((_, i) => i !== idx)
+    })
+  }
+
+  // モーダルを閉じたら object URL を片付ける
+  useEffect(() => {
+    return () => {
+      for (const p of photos) URL.revokeObjectURL(p.previewUrl)
+    }
+    // photos の変更時に毎回 cleanup を走らせると removePhoto で revoke
+    // 済みのものまで呼んでしまうため、unmount 時の cleanup のみとする
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const save = async () => {
     if (busy) return
     setBusy(true)
     try {
-      await onSave({
-        content,
-        lat: defaultLat,
-        lng: defaultLng,
-        headingDeg: defaultHeading,
-      })
+      await onSave(
+        {
+          content,
+          lat: defaultLat,
+          lng: defaultLng,
+          headingDeg: defaultHeading,
+        },
+        photos.map((p) => ({
+          blob: p.blob,
+          category: p.category,
+          caption: p.caption,
+          takenAt: p.takenAt,
+        })),
+      )
     } finally {
       setBusy(false)
     }
@@ -5101,9 +5199,53 @@ function MobileMemoCreateModal({
         className="bg-white w-full sm:max-w-sm rounded-t-xl sm:rounded-xl shadow-xl p-4 space-y-3"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="text-base font-bold flex items-center gap-2">
-          📝 メモを残す
-        </h3>
+        <h3 className="text-base font-bold flex items-center gap-2">📝 メモを残す</h3>
+
+        {/* タイトル直下: カメラ系ボタン + 取り込み済み写真の一覧 */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => cameraInputRef.current?.click()}
+              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-sm rounded border border-blue-600 text-blue-700 bg-blue-50 active:bg-blue-100"
+              title="カメラで撮影"
+            >
+              <Camera className="h-4 w-4" />
+              撮影
+            </button>
+            <button
+              type="button"
+              onClick={() => pickerInputRef.current?.click()}
+              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-sm rounded border border-slate-400 text-slate-700 bg-white active:bg-slate-100"
+              title="画像から選択"
+            >
+              <ImageIcon className="h-4 w-4" />
+              画像から選択
+            </button>
+          </div>
+          {photos.length > 0 && (
+            <div className="grid grid-cols-4 gap-1.5">
+              {photos.map((p, i) => (
+                <div key={i} className="relative group">
+                  <img
+                    src={p.previewUrl}
+                    alt=""
+                    className="w-full aspect-square object-cover rounded border"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removePhoto(i)}
+                    className="absolute -top-1 -right-1 bg-white border border-slate-300 text-red-600 rounded-full p-0.5 shadow"
+                    title="この写真を取り消す"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="text-[11px] text-slate-500 space-y-0.5">
           <div>
             位置: {defaultLat != null && defaultLng != null
@@ -5112,19 +5254,18 @@ function MobileMemoCreateModal({
           </div>
           <div>
             方向:{' '}
-            {defaultHeading != null
-              ? `${defaultHeading.toFixed(0)}°`
-              : '取得中／未許可'}
+            {defaultHeading != null ? `${defaultHeading.toFixed(0)}°` : '取得中／未許可'}
           </div>
         </div>
+
         <textarea
           value={content}
           onChange={(e) => setContent(e.target.value)}
           rows={5}
           className="w-full px-2 py-1.5 text-sm border rounded"
           placeholder="現場で気付いたことを書く"
-          autoFocus
         />
+
         <div className="flex justify-end gap-2">
           <button
             onClick={onCancel}
@@ -5135,13 +5276,41 @@ function MobileMemoCreateModal({
           </button>
           <button
             onClick={save}
-            disabled={busy || content.trim() === ''}
+            disabled={busy || (content.trim() === '' && photos.length === 0)}
             className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
           >
-            保存
+            {busy ? '保存中…' : '保存'}
           </button>
         </div>
+
+        {/* 「撮影」用: capture=environment でモバイルは背面カメラ直起動。
+            「画像から選択」用: capture を付けないのでギャラリーが開く。 */}
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={handleFileSelected}
+          className="hidden"
+        />
+        <input
+          ref={pickerInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleFileSelected}
+          className="hidden"
+        />
       </div>
+
+      {/* 写真編集（回転・トリミング・1600px 縮小） */}
+      {editingFile && (
+        <PhotoEditModal
+          file={editingFile}
+          onCancel={handleEditCancelled}
+          onConfirm={handleEditConfirmed}
+          headerNote="メモ写真"
+        />
+      )}
     </div>
   )
 }
