@@ -76,7 +76,7 @@ const navigation: NavGroup[] = [
   { name: '工区選択に戻る', href: '/', icon: Home },
   { name: '座標管理', href: '/coordinates', icon: Map },
   { name: '測設記録', href: '/staking-records', icon: FileSearch },
-  { name: 'メモ', href: '/memos', icon: StickyNote },
+  { name: '野帳', href: '/memos', icon: StickyNote },
   // 地籍測量: 「地番管理」と「地権者管理」をフラットに並べる
   { name: '地番管理', href: '/boundary-survey/work-area', icon: Compass },
   { name: '地権者管理', href: '/boundary-survey/landowners', icon: Users },

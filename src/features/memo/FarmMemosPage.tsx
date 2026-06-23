@@ -84,14 +84,14 @@ export function FarmMemosPage() {
   }, [memos, attachmentsByEntity])
 
   const handleDelete = async (memo: FarmMemo) => {
-    if (!confirm('このメモを削除しますか？（紐づいた写真も合わせて消えます）')) return
+    if (!confirm('この野帳を削除しますか？（紐づいた写真も合わせて消えます）')) return
     await deleteMemo(memo.id)
   }
 
   if (!farmId) {
     return (
       <div className="h-full flex flex-col">
-        <PageHeader title="メモ" subtitle="工区を選択してください" />
+        <PageHeader title="野帳" subtitle="工区を選択してください" />
       </div>
     )
   }
@@ -99,7 +99,7 @@ export function FarmMemosPage() {
   return (
     <div className="h-full flex flex-col">
       <PageHeader
-        title="メモ"
+        title="野帳"
         subtitle="現場で気付いたことを位置・方向・写真と一緒に残せます"
         actions={
           <button
@@ -107,7 +107,7 @@ export function FarmMemosPage() {
             className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
           >
             <Plus className="h-3.5 w-3.5" />
-            メモを追加
+            野帳を追加
           </button>
         }
       />
@@ -126,7 +126,7 @@ export function FarmMemosPage() {
           </div>
         ) : memos.length === 0 ? (
           <div className="text-center py-12 text-sm text-slate-400 border border-dashed rounded">
-            まだメモはありません。
+            まだ野帳はありません。
           </div>
         ) : (
           memos.map((memo) => (
@@ -316,7 +316,7 @@ function MemoEditModal({
       <div className="bg-white rounded-lg shadow-xl w-full max-w-lg flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="px-4 py-3 border-b flex items-center gap-2">
           <StickyNote className="h-4 w-4 text-amber-500" />
-          <h3 className="flex-1 text-base font-semibold">{mode === 'create' ? 'メモを追加' : 'メモを編集'}</h3>
+          <h3 className="flex-1 text-base font-semibold">{mode === 'create' ? '野帳を追加' : '野帳を編集'}</h3>
           <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-700 rounded">
             <X className="h-5 w-5" />
           </button>

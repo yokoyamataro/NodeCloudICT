@@ -35,6 +35,7 @@ import {
   Square,
   ChevronUp,
   Plus,
+  StickyNote,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { playStartChime, playStopChime, unlockAudio } from '@/lib/beep'
@@ -576,8 +577,8 @@ export function MobileStakingPage() {
   const [showDisplaySettings, setShowDisplaySettings] = useState(false)
   // 写真モーダル: 選択中ターゲット（座標）の写真を閲覧／撮影できる
   const [photoModalTarget, setPhotoModalTarget] = useState<StakingTarget | null>(null)
-  // メモ作成モーダル
-  const [showMemoModal, setShowMemoModal] = useState(false)
+  // 野帳（メモ）作成モーダル。'camera' を指定するとカメラ直起動で開く
+  const [memoModalAction, setMemoModalAction] = useState<null | 'normal' | 'camera'>(null)
   const [showLabels, setShowLabels] = useState(
     () => localStorage.getItem('mobile:staking:showLabels') !== '0',
   )
@@ -2437,21 +2438,22 @@ export function MobileStakingPage() {
         onChange={handleSimImported}
         className="hidden"
       />
-      {/* 写真モーダル（撮影・閲覧） */}
-      {showMemoModal && farmId && (
+      {/* 野帳（メモ）作成モーダル */}
+      {memoModalAction && farmId && (
         <MobileMemoCreateModal
           defaultLat={currentPos ? currentPos[0] : null}
           defaultLng={currentPos ? currentPos[1] : null}
           defaultHeading={heading}
-          onCancel={() => setShowMemoModal(false)}
+          initialAction={memoModalAction === 'camera' ? 'camera' : 'normal'}
+          onCancel={() => setMemoModalAction(null)}
           onSave={async (data, photos) => {
             const saved = await createFarmMemo(farmId, data)
-            setShowMemoModal(false)
+            setMemoModalAction(null)
             if (!saved) return
             // 写真がある場合は memo を作った後、entity_type='farm_memo' で添付
             const projectId = farm?.project_id
             if (photos.length > 0 && projectId) {
-              setShareToast(`メモを保存しました（写真 ${photos.length} 枚アップロード中…）`)
+              setShareToast(`野帳を保存しました（写真 ${photos.length} 枚アップロード中…）`)
               let ok = 0
               for (const p of photos) {
                 const r = await uploadPhoto({
@@ -2468,11 +2470,11 @@ export function MobileStakingPage() {
               }
               setShareToast(
                 ok === photos.length
-                  ? `メモを保存（写真 ${ok} 枚）`
-                  : `メモを保存（写真 ${ok}/${photos.length} 枚成功）`,
+                  ? `野帳を保存（写真 ${ok} 枚）`
+                  : `野帳を保存（写真 ${ok}/${photos.length} 枚成功）`,
               )
             } else {
-              setShareToast('メモを保存しました')
+              setShareToast('野帳を保存しました')
             }
             window.setTimeout(() => setShareToast(null), 3000)
           }}
@@ -4216,55 +4218,78 @@ export function MobileStakingPage() {
           )}
         </div>
 
-        {/* 記録ボタン
-            ターゲット未選択時はメモボタンをこのすぐ下に追加するので、
-            mt を 1 段狭めて全体を少し上に詰める */}
-        <div className={`${!selectedTarget && !recording ? 'mt-1' : 'mt-2'} flex gap-2`}>
+        {/* 操作ボタン: 測定 / カメラ / 野帳 を横一列に並べる。
+            ターゲットを選択中なら 設置済 マークボタンも追加表示。 */}
+        <div className="mt-1 flex gap-2">
           {!recording ? (
             <>
+              {/* 測定（旧 記録） */}
               <button
                 onClick={() => startRecording()}
                 disabled={saving || !currentPos}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed font-bold"
+                className="flex-1 flex items-center justify-center gap-1 px-3 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed font-bold"
               >
                 <CircleIcon className="h-5 w-5" />
-                記録 ({avgSeconds} 秒平均)
+                測定
               </button>
+
+              {/* カメラ: ターゲット選択時は座標の写真モーダル、それ以外は
+                  野帳モーダルをカメラ直起動で開く（位置・方向と一緒に保存） */}
+              {selectedTarget && selectedTarget.kind === 'coordinate' ? (() => {
+                const photoCount =
+                  attachmentsByEntity.get(`coordinate:${selectedTarget.refId}`)?.length ?? 0
+                return (
+                  <button
+                    onClick={handleOpenPhotoModal}
+                    className="relative px-3 py-3 rounded-lg font-bold bg-blue-600 text-white hover:bg-blue-700"
+                    title="ターゲット座標の写真（撮影・閲覧）"
+                  >
+                    <Camera className="h-5 w-5" />
+                    {photoCount > 0 && (
+                      <span className="absolute -top-1 -right-1 bg-amber-400 text-slate-900 text-[10px] font-bold rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">
+                        {photoCount > 99 ? '99+' : photoCount}
+                      </span>
+                    )}
+                  </button>
+                )
+              })() : (
+                <button
+                  type="button"
+                  onClick={() => setMemoModalAction('camera')}
+                  className="px-3 py-3 rounded-lg font-bold bg-blue-600 text-white hover:bg-blue-700"
+                  title="現在位置・方向でカメラ撮影（野帳）"
+                >
+                  <Camera className="h-5 w-5" />
+                </button>
+              )}
+
+              {/* 野帳（旧 メモ）: 本文 + 写真で記録 */}
+              <button
+                type="button"
+                onClick={() => setMemoModalAction('normal')}
+                className="flex items-center justify-center gap-1 px-3 py-3 rounded-lg border border-amber-400 bg-amber-50 text-amber-800 font-semibold active:bg-amber-100"
+                title="現在位置・方向で野帳を残す"
+              >
+                <StickyNote className="h-5 w-5" />
+                野帳
+              </button>
+
+              {/* 設置済 トグル（ターゲットありのときだけ追加表示） */}
               {selectedTarget && (() => {
                 const isStaked = stakedTargetIds.has(selectedTarget.id)
-                const photoCount =
-                  selectedTarget.kind === 'coordinate'
-                    ? (attachmentsByEntity.get(`coordinate:${selectedTarget.refId}`)?.length ?? 0)
-                    : 0
                 return (
-                  <>
-                    {selectedTarget.kind === 'coordinate' && (
-                      <button
-                        onClick={handleOpenPhotoModal}
-                        className="relative px-3 py-3 rounded-lg font-bold bg-blue-600 text-white hover:bg-blue-700"
-                        title="写真（撮影・閲覧）"
-                      >
-                        <Camera className="h-5 w-5" />
-                        {photoCount > 0 && (
-                          <span className="absolute -top-1 -right-1 bg-amber-400 text-slate-900 text-[10px] font-bold rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">
-                            {photoCount > 99 ? '99+' : photoCount}
-                          </span>
-                        )}
-                      </button>
-                    )}
-                    <button
-                      onClick={() => handleToggleManualStaked(selectedTarget)}
-                      disabled={saving}
-                      className={`px-3 py-3 rounded-lg font-bold disabled:opacity-50 ${
-                        isStaked
-                          ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-                          : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-                      }`}
-                      title={isStaked ? '測設済（タップで解除）' : '記録せず測設済としてマーク'}
-                    >
-                      <Check className="h-5 w-5" />
-                    </button>
-                  </>
+                  <button
+                    onClick={() => handleToggleManualStaked(selectedTarget)}
+                    disabled={saving}
+                    className={`px-3 py-3 rounded-lg font-bold disabled:opacity-50 ${
+                      isStaked
+                        ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                        : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                    }`}
+                    title={isStaked ? '測設済（タップで解除）' : '記録せず測設済としてマーク'}
+                  >
+                    <Check className="h-5 w-5" />
+                  </button>
                 )
               })()}
             </>
@@ -4272,7 +4297,7 @@ export function MobileStakingPage() {
             <>
               <div className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-amber-500 text-white rounded-lg font-bold">
                 <Loader2 className="h-5 w-5 animate-spin" />
-                <span>記録中… {recordedCount} サンプル</span>
+                <span>測定中… {recordedCount} サンプル</span>
                 {rejectedCount > 0 && (
                   <span className="text-[11px] font-normal opacity-90">
                     （ノイズ棄却 {rejectedCount} 件 / 時間延長中）
@@ -4288,22 +4313,6 @@ export function MobileStakingPage() {
             </>
           )}
         </div>
-
-        {/* ターゲット未選択時のみ、記録ボタンの直下に「メモ」を出す。
-            メモは位置・方向だけで残せるので、ターゲット指定を伴わない
-            気付き記録の入口としてここに置く。 */}
-        {!recording && !selectedTarget && (
-          <div className="mt-2">
-            <button
-              type="button"
-              onClick={() => setShowMemoModal(true)}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-amber-400 bg-amber-50 text-amber-800 font-semibold active:bg-amber-100"
-              title="現在位置・方向でメモを残す"
-            >
-              📝 メモ
-            </button>
-          </div>
-        )}
       </div>
       )}
 
@@ -5097,12 +5106,15 @@ function MobileMemoCreateModal({
   defaultLat,
   defaultLng,
   defaultHeading,
+  initialAction = 'normal',
   onCancel,
   onSave,
 }: {
   defaultLat: number | null
   defaultLng: number | null
   defaultHeading: number | null
+  /** 'camera' を指定するとマウント時にカメラ起動を試みる */
+  initialAction?: 'normal' | 'camera'
   onCancel: () => void
   onSave: (
     data: {
@@ -5125,6 +5137,14 @@ function MobileMemoCreateModal({
   const [editingFile, setEditingFile] = useState<File | null>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const pickerInputRef = useRef<HTMLInputElement>(null)
+  // initialAction='camera' のときは初回マウント時にカメラを開く
+  useEffect(() => {
+    if (initialAction !== 'camera') return
+    // 0ms 遅延で input を click → モバイルブラウザのユーザー操作扱いになる
+    const t = window.setTimeout(() => cameraInputRef.current?.click(), 0)
+    return () => window.clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // 撮影 / 画像から選択 共通: ファイル選択 → 編集モーダルへ
   const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -5199,7 +5219,7 @@ function MobileMemoCreateModal({
         className="bg-white w-full sm:max-w-sm rounded-t-xl sm:rounded-xl shadow-xl p-4 space-y-3"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="text-base font-bold flex items-center gap-2">📝 メモを残す</h3>
+        <h3 className="text-base font-bold flex items-center gap-2">📓 野帳を残す</h3>
 
         {/* タイトル直下: カメラ系ボタン + 取り込み済み写真の一覧 */}
         <div className="space-y-2">
