@@ -23,6 +23,18 @@ export interface FarmMemo {
 // 無限再レンダリングになるため、参照が変わらない 1 つのインスタンスを使う。
 export const EMPTY_FARM_MEMOS: FarmMemo[] = []
 
+// Supabase の PostgrestError は Error 継承ではないので instanceof で取れない。
+// message / details / hint / code を拾って 1 行にまとめる（parcelStore と同じ方針）。
+function extractMessage(err: unknown, fallback: string): string {
+  const e = err as
+    | (Partial<{ message: string; code: string; details: string; hint: string }> &
+        Record<string, unknown>)
+    | null
+  const parts = [e?.message, e?.details, e?.hint, e?.code ? `(code: ${e.code})` : null]
+    .filter((s): s is string => typeof s === 'string' && s.length > 0)
+  return parts.length > 0 ? parts.join(' — ') : fallback
+}
+
 interface RawRow {
   id: string
   farm_id: string
@@ -96,7 +108,7 @@ export const useFarmMemoStore = create<State>((set, get) => ({
     } catch (err) {
       set({
         loading: false,
-        error: err instanceof Error ? err.message : 'メモの取得に失敗しました',
+        error: extractMessage(err, 'メモの取得に失敗しました'),
       })
     }
   },
@@ -124,7 +136,7 @@ export const useFarmMemoStore = create<State>((set, get) => ({
       set({ byFarm: next })
       return created
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : 'メモの作成に失敗しました' })
+      set({ error: extractMessage(err, 'メモの作成に失敗しました') })
       // eslint-disable-next-line no-console
       console.error('[farmMemoStore] createMemo failed', err)
       return null
@@ -159,7 +171,7 @@ export const useFarmMemoStore = create<State>((set, get) => ({
     } catch (err) {
       set({
         byFarm: prevByFarm,
-        error: err instanceof Error ? err.message : 'メモの更新に失敗しました',
+        error: extractMessage(err, 'メモの更新に失敗しました'),
       })
       // eslint-disable-next-line no-console
       console.error('[farmMemoStore] updateMemo failed', err)
@@ -181,7 +193,7 @@ export const useFarmMemoStore = create<State>((set, get) => ({
     } catch (err) {
       set({
         byFarm: prev,
-        error: err instanceof Error ? err.message : 'メモの削除に失敗しました',
+        error: extractMessage(err, 'メモの削除に失敗しました'),
       })
     }
   },
