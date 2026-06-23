@@ -2865,16 +2865,6 @@ export function MobileStakingPage() {
           })}
         </div>
 
-        {/* 工区メモ追加ボタン（左下浮動） */}
-        <button
-          type="button"
-          onClick={() => setShowMemoModal(true)}
-          className="absolute bottom-5 left-1 z-[1000] flex items-center gap-1 px-2 py-1 rounded shadow border border-amber-400 bg-amber-50 text-amber-800 text-[12px] font-medium active:bg-amber-100"
-          title="現在位置・方向でメモを残す"
-        >
-          📝 メモ
-        </button>
-
         {/* 背景地図セレクタ（右下、Leaflet 帰属の上） */}
         <div className="absolute bottom-5 right-1 z-[1000] flex items-center gap-1 px-1.5 py-0.5 rounded shadow border border-slate-300 bg-white/95 text-[11px]">
           <span className="text-slate-500">背景</span>
@@ -4200,8 +4190,10 @@ export function MobileStakingPage() {
           )}
         </div>
 
-        {/* 記録ボタン */}
-        <div className="mt-2 flex gap-2">
+        {/* 記録ボタン
+            ターゲット未選択時はメモボタンをこのすぐ下に追加するので、
+            mt を 1 段狭めて全体を少し上に詰める */}
+        <div className={`${!selectedTarget && !recording ? 'mt-1' : 'mt-2'} flex gap-2`}>
           {!recording ? (
             <>
               <button
@@ -4270,6 +4262,22 @@ export function MobileStakingPage() {
             </>
           )}
         </div>
+
+        {/* ターゲット未選択時のみ、記録ボタンの直下に「メモ」を出す。
+            メモは位置・方向だけで残せるので、ターゲット指定を伴わない
+            気付き記録の入口としてここに置く。 */}
+        {!recording && !selectedTarget && (
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={() => setShowMemoModal(true)}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-amber-400 bg-amber-50 text-amber-800 font-semibold active:bg-amber-100"
+              title="現在位置・方向でメモを残す"
+            >
+              📝 メモ
+            </button>
+          </div>
+        )}
       </div>
       )}
 
