@@ -18,6 +18,11 @@ export interface FarmMemo {
   updatedAt: string
 }
 
+// セレクタで「該当 farm のメモが無いとき」用に共有する固定配列。
+// `?? []` を直接書くと毎回新しい [] が返り、Zustand が差分とみなして
+// 無限再レンダリングになるため、参照が変わらない 1 つのインスタンスを使う。
+export const EMPTY_FARM_MEMOS: FarmMemo[] = []
+
 interface RawRow {
   id: string
   farm_id: string

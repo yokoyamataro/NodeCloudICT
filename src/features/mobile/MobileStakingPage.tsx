@@ -39,7 +39,7 @@ import {
 import { supabase } from '@/lib/supabase'
 import { playStartChime, playStopChime, unlockAudio } from '@/lib/beep'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
-import { useFarmMemoStore } from '@/stores/farmMemoStore'
+import { useFarmMemoStore, EMPTY_FARM_MEMOS } from '@/stores/farmMemoStore'
 import { createMemoIcon } from '@/components/map/CoordinateMap'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
@@ -926,7 +926,7 @@ export function MobileStakingPage() {
 
   // 工区メモ（地図上にマーカー表示 + メモボタンで作成）
   const farmMemos = useFarmMemoStore((s) =>
-    farmId ? s.byFarm.get(farmId) ?? [] : [],
+    farmId ? s.byFarm.get(farmId) ?? EMPTY_FARM_MEMOS : EMPTY_FARM_MEMOS,
   )
   const fetchFarmMemos = useFarmMemoStore((s) => s.fetchByFarm)
   const createFarmMemo = useFarmMemoStore((s) => s.createMemo)

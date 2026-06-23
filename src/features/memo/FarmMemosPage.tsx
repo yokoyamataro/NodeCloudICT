@@ -18,7 +18,7 @@ import {
 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
-import { useFarmMemoStore, type FarmMemo } from '@/stores/farmMemoStore'
+import { useFarmMemoStore, EMPTY_FARM_MEMOS, type FarmMemo } from '@/stores/farmMemoStore'
 import { useAttachmentStore } from '@/stores/attachmentStore'
 import { MemoPhotoModal } from './MemoPhotoModal'
 
@@ -48,7 +48,7 @@ export function FarmMemosPage() {
   const projectId = currentFarm?.project_id ?? null
 
   const memos = useFarmMemoStore((s) =>
-    farmId ? s.byFarm.get(farmId) ?? [] : [],
+    farmId ? s.byFarm.get(farmId) ?? EMPTY_FARM_MEMOS : EMPTY_FARM_MEMOS,
   )
   const loading = useFarmMemoStore((s) => s.loading)
   const fetchByFarm = useFarmMemoStore((s) => s.fetchByFarm)

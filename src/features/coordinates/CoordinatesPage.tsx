@@ -14,7 +14,7 @@ import { CoordinateCalcModal } from './CoordinateCalcModal'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
-import { useFarmMemoStore } from '@/stores/farmMemoStore'
+import { useFarmMemoStore, EMPTY_FARM_MEMOS } from '@/stores/farmMemoStore'
 import { useNavigate } from 'react-router-dom'
 import { useMapViewStore } from '@/stores/mapViewStore'
 import { useStakingStore } from '@/stores/stakingStore'
@@ -548,7 +548,7 @@ export function CoordinatesPage() {
 
   // 工区メモ
   const farmMemos = useFarmMemoStore((s) =>
-    currentFarm ? s.byFarm.get(currentFarm.id) ?? [] : [],
+    currentFarm ? s.byFarm.get(currentFarm.id) ?? EMPTY_FARM_MEMOS : EMPTY_FARM_MEMOS,
   )
   const fetchFarmMemos = useFarmMemoStore((s) => s.fetchByFarm)
   const memosForMap = useMemo(
