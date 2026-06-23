@@ -578,8 +578,29 @@ export function CoordinatesPage() {
       fetchStakingRecords(currentFarm.id)
       // 工区メモ
       void fetchFarmMemos(currentFarm.id)
+      // 工区写真（スマホで撮影した位置・方向付き写真をマーカー表示するため）
+      void fetchAttachments('farm_photo', [currentFarm.id])
     }
-  }, [currentFarm, projectZone, setZone, fetchCoordinates, fetchRoute, fetchStakingRecords, fetchFarmMemos])
+  }, [currentFarm, projectZone, setZone, fetchCoordinates, fetchRoute, fetchStakingRecords, fetchFarmMemos, fetchAttachments])
+
+  // 工区写真（マーカー描画用）
+  const farmPhotosForMap = useMemo(() => {
+    if (!currentFarm) return [] as Array<{
+      id: string
+      lat: number
+      lng: number
+      headingDeg: number | null
+    }>
+    const list = attachmentsByEntity.get(`farm_photo:${currentFarm.id}`) ?? []
+    return list
+      .filter((a) => a.lat != null && a.lng != null)
+      .map((a) => ({
+        id: a.id,
+        lat: a.lat as number,
+        lng: a.lng as number,
+        headingDeg: a.headingDeg,
+      }))
+  }, [currentFarm, attachmentsByEntity])
 
   // 座標が読み込まれたら、写真の枚数を一括取得（写真列のカウント表示用）
   useEffect(() => {
@@ -1785,6 +1806,9 @@ export function CoordinatesPage() {
             onPointToggleCheck={handlePointToggleCheck}
             farmMemos={memosForMap}
             onMemoClick={() => navigate('/memos')}
+            farmPhotos={farmPhotosForMap}
+            onPhotoClick={() => navigate('/memos')}
+            onMapLongPress={() => navigate('/memos')}
             baseLayer={baseLayer}
             route={route}
             showRoute={true}
@@ -2472,6 +2496,9 @@ export function CoordinatesPage() {
             onPointToggleCheck={handlePointToggleCheck}
             farmMemos={memosForMap}
             onMemoClick={() => navigate('/memos')}
+            farmPhotos={farmPhotosForMap}
+            onPhotoClick={() => navigate('/memos')}
+            onMapLongPress={() => navigate('/memos')}
               baseLayer={baseLayer}
               route={route}
               showRoute={true}

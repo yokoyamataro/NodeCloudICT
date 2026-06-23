@@ -70,6 +70,47 @@ function createColoredIcon(
   })
 }
 
+// 工区写真のマーカーアイコン。カメラ風 + 撮影方向の三角形（heading 指定時のみ）。
+export function createPhotoIcon(headingDeg: number | null): L.DivIcon {
+  const arrow =
+    headingDeg == null
+      ? ''
+      : `<div style="
+          position: absolute;
+          top: -6px;
+          left: 50%;
+          width: 0;
+          height: 0;
+          transform: translate(-50%, -100%) rotate(${headingDeg}deg);
+          transform-origin: 50% calc(100% + 12px);
+          border-left: 6px solid transparent;
+          border-right: 6px solid transparent;
+          border-bottom: 12px solid #2563eb;
+          filter: drop-shadow(0 1px 1px rgba(0,0,0,0.3));
+        "></div>`
+  return L.divIcon({
+    className: 'photo-marker',
+    html: `<div style="position: relative; width: 22px; height: 22px;">
+      ${arrow}
+      <div style="
+        width: 22px;
+        height: 22px;
+        background: #dbeafe;
+        border: 2px solid #1d4ed8;
+        border-radius: 50%;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        color: #1e3a8a;
+      ">📷</div>
+    </div>`,
+    iconSize: [22, 22],
+    iconAnchor: [11, 22],
+  })
+}
+
 // 工区メモのマーカーアイコン。黄色付箋風のピン + 方向矢印（heading 指定時のみ）。
 // heading は 0=北, 90=東 ... の地理学的角度。SVG 上は北が下向きなので 180° オフセット。
 export function createMemoIcon(headingDeg: number | null): L.DivIcon {
@@ -144,6 +185,20 @@ function createEdgeLengthIcon(label: string, angle: number): L.DivIcon {
 }
 
 // 地図の表示状態を管理するコンポーネント
+// 地図の長押し / 右クリック を拾うレイヤ。MapContainer の子としてマウントする。
+function CoordinateMapLongPressBridge({
+  onLongPress,
+}: {
+  onLongPress: (lat: number, lng: number) => void
+}) {
+  useMapEvents({
+    contextmenu(e) {
+      onLongPress(e.latlng.lat, e.latlng.lng)
+    },
+  })
+  return null
+}
+
 function MapViewManager({ coordinates }: { coordinates: CoordinateRow[] }) {
   const map = useMap()
   const { center, zoom, isInitialized, setView } = useMapViewStore()
@@ -310,6 +365,16 @@ interface CoordinateMapProps {
   }>
   /** メモマーカーをクリックしたとき */
   onMemoClick?: (memoId: string) => void
+  /** 工区写真（標準写真）のマーカー。撮影位置 + 撮影方向 */
+  farmPhotos?: Array<{
+    id: string
+    lat: number
+    lng: number
+    headingDeg: number | null
+  }>
+  onPhotoClick?: (photoId: string) => void
+  /** 地図の長押し（右クリック / モバイル長押し）で呼ぶ。野帳作成等に利用 */
+  onMapLongPress?: (lat: number, lng: number) => void
   baseLayer?: BaseLayerType
   externalPolygons?: ExternalPolygon[]
   editingExternalPolygonId?: string | null
@@ -368,6 +433,9 @@ export function CoordinateMap({
   onPointToggleCheck,
   farmMemos,
   onMemoClick,
+  farmPhotos,
+  onPhotoClick,
+  onMapLongPress,
   baseLayer = 'osm',
   externalPolygons = [],
   editingExternalPolygonId,
@@ -625,6 +693,20 @@ export function CoordinateMap({
           </Tooltip>
         </Marker>
       ))}
+
+      {/* 工区写真のマーカー（カメラアイコン + 撮影方向） */}
+      {farmPhotos?.map((p) => (
+        <Marker
+          key={`photo-${p.id}`}
+          position={[p.lat, p.lng]}
+          icon={createPhotoIcon(p.headingDeg)}
+          zIndexOffset={450}
+          eventHandlers={{ click: () => onPhotoClick?.(p.id) }}
+        />
+      ))}
+
+      {/* 長押し / 右クリック で野帳作成等のコールバックを発火 */}
+      {onMapLongPress && <CoordinateMapLongPressBridge onLongPress={onMapLongPress} />}
 
       {/* 経路の順番ラベル */}
       {showRoute && route.map((p, idx) => {

@@ -17,6 +17,8 @@ export interface Attachment {
   takenAt: string | null
   lat: number | null
   lng: number | null
+  /** 撮影方向（端末方位 0=北, 90=東 ...）。座標写真には NULL でも可。 */
+  headingDeg: number | null
   sortOrder: number
   createdBy: string | null
   createdAt: string
@@ -35,6 +37,7 @@ interface RawAttachmentRow {
   taken_at: string | null
   lat: number | null
   lng: number | null
+  heading_deg: number | string | null
   sort_order: number
   created_by: string | null
   created_at: string
@@ -54,6 +57,7 @@ function rowToAttachment(r: RawAttachmentRow): Attachment {
     takenAt: r.taken_at,
     lat: r.lat,
     lng: r.lng,
+    headingDeg: r.heading_deg == null ? null : Number(r.heading_deg),
     sortOrder: r.sort_order,
     createdBy: r.created_by,
     createdAt: r.created_at,
@@ -85,6 +89,8 @@ interface State {
     takenAt?: Date | null
     lat?: number | null
     lng?: number | null
+    /** 撮影方向 (0..360 度)。工区写真など現場で「方位」を持つ写真で利用 */
+    headingDeg?: number | null
     /** 既に縮小済みの Blob を渡す場合は true（再エンコードしない） */
     skipResize?: boolean
     /** 保存ファイル名（拡張子は .jpg を推奨）。省略時は uuid.jpg */
@@ -201,6 +207,7 @@ export const useAttachmentStore = create<State>((set, get) => ({
     takenAt = null,
     lat = null,
     lng = null,
+    headingDeg = null,
     skipResize = false,
   }) => {
     try {
@@ -239,6 +246,7 @@ export const useAttachmentStore = create<State>((set, get) => ({
         taken_at: takenAt ? takenAt.toISOString() : null,
         lat,
         lng,
+        heading_deg: headingDeg ?? null,
         sort_order: sortOrder,
         created_by: userRes.data.user?.id ?? null,
       }
@@ -315,6 +323,7 @@ export const useAttachmentStore = create<State>((set, get) => ({
         taken_at: null,
         lat: null,
         lng: null,
+        heading_deg: null,
         sort_order: sortOrder,
         created_by: userRes.data.user?.id ?? null,
       }
