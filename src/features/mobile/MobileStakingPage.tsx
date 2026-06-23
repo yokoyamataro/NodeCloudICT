@@ -39,6 +39,8 @@ import {
 import { supabase } from '@/lib/supabase'
 import { playStartChime, playStopChime, unlockAudio } from '@/lib/beep'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
+import { useFarmMemoStore } from '@/stores/farmMemoStore'
+import { createMemoIcon } from '@/components/map/CoordinateMap'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useMapViewStore } from '@/stores/mapViewStore'
@@ -572,6 +574,8 @@ export function MobileStakingPage() {
   const [showDisplaySettings, setShowDisplaySettings] = useState(false)
   // 写真モーダル: 選択中ターゲット（座標）の写真を閲覧／撮影できる
   const [photoModalTarget, setPhotoModalTarget] = useState<StakingTarget | null>(null)
+  // メモ作成モーダル
+  const [showMemoModal, setShowMemoModal] = useState(false)
   const [showLabels, setShowLabels] = useState(
     () => localStorage.getItem('mobile:staking:showLabels') !== '0',
   )
@@ -919,6 +923,16 @@ export function MobileStakingPage() {
   useEffect(() => {
     if (farmId && farm) fetchWorkAreaPolygons()
   }, [farmId, farm, fetchWorkAreaPolygons])
+
+  // 工区メモ（地図上にマーカー表示 + メモボタンで作成）
+  const farmMemos = useFarmMemoStore((s) =>
+    farmId ? s.byFarm.get(farmId) ?? [] : [],
+  )
+  const fetchFarmMemos = useFarmMemoStore((s) => s.fetchByFarm)
+  const createFarmMemo = useFarmMemoStore((s) => s.createMemo)
+  useEffect(() => {
+    if (farmId) void fetchFarmMemos(farmId)
+  }, [farmId, fetchFarmMemos])
 
   // オルソ画像タイルセットを取得
   useEffect(() => {
@@ -2422,6 +2436,22 @@ export function MobileStakingPage() {
         className="hidden"
       />
       {/* 写真モーダル（撮影・閲覧） */}
+      {showMemoModal && farmId && (
+        <MobileMemoCreateModal
+          defaultLat={currentPos ? currentPos[0] : null}
+          defaultLng={currentPos ? currentPos[1] : null}
+          defaultHeading={heading}
+          onCancel={() => setShowMemoModal(false)}
+          onSave={async (data) => {
+            const saved = await createFarmMemo(farmId, data)
+            setShowMemoModal(false)
+            if (saved) {
+              setShareToast('メモを保存しました')
+              window.setTimeout(() => setShareToast(null), 2500)
+            }
+          }}
+        />
+      )}
       {photoModalTarget && farm?.project_id && (
         <CoordinatePhotoModal
           open={!!photoModalTarget}
@@ -2835,6 +2865,16 @@ export function MobileStakingPage() {
           })}
         </div>
 
+        {/* 工区メモ追加ボタン（左下浮動） */}
+        <button
+          type="button"
+          onClick={() => setShowMemoModal(true)}
+          className="absolute bottom-5 left-1 z-[1000] flex items-center gap-1 px-2 py-1 rounded shadow border border-amber-400 bg-amber-50 text-amber-800 text-[12px] font-medium active:bg-amber-100"
+          title="現在位置・方向でメモを残す"
+        >
+          📝 メモ
+        </button>
+
         {/* 背景地図セレクタ（右下、Leaflet 帰属の上） */}
         <div className="absolute bottom-5 right-1 z-[1000] flex items-center gap-1 px-1.5 py-0.5 rounded shadow border border-slate-300 bg-white/95 text-[11px]">
           <span className="text-slate-500">背景</span>
@@ -2988,6 +3028,30 @@ export function MobileStakingPage() {
               </Polygon>
             )
           })}
+
+          {/* 工区メモのマーカー（位置 + 方向） */}
+          {farmMemos.map((m) =>
+            m.lat != null && m.lng != null ? (
+              <Marker
+                key={`memo-${m.id}`}
+                position={[m.lat, m.lng]}
+                icon={createMemoIcon(m.headingDeg)}
+                zIndexOffset={500}
+              >
+                <Tooltip
+                  direction="top"
+                  offset={[0, -16]}
+                  className="staking-label-tooltip"
+                >
+                  <div style={{ maxWidth: 200, whiteSpace: 'pre-wrap' }}>
+                    {m.content.length > 60
+                      ? m.content.slice(0, 60) + '…'
+                      : m.content}
+                  </div>
+                </Tooltip>
+              </Marker>
+            ) : null,
+          )}
 
           {/* 配線ライン（吸水=青・集水=緑、選択中はオレンジ）
               タップ判定を確実にするため、透明な太い「ヒットレイヤ」を上に重ねる */}
@@ -4977,6 +5041,99 @@ function ParcelAttrRow({ label, value }: { label: string; value: string | null |
       <span className="flex-1 text-slate-800 break-all">
         {value && value !== '' ? value : <span className="text-slate-400">-</span>}
       </span>
+    </div>
+  )
+}
+
+// メモ作成（スマホ）。
+//   現在地・現在方位を既定値として埋め、ユーザは本文を書いて保存するだけ。
+//   写真は保存後に「メモ」タブ等から追加してもらう想定（写真は後追いでも追える）。
+function MobileMemoCreateModal({
+  defaultLat,
+  defaultLng,
+  defaultHeading,
+  onCancel,
+  onSave,
+}: {
+  defaultLat: number | null
+  defaultLng: number | null
+  defaultHeading: number | null
+  onCancel: () => void
+  onSave: (data: {
+    content: string
+    lat: number | null
+    lng: number | null
+    headingDeg: number | null
+  }) => Promise<void>
+}) {
+  const [content, setContent] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const save = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await onSave({
+        content,
+        lat: defaultLat,
+        lng: defaultLng,
+        headingDeg: defaultHeading,
+      })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3000]"
+      onClick={onCancel}
+    >
+      <div
+        className="bg-white w-full sm:max-w-sm rounded-t-xl sm:rounded-xl shadow-xl p-4 space-y-3"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-base font-bold flex items-center gap-2">
+          📝 メモを残す
+        </h3>
+        <div className="text-[11px] text-slate-500 space-y-0.5">
+          <div>
+            位置: {defaultLat != null && defaultLng != null
+              ? `${defaultLat.toFixed(6)}, ${defaultLng.toFixed(6)}`
+              : '取得中／未許可'}
+          </div>
+          <div>
+            方向:{' '}
+            {defaultHeading != null
+              ? `${defaultHeading.toFixed(0)}°`
+              : '取得中／未許可'}
+          </div>
+        </div>
+        <textarea
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          rows={5}
+          className="w-full px-2 py-1.5 text-sm border rounded"
+          placeholder="現場で気付いたことを書く"
+          autoFocus
+        />
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            disabled={busy}
+            className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={save}
+            disabled={busy || content.trim() === ''}
+            className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+          >
+            保存
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

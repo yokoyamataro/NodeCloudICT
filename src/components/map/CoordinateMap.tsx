@@ -70,6 +70,49 @@ function createColoredIcon(
   })
 }
 
+// 工区メモのマーカーアイコン。黄色付箋風のピン + 方向矢印（heading 指定時のみ）。
+// heading は 0=北, 90=東 ... の地理学的角度。SVG 上は北が下向きなので 180° オフセット。
+export function createMemoIcon(headingDeg: number | null): L.DivIcon {
+  const arrow =
+    headingDeg == null
+      ? ''
+      : `<div style="
+          position: absolute;
+          top: -6px;
+          left: 50%;
+          width: 0;
+          height: 0;
+          transform: translate(-50%, -100%) rotate(${headingDeg}deg);
+          transform-origin: 50% calc(100% + 12px);
+          border-left: 6px solid transparent;
+          border-right: 6px solid transparent;
+          border-bottom: 12px solid #f59e0b;
+          filter: drop-shadow(0 1px 1px rgba(0,0,0,0.3));
+        "></div>`
+  return L.divIcon({
+    className: 'memo-marker',
+    html: `<div style="position: relative; width: 22px; height: 22px;">
+      ${arrow}
+      <div style="
+        width: 22px;
+        height: 22px;
+        background: #fde68a;
+        border: 2px solid #d97706;
+        border-radius: 4px 4px 4px 12px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        font-weight: 700;
+        color: #92400e;
+      ">M</div>
+    </div>`,
+    iconSize: [22, 22],
+    iconAnchor: [11, 22],
+  })
+}
+
 // 辺長の端数処理
 export type EdgeRounding = 'round' | 'floor'
 
@@ -257,6 +300,16 @@ interface CoordinateMapProps {
   /** Ctrl/⌘ + マーカークリックで呼ぶ。指定すると複数選択 UI と連動。
    *  未指定なら従来通り通常クリックで onPointSelect だけ呼ばれる */
   onPointToggleCheck?: (id: string) => void
+  /** 工区メモ（lat/lng 必須）。マーカーで地図上に位置・方向を表示する */
+  farmMemos?: Array<{
+    id: string
+    content: string
+    lat: number
+    lng: number
+    headingDeg: number | null
+  }>
+  /** メモマーカーをクリックしたとき */
+  onMemoClick?: (memoId: string) => void
   baseLayer?: BaseLayerType
   externalPolygons?: ExternalPolygon[]
   editingExternalPolygonId?: string | null
@@ -313,6 +366,8 @@ export function CoordinateMap({
   orangeCoordIds,
   checkedCoordIds,
   onPointToggleCheck,
+  farmMemos,
+  onMemoClick,
   baseLayer = 'osm',
   externalPolygons = [],
   editingExternalPolygonId,
@@ -553,6 +608,23 @@ export function CoordinateMap({
           />
         ))
       })()}
+
+      {/* 工区メモのマーカー */}
+      {farmMemos?.map((m) => (
+        <Marker
+          key={`memo-${m.id}`}
+          position={[m.lat, m.lng]}
+          icon={createMemoIcon(m.headingDeg)}
+          zIndexOffset={500}
+          eventHandlers={{ click: () => onMemoClick?.(m.id) }}
+        >
+          <Tooltip direction="top" offset={[0, -16]} className="memo-tooltip">
+            <div style={{ maxWidth: 200, whiteSpace: 'pre-wrap' }}>
+              {m.content.length > 80 ? m.content.slice(0, 80) + '…' : m.content}
+            </div>
+          </Tooltip>
+        </Marker>
+      ))}
 
       {/* 経路の順番ラベル */}
       {showRoute && route.map((p, idx) => {

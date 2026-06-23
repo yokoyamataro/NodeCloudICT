@@ -14,6 +14,8 @@ import { CoordinateCalcModal } from './CoordinateCalcModal'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
+import { useFarmMemoStore } from '@/stores/farmMemoStore'
+import { useNavigate } from 'react-router-dom'
 import { useMapViewStore } from '@/stores/mapViewStore'
 import { useStakingStore } from '@/stores/stakingStore'
 import { useProjectListStore } from '@/stores/projectListStore'
@@ -310,6 +312,7 @@ export function CoordinatesPage() {
   const viewMode = urlParams.get('view') // 'map' または 'table'
 
   const { currentFarm } = useFarmStore()
+  const navigate = useNavigate()
   const { projects, members, fetchMembers } = useProjectListStore()
   const { fetchByEntityIds: fetchAttachments, getSignedUrl } = useAttachmentStore()
   const attachmentsByEntity = useAttachmentStore((s) => s.byEntity)
@@ -543,6 +546,25 @@ export function CoordinatesPage() {
     return set
   }, [stakingRecords])
 
+  // 工区メモ
+  const farmMemos = useFarmMemoStore((s) =>
+    currentFarm ? s.byFarm.get(currentFarm.id) ?? [] : [],
+  )
+  const fetchFarmMemos = useFarmMemoStore((s) => s.fetchByFarm)
+  const memosForMap = useMemo(
+    () =>
+      farmMemos
+        .filter((m) => m.lat != null && m.lng != null)
+        .map((m) => ({
+          id: m.id,
+          content: m.content,
+          lat: m.lat as number,
+          lng: m.lng as number,
+          headingDeg: m.headingDeg,
+        })),
+    [farmMemos],
+  )
+
   // 工区選択時にデータを読み込む
   useEffect(() => {
     if (currentFarm && projectZone !== null) {
@@ -554,8 +576,10 @@ export function CoordinatesPage() {
       fetchRoute(currentFarm.id)
       // スマホ実測の状態
       fetchStakingRecords(currentFarm.id)
+      // 工区メモ
+      void fetchFarmMemos(currentFarm.id)
     }
-  }, [currentFarm, projectZone, setZone, fetchCoordinates, fetchRoute, fetchStakingRecords])
+  }, [currentFarm, projectZone, setZone, fetchCoordinates, fetchRoute, fetchStakingRecords, fetchFarmMemos])
 
   // 座標が読み込まれたら、写真の枚数を一括取得（写真列のカウント表示用）
   useEffect(() => {
@@ -1759,6 +1783,8 @@ export function CoordinatesPage() {
             orangeCoordIds={orangeCoordIds}
             checkedCoordIds={checkedIds}
             onPointToggleCheck={handlePointToggleCheck}
+            farmMemos={memosForMap}
+            onMemoClick={() => navigate('/memos')}
             baseLayer={baseLayer}
             route={route}
             showRoute={true}
@@ -2444,6 +2470,8 @@ export function CoordinatesPage() {
             orangeCoordIds={orangeCoordIds}
             checkedCoordIds={checkedIds}
             onPointToggleCheck={handlePointToggleCheck}
+            farmMemos={memosForMap}
+            onMemoClick={() => navigate('/memos')}
               baseLayer={baseLayer}
               route={route}
               showRoute={true}

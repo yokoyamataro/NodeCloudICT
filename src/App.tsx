@@ -36,6 +36,7 @@ import { LandXMLPage } from '@/features/underdrain/LandXMLPage'
 import { CadExportPage } from '@/features/underdrain/CadExportPage'
 import { ReportsPage } from '@/features/underdrain/ReportsPage'
 import { StakingRecordsPage } from '@/features/underdrain/StakingRecordsPage'
+import { FarmMemosPage } from '@/features/memo/FarmMemosPage'
 // 境界測量
 import { BoundarySurveyWorkAreaPage } from '@/features/boundary-survey/BoundarySurveyWorkAreaPage'
 import { LandownersPage } from '@/features/boundary-survey/LandownersPage'
@@ -243,6 +244,8 @@ function AppRoutes() {
         <Route path="coordinates" element={<CoordinatesPage />} />
         {/* スマホで記録した測設記録の一覧（工区横断のトップレベル経路） */}
         <Route path="staking-records" element={<StakingRecordsPage />} />
+        {/* 工区メモ */}
+        <Route path="memos" element={<FarmMemosPage />} />
         {/* 境界測量 */}
         <Route path="boundary-survey">
           <Route path="work-area" element={<BoundarySurveyWorkAreaPage />} />
