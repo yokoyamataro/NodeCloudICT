@@ -1,11 +1,17 @@
 // 撮影／選択した写真の回転とトリミングを行うモーダル
 // 確定で 回転 + トリミング を Canvas に焼き付けた Blob と
-// メタ情報（撮影日 / 備考）を返す。
+// メタ情報（撮影日 / 備考 / 位置 / 撮影方向）を返す。
+//
+// 位置・方向の編集はオプション（enableLocationEdit=true で有効）。
+// 「位置・方向を編集」ボタン → 内部的に地図ピッカー画面に遷移し、
+// ピンの移動と方向スライダで lat/lng/heading を指定できる。
 
 import { useEffect, useRef, useState } from 'react'
 import ReactCrop, { type Crop, type PixelCrop, centerCrop, makeAspectCrop } from 'react-image-crop'
 import 'react-image-crop/dist/ReactCrop.css'
-import { RotateCcw, RotateCw, X, Check, Loader2 } from 'lucide-react'
+import { RotateCcw, RotateCw, X, Check, Loader2, MapPin, Compass } from 'lucide-react'
+import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet'
+import L from 'leaflet'
 import { readExifDate } from '@/lib/readExifDate'
 
 export interface PhotoEditMeta {
@@ -13,6 +19,12 @@ export interface PhotoEditMeta {
   takenAt: Date | null
   /** 備考。空文字は null として扱う */
   caption: string | null
+  /** 撮影位置（緯度）。enableLocationEdit が無効なら null のまま */
+  lat: number | null
+  /** 撮影位置（経度） */
+  lng: number | null
+  /** 撮影方向 0..360 度（0=北, 90=東）。指定なしは null */
+  headingDeg: number | null
 }
 
 interface PhotoEditModalProps {
@@ -22,6 +34,12 @@ interface PhotoEditModalProps {
   onConfirm: (blob: Blob, fileName: string, meta: PhotoEditMeta) => void
   /** ヘッダ右に出す注記（カテゴリ名、残り枚数など） */
   headerNote?: string
+  /** 位置・方向の編集 UI を出すかどうか */
+  enableLocationEdit?: boolean
+  /** 初期位置・方向（取り込み直後にカメラから渡された値など） */
+  initialLat?: number | null
+  initialLng?: number | null
+  initialHeadingDeg?: number | null
 }
 
 // HTML <input type="date"> に渡す YYYY-MM-DD 文字列に変換
@@ -39,7 +57,16 @@ function parseDateInputValue(s: string): Date | null {
   return Number.isNaN(d.getTime()) ? null : d
 }
 
-export function PhotoEditModal({ file, onCancel, onConfirm, headerNote }: PhotoEditModalProps) {
+export function PhotoEditModal({
+  file,
+  onCancel,
+  onConfirm,
+  headerNote,
+  enableLocationEdit = false,
+  initialLat = null,
+  initialLng = null,
+  initialHeadingDeg = null,
+}: PhotoEditModalProps) {
   const [imgUrl, setImgUrl] = useState<string | null>(null)
   const [rotation, setRotation] = useState(0) // 度数（90 単位）
   const [crop, setCrop] = useState<Crop>()
@@ -50,6 +77,11 @@ export function PhotoEditModal({ file, onCancel, onConfirm, headerNote }: PhotoE
   const [takenAtStr, setTakenAtStr] = useState<string>(() => toDateInputValue(new Date()))
   const [caption, setCaption] = useState<string>('')
   const [exifLoaded, setExifLoaded] = useState(false)
+  // 位置・方向
+  const [lat, setLat] = useState<number | null>(initialLat)
+  const [lng, setLng] = useState<number | null>(initialLng)
+  const [headingDeg, setHeadingDeg] = useState<number | null>(initialHeadingDeg)
+  const [mode, setMode] = useState<'photo' | 'location'>('photo')
 
   useEffect(() => {
     const url = URL.createObjectURL(file)
@@ -164,6 +196,9 @@ export function PhotoEditModal({ file, onCancel, onConfirm, headerNote }: PhotoE
       onConfirm(blob, file.name, {
         takenAt: parseDateInputValue(takenAtStr),
         caption: caption.trim() ? caption.trim() : null,
+        lat,
+        lng,
+        headingDeg,
       })
     } catch (err) {
       console.error(err)
@@ -171,6 +206,31 @@ export function PhotoEditModal({ file, onCancel, onConfirm, headerNote }: PhotoE
     } finally {
       setBusy(false)
     }
+  }
+
+  // 位置・方向の編集モードのとき: モーダル全体を地図ピッカーに差し替える。
+  if (mode === 'location') {
+    return (
+      <div
+        className="fixed inset-0 bg-black/70 flex items-center justify-center z-[9999]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl h-[90vh] flex flex-col">
+          <PhotoLocationPicker
+            initialLat={lat}
+            initialLng={lng}
+            initialHeadingDeg={headingDeg}
+            onCancel={() => setMode('photo')}
+            onSave={(nlat, nlng, nheading) => {
+              setLat(nlat)
+              setLng(nlng)
+              setHeadingDeg(nheading)
+              setMode('photo')
+            }}
+          />
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -246,6 +306,30 @@ export function PhotoEditModal({ file, onCancel, onConfirm, headerNote }: PhotoE
             placeholder="任意のメモ（例: 杭頭飛び、コンクリート巻き 等）"
             className="px-2 py-1 text-sm border rounded"
           />
+          {enableLocationEdit && (
+            <>
+              <label className="text-xs text-slate-600">位置・方向</label>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-slate-600 inline-flex items-center gap-1">
+                  <MapPin className="h-3.5 w-3.5" />
+                  {lat != null && lng != null
+                    ? `${lat.toFixed(6)}, ${lng.toFixed(6)}`
+                    : '未設定'}
+                </span>
+                <span className="text-xs text-slate-600 inline-flex items-center gap-1">
+                  <Compass className="h-3.5 w-3.5" />
+                  {headingDeg != null ? `${headingDeg.toFixed(0)}°` : '未設定'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setMode('location')}
+                  className="ml-auto text-xs text-blue-600 hover:text-blue-800 underline"
+                >
+                  地図で編集
+                </button>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="px-4 py-2 border-t flex items-center gap-2">
@@ -279,6 +363,187 @@ export function PhotoEditModal({ file, onCancel, onConfirm, headerNote }: PhotoE
             取り込む
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ----------------------------------------------------------------------------
+// 写真の位置・方向ピッカー（PhotoEditModal の内部画面）
+// ----------------------------------------------------------------------------
+
+// 位置 + 方向のマーカーアイコン。中心の青円 + 矢印（heading 方向）。
+function createLocationArrowIcon(headingDeg: number | null): L.DivIcon {
+  const arrow =
+    headingDeg == null
+      ? ''
+      : `<div style="
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          width: 0;
+          height: 0;
+          transform: translate(-50%, -50%) rotate(${headingDeg}deg) translateY(-22px);
+          border-left: 8px solid transparent;
+          border-right: 8px solid transparent;
+          border-bottom: 16px solid #1d4ed8;
+          filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));
+        "></div>`
+  return L.divIcon({
+    className: 'photo-loc-marker',
+    html: `<div style="position: relative; width: 18px; height: 18px;">
+      ${arrow}
+      <div style="
+        width: 18px;
+        height: 18px;
+        background: #1d4ed8;
+        border: 3px solid white;
+        border-radius: 50%;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      "></div>
+    </div>`,
+    iconSize: [18, 18],
+    iconAnchor: [9, 9],
+  })
+}
+
+// 地図クリック → onPick(lat, lng) を呼ぶための薄いラッパ。
+function ClickToPick({ onPick }: { onPick: (lat: number, lng: number) => void }) {
+  useMapEvents({
+    click(e) {
+      onPick(e.latlng.lat, e.latlng.lng)
+    },
+  })
+  return null
+}
+
+function PhotoLocationPicker({
+  initialLat,
+  initialLng,
+  initialHeadingDeg,
+  onCancel,
+  onSave,
+}: {
+  initialLat: number | null
+  initialLng: number | null
+  initialHeadingDeg: number | null
+  onCancel: () => void
+  onSave: (lat: number | null, lng: number | null, headingDeg: number | null) => void
+}) {
+  const [lat, setLat] = useState<number | null>(initialLat)
+  const [lng, setLng] = useState<number | null>(initialLng)
+  const [headingDeg, setHeadingDeg] = useState<number | null>(initialHeadingDeg ?? 0)
+
+  // 初期位置が無いときは日本の中心付近を仮表示（位置を取らないと地図が広がりすぎる）
+  const initialCenter: [number, number] = initialLat != null && initialLng != null
+    ? [initialLat, initialLng]
+    : [35.681, 139.767]
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-4 py-2 border-b flex items-center gap-2 bg-slate-50">
+        <MapPin className="h-4 w-4 text-blue-600" />
+        <h3 className="text-base font-semibold flex-1">
+          {initialLat != null && initialLng != null
+            ? '撮影方向を編集'
+            : '撮影位置・方向を編集'}
+        </h3>
+        <button
+          onClick={onCancel}
+          className="p-1 text-slate-400 hover:text-slate-700 rounded"
+          title="戻る"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+
+      <div className="px-4 py-1.5 text-[11px] text-slate-600 border-b">
+        地図をタップして位置を指定。スライダで方向（0=北, 90=東）を調整します。
+      </div>
+
+      <div className="flex-1 min-h-0">
+        <MapContainer
+          center={initialCenter}
+          zoom={initialLat != null ? 17 : 5}
+          style={{ width: '100%', height: '100%' }}
+          attributionControl={false}
+        >
+          <TileLayer
+            url="https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg"
+            attribution="出典: 国土地理院"
+            maxNativeZoom={18}
+            maxZoom={20}
+          />
+          <ClickToPick
+            onPick={(la, ln) => {
+              setLat(la)
+              setLng(ln)
+            }}
+          />
+          {lat != null && lng != null && (
+            <Marker
+              position={[lat, lng]}
+              icon={createLocationArrowIcon(headingDeg)}
+              draggable
+              eventHandlers={{
+                dragend(e) {
+                  const m = e.target as L.Marker
+                  const ll = m.getLatLng()
+                  setLat(ll.lat)
+                  setLng(ll.lng)
+                },
+              }}
+            />
+          )}
+        </MapContainer>
+      </div>
+
+      <div className="px-4 py-2 border-t bg-slate-50 space-y-1.5">
+        <div className="flex items-center gap-2 text-xs text-slate-600">
+          <MapPin className="h-3.5 w-3.5" />
+          {lat != null && lng != null ? `${lat.toFixed(6)}, ${lng.toFixed(6)}` : '未設定'}
+        </div>
+        <div className="flex items-center gap-2">
+          <Compass className="h-3.5 w-3.5 text-slate-600" />
+          <input
+            type="range"
+            min={0}
+            max={359}
+            step={1}
+            value={headingDeg ?? 0}
+            onChange={(e) => setHeadingDeg(parseInt(e.target.value, 10))}
+            className="flex-1"
+          />
+          <input
+            type="number"
+            min={0}
+            max={359}
+            value={headingDeg ?? 0}
+            onChange={(e) => {
+              const v = parseInt(e.target.value, 10)
+              if (Number.isFinite(v)) setHeadingDeg(((v % 360) + 360) % 360)
+            }}
+            className="w-16 px-1.5 py-0.5 text-xs border rounded text-right"
+          />
+          <span className="text-xs text-slate-500">°</span>
+        </div>
+      </div>
+
+      <div className="px-4 py-2 border-t flex justify-end gap-2">
+        <button
+          onClick={onCancel}
+          className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
+        >
+          キャンセル
+        </button>
+        <button
+          onClick={() => onSave(lat, lng, headingDeg)}
+          disabled={lat == null || lng == null}
+          className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+        >
+          <Check className="h-3.5 w-3.5" />
+          確定
+        </button>
       </div>
     </div>
   )

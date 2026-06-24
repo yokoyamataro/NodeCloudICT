@@ -589,7 +589,10 @@ export function MobileStakingPage() {
   >(null)
   // 工区写真（標準写真）撮影用: PhotoEditModal で編集する元ファイル
   const [editingStandalonePhoto, setEditingStandalonePhoto] = useState<File | null>(null)
+  // カメラボタンの「撮影 / インポート」選択シート
+  const [photoSourceSheet, setPhotoSourceSheet] = useState(false)
   const standalonePhotoInputRef = useRef<HTMLInputElement>(null)
+  const standalonePhotoPickerRef = useRef<HTMLInputElement>(null)
   const [showLabels, setShowLabels] = useState(
     () => localStorage.getItem('mobile:staking:showLabels') !== '0',
   )
@@ -2497,6 +2500,10 @@ export function MobileStakingPage() {
       {editingStandalonePhoto && farm?.project_id && farmId && (
         <PhotoEditModal
           file={editingStandalonePhoto}
+          enableLocationEdit
+          initialLat={currentPos?.[0] ?? null}
+          initialLng={currentPos?.[1] ?? null}
+          initialHeadingDeg={heading}
           onCancel={() => setEditingStandalonePhoto(null)}
           onConfirm={async (blob, _name, meta) => {
             setEditingStandalonePhoto(null)
@@ -2510,9 +2517,10 @@ export function MobileStakingPage() {
               category: '現場',
               caption: meta.caption,
               takenAt: meta.takenAt ?? new Date(),
-              lat: currentPos?.[0] ?? null,
-              lng: currentPos?.[1] ?? null,
-              headingDeg: heading,
+              // メタの位置・方向を優先（編集モーダルで変更可）、未指定なら現在地
+              lat: meta.lat ?? currentPos?.[0] ?? null,
+              lng: meta.lng ?? currentPos?.[1] ?? null,
+              headingDeg: meta.headingDeg ?? heading,
               skipResize: true,
             })
             if (r) {
@@ -2529,7 +2537,7 @@ export function MobileStakingPage() {
         />
       )}
 
-      {/* 標準写真用の hidden カメラ input（カメラボタン直接撮影用） */}
+      {/* 標準写真用の hidden input。撮影 (capture) と インポート (picker) で分ける */}
       <input
         ref={standalonePhotoInputRef}
         type="file"
@@ -2542,6 +2550,61 @@ export function MobileStakingPage() {
         }}
         className="hidden"
       />
+      <input
+        ref={standalonePhotoPickerRef}
+        type="file"
+        accept="image/*"
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          e.target.value = ''
+          if (f) setEditingStandalonePhoto(f)
+        }}
+        className="hidden"
+      />
+
+      {/* カメラボタンを押したときに「撮影 / インポート」を選ばせるシート */}
+      {photoSourceSheet && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-end justify-center z-[3000]"
+          onClick={() => setPhotoSourceSheet(false)}
+        >
+          <div
+            className="bg-white w-full sm:max-w-sm rounded-t-xl shadow-xl p-3 space-y-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-center text-xs text-slate-500 mb-1">写真を追加</div>
+            <button
+              type="button"
+              onClick={() => {
+                setPhotoSourceSheet(false)
+                standalonePhotoInputRef.current?.click()
+              }}
+              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg font-semibold"
+            >
+              <Camera className="h-5 w-5" />
+              撮影
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPhotoSourceSheet(false)
+                standalonePhotoPickerRef.current?.click()
+              }}
+              className="w-full flex items-center justify-center gap-2 px-4 py-3 border border-blue-600 text-blue-700 rounded-lg font-semibold"
+            >
+              <ImageIcon className="h-5 w-5" />
+              インポート
+            </button>
+            <button
+              type="button"
+              onClick={() => setPhotoSourceSheet(false)}
+              className="w-full px-4 py-2 text-sm text-slate-500"
+            >
+              キャンセル
+            </button>
+          </div>
+        </div>
+      )}
       {photoModalTarget && farm?.project_id && (
         <CoordinatePhotoModal
           open={!!photoModalTarget}
@@ -4331,9 +4394,9 @@ export function MobileStakingPage() {
               })() : (
                 <button
                   type="button"
-                  onClick={() => standalonePhotoInputRef.current?.click()}
+                  onClick={() => setPhotoSourceSheet(true)}
                   className="flex-1 basis-0 flex items-center justify-center gap-1 px-2 py-3 rounded-lg font-bold bg-blue-600 text-white hover:bg-blue-700"
-                  title="現在位置・方向で写真を撮影"
+                  title="撮影またはインポート"
                 >
                   <Camera className="h-5 w-5" />
                   カメラ
