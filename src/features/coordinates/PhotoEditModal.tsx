@@ -12,7 +12,7 @@ import 'react-image-crop/dist/ReactCrop.css'
 import { RotateCcw, RotateCw, X, Check, Loader2, MapPin, Compass } from 'lucide-react'
 import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
-import { readExifDate } from '@/lib/readExifDate'
+import { readExifMetadata } from '@/lib/readExifDate'
 
 export interface PhotoEditMeta {
   /** 撮影日（EXIF があれば優先。ユーザは編集可能）。null は未指定 */
@@ -89,14 +89,23 @@ export function PhotoEditModal({
     return () => URL.revokeObjectURL(url)
   }, [file])
 
-  // ファイルから EXIF DateTimeOriginal を非同期で読み、取れたら反映。
-  // 取れなければアップロード日（初期値）のまま。
+  // ファイルから EXIF (撮影日 + GPS 位置 + 撮影方向) を非同期で読み、取れたら反映。
+  // GPS / 方向は EXIF が最優先（写真ファイル自身が持つ「撮影時」の情報なので、
+  // デバイス現在値より信頼できる）。
   useEffect(() => {
     let cancelled = false
     setExifLoaded(false)
-    void readExifDate(file).then((d) => {
-      if (cancelled) return
-      if (d) setTakenAtStr(toDateInputValue(d))
+    void readExifMetadata(file).then((meta) => {
+      if (cancelled || !meta) {
+        if (!cancelled) setExifLoaded(true)
+        return
+      }
+      if (meta.date) setTakenAtStr(toDateInputValue(meta.date))
+      if (meta.gps.lat != null && meta.gps.lng != null) {
+        setLat(meta.gps.lat)
+        setLng(meta.gps.lng)
+      }
+      if (meta.gps.headingDeg != null) setHeadingDeg(meta.gps.headingDeg)
       setExifLoaded(true)
     })
     return () => {
