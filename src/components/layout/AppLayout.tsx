@@ -37,7 +37,6 @@ import {
   PanelLeftOpen,
   Image as ImageIcon,
   Users,
-  StickyNote,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
@@ -76,11 +75,10 @@ const navigation: NavGroup[] = [
   { name: '工区選択に戻る', href: '/', icon: Home },
   { name: '座標管理', href: '/coordinates', icon: Map },
   { name: '測設記録', href: '/staking-records', icon: FileSearch },
-  { name: '野帳', href: '/memos', icon: StickyNote },
   // 地籍測量: 「地番管理」と「地権者管理」をフラットに並べる
   { name: '地番管理', href: '/boundary-survey/work-area', icon: Compass },
   { name: '地権者管理', href: '/boundary-survey/landowners', icon: Users },
-  { name: 'オルソ画像・簡易作図', href: '/orthophoto', icon: ImageIcon },
+  { name: '全体図', href: '/orthophoto', icon: ImageIcon },
   {
     name: '暗渠工事',
     href: '/underdrain',

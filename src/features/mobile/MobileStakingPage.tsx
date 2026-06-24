@@ -578,7 +578,7 @@ export function MobileStakingPage() {
   const [showDisplaySettings, setShowDisplaySettings] = useState(false)
   // 写真モーダル: 選択中ターゲット（座標）の写真を閲覧／撮影できる
   const [photoModalTarget, setPhotoModalTarget] = useState<StakingTarget | null>(null)
-  // 野帳（メモ）作成モーダル。lat/lng/heading の上書きを伴う場合もある（地図長押し）
+  // メモ作成モーダル。lat/lng/heading の上書きを伴う場合もある（地図長押し）
   const [memoModalState, setMemoModalState] = useState<
     | null
     | {
@@ -2479,7 +2479,7 @@ export function MobileStakingPage() {
         onChange={handleSimImported}
         className="hidden"
       />
-      {/* 野帳（メモ）作成モーダル */}
+      {/* メモ作成モーダル */}
       {memoModalState && farmId && (
         <MobileMemoCreateModal
           defaultLat={memoModalState.lat}
@@ -2490,7 +2490,7 @@ export function MobileStakingPage() {
             const saved = await createFarmMemo(farmId, data)
             setMemoModalState(null)
             if (!saved) return
-            setShareToast('野帳を保存しました')
+            setShareToast('メモを保存しました')
             window.setTimeout(() => setShareToast(null), 2500)
           }}
         />
@@ -3201,7 +3201,7 @@ export function MobileStakingPage() {
             <PhotoMarker key={`photo-${p.id}`} photo={p} getSignedUrl={getSignedUrl} />
           ))}
 
-          {/* 地図の長押し / 右クリックで野帳作成。Leaflet の contextmenu
+          {/* 地図の長押し / 右クリックでメモ作成。Leaflet の contextmenu
               イベントはスマホでも長押しで発火する */}
           <MapLongPressHandler
             onLongPress={(lat, lng) =>
@@ -4356,7 +4356,7 @@ export function MobileStakingPage() {
           )}
         </div>
 
-        {/* 操作ボタン: 測定 / カメラ / 野帳 を等幅で横並びに。
+        {/* 操作ボタン: 測定 / カメラ / メモ を等幅で横並びに。
             ターゲットを選択中なら 設置済 マークボタンも追加表示。 */}
         <div className="mt-1 flex gap-2">
           {!recording ? (
@@ -4403,7 +4403,7 @@ export function MobileStakingPage() {
                 </button>
               )}
 
-              {/* 野帳（旧 メモ） — 現在位置・方向で野帳を残す */}
+              {/* メモ — 現在位置・方向でメモを残す */}
               <button
                 type="button"
                 onClick={() =>
@@ -4414,10 +4414,10 @@ export function MobileStakingPage() {
                   })
                 }
                 className="flex-1 basis-0 flex items-center justify-center gap-1 px-2 py-3 rounded-lg border border-amber-400 bg-amber-50 text-amber-800 font-semibold active:bg-amber-100"
-                title="現在位置・方向で野帳を残す"
+                title="現在位置・方向でメモを残す"
               >
                 <StickyNote className="h-5 w-5" />
-                野帳
+                メモ
               </button>
 
               {/* 設置済 トグル（ターゲットありのときだけ追加表示） */}
@@ -5249,7 +5249,7 @@ function ParcelAttrRow({ label, value }: { label: string; value: string | null |
   )
 }
 
-// 野帳作成（スマホ）。本文 + 位置 + 方向のみ。写真は別管理（写真ボタン）。
+// メモ作成（スマホ）。本文 + 位置 + 方向のみ。写真は別管理（写真ボタン）。
 function MobileMemoCreateModal({
   defaultLat,
   defaultLng,
@@ -5295,7 +5295,7 @@ function MobileMemoCreateModal({
         className="bg-white w-full sm:max-w-sm rounded-t-xl sm:rounded-xl shadow-xl p-4 space-y-3"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="text-base font-bold flex items-center gap-2">📓 野帳を残す</h3>
+        <h3 className="text-base font-bold flex items-center gap-2">📓 メモを残す</h3>
 
         <div className="text-[11px] text-slate-500 space-y-0.5">
           <div>

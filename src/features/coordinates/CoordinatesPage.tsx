@@ -1809,10 +1809,10 @@ export function CoordinatesPage() {
             checkedCoordIds={checkedIds}
             onPointToggleCheck={handlePointToggleCheck}
             farmMemos={memosForMap}
-            onMemoClick={() => navigate('/memos')}
+            onMemoClick={() => navigate('/orthophoto')}
             farmPhotos={farmPhotosForMap}
             photoGetSignedUrl={getSignedUrl}
-            onMapLongPress={() => navigate('/memos')}
+            onMapLongPress={() => navigate('/orthophoto')}
             baseLayer={baseLayer}
             route={route}
             showRoute={true}
@@ -2499,10 +2499,10 @@ export function CoordinatesPage() {
             checkedCoordIds={checkedIds}
             onPointToggleCheck={handlePointToggleCheck}
             farmMemos={memosForMap}
-            onMemoClick={() => navigate('/memos')}
+            onMemoClick={() => navigate('/orthophoto')}
             farmPhotos={farmPhotosForMap}
             photoGetSignedUrl={getSignedUrl}
-            onMapLongPress={() => navigate('/memos')}
+            onMapLongPress={() => navigate('/orthophoto')}
               baseLayer={baseLayer}
               route={route}
               showRoute={true}

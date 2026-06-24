@@ -460,7 +460,7 @@ interface CoordinateMapProps {
   /** サムネ表示のため Popup から呼ぶ signed URL ヘルパ */
   photoGetSignedUrl?: (filePath: string) => Promise<string | null>
   onPhotoClick?: (photoId: string) => void
-  /** 地図の長押し（右クリック / モバイル長押し）で呼ぶ。野帳作成等に利用 */
+  /** 地図の長押し（右クリック / モバイル長押し）で呼ぶ。メモ作成等に利用 */
   onMapLongPress?: (lat: number, lng: number) => void
   baseLayer?: BaseLayerType
   externalPolygons?: ExternalPolygon[]
@@ -793,7 +793,7 @@ export function CoordinateMap({
           />
         ))}
 
-      {/* 長押し / 右クリック で野帳作成等のコールバックを発火 */}
+      {/* 長押し / 右クリック でメモ作成等のコールバックを発火 */}
       {onMapLongPress && <CoordinateMapLongPressBridge onLongPress={onMapLongPress} />}
 
       {/* 経路の順番ラベル */}

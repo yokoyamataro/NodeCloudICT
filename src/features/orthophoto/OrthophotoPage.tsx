@@ -1,5 +1,6 @@
-// オルソ画像ページ: タイトル部に「アップロード」「登録済み一覧」を集約し、
-// 画面の大半を地図（オルソ＋座標＋区域）の表示に使う。
+// 全体図ページ: タイトル部に「アップロード」「登録済み一覧」を集約し、
+// 画面の大半を地図（オルソ＋座標＋区域＋メモ＋写真）の表示に使う。
+// 右側にメモ一覧（上半分）と写真サムネ（下半分）を折りたたみパネルで集約する。
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Upload,
@@ -9,6 +10,11 @@ import {
   AlertTriangle,
   List,
   X,
+  StickyNote,
+  PanelRightOpen,
+  PanelRightClose,
+  MapPin,
+  Compass,
 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
@@ -16,6 +22,8 @@ import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import { useOrthophotoStore, tileBoundsLatLng } from '@/stores/orthophotoStore'
+import { useFarmMemoStore, EMPTY_FARM_MEMOS, type FarmMemo } from '@/stores/farmMemoStore'
+import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
 import { CoordinateMap, type ExternalPolygon } from '@/components/map/CoordinateMap'
 import { CoordinateConverter } from '@/lib/coordinates'
 import {
@@ -45,6 +53,13 @@ export function OrthophotoPage() {
   const { setZone, fetchCoordinates, importCoordinates, coordinates, selectedType } = useCoordinateStore()
   const { fetchMembers, members } = useProjectListStore()
   const { workAreas, fetchWorkAreas } = useWorkAreaStore()
+  // メモ + 写真（右側パネルと地図上マーカーの両方で使う）
+  const farmMemos = useFarmMemoStore((s) =>
+    currentFarm ? s.byFarm.get(currentFarm.id) ?? EMPTY_FARM_MEMOS : EMPTY_FARM_MEMOS,
+  )
+  const fetchFarmMemos = useFarmMemoStore((s) => s.fetchByFarm)
+  const { fetchByEntityIds: fetchAttachments, getSignedUrl } = useAttachmentStore()
+  const attachmentsByEntity = useAttachmentStore((s) => s.byEntity)
   const tilesets = useMemo(
     () => (currentFarm ? byFarm.get(currentFarm.id) ?? [] : []),
     [byFarm, currentFarm],
@@ -55,7 +70,7 @@ export function OrthophotoPage() {
     ? projects.find((p) => p.id === currentFarm.project_id)?.coordinate_zone ?? null
     : null
 
-  // 工区切替時にオルソ・座標・区域・メンバー・点種をまとめて読み込み
+  // 工区切替時にオルソ・座標・区域・メンバー・点種・メモ・写真をまとめて読み込み
   useEffect(() => {
     if (!currentFarm) return
     fetchByFarm(currentFarm.id)
@@ -67,7 +82,67 @@ export function OrthophotoPage() {
     if (currentFarm.project_id) {
       fetchMembers(currentFarm.project_id)
     }
-  }, [currentFarm, projectZone, fetchByFarm, fetchWorkAreas, setZone, fetchCoordinates, fetchMembers])
+    void fetchFarmMemos(currentFarm.id)
+    void fetchAttachments('farm_photo', [currentFarm.id])
+  }, [
+    currentFarm,
+    projectZone,
+    fetchByFarm,
+    fetchWorkAreas,
+    setZone,
+    fetchCoordinates,
+    fetchMembers,
+    fetchFarmMemos,
+    fetchAttachments,
+  ])
+
+  // 地図用メモ（位置がある分のみ）
+  const memosForMap = useMemo(
+    () =>
+      farmMemos
+        .filter((m) => m.lat != null && m.lng != null)
+        .map((m) => ({
+          id: m.id,
+          content: m.content,
+          lat: m.lat as number,
+          lng: m.lng as number,
+          headingDeg: m.headingDeg,
+        })),
+    [farmMemos],
+  )
+
+  // 地図 + サムネパネル用の写真リスト（位置あり）
+  const farmPhotosForMap = useMemo(() => {
+    if (!currentFarm)
+      return [] as Array<{
+        id: string
+        lat: number
+        lng: number
+        headingDeg: number | null
+        filePath: string
+        caption: string | null
+      }>
+    const list = attachmentsByEntity.get(`farm_photo:${currentFarm.id}`) ?? []
+    return list
+      .filter((a) => a.lat != null && a.lng != null)
+      .map((a) => ({
+        id: a.id,
+        lat: a.lat as number,
+        lng: a.lng as number,
+        headingDeg: a.headingDeg,
+        filePath: a.filePath,
+        caption: a.caption,
+      }))
+  }, [currentFarm, attachmentsByEntity])
+
+  // 工区写真の全件（位置の有無に関わらずサムネ一覧で見せる）
+  const farmPhotosAll = useMemo(() => {
+    if (!currentFarm) return []
+    return attachmentsByEntity.get(`farm_photo:${currentFarm.id}`) ?? []
+  }, [currentFarm, attachmentsByEntity])
+
+  // 右側パネルの折りたたみ状態
+  const [panelOpen, setPanelOpen] = useState(true)
 
   // 区域ポリゴン（全工種を表示）
   const workAreaPolygons = useMemo<ExternalPolygon[]>(() => {
@@ -520,7 +595,7 @@ export function OrthophotoPage() {
   if (!currentFarm) {
     return (
       <div className="h-full flex flex-col">
-        <PageHeader title="オルソ画像" subtitle="ドローン等のオルソ画像（Web タイル）" />
+        <PageHeader title="全体図" subtitle="オルソ・座標・区域・メモ・写真を集約した工区全体ビュー" />
         <div className="flex-1 flex items-center justify-center text-sm text-slate-500">
           工区を選択してください
         </div>
@@ -562,9 +637,10 @@ export function OrthophotoPage() {
 
   return (
     <div className="h-full flex flex-col">
-      <PageHeader title="オルソ画像" subtitle="ドローン等のオルソ画像（Web タイル）" actions={headerActions} />
+      <PageHeader title="全体図" subtitle="オルソ・座標・区域・メモ・写真を集約した工区全体ビュー" actions={headerActions} />
 
-      {/* 大きな地図（オルソ＋座標＋区域＋作図） */}
+      {/* 横並び: 左=大きな地図（オルソ＋座標＋区域＋作図＋メモ＋写真）、右=折りたたみパネル */}
+      <div className="flex-1 flex min-h-0">
       <div className="flex-1 relative">
         <CoordinateMap
           key={currentFarm.id}
@@ -572,6 +648,9 @@ export function OrthophotoPage() {
           showOrtho
           externalPolygons={workAreaPolygons}
           coordinatesInteractive={false}
+          farmMemos={memosForMap}
+          farmPhotos={farmPhotosForMap}
+          photoGetSignedUrl={getSignedUrl}
         >
           <OrthophotoAnnotations
             tool={tool}
@@ -772,59 +851,69 @@ export function OrthophotoPage() {
             )}
           </div>
         )}
+
+        {/* 図形インスペクタ（選択ツールで図形クリックすると表示） */}
+        {selectedAnno && (
+          <div className="absolute top-2 right-2 z-[1000] bg-white border rounded-lg shadow p-3 w-64 text-sm">
+            <div className="flex items-center justify-between mb-2">
+              <span className="font-semibold">図形を編集</span>
+              <button
+                onClick={() => setSelectedAnnoId(null)}
+                className="text-slate-400 hover:text-slate-700"
+                title="閉じる"
+              >
+                ×
+              </button>
+            </div>
+            <div className="text-xs text-slate-500 mb-2">
+              種類: <b>{selectedAnno.kind}</b>
+            </div>
+            <label className="flex items-center justify-between gap-2 mb-2">
+              <span className="text-xs text-slate-600">色</span>
+              <input
+                type="color"
+                value={selectedAnno.color}
+                onChange={(e) => updateAnnotation(selectedAnno.id, { color: e.target.value })}
+                className="w-8 h-6 p-0 border rounded cursor-pointer"
+              />
+            </label>
+            <label className="flex items-center justify-between gap-2 mb-2">
+              <span className="text-xs text-slate-600">レイヤ</span>
+              <input
+                type="text"
+                value={selectedAnno.layer ?? '0'}
+                onChange={(e) => updateAnnotation(selectedAnno.id, { layer: e.target.value })}
+                list="ortho-layers"
+                className="flex-1 px-1 py-0.5 border rounded font-mono text-xs"
+              />
+            </label>
+            <div className="flex justify-between mt-3 pt-2 border-t">
+              <button
+                onClick={() => deleteAnnotation(selectedAnno.id)}
+                className="px-2 py-1 text-xs border border-red-300 text-red-600 rounded hover:bg-red-50"
+              >
+                削除
+              </button>
+              <button
+                onClick={() => setSelectedAnnoId(null)}
+                className="px-2 py-1 text-xs border border-slate-300 text-slate-600 rounded hover:bg-slate-50"
+              >
+                閉じる
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* 図形インスペクタ（選択ツールで図形クリックすると表示） */}
-      {selectedAnno && (
-        <div className="absolute top-2 right-2 z-[1000] bg-white border rounded-lg shadow p-3 w-64 text-sm">
-          <div className="flex items-center justify-between mb-2">
-            <span className="font-semibold">図形を編集</span>
-            <button
-              onClick={() => setSelectedAnnoId(null)}
-              className="text-slate-400 hover:text-slate-700"
-              title="閉じる"
-            >
-              ×
-            </button>
-          </div>
-          <div className="text-xs text-slate-500 mb-2">
-            種類: <b>{selectedAnno.kind}</b>
-          </div>
-          <label className="flex items-center justify-between gap-2 mb-2">
-            <span className="text-xs text-slate-600">色</span>
-            <input
-              type="color"
-              value={selectedAnno.color}
-              onChange={(e) => updateAnnotation(selectedAnno.id, { color: e.target.value })}
-              className="w-8 h-6 p-0 border rounded cursor-pointer"
-            />
-          </label>
-          <label className="flex items-center justify-between gap-2 mb-2">
-            <span className="text-xs text-slate-600">レイヤ</span>
-            <input
-              type="text"
-              value={selectedAnno.layer ?? '0'}
-              onChange={(e) => updateAnnotation(selectedAnno.id, { layer: e.target.value })}
-              list="ortho-layers"
-              className="flex-1 px-1 py-0.5 border rounded font-mono text-xs"
-            />
-          </label>
-          <div className="flex justify-between mt-3 pt-2 border-t">
-            <button
-              onClick={() => deleteAnnotation(selectedAnno.id)}
-              className="px-2 py-1 text-xs border border-red-300 text-red-600 rounded hover:bg-red-50"
-            >
-              削除
-            </button>
-            <button
-              onClick={() => setSelectedAnnoId(null)}
-              className="px-2 py-1 text-xs border border-slate-300 text-slate-600 rounded hover:bg-slate-50"
-            >
-              閉じる
-            </button>
-          </div>
-        </div>
-      )}
+      {/* 右側パネル: 上半分にメモ一覧、下半分に写真サムネ。折りたたみ可能。 */}
+      <OverviewSidePanel
+        open={panelOpen}
+        onToggle={() => setPanelOpen((v) => !v)}
+        memos={farmMemos}
+        photos={farmPhotosAll}
+        getSignedUrl={getSignedUrl}
+      />
+      </div>{/* /flex-1 flex */}
 
       {/* コメント入力モーダル（メンバーをメンション可） */}
       {pendingComment && (
@@ -1117,5 +1206,158 @@ function CommentInputModal({
         </div>
       </div>
     </div>
+  )
+}
+
+// =============================================
+// 全体図の右パネル（メモ一覧 + 写真サムネ。折りたたみ可）
+// =============================================
+function OverviewSidePanel({
+  open,
+  onToggle,
+  memos,
+  photos,
+  getSignedUrl,
+}: {
+  open: boolean
+  onToggle: () => void
+  memos: FarmMemo[]
+  photos: Attachment[]
+  getSignedUrl: (filePath: string) => Promise<string | null>
+}) {
+  if (!open) {
+    return (
+      <div className="w-9 border-l bg-slate-50 flex flex-col items-center pt-2">
+        <button
+          onClick={onToggle}
+          className="p-1.5 text-slate-500 hover:bg-slate-200 rounded"
+          title="パネルを開く"
+        >
+          <PanelRightOpen className="h-5 w-5" />
+        </button>
+        <div className="mt-3 text-[10px] text-slate-400 [writing-mode:vertical-rl]">
+          メモ {memos.length} / 写真 {photos.length}
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div className="w-80 border-l bg-white flex flex-col min-h-0">
+      <div className="px-3 py-2 border-b flex items-center gap-2 bg-slate-50">
+        <span className="text-sm font-semibold flex-1">メモ / 写真</span>
+        <button
+          onClick={onToggle}
+          className="p-1 text-slate-500 hover:bg-slate-200 rounded"
+          title="パネルを閉じる"
+        >
+          <PanelRightClose className="h-4 w-4" />
+        </button>
+      </div>
+
+      {/* 上半分: メモ一覧 */}
+      <div className="flex-1 min-h-0 flex flex-col border-b">
+        <div className="px-3 py-1.5 text-[11px] text-slate-500 flex items-center gap-1 bg-slate-50">
+          <StickyNote className="h-3 w-3 text-amber-500" />
+          メモ ({memos.length})
+        </div>
+        <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
+          {memos.length === 0 ? (
+            <div className="text-center text-xs text-slate-400 py-4">
+              メモはまだありません
+            </div>
+          ) : (
+            memos.map((m) => (
+              <div
+                key={m.id}
+                className="text-xs p-2 border rounded bg-amber-50/40 hover:bg-amber-50 cursor-default"
+              >
+                <div className="whitespace-pre-wrap break-words text-slate-800 line-clamp-3">
+                  {m.content || <span className="text-slate-400">(本文なし)</span>}
+                </div>
+                <div className="mt-1 flex items-center gap-2 text-[10px] text-slate-500 flex-wrap">
+                  <span>{new Date(m.createdAt).toLocaleString('ja-JP')}</span>
+                  {m.lat != null && m.lng != null && (
+                    <span className="inline-flex items-center gap-0.5">
+                      <MapPin className="h-2.5 w-2.5" />
+                      {m.lat.toFixed(5)}, {m.lng.toFixed(5)}
+                    </span>
+                  )}
+                  {m.headingDeg != null && (
+                    <span className="inline-flex items-center gap-0.5">
+                      <Compass className="h-2.5 w-2.5" />
+                      {m.headingDeg.toFixed(0)}°
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* 下半分: 写真サムネ */}
+      <div className="flex-1 min-h-0 flex flex-col">
+        <div className="px-3 py-1.5 text-[11px] text-slate-500 flex items-center gap-1 bg-slate-50">
+          <ImageIcon className="h-3 w-3 text-blue-500" />
+          写真 ({photos.length})
+        </div>
+        <div className="flex-1 overflow-y-auto p-2">
+          {photos.length === 0 ? (
+            <div className="text-center text-xs text-slate-400 py-4">
+              写真はまだありません
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-1.5">
+              {photos.map((p) => (
+                <PanelPhotoThumb key={p.id} attachment={p} getSignedUrl={getSignedUrl} />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PanelPhotoThumb({
+  attachment,
+  getSignedUrl,
+}: {
+  attachment: Attachment
+  getSignedUrl: (filePath: string) => Promise<string | null>
+}) {
+  const [url, setUrl] = useState<string | null>(null)
+  const [error, setError] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    void getSignedUrl(attachment.filePath).then((u) => {
+      if (cancelled) return
+      if (u) setUrl(u)
+      else setError(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [attachment.filePath, getSignedUrl])
+  return (
+    <a
+      href={url ?? undefined}
+      target="_blank"
+      rel="noreferrer"
+      className="block aspect-square border rounded overflow-hidden bg-slate-100 hover:ring-2 hover:ring-blue-400"
+      title={attachment.caption ?? attachment.filePath.split('/').pop() ?? ''}
+    >
+      {error ? (
+        <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-400">
+          読み込み失敗
+        </div>
+      ) : url ? (
+        <img src={url} alt="" className="w-full h-full object-cover" />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center">
+          <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+        </div>
+      )}
+    </a>
   )
 }
