@@ -1581,12 +1581,6 @@ export function MobileStakingPage() {
     return null
   }, [currentAlt, currentPos, useGeoidCorrection, geoidGrid, antennaHeight])
 
-  // ターゲットとの比高（現在地 − ターゲットZ）
-  const elevationDiff = useMemo<number | null>(() => {
-    if (!use3dGuidance || currentZ == null || !selectedTarget || selectedTarget.z == null) return null
-    return currentZ - selectedTarget.z
-  }, [use3dGuidance, currentZ, selectedTarget])
-
   // 近接モード: 自己位置→ターゲットの相対位置（測量座標 X=北/Y=東 ベースで高精度）
   const proximityRel = useMemo(() => {
     if (!currentXY || !selectedTarget || selectedTarget.x == null || selectedTarget.y == null) {
