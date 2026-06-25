@@ -3170,7 +3170,7 @@ export function MobileStakingPage() {
               <Marker
                 key={`memo-${m.id}`}
                 position={[m.lat, m.lng]}
-                icon={createMemoIcon(m.headingDeg)}
+                icon={createMemoIcon()}
                 zIndexOffset={500}
               >
                 <Tooltip
