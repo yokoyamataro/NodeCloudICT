@@ -1558,29 +1558,6 @@ export function MobileStakingPage() {
     }
   }, [currentPos, converter])
 
-  // 現在地の標高(H = 楕円体高 − ジオイド高 − アンテナ高)。利用不可なら null
-  const currentZ = useMemo<number | null>(() => {
-    if (currentAlt == null) return null
-    if (currentPos && useGeoidCorrection && geoidGrid) {
-      const rRow = (geoidGrid.latMax - currentPos[0]) / geoidGrid.dLat
-      const rCol = (currentPos[1] - geoidGrid.lonMin) / geoidGrid.dLon
-      if (rRow >= 0 && rCol >= 0 && rRow < geoidGrid.nrows && rCol < geoidGrid.ncols) {
-        const r0 = Math.floor(rRow), c0 = Math.floor(rCol)
-        const r1 = Math.min(r0 + 1, geoidGrid.nrows - 1)
-        const c1 = Math.min(c0 + 1, geoidGrid.ncols - 1)
-        const tr = rRow - r0, tc = rCol - c0
-        const v00 = geoidGrid.values[r0 * geoidGrid.ncols + c0]
-        const v01 = geoidGrid.values[r0 * geoidGrid.ncols + c1]
-        const v10 = geoidGrid.values[r1 * geoidGrid.ncols + c0]
-        const v11 = geoidGrid.values[r1 * geoidGrid.ncols + c1]
-        const N = (v00 * (1 - tc) + v01 * tc) * (1 - tr) + (v10 * (1 - tc) + v11 * tc) * tr
-        if (Number.isFinite(N)) return currentAlt - N - antennaHeight
-      }
-    }
-    if (currentPos) return currentAlt - antennaHeight
-    return null
-  }, [currentAlt, currentPos, useGeoidCorrection, geoidGrid, antennaHeight])
-
   // 近接モード: 自己位置→ターゲットの相対位置（測量座標 X=北/Y=東 ベースで高精度）
   const proximityRel = useMemo(() => {
     if (!currentXY || !selectedTarget || selectedTarget.x == null || selectedTarget.y == null) {
