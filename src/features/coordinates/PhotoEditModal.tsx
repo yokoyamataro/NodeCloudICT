@@ -416,11 +416,44 @@ function createLocationArrowIcon(headingDeg: number | null): L.DivIcon {
   })
 }
 
-// 地図クリック → onPick(lat, lng) を呼ぶための薄いラッパ。
-function ClickToPick({ onPick }: { onPick: (lat: number, lng: number) => void }) {
+// 2点間の方位角（北=0, 東=90 ...）を 0..360 度で返す。
+// 写真ピンと同じ向き付け（マーカーから見たタップ位置の方角）。
+function bearingDeg(
+  from: { lat: number; lng: number },
+  to: { lat: number; lng: number },
+): number {
+  const toRad = (d: number) => (d * Math.PI) / 180
+  const toDeg = (r: number) => (r * 180) / Math.PI
+  const φ1 = toRad(from.lat)
+  const φ2 = toRad(to.lat)
+  const Δλ = toRad(to.lng - from.lng)
+  const y = Math.sin(Δλ) * Math.cos(φ2)
+  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ)
+  const θ = Math.atan2(y, x)
+  return (toDeg(θ) + 360) % 360
+}
+
+// 地図シングルタップで:
+//   位置が未設定 → タップ位置に新規ピンを落とす
+//   位置がある  → ピンからタップ位置への方位角を heading に反映する
+function MapTapHandler({
+  origin,
+  onPick,
+  onSetHeading,
+}: {
+  origin: { lat: number; lng: number } | null
+  onPick: (lat: number, lng: number) => void
+  onSetHeading: (deg: number) => void
+}) {
   useMapEvents({
     click(e) {
-      onPick(e.latlng.lat, e.latlng.lng)
+      if (!origin) {
+        onPick(e.latlng.lat, e.latlng.lng)
+        return
+      }
+      // マーカー自身に触れたシングルタップは Leaflet 側で marker click として
+      // 処理されるため、ここに来るのは「マーカー外」のタップ。
+      onSetHeading(bearingDeg(origin, { lat: e.latlng.lat, lng: e.latlng.lng }))
     },
   })
   return null
@@ -467,7 +500,9 @@ function PhotoLocationPicker({
       </div>
 
       <div className="px-4 py-1.5 text-[11px] text-slate-600 border-b">
-        地図をタップして位置を指定。スライダで方向（0=北, 90=東）を調整します。
+        {lat == null || lng == null
+          ? '地図をタップして撮影位置を指定してください。'
+          : 'ピンをドラッグして位置変更／ピンの外をタップして向きを指定します。'}
       </div>
 
       <div className="flex-1 min-h-0">
@@ -483,11 +518,13 @@ function PhotoLocationPicker({
             maxNativeZoom={18}
             maxZoom={20}
           />
-          <ClickToPick
+          <MapTapHandler
+            origin={lat != null && lng != null ? { lat, lng } : null}
             onPick={(la, ln) => {
               setLat(la)
               setLng(ln)
             }}
+            onSetHeading={(deg) => setHeadingDeg(deg)}
           />
           {lat != null && lng != null && (
             <Marker
