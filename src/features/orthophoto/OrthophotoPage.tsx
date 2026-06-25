@@ -14,7 +14,6 @@ import {
   PanelRightOpen,
   PanelRightClose,
   MapPin,
-  Compass,
 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
@@ -106,7 +105,6 @@ export function OrthophotoPage() {
           content: m.content,
           lat: m.lat as number,
           lng: m.lng as number,
-          headingDeg: m.headingDeg,
         })),
     [farmMemos],
   )
@@ -1280,12 +1278,6 @@ function OverviewSidePanel({
                     <span className="inline-flex items-center gap-0.5">
                       <MapPin className="h-2.5 w-2.5" />
                       {m.lat.toFixed(5)}, {m.lng.toFixed(5)}
-                    </span>
-                  )}
-                  {m.headingDeg != null && (
-                    <span className="inline-flex items-center gap-0.5">
-                      <Compass className="h-2.5 w-2.5" />
-                      {m.headingDeg.toFixed(0)}°
                     </span>
                   )}
                 </div>

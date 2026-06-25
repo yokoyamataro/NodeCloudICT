@@ -578,13 +578,12 @@ export function MobileStakingPage() {
   const [showDisplaySettings, setShowDisplaySettings] = useState(false)
   // 写真モーダル: 選択中ターゲット（座標）の写真を閲覧／撮影できる
   const [photoModalTarget, setPhotoModalTarget] = useState<StakingTarget | null>(null)
-  // メモ作成モーダル。lat/lng/heading の上書きを伴う場合もある（地図長押し）
+  // メモ作成モーダル。lat/lng の上書きを伴う場合もある（地図長押し）
   const [memoModalState, setMemoModalState] = useState<
     | null
     | {
         lat: number | null
         lng: number | null
-        headingDeg: number | null
       }
   >(null)
   // 工区写真（標準写真）撮影用: PhotoEditModal で編集する元ファイル
@@ -2455,7 +2454,6 @@ export function MobileStakingPage() {
         <MobileMemoCreateModal
           defaultLat={memoModalState.lat}
           defaultLng={memoModalState.lng}
-          defaultHeading={memoModalState.headingDeg}
           onCancel={() => setMemoModalState(null)}
           onSave={async (data) => {
             const saved = await createFarmMemo(farmId, data)
@@ -3198,9 +3196,7 @@ export function MobileStakingPage() {
           {/* 地図の長押し / 右クリックでメモ作成。Leaflet の contextmenu
               イベントはスマホでも長押しで発火する */}
           <MapLongPressHandler
-            onLongPress={(lat, lng) =>
-              setMemoModalState({ lat, lng, headingDeg: heading })
-            }
+            onLongPress={(lat, lng) => setMemoModalState({ lat, lng })}
           />
 
           {/* 配線ライン（吸水=青・集水=緑、選択中はオレンジ）
@@ -4362,18 +4358,17 @@ export function MobileStakingPage() {
                 </button>
               )}
 
-              {/* メモ — 現在位置・方向でメモを残す */}
+              {/* メモ — 現在位置でメモを残す */}
               <button
                 type="button"
                 onClick={() =>
                   setMemoModalState({
                     lat: currentPos ? currentPos[0] : null,
                     lng: currentPos ? currentPos[1] : null,
-                    headingDeg: heading,
                   })
                 }
                 className="flex-1 basis-0 flex items-center justify-center gap-1 px-2 py-3 rounded-lg border border-amber-400 bg-amber-50 text-amber-800 font-semibold active:bg-amber-100"
-                title="現在位置・方向でメモを残す"
+                title="現在位置でメモを残す"
               >
                 <StickyNote className="h-5 w-5" />
                 メモ
@@ -5208,17 +5203,15 @@ function ParcelAttrRow({ label, value }: { label: string; value: string | null |
   )
 }
 
-// メモ作成（スマホ）。本文 + 位置 + 方向のみ。写真は別管理（写真ボタン）。
+// メモ作成（スマホ）。本文 + 位置のみ。写真は別管理（写真ボタン）。
 function MobileMemoCreateModal({
   defaultLat,
   defaultLng,
-  defaultHeading,
   onCancel,
   onSave,
 }: {
   defaultLat: number | null
   defaultLng: number | null
-  defaultHeading: number | null
   onCancel: () => void
   onSave: (data: {
     content: string
@@ -5238,7 +5231,7 @@ function MobileMemoCreateModal({
         content,
         lat: defaultLat,
         lng: defaultLng,
-        headingDeg: defaultHeading,
+        headingDeg: null,
       })
     } finally {
       setBusy(false)
@@ -5256,17 +5249,11 @@ function MobileMemoCreateModal({
       >
         <h3 className="text-base font-bold flex items-center gap-2">📓 メモを残す</h3>
 
-        <div className="text-[11px] text-slate-500 space-y-0.5">
-          <div>
-            位置:{' '}
-            {defaultLat != null && defaultLng != null
-              ? `${defaultLat.toFixed(6)}, ${defaultLng.toFixed(6)}`
-              : '取得中／未許可'}
-          </div>
-          <div>
-            方向:{' '}
-            {defaultHeading != null ? `${defaultHeading.toFixed(0)}°` : '取得中／未許可'}
-          </div>
+        <div className="text-[11px] text-slate-500">
+          位置:{' '}
+          {defaultLat != null && defaultLng != null
+            ? `${defaultLat.toFixed(6)}, ${defaultLng.toFixed(6)}`
+            : '取得中／未許可'}
         </div>
 
         <textarea

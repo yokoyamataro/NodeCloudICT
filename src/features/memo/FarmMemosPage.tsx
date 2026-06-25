@@ -11,7 +11,6 @@ import {
   Pencil,
   Camera,
   MapPin,
-  Compass,
   Save,
   X,
   StickyNote,
@@ -32,13 +31,6 @@ function fmtDateTime(iso: string): string {
     hour: '2-digit',
     minute: '2-digit',
   })
-}
-
-function fmtCompass(deg: number | null): string {
-  if (deg == null) return '—'
-  const dirs = ['北', '北東', '東', '南東', '南', '南西', '西', '北西']
-  const idx = Math.round(((deg % 360) / 45)) % 8
-  return `${deg.toFixed(0)}° (${dirs[idx]})`
 }
 
 export function FarmMemosPage() {
@@ -231,25 +223,17 @@ function MemoCard({
       <div className="text-sm text-slate-800 whitespace-pre-wrap mb-2">
         {memo.content || <span className="text-slate-400">(本文なし)</span>}
       </div>
-      {(memo.lat != null || memo.headingDeg != null) && (
+      {memo.lat != null && memo.lng != null && (
         <div className="flex items-center gap-3 text-[11px] text-slate-500">
-          {memo.lat != null && memo.lng != null && (
-            <button
-              onClick={onLocate ?? undefined}
-              disabled={!onLocate}
-              className="inline-flex items-center gap-1 hover:text-blue-600 disabled:hover:text-slate-500"
-              title="地図で見る"
-            >
-              <MapPin className="h-3 w-3" />
-              {memo.lat.toFixed(6)}, {memo.lng.toFixed(6)}
-            </button>
-          )}
-          {memo.headingDeg != null && (
-            <span className="inline-flex items-center gap-1">
-              <Compass className="h-3 w-3" />
-              {fmtCompass(memo.headingDeg)}
-            </span>
-          )}
+          <button
+            onClick={onLocate ?? undefined}
+            disabled={!onLocate}
+            className="inline-flex items-center gap-1 hover:text-blue-600 disabled:hover:text-slate-500"
+            title="地図で見る"
+          >
+            <MapPin className="h-3 w-3" />
+            {memo.lat.toFixed(6)}, {memo.lng.toFixed(6)}
+          </button>
         </div>
       )}
     </div>
@@ -275,7 +259,6 @@ function MemoEditModal({
   const [content, setContent] = useState(initial?.content ?? '')
   const [lat, setLat] = useState(initial?.lat?.toString() ?? '')
   const [lng, setLng] = useState(initial?.lng?.toString() ?? '')
-  const [heading, setHeading] = useState(initial?.headingDeg?.toString() ?? '')
   const [busy, setBusy] = useState(false)
 
   // PC でも現在地が拾えれば自動入力する。失敗（権限なし等）はサイレントに無視。
@@ -285,9 +268,6 @@ function MemoEditModal({
       (pos) => {
         setLat(pos.coords.latitude.toFixed(6))
         setLng(pos.coords.longitude.toFixed(6))
-        if (pos.coords.heading != null && !Number.isNaN(pos.coords.heading)) {
-          setHeading(pos.coords.heading.toFixed(0))
-        }
       },
       () => {},
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
@@ -299,12 +279,11 @@ function MemoEditModal({
     try {
       const latN = lat.trim() === '' ? null : parseFloat(lat)
       const lngN = lng.trim() === '' ? null : parseFloat(lng)
-      const headN = heading.trim() === '' ? null : parseFloat(heading)
       await onSave({
         content,
         lat: latN === null || Number.isNaN(latN) ? null : latN,
         lng: lngN === null || Number.isNaN(lngN) ? null : lngN,
-        headingDeg: headN === null || Number.isNaN(headN) ? null : headN,
+        headingDeg: null,
       })
     } finally {
       setBusy(false)
@@ -345,7 +324,7 @@ function MemoEditModal({
                 現在地を取得
               </button>
             </div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               <label className="flex flex-col gap-1 text-[10px] text-slate-500">
                 緯度
                 <input
@@ -365,17 +344,6 @@ function MemoEditModal({
                   value={lng}
                   onChange={(e) => setLng(e.target.value)}
                   placeholder="139.0000"
-                  className="px-1.5 py-1 text-xs border rounded"
-                />
-              </label>
-              <label className="flex flex-col gap-1 text-[10px] text-slate-500">
-                方向 (°)
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={heading}
-                  onChange={(e) => setHeading(e.target.value)}
-                  placeholder="0..360"
                   className="px-1.5 py-1 text-xs border rounded"
                 />
               </label>

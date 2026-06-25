@@ -560,7 +560,6 @@ export function CoordinatesPage() {
           content: m.content,
           lat: m.lat as number,
           lng: m.lng as number,
-          headingDeg: m.headingDeg,
         })),
     [farmMemos],
   )
