@@ -2645,9 +2645,32 @@ export function MobileStakingPage() {
         <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3000]">
           <div className="bg-white w-full sm:max-w-sm rounded-t-xl sm:rounded-xl shadow-xl p-4">
             <h3 className="text-base font-bold mb-2">測設完了</h3>
-            <p className="text-sm text-slate-700 whitespace-pre-line mb-4">
+            <p className="text-sm text-slate-700 whitespace-pre-line mb-3">
               {postStakeDialog.message}
             </p>
+            {/* 設置状態セレクタ（座標点ターゲットのみ）。測定後にここで更新する */}
+            {postStakeDialog.target.kind === 'coordinate' && (() => {
+              const coord = coordinates.find((c) => c.id === postStakeDialog.target.refId)
+              if (!coord) return null
+              return (
+                <label className="flex items-center gap-2 mb-3 text-sm">
+                  <span className="text-slate-600 shrink-0">設置状態</span>
+                  <select
+                    value={coord.stakeStatus}
+                    onChange={(e) =>
+                      void setStakeStatus(coord.id, e.target.value as StakeStatus)
+                    }
+                    className={`flex-1 px-2 py-1.5 text-sm font-medium border rounded ${STAKE_STATUS_BADGE[coord.stakeStatus]}`}
+                  >
+                    {STAKE_STATUS_OPTIONS.map((s) => (
+                      <option key={s} value={s}>
+                        {STAKE_STATUS_LABEL[s]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )
+            })()}
             <div className="space-y-2">
               {postStakeDialog.target.kind === 'coordinate' && (
                 <button
@@ -4205,28 +4228,7 @@ export function MobileStakingPage() {
               </div>
               <div className="font-bold truncate">{selectedTarget.name}</div>
             </button>
-            {/* 設置状態セレクタ（座標点のみ。PC の表と同じ enum で揃える） */}
-            {selectedTarget.kind === 'coordinate' &&
-              (() => {
-                const coord = coordinates.find((c) => c.id === selectedTarget.refId)
-                if (!coord) return null
-                return (
-                  <select
-                    value={coord.stakeStatus}
-                    onChange={(e) =>
-                      void setStakeStatus(coord.id, e.target.value as StakeStatus)
-                    }
-                    title={`設置状態: ${STAKE_STATUS_LABEL[coord.stakeStatus]}`}
-                    className={`shrink-0 px-1.5 py-1 text-xs font-medium border rounded ${STAKE_STATUS_BADGE[coord.stakeStatus]}`}
-                  >
-                    {STAKE_STATUS_OPTIONS.map((s) => (
-                      <option key={s} value={s}>
-                        {STAKE_STATUS_LABEL[s]}
-                      </option>
-                    ))}
-                  </select>
-                )
-              })()}
+            {/* 設置状態セレクタは測定完了モーダル (postStakeDialog) 側で操作する */}
             <button
               onClick={() => setSelectedTargetId(null)}
               className="p-1.5 rounded border border-slate-300 text-slate-500 hover:bg-slate-100 shrink-0"
