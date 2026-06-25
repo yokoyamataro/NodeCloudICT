@@ -4223,13 +4223,16 @@ export function MobileStakingPage() {
               className="flex-1 min-w-0 text-left"
               title="ターゲット切替"
             >
-              <div className="text-xs text-slate-500">ターゲット</div>
-              <div className="font-bold truncate">
-                {selectedTarget.name}
-                {selectedTarget.kind !== 'coordinate' && (
-                  <span className="ml-2 text-xs text-slate-500 font-normal">暗渠頂点</span>
-                )}
+              <div className="text-xs text-slate-500">
+                ターゲット
+                <span className="ml-2 text-[10px] text-slate-400 font-normal">
+                  {/* 杭種は MAP モードでのみ表示する */}
+                  {selectedTarget.kind === 'coordinate'
+                    ? selectedTarget.subTypeLabel
+                    : '暗渠頂点'}
+                </span>
               </div>
+              <div className="font-bold truncate">{selectedTarget.name}</div>
             </button>
             {/* 設置状態セレクタ（座標点のみ。PC の表と同じ enum で揃える） */}
             {selectedTarget.kind === 'coordinate' &&
@@ -4280,24 +4283,7 @@ export function MobileStakingPage() {
                       : `${distanceToTarget.toFixed(2)} m`}
                   </div>
                 </div>
-                {use3dGuidance && elevationDiff != null && (
-                  <div className="text-right border-l pl-2 ml-1">
-                    <div className="text-[10px] text-slate-500 leading-none">比高</div>
-                    <div className="font-mono font-bold text-lg leading-tight" style={{
-                      color: Math.abs(elevationDiff) < 0.005
-                        ? '#0f766e'
-                        : elevationDiff > 0
-                          ? '#b45309'
-                          : '#1d4ed8',
-                    }}>
-                      {Math.abs(elevationDiff) < 0.005
-                        ? '0.00 m'
-                        : elevationDiff > 0
-                          ? `↓${elevationDiff.toFixed(2)} m`
-                          : `↑${(-elevationDiff).toFixed(2)} m`}
-                    </div>
-                  </div>
-                )}
+                {/* 比高は 3D 行 (TIN 比高) で表示するため、MAP 行では省略 */}
               </div>
             )}
           </div>
