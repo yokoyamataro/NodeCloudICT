@@ -715,6 +715,11 @@ export interface Database {
         Insert: Omit<OrthoLayer, 'id' | 'created_at'>
         Update: Partial<Omit<OrthoLayer, 'id' | 'created_at'>>
       }
+      profiles: {
+        Row: Profile
+        Insert: Omit<Profile, 'created_at' | 'updated_at'>
+        Update: Partial<Omit<Profile, 'user_id' | 'created_at' | 'updated_at'>>
+      }
     }
   }
 }

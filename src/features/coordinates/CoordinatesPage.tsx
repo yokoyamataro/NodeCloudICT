@@ -177,6 +177,54 @@ function StakeStatusCell({
   )
 }
 
+// 貼り付けモーダルで指定する列の役割。
+// 'ignore' は読み飛ばす列（地番など、座標一覧に取り込まない列）。
+type ColumnRole = 'name' | 'x' | 'y' | 'z' | 'ignore'
+
+const COLUMN_ROLE_OPTIONS: { value: ColumnRole; label: string }[] = [
+  { value: 'name', label: '点名' },
+  { value: 'x', label: 'X' },
+  { value: 'y', label: 'Y' },
+  { value: 'z', label: 'Z' },
+  { value: 'ignore', label: '無視' },
+]
+
+// 区切り文字を判定（タブが多ければTSV、そうでなければCSV）
+function detectDelimiter(line: string): '\t' | ',' {
+  const tabCount = (line.match(/\t/g) || []).length
+  const commaCount = (line.match(/,/g) || []).length
+  return tabCount >= commaCount ? '\t' : ','
+}
+
+// 列数と先頭行の内容から、典型的なマッピングを決める。
+//   2列 → X, Y
+//   3列 → 先頭が数値なら X, Y, Z / そうでなければ 点名, X, Y
+//   4列以上 → 点名, X, Y, Z, (以降は無視)
+function buildDefaultMapping(firstRow: string[]): ColumnRole[] {
+  const n = firstRow.length
+  if (n <= 0) return []
+  if (n === 1) return ['x']
+  if (n === 2) return ['x', 'y']
+  if (n === 3) {
+    const first = firstRow[0]
+    const firstIsNumber = /^-?\d+(\.\d+)?$/.test(first)
+    return firstIsNumber ? ['x', 'y', 'z'] : ['name', 'x', 'y']
+  }
+  const result: ColumnRole[] = ['name', 'x', 'y', 'z']
+  for (let i = 4; i < n; i++) result.push('ignore')
+  return result
+}
+
+// プリセット定義。クリックで指定の役割並びを適用する。
+// 列数が足りない場合は前から埋め、不足分は 'ignore' を補う。
+const MAPPING_PRESETS: { label: string; mapping: ColumnRole[] }[] = [
+  { label: '点名,X,Y,Z', mapping: ['name', 'x', 'y', 'z'] },
+  { label: '点名,Y,X,Z', mapping: ['name', 'y', 'x', 'z'] },
+  { label: '点名,X,Y',   mapping: ['name', 'x', 'y'] },
+  { label: 'X,Y,Z',      mapping: ['x', 'y', 'z'] },
+  { label: '地番,点名,X,Y', mapping: ['ignore', 'name', 'x', 'y'] },
+]
+
 // 貼り付けモーダルコンポーネント
 function PasteModal({
   isOpen,
@@ -186,20 +234,69 @@ function PasteModal({
 }: {
   isOpen: boolean
   onClose: () => void
-  onPaste: (text: string, type: CoordinateType) => void
+  onPaste: (text: string, type: CoordinateType, mapping: ColumnRole[], delimiter: '\t' | ',') => void
   typeOptions: { code: string; label: string }[]
 }) {
   const [pasteText, setPasteText] = useState('')
   const [pasteType, setPasteType] = useState<CoordinateType>('boundary')
+  const [columnMapping, setColumnMapping] = useState<ColumnRole[]>([])
+  const [delimiter, setDelimiter] = useState<'\t' | ','>(',')
+  // 自動検出済みの列数。列数が変わったときだけ既定マッピングをリセットし、
+  // ユーザが選び直した内容を typing 中の再検出で潰さないようにする。
+  const lastColCountRef = useRef(0)
+  // 先頭行のプレビュー（区切り後の各値）
+  const [firstRowCells, setFirstRowCells] = useState<string[]>([])
+
+  useEffect(() => {
+    const lines = pasteText.split('\n').filter((l) => l.trim())
+    if (lines.length === 0) {
+      setColumnMapping([])
+      setFirstRowCells([])
+      lastColCountRef.current = 0
+      return
+    }
+    const first = lines[0]
+    const d = detectDelimiter(first)
+    setDelimiter(d)
+    const cells = first.split(d).map((s) => s.trim())
+    setFirstRowCells(cells)
+    if (cells.length !== lastColCountRef.current) {
+      setColumnMapping(buildDefaultMapping(cells))
+      lastColCountRef.current = cells.length
+    }
+  }, [pasteText])
 
   if (!isOpen) return null
 
-  const handleSubmit = () => {
-    if (pasteText.trim()) {
-      onPaste(pasteText, pasteType)
-      setPasteText('')
-      onClose()
+  const setRoleAt = (index: number, role: ColumnRole) => {
+    setColumnMapping((prev) => {
+      const next = [...prev]
+      next[index] = role
+      return next
+    })
+  }
+
+  const applyPreset = (preset: ColumnRole[]) => {
+    const n = firstRowCells.length || preset.length
+    const next: ColumnRole[] = []
+    for (let i = 0; i < n; i++) {
+      next.push(i < preset.length ? preset[i] : 'ignore')
     }
+    setColumnMapping(next)
+  }
+
+  const hasX = columnMapping.includes('x')
+  const hasY = columnMapping.includes('y')
+  const canSubmit = pasteText.trim().length > 0 && hasX && hasY
+
+  const handleSubmit = () => {
+    if (!canSubmit) return
+    onPaste(pasteText, pasteType, columnMapping, delimiter)
+    setPasteText('')
+    setColumnMapping([])
+    setFirstRowCells([])
+    lastColCountRef.current = 0
+    onClose()
   }
 
   return (
@@ -228,9 +325,76 @@ function PasteModal({
             value={pasteText}
             onChange={(e) => setPasteText(e.target.value)}
             placeholder="点番号,X,Y,Z の形式でデータを貼り付けてください&#10;例:&#10;P1,-100.000,200.000,50.000&#10;P2,-150.000,250.000,51.000"
-            className="w-full h-64 px-3 py-2 border rounded font-mono text-sm"
+            className="w-full h-48 px-3 py-2 border rounded font-mono text-sm"
           />
         </div>
+
+        {columnMapping.length > 0 && (
+          <div className="mb-4 border rounded p-3 bg-slate-50">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium">
+                列の割り当て（{delimiter === '\t' ? 'TSV' : 'CSV'}・{columnMapping.length}列）
+              </label>
+              <div className="flex flex-wrap gap-1">
+                {MAPPING_PRESETS.map((p) => (
+                  <button
+                    key={p.label}
+                    type="button"
+                    onClick={() => applyPreset(p.mapping)}
+                    className="px-2 py-0.5 text-xs border rounded bg-white hover:bg-slate-100"
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="text-xs border-collapse">
+                <tbody>
+                  <tr>
+                    {columnMapping.map((_, i) => (
+                      <td key={`h-${i}`} className="px-2 py-1 text-slate-500 text-center">
+                        {i + 1}列目
+                      </td>
+                    ))}
+                  </tr>
+                  <tr>
+                    {columnMapping.map((role, i) => (
+                      <td key={`s-${i}`} className="px-2 py-1">
+                        <select
+                          value={role}
+                          onChange={(e) => setRoleAt(i, e.target.value as ColumnRole)}
+                          className="px-1 py-0.5 border rounded text-xs bg-white"
+                        >
+                          {COLUMN_ROLE_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </td>
+                    ))}
+                  </tr>
+                  <tr>
+                    {firstRowCells.map((cell, i) => (
+                      <td key={`p-${i}`} className="px-2 py-1 font-mono text-slate-700 border-t">
+                        {cell || <span className="text-slate-300">(空)</span>}
+                      </td>
+                    ))}
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            {!columnMapping.includes('z') && (
+              <p className="mt-2 text-xs text-slate-500">
+                Z 列が未割当のため、Z は 0 として取り込みます。
+              </p>
+            )}
+            {(!hasX || !hasY) && (
+              <p className="mt-2 text-xs text-red-600">
+                X 列と Y 列を必ず割り当ててください。
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="flex justify-end gap-2">
           <button
@@ -241,7 +405,7 @@ function PasteModal({
           </button>
           <button
             onClick={handleSubmit}
-            disabled={!pasteText.trim()}
+            disabled={!canSubmit}
             className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
           >
             貼り付け
@@ -1178,65 +1342,53 @@ export function CoordinatesPage() {
     )
   }
 
-  // モーダルからのペースト処理
-  const handleModalPaste = useCallback((text: string, pasteType: CoordinateType) => {
+  // モーダルからのペースト処理。
+  // PasteModal で指定された列マッピングに従って、各列を 点名/X/Y/Z/無視 に割り当てる。
+  // Z 列が未割当のときは Z=0 として取り込む（点名,X,Y のみの貼り付け対応）。
+  const handleModalPaste = useCallback((
+    text: string,
+    pasteType: CoordinateType,
+    mapping: ColumnRole[],
+    delimiter: '\t' | ',',
+  ) => {
     if (!text) return
-
-    // TSV（タブ区切り）またはCSV（カンマ区切り）を検出
-    const lines = text.split('\n').filter(line => line.trim())
+    const lines = text.split('\n').filter((line) => line.trim())
     if (lines.length === 0) return
 
-    // 区切り文字を判定（タブが多ければTSV、そうでなければCSV）
-    const firstLine = lines[0]
-    const tabCount = (firstLine.match(/\t/g) || []).length
-    const commaCount = (firstLine.match(/,/g) || []).length
-    const delimiter = tabCount >= commaCount ? '\t' : ','
+    const xIdx = mapping.indexOf('x')
+    const yIdx = mapping.indexOf('y')
+    const zIdx = mapping.indexOf('z')
+    const nameIdx = mapping.indexOf('name')
+    if (xIdx < 0 || yIdx < 0) return
 
     const newCoords = lines.map((line, idx) => {
-      const parts = line.split(delimiter).map(s => s.trim())
-      // 最低2列（X, Y）が必要
-      if (parts.length < 2) return null
+      const parts = line.split(delimiter).map((s) => s.trim())
+      const xRaw = parts[xIdx] ?? ''
+      const yRaw = parts[yIdx] ?? ''
+      const x = parseFloat(xRaw)
+      const y = parseFloat(yRaw)
+      if (Number.isNaN(x) || Number.isNaN(y)) return null
 
-      // 列数で判定: 2列=X,Y、3列=X,Y,Z または 点番号,X,Y、4列=点番号,X,Y,Z
-      let pointNumber: string
-      let x: number
-      let y: number
-      let z: number | null = null
-
-      if (parts.length === 2) {
-        // X, Y のみ
-        pointNumber = `P${coordinates.length + idx + 1}`
-        x = parseFloat(parts[0]) || 0
-        y = parseFloat(parts[1]) || 0
-      } else if (parts.length === 3) {
-        // 最初の列が数値かどうかで判定
-        const firstIsNumber = !isNaN(parseFloat(parts[0])) && parts[0].match(/^-?\d+\.?\d*$/)
-        if (firstIsNumber) {
-          // X, Y, Z
-          pointNumber = `P${coordinates.length + idx + 1}`
-          x = parseFloat(parts[0]) || 0
-          y = parseFloat(parts[1]) || 0
-          z = parseFloat(parts[2]) || null
-        } else {
-          // 点番号, X, Y
-          pointNumber = parts[0] || `P${coordinates.length + idx + 1}`
-          x = parseFloat(parts[1]) || 0
-          y = parseFloat(parts[2]) || 0
-        }
+      let z: number | null
+      if (zIdx >= 0) {
+        const zRaw = parts[zIdx] ?? ''
+        const zVal = parseFloat(zRaw)
+        z = Number.isNaN(zVal) ? 0 : zVal
       } else {
-        // 4列以上: 点番号, X, Y, Z
-        pointNumber = parts[0] || `P${coordinates.length + idx + 1}`
-        x = parseFloat(parts[1]) || 0
-        y = parseFloat(parts[2]) || 0
-        z = parts[3] ? parseFloat(parts[3]) : null
+        z = 0
       }
+
+      const fallbackName = `P${coordinates.length + idx + 1}`
+      const pointNumber = nameIdx >= 0
+        ? ((parts[nameIdx] ?? '').trim() || fallbackName)
+        : fallbackName
 
       return {
         pointNumber,
         x,
         y,
         z,
-        type: pasteType, // 選択された点種を使用
+        type: pasteType,
       }
     }).filter((c): c is NonNullable<typeof c> => c !== null)
 

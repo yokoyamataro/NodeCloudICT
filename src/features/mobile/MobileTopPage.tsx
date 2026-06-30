@@ -49,8 +49,8 @@ function FitBounds({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
 export function MobileTopPage() {
   const navigate = useNavigate()
   const { projectId: routeProjectId } = useParams<{ projectId: string }>()
-  const { signOut, user } = useAuth()
-  const userLabel = user?.email ? user.email.split('@')[0] : ''
+  const { signOut, user, profile } = useAuth()
+  const userLabel = profile?.full_name?.trim() || (user?.email ? user.email.split('@')[0] : '')
   const {
     farms: allFarms,
     loading: farmsLoading,

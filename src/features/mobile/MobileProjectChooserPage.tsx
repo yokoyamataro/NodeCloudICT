@@ -14,8 +14,8 @@ import type { Project } from '@/types/database'
 
 export function MobileProjectChooserPage() {
   const navigate = useNavigate()
-  const { signOut, user } = useAuth()
-  const userLabel = user?.email ? user.email.split('@')[0] : ''
+  const { signOut, user, profile } = useAuth()
+  const userLabel = profile?.full_name?.trim() || (user?.email ? user.email.split('@')[0] : '')
   const { projects, loading, error, fetchProjects } = useProjectListStore()
   const { farms, fetchFarms } = useFarmStore()
 

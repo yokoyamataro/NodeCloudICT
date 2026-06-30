@@ -269,12 +269,28 @@ export const useProjectListStore = create<ProjectListState>()(
   updateMemberRole: async (memberId, role) => {
     const state = get()
     try {
-      const { error } = await supabase
+      // .select() を付けて更新された行を返してもらう。RLS で弾かれた場合は
+      // エラーにならず data が空配列で返るので、それを「権限なし」として UI に出す。
+      const { data, error } = await supabase
         .from('project_members')
         .update({ role } as never)
         .eq('id', memberId)
+        .select()
 
       if (error) throw error
+
+      if (!data || (data as unknown[]).length === 0) {
+        set({
+          error:
+            'メンバーの権限を変更する権限がありません（プロジェクト作成者・オーナーのみ変更できます）',
+        })
+        // ローカル状態は触らない（実 DB と乖離させない）
+        const target = state.members.find((m) => m.id === memberId)
+        if (target?.project_id) {
+          await get().fetchMembers(target.project_id)
+        }
+        return
+      }
 
       set({
         members: state.members.map((m) => (m.id === memberId ? { ...m, role } : m)),

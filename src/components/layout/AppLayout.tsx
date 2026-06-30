@@ -152,7 +152,7 @@ const navigation: NavGroup[] = [
 export function AppLayout() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { user, signOut } = useAuth()
+  const { user, displayName, signOut } = useAuth()
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
     new Set(['暗渠工事']) // デフォルトで暗渠工事を展開
   )
@@ -433,7 +433,7 @@ export function AppLayout() {
 
             <div className="flex items-center gap-2">
               <User className="h-4 w-4 text-slate-400" />
-              <span className="text-sm text-slate-300">{user?.email}</span>
+              <span className="text-sm text-slate-300" title={user?.email ?? ''}>{displayName}</span>
             </div>
             <button
               onClick={handleSignOut}

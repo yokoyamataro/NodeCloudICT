@@ -2,10 +2,17 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import { supabase } from '@/lib/supabase'
 import type { User, Session } from '@supabase/supabase-js'
 
+interface AuthProfile {
+  full_name: string | null
+}
+
 interface AuthContextType {
   user: User | null
   session: Session | null
   loading: boolean
+  profile: AuthProfile | null
+  /** 表示用の名前。profiles.full_name があればそれ、無ければメールアドレス */
+  displayName: string
   signIn: (email: string, password: string) => Promise<void>
   signOut: () => Promise<void>
 }
@@ -16,6 +23,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
+  const [profile, setProfile] = useState<AuthProfile | null>(null)
 
   useEffect(() => {
     // 初期セッション取得
@@ -37,6 +45,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe()
   }, [])
 
+  // ログイン中ユーザーの profile.full_name を取得
+  useEffect(() => {
+    if (!user) {
+      setProfile(null)
+      return
+    }
+    let cancelled = false
+    supabase
+      .from('profiles')
+      .select('user_id, full_name')
+      .eq('user_id', user.id)
+      .maybeSingle<{ user_id: string; full_name: string | null }>()
+      .then(({ data }) => {
+        if (cancelled) return
+        setProfile({ full_name: data?.full_name ?? null })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [user])
+
+  const displayName = profile?.full_name?.trim() || user?.email || ''
+
   const signIn = async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({
       email,
@@ -51,7 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, session, loading, profile, displayName, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   )

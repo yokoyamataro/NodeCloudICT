@@ -26,27 +26,32 @@ interface InviteBody {
   role?: Role
 }
 
-const cors = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+function makeCors(origin?: string) {
+  const allowOrigin = origin && origin !== '' ? origin : '*'
+  return {
+    'Access-Control-Allow-Origin': allowOrigin,
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Credentials': 'true',
+  }
 }
 
-const json = (status: number, body: unknown) =>
+const json = (status: number, body: unknown, origin?: string) =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json', ...cors },
+    headers: { 'Content-Type': 'application/json', ...makeCors(origin) },
   })
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
-  if (req.method !== 'POST') return json(405, { error: 'Method Not Allowed' })
+  const origin = req.headers.get('origin') ?? undefined
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: makeCors(origin) })
+  if (req.method !== 'POST') return json(405, { error: 'Method Not Allowed' }, origin)
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
   const redirectBase = Deno.env.get('PUBLIC_APP_URL') ?? ''
   if (!supabaseUrl || !serviceKey) {
-    return json(500, { error: 'Server not configured' })
+    return json(500, { error: 'Server not configured' }, origin)
   }
 
   // 呼び出し元の JWT を取り出して uid を取得
@@ -58,7 +63,7 @@ Deno.serve(async (req) => {
     auth: { persistSession: false, autoRefreshToken: false },
   })
   const { data: callerData, error: callerErr } = await admin.auth.getUser(callerToken)
-  if (callerErr || !callerData.user) return json(401, { error: 'Not authenticated' })
+  if (callerErr || !callerData.user) return json(401, { error: 'Not authenticated' }, origin)
   const callerId = callerData.user.id
 
   // body
@@ -66,21 +71,21 @@ Deno.serve(async (req) => {
   try {
     body = (await req.json()) as InviteBody
   } catch {
-    return json(400, { error: 'Bad Request' })
+    return json(400, { error: 'Bad Request' }, origin)
   }
   const projectId = body.project_id
   const emailRaw = body.email?.trim().toLowerCase()
   const role = body.role
-  if (!projectId || !emailRaw || !role) return json(400, { error: 'Missing fields' })
+  if (!projectId || !emailRaw || !role) return json(400, { error: 'Missing fields' }, origin)
   if (!['owner', 'editor', 'viewer'].includes(role)) {
-    return json(400, { error: 'Invalid role' })
+    return json(400, { error: 'Invalid role' }, origin)
   }
 
   // オーナー判定（is_project_owner を SECURITY DEFINER 関数として用意済み）
   const { data: isOwner, error: ownerErr } = await admin.rpc('is_project_owner', {
     p_project_id: projectId,
   })
-  if (ownerErr) return json(500, { error: 'Owner check failed: ' + ownerErr.message })
+  if (ownerErr) return json(500, { error: 'Owner check failed: ' + ownerErr.message }, origin)
   // 注: is_project_owner は内部で auth.uid() を見るが、service_role で呼ぶと
   // auth.uid() が NULL になるため、ここではあえて service role 経由のチェックは
   // 行わず、別 SQL で「projects.user_id = callerId OR project_members.role='owner'」
@@ -121,21 +126,52 @@ Deno.serve(async (req) => {
     const hit = list.users.find((u) => (u.email ?? '').toLowerCase() === emailRaw)
     if (hit) existingUserId = hit.id
   } catch (err) {
-    return json(500, { error: 'User lookup failed: ' + (err as Error).message })
+    return json(500, { error: 'User lookup failed: ' + (err as Error).message }, origin)
   }
 
-  // ケース A: 既存ユーザー → project_members に直接 INSERT
+  // ケース A: 既存ユーザー → project_members を upsert
+  // 既にメンバー登録されている相手にもう一度 invite された場合は、エラーを返さず
+  // 指定ロールに更新する（UI 上「閲覧者として登録済の人に編集権限を付与」したい
+  // ケースを救う）。ただし既存が owner の場合は降格させないため触らない。
   if (existingUserId) {
+    const { data: existing, error: selErr } = await admin
+      .from('project_members')
+      .select('id, role')
+      .eq('project_id', projectId)
+      .eq('user_id', existingUserId)
+      .maybeSingle()
+    if (selErr) {
+      return json(500, { error: 'Member lookup failed: ' + selErr.message }, origin)
+    }
+
+    if (existing) {
+      const cur = (existing as { id: string; role: string })
+      if (cur.role === 'owner') {
+        return json(409, { error: 'このユーザーは既にオーナーです' }, origin)
+      }
+      if (cur.role === role) {
+        return json(200, { ok: true, mode: 'added_existing' }, origin)
+      }
+      const { error: updErr } = await admin
+        .from('project_members')
+        .update({ role })
+        .eq('id', cur.id)
+      if (updErr) {
+        return json(500, { error: 'Member update failed: ' + updErr.message }, origin)
+      }
+      return json(200, { ok: true, mode: 'added_existing' }, origin)
+    }
+
     const { error } = await admin
       .from('project_members')
       .insert({ project_id: projectId, user_id: existingUserId, role })
     if (error) {
       if (error.code === '23505') {
-        return json(409, { error: 'このユーザーは既にメンバーです' })
+        return json(409, { error: 'このユーザーは既にメンバーです' }, origin)
       }
-      return json(500, { error: 'Member insert failed: ' + error.message })
+      return json(500, { error: 'Member insert failed: ' + error.message }, origin)
     }
-    return json(200, { ok: true, mode: 'added_existing' })
+    return json(200, { ok: true, mode: 'added_existing' }, origin)
   }
 
   // ケース B: 未登録ユーザー → pending_invitations + 招待メール
@@ -147,7 +183,7 @@ Deno.serve(async (req) => {
       { onConflict: 'project_id,email' },
     )
   if (pendErr) {
-    return json(500, { error: 'Pending insert failed: ' + pendErr.message })
+    return json(500, { error: 'Pending insert failed: ' + pendErr.message }, origin)
   }
 
   // 2) 招待メール送信（Supabase Auth の Invite テンプレが使われる）
@@ -158,8 +194,8 @@ Deno.serve(async (req) => {
     redirectTo,
   })
   if (inviteErr) {
-    return json(500, { error: 'Invite send failed: ' + inviteErr.message })
+    return json(500, { error: 'Invite send failed: ' + inviteErr.message }, origin)
   }
 
-  return json(200, { ok: true, mode: 'invited' })
+  return json(200, { ok: true, mode: 'invited' }, origin)
 })

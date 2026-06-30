@@ -212,9 +212,13 @@ export const useFarmStore = create<FarmState>()(
       const polygons: WorkAreaPolygon[] = []
 
       // 1. design_work_areas から工事区域を取得（客土、整地など）
+      // point_ids も同じクエリで取る。以前は 2 段階で引いていたが、2 段目の
+      // .in('id', [...全 area_id]) が URL 長制限（数百件で 16KB 超）にぶつかり
+      // 400 Bad Request になっていた。元々同テーブル同 farm スコープなので
+      // 1 回で済む。
       const { data: areasData, error: areaError } = await supabase
         .from('design_work_areas')
-        .select('id, farm_id, work_type, zone_number, name')
+        .select('id, farm_id, work_type, zone_number, name, point_ids')
         .in('farm_id', targetFarms.map(f => f.id))
 
       if (areaError) throw areaError
@@ -225,21 +229,10 @@ export const useFarmStore = create<FarmState>()(
         work_type: string
         zone_number: string
         name: string | null
+        point_ids: string[] | null
       }> | null
 
       if (areas && areas.length > 0) {
-        // design_work_areasのpoint_idsを取得
-        const { data: areasWithPointIds, error: pointIdsError } = await supabase
-          .from('design_work_areas')
-          .select('id, point_ids')
-          .in('id', areas.map(a => a.id))
-
-        if (pointIdsError) throw pointIdsError
-
-        const areasPointIds = areasWithPointIds as Array<{
-          id: string
-          point_ids: string[] | null
-        }> | null
 
         // design_coordinates は work_area が属する各 farm_id 単位でページング取得する
         // （in('id', [...uuids]) は URL 長 + 1000 行上限の問題があるため使わない）
@@ -274,7 +267,7 @@ export const useFarmStore = create<FarmState>()(
           const farm = targetFarms.find(f => f.id === area.farm_id)
           if (!farm) continue
 
-          const areaPointIds = areasPointIds?.find(a => a.id === area.id)?.point_ids || []
+          const areaPointIds = area.point_ids ?? []
           if (areaPointIds.length < 3) continue
 
           const zone = projectZones.get(farm.project_id) ?? 13

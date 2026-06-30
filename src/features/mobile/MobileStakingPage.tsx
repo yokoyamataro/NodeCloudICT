@@ -402,8 +402,8 @@ export function MobileStakingPage() {
   } = useOrthophotoStore()
   const { fetchPipes, pipes } = useUnderdrainStore()
   const { records, fetchRecords, addRecord, deleteRecord, saving } = useStakingStore()
-  const { user } = useAuth()
-  const userLabel = user?.email ? user.email.split('@')[0] : ''
+  const { user, profile } = useAuth()
+  const userLabel = profile?.full_name?.trim() || (user?.email ? user.email.split('@')[0] : '')
 
   const [farm, setFarm] = useState<Farm | null>(null)
   const [project, setProject] = useState<Project | null>(null)
