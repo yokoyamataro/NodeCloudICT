@@ -178,10 +178,15 @@ function CoordinateMapLongPressBridge({
 // 工区写真マーカー。カメラアイコン (createPhotoIcon) を表示し、クリックで
 // 写真のサムネを含む Popup を開く。signed URL は遅延取得で、popup が開いた
 // タイミングで初回ロードする。
+//
+// onMove / onClearLocation が渡された場合、長押し（contextmenu）で編集メニュー
+// を開き、ドラッグ移動 or 位置情報の削除ができる。
 export function PhotoMarker({
   photo,
   getSignedUrl,
   onClick,
+  onMove,
+  onClearLocation,
 }: {
   photo: {
     id: string
@@ -193,9 +198,23 @@ export function PhotoMarker({
   }
   getSignedUrl: (filePath: string) => Promise<string | null>
   onClick?: (id: string) => void
+  onMove?: (id: string, lat: number, lng: number) => void
+  onClearLocation?: (id: string) => void
 }) {
   const [status, setStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle')
   const [url, setUrl] = useState<string | null>(null)
+  // 'view': 通常（写真ポップアップ）／'menu': 編集メニュー／'dragging': ドラッグ移動中
+  const [mode, setMode] = useState<'view' | 'menu' | 'dragging'>('view')
+  const markerRef = useRef<L.Marker | null>(null)
+  const editable = !!(onMove || onClearLocation)
+
+  // dragging 中だけ leaflet の drag を有効化
+  useEffect(() => {
+    const m = markerRef.current
+    if (!m) return
+    if (mode === 'dragging') m.dragging?.enable()
+    else m.dragging?.disable()
+  }, [mode])
 
   const ensureUrl = async () => {
     if (status === 'loading' || status === 'loaded') return
@@ -215,52 +234,123 @@ export function PhotoMarker({
 
   return (
     <Marker
+      ref={markerRef}
       position={[photo.lat, photo.lng]}
       icon={createPhotoIcon(photo.headingDeg)}
-      zIndexOffset={450}
+      zIndexOffset={mode === 'dragging' ? 900 : 450}
       eventHandlers={{
         click: () => {
+          if (mode !== 'view') return
           onClick?.(photo.id)
           void ensureUrl()
         },
+        contextmenu: (e) => {
+          if (!editable) return
+          setMode('menu')
+          ;(e.target as L.Marker).openPopup()
+        },
+        dragend: (e) => {
+          const ll = (e.target as L.Marker).getLatLng()
+          onMove?.(photo.id, ll.lat, ll.lng)
+          setMode('view')
+        },
+        popupclose: () => {
+          setMode((m) => (m === 'menu' ? 'view' : m))
+        },
       }}
     >
-      <Popup minWidth={180} maxWidth={260}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          {status === 'loading' && (
-            <div style={{ padding: '12px 0', textAlign: 'center', color: '#64748b' }}>
-              読み込み中…
-            </div>
-          )}
-          {status === 'error' && (
-            <div style={{ padding: '12px 0', textAlign: 'center', color: '#dc2626' }}>
-              写真を取得できませんでした
-            </div>
-          )}
-          {status === 'loaded' && url && (
-            <a href={url} target="_blank" rel="noreferrer">
-              <img
-                src={url}
-                alt=""
-                style={{
-                  display: 'block',
-                  maxWidth: '100%',
-                  maxHeight: 240,
-                  borderRadius: 4,
+      {mode === 'menu' ? (
+        <Popup minWidth={200}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 2 }}>
+            <div style={{ fontSize: 12, color: '#475569', marginBottom: 4 }}>写真の位置</div>
+            {onMove && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMode('dragging')
+                  markerRef.current?.closePopup()
                 }}
-              />
-            </a>
-          )}
-          {photo.caption && (
-            <div style={{ fontSize: 11, color: '#475569' }}>{photo.caption}</div>
-          )}
-          {photo.headingDeg != null && (
-            <div style={{ fontSize: 10, color: '#94a3b8' }}>
-              方向 {photo.headingDeg.toFixed(0)}°
-            </div>
-          )}
-        </div>
-      </Popup>
+                style={{
+                  padding: '8px 12px',
+                  background: '#2563eb',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 4,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                }}
+              >
+                位置を移動（ドラッグ）
+              </button>
+            )}
+            {onClearLocation && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm('この写真の位置情報を削除しますか？（写真自体は残ります）')) {
+                    onClearLocation(photo.id)
+                    markerRef.current?.closePopup()
+                    setMode('view')
+                  }
+                }}
+                style={{
+                  padding: '8px 12px',
+                  background: '#dc2626',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 4,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                }}
+              >
+                位置情報を削除
+              </button>
+            )}
+          </div>
+        </Popup>
+      ) : (
+        <Popup minWidth={180} maxWidth={260}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {status === 'loading' && (
+              <div style={{ padding: '12px 0', textAlign: 'center', color: '#64748b' }}>
+                読み込み中…
+              </div>
+            )}
+            {status === 'error' && (
+              <div style={{ padding: '12px 0', textAlign: 'center', color: '#dc2626' }}>
+                写真を取得できませんでした
+              </div>
+            )}
+            {status === 'loaded' && url && (
+              <a href={url} target="_blank" rel="noreferrer">
+                <img
+                  src={url}
+                  alt=""
+                  style={{
+                    display: 'block',
+                    maxWidth: '100%',
+                    maxHeight: 240,
+                    borderRadius: 4,
+                  }}
+                />
+              </a>
+            )}
+            {photo.caption && (
+              <div style={{ fontSize: 11, color: '#475569' }}>{photo.caption}</div>
+            )}
+            {photo.headingDeg != null && (
+              <div style={{ fontSize: 10, color: '#94a3b8' }}>
+                方向 {photo.headingDeg.toFixed(0)}°
+              </div>
+            )}
+            {editable && (
+              <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 4 }}>
+                長押しで位置の編集メニュー
+              </div>
+            )}
+          </div>
+        </Popup>
+      )}
     </Marker>
   )
 }

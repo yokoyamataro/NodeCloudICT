@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, Polygon, Tooltip, Pane, useMap, useMapEvents } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, Polygon, Tooltip, Pane, Popup, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import {
@@ -265,6 +265,109 @@ function BoundsWatcher({
   return null
 }
 
+// 工区メモのマーカー。長押し（contextmenu）で編集メニューを開き、
+// ドラッグ移動 or 位置情報の削除ができる。写真マーカーの方の同種 UX と揃える。
+function EditableMemoMarker({
+  memo,
+  onMove,
+  onClearLocation,
+}: {
+  memo: {
+    id: string
+    lat: number
+    lng: number
+    content: string
+  }
+  onMove: (id: string, lat: number, lng: number) => void
+  onClearLocation: (id: string) => void
+}) {
+  const [mode, setMode] = useState<'view' | 'menu' | 'dragging'>('view')
+  const markerRef = useRef<L.Marker | null>(null)
+
+  useEffect(() => {
+    const m = markerRef.current
+    if (!m) return
+    if (mode === 'dragging') m.dragging?.enable()
+    else m.dragging?.disable()
+  }, [mode])
+
+  return (
+    <Marker
+      ref={markerRef}
+      position={[memo.lat, memo.lng]}
+      icon={createMemoIcon()}
+      zIndexOffset={mode === 'dragging' ? 900 : 500}
+      eventHandlers={{
+        contextmenu: (e) => {
+          setMode('menu')
+          ;(e.target as L.Marker).openPopup()
+        },
+        dragend: (e) => {
+          const ll = (e.target as L.Marker).getLatLng()
+          onMove(memo.id, ll.lat, ll.lng)
+          setMode('view')
+        },
+        popupclose: () => {
+          setMode((m) => (m === 'menu' ? 'view' : m))
+        },
+      }}
+    >
+      {mode === 'menu' ? (
+        <Popup minWidth={200}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 2 }}>
+            <div style={{ fontSize: 12, color: '#475569', marginBottom: 4 }}>メモの位置</div>
+            <button
+              type="button"
+              onClick={() => {
+                setMode('dragging')
+                markerRef.current?.closePopup()
+              }}
+              style={{
+                padding: '8px 12px',
+                background: '#2563eb',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 4,
+                fontSize: 13,
+                cursor: 'pointer',
+              }}
+            >
+              位置を移動（ドラッグ）
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (confirm('このメモの位置情報を削除しますか？（メモ本文は残ります）')) {
+                  onClearLocation(memo.id)
+                  markerRef.current?.closePopup()
+                  setMode('view')
+                }
+              }}
+              style={{
+                padding: '8px 12px',
+                background: '#dc2626',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 4,
+                fontSize: 13,
+                cursor: 'pointer',
+              }}
+            >
+              位置情報を削除
+            </button>
+          </div>
+        </Popup>
+      ) : (
+        <Tooltip direction="top" offset={[0, -16]} className="staking-label-tooltip">
+          <div style={{ maxWidth: 200, whiteSpace: 'pre-wrap' }}>
+            {memo.content.length > 60 ? memo.content.slice(0, 60) + '…' : memo.content}
+          </div>
+        </Tooltip>
+      )}
+    </Marker>
+  )
+}
+
 // 旧: 地図クリックで断面 2 点を拾うピッカー（座標 2 点を選ぶ方式に変更したため未使用）
 
 function FollowCurrent({
@@ -394,6 +497,7 @@ export function MobileStakingPage() {
     fetchByEntityIds: fetchAttachments,
     uploadPhoto,
     getSignedUrl,
+    updateAttachment,
   } = useAttachmentStore()
   const {
     byFarm: orthoByFarm,
@@ -946,6 +1050,7 @@ export function MobileStakingPage() {
   )
   const fetchFarmMemos = useFarmMemoStore((s) => s.fetchByFarm)
   const createFarmMemo = useFarmMemoStore((s) => s.createMemo)
+  const updateFarmMemo = useFarmMemoStore((s) => s.updateMemo)
   useEffect(() => {
     if (farmId) void fetchFarmMemos(farmId)
   }, [farmId, fetchFarmMemos])
@@ -3164,33 +3269,35 @@ export function MobileStakingPage() {
             )
           })}
 
-          {/* 工区メモのマーカー（位置 + 方向） */}
+          {/* 工区メモのマーカー（長押しで移動・位置削除） */}
           {farmMemos.map((m) =>
             m.lat != null && m.lng != null ? (
-              <Marker
+              <EditableMemoMarker
                 key={`memo-${m.id}`}
-                position={[m.lat, m.lng]}
-                icon={createMemoIcon()}
-                zIndexOffset={500}
-              >
-                <Tooltip
-                  direction="top"
-                  offset={[0, -16]}
-                  className="staking-label-tooltip"
-                >
-                  <div style={{ maxWidth: 200, whiteSpace: 'pre-wrap' }}>
-                    {m.content.length > 60
-                      ? m.content.slice(0, 60) + '…'
-                      : m.content}
-                  </div>
-                </Tooltip>
-              </Marker>
+                memo={{ id: m.id, lat: m.lat, lng: m.lng, content: m.content }}
+                onMove={(id, lat, lng) => {
+                  void updateFarmMemo(id, { lat, lng })
+                }}
+                onClearLocation={(id) => {
+                  void updateFarmMemo(id, { lat: null, lng: null })
+                }}
+              />
             ) : null,
           )}
 
-          {/* 工区写真のマーカー（カメラアイコン + 撮影方向 + タップでサムネ） */}
+          {/* 工区写真のマーカー（カメラアイコン + 撮影方向 + タップでサムネ / 長押しで移動・位置削除） */}
           {farmPhotos.map((p) => (
-            <PhotoMarker key={`photo-${p.id}`} photo={p} getSignedUrl={getSignedUrl} />
+            <PhotoMarker
+              key={`photo-${p.id}`}
+              photo={p}
+              getSignedUrl={getSignedUrl}
+              onMove={(id, lat, lng) => {
+                void updateAttachment(id, { lat, lng })
+              }}
+              onClearLocation={(id) => {
+                void updateAttachment(id, { lat: null, lng: null })
+              }}
+            />
           ))}
 
           {/* 地図の長押し / 右クリックでメモ作成。Leaflet の contextmenu

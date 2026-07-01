@@ -112,7 +112,13 @@ interface State {
   removeAttachment: (id: string) => Promise<void>
   updateAttachment: (
     id: string,
-    patch: { takenAt?: Date | null; caption?: string | null },
+    patch: {
+      takenAt?: Date | null
+      caption?: string | null
+      lat?: number | null
+      lng?: number | null
+      headingDeg?: number | null
+    },
   ) => Promise<void>
   getSignedUrl: (filePath: string) => Promise<string | null>
 }
@@ -391,12 +397,21 @@ export const useAttachmentStore = create<State>((set, get) => ({
     const all = Array.from(get().byEntity.values()).flat()
     const target = all.find((a) => a.id === id)
     if (!target) return
-    const payload: Record<string, string | null> = {}
+    const payload: Record<string, string | number | null> = {}
     if (Object.prototype.hasOwnProperty.call(patch, 'takenAt')) {
       payload.taken_at = patch.takenAt ? patch.takenAt.toISOString() : null
     }
     if (Object.prototype.hasOwnProperty.call(patch, 'caption')) {
       payload.caption = patch.caption ?? null
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'lat')) {
+      payload.lat = patch.lat ?? null
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'lng')) {
+      payload.lng = patch.lng ?? null
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'headingDeg')) {
+      payload.heading_deg = patch.headingDeg ?? null
     }
     if (Object.keys(payload).length === 0) return
     try {
@@ -427,6 +442,15 @@ export const useAttachmentStore = create<State>((set, get) => ({
                 caption: Object.prototype.hasOwnProperty.call(patch, 'caption')
                   ? patch.caption ?? null
                   : a.caption,
+                lat: Object.prototype.hasOwnProperty.call(patch, 'lat')
+                  ? patch.lat ?? null
+                  : a.lat,
+                lng: Object.prototype.hasOwnProperty.call(patch, 'lng')
+                  ? patch.lng ?? null
+                  : a.lng,
+                headingDeg: Object.prototype.hasOwnProperty.call(patch, 'headingDeg')
+                  ? patch.headingDeg ?? null
+                  : a.headingDeg,
               }
             : a,
         ),
