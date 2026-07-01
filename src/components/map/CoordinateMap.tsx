@@ -175,18 +175,111 @@ function CoordinateMapLongPressBridge({
   return null
 }
 
+// 写真マーカー「角度編集」用: マップ全体でポインターの動きを拾い、カメラ位置
+// からポインターへの方位（0=北, 90=東, ...）を返す。マップの drag / touchZoom
+// は一時的に無効化。ポインター解放時に onCommit で確定。
+function RotationDragLayer({
+  cameraLat,
+  cameraLng,
+  onPreview,
+  onCommit,
+}: {
+  cameraLat: number
+  cameraLng: number
+  onPreview: (headingDeg: number, pointerLat: number, pointerLng: number) => void
+  onCommit: (headingDeg: number) => void
+}) {
+  const map = useMap()
+  const onPreviewRef = useRef(onPreview)
+  const onCommitRef = useRef(onCommit)
+  onPreviewRef.current = onPreview
+  onCommitRef.current = onCommit
+
+  useEffect(() => {
+    const container = map.getContainer()
+
+    // マップ操作を一時停止（rotation ドラッグと干渉させない）
+    const savedDragging = map.dragging.enabled()
+    const savedDbl = map.doubleClickZoom.enabled()
+    const savedTouchZoom = map.touchZoom.enabled()
+    map.dragging.disable()
+    map.doubleClickZoom.disable()
+    map.touchZoom.disable()
+
+    const trackingRef = { current: false }
+    let lastHeading: number | null = null
+
+    const compute = (clientX: number, clientY: number) => {
+      const rect = container.getBoundingClientRect()
+      const x = clientX - rect.left
+      const y = clientY - rect.top
+      const cam = map.latLngToContainerPoint(L.latLng(cameraLat, cameraLng))
+      const dx = x - cam.x
+      const dy = y - cam.y
+      // 上=北を 0°、右=東を 90° にするため atan2(dx, -dy)
+      const heading = ((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360
+      const ll = map.containerPointToLatLng([x, y])
+      return { heading, ll }
+    }
+
+    const onDown = (e: PointerEvent) => {
+      trackingRef.current = true
+      const { heading, ll } = compute(e.clientX, e.clientY)
+      lastHeading = heading
+      onPreviewRef.current(heading, ll.lat, ll.lng)
+      try { container.setPointerCapture?.(e.pointerId) } catch { /* ignore */ }
+      e.preventDefault()
+      e.stopPropagation()
+    }
+
+    const onMove = (e: PointerEvent) => {
+      if (!trackingRef.current) return
+      const { heading, ll } = compute(e.clientX, e.clientY)
+      lastHeading = heading
+      onPreviewRef.current(heading, ll.lat, ll.lng)
+      e.preventDefault()
+    }
+
+    const onUp = (e: PointerEvent) => {
+      if (!trackingRef.current) return
+      trackingRef.current = false
+      if (lastHeading != null) onCommitRef.current(lastHeading)
+      try { container.releasePointerCapture?.(e.pointerId) } catch { /* ignore */ }
+      e.preventDefault()
+    }
+
+    container.addEventListener('pointerdown', onDown, { capture: true })
+    container.addEventListener('pointermove', onMove, { capture: true })
+    container.addEventListener('pointerup', onUp, { capture: true })
+    container.addEventListener('pointercancel', onUp, { capture: true })
+
+    return () => {
+      if (savedDragging) map.dragging.enable()
+      if (savedDbl) map.doubleClickZoom.enable()
+      if (savedTouchZoom) map.touchZoom.enable()
+      container.removeEventListener('pointerdown', onDown, { capture: true })
+      container.removeEventListener('pointermove', onMove, { capture: true })
+      container.removeEventListener('pointerup', onUp, { capture: true })
+      container.removeEventListener('pointercancel', onUp, { capture: true })
+    }
+  }, [map, cameraLat, cameraLng])
+
+  return null
+}
+
 // 工区写真マーカー。カメラアイコン (createPhotoIcon) を表示し、クリックで
 // 写真のサムネを含む Popup を開く。signed URL は遅延取得で、popup が開いた
 // タイミングで初回ロードする。
 //
-// onMove / onClearLocation が渡された場合、長押し（contextmenu）で編集メニュー
-// を開き、ドラッグ移動 or 位置情報の削除ができる。
+// onMove / onClearLocation / onRotate が渡された場合、長押し（contextmenu）
+// で編集メニューを開き、ドラッグ移動 / 位置削除 / 撮影方向の編集ができる。
 export function PhotoMarker({
   photo,
   getSignedUrl,
   onClick,
   onMove,
   onClearLocation,
+  onRotate,
 }: {
   photo: {
     id: string
@@ -200,13 +293,18 @@ export function PhotoMarker({
   onClick?: (id: string) => void
   onMove?: (id: string, lat: number, lng: number) => void
   onClearLocation?: (id: string) => void
+  onRotate?: (id: string, headingDeg: number) => void
 }) {
   const [status, setStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle')
   const [url, setUrl] = useState<string | null>(null)
-  // 'view': 通常（写真ポップアップ）／'menu': 編集メニュー／'dragging': ドラッグ移動中
-  const [mode, setMode] = useState<'view' | 'menu' | 'dragging'>('view')
+  // 'view': 通常（写真ポップアップ）／'menu': 編集メニュー／
+  // 'dragging': 位置ドラッグ中／'rotating': 角度ドラッグ中
+  const [mode, setMode] = useState<'view' | 'menu' | 'dragging' | 'rotating'>('view')
+  // rotating 中のプレビュー用
+  const [previewHeading, setPreviewHeading] = useState<number | null>(null)
+  const [previewPointer, setPreviewPointer] = useState<{ lat: number; lng: number } | null>(null)
   const markerRef = useRef<L.Marker | null>(null)
-  const editable = !!(onMove || onClearLocation)
+  const editable = !!(onMove || onClearLocation || onRotate)
 
   // dragging 中だけ leaflet の drag を有効化
   useEffect(() => {
@@ -232,126 +330,182 @@ export function PhotoMarker({
     }
   }
 
+  const displayHeading =
+    mode === 'rotating' && previewHeading != null ? previewHeading : photo.headingDeg
+
   return (
-    <Marker
-      ref={markerRef}
-      position={[photo.lat, photo.lng]}
-      icon={createPhotoIcon(photo.headingDeg)}
-      zIndexOffset={mode === 'dragging' ? 900 : 450}
-      eventHandlers={{
-        click: () => {
-          if (mode !== 'view') return
-          onClick?.(photo.id)
-          void ensureUrl()
-        },
-        contextmenu: (e) => {
-          if (!editable) return
-          setMode('menu')
-          ;(e.target as L.Marker).openPopup()
-        },
-        dragend: (e) => {
-          const ll = (e.target as L.Marker).getLatLng()
-          onMove?.(photo.id, ll.lat, ll.lng)
-          setMode('view')
-        },
-        popupclose: () => {
-          setMode((m) => (m === 'menu' ? 'view' : m))
-        },
-      }}
-    >
-      {mode === 'menu' ? (
-        <Popup minWidth={200}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 2 }}>
-            <div style={{ fontSize: 12, color: '#475569', marginBottom: 4 }}>写真の位置</div>
-            {onMove && (
-              <button
-                type="button"
-                onClick={() => {
-                  setMode('dragging')
-                  markerRef.current?.closePopup()
-                }}
-                style={{
-                  padding: '8px 12px',
-                  background: '#2563eb',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: 4,
-                  fontSize: 13,
-                  cursor: 'pointer',
-                }}
-              >
-                位置を移動（ドラッグ）
-              </button>
-            )}
-            {onClearLocation && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (confirm('この写真の位置情報を削除しますか？（写真自体は残ります）')) {
-                    onClearLocation(photo.id)
+    <>
+      <Marker
+        ref={markerRef}
+        position={[photo.lat, photo.lng]}
+        icon={createPhotoIcon(displayHeading)}
+        zIndexOffset={mode === 'dragging' || mode === 'rotating' ? 900 : 450}
+        eventHandlers={{
+          click: () => {
+            if (mode !== 'view') return
+            onClick?.(photo.id)
+            void ensureUrl()
+          },
+          contextmenu: (e) => {
+            if (!editable) return
+            setMode('menu')
+            ;(e.target as L.Marker).openPopup()
+          },
+          dragend: (e) => {
+            const ll = (e.target as L.Marker).getLatLng()
+            onMove?.(photo.id, ll.lat, ll.lng)
+            setMode('view')
+          },
+          popupclose: () => {
+            setMode((m) => (m === 'menu' ? 'view' : m))
+          },
+        }}
+      >
+        {mode === 'menu' ? (
+          <Popup minWidth={220}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 2 }}>
+              <div style={{ fontSize: 12, color: '#475569', marginBottom: 4 }}>写真の編集</div>
+              {onMove && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('dragging')
                     markerRef.current?.closePopup()
-                    setMode('view')
-                  }
-                }}
-                style={{
-                  padding: '8px 12px',
-                  background: '#dc2626',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: 4,
-                  fontSize: 13,
-                  cursor: 'pointer',
-                }}
-              >
-                位置情報を削除
-              </button>
-            )}
-          </div>
-        </Popup>
-      ) : (
-        <Popup minWidth={180} maxWidth={260}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {status === 'loading' && (
-              <div style={{ padding: '12px 0', textAlign: 'center', color: '#64748b' }}>
-                読み込み中…
-              </div>
-            )}
-            {status === 'error' && (
-              <div style={{ padding: '12px 0', textAlign: 'center', color: '#dc2626' }}>
-                写真を取得できませんでした
-              </div>
-            )}
-            {status === 'loaded' && url && (
-              <a href={url} target="_blank" rel="noreferrer">
-                <img
-                  src={url}
-                  alt=""
-                  style={{
-                    display: 'block',
-                    maxWidth: '100%',
-                    maxHeight: 240,
-                    borderRadius: 4,
                   }}
-                />
-              </a>
-            )}
-            {photo.caption && (
-              <div style={{ fontSize: 11, color: '#475569' }}>{photo.caption}</div>
-            )}
-            {photo.headingDeg != null && (
-              <div style={{ fontSize: 10, color: '#94a3b8' }}>
-                方向 {photo.headingDeg.toFixed(0)}°
-              </div>
-            )}
-            {editable && (
-              <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 4 }}>
-                長押しで位置の編集メニュー
-              </div>
-            )}
-          </div>
-        </Popup>
+                  style={{
+                    padding: '8px 12px',
+                    background: '#2563eb',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 4,
+                    fontSize: 13,
+                    cursor: 'pointer',
+                  }}
+                >
+                  位置を移動（ドラッグ）
+                </button>
+              )}
+              {onRotate && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPreviewHeading(null)
+                    setPreviewPointer(null)
+                    setMode('rotating')
+                    markerRef.current?.closePopup()
+                  }}
+                  style={{
+                    padding: '8px 12px',
+                    background: '#0e7490',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 4,
+                    fontSize: 13,
+                    cursor: 'pointer',
+                  }}
+                >
+                  撮影方向を編集（中心から画角方向へドラッグ）
+                </button>
+              )}
+              {onClearLocation && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirm('この写真の位置情報を削除しますか？（写真自体は残ります）')) {
+                      onClearLocation(photo.id)
+                      markerRef.current?.closePopup()
+                      setMode('view')
+                    }
+                  }}
+                  style={{
+                    padding: '8px 12px',
+                    background: '#dc2626',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 4,
+                    fontSize: 13,
+                    cursor: 'pointer',
+                  }}
+                >
+                  位置情報を削除
+                </button>
+              )}
+            </div>
+          </Popup>
+        ) : (
+          <Popup minWidth={180} maxWidth={260}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {status === 'loading' && (
+                <div style={{ padding: '12px 0', textAlign: 'center', color: '#64748b' }}>
+                  読み込み中…
+                </div>
+              )}
+              {status === 'error' && (
+                <div style={{ padding: '12px 0', textAlign: 'center', color: '#dc2626' }}>
+                  写真を取得できませんでした
+                </div>
+              )}
+              {status === 'loaded' && url && (
+                <a href={url} target="_blank" rel="noreferrer">
+                  <img
+                    src={url}
+                    alt=""
+                    style={{
+                      display: 'block',
+                      maxWidth: '100%',
+                      maxHeight: 240,
+                      borderRadius: 4,
+                    }}
+                  />
+                </a>
+              )}
+              {photo.caption && (
+                <div style={{ fontSize: 11, color: '#475569' }}>{photo.caption}</div>
+              )}
+              {photo.headingDeg != null && (
+                <div style={{ fontSize: 10, color: '#94a3b8' }}>
+                  方向 {photo.headingDeg.toFixed(0)}°
+                </div>
+              )}
+              {editable && (
+                <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 4 }}>
+                  長押しで編集メニュー
+                </div>
+              )}
+            </div>
+          </Popup>
+        )}
+      </Marker>
+
+      {/* 撮影方向編集モード: マップ全体でドラッグを拾い、カメラ→指の向きを heading に反映 */}
+      {mode === 'rotating' && (
+        <>
+          <RotationDragLayer
+            cameraLat={photo.lat}
+            cameraLng={photo.lng}
+            onPreview={(h, lat, lng) => {
+              setPreviewHeading(h)
+              setPreviewPointer({ lat, lng })
+            }}
+            onCommit={(h) => {
+              onRotate?.(photo.id, h)
+              setPreviewHeading(null)
+              setPreviewPointer(null)
+              setMode('view')
+            }}
+          />
+          {previewPointer && (
+            <Polyline
+              positions={[
+                [photo.lat, photo.lng],
+                [previewPointer.lat, previewPointer.lng],
+              ]}
+              pathOptions={{ color: '#0e7490', weight: 3, dashArray: '6 6' }}
+            />
+          )}
+        </>
       )}
-    </Marker>
+    </>
   )
 }
 

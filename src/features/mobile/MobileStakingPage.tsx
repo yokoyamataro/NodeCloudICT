@@ -3285,7 +3285,7 @@ export function MobileStakingPage() {
             ) : null,
           )}
 
-          {/* 工区写真のマーカー（カメラアイコン + 撮影方向 + タップでサムネ / 長押しで移動・位置削除） */}
+          {/* 工区写真のマーカー（カメラアイコン + 撮影方向 + タップでサムネ / 長押しで移動・角度・位置削除） */}
           {farmPhotos.map((p) => (
             <PhotoMarker
               key={`photo-${p.id}`}
@@ -3293,6 +3293,9 @@ export function MobileStakingPage() {
               getSignedUrl={getSignedUrl}
               onMove={(id, lat, lng) => {
                 void updateAttachment(id, { lat, lng })
+              }}
+              onRotate={(id, headingDeg) => {
+                void updateAttachment(id, { headingDeg })
               }}
               onClearLocation={(id) => {
                 void updateAttachment(id, { lat: null, lng: null })
