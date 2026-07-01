@@ -70,37 +70,37 @@ function createColoredIcon(
   })
 }
 
-// 工区写真のマーカーアイコン。SVG カメラ + 撮影方向の「視野コーン」を一体で描く。
-// heading（0=北, 90=東 ...）が指定されていれば半透明の三角錐で「撮影方向」を表示。
-// 全体を SVG で組むことで、emoji や絵文字に依存せず端末横断で同じ見た目になる。
+// 工区写真のマーカーアイコン。カムコーダー風のシルエットで、レンズ（台形）
+// の突き出す向き = 撮影方向。heading（0=北, 90=東 ...）でシェイプごと回転
+// させるので、視野コーンなど別要素に頼らなくてもマーカー自体で方向が読める。
+// heading が null の場合はレンズを付けず、本体（角丸長方形）だけを出す。
 export function createPhotoIcon(headingDeg: number | null): L.DivIcon {
-  const cone =
-    headingDeg == null
-      ? ''
-      : `
-        <g transform="rotate(${headingDeg})">
-          <polygon points="0,-28 -14,-9 14,-9"
-            fill="rgba(37, 99, 235, 0.4)"
-            stroke="rgba(37, 99, 235, 0.8)"
-            stroke-width="1"
-            stroke-linejoin="round" />
-        </g>
-      `
-  // 中央 (0,0) に置いたカメラ本体 (rect) + 上の Hot shoe + レンズ (二重円)
+  // 本体 + 上向きレンズ台形 を単一パスで一体化（既定は北向き）。
+  // 座標系: viewBox 中心 (0,0)。y は下向き＋なので、北=−y。
+  const bodyWithLens =
+    'M -6,-5 L -4,-5 L -2.5,-11 L 2.5,-11 L 4,-5 L 6,-5 ' +
+    'Q 8,-5 8,-3 L 8,6 Q 8,8 6,8 L -6,8 Q -8,8 -8,6 L -8,-3 Q -8,-5 -6,-5 Z'
+  const bodyOnly =
+    'M -6,-5 L 6,-5 Q 8,-5 8,-3 L 8,6 Q 8,8 6,8 L -6,8 ' +
+    'Q -8,8 -8,6 L -8,-3 Q -8,-5 -6,-5 Z'
+  const path = headingDeg == null ? bodyOnly : bodyWithLens
+  const rotate = headingDeg == null ? 0 : headingDeg
+  // レンズガラス相当の小さな明点（前方を強調）
+  const lensGlint = headingDeg == null
+    ? ''
+    : '<circle cx="0" cy="-9" r="0.9" fill="#e5e7eb" />'
   return L.divIcon({
     className: 'photo-marker',
-    html: `<svg viewBox="-22 -22 44 44" width="44" height="44"
+    html: `<svg viewBox="-22 -22 44 44" width="40" height="40"
       style="filter: drop-shadow(0 2px 3px rgba(0,0,0,0.4));">
-      ${cone}
-      <rect x="-12" y="-9" width="24" height="18" rx="3"
-        fill="#1d4ed8" stroke="white" stroke-width="2" />
-      <rect x="-3" y="-13" width="9" height="5" rx="1"
-        fill="#1d4ed8" stroke="white" stroke-width="1.5" />
-      <circle cx="0" cy="1" r="6" fill="white" stroke="#1d4ed8" stroke-width="1.5" />
-      <circle cx="0" cy="1" r="3" fill="#1d4ed8" />
+      <g transform="rotate(${rotate})">
+        <path d="${path}"
+          fill="#374151" stroke="white" stroke-width="1.6" stroke-linejoin="round" />
+        ${lensGlint}
+      </g>
     </svg>`,
-    iconSize: [44, 44],
-    iconAnchor: [22, 22],
+    iconSize: [40, 40],
+    iconAnchor: [20, 20],
   })
 }
 
