@@ -4,8 +4,9 @@
 // SIMA エクスポート: 現工区の boundary 座標 + boundary_survey 工事区域を出力
 
 import { useRef, useState } from 'react'
-import { Download, Upload, Loader2 } from 'lucide-react'
+import { Download, Upload, Loader2, FileSpreadsheet } from 'lucide-react'
 import { GenericWorkAreaPage } from '@/components/work-area/GenericWorkAreaPage'
+import { CadastralCsvExportModal } from './CadastralCsvExportModal'
 import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
@@ -25,6 +26,7 @@ export function BoundarySurveyWorkAreaPage() {
   const xmlFileRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState<'import' | 'export' | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const [csvOpen, setCsvOpen] = useState(false)
   // インポート進捗
   const [progress, setProgress] = useState<{ phase: string; done: number; total: number } | null>(null)
 
@@ -588,9 +590,19 @@ export function BoundarySurveyWorkAreaPage() {
               )}
               SIMA 出力
             </button>
+            <button
+              onClick={() => setCsvOpen(true)}
+              disabled={busy !== null || !currentFarm}
+              className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
+              title="地番一覧を CSV で出力（列を選べます）"
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              CSV 出力
+            </button>
           </div>
         }
       />
+      {csvOpen && <CadastralCsvExportModal onClose={() => setCsvOpen(false)} />}
       <input
         ref={fileRef}
         type="file"
