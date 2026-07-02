@@ -6,8 +6,8 @@
 // ・表示する列は CadastralColumnPicker と同じ要領で選択可
 // ・地番への割当は地番一覧側の「地権者」列モーダルから行う（このページでは行わない）
 
-import { useEffect, useMemo, useState } from 'react'
-import { Plus, Loader2, Wand2 } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Plus, Loader2, Wand2, FileText, ChevronDown } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
 import { useLandownerStore } from '@/stores/landownerStore'
@@ -23,6 +23,7 @@ import {
 } from './LandownerColumnPicker'
 import { supabase } from '@/lib/supabase'
 import { LandownerAutoImportModal, type FarmParcelRow } from './LandownerAutoImportModal'
+import { EntryNoticeModal } from './EntryNoticeModal'
 
 export function LandownersPage() {
   const { currentFarm } = useFarmStore()
@@ -42,6 +43,20 @@ export function LandownersPage() {
   // 工区配下の地番一覧（自動取込モーダル / 所有地列の表示に使う）
   const [farmParcels, setFarmParcels] = useState<FarmParcelRow[]>([])
   const [showAutoImport, setShowAutoImport] = useState(false)
+  // 書類作成メニュー
+  const [docMenuOpen, setDocMenuOpen] = useState(false)
+  const [showEntryNotice, setShowEntryNotice] = useState(false)
+  const docMenuRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!docMenuOpen) return
+    const onClick = (e: MouseEvent) => {
+      if (docMenuRef.current && !docMenuRef.current.contains(e.target as Node)) {
+        setDocMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onClick)
+    return () => document.removeEventListener('mousedown', onClick)
+  }, [docMenuOpen])
 
   useEffect(() => {
     if (farmId) void fetchByFarm(farmId)
@@ -148,6 +163,31 @@ export function LandownersPage() {
               className="px-2 py-1 text-sm border rounded w-60"
             />
             <LandownerColumnPicker visible={visible} onChange={setVisible} />
+            <div className="relative" ref={docMenuRef}>
+              <button
+                onClick={() => setDocMenuOpen((o) => !o)}
+                disabled={!farmId || landowners.length === 0}
+                className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
+                title="書類を作成"
+              >
+                <FileText className="h-3.5 w-3.5" />
+                書類作成
+                <ChevronDown className="h-3.5 w-3.5" />
+              </button>
+              {docMenuOpen && (
+                <div className="absolute right-0 mt-1 w-56 bg-white border rounded shadow-lg z-20 py-1">
+                  <button
+                    onClick={() => {
+                      setDocMenuOpen(false)
+                      setShowEntryNotice(true)
+                    }}
+                    className="w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50"
+                  >
+                    立入通知書作成
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               onClick={() => setShowAutoImport(true)}
               disabled={!farmId}
@@ -232,6 +272,13 @@ export function LandownersPage() {
             await fetchByFarm(farmId)
             await reloadFarmParcels(farmId)
           }}
+        />
+      )}
+
+      {showEntryNotice && (
+        <EntryNoticeModal
+          landowners={landowners}
+          onClose={() => setShowEntryNotice(false)}
         />
       )}
     </div>
