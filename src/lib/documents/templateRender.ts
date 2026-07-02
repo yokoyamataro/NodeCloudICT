@@ -1,0 +1,145 @@
+// Word テンプレート (.docx) をロードして、プレースホルダを差し替えて Blob を返す。
+// docxtemplater + pizzip のラッパー。
+//
+// 使えるプレースホルダ（テンプレ側で {} で囲む）:
+//   {issued_date}      … 発行日 (令和X年Y月Z日)
+//   {issued_ymd}       … 発行日 (YYYY-MM-DD)
+//   {client_name}       … 依頼人氏名
+//   {client_postal_code} … 依頼人郵便番号
+//   {client_address}    … 依頼人住所
+//   {neighbors_names}   … 隣接者名を「、」区切り
+//   {neighbors_lines}   … 隣接者を 1 名 1 行（氏名 + 住所）
+//   {office_postal_code}, {office_address}, {office_name}, {office_title},
+//   {office_representative}, {office_contact_name},
+//   {office_tel}, {office_fax}, {office_mobile}, {office_email}
+//
+// 加えて docxtemplater のループ構文もそのまま利用可能:
+//   {#neighbors}・{name} {address}{/neighbors}
+//   ループ内で使える keys: name, postal_code, address
+
+import PizZip from 'pizzip'
+import Docxtemplater from 'docxtemplater'
+import type { DocumentSettings } from '@/types/database'
+
+export interface RenderInput {
+  issuedAt?: Date
+  client: {
+    full_name: string
+    postal_code?: string | null
+    address?: string | null
+  }
+  neighbors: Array<{
+    full_name: string
+    postal_code?: string | null
+    address?: string | null
+  }>
+  office: NonNullable<DocumentSettings['office']>
+}
+
+function formatWareki(d: Date): string {
+  const reiwaStart = new Date(2019, 4, 1).getTime()
+  if (d.getTime() < reiwaStart) {
+    return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`
+  }
+  const era = d.getFullYear() - 2018
+  return `令和${era === 1 ? '元' : era}年${d.getMonth() + 1}月${d.getDate()}日`
+}
+
+function formatYMD(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function buildData(input: RenderInput): Record<string, unknown> {
+  const issued = input.issuedAt ?? new Date()
+  const office = input.office ?? {}
+  const neighborsForLoop = input.neighbors.map((n) => ({
+    name: n.full_name ?? '',
+    postal_code: n.postal_code ?? '',
+    address: n.address ?? '',
+  }))
+  const neighbors_lines = neighborsForLoop
+    .map((n) => (n.address ? `${n.name}　${n.address}` : n.name))
+    .join('\n')
+  const neighbors_names = neighborsForLoop.map((n) => n.name).join('、')
+  return {
+    issued_date: formatWareki(issued),
+    issued_ymd: formatYMD(issued),
+    client_name: input.client.full_name ?? '',
+    client_postal_code: input.client.postal_code ?? '',
+    client_address: input.client.address ?? '',
+    neighbors: neighborsForLoop,
+    neighbors_names,
+    neighbors_lines,
+    office_postal_code: office.postal_code ?? '',
+    office_address: office.address ?? '',
+    office_name: office.name ?? '',
+    office_title: office.title ?? '',
+    office_representative: office.representative ?? '',
+    office_contact_name: office.contact_name ?? '',
+    office_tel: office.tel ?? '',
+    office_fax: office.fax ?? '',
+    office_mobile: office.mobile ?? '',
+    office_email: office.email ?? '',
+  }
+}
+
+/**
+ * テンプレート .docx (Blob/ArrayBuffer) にデータを差し込んで新しい Blob を返す。
+ */
+export async function renderTemplate(
+  templateBlob: Blob | ArrayBuffer,
+  input: RenderInput,
+): Promise<Blob> {
+  const buf =
+    templateBlob instanceof Blob ? await templateBlob.arrayBuffer() : templateBlob
+  const zip = new PizZip(buf)
+  const doc = new Docxtemplater(zip, {
+    paragraphLoop: true,
+    linebreaks: true,
+    delimiters: { start: '{', end: '}' },
+  })
+  doc.render(buildData(input))
+  const out = doc.getZip().generate({
+    type: 'blob',
+    mimeType:
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    compression: 'DEFLATE',
+  })
+  return out
+}
+
+/** 利用可能なプレースホルダ一覧（UI ヘルプ用） */
+export const AVAILABLE_PLACEHOLDERS: Array<{ tag: string; description: string }> = [
+  { tag: '{issued_date}', description: '発行日（令和X年Y月Z日）' },
+  { tag: '{issued_ymd}', description: '発行日（YYYY-MM-DD）' },
+  { tag: '{client_name}', description: '依頼人氏名' },
+  { tag: '{client_postal_code}', description: '依頼人郵便番号' },
+  { tag: '{client_address}', description: '依頼人住所' },
+  { tag: '{neighbors_names}', description: '隣接者名を「、」区切り' },
+  { tag: '{neighbors_lines}', description: '隣接者を 1 名 1 行（氏名+住所）' },
+  { tag: '{#neighbors}...{name} {address}...{/neighbors}', description: '隣接者のループ（name / postal_code / address）' },
+  { tag: '{office_postal_code}', description: '事務所 郵便番号' },
+  { tag: '{office_address}', description: '事務所 住所' },
+  { tag: '{office_name}', description: '事務所名' },
+  { tag: '{office_title}', description: '肩書（土地家屋調査士 等）' },
+  { tag: '{office_representative}', description: '代表者氏名' },
+  { tag: '{office_contact_name}', description: '担当者氏名' },
+  { tag: '{office_tel}', description: 'TEL' },
+  { tag: '{office_fax}', description: 'FAX' },
+  { tag: '{office_mobile}', description: '携帯' },
+  { tag: '{office_email}', description: 'メール' },
+]
+
+export function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}

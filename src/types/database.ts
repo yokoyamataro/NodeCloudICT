@@ -328,6 +328,25 @@ export interface DocumentSettings {
   }
 }
 
+// ユーザーがアップロードした Word テンプレートのメタ。
+// 本体 .docx は Storage 'templates' バケットに {owner_uid}/{id}.docx で保存。
+export interface DocumentTemplate {
+  id: string
+  owner_user_id: string
+  name: string
+  description: string | null
+  storage_path: string
+  created_at: string
+  updated_at: string
+}
+
+// テンプレの共有先ユーザー
+export interface DocumentTemplateShare {
+  template_id: string
+  shared_with_user_id: string
+  created_at: string
+}
+
 // 地籍（境界測量）の地番属性。ポリゴン形状は design_work_areas 側に残しているので
 // 1:1 のサイドカーテーブル parcels(work_area_id UNIQUE) と対応する。
 //

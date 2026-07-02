@@ -23,7 +23,8 @@ import {
 } from './LandownerColumnPicker'
 import { supabase } from '@/lib/supabase'
 import { LandownerAutoImportModal, type FarmParcelRow } from './LandownerAutoImportModal'
-import { EntryNoticeModal } from './EntryNoticeModal'
+import { TemplateManagerModal } from '@/features/document-templates/TemplateManagerModal'
+import { TemplateExportModal } from '@/features/document-templates/TemplateExportModal'
 
 export function LandownersPage() {
   const { currentFarm } = useFarmStore()
@@ -45,7 +46,8 @@ export function LandownersPage() {
   const [showAutoImport, setShowAutoImport] = useState(false)
   // 書類作成メニュー
   const [docMenuOpen, setDocMenuOpen] = useState(false)
-  const [showEntryNotice, setShowEntryNotice] = useState(false)
+  const [showTemplateExport, setShowTemplateExport] = useState(false)
+  const [showTemplateManager, setShowTemplateManager] = useState(false)
   const docMenuRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
     if (!docMenuOpen) return
@@ -179,11 +181,21 @@ export function LandownersPage() {
                   <button
                     onClick={() => {
                       setDocMenuOpen(false)
-                      setShowEntryNotice(true)
+                      setShowTemplateExport(true)
                     }}
                     className="w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50"
                   >
-                    立入通知書作成
+                    テンプレートから作成
+                  </button>
+                  <div className="my-1 border-t" />
+                  <button
+                    onClick={() => {
+                      setDocMenuOpen(false)
+                      setShowTemplateManager(true)
+                    }}
+                    className="w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50"
+                  >
+                    テンプレート管理
                   </button>
                 </div>
               )}
@@ -275,11 +287,14 @@ export function LandownersPage() {
         />
       )}
 
-      {showEntryNotice && (
-        <EntryNoticeModal
+      {showTemplateExport && (
+        <TemplateExportModal
           landowners={landowners}
-          onClose={() => setShowEntryNotice(false)}
+          onClose={() => setShowTemplateExport(false)}
         />
+      )}
+      {showTemplateManager && (
+        <TemplateManagerModal onClose={() => setShowTemplateManager(false)} />
       )}
     </div>
   )
