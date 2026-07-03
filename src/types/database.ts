@@ -527,7 +527,7 @@ export interface DesignCoordinate {
   latitude: number | null
   longitude: number | null
   coordinate_type: string
-  /** 杭種（木杭 / コンクリート杭 / プラ杭 / 金属鋲 / 金属標 / 石標 / 既設標 / 自由入力） */
+  /** 杭種（木杭 / コンクリート杭 / プラスチック杭 / 金属鋲 / 金属標 / 石標 / 既設標 / 自由入力） */
   stake_type: string | null
   /** 設置状態（地籍測量モード）。'unset' | 'temporary' | 'new' | 'replaced' | 'existing' | 'skip' */
   stake_status: StakeStatus

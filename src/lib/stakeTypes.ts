@@ -10,7 +10,7 @@ export interface StakeTypeOption {
 export const STAKE_TYPE_OPTIONS: StakeTypeOption[] = [
   { label: '木杭' },
   { label: 'コンクリート杭' },
-  { label: 'プラ杭' },
+  { label: 'プラスチック杭' },
   { label: '金属鋲' },
   { label: '金属標' },
   { label: '石標' },
