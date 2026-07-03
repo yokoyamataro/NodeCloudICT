@@ -214,7 +214,7 @@ BEGIN
         -- 自分の子
         OR p.parent_user_id = caller
       )
-    ORDER BY u.email;
+    ORDER BY 2;  -- email 列（位置指定）。u.email と u.email::text の式差で 42P10 を避ける
 END;
 $$;
 
