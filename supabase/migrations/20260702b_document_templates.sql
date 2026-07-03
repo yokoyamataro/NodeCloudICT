@@ -46,7 +46,34 @@ CREATE TRIGGER trg_document_templates_touch
   FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
 
 -- ========================================================================
--- 2. RLS
+-- 2. RLS 用 SECURITY DEFINER ヘルパー（再帰 42P17 回避）
+-- ========================================================================
+CREATE OR REPLACE FUNCTION public.is_document_template_owner(p_template_id uuid)
+RETURNS boolean
+LANGUAGE sql SECURITY DEFINER SET search_path = public STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.document_templates t
+    WHERE t.id = p_template_id AND t.owner_user_id = auth.uid()
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_document_template_shared_with_me(p_template_id uuid)
+RETURNS boolean
+LANGUAGE sql SECURITY DEFINER SET search_path = public STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.document_template_shares s
+    WHERE s.template_id = p_template_id
+      AND s.shared_with_user_id = auth.uid()
+  );
+$$;
+
+GRANT EXECUTE ON FUNCTION public.is_document_template_owner(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.is_document_template_shared_with_me(uuid) TO authenticated;
+
+-- ========================================================================
+-- 3. RLS
 -- ========================================================================
 ALTER TABLE public.document_templates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.document_template_shares ENABLE ROW LEVEL SECURITY;
@@ -61,11 +88,7 @@ CREATE POLICY document_templates_select ON public.document_templates FOR SELECT
   USING (
     owner_user_id = auth.uid()
     OR public.is_site_owner()
-    OR EXISTS (
-      SELECT 1 FROM public.document_template_shares s
-      WHERE s.template_id = document_templates.id
-        AND s.shared_with_user_id = auth.uid()
-    )
+    OR public.is_document_template_shared_with_me(id)
   );
 
 CREATE POLICY document_templates_insert ON public.document_templates FOR INSERT
@@ -90,11 +113,7 @@ CREATE POLICY document_template_shares_select ON public.document_template_shares
   USING (
     shared_with_user_id = auth.uid()
     OR public.is_site_owner()
-    OR EXISTS (
-      SELECT 1 FROM public.document_templates t
-      WHERE t.id = document_template_shares.template_id
-        AND t.owner_user_id = auth.uid()
-    )
+    OR public.is_document_template_owner(template_id)
   );
 
 -- INSERT/UPDATE/DELETE は所有者かサイトオーナーのみ
@@ -102,19 +121,11 @@ CREATE POLICY document_template_shares_write ON public.document_template_shares 
   TO authenticated
   USING (
     public.is_site_owner()
-    OR EXISTS (
-      SELECT 1 FROM public.document_templates t
-      WHERE t.id = document_template_shares.template_id
-        AND t.owner_user_id = auth.uid()
-    )
+    OR public.is_document_template_owner(template_id)
   )
   WITH CHECK (
     public.is_site_owner()
-    OR EXISTS (
-      SELECT 1 FROM public.document_templates t
-      WHERE t.id = document_template_shares.template_id
-        AND t.owner_user_id = auth.uid()
-    )
+    OR public.is_document_template_owner(template_id)
   );
 
 -- ========================================================================
@@ -151,18 +162,27 @@ CREATE POLICY templates_owner_all ON storage.objects
     AND (storage.foldername(name))[1] = auth.uid()::text
   );
 
--- 共有先ユーザーは SELECT だけ可能（テーブルに share 行があるとき）
+-- 共有先ユーザーは SELECT だけ可能（テーブルに share 行があるとき）。
+-- テーブル参照は SECURITY DEFINER 関数経由で行い、42P17 再帰を避ける。
+CREATE OR REPLACE FUNCTION public.storage_can_read_template(p_storage_path text)
+RETURNS boolean
+LANGUAGE sql SECURITY DEFINER SET search_path = public STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.document_templates t
+    JOIN public.document_template_shares s ON s.template_id = t.id
+    WHERE t.storage_path = p_storage_path
+      AND s.shared_with_user_id = auth.uid()
+  );
+$$;
+GRANT EXECUTE ON FUNCTION public.storage_can_read_template(text) TO authenticated;
+
 CREATE POLICY templates_shared_read ON storage.objects
   FOR SELECT TO authenticated
   USING (
     bucket_id = 'templates'
-    AND EXISTS (
-      SELECT 1
-      FROM public.document_templates t
-      JOIN public.document_template_shares s ON s.template_id = t.id
-      WHERE t.storage_path = storage.objects.name
-        AND s.shared_with_user_id = auth.uid()
-    )
+    AND public.storage_can_read_template(storage.objects.name)
   );
 
 -- ========================================================================
