@@ -227,6 +227,7 @@ export function TemplateManagerModal({ onClose }: Props) {
       {uploadOpen && (
         <UploadPanel
           onClose={() => setUploadOpen(false)}
+          error={error}
           onUpload={async ({ name, description, file }) => {
             const t = await uploadTemplate({ name, description, file })
             if (t) setUploadOpen(false)
@@ -420,9 +421,11 @@ function TemplateRow({
 function UploadPanel({
   onClose,
   onUpload,
+  error,
 }: {
   onClose: () => void
   onUpload: (params: { name: string; description: string | null; file: File }) => Promise<void>
+  error: string | null
 }) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -487,6 +490,11 @@ function UploadPanel({
               </div>
             )}
           </label>
+          {error && (
+            <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2 whitespace-pre-wrap">
+              {error}
+            </div>
+          )}
         </div>
         <div className="px-4 py-3 border-t flex justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50">

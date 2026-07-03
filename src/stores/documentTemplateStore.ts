@@ -6,6 +6,23 @@ import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
 import type { DocumentTemplate } from '@/types/database'
 
+// Supabase の PostgrestError / StorageError は Error 継承ではないので、
+// message / details / hint / code を拾って 1 行にまとめる。
+function msg(err: unknown, fallback: string): string {
+  const e = err as
+    | (Partial<{ message: string; code: string; details: string; hint: string; error: string }> &
+        Record<string, unknown>)
+    | null
+  const parts = [
+    e?.message,
+    e?.error,
+    e?.details,
+    e?.hint,
+    e?.code ? `(code: ${e.code})` : null,
+  ].filter((s): s is string => typeof s === 'string' && s.length > 0)
+  return parts.length > 0 ? parts.join(' — ') : fallback
+}
+
 export interface ShareCandidate {
   user_id: string
   email: string
@@ -62,7 +79,7 @@ export const useDocumentTemplateStore = create<State>((set, get) => ({
     } catch (err) {
       set({
         loading: false,
-        error: err instanceof Error ? err.message : 'テンプレート一覧の取得に失敗しました',
+        error: msg(err, 'テンプレート一覧の取得に失敗しました'),
       })
     }
   },
@@ -80,7 +97,7 @@ export const useDocumentTemplateStore = create<State>((set, get) => ({
       set({ sharesByTemplateId: next })
     } catch (err) {
       set({
-        error: err instanceof Error ? err.message : '共有情報の取得に失敗しました',
+        error: msg(err, '共有情報の取得に失敗しました'),
       })
     }
   },
@@ -96,13 +113,15 @@ export const useDocumentTemplateStore = create<State>((set, get) => ({
       set({ shareCandidates: (data ?? []) as ShareCandidate[] })
     } catch (err) {
       set({
-        error: err instanceof Error ? err.message : '共有候補ユーザーの取得に失敗しました',
+        error: msg(err, '共有候補ユーザーの取得に失敗しました'),
       })
     }
   },
 
   uploadTemplate: async ({ name, description, file }) => {
     set({ error: null })
+    // eslint-disable-next-line no-console
+    console.info('[documentTemplateStore] uploadTemplate start', { name, size: file.size })
     try {
       const { data: userData, error: uErr } = await supabase.auth.getUser()
       if (uErr) throw uErr
@@ -148,8 +167,10 @@ export const useDocumentTemplateStore = create<State>((set, get) => ({
       set((state) => ({ templates: [created, ...state.templates] }))
       return created
     } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[documentTemplateStore] uploadTemplate failed', err)
       set({
-        error: err instanceof Error ? err.message : 'テンプレートのアップロードに失敗しました',
+        error: msg(err, 'テンプレートのアップロードに失敗しました'),
       })
       return null
     }
@@ -174,7 +195,7 @@ export const useDocumentTemplateStore = create<State>((set, get) => ({
     } catch (err) {
       set({
         templates: prev,
-        error: err instanceof Error ? err.message : 'テンプレート更新に失敗しました',
+        error: msg(err, 'テンプレート更新に失敗しました'),
       })
     }
   },
@@ -195,7 +216,7 @@ export const useDocumentTemplateStore = create<State>((set, get) => ({
     } catch (err) {
       set({
         templates: prev,
-        error: err instanceof Error ? err.message : 'テンプレート削除に失敗しました',
+        error: msg(err, 'テンプレート削除に失敗しました'),
       })
     }
   },
@@ -223,7 +244,7 @@ export const useDocumentTemplateStore = create<State>((set, get) => ({
       set({ sharesByTemplateId: next })
     } catch (err) {
       set({
-        error: err instanceof Error ? err.message : '共有設定の保存に失敗しました',
+        error: msg(err, '共有設定の保存に失敗しました'),
       })
       throw err
     }
@@ -238,7 +259,7 @@ export const useDocumentTemplateStore = create<State>((set, get) => ({
       return data
     } catch (err) {
       set({
-        error: err instanceof Error ? err.message : 'テンプレートのダウンロードに失敗しました',
+        error: msg(err, 'テンプレートのダウンロードに失敗しました'),
       })
       return null
     }
