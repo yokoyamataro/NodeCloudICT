@@ -25,6 +25,7 @@ import {
   Plus,
   StickyNote,
   ExternalLink,
+  Info,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { playStartChime, playStopChime, unlockAudio } from '@/lib/beep'
@@ -3709,7 +3710,6 @@ export function MobileStakingPage() {
                     }
                     if (nearby.length <= 1) {
                       setSelectedTargetId(t.id)
-                      setPointInfoTarget(t)
                       return
                     }
                     setOverlapPicker({ candidates: nearby, mode: 'select' })
@@ -4503,20 +4503,19 @@ export function MobileStakingPage() {
                 </button>
               )
             })()}
+            {/* 詳細ボタン: 選択中ターゲットの詳細情報モーダルを開く */}
+            <button
+              onClick={() => setPointInfoTarget(selectedTarget)}
+              className="shrink-0 flex items-center justify-center p-2 border border-slate-300 rounded text-slate-600 hover:bg-slate-100"
+              title="ターゲットの詳細を表示"
+            >
+              <Info className="h-4 w-4" />
+            </button>
             <button
               onClick={() => setShowTargetList(true)}
               className="flex-1 min-w-0 text-left"
               title="ターゲット切替"
             >
-              <div className="text-xs text-slate-500">
-                ターゲット
-                <span className="ml-2 text-[10px] text-slate-400 font-normal">
-                  {/* 杭種は MAP モードでのみ表示する */}
-                  {selectedTarget.kind === 'coordinate'
-                    ? selectedTarget.subTypeLabel
-                    : '暗渠頂点'}
-                </span>
-              </div>
               <div className="font-bold truncate">{selectedTarget.name}</div>
             </button>
             {/* 設置状態セレクタは測定完了モーダル (postStakeDialog) 側で操作する */}
