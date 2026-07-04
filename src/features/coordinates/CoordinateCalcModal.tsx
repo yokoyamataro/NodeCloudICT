@@ -1,7 +1,9 @@
-// 座標計算モーダル: 交点計算 / 線上計算。既存座標から点・線を選び、結果を新規点として追加する。
+// 座標計算モーダル: 交点計算 / 線上計算 / 2点距離。
+// - 交点・線上: 既存座標から点・線を選び、結果を新規点として追加
+// - 2点距離   : 起点→終点の平面距離と方向角（度分秒）を表示（座標追加はしない）
 import { useMemo, useState } from 'react'
-import { X, Calculator, MapPin } from 'lucide-react'
-import { intersectionCalc, onLineCalc, type XY } from '@/lib/coordCalc'
+import { X, Calculator, MapPin, Ruler } from 'lucide-react'
+import { intersectionCalc, onLineCalc, len, type XY } from '@/lib/coordCalc'
 
 export interface CalcCoordinate {
   id: string
@@ -22,7 +24,27 @@ interface Props {
   onLineRequest?: (assign: ((id1: string, id2: string) => void) | null) => void
 }
 
-type Mode = 'intersection' | 'online'
+type Mode = 'intersection' | 'online' | 'distance'
+
+// 度分秒表記
+function formatDMS(deg: number): string {
+  const sign = deg < 0 ? '-' : ''
+  const abs = Math.abs(deg)
+  const d = Math.floor(abs)
+  const mFrac = (abs - d) * 60
+  const m = Math.floor(mFrac)
+  const s = (mFrac - m) * 60
+  return `${sign}${d}°${String(m).padStart(2, '0')}′${s.toFixed(2)}″`
+}
+
+// 平面直角座標 (x=北, y=東) 上で起点→終点の方向角（北から時計回り、0..360）
+function bearingDeg(a: XY, b: XY): number {
+  const dN = b.x - a.x
+  const dE = b.y - a.y
+  if (dN === 0 && dE === 0) return 0
+  const rad = Math.atan2(dE, dN)
+  return ((rad * 180) / Math.PI + 360) % 360
+}
 
 export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onAdd, onClose, onPickRequest, onLineRequest }: Props) {
   const [mode, setMode] = useState<Mode>('intersection')
@@ -43,6 +65,10 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
   const [ob, setOb] = useState('') // 方向先
   const [ext, setExt] = useState('0')
   const [lat, setLat] = useState('0')
+
+  // 2点距離用
+  const [da, setDa] = useState('') // 起点
+  const [db, setDb] = useState('') // 終点
 
   const [name, setName] = useState('')
   const [type, setType] = useState(defaultType)
@@ -69,13 +95,25 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
         { a: a1, b: b1, offset: num(l1off) },
         { a: a2, b: b2, offset: num(l2off) },
       )
-    } else {
+    } else if (mode === 'online') {
       const a = xy(oa), b = xy(ob)
       if (!a || !b) return null
       return onLineCalc(a, b, num(ext), num(lat))
+    } else {
+      // 距離モードは新規点を作らないので座標結果は返さない
+      return null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, l1a, l1b, l1off, l2a, l2b, l2off, oa, ob, ext, lat, byId])
+
+  // 2 点距離の計算結果（距離 [m] と方向角 [deg]）。両点未選択のとき null
+  const distanceResult = useMemo<{ dist: number; bearing: number } | null>(() => {
+    if (mode !== 'distance') return null
+    const a = xy(da), b = xy(db)
+    if (!a || !b) return null
+    return { dist: len(a, b), bearing: bearingDeg(a, b) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, da, db, byId])
 
   // 地図からの点選択を開始
   const startPick = (label: string, onChange: (v: string) => void) => {
@@ -184,10 +222,11 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
         </div>
 
         {/* モード切替 */}
-        <div className="px-4 pt-3 flex gap-2 text-sm">
+        <div className="px-4 pt-3 flex gap-2 text-sm flex-wrap">
           {([
             ['intersection', '交点計算'],
             ['online', '線上計算'],
+            ['distance', '2点距離'],
           ] as [Mode, string][]).map(([m, label]) => (
             <button
               key={m}
@@ -229,7 +268,7 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
                 </div>
               ))}
             </>
-          ) : (
+          ) : mode === 'online' ? (
             <>
               <p className="text-xs text-slate-500">
                 線（2点）を選び、起点から延長方向(+前方) ・ 左右(+右) にずらした点を計算します。
@@ -252,12 +291,45 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
                 </div>
               </div>
             </>
+          ) : (
+            <>
+              <p className="text-xs text-slate-500">
+                2 点を選び、起点→終点の平面距離と方向角（北から時計回り）を表示します。
+              </p>
+              <div className="border rounded p-2 space-y-2">
+                <LinePickButton label="計測区間（起点→終点）" setA={setDa} setB={setDb} />
+                <PointSelect value={da} onChange={setDa} placeholder="起点を選択" label="起点" />
+                <PointSelect value={db} onChange={setDb} placeholder="終点を選択" label="終点" />
+              </div>
+            </>
           )}
 
           {/* 結果 */}
           <div className="border-t pt-3">
-            <div className="text-xs text-slate-500 mb-1">計算結果</div>
-            {result ? (
+            <div className="text-xs text-slate-500 mb-1 flex items-center gap-1">
+              {mode === 'distance' ? (
+                <>
+                  <Ruler className="h-3.5 w-3.5" />
+                  計測結果
+                </>
+              ) : (
+                '計算結果'
+              )}
+            </div>
+            {mode === 'distance' ? (
+              distanceResult ? (
+                <div className="font-mono text-sm bg-slate-50 rounded p-2 space-y-1">
+                  <div>距離 = <span className="font-semibold">{distanceResult.dist.toFixed(3)}</span> m</div>
+                  <div>
+                    方向角 ={' '}
+                    <span className="font-semibold">{formatDMS(distanceResult.bearing)}</span>{' '}
+                    <span className="text-slate-500">({distanceResult.bearing.toFixed(4)}°)</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-sm text-slate-400">起点と終点を選択してください</div>
+              )
+            ) : result ? (
               <div className="font-mono text-sm bg-slate-50 rounded p-2">
                 X = {result.x.toFixed(3)} ／ Y = {result.y.toFixed(3)}
               </div>
@@ -266,7 +338,8 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
             )}
           </div>
 
-          {/* 追加 */}
+          {/* 追加（距離モードでは非表示） */}
+          {mode !== 'distance' && (
           <div className="grid grid-cols-2 gap-2">
             <label className="text-xs text-slate-600">
               点名
@@ -287,19 +360,22 @@ export function CoordinateCalcModal({ coordinates, typeOptions, defaultType, onA
               </select>
             </label>
           </div>
+          )}
         </div>
 
         <div className="px-4 py-3 border-t flex justify-end gap-2">
           <button onClick={onClose} className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50">
-            キャンセル
+            {mode === 'distance' ? '閉じる' : 'キャンセル'}
           </button>
-          <button
-            onClick={handleAdd}
-            disabled={!result}
-            className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-          >
-            座標に追加
-          </button>
+          {mode !== 'distance' && (
+            <button
+              onClick={handleAdd}
+              disabled={!result}
+              className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+            >
+              座標に追加
+            </button>
+          )}
         </div>
       </div>
     </div>
