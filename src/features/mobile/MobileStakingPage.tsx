@@ -1858,11 +1858,6 @@ export function MobileStakingPage() {
       return
     }
     if (!farmId) return
-    // スマホ GPS モードでは測定不可
-    if (positioningMode === 'gps') {
-      alert('スマホ GPS モードでは測定できません。Drogger RTK に切り替えてください。')
-      return
-    }
     // モード未選択なら選択モーダルを出す
     if (positioningMode == null) {
       setShowModeChooser(true)
@@ -1871,24 +1866,53 @@ export function MobileStakingPage() {
     // RTK モードの初回押下時のみ「開始前チェック」モーダルを出して観測は止める。
     // 工区ごとにセッション中 1 回だけ。ユーザーが「確認した」で閉じてから
     // もう一度記録ボタンを押すと観測が始まる。
-    try {
-      const key = `mobile:startup-check:${farmId}`
-      if (sessionStorage.getItem(key) !== '1') {
-        setShowStartupCheck(true)
-        sessionStorage.setItem(key, '1')
-        return
+    if (positioningMode === 'rtk') {
+      try {
+        const key = `mobile:startup-check:${farmId}`
+        if (sessionStorage.getItem(key) !== '1') {
+          setShowStartupCheck(true)
+          sessionStorage.setItem(key, '1')
+          return
+        }
+      } catch {
+        // sessionStorage が使えない環境ではチェックを省いてそのまま進む
       }
-    } catch {
-      // sessionStorage が使えない環境ではチェックを省いてそのまま進む
     }
     recSamplesRef.current = []
     setRecordedCount(0)
     setRejectedCount(0)
     recForceFreeRef.current = !!opts.forceFreePoint
-    recEndMsRef.current = Date.now() + avgSeconds * 1000
     setRecording(true)
     // 開始音（ユーザ操作直後なので AudioContext を resume してから鳴らす）
     void unlockAudio().then(() => playStartChime())
+
+    // スマホ GPS モード: 1 発計測。watchPosition の平均化フローは使わず、
+    // getCurrentPosition で 1 サンプルだけ取って即 finish。
+    if (positioningMode === 'gps') {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          recSamplesRef.current = [
+            {
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+              alt: pos.coords.altitude,
+              acc: pos.coords.accuracy,
+            },
+          ]
+          setRecordedCount(1)
+          void finishRecording()
+        },
+        () => {
+          alert('位置情報を取得できませんでした')
+          setRecording(false)
+        },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 },
+      )
+      return
+    }
+
+    // 以降は RTK モード（従来の平均化フロー）
+    recEndMsRef.current = Date.now() + avgSeconds * 1000
 
     // 1 サンプルあたりのおおよその間隔（GPS の watchPosition は機種で揺れるが
     // ハイエンドで概ね 1 秒に 1 回）。棄却 1 回につきこの時間だけ終了時刻を後ろへ。
@@ -1995,13 +2019,16 @@ export function MobileStakingPage() {
     const rawEllipsoidal = altCount > 0 ? sumAlt / altCount : null
 
     // 標高 = 楕円体高 − ジオイド高 − アンテナ高
+    // ただしスマホ GPS モードでは補正をかけず生値を使う（誤差前提の簡易測定）
+    const isGpsMode = positioningMode === 'gps'
     let geoidN: number | null = null
-    if (useGeoidCorrection && geoidGrid) {
+    if (!isGpsMode && useGeoidCorrection && geoidGrid) {
       const { lookupGeoid } = await import('@/lib/geoid')
       geoidN = lookupGeoid(geoidGrid, avgLat, avgLng)
     }
+    const effAntennaHeight = isGpsMode ? 0 : antennaHeight
     const avgAlt = rawEllipsoidal !== null
-      ? (geoidN !== null ? rawEllipsoidal - geoidN - antennaHeight : rawEllipsoidal - antennaHeight)
+      ? (geoidN !== null ? rawEllipsoidal - geoidN - effAntennaHeight : rawEllipsoidal - effAntennaHeight)
       : null
 
     const { x, y } = converter.toXY(avgLat, avgLng)
@@ -4457,19 +4484,23 @@ export function MobileStakingPage() {
         <div className="mt-1 flex gap-2">
           {!recording ? (
             <>
-              {/* 測定（旧 記録） */}
+              {/* 測定（旧 記録）。スマホ GPS モードのときはオレンジ「簡易測定」 */}
               <button
                 onClick={() => startRecording()}
-                disabled={saving || !currentPos || positioningMode === 'gps'}
-                className="flex-1 basis-0 flex items-center justify-center gap-1 px-2 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed font-bold"
+                disabled={saving || !currentPos}
+                className={`flex-1 basis-0 flex items-center justify-center gap-1 px-2 py-3 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed font-bold ${
+                  positioningMode === 'gps'
+                    ? 'bg-orange-500 hover:bg-orange-600'
+                    : 'bg-red-600 hover:bg-red-700'
+                }`}
                 title={
                   positioningMode === 'gps'
-                    ? 'スマホ GPS モードでは測定できません（Drogger RTK に切替）'
+                    ? '1 回だけ位置を取得します（補正なしの簡易測定）'
                     : undefined
                 }
               >
                 <CircleIcon className="h-5 w-5" />
-                測定
+                {positioningMode === 'gps' ? '簡易測定' : '測定'}
               </button>
 
               {/* カメラ: ターゲット選択時は座標の写真モーダル、それ以外は
