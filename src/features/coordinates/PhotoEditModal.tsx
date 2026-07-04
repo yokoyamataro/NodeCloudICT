@@ -72,12 +72,31 @@ export function PhotoEditModal({
   initialCaption = null,
   initialTakenAt = null,
 }: PhotoEditModalProps) {
+  // 「トリミング」ボタンで仮確定した中間ファイル（さらに切り直せる）を保持する。
+  // 初期は props の file、「戻す」で file に戻る。「確定」時にこの workingFile と
+  // 現在の crop/rotation を最終適用する。
+  const [workingFile, setWorkingFile] = useState<File>(file)
   const [imgUrl, setImgUrl] = useState<string | null>(null)
   const [rotation, setRotation] = useState(0) // 度数（90 単位）
   const [crop, setCrop] = useState<Crop>()
   const [completedCrop, setCompletedCrop] = useState<PixelCrop | null>(null)
   const [busy, setBusy] = useState(false)
   const imgRef = useRef<HTMLImageElement>(null)
+  // トリミング枠のアスペクト比。null なら自由、既定は 4:3
+  type AspectKey = '1:1' | '4:3' | '16:9' | '3:4' | '9:16' | 'free'
+  const [aspectKey, setAspectKey] = useState<AspectKey>('4:3')
+  const aspect =
+    aspectKey === '1:1'
+      ? 1
+      : aspectKey === '4:3'
+        ? 4 / 3
+        : aspectKey === '16:9'
+          ? 16 / 9
+          : aspectKey === '3:4'
+            ? 3 / 4
+            : aspectKey === '9:16'
+              ? 9 / 16
+              : undefined
   // 撮影日: 既存写真の編集なら initialTakenAt、それ以外は空。EXIF が取れれば下の
   // useEffect で上書き。EXIF が無ければ空のままにする（本日を勝手に入れない）。
   const [takenAtStr, setTakenAtStr] = useState<string>(() =>
@@ -91,15 +110,23 @@ export function PhotoEditModal({
   const [headingDeg, setHeadingDeg] = useState<number | null>(initialHeadingDeg)
   const [mode, setMode] = useState<'photo' | 'location'>('photo')
 
+  // props.file が変わった (別の写真を編集し始めた) 場合は workingFile もリセット
   useEffect(() => {
-    const url = URL.createObjectURL(file)
-    setImgUrl(url)
-    return () => URL.revokeObjectURL(url)
+    setWorkingFile(file)
+    setCrop(undefined)
+    setCompletedCrop(null)
+    setRotation(0)
   }, [file])
 
+  useEffect(() => {
+    const url = URL.createObjectURL(workingFile)
+    setImgUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [workingFile])
+
   // ファイルから EXIF (撮影日 + GPS 位置 + 撮影方向) を非同期で読み、取れたら反映。
-  // GPS / 方向は EXIF が最優先（写真ファイル自身が持つ「撮影時」の情報なので、
-  // デバイス現在値より信頼できる）。
+  // GPS / 方向は EXIF が最優先。EXIF 読み取りは元 file だけを対象にする
+  // （workingFile はキャンバス生成の JPEG で EXIF は残っていないため）。
   useEffect(() => {
     let cancelled = false
     setExifLoaded(false)
@@ -121,16 +148,32 @@ export function PhotoEditModal({
     }
   }, [file])
 
-  // 初期トリミング: 中央に画像全体
+  // 初期トリミング: 現在の aspectKey を反映して中央に配置
   const handleImgLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
     const { width, height } = e.currentTarget
+    const ar = aspect ?? width / height
     const initial = centerCrop(
-      makeAspectCrop({ unit: '%', width: 100 }, width / height, width, height),
+      makeAspectCrop({ unit: '%', width: 90 }, ar, width, height),
       width,
       height,
     )
     setCrop(initial)
   }
+
+  // aspect が変わったらクロップを再設定
+  useEffect(() => {
+    const img = imgRef.current
+    if (!img || !img.width) return
+    const ar = aspect ?? img.width / img.height
+    const initial = centerCrop(
+      makeAspectCrop({ unit: '%', width: 90 }, ar, img.width, img.height),
+      img.width,
+      img.height,
+    )
+    setCrop(initial)
+    setCompletedCrop(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aspect])
 
   const handleRotate = (delta: 90 | -90) => {
     setRotation((r) => (((r + delta) % 360) + 360) % 360)
@@ -139,76 +182,100 @@ export function PhotoEditModal({
     setCompletedCrop(null)
   }
 
+  // 現在の workingFile + crop + rotation から JPEG Blob を生成する共通処理。
+  // downsize=false: サイズ制限なし（プレビュー用）、true: 長辺 1600px に縮小（確定用）
+  const renderBlob = async (downsize: boolean): Promise<Blob | null> => {
+    if (!imgRef.current) return null
+    const img = imgRef.current
+    const naturalW = img.naturalWidth
+    const naturalH = img.naturalHeight
+    const scaleX = naturalW / img.width
+    const scaleY = naturalH / img.height
+    const cropPx = completedCrop ?? {
+      x: 0,
+      y: 0,
+      width: img.width,
+      height: img.height,
+      unit: 'px' as const,
+    }
+    const cx = Math.round(cropPx.x * scaleX)
+    const cy = Math.round(cropPx.y * scaleY)
+    const cw = Math.round(cropPx.width * scaleX)
+    const ch = Math.round(cropPx.height * scaleY)
+    const isQuarterTurn = rotation === 90 || rotation === 270
+    const finalW = isQuarterTurn ? ch : cw
+    const finalH = isQuarterTurn ? cw : ch
+    const MAX_LONG_EDGE = 1600
+    const scale = downsize
+      ? Math.min(1, MAX_LONG_EDGE / Math.max(finalW, finalH))
+      : 1
+    const outW = Math.max(1, Math.round(finalW * scale))
+    const outH = Math.max(1, Math.round(finalH * scale))
+    const preRotateW = isQuarterTurn ? outH : outW
+    const preRotateH = isQuarterTurn ? outW : outH
+    let bitmap: ImageBitmap
+    try {
+      bitmap = await createImageBitmap(workingFile, cx, cy, cw, ch, {
+        resizeWidth: preRotateW,
+        resizeHeight: preRotateH,
+        resizeQuality: 'high',
+      })
+    } catch {
+      bitmap = await createImageBitmap(img, cx, cy, cw, ch, {
+        resizeWidth: preRotateW,
+        resizeHeight: preRotateH,
+        resizeQuality: 'high',
+      })
+    }
+    const canvas = document.createElement('canvas')
+    canvas.width = outW
+    canvas.height = outH
+    const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      bitmap.close?.()
+      throw new Error('Canvas 2D が取得できません')
+    }
+    ctx.translate(canvas.width / 2, canvas.height / 2)
+    ctx.rotate((rotation * Math.PI) / 180)
+    ctx.drawImage(bitmap, -preRotateW / 2, -preRotateH / 2)
+    bitmap.close?.()
+    return await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, 'image/jpeg', 0.9),
+    )
+  }
+
+  // 「トリミング」ボタン: 現在の crop + rotation を仮確定 → 新しい workingFile として反映。
+  //   さらに切り直せる / 「戻す」で元 file に戻る
+  const applyCropAsPreview = async () => {
+    setBusy(true)
+    try {
+      const blob = await renderBlob(false)
+      if (!blob) return
+      const newFile = new File([blob], workingFile.name, { type: 'image/jpeg' })
+      setWorkingFile(newFile)
+      setRotation(0)
+      setCrop(undefined)
+      setCompletedCrop(null)
+    } catch (err) {
+      console.error('[PhotoEditModal] applyCropAsPreview failed', err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // 「戻す」ボタン: 元の props.file に戻す
+  const resetToOriginal = () => {
+    setWorkingFile(file)
+    setRotation(0)
+    setCrop(undefined)
+    setCompletedCrop(null)
+  }
+
   const handleConfirm = async () => {
     if (!imgRef.current) return
     setBusy(true)
     try {
-      const img = imgRef.current
-      const naturalW = img.naturalWidth
-      const naturalH = img.naturalHeight
-
-      // 表示サイズ → ナチュラルサイズへの倍率
-      const scaleX = naturalW / img.width
-      const scaleY = naturalH / img.height
-
-      // クロップ未指定なら全画像を出力
-      const cropPx = completedCrop ?? {
-        x: 0,
-        y: 0,
-        width: img.width,
-        height: img.height,
-        unit: 'px' as const,
-      }
-      // ナチュラル単位
-      const cx = Math.round(cropPx.x * scaleX)
-      const cy = Math.round(cropPx.y * scaleY)
-      const cw = Math.round(cropPx.width * scaleX)
-      const ch = Math.round(cropPx.height * scaleY)
-
-      // 回転後の出力寸法を決定し、長辺 1600px に縮小（モバイルでの canvas/encode 負荷低減）
-      const isQuarterTurn = rotation === 90 || rotation === 270
-      const finalW = isQuarterTurn ? ch : cw
-      const finalH = isQuarterTurn ? cw : ch
-      const MAX_LONG_EDGE = 1600
-      const scale = Math.min(1, MAX_LONG_EDGE / Math.max(finalW, finalH))
-      const outW = Math.max(1, Math.round(finalW * scale))
-      const outH = Math.max(1, Math.round(finalH * scale))
-
-      // ブラウザの hardware decode を活かして元 File から「クロップ＋縮小」を 1 ステップで実施。
-      // resizeWidth/Height は回転前のサイズに合わせる（回転後に outW/outH になる）
-      const preRotateW = isQuarterTurn ? outH : outW
-      const preRotateH = isQuarterTurn ? outW : outH
-      let bitmap: ImageBitmap
-      try {
-        bitmap = await createImageBitmap(file, cx, cy, cw, ch, {
-          resizeWidth: preRotateW,
-          resizeHeight: preRotateH,
-          resizeQuality: 'high',
-        })
-      } catch {
-        // 古い iOS Safari など対応外環境では img タグから drawImage で済ます
-        bitmap = await createImageBitmap(img, cx, cy, cw, ch, {
-          resizeWidth: preRotateW,
-          resizeHeight: preRotateH,
-          resizeQuality: 'high',
-        })
-      }
-
-      const canvas = document.createElement('canvas')
-      canvas.width = outW
-      canvas.height = outH
-      const ctx = canvas.getContext('2d')
-      if (!ctx) throw new Error('Canvas 2D が取得できません')
-
-      // 中心原点で回転 → 縮小済み bitmap を貼り付け
-      ctx.translate(canvas.width / 2, canvas.height / 2)
-      ctx.rotate((rotation * Math.PI) / 180)
-      ctx.drawImage(bitmap, -preRotateW / 2, -preRotateH / 2)
-      bitmap.close?.()
-
-      const blob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob(resolve, 'image/jpeg', 0.8),
-      )
+      const blob = await renderBlob(true)
       if (!blob) throw new Error('画像のエンコードに失敗しました')
       onConfirm(blob, file.name, {
         takenAt: parseDateInputValue(takenAtStr),
@@ -281,6 +348,7 @@ export function PhotoEditModal({
               crop={crop}
               onChange={(c) => setCrop(c)}
               onComplete={(c) => setCompletedCrop(c)}
+              aspect={aspect}
               ruleOfThirds
             >
               <img
@@ -337,7 +405,25 @@ export function PhotoEditModal({
           </div>
         </div>
 
-        <div className="px-4 py-2 border-t flex items-center gap-2">
+        {/* トリミング比率選択 */}
+        <div className="px-4 py-1.5 border-t bg-slate-50 flex items-center gap-1 text-xs">
+          <span className="text-slate-500 mr-1">比率:</span>
+          {(['1:1', '4:3', '16:9', '3:4', '9:16', 'free'] as const).map((k) => (
+            <button
+              key={k}
+              onClick={() => setAspectKey(k)}
+              className={`px-2 py-0.5 rounded border ${
+                aspectKey === k
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              {k === 'free' ? '自由' : k}
+            </button>
+          ))}
+        </div>
+
+        <div className="px-4 py-2 border-t flex items-center gap-2 flex-wrap">
           <button
             onClick={() => handleRotate(-90)}
             disabled={busy}
@@ -356,16 +442,30 @@ export function PhotoEditModal({
             <RotateCw className="h-4 w-4" />
             右
           </button>
-          <span className="ml-2 text-xs text-slate-500 truncate flex-1">
-            ドラッグでトリミング枠を指定（指定なしは全体）
-          </span>
+          <button
+            onClick={applyCropAsPreview}
+            disabled={busy}
+            className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded text-blue-700 border-blue-300 hover:bg-blue-50 disabled:opacity-50"
+            title="現在の枠でトリミングを仮確定（さらに切り直しできます）"
+          >
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+            トリミング
+          </button>
+          <button
+            onClick={resetToOriginal}
+            disabled={busy}
+            className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
+            title="元の写真に戻す"
+          >
+            戻す
+          </button>
           <button
             onClick={handleConfirm}
             disabled={busy}
-            className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+            className="ml-auto flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-            取り込む
+            確定
           </button>
         </div>
       </div>
