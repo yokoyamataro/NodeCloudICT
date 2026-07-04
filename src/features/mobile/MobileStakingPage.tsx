@@ -2621,10 +2621,12 @@ export function MobileStakingPage() {
           initialTakenAt={editingExistingPhoto.initialTakenAt}
           onCancel={() => setEditingExistingPhoto(null)}
           onConfirm={async (blob, _name, meta) => {
-            const oldId = editingExistingPhoto.oldAttachmentId
-            setEditingExistingPhoto(null)
+            // 確定を押しても閉じない。差替が済んだら oldAttachmentId を新しい方に
+            // 付け替えて「次の確定でその新規行を再度差し替える」ようにする。
+            // モーダルを閉じるのは右上 × ボタン。
             const projectId = farm.project_id
             if (!projectId) return
+            const oldId = editingExistingPhoto.oldAttachmentId
             const r = await uploadPhoto({
               projectId,
               entityType: 'farm_photo',
@@ -2639,12 +2641,14 @@ export function MobileStakingPage() {
               skipResize: true,
             })
             if (r) {
-              // 差替なので旧行 + 旧 Storage オブジェクトを削除
               try {
                 await removeAttachment(oldId)
               } catch (err) {
                 console.warn('[farm_photo edit] failed to remove old', err)
               }
+              setEditingExistingPhoto((prev) =>
+                prev ? { ...prev, oldAttachmentId: r.id } : null,
+              )
               setShareToast('写真を更新しました')
               window.setTimeout(() => setShareToast(null), 2500)
               void fetchAttachments('farm_photo', [farmId])
