@@ -153,8 +153,10 @@ function accuracyColor(acc: number | null): string {
 // これを超える（FIX解が外れて数m〜十数m飛ぶ）位置では地図を動かさず、画面を保持する。
 const FOLLOW_FIX_THRESHOLD_M = 1.0
 
-// 音声ガイダンス: RTK-FIX とみなす精度(3cm)
-const SOUND_FIX_ACCURACY_M = 0.03
+// RTK-FIX とみなす精度の既定値 (3cm)。ユーザーは設定で 0.02〜0.05m の範囲で変更可
+const DEFAULT_FIX_ACCURACY_M = 0.03
+const FIX_ACCURACY_MIN_M = 0.02
+const FIX_ACCURACY_MAX_M = 0.05
 
 // 「ピッ」を count 回、短い間隔で鳴らす（Web Audio）
 function playBeeps(ctx: AudioContext, count: number) {
@@ -557,11 +559,8 @@ export function MobileStakingPage() {
   useEffect(() => {
     try { localStorage.setItem('rtk:antennaHeight', String(antennaHeight)) } catch { /* ignore */ }
   }, [antennaHeight])
-  // ジオイド補正の有効化
-  const [useGeoidCorrection, setUseGeoidCorrection] = useState<boolean>(() => {
-    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('rtk:useGeoid') : null
-    return saved === null ? true : saved === '1'
-  })
+  // ジオイド補正の有効化。既定 ON（保存済みの OFF は無視）
+  const [useGeoidCorrection, setUseGeoidCorrection] = useState<boolean>(true)
   useEffect(() => {
     try { localStorage.setItem('rtk:useGeoid', useGeoidCorrection ? '1' : '0') } catch { /* ignore */ }
   }, [useGeoidCorrection])
@@ -573,6 +572,18 @@ export function MobileStakingPage() {
   useEffect(() => {
     try { localStorage.setItem('rtk:use3dGuidance', use3dGuidance ? '1' : '0') } catch { /* ignore */ }
   }, [use3dGuidance])
+  // RTK-FIX とみなす精度しきい値 [m]（0.02〜0.05）。精密モードで測定ボタン
+  // の有効化と 1Hz ビープの判定に共通で使う。
+  const [rtkFixAccuracyM, setRtkFixAccuracyM] = useState<number>(() => {
+    const saved =
+      typeof localStorage !== 'undefined' ? localStorage.getItem('rtk:fixAccuracyM') : null
+    const n = saved ? parseFloat(saved) : NaN
+    if (!Number.isFinite(n)) return DEFAULT_FIX_ACCURACY_M
+    return Math.min(FIX_ACCURACY_MAX_M, Math.max(FIX_ACCURACY_MIN_M, n))
+  })
+  useEffect(() => {
+    try { localStorage.setItem('rtk:fixAccuracyM', String(rtkFixAccuracyM)) } catch { /* ignore */ }
+  }, [rtkFixAccuracyM])
   // ジオイドグリッド（遅延読込）
   const [geoidGrid, setGeoidGrid] = useState<import('@/lib/geoid').GeoidGrid | null>(null)
   const [geoidLoading, setGeoidLoading] = useState(false)
@@ -603,8 +614,8 @@ export function MobileStakingPage() {
   type PositioningMode = 'rtk' | 'gps'
   const [positioningMode, setPositioningMode] = useState<PositioningMode | null>(null)
   const [showModeChooser, setShowModeChooser] = useState(false)
-  // モード選択モーダル内での「音声ガイダンス ON にする」チェック。既定 ON
-  const [modeChooserSoundOn, setModeChooserSoundOn] = useState(true)
+  // 開始前チェック（RTK）内の「音声ガイダンスを有効化」チェック。既定 ON
+  const [startupSoundOn, setStartupSoundOn] = useState(true)
   // 座標計算（交点・線上）モーダル
   const [showCalcModal, setShowCalcModal] = useState(false)
   // 計算モーダルで地図から点選択中の割り当て関数
@@ -1720,15 +1731,15 @@ export function MobileStakingPage() {
     soundDistRef.current = proximityRel?.dist ?? null
   }, [proximityRel])
 
-  // 1Hz ビープのループ
+  // 1Hz ビープのループ。しきい値変更時は setInterval を再セットアップ
   useEffect(() => {
     if (!soundEnabled) return
     const ctx = audioCtxRef.current
     if (!ctx) return
-    prevFixRef.current = soundAccRef.current != null && soundAccRef.current <= SOUND_FIX_ACCURACY_M
+    prevFixRef.current = soundAccRef.current != null && soundAccRef.current <= rtkFixAccuracyM
     const id = window.setInterval(() => {
       const acc = soundAccRef.current
-      const fix = acc != null && acc <= SOUND_FIX_ACCURACY_M
+      const fix = acc != null && acc <= rtkFixAccuracyM
       if (!fix) return
       const d = soundDistRef.current
       let count = 1
@@ -1737,10 +1748,10 @@ export function MobileStakingPage() {
       playBeeps(ctx, count)
     }, 1000)
     return () => window.clearInterval(id)
-  }, [soundEnabled])
+  }, [soundEnabled, rtkFixAccuracyM])
 
   // FIX→喪失の瞬間に警告音（ブーッ）を 1 回
-  const soundIsFix = currentAcc != null && currentAcc <= SOUND_FIX_ACCURACY_M
+  const soundIsFix = currentAcc != null && currentAcc <= rtkFixAccuracyM
   useEffect(() => {
     if (!soundEnabled) {
       prevFixRef.current = soundIsFix
@@ -3871,6 +3882,27 @@ export function MobileStakingPage() {
               標高 = 楕円体高 − ジオイド高 − アンテナ高
             </div>
 
+            {/* RTK 判定精度しきい値 (精密モードのみ効く) */}
+            <label className="flex flex-col gap-1 mb-3 border-t pt-2">
+              <span className="text-xs text-slate-600">
+                RTK 判定精度 (精密モード)
+              </span>
+              <input
+                type="range"
+                min={FIX_ACCURACY_MIN_M}
+                max={FIX_ACCURACY_MAX_M}
+                step={0.005}
+                value={rtkFixAccuracyM}
+                onChange={(e) => setRtkFixAccuracyM(parseFloat(e.target.value))}
+              />
+              <span className="font-mono text-center text-xs">
+                {(rtkFixAccuracyM * 100).toFixed(1)} cm 以下で FIX
+              </span>
+              <span className="text-[11px] text-slate-500">
+                この精度を下回ると測定ボタンが押せなくなり、RTK 受信音（ピッ）も出ません。
+              </span>
+            </label>
+
             <label className="flex items-center gap-2 mb-2 pt-2 border-t">
               <input
                 type="checkbox"
@@ -4463,24 +4495,34 @@ export function MobileStakingPage() {
         <div className="mt-1 flex gap-2">
           {!recording ? (
             <>
-              {/* 測定（旧 記録）。スマホ GPS モードのときはオレンジ「簡易測定」 */}
-              <button
-                onClick={() => startRecording()}
-                disabled={saving || !currentPos}
-                className={`flex-1 basis-0 flex items-center justify-center gap-1 px-2 py-3 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed font-bold ${
-                  positioningMode === 'gps'
-                    ? 'bg-orange-500 hover:bg-orange-600'
-                    : 'bg-red-600 hover:bg-red-700'
-                }`}
-                title={
-                  positioningMode === 'gps'
-                    ? '1 回だけ位置を取得します（補正なしの簡易測定）'
-                    : undefined
-                }
-              >
-                <CircleIcon className="h-5 w-5" />
-                {positioningMode === 'gps' ? '簡易測定' : '測定'}
-              </button>
+              {/* 測定（旧 記録）。GPS モードはオレンジ「簡易測定」。
+                  RTK モードでは currentAcc がしきい値を超えているとき半透明化 */}
+              {(() => {
+                const isGps = positioningMode === 'gps'
+                const rtkNotFix =
+                  positioningMode === 'rtk' &&
+                  (currentAcc == null || currentAcc > rtkFixAccuracyM)
+                const disabled = saving || !currentPos || rtkNotFix
+                return (
+                  <button
+                    onClick={() => startRecording()}
+                    disabled={disabled}
+                    className={`flex-1 basis-0 flex items-center justify-center gap-1 px-2 py-3 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed font-bold ${
+                      isGps ? 'bg-orange-500 hover:bg-orange-600' : 'bg-red-600 hover:bg-red-700'
+                    }`}
+                    title={
+                      isGps
+                        ? '1 回だけ位置を取得します（補正なしの簡易測定）'
+                        : rtkNotFix
+                          ? `精度 ${(rtkFixAccuracyM * 100).toFixed(1)}cm 以下で測定可能`
+                          : undefined
+                    }
+                  >
+                    <CircleIcon className="h-5 w-5" />
+                    {isGps ? '簡易測定' : '測定'}
+                  </button>
+                )
+              })()}
 
               {/* カメラ: ターゲット選択時は座標の写真モーダル、それ以外は
                   位置 + 方向を持つ標準写真を撮影 → 直接アップロード */}
@@ -4789,8 +4831,39 @@ export function MobileStakingPage() {
               </div>
             </div>
 
+            {/* 音声ガイダンス */}
+            <div className="border rounded-lg p-3 mb-3 bg-slate-50">
+              <div className="text-xs font-bold text-slate-700 mb-1.5">音声ガイダンス</div>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={startupSoundOn}
+                  onChange={(e) => setStartupSoundOn(e.target.checked)}
+                />
+                <span className="text-sm">音声ガイダンスを有効化する</span>
+                <span
+                  className={`ml-auto text-[11px] px-1.5 py-0.5 rounded ${
+                    startupSoundOn ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
+                  }`}
+                >
+                  {startupSoundOn ? 'ON' : 'OFF'}
+                </span>
+              </label>
+              <div className="text-[11px] text-slate-500 mt-1">
+                FIX 判定 / FIX 喪失 / ターゲット接近を音で通知します（RTK 測位で推奨）。
+              </div>
+            </div>
+
             <button
-              onClick={() => setShowStartupCheck(false)}
+              onClick={() => {
+                // 音声 ON にする（ユーザー操作直後なので AudioContext を resume 可能）
+                if (startupSoundOn && !soundEnabled) {
+                  void toggleSound()
+                } else if (!startupSoundOn && soundEnabled) {
+                  void toggleSound()
+                }
+                setShowStartupCheck(false)
+              }}
               className="w-full px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold"
             >
               確認した
@@ -4812,32 +4885,14 @@ export function MobileStakingPage() {
               onClick={() => {
                 setPositioningMode('rtk')
                 setShowModeChooser(false)
-                // 音声 ON にする（未 ON なら AudioContext を起こす）
-                if (modeChooserSoundOn && !soundEnabled) {
-                  void toggleSound()
-                }
-                // RTK を選んだら続けて開始前チェック（ジオイド補正 / アンテナ高）を出す
+                // RTK を選んだら続けて開始前チェック（ジオイド補正 / アンテナ高 / 音声）を出す
                 setShowStartupCheck(true)
               }}
-              className="w-full border-2 border-blue-600 rounded-lg p-3 mb-2 text-left hover:bg-blue-50"
+              className="w-full border-2 border-blue-600 rounded-lg p-3 mb-3 text-left hover:bg-blue-50"
             >
               <div className="text-sm font-bold text-blue-700">精密測定モード</div>
               <div className="text-xs text-slate-600 mt-0.5">Android + Drogger で cm 精密測位</div>
             </button>
-
-            {/* 音声ガイダンス設定（RTK モード時に使う）。RTK ボタンの下・GPS ボタンの上に配置 */}
-            <label className="flex items-center gap-2 mb-3 px-3 py-1.5 text-xs text-slate-700 bg-slate-50 border rounded cursor-pointer">
-              <input
-                type="checkbox"
-                checked={modeChooserSoundOn}
-                onChange={(e) => setModeChooserSoundOn(e.target.checked)}
-                className="h-4 w-4"
-              />
-              <span>
-                音声ガイダンスを有効化する
-                <span className="text-slate-400 ml-1">（RTK 測位で推奨: FIX / 喪失 / 接近を音で通知）</span>
-              </span>
-            </label>
 
             <button
               onClick={() => {
