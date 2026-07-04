@@ -945,7 +945,8 @@ export function MobileStakingPage() {
   const [postStakeDialog, setPostStakeDialog] = useState<{
     message: string
     target: StakingTarget
-    resolve: () => void
+    /** OK 押下時は 'ok'、写真撮影押下時は 'photo' を返す */
+    resolve: (action: 'ok' | 'photo') => void
   } | null>(null)
   // 新点計測完了モーダル: 名前入力 + プレビュー + OK / 写真 / キャンセル
   const [freePointDialog, setFreePointDialog] = useState<{
@@ -2177,13 +2178,18 @@ export function MobileStakingPage() {
         const msg =
           `${stakeRecordName} を測設しました（ターゲット: ${selectedTarget.name}）\n` +
           `誤差 ${dist.toFixed(3)} m / 精度 ${maxAcc.toFixed(3)} m / ${samples.length} サンプル`
-        // 結果モーダルを開いて OK を待つ（OK の上に「写真撮影」ボタンも表示）
-        await new Promise<void>((resolve) => {
+        // 結果モーダルを開いて OK or 写真撮影 を待つ
+        const action = await new Promise<'ok' | 'photo'>((resolve) => {
           setPostStakeDialog({ message: msg, target: selectedTarget, resolve })
         })
+        const measuredTarget = selectedTarget
         const idx = filteredTargets.findIndex((t) => t.id === selectedTarget.id)
         const next = idx >= 0 ? filteredTargets[idx + 1] : null
         setSelectedTargetId(next?.id ?? null)
+        // OK なら測点モーダル、写真撮影 なら写真モーダルが postStakeDialog 側で開いているので何もしない
+        if (action === 'ok') {
+          setPointInfoTarget(measuredTarget)
+        }
       }
       return
     }
@@ -2917,7 +2923,7 @@ export function MobileStakingPage() {
                   onClick={() => {
                     // 写真モーダルを開く（測設モーダルは閉じる）
                     const t = postStakeDialog.target
-                    postStakeDialog.resolve()
+                    postStakeDialog.resolve('photo')
                     setPostStakeDialog(null)
                     setPhotoModalTarget(t)
                   }}
@@ -2929,7 +2935,7 @@ export function MobileStakingPage() {
               )}
               <button
                 onClick={() => {
-                  postStakeDialog.resolve()
+                  postStakeDialog.resolve('ok')
                   setPostStakeDialog(null)
                 }}
                 className="w-full px-4 py-2.5 bg-slate-200 hover:bg-slate-300 rounded-lg text-sm font-medium"
@@ -4547,7 +4553,34 @@ export function MobileStakingPage() {
 
         {/* MAP モード行: ターゲット設定 → 誘導表示 */}
         {showMap && (selectedTarget ? (
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            {/* ターゲット選択中は 測定 ボタンを点名の左に配置 */}
+            {!recording && (() => {
+              const isGps = positioningMode === 'gps'
+              const rtkNotFix =
+                positioningMode === 'rtk' &&
+                (currentAcc == null || currentAcc > rtkFixAccuracyM)
+              const disabled = saving || !currentPos || rtkNotFix
+              return (
+                <button
+                  onClick={() => startRecording()}
+                  disabled={disabled}
+                  className={`shrink-0 flex items-center justify-center gap-1 px-3 py-2 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm ${
+                    isGps ? 'bg-orange-500 hover:bg-orange-600' : 'bg-red-600 hover:bg-red-700'
+                  }`}
+                  title={
+                    isGps
+                      ? '1 回だけ位置を取得します（補正なしの簡易測定）'
+                      : rtkNotFix
+                        ? `精度 ${(rtkFixAccuracyM * 100).toFixed(1)}cm 以下で測定可能`
+                        : undefined
+                  }
+                >
+                  <CircleIcon className="h-4 w-4" />
+                  {isGps ? '簡易' : '測定'}
+                </button>
+              )
+            })()}
             <button
               onClick={() => setShowTargetList(true)}
               className="flex-1 min-w-0 text-left"
@@ -4653,7 +4686,10 @@ export function MobileStakingPage() {
         </div>
 
         {/* 操作ボタン: 測定 / カメラ / メモ を等幅で横並びに。
-            ターゲットを選択中なら 設置済 マークボタンも追加表示。 */}
+            ターゲット選択中はターゲット行の左に測定ボタンがあるので、この行自体を消す。
+            ターゲット未選択時のみ表示（フリー点の記録 or カメラ / メモ）。
+            測定中はどちらの状態でも進捗表示は必要なので出す。 */}
+        {(recording || !selectedTarget) && (
         <div className="mt-1 flex gap-2">
           {!recording ? (
             <>
@@ -4773,6 +4809,7 @@ export function MobileStakingPage() {
             </>
           )}
         </div>
+        )}
       </div>
       )}
 
