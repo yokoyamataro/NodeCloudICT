@@ -787,6 +787,44 @@ export function MobileStakingPage() {
   const [editingStandalonePhoto, setEditingStandalonePhoto] = useState<File | null>(null)
   // 撮影(camera) / インポート(picker) の区別。カメラ撮影のときだけ 撮影日を「今」に既定化する
   const [standalonePhotoSource, setStandalonePhotoSource] = useState<'camera' | 'picker' | null>(null)
+  // 工区写真タイトルのよく使う候補（既定 + ユーザーが最近使ったもの）
+  const PHOTO_TITLE_DEFAULTS = ['全景', '道路', '建物', '水路'] as const
+  const [photoTitleRecents, setPhotoTitleRecents] = useState<string[]>(() => {
+    try {
+      const s = localStorage.getItem('mobile:photo:recentTitles')
+      const arr = s ? JSON.parse(s) : null
+      if (Array.isArray(arr)) return arr.filter((x) => typeof x === 'string')
+    } catch { /* ignore */ }
+    return []
+  })
+  const photoTitleSuggestions = useMemo(() => {
+    // 既定 + 最近使った の順で重複除去（先着優先）
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const s of [...PHOTO_TITLE_DEFAULTS, ...photoTitleRecents]) {
+      const t = s.trim()
+      if (!t || seen.has(t)) continue
+      seen.add(t)
+      out.push(t)
+    }
+    return out
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [photoTitleRecents])
+  const pushPhotoTitleRecent = (prefix: string) => {
+    const p = prefix.trim()
+    if (!p) return
+    setPhotoTitleRecents((prev) => {
+      const next = [p, ...prev.filter((x) => x !== p)].slice(0, 8)
+      try { localStorage.setItem('mobile:photo:recentTitles', JSON.stringify(next)) } catch { /* ignore */ }
+      return next
+    })
+  }
+  // 既存の工区写真タイトル一覧（自動採番用）
+  const existingFarmPhotoTitles = useMemo(() => {
+    if (!farmId) return [] as string[]
+    const list = attachmentsByEntity.get(`farm_photo:${farmId}`) ?? []
+    return list.map((a) => a.category ?? '').filter((s) => s && s !== '現場')
+  }, [farmId, attachmentsByEntity])
   // 既存の工区写真マーカーからの編集: 差替対象の attachment メタ + 元 File
   const [editingExistingPhoto, setEditingExistingPhoto] = useState<{
     file: File
@@ -796,6 +834,7 @@ export function MobileStakingPage() {
     initialHeadingDeg: number | null
     initialCaption: string | null
     initialTakenAt: Date | null
+    initialTitle: string | null
   } | null>(null)
   // カメラボタンの「撮影 / インポート」選択シート
   const [photoSourceSheet, setPhotoSourceSheet] = useState(false)
@@ -2807,6 +2846,10 @@ export function MobileStakingPage() {
           initialHeadingDeg={editingExistingPhoto.initialHeadingDeg}
           initialCaption={editingExistingPhoto.initialCaption}
           initialTakenAt={editingExistingPhoto.initialTakenAt}
+          initialTitle={editingExistingPhoto.initialTitle ?? null}
+          titleSuggestions={photoTitleSuggestions}
+          existingTitles={existingFarmPhotoTitles}
+          onUseTitlePrefix={pushPhotoTitleRecent}
           onCancel={() => setEditingExistingPhoto(null)}
           onConfirm={async (blob, _name, meta) => {
             // 確定を押しても閉じない。差替が済んだら oldAttachmentId を新しい方に
@@ -2820,7 +2863,8 @@ export function MobileStakingPage() {
               entityType: 'farm_photo',
               entityId: farmId,
               file: blob,
-              category: '現場',
+              // 工区写真は category にタイトル (例: '全景-1') を格納する。未指定なら旧値保持
+              category: meta.title ?? editingExistingPhoto.initialTitle ?? '現場',
               caption: meta.caption,
               takenAt: meta.takenAt ?? new Date(),
               lat: meta.lat,
@@ -2845,7 +2889,6 @@ export function MobileStakingPage() {
               window.setTimeout(() => setShareToast(null), 3000)
             }
           }}
-          headerNote="現場写真の編集"
         />
       )}
 
@@ -2859,6 +2902,9 @@ export function MobileStakingPage() {
           initialHeadingDeg={heading}
           // カメラ撮影のときは撮影日を「今」に既定化（EXIF に日時があれば PhotoEditModal 側で上書き）
           initialTakenAt={standalonePhotoSource === 'camera' ? new Date() : null}
+          titleSuggestions={photoTitleSuggestions}
+          existingTitles={existingFarmPhotoTitles}
+          onUseTitlePrefix={pushPhotoTitleRecent}
           onCancel={() => {
             setEditingStandalonePhoto(null)
             setStandalonePhotoSource(null)
@@ -2873,7 +2919,8 @@ export function MobileStakingPage() {
               entityType: 'farm_photo',
               entityId: farmId,
               file: blob,
-              category: '現場',
+              // 工区写真は category にタイトル (例: '全景-1') を格納する。未指定は '現場' fallback
+              category: meta.title ?? '現場',
               caption: meta.caption,
               takenAt: meta.takenAt ?? new Date(),
               // メタの位置・方向を優先（編集モーダルで変更可）、未指定なら現在地
@@ -2892,7 +2939,6 @@ export function MobileStakingPage() {
               window.setTimeout(() => setShareToast(null), 3000)
             }
           }}
-          headerNote="現場写真"
         />
       )}
 
@@ -3627,6 +3673,8 @@ export function MobileStakingPage() {
                     initialHeadingDeg: meta.headingDeg,
                     initialCaption: meta.caption,
                     initialTakenAt: meta.takenAt ? new Date(meta.takenAt) : null,
+                    // タイトルは category に格納している ('現場' は旧値のためスキップ)
+                    initialTitle: meta.category && meta.category !== '現場' ? meta.category : null,
                   })
                 } catch (err) {
                   console.error('[farm_photo edit] failed to load', err)

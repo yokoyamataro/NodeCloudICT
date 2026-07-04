@@ -17,8 +17,10 @@ import { readExifMetadata } from '@/lib/readExifDate'
 export interface PhotoEditMeta {
   /** 撮影日（EXIF があれば優先。ユーザは編集可能）。null は未指定 */
   takenAt: Date | null
-  /** 備考。空文字は null として扱う */
+  /** メモ（旧 備考）。空文字は null として扱う */
   caption: string | null
+  /** 写真タイトル（例: '全景-3'）。titleSuggestions が渡された時のみ設定される */
+  title: string | null
   /** 撮影位置（緯度）。enableLocationEdit が無効なら null のまま */
   lat: number | null
   /** 撮影位置（経度） */
@@ -32,7 +34,7 @@ interface PhotoEditModalProps {
   onCancel: () => void
   /** 編集結果の Blob と元のファイル名 + メタを返す */
   onConfirm: (blob: Blob, fileName: string, meta: PhotoEditMeta) => void
-  /** ヘッダ右に出す注記（カテゴリ名、残り枚数など） */
+  /** ヘッダ右に出す注記（カテゴリ名、残り枚数など）。デフォルトでは表示しない */
   headerNote?: string
   /** 位置・方向の編集 UI を出すかどうか */
   enableLocationEdit?: boolean
@@ -40,9 +42,19 @@ interface PhotoEditModalProps {
   initialLat?: number | null
   initialLng?: number | null
   initialHeadingDeg?: number | null
-  /** 既存写真の編集時に、備考と撮影日を復元するための初期値 */
+  /** 既存写真の編集時に、メモと撮影日を復元するための初期値 */
   initialCaption?: string | null
   initialTakenAt?: Date | null
+  /** 既存写真の編集時に、タイトルを復元するための初期値（例: '全景-3'） */
+  initialTitle?: string | null
+  /** タイトル UI を有効化するとき、よく使うタイトルプレフィックスを渡す（例: ['全景','道路','建物','水路']）。
+   *  空配列 / 未指定なら UI は表示しない。 */
+  titleSuggestions?: string[]
+  /** タイトル自動採番のために、同じエンティティに既に付いているタイトル一覧を渡す。
+   *  例: ['全景-1','全景-2','道路-1'] → 「全景」を選ぶと 全景-3 になる。 */
+  existingTitles?: string[]
+  /** ユーザーが新しいプレフィックスを追加/使用したときに、呼び出し側で recent 履歴を更新する */
+  onUseTitlePrefix?: (prefix: string) => void
 }
 
 // HTML <input type="date"> に渡す YYYY-MM-DD 文字列に変換
@@ -60,18 +72,49 @@ function parseDateInputValue(s: string): Date | null {
   return Number.isNaN(d.getTime()) ? null : d
 }
 
+// 既存タイトルのうち、指定プレフィックスの最大番号を返す（0 なら未使用）
+function nextTitleNumber(existingTitles: string[], prefix: string): number {
+  const re = new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-(\\d+)$`)
+  let max = 0
+  for (const t of existingTitles) {
+    const m = t.match(re)
+    if (m) {
+      const n = parseInt(m[1], 10)
+      if (Number.isFinite(n) && n > max) max = n
+    }
+  }
+  return max + 1
+}
+
+// 保存済みタイトル "全景-3" から プレフィックス "全景" を取り出す。数字が無ければ全体をプレフィックス扱い
+function extractTitlePrefix(title: string | null | undefined): string | null {
+  if (!title) return null
+  const m = title.match(/^(.+)-(\d+)$/)
+  return m ? m[1] : title
+}
+
 export function PhotoEditModal({
   file,
   onCancel,
   onConfirm,
-  headerNote,
+  // headerNote は後方互換のため受け取るが、UI では表示しない
   enableLocationEdit = false,
   initialLat = null,
   initialLng = null,
   initialHeadingDeg = null,
   initialCaption = null,
   initialTakenAt = null,
+  initialTitle = null,
+  titleSuggestions,
+  existingTitles = [],
+  onUseTitlePrefix,
 }: PhotoEditModalProps) {
+  // タイトル UI: プレフィックス選択 + 自動採番。titleSuggestions 未指定なら非表示
+  const titleUiEnabled = Array.isArray(titleSuggestions) && titleSuggestions.length > 0
+  const [titlePrefix, setTitlePrefix] = useState<string>(() => {
+    const pre = extractTitlePrefix(initialTitle)
+    return pre ?? ''
+  })
   // 「トリミング」ボタンで仮確定した中間ファイル（さらに切り直せる）を保持する。
   // 初期は props の file、「戻す」で file に戻る。「確定」時にこの workingFile と
   // 現在の crop/rotation を最終適用する。
@@ -324,9 +367,25 @@ export function PhotoEditModal({
     try {
       const blob = await renderBlob(true)
       if (!blob) throw new Error('画像のエンコードに失敗しました')
+      // タイトル決定: プレフィックスが選ばれていれば "<prefix>-N" で採番。
+      // 既存写真の編集時 (initialTitle と同じプレフィックスかつ後半数字が生きているなら維持)
+      let outTitle: string | null = null
+      if (titleUiEnabled && titlePrefix.trim()) {
+        const pre = titlePrefix.trim()
+        const initialPre = extractTitlePrefix(initialTitle)
+        if (initialTitle && initialPre === pre) {
+          // 同じプレフィックスのまま編集 → 番号を保持
+          outTitle = initialTitle
+        } else {
+          const n = nextTitleNumber(existingTitles, pre)
+          outTitle = `${pre}-${n}`
+          onUseTitlePrefix?.(pre)
+        }
+      }
       onConfirm(blob, file.name, {
         takenAt: parseDateInputValue(takenAtStr),
         caption: caption.trim() ? caption.trim() : null,
+        title: outTitle,
         lat,
         lng,
         headingDeg,
@@ -375,11 +434,6 @@ export function PhotoEditModal({
       <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[95vh] flex flex-col">
         <div className="px-4 py-2 border-b flex items-center gap-2">
           <h3 className="text-base font-semibold flex-1">写真を編集</h3>
-          {headerNote && (
-            <span className="text-xs text-slate-500 px-2 py-0.5 rounded bg-slate-100">
-              {headerNote}
-            </span>
-          )}
           <button
             onClick={onCancel}
             className="p-1 text-slate-400 hover:text-slate-700 rounded"
@@ -431,8 +485,53 @@ export function PhotoEditModal({
           )}
         </div>
 
-        {/* メタ情報入力: 撮影日・備考は 1 行ずつ横並び、位置・方向は「地図で編集」ボタンのみ */}
+        {/* メタ情報入力: タイトル (任意)・撮影日・メモ */}
         <div className="px-4 py-2 border-t bg-slate-50 space-y-1.5">
+          {titleUiEnabled && (() => {
+            const previewNum = titlePrefix.trim()
+              ? (() => {
+                  const initialPre = extractTitlePrefix(initialTitle)
+                  if (initialTitle && initialPre === titlePrefix.trim()) {
+                    // 既存を維持
+                    return initialTitle.match(/-(\d+)$/)?.[1] ?? null
+                  }
+                  return nextTitleNumber(existingTitles, titlePrefix.trim())
+                })()
+              : null
+            return (
+              <div className="flex items-center gap-2 flex-wrap">
+                <label className="text-xs text-slate-600 shrink-0 w-14">タイトル</label>
+                <div className="flex items-center gap-1 flex-1 flex-wrap">
+                  {titleSuggestions!.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setTitlePrefix(s)}
+                      className={`text-xs px-2 py-0.5 rounded border ${
+                        titlePrefix === s
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                  <input
+                    type="text"
+                    value={titlePrefix}
+                    onChange={(e) => setTitlePrefix(e.target.value)}
+                    placeholder="タイトル"
+                    className="ml-1 w-24 px-2 py-0.5 text-xs border rounded"
+                  />
+                  {previewNum != null && (
+                    <span className="text-xs text-slate-600 font-mono ml-1">
+                      → {titlePrefix.trim()}-{previewNum}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )
+          })()}
           <div className="flex items-center gap-2">
             <label className="text-xs text-slate-600 shrink-0 w-14">撮影日</label>
             <input
@@ -456,12 +555,11 @@ export function PhotoEditModal({
             )}
           </div>
           <div className="flex items-center gap-2">
-            <label className="text-xs text-slate-600 shrink-0 w-14">備考</label>
+            <label className="text-xs text-slate-600 shrink-0 w-14">メモ</label>
             <input
               type="text"
               value={caption}
               onChange={(e) => setCaption(e.target.value)}
-              placeholder="任意のメモ（例: 杭頭飛び、コンクリート巻き 等）"
               className="flex-1 px-2 py-1 text-sm border rounded"
             />
           </div>
