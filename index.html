@@ -4,6 +4,9 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- iOS Safari 等が数字列を電話番号 / 住所 / 日付として自動判定して
+         下線付きリンクに変えるのを抑止する。座標値 (X/Y/Z) が誤検出されるのを防ぐ。 -->
+    <meta name="format-detection" content="telephone=no,email=no,address=no,date=no" />
     <title>NodeCloud</title>
     <!-- Google Analytics (GA4) — 測定 ID: G-99NCXWNVGD。
          SPA 用に初期の自動 page_view は無効化し、React ルーター側から
