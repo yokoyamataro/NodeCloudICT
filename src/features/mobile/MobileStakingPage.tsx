@@ -3,6 +3,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, Polygon, Tooltip, Pane, Popup, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+// leaflet-rotate は Map クラスにパッチ (rotate オプション / setBearing) を当てる副作用付き import
+import 'leaflet-rotate'
 import {
   ArrowLeft,
   ArrowUp,
@@ -258,6 +260,27 @@ function FitOnce({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
     map.fitBounds(bounds, { padding: [30, 30], maxZoom: 20 })
     doneRef.current = true
   }, [map, bounds])
+  return null
+}
+
+// leaflet-rotate の bearing を方位センサー値に同期させる。
+// enabled=false または heading=null の時は bearing=0 で北向きに戻す。
+function MapBearingUpdater({
+  enabled,
+  heading,
+}: {
+  enabled: boolean
+  heading: number | null
+}) {
+  const map = useMap() as L.Map & {
+    setBearing?: (deg: number) => void
+    getBearing?: () => number
+  }
+  useEffect(() => {
+    if (typeof map.setBearing !== 'function') return
+    const desired = enabled && heading != null ? -heading : 0
+    try { map.setBearing(desired) } catch { /* ignore */ }
+  }, [map, enabled, heading])
   return null
 }
 
@@ -1182,36 +1205,6 @@ export function MobileStakingPage() {
     }
     setMapRotationEnabled(true)
   }
-
-  // 地図ラッパー ref: .leaflet-container を掴んで CSS transform を当てる
-  const mapWrapperRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const wrapper = mapWrapperRef.current
-    if (!wrapper) return
-    const container = wrapper.querySelector('.leaflet-container') as HTMLElement | null
-    if (!container) return
-    const controls = container.querySelector('.leaflet-control-container') as HTMLElement | null
-    if (mapRotationEnabled && heading != null) {
-      container.style.transform = `rotate(${-heading}deg)`
-      container.style.transformOrigin = 'center'
-      container.style.transition = 'transform 200ms ease-out'
-      // コントロール（ズーム / 帰属）は回転を打ち消して常に画面上向き
-      if (controls) {
-        controls.style.transform = `rotate(${heading}deg)`
-        controls.style.transformOrigin = 'center'
-        controls.style.transition = 'transform 200ms ease-out'
-      }
-    } else {
-      container.style.transform = ''
-      container.style.transformOrigin = ''
-      container.style.transition = ''
-      if (controls) {
-        controls.style.transform = ''
-        controls.style.transformOrigin = ''
-        controls.style.transition = ''
-      }
-    }
-  }, [mapRotationEnabled, heading])
 
   // 現在位置の監視
   useEffect(() => {
@@ -3369,7 +3362,7 @@ export function MobileStakingPage() {
       )}
 
       {/* 地図 */}
-      <div ref={mapWrapperRef} className="flex-1 relative overflow-hidden">
+      <div className="flex-1 relative">
         {/* MAP / 3D / 2D 切替（地図右上に縦並び、ズームコントロールの対側）
             z は 2D パネル (z-[1000]) より高く、常に上に出す。 */}
         <div className="absolute top-2 right-2 z-[1200] flex flex-col gap-0.5 rounded overflow-hidden shadow-md border border-slate-400 bg-white">
@@ -3442,7 +3435,13 @@ export function MobileStakingPage() {
           maxZoom={24}
           className="h-full w-full"
           style={baseLayer === 'none' ? { background: '#ffffff' } : undefined}
+          // leaflet-rotate: 回転機能を有効化。実際の bearing は MapBearingUpdater が制御
+          {...({ rotate: true, bearing: 0, rotateControl: false } as Record<string, unknown>)}
         >
+          <MapBearingUpdater
+            enabled={mapRotationEnabled}
+            heading={heading}
+          />
           {/* 断面ピック中の仮マーカー（座標管理から選択した点を強調） */}
           {sectionPickingMode && sectionPickIds.map((id, i) => {
             const c = coordinates.find((cc) => cc.id === id)
@@ -4051,8 +4050,18 @@ export function MobileStakingPage() {
         {showSettings && (() => {
           const isGps = positioningMode === 'gps'
           return (
-          <div className="absolute top-2 right-2 z-[1000] bg-white border rounded-lg shadow-lg p-3 w-64 text-sm">
-            <div className="font-semibold mb-2">設定</div>
+          <div className="absolute top-2 right-2 z-[3400] bg-white border rounded-lg shadow-lg w-64 text-sm flex flex-col max-h-[85vh]">
+            <div className="px-3 pt-3 pb-2 border-b flex items-center justify-between shrink-0">
+              <div className="font-semibold">設定</div>
+              <button
+                onClick={() => setShowSettings(false)}
+                className="p-1 rounded hover:bg-slate-100"
+                aria-label="閉じる"
+              >
+                <X className="h-4 w-4 text-slate-500" />
+              </button>
+            </div>
+            <div className="p-3 overflow-y-auto flex-1">
 
             {/* 地図回転（進行方向を画面上に） */}
             <label className="flex items-center gap-2 mb-1">
@@ -4206,12 +4215,15 @@ export function MobileStakingPage() {
             <div className="text-xs text-slate-500 border-t pt-2">
               Mock Location 経由で RTK-GNSS の補正座標を取得できます。
             </div>
-            <button
-              onClick={() => setShowSettings(false)}
-              className="mt-2 w-full px-2 py-1 text-xs border rounded hover:bg-slate-50"
-            >
-              閉じる
-            </button>
+            </div>
+            <div className="px-3 py-2 border-t shrink-0">
+              <button
+                onClick={() => setShowSettings(false)}
+                className="w-full px-2 py-1.5 text-xs border rounded hover:bg-slate-50"
+              >
+                閉じる
+              </button>
+            </div>
           </div>
           )
         })()}
