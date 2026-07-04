@@ -14,7 +14,6 @@ import {
   List,
   Tag,
   Trash2,
-  ChevronDown,
   FileText,
   Database,
   Navigation2,
@@ -29,8 +28,6 @@ import {
   Volume2,
   VolumeX,
   Calculator,
-  Square,
-  ChevronUp,
   Plus,
   StickyNote,
   ExternalLink,
@@ -523,20 +520,9 @@ export function MobileStakingPage() {
   const visibleStakeStatuses = useMapViewStore((s) => s.visibleStakeStatuses)
   const toggleVisibleStakeStatus = useMapViewStore((s) => s.toggleVisibleStakeStatus)
   const setVisibleStakeStatuses = useMapViewStore((s) => s.setVisibleStakeStatuses)
-  // 地籍工事の地番編集モード用
-  const {
-    workAreas: workAreasAll,
-    fetchWorkAreas,
-    addWorkArea: addWorkAreaInStore,
-    deleteWorkArea: deleteWorkAreaInStore,
-    addPoint: addPointToArea,
-    removePoint: removePointFromArea,
-    reorderPoints: reorderAreaPoints,
-    saveAllWorkAreas,
-  } = useWorkAreaStore()
-  const parcelMap = useParcelStore((s) => s.byWorkAreaId)
+  // 工事区域は地図表示（ポリゴンレイヤ）にのみ使う。編集は PC 側のみ。
+  const { workAreas: workAreasAll, fetchWorkAreas } = useWorkAreaStore()
   const fetchParcels = useParcelStore((s) => s.fetchByWorkAreaIds)
-  const upsertParcel = useParcelStore((s) => s.upsertParcel)
   const parcelAreas = workAreasAll['boundary_survey'] ?? []
   const {
     byEntity: attachmentsByEntity,
@@ -644,10 +630,6 @@ export function MobileStakingPage() {
   const [showSettings, setShowSettings] = useState(false)
   const [showTargetList, setShowTargetList] = useState(false)
   const [showRecordList, setShowRecordList] = useState(false)
-  // 地番編集モード（地籍工事用）。トグルで下半分にパネルを出す
-  const [showParcels, setShowParcels] = useState(false)
-  // 地番モードで現在編集中の design_work_area.id（マップタップで構成点を追加/削除）
-  const [parcelEditingAreaId, setParcelEditingAreaId] = useState<string | null>(null)
   // 現場を開いたときの開始前チェック（ジオイド補正・目標高(アンテナ高)・既知点精度確認の喚起）
   // 工区IDごとにセッション中 1 回だけ表示する。
   const [showStartupCheck, setShowStartupCheck] = useState(false)
@@ -1061,73 +1043,7 @@ export function MobileStakingPage() {
     setShowModeChooser(true)
   }, [farmId])
 
-  // 地籍工事のときだけ地番編集ボタンを出す
-  const isCadastral = project?.category === 'cadastral'
-
-  // 編集中の地番（タップで点を出し入れする対象）
-  const parcelEditingArea = parcelAreas.find((p) => p.id === parcelEditingAreaId) ?? null
-  const parcelEditingSet = new Set(parcelEditingArea?.pointIds ?? [])
-
-  // 地番属性のラベル: parcels.parcel_number ← zoneNumber ← name
-  const labelForParcelArea = (a: typeof parcelAreas[number]): string => {
-    const p = parcelMap.get(a.id)
-    return p?.parcel_number || a.zoneNumber || a.name || '(無題)'
-  }
-
-  // 地番編集系ハンドラ
-  const handleAddParcelArea = async () => {
-    const created = await addWorkAreaInStore('boundary_survey')
-    if (created) {
-      await saveAllWorkAreas()
-      setParcelEditingAreaId(created.id)
-    }
-  }
-
-  const handleDeleteParcelArea = async (areaId: string) => {
-    if (!confirm('この地番を削除しますか？')) return
-    await deleteWorkAreaInStore(areaId)
-    if (parcelEditingAreaId === areaId) setParcelEditingAreaId(null)
-  }
-
-  const handleToggleParcelPoint = async (coord: CoordinateRow) => {
-    if (!parcelEditingAreaId) return
-    const area = parcelAreas.find((a) => a.id === parcelEditingAreaId)
-    if (!area) return
-    if (area.pointIds.includes(coord.id)) {
-      removePointFromArea(parcelEditingAreaId, coord.id)
-    } else {
-      addPointToArea(parcelEditingAreaId, {
-        id: coord.id,
-        pointNumber: coord.pointNumber,
-        x: coord.x,
-        y: coord.y,
-        z: coord.z,
-      })
-    }
-    await saveAllWorkAreas()
-  }
-
-  const handleMoveParcelPoint = async (areaId: string, fromIdx: number, dir: -1 | 1) => {
-    const area = parcelAreas.find((a) => a.id === areaId)
-    if (!area) return
-    const toIdx = fromIdx + dir
-    if (toIdx < 0 || toIdx >= area.pointIds.length) return
-    const ids = [...area.pointIds]
-    const [m] = ids.splice(fromIdx, 1)
-    ids.splice(toIdx, 0, m)
-    reorderAreaPoints(areaId, ids)
-    await saveAllWorkAreas()
-  }
-
-  const handleRemoveParcelPoint = async (areaId: string, pointId: string) => {
-    removePointFromArea(areaId, pointId)
-    await saveAllWorkAreas()
-  }
-
-  const handleSaveParcelName = async (areaId: string, value: string) => {
-    await upsertParcel(areaId, { parcel_number: value.trim() || null })
-  }
-
+  // 地番編集機能はスマホから撤去（PC の地番管理から編集する運用）。
   // 「開始前チェック」モーダルは startRecording 内で初回押下時に出す。
   // （工区を開いた時点では出さず、実際に観測を始めようとしたタイミングで喚起する）
 
@@ -2602,23 +2518,7 @@ export function MobileStakingPage() {
             </span>
           )}
         </button>
-        {/* 地番編集モード切替（地籍工事のみ表示） */}
-        {isCadastral && (
-          <button
-            onClick={() => setShowParcels((v) => !v)}
-            className={`p-1.5 rounded relative ${
-              showParcels ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-slate-700 hover:bg-slate-600'
-            }`}
-            title="地番編集（地籍）"
-          >
-            <Square className="h-4 w-4" />
-            {parcelAreas.length > 0 && (
-              <span className="absolute -top-1 -right-1 bg-amber-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">
-                {parcelAreas.length > 9 ? '9+' : parcelAreas.length}
-              </span>
-            )}
-          </button>
-        )}
+        {/* 地番編集はスマホから撤去（PC の地番管理から編集する運用） */}
         <button
           onClick={handleOpenSimImport}
           className="p-1.5 rounded bg-slate-700 hover:bg-slate-600"
@@ -3873,46 +3773,7 @@ export function MobileStakingPage() {
           })
           })()}
 
-          {/* 地番編集モード: 当該工区の全座標にタップ可能なマーカーを重ねる。
-              当該地番に含まれる点は赤、未割当は青。マーカータップで追加 / 削除をトグル */}
-          {showParcels && parcelEditingAreaId && coordinates
-            .filter((c) => c.lat != null && c.lng != null)
-            .map((c) => {
-              const selected = parcelEditingSet.has(c.id)
-              return (
-                <CircleMarker
-                  key={`parcel-pick-${c.id}`}
-                  center={[c.lat as number, c.lng as number]}
-                  radius={selected ? 10 : 6}
-                  pathOptions={{
-                    color: selected ? '#dc2626' : '#1d4ed8',
-                    fillColor: selected ? '#dc2626' : '#3b82f6',
-                    fillOpacity: 0.9,
-                    weight: 2,
-                  }}
-                  eventHandlers={{ click: () => void handleToggleParcelPoint(c) }}
-                >
-                  <Tooltip direction="top" offset={[0, -6]} opacity={0.9}>
-                    {c.pointNumber}
-                  </Tooltip>
-                </CircleMarker>
-              )
-            })}
-          {/* 編集中の地番ポリゴン（3 点以上） */}
-          {showParcels && parcelEditingArea && parcelEditingArea.points.length >= 3 && (() => {
-            const positions: [number, number][] = []
-            for (const pid of parcelEditingArea.pointIds) {
-              const c = coordinates.find((cc) => cc.id === pid)
-              if (c?.lat != null && c?.lng != null) positions.push([c.lat, c.lng])
-            }
-            if (positions.length < 3) return null
-            return (
-              <Polygon
-                positions={positions}
-                pathOptions={{ color: '#dc2626', fillColor: '#dc2626', fillOpacity: 0.15, weight: 2 }}
-              />
-            )
-          })()}
+
 
           {/* 現在位置 */}
           {currentPos && (
@@ -4448,177 +4309,6 @@ export function MobileStakingPage() {
           </div>
         )}
 
-        {/* 地番編集パネル（地籍工事のみ） */}
-        {showParcels && isCadastral && (
-          <div className="absolute inset-x-0 bottom-0 z-[1000] bg-white border-t shadow-xl h-[50%] flex flex-col">
-            <div className="px-3 py-2 border-b flex items-center gap-2 text-sm">
-              <span className="font-semibold">地番編集</span>
-              <span className="text-xs text-slate-500">{parcelAreas.length} 件</span>
-              <button
-                onClick={handleAddParcelArea}
-                className="ml-auto flex items-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
-              >
-                <Plus className="h-3 w-3" />
-                地番追加
-              </button>
-              <button
-                onClick={() => {
-                  setShowParcels(false)
-                  setParcelEditingAreaId(null)
-                }}
-                className="text-xs px-2 py-0.5 border rounded hover:bg-slate-50"
-              >
-                閉じる
-              </button>
-            </div>
-            <div className="flex-1 overflow-auto">
-              {parcelAreas.length === 0 ? (
-                <div className="p-4 text-center text-xs text-slate-500">
-                  地番がありません。「地番追加」から作成してください。
-                </div>
-              ) : (
-                <ul className="divide-y">
-                  {parcelAreas.map((a) => {
-                    const editing = parcelEditingAreaId === a.id
-                    const attrs = parcelMap.get(a.id)
-                    return (
-                      <li key={a.id} className={editing ? 'bg-blue-50' : ''}>
-                        {/* 行ヘッダ */}
-                        <div className="px-3 py-2 flex items-center gap-2">
-                          <button
-                            onClick={() =>
-                              setParcelEditingAreaId(editing ? null : a.id)
-                            }
-                            className={`p-1 rounded ${
-                              editing ? 'bg-blue-600 text-white' : 'border'
-                            }`}
-                            title={editing ? '編集解除' : '編集'}
-                          >
-                            <Square className="h-3.5 w-3.5" />
-                          </button>
-                          <div className="flex-1 min-w-0">
-                            <div className="font-medium truncate">{labelForParcelArea(a)}</div>
-                            <div className="text-[11px] text-slate-500">
-                              構成点 {a.pointIds.length} 点
-                              {a.areaSqm != null && (
-                                <span className="ml-2 font-mono">
-                                  {(Math.floor(a.areaSqm * 100) / 100).toFixed(2)} m²
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => handleDeleteParcelArea(a.id)}
-                            className="p-1 text-red-500 hover:bg-red-50 rounded"
-                            title="地番を削除"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                        {/* 展開: 地番名 + 構成点 + 属性 */}
-                        {editing && (
-                          <div className="px-3 pb-3 space-y-2 bg-white">
-                            <div className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
-                              地図上のマーカーをタップで構成点を追加 / 削除
-                            </div>
-                            <ParcelInlineEditor
-                              parcelNumber={attrs?.parcel_number ?? ''}
-                              onSaveParcelNumber={(v) => handleSaveParcelName(a.id, v)}
-                            />
-                            {a.points.length === 0 ? (
-                              <div className="py-2 text-center text-xs text-slate-500 border border-dashed rounded">
-                                構成点がありません
-                              </div>
-                            ) : (
-                              <ul className="space-y-1">
-                                {a.points.map((point, index) => (
-                                  <li
-                                    key={point.id}
-                                    className="flex items-center gap-2 px-2 py-1 text-sm bg-white border rounded"
-                                  >
-                                    <span className="w-5 text-[11px] text-slate-500">
-                                      {index + 1}.
-                                    </span>
-                                    <span className="font-medium flex-1 truncate">
-                                      {point.pointNumber}
-                                    </span>
-                                    <button
-                                      onClick={() => handleMoveParcelPoint(a.id, index, -1)}
-                                      disabled={index === 0}
-                                      className="p-0.5 text-slate-500 hover:bg-slate-100 rounded disabled:opacity-30"
-                                      title="上へ"
-                                    >
-                                      <ChevronUp className="h-3.5 w-3.5" />
-                                    </button>
-                                    <button
-                                      onClick={() => handleMoveParcelPoint(a.id, index, 1)}
-                                      disabled={index === a.points.length - 1}
-                                      className="p-0.5 text-slate-500 hover:bg-slate-100 rounded disabled:opacity-30"
-                                      title="下へ"
-                                    >
-                                      <ChevronDown className="h-3.5 w-3.5" />
-                                    </button>
-                                    <button
-                                      onClick={() =>
-                                        handleRemoveParcelPoint(a.id, point.id)
-                                      }
-                                      className="p-0.5 text-red-500 hover:bg-red-50 rounded"
-                                      title="削除"
-                                    >
-                                      <Trash2 className="h-3.5 w-3.5" />
-                                    </button>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                            {/* 属性表示のみ */}
-                            <div className="border rounded p-2 bg-slate-50 text-[11px] space-y-0.5">
-                              <ParcelAttrRow
-                                label="登記地目"
-                                value={attrs?.registered_land_category ?? null}
-                              />
-                              <ParcelAttrRow
-                                label="登記地積"
-                                value={
-                                  attrs?.registered_area_sqm != null
-                                    ? `${attrs.registered_area_sqm.toFixed(2)} m²`
-                                    : null
-                                }
-                              />
-                              <ParcelAttrRow
-                                label="変更地目"
-                                value={attrs?.updated_land_category ?? null}
-                              />
-                              <ParcelAttrRow
-                                label="変更地積"
-                                value={
-                                  attrs?.updated_area_sqm != null
-                                    ? `${attrs.updated_area_sqm.toFixed(2)} m²`
-                                    : null
-                                }
-                              />
-                              <ParcelAttrRow
-                                label="登記所有者氏名"
-                                value={attrs?.registered_owner_name ?? null}
-                              />
-                              <ParcelAttrRow
-                                label="登記所有者住所"
-                                value={attrs?.registered_owner_address ?? null}
-                              />
-                              <div className="text-[10px] text-slate-400 pt-1">
-                                属性の編集は PC 画面で
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </li>
-                    )
-                  })}
-                </ul>
-              )}
-            </div>
-          </div>
-        )}
 
         {/* 座標一覧（元の座標 + 起工測量記録をマージ表示） */}
         {showRecordList && (
@@ -5988,35 +5678,6 @@ function FreePointDialog({
   )
 }
 
-// 地番編集パネル内: 地番名 (parcels.parcel_number) を 1 行で編集して onBlur で保存
-function ParcelInlineEditor({
-  parcelNumber,
-  onSaveParcelNumber,
-}: {
-  parcelNumber: string
-  onSaveParcelNumber: (value: string) => Promise<void>
-}) {
-  const [draft, setDraft] = useState(parcelNumber)
-  useEffect(() => {
-    setDraft(parcelNumber)
-  }, [parcelNumber])
-  return (
-    <label className="block">
-      <span className="text-[11px] font-medium text-slate-600 mb-0.5 block">地番名</span>
-      <input
-        type="text"
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => {
-          if (draft !== parcelNumber) void onSaveParcelNumber(draft)
-        }}
-        placeholder="地番"
-        className="w-full px-2 py-1 text-sm border rounded"
-      />
-    </label>
-  )
-}
-
 // Leaflet 地図の長押し / 右クリック を拾うためだけのレイヤ。
 // useMapEvents を使うので MapContainer の子としてレンダーする必要がある。
 function MapLongPressHandler({
@@ -6030,18 +5691,6 @@ function MapLongPressHandler({
     },
   })
   return null
-}
-
-// 属性 1 行表示
-function ParcelAttrRow({ label, value }: { label: string; value: string | null | undefined }) {
-  return (
-    <div className="flex items-baseline gap-2">
-      <span className="w-20 text-slate-500 shrink-0">{label}</span>
-      <span className="flex-1 text-slate-800 break-all">
-        {value && value !== '' ? value : <span className="text-slate-400">-</span>}
-      </span>
-    </div>
-  )
 }
 
 // メモ作成（スマホ）。本文 + 位置のみ。写真は別管理（写真ボタン）。
