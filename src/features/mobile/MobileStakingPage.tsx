@@ -218,6 +218,44 @@ function playBuzzer(ctx: AudioContext) {
   osc.stop(t + 0.15)
 }
 
+// 遅延読込のサムネ画像（点情報モーダル用）。signed URL を非同期で解決してから
+// <img> を表示する。タップで onClick に photoId を返す。
+function PointPhotoThumb({
+  filePath,
+  getSignedUrl,
+  onClick,
+}: {
+  filePath: string
+  getSignedUrl: (filePath: string) => Promise<string | null>
+  onClick?: () => void
+}) {
+  const [url, setUrl] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void getSignedUrl(filePath).then((u) => {
+      if (!cancelled) setUrl(u)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [filePath, getSignedUrl])
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="block w-full aspect-square rounded overflow-hidden bg-slate-200 hover:opacity-90"
+    >
+      {url ? (
+        <img src={url} alt="" className="w-full h-full object-cover" />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center text-slate-400 text-[10px]">
+          読込中
+        </div>
+      )}
+    </button>
+  )
+}
+
 function FitOnce({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
   const map = useMap()
   const doneRef = useRef(false)
@@ -4936,64 +4974,80 @@ export function MobileStakingPage() {
               </div>
 
               <div className="overflow-auto flex-1 p-4 space-y-3">
-                {/* 座標（読み取り専用） */}
-                <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm font-mono">
-                  <div className="text-slate-500 text-xs font-sans">X</div>
-                  <div className="text-slate-800">{t.x.toFixed(3)}</div>
-                  <div className="text-slate-500 text-xs font-sans">Y</div>
-                  <div className="text-slate-800">{t.y.toFixed(3)}</div>
-                  <div className="text-slate-500 text-xs font-sans">Z</div>
-                  <div className="text-slate-800">{t.z != null ? t.z.toFixed(3) : '-'}</div>
+                {/* 座標 X / Y / Z を横並び */}
+                <div className="grid grid-cols-3 gap-2 text-sm">
+                  <div className="bg-slate-50 border rounded p-1.5">
+                    <div className="text-[10px] text-slate-500">X</div>
+                    <div className="font-mono text-slate-800 truncate">{t.x.toFixed(3)}</div>
+                  </div>
+                  <div className="bg-slate-50 border rounded p-1.5">
+                    <div className="text-[10px] text-slate-500">Y</div>
+                    <div className="font-mono text-slate-800 truncate">{t.y.toFixed(3)}</div>
+                  </div>
+                  <div className="bg-slate-50 border rounded p-1.5">
+                    <div className="text-[10px] text-slate-500">Z</div>
+                    <div className="font-mono text-slate-800 truncate">
+                      {t.z != null ? t.z.toFixed(3) : '-'}
+                    </div>
+                  </div>
                 </div>
 
-                {/* 点種 / 設置（coordinate のみ編集可） */}
+                {/* 点種 / 設置 を横並び（coordinate のみ編集可） */}
                 {isCoord ? (
-                  <div className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1.5 items-center">
-                    <label className="text-xs text-slate-500">点種</label>
-                    <select
-                      value={currentType}
-                      onChange={(e) =>
-                        updateCoordinate(
-                          t.refId,
-                          'type',
-                          e.target.value as CoordinateRow['type'],
-                        )
-                      }
-                      className="w-full px-2 py-1 text-sm border rounded bg-white"
-                    >
-                      {typeOptions.map((o) => (
-                        <option key={o.code} value={o.code}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
-                    <label className="text-xs text-slate-500">設置</label>
-                    <select
-                      value={currentStatus || ''}
-                      onChange={(e) => {
-                        const v = e.target.value as typeof currentStatus
-                        void setStakeStatus(t.refId, v)
-                      }}
-                      className="w-full px-2 py-1 text-sm border rounded bg-white"
-                    >
-                      {STAKE_STATUS_OPTIONS.map((s) => (
-                        <option key={s} value={s}>
-                          {STAKE_STATUS_LABEL[s]}
-                        </option>
-                      ))}
-                    </select>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <div className="text-[10px] text-slate-500 mb-0.5">点種</div>
+                      <select
+                        value={currentType}
+                        onChange={(e) =>
+                          updateCoordinate(
+                            t.refId,
+                            'type',
+                            e.target.value as CoordinateRow['type'],
+                          )
+                        }
+                        className="w-full px-2 py-1 text-sm border rounded bg-white"
+                      >
+                        {typeOptions.map((o) => (
+                          <option key={o.code} value={o.code}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-slate-500 mb-0.5">設置</div>
+                      <select
+                        value={currentStatus || ''}
+                        onChange={(e) => {
+                          const v = e.target.value as typeof currentStatus
+                          void setStakeStatus(t.refId, v)
+                        }}
+                        className="w-full px-2 py-1 text-sm border rounded bg-white"
+                      >
+                        {STAKE_STATUS_OPTIONS.map((s) => (
+                          <option key={s} value={s}>
+                            {STAKE_STATUS_LABEL[s]}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
-                    <div className="text-slate-500 text-xs font-sans">点種</div>
-                    <div className="text-slate-800">{t.subTypeLabel}</div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div>
+                      <div className="text-[10px] text-slate-500 mb-0.5">点種</div>
+                      <div className="px-2 py-1 border rounded bg-slate-50 text-slate-800">
+                        {t.subTypeLabel}
+                      </div>
+                    </div>
                   </div>
                 )}
 
                 {/* 写真セクション（coordinate のみ） */}
                 {isCoord && (
                   <div className="border rounded p-2 bg-slate-50">
-                    <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center justify-between mb-2">
                       <span className="text-xs font-semibold text-slate-700 inline-flex items-center gap-1">
                         <Camera className="h-3.5 w-3.5" />
                         測点写真
@@ -5005,22 +5059,64 @@ export function MobileStakingPage() {
                         写真を編集
                       </button>
                     </div>
-                    <div className="grid grid-cols-3 gap-2 text-[11px] text-slate-600">
-                      <div className="text-center bg-white border rounded py-1">
-                        <div>遠景</div>
-                        <div className="font-semibold text-slate-800">{farView.length} 枚</div>
-                      </div>
-                      <div className="text-center bg-white border rounded py-1">
-                        <div>近景</div>
-                        <div className="font-semibold text-slate-800">{nearView.length} 枚</div>
-                      </div>
-                      <div className="text-center bg-white border rounded py-1">
-                        <div>その他</div>
-                        <div className="font-semibold text-slate-800">
-                          {otherPhotos.length} 枚
+
+                    {/* 遠景 / 近景 を横並び */}
+                    <div className="grid grid-cols-2 gap-2">
+                      {(
+                        [
+                          { label: '遠景', list: farView },
+                          { label: '近景', list: nearView },
+                        ] as const
+                      ).map(({ label, list }) => (
+                        <div key={label} className="bg-white border rounded p-1.5">
+                          <div className="text-[10px] text-slate-500 mb-1 flex items-center justify-between">
+                            <span>{label}</span>
+                            <span className="font-semibold text-slate-700">{list.length} 枚</span>
+                          </div>
+                          {list.length === 0 ? (
+                            <button
+                              onClick={() => setPhotoModalTarget(t)}
+                              className="w-full aspect-square rounded border border-dashed border-slate-300 text-slate-400 text-xs hover:bg-slate-50"
+                            >
+                              追加
+                            </button>
+                          ) : (
+                            <div className="grid grid-cols-2 gap-1">
+                              {list.slice(0, 4).map((p) => (
+                                <PointPhotoThumb
+                                  key={p.id}
+                                  filePath={p.filePath}
+                                  getSignedUrl={getSignedUrl}
+                                  onClick={() => setPhotoModalTarget(t)}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* その他があるときだけ下段に表示 */}
+                    {otherPhotos.length > 0 && (
+                      <div className="mt-2 bg-white border rounded p-1.5">
+                        <div className="text-[10px] text-slate-500 mb-1 flex items-center justify-between">
+                          <span>その他</span>
+                          <span className="font-semibold text-slate-700">
+                            {otherPhotos.length} 枚
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-4 gap-1">
+                          {otherPhotos.slice(0, 8).map((p) => (
+                            <PointPhotoThumb
+                              key={p.id}
+                              filePath={p.filePath}
+                              getSignedUrl={getSignedUrl}
+                              onClick={() => setPhotoModalTarget(t)}
+                            />
+                          ))}
                         </div>
                       </div>
-                    </div>
+                    )}
                   </div>
                 )}
               </div>
