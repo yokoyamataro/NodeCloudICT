@@ -12,18 +12,15 @@ import {
   Radio,
   Settings,
   List,
-  Save,
   Tag,
   Trash2,
   ChevronDown,
-  ChevronRight,
   FileText,
   Database,
   Navigation2,
   Share2,
   Check,
   Camera,
-  Car,
   Upload,
   Download,
   Image as ImageIcon,
@@ -46,7 +43,7 @@ import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useMapViewStore } from '@/stores/mapViewStore'
 import { useUnderdrainStore, type PipeRow, PIPE_TYPE_NAMES } from '@/stores/underdrainStore'
-import { useStakingStore, type StakingRecord } from '@/stores/stakingStore'
+import { useStakingStore } from '@/stores/stakingStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import { useExportRouteStore, type RoutePoint } from '@/stores/exportRouteStore'
 import { useAuth } from '@/contexts/AuthContext'
@@ -616,6 +613,8 @@ export function MobileStakingPage() {
   const [showModeChooser, setShowModeChooser] = useState(false)
   // 開始前チェック（RTK）内の「音声ガイダンスを有効化」チェック。既定 ON
   const [startupSoundOn, setStartupSoundOn] = useState(true)
+  // 地図マーカータップで開く点情報モーダルの対象
+  const [pointInfoTarget, setPointInfoTarget] = useState<StakingTarget | null>(null)
   // 座標計算（交点・線上）モーダル
   const [showCalcModal, setShowCalcModal] = useState(false)
   // 計算モーダルで地図から点選択中の割り当て関数
@@ -2450,30 +2449,6 @@ export function MobileStakingPage() {
             {farm?.name ?? '工事測量'}
           </span>
         </div>
-        {/* 道案内（Google マップ） — 工区の中心座標へ */}
-        <button
-          onClick={() => {
-            // 座標の平均位置を目的地とする
-            const locs = coordinates.filter(
-              (c): c is typeof c & { lat: number; lng: number } =>
-                c.lat != null && c.lng != null,
-            )
-            if (locs.length === 0) {
-              alert('工区の位置情報が取得できません')
-              return
-            }
-            const lat = locs.reduce((s, l) => s + l.lat, 0) / locs.length
-            const lng = locs.reduce((s, l) => s + l.lng, 0) / locs.length
-            window.open(
-              `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`,
-              '_blank',
-            )
-          }}
-          className="p-1.5 rounded hover:bg-slate-700"
-          title="道案内（Google マップ）"
-        >
-          <Car className="h-4 w-4" />
-        </button>
         {userLabel && (
           <span className="text-[11px] text-slate-300 truncate max-w-[6rem]" title={user?.email ?? ''}>
             {userLabel}
@@ -2537,12 +2512,12 @@ export function MobileStakingPage() {
         <button
           onClick={() => setShowRecordList((v) => !v)}
           className="p-1.5 rounded bg-slate-700 hover:bg-slate-600 relative"
-          title="記録一覧"
+          title="座標一覧"
         >
           <List className="h-4 w-4" />
-          {records.length > 0 && (
-            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">
-              {records.length > 9 ? '9+' : records.length}
+          {coordinates.length > 0 && (
+            <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">
+              {coordinates.length > 9 ? '9+' : coordinates.length}
             </span>
           )}
         </button>
@@ -3509,6 +3484,7 @@ export function MobileStakingPage() {
                     }
                     if (nearby.length <= 1) {
                       setSelectedTargetId(t.id)
+                      setPointInfoTarget(t)
                       return
                     }
                     setOverlapPicker({ candidates: nearby, mode: 'select' })
@@ -4285,33 +4261,82 @@ export function MobileStakingPage() {
           </div>
         )}
 
-        {/* 記録リスト */}
-        {showRecordList && (() => {
-          const filtered = records.filter((r) => r.surveyCategory === surveyCategory)
-          return (
-            <div className="absolute inset-x-0 bottom-0 z-[1000] bg-white border-t shadow-xl max-h-[60%] flex flex-col">
-              <div className="px-3 py-2 border-b flex items-center gap-2 text-sm">
-                <span className="font-semibold">
-                  {surveyCategory === 'initial' ? '起工測量' : '出来形測量'} 記録
-                </span>
-                <span className="text-xs text-slate-500">{filtered.length} 件</span>
-                <button
-                  onClick={() => setShowRecordList(false)}
-                  className="ml-auto text-xs px-2 py-0.5 border rounded hover:bg-slate-50"
-                >
-                  閉じる
-                </button>
-              </div>
-              <div className="flex-1 overflow-auto">
-                {filtered.length === 0 ? (
-                  <div className="p-4 text-center text-xs text-slate-400">記録なし</div>
-                ) : (
-                  <RecordList records={filtered} onDelete={deleteRecord} saving={saving} />
-                )}
-              </div>
+        {/* 座標一覧（元の座標 + 起工測量記録をマージ表示） */}
+        {showRecordList && (
+          <div className="absolute inset-x-0 bottom-0 z-[1000] bg-white border-t shadow-xl max-h-[65%] flex flex-col">
+            <div className="px-3 py-2 border-b flex items-center gap-2 text-sm">
+              <span className="font-semibold">座標一覧</span>
+              <span className="text-xs text-slate-500">{filteredTargets.length} 件</span>
+              <button
+                onClick={() => setShowRecordList(false)}
+                className="ml-auto text-xs px-2 py-0.5 border rounded hover:bg-slate-50"
+              >
+                閉じる
+              </button>
             </div>
-          )
-        })()}
+            <div className="flex-1 overflow-auto">
+              {filteredTargets.length === 0 ? (
+                <div className="p-4 text-center text-xs text-slate-400">座標がありません</div>
+              ) : (
+                <table className="w-full text-[11px]">
+                  <thead className="sticky top-0 bg-slate-50 z-10">
+                    <tr className="text-slate-500">
+                      <th className="px-2 py-1 text-left">点名</th>
+                      <th className="px-2 py-1 text-right">X</th>
+                      <th className="px-2 py-1 text-right">Y</th>
+                      <th className="px-2 py-1 text-right">Z</th>
+                      <th className="px-2 py-1 text-left">種類</th>
+                      <th className="px-2 py-1 text-left">設置</th>
+                      <th className="px-2 py-1 text-center">写真</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredTargets.map((t) => {
+                      const photoCount =
+                        t.kind === 'coordinate'
+                          ? attachmentsByEntity.get(`coordinate:${t.refId}`)?.length ?? 0
+                          : 0
+                      const statusLabel =
+                        t.kind === 'coordinate' && t.stakeStatus
+                          ? STAKE_STATUS_LABEL[t.stakeStatus] ?? ''
+                          : ''
+                      return (
+                        <tr
+                          key={t.id}
+                          className="border-t hover:bg-blue-50 cursor-pointer"
+                          onClick={() => setPointInfoTarget(t)}
+                        >
+                          <td className="px-2 py-1 font-medium text-slate-800 whitespace-nowrap max-w-[6rem] truncate">
+                            {t.name}
+                          </td>
+                          <td className="px-2 py-1 text-right font-mono">{t.x.toFixed(3)}</td>
+                          <td className="px-2 py-1 text-right font-mono">{t.y.toFixed(3)}</td>
+                          <td className="px-2 py-1 text-right font-mono">
+                            {t.z != null ? t.z.toFixed(3) : '-'}
+                          </td>
+                          <td className="px-2 py-1 text-slate-600 whitespace-nowrap max-w-[5rem] truncate">
+                            {t.subTypeLabel}
+                          </td>
+                          <td className="px-2 py-1 text-slate-600">{statusLabel || '-'}</td>
+                          <td className="px-2 py-1 text-center">
+                            {photoCount > 0 ? (
+                              <span className="inline-flex items-center gap-0.5 text-slate-700">
+                                <Camera className="h-3 w-3" />
+                                {photoCount}
+                              </span>
+                            ) : (
+                              <span className="text-slate-300">-</span>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 下部パネル（施工管理モードでは非表示） */}
@@ -4772,6 +4797,83 @@ export function MobileStakingPage() {
         </div>
       )}
 
+      {/* 点情報モーダル（座標一覧の行タップ / マップマーカータップで開く） */}
+      {pointInfoTarget && (() => {
+        const t = pointInfoTarget
+        const photoCount =
+          t.kind === 'coordinate'
+            ? attachmentsByEntity.get(`coordinate:${t.refId}`)?.length ?? 0
+            : 0
+        const statusLabel =
+          t.kind === 'coordinate' && t.stakeStatus
+            ? STAKE_STATUS_LABEL[t.stakeStatus] ?? ''
+            : ''
+        const openInGoogleMaps = () => {
+          const url = `https://www.google.com/maps/dir/?api=1&destination=${t.lat},${t.lng}`
+          window.open(url, '_blank')
+        }
+        return (
+          <div
+            className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3400] p-3"
+            onClick={() => setPointInfoTarget(null)}
+          >
+            <div
+              className="bg-white w-full sm:max-w-md rounded-t-xl sm:rounded-xl shadow-xl overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="px-4 py-3 border-b flex items-center justify-between">
+                <div className="min-w-0">
+                  <div className="text-sm font-bold text-slate-800 truncate">{t.name}</div>
+                  <div className="text-[11px] text-slate-500">{t.subTypeLabel}</div>
+                </div>
+                <button
+                  onClick={() => setPointInfoTarget(null)}
+                  className="text-slate-400 hover:text-slate-600 p-1"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="p-4 grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm font-mono">
+                <div className="text-slate-500 text-xs font-sans">X</div>
+                <div className="text-slate-800">{t.x.toFixed(3)}</div>
+                <div className="text-slate-500 text-xs font-sans">Y</div>
+                <div className="text-slate-800">{t.y.toFixed(3)}</div>
+                <div className="text-slate-500 text-xs font-sans">Z</div>
+                <div className="text-slate-800">{t.z != null ? t.z.toFixed(3) : '-'}</div>
+                <div className="text-slate-500 text-xs font-sans">設置</div>
+                <div className="text-slate-800 font-sans">{statusLabel || '-'}</div>
+                <div className="text-slate-500 text-xs font-sans">写真</div>
+                <div className="text-slate-800 font-sans">
+                  {photoCount > 0 ? (
+                    <span className="inline-flex items-center gap-1">
+                      <Camera className="h-3.5 w-3.5" />
+                      {photoCount} 枚
+                    </span>
+                  ) : (
+                    'なし'
+                  )}
+                </div>
+              </div>
+              <div className="px-4 pb-4 pt-2 border-t flex gap-2">
+                <button
+                  onClick={() => setPointInfoTarget(null)}
+                  className="flex-1 px-3 py-2 text-sm border rounded hover:bg-slate-50"
+                >
+                  閉じる
+                </button>
+                <button
+                  onClick={openInGoogleMaps}
+                  className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+                >
+                  <Navigation2 className="h-4 w-4" />
+                  この点まで案内
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
       {/* 現場開始前チェック（ジオイド補正・目標高 と既知点による精度チェックの喚起） */}
       {showStartupCheck && (
         <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center z-[3500]">
@@ -4990,90 +5092,6 @@ function ActiveSectionChart({
   )
 }
 
-function RecordList({
-  records,
-  onDelete,
-  saving,
-}: {
-  records: StakingRecord[]
-  onDelete: (id: string) => Promise<void>
-  saving: boolean
-}) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  return (
-    <ul className="divide-y text-sm">
-      {records.map((r) => {
-        const diff =
-          r.targetX != null && r.targetY != null
-            ? Math.hypot(r.measuredX - r.targetX, r.measuredY - r.targetY)
-            : null
-        const isOpen = expanded.has(r.id)
-        return (
-          <li key={r.id} className="px-3 py-2">
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() =>
-                  setExpanded((s) => {
-                    const n = new Set(s)
-                    if (n.has(r.id)) n.delete(r.id)
-                    else n.add(r.id)
-                    return n
-                  })
-                }
-                className="p-0.5"
-              >
-                {isOpen ? (
-                  <ChevronDown className="h-3.5 w-3.5" />
-                ) : (
-                  <ChevronRight className="h-3.5 w-3.5" />
-                )}
-              </button>
-              <div className="flex-1 min-w-0">
-                <div className="font-medium truncate">
-                  {r.targetName ?? '(フリー記録)'}
-                </div>
-                <div className="text-[11px] text-slate-500">
-                  {new Date(r.recordedAt).toLocaleString('ja-JP')}
-                  {r.accuracy != null && ` · 精度 ${r.accuracy.toFixed(3)}m`}
-                  {r.sampleCount != null && ` · ${r.sampleCount}samples`}
-                </div>
-              </div>
-              {diff != null && (
-                <span className="text-xs font-mono text-slate-700 w-16 text-right">
-                  Δ{diff < 1 ? `${(diff * 100).toFixed(0)}cm` : `${diff.toFixed(2)}m`}
-                </span>
-              )}
-              <button
-                onClick={() => {
-                  if (confirm('この記録を削除しますか？')) onDelete(r.id)
-                }}
-                disabled={saving}
-                className="p-1 text-slate-400 hover:text-red-500 disabled:opacity-50"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
-            {isOpen && (
-              <div className="mt-1 ml-5 text-[11px] text-slate-600 font-mono space-y-0.5">
-                {r.targetX != null && (
-                  <div>
-                    目標: X={r.targetX.toFixed(3)}, Y={r.targetY?.toFixed(3)}
-                    {r.targetZ != null && `, Z=${r.targetZ.toFixed(3)}`}
-                  </div>
-                )}
-                <div className="flex items-center gap-1">
-                  <Save className="h-3 w-3" />
-                  実測: X={r.measuredX.toFixed(3)}, Y={r.measuredY.toFixed(3)}
-                  {r.measuredZ != null && `, Z=${r.measuredZ.toFixed(3)}`}
-                </div>
-              </div>
-            )}
-          </li>
-        )
-      })}
-    </ul>
-  )
-}
 
 // 近接モード（精密誘導）: 地図に替えて自己位置中心のレーダー表示。
 // 1m 以内で起動し、10cm 以内では 10cm 幅へ自動でズームイン。
