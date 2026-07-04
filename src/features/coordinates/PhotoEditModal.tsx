@@ -78,9 +78,10 @@ export function PhotoEditModal({
   const [completedCrop, setCompletedCrop] = useState<PixelCrop | null>(null)
   const [busy, setBusy] = useState(false)
   const imgRef = useRef<HTMLImageElement>(null)
-  // 撮影日: 既存写真の編集なら initialTakenAt、それ以外は今日から。EXIF があれば上書き。
+  // 撮影日: 既存写真の編集なら initialTakenAt、それ以外は空。EXIF が取れれば下の
+  // useEffect で上書き。EXIF が無ければ空のままにする（本日を勝手に入れない）。
   const [takenAtStr, setTakenAtStr] = useState<string>(() =>
-    toDateInputValue(initialTakenAt ?? new Date()),
+    initialTakenAt ? toDateInputValue(initialTakenAt) : '',
   )
   const [caption, setCaption] = useState<string>(initialCaption ?? '')
   const [exifLoaded, setExifLoaded] = useState(false)
@@ -300,52 +301,40 @@ export function PhotoEditModal({
           )}
         </div>
 
-        {/* メタ情報入力（撮影日 + 備考）。EXIF があれば撮影日にプリフィル済み。 */}
-        <div className="px-4 py-2 border-t bg-slate-50 grid grid-cols-[auto,1fr] gap-x-2 gap-y-1.5 items-center">
-          <label className="text-xs text-slate-600">撮影日</label>
+        {/* メタ情報入力: 撮影日・備考は 1 行ずつ横並び、位置・方向は「地図で編集」ボタンのみ */}
+        <div className="px-4 py-2 border-t bg-slate-50 space-y-1.5">
           <div className="flex items-center gap-2">
+            <label className="text-xs text-slate-600 shrink-0 w-14">撮影日</label>
             <input
               type="date"
               value={takenAtStr}
               onChange={(e) => setTakenAtStr(e.target.value)}
               className="px-2 py-1 text-sm border rounded"
             />
-            <span className="text-[10px] text-slate-400">
-              {exifLoaded ? '（EXIF が無い場合は本日）' : 'EXIF 読み取り中…'}
-            </span>
+            {enableLocationEdit && (
+              <button
+                type="button"
+                onClick={() => setMode('location')}
+                className="ml-auto text-xs px-2 py-1 border rounded text-blue-700 border-blue-300 hover:bg-blue-50 inline-flex items-center gap-1"
+              >
+                <MapPin className="h-3.5 w-3.5" />
+                地図で編集
+              </button>
+            )}
+            {!enableLocationEdit && !exifLoaded && (
+              <span className="text-[10px] text-slate-400">EXIF 読み取り中…</span>
+            )}
           </div>
-          <label className="text-xs text-slate-600">備考</label>
-          <input
-            type="text"
-            value={caption}
-            onChange={(e) => setCaption(e.target.value)}
-            placeholder="任意のメモ（例: 杭頭飛び、コンクリート巻き 等）"
-            className="px-2 py-1 text-sm border rounded"
-          />
-          {enableLocationEdit && (
-            <>
-              <label className="text-xs text-slate-600">位置・方向</label>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs text-slate-600 inline-flex items-center gap-1">
-                  <MapPin className="h-3.5 w-3.5" />
-                  {lat != null && lng != null
-                    ? `${lat.toFixed(6)}, ${lng.toFixed(6)}`
-                    : '未設定'}
-                </span>
-                <span className="text-xs text-slate-600 inline-flex items-center gap-1">
-                  <Compass className="h-3.5 w-3.5" />
-                  {headingDeg != null ? `${headingDeg.toFixed(0)}°` : '未設定'}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setMode('location')}
-                  className="ml-auto text-xs text-blue-600 hover:text-blue-800 underline"
-                >
-                  地図で編集
-                </button>
-              </div>
-            </>
-          )}
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-slate-600 shrink-0 w-14">備考</label>
+            <input
+              type="text"
+              value={caption}
+              onChange={(e) => setCaption(e.target.value)}
+              placeholder="任意のメモ（例: 杭頭飛び、コンクリート巻き 等）"
+              className="flex-1 px-2 py-1 text-sm border rounded"
+            />
+          </div>
         </div>
 
         <div className="px-4 py-2 border-t flex items-center gap-2">
