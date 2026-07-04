@@ -4999,13 +4999,6 @@ export function MobileStakingPage() {
               <div className="text-sm font-bold text-amber-700">簡易測定モード</div>
               <div className="text-xs text-slate-600 mt-0.5">スマホで手軽に概略調査</div>
             </button>
-
-            <button
-              onClick={() => setShowModeChooser(false)}
-              className="mt-3 w-full px-2 py-1.5 text-xs border rounded text-slate-500 hover:bg-slate-50"
-            >
-              後で選ぶ（測定は無効）
-            </button>
           </div>
         </div>
       )}
