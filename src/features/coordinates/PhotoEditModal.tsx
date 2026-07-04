@@ -82,21 +82,19 @@ export function PhotoEditModal({
   const [completedCrop, setCompletedCrop] = useState<PixelCrop | null>(null)
   const [busy, setBusy] = useState(false)
   const imgRef = useRef<HTMLImageElement>(null)
-  // トリミング枠のアスペクト比。null なら自由、既定は 4:3
-  type AspectKey = '1:1' | '4:3' | '16:9' | '3:4' | '9:16' | 'free'
-  const [aspectKey, setAspectKey] = useState<AspectKey>('4:3')
-  const aspect =
-    aspectKey === '1:1'
-      ? 1
-      : aspectKey === '4:3'
-        ? 4 / 3
-        : aspectKey === '16:9'
-          ? 16 / 9
-          : aspectKey === '3:4'
-            ? 3 / 4
-            : aspectKey === '9:16'
-              ? 9 / 16
-              : undefined
+  // トリミング枠のアスペクト比。ラベルは常に "短辺:長辺" で持ち、横長 / 縦長 の
+  // 向きボタンでどちらを width に当てるか切り替える。既定は 横長 + 3:4（従来の
+  // 4:3 相当）。
+  type AspectKey = '1:1' | '2:3' | '3:4' | '9:16' | 'free'
+  const [aspectKey, setAspectKey] = useState<AspectKey>('3:4')
+  const [orientation, setOrientation] = useState<'landscape' | 'portrait'>('landscape')
+  const aspect: number | undefined = (() => {
+    if (aspectKey === 'free') return undefined
+    if (aspectKey === '1:1') return 1
+    const [a, b] = aspectKey.split(':').map(Number)
+    // a < b。横長 = b/a、縦長 = a/b
+    return orientation === 'landscape' ? b / a : a / b
+  })()
   // 「トリミング」ボタンの 2 段階フロー用の状態
   //   showHandles=false, hasApplied=false → 初期。ハンドル・比率非表示、[トリミング] のみ
   //   showHandles=true,  hasApplied=false → 編集中。ハンドル・比率表示、[トリミング] で仮確定
@@ -471,9 +469,33 @@ export function PhotoEditModal({
 
         {/* トリミング比率選択（トリミングハンドル表示時のみ） */}
         {showHandles && (
-          <div className="px-4 py-1.5 border-t bg-slate-50 flex items-center gap-1 text-xs">
-            <span className="text-slate-500 mr-1">比率:</span>
-            {(['1:1', '4:3', '16:9', '3:4', '9:16', 'free'] as const).map((k) => (
+          <div className="px-4 py-1.5 border-t bg-slate-50 flex items-center gap-1 text-xs flex-wrap">
+            {/* 横長 / 縦長 の向きトグル。1:1・自由 のときは効かない */}
+            <div className="inline-flex rounded border overflow-hidden mr-2">
+              <button
+                onClick={() => setOrientation('landscape')}
+                disabled={aspectKey === '1:1' || aspectKey === 'free'}
+                className={`px-2 py-0.5 border-r ${
+                  orientation === 'landscape'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white text-slate-700 hover:bg-slate-100'
+                } disabled:opacity-40`}
+              >
+                横長
+              </button>
+              <button
+                onClick={() => setOrientation('portrait')}
+                disabled={aspectKey === '1:1' || aspectKey === 'free'}
+                className={`px-2 py-0.5 ${
+                  orientation === 'portrait'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white text-slate-700 hover:bg-slate-100'
+                } disabled:opacity-40`}
+              >
+                縦長
+              </button>
+            </div>
+            {(['1:1', '2:3', '3:4', '9:16', 'free'] as const).map((k) => (
               <button
                 key={k}
                 onClick={() => setAspectKey(k)}
