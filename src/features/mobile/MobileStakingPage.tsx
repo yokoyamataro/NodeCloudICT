@@ -516,7 +516,8 @@ export function MobileStakingPage() {
     coordinates,
     importCoordinates,
     setStakeStatus,
-    updateCoordinate,
+    setCoordinateType,
+    setNotes,
   } = useCoordinateStore()
   // 設置状態フィルタ（PC と共有。localStorage 永続化）
   const visibleStakeStatuses = useMapViewStore((s) => s.visibleStakeStatuses)
@@ -5000,9 +5001,8 @@ export function MobileStakingPage() {
                       <select
                         value={currentType}
                         onChange={(e) =>
-                          updateCoordinate(
+                          void setCoordinateType(
                             t.refId,
-                            'type',
                             e.target.value as CoordinateRow['type'],
                           )
                         }
@@ -5041,6 +5041,23 @@ export function MobileStakingPage() {
                         {t.subTypeLabel}
                       </div>
                     </div>
+                  </div>
+                )}
+
+                {/* 備考（coordinate のみ編集可、blur で即時保存） */}
+                {isCoord && (
+                  <div>
+                    <div className="text-[10px] text-slate-500 mb-0.5">備考</div>
+                    <input
+                      type="text"
+                      defaultValue={liveCoord?.notes ?? ''}
+                      onBlur={(e) => {
+                        const v = e.target.value.trim()
+                        void setNotes(t.refId, v.length > 0 ? v : null)
+                      }}
+                      placeholder="任意のメモ"
+                      className="w-full px-2 py-1 text-sm border rounded bg-white"
+                    />
                   </div>
                 )}
 

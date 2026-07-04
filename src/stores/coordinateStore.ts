@@ -63,6 +63,8 @@ export interface CoordinateRow {
   stakeType: string | null
   /** 設置状態（地籍測量モードの杭設置ワークフロー）。既定 'none' */
   stakeStatus: StakeStatus
+  /** 備考（自由入力）。SIMA インポート等の出所メモにも使う */
+  notes: string | null
   /** 作成日時 (ISO) */
   createdAt: string | null
   /** 最終更新日時 (ISO) */
@@ -127,6 +129,10 @@ interface CoordinateState {
   getCoordinateById: (id: string) => CoordinateRow | undefined
   /** 設置状態を即時 DB に反映（楽観 + サーバ更新。pendingChanges は通さない） */
   setStakeStatus: (id: string, status: StakeStatus) => Promise<void>
+  /** 点種を即時 DB に反映（スマホからの編集用。pendingChanges は通さない） */
+  setCoordinateType: (id: string, type: CoordinateType) => Promise<void>
+  /** 備考を即時 DB に反映（スマホからの編集用。pendingChanges は通さない） */
+  setNotes: (id: string, notes: string | null) => Promise<void>
 
   // フィルタリング
   selectedType: CoordinateType
@@ -244,6 +250,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
           type: normalizeCoordinateType(row.coordinate_type) as CoordinateType,
           stakeType: row.stake_type ?? null,
           stakeStatus: normalizeStakeStatus(row.stake_status),
+          notes: row.notes ?? null,
           createdAt: row.created_at ?? null,
           updatedAt: row.updated_at ?? null,
           createdBy: row.created_by ?? null,
@@ -309,6 +316,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         type: normalizeCoordinateType(row.coordinate_type) as CoordinateType,
         stakeType: row.stake_type ?? null,
         stakeStatus: normalizeStakeStatus(row.stake_status),
+        notes: null,
         createdAt: row.created_at ?? null,
         updatedAt: row.updated_at ?? null,
         createdBy: row.created_by ?? null,
@@ -409,6 +417,55 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
     }
   },
 
+  // 点種の即時反映（スマホの点情報モーダル用）。pendingChanges は通さず楽観 + サーバ更新。
+  setCoordinateType: async (id, type) => {
+    const prev = get().coordinates.find((c) => c.id === id)
+    if (!prev) return
+    const safeType = normalizeCoordinateType(type) as CoordinateType
+    set((state) => ({
+      coordinates: state.coordinates.map((c) =>
+        c.id === id ? { ...c, type: safeType } : c,
+      ),
+    }))
+    try {
+      const { error } = await supabase
+        .from('design_coordinates')
+        .update({ coordinate_type: safeType } as never)
+        .eq('id', id)
+      if (error) throw error
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[coordinateStore] setCoordinateType failed', err, { id, type })
+      set((state) => ({
+        coordinates: state.coordinates.map((c) => (c.id === id ? { ...c, type: prev.type } : c)),
+        error: extractSupabaseErrorMessage(err, '点種の保存に失敗しました'),
+      }))
+    }
+  },
+
+  // 備考の即時反映（スマホの点情報モーダル用）。
+  setNotes: async (id, notes) => {
+    const prev = get().coordinates.find((c) => c.id === id)
+    if (!prev) return
+    set((state) => ({
+      coordinates: state.coordinates.map((c) => (c.id === id ? { ...c, notes } : c)),
+    }))
+    try {
+      const { error } = await supabase
+        .from('design_coordinates')
+        .update({ notes } as never)
+        .eq('id', id)
+      if (error) throw error
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[coordinateStore] setNotes failed', err, { id, notes })
+      set((state) => ({
+        coordinates: state.coordinates.map((c) => (c.id === id ? { ...c, notes: prev.notes } : c)),
+        error: extractSupabaseErrorMessage(err, '備考の保存に失敗しました'),
+      }))
+    }
+  },
+
   // 複数 ID を一括削除（in() は URL 長制限があるため 100 件ずつチャンク）
   deleteCoordinates: async (ids) => {
     if (ids.length === 0) return
@@ -504,6 +561,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
             type: src.coordinate_type as CoordinateType,
             stakeType: src.stake_type ?? null,
             stakeStatus: 'unset',
+            notes: src.notes ?? null,
             createdAt: null,
             updatedAt: null,
             createdBy: src.created_by,
@@ -591,6 +649,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
             coordinate_type: normalizeCoordinateType(coord.type),
             stake_type: coord.stakeType,
             stake_status: safeStakeStatus,
+            notes: coord.notes,
             latitude: coord.lat,
             longitude: coord.lng,
             updated_by: uid,

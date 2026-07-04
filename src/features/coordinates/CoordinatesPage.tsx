@@ -1557,6 +1557,7 @@ export function CoordinatesPage() {
         <td className="px-0.5 py-0.5 text-right text-slate-300">-</td>
         <td className="px-0.5 py-0.5 text-slate-300">-</td>
         <td className="px-0.5 py-0.5 text-slate-300">-</td>
+        <td className="px-0.5 py-0.5 text-slate-300">-</td>
         <td className="px-1 py-0.5"></td>
       </tr>
     )
@@ -2053,6 +2054,7 @@ export function CoordinatesPage() {
                 <th className="px-0.5 py-2 text-right font-medium">経度</th>
                 <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新者</th>
                 <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新日時</th>
+                <th className="px-0.5 py-2 text-left font-medium">備考</th>
                 <th className="px-1 py-2 w-16"></th>
               </tr>
             </thead>
@@ -2213,6 +2215,18 @@ export function CoordinatesPage() {
                   </td>
                   <td className="px-0.5 py-0.5 text-xs text-muted-foreground font-mono whitespace-nowrap">
                     {fmtDateTime(coord.updatedAt)}
+                  </td>
+                  <td className="px-0.5 py-0.5">
+                    <input
+                      type="text"
+                      value={coord.notes ?? ''}
+                      onChange={(e) =>
+                        updateCoordinate(coord.id, 'notes', e.target.value || null)
+                      }
+                      onClick={(e) => e.stopPropagation()}
+                      placeholder="-"
+                      className="w-40 px-1 py-0.5 border rounded text-xs bg-white"
+                    />
                   </td>
                   <td className="px-1 py-0.5">
                     <button
@@ -2393,6 +2407,7 @@ export function CoordinatesPage() {
                       <th className="px-0.5 py-2 text-right font-medium">経度</th>
                       <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新者</th>
                       <th className="px-0.5 py-2 text-left font-medium whitespace-nowrap">更新日時</th>
+                      <th className="px-0.5 py-2 text-left font-medium">備考</th>
                       <th className="px-1 py-2 w-16"></th>
                     </tr>
                   </thead>
@@ -2553,6 +2568,18 @@ export function CoordinatesPage() {
                         </td>
                         <td className="px-0.5 py-0.5 text-xs text-muted-foreground font-mono whitespace-nowrap">
                           {fmtDateTime(coord.updatedAt)}
+                        </td>
+                        <td className="px-0.5 py-0.5">
+                          <input
+                            type="text"
+                            value={coord.notes ?? ''}
+                            onChange={(e) =>
+                              updateCoordinate(coord.id, 'notes', e.target.value || null)
+                            }
+                            onClick={(e) => e.stopPropagation()}
+                            placeholder="-"
+                            className="w-40 px-1 py-0.5 border rounded text-xs bg-white"
+                          />
                         </td>
                         <td className="px-1 py-0.5">
                           <button
