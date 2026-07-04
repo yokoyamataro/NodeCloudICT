@@ -201,21 +201,22 @@ function nextNumberedName(
   return `${p}-${max + 1}`
 }
 
-// RTK が外れた時の警告音「ブーッ」（低く長い音）
+// RTK が外れた時の警告音「ブッ」（短く控えめ）。
+// 頻繁に外れる現場でうるさくならないよう、音量小・持続 0.12 秒に抑える。
 function playBuzzer(ctx: AudioContext) {
   const t = ctx.currentTime
   const osc = ctx.createOscillator()
   const gain = ctx.createGain()
   osc.type = 'sawtooth'
-  osc.frequency.value = 200
+  osc.frequency.value = 240
   gain.gain.setValueAtTime(0.0001, t)
-  gain.gain.exponentialRampToValueAtTime(0.4, t + 0.02)
-  gain.gain.setValueAtTime(0.4, t + 0.4)
-  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.5)
+  gain.gain.exponentialRampToValueAtTime(0.13, t + 0.01)
+  gain.gain.setValueAtTime(0.13, t + 0.09)
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.13)
   osc.connect(gain)
   gain.connect(ctx.destination)
   osc.start(t)
-  osc.stop(t + 0.55)
+  osc.stop(t + 0.15)
 }
 
 function FitOnce({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
@@ -596,6 +597,12 @@ export function MobileStakingPage() {
   // 現場を開いたときの開始前チェック（ジオイド補正・目標高(アンテナ高)・既知点精度確認の喚起）
   // 工区IDごとにセッション中 1 回だけ表示する。
   const [showStartupCheck, setShowStartupCheck] = useState(false)
+  // 測位モード選択（RTK / スマホ GPS）。工区ごとに sessionStorage で保持。
+  //  - 'rtk': Drogger RTK 接続 (cm 測位)。既存フローどおり測定可、開始前チェックあり。
+  //  - 'gps': スマホ GPS のみ。誤差ありのため測定ボタンは無効化。
+  type PositioningMode = 'rtk' | 'gps'
+  const [positioningMode, setPositioningMode] = useState<PositioningMode | null>(null)
+  const [showModeChooser, setShowModeChooser] = useState(false)
   // 座標計算（交点・線上）モーダル
   const [showCalcModal, setShowCalcModal] = useState(false)
   // 計算モーダルで地図から点選択中の割り当て関数
@@ -960,6 +967,23 @@ export function MobileStakingPage() {
     // 比較は id 集合だけ
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [parcelAreas.map((a) => a.id).join(','), fetchParcels])
+
+  // 工区を開いたら測位モード（RTK / スマホ GPS）の選択を促す。
+  // 選択済みは sessionStorage に保持し、同一セッション中は再表示しない。
+  useEffect(() => {
+    if (!farmId) return
+    try {
+      const saved = sessionStorage.getItem(`mobile:positioning-mode:${farmId}`)
+      if (saved === 'rtk' || saved === 'gps') {
+        setPositioningMode(saved)
+        return
+      }
+    } catch {
+      /* sessionStorage 不可 */
+    }
+    setPositioningMode(null)
+    setShowModeChooser(true)
+  }, [farmId])
 
   // 地籍工事のときだけ地番編集ボタンを出す
   const isCadastral = project?.category === 'cadastral'
@@ -1834,7 +1858,17 @@ export function MobileStakingPage() {
       return
     }
     if (!farmId) return
-    // 初回押下時のみ「開始前チェック」モーダルを出して観測は止める。
+    // スマホ GPS モードでは測定不可
+    if (positioningMode === 'gps') {
+      alert('スマホ GPS モードでは測定できません。Drogger RTK に切り替えてください。')
+      return
+    }
+    // モード未選択なら選択モーダルを出す
+    if (positioningMode == null) {
+      setShowModeChooser(true)
+      return
+    }
+    // RTK モードの初回押下時のみ「開始前チェック」モーダルを出して観測は止める。
     // 工区ごとにセッション中 1 回だけ。ユーザーが「確認した」で閉じてから
     // もう一度記録ボタンを押すと観測が始まる。
     try {
@@ -4426,8 +4460,13 @@ export function MobileStakingPage() {
               {/* 測定（旧 記録） */}
               <button
                 onClick={() => startRecording()}
-                disabled={saving || !currentPos}
+                disabled={saving || !currentPos || positioningMode === 'gps'}
                 className="flex-1 basis-0 flex items-center justify-center gap-1 px-2 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed font-bold"
+                title={
+                  positioningMode === 'gps'
+                    ? 'スマホ GPS モードでは測定できません（Drogger RTK に切替）'
+                    : undefined
+                }
               >
                 <CircleIcon className="h-5 w-5" />
                 測定
@@ -4740,22 +4779,62 @@ export function MobileStakingPage() {
               </div>
             </div>
 
-            {/* 既知点による精度チェック喚起 */}
-            <div className="border border-red-300 rounded-lg p-3 mb-4 bg-red-50">
-              <div className="text-sm font-bold text-red-700 mb-1">⚠ 精度チェックのお願い</div>
-              <div className="text-xs text-red-700 leading-relaxed mb-2">
-                必ず１点以上の既知点を計測し、精度チェックを行ってください。
-              </div>
-              <div className="text-xs text-red-700 leading-relaxed">
-                GNSS測位にはミスFIXが生じる可能性があります。適宜の方法で点検してください。
-              </div>
-            </div>
-
             <button
               onClick={() => setShowStartupCheck(false)}
               className="w-full px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold"
             >
               確認した
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 測位モード選択（工区オープン時に 1 回表示） */}
+      {showModeChooser && farmId && (
+        <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center z-[3600]">
+          <div className="bg-white w-full sm:max-w-md rounded-t-xl sm:rounded-xl shadow-xl p-4">
+            <h3 className="text-base font-bold mb-2 text-slate-800">測位方法を選択</h3>
+            <p className="text-xs text-slate-600 mb-3">
+              現場で使用する測位方法を選んでください。工区ごとに 1 回だけ聞きます。
+            </p>
+
+            <button
+              onClick={() => {
+                setPositioningMode('rtk')
+                try { sessionStorage.setItem(`mobile:positioning-mode:${farmId}`, 'rtk') } catch { /* ignore */ }
+                setShowModeChooser(false)
+                // RTK を選んだら続けて開始前チェック（ジオイド補正 / アンテナ高）を出す
+                try {
+                  const key = `mobile:startup-check:${farmId}`
+                  if (sessionStorage.getItem(key) !== '1') {
+                    setShowStartupCheck(true)
+                    sessionStorage.setItem(key, '1')
+                  }
+                } catch { /* ignore */ }
+              }}
+              className="w-full border-2 border-blue-600 rounded-lg p-3 mb-3 text-left hover:bg-blue-50"
+            >
+              <div className="text-sm font-bold text-blue-700">Drogger RTK を接続する</div>
+              <div className="text-xs text-slate-600 mt-0.5">cm 測位</div>
+            </button>
+
+            <button
+              onClick={() => {
+                setPositioningMode('gps')
+                try { sessionStorage.setItem(`mobile:positioning-mode:${farmId}`, 'gps') } catch { /* ignore */ }
+                setShowModeChooser(false)
+              }}
+              className="w-full border-2 border-amber-500 rounded-lg p-3 text-left hover:bg-amber-50"
+            >
+              <div className="text-sm font-bold text-amber-700">スマホ GPS を使用する</div>
+              <div className="text-xs text-slate-600 mt-0.5">位置情報は誤差があります</div>
+            </button>
+
+            <button
+              onClick={() => setShowModeChooser(false)}
+              className="mt-3 w-full px-2 py-1.5 text-xs border rounded text-slate-500 hover:bg-slate-50"
+            >
+              後で選ぶ（測定は無効）
             </button>
           </div>
         </div>
