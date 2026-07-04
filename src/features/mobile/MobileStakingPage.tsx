@@ -4476,9 +4476,9 @@ export function MobileStakingPage() {
         {/* MAP モード行: ターゲット設定 → 誘導表示 */}
         {showMap && (selectedTarget ? (
           <div className="flex items-center gap-2">
-            {/* ターゲット選択中は 測定 ボタンを点名の左に配置 */}
-            {!recording && (() => {
-              const isGps = positioningMode === 'gps'
+            {/* ターゲット選択中は 測定 ボタンを点名の左に配置。
+                簡易測定モードではターゲット測設の概念がないので測定ボタンは出さない。 */}
+            {!recording && positioningMode !== 'gps' && (() => {
               const rtkNotFix =
                 positioningMode === 'rtk' &&
                 (currentAcc == null || currentAcc > rtkFixAccuracyM)
@@ -4487,19 +4487,15 @@ export function MobileStakingPage() {
                 <button
                   onClick={() => startRecording()}
                   disabled={disabled}
-                  className={`shrink-0 flex items-center justify-center gap-1 px-3 py-2 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm ${
-                    isGps ? 'bg-orange-500 hover:bg-orange-600' : 'bg-red-600 hover:bg-red-700'
-                  }`}
+                  className="shrink-0 flex items-center justify-center gap-1 px-3 py-2 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm bg-red-600 hover:bg-red-700"
                   title={
-                    isGps
-                      ? '1 回だけ位置を取得します（補正なしの簡易測定）'
-                      : rtkNotFix
-                        ? `精度 ${(rtkFixAccuracyM * 100).toFixed(1)}cm 以下で測定可能`
-                        : undefined
+                    rtkNotFix
+                      ? `精度 ${(rtkFixAccuracyM * 100).toFixed(1)}cm 以下で測定可能`
+                      : undefined
                   }
                 >
                   <CircleIcon className="h-4 w-4" />
-                  {isGps ? '簡易' : '測定'}
+                  測定
                 </button>
               )
             })()}
