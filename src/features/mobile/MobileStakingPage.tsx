@@ -471,8 +471,14 @@ export function MobileStakingPage() {
     byProject: pointTypesByProject,
     fetchForProject: fetchPointTypes,
   } = useCoordinatePointTypeStore()
-  const { setZone, fetchCoordinates, coordinates, importCoordinates, setStakeStatus } =
-    useCoordinateStore()
+  const {
+    setZone,
+    fetchCoordinates,
+    coordinates,
+    importCoordinates,
+    setStakeStatus,
+    updateCoordinate,
+  } = useCoordinateStore()
   // 設置状態フィルタ（PC と共有。localStorage 永続化）
   const visibleStakeStatuses = useMapViewStore((s) => s.visibleStakeStatuses)
   const toggleVisibleStakeStatus = useMapViewStore((s) => s.toggleVisibleStakeStatus)
@@ -4887,14 +4893,22 @@ export function MobileStakingPage() {
       {/* 点情報モーダル（座標一覧の行タップ / マップマーカータップで開く） */}
       {pointInfoTarget && (() => {
         const t = pointInfoTarget
-        const photoCount =
-          t.kind === 'coordinate'
-            ? attachmentsByEntity.get(`coordinate:${t.refId}`)?.length ?? 0
-            : 0
-        const statusLabel =
-          t.kind === 'coordinate' && t.stakeStatus
-            ? STAKE_STATUS_LABEL[t.stakeStatus] ?? ''
-            : ''
+        const isCoord = t.kind === 'coordinate'
+        // 編集内容が即座に反映されるよう、最新の coordinate 行から type / stakeStatus を読み直す
+        const liveCoord = isCoord ? coordinates.find((c) => c.id === t.refId) : null
+        const currentType = liveCoord?.type ?? t.subType
+        const currentStatus = (liveCoord?.stakeStatus ?? t.stakeStatus) as
+          | typeof t.stakeStatus
+          | ''
+        // 写真（遠景 / 近景 / その他）
+        const photos = isCoord
+          ? attachmentsByEntity.get(`coordinate:${t.refId}`) ?? []
+          : []
+        const farView = photos.filter((p) => p.category === '遠景')
+        const nearView = photos.filter((p) => p.category === '近景')
+        const otherPhotos = photos.filter(
+          (p) => p.category !== '遠景' && p.category !== '近景',
+        )
         const openInGoogleMaps = () => {
           const url = `https://www.google.com/maps/dir/?api=1&destination=${t.lat},${t.lng}`
           window.open(url, '_blank')
@@ -4905,7 +4919,7 @@ export function MobileStakingPage() {
             onClick={() => setPointInfoTarget(null)}
           >
             <div
-              className="bg-white w-full sm:max-w-md rounded-t-xl sm:rounded-xl shadow-xl overflow-hidden"
+              className="bg-white w-full sm:max-w-md rounded-t-xl sm:rounded-xl shadow-xl overflow-hidden flex flex-col max-h-[92vh]"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="px-4 py-3 border-b flex items-center justify-between">
@@ -4920,27 +4934,97 @@ export function MobileStakingPage() {
                   <X className="h-5 w-5" />
                 </button>
               </div>
-              <div className="p-4 grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm font-mono">
-                <div className="text-slate-500 text-xs font-sans">X</div>
-                <div className="text-slate-800">{t.x.toFixed(3)}</div>
-                <div className="text-slate-500 text-xs font-sans">Y</div>
-                <div className="text-slate-800">{t.y.toFixed(3)}</div>
-                <div className="text-slate-500 text-xs font-sans">Z</div>
-                <div className="text-slate-800">{t.z != null ? t.z.toFixed(3) : '-'}</div>
-                <div className="text-slate-500 text-xs font-sans">設置</div>
-                <div className="text-slate-800 font-sans">{statusLabel || '-'}</div>
-                <div className="text-slate-500 text-xs font-sans">写真</div>
-                <div className="text-slate-800 font-sans">
-                  {photoCount > 0 ? (
-                    <span className="inline-flex items-center gap-1">
-                      <Camera className="h-3.5 w-3.5" />
-                      {photoCount} 枚
-                    </span>
-                  ) : (
-                    'なし'
-                  )}
+
+              <div className="overflow-auto flex-1 p-4 space-y-3">
+                {/* 座標（読み取り専用） */}
+                <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm font-mono">
+                  <div className="text-slate-500 text-xs font-sans">X</div>
+                  <div className="text-slate-800">{t.x.toFixed(3)}</div>
+                  <div className="text-slate-500 text-xs font-sans">Y</div>
+                  <div className="text-slate-800">{t.y.toFixed(3)}</div>
+                  <div className="text-slate-500 text-xs font-sans">Z</div>
+                  <div className="text-slate-800">{t.z != null ? t.z.toFixed(3) : '-'}</div>
                 </div>
+
+                {/* 点種 / 設置（coordinate のみ編集可） */}
+                {isCoord ? (
+                  <div className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1.5 items-center">
+                    <label className="text-xs text-slate-500">点種</label>
+                    <select
+                      value={currentType}
+                      onChange={(e) =>
+                        updateCoordinate(
+                          t.refId,
+                          'type',
+                          e.target.value as CoordinateRow['type'],
+                        )
+                      }
+                      className="w-full px-2 py-1 text-sm border rounded bg-white"
+                    >
+                      {typeOptions.map((o) => (
+                        <option key={o.code} value={o.code}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                    <label className="text-xs text-slate-500">設置</label>
+                    <select
+                      value={currentStatus || ''}
+                      onChange={(e) => {
+                        const v = e.target.value as typeof currentStatus
+                        void setStakeStatus(t.refId, v)
+                      }}
+                      className="w-full px-2 py-1 text-sm border rounded bg-white"
+                    >
+                      {STAKE_STATUS_OPTIONS.map((s) => (
+                        <option key={s} value={s}>
+                          {STAKE_STATUS_LABEL[s]}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
+                    <div className="text-slate-500 text-xs font-sans">点種</div>
+                    <div className="text-slate-800">{t.subTypeLabel}</div>
+                  </div>
+                )}
+
+                {/* 写真セクション（coordinate のみ） */}
+                {isCoord && (
+                  <div className="border rounded p-2 bg-slate-50">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-semibold text-slate-700 inline-flex items-center gap-1">
+                        <Camera className="h-3.5 w-3.5" />
+                        測点写真
+                      </span>
+                      <button
+                        onClick={() => setPhotoModalTarget(t)}
+                        className="text-xs px-2 py-0.5 border rounded bg-white text-blue-700 border-blue-300 hover:bg-blue-50"
+                      >
+                        写真を編集
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-[11px] text-slate-600">
+                      <div className="text-center bg-white border rounded py-1">
+                        <div>遠景</div>
+                        <div className="font-semibold text-slate-800">{farView.length} 枚</div>
+                      </div>
+                      <div className="text-center bg-white border rounded py-1">
+                        <div>近景</div>
+                        <div className="font-semibold text-slate-800">{nearView.length} 枚</div>
+                      </div>
+                      <div className="text-center bg-white border rounded py-1">
+                        <div>その他</div>
+                        <div className="font-semibold text-slate-800">
+                          {otherPhotos.length} 枚
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
+
               <div className="px-4 pb-4 pt-2 border-t flex gap-2">
                 <button
                   onClick={() => setPointInfoTarget(null)}
