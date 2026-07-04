@@ -97,6 +97,12 @@ export function PhotoEditModal({
             : aspectKey === '9:16'
               ? 9 / 16
               : undefined
+  // 「トリミング」ボタンの 2 段階フロー用の状態
+  //   showHandles=false, hasApplied=false → 初期。ハンドル・比率非表示、[トリミング] のみ
+  //   showHandles=true,  hasApplied=false → 編集中。ハンドル・比率表示、[トリミング] で仮確定
+  //   showHandles=true,  hasApplied=true  → 仮確定済。ハンドル外枠いっぱい、[戻す] で元に戻る
+  const [showHandles, setShowHandles] = useState(false)
+  const [hasApplied, setHasApplied] = useState(false)
   // 撮影日: 既存写真の編集なら initialTakenAt、それ以外は空。EXIF が取れれば下の
   // useEffect で上書き。EXIF が無ければ空のままにする（本日を勝手に入れない）。
   const [takenAtStr, setTakenAtStr] = useState<string>(() =>
@@ -110,12 +116,14 @@ export function PhotoEditModal({
   const [headingDeg, setHeadingDeg] = useState<number | null>(initialHeadingDeg)
   const [mode, setMode] = useState<'photo' | 'location'>('photo')
 
-  // props.file が変わった (別の写真を編集し始めた) 場合は workingFile もリセット
+  // props.file が変わった (別の写真を編集し始めた) 場合はすべての中間状態をリセット
   useEffect(() => {
     setWorkingFile(file)
     setCrop(undefined)
     setCompletedCrop(null)
     setRotation(0)
+    setShowHandles(false)
+    setHasApplied(false)
   }, [file])
 
   useEffect(() => {
@@ -148,9 +156,17 @@ export function PhotoEditModal({
     }
   }, [file])
 
-  // 初期トリミング: 現在の aspectKey を反映して中央に配置
+  // 画像 load 時のクロップ初期化:
+  //   仮確定直後 (hasApplied) は外枠いっぱい 100%
+  //   編集中 (showHandles) は 現在の aspect で 90% 中央
+  //   それ以外 (初期状態) はハンドルが出ないので何もしない
   const handleImgLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    if (!showHandles) return
     const { width, height } = e.currentTarget
+    if (hasApplied) {
+      setCrop({ unit: '%', x: 0, y: 0, width: 100, height: 100 })
+      return
+    }
     const ar = aspect ?? width / height
     const initial = centerCrop(
       makeAspectCrop({ unit: '%', width: 90 }, ar, width, height),
@@ -160,8 +176,9 @@ export function PhotoEditModal({
     setCrop(initial)
   }
 
-  // aspect が変わったらクロップを再設定
+  // aspect が変わったらクロップを再設定（編集中のみ）
   useEffect(() => {
+    if (!showHandles || hasApplied) return
     const img = imgRef.current
     if (!img || !img.width) return
     const ar = aspect ?? img.width / img.height
@@ -174,6 +191,30 @@ export function PhotoEditModal({
     setCompletedCrop(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aspect])
+
+  // showHandles を ON にした瞬間、初期クロップを与えるためもう一度 handleImgLoad
+  // 相当の処理を走らせる（画像 load 済みで onLoad は再発火しないため）
+  useEffect(() => {
+    if (!showHandles) {
+      setCrop(undefined)
+      setCompletedCrop(null)
+      return
+    }
+    const img = imgRef.current
+    if (!img || !img.width) return
+    if (hasApplied) {
+      setCrop({ unit: '%', x: 0, y: 0, width: 100, height: 100 })
+      return
+    }
+    const ar = aspect ?? img.width / img.height
+    const initial = centerCrop(
+      makeAspectCrop({ unit: '%', width: 90 }, ar, img.width, img.height),
+      img.width,
+      img.height,
+    )
+    setCrop(initial)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showHandles, hasApplied])
 
   const handleRotate = (delta: 90 | -90) => {
     setRotation((r) => (((r + delta) % 360) + 360) % 360)
@@ -244,9 +285,14 @@ export function PhotoEditModal({
     )
   }
 
-  // 「トリミング」ボタン: 現在の crop + rotation を仮確定 → 新しい workingFile として反映。
-  //   さらに切り直せる / 「戻す」で元 file に戻る
-  const applyCropAsPreview = async () => {
+  // 「トリミング」ボタン: 2 段階
+  //   1 回目 (showHandles=false): ハンドル・比率 UI を表示するだけ
+  //   2 回目 (showHandles=true, !hasApplied): 現在の枠を仮確定 → workingFile 差替
+  const handleTrimButton = async () => {
+    if (!showHandles) {
+      setShowHandles(true)
+      return
+    }
     setBusy(true)
     try {
       const blob = await renderBlob(false)
@@ -254,21 +300,24 @@ export function PhotoEditModal({
       const newFile = new File([blob], workingFile.name, { type: 'image/jpeg' })
       setWorkingFile(newFile)
       setRotation(0)
-      setCrop(undefined)
-      setCompletedCrop(null)
+      // 新しい workingFile で画像が load されると handleImgLoad が
+      // hasApplied=true を見て外枠いっぱいのクロップを設定する
+      setHasApplied(true)
     } catch (err) {
-      console.error('[PhotoEditModal] applyCropAsPreview failed', err)
+      console.error('[PhotoEditModal] handleTrimButton failed', err)
     } finally {
       setBusy(false)
     }
   }
 
-  // 「戻す」ボタン: 元の props.file に戻す
-  const resetToOriginal = () => {
+  // 「戻す」ボタン: 元の props.file に戻し、初期状態（ハンドル非表示）へ
+  const handleUndoButton = () => {
     setWorkingFile(file)
     setRotation(0)
     setCrop(undefined)
     setCompletedCrop(null)
+    setShowHandles(false)
+    setHasApplied(false)
   }
 
   const handleConfirm = async () => {
@@ -344,13 +393,28 @@ export function PhotoEditModal({
 
         <div className="flex-1 overflow-auto p-3 bg-slate-100 flex items-center justify-center">
           {imgUrl ? (
-            <ReactCrop
-              crop={crop}
-              onChange={(c) => setCrop(c)}
-              onComplete={(c) => setCompletedCrop(c)}
-              aspect={aspect}
-              ruleOfThirds
-            >
+            showHandles ? (
+              <ReactCrop
+                crop={crop}
+                onChange={(c) => setCrop(c)}
+                onComplete={(c) => setCompletedCrop(c)}
+                aspect={hasApplied ? undefined : aspect}
+                ruleOfThirds
+              >
+                <img
+                  ref={imgRef}
+                  src={imgUrl}
+                  onLoad={handleImgLoad}
+                  style={{
+                    transform: `rotate(${rotation}deg)`,
+                    maxHeight: '60vh',
+                    maxWidth: '100%',
+                    display: 'block',
+                  }}
+                  alt="編集中"
+                />
+              </ReactCrop>
+            ) : (
               <img
                 ref={imgRef}
                 src={imgUrl}
@@ -363,7 +427,7 @@ export function PhotoEditModal({
                 }}
                 alt="編集中"
               />
-            </ReactCrop>
+            )
           ) : (
             <Loader2 className="h-6 w-6 animate-spin text-slate-500" />
           )}
@@ -405,23 +469,25 @@ export function PhotoEditModal({
           </div>
         </div>
 
-        {/* トリミング比率選択 */}
-        <div className="px-4 py-1.5 border-t bg-slate-50 flex items-center gap-1 text-xs">
-          <span className="text-slate-500 mr-1">比率:</span>
-          {(['1:1', '4:3', '16:9', '3:4', '9:16', 'free'] as const).map((k) => (
-            <button
-              key={k}
-              onClick={() => setAspectKey(k)}
-              className={`px-2 py-0.5 rounded border ${
-                aspectKey === k
-                  ? 'bg-blue-600 text-white border-blue-600'
-                  : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'
-              }`}
-            >
-              {k === 'free' ? '自由' : k}
-            </button>
-          ))}
-        </div>
+        {/* トリミング比率選択（トリミングハンドル表示時のみ） */}
+        {showHandles && (
+          <div className="px-4 py-1.5 border-t bg-slate-50 flex items-center gap-1 text-xs">
+            <span className="text-slate-500 mr-1">比率:</span>
+            {(['1:1', '4:3', '16:9', '3:4', '9:16', 'free'] as const).map((k) => (
+              <button
+                key={k}
+                onClick={() => setAspectKey(k)}
+                className={`px-2 py-0.5 rounded border ${
+                  aspectKey === k
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'
+                }`}
+              >
+                {k === 'free' ? '自由' : k}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="px-4 py-2 border-t flex items-center gap-2 flex-wrap">
           <button
@@ -442,23 +508,31 @@ export function PhotoEditModal({
             <RotateCw className="h-4 w-4" />
             右
           </button>
-          <button
-            onClick={applyCropAsPreview}
-            disabled={busy}
-            className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded text-blue-700 border-blue-300 hover:bg-blue-50 disabled:opacity-50"
-            title="現在の枠でトリミングを仮確定（さらに切り直しできます）"
-          >
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-            トリミング
-          </button>
-          <button
-            onClick={resetToOriginal}
-            disabled={busy}
-            className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
-            title="元の写真に戻す"
-          >
-            戻す
-          </button>
+          {!hasApplied && (
+            <button
+              onClick={handleTrimButton}
+              disabled={busy}
+              className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded text-blue-700 border-blue-300 hover:bg-blue-50 disabled:opacity-50"
+              title={
+                showHandles
+                  ? '現在の枠でトリミングを実行'
+                  : 'トリミング枠を表示して編集を開始'
+              }
+            >
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+              トリミング
+            </button>
+          )}
+          {hasApplied && (
+            <button
+              onClick={handleUndoButton}
+              disabled={busy}
+              className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
+              title="元の写真に戻す"
+            >
+              戻す
+            </button>
+          )}
           <button
             onClick={handleConfirm}
             disabled={busy}
