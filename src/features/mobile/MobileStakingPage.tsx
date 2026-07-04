@@ -559,6 +559,18 @@ export function MobileStakingPage() {
   const [heading, setHeading] = useState<number | null>(null)
   const [headingEnabled, setHeadingEnabled] = useState(false)
   const [headingError, setHeadingError] = useState<string | null>(null)
+  // 地図を進行方向に回す（コンパスに応じて .leaflet-container を CSS 回転）
+  const [mapRotationEnabled, setMapRotationEnabled] = useState<boolean>(() => {
+    try {
+      return typeof localStorage !== 'undefined' &&
+        localStorage.getItem('mobile:staking:mapRotation') === '1'
+    } catch { return false }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('mobile:staking:mapRotation', mapRotationEnabled ? '1' : '0')
+    } catch { /* ignore */ }
+  }, [mapRotationEnabled])
 
   // 設定・UI
   const [avgSeconds, setAvgSeconds] = useState(3)
@@ -1158,6 +1170,48 @@ export function MobileStakingPage() {
     }
     setHeadingEnabled(true)
   }
+
+  // 地図回転（進行方向を上に）のトグル。ON にすると方位センサーも自動 ON
+  const toggleMapRotation = async () => {
+    if (mapRotationEnabled) {
+      setMapRotationEnabled(false)
+      return
+    }
+    if (!headingEnabled) {
+      await toggleHeading()
+    }
+    setMapRotationEnabled(true)
+  }
+
+  // 地図ラッパー ref: .leaflet-container を掴んで CSS transform を当てる
+  const mapWrapperRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const wrapper = mapWrapperRef.current
+    if (!wrapper) return
+    const container = wrapper.querySelector('.leaflet-container') as HTMLElement | null
+    if (!container) return
+    const controls = container.querySelector('.leaflet-control-container') as HTMLElement | null
+    if (mapRotationEnabled && heading != null) {
+      container.style.transform = `rotate(${-heading}deg)`
+      container.style.transformOrigin = 'center'
+      container.style.transition = 'transform 200ms ease-out'
+      // コントロール（ズーム / 帰属）は回転を打ち消して常に画面上向き
+      if (controls) {
+        controls.style.transform = `rotate(${heading}deg)`
+        controls.style.transformOrigin = 'center'
+        controls.style.transition = 'transform 200ms ease-out'
+      }
+    } else {
+      container.style.transform = ''
+      container.style.transformOrigin = ''
+      container.style.transition = ''
+      if (controls) {
+        controls.style.transform = ''
+        controls.style.transformOrigin = ''
+        controls.style.transition = ''
+      }
+    }
+  }, [mapRotationEnabled, heading])
 
   // 現在位置の監視
   useEffect(() => {
@@ -3315,7 +3369,7 @@ export function MobileStakingPage() {
       )}
 
       {/* 地図 */}
-      <div className="flex-1 relative">
+      <div ref={mapWrapperRef} className="flex-1 relative overflow-hidden">
         {/* MAP / 3D / 2D 切替（地図右上に縦並び、ズームコントロールの対側）
             z は 2D パネル (z-[1000]) より高く、常に上に出す。 */}
         <div className="absolute top-2 right-2 z-[1200] flex flex-col gap-0.5 rounded overflow-hidden shadow-md border border-slate-400 bg-white">
@@ -3999,6 +4053,25 @@ export function MobileStakingPage() {
           return (
           <div className="absolute top-2 right-2 z-[1000] bg-white border rounded-lg shadow-lg p-3 w-64 text-sm">
             <div className="font-semibold mb-2">設定</div>
+
+            {/* 地図回転（進行方向を画面上に） */}
+            <label className="flex items-center gap-2 mb-1">
+              <input
+                type="checkbox"
+                checked={mapRotationEnabled}
+                onChange={() => void toggleMapRotation()}
+              />
+              <span className="text-xs">地図を進行方向に回す</span>
+              <Navigation2
+                className={`h-3.5 w-3.5 ml-auto ${
+                  mapRotationEnabled ? 'text-emerald-600' : 'text-slate-400'
+                }`}
+              />
+            </label>
+            <div className="text-[10px] text-slate-500 mb-2">
+              コンパス（方位センサー）を利用します。iOS では初回に許可を求められます。
+            </div>
+
             {isGps && (
               <div className="mb-2 px-2 py-1.5 text-[11px] bg-amber-50 border border-amber-200 text-amber-800 rounded">
                 簡易測定モードでは以下の RTK 用設定は編集できません
