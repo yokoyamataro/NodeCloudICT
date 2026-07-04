@@ -7,27 +7,21 @@ import {
   ArrowLeft,
   ArrowUp,
   Loader2,
-  Crosshair,
   Circle as CircleIcon,
   Radio,
-  Settings,
-  List,
   Tag,
   Trash2,
   FileText,
   Database,
   Navigation2,
-  Share2,
   Check,
   Camera,
   Upload,
   Download,
   Image as ImageIcon,
-  SlidersHorizontal,
   X,
   Volume2,
   VolumeX,
-  Calculator,
   Plus,
   StickyNote,
   ExternalLink,
@@ -2448,104 +2442,73 @@ export function MobileStakingPage() {
         )}
         <FeedbackButton variant="mobile" />
       </div>
-      {/* ヘッダー（2 行目: ツールボタン群） */}
-      <div className="px-2 py-1.5 bg-slate-800 text-white flex items-center gap-2 text-sm border-t border-slate-700">
+      {/* ヘッダー（2 行目: ツールボタン群）。すべて日本語ラベル。
+          音声ガイダンスと SIMA インポート/エクスポートは別画面へ移動。 */}
+      <div className="px-2 py-1.5 bg-slate-800 text-white flex items-center gap-1.5 text-xs border-t border-slate-700 overflow-x-auto">
         <button
           onClick={() => setFollowMode((m) => NEXT_FOLLOW_MODE[m])}
-          className={`flex items-center gap-1 px-2 py-1.5 rounded text-[11px] font-medium ${
-            followMode === 'self'
-              ? 'bg-blue-600'
-              : 'bg-slate-700 hover:bg-slate-600'
+          className={`shrink-0 px-2 py-1.5 rounded font-medium ${
+            followMode === 'self' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'
           }`}
           title={`地図表示モード: ${MAP_FOLLOW_LABEL[followMode]}（クリックで切替）`}
         >
-          <Crosshair className="h-4 w-4" />
-          <span className="hidden sm:inline">{MAP_FOLLOW_LABEL[followMode]}</span>
+          現在地
         </button>
         {farmOrthos.length > 0 && (
           <button
             onClick={() => setShowOrtho((v) => !v)}
-            className={`p-1.5 rounded ${
+            className={`shrink-0 px-2 py-1.5 rounded font-medium ${
               showOrtho ? 'bg-emerald-600' : 'bg-slate-700 hover:bg-slate-600'
             }`}
             title="オルソ画像の表示を切替"
           >
-            <ImageIcon className="h-4 w-4" />
+            オルソ
           </button>
         )}
         <button
           onClick={() => setShowDisplaySettings((v) => !v)}
-          className={`p-1.5 rounded relative ${
+          className={`shrink-0 relative px-2 py-1.5 rounded font-medium ${
             showDisplaySettings ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'
           }`}
-          title="表示設定（コンパス・点名・点種フィルタ・地番）"
+          title="表示設定（コンパス・点名・点種フィルタ）"
         >
-          <SlidersHorizontal className="h-4 w-4" />
+          表示
           {(hiddenSubTypes.size > 0 || targetFilter !== 'all' || headingEnabled) && (
             <span className="absolute -top-1 -right-1 bg-amber-400 w-2 h-2 rounded-full" />
           )}
         </button>
         <button
           onClick={() => setShowCalcModal(true)}
-          className="p-1.5 rounded bg-slate-700 hover:bg-slate-600"
-          title="座標計算（交点・線上）"
+          className="shrink-0 px-2 py-1.5 rounded font-medium bg-slate-700 hover:bg-slate-600"
+          title="座標計算（交点・線上・2 点距離）"
         >
-          <Calculator className="h-4 w-4" />
-        </button>
-        <button
-          onClick={toggleSound}
-          disabled={positioningMode === 'gps'}
-          className={`p-1.5 rounded disabled:opacity-40 disabled:cursor-not-allowed ${
-            soundEnabled ? 'bg-emerald-600' : 'bg-slate-700 hover:bg-slate-600'
-          }`}
-          title={
-            positioningMode === 'gps'
-              ? '簡易測定モードでは音声ガイダンスは利用できません'
-              : '音声ガイダンス（FIX: ピッ / 1m以内: ピピ / 10cm以内: ピピピ、FIX喪失: ブーッ）'
-          }
-        >
-          {soundEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+          計算
         </button>
         <button
           onClick={() => setShowRecordList((v) => !v)}
-          className="p-1.5 rounded bg-slate-700 hover:bg-slate-600 relative"
-          title="座標一覧"
+          className="shrink-0 relative px-2 py-1.5 rounded font-medium bg-slate-700 hover:bg-slate-600"
+          title="座標一覧（SIMA インポート/エクスポートもここから）"
         >
-          <List className="h-4 w-4" />
+          座標一覧
           {coordinates.length > 0 && (
             <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">
               {coordinates.length > 9 ? '9+' : coordinates.length}
             </span>
           )}
         </button>
-        {/* 地番編集はスマホから撤去（PC の地番管理から編集する運用） */}
-        <button
-          onClick={handleOpenSimImport}
-          className="p-1.5 rounded bg-slate-700 hover:bg-slate-600"
-          title="SIMA インポート"
-        >
-          <Download className="h-4 w-4" />
-        </button>
-        <button
-          onClick={handleSimExport}
-          className="p-1.5 rounded bg-slate-700 hover:bg-slate-600"
-          title="SIMA エクスポート"
-        >
-          <Upload className="h-4 w-4" />
-        </button>
         <button
           onClick={handleShare}
-          className="p-1.5 rounded bg-slate-700 hover:bg-slate-600"
+          className="shrink-0 px-2 py-1.5 rounded font-medium bg-slate-700 hover:bg-slate-600"
           title="共有リンクを発行（他社にLINE等で送信）"
         >
-          <Share2 className="h-4 w-4" />
+          共有
         </button>
         <button
           onClick={() => setShowSettings((v) => !v)}
-          className="p-1.5 rounded bg-slate-700 hover:bg-slate-600"
+          className="shrink-0 px-2 py-1.5 rounded font-medium bg-slate-700 hover:bg-slate-600"
           title="設定"
         >
-          <Settings className="h-4 w-4" />
+          設定
         </button>
       </div>
       {/* 共有結果トースト */}
@@ -4029,7 +3992,27 @@ export function MobileStakingPage() {
                 簡易測定モードでは以下の RTK 用設定は編集できません
               </div>
             )}
-            <label className="flex flex-col gap-1 mb-3">
+
+            {/* 音声ガイダンス（精密モードのみ有効） */}
+            <label className={`flex items-center gap-2 mb-3 ${isGps ? 'text-slate-400' : ''}`}>
+              <input
+                type="checkbox"
+                checked={soundEnabled}
+                onChange={() => void toggleSound()}
+                disabled={isGps}
+              />
+              <span className="text-xs">音声ガイダンス</span>
+              {soundEnabled ? (
+                <Volume2 className="h-3.5 w-3.5 ml-auto text-emerald-600" />
+              ) : (
+                <VolumeX className="h-3.5 w-3.5 ml-auto text-slate-400" />
+              )}
+            </label>
+            <div className={`text-[10px] mb-2 ${isGps ? 'text-slate-400' : 'text-slate-500'}`}>
+              FIX: ピッ / 1m 以内: ピピ / 10cm 以内: ピピピ / FIX 喪失: ブーッ
+            </div>
+
+            <label className="flex flex-col gap-1 mb-3 border-t pt-2">
               <span className={`text-xs ${isGps ? 'text-slate-400' : 'text-slate-600'}`}>平均秒数</span>
               <input
                 type="range"
@@ -4316,9 +4299,26 @@ export function MobileStakingPage() {
             <div className="px-3 py-2 border-b flex items-center gap-2 text-sm">
               <span className="font-semibold">座標一覧</span>
               <span className="text-xs text-slate-500">{filteredTargets.length} 件</span>
+              {/* SIMA インポート / エクスポート を「閉じる」の左に配置 */}
+              <button
+                onClick={handleOpenSimImport}
+                className="ml-auto flex items-center gap-1 text-xs px-2 py-0.5 border rounded text-blue-700 border-blue-300 hover:bg-blue-50"
+                title="SIMA インポート"
+              >
+                <Download className="h-3.5 w-3.5" />
+                SIMA 取込
+              </button>
+              <button
+                onClick={handleSimExport}
+                className="flex items-center gap-1 text-xs px-2 py-0.5 border rounded text-blue-700 border-blue-300 hover:bg-blue-50"
+                title="SIMA エクスポート"
+              >
+                <Upload className="h-3.5 w-3.5" />
+                SIMA 出力
+              </button>
               <button
                 onClick={() => setShowRecordList(false)}
-                className="ml-auto text-xs px-2 py-0.5 border rounded hover:bg-slate-50"
+                className="text-xs px-2 py-0.5 border rounded hover:bg-slate-50"
               >
                 閉じる
               </button>
