@@ -179,11 +179,14 @@ function CoordinateMapLongPressBridge({
 // 写真のサムネを含む Popup を開く。signed URL は遅延取得で、popup が開いた
 // タイミングで初回ロードする。
 //
-// 位置・撮影方向の編集機能は撤去済み（別途 UI で編集する運用に変更）。
+// onEdit が渡された場合、ポップアップ内に「編集」ボタンが出る。
+// 押下で onEdit(photo.id) が呼ばれる（呼び出し側でファイルを DL して
+// PhotoEditModal を開く運用）。
 export function PhotoMarker({
   photo,
   getSignedUrl,
   onClick,
+  onEdit,
 }: {
   photo: {
     id: string
@@ -195,6 +198,7 @@ export function PhotoMarker({
   }
   getSignedUrl: (filePath: string) => Promise<string | null>
   onClick?: (id: string) => void
+  onEdit?: (photoId: string) => void
 }) {
   const [status, setStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle')
   const [url, setUrl] = useState<string | null>(null)
@@ -260,6 +264,24 @@ export function PhotoMarker({
             <div style={{ fontSize: 10, color: '#94a3b8' }}>
               方向 {photo.headingDeg.toFixed(0)}°
             </div>
+          )}
+          {onEdit && (
+            <button
+              type="button"
+              onClick={() => onEdit(photo.id)}
+              style={{
+                marginTop: 4,
+                padding: '6px 10px',
+                background: '#2563eb',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 4,
+                fontSize: 12,
+                cursor: 'pointer',
+              }}
+            >
+              編集（トリミング / 位置・方向）
+            </button>
           )}
         </div>
       </Popup>

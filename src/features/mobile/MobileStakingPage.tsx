@@ -497,6 +497,7 @@ export function MobileStakingPage() {
     fetchByEntityIds: fetchAttachments,
     uploadPhoto,
     getSignedUrl,
+    removeAttachment,
   } = useAttachmentStore()
   const {
     byFarm: orthoByFarm,
@@ -710,6 +711,16 @@ export function MobileStakingPage() {
   >(null)
   // 工区写真（標準写真）撮影用: PhotoEditModal で編集する元ファイル
   const [editingStandalonePhoto, setEditingStandalonePhoto] = useState<File | null>(null)
+  // 既存の工区写真マーカーからの編集: 差替対象の attachment メタ + 元 File
+  const [editingExistingPhoto, setEditingExistingPhoto] = useState<{
+    file: File
+    oldAttachmentId: string
+    initialLat: number | null
+    initialLng: number | null
+    initialHeadingDeg: number | null
+    initialCaption: string | null
+    initialTakenAt: Date | null
+  } | null>(null)
   // カメラボタンの「撮影 / インポート」選択シート
   const [photoSourceSheet, setPhotoSourceSheet] = useState(false)
   const standalonePhotoInputRef = useRef<HTMLInputElement>(null)
@@ -2598,6 +2609,54 @@ export function MobileStakingPage() {
         />
       )}
 
+      {/* 既存の工区写真の編集モーダル: 差替アップロード + 旧行削除 */}
+      {editingExistingPhoto && farm?.project_id && farmId && (
+        <PhotoEditModal
+          file={editingExistingPhoto.file}
+          enableLocationEdit
+          initialLat={editingExistingPhoto.initialLat}
+          initialLng={editingExistingPhoto.initialLng}
+          initialHeadingDeg={editingExistingPhoto.initialHeadingDeg}
+          initialCaption={editingExistingPhoto.initialCaption}
+          initialTakenAt={editingExistingPhoto.initialTakenAt}
+          onCancel={() => setEditingExistingPhoto(null)}
+          onConfirm={async (blob, _name, meta) => {
+            const oldId = editingExistingPhoto.oldAttachmentId
+            setEditingExistingPhoto(null)
+            const projectId = farm.project_id
+            if (!projectId) return
+            const r = await uploadPhoto({
+              projectId,
+              entityType: 'farm_photo',
+              entityId: farmId,
+              file: blob,
+              category: '現場',
+              caption: meta.caption,
+              takenAt: meta.takenAt ?? new Date(),
+              lat: meta.lat,
+              lng: meta.lng,
+              headingDeg: meta.headingDeg,
+              skipResize: true,
+            })
+            if (r) {
+              // 差替なので旧行 + 旧 Storage オブジェクトを削除
+              try {
+                await removeAttachment(oldId)
+              } catch (err) {
+                console.warn('[farm_photo edit] failed to remove old', err)
+              }
+              setShareToast('写真を更新しました')
+              window.setTimeout(() => setShareToast(null), 2500)
+              void fetchAttachments('farm_photo', [farmId])
+            } else {
+              setShareToast('写真の更新に失敗しました')
+              window.setTimeout(() => setShareToast(null), 3000)
+            }
+          }}
+          headerNote="現場写真の編集"
+        />
+      )}
+
       {/* 工区写真（標準写真）の編集モーダル — 撮影 / アップロード後の編集 */}
       {editingStandalonePhoto && farm?.project_id && farmId && (
         <PhotoEditModal
@@ -3313,9 +3372,44 @@ export function MobileStakingPage() {
             ) : null,
           )}
 
-          {/* 工区写真のマーカー: タップで写真ポップアップ */}
+          {/* 工区写真のマーカー: タップで写真ポップアップ、編集ボタンで PhotoEditModal を開く */}
           {farmPhotos.map((p) => (
-            <PhotoMarker key={`photo-${p.id}`} photo={p} getSignedUrl={getSignedUrl} />
+            <PhotoMarker
+              key={`photo-${p.id}`}
+              photo={p}
+              getSignedUrl={getSignedUrl}
+              onEdit={async (photoId) => {
+                // Storage の写真を DL して File 化し、既存メタとともに編集モーダルへ渡す
+                try {
+                  const list = attachmentsByEntity.get(`farm_photo:${farmId}`) ?? []
+                  const meta = list.find((a) => a.id === photoId)
+                  if (!meta) return
+                  const url = await getSignedUrl(meta.filePath)
+                  if (!url) {
+                    alert('写真のダウンロードに失敗しました')
+                    return
+                  }
+                  const res = await fetch(url)
+                  const blob = await res.blob()
+                  const name = meta.filePath.split('/').pop() || 'photo.jpg'
+                  const orgFile = new File([blob], name, {
+                    type: blob.type || 'image/jpeg',
+                  })
+                  setEditingExistingPhoto({
+                    file: orgFile,
+                    oldAttachmentId: meta.id,
+                    initialLat: meta.lat,
+                    initialLng: meta.lng,
+                    initialHeadingDeg: meta.headingDeg,
+                    initialCaption: meta.caption,
+                    initialTakenAt: meta.takenAt ? new Date(meta.takenAt) : null,
+                  })
+                } catch (err) {
+                  console.error('[farm_photo edit] failed to load', err)
+                  alert('写真の読み込みに失敗しました')
+                }
+              }}
+            />
           ))}
 
           {/* 地図の長押し / 右クリックでメモ作成。Leaflet の contextmenu

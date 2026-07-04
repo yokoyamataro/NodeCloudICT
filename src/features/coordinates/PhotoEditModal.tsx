@@ -40,6 +40,9 @@ interface PhotoEditModalProps {
   initialLat?: number | null
   initialLng?: number | null
   initialHeadingDeg?: number | null
+  /** 既存写真の編集時に、備考と撮影日を復元するための初期値 */
+  initialCaption?: string | null
+  initialTakenAt?: Date | null
 }
 
 // HTML <input type="date"> に渡す YYYY-MM-DD 文字列に変換
@@ -66,6 +69,8 @@ export function PhotoEditModal({
   initialLat = null,
   initialLng = null,
   initialHeadingDeg = null,
+  initialCaption = null,
+  initialTakenAt = null,
 }: PhotoEditModalProps) {
   const [imgUrl, setImgUrl] = useState<string | null>(null)
   const [rotation, setRotation] = useState(0) // 度数（90 単位）
@@ -73,9 +78,11 @@ export function PhotoEditModal({
   const [completedCrop, setCompletedCrop] = useState<PixelCrop | null>(null)
   const [busy, setBusy] = useState(false)
   const imgRef = useRef<HTMLImageElement>(null)
-  // 撮影日: EXIF DateTimeOriginal を優先、なければアップロード日（今）。両方ユーザ編集可能。
-  const [takenAtStr, setTakenAtStr] = useState<string>(() => toDateInputValue(new Date()))
-  const [caption, setCaption] = useState<string>('')
+  // 撮影日: 既存写真の編集なら initialTakenAt、それ以外は今日から。EXIF があれば上書き。
+  const [takenAtStr, setTakenAtStr] = useState<string>(() =>
+    toDateInputValue(initialTakenAt ?? new Date()),
+  )
+  const [caption, setCaption] = useState<string>(initialCaption ?? '')
   const [exifLoaded, setExifLoaded] = useState(false)
   // 位置・方向
   const [lat, setLat] = useState<number | null>(initialLat)
@@ -551,13 +558,25 @@ function PhotoLocationPicker({
         </div>
         <div className="flex items-center gap-2">
           <Compass className="h-3.5 w-3.5 text-slate-600" />
+          {/* スライダーは -180 (左=反時計回り) 〜 +180 (右=時計回り) の符号付き表現。
+              中央 0 が北。両端はどちらも 180°。実データは 0..360 に正規化して保持 */}
           <input
             type="range"
-            min={0}
-            max={359}
+            min={-180}
+            max={180}
             step={1}
-            value={headingDeg ?? 0}
-            onChange={(e) => setHeadingDeg(parseInt(e.target.value, 10))}
+            value={
+              headingDeg == null
+                ? 0
+                : headingDeg > 180
+                  ? headingDeg - 360
+                  : headingDeg
+            }
+            onChange={(e) => {
+              const raw = parseInt(e.target.value, 10)
+              if (!Number.isFinite(raw)) return
+              setHeadingDeg(((raw % 360) + 360) % 360)
+            }}
             className="flex-1"
           />
           <input
