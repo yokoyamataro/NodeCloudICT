@@ -4815,8 +4815,8 @@ export function MobileStakingPage() {
               }}
               className="w-full border-2 border-blue-600 rounded-lg p-3 mb-3 text-left hover:bg-blue-50"
             >
-              <div className="text-sm font-bold text-blue-700">Drogger RTK を接続する</div>
-              <div className="text-xs text-slate-600 mt-0.5">cm 測位</div>
+              <div className="text-sm font-bold text-blue-700">精密測定モード</div>
+              <div className="text-xs text-slate-600 mt-0.5">Android + Drogger で cm 精密測位</div>
             </button>
 
             <button
@@ -4826,8 +4826,8 @@ export function MobileStakingPage() {
               }}
               className="w-full border-2 border-amber-500 rounded-lg p-3 text-left hover:bg-amber-50"
             >
-              <div className="text-sm font-bold text-amber-700">スマホ GPS を使用する</div>
-              <div className="text-xs text-slate-600 mt-0.5">位置情報は誤差があります</div>
+              <div className="text-sm font-bold text-amber-700">簡易測定モード</div>
+              <div className="text-xs text-slate-600 mt-0.5">スマホで手軽に概略調査</div>
             </button>
 
             <button
