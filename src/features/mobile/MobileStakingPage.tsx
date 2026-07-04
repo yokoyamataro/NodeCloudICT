@@ -33,6 +33,7 @@ import {
   ChevronUp,
   Plus,
   StickyNote,
+  ExternalLink,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { playStartChime, playStopChime, unlockAudio } from '@/lib/beep'
@@ -5152,6 +5153,23 @@ export function MobileStakingPage() {
         <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center z-[3500]">
           <div className="bg-white w-full sm:max-w-md rounded-t-xl sm:rounded-xl shadow-xl p-4 max-h-[95vh] overflow-auto">
             <h3 className="text-base font-bold mb-2 text-slate-800">現場の開始前チェック</h3>
+
+            {/* Drogger アプリへのリンク */}
+            <a
+              href="https://play.google.com/store/search?q=Drogger%20GPS&c=apps"
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center justify-between gap-2 mb-3 px-3 py-2 border border-emerald-300 rounded-lg bg-emerald-50 hover:bg-emerald-100"
+            >
+              <div className="min-w-0">
+                <div className="text-xs font-bold text-emerald-800">Drogger アプリを開く</div>
+                <div className="text-[10px] text-emerald-700">
+                  Google Play で Drogger GPS / RTK を検索・起動
+                </div>
+              </div>
+              <ExternalLink className="h-4 w-4 text-emerald-700 shrink-0" />
+            </a>
+
             <p className="text-xs text-slate-600 mb-3">
               観測を始める前に以下の設定をご確認ください。
             </p>
