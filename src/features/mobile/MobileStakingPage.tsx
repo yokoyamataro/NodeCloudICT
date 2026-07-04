@@ -603,6 +603,8 @@ export function MobileStakingPage() {
   type PositioningMode = 'rtk' | 'gps'
   const [positioningMode, setPositioningMode] = useState<PositioningMode | null>(null)
   const [showModeChooser, setShowModeChooser] = useState(false)
+  // モード選択モーダル内での「音声ガイダンス ON にする」チェック。既定 ON
+  const [modeChooserSoundOn, setModeChooserSoundOn] = useState(true)
   // 座標計算（交点・線上）モーダル
   const [showCalcModal, setShowCalcModal] = useState(false)
   // 計算モーダルで地図から点選択中の割り当て関数
@@ -4797,27 +4799,45 @@ export function MobileStakingPage() {
         </div>
       )}
 
-      {/* 測位モード選択（工区オープン時に 1 回表示） */}
+      {/* 測位モード選択（工区を開くたびに表示） */}
       {showModeChooser && farmId && (
         <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center z-[3600]">
           <div className="bg-white w-full sm:max-w-md rounded-t-xl sm:rounded-xl shadow-xl p-4">
             <h3 className="text-base font-bold mb-2 text-slate-800">測位方法を選択</h3>
             <p className="text-xs text-slate-600 mb-3">
-              現場で使用する測位方法を選んでください。工区ごとに 1 回だけ聞きます。
+              現場で使用する測位方法を選んでください。
             </p>
 
             <button
               onClick={() => {
                 setPositioningMode('rtk')
                 setShowModeChooser(false)
+                // 音声 ON にする（未 ON なら AudioContext を起こす）
+                if (modeChooserSoundOn && !soundEnabled) {
+                  void toggleSound()
+                }
                 // RTK を選んだら続けて開始前チェック（ジオイド補正 / アンテナ高）を出す
                 setShowStartupCheck(true)
               }}
-              className="w-full border-2 border-blue-600 rounded-lg p-3 mb-3 text-left hover:bg-blue-50"
+              className="w-full border-2 border-blue-600 rounded-lg p-3 mb-2 text-left hover:bg-blue-50"
             >
               <div className="text-sm font-bold text-blue-700">精密測定モード</div>
               <div className="text-xs text-slate-600 mt-0.5">Android + Drogger で cm 精密測位</div>
             </button>
+
+            {/* 音声ガイダンス設定（RTK モード時に使う）。RTK ボタンの下・GPS ボタンの上に配置 */}
+            <label className="flex items-center gap-2 mb-3 px-3 py-1.5 text-xs text-slate-700 bg-slate-50 border rounded cursor-pointer">
+              <input
+                type="checkbox"
+                checked={modeChooserSoundOn}
+                onChange={(e) => setModeChooserSoundOn(e.target.checked)}
+                className="h-4 w-4"
+              />
+              <span>
+                音声ガイダンスを有効化する
+                <span className="text-slate-400 ml-1">（RTK 測位で推奨: FIX / 喪失 / 接近を音で通知）</span>
+              </span>
+            </label>
 
             <button
               onClick={() => {
