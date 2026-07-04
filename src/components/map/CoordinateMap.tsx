@@ -182,11 +182,13 @@ function CoordinateMapLongPressBridge({
 // onEdit が渡された場合、ポップアップ内に「編集」ボタンが出る。
 // 押下で onEdit(photo.id) が呼ばれる（呼び出し側でファイルを DL して
 // PhotoEditModal を開く運用）。
+// onDelete が渡された場合は隣に「削除」ボタンが出る。
 export function PhotoMarker({
   photo,
   getSignedUrl,
   onClick,
   onEdit,
+  onDelete,
 }: {
   photo: {
     id: string
@@ -199,6 +201,7 @@ export function PhotoMarker({
   getSignedUrl: (filePath: string) => Promise<string | null>
   onClick?: (id: string) => void
   onEdit?: (photoId: string) => void
+  onDelete?: (photoId: string) => void
 }) {
   const [status, setStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle')
   const [url, setUrl] = useState<string | null>(null)
@@ -260,23 +263,45 @@ export function PhotoMarker({
           {photo.caption && (
             <div style={{ fontSize: 11, color: '#475569' }}>{photo.caption}</div>
           )}
-          {onEdit && (
-            <button
-              type="button"
-              onClick={() => onEdit(photo.id)}
-              style={{
-                marginTop: 4,
-                padding: '6px 10px',
-                background: '#2563eb',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 4,
-                fontSize: 12,
-                cursor: 'pointer',
-              }}
-            >
-              写真を編集
-            </button>
+          {(onEdit || onDelete) && (
+            <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+              {onEdit && (
+                <button
+                  type="button"
+                  onClick={() => onEdit(photo.id)}
+                  style={{
+                    flex: 1,
+                    padding: '6px 10px',
+                    background: '#2563eb',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 4,
+                    fontSize: 12,
+                    cursor: 'pointer',
+                  }}
+                >
+                  編集
+                </button>
+              )}
+              {onDelete && (
+                <button
+                  type="button"
+                  onClick={() => onDelete(photo.id)}
+                  style={{
+                    flex: 1,
+                    padding: '6px 10px',
+                    background: '#dc2626',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 4,
+                    fontSize: 12,
+                    cursor: 'pointer',
+                  }}
+                >
+                  削除
+                </button>
+              )}
+            </div>
           )}
         </div>
       </Popup>

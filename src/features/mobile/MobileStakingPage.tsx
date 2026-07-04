@@ -3574,6 +3574,15 @@ export function MobileStakingPage() {
               key={`photo-${p.id}`}
               photo={p}
               getSignedUrl={getSignedUrl}
+              onDelete={async (photoId) => {
+                if (!confirm('この写真を削除しますか？')) return
+                try {
+                  await removeAttachment(photoId)
+                } catch (err) {
+                  console.error('[farm_photo delete] failed', err)
+                  alert('写真の削除に失敗しました')
+                }
+              }}
               onEdit={async (photoId) => {
                 // Storage の写真を DL して File 化し、既存メタとともに編集モーダルへ渡す
                 try {
