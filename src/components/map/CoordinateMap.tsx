@@ -260,11 +260,6 @@ export function PhotoMarker({
           {photo.caption && (
             <div style={{ fontSize: 11, color: '#475569' }}>{photo.caption}</div>
           )}
-          {photo.headingDeg != null && (
-            <div style={{ fontSize: 10, color: '#94a3b8' }}>
-              方向 {photo.headingDeg.toFixed(0)}°
-            </div>
-          )}
           {onEdit && (
             <button
               type="button"
@@ -280,7 +275,7 @@ export function PhotoMarker({
                 cursor: 'pointer',
               }}
             >
-              編集（トリミング / 位置・方向）
+              写真を編集
             </button>
           )}
         </div>
