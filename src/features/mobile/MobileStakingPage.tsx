@@ -1937,28 +1937,26 @@ export function MobileStakingPage() {
     // 開始音（ユーザ操作直後なので AudioContext を resume してから鳴らす）
     void unlockAudio().then(() => playStartChime())
 
-    // スマホ GPS モード: 1 発計測。watchPosition の平均化フローは使わず、
-    // getCurrentPosition で 1 サンプルだけ取って即 finish。
+    // スマホ GPS モード: 1 発計測。
+    // getCurrentPosition を呼び直すと iPhone が GPS を再測位して数秒〜十数秒待たされるので、
+    // すでに watchPosition が更新している currentPos / currentAcc / currentAlt をそのまま
+    // スナップショットして即 finish する。
     if (positioningMode === 'gps') {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          recSamplesRef.current = [
-            {
-              lat: pos.coords.latitude,
-              lng: pos.coords.longitude,
-              alt: pos.coords.altitude,
-              acc: pos.coords.accuracy,
-            },
-          ]
-          setRecordedCount(1)
-          void finishRecording()
+      if (!currentPos) {
+        alert('位置情報を取得できませんでした')
+        setRecording(false)
+        return
+      }
+      recSamplesRef.current = [
+        {
+          lat: currentPos[0],
+          lng: currentPos[1],
+          alt: currentAlt,
+          acc: currentAcc,
         },
-        () => {
-          alert('位置情報を取得できませんでした')
-          setRecording(false)
-        },
-        { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 },
-      )
+      ]
+      setRecordedCount(1)
+      void finishRecording()
       return
     }
 
