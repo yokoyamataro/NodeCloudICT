@@ -2590,6 +2590,18 @@ export function MobileStakingPage() {
               メモを残す
             </button>
             <button
+              onClick={() => {
+                const { lat, lng } = longPressChoice
+                const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`
+                window.open(url, '_blank')
+                setLongPressChoice(null)
+              }}
+              className="w-full flex items-center justify-center gap-2 px-4 py-3 border border-emerald-400 bg-emerald-50 text-emerald-800 rounded-lg font-semibold"
+            >
+              <Navigation2 className="h-5 w-5" />
+              道案内（Google マップ）
+            </button>
+            <button
               onClick={() => setLongPressChoice(null)}
               className="w-full px-4 py-2 text-sm text-slate-500"
             >
@@ -4896,10 +4908,6 @@ export function MobileStakingPage() {
         const otherPhotos = photos.filter(
           (p) => p.category !== '遠景' && p.category !== '近景',
         )
-        const openInGoogleMaps = () => {
-          const url = `https://www.google.com/maps/dir/?api=1&destination=${t.lat},${t.lng}`
-          window.open(url, '_blank')
-        }
         return (
           <div
             className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3400] p-3"
@@ -5092,19 +5100,12 @@ export function MobileStakingPage() {
                 )}
               </div>
 
-              <div className="px-4 pb-4 pt-2 border-t flex gap-2">
+              <div className="px-4 pb-4 pt-2 border-t">
                 <button
                   onClick={() => setPointInfoTarget(null)}
-                  className="flex-1 px-3 py-2 text-sm border rounded hover:bg-slate-50"
+                  className="w-full px-3 py-2 text-sm border rounded hover:bg-slate-50"
                 >
                   閉じる
-                </button>
-                <button
-                  onClick={openInGoogleMaps}
-                  className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
-                >
-                  <Navigation2 className="h-4 w-4" />
-                  この点まで案内
                 </button>
               </div>
             </div>
