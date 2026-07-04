@@ -2578,10 +2578,15 @@ export function MobileStakingPage() {
         </button>
         <button
           onClick={toggleSound}
-          className={`p-1.5 rounded ${
+          disabled={positioningMode === 'gps'}
+          className={`p-1.5 rounded disabled:opacity-40 disabled:cursor-not-allowed ${
             soundEnabled ? 'bg-emerald-600' : 'bg-slate-700 hover:bg-slate-600'
           }`}
-          title="音声ガイダンス（FIX: ピッ / 1m以内: ピピ / 10cm以内: ピピピ、FIX喪失: ブーッ）"
+          title={
+            positioningMode === 'gps'
+              ? '簡易測定モードでは音声ガイダンスは利用できません'
+              : '音声ガイダンス（FIX: ピッ / 1m以内: ピピ / 10cm以内: ピピピ、FIX喪失: ブーッ）'
+          }
         >
           {soundEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
         </button>
@@ -4153,11 +4158,18 @@ export function MobileStakingPage() {
         })()}
 
         {/* 設定パネル */}
-        {showSettings && (
+        {showSettings && (() => {
+          const isGps = positioningMode === 'gps'
+          return (
           <div className="absolute top-2 right-2 z-[1000] bg-white border rounded-lg shadow-lg p-3 w-64 text-sm">
             <div className="font-semibold mb-2">設定</div>
+            {isGps && (
+              <div className="mb-2 px-2 py-1.5 text-[11px] bg-amber-50 border border-amber-200 text-amber-800 rounded">
+                簡易測定モードでは以下の RTK 用設定は編集できません
+              </div>
+            )}
             <label className="flex flex-col gap-1 mb-3">
-              <span className="text-xs text-slate-600">平均秒数</span>
+              <span className={`text-xs ${isGps ? 'text-slate-400' : 'text-slate-600'}`}>平均秒数</span>
               <input
                 type="range"
                 min={1}
@@ -4165,13 +4177,13 @@ export function MobileStakingPage() {
                 step={1}
                 value={avgSeconds}
                 onChange={(e) => setAvgSeconds(parseInt(e.target.value, 10))}
-                disabled={recording}
+                disabled={recording || isGps}
               />
-              <span className="font-mono text-center">{avgSeconds} 秒</span>
+              <span className={`font-mono text-center ${isGps ? 'text-slate-400' : ''}`}>{avgSeconds} 秒</span>
             </label>
 
             <label className="flex flex-col gap-1 mb-3">
-              <span className="text-xs text-slate-600">アンテナ高 (m)</span>
+              <span className={`text-xs ${isGps ? 'text-slate-400' : 'text-slate-600'}`}>アンテナ高 (m)</span>
               <input
                 type="number"
                 step={0.01}
@@ -4180,21 +4192,21 @@ export function MobileStakingPage() {
                   const n = parseFloat(e.target.value)
                   if (Number.isFinite(n)) setAntennaHeight(n)
                 }}
-                disabled={recording}
-                className="w-full px-2 py-1 border rounded text-right font-mono"
+                disabled={recording || isGps}
+                className="w-full px-2 py-1 border rounded text-right font-mono disabled:bg-slate-50 disabled:text-slate-400"
               />
             </label>
 
-            <label className="flex items-center gap-2 mb-2">
+            <label className={`flex items-center gap-2 mb-2 ${isGps ? 'text-slate-400' : ''}`}>
               <input
                 type="checkbox"
                 checked={useGeoidCorrection}
                 onChange={(e) => setUseGeoidCorrection(e.target.checked)}
-                disabled={recording}
+                disabled={recording || isGps}
               />
               <span className="text-xs">ジオイド補正を有効化</span>
             </label>
-            {useGeoidCorrection && (
+            {useGeoidCorrection && !isGps && (
               <div className="text-[11px] text-slate-500 mb-2">
                 {geoidLoading && '読込中…'}
                 {!geoidLoading && geoidGrid && '✓ JPGEO2024 読込済み'}
@@ -4202,13 +4214,13 @@ export function MobileStakingPage() {
               </div>
             )}
 
-            <div className="text-[11px] text-slate-500 mb-2">
+            <div className={`text-[11px] mb-2 ${isGps ? 'text-slate-400' : 'text-slate-500'}`}>
               標高 = 楕円体高 − ジオイド高 − アンテナ高
             </div>
 
             {/* RTK 判定精度しきい値 (精密モードのみ効く) */}
             <label className="flex flex-col gap-1 mb-3 border-t pt-2">
-              <span className="text-xs text-slate-600">
+              <span className={`text-xs ${isGps ? 'text-slate-400' : 'text-slate-600'}`}>
                 RTK 判定精度 (精密モード)
               </span>
               <input
@@ -4218,11 +4230,12 @@ export function MobileStakingPage() {
                 step={0.005}
                 value={rtkFixAccuracyM}
                 onChange={(e) => setRtkFixAccuracyM(parseFloat(e.target.value))}
+                disabled={isGps}
               />
-              <span className="font-mono text-center text-xs">
+              <span className={`font-mono text-center text-xs ${isGps ? 'text-slate-400' : ''}`}>
                 {(rtkFixAccuracyM * 100).toFixed(1)} cm 以下で FIX
               </span>
-              <span className="text-[11px] text-slate-500">
+              <span className={`text-[11px] ${isGps ? 'text-slate-400' : 'text-slate-500'}`}>
                 この精度を下回ると測定ボタンが押せなくなり、RTK 受信音（ピッ）も出ません。
               </span>
             </label>
@@ -4271,7 +4284,8 @@ export function MobileStakingPage() {
               閉じる
             </button>
           </div>
-        )}
+          )
+        })()}
 
         {/* ターゲットリスト（下部スライドアップ） */}
         {showTargetList && (
