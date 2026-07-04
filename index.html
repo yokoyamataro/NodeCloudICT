@@ -5,6 +5,16 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>NodeCloud</title>
+    <!-- Google Analytics (GA4) — 測定 ID: G-99NCXWNVGD。
+         SPA 用に初期の自動 page_view は無効化し、React ルーター側から
+         明示的に page_view を送る（src/App.tsx の GATracker）。 -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-99NCXWNVGD"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-99NCXWNVGD', { send_page_view: false });
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -298,10 +298,35 @@ function AppRoutes() {
   )
 }
 
+// Google Analytics 4: ルーター変更ごとに page_view を送信する SPA トラッカー。
+// gtag 本体は index.html で読み込み済み。send_page_view: false にしてあるので
+// 初期含めここから明示的に送る。
+function GATracker() {
+  const location = useLocation()
+  useEffect(() => {
+    const w = window as unknown as {
+      gtag?: (
+        cmd: string,
+        eventOrId: string,
+        params?: Record<string, unknown>,
+      ) => void
+    }
+    if (typeof w.gtag !== 'function') return
+    const path = location.pathname + location.search
+    w.gtag('event', 'page_view', {
+      page_path: path,
+      page_location: window.location.origin + path,
+      page_title: document.title,
+    })
+  }, [location.pathname, location.search])
+  return null
+}
+
 function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <GATracker />
         <MobileAutoRedirect />
         <AppRoutes />
       </AuthProvider>
