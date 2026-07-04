@@ -4963,7 +4963,6 @@ export function MobileStakingPage() {
               <div className="px-4 py-3 border-b flex items-center justify-between">
                 <div className="min-w-0">
                   <div className="text-sm font-bold text-slate-800 truncate">{t.name}</div>
-                  <div className="text-[11px] text-slate-500">{t.subTypeLabel}</div>
                 </div>
                 <button
                   onClick={() => setPointInfoTarget(null)}
@@ -4974,21 +4973,21 @@ export function MobileStakingPage() {
               </div>
 
               <div className="overflow-auto flex-1 p-4 space-y-3">
-                {/* 座標 X / Y / Z を横並び */}
-                <div className="grid grid-cols-3 gap-2 text-sm">
-                  <div className="bg-slate-50 border rounded p-1.5">
-                    <div className="text-[10px] text-slate-500">X</div>
-                    <div className="font-mono text-slate-800 truncate">{t.x.toFixed(3)}</div>
+                {/* 座標 X / Y / Z を横並び（枠なし） */}
+                <div className="flex items-baseline gap-4 text-sm font-mono">
+                  <div>
+                    <span className="text-[10px] text-slate-500 mr-1 font-sans">X</span>
+                    <span className="text-slate-800">{t.x.toFixed(3)}</span>
                   </div>
-                  <div className="bg-slate-50 border rounded p-1.5">
-                    <div className="text-[10px] text-slate-500">Y</div>
-                    <div className="font-mono text-slate-800 truncate">{t.y.toFixed(3)}</div>
+                  <div>
+                    <span className="text-[10px] text-slate-500 mr-1 font-sans">Y</span>
+                    <span className="text-slate-800">{t.y.toFixed(3)}</span>
                   </div>
-                  <div className="bg-slate-50 border rounded p-1.5">
-                    <div className="text-[10px] text-slate-500">Z</div>
-                    <div className="font-mono text-slate-800 truncate">
+                  <div>
+                    <span className="text-[10px] text-slate-500 mr-1 font-sans">Z</span>
+                    <span className="text-slate-800">
                       {t.z != null ? t.z.toFixed(3) : '-'}
-                    </div>
+                    </span>
                   </div>
                 </div>
 
@@ -5060,7 +5059,8 @@ export function MobileStakingPage() {
                       </button>
                     </div>
 
-                    {/* 遠景 / 近景 を横並び */}
+                    {/* 遠景 / 近景 を横並び。1 枚あたりカードの幅いっぱいで大きく表示。
+                        2 枚以上あるときは先頭のみ大きく、右上に +N バッジ */}
                     <div className="grid grid-cols-2 gap-2">
                       {(
                         [
@@ -5068,51 +5068,57 @@ export function MobileStakingPage() {
                           { label: '近景', list: nearView },
                         ] as const
                       ).map(({ label, list }) => (
-                        <div key={label} className="bg-white border rounded p-1.5">
-                          <div className="text-[10px] text-slate-500 mb-1 flex items-center justify-between">
-                            <span>{label}</span>
-                            <span className="font-semibold text-slate-700">{list.length} 枚</span>
+                        <div key={label}>
+                          <div className="text-[11px] text-slate-500 mb-1 flex items-center justify-between">
+                            <span className="font-semibold text-slate-700">{label}</span>
+                            <span>{list.length} 枚</span>
                           </div>
                           {list.length === 0 ? (
                             <button
                               onClick={() => setPhotoModalTarget(t)}
-                              className="w-full aspect-square rounded border border-dashed border-slate-300 text-slate-400 text-xs hover:bg-slate-50"
+                              className="w-full aspect-square rounded border border-dashed border-slate-300 text-slate-400 text-sm hover:bg-slate-100"
                             >
                               追加
                             </button>
                           ) : (
-                            <div className="grid grid-cols-2 gap-1">
-                              {list.slice(0, 4).map((p) => (
-                                <PointPhotoThumb
-                                  key={p.id}
-                                  filePath={p.filePath}
-                                  getSignedUrl={getSignedUrl}
-                                  onClick={() => setPhotoModalTarget(t)}
-                                />
-                              ))}
+                            <div className="relative">
+                              <PointPhotoThumb
+                                filePath={list[0].filePath}
+                                getSignedUrl={getSignedUrl}
+                                onClick={() => setPhotoModalTarget(t)}
+                              />
+                              {list.length > 1 && (
+                                <span className="absolute top-1 right-1 bg-black/60 text-white text-[10px] rounded px-1.5 py-0.5">
+                                  +{list.length - 1}
+                                </span>
+                              )}
                             </div>
                           )}
                         </div>
                       ))}
                     </div>
 
-                    {/* その他があるときだけ下段に表示 */}
+                    {/* その他があるときだけ下段に。1 枚を大きめ + バッジ */}
                     {otherPhotos.length > 0 && (
-                      <div className="mt-2 bg-white border rounded p-1.5">
-                        <div className="text-[10px] text-slate-500 mb-1 flex items-center justify-between">
-                          <span>その他</span>
-                          <span className="font-semibold text-slate-700">
-                            {otherPhotos.length} 枚
-                          </span>
+                      <div className="mt-3">
+                        <div className="text-[11px] text-slate-500 mb-1 flex items-center justify-between">
+                          <span className="font-semibold text-slate-700">その他</span>
+                          <span>{otherPhotos.length} 枚</span>
                         </div>
-                        <div className="grid grid-cols-4 gap-1">
-                          {otherPhotos.slice(0, 8).map((p) => (
-                            <PointPhotoThumb
-                              key={p.id}
-                              filePath={p.filePath}
-                              getSignedUrl={getSignedUrl}
-                              onClick={() => setPhotoModalTarget(t)}
-                            />
+                        <div className="grid grid-cols-3 gap-2">
+                          {otherPhotos.slice(0, 3).map((p, idx) => (
+                            <div key={p.id} className="relative">
+                              <PointPhotoThumb
+                                filePath={p.filePath}
+                                getSignedUrl={getSignedUrl}
+                                onClick={() => setPhotoModalTarget(t)}
+                              />
+                              {idx === 2 && otherPhotos.length > 3 && (
+                                <span className="absolute top-1 right-1 bg-black/60 text-white text-[10px] rounded px-1.5 py-0.5">
+                                  +{otherPhotos.length - 3}
+                                </span>
+                              )}
+                            </div>
                           ))}
                         </div>
                       </div>
