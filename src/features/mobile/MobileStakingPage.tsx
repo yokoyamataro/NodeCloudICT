@@ -755,6 +755,22 @@ export function MobileStakingPage() {
         lng: number | null
       }
   >(null)
+  // 長押ししたときに出す選択シート（測点を追加 / メモを残す）
+  const [longPressChoice, setLongPressChoice] = useState<{ lat: number; lng: number } | null>(null)
+  // 長押し座標から測点を追加する入力モーダル
+  const [addCoordDialog, setAddCoordDialog] = useState<
+    | null
+    | {
+        lat: number
+        lng: number
+        x: number
+        y: number
+        name: string
+        type: string
+        z: string
+        notes: string
+      }
+  >(null)
   // 工区写真（標準写真）撮影用: PhotoEditModal で編集する元ファイル
   const [editingStandalonePhoto, setEditingStandalonePhoto] = useState<File | null>(null)
   // 既存の工区写真マーカーからの編集: 差替対象の attachment メタ + 元 File
@@ -2659,6 +2675,198 @@ export function MobileStakingPage() {
         />
       )}
 
+      {/* 長押し時の選択シート（測点を追加 / メモを残す） */}
+      {longPressChoice && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-end justify-center z-[3400]"
+          onClick={() => setLongPressChoice(null)}
+        >
+          <div
+            className="bg-white w-full rounded-t-xl shadow-xl p-3 space-y-2 max-w-md"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-xs text-slate-500 text-center pb-1">
+              長押しした地点で
+            </div>
+            <button
+              onClick={() => {
+                const { lat, lng } = longPressChoice
+                const { x, y } = converter.toXY(lat, lng)
+                // 次の点名候補（既存座標数 + 1、頭 'M'）
+                const nextIdx = coordinates.length + 1
+                setAddCoordDialog({
+                  lat,
+                  lng,
+                  x,
+                  y,
+                  name: `M-${nextIdx}`,
+                  type: 'boundary',
+                  z: '',
+                  notes: '',
+                })
+                setLongPressChoice(null)
+              }}
+              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg font-bold"
+            >
+              <Plus className="h-5 w-5" />
+              測点を追加
+            </button>
+            <button
+              onClick={() => {
+                setMemoModalState({ lat: longPressChoice.lat, lng: longPressChoice.lng })
+                setLongPressChoice(null)
+              }}
+              className="w-full flex items-center justify-center gap-2 px-4 py-3 border border-amber-400 bg-amber-50 text-amber-800 rounded-lg font-semibold"
+            >
+              <StickyNote className="h-5 w-5" />
+              メモを残す
+            </button>
+            <button
+              onClick={() => setLongPressChoice(null)}
+              className="w-full px-4 py-2 text-sm text-slate-500"
+            >
+              キャンセル
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 長押し座標から測点を追加するモーダル */}
+      {addCoordDialog && farmId && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3450] p-3"
+          onClick={() => setAddCoordDialog(null)}
+        >
+          <div
+            className="bg-white w-full sm:max-w-md rounded-t-xl sm:rounded-xl shadow-xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 border-b flex items-center justify-between">
+              <h3 className="text-base font-bold text-slate-800">測点を追加</h3>
+              <button
+                onClick={() => setAddCoordDialog(null)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div className="flex items-baseline gap-4 text-sm font-mono text-slate-600">
+                <div>
+                  <span className="text-[10px] text-slate-500 mr-1 font-sans">X</span>
+                  <span className="text-slate-800">{addCoordDialog.x.toFixed(3)}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-500 mr-1 font-sans">Y</span>
+                  <span className="text-slate-800">{addCoordDialog.y.toFixed(3)}</span>
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] text-slate-500 mb-0.5">点名</div>
+                <input
+                  type="text"
+                  value={addCoordDialog.name}
+                  onChange={(e) =>
+                    setAddCoordDialog((d) => (d ? { ...d, name: e.target.value } : d))
+                  }
+                  className="w-full px-2 py-1.5 text-sm border rounded"
+                  autoFocus
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <div className="text-[10px] text-slate-500 mb-0.5">点種</div>
+                  <select
+                    value={addCoordDialog.type}
+                    onChange={(e) =>
+                      setAddCoordDialog((d) => (d ? { ...d, type: e.target.value } : d))
+                    }
+                    className="w-full px-2 py-1.5 text-sm border rounded bg-white"
+                  >
+                    {typeOptions.map((o) => (
+                      <option key={o.code} value={o.code}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <div className="text-[10px] text-slate-500 mb-0.5">Z（任意）</div>
+                  <input
+                    type="number"
+                    step="0.001"
+                    inputMode="decimal"
+                    value={addCoordDialog.z}
+                    onChange={(e) =>
+                      setAddCoordDialog((d) => (d ? { ...d, z: e.target.value } : d))
+                    }
+                    placeholder="-"
+                    className="w-full px-2 py-1.5 text-sm border rounded font-mono text-right"
+                  />
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] text-slate-500 mb-0.5">備考</div>
+                <input
+                  type="text"
+                  value={addCoordDialog.notes}
+                  onChange={(e) =>
+                    setAddCoordDialog((d) => (d ? { ...d, notes: e.target.value } : d))
+                  }
+                  placeholder="任意"
+                  className="w-full px-2 py-1.5 text-sm border rounded"
+                />
+              </div>
+            </div>
+            <div className="px-4 pb-4 pt-2 border-t flex gap-2">
+              <button
+                onClick={() => setAddCoordDialog(null)}
+                className="flex-1 px-3 py-2 text-sm border rounded hover:bg-slate-50"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={async () => {
+                  const d = addCoordDialog
+                  const name = d.name.trim()
+                  if (!name) {
+                    alert('点名を入力してください')
+                    return
+                  }
+                  if (coordinates.some((c) => c.pointNumber === name)) {
+                    alert(`点名 ${name} は既に存在します`)
+                    return
+                  }
+                  const zNum = d.z.trim() ? parseFloat(d.z) : null
+                  const inserted = await importCoordinates([
+                    {
+                      pointNumber: name,
+                      x: d.x,
+                      y: d.y,
+                      z: zNum,
+                      type: d.type as CoordinateRow['type'],
+                      notes: d.notes.trim() || null,
+                    },
+                  ])
+                  setAddCoordDialog(null)
+                  if (inserted.length > 0) {
+                    setShareToast(`測点 ${name} を追加しました`)
+                    window.setTimeout(() => setShareToast(null), 2500)
+                  } else {
+                    const errMsg = useCoordinateStore.getState().error ?? '不明なエラー'
+                    setShareToast(`測点追加に失敗: ${errMsg}`)
+                    window.setTimeout(() => setShareToast(null), 3500)
+                  }
+                }}
+                className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                追加
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 既存の工区写真の編集モーダル: 差替アップロード + 旧行削除 */}
       {editingExistingPhoto && farm?.project_id && farmId && (
         <PhotoEditModal
@@ -3466,10 +3674,10 @@ export function MobileStakingPage() {
             />
           ))}
 
-          {/* 地図の長押し / 右クリックでメモ作成。Leaflet の contextmenu
-              イベントはスマホでも長押しで発火する */}
+          {/* 地図の長押し / 右クリックで「測点追加 / メモを残す」の選択シートを開く。
+              Leaflet の contextmenu イベントはスマホでも長押しで発火する */}
           <MapLongPressHandler
-            onLongPress={(lat, lng) => setMemoModalState({ lat, lng })}
+            onLongPress={(lat, lng) => setLongPressChoice({ lat, lng })}
           />
 
           {/* 配線ライン（吸水=青・集水=緑、選択中はオレンジ）
