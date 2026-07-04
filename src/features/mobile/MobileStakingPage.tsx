@@ -497,7 +497,6 @@ export function MobileStakingPage() {
     fetchByEntityIds: fetchAttachments,
     uploadPhoto,
     getSignedUrl,
-    updateAttachment,
   } = useAttachmentStore()
   const {
     byFarm: orthoByFarm,
@@ -3314,19 +3313,9 @@ export function MobileStakingPage() {
             ) : null,
           )}
 
-          {/* 工区写真のマーカー: 長押しで編集モード → マーカードラッグで位置、ハンドルで角度 */}
+          {/* 工区写真のマーカー: タップで写真ポップアップ */}
           {farmPhotos.map((p) => (
-            <PhotoMarker
-              key={`photo-${p.id}`}
-              photo={p}
-              getSignedUrl={getSignedUrl}
-              onMove={(id, lat, lng) => {
-                void updateAttachment(id, { lat, lng })
-              }}
-              onRotate={(id, headingDeg) => {
-                void updateAttachment(id, { headingDeg })
-              }}
-            />
+            <PhotoMarker key={`photo-${p.id}`} photo={p} getSignedUrl={getSignedUrl} />
           ))}
 
           {/* 地図の長押し / 右クリックでメモ作成。Leaflet の contextmenu

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { MapContainer, TileLayer, Marker, Polygon, Polyline, useMap, useMapEvents, Tooltip, Popup } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -74,11 +74,7 @@ function createColoredIcon(
 // の突き出す向き = 撮影方向。heading（0=北, 90=東 ...）でシェイプごと回転
 // させるので、視野コーンなど別要素に頼らなくてもマーカー自体で方向が読める。
 // heading が null の場合はレンズを付けず、本体（角丸長方形）だけを出す。
-// editing=true のときは色を変えて破線ハローで「編集中」を示す。
-export function createPhotoIcon(
-  headingDeg: number | null,
-  editing: boolean = false,
-): L.DivIcon {
+export function createPhotoIcon(headingDeg: number | null): L.DivIcon {
   // 本体 + 上向きレンズ台形 を単一パスで一体化（既定は北向き）。
   // 座標系: viewBox 中心 (0,0)。y は下向き＋なので、北=−y。
   const bodyWithLens =
@@ -93,42 +89,18 @@ export function createPhotoIcon(
   const lensGlint = headingDeg == null
     ? ''
     : '<circle cx="0" cy="-9" r="0.9" fill="#e5e7eb" />'
-  const fillColor = editing ? '#0e7490' : '#374151'
-  const halo = editing
-    ? '<circle cx="0" cy="0" r="19" fill="none" stroke="#f59e0b" stroke-width="1.6" stroke-dasharray="3 3" />'
-    : ''
   return L.divIcon({
-    className: 'photo-marker' + (editing ? ' photo-marker-editing' : ''),
+    className: 'photo-marker',
     html: `<svg viewBox="-22 -22 44 44" width="40" height="40"
       style="filter: drop-shadow(0 2px 3px rgba(0,0,0,0.4)); -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;">
-      ${halo}
       <g transform="rotate(${rotate})">
         <path d="${path}"
-          fill="${fillColor}" stroke="white" stroke-width="1.6" stroke-linejoin="round" />
+          fill="#374151" stroke="white" stroke-width="1.6" stroke-linejoin="round" />
         ${lensGlint}
       </g>
     </svg>`,
     iconSize: [40, 40],
     iconAnchor: [20, 20],
-  })
-}
-
-// 撮影方向編集用の回転ハンドルアイコン。オレンジの円点。
-function createRotationHandleIcon(): L.DivIcon {
-  return L.divIcon({
-    className: 'rotation-handle',
-    html: `<div style="
-      width: 16px; height: 16px;
-      background: #f59e0b;
-      border: 2px solid white;
-      border-radius: 50%;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.4);
-      -webkit-user-select: none;
-      user-select: none;
-      -webkit-touch-callout: none;
-    "></div>`,
-    iconSize: [16, 16],
-    iconAnchor: [8, 8],
   })
 }
 
@@ -207,16 +179,11 @@ function CoordinateMapLongPressBridge({
 // 写真のサムネを含む Popup を開く。signed URL は遅延取得で、popup が開いた
 // タイミングで初回ロードする。
 //
-// onMove / onRotate が渡された場合、長押し（contextmenu）で編集モードに入り、
-//   ・マーカー本体をドラッグ → 位置を変更（onMove）
-//   ・周囲に出る回転ハンドルをドラッグ → 撮影方向を変更（onRotate）
-// 再度長押し、または地図の何もない場所をタップで編集モードを抜ける。
+// 位置・撮影方向の編集機能は撤去済み（別途 UI で編集する運用に変更）。
 export function PhotoMarker({
   photo,
   getSignedUrl,
   onClick,
-  onMove,
-  onRotate,
 }: {
   photo: {
     id: string
@@ -228,79 +195,9 @@ export function PhotoMarker({
   }
   getSignedUrl: (filePath: string) => Promise<string | null>
   onClick?: (id: string) => void
-  onMove?: (id: string, lat: number, lng: number) => void
-  onRotate?: (id: string, headingDeg: number) => void
 }) {
-  const map = useMap()
   const [status, setStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle')
   const [url, setUrl] = useState<string | null>(null)
-  const [editing, setEditing] = useState(false)
-  // 回転ハンドルドラッグ中の角度プレビュー
-  const [previewHeading, setPreviewHeading] = useState<number | null>(null)
-  // 回転ハンドルの現在位置（screen 55px オフセットで再計算）
-  const [handleLL, setHandleLL] = useState<L.LatLng | null>(null)
-  const markerRef = useRef<L.Marker | null>(null)
-  const handleMarkerRef = useRef<L.Marker | null>(null)
-  const handleDraggingRef = useRef(false)
-  const editable = !!(onMove || onRotate)
-
-  const currentHeading = previewHeading ?? photo.headingDeg ?? 0
-
-  // 回転ハンドルの位置をカメラ位置＋現在方位から画面 55px 分オフセットして算出。
-  // ハンドルドラッグ中は Leaflet 側が位置を持つので、上書きしない。
-  const recomputeHandle = useCallback(
-    (cameraLat: number, cameraLng: number) => {
-      if (!editing || !onRotate || handleDraggingRef.current) return
-      const cam = map.latLngToContainerPoint(L.latLng(cameraLat, cameraLng))
-      const rad = (currentHeading * Math.PI) / 180
-      const HANDLE_DIST = 55
-      const p = L.point(
-        cam.x + Math.sin(rad) * HANDLE_DIST,
-        cam.y - Math.cos(rad) * HANDLE_DIST,
-      )
-      setHandleLL(map.containerPointToLatLng(p))
-    },
-    [editing, currentHeading, map, onRotate],
-  )
-
-  useEffect(() => {
-    if (!editing) {
-      setHandleLL(null)
-      return
-    }
-    recomputeHandle(photo.lat, photo.lng)
-  }, [editing, recomputeHandle, photo.lat, photo.lng])
-
-  // 親から photo.headingDeg が更新されたら previewHeading をクリアして本値で表示
-  useEffect(() => {
-    setPreviewHeading(null)
-  }, [photo.headingDeg])
-
-  // 編集モード中: マップの空タップで解除、ズーム/パンでハンドル位置を再計算
-  useEffect(() => {
-    if (!editing) return
-    const onZoomOrMove = () => recomputeHandle(photo.lat, photo.lng)
-    const onMapClick = () => {
-      setEditing(false)
-      setPreviewHeading(null)
-    }
-    map.on('zoomend', onZoomOrMove)
-    map.on('moveend', onZoomOrMove)
-    map.on('click', onMapClick)
-    return () => {
-      map.off('zoomend', onZoomOrMove)
-      map.off('moveend', onZoomOrMove)
-      map.off('click', onMapClick)
-    }
-  }, [editing, map, recomputeHandle, photo.lat, photo.lng])
-
-  // 編集モード中だけカメラマーカーを draggable に
-  useEffect(() => {
-    const m = markerRef.current
-    if (!m) return
-    if (editing) m.dragging?.enable()
-    else m.dragging?.disable()
-  }, [editing])
 
   const ensureUrl = async () => {
     if (status === 'loading' || status === 'loaded') return
@@ -318,132 +215,55 @@ export function PhotoMarker({
     }
   }
 
-  // カメラ→ハンドル位置の方位（0=北, 90=東）
-  const computeHeadingFromHandle = (handlePos: L.LatLng, cameraPos: L.LatLng): number => {
-    const cam = map.latLngToContainerPoint(cameraPos)
-    const h = map.latLngToContainerPoint(handlePos)
-    const dx = h.x - cam.x
-    const dy = h.y - cam.y
-    return ((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360
-  }
-
   return (
-    <>
-      <Marker
-        ref={markerRef}
-        position={[photo.lat, photo.lng]}
-        icon={createPhotoIcon(currentHeading, editing)}
-        zIndexOffset={editing ? 900 : 450}
-        eventHandlers={{
-          click: () => {
-            if (editing) return
-            onClick?.(photo.id)
-            void ensureUrl()
-          },
-          contextmenu: () => {
-            if (!editable) return
-            setEditing((v) => !v)
-            setPreviewHeading(null)
-          },
-          drag: (e) => {
-            // カメラをドラッグ中はハンドルも一緒に付いてくるように再計算
-            const ll = (e.target as L.Marker).getLatLng()
-            if (!handleDraggingRef.current) recomputeHandle(ll.lat, ll.lng)
-          },
-          dragend: (e) => {
-            const ll = (e.target as L.Marker).getLatLng()
-            onMove?.(photo.id, ll.lat, ll.lng)
-            // 編集モードは継続。次の親レンダで photo.lat/lng が更新される。
-          },
-        }}
-      >
-        {!editing && (
-          <Popup minWidth={180} maxWidth={260}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {status === 'loading' && (
-                <div style={{ padding: '12px 0', textAlign: 'center', color: '#64748b' }}>
-                  読み込み中…
-                </div>
-              )}
-              {status === 'error' && (
-                <div style={{ padding: '12px 0', textAlign: 'center', color: '#dc2626' }}>
-                  写真を取得できませんでした
-                </div>
-              )}
-              {status === 'loaded' && url && (
-                <a href={url} target="_blank" rel="noreferrer">
-                  <img
-                    src={url}
-                    alt=""
-                    style={{
-                      display: 'block',
-                      maxWidth: '100%',
-                      maxHeight: 240,
-                      borderRadius: 4,
-                    }}
-                  />
-                </a>
-              )}
-              {photo.caption && (
-                <div style={{ fontSize: 11, color: '#475569' }}>{photo.caption}</div>
-              )}
-              {photo.headingDeg != null && (
-                <div style={{ fontSize: 10, color: '#94a3b8' }}>
-                  方向 {photo.headingDeg.toFixed(0)}°
-                </div>
-              )}
-              {editable && (
-                <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 4 }}>
-                  長押しで編集モード
-                </div>
-              )}
+    <Marker
+      position={[photo.lat, photo.lng]}
+      icon={createPhotoIcon(photo.headingDeg)}
+      zIndexOffset={450}
+      eventHandlers={{
+        click: () => {
+          onClick?.(photo.id)
+          void ensureUrl()
+        },
+      }}
+    >
+      <Popup minWidth={180} maxWidth={260}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {status === 'loading' && (
+            <div style={{ padding: '12px 0', textAlign: 'center', color: '#64748b' }}>
+              読み込み中…
             </div>
-          </Popup>
-        )}
-      </Marker>
-
-      {/* カメラ中心 → 回転ハンドル を結ぶ細い線（画角方向のガイド） */}
-      {editing && onRotate && handleLL && (
-        <Polyline
-          positions={[
-            [photo.lat, photo.lng],
-            [handleLL.lat, handleLL.lng],
-          ]}
-          pathOptions={{ color: '#f59e0b', weight: 2, opacity: 0.9 }}
-          interactive={false}
-        />
-      )}
-
-      {/* 回転ハンドル: これをドラッグすると撮影方向が変わる */}
-      {editing && onRotate && handleLL && (
-        <Marker
-          ref={handleMarkerRef}
-          position={handleLL}
-          icon={createRotationHandleIcon()}
-          draggable
-          zIndexOffset={950}
-          eventHandlers={{
-            dragstart: () => {
-              handleDraggingRef.current = true
-            },
-            drag: (e) => {
-              const cur = (e.target as L.Marker).getLatLng()
-              const heading = computeHeadingFromHandle(cur, L.latLng(photo.lat, photo.lng))
-              setPreviewHeading(heading)
-            },
-            dragend: (e) => {
-              handleDraggingRef.current = false
-              const cur = (e.target as L.Marker).getLatLng()
-              const heading = computeHeadingFromHandle(cur, L.latLng(photo.lat, photo.lng))
-              onRotate(photo.id, heading)
-              // photo.headingDeg 更新後の useEffect で previewHeading はクリア済み。
-              // ハンドル位置は次回 recomputeHandle で正規位置（55px）に戻る。
-              recomputeHandle(photo.lat, photo.lng)
-            },
-          }}
-        />
-      )}
-    </>
+          )}
+          {status === 'error' && (
+            <div style={{ padding: '12px 0', textAlign: 'center', color: '#dc2626' }}>
+              写真を取得できませんでした
+            </div>
+          )}
+          {status === 'loaded' && url && (
+            <a href={url} target="_blank" rel="noreferrer">
+              <img
+                src={url}
+                alt=""
+                style={{
+                  display: 'block',
+                  maxWidth: '100%',
+                  maxHeight: 240,
+                  borderRadius: 4,
+                }}
+              />
+            </a>
+          )}
+          {photo.caption && (
+            <div style={{ fontSize: 11, color: '#475569' }}>{photo.caption}</div>
+          )}
+          {photo.headingDeg != null && (
+            <div style={{ fontSize: 10, color: '#94a3b8' }}>
+              方向 {photo.headingDeg.toFixed(0)}°
+            </div>
+          )}
+        </div>
+      </Popup>
+    </Marker>
   )
 }
 
