@@ -785,6 +785,8 @@ export function MobileStakingPage() {
   >(null)
   // 工区写真（標準写真）撮影用: PhotoEditModal で編集する元ファイル
   const [editingStandalonePhoto, setEditingStandalonePhoto] = useState<File | null>(null)
+  // 撮影(camera) / インポート(picker) の区別。カメラ撮影のときだけ 撮影日を「今」に既定化する
+  const [standalonePhotoSource, setStandalonePhotoSource] = useState<'camera' | 'picker' | null>(null)
   // 既存の工区写真マーカーからの編集: 差替対象の attachment メタ + 元 File
   const [editingExistingPhoto, setEditingExistingPhoto] = useState<{
     file: File
@@ -2855,9 +2857,15 @@ export function MobileStakingPage() {
           initialLat={currentPos?.[0] ?? null}
           initialLng={currentPos?.[1] ?? null}
           initialHeadingDeg={heading}
-          onCancel={() => setEditingStandalonePhoto(null)}
+          // カメラ撮影のときは撮影日を「今」に既定化（EXIF に日時があれば PhotoEditModal 側で上書き）
+          initialTakenAt={standalonePhotoSource === 'camera' ? new Date() : null}
+          onCancel={() => {
+            setEditingStandalonePhoto(null)
+            setStandalonePhotoSource(null)
+          }}
           onConfirm={async (blob, _name, meta) => {
             setEditingStandalonePhoto(null)
+            setStandalonePhotoSource(null)
             const projectId = farm.project_id
             if (!projectId) return
             const r = await uploadPhoto({
@@ -2897,7 +2905,10 @@ export function MobileStakingPage() {
         onChange={(e) => {
           const f = e.target.files?.[0]
           e.target.value = ''
-          if (f) setEditingStandalonePhoto(f)
+          if (f) {
+            setStandalonePhotoSource('camera')
+            setEditingStandalonePhoto(f)
+          }
         }}
         className="hidden"
       />
@@ -2908,7 +2919,10 @@ export function MobileStakingPage() {
         onChange={(e) => {
           const f = e.target.files?.[0]
           e.target.value = ''
-          if (f) setEditingStandalonePhoto(f)
+          if (f) {
+            setStandalonePhotoSource('picker')
+            setEditingStandalonePhoto(f)
+          }
         }}
         className="hidden"
       />
@@ -2926,8 +2940,13 @@ export function MobileStakingPage() {
             <div className="text-center text-xs text-slate-500 mb-1">写真を追加</div>
             <button
               type="button"
-              onClick={() => {
+              onClick={async () => {
                 setPhotoSourceSheet(false)
+                // 撮影方向を記録するためコンパスを先に有効化（iOS はここで許可ダイアログ）。
+                // 許可拒否 / 失敗しても撮影自体は続行する。
+                if (!headingEnabled) {
+                  try { await toggleHeading() } catch { /* ignore */ }
+                }
                 standalonePhotoInputRef.current?.click()
               }}
               className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg font-semibold"
