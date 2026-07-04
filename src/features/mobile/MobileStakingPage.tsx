@@ -968,19 +968,10 @@ export function MobileStakingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [parcelAreas.map((a) => a.id).join(','), fetchParcels])
 
-  // 工区を開いたら測位モード（RTK / スマホ GPS）の選択を促す。
-  // 選択済みは sessionStorage に保持し、同一セッション中は再表示しない。
+  // 工区を開くたびに測位モード（RTK / スマホ GPS）の選択を促す。
+  // 前回の選択は保持しない（毎回聞く運用）。
   useEffect(() => {
     if (!farmId) return
-    try {
-      const saved = sessionStorage.getItem(`mobile:positioning-mode:${farmId}`)
-      if (saved === 'rtk' || saved === 'gps') {
-        setPositioningMode(saved)
-        return
-      }
-    } catch {
-      /* sessionStorage 不可 */
-    }
     setPositioningMode(null)
     setShowModeChooser(true)
   }, [farmId])
@@ -1859,24 +1850,10 @@ export function MobileStakingPage() {
     }
     if (!farmId) return
     // モード未選択なら選択モーダルを出す
+    // （RTK の開始前チェックは選択時に出るのでここでは再表示しない）
     if (positioningMode == null) {
       setShowModeChooser(true)
       return
-    }
-    // RTK モードの初回押下時のみ「開始前チェック」モーダルを出して観測は止める。
-    // 工区ごとにセッション中 1 回だけ。ユーザーが「確認した」で閉じてから
-    // もう一度記録ボタンを押すと観測が始まる。
-    if (positioningMode === 'rtk') {
-      try {
-        const key = `mobile:startup-check:${farmId}`
-        if (sessionStorage.getItem(key) !== '1') {
-          setShowStartupCheck(true)
-          sessionStorage.setItem(key, '1')
-          return
-        }
-      } catch {
-        // sessionStorage が使えない環境ではチェックを省いてそのまま進む
-      }
     }
     recSamplesRef.current = []
     setRecordedCount(0)
@@ -4832,16 +4809,9 @@ export function MobileStakingPage() {
             <button
               onClick={() => {
                 setPositioningMode('rtk')
-                try { sessionStorage.setItem(`mobile:positioning-mode:${farmId}`, 'rtk') } catch { /* ignore */ }
                 setShowModeChooser(false)
                 // RTK を選んだら続けて開始前チェック（ジオイド補正 / アンテナ高）を出す
-                try {
-                  const key = `mobile:startup-check:${farmId}`
-                  if (sessionStorage.getItem(key) !== '1') {
-                    setShowStartupCheck(true)
-                    sessionStorage.setItem(key, '1')
-                  }
-                } catch { /* ignore */ }
+                setShowStartupCheck(true)
               }}
               className="w-full border-2 border-blue-600 rounded-lg p-3 mb-3 text-left hover:bg-blue-50"
             >
@@ -4852,7 +4822,6 @@ export function MobileStakingPage() {
             <button
               onClick={() => {
                 setPositioningMode('gps')
-                try { sessionStorage.setItem(`mobile:positioning-mode:${farmId}`, 'gps') } catch { /* ignore */ }
                 setShowModeChooser(false)
               }}
               className="w-full border-2 border-amber-500 rounded-lg p-3 text-left hover:bg-amber-50"
