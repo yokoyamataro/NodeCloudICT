@@ -1397,10 +1397,15 @@ export function MobileStakingPage() {
   const trenchZ = useMemo<number | null>(() => (trenchIdx && selfXY ? queryZ(trenchIdx, selfXY.x, selfXY.y) : null), [trenchIdx, selfXY])
   const groundZ = useMemo<number | null>(() => (groundIdx && selfXY ? queryZ(groundIdx, selfXY.x, selfXY.y) : null), [groundIdx, selfXY])
 
+  // 実効補正値: 簡易測定モードでは補正を無効化（生の楕円体高、アンテナ高 0）
+  // 精密モードではユーザー設定値を使う
+  const effUseGeoid = positioningMode === 'gps' ? false : useGeoidCorrection
+  const effAntennaHeight = positioningMode === 'gps' ? 0 : antennaHeight
+
   // 自己標高（補正後）— 既存の計算ロジックをここで再利用
   const selfElevation = useMemo<number | null>(() => {
     if (currentAlt === null || currentPos === null) return null
-    if (useGeoidCorrection && geoidGrid) {
+    if (effUseGeoid && geoidGrid) {
       const rRow = (geoidGrid.latMax - currentPos[0]) / geoidGrid.dLat
       const rCol = (currentPos[1] - geoidGrid.lonMin) / geoidGrid.dLon
       if (rRow >= 0 && rCol >= 0 && rRow < geoidGrid.nrows && rCol < geoidGrid.ncols) {
@@ -1413,11 +1418,11 @@ export function MobileStakingPage() {
         const v10 = geoidGrid.values[r1 * geoidGrid.ncols + c0]
         const v11 = geoidGrid.values[r1 * geoidGrid.ncols + c1]
         const N = (v00 * (1 - tc) + v01 * tc) * (1 - tr) + (v10 * (1 - tc) + v11 * tc) * tr
-        if (Number.isFinite(N)) return currentAlt - N - antennaHeight
+        if (Number.isFinite(N)) return currentAlt - N - effAntennaHeight
       }
     }
-    return currentAlt - antennaHeight
-  }, [currentAlt, currentPos, useGeoidCorrection, geoidGrid, antennaHeight])
+    return currentAlt - effAntennaHeight
+  }, [currentAlt, currentPos, effUseGeoid, geoidGrid, effAntennaHeight])
 
   const trenchDiff = trenchZ !== null && selfElevation !== null ? selfElevation - trenchZ : null
   const groundDiff = groundZ !== null && selfElevation !== null ? selfElevation - groundZ : null
@@ -2009,14 +2014,12 @@ export function MobileStakingPage() {
     const rawEllipsoidal = altCount > 0 ? sumAlt / altCount : null
 
     // 標高 = 楕円体高 − ジオイド高 − アンテナ高
-    // ただしスマホ GPS モードでは補正をかけず生値を使う（誤差前提の簡易測定）
-    const isGpsMode = positioningMode === 'gps'
+    // 実効補正値（effUseGeoid / effAntennaHeight）は簡易測定モードで自動 OFF/0 になる
     let geoidN: number | null = null
-    if (!isGpsMode && useGeoidCorrection && geoidGrid) {
+    if (effUseGeoid && geoidGrid) {
       const { lookupGeoid } = await import('@/lib/geoid')
       geoidN = lookupGeoid(geoidGrid, avgLat, avgLng)
     }
-    const effAntennaHeight = isGpsMode ? 0 : antennaHeight
     const avgAlt = rawEllipsoidal !== null
       ? (geoidN !== null ? rawEllipsoidal - geoidN - effAntennaHeight : rawEllipsoidal - effAntennaHeight)
       : null
@@ -2141,7 +2144,7 @@ export function MobileStakingPage() {
       distance: dist,
       accuracy: maxAcc,
       sampleCount: samples.length,
-      antennaHeight,
+      antennaHeight: effAntennaHeight,
     })
   }
 
@@ -4457,8 +4460,9 @@ export function MobileStakingPage() {
                   {(() => {
                     if (currentAlt == null) return '-'
                     // 楕円体高 → 標高（ジオイド補正 + アンテナ高）
+                    // 簡易測定モードでは補正なしで楕円体高そのまま
                     let H: number | null = null
-                    if (currentPos && useGeoidCorrection && geoidGrid) {
+                    if (currentPos && effUseGeoid && geoidGrid) {
                       const rRow = (geoidGrid.latMax - currentPos[0]) / geoidGrid.dLat
                       const rCol = (currentPos[1] - geoidGrid.lonMin) / geoidGrid.dLon
                       if (rRow >= 0 && rCol >= 0 && rRow < geoidGrid.nrows && rCol < geoidGrid.ncols) {
@@ -4471,10 +4475,10 @@ export function MobileStakingPage() {
                         const v10 = geoidGrid.values[r1 * geoidGrid.ncols + c0]
                         const v11 = geoidGrid.values[r1 * geoidGrid.ncols + c1]
                         const N = (v00 * (1 - tc) + v01 * tc) * (1 - tr) + (v10 * (1 - tc) + v11 * tc) * tr
-                        if (Number.isFinite(N)) H = currentAlt - N - antennaHeight
+                        if (Number.isFinite(N)) H = currentAlt - N - effAntennaHeight
                       }
                     } else if (currentPos) {
-                      H = currentAlt - antennaHeight
+                      H = currentAlt - effAntennaHeight
                     }
                     return (H ?? currentAlt).toFixed(3)
                   })()}
