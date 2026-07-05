@@ -150,6 +150,12 @@ const DEFAULT_FIX_ACCURACY_M = 0.03
 const FIX_ACCURACY_MIN_M = 0.02
 const FIX_ACCURACY_MAX_M = 0.05
 
+// 一度 FIX に達した後、この精度(m)より悪い読みは短期間の "はずれ値" として棄却する。
+// Android FLP が数十秒に一度ネットワーク測位を混ぜてくるケースへの緩和策。
+const POST_FIX_REJECT_ACC_M = 0.50
+// この回数を超えて連続で棄却が続いたら FIX 喪失とみなして受け入れる。
+const MAX_CONSECUTIVE_REJECTS = 5
+
 // 「ピッ」を count 回、短い間隔で鳴らす（Web Audio）
 function playBeeps(ctx: AudioContext, count: number) {
   const now = ctx.currentTime
@@ -1248,16 +1254,68 @@ export function MobileStakingPage() {
   }
 
   // 現在位置の監視
+  //
+  // RTK モードで一度 FIX に達したあとは、accuracy が急に 0.50m を超える読みを
+  // 短期的な "はずれ値" として棄却する（Android FLP のネットワーク測位混入対策）。
+  // ただし連続 5 回まで。それを超えたら FIX 喪失として受け入れ、通常フローに戻す。
+  const postFixModeRef = useRef(false)
+  const consecutiveRejectsRef = useRef(0)
+  const positioningModeRef = useRef(positioningMode)
+  const rtkFixAccuracyRef = useRef(rtkFixAccuracyM)
+  useEffect(() => { positioningModeRef.current = positioningMode }, [positioningMode])
+  useEffect(() => { rtkFixAccuracyRef.current = rtkFixAccuracyM }, [rtkFixAccuracyM])
+  // 棄却中フラグ (>0 の間は FIX 音を鳴らさない)。ref と state の両方を持つ
+  const [rejectingCount, setRejectingCount] = useState(0)
+  const rejectingCountRef = useRef(0)
+  useEffect(() => { rejectingCountRef.current = rejectingCount }, [rejectingCount])
+
   useEffect(() => {
     if (!('geolocation' in navigator)) return
     const id = navigator.geolocation.watchPosition(
       (pos) => {
+        const acc = pos.coords.accuracy
+        const isRtk = positioningModeRef.current === 'rtk'
+        const fixThreshold = rtkFixAccuracyRef.current
+
+        // RTK モード + 既に一度 FIX 済 + 精度が閾値超過 → 棄却フェーズ
+        if (
+          isRtk &&
+          postFixModeRef.current &&
+          acc != null &&
+          acc > POST_FIX_REJECT_ACC_M
+        ) {
+          consecutiveRejectsRef.current += 1
+          if (consecutiveRejectsRef.current > MAX_CONSECUTIVE_REJECTS) {
+            // 連続 5 回を超えた → FIX 喪失として受け入れる。棄却状態を解除して
+            // この読みで currentAcc を更新することで既存の FIX→喪失トリガが警告音を鳴らす。
+            postFixModeRef.current = false
+            consecutiveRejectsRef.current = 0
+            setRejectingCount(0)
+            // fallthrough して下の accept 分岐へ
+          } else {
+            // まだ棄却継続。currentPos / currentAcc を更新しない (画面は最終良好値を保持)
+            setRejectingCount(consecutiveRejectsRef.current)
+            return
+          }
+        } else {
+          // accept 分岐: 棄却カウントをリセット
+          if (consecutiveRejectsRef.current !== 0) {
+            consecutiveRejectsRef.current = 0
+            setRejectingCount(0)
+          }
+        }
+
+        // 一度 FIX 精度に達したら postFixMode に入り、以降のフィルタが有効化される
+        if (isRtk && acc != null && acc <= fixThreshold) {
+          postFixModeRef.current = true
+        }
+
         const ll: [number, number] = [pos.coords.latitude, pos.coords.longitude]
         setCurrentPos(ll)
-        setCurrentAcc(pos.coords.accuracy)
+        setCurrentAcc(acc)
         setCurrentAlt(pos.coords.altitude)
         // FIX相当の精度のときだけ追従用の安定位置を更新（外れたら据え置き）
-        if (pos.coords.accuracy != null && pos.coords.accuracy <= FOLLOW_FIX_THRESHOLD_M) {
+        if (acc != null && acc <= FOLLOW_FIX_THRESHOLD_M) {
           setStablePos(ll)
         }
       },
@@ -1814,6 +1872,8 @@ export function MobileStakingPage() {
     if (!ctx) return
     prevFixRef.current = soundAccRef.current != null && soundAccRef.current <= rtkFixAccuracyM
     const id = window.setInterval(() => {
+      // 棄却フェーズ (連続 1〜5 回) の間は FIX 音を止める
+      if (rejectingCountRef.current > 0) return
       const acc = soundAccRef.current
       const fix = acc != null && acc <= rtkFixAccuracyM
       if (!fix) return
