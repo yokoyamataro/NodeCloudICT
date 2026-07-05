@@ -4636,76 +4636,78 @@ export function MobileStakingPage() {
 
         {/* MAP モード行: ターゲット設定 → 誘導表示 */}
         {showMap && (selectedTarget ? (
-          <div className="flex items-center gap-2">
-            {/* ターゲット選択中は 測定 ボタンを点名の左に配置。
-                簡易測定モードではターゲット測設の概念がないので測定ボタンは出さない。 */}
-            {!recording && positioningMode !== 'gps' && (() => {
-              const rtkNotFix =
-                positioningMode === 'rtk' &&
-                (currentAcc == null || currentAcc > rtkFixAccuracyM)
-              const disabled = saving || !currentPos || rtkNotFix
-              return (
-                <button
-                  onClick={() => startRecording()}
-                  disabled={disabled}
-                  className="shrink-0 flex items-center justify-center gap-1 px-3 py-2 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm bg-red-600 hover:bg-red-700"
-                  title={
-                    rtkNotFix
-                      ? `精度 ${(rtkFixAccuracyM * 100).toFixed(1)}cm 以下で測定可能`
-                      : undefined
-                  }
-                >
-                  <CircleIcon className="h-4 w-4" />
-                  測定
-                </button>
-              )
-            })()}
-            {/* 詳細ボタン: 選択中ターゲットの詳細情報モーダルを開く */}
-            <button
-              onClick={() => setPointInfoTarget(selectedTarget)}
-              className="shrink-0 flex items-center justify-center p-2 border border-slate-300 rounded text-slate-600 hover:bg-slate-100"
-              title="ターゲットの詳細を表示"
-            >
-              <Info className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => setShowTargetList(true)}
-              className="flex-1 min-w-0 text-left"
-              title="ターゲット切替"
-            >
-              <div className="font-bold truncate">{selectedTarget.name}</div>
-            </button>
-            {/* 設置状態セレクタは測定完了モーダル (postStakeDialog) 側で操作する */}
-            <button
-              onClick={() => setSelectedTargetId(null)}
-              className="p-1.5 rounded border border-slate-300 text-slate-500 hover:bg-slate-100 shrink-0"
-              title="ターゲットを解除"
-            >
-              <X className="h-4 w-4" />
-            </button>
-            {distanceToTarget != null && bearingToTarget != null && (
-              <div className="flex items-center gap-2">
-                {/* 矢印（北を 0° として時計回りに回転） */}
-                <ArrowUp
-                  className="h-7 w-7 text-blue-600"
-                  style={{
-                    transform: `rotate(${bearingToTarget}deg)`,
-                    transition: 'transform 120ms linear',
-                  }}
-                />
-                <div className="text-right">
-                  <div className="text-[10px] text-slate-500 leading-none">
-                    {bearingToTarget.toFixed(0)}°
-                  </div>
-                  <div className="font-mono font-bold text-lg leading-tight">
-                    {distanceToTarget < 1
-                      ? `${(distanceToTarget * 100).toFixed(0)} cm`
-                      : `${distanceToTarget.toFixed(2)} m`}
+          <div className="flex flex-col gap-1">
+            {/* 1 行目: 点名 (伸縮) + 解除 X + 矢印/距離。
+                点名を最大限に表示するため、測定/詳細ボタンは 2 行目に配置。 */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowTargetList(true)}
+                className="flex-1 min-w-0 text-left"
+                title="ターゲット切替"
+              >
+                <div className="font-bold text-base truncate">{selectedTarget.name}</div>
+              </button>
+              <button
+                onClick={() => setSelectedTargetId(null)}
+                className="p-1.5 rounded border border-slate-300 text-slate-500 hover:bg-slate-100 shrink-0"
+                title="ターゲットを解除"
+              >
+                <X className="h-4 w-4" />
+              </button>
+              {distanceToTarget != null && bearingToTarget != null && (
+                <div className="flex items-center gap-2 shrink-0">
+                  <ArrowUp
+                    className="h-7 w-7 text-blue-600"
+                    style={{
+                      transform: `rotate(${bearingToTarget}deg)`,
+                      transition: 'transform 120ms linear',
+                    }}
+                  />
+                  <div className="text-right">
+                    <div className="text-[10px] text-slate-500 leading-none">
+                      {bearingToTarget.toFixed(0)}°
+                    </div>
+                    <div className="font-mono font-bold text-lg leading-tight">
+                      {distanceToTarget < 1
+                        ? `${(distanceToTarget * 100).toFixed(0)} cm`
+                        : `${distanceToTarget.toFixed(2)} m`}
+                    </div>
                   </div>
                 </div>
-                {/* 比高は 3D 行 (TIN 比高) で表示するため、MAP 行では省略 */}
-              </div>
-            )}
+              )}
+            </div>
+            {/* 2 行目: 測定 + 詳細ボタン。簡易測定モードでは測定ボタンなし。 */}
+            <div className="flex items-center gap-2">
+              {!recording && positioningMode !== 'gps' && (() => {
+                const rtkNotFix =
+                  positioningMode === 'rtk' &&
+                  (currentAcc == null || currentAcc > rtkFixAccuracyM)
+                const disabled = saving || !currentPos || rtkNotFix
+                return (
+                  <button
+                    onClick={() => startRecording()}
+                    disabled={disabled}
+                    className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm bg-red-600 hover:bg-red-700"
+                    title={
+                      rtkNotFix
+                        ? `精度 ${(rtkFixAccuracyM * 100).toFixed(1)}cm 以下で測定可能`
+                        : undefined
+                    }
+                  >
+                    <CircleIcon className="h-4 w-4" />
+                    測定
+                  </button>
+                )
+              })()}
+              <button
+                onClick={() => setPointInfoTarget(selectedTarget)}
+                className="flex-1 flex items-center justify-center gap-1 px-3 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-100 text-sm font-semibold"
+                title="ターゲットの詳細を表示"
+              >
+                <Info className="h-4 w-4" />
+                詳細
+              </button>
+            </div>
           </div>
         ) : (
           <button
