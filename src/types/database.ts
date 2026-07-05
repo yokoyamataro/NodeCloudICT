@@ -487,6 +487,7 @@ export interface Project {
   category: ProjectCategory | null  // 工事種別（NULL は未分類）
   created_at: string
   updated_at: string
+  deleted_at: string | null      // ゴミ箱運用: NULL 以外は削除済み。保持期間経過で物理削除
 }
 
 // プロジェクトメンバー
@@ -511,6 +512,7 @@ export interface Farm {
   description: string | null
   created_at: string
   updated_at: string
+  deleted_at: string | null      // ゴミ箱運用: NULL 以外は削除済み
 }
 
 // 後方互換性のためのエイリアス

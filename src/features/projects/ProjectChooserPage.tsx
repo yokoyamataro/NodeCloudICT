@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Folder, Loader2, Users, MapPin, AlertCircle } from 'lucide-react'
+import { Plus, Folder, Loader2, Users, MapPin, AlertCircle, Trash2 } from 'lucide-react'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { JGD2011_ZONES } from '@/lib/coordinates'
@@ -99,6 +99,14 @@ export function ProjectChooserPage() {
       <div className="p-4 bg-white border-b flex items-center gap-3 flex-wrap">
         <Folder className="h-5 w-5 text-blue-600" />
         <h1 className="text-lg font-bold flex-1">工事一覧</h1>
+        <button
+          onClick={() => navigate('/trash')}
+          className="flex items-center gap-1 px-2 py-1.5 text-sm border border-slate-300 text-slate-600 rounded hover:bg-slate-50"
+          title="削除した現場・工区を確認"
+        >
+          <Trash2 className="h-4 w-4" />
+          ゴミ箱
+        </button>
         <button
           onClick={() => openCreateDialog('cadastral')}
           className="flex items-center gap-1 px-3 py-1.5 text-sm bg-emerald-600 text-white rounded hover:bg-emerald-700"

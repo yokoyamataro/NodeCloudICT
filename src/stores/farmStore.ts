@@ -13,6 +13,7 @@ export interface Farm {
   description: string | null
   created_at: string
   updated_at: string
+  deleted_at: string | null
 }
 
 // 工区の先頭座標情報
@@ -69,6 +70,8 @@ async function fetchProjectZones(projectIds: string[]): Promise<Map<string, numb
 interface FarmState {
   // 工区一覧
   farms: Farm[]
+  // ゴミ箱内 (deleted_at != null) の工区
+  trashedFarms: Farm[]
   loading: boolean
   error: string | null
 
@@ -84,11 +87,17 @@ interface FarmState {
 
   // CRUD操作
   fetchFarms: (projectId?: string) => Promise<void>
+  fetchTrashedFarms: (projectId?: string) => Promise<void>
   fetchFarmLocations: () => Promise<void>
   fetchWorkAreaPolygons: () => Promise<void>
   createFarm: (projectId: string, name: string, description?: string) => Promise<Farm | null>
   updateFarm: (id: string, updates: Partial<Pick<Farm, 'name' | 'description'>>) => Promise<void>
-  deleteFarm: (
+  /** ゴミ箱へ移動 (soft delete)。保持期間経過で物理削除される。 */
+  deleteFarm: (id: string) => Promise<void>
+  /** ゴミ箱から復元 */
+  restoreFarm: (id: string) => Promise<void>
+  /** ゴミ箱から即時完全削除 (子行 + Storage 実体も掃除する重い処理) */
+  purgeFarm: (
     id: string,
     onProgress?: (phase: string, done?: number, total?: number) => void,
   ) => Promise<void>
@@ -98,6 +107,7 @@ export const useFarmStore = create<FarmState>()(
   persist(
     (set, get) => ({
   farms: [],
+  trashedFarms: [],
   loading: false,
   error: null,
   currentFarm: null,
@@ -119,6 +129,7 @@ export const useFarmStore = create<FarmState>()(
       let query = supabase
         .from('farms')
         .select('*')
+        .is('deleted_at', null)
         .order('updated_at', { ascending: false })
 
       if (projectId) {
@@ -134,6 +145,26 @@ export const useFarmStore = create<FarmState>()(
       get().fetchFarmLocations()
     } catch (err) {
       set({ error: err instanceof Error ? err.message : '工区の取得に失敗しました', loading: false })
+    }
+  },
+
+  fetchTrashedFarms: async (projectId?: string) => {
+    try {
+      let query = supabase
+        .from('farms')
+        .select('*')
+        .not('deleted_at', 'is', null)
+        .order('deleted_at', { ascending: false })
+
+      if (projectId) {
+        query = query.eq('project_id', projectId)
+      }
+
+      const { data, error } = await query
+      if (error) throw error
+      set({ trashedFarms: data || [] })
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : 'ゴミ箱の取得に失敗しました' })
     }
   },
 
@@ -372,7 +403,50 @@ export const useFarmStore = create<FarmState>()(
     }
   },
 
-  deleteFarm: async (id, onProgress) => {
+  deleteFarm: async (id) => {
+    set({ loading: true, error: null })
+    try {
+      const { error } = await supabase
+        .from('farms')
+        .update({ deleted_at: new Date().toISOString() } as never)
+        .eq('id', id)
+
+      if (error) throw error
+
+      set((state) => ({
+        farms: state.farms.filter((f) => f.id !== id),
+        currentFarm: state.currentFarm?.id === id ? null : state.currentFarm,
+        loading: false,
+      }))
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : '工区の削除に失敗しました', loading: false })
+      throw err
+    }
+  },
+
+  restoreFarm: async (id) => {
+    try {
+      const { data, error } = await supabase
+        .from('farms')
+        .update({ deleted_at: null } as never)
+        .eq('id', id)
+        .select()
+        .single()
+
+      if (error) throw error
+
+      const restored = data as Farm
+      set((state) => ({
+        trashedFarms: state.trashedFarms.filter((f) => f.id !== id),
+        farms: [restored, ...state.farms],
+      }))
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : '工区の復元に失敗しました' })
+      throw err
+    }
+  },
+
+  purgeFarm: async (id, onProgress) => {
     set({ loading: true, error: null })
     try {
       // 1. 関連する design_coordinates / design_work_areas / design_pipes の ID を集める。
@@ -512,11 +586,12 @@ export const useFarmStore = create<FarmState>()(
 
       set((state) => ({
         farms: state.farms.filter((f) => f.id !== id),
+        trashedFarms: state.trashedFarms.filter((f) => f.id !== id),
         currentFarm: state.currentFarm?.id === id ? null : state.currentFarm,
         loading: false,
       }))
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : '工区の削除に失敗しました', loading: false })
+      set({ error: err instanceof Error ? err.message : '工区の完全削除に失敗しました', loading: false })
       throw err
     }
   },

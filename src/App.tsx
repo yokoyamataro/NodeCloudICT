@@ -50,6 +50,7 @@ import { GradingWorkAreaPage } from '@/features/grading/GradingWorkAreaPage'
 import { SubsoilWorkAreaPage } from '@/features/subsoil/SubsoilWorkAreaPage'
 import { StoneRemovalWorkAreaPage } from '@/features/stone-removal/StoneRemovalWorkAreaPage'
 import { OpenChannelAlignmentPage } from '@/features/open-channel/OpenChannelAlignmentPage'
+import { TrashPage } from '@/features/trash/TrashPage'
 import { Loader2 } from 'lucide-react'
 
 // 認証が必要なルートのラッパー
@@ -293,6 +294,7 @@ function AppRoutes() {
           <Route path="alignment" element={<OpenChannelAlignmentPage />} />
         </Route>
         <Route path="settings" element={<PlaceholderPage title="設定" />} />
+        <Route path="trash" element={<TrashPage />} />
         </Route>
       </Routes>
   )

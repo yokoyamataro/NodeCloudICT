@@ -5,6 +5,8 @@ import type { Project, ProjectCategory, ProjectMember, ProjectMemberRole } from 
 
 interface ProjectListState {
   projects: Project[]
+  // ゴミ箱内 (deleted_at != null) のプロジェクト。トップの一覧には含めない
+  trashedProjects: Project[]
   currentProject: Project | null
   loading: boolean
   error: string | null
@@ -20,12 +22,18 @@ interface ProjectListState {
 
   // データ取得
   fetchProjects: () => Promise<void>
+  fetchTrashedProjects: () => Promise<void>
   fetchMembers: (projectId: string) => Promise<void>
 
   // プロジェクト操作
   createProject: (name: string, description?: string, coordinateZone?: number, category?: ProjectCategory | null) => Promise<Project | null>
   updateProject: (id: string, updates: Partial<Pick<Project, 'name' | 'description' | 'start_date' | 'end_date' | 'client' | 'contractor' | 'coordinate_zone' | 'category'>>) => Promise<void>
+  /** ゴミ箱へ移動 (soft delete)。保持期間経過で物理削除される。 */
   deleteProject: (id: string) => Promise<void>
+  /** ゴミ箱から復元 */
+  restoreProject: (id: string) => Promise<void>
+  /** ゴミ箱から即時完全削除 (子行は CASCADE、Storage 掃除は含まない) */
+  purgeProject: (id: string) => Promise<void>
 
   // メンバー操作
   // - inviteMember: 招待リンク経由でメンバーを追加。既存ユーザーなら即追加、
@@ -50,6 +58,7 @@ export const useProjectListStore = create<ProjectListState>()(
   persist(
     (set, get) => ({
   projects: [],
+  trashedProjects: [],
   currentProject: null,
   loading: false,
   error: null,
@@ -84,9 +93,11 @@ export const useProjectListStore = create<ProjectListState>()(
   fetchProjects: async () => {
     set({ loading: true, error: null })
     try {
+      // 通常一覧はゴミ箱に入ってないものだけ
       const { data, error } = await supabase
         .from('projects')
         .select('*')
+        .is('deleted_at', null)
         .order('created_at', { ascending: false })
 
       if (error) throw error
@@ -96,6 +107,24 @@ export const useProjectListStore = create<ProjectListState>()(
       set({
         error: err instanceof Error ? err.message : 'プロジェクトの取得に失敗しました',
         loading: false,
+      })
+    }
+  },
+
+  fetchTrashedProjects: async () => {
+    try {
+      const { data, error } = await supabase
+        .from('projects')
+        .select('*')
+        .not('deleted_at', 'is', null)
+        .order('deleted_at', { ascending: false })
+
+      if (error) throw error
+
+      set({ trashedProjects: (data || []) as Project[] })
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : 'ゴミ箱の取得に失敗しました',
       })
     }
   },
@@ -203,7 +232,11 @@ export const useProjectListStore = create<ProjectListState>()(
   deleteProject: async (id) => {
     const state = get()
     try {
-      const { error } = await supabase.from('projects').delete().eq('id', id)
+      // ゴミ箱へ移動 (soft delete)。物理削除は保持期間経過後
+      const { error } = await supabase
+        .from('projects')
+        .update({ deleted_at: new Date().toISOString() } as never)
+        .eq('id', id)
 
       if (error) throw error
 
@@ -213,6 +246,45 @@ export const useProjectListStore = create<ProjectListState>()(
       })
     } catch (err) {
       set({ error: err instanceof Error ? err.message : 'プロジェクトの削除に失敗しました' })
+    }
+  },
+
+  restoreProject: async (id) => {
+    const state = get()
+    try {
+      const { data, error } = await supabase
+        .from('projects')
+        .update({ deleted_at: null } as never)
+        .eq('id', id)
+        .select()
+        .single()
+
+      if (error) throw error
+
+      const restored = data as Project
+      set({
+        trashedProjects: state.trashedProjects.filter((p) => p.id !== id),
+        projects: [restored, ...state.projects],
+      })
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : 'プロジェクトの復元に失敗しました' })
+    }
+  },
+
+  purgeProject: async (id) => {
+    const state = get()
+    try {
+      // 完全削除 (FK CASCADE で子行は消える)
+      const { error } = await supabase.from('projects').delete().eq('id', id)
+      if (error) throw error
+
+      set({
+        trashedProjects: state.trashedProjects.filter((p) => p.id !== id),
+      })
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : 'プロジェクトの完全削除に失敗しました',
+      })
     }
   },
 
