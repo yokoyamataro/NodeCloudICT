@@ -2,27 +2,59 @@
 // 選ぶと /mobile/farms/:projectId に遷移する。
 // 上から 地籍測量 → 土木工事 → 未分類（あれば）の順で縦に並べる。
 
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertCircle, Folder, Loader2, LogOut, MapPin, Monitor } from 'lucide-react'
+import { AlertCircle, Folder, Loader2, LogOut, MapPin, Monitor, Plus, X } from 'lucide-react'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { useAuth } from '@/contexts/AuthContext'
 import { setDisplayModeOverride } from '@/lib/displayMode'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
-import type { Project } from '@/types/database'
+import { JGD2011_ZONES } from '@/lib/coordinates'
+import type { Project, ProjectCategory } from '@/types/database'
+import { PROJECT_CATEGORY_LABEL } from '@/types/database'
 
 export function MobileProjectChooserPage() {
   const navigate = useNavigate()
   const { signOut, user, profile } = useAuth()
   const userLabel = profile?.full_name?.trim() || (user?.email ? user.email.split('@')[0] : '')
-  const { projects, loading, error, fetchProjects } = useProjectListStore()
+  const { projects, loading, error, fetchProjects, createProject } = useProjectListStore()
   const { farms, fetchFarms } = useFarmStore()
 
   useEffect(() => {
     fetchProjects()
     fetchFarms()
   }, [fetchProjects, fetchFarms])
+
+  // 新規工事作成ダイアログ
+  const [showNewDialog, setShowNewDialog] = useState<ProjectCategory | null>(null)
+  const [newName, setNewName] = useState('')
+  const [newDescription, setNewDescription] = useState('')
+  const [newZone, setNewZone] = useState(13)
+  const [creating, setCreating] = useState(false)
+
+  const openCreateDialog = (category: ProjectCategory) => {
+    setShowNewDialog(category)
+    setNewName('')
+    setNewDescription('')
+    setNewZone(13)
+  }
+
+  const handleCreate = async () => {
+    if (!showNewDialog || !newName.trim()) return
+    setCreating(true)
+    try {
+      await createProject(
+        newName.trim(),
+        newDescription.trim() || undefined,
+        newZone,
+        showNewDialog,
+      )
+      setShowNewDialog(null)
+    } finally {
+      setCreating(false)
+    }
+  }
 
   const farmCountByProject = (id: string) =>
     farms.filter((f) => f.project_id === id).length
@@ -94,10 +126,28 @@ export function MobileProjectChooserPage() {
         </div>
       )}
 
-      <div className="flex-1 overflow-auto p-3 space-y-4">
+      <div className="flex-1 overflow-auto p-3 space-y-3">
+        {/* 新規作成ボタン (地籍測量 / 土木工事)。空でも常時表示 */}
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={() => openCreateDialog('cadastral')}
+            className="flex items-center justify-center gap-1 py-2.5 text-sm font-semibold bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
+          >
+            <Plus className="h-4 w-4" />
+            新規地籍測量
+          </button>
+          <button
+            onClick={() => openCreateDialog('civil')}
+            className="flex items-center justify-center gap-1 py-2.5 text-sm font-semibold bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            <Plus className="h-4 w-4" />
+            新規土木工事
+          </button>
+        </div>
+
         {projects.length === 0 ? (
-          <div className="text-center py-12 text-sm text-slate-500">
-            工事がありません。PC で作成してください。
+          <div className="text-center py-8 text-sm text-slate-500">
+            工事がありません。上のボタンから新規作成してください。
           </div>
         ) : (
           <>
@@ -132,6 +182,83 @@ export function MobileProjectChooserPage() {
           </>
         )}
       </div>
+
+      {/* 新規工事作成ダイアログ (モバイル向けボトムシート) */}
+      {showNewDialog && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[9999]"
+          onClick={() => !creating && setShowNewDialog(null)}
+        >
+          <div
+            className="bg-white w-full sm:max-w-md rounded-t-xl sm:rounded-xl shadow-xl flex flex-col max-h-[92vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 border-b flex items-center justify-between shrink-0">
+              <h3 className="text-base font-semibold">
+                新規{PROJECT_CATEGORY_LABEL[showNewDialog]}
+              </h3>
+              <button
+                onClick={() => !creating && setShowNewDialog(null)}
+                disabled={creating}
+                className="p-1 rounded hover:bg-slate-100 text-slate-500 disabled:opacity-50"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto flex-1 space-y-3">
+              <div>
+                <label className="block text-xs text-slate-600 mb-1">工事名</label>
+                <input
+                  type="text"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  className="w-full px-2 py-2 text-base border rounded"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-600 mb-1">概要</label>
+                <textarea
+                  value={newDescription}
+                  onChange={(e) => setNewDescription(e.target.value)}
+                  className="w-full px-2 py-2 text-sm border rounded h-16"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-600 mb-1">座標系</label>
+                <select
+                  value={newZone}
+                  onChange={(e) => setNewZone(parseInt(e.target.value, 10))}
+                  className="w-full px-2 py-2 text-sm border rounded"
+                >
+                  {Object.entries(JGD2011_ZONES).map(([zone, info]) => (
+                    <option key={zone} value={zone}>
+                      {info.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="px-4 py-3 border-t flex gap-2 shrink-0">
+              <button
+                onClick={() => setShowNewDialog(null)}
+                disabled={creating}
+                className="flex-1 px-3 py-2 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={handleCreate}
+                disabled={creating || !newName.trim()}
+                className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+              >
+                {creating && <Loader2 className="h-4 w-4 animate-spin" />}
+                作成
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
