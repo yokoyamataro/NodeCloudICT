@@ -1,11 +1,11 @@
-// テンプレートを選んで、依頼人 / 隣接者 / 事務所情報を差し込んで Word 出力するモーダル。
+// テンプレートを選んで、依頼人 / 隣接者 を差し込んで Word 出力するモーダル。
+// 事務所情報はテンプレート本体に直書きする運用にしたため、ここでの入力は撤去。
 // 地権者管理から呼ぶ。
 
 import { useEffect, useMemo, useState } from 'react'
 import { Check, Download, Loader2, X } from 'lucide-react'
-import type { DocumentSettings, Landowner } from '@/types/database'
+import type { Landowner } from '@/types/database'
 import { useAuth } from '@/contexts/AuthContext'
-import { useDocumentSettingsStore } from '@/stores/documentSettingsStore'
 import { useDocumentTemplateStore } from '@/stores/documentTemplateStore'
 import { downloadBlob, renderTemplate } from '@/lib/documents/templateRender'
 
@@ -14,28 +14,8 @@ interface Props {
   onClose: () => void
 }
 
-type OfficeFields = NonNullable<DocumentSettings['office']>
-
-const OFFICE_LABELS: Array<{ key: keyof OfficeFields; label: string; placeholder?: string }> = [
-  { key: 'postal_code', label: '郵便番号', placeholder: '099-4117' },
-  { key: 'address', label: '住所', placeholder: '斜里郡斜里町青葉町9番地13' },
-  { key: 'name', label: '事務所名', placeholder: '土地家屋調査士 横山太郎事務所' },
-  { key: 'title', label: '肩書', placeholder: '土地家屋調査士' },
-  { key: 'representative', label: '代表者氏名', placeholder: '横山太郎' },
-  { key: 'contact_name', label: '担当者氏名', placeholder: '横山太郎' },
-  { key: 'tel', label: 'TEL', placeholder: '0152-23-1311' },
-  { key: 'fax', label: 'FAX', placeholder: '0152-23-0626' },
-  { key: 'mobile', label: '携帯', placeholder: '090-7883-4246' },
-  { key: 'email', label: 'メール', placeholder: 'example@example.com' },
-]
-
 export function TemplateExportModal({ landowners, onClose }: Props) {
   const { user } = useAuth()
-  const {
-    settings,
-    fetch: fetchSettings,
-    save: saveSettings,
-  } = useDocumentSettingsStore()
   const {
     templates,
     loading: templatesLoading,
@@ -46,19 +26,12 @@ export function TemplateExportModal({ landowners, onClose }: Props) {
   const [templateId, setTemplateId] = useState<string | null>(null)
   const [clientId, setClientId] = useState<string | null>(null)
   const [neighborIds, setNeighborIds] = useState<Set<string>>(new Set())
-  const [office, setOffice] = useState<OfficeFields>({})
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
     void fetchTemplates()
   }, [fetchTemplates])
-  useEffect(() => {
-    if (user) void fetchSettings(user.id)
-  }, [user, fetchSettings])
-  useEffect(() => {
-    if (settings.office) setOffice(settings.office)
-  }, [settings.office])
 
   const sortedLandowners = useMemo(
     () =>
@@ -81,10 +54,6 @@ export function TemplateExportModal({ landowners, onClose }: Props) {
     })
   }
 
-  const setOfficeField = (key: keyof OfficeFields, value: string) => {
-    setOffice((prev) => ({ ...prev, [key]: value }))
-  }
-
   const handleExport = async () => {
     setErr(null)
     if (!template) {
@@ -104,15 +73,6 @@ export function TemplateExportModal({ landowners, onClose }: Props) {
 
     setBusy(true)
     try {
-      // 事務所情報を保存
-      if (user) {
-        try {
-          await saveSettings(user.id, { office })
-        } catch {
-          /* 保存失敗しても出力は続行 */
-        }
-      }
-
       // テンプレ本体を DL してレンダリング
       const templateBlob = await downloadTemplateBlob(template)
       if (!templateBlob) {
@@ -131,7 +91,6 @@ export function TemplateExportModal({ landowners, onClose }: Props) {
           postal_code: n.postal_code,
           address: n.address,
         })),
-        office,
       })
 
       const now = new Date()
@@ -260,30 +219,6 @@ export function TemplateExportModal({ landowners, onClose }: Props) {
                   )
                 })
               )}
-            </div>
-          </section>
-
-          {/* 事務所情報 */}
-          <section>
-            <div className="text-sm font-medium mb-2">
-              4. 事務所情報{' '}
-              <span className="text-[10px] text-slate-400 font-normal">
-                (保存されるので次回以降は自動入力)
-              </span>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              {OFFICE_LABELS.map(({ key, label, placeholder }) => (
-                <label key={key} className="flex flex-col gap-1">
-                  <span className="text-[11px] text-slate-500">{label}</span>
-                  <input
-                    type="text"
-                    value={office[key] ?? ''}
-                    onChange={(e) => setOfficeField(key, e.target.value)}
-                    placeholder={placeholder}
-                    className="w-full px-2 py-1 border rounded text-sm"
-                  />
-                </label>
-              ))}
             </div>
           </section>
 
