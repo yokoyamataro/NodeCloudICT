@@ -73,35 +73,67 @@ export function TemplateExportModal({ landowners, onClose }: Props) {
 
     setBusy(true)
     try {
-      // テンプレ本体を DL してレンダリング
+      // テンプレ本体を DL
       const templateBlob = await downloadTemplateBlob(template)
       if (!templateBlob) {
         setErr('テンプレート本体のダウンロードに失敗しました')
         return
       }
 
-      const out = await renderTemplate(templateBlob, {
-        client: {
-          full_name: client.full_name,
-          postal_code: client.postal_code,
-          address: client.address,
-        },
-        neighbors: neighbors.map((n) => ({
-          full_name: n.full_name,
-          postal_code: n.postal_code,
-          address: n.address,
-        })),
-      })
-
       const now = new Date()
       const y = now.getFullYear()
       const m = String(now.getMonth() + 1).padStart(2, '0')
       const d = String(now.getDate()).padStart(2, '0')
-      const filename = `${template.name}_${client.full_name}_${y}${m}${d}.docx`.replace(
-        /[<>:"/\\|?*]/g,
-        '_',
-      )
-      downloadBlob(out, filename)
+      const dateStr = `${y}${m}${d}`
+      const sanitize = (s: string) => s.replace(/[<>:"/\\|?*]/g, '_')
+      const baseName = sanitize(template.name)
+
+      const clientPayload = {
+        full_name: client.full_name,
+        postal_code: client.postal_code,
+        address: client.address,
+      }
+
+      // 隣接者未選択: 依頼人のみで 1 枚
+      if (neighbors.length === 0) {
+        const out = await renderTemplate(templateBlob, {
+          client: clientPayload,
+          neighbor: null,
+        })
+        const filename = `${baseName}_${sanitize(client.full_name)}_${dateStr}.docx`
+        downloadBlob(out, filename)
+        onClose()
+        return
+      }
+
+      // 隣接者ごとに 1 枚ずつ生成
+      const files: Array<{ name: string; blob: Blob }> = []
+      for (const n of neighbors) {
+        const out = await renderTemplate(templateBlob, {
+          client: clientPayload,
+          neighbor: {
+            full_name: n.full_name,
+            postal_code: n.postal_code,
+            address: n.address,
+          },
+        })
+        const filename = `${baseName}_${sanitize(n.full_name)}_${dateStr}.docx`
+        files.push({ name: filename, blob: out })
+      }
+
+      if (files.length === 1) {
+        downloadBlob(files[0].blob, files[0].name)
+      } else {
+        // 複数隣接者 → ZIP でまとめて 1 回のダウンロード
+        const { default: JSZip } = await import('jszip')
+        const zip = new JSZip()
+        for (const f of files) zip.file(f.name, f.blob)
+        const zipBlob = await zip.generateAsync({ type: 'blob' })
+        downloadBlob(
+          zipBlob,
+          `${baseName}_${sanitize(client.full_name)}_${dateStr}.zip`,
+        )
+      }
       onClose()
     } catch (e) {
       setErr(e instanceof Error ? e.message : '出力に失敗しました')
@@ -176,7 +208,10 @@ export function TemplateExportModal({ landowners, onClose }: Props) {
           {/* 隣接者 */}
           <section>
             <div className="text-sm font-medium mb-2">
-              3. 隣接する土地の所有者（複数可 / {neighborIds.size} 名選択中）
+              3. 隣接する土地の所有者（{neighborIds.size} 名選択中）
+              <span className="ml-2 text-[10px] text-slate-400 font-normal">
+                選択した各人ごとに 1 枚ずつ出力（2 名以上は ZIP でまとめてダウンロード）
+              </span>
             </div>
             <div className="max-h-40 overflow-auto border rounded p-1">
               {sortedLandowners.length === 0 ? (

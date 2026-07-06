@@ -1,22 +1,23 @@
 // Word テンプレート (.docx) をロードして、プレースホルダを差し替えて Blob を返す。
 // docxtemplater + pizzip のラッパー。
 //
+// 1 枚の Word には 依頼人 1 名 + 隣接者 1 名を差し込む方針。
+// 複数隣接者を選んだ場合は呼び出し側で隣接者ごとに 1 回ずつ renderTemplate を
+// 呼んで別ファイルにする (テンプレート側にループを書く必要はない)。
+//
 // 使えるプレースホルダ（テンプレ側で {} で囲む）:
-//   {issued_date}      … 発行日 (令和X年Y月Z日)
-//   {issued_ymd}       … 発行日 (YYYY-MM-DD)
-//   {client_name}       … 依頼人氏名
-//   {client_postal_code} … 依頼人郵便番号
-//   {client_address}    … 依頼人住所
-//   {neighbors_names}   … 隣接者名を「、」区切り
-//   {neighbors_lines}   … 隣接者を 1 名 1 行（氏名 + 住所）
+//   {issued_date}          … 発行日 (令和X年Y月Z日)
+//   {issued_ymd}           … 発行日 (YYYY-MM-DD)
+//   {client_name}          … 依頼人氏名
+//   {client_postal_code}   … 依頼人郵便番号
+//   {client_address}       … 依頼人住所
+//   {neighbor_name}        … 隣接者氏名
+//   {neighbor_postal_code} … 隣接者郵便番号
+//   {neighbor_address}     … 隣接者住所
 //
 // 事務所情報 (事務所名 / 住所 / TEL 等) はテンプレート本体に直書きする運用のため、
 // 差し込み対象からは外している。旧テンプレが {office_*} を含んでいても、
 // 存在する場合は空文字で置換されるので docxtemplater エラーにはならない。
-//
-// 加えて docxtemplater のループ構文もそのまま利用可能:
-//   {#neighbors}・{name} {address}{/neighbors}
-//   ループ内で使える keys: name, postal_code, address
 
 import PizZip from 'pizzip'
 import Docxtemplater from 'docxtemplater'
@@ -42,11 +43,12 @@ export interface RenderInput {
     postal_code?: string | null
     address?: string | null
   }
-  neighbors: Array<{
+  /** 隣接者は 1 枚あたり 1 名。未指定なら関連プレースホルダは空文字。 */
+  neighbor?: {
     full_name: string
     postal_code?: string | null
     address?: string | null
-  }>
+  } | null
   /** 旧テンプレ互換用。省略可 */
   office?: LegacyOfficeFields
 }
@@ -70,24 +72,16 @@ function formatYMD(d: Date): string {
 function buildData(input: RenderInput): Record<string, unknown> {
   const issued = input.issuedAt ?? new Date()
   const office = input.office ?? {}
-  const neighborsForLoop = input.neighbors.map((n) => ({
-    name: n.full_name ?? '',
-    postal_code: n.postal_code ?? '',
-    address: n.address ?? '',
-  }))
-  const neighbors_lines = neighborsForLoop
-    .map((n) => (n.address ? `${n.name}　${n.address}` : n.name))
-    .join('\n')
-  const neighbors_names = neighborsForLoop.map((n) => n.name).join('、')
+  const n = input.neighbor
   return {
     issued_date: formatWareki(issued),
     issued_ymd: formatYMD(issued),
     client_name: input.client.full_name ?? '',
     client_postal_code: input.client.postal_code ?? '',
     client_address: input.client.address ?? '',
-    neighbors: neighborsForLoop,
-    neighbors_names,
-    neighbors_lines,
+    neighbor_name: n?.full_name ?? '',
+    neighbor_postal_code: n?.postal_code ?? '',
+    neighbor_address: n?.address ?? '',
     office_postal_code: office.postal_code ?? '',
     office_address: office.address ?? '',
     office_name: office.name ?? '',
@@ -127,16 +121,17 @@ export async function renderTemplate(
 }
 
 /** 利用可能なプレースホルダ一覧（UI ヘルプ用）。
- *  事務所情報はテンプレート本体に直書きする運用のため、案内から外す。 */
+ *  事務所情報はテンプレート本体に直書きする運用のため、案内から外す。
+ *  隣接者を複数選んだ場合は 1 名につき 1 ファイル出力するため、ここでは単数形。 */
 export const AVAILABLE_PLACEHOLDERS: Array<{ tag: string; description: string }> = [
   { tag: '{issued_date}', description: '発行日（令和X年Y月Z日）' },
   { tag: '{issued_ymd}', description: '発行日（YYYY-MM-DD）' },
   { tag: '{client_name}', description: '依頼人氏名' },
   { tag: '{client_postal_code}', description: '依頼人郵便番号' },
   { tag: '{client_address}', description: '依頼人住所' },
-  { tag: '{neighbors_names}', description: '隣接者名を「、」区切り' },
-  { tag: '{neighbors_lines}', description: '隣接者を 1 名 1 行（氏名+住所）' },
-  { tag: '{#neighbors}...{name} {address}...{/neighbors}', description: '隣接者のループ（name / postal_code / address）' },
+  { tag: '{neighbor_name}', description: '隣接者氏名' },
+  { tag: '{neighbor_postal_code}', description: '隣接者郵便番号' },
+  { tag: '{neighbor_address}', description: '隣接者住所' },
 ]
 
 export function downloadBlob(blob: Blob, filename: string) {
