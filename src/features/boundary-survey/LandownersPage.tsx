@@ -290,6 +290,8 @@ export function LandownersPage() {
       {showTemplateExport && (
         <TemplateExportModal
           landowners={landowners}
+          farmParcels={farmParcels}
+          landownersByParcelId={landownersByParcelId}
           onClose={() => setShowTemplateExport(false)}
         />
       )}

@@ -11,9 +11,11 @@
 //   {client_name}          … 依頼人氏名
 //   {client_postal_code}   … 依頼人郵便番号
 //   {client_address}       … 依頼人住所
+//   {client_parcels}       … 依頼人所有地 (所在 地番、…)
 //   {neighbor_name}        … 隣接者氏名
 //   {neighbor_postal_code} … 隣接者郵便番号
 //   {neighbor_address}     … 隣接者住所
+//   {neighbor_parcels}     … 隣接者所有地 (所在 地番、…)
 //
 // 事務所情報 (事務所名 / 住所 / TEL 等) はテンプレート本体に直書きする運用のため、
 // 差し込み対象からは外している。旧テンプレが {office_*} を含んでいても、
@@ -36,21 +38,44 @@ interface LegacyOfficeFields {
   email?: string
 }
 
+/** 所有地 1 件 (所在 + 地番) */
+export interface ParcelRef {
+  location?: string | null
+  parcel_number?: string | null
+}
+
 export interface RenderInput {
   issuedAt?: Date
   client: {
     full_name: string
     postal_code?: string | null
     address?: string | null
+    /** 所有地 (所在 + 地番) の一覧。複数あれば「、」で連結して {client_parcels} に展開 */
+    parcels?: ParcelRef[]
   }
   /** 隣接者は 1 枚あたり 1 名。未指定なら関連プレースホルダは空文字。 */
   neighbor?: {
     full_name: string
     postal_code?: string | null
     address?: string | null
+    parcels?: ParcelRef[]
   } | null
   /** 旧テンプレ互換用。省略可 */
   office?: LegacyOfficeFields
+}
+
+/** 所有地の配列を「所在 地番、所在 地番、…」形式で連結する */
+function formatParcels(parcels: ParcelRef[] | undefined | null): string {
+  if (!parcels || parcels.length === 0) return ''
+  return parcels
+    .map((p) => {
+      const loc = (p.location ?? '').trim()
+      const num = (p.parcel_number ?? '').trim()
+      if (loc && num) return `${loc}　${num}`
+      return loc || num
+    })
+    .filter((s) => s.length > 0)
+    .join('、')
 }
 
 function formatWareki(d: Date): string {
@@ -79,9 +104,11 @@ function buildData(input: RenderInput): Record<string, unknown> {
     client_name: input.client.full_name ?? '',
     client_postal_code: input.client.postal_code ?? '',
     client_address: input.client.address ?? '',
+    client_parcels: formatParcels(input.client.parcels),
     neighbor_name: n?.full_name ?? '',
     neighbor_postal_code: n?.postal_code ?? '',
     neighbor_address: n?.address ?? '',
+    neighbor_parcels: formatParcels(n?.parcels),
     office_postal_code: office.postal_code ?? '',
     office_address: office.address ?? '',
     office_name: office.name ?? '',
@@ -129,9 +156,11 @@ export const AVAILABLE_PLACEHOLDERS: Array<{ tag: string; description: string }>
   { tag: '{client_name}', description: '依頼人氏名' },
   { tag: '{client_postal_code}', description: '依頼人郵便番号' },
   { tag: '{client_address}', description: '依頼人住所' },
+  { tag: '{client_parcels}', description: '依頼人所有地（所在＋地番。複数は「、」区切り）' },
   { tag: '{neighbor_name}', description: '隣接者氏名' },
   { tag: '{neighbor_postal_code}', description: '隣接者郵便番号' },
   { tag: '{neighbor_address}', description: '隣接者住所' },
+  { tag: '{neighbor_parcels}', description: '隣接者所有地（所在＋地番。複数は「、」区切り）' },
 ]
 
 export function downloadBlob(blob: Blob, filename: string) {

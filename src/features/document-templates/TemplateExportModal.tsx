@@ -7,15 +7,62 @@ import { Check, Download, Loader2, X } from 'lucide-react'
 import type { Landowner } from '@/types/database'
 import { useAuth } from '@/contexts/AuthContext'
 import { useDocumentTemplateStore } from '@/stores/documentTemplateStore'
-import { downloadBlob, renderTemplate } from '@/lib/documents/templateRender'
+import {
+  downloadBlob,
+  renderTemplate,
+  type ParcelRef,
+} from '@/lib/documents/templateRender'
+
+/** parcel の最小メタ (LandownersPage の FarmParcelRow と互換) */
+interface ParcelMeta {
+  id: string
+  parcel_number: string | null
+  location: string | null
+}
 
 interface Props {
   landowners: Landowner[]
+  /** 工区配下の parcels 一覧 (所在 + 地番) */
+  farmParcels?: ParcelMeta[]
+  /** parcel_id -> [landowner_id, ...]。地権者ごとの所有地を引くための逆引き元 */
+  landownersByParcelId?: Map<string, string[]>
   onClose: () => void
 }
 
-export function TemplateExportModal({ landowners, onClose }: Props) {
+export function TemplateExportModal({
+  landowners,
+  farmParcels,
+  landownersByParcelId,
+  onClose,
+}: Props) {
   const { user } = useAuth()
+
+  // landowner_id -> ParcelRef[] の逆引きを作る (依頼人・隣接者の所有地展開に使う)
+  const parcelsByLandownerId = useMemo(() => {
+    const out = new Map<string, ParcelRef[]>()
+    if (!farmParcels || !landownersByParcelId) return out
+    const byId = new Map<string, ParcelMeta>()
+    for (const p of farmParcels) byId.set(p.id, p)
+    for (const [parcelId, ownerIds] of landownersByParcelId) {
+      const p = byId.get(parcelId)
+      if (!p) continue
+      const ref: ParcelRef = { location: p.location, parcel_number: p.parcel_number }
+      for (const oid of ownerIds) {
+        const arr = out.get(oid) ?? []
+        arr.push(ref)
+        out.set(oid, arr)
+      }
+    }
+    // 所在 → 地番 で安定ソート
+    for (const arr of out.values()) {
+      arr.sort((a, b) => {
+        const la = (a.location ?? '').localeCompare(b.location ?? '', 'ja')
+        if (la !== 0) return la
+        return (a.parcel_number ?? '').localeCompare(b.parcel_number ?? '', 'ja')
+      })
+    }
+    return out
+  }, [farmParcels, landownersByParcelId])
   const {
     templates,
     loading: templatesLoading,
@@ -92,6 +139,7 @@ export function TemplateExportModal({ landowners, onClose }: Props) {
         full_name: client.full_name,
         postal_code: client.postal_code,
         address: client.address,
+        parcels: parcelsByLandownerId.get(client.id) ?? [],
       }
 
       // 隣接者未選択: 依頼人のみで 1 枚
@@ -115,6 +163,7 @@ export function TemplateExportModal({ landowners, onClose }: Props) {
             full_name: n.full_name,
             postal_code: n.postal_code,
             address: n.address,
+            parcels: parcelsByLandownerId.get(n.id) ?? [],
           },
         })
         const filename = `${baseName}_${sanitize(n.full_name)}_${dateStr}.docx`
