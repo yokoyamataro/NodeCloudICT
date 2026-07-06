@@ -20,7 +20,20 @@
 
 import PizZip from 'pizzip'
 import Docxtemplater from 'docxtemplater'
-import type { DocumentSettings } from '@/types/database'
+
+/** 旧テンプレ互換用の事務所情報。省略可 (テンプレート本体に直書きが基本)。 */
+interface LegacyOfficeFields {
+  postal_code?: string
+  address?: string
+  name?: string
+  title?: string
+  representative?: string
+  contact_name?: string
+  tel?: string
+  fax?: string
+  mobile?: string
+  email?: string
+}
 
 export interface RenderInput {
   issuedAt?: Date
@@ -34,8 +47,8 @@ export interface RenderInput {
     postal_code?: string | null
     address?: string | null
   }>
-  /** 旧テンプレ互換用。省略可 (事務所情報はテンプレート本体に直書きが基本) */
-  office?: DocumentSettings['office']
+  /** 旧テンプレ互換用。省略可 */
+  office?: LegacyOfficeFields
 }
 
 function formatWareki(d: Date): string {

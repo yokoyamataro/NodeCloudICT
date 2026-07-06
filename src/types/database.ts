@@ -302,30 +302,8 @@ export interface Profile {
   plan: AccountPlan | null
   // 親が抱えられる子ユーザー数の上限（NULL = 無制限）
   child_user_limit: number | null
-  // 文書作成用の設定（事務所住所・氏名・電話番号など）
-  document_settings: DocumentSettings
   created_at: string
   updated_at: string
-}
-
-// 文書作成（立入通知書 等）で使うデフォルト値。profiles.document_settings に保存。
-export interface DocumentSettings {
-  office?: {
-    postal_code?: string
-    address?: string
-    /** 事務所名（土地家屋調査士事務所 等） */
-    name?: string
-    /** 資格・肩書（例: 土地家屋調査士） */
-    title?: string
-    /** 代表者氏名 */
-    representative?: string
-    /** 担当者氏名 */
-    contact_name?: string
-    tel?: string
-    fax?: string
-    mobile?: string
-    email?: string
-  }
 }
 
 // ユーザーがアップロードした Word テンプレートのメタ。
