@@ -13,6 +13,8 @@ import {
   StickyNote,
   PanelRightOpen,
   PanelRightClose,
+  PanelTopOpen,
+  PanelTopClose,
   MapPin,
   Eye,
 } from 'lucide-react'
@@ -142,6 +144,14 @@ export function OrthophotoPage() {
 
   // 右側パネルの折りたたみ状態
   const [panelOpen, setPanelOpen] = useState(true)
+
+  // 上部の作図・計測ツールバーの折りたたみ状態 (localStorage 永続化)
+  const [toolbarOpen, setToolbarOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem('orthophoto:toolbarOpen') !== '0' } catch { return true }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('orthophoto:toolbarOpen', toolbarOpen ? '1' : '0') } catch { /* ignore */ }
+  }, [toolbarOpen])
 
   // 表示設定 (点種 / 地番 / カメラ / メモ / 作図要素の表示切替)。localStorage 永続化
   const readVis = (key: string, def: boolean): boolean => {
@@ -715,6 +725,153 @@ export function OrthophotoPage() {
     <div className="h-full flex flex-col">
       <PageHeader title="全体図" subtitle="オルソ・座標・区域・メモ・写真を集約した工区全体ビュー" actions={headerActions} />
 
+      {/* 上部の作図・計測ツールバー (折りたたみ可能) */}
+      <div className="border-b bg-white">
+        {toolbarOpen ? (
+          <div className="px-2 py-2 flex flex-col gap-1">
+            {/* 上段: 作図 */}
+            <div className="flex items-center gap-1 flex-wrap">
+              <span className="text-[10px] text-slate-400 mr-1 select-none">作図</span>
+              {DRAW_TOOLS.map((t) => {
+                const active = tool === t.tool
+                return (
+                  <button
+                    key={t.tool}
+                    onClick={() => setTool(t.tool)}
+                    className={`px-2 py-1 text-xs rounded border ${
+                      active
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                    }`}
+                    title={t.help ?? t.label}
+                  >
+                    {t.label}
+                  </button>
+                )
+              })}
+              <label className="flex items-center gap-1 ml-1 text-xs text-slate-600">
+                色
+                <input
+                  type="color"
+                  value={drawColor}
+                  onChange={(e) => setDrawColor(e.target.value)}
+                  className="w-7 h-6 p-0 border rounded cursor-pointer"
+                />
+              </label>
+              <label className="flex items-center gap-1 text-xs text-slate-600">
+                文字
+                <input
+                  type="number"
+                  min={8}
+                  max={48}
+                  value={fontSize}
+                  onChange={(e) => setFontSize(Math.max(8, Math.min(48, parseInt(e.target.value, 10) || 14)))}
+                  className="w-12 px-1 py-0.5 border rounded text-right font-mono"
+                  title="文字・コメント・寸法ラベルのサイズ(px)"
+                />
+                px
+              </label>
+              <label className="flex items-center gap-1 text-xs text-slate-600">
+                レイヤ
+                <input
+                  type="text"
+                  value={currentLayer}
+                  onChange={(e) => setCurrentLayer(e.target.value)}
+                  list="ortho-layers"
+                  className="w-24 px-1 py-0.5 border rounded font-mono"
+                  title="作図時に付与するレイヤ名（DXF出力にも反映）"
+                />
+                <datalist id="ortho-layers">
+                  {existingLayers.map((l) => (
+                    <option key={l} value={l} />
+                  ))}
+                </datalist>
+              </label>
+              <button
+                onClick={() => setSnapEnabled((v) => !v)}
+                className={`px-2 py-1 text-xs rounded border ${
+                  snapEnabled
+                    ? 'bg-amber-100 border-amber-400 text-amber-800 font-medium'
+                    : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
+                }`}
+                title="ピック(スナップ): ONで近接する点や端部に吸着します"
+              >
+                {snapEnabled ? '🎯 ピックON' : '🎯 ピックOFF'}
+              </button>
+              <button
+                onClick={undo}
+                disabled={history.length === 0}
+                className="px-2 py-1 text-xs rounded border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                title={`元に戻す (Ctrl+Z) - 最大${HISTORY_LIMIT}回`}
+              >
+                ↶ 元に戻す
+                {history.length > 0 && <span className="ml-1 text-blue-600">({history.length})</span>}
+              </button>
+              {annotations.length > 0 && (
+                <button
+                  onClick={() => {
+                    if (confirm(`作図(${annotations.length}件)をすべて削除しますか？`)) setAnnotations([])
+                  }}
+                  className="px-2 py-1 text-xs rounded border border-red-300 text-red-600 hover:bg-red-50"
+                  title="作図を全消去"
+                >
+                  全消去
+                </button>
+              )}
+              <button
+                onClick={() => setToolbarOpen(false)}
+                className="ml-auto p-1 rounded hover:bg-slate-100"
+                title="ツールバーを折りたたむ"
+              >
+                <PanelTopClose className="h-4 w-4 text-slate-500" />
+              </button>
+            </div>
+            {/* 下段: 計測 */}
+            <div className="flex items-center gap-1 flex-wrap pt-1 border-t">
+              <span className="text-[10px] text-slate-400 mr-1 select-none">計測</span>
+              {MEASURE_TOOLS.map((t) => {
+                const active = tool === t.tool
+                return (
+                  <button
+                    key={t.tool}
+                    onClick={() => setTool(t.tool)}
+                    className={`px-2 py-1 text-xs rounded border ${
+                      active
+                        ? 'bg-emerald-600 text-white border-emerald-600'
+                        : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                    }`}
+                    title={t.help ?? t.label}
+                  >
+                    {t.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="px-3 py-1 flex items-center gap-2">
+            <span className="text-[11px] text-slate-500 select-none">作図・計測ツール</span>
+            {tool !== 'none' && (
+              <span className="text-[11px] font-semibold text-blue-700">
+                → {[...DRAW_TOOLS, ...MEASURE_TOOLS].find((t) => t.tool === tool)?.label ?? tool}
+              </span>
+            )}
+            {annotations.length > 0 && (
+              <span className="text-[11px] text-slate-500">
+                作図 {annotations.length} 件
+              </span>
+            )}
+            <button
+              onClick={() => setToolbarOpen(true)}
+              className="ml-auto p-1 rounded hover:bg-slate-100"
+              title="ツールバーを開く"
+            >
+              <PanelTopOpen className="h-4 w-4 text-slate-500" />
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* 横並び: 左=大きな地図（オルソ＋座標＋区域＋作図＋メモ＋写真）、右=折りたたみパネル */}
       <div className="flex-1 flex min-h-0">
       <div className="flex-1 relative">
@@ -753,117 +910,6 @@ export function OrthophotoPage() {
             />
           )}
         </CoordinateMap>
-
-        {/* 作図ツールバー（左上オーバーレイ・上段=作図／下段=計測） */}
-        <div className="absolute top-2 left-2 z-[1000] bg-white/95 border rounded-lg shadow p-2 flex flex-col gap-1 max-w-[calc(100%-1rem)]">
-          {/* 上段: 作図 */}
-          <div className="flex items-center gap-1 flex-wrap">
-            <span className="text-[10px] text-slate-400 mr-1 select-none">作図</span>
-            {DRAW_TOOLS.map((t) => {
-              const active = tool === t.tool
-              return (
-                <button
-                  key={t.tool}
-                  onClick={() => setTool(t.tool)}
-                  className={`px-2 py-1 text-xs rounded border ${
-                    active ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                  }`}
-                  title={t.help ?? t.label}
-                >
-                  {t.label}
-                </button>
-              )
-            })}
-            <label className="flex items-center gap-1 ml-1 text-xs text-slate-600">
-              色
-              <input
-                type="color"
-                value={drawColor}
-                onChange={(e) => setDrawColor(e.target.value)}
-                className="w-7 h-6 p-0 border rounded cursor-pointer"
-              />
-            </label>
-            <label className="flex items-center gap-1 text-xs text-slate-600">
-              文字
-              <input
-                type="number"
-                min={8}
-                max={48}
-                value={fontSize}
-                onChange={(e) => setFontSize(Math.max(8, Math.min(48, parseInt(e.target.value, 10) || 14)))}
-                className="w-12 px-1 py-0.5 border rounded text-right font-mono"
-                title="文字・コメント・寸法ラベルのサイズ(px)"
-              />
-              px
-            </label>
-            <label className="flex items-center gap-1 text-xs text-slate-600">
-              レイヤ
-              <input
-                type="text"
-                value={currentLayer}
-                onChange={(e) => setCurrentLayer(e.target.value)}
-                list="ortho-layers"
-                className="w-24 px-1 py-0.5 border rounded font-mono"
-                title="作図時に付与するレイヤ名（DXF出力にも反映）"
-              />
-              <datalist id="ortho-layers">
-                {existingLayers.map((l) => (
-                  <option key={l} value={l} />
-                ))}
-              </datalist>
-            </label>
-            <button
-              onClick={() => setSnapEnabled((v) => !v)}
-              className={`px-2 py-1 text-xs rounded border ${
-                snapEnabled
-                  ? 'bg-amber-100 border-amber-400 text-amber-800 font-medium'
-                  : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
-              }`}
-              title="ピック(スナップ): ONで近接する点や端部に吸着します"
-            >
-              {snapEnabled ? '🎯 ピックON' : '🎯 ピックOFF'}
-            </button>
-            <button
-              onClick={undo}
-              disabled={history.length === 0}
-              className="px-2 py-1 text-xs rounded border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-40"
-              title={`元に戻す (Ctrl+Z) - 最大${HISTORY_LIMIT}回`}
-            >
-              ↶ 元に戻す
-              {history.length > 0 && <span className="ml-1 text-blue-600">({history.length})</span>}
-            </button>
-            {annotations.length > 0 && (
-              <button
-                onClick={() => {
-                  if (confirm(`作図(${annotations.length}件)をすべて削除しますか？`)) setAnnotations([])
-                }}
-                className="px-2 py-1 text-xs rounded border border-red-300 text-red-600 hover:bg-red-50"
-                title="作図を全消去"
-              >
-                全消去
-              </button>
-            )}
-          </div>
-          {/* 下段: 計測 */}
-          <div className="flex items-center gap-1 flex-wrap pt-1 border-t">
-            <span className="text-[10px] text-slate-400 mr-1 select-none">計測</span>
-            {MEASURE_TOOLS.map((t) => {
-              const active = tool === t.tool
-              return (
-                <button
-                  key={t.tool}
-                  onClick={() => setTool(t.tool)}
-                  className={`px-2 py-1 text-xs rounded border ${
-                    active ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                  }`}
-                  title={t.help ?? t.label}
-                >
-                  {t.label}
-                </button>
-              )
-            })}
-          </div>
-        </div>
 
         {/* ツールヘルプ＋計測結果（左下） */}
         {(tool !== 'none' || lastMeasure) && (
