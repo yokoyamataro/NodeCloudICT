@@ -14,6 +14,7 @@ import {
   PanelRightOpen,
   PanelRightClose,
   MapPin,
+  Eye,
 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
@@ -141,6 +142,46 @@ export function OrthophotoPage() {
 
   // 右側パネルの折りたたみ状態
   const [panelOpen, setPanelOpen] = useState(true)
+
+  // 表示設定 (点種 / 地番 / カメラ / メモ / 作図要素の表示切替)。localStorage 永続化
+  const readVis = (key: string, def: boolean): boolean => {
+    try {
+      const v = localStorage.getItem(`orthophoto:vis:${key}`)
+      if (v === '0') return false
+      if (v === '1') return true
+    } catch { /* ignore */ }
+    return def
+  }
+  const writeVis = (key: string, v: boolean) => {
+    try { localStorage.setItem(`orthophoto:vis:${key}`, v ? '1' : '0') } catch { /* ignore */ }
+  }
+  const [showPointsLayer, setShowPointsLayer] = useState<boolean>(() => readVis('points', true))
+  const [showParcelsLayer, setShowParcelsLayer] = useState<boolean>(() => readVis('parcels', true))
+  const [showCamerasLayer, setShowCamerasLayer] = useState<boolean>(() => readVis('cameras', true))
+  const [showMemosLayer, setShowMemosLayer] = useState<boolean>(() => readVis('memos', true))
+  const [showAnnotationsLayer, setShowAnnotationsLayer] = useState<boolean>(() => readVis('annotations', true))
+  useEffect(() => writeVis('points', showPointsLayer), [showPointsLayer])
+  useEffect(() => writeVis('parcels', showParcelsLayer), [showParcelsLayer])
+  useEffect(() => writeVis('cameras', showCamerasLayer), [showCamerasLayer])
+  useEffect(() => writeVis('memos', showMemosLayer), [showMemosLayer])
+  useEffect(() => writeVis('annotations', showAnnotationsLayer), [showAnnotationsLayer])
+
+  // 表示設定パネルの開閉 (ヘッダの「表示」ボタンから)
+  const [showVisMenu, setShowVisMenu] = useState(false)
+  const visMenuRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!showVisMenu) return
+    const onClick = (e: MouseEvent) => {
+      if (visMenuRef.current && !visMenuRef.current.contains(e.target as Node)) {
+        setShowVisMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', onClick)
+    return () => document.removeEventListener('mousedown', onClick)
+  }, [showVisMenu])
+
+  // displayCoordinateIds が Set/undefined の切替で参照が変わらないように memo 化
+  const emptyCoordSet = useMemo(() => new Set<string>(), [])
 
   // 区域ポリゴン（全工種を表示）
   const workAreaPolygons = useMemo<ExternalPolygon[]>(() => {
@@ -603,6 +644,43 @@ export function OrthophotoPage() {
 
   const headerActions = (
     <div className="flex items-center gap-2">
+      {/* 表示設定 (点種 / 地番 / カメラ / メモ / 作図要素) */}
+      <div className="relative" ref={visMenuRef}>
+        <button
+          onClick={() => setShowVisMenu((v) => !v)}
+          className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
+          title="地図上に表示するレイヤを切替"
+        >
+          <Eye className="h-4 w-4" />
+          表示
+        </button>
+        {showVisMenu && (
+          <div className="absolute right-0 mt-1 z-[2000] bg-white border rounded-lg shadow-lg p-2 w-52 text-sm">
+            <div className="text-[11px] text-slate-500 mb-1 px-1">表示するレイヤ</div>
+            {(
+              [
+                { key: 'points', label: '点種 (座標マーカー)', on: showPointsLayer, set: setShowPointsLayer },
+                { key: 'parcels', label: '地番 (区域ポリゴン)', on: showParcelsLayer, set: setShowParcelsLayer },
+                { key: 'cameras', label: 'カメラ (工区写真)', on: showCamerasLayer, set: setShowCamerasLayer },
+                { key: 'memos', label: 'メモ', on: showMemosLayer, set: setShowMemosLayer },
+                { key: 'annotations', label: '作図要素', on: showAnnotationsLayer, set: setShowAnnotationsLayer },
+              ] as const
+            ).map((row) => (
+              <label
+                key={row.key}
+                className="flex items-center gap-2 px-1 py-1 rounded hover:bg-slate-50 cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  checked={row.on}
+                  onChange={(e) => row.set(e.target.checked)}
+                />
+                <span className="text-xs">{row.label}</span>
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
       <button
         onClick={handleDxfExport}
         disabled={annotations.length === 0}
@@ -644,32 +722,36 @@ export function OrthophotoPage() {
           key={currentFarm.id}
           farmId={currentFarm.id}
           showOrtho
-          externalPolygons={workAreaPolygons}
+          externalPolygons={showParcelsLayer ? workAreaPolygons : []}
           coordinatesInteractive={false}
-          farmMemos={memosForMap}
-          farmPhotos={farmPhotosForMap}
+          farmMemos={showMemosLayer ? memosForMap : []}
+          farmPhotos={showCamerasLayer ? farmPhotosForMap : []}
           photoGetSignedUrl={getSignedUrl}
+          // 点種を非表示: 空 Set を渡して全マーカーを除外
+          displayCoordinateIds={showPointsLayer ? undefined : emptyCoordSet}
         >
-          <OrthophotoAnnotations
-            tool={tool}
-            color={drawColor}
-            fontSize={fontSize}
-            currentLayer={currentLayer}
-            annotations={annotations}
-            setAnnotations={setAnnotations}
-            converter={converter}
-            lastMeasure={lastMeasure}
-            setLastMeasure={setLastMeasure}
-            onAddCoordinate={handleAddCoordinate}
-            onRequestComment={(pos) => setPendingComment({ pos })}
-            onSelect={(id) => setSelectedAnnoId(id)}
-            snapEnabled={snapEnabled}
-            extraSnapPoints={extraSnapPoints}
-            extraLineSegments={extraLineSegments}
-            parallelRef={parallelRef}
-            setParallelRef={setParallelRef}
-            parallelOffset={parallelOffset}
-          />
+          {showAnnotationsLayer && (
+            <OrthophotoAnnotations
+              tool={tool}
+              color={drawColor}
+              fontSize={fontSize}
+              currentLayer={currentLayer}
+              annotations={annotations}
+              setAnnotations={setAnnotations}
+              converter={converter}
+              lastMeasure={lastMeasure}
+              setLastMeasure={setLastMeasure}
+              onAddCoordinate={handleAddCoordinate}
+              onRequestComment={(pos) => setPendingComment({ pos })}
+              onSelect={(id) => setSelectedAnnoId(id)}
+              snapEnabled={snapEnabled}
+              extraSnapPoints={extraSnapPoints}
+              extraLineSegments={extraLineSegments}
+              parallelRef={parallelRef}
+              setParallelRef={setParallelRef}
+              parallelOffset={parallelOffset}
+            />
+          )}
         </CoordinateMap>
 
         {/* 作図ツールバー（左上オーバーレイ・上段=作図／下段=計測） */}
