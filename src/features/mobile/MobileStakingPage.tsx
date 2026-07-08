@@ -5795,101 +5795,107 @@ function FreePointDialog({
   }
   return (
     <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3000]">
-      <div className="bg-white w-full sm:max-w-sm rounded-t-xl sm:rounded-xl shadow-xl p-4">
-        <h3 className="text-base font-bold mb-3">新点計測完了</h3>
+      <div className="bg-white w-full sm:max-w-sm rounded-t-xl sm:rounded-xl shadow-xl p-3">
+        <h3 className="text-sm font-bold mb-2">新点計測完了</h3>
 
-        <label className="block text-xs text-slate-500 mb-1">頭文字</label>
-        <input
-          type="text"
-          value={prefix}
-          onChange={(e) => applyPrefix(e.target.value)}
-          placeholder="例: 道路 / As / 側溝 / 境界杭"
-          className="w-full px-2 py-1.5 border rounded text-sm mb-1"
-        />
-        {recentPrefixes.length > 0 && (
-          <div className="flex flex-wrap gap-1 mb-3">
-            {recentPrefixes.map((p) => (
-              <button
-                key={p}
-                onClick={() => applyPrefix(p)}
-                className={`px-2 py-0.5 rounded border text-xs font-medium ${
-                  prefix === p
-                    ? 'bg-blue-600 text-white border-blue-600'
-                    : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
-                }`}
-              >
-                {p}
-              </button>
-            ))}
-          </div>
-        )}
-
-        <label className="block text-xs text-slate-500 mb-1">点名</label>
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="w-full px-2 py-1.5 border rounded text-sm mb-3"
-          autoFocus
-        />
-
-        <label className="block text-xs text-slate-500 mb-1">点種</label>
-        <select
-          value={type}
-          onChange={(e) => setType(e.target.value)}
-          className="w-full px-2 py-1.5 border rounded text-sm mb-3 bg-white"
-        >
-          {typeOptions.map((o) => (
-            <option key={o.code} value={o.code}>
-              {o.label}
-            </option>
+        {/* 頭文字: ラベル + 入力 + チップ を 1 行に配置 (改行なし・折り返しあり) */}
+        <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
+          <span className="text-[11px] text-slate-500 shrink-0 w-10">頭文字</span>
+          <input
+            type="text"
+            value={prefix}
+            onChange={(e) => applyPrefix(e.target.value)}
+            placeholder="道路/As/側溝/境界杭"
+            className="w-24 px-1.5 py-1 border rounded text-xs"
+          />
+          {recentPrefixes.map((p) => (
+            <button
+              key={p}
+              onClick={() => applyPrefix(p)}
+              className={`px-1.5 py-0.5 rounded border text-[11px] font-medium ${
+                prefix === p
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              {p}
+            </button>
           ))}
-        </select>
-
-        <div className="text-sm font-mono space-y-1 mb-3 bg-slate-50 rounded p-2">
-          <div>X = <span className="text-slate-800">{data.x.toFixed(3)}</span></div>
-          <div>Y = <span className="text-slate-800">{data.y.toFixed(3)}</span></div>
-          <div>Z = <span className="text-slate-800">{data.z != null ? data.z.toFixed(3) : '-'}</span></div>
         </div>
 
-        <div className="text-[11px] text-slate-600 flex flex-wrap gap-x-3 gap-y-0.5 mb-4">
+        {/* 点名: ラベル + 入力を 1 行に */}
+        <div className="flex items-center gap-1.5 mb-1.5">
+          <span className="text-[11px] text-slate-500 shrink-0 w-10">点名</span>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="flex-1 px-1.5 py-1 border rounded text-xs"
+          />
+        </div>
+
+        {/* 点種: ラベル + チップを 1 行に (折り返しあり) */}
+        <div className="flex items-center gap-1.5 flex-wrap mb-2">
+          <span className="text-[11px] text-slate-500 shrink-0 w-10">点種</span>
+          {typeOptions.map((o) => (
+            <button
+              key={o.code}
+              onClick={() => setType(o.code)}
+              className={`px-1.5 py-0.5 rounded border text-[11px] font-medium ${
+                type === o.code
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+
+        {/* XYZ を横 1 行に */}
+        <div className="text-xs font-mono flex gap-3 mb-2 bg-slate-50 rounded px-2 py-1.5">
+          <span>X <span className="text-slate-800">{data.x.toFixed(3)}</span></span>
+          <span>Y <span className="text-slate-800">{data.y.toFixed(3)}</span></span>
+          <span>Z <span className="text-slate-800">{data.z != null ? data.z.toFixed(3) : '-'}</span></span>
+        </div>
+
+        <div className="text-[10px] text-slate-600 flex flex-wrap gap-x-3 gap-y-0.5 mb-3">
           <span>
-            誤差 = <span className="font-mono">{data.distance != null ? `${data.distance.toFixed(3)} m` : '-'}</span>
+            誤差 <span className="font-mono">{data.distance != null ? `${data.distance.toFixed(3)} m` : '-'}</span>
           </span>
           <span>
-            アンテナ高 = <span className="font-mono">{data.antennaHeight.toFixed(3)} m</span>
+            アンテナ高 <span className="font-mono">{data.antennaHeight.toFixed(3)} m</span>
           </span>
           <span>
-            精度 = <span className="font-mono">{data.accuracy.toFixed(3)} m</span>
+            精度 <span className="font-mono">{data.accuracy.toFixed(3)} m</span>
           </span>
           <span>
-            サンプル = <span className="font-mono">{data.sampleCount}</span>
+            サンプル <span className="font-mono">{data.sampleCount}</span>
           </span>
         </div>
 
-        <div className="space-y-2">
-          <div className="flex gap-2">
-            <button
-              onClick={() => onConfirm(name.trim() || data.defaultName, type, prefix, false)}
-              disabled={!name.trim()}
-              className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
-            >
-              OK
-            </button>
-            <button
-              onClick={() => onConfirm(name.trim() || data.defaultName, type, prefix, true)}
-              disabled={!name.trim()}
-              className="px-4 py-2.5 bg-slate-700 text-white rounded-lg hover:bg-slate-800 disabled:opacity-50 flex items-center justify-center"
-              title="登録して写真撮影"
-            >
-              <Camera className="h-5 w-5" />
-            </button>
-          </div>
+        {/* OK / カメラ / キャンセル を横 1 列に */}
+        <div className="flex gap-2">
           <button
             onClick={onCancel}
-            className="w-full px-4 py-2 border rounded-lg hover:bg-slate-50 text-sm"
+            className="px-3 py-2 border rounded-lg hover:bg-slate-50 text-xs"
           >
             キャンセル
+          </button>
+          <button
+            onClick={() => onConfirm(name.trim() || data.defaultName, type, prefix, true)}
+            disabled={!name.trim()}
+            className="px-3 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-800 disabled:opacity-50 flex items-center justify-center"
+            title="登録して写真撮影"
+          >
+            <Camera className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => onConfirm(name.trim() || data.defaultName, type, prefix, false)}
+            disabled={!name.trim()}
+            className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
+          >
+            OK
           </button>
         </div>
       </div>
