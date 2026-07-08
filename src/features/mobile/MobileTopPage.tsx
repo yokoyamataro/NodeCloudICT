@@ -69,6 +69,10 @@ export function MobileTopPage() {
   const fetchStatuses = useWorkStatusStore((s) => s.fetchStatuses)
   const isFarmCompleted = useWorkStatusStore((s) => s.isFarmCompleted)
   const setWorkStatus = useWorkStatusStore((s) => s.setStatus)
+  // statusByKey に購読しないと useMemo の再計算がトリガーされず、初期表示で
+  // fetchStatuses 完了後の完了フィルタが効かない (体感バグ)。
+  // 値そのものは使わないが、参照が変わるたびに再レンダーさせるのが目的。
+  const statusByKey = useWorkStatusStore((s) => s.statusByKey)
   // 完了状態を保存する work_type キー。
   // 地籍測量は boundary_survey (PC の状態表示と自動で同期する)、
   // それ以外は farm_completed という汎用キーに書く
@@ -105,14 +109,16 @@ export function MobileTopPage() {
     }
   }, [allFarms, fetchStatuses])
 
-  // URL の projectId に該当する工事の工区のみ表示。完了フィルタ ON なら「完了」も除外
+  // URL の projectId に該当する工事の工区のみ表示。完了フィルタ ON なら「完了」も除外。
+  // statusByKey を deps に含めて、fetchStatuses が終わった時点で再フィルタリングされるようにする。
   const farms = useMemo(() => {
     const list = routeProjectId
       ? allFarms.filter((f) => f.project_id === routeProjectId)
       : allFarms
     if (!hideCompletedFarms) return list
     return list.filter((f) => !isFarmCompleted(f.id))
-  }, [allFarms, routeProjectId, hideCompletedFarms, isFarmCompleted])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allFarms, routeProjectId, hideCompletedFarms, statusByKey])
   const currentProject = useMemo(
     () => (routeProjectId ? projects.find((p) => p.id === routeProjectId) : null),
     [projects, routeProjectId],
