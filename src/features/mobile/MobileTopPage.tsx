@@ -6,6 +6,7 @@ import 'leaflet/dist/leaflet.css'
 import { Loader2, Monitor, LogOut, ArrowLeft, MapPin, Plus } from 'lucide-react'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
+import { useWorkStatusStore } from '@/stores/workStatusStore'
 import { useAuth } from '@/contexts/AuthContext'
 import { CurrentLocationLayer } from '@/components/map/CurrentLocationLayer'
 import { setDisplayModeOverride } from '@/lib/displayMode'
@@ -61,6 +62,8 @@ export function MobileTopPage() {
     fetchWorkAreaPolygons,
   } = useFarmStore()
   const { projects, fetchProjects } = useProjectListStore()
+  const fetchStatuses = useWorkStatusStore((s) => s.fetchStatuses)
+  const isFarmCompleted = useWorkStatusStore((s) => s.isFarmCompleted)
 
   // 新規工区ダイアログ
   const [showNewFarmDialog, setShowNewFarmDialog] = useState(false)
@@ -68,16 +71,36 @@ export function MobileTopPage() {
   const [newFarmDescription, setNewFarmDescription] = useState('')
   const [creatingFarm, setCreatingFarm] = useState(false)
 
+  // 完了工区を非表示にするかどうか (既定: 非表示)。PC の ProjectListPage と同じ localStorage キーを共有
+  const [hideCompletedFarms, setHideCompletedFarms] = useState<boolean>(() => {
+    try { return localStorage.getItem('projects:hideCompletedFarms') !== '0' } catch { return true }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('projects:hideCompletedFarms', hideCompletedFarms ? '1' : '0')
+    } catch { /* ignore */ }
+  }, [hideCompletedFarms])
+
   useEffect(() => {
     fetchFarms()
     fetchProjects()
   }, [fetchFarms, fetchProjects])
 
-  // URL の projectId に該当する工事の工区のみ表示
-  const farms = useMemo(
-    () => (routeProjectId ? allFarms.filter((f) => f.project_id === routeProjectId) : allFarms),
-    [allFarms, routeProjectId],
-  )
+  // 完了フィルタが効くように farm_work_status も取り込む
+  useEffect(() => {
+    if (allFarms.length > 0) {
+      void fetchStatuses(allFarms.map((f) => f.id))
+    }
+  }, [allFarms, fetchStatuses])
+
+  // URL の projectId に該当する工事の工区のみ表示。完了フィルタ ON なら「完了」も除外
+  const farms = useMemo(() => {
+    const list = routeProjectId
+      ? allFarms.filter((f) => f.project_id === routeProjectId)
+      : allFarms
+    if (!hideCompletedFarms) return list
+    return list.filter((f) => !isFarmCompleted(f.id))
+  }, [allFarms, routeProjectId, hideCompletedFarms, isFarmCompleted])
   const currentProject = useMemo(
     () => (routeProjectId ? projects.find((p) => p.id === routeProjectId) : null),
     [projects, routeProjectId],
@@ -253,9 +276,23 @@ export function MobileTopPage() {
 
       {/* 工区一覧（下半分）+ 末尾に新規作成 */}
       <div className="flex-1 overflow-auto bg-white border-t">
+        {/* 完了工区フィルタ (既定: 非表示) */}
+        <div className="px-3 py-1.5 border-b bg-slate-50 flex items-center text-xs text-slate-600">
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={!hideCompletedFarms}
+              onChange={(e) => setHideCompletedFarms(!e.target.checked)}
+              className="h-3.5 w-3.5"
+            />
+            <span>完了工区も表示</span>
+          </label>
+        </div>
         {farms.length === 0 ? (
           <div className="p-4 text-center text-sm text-slate-500">
-            工区がありません。下の「新規工区を追加」から作成してください。
+            {hideCompletedFarms
+              ? '工区がありません（完了工区は非表示中）。上のチェックで完了も表示できます。'
+              : '工区がありません。下の「新規工区を追加」から作成してください。'}
           </div>
         ) : (
           <ul className="divide-y">
