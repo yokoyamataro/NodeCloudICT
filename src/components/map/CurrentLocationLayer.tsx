@@ -1,9 +1,14 @@
 import { useEffect, useState } from 'react'
-import { CircleMarker, Marker, Tooltip } from 'react-leaflet'
+import { CircleMarker, Marker } from 'react-leaflet'
 import L from 'leaflet'
 
 // 現在位置（Geolocation）をマップに表示するレイヤー
-// react-leaflet の MapContainer の中に配置して使う
+// react-leaflet の MapContainer の中に配置して使う。
+// 工区マーカーの青/緑と混ざらないよう、オレンジ系で描画する。
+// 「現在位置」の吹き出しは他ラベルとの干渉が多いので出さない。
+const COLOR = '#f97316' // orange-500
+const COLOR_HALO = 'rgba(249,115,22,0.4)'
+
 export function CurrentLocationLayer() {
   const [position, setPosition] = useState<[number, number] | null>(null)
   const [accuracy, setAccuracy] = useState<number | null>(null)
@@ -30,10 +35,10 @@ export function CurrentLocationLayer() {
     html: `<div style="
       width: 16px;
       height: 16px;
-      background: #2563eb;
+      background: ${COLOR};
       border: 3px solid white;
       border-radius: 50%;
-      box-shadow: 0 0 0 2px rgba(37,99,235,0.4), 0 2px 6px rgba(0,0,0,0.4);
+      box-shadow: 0 0 0 2px ${COLOR_HALO}, 0 2px 6px rgba(0,0,0,0.4);
     "></div>`,
     iconSize: [16, 16],
     iconAnchor: [8, 8],
@@ -45,14 +50,10 @@ export function CurrentLocationLayer() {
         <CircleMarker
           center={position}
           radius={Math.min(40, Math.max(6, accuracy / 2))}
-          pathOptions={{ color: '#2563eb', fillColor: '#2563eb', fillOpacity: 0.15, weight: 1 }}
+          pathOptions={{ color: COLOR, fillColor: COLOR, fillOpacity: 0.15, weight: 1 }}
         />
       )}
-      <Marker position={position} icon={dotIcon} interactive={false} zIndexOffset={2000}>
-        <Tooltip permanent direction="top" offset={[0, -12]}>
-          現在位置{accuracy !== null ? ` (±${accuracy.toFixed(0)}m)` : ''}
-        </Tooltip>
-      </Marker>
+      <Marker position={position} icon={dotIcon} interactive={false} zIndexOffset={2000} />
     </>
   )
 }
