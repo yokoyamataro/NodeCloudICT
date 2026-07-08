@@ -18,9 +18,6 @@ import {
   Crosshair,
   Minimize2,
   Table as TableIcon,
-  Edit,
-  Map as MapIcon,
-  Lock,
   Check,
   ArrowLeft,
   Mail,
@@ -140,7 +137,6 @@ export function ProjectListPage() {
     inviteMember,
     updateMemberRole,
     removeMember,
-    userRolesByProject,
     fetchUserRoles,
     setCurrentProject,
   } = useProjectListStore()
@@ -230,8 +226,7 @@ export function ProjectListPage() {
     }
   }, [farms, fetchStatuses])
 
-  // 工区クリック時のアクション選択ダイアログ
-  const [farmActionDialog, setFarmActionDialog] = useState<Farm | null>(null)
+  // (アクション選択ダイアログは撤去。工区クリックで直接工区編集へ遷移する)
 
   // 工区が読み込まれたらポリゴンデータを取得
   useEffect(() => {
@@ -608,7 +603,7 @@ export function ProjectListPage() {
             statusByKey={statusByKey}
             onSetStatus={setWorkStatus}
             onClose={() => setExpandedList(false)}
-            onSelectFarm={(farm) => setFarmActionDialog(farm)}
+            onSelectFarm={(farm) => handleOpenFarm(farm)}
             onNewProject={() => setShowNewProjectDialog(true)}
           />
         </div>
@@ -755,13 +750,14 @@ export function ProjectListPage() {
                                   key={farm.id}
                                   onClick={() => {
                                     handleSelectFarm(farm)
-                                    setFarmActionDialog(farm)
+                                    handleOpenFarm(farm)
                                   }}
                                   className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group ${
                                     isSelected
                                       ? 'bg-blue-100 text-blue-700'
                                       : 'hover:bg-slate-100'
                                   }`}
+                                  title="クリックで工区編集を開く"
                                 >
                                   <FolderOpen className={`h-4 w-4 flex-shrink-0 ${isSelected ? 'text-blue-600' : 'text-slate-400'}`} />
                                   <span className="flex-1 text-sm truncate" title={farm.name}>
@@ -771,16 +767,6 @@ export function ProjectListPage() {
                                     <MapPin className="h-3 w-3 text-slate-400 flex-shrink-0" />
                                   )}
                                   <div className="hidden group-hover:flex items-center gap-1">
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation()
-                                        setFarmActionDialog(farm)
-                                      }}
-                                      className="px-2 py-0.5 text-xs border text-slate-500 rounded hover:bg-slate-50"
-                                      title="アクション選択"
-                                    >
-                                      …
-                                    </button>
                                     <button
                                       onClick={(e) => handleDeleteFarm(e, farm.id)}
                                       className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded"
@@ -968,10 +954,10 @@ export function ProjectListPage() {
                           </div>
                         )}
                         <button
-                          onClick={() => setFarmActionDialog(farm)}
+                          onClick={() => handleOpenFarm(farm)}
                           className="mt-2 px-3 py-1.5 text-xs bg-primary text-white rounded hover:bg-primary/90 w-full"
                         >
-                          アクション選択（工区編集 / 地図表示 / 経路案内）
+                          工区編集を開く
                         </button>
                       </div>
                     </Popup>
@@ -982,161 +968,6 @@ export function ProjectListPage() {
           )}
         </div>
       </div>
-
-      {/* 工区アクション選択ダイアログ */}
-      {farmActionDialog && (() => {
-        const farm = farmActionDialog
-        const location = farmLocations.get(farm.id)
-        const project = projects.find((p) => p.id === farm.project_id)
-        const role = farm.project_id ? userRolesByProject.get(farm.project_id) ?? null : null
-        const canEdit = role === 'owner' || role === 'editor' || role == null // 未登録は owner 扱い（既存データ互換）
-        const canEditExplicitViewer = role === 'viewer'
-        return (
-          <div
-            className="fixed inset-0 bg-black/40 flex items-center justify-center z-[1500] p-4"
-            onClick={() => setFarmActionDialog(null)}
-          >
-            <div
-              className="bg-white rounded-xl shadow-xl w-full max-w-sm p-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-start justify-between mb-3">
-                <div>
-                  {project && <div className="text-xs text-slate-500">{project.name}</div>}
-                  <div className="text-base font-bold">{farm.name}</div>
-                  {role && (
-                    <div className="mt-1 text-xs text-slate-500">
-                      権限:{' '}
-                      {role === 'owner' ? 'オーナー' : role === 'editor' ? '編集者' : '閲覧者'}
-                    </div>
-                  )}
-                </div>
-                <button
-                  onClick={() => setFarmActionDialog(null)}
-                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-              <div className="space-y-2">
-                {/* 地籍測量の工事では、境界測量の状態（未着手・進行中・完了）を
-                    このダイアログから直接切り替えられるようにする */}
-                {project?.category === 'cadastral' && (() => {
-                  const currentStatus =
-                    statusByKey.get(`${farm.id}:boundary_survey`) ?? 'not_started'
-                  const canChangeStatus = !canEditExplicitViewer && canEdit
-                  const STATUS_BTN: Record<WorkStatus, { active: string; idle: string }> = {
-                    not_started: {
-                      active: 'bg-slate-500 text-white border-slate-600',
-                      idle: 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200',
-                    },
-                    completed: {
-                      active: 'bg-emerald-600 text-white border-emerald-700',
-                      idle: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100',
-                    },
-                  }
-                  return (
-                    <div>
-                      <div className="text-xs text-slate-500 mb-1">境界測量の状態</div>
-                      <div className="grid grid-cols-2 gap-2">
-                        {(['not_started', 'completed'] as const).map((s) => {
-                          const active = currentStatus === s
-                          const style = STATUS_BTN[s]
-                          return (
-                            <button
-                              key={s}
-                              disabled={!canChangeStatus}
-                              onClick={() => setWorkStatus(farm.id, 'boundary_survey', s)}
-                              className={`px-2 py-2 text-xs font-medium rounded-lg border-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                                active ? style.active : style.idle
-                              }`}
-                              title={canChangeStatus ? '' : '閲覧権限では変更できません'}
-                            >
-                              {STATUS_LABEL[s]}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  )
-                })()}
-
-                <button
-                  disabled={canEditExplicitViewer || !canEdit}
-                  onClick={() => {
-                    setFarmActionDialog(null)
-                    handleOpenFarm(farm)
-                  }}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium ${
-                    canEditExplicitViewer || !canEdit
-                      ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                      : 'bg-blue-600 text-white hover:bg-blue-700'
-                  }`}
-                  title={canEditExplicitViewer ? '閲覧権限では編集できません' : ''}
-                >
-                  {canEditExplicitViewer ? (
-                    <Lock className="h-5 w-5" />
-                  ) : (
-                    <Edit className="h-5 w-5" />
-                  )}
-                  工区編集
-                  {canEditExplicitViewer && (
-                    <span className="ml-auto text-xs">閲覧のみ</span>
-                  )}
-                </button>
-                <button
-                  onClick={() => {
-                    setFarmActionDialog(null)
-                    const url = `/site-map?farmId=${encodeURIComponent(farm.id)}`
-                    const screenW = window.screen.availWidth
-                    const screenH = window.screen.availHeight
-                    const w = window.open(
-                      url,
-                      'nodecloud_site_map',
-                      `width=${screenW},height=${screenH},left=0,top=0`,
-                    )
-                    if (w) {
-                      try {
-                        if (w.location.href.indexOf(url) === -1) w.location.href = url
-                        w.focus()
-                      } catch {
-                        // ignore
-                      }
-                    }
-                  }}
-                  className="w-full flex items-center gap-3 px-4 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium"
-                >
-                  <MapIcon className="h-5 w-5" />
-                  地図表示
-                </button>
-                <button
-                  disabled={!location}
-                  onClick={() => {
-                    if (!location) return
-                    setFarmActionDialog(null)
-                    openGoogleMapsNavigation(location.lat, location.lng)
-                  }}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium ${
-                    location
-                      ? 'bg-green-600 text-white hover:bg-green-700'
-                      : 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                  }`}
-                  title={!location ? '位置情報がありません' : ''}
-                >
-                  <Navigation className="h-5 w-5" />
-                  経路案内（Google マップ）
-                </button>
-                <button
-                  onClick={() => setFarmActionDialog(null)}
-                  className="w-full px-4 py-2.5 border rounded-lg hover:bg-slate-50 text-sm"
-                >
-                  キャンセル
-                </button>
-              </div>
-            </div>
-          </div>
-        )
-      })()}
 
       {/* 地図表示ダイアログ */}
       {showMapDialog && (
