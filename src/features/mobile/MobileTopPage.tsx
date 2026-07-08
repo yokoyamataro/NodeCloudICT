@@ -64,6 +64,14 @@ export function MobileTopPage() {
   const { projects, fetchProjects } = useProjectListStore()
   const fetchStatuses = useWorkStatusStore((s) => s.fetchStatuses)
   const isFarmCompleted = useWorkStatusStore((s) => s.isFarmCompleted)
+  const setWorkStatus = useWorkStatusStore((s) => s.setStatus)
+  // 完了状態を保存する work_type キー。
+  // 地籍測量は boundary_survey (PC の状態表示と自動で同期する)、
+  // それ以外は farm_completed という汎用キーに書く
+  const primaryWorkType = (farm: Farm): string => {
+    const proj = projects.find((p) => p.id === farm.project_id)
+    return proj?.category === 'cadastral' ? 'boundary_survey' : 'farm_completed'
+  }
 
   // 新規工区ダイアログ
   const [showNewFarmDialog, setShowNewFarmDialog] = useState(false)
@@ -298,11 +306,12 @@ export function MobileTopPage() {
           <ul className="divide-y">
             {farms.map((farm) => {
               const location = farmLocations.get(farm.id)
+              const done = isFarmCompleted(farm.id)
               return (
-                <li key={farm.id}>
+                <li key={farm.id} className="flex items-stretch hover:bg-slate-50 active:bg-blue-50">
                   <button
                     onClick={() => handleFarmClick(farm)}
-                    className="w-full flex items-center gap-2 px-3 py-3 text-left hover:bg-slate-50 active:bg-blue-50"
+                    className="flex-1 min-w-0 flex items-center gap-2 pl-3 py-3 text-left"
                   >
                     <MapPin
                       className={`h-4 w-4 flex-shrink-0 ${
@@ -316,6 +325,26 @@ export function MobileTopPage() {
                       </span>
                     )}
                   </button>
+                  {/* 完了チェック (右端)。工区ナビゲーションを阻止 */}
+                  <label
+                    className="flex items-center gap-1.5 pr-3 pl-2 text-xs text-slate-600 cursor-pointer select-none"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={done}
+                      onChange={(e) => {
+                        e.stopPropagation()
+                        void setWorkStatus(
+                          farm.id,
+                          primaryWorkType(farm),
+                          e.target.checked ? 'completed' : 'not_started',
+                        )
+                      }}
+                      className="h-4 w-4"
+                    />
+                    完了
+                  </label>
                 </li>
               )
             })}
