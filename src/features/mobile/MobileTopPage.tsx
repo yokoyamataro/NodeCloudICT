@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Loader2, Monitor, LogOut, ArrowLeft, Plus } from 'lucide-react'
+import { Loader2, Monitor, LogOut, ArrowLeft, Plus, Edit3, X } from 'lucide-react'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useWorkStatusStore } from '@/stores/workStatusStore'
@@ -140,17 +140,12 @@ export function MobileTopPage() {
     return { lat: avgLat, lng: avgLng }
   }, [projectFarmLocations])
 
-  // 工区詳細プレビュー (タップすると開く)。
-  //  上半分: その工区にフォーカスした地図
-  //  下半分: 名前 / 説明 / 完了 の編集 + 「工区を開く」ボタン
-  const [detailFarm, setDetailFarm] = useState<Farm | null>(null)
+  // 工区タップで直接工事測量画面へ (地籍・土木とも共通)
   const handleFarmClick = (farm: Farm) => {
-    setDetailFarm(farm)
-  }
-  const handleOpenFarmStaking = (farm: Farm) => {
-    setDetailFarm(null)
     navigate(`/mobile/staking?farmId=${farm.id}`)
   }
+  // 一覧右端の 編集ボタンで開く 工区編集モーダル (名前 / 説明 / 完了)
+  const [editFarm, setEditFarm] = useState<Farm | null>(null)
 
   const handleCreateNewFarm = async () => {
     if (!routeProjectId) {
@@ -337,7 +332,7 @@ export function MobileTopPage() {
                   </label>
                   <button
                     onClick={() => handleFarmClick(farm)}
-                    className="flex-1 min-w-0 flex items-center gap-2 pl-2 pr-3 py-3 text-left"
+                    className="flex-1 min-w-0 flex items-center gap-2 pl-2 pr-2 py-3 text-left"
                   >
                     <span className="flex-1 truncate font-medium">{farm.name}</span>
                     {farm.description && (
@@ -345,6 +340,17 @@ export function MobileTopPage() {
                         {farm.description}
                       </span>
                     )}
+                  </button>
+                  {/* 右端: 編集ボタン (名前 / 説明 / 完了 の編集モーダルを開く) */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setEditFarm(farm)
+                    }}
+                    className="px-3 flex items-center text-slate-400 hover:text-blue-600 hover:bg-slate-100"
+                    title="工区の編集"
+                  >
+                    <Edit3 className="h-4 w-4" />
                   </button>
                 </li>
               )
@@ -408,24 +414,20 @@ export function MobileTopPage() {
         </div>
       )}
 
-      {/* 工区詳細プレビュー: 上半分=フォーカスマップ / 下半分=編集フィールド + 工区を開くボタン */}
-      {detailFarm && (
-        <FarmDetailView
-          farm={detailFarm}
-          location={farmLocations.get(detailFarm.id) ?? null}
-          polygons={workAreaPolygons.filter((p) => p.farmId === detailFarm.id)}
-          workTypeKey={primaryWorkType(detailFarm)}
-          isCompleted={isFarmCompleted(detailFarm.id)}
+      {/* 工区編集モーダル (右端の 編集ボタンで開く: 名前 / 説明 / 完了) */}
+      {editFarm && (
+        <FarmEditModal
+          farm={editFarm}
+          isCompleted={isFarmCompleted(editFarm.id)}
           onToggleCompleted={(next) =>
             void setWorkStatus(
-              detailFarm.id,
-              primaryWorkType(detailFarm),
+              editFarm.id,
+              primaryWorkType(editFarm),
               next ? 'completed' : 'not_started',
             )
           }
-          onUpdateFarm={(patch) => void updateFarm(detailFarm.id, patch)}
-          onClose={() => setDetailFarm(null)}
-          onOpen={() => handleOpenFarmStaking(detailFarm)}
+          onUpdateFarm={(patch) => void updateFarm(editFarm.id, patch)}
+          onClose={() => setEditFarm(null)}
         />
       )}
     </div>
@@ -433,62 +435,29 @@ export function MobileTopPage() {
 }
 
 // -----------------------------------------------------------------
-// 工区詳細プレビュー (フルスクリーンオーバーレイ)
-//   上半分: その工区の地図
-//   下半分: 名前・説明の編集 + 完了チェック + 「工区を開く」
+// 工区編集モーダル (ボトムシート):
+//   一覧の右端 編集ボタンで開く。名前 / 説明 / 完了 を編集。
 // -----------------------------------------------------------------
-function FarmDetailView({
+function FarmEditModal({
   farm,
-  location,
-  polygons,
   isCompleted,
   onToggleCompleted,
   onUpdateFarm,
   onClose,
-  onOpen,
 }: {
   farm: Farm
-  location: { lat: number; lng: number } | null
-  polygons: Array<{ id: string; workType: string; name: string; positions: [number, number][] }>
-  workTypeKey: string
   isCompleted: boolean
   onToggleCompleted: (next: boolean) => void
   onUpdateFarm: (patch: Partial<Pick<Farm, 'name' | 'description'>>) => void
   onClose: () => void
-  onOpen: () => void
 }) {
-  // ローカル編集値 (blur 時に onUpdateFarm)
   const [name, setName] = useState(farm.name)
   const [description, setDescription] = useState(farm.description ?? '')
 
-  // farm が変わったら (親から別の工区を渡された等) ローカル値をリセット
   useEffect(() => {
     setName(farm.name)
     setDescription(farm.description ?? '')
   }, [farm.id, farm.name, farm.description])
-
-  // 地図のフィット対象 bounds: ポリゴン群があればそれ、なければ工区の代表位置
-  const bounds = useMemo<L.LatLngBoundsExpression | null>(() => {
-    const pts: [number, number][] = polygons.flatMap((p) => p.positions)
-    if (pts.length >= 2) {
-      const lats = pts.map((p) => p[0])
-      const lngs = pts.map((p) => p[1])
-      return L.latLngBounds(
-        [Math.min(...lats), Math.min(...lngs)],
-        [Math.max(...lats), Math.max(...lngs)],
-      )
-    }
-    return null
-  }, [polygons])
-
-  const center: [number, number] = location
-    ? [location.lat, location.lng]
-    : bounds
-      ? [
-          ((bounds as L.LatLngBounds).getNorth() + (bounds as L.LatLngBounds).getSouth()) / 2,
-          ((bounds as L.LatLngBounds).getEast() + (bounds as L.LatLngBounds).getWest()) / 2,
-        ]
-      : [43.06, 141.35]
 
   const commitName = () => {
     const v = name.trim()
@@ -502,107 +471,66 @@ function FarmDetailView({
   }
 
   return (
-    <div className="fixed inset-0 bg-white z-[3500] flex flex-col">
-      {/* ヘッダー */}
-      <div className="px-3 py-2 bg-slate-800 text-white flex items-center gap-2 text-sm shrink-0">
-        <button
-          onClick={onClose}
-          className="p-1 rounded hover:bg-slate-700"
-          title="一覧に戻る"
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </button>
-        <span className="font-medium truncate">{farm.name}</span>
-      </div>
-
-      {/* 上半分: 地図 */}
-      <div className="h-1/2 min-h-[220px] relative bg-slate-200">
-        <MapContainer
-          center={center}
-          zoom={16}
-          maxZoom={24}
-          className="h-full w-full"
-        >
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            maxZoom={24}
-            maxNativeZoom={19}
-          />
-          {bounds && <FitBounds bounds={bounds} />}
-          <CurrentLocationLayer />
-          {polygons.map((polygon) => (
-            <Polygon
-              key={polygon.id}
-              positions={polygon.positions}
-              pathOptions={{
-                color: WORK_TYPE_COLORS[polygon.workType] || '#22c55e',
-                fillColor: WORK_TYPE_COLORS[polygon.workType] || '#22c55e',
-                fillOpacity: 0.3,
-                weight: 2,
-              }}
-            />
-          ))}
-          {location && (
-            <Marker position={[location.lat, location.lng]} icon={createMarkerIcon()}>
-              <Tooltip permanent direction="top" offset={[0, -16]}>
-                {farm.name}
-              </Tooltip>
-            </Marker>
-          )}
-        </MapContainer>
-      </div>
-
-      {/* 下半分: 編集 + アクション */}
-      <div className="flex-1 min-h-0 overflow-auto p-3 space-y-3 border-t">
-        <div>
-          <label className="block text-[11px] text-slate-500 mb-1">工区名</label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onBlur={commitName}
-            className="w-full px-2 py-2 border rounded text-sm"
-          />
+    <div
+      className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3500]"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white w-full sm:max-w-sm rounded-t-xl sm:rounded-xl shadow-xl flex flex-col max-h-[90vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-4 py-3 border-b flex items-center justify-between shrink-0">
+          <h3 className="text-base font-semibold">工区の編集</h3>
+          <button
+            onClick={onClose}
+            className="p-1 rounded hover:bg-slate-100 text-slate-500"
+            title="閉じる"
+          >
+            <X className="h-5 w-5" />
+          </button>
         </div>
-        <div>
-          <label className="block text-[11px] text-slate-500 mb-1">説明</label>
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            onBlur={commitDescription}
-            placeholder="任意"
-            className="w-full px-2 py-2 border rounded text-sm h-20"
-          />
-        </div>
-        <div>
-          <label className="block text-[11px] text-slate-500 mb-1">進捗</label>
-          <label className="flex items-center gap-2 px-2 py-2 border rounded cursor-pointer">
+        <div className="p-3 overflow-y-auto flex-1 space-y-3">
+          <div>
+            <label className="block text-[11px] text-slate-500 mb-1">工区名</label>
             <input
-              type="checkbox"
-              checked={isCompleted}
-              onChange={(e) => onToggleCompleted(e.target.checked)}
-              className="h-4 w-4"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={commitName}
+              className="w-full px-2 py-2 border rounded text-sm"
             />
-            <span className="text-sm">完了</span>
-          </label>
+          </div>
+          <div>
+            <label className="block text-[11px] text-slate-500 mb-1">説明</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              onBlur={commitDescription}
+              placeholder="任意"
+              className="w-full px-2 py-2 border rounded text-sm h-20"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] text-slate-500 mb-1">進捗</label>
+            <label className="flex items-center gap-2 px-2 py-2 border rounded cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isCompleted}
+                onChange={(e) => onToggleCompleted(e.target.checked)}
+                className="h-4 w-4"
+              />
+              <span className="text-sm">完了</span>
+            </label>
+          </div>
         </div>
-      </div>
-
-      {/* フッター: 工区を開くボタン */}
-      <div className="px-3 py-2 border-t shrink-0 flex gap-2">
-        <button
-          onClick={onClose}
-          className="px-4 py-3 text-sm border rounded-lg hover:bg-slate-50"
-        >
-          戻る
-        </button>
-        <button
-          onClick={onOpen}
-          className="flex-1 px-4 py-3 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold"
-        >
-          工区を開く
-        </button>
+        <div className="px-3 py-2 border-t shrink-0">
+          <button
+            onClick={onClose}
+            className="w-full px-4 py-2.5 text-sm border rounded-lg hover:bg-slate-50"
+          >
+            閉じる
+          </button>
+        </div>
       </div>
     </div>
   )
