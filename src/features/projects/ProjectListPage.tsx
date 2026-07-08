@@ -21,7 +21,6 @@ import {
   Edit,
   Map as MapIcon,
   Lock,
-  Play,
   Check,
   ArrowLeft,
   Mail,
@@ -67,10 +66,9 @@ const WORK_TYPE_NAMES: Record<string, string> = {
 // 全工種リスト
 const ALL_WORK_TYPES = ['boundary_survey', 'underdrain', 'soil_import', 'simple_grading', 'grading', 'subsoil', 'stone_removal'] as const
 
-// 地籍測量モードでの状態フィルタ用スウォッチ色
-const STATUS_FILTER_COLOR: Record<'not_started' | 'in_progress' | 'completed', string> = {
+// 地籍測量モードでの状態フィルタ用スウォッチ色 (2 値: 未完了 / 完了)
+const STATUS_FILTER_COLOR: Record<WorkStatus, string> = {
   not_started: '#94a3b8', // slate-400
-  in_progress: '#f59e0b', // amber-500
   completed: '#10b981',   // emerald-500
 }
 
@@ -165,8 +163,9 @@ export function ProjectListPage() {
   // 工種フィルター（表示する工種のSet）
   const [visibleWorkTypes, setVisibleWorkTypes] = useState<Set<string>>(new Set(ALL_WORK_TYPES))
   // 地籍測量モードで使う状態フィルター（表示する状態のSet）
+  // 完了工区は既定で非表示 (未完了のみ表示)。ユーザーがトグルで完了も表示可能
   const [visibleStatuses, setVisibleStatuses] = useState<Set<WorkStatus>>(
-    new Set<WorkStatus>(['not_started', 'in_progress', 'completed']),
+    new Set<WorkStatus>(['not_started']),
   )
 
   // 現在地表示トグル
@@ -208,6 +207,16 @@ export function ProjectListPage() {
   const fetchStatuses = useWorkStatusStore((s) => s.fetchStatuses)
   const setWorkStatus = useWorkStatusStore((s) => s.setStatus)
   const statusByKey = useWorkStatusStore((s) => s.statusByKey)
+  const isFarmCompleted = useWorkStatusStore((s) => s.isFarmCompleted)
+  // 完了工区を非表示にするかどうか (既定: 非表示)。設定は localStorage に保存
+  const [hideCompletedFarms, setHideCompletedFarms] = useState<boolean>(() => {
+    try { return localStorage.getItem('projects:hideCompletedFarms') !== '0' } catch { return true }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('projects:hideCompletedFarms', hideCompletedFarms ? '1' : '0')
+    } catch { /* ignore */ }
+  }, [hideCompletedFarms])
 
   useEffect(() => {
     fetchProjects()
@@ -543,7 +552,10 @@ export function ProjectListPage() {
   }
 
   const getFarmsForProject = (projectId: string) => {
-    return farms.filter((f) => f.project_id === projectId)
+    const all = farms.filter((f) => f.project_id === projectId)
+    if (!hideCompletedFarms) return all
+    // 「完了」の farm_work_status が 1 件でもある工区は完了扱いとして隠す
+    return all.filter((f) => !isFarmCompleted(f.id))
   }
 
   const loading = projectsLoading || farmsLoading
@@ -639,6 +651,19 @@ export function ProjectListPage() {
                 </button>
               )}
             </div>
+          </div>
+
+          {/* 完了工区フィルタ (既定: 非表示) */}
+          <div className="px-3 py-1.5 border-b bg-slate-50 flex items-center text-xs text-slate-600">
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!hideCompletedFarms}
+                onChange={(e) => setHideCompletedFarms(!e.target.checked)}
+                className="h-3.5 w-3.5"
+              />
+              <span>完了工区も表示</span>
+            </label>
           </div>
 
           {/* ツリー表示 */}
@@ -798,7 +823,7 @@ export function ProjectListPage() {
             {isCadastral ? (
               <>
                 <span className="text-sm font-medium text-muted-foreground">状態:</span>
-                {(['not_started', 'in_progress', 'completed'] as const).map((status) => (
+                {(['not_started', 'completed'] as const).map((status) => (
                   <label
                     key={status}
                     className="flex items-center gap-2 cursor-pointer text-sm px-2 py-1 rounded hover:bg-slate-50"
@@ -1005,10 +1030,6 @@ export function ProjectListPage() {
                       active: 'bg-slate-500 text-white border-slate-600',
                       idle: 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200',
                     },
-                    in_progress: {
-                      active: 'bg-amber-500 text-white border-amber-600',
-                      idle: 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100',
-                    },
                     completed: {
                       active: 'bg-emerald-600 text-white border-emerald-700',
                       idle: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100',
@@ -1017,8 +1038,8 @@ export function ProjectListPage() {
                   return (
                     <div>
                       <div className="text-xs text-slate-500 mb-1">境界測量の状態</div>
-                      <div className="grid grid-cols-3 gap-2">
-                        {(['not_started', 'in_progress', 'completed'] as const).map((s) => {
+                      <div className="grid grid-cols-2 gap-2">
+                        {(['not_started', 'completed'] as const).map((s) => {
                           const active = currentStatus === s
                           const style = STATUS_BTN[s]
                           return (
@@ -1613,13 +1634,9 @@ export function ProjectListPage() {
   )
 }
 
-// 状態のスタイル
+// 状態のスタイル (2 値)
 const STATUS_STYLE: Record<WorkStatus, { wrap: string; icon: React.ReactNode | null }> = {
   not_started: { wrap: '', icon: null },
-  in_progress: {
-    wrap: 'bg-amber-50 text-amber-700',
-    icon: <Play className="h-3 w-3 fill-current shrink-0" />,
-  },
   completed: {
     wrap: 'bg-emerald-50 text-emerald-700',
     icon: <Check className="h-3.5 w-3.5 shrink-0" strokeWidth={3} />,
@@ -1693,7 +1710,7 @@ function StatusContextMenu({
   const left = Math.min(x, window.innerWidth - 180)
   const top = Math.min(y, window.innerHeight - 140)
 
-  const items: WorkStatus[] = ['not_started', 'in_progress', 'completed']
+  const items: WorkStatus[] = ['not_started', 'completed']
   return (
     <div
       className="fixed bg-white shadow-xl rounded-md border z-[2000] py-1 min-w-[160px]"
@@ -1725,14 +1742,12 @@ function StatusContextMenu({
   )
 }
 
-// プロジェクト工種別の進捗集計
+// プロジェクト工種別の進捗集計 (2 値: 完了 / 未完了)
 interface WorkTypeProgress {
   totalArea: number
   completedArea: number
-  inProgressArea: number
   total: number
   completed: number
-  inProgress: number
 }
 
 function computeProgress(
@@ -1744,10 +1759,8 @@ function computeProgress(
   const r: WorkTypeProgress = {
     totalArea: 0,
     completedArea: 0,
-    inProgressArea: 0,
     total: 0,
     completed: 0,
-    inProgress: 0,
   }
   for (const farm of farms) {
     const area = farmWorkAreaSummary[farm.id]?.[workType] ?? 0
@@ -1758,9 +1771,6 @@ function computeProgress(
     if (status === 'completed') {
       r.completedArea += area
       r.completed += 1
-    } else if (status === 'in_progress') {
-      r.inProgressArea += area
-      r.inProgress += 1
     }
   }
   return r
@@ -1833,11 +1843,7 @@ function ExpandedProjectTable({
       <div className="px-3 py-1.5 border-b bg-slate-50 flex items-center gap-3 text-[11px] text-slate-600">
         <span className="font-medium">状態:</span>
         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-slate-500">
-          未着手
-        </span>
-        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-amber-700 bg-amber-50">
-          <Play className="h-3 w-3 fill-current" />
-          進行中
+          未完了
         </span>
         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-emerald-700 bg-emerald-50">
           <Check className="h-3.5 w-3.5" strokeWidth={3} />
@@ -1973,20 +1979,12 @@ function ProjectTableGroup({
           return (
             <td key={wt} className="px-2 py-1.5 border-b border-r text-right font-mono">
               <div className="text-slate-800 font-semibold">{p.totalArea.toFixed(2)}</div>
-              {(p.completedArea > 0 || p.inProgressArea > 0) && (
+              {p.completedArea > 0 && (
                 <div className="flex items-center justify-end gap-2 text-[10px] mt-0.5">
-                  {p.completedArea > 0 && (
-                    <span className="inline-flex items-center gap-0.5 text-emerald-700">
-                      <Check className="h-2.5 w-2.5" strokeWidth={3} />
-                      {p.completedArea.toFixed(2)}（{pct.toFixed(0)}%）
-                    </span>
-                  )}
-                  {p.inProgressArea > 0 && (
-                    <span className="inline-flex items-center gap-0.5 text-amber-700">
-                      <Play className="h-2.5 w-2.5 fill-current" />
-                      {p.inProgressArea.toFixed(2)}
-                    </span>
-                  )}
+                  <span className="inline-flex items-center gap-0.5 text-emerald-700">
+                    <Check className="h-2.5 w-2.5" strokeWidth={3} />
+                    {p.completedArea.toFixed(2)}（{pct.toFixed(0)}%）
+                  </span>
                 </div>
               )}
             </td>

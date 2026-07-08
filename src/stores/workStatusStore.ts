@@ -1,9 +1,9 @@
 import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
 
-// 工程の進捗状態
-// 将来細分化が予想されるため、リテラル型で集約しておく
-export type WorkStatus = 'not_started' | 'in_progress' | 'completed'
+// 工程の進捗状態: 完了 (True) / 未完了 (False) の 2 値
+// 旧 'in_progress' は SQL 側で 'not_started' に統合済み。
+export type WorkStatus = 'not_started' | 'completed'
 
 export interface FarmWorkStatus {
   farmId: string
@@ -11,16 +11,8 @@ export interface FarmWorkStatus {
   status: WorkStatus
 }
 
-// 状態の循環順序: クリックで未着手 → 進行中 → 完了 → 未着手
-export const NEXT_STATUS: Record<WorkStatus, WorkStatus> = {
-  not_started: 'in_progress',
-  in_progress: 'completed',
-  completed: 'not_started',
-}
-
 export const STATUS_LABEL: Record<WorkStatus, string> = {
-  not_started: '未着手',
-  in_progress: '進行中',
+  not_started: '未完了',
   completed: '完了',
 }
 
@@ -33,8 +25,11 @@ interface WorkStatusState {
 
   fetchStatuses: (farmIds: string[]) => Promise<void>
   setStatus: (farmId: string, workType: string, status: WorkStatus) => Promise<void>
-  cycleStatus: (farmId: string, workType: string) => Promise<void>
+  /** 完了 ↔ 未完了 の 2 値をトグル */
+  toggleStatus: (farmId: string, workType: string) => Promise<void>
   getStatus: (farmId: string, workType: string) => WorkStatus
+  /** その工区に「完了」の行が 1 件以上あるか (工区一覧の完了フィルタ用) */
+  isFarmCompleted: (farmId: string) => boolean
 }
 
 const keyOf = (farmId: string, workType: string) => `${farmId}:${workType}`
@@ -43,9 +38,18 @@ export const useWorkStatusStore = create<WorkStatusState>((set, get) => ({
   statusByKey: new Map(),
   loading: false,
   error: null,
+  alertedOnce: false,
 
   getStatus: (farmId, workType) => {
     return get().statusByKey.get(keyOf(farmId, workType)) ?? 'not_started'
+  },
+
+  isFarmCompleted: (farmId) => {
+    const prefix = `${farmId}:`
+    for (const [k, v] of get().statusByKey) {
+      if (k.startsWith(prefix) && v === 'completed') return true
+    }
+    return false
   },
 
   fetchStatuses: async (farmIds) => {
@@ -63,11 +67,13 @@ export const useWorkStatusStore = create<WorkStatusState>((set, get) => ({
       const rows = (data ?? []) as Array<{
         farm_id: string
         work_type: string
-        status: WorkStatus
+        // DB には旧値 'in_progress' が入っている可能性もあるので unknown 化して narrow
+        status: string
       }>
       const map = new Map<string, WorkStatus>()
       for (const r of rows) {
-        map.set(keyOf(r.farm_id, r.work_type), r.status)
+        const s: WorkStatus = r.status === 'completed' ? 'completed' : 'not_started'
+        map.set(keyOf(r.farm_id, r.work_type), s)
       }
       set({ statusByKey: map, loading: false })
     } catch (err) {
@@ -95,10 +101,6 @@ export const useWorkStatusStore = create<WorkStatusState>((set, get) => ({
       if (error) throw error
     } catch (err) {
       // ロールバック + 詳細をコンソールに出して原因特定を容易にする
-      // よくある原因:
-      //   - farm_work_status テーブルに対する RLS が有効化されているがポリシー未設定
-      //   - anon/authenticated ロールに INSERT/UPDATE 権限が無い
-      //   - マイグレーション未適用
       console.error('[workStatusStore] setStatus failed', {
         farmId,
         workType,
@@ -112,7 +114,6 @@ export const useWorkStatusStore = create<WorkStatusState>((set, get) => ({
           ? JSON.stringify(err)
           : '工程状態の更新に失敗しました'
       set({ statusByKey: prev, error: message })
-      // 1 度だけアラートして利用者に気付きを促す（他の状態変更は console のみ）
       if (typeof window !== 'undefined' && !get().alertedOnce) {
         set({ alertedOnce: true })
         alert(`工程状態を保存できませんでした: ${message}`)
@@ -120,10 +121,8 @@ export const useWorkStatusStore = create<WorkStatusState>((set, get) => ({
     }
   },
 
-  alertedOnce: false,
-
-  cycleStatus: async (farmId, workType) => {
+  toggleStatus: async (farmId, workType) => {
     const current = get().getStatus(farmId, workType)
-    await get().setStatus(farmId, workType, NEXT_STATUS[current])
+    await get().setStatus(farmId, workType, current === 'completed' ? 'not_started' : 'completed')
   },
 }))
