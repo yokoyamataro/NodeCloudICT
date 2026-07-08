@@ -3,11 +3,11 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Loader2, Monitor, LogOut, ArrowLeft, Plus, Edit3, X } from 'lucide-react'
+import { Loader2, Monitor, LogOut, ArrowLeft, Plus, Edit3 } from 'lucide-react'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
-import { useWorkStatusStore } from '@/stores/workStatusStore'
 import { useAuth } from '@/contexts/AuthContext'
+import { FarmEditModal } from '@/features/farms/FarmEditModal'
 import { CurrentLocationLayer } from '@/components/map/CurrentLocationLayer'
 import { setDisplayModeOverride } from '@/lib/displayMode'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
@@ -66,20 +66,8 @@ export function MobileTopPage() {
     fetchWorkAreaPolygons,
   } = useFarmStore()
   const { projects, fetchProjects } = useProjectListStore()
-  const fetchStatuses = useWorkStatusStore((s) => s.fetchStatuses)
-  const isFarmCompleted = useWorkStatusStore((s) => s.isFarmCompleted)
-  const setWorkStatus = useWorkStatusStore((s) => s.setStatus)
-  // statusByKey に購読しないと useMemo の再計算がトリガーされず、初期表示で
-  // fetchStatuses 完了後の完了フィルタが効かない (体感バグ)。
-  // 値そのものは使わないが、参照が変わるたびに再レンダーさせるのが目的。
-  const statusByKey = useWorkStatusStore((s) => s.statusByKey)
-  // 完了状態を保存する work_type キー。
-  // 地籍測量は boundary_survey (PC の状態表示と自動で同期する)、
-  // それ以外は farm_completed という汎用キーに書く
-  const primaryWorkType = (farm: Farm): string => {
-    const proj = projects.find((p) => p.id === farm.project_id)
-    return proj?.category === 'cadastral' ? 'boundary_survey' : 'farm_completed'
-  }
+  // 完了判定: farms.completed_at が真実の源。過去互換用に isFarmCompleted 関数だけ残す
+  const isFarmCompleted = (farm: Farm) => farm.completed_at != null
 
   // 新規工区ダイアログ
   const [showNewFarmDialog, setShowNewFarmDialog] = useState(false)
@@ -102,23 +90,14 @@ export function MobileTopPage() {
     fetchProjects()
   }, [fetchFarms, fetchProjects])
 
-  // 完了フィルタが効くように farm_work_status も取り込む
-  useEffect(() => {
-    if (allFarms.length > 0) {
-      void fetchStatuses(allFarms.map((f) => f.id))
-    }
-  }, [allFarms, fetchStatuses])
-
   // URL の projectId に該当する工事の工区のみ表示。完了フィルタ ON なら「完了」も除外。
-  // statusByKey を deps に含めて、fetchStatuses が終わった時点で再フィルタリングされるようにする。
   const farms = useMemo(() => {
     const list = routeProjectId
       ? allFarms.filter((f) => f.project_id === routeProjectId)
       : allFarms
     if (!hideCompletedFarms) return list
-    return list.filter((f) => !isFarmCompleted(f.id))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allFarms, routeProjectId, hideCompletedFarms, statusByKey])
+    return list.filter((f) => f.completed_at == null)
+  }, [allFarms, routeProjectId, hideCompletedFarms])
   const currentProject = useMemo(
     () => (routeProjectId ? projects.find((p) => p.id === routeProjectId) : null),
     [projects, routeProjectId],
@@ -288,7 +267,7 @@ export function MobileTopPage() {
             {farms.map((farm) => {
               const location = farmLocations.get(farm.id)
               if (!location) return null
-              const done = isFarmCompleted(farm.id)
+              const done = isFarmCompleted(farm)
               return (
                 <Marker
                   key={farm.id}
@@ -329,7 +308,7 @@ export function MobileTopPage() {
         ) : (
           <ul className="divide-y">
             {farms.map((farm) => {
-              const done = isFarmCompleted(farm.id)
+              const done = isFarmCompleted(farm)
               return (
                 <li
                   key={farm.id}
@@ -349,11 +328,9 @@ export function MobileTopPage() {
                       checked={done}
                       onChange={(e) => {
                         e.stopPropagation()
-                        void setWorkStatus(
-                          farm.id,
-                          primaryWorkType(farm),
-                          e.target.checked ? 'completed' : 'not_started',
-                        )
+                        void updateFarm(farm.id, {
+                          completed_at: e.target.checked ? new Date().toISOString() : null,
+                        })
                       }}
                       className="h-4 w-4"
                     />
@@ -442,17 +419,12 @@ export function MobileTopPage() {
         </div>
       )}
 
-      {/* 工区編集モーダル (右端の 編集ボタンで開く: 名前 / 説明 / 完了) */}
+      {/* 工区編集モーダル (右端の 編集ボタンで開く: 名前 / 説明 / 着手日 / 完成日 / 完了) */}
       {editFarm && (
         <FarmEditModal
-          farm={editFarm}
-          isCompleted={isFarmCompleted(editFarm.id)}
-          onToggleCompleted={(next) =>
-            void setWorkStatus(
-              editFarm.id,
-              primaryWorkType(editFarm),
-              next ? 'completed' : 'not_started',
-            )
+          farm={
+            // farms 側 (allFarms) から最新の状態を再検索して常に最新を表示する
+            allFarms.find((f) => f.id === editFarm.id) ?? editFarm
           }
           onUpdateFarm={(patch) => void updateFarm(editFarm.id, patch)}
           onClose={() => setEditFarm(null)}
@@ -462,104 +434,3 @@ export function MobileTopPage() {
   )
 }
 
-// -----------------------------------------------------------------
-// 工区編集モーダル (ボトムシート):
-//   一覧の右端 編集ボタンで開く。名前 / 説明 / 完了 を編集。
-// -----------------------------------------------------------------
-function FarmEditModal({
-  farm,
-  isCompleted,
-  onToggleCompleted,
-  onUpdateFarm,
-  onClose,
-}: {
-  farm: Farm
-  isCompleted: boolean
-  onToggleCompleted: (next: boolean) => void
-  onUpdateFarm: (patch: Partial<Pick<Farm, 'name' | 'description'>>) => void
-  onClose: () => void
-}) {
-  const [name, setName] = useState(farm.name)
-  const [description, setDescription] = useState(farm.description ?? '')
-
-  useEffect(() => {
-    setName(farm.name)
-    setDescription(farm.description ?? '')
-  }, [farm.id, farm.name, farm.description])
-
-  const commitName = () => {
-    const v = name.trim()
-    if (v && v !== farm.name) onUpdateFarm({ name: v })
-    else if (!v) setName(farm.name)
-  }
-  const commitDescription = () => {
-    const v = description.trim()
-    const prev = farm.description ?? ''
-    if (v !== prev) onUpdateFarm({ description: v || null })
-  }
-
-  return (
-    <div
-      className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3500]"
-      onClick={onClose}
-    >
-      <div
-        className="bg-white w-full sm:max-w-sm rounded-t-xl sm:rounded-xl shadow-xl flex flex-col max-h-[90vh]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="px-4 py-3 border-b flex items-center justify-between shrink-0">
-          <h3 className="text-base font-semibold">工区の編集</h3>
-          <button
-            onClick={onClose}
-            className="p-1 rounded hover:bg-slate-100 text-slate-500"
-            title="閉じる"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-        <div className="p-3 overflow-y-auto flex-1 space-y-3">
-          <div>
-            <label className="block text-[11px] text-slate-500 mb-1">工区名</label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onBlur={commitName}
-              className="w-full px-2 py-2 border rounded text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-[11px] text-slate-500 mb-1">説明</label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              onBlur={commitDescription}
-              placeholder="任意"
-              className="w-full px-2 py-2 border rounded text-sm h-20"
-            />
-          </div>
-          <div>
-            <label className="block text-[11px] text-slate-500 mb-1">進捗</label>
-            <label className="flex items-center gap-2 px-2 py-2 border rounded cursor-pointer">
-              <input
-                type="checkbox"
-                checked={isCompleted}
-                onChange={(e) => onToggleCompleted(e.target.checked)}
-                className="h-4 w-4"
-              />
-              <span className="text-sm">完了</span>
-            </label>
-          </div>
-        </div>
-        <div className="px-3 py-2 border-t shrink-0">
-          <button
-            onClick={onClose}
-            className="w-full px-4 py-2.5 text-sm border rounded-lg hover:bg-slate-50"
-          >
-            閉じる
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}

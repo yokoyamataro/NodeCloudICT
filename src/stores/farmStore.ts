@@ -14,6 +14,8 @@ export interface Farm {
   created_at: string
   updated_at: string
   deleted_at: string | null
+  started_at: string | null
+  completed_at: string | null
 }
 
 // 工区の先頭座標情報
@@ -91,7 +93,10 @@ interface FarmState {
   fetchFarmLocations: () => Promise<void>
   fetchWorkAreaPolygons: () => Promise<void>
   createFarm: (projectId: string, name: string, description?: string) => Promise<Farm | null>
-  updateFarm: (id: string, updates: Partial<Pick<Farm, 'name' | 'description'>>) => Promise<void>
+  updateFarm: (
+    id: string,
+    updates: Partial<Pick<Farm, 'name' | 'description' | 'started_at' | 'completed_at'>>,
+  ) => Promise<void>
   /** ゴミ箱へ移動 (soft delete)。保持期間経過で物理削除される。 */
   deleteFarm: (id: string) => Promise<void>
   /** ゴミ箱から復元 */

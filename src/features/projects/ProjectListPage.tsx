@@ -2,7 +2,6 @@ import { useEffect, useState, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   Plus,
-  FolderOpen,
   Trash2,
   Loader2,
   MapPin,
@@ -27,6 +26,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useFarmStore, type Farm, type FarmLocation } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
+import { FarmEditModal } from '@/features/farms/FarmEditModal'
 import {
   useWorkStatusStore,
   type WorkStatus,
@@ -117,6 +117,7 @@ export function ProjectListPage() {
     error: farmsError,
     fetchFarms,
     createFarm,
+    updateFarm,
     deleteFarm,
     setCurrentFarm,
     farmLocations,
@@ -203,7 +204,13 @@ export function ProjectListPage() {
   const fetchStatuses = useWorkStatusStore((s) => s.fetchStatuses)
   const setWorkStatus = useWorkStatusStore((s) => s.setStatus)
   const statusByKey = useWorkStatusStore((s) => s.statusByKey)
-  const isFarmCompleted = useWorkStatusStore((s) => s.isFarmCompleted)
+  // 完了判定は farms.completed_at を真実の源とする
+  const isFarmCompleted = (farmId: string): boolean => {
+    const f = allFarms.find((x) => x.id === farmId)
+    return f?.completed_at != null
+  }
+  // 一覧の右端 編集ボタンで開く 工区情報編集モーダル
+  const [editFarmForModal, setEditFarmForModal] = useState<Farm | null>(null)
   // 完了工区を非表示にするかどうか (既定: 非表示)。設定は localStorage に保存
   const [hideCompletedFarms, setHideCompletedFarms] = useState<boolean>(() => {
     try { return localStorage.getItem('projects:hideCompletedFarms') !== '0' } catch { return true }
@@ -742,31 +749,55 @@ export function ProjectListPage() {
                             </div>
                           ) : (
                             projectFarms.map((farm) => {
-                              const location = farmLocations.get(farm.id)
                               const isSelected = selectedFarm?.id === farm.id
-
+                              const done = farm.completed_at != null
                               return (
                                 <div
                                   key={farm.id}
-                                  onClick={() => {
-                                    handleSelectFarm(farm)
-                                    handleOpenFarm(farm)
-                                  }}
                                   className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group ${
-                                    isSelected
-                                      ? 'bg-blue-100 text-blue-700'
-                                      : 'hover:bg-slate-100'
+                                    done
+                                      ? 'bg-emerald-50 hover:bg-emerald-100'
+                                      : isSelected
+                                        ? 'bg-blue-100 text-blue-700'
+                                        : 'hover:bg-slate-100'
                                   }`}
-                                  title="クリックで工区編集を開く"
                                 >
-                                  <FolderOpen className={`h-4 w-4 flex-shrink-0 ${isSelected ? 'text-blue-600' : 'text-slate-400'}`} />
-                                  <span className="flex-1 text-sm truncate" title={farm.name}>
+                                  {/* 左端: 完了チェックボックス (工区ナビゲーションを阻止) */}
+                                  <input
+                                    type="checkbox"
+                                    checked={done}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onChange={(e) => {
+                                      e.stopPropagation()
+                                      void updateFarm(farm.id, {
+                                        completed_at: e.target.checked ? new Date().toISOString() : null,
+                                      })
+                                    }}
+                                    className="h-4 w-4 flex-shrink-0"
+                                    title={done ? '完了' : '未完了'}
+                                  />
+                                  <span
+                                    onClick={() => {
+                                      handleSelectFarm(farm)
+                                      handleOpenFarm(farm)
+                                    }}
+                                    className="flex-1 text-sm truncate"
+                                    title={`${farm.name} — クリックで工区編集を開く`}
+                                  >
                                     {farm.name}
                                   </span>
-                                  {location && (
-                                    <MapPin className="h-3 w-3 text-slate-400 flex-shrink-0" />
-                                  )}
+                                  {/* 右端: 編集 / 削除ボタン (ホバー時のみ表示) */}
                                   <div className="hidden group-hover:flex items-center gap-1">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        setEditFarmForModal(farm)
+                                      }}
+                                      className="p-1 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded"
+                                      title="工区情報を編集"
+                                    >
+                                      <Edit3 className="h-3 w-3" />
+                                    </button>
                                     <button
                                       onClick={(e) => handleDeleteFarm(e, farm.id)}
                                       className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded"
@@ -1091,6 +1122,17 @@ export function ProjectListPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* 工区情報編集モーダル (サイドバー右端の 編集ボタンで開く) */}
+      {editFarmForModal && (
+        <FarmEditModal
+          farm={
+            allFarms.find((f) => f.id === editFarmForModal.id) ?? editFarmForModal
+          }
+          onUpdateFarm={(patch) => void updateFarm(editFarmForModal.id, patch)}
+          onClose={() => setEditFarmForModal(null)}
+        />
       )}
 
       {/* 新規工区ダイアログ */}

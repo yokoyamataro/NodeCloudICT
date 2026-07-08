@@ -491,6 +491,8 @@ export interface Farm {
   created_at: string
   updated_at: string
   deleted_at: string | null      // ゴミ箱運用: NULL 以外は削除済み
+  started_at: string | null      // 着手日 (作成時に created_at を初期値、以後編集可能)
+  completed_at: string | null    // 完成日 (完了チェック ON で now() を初期値、以後編集可能。OFF なら NULL)
 }
 
 // 後方互換性のためのエイリアス
