@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Loader2, Monitor, LogOut, ArrowLeft, MapPin, Plus } from 'lucide-react'
+import { Loader2, Monitor, LogOut, ArrowLeft, Plus } from 'lucide-react'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useWorkStatusStore } from '@/stores/workStatusStore'
@@ -305,29 +305,12 @@ export function MobileTopPage() {
         ) : (
           <ul className="divide-y">
             {farms.map((farm) => {
-              const location = farmLocations.get(farm.id)
               const done = isFarmCompleted(farm.id)
               return (
                 <li key={farm.id} className="flex items-stretch hover:bg-slate-50 active:bg-blue-50">
-                  <button
-                    onClick={() => handleFarmClick(farm)}
-                    className="flex-1 min-w-0 flex items-center gap-2 pl-3 py-3 text-left"
-                  >
-                    <MapPin
-                      className={`h-4 w-4 flex-shrink-0 ${
-                        location ? 'text-blue-600' : 'text-slate-300'
-                      }`}
-                    />
-                    <span className="flex-1 truncate font-medium">{farm.name}</span>
-                    {farm.description && (
-                      <span className="text-[11px] text-slate-400 truncate max-w-[40%]">
-                        {farm.description}
-                      </span>
-                    )}
-                  </button>
-                  {/* 完了チェック (右端)。工区ナビゲーションを阻止 */}
+                  {/* 完了チェック (左端)。工区ナビゲーションを阻止 */}
                   <label
-                    className="flex items-center gap-1.5 pr-3 pl-2 text-xs text-slate-600 cursor-pointer select-none"
+                    className="flex items-center pl-3 pr-1 cursor-pointer select-none"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <input
@@ -343,8 +326,18 @@ export function MobileTopPage() {
                       }}
                       className="h-4 w-4"
                     />
-                    完了
                   </label>
+                  <button
+                    onClick={() => handleFarmClick(farm)}
+                    className="flex-1 min-w-0 flex items-center gap-2 pl-2 pr-3 py-3 text-left"
+                  >
+                    <span className="flex-1 truncate font-medium">{farm.name}</span>
+                    {farm.description && (
+                      <span className="text-[11px] text-slate-400 truncate max-w-[40%]">
+                        {farm.description}
+                      </span>
+                    )}
+                  </button>
                 </li>
               )
             })}
