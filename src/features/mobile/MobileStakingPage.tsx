@@ -5834,22 +5834,20 @@ function FreePointDialog({
           />
         </div>
 
-        {/* 点種: ラベル + チップを 1 行に (折り返しあり) */}
-        <div className="flex items-center gap-1.5 flex-wrap mb-2">
+        {/* 点種: ラベル + プルダウンを 1 行に */}
+        <div className="flex items-center gap-1.5 mb-2">
           <span className="text-[11px] text-slate-500 shrink-0 w-10">点種</span>
-          {typeOptions.map((o) => (
-            <button
-              key={o.code}
-              onClick={() => setType(o.code)}
-              className={`px-1.5 py-0.5 rounded border text-[11px] font-medium ${
-                type === o.code
-                  ? 'bg-blue-600 text-white border-blue-600'
-                  : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
-              }`}
-            >
-              {o.label}
-            </button>
-          ))}
+          <select
+            value={type}
+            onChange={(e) => setType(e.target.value)}
+            className="flex-1 px-1.5 py-1 border rounded text-xs bg-white"
+          >
+            {typeOptions.map((o) => (
+              <option key={o.code} value={o.code}>
+                {o.label}
+              </option>
+            ))}
+          </select>
         </div>
 
         {/* XYZ を横 1 行に */}
@@ -5874,28 +5872,28 @@ function FreePointDialog({
           </span>
         </div>
 
-        {/* OK / カメラ / キャンセル を横 1 列に */}
+        {/* OK / カメラ / キャンセル を横 1 列・等幅に */}
         <div className="flex gap-2">
           <button
-            onClick={onCancel}
-            className="px-3 py-2 border rounded-lg hover:bg-slate-50 text-xs"
+            onClick={() => onConfirm(name.trim() || data.defaultName, type, prefix, false)}
+            disabled={!name.trim()}
+            className="flex-1 basis-0 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
           >
-            キャンセル
+            OK
           </button>
           <button
             onClick={() => onConfirm(name.trim() || data.defaultName, type, prefix, true)}
             disabled={!name.trim()}
-            className="px-3 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-800 disabled:opacity-50 flex items-center justify-center"
+            className="flex-1 basis-0 px-3 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-800 disabled:opacity-50 flex items-center justify-center"
             title="登録して写真撮影"
           >
             <Camera className="h-4 w-4" />
           </button>
           <button
-            onClick={() => onConfirm(name.trim() || data.defaultName, type, prefix, false)}
-            disabled={!name.trim()}
-            className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
+            onClick={onCancel}
+            className="flex-1 basis-0 px-3 py-2 border rounded-lg hover:bg-slate-50 text-xs"
           >
-            OK
+            キャンセル
           </button>
         </div>
       </div>
