@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, Polygon, Tooltip, Pane, Popup, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
@@ -28,6 +28,7 @@ import {
   StickyNote,
   ExternalLink,
   Info,
+  RefreshCw,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { playStartChime, playStopChime, unlockAudio } from '@/lib/beep'
@@ -1153,6 +1154,53 @@ export function MobileStakingPage() {
   useEffect(() => {
     if (farmId) void fetchAttachments('farm_photo', [farmId])
   }, [farmId, fetchAttachments])
+
+  // ---------------- データ更新（共同作業向けの再取得） ----------------
+  // 手動: ヘッダの「更新」ボタン。自動: DEFAULT_ON かつ 60 秒間隔。
+  // 座標 attachments は coordinates 変化を watch する既存 effect が拾うので明示は不要。
+  const REFRESH_INTERVAL_MS = 60_000
+  const [refreshing, setRefreshing] = useState(false)
+  const [lastRefreshAt, setLastRefreshAt] = useState<Date | null>(null)
+  const refreshingRef = useRef(false)
+  const refreshData = useCallback(async () => {
+    if (!farmId) return
+    if (refreshingRef.current) return
+    refreshingRef.current = true
+    setRefreshing(true)
+    try {
+      // キャッシュを持つストアは invalidate してから再取得
+      useCoordinateStore.getState().invalidateCache()
+      useWorkAreaStore.getState().invalidateCache()
+      await Promise.all([
+        fetchCoordinates(farmId),
+        fetchWorkAreas(farmId),
+        fetchPipes(farmId),
+        fetchRecords(farmId),
+        fetchFarmMemos(farmId),
+        fetchAttachments('farm_photo', [farmId]),
+      ])
+      setLastRefreshAt(new Date())
+    } catch (err) {
+      console.warn('[mobile refresh] failed', err)
+    } finally {
+      refreshingRef.current = false
+      setRefreshing(false)
+    }
+  }, [
+    farmId,
+    fetchCoordinates,
+    fetchWorkAreas,
+    fetchPipes,
+    fetchRecords,
+    fetchFarmMemos,
+    fetchAttachments,
+  ])
+  // 60 秒ごとの自動更新（既定 ON、ページ表示中のみ）
+  useEffect(() => {
+    if (!farmId) return
+    const id = window.setInterval(() => { void refreshData() }, REFRESH_INTERVAL_MS)
+    return () => window.clearInterval(id)
+  }, [farmId, refreshData])
   const farmPhotos = useMemo(() => {
     if (!farmId) return [] as Array<{
       id: string
@@ -2602,6 +2650,23 @@ export function MobileStakingPage() {
           title={`地図表示モード: ${MAP_FOLLOW_LABEL[followMode]}（クリックで切替）`}
         >
           現在地
+        </button>
+        <button
+          onClick={() => void refreshData()}
+          disabled={refreshing}
+          className="shrink-0 flex items-center gap-1 px-2 py-1.5 rounded font-medium bg-slate-700 hover:bg-slate-600 disabled:opacity-60"
+          title={
+            refreshing
+              ? 'データを更新中…'
+              : `データを最新に更新（60 秒ごとに自動）${
+                  lastRefreshAt
+                    ? `\n最終更新: ${lastRefreshAt.toLocaleTimeString('ja-JP', { hour12: false })}`
+                    : ''
+                }`
+          }
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+          更新
         </button>
         {farmOrthos.length > 0 && (
           <button
