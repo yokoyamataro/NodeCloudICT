@@ -22,11 +22,13 @@ const WORK_TYPE_COLORS: Record<string, string> = {
   stone_removal: '#6b7280',
 }
 
-const createMarkerIcon = (): L.DivIcon =>
-  L.divIcon({
+// 完了時は緑色に切り替える。未完了は既定の青。
+const createMarkerIcon = (completed = false): L.DivIcon => {
+  const bg = completed ? '#10b981' : '#3b82f6'
+  return L.divIcon({
     className: 'mobile-farm-marker',
     html: `<div style="
-      background-color: #3b82f6;
+      background-color: ${bg};
       width: 22px;
       height: 22px;
       border-radius: 50%;
@@ -36,6 +38,7 @@ const createMarkerIcon = (): L.DivIcon =>
     iconSize: [22, 22],
     iconAnchor: [11, 11],
   })
+}
 
 function FitBounds({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
   const map = useMap()
@@ -268,11 +271,12 @@ export function MobileTopPage() {
             {farms.map((farm) => {
               const location = farmLocations.get(farm.id)
               if (!location) return null
+              const done = isFarmCompleted(farm.id)
               return (
                 <Marker
                   key={farm.id}
                   position={[location.lat, location.lng]}
-                  icon={createMarkerIcon()}
+                  icon={createMarkerIcon(done)}
                   eventHandlers={{ click: () => handleFarmClick(farm) }}
                 >
                   <Tooltip permanent direction="top" offset={[0, -16]}>
@@ -310,7 +314,14 @@ export function MobileTopPage() {
             {farms.map((farm) => {
               const done = isFarmCompleted(farm.id)
               return (
-                <li key={farm.id} className="flex items-stretch hover:bg-slate-50 active:bg-blue-50">
+                <li
+                  key={farm.id}
+                  className={`flex items-stretch ${
+                    done
+                      ? 'bg-emerald-50 hover:bg-emerald-100 active:bg-emerald-200'
+                      : 'hover:bg-slate-50 active:bg-blue-50'
+                  }`}
+                >
                   {/* 完了チェック (左端)。工区ナビゲーションを阻止 */}
                   <label
                     className="flex items-center pl-3 pr-1 cursor-pointer select-none"
