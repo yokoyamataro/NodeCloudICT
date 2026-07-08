@@ -261,7 +261,18 @@ export function MobileTopPage() {
             {allBounds && <FitBounds bounds={allBounds} />}
             <CurrentLocationLayer />
             {workAreaPolygons
-              .filter((polygon) => farms.some((f) => f.id === polygon.farmId))
+              .filter((polygon) => {
+                if (!farms.some((f) => f.id === polygon.farmId)) return false
+                // 地籍測量プロジェクトの工区一覧では、地番ポリゴン (boundary_survey) を
+                // 描画しない。地番数が多く俯瞰の妨げになるため。土木工事は表示のまま。
+                if (
+                  currentProject?.category === 'cadastral' &&
+                  polygon.workType === 'boundary_survey'
+                ) {
+                  return false
+                }
+                return true
+              })
               .map((polygon) => (
                 <Polygon
                   key={polygon.id}
