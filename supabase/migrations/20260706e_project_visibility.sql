@@ -187,7 +187,10 @@ BEGIN
       u.id,
       u.email::text,
       prof.full_name,
-      (caller_org IS NOT NULL AND prof.organization_id = caller_org)
+      COALESCE(
+        caller_org IS NOT NULL AND prof.organization_id = caller_org,
+        false
+      )
     FROM auth.users u
     LEFT JOIN public.profiles prof ON prof.user_id = u.id
     WHERE u.id <> caller
