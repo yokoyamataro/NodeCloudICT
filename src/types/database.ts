@@ -457,8 +457,8 @@ export interface Project {
   user_id: string
   name: string
   description: string | null
-  start_date: string | null      // 工期開始日
-  end_date: string | null        // 工期終了日
+  start_date: string | null      // 工期開始日 (予定期間)
+  end_date: string | null        // 工期終了日 (予定期間)
   client: string | null          // 発注者
   contractor: string | null      // 受託者
   coordinate_zone: number        // 座標系（平面直角座標系の系番号、デフォルト13系）
@@ -466,6 +466,8 @@ export interface Project {
   created_at: string
   updated_at: string
   deleted_at: string | null      // ゴミ箱運用: NULL 以外は削除済み。保持期間経過で物理削除
+  started_at: string | null      // 実際の着手日 (作成時に created_at を初期値、以後編集可能)
+  completed_at: string | null    // 完成日 (完了チェック ON で now() を初期値、OFF なら NULL)
 }
 
 // プロジェクトメンバー

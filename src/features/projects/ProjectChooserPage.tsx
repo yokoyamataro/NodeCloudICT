@@ -5,13 +5,14 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Folder, Loader2, Users, MapPin, AlertCircle, Trash2 } from 'lucide-react'
+import { Plus, Folder, Loader2, Users, MapPin, AlertCircle, Trash2, Edit3 } from 'lucide-react'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { JGD2011_ZONES } from '@/lib/coordinates'
 import type { Project, ProjectCategory } from '@/types/database'
 import { PROJECT_CATEGORY_LABEL } from '@/types/database'
 import { AnnouncementsSection } from '@/features/announcements/AnnouncementsSection'
+import { ProjectEditModal } from '@/features/projects/ProjectEditModal'
 
 export function ProjectChooserPage() {
   const navigate = useNavigate()
@@ -21,12 +22,16 @@ export function ProjectChooserPage() {
     error,
     fetchProjects,
     createProject,
+    updateProject,
+    deleteProject,
     setCurrentProject,
   } = useProjectListStore()
   const { farms, fetchFarms, setCurrentFarm } = useFarmStore()
 
   // 新規作成ダイアログは category を持つ
   const [showNewDialog, setShowNewDialog] = useState<ProjectCategory | null>(null)
+  // 現場情報編集モーダル
+  const [editProject, setEditProject] = useState<Project | null>(null)
   const [newName, setNewName] = useState('')
   const [newDescription, setNewDescription] = useState('')
   const [newZone, setNewZone] = useState(13)
@@ -137,6 +142,7 @@ export function ProjectChooserPage() {
           emptyText="地籍測量の工事がありません。右上の「新規地籍測量」から作成してください。"
           farmCountByProject={farmCountByProject}
           onSelectProject={(p) => navigate(`/projects/${p.id}`)}
+          onEditProject={(p) => setEditProject(p)}
         />
         <ProjectsSection
           title="土木工事一覧"
@@ -145,6 +151,7 @@ export function ProjectChooserPage() {
           emptyText="土木工事の工事がありません。右上の「新規土木工事」から作成してください。"
           farmCountByProject={farmCountByProject}
           onSelectProject={(p) => navigate(`/projects/${p.id}`)}
+          onEditProject={(p) => setEditProject(p)}
         />
         {uncategorizedProjects.length > 0 && (
           <ProjectsSection
@@ -156,9 +163,29 @@ export function ProjectChooserPage() {
             hintIcon={<AlertCircle className="h-3.5 w-3.5" />}
             farmCountByProject={farmCountByProject}
             onSelectProject={(p) => navigate(`/projects/${p.id}`)}
+            onEditProject={(p) => setEditProject(p)}
           />
         )}
       </div>
+
+      {/* 現場情報編集モーダル */}
+      {editProject && (
+        <ProjectEditModal
+          project={projects.find((p) => p.id === editProject.id) ?? editProject}
+          onUpdateProject={(patch) => void updateProject(editProject.id, patch)}
+          onClose={() => setEditProject(null)}
+          onDelete={async () => {
+            const id = editProject.id
+            setEditProject(null)
+            try {
+              await deleteProject(id)
+              fetchFarms()
+            } catch (err) {
+              alert(err instanceof Error ? err.message : '現場の削除に失敗しました')
+            }
+          }}
+        />
+      )}
 
       {/* 新規工事作成ダイアログ（種別ごと） */}
       {showNewDialog && (
@@ -235,6 +262,7 @@ function ProjectsSection({
   hintIcon,
   farmCountByProject,
   onSelectProject,
+  onEditProject,
 }: {
   title: string
   /** 見出し左のアクセント色 (tailwind bg-...) */
@@ -245,6 +273,7 @@ function ProjectsSection({
   hintIcon?: React.ReactNode
   farmCountByProject: (projectId: string) => number
   onSelectProject: (p: Project) => void
+  onEditProject: (p: Project) => void
 }) {
   return (
     <section>
@@ -269,17 +298,39 @@ function ProjectsSection({
             const count = farmCountByProject(p.id)
             const zoneName =
               JGD2011_ZONES[p.coordinate_zone]?.name ?? `第${p.coordinate_zone}系`
+            const done = p.completed_at != null
             return (
-              <button
+              <div
                 key={p.id}
                 onClick={() => onSelectProject(p)}
-                className="text-left bg-white border rounded-lg p-3 hover:border-blue-400 hover:shadow transition-shadow"
+                className={`relative text-left border rounded-lg p-3 hover:shadow transition-shadow cursor-pointer group ${
+                  done
+                    ? 'bg-emerald-50 hover:border-emerald-400'
+                    : 'bg-white hover:border-blue-400'
+                }`}
               >
-                <div className="flex items-center gap-2 mb-1">
-                  <Folder className="h-4 w-4 text-blue-600 flex-shrink-0" />
+                {/* 右上: 編集ボタン (現場情報編集モーダルを開く) */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onEditProject(p)
+                  }}
+                  className="absolute top-1.5 right-1.5 p-1 rounded text-slate-400 hover:text-blue-600 hover:bg-white/80 opacity-70 group-hover:opacity-100"
+                  title="現場情報を編集"
+                >
+                  <Edit3 className="h-3.5 w-3.5" />
+                </button>
+                <div className="flex items-center gap-2 mb-1 pr-6">
+                  <Folder className={`h-4 w-4 flex-shrink-0 ${done ? 'text-emerald-600' : 'text-blue-600'}`} />
                   <span className="font-semibold truncate flex-1" title={p.name}>
                     {p.name}
                   </span>
+                  {done && (
+                    <span className="text-[10px] px-1.5 py-0.5 bg-emerald-200 text-emerald-800 rounded">
+                      完了
+                    </span>
+                  )}
                   {p.category == null && (
                     <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded">
                       未分類
@@ -308,7 +359,7 @@ function ProjectsSection({
                     {p.contractor && `受託: ${p.contractor}`}
                   </div>
                 )}
-              </button>
+              </div>
             )
           })}
         </div>
