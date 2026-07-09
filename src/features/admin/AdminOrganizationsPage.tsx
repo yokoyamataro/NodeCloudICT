@@ -1,5 +1,11 @@
-// サイトオーナー用: 組織（会社）マスタの一覧 / 追加 / 名称・メモ編集 / 削除。
+// サイトオーナー用: 組織（会社）マスタの一覧 / 追加 / 編集 / 削除。
 // /admin/organizations（要ログイン + サイトオーナー判定）。
+//
+// 管理項目:
+//   組織名 / 電話番号 / 住所 / 代表者 / 管理者(ユーザー) /
+//   ユーザー数 / プラン / メモ
+//
+// ユーザー数 / プランは現時点で他の挙動に影響を与えない管理データ。
 //
 // RLS:
 //   SELECT は全認証ユーザー可、INSERT/UPDATE/DELETE は is_site_owner() のみ。
@@ -14,54 +20,124 @@ import {
   Plus,
   Save,
   Trash2,
-  X,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdmin } from '@/lib/admin'
-import type { Organization } from '@/types/database'
+import type { Organization, AdminUserRow } from '@/types/database'
 
 interface Draft {
   name: string
+  phone: string
+  address: string
+  representative: string
+  admin_user_id: string
+  user_count_limit: string
+  plan: string
   note: string
   dirty: boolean
   saving: boolean
   error: string | null
 }
 
+const EMPTY_DRAFT: Omit<Draft, 'dirty' | 'saving' | 'error'> = {
+  name: '',
+  phone: '',
+  address: '',
+  representative: '',
+  admin_user_id: '',
+  user_count_limit: '',
+  plan: '',
+  note: '',
+}
+
+function toDraft(o: Organization): Draft {
+  return {
+    name: o.name,
+    phone: o.phone ?? '',
+    address: o.address ?? '',
+    representative: o.representative ?? '',
+    admin_user_id: o.admin_user_id ?? '',
+    user_count_limit: o.user_count_limit == null ? '' : String(o.user_count_limit),
+    plan: o.plan ?? '',
+    note: o.note ?? '',
+    dirty: false,
+    saving: false,
+    error: null,
+  }
+}
+
+function toPayload(d: Draft): {
+  name: string
+  phone: string | null
+  address: string | null
+  representative: string | null
+  admin_user_id: string | null
+  user_count_limit: number | null
+  plan: string | null
+  note: string | null
+} {
+  let limit: number | null = null
+  if (d.user_count_limit.trim() !== '') {
+    const n = Number(d.user_count_limit)
+    if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+      throw new Error('ユーザー数は 0 以上の整数で指定してください')
+    }
+    limit = n
+  }
+  return {
+    name: d.name.trim(),
+    phone: d.phone.trim() || null,
+    address: d.address.trim() || null,
+    representative: d.representative.trim() || null,
+    admin_user_id: d.admin_user_id || null,
+    user_count_limit: limit,
+    plan: d.plan.trim() || null,
+    note: d.note.trim() || null,
+  }
+}
+
 export function AdminOrganizationsPage() {
   const { user } = useAuth()
   const [orgs, setOrgs] = useState<Organization[]>([])
   const [drafts, setDrafts] = useState<Map<string, Draft>>(new Map())
+  const [userOptions, setUserOptions] = useState<AdminUserRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   // 新規追加フォーム
   const [showNewForm, setShowNewForm] = useState(false)
-  const [newName, setNewName] = useState('')
-  const [newNote, setNewNote] = useState('')
+  const [newDraft, setNewDraft] = useState<Draft>({
+    ...EMPTY_DRAFT,
+    dirty: false,
+    saving: false,
+    error: null,
+  })
   const [creating, setCreating] = useState(false)
 
-  const fetchOrgs = useCallback(async () => {
+  const fetchAll = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const { data, error: e } = await supabase
-        .from('organizations')
-        .select('*')
-        .order('name')
-      if (e) throw e
-      const rows = (data ?? []) as Organization[]
+      const [orgsRes, usersRes] = await Promise.all([
+        supabase.from('organizations').select('*').order('name'),
+        (
+          supabase.rpc as unknown as (
+            fn: string,
+          ) => Promise<{
+            data: AdminUserRow[] | null
+            error: { message: string } | null
+          }>
+        )('admin_list_users'),
+      ])
+      if (orgsRes.error) throw orgsRes.error
+      if (usersRes.error) throw usersRes.error
+      const rows = (orgsRes.data ?? []) as Organization[]
       setOrgs(rows)
+      setUserOptions((usersRes.data ?? []) as AdminUserRow[])
       const m = new Map<string, Draft>()
       for (const o of rows) {
-        m.set(o.id, {
-          name: o.name,
-          note: o.note ?? '',
-          dirty: false,
-          saving: false,
-          error: null,
-        })
+        m.set(o.id, toDraft(o))
       }
       setDrafts(m)
     } catch (err) {
@@ -72,19 +148,14 @@ export function AdminOrganizationsPage() {
   }, [])
 
   useEffect(() => {
-    fetchOrgs()
-  }, [fetchOrgs])
+    fetchAll()
+  }, [fetchAll])
 
   const updateDraft = (id: string, patch: Partial<Draft>) => {
     setDrafts((prev) => {
       const next = new Map(prev)
-      const cur = next.get(id) ?? {
-        name: '',
-        note: '',
-        dirty: false,
-        saving: false,
-        error: null,
-      }
+      const cur = next.get(id)
+      if (!cur) return prev
       next.set(id, { ...cur, ...patch, dirty: true })
       return next
     })
@@ -94,7 +165,7 @@ export function AdminOrganizationsPage() {
     const d = drafts.get(id)
     if (!d) return
     if (!d.name.trim()) {
-      updateDraft(id, { error: '名称は必須です' })
+      updateDraft(id, { error: '組織名は必須です' })
       return
     }
     setDrafts((prev) => {
@@ -103,15 +174,14 @@ export function AdminOrganizationsPage() {
       return next
     })
     try {
+      const payload = toPayload(d)
       const { error: e } = await supabase
         .from('organizations')
-        .update({ name: d.name.trim(), note: d.note.trim() || null } as never)
+        .update(payload as never)
         .eq('id', id)
       if (e) throw e
       setOrgs((prev) =>
-        prev.map((o) =>
-          o.id === id ? { ...o, name: d.name.trim(), note: d.note.trim() || null } : o,
-        ),
+        prev.map((o) => (o.id === id ? { ...o, ...payload } : o)),
       )
       setDrafts((prev) => {
         const next = new Map(prev)
@@ -156,32 +226,27 @@ export function AdminOrganizationsPage() {
   }
 
   const handleCreate = async () => {
-    const name = newName.trim()
-    if (!name) return
+    if (!newDraft.name.trim()) return
     setCreating(true)
     setError(null)
     try {
+      const payload = toPayload(newDraft)
       const { data, error: e } = await supabase
         .from('organizations')
-        .insert({ name, note: newNote.trim() || null } as never)
+        .insert(payload as never)
         .select()
         .single()
       if (e) throw e
       const created = data as Organization
-      setOrgs((prev) => [created, ...prev].sort((a, b) => a.name.localeCompare(b.name)))
+      setOrgs((prev) =>
+        [created, ...prev].sort((a, b) => a.name.localeCompare(b.name)),
+      )
       setDrafts((prev) => {
         const next = new Map(prev)
-        next.set(created.id, {
-          name: created.name,
-          note: created.note ?? '',
-          dirty: false,
-          saving: false,
-          error: null,
-        })
+        next.set(created.id, toDraft(created))
         return next
       })
-      setNewName('')
-      setNewNote('')
+      setNewDraft({ ...EMPTY_DRAFT, dirty: false, saving: false, error: null })
       setShowNewForm(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : '作成に失敗しました')
@@ -222,7 +287,7 @@ export function AdminOrganizationsPage() {
           新規組織
         </button>
         <button
-          onClick={fetchOrgs}
+          onClick={fetchAll}
           disabled={loading}
           className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
         >
@@ -243,56 +308,46 @@ export function AdminOrganizationsPage() {
 
       {showNewForm && (
         <div className="px-4 py-3 bg-blue-50 border-b border-blue-200">
-          <div className="grid grid-cols-12 gap-2 items-end">
-            <div className="col-span-4">
-              <label className="block text-xs text-slate-600 mb-1">組織名（必須・重複不可）</label>
-              <input
-                type="text"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                autoFocus
-                className="w-full px-2 py-1.5 text-sm border rounded"
-              />
-            </div>
-            <div className="col-span-6">
-              <label className="block text-xs text-slate-600 mb-1">メモ（任意）</label>
-              <input
-                type="text"
-                value={newNote}
-                onChange={(e) => setNewNote(e.target.value)}
-                className="w-full px-2 py-1.5 text-sm border rounded"
-              />
-            </div>
-            <div className="col-span-2 flex gap-1">
-              <button
-                onClick={handleCreate}
-                disabled={creating || !newName.trim()}
-                className="flex-1 flex items-center justify-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-              >
-                {creating ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Plus className="h-3.5 w-3.5" />
-                )}
-                作成
-              </button>
-              <button
-                onClick={() => {
-                  setShowNewForm(false)
-                  setNewName('')
-                  setNewNote('')
-                }}
-                className="p-1.5 text-slate-500 hover:bg-slate-200 rounded"
-                title="閉じる"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
+          <div className="text-xs font-semibold text-slate-700 mb-2">新規組織</div>
+          <OrgFields
+            draft={newDraft}
+            userOptions={userOptions}
+            onChange={(patch) =>
+              setNewDraft((prev) => ({ ...prev, ...patch, dirty: true }))
+            }
+          />
+          <div className="mt-2 flex justify-end gap-2">
+            <button
+              onClick={() => {
+                setShowNewForm(false)
+                setNewDraft({
+                  ...EMPTY_DRAFT,
+                  dirty: false,
+                  saving: false,
+                  error: null,
+                })
+              }}
+              className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
+            >
+              キャンセル
+            </button>
+            <button
+              onClick={handleCreate}
+              disabled={creating || !newDraft.name.trim()}
+              className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+            >
+              {creating ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Plus className="h-3.5 w-3.5" />
+              )}
+              作成
+            </button>
           </div>
         </div>
       )}
 
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto p-4 space-y-3">
         {loading && orgs.length === 0 ? (
           <div className="h-full flex items-center justify-center text-slate-500 text-sm">
             <Loader2 className="h-5 w-5 animate-spin mr-2" />
@@ -303,78 +358,162 @@ export function AdminOrganizationsPage() {
             組織がまだありません。右上の「新規組織」から追加してください。
           </div>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-slate-100 text-slate-600 text-xs sticky top-0">
-              <tr>
-                <th className="text-left px-3 py-2 w-64">組織名</th>
-                <th className="text-left px-3 py-2">メモ</th>
-                <th className="text-left px-3 py-2 w-40">登録日</th>
-                <th className="text-left px-3 py-2 w-32"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {orgs.map((o) => {
-                const d = drafts.get(o.id)
-                if (!d) return null
-                return (
-                  <tr key={o.id} className="border-b hover:bg-slate-50/50">
-                    <td className="px-3 py-2 align-top">
-                      <input
-                        type="text"
-                        value={d.name}
-                        onChange={(e) => updateDraft(o.id, { name: e.target.value })}
-                        className="w-full px-2 py-1 text-sm border rounded font-medium"
-                      />
-                    </td>
-                    <td className="px-3 py-2 align-top">
-                      <input
-                        type="text"
-                        value={d.note}
-                        onChange={(e) => updateDraft(o.id, { note: e.target.value })}
-                        placeholder="（メモなし）"
-                        className="w-full px-2 py-1 text-sm border rounded"
-                      />
-                    </td>
-                    <td className="px-3 py-2 align-top text-xs text-slate-500">
-                      {new Date(o.created_at).toLocaleDateString('ja-JP')}
-                    </td>
-                    <td className="px-3 py-2 align-top">
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => handleSave(o.id)}
-                          disabled={!d.dirty || d.saving}
-                          className={`flex items-center gap-1 px-2 py-1 text-xs rounded ${
-                            d.dirty
-                              ? 'bg-blue-600 text-white hover:bg-blue-700'
-                              : 'bg-slate-200 text-slate-500 cursor-not-allowed'
-                          } disabled:opacity-50`}
-                        >
-                          {d.saving ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <Save className="h-3 w-3" />
-                          )}
-                          保存
-                        </button>
-                        <button
-                          onClick={() => handleDelete(o.id)}
-                          className="p-1 text-red-600 hover:bg-red-50 rounded"
-                          title="削除"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                      {d.error && (
-                        <div className="mt-1 text-[10px] text-red-600">{d.error}</div>
-                      )}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+          orgs.map((o) => {
+            const d = drafts.get(o.id)
+            if (!d) return null
+            return (
+              <div
+                key={o.id}
+                className="bg-white border rounded-lg shadow-sm p-3 space-y-2"
+              >
+                <div className="flex items-center gap-2">
+                  <Building2 className="h-4 w-4 text-slate-400 shrink-0" />
+                  <span className="text-[10px] text-slate-400 font-mono truncate">
+                    {o.id}
+                  </span>
+                  <span className="ml-auto text-[11px] text-slate-500">
+                    登録: {new Date(o.created_at).toLocaleDateString('ja-JP')}
+                  </span>
+                </div>
+                <OrgFields
+                  draft={d}
+                  userOptions={userOptions}
+                  onChange={(patch) => updateDraft(o.id, patch)}
+                />
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    onClick={() => handleSave(o.id)}
+                    disabled={!d.dirty || d.saving}
+                    className={`flex items-center gap-1 px-3 py-1.5 text-xs rounded ${
+                      d.dirty
+                        ? 'bg-blue-600 text-white hover:bg-blue-700'
+                        : 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                    } disabled:opacity-50`}
+                  >
+                    {d.saving ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Save className="h-3 w-3" />
+                    )}
+                    保存
+                  </button>
+                  <button
+                    onClick={() => handleDelete(o.id)}
+                    className="flex items-center gap-1 px-2 py-1.5 text-xs text-red-600 hover:bg-red-50 rounded"
+                    title="削除"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    削除
+                  </button>
+                  {d.error && (
+                    <div className="text-[11px] text-red-600">{d.error}</div>
+                  )}
+                </div>
+              </div>
+            )
+          })
         )}
       </div>
     </div>
   )
 }
+
+function OrgFields({
+  draft,
+  userOptions,
+  onChange,
+}: {
+  draft: Draft
+  userOptions: AdminUserRow[]
+  onChange: (patch: Partial<Draft>) => void
+}) {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1.5">
+      <Field label="組織名 *">
+        <input
+          type="text"
+          value={draft.name}
+          onChange={(e) => onChange({ name: e.target.value })}
+          className="w-full px-2 py-1 text-sm border rounded"
+        />
+      </Field>
+      <Field label="代表者">
+        <input
+          type="text"
+          value={draft.representative}
+          onChange={(e) => onChange({ representative: e.target.value })}
+          className="w-full px-2 py-1 text-sm border rounded"
+        />
+      </Field>
+      <Field label="電話番号">
+        <input
+          type="tel"
+          value={draft.phone}
+          onChange={(e) => onChange({ phone: e.target.value })}
+          className="w-full px-2 py-1 text-sm border rounded"
+        />
+      </Field>
+      <Field label="住所">
+        <input
+          type="text"
+          value={draft.address}
+          onChange={(e) => onChange({ address: e.target.value })}
+          className="w-full px-2 py-1 text-sm border rounded"
+        />
+      </Field>
+      <Field label="管理者">
+        <select
+          value={draft.admin_user_id}
+          onChange={(e) => onChange({ admin_user_id: e.target.value })}
+          className="w-full px-2 py-1 text-sm border rounded bg-white"
+        >
+          <option value="">（未設定）</option>
+          {userOptions.map((u) => (
+            <option key={u.user_id} value={u.user_id}>
+              {u.full_name ? `${u.full_name} (${u.email})` : u.email}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label="プラン">
+        <input
+          type="text"
+          value={draft.plan}
+          onChange={(e) => onChange({ plan: e.target.value })}
+          placeholder="任意 (例: ベーシック)"
+          className="w-full px-2 py-1 text-sm border rounded"
+        />
+      </Field>
+      <Field label="ユーザー数">
+        <input
+          type="number"
+          min={0}
+          value={draft.user_count_limit}
+          onChange={(e) => onChange({ user_count_limit: e.target.value })}
+          placeholder="任意"
+          className="w-full px-2 py-1 text-sm border rounded"
+        />
+      </Field>
+      <Field label="メモ">
+        <input
+          type="text"
+          value={draft.note}
+          onChange={(e) => onChange({ note: e.target.value })}
+          className="w-full px-2 py-1 text-sm border rounded"
+        />
+      </Field>
+    </div>
+  )
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="flex items-center gap-2">
+      <span className="text-[11px] text-slate-500 shrink-0 w-16 text-right">
+        {label}
+      </span>
+      <span className="flex-1 min-w-0">{children}</span>
+    </label>
+  )
+}
+

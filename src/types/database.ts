@@ -284,6 +284,12 @@ export interface Organization {
   id: string
   name: string
   note: string | null
+  phone: string | null
+  address: string | null
+  representative: string | null
+  admin_user_id: string | null
+  user_count_limit: number | null
+  plan: string | null
   created_at: string
   updated_at: string
 }
