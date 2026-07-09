@@ -5,11 +5,11 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Folder, Loader2, Users, MapPin, AlertCircle, Trash2, Edit3, Check } from 'lucide-react'
+import { Plus, Folder, Loader2, Users, MapPin, AlertCircle, Trash2, Edit3, Check, Lock, Globe } from 'lucide-react'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { JGD2011_ZONES } from '@/lib/coordinates'
-import type { Project, ProjectCategory } from '@/types/database'
+import type { Project, ProjectCategory, ProjectVisibility } from '@/types/database'
 import { PROJECT_CATEGORY_LABEL } from '@/types/database'
 import { AnnouncementsSection } from '@/features/announcements/AnnouncementsSection'
 import { ProjectEditModal } from '@/features/projects/ProjectEditModal'
@@ -355,11 +355,12 @@ function ProjectsSection({
                 >
                   <Edit3 className="h-3.5 w-3.5" />
                 </button>
-                <div className="flex items-center gap-2 mb-1 pr-6">
+                <div className="flex items-center gap-1.5 mb-1 pr-6">
                   <Folder className={`h-4 w-4 flex-shrink-0 ${done ? 'text-emerald-600' : 'text-blue-600'}`} />
                   <span className="font-semibold truncate flex-1" title={p.name}>
                     {p.name}
                   </span>
+                  <VisibilityBadge visibility={p.visibility} />
                   {done && (
                     <span className="text-[10px] px-1.5 py-0.5 bg-emerald-200 text-emerald-800 rounded">
                       完了
@@ -399,5 +400,29 @@ function ProjectsSection({
         </div>
       )}
     </section>
+  )
+}
+
+// 共有ポリシー バッジ (占有 / 共有 / 公開)。工事カードや一覧に表示する用の共通コンポーネント
+function VisibilityBadge({ visibility }: { visibility: ProjectVisibility }) {
+  const conf = (() => {
+    switch (visibility) {
+      case 'private':
+        return { label: '占有', icon: Lock, cls: 'bg-slate-100 text-slate-700 border-slate-300' }
+      case 'shared':
+        return { label: '共有', icon: Users, cls: 'bg-blue-50 text-blue-700 border-blue-200' }
+      case 'public':
+        return { label: '公開', icon: Globe, cls: 'bg-amber-50 text-amber-700 border-amber-200' }
+    }
+  })()
+  const Icon = conf.icon
+  return (
+    <span
+      className={`inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded border font-medium ${conf.cls}`}
+      title={`共有ポリシー: ${conf.label}`}
+    >
+      <Icon className="h-2.5 w-2.5" />
+      {conf.label}
+    </span>
   )
 }
