@@ -1626,17 +1626,20 @@ function PanelPhotoThumb({
       cancelled = true
     }
   }, [attachment.filePath, getSignedUrl])
+  // タイトル (旧: category に保存している。旧値 '現場' は表示しない)
+  const title = attachment.category && attachment.category !== '現場' ? attachment.category : ''
+  const memo = attachment.caption ?? ''
   return (
     <div
-      className="relative group aspect-square border rounded overflow-hidden bg-slate-100 hover:ring-2 hover:ring-blue-300"
-      title={attachment.caption ?? attachment.filePath.split('/').pop() ?? ''}
+      className="group border rounded overflow-hidden bg-white hover:ring-2 hover:ring-blue-300 flex flex-col"
+      title={memo || title || attachment.filePath.split('/').pop() || ''}
     >
       {/* サムネ (クリックで別窓プレビュー) */}
       <a
         href={url ?? undefined}
         target="_blank"
         rel="noreferrer"
-        className="block w-full h-full"
+        className="block aspect-square relative bg-slate-100"
         onClick={(e) => {
           if (!url) e.preventDefault()
         }}
@@ -1652,34 +1655,51 @@ function PanelPhotoThumb({
             <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
           </div>
         )}
+
+        {/* 右上: 編集 / 削除 (ホバー時のみ) */}
+        <div className="absolute top-1 right-1 hidden group-hover:flex gap-1 z-10">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onEdit()
+            }}
+            className="p-1 bg-white/95 text-blue-700 rounded shadow hover:bg-white"
+            title="編集 (位置・向き・メモ・トリミング)"
+          >
+            <Edit3 className="h-3 w-3" />
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onDelete()
+            }}
+            className="p-1 bg-white/95 text-red-600 rounded shadow hover:bg-white"
+            title="削除"
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
+        </div>
       </a>
 
-      {/* 右上: 編集 / 削除 (ホバー時のみ) */}
-      <div className="absolute top-1 right-1 hidden group-hover:flex gap-1 z-10">
-        <button
-          type="button"
-          onClick={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            onEdit()
-          }}
-          className="p-1 bg-white/95 text-blue-700 rounded shadow hover:bg-white"
-          title="編集 (位置・向き・メモ・トリミング)"
+      {/* サムネ下部: タイトル + メモ */}
+      <div className="px-1.5 py-1 text-[11px] leading-tight border-t bg-white">
+        {title && (
+          <div className="font-semibold text-slate-800 truncate" title={title}>
+            {title}
+          </div>
+        )}
+        <div
+          className={`${
+            memo ? 'text-slate-600' : 'text-slate-300'
+          } line-clamp-2 break-words`}
+          title={memo}
         >
-          <Edit3 className="h-3 w-3" />
-        </button>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            onDelete()
-          }}
-          className="p-1 bg-white/95 text-red-600 rounded shadow hover:bg-white"
-          title="削除"
-        >
-          <Trash2 className="h-3 w-3" />
-        </button>
+          {memo || '(メモなし)'}
+        </div>
       </div>
     </div>
   )
