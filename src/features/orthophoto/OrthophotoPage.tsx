@@ -1516,6 +1516,8 @@ function OverviewSidePanel({
   // ダウンロード / 写真帳出力: それぞれ選択モーダルを開く
   const [downloadOpen, setDownloadOpen] = useState(false)
   const [photoBookOpen, setPhotoBookOpen] = useState(false)
+  // 写真セクションだけを大きく表示するモード (メモ一覧を折りたたみ、パネルを広げる)
+  const [photoMaximized, setPhotoMaximized] = useState(false)
   if (!open) {
     return (
       <div className="w-9 border-l bg-slate-50 flex flex-col items-center pt-2">
@@ -1533,7 +1535,11 @@ function OverviewSidePanel({
     )
   }
   return (
-    <div className="w-80 border-l bg-white flex flex-col min-h-0">
+    <div
+      className={`border-l bg-white flex flex-col min-h-0 transition-[width] duration-150 ${
+        photoMaximized ? 'w-[560px]' : 'w-80'
+      }`}
+    >
       <div className="px-3 py-2 border-b flex items-center gap-2 bg-slate-50">
         <span className="text-sm font-semibold flex-1">メモ / 写真</span>
         <button
@@ -1545,8 +1551,12 @@ function OverviewSidePanel({
         </button>
       </div>
 
-      {/* 上半分: メモ一覧 */}
-      <div className="flex-1 min-h-0 flex flex-col border-b">
+      {/* 上半分: メモ一覧 (photo maximized 時は完全に隠す) */}
+      <div
+        className={`${
+          photoMaximized ? 'hidden' : 'flex-1'
+        } min-h-0 flex flex-col border-b`}
+      >
         <div className="px-3 py-1.5 text-[11px] text-slate-500 flex items-center gap-1 bg-slate-50">
           <StickyNote className="h-3 w-3 text-amber-500" />
           メモ ({memos.length})
@@ -1585,6 +1595,18 @@ function OverviewSidePanel({
         <div className="px-3 py-1.5 text-[11px] text-slate-500 flex items-center gap-1 bg-slate-50">
           <ImageIcon className="h-3 w-3 text-blue-500" />
           写真 ({photos.length})
+          <button
+            type="button"
+            onClick={() => setPhotoMaximized((v) => !v)}
+            className="ml-auto p-0.5 rounded hover:bg-slate-200 text-slate-500"
+            title={photoMaximized ? '写真表示を通常サイズに戻す' : '写真表示を大きくする'}
+          >
+            {photoMaximized ? (
+              <Minimize2 className="h-3.5 w-3.5" />
+            ) : (
+              <Maximize2 className="h-3.5 w-3.5" />
+            )}
+          </button>
         </div>
         <div className="px-2 py-1.5 border-b bg-white flex items-center gap-1 flex-wrap">
           <button
@@ -1614,7 +1636,11 @@ function OverviewSidePanel({
               写真はまだありません
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-1.5">
+            <div
+              className={`grid gap-1.5 ${
+                photoMaximized ? 'grid-cols-3' : 'grid-cols-2'
+              }`}
+            >
               {photos.map((p) => (
                 <PanelPhotoThumb
                   key={p.id}
