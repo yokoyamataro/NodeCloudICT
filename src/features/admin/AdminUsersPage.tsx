@@ -12,19 +12,11 @@ import { Loader2, RefreshCw, ArrowLeft, Users, Save } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdmin } from '@/lib/admin'
-import type { AdminUserRow, AccountPlan, Organization } from '@/types/database'
-
-const PLAN_LABEL: Record<AccountPlan, string> = {
-  cadastral: '地籍測量',
-  civil: '土木工事',
-  total: 'トータル',
-}
+import type { AdminUserRow, Organization } from '@/types/database'
 
 interface RowDraft {
   full_name: string
   organization_id: string | ''
-  plan: AccountPlan | ''
-  child_user_limit: string // '' for unlimited
   dirty: boolean
   saving: boolean
   error: string | null
@@ -67,8 +59,6 @@ export function AdminUsersPage() {
         m.set(r.user_id, {
           full_name: r.full_name ?? '',
           organization_id: r.organization_id ?? '',
-          plan: r.plan ?? '',
-          child_user_limit: r.child_user_limit == null ? '' : String(r.child_user_limit),
           dirty: false,
           saving: false,
           error: null,
@@ -92,8 +82,6 @@ export function AdminUsersPage() {
       const cur = next.get(userId) ?? {
         full_name: '',
         organization_id: '',
-        plan: '' as const,
-        child_user_limit: '',
         dirty: false,
         saving: false,
         error: null,
@@ -112,15 +100,6 @@ export function AdminUsersPage() {
       return next
     })
     try {
-      // child_user_limit のバリデーション
-      let childLimit: number | null = null
-      if (d.child_user_limit.trim() !== '') {
-        const n = Number(d.child_user_limit)
-        if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
-          throw new Error('上限は 0 以上の整数で指定してください')
-        }
-        childLimit = n
-      }
       const { error: rpcError } = await (
         supabase.rpc as unknown as (
           fn: string,
@@ -130,8 +109,6 @@ export function AdminUsersPage() {
         p_user_id: userId,
         p_full_name: d.full_name.trim() || null,
         p_organization_id: d.organization_id || null,
-        p_plan: d.plan || null,
-        p_child_user_limit: childLimit,
       })
       if (rpcError) throw rpcError
       // 一覧側にも反映
@@ -144,8 +121,6 @@ export function AdminUsersPage() {
                 organization_id: d.organization_id || null,
                 organization_name:
                   orgs.find((o) => o.id === d.organization_id)?.name ?? null,
-                plan: (d.plan || null) as AccountPlan | null,
-                child_user_limit: childLimit,
               }
             : r,
         ),
@@ -248,8 +223,6 @@ export function AdminUsersPage() {
                 <th className="text-left px-3 py-2">メール</th>
                 <th className="text-left px-3 py-2 w-44">フルネーム</th>
                 <th className="text-left px-3 py-2 w-44">所属組織</th>
-                <th className="text-left px-3 py-2 w-32">プラン</th>
-                <th className="text-left px-3 py-2 w-32">子ユーザー</th>
                 <th className="text-left px-3 py-2 w-36">最終ログイン</th>
                 <th className="text-left px-3 py-2 w-32">登録日</th>
                 <th className="text-left px-3 py-2 w-24"></th>
@@ -264,11 +237,6 @@ export function AdminUsersPage() {
                     <td className="px-3 py-2 align-top">
                       <div className="font-medium break-all">{r.email}</div>
                       <div className="text-[10px] text-slate-400 font-mono">{r.user_id}</div>
-                      {r.parent_user_id && (
-                        <div className="text-[10px] text-amber-700 mt-0.5">
-                          子ユーザー（親: {r.parent_email ?? '?'}）
-                        </div>
-                      )}
                     </td>
                     <td className="px-3 py-2 align-top">
                       <input
@@ -296,47 +264,6 @@ export function AdminUsersPage() {
                           </option>
                         ))}
                       </select>
-                    </td>
-                    <td className="px-3 py-2 align-top">
-                      <select
-                        value={d.plan}
-                        onChange={(e) =>
-                          updateDraft(r.user_id, { plan: e.target.value as AccountPlan | '' })
-                        }
-                        disabled={!!r.parent_user_id}
-                        className="w-full px-2 py-1 text-sm border rounded bg-white disabled:bg-slate-100"
-                        title={r.parent_user_id ? '子ユーザーは親のプランを継承' : ''}
-                      >
-                        <option value="">（未設定）</option>
-                        {(['cadastral', 'civil', 'total'] as const).map((p) => (
-                          <option key={p} value={p}>
-                            {PLAN_LABEL[p]}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="px-3 py-2 align-top">
-                      {r.parent_user_id ? (
-                        <span className="text-xs text-slate-400">-</span>
-                      ) : (
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="number"
-                            min="0"
-                            value={d.child_user_limit}
-                            onChange={(e) =>
-                              updateDraft(r.user_id, {
-                                child_user_limit: e.target.value,
-                              })
-                            }
-                            placeholder="∞"
-                            className="w-16 px-2 py-1 text-sm border rounded text-right"
-                          />
-                          <span className="text-xs text-slate-400">
-                            / 現在 {r.child_user_count}
-                          </span>
-                        </div>
-                      )}
                     </td>
                     <td className="px-3 py-2 align-top text-xs text-slate-500">
                       {r.last_sign_in_at

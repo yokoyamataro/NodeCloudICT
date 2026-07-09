@@ -14,7 +14,6 @@ import { AdminSignupsPage } from '@/features/admin/AdminSignupsPage'
 import { AdminUsersPage } from '@/features/admin/AdminUsersPage'
 import { AdminOrganizationsPage } from '@/features/admin/AdminOrganizationsPage'
 import { AdminAnnouncementsPage } from '@/features/admin/AdminAnnouncementsPage'
-import { TeamPage } from '@/features/team/TeamPage'
 import { ProjectListPage } from '@/features/projects/ProjectListPage'
 import { ProjectChooserPage } from '@/features/projects/ProjectChooserPage'
 import { CoordinatesPage } from '@/features/coordinates/CoordinatesPage'
@@ -175,15 +174,6 @@ function AppRoutes() {
           element={
             <ProtectedRoute>
               <AdminAnnouncementsPage />
-            </ProtectedRoute>
-          }
-        />
-        {/* 全認証ユーザー: 自分の子ユーザー管理 */}
-        <Route
-          path="/team"
-          element={
-            <ProtectedRoute>
-              <TeamPage />
             </ProtectedRoute>
           }
         />

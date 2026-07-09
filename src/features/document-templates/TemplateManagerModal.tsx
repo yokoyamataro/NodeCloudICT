@@ -368,7 +368,7 @@ function TemplateRow({
             </div>
             {shareCandidates.length === 0 ? (
               <div className="text-[11px] text-slate-400 border rounded p-2">
-                共有可能なユーザーが見つかりません。（同組織 / 子ユーザーが候補になります）
+                共有可能なユーザーが見つかりません。（同組織のユーザーが候補になります）
               </div>
             ) : (
               <div className="max-h-32 overflow-auto border rounded bg-white p-1">
