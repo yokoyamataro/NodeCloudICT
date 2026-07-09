@@ -432,7 +432,7 @@ export function CoordinatesPage() {
   //   ① 出力モード選択（全点 / 表示点 / 表示点順指定）
   //   ② フォーマット選択（CSV / SIMA / TSV / 写真帳 / Excel）
   // exportSource はモード選択後にセットされ、フォーマット選択時に消費する
-  type ExportSource = 'all' | 'visible' | 'visible-ordered'
+  type ExportSource = 'all' | 'checked' | 'visible' | 'visible-ordered'
   type ExportFormat = 'csv' | 'tsv' | 'sima' | 'photobook' | 'photos' | 'excel'
   const [exportSource, setExportSource] = useState<ExportSource | null>(null)
   // フォーマット選択を先にする 2 段階フローに変更。
@@ -936,6 +936,7 @@ export function CoordinatesPage() {
   //   source=null               → 念のためチェック済 or 全件（旧挙動）
   const getExportTargets = (source: ExportSource | null = exportSource): CoordinateRow[] => {
     if (source === 'all') return coordinates
+    if (source === 'checked') return coordinates.filter((c) => checkedIds.has(c.id))
     if (source === 'visible-ordered') {
       const byId = new Map(coordinates.map((c) => [c.id, c]))
       return orderedIds
@@ -1765,6 +1766,20 @@ export function CoordinatesPage() {
                   >
                     <span>全点出力</span>
                     <span className="text-xs text-slate-400">{coordinates.length} 件</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => executeExport(pendingFormat, 'checked')}
+                    disabled={checkedIds.size === 0}
+                    className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm text-left hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white"
+                    title={
+                      checkedIds.size === 0
+                        ? '事前に一覧の チェック欄で対象を選択してください'
+                        : `選択した ${checkedIds.size} 点を出力します`
+                    }
+                  >
+                    <span>選択点出力</span>
+                    <span className="text-xs text-slate-400">{checkedIds.size} 件</span>
                   </button>
                   <button
                     type="button"
