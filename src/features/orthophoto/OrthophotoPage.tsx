@@ -1480,6 +1480,8 @@ function OverviewSidePanel({
   onDeletePhoto: (photoId: string) => void
   farmName: string
 }) {
+  // 写真帳出力モーダル (出力する写真を選び、順番を決めてから Excel 出力)
+  const [photoBookOpen, setPhotoBookOpen] = useState(false)
   if (!open) {
     return (
       <div className="w-9 border-l bg-slate-50 flex flex-col items-center pt-2">
@@ -1583,14 +1585,10 @@ function OverviewSidePanel({
           </button>
           <button
             type="button"
-            onClick={async () => {
-              const targets = photos.filter((p) => selectedIds.has(p.id))
-              if (targets.length === 0) return
-              await downloadPhotosExcel(targets, getSignedUrl, farmName)
-            }}
-            disabled={selectedIds.size === 0}
+            onClick={() => setPhotoBookOpen(true)}
+            disabled={photos.length === 0}
             className="text-[11px] px-1.5 py-0.5 border rounded text-emerald-700 border-emerald-300 hover:bg-emerald-50 disabled:opacity-40 inline-flex items-center gap-0.5"
-            title="選択した写真を Excel 写真帳で出力"
+            title="写真帳: 出力する写真と順番を選ぶ"
           >
             <FileDown className="h-3 w-3" />
             Excel 写真帳
@@ -1625,6 +1623,15 @@ function OverviewSidePanel({
           )}
         </div>
       </div>
+
+      {photoBookOpen && (
+        <PhotoBookOrderModal
+          photos={photos}
+          getSignedUrl={getSignedUrl}
+          farmName={farmName}
+          onClose={() => setPhotoBookOpen(false)}
+        />
+      )}
     </div>
   )
 }
@@ -1770,7 +1777,8 @@ async function downloadPhotosZip(
 
 // -----------------------------------------------------------------
 // 選択された工区写真を Excel 写真帳 (.xlsx) で出力
-//   1 行 = 1 写真。 画像 / タイトル / 撮影日 / 位置 / メモ の列
+//   2 列 × 3 段 = 1 ページ 6 枚のレイアウト。7 枚目からは自動改ページ。
+//   1 枚あたり: 画像 (上段) + タイトル / 撮影日 / 位置 / メモ (下段)
 // -----------------------------------------------------------------
 async function downloadPhotosExcel(
   photos: Attachment[],
@@ -1780,51 +1788,99 @@ async function downloadPhotosExcel(
   const { default: ExcelJS } = await import('exceljs')
   const wb = new ExcelJS.Workbook()
   wb.creator = 'NodeCloud'
-  const ws = wb.addWorksheet('写真帳')
+  const ws = wb.addWorksheet('写真帳', {
+    pageSetup: {
+      paperSize: 9, // A4
+      orientation: 'portrait',
+      horizontalCentered: true,
+      margins: {
+        left: 0.5, right: 0.5, top: 0.5, bottom: 0.5,
+        header: 0.3, footer: 0.3,
+      },
+    },
+  })
 
-  // 列幅設定 (px 相当: 1 char ≒ 7px)
+  // 2 列レイアウト。列幅 (char) は 1 char ≒ 7 px 換算
   ws.columns = [
-    { header: '写真', key: 'image', width: 30 },
-    { header: 'タイトル', key: 'title', width: 20 },
-    { header: '撮影日', key: 'taken', width: 14 },
-    { header: '位置', key: 'location', width: 22 },
-    { header: '方位', key: 'heading', width: 6 },
-    { header: 'メモ', key: 'caption', width: 30 },
+    { key: 'left', width: 42 },
+    { key: 'right', width: 42 },
   ]
-  ws.getRow(1).font = { bold: true }
-  ws.getRow(1).alignment = { vertical: 'middle', horizontal: 'center' }
 
-  const IMG_ROW_HEIGHT = 120 // ポイント (~ 160px)
-  const IMG_COL_WIDTH_PX = 200 // 列幅を上書きするサイズ計算用の目安
+  const IMG_ROW_H = 150 // pt (~ 200 px)
+  const META_ROW_H = 55 // pt (~ 73 px, 3 行程度の wrap 可)
+  const IMG_W = 285
+  const IMG_H = 195
+  const ROWS_PER_PHOTO = 2 // 画像行 + メタ行
+
+  const buildMeta = (a: Attachment): string => {
+    const parts: string[] = []
+    if (a.category) parts.push(a.category)
+    if (a.takenAt) {
+      const d = new Date(a.takenAt)
+      if (!Number.isNaN(d.getTime())) {
+        parts.push(
+          `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`,
+        )
+      }
+    }
+    if (a.lat != null && a.lng != null) parts.push(`${a.lat.toFixed(5)}, ${a.lng.toFixed(5)}`)
+    if (a.headingDeg != null) parts.push(`方位 ${a.headingDeg.toFixed(0)}°`)
+    const header = parts.join(' / ')
+    return a.caption ? `${header}\n${a.caption}` : header
+  }
 
   for (let i = 0; i < photos.length; i++) {
     const a = photos[i]
-    const rowIndex = i + 2 // 1 行目はヘッダー
-    ws.getRow(rowIndex).height = IMG_ROW_HEIGHT
-    // メタ書き込み
-    ws.getCell(rowIndex, 2).value = a.category ?? ''
-    ws.getCell(rowIndex, 3).value = a.takenAt ? new Date(a.takenAt) : null
-    ws.getCell(rowIndex, 3).numFmt = 'yyyy/mm/dd'
-    ws.getCell(rowIndex, 4).value =
-      a.lat != null && a.lng != null ? `${a.lat.toFixed(6)}, ${a.lng.toFixed(6)}` : ''
-    ws.getCell(rowIndex, 5).value = a.headingDeg != null ? `${a.headingDeg.toFixed(0)}°` : ''
-    ws.getCell(rowIndex, 6).value = a.caption ?? ''
-    ws.getCell(rowIndex, 6).alignment = { vertical: 'top', wrapText: true }
+    const pageIdx = Math.floor(i / 6)
+    const idxInPage = i % 6 // 0..5
+    const col = idxInPage % 2 // 0=A, 1=B
+    const rowPair = Math.floor(idxInPage / 2) // 0, 1, 2
+    // 1 ページ = 6 行 (2 rows per photo × 3 pairs)
+    const imgRowIdx = pageIdx * 6 + rowPair * ROWS_PER_PHOTO + 1 // 1-indexed
+    const metaRowIdx = imgRowIdx + 1
 
-    // 画像を挿入 (画像取得は非同期)
+    ws.getRow(imgRowIdx).height = IMG_ROW_H
+    ws.getRow(metaRowIdx).height = META_ROW_H
+
+    // メタ書き込み
+    const metaCell = ws.getCell(metaRowIdx, col + 1)
+    metaCell.value = buildMeta(a)
+    metaCell.alignment = { wrapText: true, vertical: 'top', horizontal: 'left' }
+    metaCell.font = { size: 10 }
+    metaCell.border = {
+      top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+      left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+      right: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+      bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    }
+    // 画像行にも同色のボーダーを回してカード風に
+    const imgCell = ws.getCell(imgRowIdx, col + 1)
+    imgCell.border = {
+      top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+      left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+      right: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+    }
+
+    // 画像挿入
     try {
       const url = await getSignedUrl(a.filePath)
       if (!url) continue
       const res = await fetch(url)
       const buffer = await res.arrayBuffer()
       const imageId = wb.addImage({ buffer, extension: 'jpeg' })
-      // 画像はセル A{rowIndex} を左上、右下は同セル。ext で幅と高さをピクセル指定
       ws.addImage(imageId, {
-        tl: { col: 0.1, row: rowIndex - 1 + 0.05 },
-        ext: { width: IMG_COL_WIDTH_PX, height: 150 },
+        tl: { col: col + 0.05, row: imgRowIdx - 1 + 0.05 },
+        ext: { width: IMG_W, height: IMG_H },
       })
     } catch (err) {
       console.warn('[downloadPhotosExcel] image insert failed', a.id, err)
+    }
+
+    // 各ページの最終メタ行の後に改ページ (最後のページは不要)
+    const isLastInPage = idxInPage === 5
+    const isLastPhoto = i === photos.length - 1
+    if (isLastInPage && !isLastPhoto) {
+      ws.getRow(metaRowIdx).addPageBreak()
     }
   }
 
@@ -1834,7 +1890,238 @@ async function downloadPhotosExcel(
   const blob = new Blob([out], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   })
-  triggerDownload(blob, `${sanitizeFilename(farmName)}_photos_${yyyymmdd}.xlsx`)
+  triggerDownload(blob, `${sanitizeFilename(farmName)}_photobook_${yyyymmdd}.xlsx`)
+}
+
+// -----------------------------------------------------------------
+// 写真帳の 出力対象 + 順番 を決めるモーダル
+//   全写真から順にクリックすると順番付きで選択、再度クリックで除外。
+//   ↑ / ↓ ボタンで順番を入れ替えできる。
+// -----------------------------------------------------------------
+function PhotoBookOrderModal({
+  photos,
+  getSignedUrl,
+  farmName,
+  onClose,
+}: {
+  photos: Attachment[]
+  getSignedUrl: (filePath: string) => Promise<string | null>
+  farmName: string
+  onClose: () => void
+}) {
+  const [orderIds, setOrderIds] = useState<string[]>([])
+  const [busy, setBusy] = useState(false)
+
+  const toggle = (id: string) => {
+    setOrderIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }
+  const move = (id: string, dir: -1 | 1) => {
+    setOrderIds((prev) => {
+      const idx = prev.indexOf(id)
+      if (idx === -1) return prev
+      const target = idx + dir
+      if (target < 0 || target >= prev.length) return prev
+      const next = prev.slice()
+      ;[next[idx], next[target]] = [next[target], next[idx]]
+      return next
+    })
+  }
+
+  const orderedPhotos = orderIds
+    .map((id) => photos.find((p) => p.id === id))
+    .filter((p): p is Attachment => !!p)
+
+  const handleExport = async () => {
+    if (orderedPhotos.length === 0) return
+    setBusy(true)
+    try {
+      await downloadPhotosExcel(orderedPhotos, getSignedUrl, farmName)
+      onClose()
+    } catch (err) {
+      console.error('[PhotoBookOrderModal] export failed', err)
+      alert('写真帳の出力に失敗しました')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[3500] p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[92vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-4 py-3 border-b flex items-center gap-2 shrink-0">
+          <span className="text-sm font-semibold flex-1">
+            写真帳 (Excel) — 出力する写真と順番を選ぶ
+          </span>
+          <span className="text-xs text-slate-500">
+            選択 {orderIds.length} / 全 {photos.length}
+          </span>
+          <button
+            onClick={onClose}
+            className="p-1 rounded hover:bg-slate-100 text-slate-500"
+            title="閉じる"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-hidden flex flex-col md:flex-row">
+          {/* 左: 全写真グリッド (クリックで toggle) */}
+          <div className="flex-1 min-h-0 overflow-y-auto p-3 border-b md:border-b-0 md:border-r">
+            <div className="text-[11px] text-slate-500 mb-2">
+              クリックで選択 / 解除
+            </div>
+            {photos.length === 0 ? (
+              <div className="text-center text-xs text-slate-400 py-8">写真がありません</div>
+            ) : (
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                {photos.map((p) => {
+                  const orderIdx = orderIds.indexOf(p.id)
+                  return (
+                    <PhotoBookThumb
+                      key={p.id}
+                      attachment={p}
+                      getSignedUrl={getSignedUrl}
+                      orderIndex={orderIdx === -1 ? null : orderIdx + 1}
+                      onClick={() => toggle(p.id)}
+                    />
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* 右: 選択リスト (↑↓ で順番を変更) */}
+          <div className="w-full md:w-64 shrink-0 overflow-y-auto p-3 bg-slate-50">
+            <div className="text-[11px] text-slate-500 mb-2">出力順</div>
+            {orderedPhotos.length === 0 ? (
+              <div className="text-xs text-slate-400 py-4 text-center">
+                左のサムネから選択してください
+              </div>
+            ) : (
+              <ul className="space-y-1">
+                {orderedPhotos.map((p, i) => (
+                  <li
+                    key={p.id}
+                    className="flex items-center gap-1 bg-white border rounded px-1.5 py-1"
+                  >
+                    <span className="text-[11px] w-5 text-slate-500 tabular-nums text-right">
+                      {i + 1}
+                    </span>
+                    <span
+                      className="flex-1 min-w-0 text-xs truncate"
+                      title={p.caption ?? p.category ?? p.filePath.split('/').pop() ?? ''}
+                    >
+                      {p.caption || p.category || p.filePath.split('/').pop() || '写真'}
+                    </span>
+                    <button
+                      onClick={() => move(p.id, -1)}
+                      disabled={i === 0}
+                      className="p-0.5 text-slate-400 hover:text-slate-700 disabled:opacity-30"
+                      title="上へ"
+                    >
+                      ▲
+                    </button>
+                    <button
+                      onClick={() => move(p.id, 1)}
+                      disabled={i === orderedPhotos.length - 1}
+                      className="p-0.5 text-slate-400 hover:text-slate-700 disabled:opacity-30"
+                      title="下へ"
+                    >
+                      ▼
+                    </button>
+                    <button
+                      onClick={() => toggle(p.id)}
+                      className="p-0.5 text-slate-400 hover:text-red-600"
+                      title="外す"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+
+        <div className="px-4 py-3 border-t flex items-center gap-2 shrink-0">
+          <div className="text-[11px] text-slate-500">
+            レイアウト: 2 列 × 3 段 (1 ページ 6 枚)
+          </div>
+          <div className="flex-1" />
+          <button
+            onClick={onClose}
+            disabled={busy}
+            className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={handleExport}
+            disabled={busy || orderedPhotos.length === 0}
+            className="px-3 py-1.5 text-sm bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50 inline-flex items-center gap-1"
+          >
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
+            Excel 出力
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PhotoBookThumb({
+  attachment,
+  getSignedUrl,
+  orderIndex,
+  onClick,
+}: {
+  attachment: Attachment
+  getSignedUrl: (filePath: string) => Promise<string | null>
+  orderIndex: number | null
+  onClick: () => void
+}) {
+  const [url, setUrl] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void getSignedUrl(attachment.filePath).then((u) => {
+      if (!cancelled) setUrl(u)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [attachment.filePath, getSignedUrl])
+  const selected = orderIndex != null
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`relative aspect-square border rounded overflow-hidden bg-slate-100 group ${
+        selected
+          ? 'ring-2 ring-emerald-500 border-emerald-500'
+          : 'hover:ring-2 hover:ring-emerald-300'
+      }`}
+      title={attachment.caption ?? attachment.filePath.split('/').pop() ?? ''}
+    >
+      {url ? (
+        <img src={url} alt="" className="w-full h-full object-cover" />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center">
+          <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+        </div>
+      )}
+      {selected && (
+        <span className="absolute top-1 left-1 bg-emerald-600 text-white text-[11px] font-bold rounded-full w-6 h-6 flex items-center justify-center shadow">
+          {orderIndex}
+        </span>
+      )}
+    </button>
+  )
 }
 
 function sanitizeFilename(name: string): string {
