@@ -8,9 +8,9 @@
 //     アクション: 現場を削除する (ゴミ箱へ)
 
 import { useEffect, useState } from 'react'
-import { X, Trash2 } from 'lucide-react'
+import { X, Trash2, Lock, Users, Globe } from 'lucide-react'
 import type { Project } from '@/types/database'
-import { PROJECT_CATEGORY_LABEL } from '@/types/database'
+import { PROJECT_CATEGORY_LABEL, PROJECT_VISIBILITY_LABEL } from '@/types/database'
 import { JGD2011_ZONES } from '@/lib/coordinates'
 import { isoToDateInput, dateInputToIso } from '@/features/farms/FarmEditModal'
 
@@ -42,6 +42,7 @@ export function ProjectEditModal({
         | 'category'
         | 'started_at'
         | 'completed_at'
+        | 'visibility'
       >
     >,
   ) => void
@@ -171,6 +172,53 @@ export function ProjectEditModal({
               title="種別は作成時に確定します。変更できません。"
             >
               {category != null ? PROJECT_CATEGORY_LABEL[category] : '未分類'}
+            </div>
+          </div>
+
+          {/* 共有ポリシー (占有 / 共有 / 公開) */}
+          <div>
+            <label className="block text-[11px] text-slate-500 mb-1">共有ポリシー</label>
+            <div className="grid grid-cols-3 gap-1">
+              {(
+                [
+                  { v: 'private', icon: Lock, hint: '自分だけが閲覧・編集できます' },
+                  { v: 'shared', icon: Users, hint: '選択したメンバーが閲覧・編集できます' },
+                  { v: 'public', icon: Globe, hint: '誰でも閲覧できます (編集は所有者のみ)' },
+                ] as const
+              ).map(({ v, icon: Icon, hint }) => {
+                const on = project.visibility === v
+                return (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => {
+                      if (project.visibility !== v) onUpdateProject({ visibility: v })
+                    }}
+                    title={hint}
+                    className={`flex flex-col items-center gap-0.5 px-2 py-2 rounded border text-xs font-medium ${
+                      on
+                        ? v === 'private'
+                          ? 'bg-slate-700 text-white border-slate-700'
+                          : v === 'shared'
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-amber-500 text-white border-amber-500'
+                        : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {PROJECT_VISIBILITY_LABEL[v]}
+                  </button>
+                )
+              })}
+            </div>
+            <div className="text-[10px] text-slate-500 mt-1">
+              {project.visibility === 'private' &&
+                '占有: 自分のみ閲覧・編集できます。'}
+              {project.visibility === 'shared' &&
+                '共有: メンバー一覧に登録された人が閲覧・編集できます。' +
+                  'メンバーは PC のメンバー管理から追加してください。'}
+              {project.visibility === 'public' &&
+                '公開: URL を知っていれば認証なしでも閲覧できます。編集は所有者のみ。'}
             </div>
           </div>
 

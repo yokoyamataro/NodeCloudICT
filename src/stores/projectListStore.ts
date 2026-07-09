@@ -27,7 +27,7 @@ interface ProjectListState {
 
   // プロジェクト操作
   createProject: (name: string, description?: string, coordinateZone?: number, category?: ProjectCategory | null) => Promise<Project | null>
-  updateProject: (id: string, updates: Partial<Pick<Project, 'name' | 'description' | 'start_date' | 'end_date' | 'client' | 'contractor' | 'coordinate_zone' | 'category' | 'started_at' | 'completed_at'>>) => Promise<void>
+  updateProject: (id: string, updates: Partial<Pick<Project, 'name' | 'description' | 'start_date' | 'end_date' | 'client' | 'contractor' | 'coordinate_zone' | 'category' | 'started_at' | 'completed_at' | 'visibility'>>) => Promise<void>
   /** ゴミ箱へ移動 (soft delete)。保持期間経過で物理削除される。 */
   deleteProject: (id: string) => Promise<void>
   /** ゴミ箱から復元 */

@@ -27,6 +27,8 @@ export interface ShareCandidate {
   user_id: string
   email: string
   full_name: string | null
+  /** true = 呼び出し元と同じ組織のユーザー / false = 過去に共有した外部ユーザー */
+  is_internal: boolean
 }
 
 interface State {

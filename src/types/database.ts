@@ -452,6 +452,8 @@ export const PROJECT_CATEGORY_LABEL: Record<ProjectCategory, string> = {
 }
 
 // NodeCloud-Design用プロジェクト
+export type ProjectVisibility = 'private' | 'shared' | 'public'
+
 export interface Project {
   id: string
   user_id: string
@@ -468,6 +470,13 @@ export interface Project {
   deleted_at: string | null      // ゴミ箱運用: NULL 以外は削除済み。保持期間経過で物理削除
   started_at: string | null      // 実際の着手日 (作成時に created_at を初期値、以後編集可能)
   completed_at: string | null    // 完成日 (完了チェック ON で now() を初期値、OFF なら NULL)
+  visibility: ProjectVisibility  // 占有 / 共有 / 公開 の 3 段階
+}
+
+export const PROJECT_VISIBILITY_LABEL: Record<ProjectVisibility, string> = {
+  private: '占有',
+  shared: '共有',
+  public: '公開',
 }
 
 // プロジェクトメンバー
