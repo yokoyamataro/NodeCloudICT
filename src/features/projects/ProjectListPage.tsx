@@ -26,7 +26,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useFarmStore, type Farm, type FarmLocation } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
-import { FarmEditModal } from '@/features/farms/FarmEditModal'
+import { FarmEditModal, isoToDateInput, dateInputToIso } from '@/features/farms/FarmEditModal'
 import {
   useWorkStatusStore,
   type WorkStatus,
@@ -87,15 +87,6 @@ const createMarkerIcon = (isSelected: boolean = false): L.DivIcon => {
 }
 
 // 地図の境界を自動調整するコンポーネント
-// ISO timestamp → YYYY/MM/DD 表示 (空/不正なら '-')
-function fmtDateYMD(iso: string | null): string {
-  if (!iso) return '-'
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return '-'
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())}`
-}
-
 function FitBounds({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
   const map = useMap()
   useEffect(() => {
@@ -968,68 +959,12 @@ export function ProjectListPage() {
                       {farm.name}
                     </Tooltip>
                     <Popup>
-                      <div className="text-sm min-w-[220px]">
-                        <div className="font-bold text-base mb-1">{farm.name}</div>
-                        {farm.description && (
-                          <div className="text-muted-foreground text-xs mb-2 whitespace-pre-wrap">
-                            {farm.description}
-                          </div>
-                        )}
-                        {/* 進捗 + 着手日 / 完了日 */}
-                        <div className="border-t pt-2 mb-2 space-y-1 text-xs">
-                          <div className="flex items-center gap-1">
-                            <span className="text-slate-500 w-12">進捗</span>
-                            {farm.completed_at ? (
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium">
-                                <Check className="h-3 w-3" strokeWidth={3} />
-                                完了
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-medium">
-                                未完了
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <span className="text-slate-500 w-12">着手日</span>
-                            <span className="font-mono text-slate-700">
-                              {fmtDateYMD(farm.started_at)}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <span className="text-slate-500 w-12">完了日</span>
-                            <span className="font-mono text-slate-700">
-                              {fmtDateYMD(farm.completed_at)}
-                            </span>
-                          </div>
-                        </div>
-                        {/* 工種別面積 */}
-                        {Object.keys(areaSummary).length > 0 && (
-                          <div className="border-t pt-2 mb-2">
-                            <div className="text-xs font-semibold mb-1">施工面積</div>
-                            {ALL_WORK_TYPES.map(wt => {
-                              const area = areaSummary[wt]
-                              if (!area) return null
-                              return (
-                                <div key={wt} className="flex items-center gap-2 text-xs">
-                                  <span
-                                    className="w-2 h-2 rounded-sm flex-shrink-0"
-                                    style={{ backgroundColor: WORK_TYPE_COLORS[wt] }}
-                                  />
-                                  <span className="flex-1">{WORK_TYPE_NAMES[wt]}</span>
-                                  <span className="font-mono">{area.toFixed(2)} ha</span>
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
-                        <button
-                          onClick={() => handleOpenFarm(farm)}
-                          className="mt-2 px-3 py-1.5 text-xs bg-primary text-white rounded hover:bg-primary/90 w-full"
-                        >
-                          工区編集を開く
-                        </button>
-                      </div>
+                      <FarmMarkerPopup
+                        farm={farm}
+                        areaSummary={areaSummary}
+                        onUpdateFarm={(patch) => void updateFarm(farm.id, patch)}
+                        onOpen={() => handleOpenFarm(farm)}
+                      />
                     </Popup>
                   </Marker>
                 )
@@ -1556,6 +1491,144 @@ const STATUS_STYLE: Record<WorkStatus, { wrap: string; icon: React.ReactNode | n
 }
 
 // 工区×工種の面積セル（状態マーク付き、右クリックで状態選択メニュー）
+// 工区マーカーの Popup 内で 説明 / 進捗 / 着手日 / 完了日 を編集できる小コンポーネント
+function FarmMarkerPopup({
+  farm,
+  areaSummary,
+  onUpdateFarm,
+  onOpen,
+}: {
+  farm: Farm
+  areaSummary: Record<string, number>
+  onUpdateFarm: (patch: Partial<Pick<Farm, 'description' | 'started_at' | 'completed_at'>>) => void
+  onOpen: () => void
+}) {
+  const [description, setDescription] = useState(farm.description ?? '')
+  const [startedAt, setStartedAt] = useState<string>(isoToDateInput(farm.started_at))
+  const [completedAt, setCompletedAt] = useState<string>(isoToDateInput(farm.completed_at))
+
+  useEffect(() => {
+    setDescription(farm.description ?? '')
+    setStartedAt(isoToDateInput(farm.started_at))
+    setCompletedAt(isoToDateInput(farm.completed_at))
+  }, [farm.id, farm.description, farm.started_at, farm.completed_at])
+
+  const commitDescription = () => {
+    const v = description.trim()
+    const prev = farm.description ?? ''
+    if (v !== prev) onUpdateFarm({ description: v || null })
+  }
+  const commitStartedAt = () => {
+    const iso = dateInputToIso(startedAt)
+    if (iso !== farm.started_at) onUpdateFarm({ started_at: iso })
+  }
+  const commitCompletedAt = () => {
+    const iso = dateInputToIso(completedAt)
+    if (iso !== farm.completed_at) onUpdateFarm({ completed_at: iso })
+  }
+
+  const isCompleted = farm.completed_at != null
+
+  return (
+    <div className="text-sm min-w-[240px]">
+      <div className="font-bold text-base mb-1">{farm.name}</div>
+
+      {/* 説明 (テキストエリア、blur で保存) */}
+      <div className="mb-2">
+        <div className="text-[10px] text-slate-500 mb-0.5">説明</div>
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          onBlur={commitDescription}
+          placeholder="任意"
+          className="w-full px-1.5 py-1 border rounded text-xs h-12 resize-none"
+        />
+      </div>
+
+      {/* 進捗 / 着手日 / 完了日 */}
+      <div className="border-t pt-2 mb-2 space-y-1 text-xs">
+        <div className="flex items-center gap-1">
+          <span className="text-slate-500 w-12">進捗</span>
+          <label className="flex items-center gap-1 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={isCompleted}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  const iso = farm.completed_at ?? new Date().toISOString()
+                  onUpdateFarm({ completed_at: iso })
+                  setCompletedAt(isoToDateInput(iso))
+                } else {
+                  onUpdateFarm({ completed_at: null })
+                  setCompletedAt('')
+                }
+              }}
+              className="h-3.5 w-3.5"
+            />
+            {isCompleted ? (
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium">
+                <Check className="h-3 w-3" strokeWidth={3} />
+                完了
+              </span>
+            ) : (
+              <span className="text-slate-600 font-medium">未完了</span>
+            )}
+          </label>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="text-slate-500 w-12">着手日</span>
+          <input
+            type="date"
+            value={startedAt}
+            onChange={(e) => setStartedAt(e.target.value)}
+            onBlur={commitStartedAt}
+            className="flex-1 px-1.5 py-0.5 border rounded text-xs font-mono"
+          />
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="text-slate-500 w-12">完了日</span>
+          <input
+            type="date"
+            value={completedAt}
+            onChange={(e) => setCompletedAt(e.target.value)}
+            onBlur={commitCompletedAt}
+            disabled={!isCompleted}
+            className="flex-1 px-1.5 py-0.5 border rounded text-xs font-mono disabled:bg-slate-50 disabled:text-slate-400"
+          />
+        </div>
+      </div>
+
+      {/* 工種別面積 */}
+      {Object.keys(areaSummary).length > 0 && (
+        <div className="border-t pt-2 mb-2">
+          <div className="text-xs font-semibold mb-1">施工面積</div>
+          {ALL_WORK_TYPES.map((wt) => {
+            const area = areaSummary[wt]
+            if (!area) return null
+            return (
+              <div key={wt} className="flex items-center gap-2 text-xs">
+                <span
+                  className="w-2 h-2 rounded-sm flex-shrink-0"
+                  style={{ backgroundColor: WORK_TYPE_COLORS[wt] }}
+                />
+                <span className="flex-1">{WORK_TYPE_NAMES[wt]}</span>
+                <span className="font-mono">{area.toFixed(2)} ha</span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      <button
+        onClick={onOpen}
+        className="mt-2 px-3 py-1.5 text-xs bg-primary text-white rounded hover:bg-primary/90 w-full"
+      >
+        工区編集を開く
+      </button>
+    </div>
+  )
+}
+
 function StatusAreaCell({
   area,
   status,
