@@ -486,6 +486,9 @@ interface CoordinateMapProps {
   /** サムネ表示のため Popup から呼ぶ signed URL ヘルパ */
   photoGetSignedUrl?: (filePath: string) => Promise<string | null>
   onPhotoClick?: (photoId: string) => void
+  /** 工区写真のマーカー Popup に 編集 / 削除 ボタンを出す (指定された場合のみ) */
+  onPhotoEdit?: (photoId: string) => void
+  onPhotoDelete?: (photoId: string) => void
   /** 地図の長押し（右クリック / モバイル長押し）で呼ぶ。メモ作成等に利用 */
   onMapLongPress?: (lat: number, lng: number) => void
   baseLayer?: BaseLayerType
@@ -549,6 +552,8 @@ export function CoordinateMap({
   farmPhotos,
   photoGetSignedUrl,
   onPhotoClick,
+  onPhotoEdit,
+  onPhotoDelete,
   onMapLongPress,
   baseLayer = 'osm',
   externalPolygons = [],
@@ -816,6 +821,8 @@ export function CoordinateMap({
             photo={p}
             getSignedUrl={photoGetSignedUrl}
             onClick={onPhotoClick}
+            onEdit={onPhotoEdit}
+            onDelete={onPhotoDelete}
           />
         ))}
 

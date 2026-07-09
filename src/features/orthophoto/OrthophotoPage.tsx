@@ -17,6 +17,7 @@ import {
   PanelTopClose,
   MapPin,
   Eye,
+  Edit3,
 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
@@ -26,6 +27,7 @@ import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import { useOrthophotoStore, tileBoundsLatLng } from '@/stores/orthophotoStore'
 import { useFarmMemoStore, EMPTY_FARM_MEMOS, type FarmMemo } from '@/stores/farmMemoStore'
 import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
+import { PhotoEditModal } from '@/features/coordinates/PhotoEditModal'
 import { CoordinateMap, type ExternalPolygon } from '@/components/map/CoordinateMap'
 import { CoordinateConverter } from '@/lib/coordinates'
 import {
@@ -60,7 +62,12 @@ export function OrthophotoPage() {
     currentFarm ? s.byFarm.get(currentFarm.id) ?? EMPTY_FARM_MEMOS : EMPTY_FARM_MEMOS,
   )
   const fetchFarmMemos = useFarmMemoStore((s) => s.fetchByFarm)
-  const { fetchByEntityIds: fetchAttachments, getSignedUrl } = useAttachmentStore()
+  const {
+    fetchByEntityIds: fetchAttachments,
+    getSignedUrl,
+    uploadPhoto,
+    removeAttachment,
+  } = useAttachmentStore()
   const attachmentsByEntity = useAttachmentStore((s) => s.byEntity)
   const tilesets = useMemo(
     () => (currentFarm ? byFarm.get(currentFarm.id) ?? [] : []),
@@ -144,6 +151,66 @@ export function OrthophotoPage() {
 
   // 右側パネルの折りたたみ状態
   const [panelOpen, setPanelOpen] = useState(true)
+
+  // 工区写真の編集: マップマーカー / パネルの 編集ボタンから呼ぶ
+  const [editingFarmPhoto, setEditingFarmPhoto] = useState<{
+    file: File
+    oldAttachmentId: string
+    initialLat: number | null
+    initialLng: number | null
+    initialHeadingDeg: number | null
+    initialCaption: string | null
+    initialTakenAt: Date | null
+  } | null>(null)
+  // 工区写真の選択状態 (ダウンロード / Excel 出力用)
+  const [selectedFarmPhotoIds, setSelectedFarmPhotoIds] = useState<Set<string>>(new Set())
+
+  // マーカー popup または パネル から呼ぶ 編集ハンドラ:
+  // Storage から実体を DL → File 化 → PhotoEditModal を開く。
+  const handleFarmPhotoEdit = async (photoId: string) => {
+    if (!currentFarm) return
+    const list = attachmentsByEntity.get(`farm_photo:${currentFarm.id}`) ?? []
+    const meta = list.find((a) => a.id === photoId)
+    if (!meta) return
+    try {
+      const url = await getSignedUrl(meta.filePath)
+      if (!url) {
+        alert('写真のダウンロードに失敗しました')
+        return
+      }
+      const res = await fetch(url)
+      const blob = await res.blob()
+      const name = meta.filePath.split('/').pop() || 'photo.jpg'
+      const orgFile = new File([blob], name, { type: blob.type || 'image/jpeg' })
+      setEditingFarmPhoto({
+        file: orgFile,
+        oldAttachmentId: meta.id,
+        initialLat: meta.lat,
+        initialLng: meta.lng,
+        initialHeadingDeg: meta.headingDeg,
+        initialCaption: meta.caption,
+        initialTakenAt: meta.takenAt ? new Date(meta.takenAt) : null,
+      })
+    } catch (err) {
+      console.error('[orthophoto farm_photo edit] failed', err)
+      alert('写真の読み込みに失敗しました')
+    }
+  }
+
+  const handleFarmPhotoDelete = async (photoId: string) => {
+    if (!confirm('この写真を削除しますか?')) return
+    try {
+      await removeAttachment(photoId)
+      setSelectedFarmPhotoIds((prev) => {
+        const next = new Set(prev)
+        next.delete(photoId)
+        return next
+      })
+    } catch (err) {
+      console.error('[orthophoto farm_photo delete] failed', err)
+      alert('写真の削除に失敗しました')
+    }
+  }
 
   // 上部の作図・計測ツールバーの折りたたみ状態 (localStorage 永続化)
   const [toolbarOpen, setToolbarOpen] = useState<boolean>(() => {
@@ -884,6 +951,8 @@ export function OrthophotoPage() {
           farmMemos={showMemosLayer ? memosForMap : []}
           farmPhotos={showCamerasLayer ? farmPhotosForMap : []}
           photoGetSignedUrl={getSignedUrl}
+          onPhotoEdit={handleFarmPhotoEdit}
+          onPhotoDelete={handleFarmPhotoDelete}
           // 点種を非表示: 空 Set を渡して全マーカーを除外
           displayCoordinateIds={showPointsLayer ? undefined : emptyCoordSet}
         >
@@ -1038,8 +1107,58 @@ export function OrthophotoPage() {
         memos={farmMemos}
         photos={farmPhotosAll}
         getSignedUrl={getSignedUrl}
+        selectedIds={selectedFarmPhotoIds}
+        setSelectedIds={setSelectedFarmPhotoIds}
+        onEditPhoto={handleFarmPhotoEdit}
+        onDeletePhoto={handleFarmPhotoDelete}
+        farmName={currentFarm.name}
       />
       </div>{/* /flex-1 flex */}
+
+      {/* 工区写真の編集モーダル */}
+      {editingFarmPhoto && currentFarm && (
+        <PhotoEditModal
+          file={editingFarmPhoto.file}
+          enableLocationEdit
+          initialLat={editingFarmPhoto.initialLat}
+          initialLng={editingFarmPhoto.initialLng}
+          initialHeadingDeg={editingFarmPhoto.initialHeadingDeg}
+          initialCaption={editingFarmPhoto.initialCaption}
+          initialTakenAt={editingFarmPhoto.initialTakenAt}
+          onCancel={() => setEditingFarmPhoto(null)}
+          onConfirm={async (blob, _name, meta) => {
+            const projectId = currentFarm.project_id
+            if (!projectId) return
+            const oldId = editingFarmPhoto.oldAttachmentId
+            const r = await uploadPhoto({
+              projectId,
+              entityType: 'farm_photo',
+              entityId: currentFarm.id,
+              file: blob,
+              category: meta.title ?? '現場',
+              caption: meta.caption,
+              takenAt: meta.takenAt ?? new Date(),
+              lat: meta.lat,
+              lng: meta.lng,
+              headingDeg: meta.headingDeg,
+              skipResize: true,
+            })
+            if (r) {
+              try {
+                await removeAttachment(oldId)
+              } catch (err) {
+                console.warn('[orthophoto farm_photo edit] remove old failed', err)
+              }
+              setEditingFarmPhoto((prev) =>
+                prev ? { ...prev, oldAttachmentId: r.id } : null,
+              )
+              void fetchAttachments('farm_photo', [currentFarm.id])
+            } else {
+              alert('写真の更新に失敗しました')
+            }
+          }}
+        />
+      )}
 
       {/* コメント入力モーダル（メンバーをメンション可） */}
       {pendingComment && (
@@ -1344,12 +1463,22 @@ function OverviewSidePanel({
   memos,
   photos,
   getSignedUrl,
+  selectedIds,
+  setSelectedIds,
+  onEditPhoto,
+  onDeletePhoto,
+  farmName,
 }: {
   open: boolean
   onToggle: () => void
   memos: FarmMemo[]
   photos: Attachment[]
   getSignedUrl: (filePath: string) => Promise<string | null>
+  selectedIds: Set<string>
+  setSelectedIds: React.Dispatch<React.SetStateAction<Set<string>>>
+  onEditPhoto: (photoId: string) => void
+  onDeletePhoto: (photoId: string) => void
+  farmName: string
 }) {
   if (!open) {
     return (
@@ -1415,11 +1544,57 @@ function OverviewSidePanel({
         </div>
       </div>
 
-      {/* 下半分: 写真サムネ */}
+      {/* 下半分: 写真サムネ (選択 / ダウンロード / Excel 出力) */}
       <div className="flex-1 min-h-0 flex flex-col">
         <div className="px-3 py-1.5 text-[11px] text-slate-500 flex items-center gap-1 bg-slate-50">
           <ImageIcon className="h-3 w-3 text-blue-500" />
           写真 ({photos.length})
+          {selectedIds.size > 0 && (
+            <span className="ml-auto text-blue-700 font-medium">
+              {selectedIds.size} 選択中
+            </span>
+          )}
+        </div>
+        <div className="px-2 py-1.5 border-b bg-white flex items-center gap-1 flex-wrap">
+          <button
+            type="button"
+            onClick={() => {
+              if (selectedIds.size === photos.length) setSelectedIds(new Set())
+              else setSelectedIds(new Set(photos.map((p) => p.id)))
+            }}
+            disabled={photos.length === 0}
+            className="text-[11px] px-1.5 py-0.5 border rounded text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+          >
+            {selectedIds.size === photos.length && photos.length > 0 ? '選択解除' : '全選択'}
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              const targets = photos.filter((p) => selectedIds.has(p.id))
+              if (targets.length === 0) return
+              await downloadPhotosZip(targets, getSignedUrl, farmName)
+            }}
+            disabled={selectedIds.size === 0}
+            className="text-[11px] px-1.5 py-0.5 border rounded text-blue-700 border-blue-300 hover:bg-blue-50 disabled:opacity-40 inline-flex items-center gap-0.5"
+            title="選択した写真を ZIP でダウンロード"
+          >
+            <FileDown className="h-3 w-3" />
+            ダウンロード
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              const targets = photos.filter((p) => selectedIds.has(p.id))
+              if (targets.length === 0) return
+              await downloadPhotosExcel(targets, getSignedUrl, farmName)
+            }}
+            disabled={selectedIds.size === 0}
+            className="text-[11px] px-1.5 py-0.5 border rounded text-emerald-700 border-emerald-300 hover:bg-emerald-50 disabled:opacity-40 inline-flex items-center gap-0.5"
+            title="選択した写真を Excel 写真帳で出力"
+          >
+            <FileDown className="h-3 w-3" />
+            Excel 写真帳
+          </button>
         </div>
         <div className="flex-1 overflow-y-auto p-2">
           {photos.length === 0 ? (
@@ -1429,7 +1604,22 @@ function OverviewSidePanel({
           ) : (
             <div className="grid grid-cols-2 gap-1.5">
               {photos.map((p) => (
-                <PanelPhotoThumb key={p.id} attachment={p} getSignedUrl={getSignedUrl} />
+                <PanelPhotoThumb
+                  key={p.id}
+                  attachment={p}
+                  getSignedUrl={getSignedUrl}
+                  selected={selectedIds.has(p.id)}
+                  onToggleSelected={() =>
+                    setSelectedIds((prev) => {
+                      const next = new Set(prev)
+                      if (next.has(p.id)) next.delete(p.id)
+                      else next.add(p.id)
+                      return next
+                    })
+                  }
+                  onEdit={() => onEditPhoto(p.id)}
+                  onDelete={() => onDeletePhoto(p.id)}
+                />
               ))}
             </div>
           )}
@@ -1442,9 +1632,17 @@ function OverviewSidePanel({
 function PanelPhotoThumb({
   attachment,
   getSignedUrl,
+  selected,
+  onToggleSelected,
+  onEdit,
+  onDelete,
 }: {
   attachment: Attachment
   getSignedUrl: (filePath: string) => Promise<string | null>
+  selected: boolean
+  onToggleSelected: () => void
+  onEdit: () => void
+  onDelete: () => void
 }) {
   const [url, setUrl] = useState<string | null>(null)
   const [error, setError] = useState(false)
@@ -1460,24 +1658,195 @@ function PanelPhotoThumb({
     }
   }, [attachment.filePath, getSignedUrl])
   return (
-    <a
-      href={url ?? undefined}
-      target="_blank"
-      rel="noreferrer"
-      className="block aspect-square border rounded overflow-hidden bg-slate-100 hover:ring-2 hover:ring-blue-400"
+    <div
+      className={`relative group aspect-square border rounded overflow-hidden bg-slate-100 ${
+        selected ? 'ring-2 ring-blue-500 border-blue-500' : 'hover:ring-2 hover:ring-blue-300'
+      }`}
       title={attachment.caption ?? attachment.filePath.split('/').pop() ?? ''}
     >
-      {error ? (
-        <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-400">
-          読み込み失敗
-        </div>
-      ) : url ? (
-        <img src={url} alt="" className="w-full h-full object-cover" />
-      ) : (
-        <div className="w-full h-full flex items-center justify-center">
-          <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
-        </div>
-      )}
-    </a>
+      {/* 左上: 選択チェック */}
+      <label
+        className="absolute top-1 left-1 z-10 flex items-center justify-center cursor-pointer"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onToggleSelected}
+          className="h-3.5 w-3.5 accent-blue-600 bg-white/90 rounded"
+        />
+      </label>
+
+      {/* サムネ (クリックで別窓プレビュー) */}
+      <a
+        href={url ?? undefined}
+        target="_blank"
+        rel="noreferrer"
+        className="block w-full h-full"
+        onClick={(e) => {
+          if (!url) e.preventDefault()
+        }}
+      >
+        {error ? (
+          <div className="w-full h-full flex items-center justify-center text-[10px] text-slate-400">
+            読み込み失敗
+          </div>
+        ) : url ? (
+          <img src={url} alt="" className="w-full h-full object-cover" />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+          </div>
+        )}
+      </a>
+
+      {/* 右上: 編集 / 削除 (ホバー時のみ) */}
+      <div className="absolute top-1 right-1 hidden group-hover:flex gap-1 z-10">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onEdit()
+          }}
+          className="p-1 bg-white/95 text-blue-700 rounded shadow hover:bg-white"
+          title="編集 (位置・向き・メモ・トリミング)"
+        >
+          <Edit3 className="h-3 w-3" />
+        </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onDelete()
+          }}
+          className="p-1 bg-white/95 text-red-600 rounded shadow hover:bg-white"
+          title="削除"
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
+      </div>
+    </div>
   )
+}
+
+// -----------------------------------------------------------------
+// 選択された工区写真を ZIP で一括ダウンロード
+// -----------------------------------------------------------------
+async function downloadPhotosZip(
+  photos: Attachment[],
+  getSignedUrl: (filePath: string) => Promise<string | null>,
+  farmName: string,
+): Promise<void> {
+  const { default: JSZip } = await import('jszip')
+  const zip = new JSZip()
+  const usedNames = new Set<string>()
+  const buildName = (a: Attachment): string => {
+    const base = a.caption?.trim() || a.category?.trim() || a.filePath.split('/').pop() || 'photo'
+    const stem = base.replace(/\.[a-zA-Z0-9]+$/, '')
+    let name = `${stem}.jpg`
+    let i = 2
+    while (usedNames.has(name)) name = `${stem} (${i++}).jpg`
+    usedNames.add(name)
+    return name
+  }
+  for (const a of photos) {
+    try {
+      const url = await getSignedUrl(a.filePath)
+      if (!url) continue
+      const res = await fetch(url)
+      const blob = await res.blob()
+      zip.file(buildName(a), blob)
+    } catch (err) {
+      console.warn('[downloadPhotosZip] skipped', a.id, err)
+    }
+  }
+  const zipBlob = await zip.generateAsync({ type: 'blob' })
+  const now = new Date()
+  const yyyymmdd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`
+  triggerDownload(zipBlob, `${sanitizeFilename(farmName)}_photos_${yyyymmdd}.zip`)
+}
+
+// -----------------------------------------------------------------
+// 選択された工区写真を Excel 写真帳 (.xlsx) で出力
+//   1 行 = 1 写真。 画像 / タイトル / 撮影日 / 位置 / メモ の列
+// -----------------------------------------------------------------
+async function downloadPhotosExcel(
+  photos: Attachment[],
+  getSignedUrl: (filePath: string) => Promise<string | null>,
+  farmName: string,
+): Promise<void> {
+  const { default: ExcelJS } = await import('exceljs')
+  const wb = new ExcelJS.Workbook()
+  wb.creator = 'NodeCloud'
+  const ws = wb.addWorksheet('写真帳')
+
+  // 列幅設定 (px 相当: 1 char ≒ 7px)
+  ws.columns = [
+    { header: '写真', key: 'image', width: 30 },
+    { header: 'タイトル', key: 'title', width: 20 },
+    { header: '撮影日', key: 'taken', width: 14 },
+    { header: '位置', key: 'location', width: 22 },
+    { header: '方位', key: 'heading', width: 6 },
+    { header: 'メモ', key: 'caption', width: 30 },
+  ]
+  ws.getRow(1).font = { bold: true }
+  ws.getRow(1).alignment = { vertical: 'middle', horizontal: 'center' }
+
+  const IMG_ROW_HEIGHT = 120 // ポイント (~ 160px)
+  const IMG_COL_WIDTH_PX = 200 // 列幅を上書きするサイズ計算用の目安
+
+  for (let i = 0; i < photos.length; i++) {
+    const a = photos[i]
+    const rowIndex = i + 2 // 1 行目はヘッダー
+    ws.getRow(rowIndex).height = IMG_ROW_HEIGHT
+    // メタ書き込み
+    ws.getCell(rowIndex, 2).value = a.category ?? ''
+    ws.getCell(rowIndex, 3).value = a.takenAt ? new Date(a.takenAt) : null
+    ws.getCell(rowIndex, 3).numFmt = 'yyyy/mm/dd'
+    ws.getCell(rowIndex, 4).value =
+      a.lat != null && a.lng != null ? `${a.lat.toFixed(6)}, ${a.lng.toFixed(6)}` : ''
+    ws.getCell(rowIndex, 5).value = a.headingDeg != null ? `${a.headingDeg.toFixed(0)}°` : ''
+    ws.getCell(rowIndex, 6).value = a.caption ?? ''
+    ws.getCell(rowIndex, 6).alignment = { vertical: 'top', wrapText: true }
+
+    // 画像を挿入 (画像取得は非同期)
+    try {
+      const url = await getSignedUrl(a.filePath)
+      if (!url) continue
+      const res = await fetch(url)
+      const buffer = await res.arrayBuffer()
+      const imageId = wb.addImage({ buffer, extension: 'jpeg' })
+      // 画像はセル A{rowIndex} を左上、右下は同セル。ext で幅と高さをピクセル指定
+      ws.addImage(imageId, {
+        tl: { col: 0.1, row: rowIndex - 1 + 0.05 },
+        ext: { width: IMG_COL_WIDTH_PX, height: 150 },
+      })
+    } catch (err) {
+      console.warn('[downloadPhotosExcel] image insert failed', a.id, err)
+    }
+  }
+
+  const out = await wb.xlsx.writeBuffer()
+  const now = new Date()
+  const yyyymmdd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`
+  const blob = new Blob([out], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  })
+  triggerDownload(blob, `${sanitizeFilename(farmName)}_photos_${yyyymmdd}.xlsx`)
+}
+
+function sanitizeFilename(name: string): string {
+  return name.replace(/[<>:"/\\|?*]/g, '_')
+}
+function triggerDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
