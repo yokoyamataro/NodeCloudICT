@@ -7,12 +7,22 @@
 //     進捗    : 着手日 / 完成日 (実際の作業実績) + 完了チェック
 //     アクション: 現場を削除する (ゴミ箱へ)
 
-import { useEffect, useState } from 'react'
-import { X, Trash2, Lock, Users, Globe } from 'lucide-react'
-import type { Project } from '@/types/database'
+import { useCallback, useEffect, useState } from 'react'
+import { X, Trash2, Lock, Users, Globe, Plus, UserMinus } from 'lucide-react'
+import type { Project, ProjectMember, ProjectMemberRole } from '@/types/database'
 import { PROJECT_CATEGORY_LABEL, PROJECT_VISIBILITY_LABEL } from '@/types/database'
 import { JGD2011_ZONES } from '@/lib/coordinates'
 import { isoToDateInput, dateInputToIso } from '@/features/farms/FarmEditModal'
+import { supabase } from '@/lib/supabase'
+import { useProjectListStore } from '@/stores/projectListStore'
+
+/** list_share_candidates RPC の 1 行 */
+interface ShareCandidate {
+  user_id: string
+  email: string
+  full_name: string | null
+  is_internal: boolean
+}
 
 // YYYY-MM-DD 形式の日付 (DATE 型: start_date / end_date) → date input value
 function dateStringToInput(s: string | null): string {
@@ -126,13 +136,97 @@ export function ProjectEditModal({
 
   const isCompleted = project.completed_at != null
 
+  // ---------------- 共有メンバー管理 (visibility='shared' の時に表示) ----------------
+  const inviteMember = useProjectListStore((s) => s.inviteMember)
+  const removeMember = useProjectListStore((s) => s.removeMember)
+  const updateMemberRole = useProjectListStore((s) => s.updateMemberRole)
+  const [members, setMembers] = useState<ProjectMember[]>([])
+  const [candidates, setCandidates] = useState<ShareCandidate[]>([])
+  const [selectedCandidate, setSelectedCandidate] = useState('')
+  const [newMemberRole, setNewMemberRole] = useState<ProjectMemberRole>('editor')
+  const [addingMember, setAddingMember] = useState(false)
+  const [memberError, setMemberError] = useState<string | null>(null)
+
+  const refetchMembers = useCallback(async () => {
+    try {
+      const { data, error } = await (
+        supabase.rpc as unknown as (
+          fn: string,
+          args: { p_project_id: string },
+        ) => Promise<{ data: ProjectMember[] | null; error: { message: string } | null }>
+      )('get_project_members', { p_project_id: project.id })
+      if (error) throw error
+      setMembers((data ?? []) as ProjectMember[])
+    } catch (err) {
+      console.warn('[ProjectEditModal] fetch members failed', err)
+    }
+  }, [project.id])
+
+  const refetchCandidates = useCallback(async () => {
+    try {
+      const { data, error } = await (
+        supabase.rpc as unknown as (
+          fn: string,
+        ) => Promise<{ data: ShareCandidate[] | null; error: { message: string } | null }>
+      )('list_share_candidates')
+      if (error) throw error
+      setCandidates((data ?? []) as ShareCandidate[])
+    } catch (err) {
+      console.warn('[ProjectEditModal] fetch candidates failed', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (project.visibility !== 'shared') return
+    void refetchMembers()
+    void refetchCandidates()
+  }, [project.visibility, refetchMembers, refetchCandidates])
+
+  // 追加候補は 「候補一覧」 - 「既にメンバーに居る人」 - 「オーナー自身」
+  const availableCandidates = candidates.filter(
+    (c) =>
+      c.user_id !== project.user_id &&
+      !members.some((m) => m.user_id === c.user_id),
+  )
+  const internalCandidates = availableCandidates.filter((c) => c.is_internal)
+  const externalCandidates = availableCandidates.filter((c) => !c.is_internal)
+
+  const handleAddMember = async () => {
+    const cand = candidates.find((c) => c.user_id === selectedCandidate)
+    if (!cand) return
+    setAddingMember(true)
+    setMemberError(null)
+    try {
+      const result = await inviteMember(project.id, cand.email, newMemberRole)
+      if (!result.ok) {
+        setMemberError(result.error ?? 'メンバー追加に失敗しました')
+        return
+      }
+      setSelectedCandidate('')
+      await refetchMembers()
+    } finally {
+      setAddingMember(false)
+    }
+  }
+
+  const handleRemoveMember = async (memberId: string, name: string) => {
+    if (!confirm(`「${name}」を共有メンバーから外しますか?`)) return
+    await removeMember(memberId)
+    await refetchMembers()
+  }
+
+  const handleChangeMemberRole = async (memberId: string, role: ProjectMemberRole) => {
+    await updateMemberRole(memberId, role)
+    await refetchMembers()
+  }
+
   return (
     <div
       className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3500]"
       onClick={onClose}
     >
       <div
-        className="bg-white w-full sm:max-w-md rounded-t-xl sm:rounded-xl shadow-xl flex flex-col max-h-[92vh]"
+        className="bg-white w-full sm:max-w-2xl rounded-t-xl sm:rounded-xl shadow-xl flex flex-col max-h-[92vh]"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-4 py-3 border-b flex items-center justify-between shrink-0">
@@ -219,6 +313,110 @@ export function ProjectEditModal({
             {project.visibility === 'public' &&
               '認証なしでも閲覧できます。編集は所有者のみ。'}
           </div>
+
+          {/* 共有メンバー管理 (visibility='shared' のときのみ) */}
+          {project.visibility === 'shared' && (
+            <div className="mt-1 rounded border bg-slate-50">
+              {/* メンバー追加行: [候補セレクト] [権限] [追加] */}
+              <div className="flex items-center gap-2 px-2 py-1.5 border-b bg-white">
+                <span className="text-xs text-slate-500 shrink-0 w-16">追加</span>
+                <select
+                  value={selectedCandidate}
+                  onChange={(e) => setSelectedCandidate(e.target.value)}
+                  className="flex-1 min-w-0 px-2 py-1 text-xs border rounded"
+                >
+                  <option value="">-- ユーザーを選択 --</option>
+                  {internalCandidates.length > 0 && (
+                    <optgroup label="社内メンバー">
+                      {internalCandidates.map((c) => (
+                        <option key={c.user_id} value={c.user_id}>
+                          {c.full_name || c.email} ({c.email})
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {externalCandidates.length > 0 && (
+                    <optgroup label="社外 (過去に共有したことがある)">
+                      {externalCandidates.map((c) => (
+                        <option key={c.user_id} value={c.user_id}>
+                          {c.full_name || c.email} ({c.email})
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+                <select
+                  value={newMemberRole}
+                  onChange={(e) => setNewMemberRole(e.target.value as ProjectMemberRole)}
+                  className="shrink-0 px-1.5 py-1 text-xs border rounded"
+                >
+                  <option value="editor">編集</option>
+                  <option value="viewer">閲覧</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={handleAddMember}
+                  disabled={!selectedCandidate || addingMember}
+                  className="shrink-0 inline-flex items-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                >
+                  <Plus className="h-3 w-3" />
+                  追加
+                </button>
+              </div>
+              {memberError && (
+                <div className="px-2 py-1 text-[11px] text-red-600 border-b bg-red-50">
+                  {memberError}
+                </div>
+              )}
+              {/* メンバー一覧 */}
+              <ul className="divide-y">
+                {members.length === 0 ? (
+                  <li className="px-2 py-2 text-xs text-slate-400 text-center">
+                    まだ共有メンバーはいません
+                  </li>
+                ) : (
+                  members.map((m) => (
+                    <li key={m.id} className="flex items-center gap-2 px-2 py-1">
+                      <span className="flex-1 min-w-0 text-xs truncate" title={m.email ?? ''}>
+                        <span className="font-medium">{m.display_name || m.email || m.user_id}</span>
+                        {m.email && m.display_name && (
+                          <span className="text-slate-400 ml-1">({m.email})</span>
+                        )}
+                      </span>
+                      {m.role === 'owner' ? (
+                        <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-slate-700 text-white">
+                          オーナー
+                        </span>
+                      ) : (
+                        <>
+                          <select
+                            value={m.role}
+                            onChange={(e) =>
+                              handleChangeMemberRole(m.id, e.target.value as ProjectMemberRole)
+                            }
+                            className="shrink-0 px-1 py-0.5 text-[11px] border rounded"
+                          >
+                            <option value="editor">編集</option>
+                            <option value="viewer">閲覧</option>
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleRemoveMember(m.id, m.display_name || m.email || '')
+                            }
+                            className="shrink-0 p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded"
+                            title="メンバーを外す"
+                          >
+                            <UserMinus className="h-3.5 w-3.5" />
+                          </button>
+                        </>
+                      )}
+                    </li>
+                  ))
+                )}
+              </ul>
+            </div>
+          )}
 
           {/* 説明 */}
           <div className="flex items-start gap-2">
