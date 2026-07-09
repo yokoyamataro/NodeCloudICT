@@ -161,7 +161,45 @@ export function OrthophotoPage() {
     initialHeadingDeg: number | null
     initialCaption: string | null
     initialTakenAt: Date | null
+    initialTitle: string | null
   } | null>(null)
+  // 写真タイトルの候補 (既定 + 最近使用したもの) — モバイル側と同じ仕組み
+  const PHOTO_TITLE_DEFAULTS = ['全景', '道路', '建物', '水路'] as const
+  const [photoTitleRecents, setPhotoTitleRecents] = useState<string[]>(() => {
+    try {
+      const s = localStorage.getItem('orthophoto:photo:recentTitles')
+      const arr = s ? JSON.parse(s) : null
+      if (Array.isArray(arr)) return arr.filter((x) => typeof x === 'string')
+    } catch { /* ignore */ }
+    return []
+  })
+  const photoTitleSuggestions = useMemo(() => {
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const s of [...PHOTO_TITLE_DEFAULTS, ...photoTitleRecents]) {
+      const t = s.trim()
+      if (!t || seen.has(t)) continue
+      seen.add(t)
+      out.push(t)
+    }
+    return out
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [photoTitleRecents])
+  const pushPhotoTitleRecent = (prefix: string) => {
+    const p = prefix.trim()
+    if (!p) return
+    setPhotoTitleRecents((prev) => {
+      const next = [p, ...prev.filter((x) => x !== p)].slice(0, 8)
+      try { localStorage.setItem('orthophoto:photo:recentTitles', JSON.stringify(next)) } catch { /* ignore */ }
+      return next
+    })
+  }
+  // 既存の工区写真タイトル一覧 (自動採番用)
+  const existingFarmPhotoTitles = useMemo(() => {
+    if (!currentFarm) return [] as string[]
+    const list = attachmentsByEntity.get(`farm_photo:${currentFarm.id}`) ?? []
+    return list.map((a) => a.category ?? '').filter((s) => s && s !== '現場')
+  }, [currentFarm, attachmentsByEntity])
   // マーカー popup または パネル から呼ぶ 編集ハンドラ:
   // Storage から実体を DL → File 化 → PhotoEditModal を開く。
   const handleFarmPhotoEdit = async (photoId: string) => {
@@ -187,6 +225,8 @@ export function OrthophotoPage() {
         initialHeadingDeg: meta.headingDeg,
         initialCaption: meta.caption,
         initialTakenAt: meta.takenAt ? new Date(meta.takenAt) : null,
+        // タイトルは category に格納。旧値 '現場' はスキップ
+        initialTitle: meta.category && meta.category !== '現場' ? meta.category : null,
       })
     } catch (err) {
       console.error('[orthophoto farm_photo edit] failed', err)
@@ -1115,6 +1155,10 @@ export function OrthophotoPage() {
           initialHeadingDeg={editingFarmPhoto.initialHeadingDeg}
           initialCaption={editingFarmPhoto.initialCaption}
           initialTakenAt={editingFarmPhoto.initialTakenAt}
+          initialTitle={editingFarmPhoto.initialTitle}
+          titleSuggestions={photoTitleSuggestions}
+          existingTitles={existingFarmPhotoTitles}
+          onUseTitlePrefix={pushPhotoTitleRecent}
           onCancel={() => setEditingFarmPhoto(null)}
           onConfirm={async (blob, _name, meta) => {
             const projectId = currentFarm.project_id
@@ -1125,7 +1169,8 @@ export function OrthophotoPage() {
               entityType: 'farm_photo',
               entityId: currentFarm.id,
               file: blob,
-              category: meta.title ?? '現場',
+              // タイトル (例: '全景-3') を category に保存。未指定なら旧値を維持
+              category: meta.title ?? editingFarmPhoto.initialTitle ?? '現場',
               caption: meta.caption,
               takenAt: meta.takenAt ?? new Date(),
               lat: meta.lat,
