@@ -145,24 +145,24 @@ export function ProjectEditModal({
             <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="p-3 overflow-y-auto flex-1 space-y-3">
+        <div className="p-3 overflow-y-auto flex-1 space-y-1.5">
           {/* 工事名 */}
-          <div>
-            <label className="block text-[11px] text-slate-500 mb-1">工事名</label>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 shrink-0 w-16">工事名</span>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
               onBlur={commitName}
-              className="w-full px-2 py-2 border rounded text-sm"
+              className="flex-1 px-2 py-1.5 border rounded text-sm"
             />
           </div>
 
           {/* 種別 (変更不可・表示のみ) */}
-          <div>
-            <label className="block text-[11px] text-slate-500 mb-1">種別</label>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 shrink-0 w-16">種別</span>
             <div
-              className={`px-2 py-1.5 text-xs rounded border font-medium ${
+              className={`flex-1 px-2 py-1 text-xs rounded border font-medium ${
                 category === 'cadastral'
                   ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
                   : category === 'civil'
@@ -176,9 +176,9 @@ export function ProjectEditModal({
           </div>
 
           {/* 共有ポリシー (占有 / 共有 / 公開) */}
-          <div>
-            <label className="block text-[11px] text-slate-500 mb-1">共有ポリシー</label>
-            <div className="grid grid-cols-3 gap-1">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 shrink-0 w-16">共有</span>
+            <div className="flex-1 flex gap-1">
               {(
                 [
                   { v: 'private', icon: Lock, hint: '自分だけが閲覧・編集できます' },
@@ -195,7 +195,7 @@ export function ProjectEditModal({
                       if (project.visibility !== v) onUpdateProject({ visibility: v })
                     }}
                     title={hint}
-                    className={`flex flex-col items-center gap-0.5 px-2 py-2 rounded border text-xs font-medium ${
+                    className={`flex-1 inline-flex items-center justify-center gap-1 px-2 py-1 rounded border text-xs font-medium ${
                       on
                         ? v === 'private'
                           ? 'bg-slate-700 text-white border-slate-700'
@@ -205,64 +205,62 @@ export function ProjectEditModal({
                         : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
                     }`}
                   >
-                    <Icon className="h-3.5 w-3.5" />
+                    <Icon className="h-3 w-3" />
                     {PROJECT_VISIBILITY_LABEL[v]}
                   </button>
                 )
               })}
             </div>
-            <div className="text-[10px] text-slate-500 mt-1">
-              {project.visibility === 'private' &&
-                '占有: 自分のみ閲覧・編集できます。'}
-              {project.visibility === 'shared' &&
-                '共有: メンバー一覧に登録された人が閲覧・編集できます。' +
-                  'メンバーは PC のメンバー管理から追加してください。'}
-              {project.visibility === 'public' &&
-                '公開: URL を知っていれば認証なしでも閲覧できます。編集は所有者のみ。'}
-            </div>
+          </div>
+          <div className="text-[10px] text-slate-500 pl-[4.5rem]">
+            {project.visibility === 'private' && '自分のみ閲覧・編集できます。'}
+            {project.visibility === 'shared' &&
+              'メンバー一覧に登録された人が閲覧・編集できます。'}
+            {project.visibility === 'public' &&
+              '認証なしでも閲覧できます。編集は所有者のみ。'}
           </div>
 
           {/* 説明 */}
-          <div>
-            <label className="block text-[11px] text-slate-500 mb-1">説明</label>
+          <div className="flex items-start gap-2">
+            <span className="text-xs text-slate-500 shrink-0 w-16 pt-1">説明</span>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               onBlur={commitDescription}
               placeholder="任意"
-              className="w-full px-2 py-2 border rounded text-sm h-16"
+              className="flex-1 px-2 py-1.5 border rounded text-sm h-14"
             />
           </div>
 
-          {/* 発注者 / 受託者 */}
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="block text-[11px] text-slate-500 mb-1">発注者</label>
-              <input
-                type="text"
-                value={client}
-                onChange={(e) => setClient(e.target.value)}
-                onBlur={commitClient}
-                placeholder="任意"
-                className="w-full px-2 py-2 border rounded text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-[11px] text-slate-500 mb-1">受託者</label>
-              <input
-                type="text"
-                value={contractor}
-                onChange={(e) => setContractor(e.target.value)}
-                onBlur={commitContractor}
-                placeholder="任意"
-                className="w-full px-2 py-2 border rounded text-sm"
-              />
-            </div>
+          {/* 発注者 */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 shrink-0 w-16">発注者</span>
+            <input
+              type="text"
+              value={client}
+              onChange={(e) => setClient(e.target.value)}
+              onBlur={commitClient}
+              placeholder="任意"
+              className="flex-1 px-2 py-1.5 border rounded text-sm"
+            />
+          </div>
+
+          {/* 受託者 */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 shrink-0 w-16">受託者</span>
+            <input
+              type="text"
+              value={contractor}
+              onChange={(e) => setContractor(e.target.value)}
+              onBlur={commitContractor}
+              placeholder="任意"
+              className="flex-1 px-2 py-1.5 border rounded text-sm"
+            />
           </div>
 
           {/* 座標系 */}
-          <div>
-            <label className="block text-[11px] text-slate-500 mb-1">座標系</label>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 shrink-0 w-16">座標系</span>
             <select
               value={zone}
               onChange={(e) => {
@@ -270,7 +268,7 @@ export function ProjectEditModal({
                 setZone(n)
                 if (n !== project.coordinate_zone) onUpdateProject({ coordinate_zone: n })
               }}
-              className="w-full px-2 py-2 text-sm border rounded"
+              className="flex-1 px-2 py-1.5 text-sm border rounded"
             >
               {Object.entries(JGD2011_ZONES).map(([z, info]) => (
                 <option key={z} value={z}>
@@ -280,45 +278,44 @@ export function ProjectEditModal({
             </select>
           </div>
 
-          {/* 工期 (予定) */}
-          <div>
-            <div className="text-[11px] text-slate-500 mb-1">工期 (予定)</div>
-            <div className="grid grid-cols-2 gap-2">
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                onBlur={commitStartDate}
-                className="w-full px-2 py-2 border rounded text-sm"
-                title="工期開始日"
-              />
-              <input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                onBlur={commitEndDate}
-                className="w-full px-2 py-2 border rounded text-sm"
-                title="工期終了日"
-              />
-            </div>
+          {/* 工期 (予定): 開始 / 終了 を 1 行に */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 shrink-0 w-16">工期予定</span>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              onBlur={commitStartDate}
+              className="flex-1 px-2 py-1.5 border rounded text-sm"
+              title="工期開始日"
+            />
+            <span className="text-xs text-slate-400">〜</span>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              onBlur={commitEndDate}
+              className="flex-1 px-2 py-1.5 border rounded text-sm"
+              title="工期終了日"
+            />
           </div>
 
           {/* 着手日 (実績) */}
-          <div>
-            <label className="block text-[11px] text-slate-500 mb-1">着手日 (実績)</label>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 shrink-0 w-16">着手日</span>
             <input
               type="date"
               value={startedAt}
               onChange={(e) => setStartedAt(e.target.value)}
               onBlur={commitStartedAt}
-              className="w-full px-2 py-2 border rounded text-sm"
+              className="flex-1 px-2 py-1.5 border rounded text-sm"
             />
           </div>
 
-          {/* 進捗 / 完成日 (実績) */}
-          <div>
-            <label className="block text-[11px] text-slate-500 mb-1">進捗 / 完成日 (実績)</label>
-            <label className="flex items-center gap-2 px-2 py-2 border rounded cursor-pointer mb-2">
+          {/* 進捗 / 完成日: 完了チェック + 完成日 を 1 行に */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 shrink-0 w-16">進捗</span>
+            <label className="flex items-center gap-1.5 px-2 py-1.5 border rounded cursor-pointer">
               <input
                 type="checkbox"
                 checked={isCompleted}
@@ -332,9 +329,9 @@ export function ProjectEditModal({
                     setCompletedAt('')
                   }
                 }}
-                className="h-4 w-4"
+                className="h-3.5 w-3.5"
               />
-              <span className="text-sm">完了</span>
+              <span className="text-xs">完了</span>
             </label>
             <input
               type="date"
@@ -342,7 +339,8 @@ export function ProjectEditModal({
               onChange={(e) => setCompletedAt(e.target.value)}
               onBlur={commitCompletedAt}
               disabled={!isCompleted}
-              className="w-full px-2 py-2 border rounded text-sm disabled:bg-slate-50 disabled:text-slate-400"
+              className="flex-1 px-2 py-1.5 border rounded text-sm disabled:bg-slate-50 disabled:text-slate-400"
+              title="完成日"
             />
           </div>
 
