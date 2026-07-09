@@ -162,9 +162,6 @@ export function OrthophotoPage() {
     initialCaption: string | null
     initialTakenAt: Date | null
   } | null>(null)
-  // 工区写真の選択状態 (ダウンロード / Excel 出力用)
-  const [selectedFarmPhotoIds, setSelectedFarmPhotoIds] = useState<Set<string>>(new Set())
-
   // マーカー popup または パネル から呼ぶ 編集ハンドラ:
   // Storage から実体を DL → File 化 → PhotoEditModal を開く。
   const handleFarmPhotoEdit = async (photoId: string) => {
@@ -201,11 +198,6 @@ export function OrthophotoPage() {
     if (!confirm('この写真を削除しますか?')) return
     try {
       await removeAttachment(photoId)
-      setSelectedFarmPhotoIds((prev) => {
-        const next = new Set(prev)
-        next.delete(photoId)
-        return next
-      })
     } catch (err) {
       console.error('[orthophoto farm_photo delete] failed', err)
       alert('写真の削除に失敗しました')
@@ -1107,8 +1099,6 @@ export function OrthophotoPage() {
         memos={farmMemos}
         photos={farmPhotosAll}
         getSignedUrl={getSignedUrl}
-        selectedIds={selectedFarmPhotoIds}
-        setSelectedIds={setSelectedFarmPhotoIds}
         onEditPhoto={handleFarmPhotoEdit}
         onDeletePhoto={handleFarmPhotoDelete}
         farmName={currentFarm.name}
@@ -1463,8 +1453,6 @@ function OverviewSidePanel({
   memos,
   photos,
   getSignedUrl,
-  selectedIds,
-  setSelectedIds,
   onEditPhoto,
   onDeletePhoto,
   farmName,
@@ -1474,13 +1462,12 @@ function OverviewSidePanel({
   memos: FarmMemo[]
   photos: Attachment[]
   getSignedUrl: (filePath: string) => Promise<string | null>
-  selectedIds: Set<string>
-  setSelectedIds: React.Dispatch<React.SetStateAction<Set<string>>>
   onEditPhoto: (photoId: string) => void
   onDeletePhoto: (photoId: string) => void
   farmName: string
 }) {
-  // 写真帳出力モーダル (出力する写真を選び、順番を決めてから Excel 出力)
+  // ダウンロード / 写真帳出力: それぞれ選択モーダルを開く
+  const [downloadOpen, setDownloadOpen] = useState(false)
   const [photoBookOpen, setPhotoBookOpen] = useState(false)
   if (!open) {
     return (
@@ -1546,39 +1533,19 @@ function OverviewSidePanel({
         </div>
       </div>
 
-      {/* 下半分: 写真サムネ (選択 / ダウンロード / Excel 出力) */}
+      {/* 下半分: 写真サムネ。ダウンロード / Excel 出力は各ボタンで選択モーダルへ */}
       <div className="flex-1 min-h-0 flex flex-col">
         <div className="px-3 py-1.5 text-[11px] text-slate-500 flex items-center gap-1 bg-slate-50">
           <ImageIcon className="h-3 w-3 text-blue-500" />
           写真 ({photos.length})
-          {selectedIds.size > 0 && (
-            <span className="ml-auto text-blue-700 font-medium">
-              {selectedIds.size} 選択中
-            </span>
-          )}
         </div>
         <div className="px-2 py-1.5 border-b bg-white flex items-center gap-1 flex-wrap">
           <button
             type="button"
-            onClick={() => {
-              if (selectedIds.size === photos.length) setSelectedIds(new Set())
-              else setSelectedIds(new Set(photos.map((p) => p.id)))
-            }}
+            onClick={() => setDownloadOpen(true)}
             disabled={photos.length === 0}
-            className="text-[11px] px-1.5 py-0.5 border rounded text-slate-600 hover:bg-slate-50 disabled:opacity-40"
-          >
-            {selectedIds.size === photos.length && photos.length > 0 ? '選択解除' : '全選択'}
-          </button>
-          <button
-            type="button"
-            onClick={async () => {
-              const targets = photos.filter((p) => selectedIds.has(p.id))
-              if (targets.length === 0) return
-              await downloadPhotosZip(targets, getSignedUrl, farmName)
-            }}
-            disabled={selectedIds.size === 0}
             className="text-[11px] px-1.5 py-0.5 border rounded text-blue-700 border-blue-300 hover:bg-blue-50 disabled:opacity-40 inline-flex items-center gap-0.5"
-            title="選択した写真を ZIP でダウンロード"
+            title="ダウンロード: 対象の写真を選択して ZIP 保存"
           >
             <FileDown className="h-3 w-3" />
             ダウンロード
@@ -1606,15 +1573,6 @@ function OverviewSidePanel({
                   key={p.id}
                   attachment={p}
                   getSignedUrl={getSignedUrl}
-                  selected={selectedIds.has(p.id)}
-                  onToggleSelected={() =>
-                    setSelectedIds((prev) => {
-                      const next = new Set(prev)
-                      if (next.has(p.id)) next.delete(p.id)
-                      else next.add(p.id)
-                      return next
-                    })
-                  }
                   onEdit={() => onEditPhoto(p.id)}
                   onDelete={() => onDeletePhoto(p.id)}
                 />
@@ -1624,6 +1582,14 @@ function OverviewSidePanel({
         </div>
       </div>
 
+      {downloadOpen && (
+        <PhotoDownloadSelectorModal
+          photos={photos}
+          getSignedUrl={getSignedUrl}
+          farmName={farmName}
+          onClose={() => setDownloadOpen(false)}
+        />
+      )}
       {photoBookOpen && (
         <PhotoBookOrderModal
           photos={photos}
@@ -1639,15 +1605,11 @@ function OverviewSidePanel({
 function PanelPhotoThumb({
   attachment,
   getSignedUrl,
-  selected,
-  onToggleSelected,
   onEdit,
   onDelete,
 }: {
   attachment: Attachment
   getSignedUrl: (filePath: string) => Promise<string | null>
-  selected: boolean
-  onToggleSelected: () => void
   onEdit: () => void
   onDelete: () => void
 }) {
@@ -1666,24 +1628,9 @@ function PanelPhotoThumb({
   }, [attachment.filePath, getSignedUrl])
   return (
     <div
-      className={`relative group aspect-square border rounded overflow-hidden bg-slate-100 ${
-        selected ? 'ring-2 ring-blue-500 border-blue-500' : 'hover:ring-2 hover:ring-blue-300'
-      }`}
+      className="relative group aspect-square border rounded overflow-hidden bg-slate-100 hover:ring-2 hover:ring-blue-300"
       title={attachment.caption ?? attachment.filePath.split('/').pop() ?? ''}
     >
-      {/* 左上: 選択チェック */}
-      <label
-        className="absolute top-1 left-1 z-10 flex items-center justify-center cursor-pointer"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <input
-          type="checkbox"
-          checked={selected}
-          onChange={onToggleSelected}
-          className="h-3.5 w-3.5 accent-blue-600 bg-white/90 rounded"
-        />
-      </label>
-
       {/* サムネ (クリックで別窓プレビュー) */}
       <a
         href={url ?? undefined}
@@ -2118,6 +2065,193 @@ function PhotoBookThumb({
       {selected && (
         <span className="absolute top-1 left-1 bg-emerald-600 text-white text-[11px] font-bold rounded-full w-6 h-6 flex items-center justify-center shadow">
           {orderIndex}
+        </span>
+      )}
+    </button>
+  )
+}
+
+// -----------------------------------------------------------------
+// ダウンロード対象を選ぶモーダル (順番は不要 = ZIP 化)
+// -----------------------------------------------------------------
+function PhotoDownloadSelectorModal({
+  photos,
+  getSignedUrl,
+  farmName,
+  onClose,
+}: {
+  photos: Attachment[]
+  getSignedUrl: (filePath: string) => Promise<string | null>
+  farmName: string
+  onClose: () => void
+}) {
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [busy, setBusy] = useState(false)
+
+  const toggle = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  const allSelected = photos.length > 0 && selectedIds.size === photos.length
+  const toggleAll = () => {
+    if (allSelected) setSelectedIds(new Set())
+    else setSelectedIds(new Set(photos.map((p) => p.id)))
+  }
+
+  const handleDownload = async () => {
+    const targets = photos.filter((p) => selectedIds.has(p.id))
+    if (targets.length === 0) return
+    setBusy(true)
+    try {
+      await downloadPhotosZip(targets, getSignedUrl, farmName)
+      onClose()
+    } catch (err) {
+      console.error('[PhotoDownloadSelectorModal] failed', err)
+      alert('ダウンロードに失敗しました')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[3500] p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[92vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-4 py-3 border-b flex items-center gap-2 shrink-0">
+          <span className="text-sm font-semibold flex-1">
+            写真ダウンロード — 対象を選択
+          </span>
+          <span className="text-xs text-slate-500">
+            選択 {selectedIds.size} / 全 {photos.length}
+          </span>
+          <button
+            onClick={onClose}
+            className="p-1 rounded hover:bg-slate-100 text-slate-500"
+            title="閉じる"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="px-3 py-1.5 border-b bg-slate-50 flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={toggleAll}
+            disabled={photos.length === 0}
+            className="text-[11px] px-2 py-0.5 border rounded text-slate-600 hover:bg-white disabled:opacity-40"
+          >
+            {allSelected ? '選択解除' : '全選択'}
+          </button>
+          <span className="text-[11px] text-slate-500 ml-auto">
+            クリックで選択 / 解除
+          </span>
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-y-auto p-3">
+          {photos.length === 0 ? (
+            <div className="text-center text-xs text-slate-400 py-8">
+              写真がありません
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+              {photos.map((p) => (
+                <DownloadThumb
+                  key={p.id}
+                  attachment={p}
+                  getSignedUrl={getSignedUrl}
+                  selected={selectedIds.has(p.id)}
+                  onClick={() => toggle(p.id)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="px-4 py-3 border-t flex items-center gap-2 shrink-0">
+          <div className="text-[11px] text-slate-500">
+            2 枚以上は ZIP でまとめます
+          </div>
+          <div className="flex-1" />
+          <button
+            onClick={onClose}
+            disabled={busy}
+            className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={handleDownload}
+            disabled={busy || selectedIds.size === 0}
+            className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-1"
+          >
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
+            ダウンロード
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DownloadThumb({
+  attachment,
+  getSignedUrl,
+  selected,
+  onClick,
+}: {
+  attachment: Attachment
+  getSignedUrl: (filePath: string) => Promise<string | null>
+  selected: boolean
+  onClick: () => void
+}) {
+  const [url, setUrl] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void getSignedUrl(attachment.filePath).then((u) => {
+      if (!cancelled) setUrl(u)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [attachment.filePath, getSignedUrl])
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`relative aspect-square border rounded overflow-hidden bg-slate-100 ${
+        selected
+          ? 'ring-2 ring-blue-500 border-blue-500'
+          : 'hover:ring-2 hover:ring-blue-300'
+      }`}
+      title={attachment.caption ?? attachment.filePath.split('/').pop() ?? ''}
+    >
+      {url ? (
+        <img src={url} alt="" className="w-full h-full object-cover" />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center">
+          <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+        </div>
+      )}
+      {selected && (
+        <span className="absolute top-1 left-1 bg-blue-600 text-white rounded-full w-5 h-5 flex items-center justify-center shadow">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="h-3 w-3"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="3"
+          >
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
         </span>
       )}
     </button>
