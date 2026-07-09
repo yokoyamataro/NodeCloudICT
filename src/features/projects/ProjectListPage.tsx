@@ -446,23 +446,6 @@ export function ProjectListPage() {
     fetchFarms()
   }
 
-  const handleDeleteFarm = async (e: React.MouseEvent, id: string) => {
-    e.stopPropagation()
-    if (
-      !confirm(
-        'この工区をゴミ箱へ移動しますか？\n\n7 日以内なら「ゴミ箱」から復元できます。\n7 日を超えると座標・地番ポリゴン・地番属性・写真・LandXML・オルソタイルなど、関連するすべてのデータと Storage ファイルも自動で完全削除されます。',
-      )
-    ) {
-      return
-    }
-    try {
-      await deleteFarm(id)
-      if (selectedFarm?.id === id) setSelectedFarm(null)
-    } catch (err) {
-      alert(err instanceof Error ? err.message : '工区の削除に失敗しました')
-    }
-  }
-
   const openGoogleMapsNavigation = (lat: number, lng: number) => {
     const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`
     window.open(url, '_blank')
@@ -762,16 +745,9 @@ export function ProjectListPage() {
                                         setEditFarmForModal(farm)
                                       }}
                                       className="p-1 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded"
-                                      title="工区情報を編集"
+                                      title="工区情報を編集 (削除もここから)"
                                     >
                                       <Edit3 className="h-3 w-3" />
-                                    </button>
-                                    <button
-                                      onClick={(e) => handleDeleteFarm(e, farm.id)}
-                                      className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded"
-                                      title="削除"
-                                    >
-                                      <Trash2 className="h-3 w-3" />
                                     </button>
                                   </div>
                                 </div>
@@ -1053,6 +1029,16 @@ export function ProjectListPage() {
           }
           onUpdateFarm={(patch) => void updateFarm(editFarmForModal.id, patch)}
           onClose={() => setEditFarmForModal(null)}
+          onDelete={async () => {
+            const id = editFarmForModal.id
+            setEditFarmForModal(null)
+            try {
+              await deleteFarm(id)
+              if (selectedFarm?.id === id) setSelectedFarm(null)
+            } catch (err) {
+              alert(err instanceof Error ? err.message : '工区の削除に失敗しました')
+            }
+          }}
         />
       )}
 

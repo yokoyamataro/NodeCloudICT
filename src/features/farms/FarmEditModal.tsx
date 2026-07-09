@@ -3,7 +3,7 @@
 //   モバイルとPCの両方で利用する。
 
 import { useEffect, useState } from 'react'
-import { X } from 'lucide-react'
+import { X, Trash2 } from 'lucide-react'
 import type { Farm } from '@/stores/farmStore'
 
 export function isoToDateInput(iso: string | null): string {
@@ -25,10 +25,13 @@ export function FarmEditModal({
   farm,
   onUpdateFarm,
   onClose,
+  onDelete,
 }: {
   farm: Farm
   onUpdateFarm: (patch: Partial<Pick<Farm, 'name' | 'description' | 'started_at' | 'completed_at'>>) => void
   onClose: () => void
+  /** 指定時のみ「工区を削除する」ボタンを完成日の下に表示。押下 → 確認 → 呼び出し */
+  onDelete?: () => void
 }) {
   const [name, setName] = useState(farm.name)
   const [description, setDescription] = useState(farm.description ?? '')
@@ -142,6 +145,28 @@ export function FarmEditModal({
               className="w-full px-2 py-2 border rounded text-sm disabled:bg-slate-50 disabled:text-slate-400"
             />
           </div>
+
+          {/* 完了日の下: 工区を削除するボタン (onDelete が渡されたときのみ表示) */}
+          {onDelete && (
+            <div className="pt-2 border-t">
+              <button
+                type="button"
+                onClick={() => {
+                  if (
+                    confirm(
+                      `工区「${farm.name}」をゴミ箱へ移動しますか？\n\n7 日以内なら「ゴミ箱」から復元できます。\n7 日を超えると座標・地番ポリゴン・地番属性・写真・LandXML・オルソタイル等の関連データも自動で完全削除されます。`,
+                    )
+                  ) {
+                    onDelete()
+                  }
+                }}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm border border-red-300 text-red-700 rounded-lg hover:bg-red-50"
+              >
+                <Trash2 className="h-4 w-4" />
+                工区を削除する
+              </button>
+            </div>
+          )}
         </div>
         <div className="px-3 py-2 border-t shrink-0">
           <button

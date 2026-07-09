@@ -61,6 +61,7 @@ export function MobileTopPage() {
     fetchFarms,
     createFarm,
     updateFarm,
+    deleteFarm,
     farmLocations,
     workAreaPolygons,
     fetchWorkAreaPolygons,
@@ -419,7 +420,7 @@ export function MobileTopPage() {
         </div>
       )}
 
-      {/* 工区編集モーダル (右端の 編集ボタンで開く: 名前 / 説明 / 着手日 / 完成日 / 完了) */}
+      {/* 工区編集モーダル (右端の 編集ボタンで開く: 名前 / 説明 / 着手日 / 完成日 / 完了 / 削除) */}
       {editFarm && (
         <FarmEditModal
           farm={
@@ -428,6 +429,15 @@ export function MobileTopPage() {
           }
           onUpdateFarm={(patch) => void updateFarm(editFarm.id, patch)}
           onClose={() => setEditFarm(null)}
+          onDelete={async () => {
+            const id = editFarm.id
+            setEditFarm(null)
+            try {
+              await deleteFarm(id)
+            } catch (err) {
+              alert(err instanceof Error ? err.message : '工区の削除に失敗しました')
+            }
+          }}
         />
       )}
     </div>
