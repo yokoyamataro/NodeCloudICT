@@ -146,7 +146,12 @@ END $$;
 --    - 社内メンバー: 呼び出し元と同じ organization_id のプロフィール
 --    - 外部メンバー: 呼び出し元が所有するプロジェクトに参加中の外部ユーザー
 --                   (= 呼び出し元が「共有したことがある」ユーザー)
+--
+-- 戻り値の列を追加する変更のため CREATE OR REPLACE では 42P13 になる。
+-- 事前に DROP して作り直す。
 -- ============================================================
+DROP FUNCTION IF EXISTS public.list_share_candidates();
+
 CREATE OR REPLACE FUNCTION public.list_share_candidates()
 RETURNS TABLE (
   user_id uuid,
