@@ -61,6 +61,8 @@ interface Props {
   setParallelRef?: (s: LineSeg | null) => void
   /** 平行線ツールの幅指定（m）。空なら通過点モード */
   parallelOffset?: string
+  /** true のとき、既存の作図要素を地図上にレンダーしない (ツールの入力受付は継続) */
+  hideDrawn?: boolean
 }
 
 // ---- アイコン生成 ----
@@ -200,6 +202,7 @@ export function OrthophotoAnnotations({
   parallelRef = null,
   setParallelRef,
   parallelOffset = '',
+  hideDrawn = false,
 }: Props) {
   const [tempVerts, setTempVerts] = useState<[number, number][]>([])
   // マウス追従プレビュー位置（ラバーバンド用）
@@ -646,7 +649,7 @@ export function OrthophotoAnnotations({
 
   return (
     <>
-      {annotations.map((a) => {
+      {!hideDrawn && annotations.map((a) => {
         if (a.kind === 'point') {
           return <Marker key={a.id} position={a.pos} icon={dotIcon(a.color)} {...deletableProps(a.id)} />
         }

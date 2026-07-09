@@ -974,7 +974,7 @@ export function OrthophotoPage() {
       </div>
 
       {/* 横並び: 左=大きな地図（オルソ＋座標＋区域＋作図＋メモ＋写真）、右=折りたたみパネル */}
-      <div className="flex-1 flex min-h-0">
+      <div className="flex-1 flex min-h-0 relative">
       <div className="flex-1 relative">
         <CoordinateMap
           key={currentFarm.id}
@@ -990,28 +990,29 @@ export function OrthophotoPage() {
           // 点種を非表示: 空 Set を渡して全マーカーを除外
           displayCoordinateIds={showPointsLayer ? undefined : emptyCoordSet}
         >
-          {showAnnotationsLayer && (
-            <OrthophotoAnnotations
-              tool={tool}
-              color={drawColor}
-              fontSize={fontSize}
-              currentLayer={currentLayer}
-              annotations={annotations}
-              setAnnotations={setAnnotations}
-              converter={converter}
-              lastMeasure={lastMeasure}
-              setLastMeasure={setLastMeasure}
-              onAddCoordinate={handleAddCoordinate}
-              onRequestComment={(pos) => setPendingComment({ pos })}
-              onSelect={(id) => setSelectedAnnoId(id)}
-              snapEnabled={snapEnabled}
-              extraSnapPoints={extraSnapPoints}
-              extraLineSegments={extraLineSegments}
-              parallelRef={parallelRef}
-              setParallelRef={setParallelRef}
-              parallelOffset={parallelOffset}
-            />
-          )}
+          {/* 作図要素を非表示にしても計測ツールは使えるように、コンポーネントは常時マウントし
+              既存の作図要素の描画だけを hideDrawn で切り替える */}
+          <OrthophotoAnnotations
+            tool={tool}
+            color={drawColor}
+            fontSize={fontSize}
+            currentLayer={currentLayer}
+            annotations={annotations}
+            setAnnotations={setAnnotations}
+            converter={converter}
+            lastMeasure={lastMeasure}
+            setLastMeasure={setLastMeasure}
+            onAddCoordinate={handleAddCoordinate}
+            onRequestComment={(pos) => setPendingComment({ pos })}
+            onSelect={(id) => setSelectedAnnoId(id)}
+            snapEnabled={snapEnabled}
+            extraSnapPoints={extraSnapPoints}
+            extraLineSegments={extraLineSegments}
+            parallelRef={parallelRef}
+            setParallelRef={setParallelRef}
+            parallelOffset={parallelOffset}
+            hideDrawn={!showAnnotationsLayer}
+          />
         </CoordinateMap>
 
         {/* ツールヘルプ＋計測結果（左下） */}
@@ -1536,9 +1537,12 @@ function OverviewSidePanel({
   }
   return (
     <div
-      className={`border-l bg-white flex flex-col min-h-0 transition-[width] duration-150 ${
-        photoMaximized ? 'w-[560px]' : 'w-80'
-      }`}
+      className={
+        photoMaximized
+          ? // 全画面表示: 親 (flex-1 flex min-h-0 relative) の全域を占有し、地図領域まで覆う
+            'absolute inset-0 z-[1200] border-l bg-white flex flex-col min-h-0'
+          : 'w-80 border-l bg-white flex flex-col min-h-0'
+      }
     >
       <div className="px-3 py-2 border-b flex items-center gap-2 bg-slate-50">
         <span className="text-sm font-semibold flex-1">メモ / 写真</span>
