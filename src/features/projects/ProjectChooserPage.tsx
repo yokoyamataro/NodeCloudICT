@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Folder, Loader2, Users, MapPin, AlertCircle, Trash2, Edit3 } from 'lucide-react'
+import { Plus, Folder, Loader2, Users, MapPin, AlertCircle, Trash2, Edit3, Check } from 'lucide-react'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { JGD2011_ZONES } from '@/lib/coordinates'
@@ -32,6 +32,15 @@ export function ProjectChooserPage() {
   const [showNewDialog, setShowNewDialog] = useState<ProjectCategory | null>(null)
   // 現場情報編集モーダル
   const [editProject, setEditProject] = useState<Project | null>(null)
+  // 完了現場を非表示にするか (既定: 非表示)。localStorage に永続化 (工区側と同じキーで別枠)
+  const [hideCompletedProjects, setHideCompletedProjects] = useState<boolean>(() => {
+    try { return localStorage.getItem('projects:hideCompletedProjects') !== '0' } catch { return true }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('projects:hideCompletedProjects', hideCompletedProjects ? '1' : '0')
+    } catch { /* ignore */ }
+  }, [hideCompletedProjects])
   const [newName, setNewName] = useState('')
   const [newDescription, setNewDescription] = useState('')
   const [newZone, setNewZone] = useState(13)
@@ -45,17 +54,25 @@ export function ProjectChooserPage() {
     setCurrentProject(null)
   }, [fetchProjects, fetchFarms, setCurrentFarm, setCurrentProject])
 
+  // 完了現場フィルタ (hideCompletedProjects=true の時は completed_at != null を除外)
+  const visibleProjects = useMemo(
+    () =>
+      hideCompletedProjects
+        ? projects.filter((p) => p.completed_at == null)
+        : projects,
+    [projects, hideCompletedProjects],
+  )
   const cadastralProjects = useMemo(
-    () => projects.filter((p) => p.category === 'cadastral'),
-    [projects],
+    () => visibleProjects.filter((p) => p.category === 'cadastral'),
+    [visibleProjects],
   )
   const civilProjects = useMemo(
-    () => projects.filter((p) => p.category === 'civil'),
-    [projects],
+    () => visibleProjects.filter((p) => p.category === 'civil'),
+    [visibleProjects],
   )
   const uncategorizedProjects = useMemo(
-    () => projects.filter((p) => p.category == null),
-    [projects],
+    () => visibleProjects.filter((p) => p.category == null),
+    [visibleProjects],
   )
 
   const farmCountByProject = (projectId: string) =>
@@ -104,6 +121,23 @@ export function ProjectChooserPage() {
       <div className="p-4 bg-white border-b flex items-center gap-3 flex-wrap">
         <Folder className="h-5 w-5 text-blue-600" />
         <h1 className="text-lg font-bold flex-1">工事一覧</h1>
+        <button
+          type="button"
+          onClick={() => setHideCompletedProjects((v) => !v)}
+          className={`flex items-center gap-1 px-2 py-1.5 text-sm rounded border ${
+            !hideCompletedProjects
+              ? 'bg-emerald-100 border-emerald-400 text-emerald-800 font-medium'
+              : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
+          }`}
+          title={
+            hideCompletedProjects
+              ? '完了した現場も表示する'
+              : '完了した現場を非表示にする'
+          }
+        >
+          <Check className="h-4 w-4" />
+          完了を表示
+        </button>
         <button
           onClick={() => navigate('/trash')}
           className="flex items-center gap-1 px-2 py-1.5 text-sm border border-slate-300 text-slate-600 rounded hover:bg-slate-50"
