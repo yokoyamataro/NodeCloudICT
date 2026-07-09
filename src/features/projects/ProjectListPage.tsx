@@ -87,6 +87,15 @@ const createMarkerIcon = (isSelected: boolean = false): L.DivIcon => {
 }
 
 // 地図の境界を自動調整するコンポーネント
+// ISO timestamp → YYYY/MM/DD 表示 (空/不正なら '-')
+function fmtDateYMD(iso: string | null): string {
+  if (!iso) return '-'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '-'
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())}`
+}
+
 function FitBounds({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
   const map = useMap()
   useEffect(() => {
@@ -959,11 +968,41 @@ export function ProjectListPage() {
                       {farm.name}
                     </Tooltip>
                     <Popup>
-                      <div className="text-sm min-w-[180px]">
-                        <div className="font-bold text-base mb-2">{farm.name}</div>
+                      <div className="text-sm min-w-[220px]">
+                        <div className="font-bold text-base mb-1">{farm.name}</div>
                         {farm.description && (
-                          <div className="text-muted-foreground text-xs mb-2">{farm.description}</div>
+                          <div className="text-muted-foreground text-xs mb-2 whitespace-pre-wrap">
+                            {farm.description}
+                          </div>
                         )}
+                        {/* 進捗 + 着手日 / 完了日 */}
+                        <div className="border-t pt-2 mb-2 space-y-1 text-xs">
+                          <div className="flex items-center gap-1">
+                            <span className="text-slate-500 w-12">進捗</span>
+                            {farm.completed_at ? (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium">
+                                <Check className="h-3 w-3" strokeWidth={3} />
+                                完了
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-medium">
+                                未完了
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-slate-500 w-12">着手日</span>
+                            <span className="font-mono text-slate-700">
+                              {fmtDateYMD(farm.started_at)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-slate-500 w-12">完了日</span>
+                            <span className="font-mono text-slate-700">
+                              {fmtDateYMD(farm.completed_at)}
+                            </span>
+                          </div>
+                        </div>
                         {/* 工種別面積 */}
                         {Object.keys(areaSummary).length > 0 && (
                           <div className="border-t pt-2 mb-2">
