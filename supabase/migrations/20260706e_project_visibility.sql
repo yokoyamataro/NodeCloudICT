@@ -170,8 +170,10 @@ DECLARE
 BEGIN
   IF caller IS NULL THEN RAISE EXCEPTION 'Not authenticated'; END IF;
 
-  SELECT organization_id INTO caller_org
-    FROM public.profiles WHERE user_id = caller;
+  -- RETURNS TABLE の user_id (OUT パラメータ) と カラム名 が衝突するので
+  -- profiles にエイリアスを付けてフルクオリファイする
+  SELECT p.organization_id INTO caller_org
+    FROM public.profiles p WHERE p.user_id = caller;
 
   RETURN QUERY
     WITH shared_external AS (
@@ -182,10 +184,10 @@ BEGIN
       WHERE pr.user_id = caller AND pm.user_id <> caller
     )
     SELECT
-      u.id AS user_id,
-      u.email::text AS email,
-      prof.full_name AS full_name,
-      (caller_org IS NOT NULL AND prof.organization_id = caller_org) AS is_internal
+      u.id,
+      u.email::text,
+      prof.full_name,
+      (caller_org IS NOT NULL AND prof.organization_id = caller_org)
     FROM auth.users u
     LEFT JOIN public.profiles prof ON prof.user_id = u.id
     WHERE u.id <> caller
