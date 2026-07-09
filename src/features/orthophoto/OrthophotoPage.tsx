@@ -18,6 +18,8 @@ import {
   MapPin,
   Eye,
   Edit3,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
@@ -1923,6 +1925,8 @@ function PhotoBookOrderModal({
 }) {
   const [orderIds, setOrderIds] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
+  // 全画面 (maximize) 表示 / 通常 (max-w-3xl) 表示のトグル
+  const [maximized, setMaximized] = useState(false)
 
   const toggle = (id: string) => {
     setOrderIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
@@ -1959,11 +1963,17 @@ function PhotoBookOrderModal({
 
   return (
     <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[3500] p-4"
+      className={`fixed inset-0 bg-black/50 flex items-center justify-center z-[3500] ${
+        maximized ? 'p-0' : 'p-4'
+      }`}
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[92vh] flex flex-col"
+        className={`bg-white shadow-xl flex flex-col ${
+          maximized
+            ? 'w-full h-full rounded-none max-w-none max-h-none'
+            : 'w-full max-w-3xl max-h-[92vh] rounded-lg'
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-4 py-3 border-b flex items-center gap-2 shrink-0">
@@ -1973,6 +1983,17 @@ function PhotoBookOrderModal({
           <span className="text-xs text-slate-500">
             選択 {orderIds.length} / 全 {photos.length}
           </span>
+          <button
+            onClick={() => setMaximized((v) => !v)}
+            className="p-1 rounded hover:bg-slate-100 text-slate-500"
+            title={maximized ? '通常サイズに戻す' : '全画面表示'}
+          >
+            {maximized ? (
+              <Minimize2 className="h-4 w-4" />
+            ) : (
+              <Maximize2 className="h-4 w-4" />
+            )}
+          </button>
           <button
             onClick={onClose}
             className="p-1 rounded hover:bg-slate-100 text-slate-500"
@@ -1991,7 +2012,13 @@ function PhotoBookOrderModal({
             {photos.length === 0 ? (
               <div className="text-center text-xs text-slate-400 py-8">写真がありません</div>
             ) : (
-              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+              <div
+                className={`grid gap-2 ${
+                  maximized
+                    ? 'grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10'
+                    : 'grid-cols-3 sm:grid-cols-4'
+                }`}
+              >
                 {photos.map((p) => {
                   const orderIdx = orderIds.indexOf(p.id)
                   return (
@@ -2009,7 +2036,11 @@ function PhotoBookOrderModal({
           </div>
 
           {/* 右: 選択リスト (↑↓ で順番を変更) */}
-          <div className="w-full md:w-64 shrink-0 overflow-y-auto p-3 bg-slate-50">
+          <div
+            className={`w-full shrink-0 overflow-y-auto p-3 bg-slate-50 ${
+              maximized ? 'md:w-96' : 'md:w-64'
+            }`}
+          >
             <div className="text-[11px] text-slate-500 mb-2">出力順</div>
             {orderedPhotos.length === 0 ? (
               <div className="text-xs text-slate-400 py-4 text-center">
