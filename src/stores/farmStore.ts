@@ -404,7 +404,21 @@ export const useFarmStore = create<FarmState>()(
         loading: false,
       }))
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : '工区の更新に失敗しました', loading: false })
+      // Supabase のエラーオブジェクトは Error インスタンスではないため、
+      // message / details / hint を掘り出してユーザーに提示する。
+      // よくある原因:
+      //   - migration 未適用 (started_at / completed_at 列が存在しない → PGRST/42703)
+      //   - RLS で UPDATE 権限が無い (viewer 権限、または未設定ポリシー)
+      const e = err as { message?: string; details?: string; hint?: string; code?: string } | Error
+      const parts: string[] = []
+      if ('message' in e && e.message) parts.push(String(e.message))
+      if ('details' in e && e.details) parts.push(String(e.details))
+      if ('hint' in e && e.hint) parts.push(`hint: ${e.hint}`)
+      if ('code' in e && e.code) parts.push(`code: ${e.code}`)
+      const message = parts.length > 0 ? parts.join(' / ') : '工区の更新に失敗しました'
+      // eslint-disable-next-line no-console
+      console.error('[farmStore.updateFarm] failed', { id, updates, err })
+      set({ error: `工区の更新に失敗しました: ${message}`, loading: false })
     }
   },
 
