@@ -14,7 +14,6 @@ import {
   Users,
   UserPlus,
   UserMinus,
-  Crosshair,
   Minimize2,
   Table as TableIcon,
   Check,
@@ -33,7 +32,6 @@ import {
   STATUS_LABEL,
 } from '@/stores/workStatusStore'
 import { JGD2011_ZONES } from '@/lib/coordinates'
-import { CurrentLocationLayer } from '@/components/map/CurrentLocationLayer'
 import { useAuth } from '@/contexts/AuthContext'
 import type { Project, ProjectCategory, ProjectMemberRole } from '@/types/database'
 import { PROJECT_CATEGORY_LABEL } from '@/types/database'
@@ -64,19 +62,23 @@ const WORK_TYPE_NAMES: Record<string, string> = {
 const ALL_WORK_TYPES = ['boundary_survey', 'underdrain', 'soil_import', 'simple_grading', 'grading', 'subsoil', 'stone_removal'] as const
 
 // カスタムマーカーアイコン
-const createMarkerIcon = (isSelected: boolean = false): L.DivIcon => {
+//   isSelected: 選択中 → 赤 + 大きめ
+//   completed:  完了工区 → 緑 (未完了は青)
+const createMarkerIcon = (isSelected = false, completed = false): L.DivIcon => {
+  const bg = isSelected ? '#ef4444' : completed ? '#10b981' : '#3b82f6'
+  const size = isSelected ? 28 : 20
   return L.divIcon({
     className: 'custom-marker',
     html: `<div style="
-      background-color: ${isSelected ? '#ef4444' : '#3b82f6'};
-      width: ${isSelected ? 28 : 20}px;
-      height: ${isSelected ? 28 : 20}px;
+      background-color: ${bg};
+      width: ${size}px;
+      height: ${size}px;
       border-radius: 50%;
       border: 3px solid white;
       box-shadow: 0 2px 6px rgba(0,0,0,0.4);
     "></div>`,
-    iconSize: [isSelected ? 28 : 20, isSelected ? 28 : 20],
-    iconAnchor: [isSelected ? 14 : 10, isSelected ? 14 : 10],
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
   })
 }
 
@@ -155,8 +157,7 @@ export function ProjectListPage() {
   const [visibleWorkTypes, setVisibleWorkTypes] = useState<Set<string>>(new Set(ALL_WORK_TYPES))
   // (完了フィルタは hideCompletedFarms に統一 — 状態別チェックボックスは撤去)
 
-  // 現在地表示トグル
-  const [showCurrentLocation, setShowCurrentLocation] = useState(false)
+  // (現在地の表示ボタンは工区一覧では不要になったため撤去)
 
   // 一覧拡大表示モード（デフォルト: 従来のツリー+地図）
   const [expandedList, setExpandedList] = useState(false)
@@ -845,19 +846,6 @@ export function ProjectListPage() {
               <Check className="h-4 w-4" />
               完了を表示
             </button>
-            <button
-              type="button"
-              onClick={() => setShowCurrentLocation((s) => !s)}
-              className={`flex items-center gap-1 px-2 py-1 text-sm rounded border ${
-                showCurrentLocation
-                  ? 'bg-blue-100 border-blue-400 text-blue-800 font-medium'
-                  : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
-              }`}
-              title="現在位置の表示を切替"
-            >
-              <Crosshair className="h-4 w-4" />
-              現在地
-            </button>
           </div>
 
           {farmLocations.size === 0 ? (
@@ -882,7 +870,6 @@ export function ProjectListPage() {
               {selectedFarm && selectedFarmLocation && (
                 <FocusOnFarm location={selectedFarmLocation} />
               )}
-              {showCurrentLocation && <CurrentLocationLayer />}
               {/* 工事区域ポリゴン（地籍測量モードでは非表示。マーカー + 名称だけにする） */}
               {!isCadastral && filteredPolygons.map((polygon) => (
                 <Polygon
@@ -909,7 +896,7 @@ export function ProjectListPage() {
                   <Marker
                     key={farm.id}
                     position={[location.lat, location.lng]}
-                    icon={createMarkerIcon(isSelected)}
+                    icon={createMarkerIcon(isSelected, farm.completed_at != null)}
                     eventHandlers={{
                       click: () => handleSelectFarm(farm),
                       dblclick: () => handleOpenFarm(farm),
@@ -1581,7 +1568,11 @@ function FarmMarkerPopup({
 
       <button
         onClick={onOpen}
-        className="mt-2 px-3 py-1.5 text-xs bg-primary text-white rounded hover:bg-primary/90 w-full"
+        className={`mt-2 px-3 py-1.5 text-xs text-white rounded w-full ${
+          isCompleted
+            ? 'bg-emerald-600 hover:bg-emerald-700'
+            : 'bg-primary hover:bg-primary/90'
+        }`}
       >
         工区編集を開く
       </button>
