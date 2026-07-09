@@ -63,12 +63,6 @@ const WORK_TYPE_NAMES: Record<string, string> = {
 // 全工種リスト
 const ALL_WORK_TYPES = ['boundary_survey', 'underdrain', 'soil_import', 'simple_grading', 'grading', 'subsoil', 'stone_removal'] as const
 
-// 地籍測量モードでの状態フィルタ用スウォッチ色 (2 値: 未完了 / 完了)
-const STATUS_FILTER_COLOR: Record<WorkStatus, string> = {
-  not_started: '#94a3b8', // slate-400
-  completed: '#10b981',   // emerald-500
-}
-
 // カスタムマーカーアイコン
 const createMarkerIcon = (isSelected: boolean = false): L.DivIcon => {
   return L.divIcon({
@@ -159,11 +153,7 @@ export function ProjectListPage() {
 
   // 工種フィルター（表示する工種のSet）
   const [visibleWorkTypes, setVisibleWorkTypes] = useState<Set<string>>(new Set(ALL_WORK_TYPES))
-  // 地籍測量モードで使う状態フィルター（表示する状態のSet）
-  // 完了工区は既定で非表示 (未完了のみ表示)。ユーザーがトグルで完了も表示可能
-  const [visibleStatuses, setVisibleStatuses] = useState<Set<WorkStatus>>(
-    new Set<WorkStatus>(['not_started']),
-  )
+  // (完了フィルタは hideCompletedFarms に統一 — 状態別チェックボックスは撤去)
 
   // 現在地表示トグル
   const [showCurrentLocation, setShowCurrentLocation] = useState(false)
@@ -300,15 +290,17 @@ export function ProjectListPage() {
   // - それ以外: 工種フィルタで絞る
   const filteredPolygons = useMemo(() => {
     const farmIdSet = new Set(farms.map((f) => f.id))
+    // 完了工区は farms.completed_at で判定 (単一トグル hideCompletedFarms に連動)
+    const completedFarmIds = new Set(
+      farms.filter((f) => f.completed_at != null).map((f) => f.id),
+    )
     return workAreaPolygons.filter((p) => {
       if (!farmIdSet.has(p.farmId)) return false
-      if (isCadastral) {
-        const status = statusByKey.get(`${p.farmId}:${p.workType}`) ?? 'not_started'
-        return visibleStatuses.has(status)
-      }
-      return visibleWorkTypes.has(p.workType)
+      if (hideCompletedFarms && completedFarmIds.has(p.farmId)) return false
+      if (!isCadastral && !visibleWorkTypes.has(p.workType)) return false
+      return true
     })
-  }, [workAreaPolygons, visibleWorkTypes, visibleStatuses, farms, isCadastral, statusByKey])
+  }, [workAreaPolygons, visibleWorkTypes, farms, isCadastral, hideCompletedFarms])
 
   // 工区ごとの工種別面積を計算（ポップアップ用）
   const farmWorkAreaSummary = useMemo(() => {
@@ -350,18 +342,6 @@ export function ProjectListPage() {
         next.delete(workType)
       } else {
         next.add(workType)
-      }
-      return next
-    })
-  }
-
-  const toggleStatus = (status: WorkStatus) => {
-    setVisibleStatuses((prev) => {
-      const next = new Set(prev)
-      if (next.has(status)) {
-        next.delete(status)
-      } else {
-        next.add(status)
       }
       return next
     })
@@ -655,19 +635,6 @@ export function ProjectListPage() {
             </div>
           </div>
 
-          {/* 完了工区フィルタ (既定: 非表示) */}
-          <div className="px-3 py-1.5 border-b bg-slate-50 flex items-center text-xs text-slate-600">
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={!hideCompletedFarms}
-                onChange={(e) => setHideCompletedFarms(!e.target.checked)}
-                className="h-3.5 w-3.5"
-              />
-              <span>完了工区も表示</span>
-            </label>
-          </div>
-
           {/* ツリー表示 */}
           <div className="flex-1 overflow-auto p-2">
             {projects.length === 0 ? (
@@ -837,29 +804,7 @@ export function ProjectListPage() {
         <div className="flex-1 bg-slate-100 flex flex-col">
           {/* 凡例（地籍測量モードは状態フィルター、それ以外は工種フィルター） */}
           <div className="p-3 bg-white border-b flex flex-wrap gap-4 items-center">
-            {isCadastral ? (
-              <>
-                <span className="text-sm font-medium text-muted-foreground">状態:</span>
-                {(['not_started', 'completed'] as const).map((status) => (
-                  <label
-                    key={status}
-                    className="flex items-center gap-2 cursor-pointer text-sm px-2 py-1 rounded hover:bg-slate-50"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={visibleStatuses.has(status)}
-                      onChange={() => toggleStatus(status)}
-                      className="h-4 w-4"
-                    />
-                    <span
-                      className="w-4 h-4 rounded"
-                      style={{ backgroundColor: STATUS_FILTER_COLOR[status] }}
-                    />
-                    <span className="font-medium">{STATUS_LABEL[status]}</span>
-                  </label>
-                ))}
-              </>
-            ) : (
+            {isCadastral ? null : (
               <>
                 <span className="text-sm font-medium text-muted-foreground">工種:</span>
                 {ALL_WORK_TYPES.map(workType => (
@@ -882,10 +827,28 @@ export function ProjectListPage() {
                 ))}
               </>
             )}
+            {/* 完了工区の表示 ON/OFF (一覧・地図の両方に効く単一トグル) */}
+            <button
+              type="button"
+              onClick={() => setHideCompletedFarms((v) => !v)}
+              className={`ml-auto flex items-center gap-1 px-2 py-1 text-sm rounded border ${
+                !hideCompletedFarms
+                  ? 'bg-emerald-100 border-emerald-400 text-emerald-800 font-medium'
+                  : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
+              }`}
+              title={
+                hideCompletedFarms
+                  ? '完了工区を表示する (一覧・地図とも)'
+                  : '完了工区を非表示にする (一覧・地図とも)'
+              }
+            >
+              <Check className="h-4 w-4" />
+              完了を表示
+            </button>
             <button
               type="button"
               onClick={() => setShowCurrentLocation((s) => !s)}
-              className={`ml-auto flex items-center gap-1 px-2 py-1 text-sm rounded border ${
+              className={`flex items-center gap-1 px-2 py-1 text-sm rounded border ${
                 showCurrentLocation
                   ? 'bg-blue-100 border-blue-400 text-blue-800 font-medium'
                   : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
@@ -937,11 +900,8 @@ export function ProjectListPage() {
               {farms.map((farm) => {
                 const location = farmLocations.get(farm.id)
                 if (!location) return null
-                if (isCadastral) {
-                  const status =
-                    statusByKey.get(`${farm.id}:boundary_survey`) ?? 'not_started'
-                  if (!visibleStatuses.has(status)) return null
-                }
+                // 完了工区は 「完了を表示」トグル OFF のときマップからも除外
+                if (hideCompletedFarms && farm.completed_at != null) return null
                 const isSelected = selectedFarm?.id === farm.id
                 const areaSummary = farmWorkAreaSummary[farm.id] || {}
 
