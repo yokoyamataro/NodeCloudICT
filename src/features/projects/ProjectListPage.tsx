@@ -26,6 +26,7 @@ import 'leaflet/dist/leaflet.css'
 import { useFarmStore, type Farm, type FarmLocation } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { FarmEditModal, isoToDateInput, dateInputToIso } from '@/features/farms/FarmEditModal'
+import { ProjectEditModal } from '@/features/projects/ProjectEditModal'
 import {
   useWorkStatusStore,
   type WorkStatus,
@@ -170,16 +171,8 @@ export function ProjectListPage() {
   const [creating, setCreating] = useState(false)
   const [showMapDialog, setShowMapDialog] = useState<{ farm: Farm; location: FarmLocation } | null>(null)
 
-  // プロジェクト編集用state
+  // プロジェクト編集モーダル (ProjectEditModal を呼ぶだけになったので state は 1 つ)
   const [editingProject, setEditingProject] = useState<Project | null>(null)
-  const [editProjectName, setEditProjectName] = useState('')
-  const [editProjectDescription, setEditProjectDescription] = useState('')
-  const [editProjectStartDate, setEditProjectStartDate] = useState('')
-  const [editProjectEndDate, setEditProjectEndDate] = useState('')
-  const [editProjectClient, setEditProjectClient] = useState('')
-  const [editProjectContractor, setEditProjectContractor] = useState('')
-  const [editProjectZone, setEditProjectZone] = useState(13)
-  const [saving, setSaving] = useState(false)
 
   // メンバー管理用state
   const [showMemberDialog, setShowMemberDialog] = useState<Project | null>(null)
@@ -451,34 +444,10 @@ export function ProjectListPage() {
     window.open(url, '_blank')
   }
 
-  // プロジェクト編集ダイアログを開く
+  // プロジェクト編集モーダルを開く (実際の編集 UI は ProjectEditModal 側)
   const handleOpenEditDialog = (e: React.MouseEvent, project: Project) => {
     e.stopPropagation()
     setEditingProject(project)
-    setEditProjectName(project.name)
-    setEditProjectDescription(project.description || '')
-    setEditProjectStartDate(project.start_date || '')
-    setEditProjectEndDate(project.end_date || '')
-    setEditProjectClient(project.client || '')
-    setEditProjectContractor(project.contractor || '')
-    setEditProjectZone(project.coordinate_zone ?? 13)
-  }
-
-  // プロジェクト更新
-  const handleUpdateProject = async () => {
-    if (!editingProject || !editProjectName.trim()) return
-    setSaving(true)
-    await updateProject(editingProject.id, {
-      name: editProjectName,
-      description: editProjectDescription || null,
-      start_date: editProjectStartDate || null,
-      end_date: editProjectEndDate || null,
-      client: editProjectClient || null,
-      contractor: editProjectContractor || null,
-      coordinate_zone: editProjectZone,
-    })
-    setSaving(false)
-    setEditingProject(null)
   }
 
   // メンバー管理ダイアログを開く
@@ -1090,104 +1059,21 @@ export function ProjectListPage() {
         </div>
       )}
 
-      {/* プロジェクト編集ダイアログ */}
+      {/* プロジェクト編集モーダル: ProjectChooserPage と共有 (共有者も編集可) */}
       {editingProject && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
-            <h2 className="text-lg font-bold mb-4">プロジェクト編集</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">プロジェクト名 *</label>
-                <input
-                  type="text"
-                  value={editProjectName}
-                  onChange={(e) => setEditProjectName(e.target.value)}
-                  className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  autoFocus
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">説明</label>
-                <textarea
-                  value={editProjectDescription}
-                  onChange={(e) => setEditProjectDescription(e.target.value)}
-                  className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  rows={2}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1">工期開始日</label>
-                  <input
-                    type="date"
-                    value={editProjectStartDate}
-                    onChange={(e) => setEditProjectStartDate(e.target.value)}
-                    className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">工期終了日</label>
-                  <input
-                    type="date"
-                    value={editProjectEndDate}
-                    onChange={(e) => setEditProjectEndDate(e.target.value)}
-                    className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">発注者</label>
-                <input
-                  type="text"
-                  value={editProjectClient}
-                  onChange={(e) => setEditProjectClient(e.target.value)}
-                  className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="例: 〇〇県土地改良課"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">受託者</label>
-                <input
-                  type="text"
-                  value={editProjectContractor}
-                  onChange={(e) => setEditProjectContractor(e.target.value)}
-                  className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="例: 〇〇建設株式会社"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">座標系</label>
-                <select
-                  value={editProjectZone}
-                  onChange={(e) => setEditProjectZone(parseInt(e.target.value))}
-                  className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {Object.entries(JGD2011_ZONES).map(([num, info]) => (
-                    <option key={num} value={num}>
-                      {info.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 mt-6">
-              <button
-                onClick={() => setEditingProject(null)}
-                className="px-4 py-2 text-sm border rounded hover:bg-slate-50"
-              >
-                キャンセル
-              </button>
-              <button
-                onClick={handleUpdateProject}
-                disabled={!editProjectName.trim() || saving}
-                className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              >
-                {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-                保存
-              </button>
-            </div>
-          </div>
-        </div>
+        <ProjectEditModal
+          project={
+            allProjects.find((p) => p.id === editingProject.id) ?? editingProject
+          }
+          onUpdateProject={(patch) => void updateProject(editingProject.id, patch)}
+          onClose={() => setEditingProject(null)}
+          onDelete={async () => {
+            const id = editingProject.id
+            setEditingProject(null)
+            await deleteProject(id)
+            fetchFarms()
+          }}
+        />
       )}
 
       {/* メンバー管理ダイアログ */}

@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from 'react'
 import { X, Trash2 } from 'lucide-react'
-import type { Project, ProjectCategory } from '@/types/database'
+import type { Project } from '@/types/database'
 import { PROJECT_CATEGORY_LABEL } from '@/types/database'
 import { JGD2011_ZONES } from '@/lib/coordinates'
 import { isoToDateInput, dateInputToIso } from '@/features/farms/FarmEditModal'
@@ -56,7 +56,9 @@ export function ProjectEditModal({
   const [startDate, setStartDate] = useState(dateStringToInput(project.start_date))
   const [endDate, setEndDate] = useState(dateStringToInput(project.end_date))
   const [zone, setZone] = useState<number>(project.coordinate_zone ?? 13)
-  const [category, setCategory] = useState<ProjectCategory | null>(project.category)
+  // 種別 (地籍測量 / 土木工事) は編集モーダルからは変更不可 (作成時に確定 or PC の別導線でのみ)。
+  // 表示だけ最新値を追う。
+  const category = project.category
   const [startedAt, setStartedAt] = useState<string>(isoToDateInput(project.started_at))
   const [completedAt, setCompletedAt] = useState<string>(isoToDateInput(project.completed_at))
 
@@ -68,7 +70,6 @@ export function ProjectEditModal({
     setStartDate(dateStringToInput(project.start_date))
     setEndDate(dateStringToInput(project.end_date))
     setZone(project.coordinate_zone ?? 13)
-    setCategory(project.category)
     setStartedAt(isoToDateInput(project.started_at))
     setCompletedAt(isoToDateInput(project.completed_at))
   }, [
@@ -156,31 +157,20 @@ export function ProjectEditModal({
             />
           </div>
 
-          {/* 種別 */}
+          {/* 種別 (変更不可・表示のみ) */}
           <div>
             <label className="block text-[11px] text-slate-500 mb-1">種別</label>
-            <div className="flex gap-1">
-              {(['cadastral', 'civil'] as const).map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => {
-                    if (category !== c) {
-                      setCategory(c)
-                      onUpdateProject({ category: c })
-                    }
-                  }}
-                  className={`flex-1 px-2 py-1.5 text-xs rounded border ${
-                    category === c
-                      ? c === 'cadastral'
-                        ? 'bg-emerald-600 text-white border-emerald-600'
-                        : 'bg-blue-600 text-white border-blue-600'
-                      : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
-                  }`}
-                >
-                  {PROJECT_CATEGORY_LABEL[c]}
-                </button>
-              ))}
+            <div
+              className={`px-2 py-1.5 text-xs rounded border font-medium ${
+                category === 'cadastral'
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                  : category === 'civil'
+                    ? 'bg-blue-50 text-blue-800 border-blue-200'
+                    : 'bg-amber-50 text-amber-800 border-amber-200'
+              }`}
+              title="種別は作成時に確定します。変更できません。"
+            >
+              {category != null ? PROJECT_CATEGORY_LABEL[category] : '未分類'}
             </div>
           </div>
 
