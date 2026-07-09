@@ -20,6 +20,8 @@ import {
   Edit3,
   Maximize2,
   Minimize2,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
@@ -1519,6 +1521,9 @@ function OverviewSidePanel({
   const [photoBookOpen, setPhotoBookOpen] = useState(false)
   // 写真セクションだけを大きく表示するモード (メモ一覧を折りたたみ、パネルを広げる)
   const [photoMaximized, setPhotoMaximized] = useState(false)
+  // 拡大モードのサムネサイズ (0=最小 ... 3=最大)。cols は minmax(px, 1fr) の px 値
+  const PHOTO_SIZE_STEPS = [90, 130, 180, 240] as const
+  const [photoSizeStep, setPhotoSizeStep] = useState(0)
   if (!open) {
     return (
       <div className="w-9 border-l bg-slate-50 flex flex-col items-center pt-2">
@@ -1599,6 +1604,35 @@ function OverviewSidePanel({
         <div className="px-3 py-1.5 text-[11px] text-slate-500 flex items-center gap-1 bg-slate-50">
           <ImageIcon className="h-3 w-3 text-blue-500" />
           写真 ({photos.length})
+          {photoMaximized && (
+            <div className="ml-2 flex items-center gap-0.5">
+              <button
+                type="button"
+                onClick={() => setPhotoSizeStep((n) => Math.max(0, n - 1))}
+                disabled={photoSizeStep === 0}
+                className="p-0.5 rounded hover:bg-slate-200 text-slate-500 disabled:opacity-30"
+                title="小さく"
+              >
+                <ZoomOut className="h-3.5 w-3.5" />
+              </button>
+              <span className="text-[10px] text-slate-400 tabular-nums w-6 text-center">
+                {photoSizeStep + 1}/{PHOTO_SIZE_STEPS.length}
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  setPhotoSizeStep((n) =>
+                    Math.min(PHOTO_SIZE_STEPS.length - 1, n + 1),
+                  )
+                }
+                disabled={photoSizeStep === PHOTO_SIZE_STEPS.length - 1}
+                className="p-0.5 rounded hover:bg-slate-200 text-slate-500 disabled:opacity-30"
+                title="大きく"
+              >
+                <ZoomIn className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
           <button
             type="button"
             onClick={() => setPhotoMaximized((v) => !v)}
@@ -1641,9 +1675,14 @@ function OverviewSidePanel({
             </div>
           ) : (
             <div
-              className={`grid gap-1.5 ${
-                photoMaximized ? 'grid-cols-3' : 'grid-cols-2'
-              }`}
+              className={photoMaximized ? 'grid gap-1.5' : 'grid gap-1.5 grid-cols-2'}
+              style={
+                photoMaximized
+                  ? {
+                      gridTemplateColumns: `repeat(auto-fill, minmax(${PHOTO_SIZE_STEPS[photoSizeStep]}px, 1fr))`,
+                    }
+                  : undefined
+              }
             >
               {photos.map((p) => (
                 <PanelPhotoThumb
