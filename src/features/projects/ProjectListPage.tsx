@@ -1065,7 +1065,9 @@ export function ProjectListPage() {
           project={
             allProjects.find((p) => p.id === editingProject.id) ?? editingProject
           }
-          onUpdateProject={(patch) => void updateProject(editingProject.id, patch)}
+          onSave={async (patch) => {
+            await updateProject(editingProject.id, patch)
+          }}
           onClose={() => setEditingProject(null)}
           onDelete={async () => {
             const id = editingProject.id

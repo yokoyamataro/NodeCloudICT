@@ -206,7 +206,9 @@ export function ProjectChooserPage() {
       {editProject && (
         <ProjectEditModal
           project={projects.find((p) => p.id === editProject.id) ?? editProject}
-          onUpdateProject={(patch) => void updateProject(editProject.id, patch)}
+          onSave={async (patch) => {
+            await updateProject(editProject.id, patch)
+          }}
           onClose={() => setEditProject(null)}
           onDelete={async () => {
             const id = editProject.id
