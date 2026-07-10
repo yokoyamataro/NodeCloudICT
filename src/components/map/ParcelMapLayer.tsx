@@ -31,6 +31,19 @@ interface Props {
   ) => Promise<void> | void
   /** 取込済の parcel_number (プロパティ側の一致で「既に工区にある」を判定する簡易チェック) */
   importedParcelNumbers?: Set<string>
+  /** 選択中の feature キー集合 (parcelFeatureKey で作る) */
+  selectedKeys?: Set<string>
+  /** 選択トグル (popup の「選択に追加/解除」で呼ぶ) */
+  onToggleSelect?: (feature: Feature<Polygon, ParcelFeatureProperties>) => void
+}
+
+/** feature 個別のユニークキー。parcel_name + 第 1 頂点座標 で構成 */
+export function parcelFeatureKey(
+  f: Feature<Polygon, ParcelFeatureProperties>,
+): string {
+  const first = f.geometry.coordinates[0]?.[0]
+  const label = f.properties.parcel_name || f.properties.parcel_number
+  return `${label}|${first?.[0] ?? ''}|${first?.[1] ?? ''}`
 }
 
 const STYLE_DEFAULT = {
@@ -44,6 +57,12 @@ const STYLE_IMPORTED = {
   weight: 1.2,
   fillColor: '#a7f3d0',
   fillOpacity: 0.35,
+}
+const STYLE_SELECTED = {
+  color: '#2563eb',
+  weight: 1.5,
+  fillColor: '#93c5fd',
+  fillOpacity: 0.4,
 }
 
 /** このズーム以上でラベル表示 */
@@ -82,6 +101,8 @@ export function ParcelMapLayer({
   bbox,
   onImport,
   importedParcelNumbers,
+  selectedKeys,
+  onToggleSelect,
 }: Props) {
   const map = useMap()
   const allFc = useParcelMapDatasetStore((s) => s.activeGeoJson?.data ?? null)
@@ -171,6 +192,7 @@ export function ParcelMapLayer({
       data={filteredFc}
       renderer={renderer}
       importedParcelNumbers={importedParcelNumbers}
+      selectedKeys={selectedKeys}
       onImport={async (feature) => {
         const key = feature.properties.parcel_name || feature.properties.parcel_number
         if (importingRef.current.has(key)) return
@@ -182,6 +204,15 @@ export function ParcelMapLayer({
           map.closePopup()
         }
       }}
+      onToggleSelect={
+        onToggleSelect
+          ? (feature) => {
+              onToggleSelect(feature)
+              // 選択トグル後は Popup を閉じる (色が変わるので再クリックで最新状態)
+              map.closePopup()
+            }
+          : undefined
+      }
     />
   )
 }
@@ -193,11 +224,15 @@ function GeoJsonInner({
   renderer,
   onImport,
   importedParcelNumbers,
+  selectedKeys,
+  onToggleSelect,
 }: {
   data: ParcelFeatureCollection
   renderer: L.Renderer
   onImport: (feature: Feature<Polygon, ParcelFeatureProperties>) => void
   importedParcelNumbers?: Set<string>
+  selectedKeys?: Set<string>
+  onToggleSelect?: (feature: Feature<Polygon, ParcelFeatureProperties>) => void
 }) {
   const map = useMap()
   const layerRef = useRef<L.GeoJSON | null>(null)
@@ -214,6 +249,30 @@ function GeoJsonInner({
     labelsBoundRef.current = false
   }, [data])
 
+  // 選択 / 取込済セットが変わったら明示的に setStyle して再描画する
+  // (<GeoJSON> の style prop は初回のみ評価されるため、選択切替時は手動更新が必要)
+  useEffect(() => {
+    const layerGroup = layerRef.current
+    if (!layerGroup) return
+    layerGroup.setStyle((feature) => {
+      if (!feature) return { renderer, ...STYLE_DEFAULT }
+      const f = feature as Feature<Polygon, ParcelFeatureProperties>
+      const props = f.properties
+      const imported = !!importedParcelNumbers?.has(
+        props.parcel_name || props.parcel_number,
+      )
+      const selected = !!selectedKeys?.has(parcelFeatureKey(f))
+      return {
+        renderer,
+        ...(imported
+          ? STYLE_IMPORTED
+          : selected
+            ? STYLE_SELECTED
+            : STYLE_DEFAULT),
+      }
+    })
+  }, [selectedKeys, importedParcelNumbers, renderer, data])
+
   // ズームレベルが LABEL_MIN_ZOOM 以上に達したら、一度だけ全 layer に tooltip を bind
   useEffect(() => {
     const bindLabelsIfNeeded = () => {
@@ -226,8 +285,9 @@ function GeoJsonInner({
           | Feature<Polygon, ParcelFeatureProperties>
           | undefined
         if (!feature) return
+        // ラベルは 地番 のみ ("10-10" 等)。大字名は含めない
         const text =
-          feature.properties.parcel_name || feature.properties.parcel_number
+          feature.properties.parcel_number || feature.properties.parcel_name
         if (text) {
           ;(layer as L.Layer).bindTooltip(text, {
             permanent: true,
@@ -254,12 +314,16 @@ function GeoJsonInner({
       latlng: L.LatLng,
     ) => {
       const props = feature.properties
+      const label = props.parcel_name || props.parcel_number
+      const featureKey = parcelFeatureKey(feature)
+      const isSelected = !!selectedKeys?.has(featureKey)
+      const isImported = !!importedParcelNumbers?.has(label)
       const container = document.createElement('div')
-      container.style.minWidth = '180px'
+      container.style.minWidth = '200px'
       container.innerHTML = `
         <div style="font-size:12px;line-height:1.4;">
           <div style="font-weight:600;font-size:13px;margin-bottom:4px;">
-            地番 ${escapeHtml(props.parcel_name || props.parcel_number || '(不明)')}
+            地番 ${escapeHtml(label || '(不明)')}
           </div>
           ${
             props.owner_name
@@ -274,22 +338,43 @@ function GeoJsonInner({
           <div style="color:#64748b;font-size:11px;margin-top:2px;">
             第 ${props.source_zone} 系
           </div>
-          <button
-            type="button"
-            data-import-btn="1"
-            style="margin-top:6px;width:100%;padding:6px 8px;border-radius:6px;background:#2563eb;color:white;font-size:12px;font-weight:600;border:none;cursor:pointer;"
-          >
-            この地番を工区に取り込む
-          </button>
+          ${
+            isImported
+              ? `<div style="margin-top:6px;padding:6px 8px;border-radius:6px;background:#d1fae5;color:#065f46;font-size:12px;font-weight:600;text-align:center;">取込済み</div>`
+              : `<div style="display:flex;gap:6px;margin-top:6px;">
+                  <button
+                    type="button"
+                    data-import-btn="1"
+                    style="flex:1;padding:6px 8px;border-radius:6px;background:#2563eb;color:white;font-size:12px;font-weight:600;border:none;cursor:pointer;"
+                  >
+                    取り込む
+                  </button>
+                  ${
+                    onToggleSelect
+                      ? `<button
+                          type="button"
+                          data-select-btn="1"
+                          style="flex:1;padding:6px 8px;border-radius:6px;background:${isSelected ? '#f59e0b' : '#e2e8f0'};color:${isSelected ? 'white' : '#1f2937'};font-size:12px;font-weight:600;border:none;cursor:pointer;"
+                        >
+                          ${isSelected ? '選択を解除' : '選択に追加'}
+                        </button>`
+                      : ''
+                  }
+                </div>`
+          }
         </div>
       `
-      const btn = container.querySelector<HTMLButtonElement>(
+      const importBtn = container.querySelector<HTMLButtonElement>(
         'button[data-import-btn="1"]',
       )
-      btn?.addEventListener('click', () => onImport(feature))
-      L.popup({ maxWidth: 260 }).setLatLng(latlng).setContent(container).openOn(map)
+      importBtn?.addEventListener('click', () => onImport(feature))
+      const selectBtn = container.querySelector<HTMLButtonElement>(
+        'button[data-select-btn="1"]',
+      )
+      selectBtn?.addEventListener('click', () => onToggleSelect?.(feature))
+      L.popup({ maxWidth: 280 }).setLatLng(latlng).setContent(container).openOn(map)
     },
-    [map, onImport],
+    [map, onImport, onToggleSelect, importedParcelNumbers, selectedKeys],
   )
 
   return (
@@ -300,15 +385,25 @@ function GeoJsonInner({
       }}
       data={data}
       style={(feature) => {
-        const props = feature?.properties as ParcelFeatureProperties | undefined
-        const imported =
-          !!props &&
-          !!importedParcelNumbers?.has(
-            props.parcel_name || props.parcel_number,
+        if (!feature) return { renderer, ...STYLE_DEFAULT }
+        const props = feature.properties as ParcelFeatureProperties
+        const imported = !!importedParcelNumbers?.has(
+          props.parcel_name || props.parcel_number,
+        )
+        const selected =
+          !!selectedKeys &&
+          selectedKeys.has(
+            parcelFeatureKey(
+              feature as Feature<Polygon, ParcelFeatureProperties>,
+            ),
           )
         return {
           renderer,
-          ...(imported ? STYLE_IMPORTED : STYLE_DEFAULT),
+          ...(imported
+            ? STYLE_IMPORTED
+            : selected
+              ? STYLE_SELECTED
+              : STYLE_DEFAULT),
         }
       }}
       eventHandlers={{

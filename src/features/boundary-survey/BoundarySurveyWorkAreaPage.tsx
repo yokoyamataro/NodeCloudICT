@@ -3,13 +3,14 @@
 // SIMA インポート: 座標 → design_coordinates (type='boundary'), 画地 → design_work_areas
 // SIMA エクスポート: 現工区の boundary 座標 + boundary_survey 工事区域を出力
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Download,
   Upload,
   Loader2,
   FileSpreadsheet,
   Map as MapIcon,
+  X,
 } from 'lucide-react'
 import { GenericWorkAreaPage } from '@/components/work-area/GenericWorkAreaPage'
 import { CadastralCsvExportModal } from './CadastralCsvExportModal'
@@ -31,7 +32,7 @@ import type { Feature, Polygon } from 'geojson'
 import { supabase } from '@/lib/supabase'
 import type { CoordinateRow } from '@/stores/coordinateStore'
 import type { DesignWorkArea } from '@/types/database'
-import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
+import { ParcelMapLayer, parcelFeatureKey } from '@/components/map/ParcelMapLayer'
 import { expandBbox, ringBbox, type Bbox } from '@/lib/tile-math'
 
 const PARCEL_LAYER_STORAGE_KEY = 'boundary-survey:parcel-map-layer'
@@ -118,23 +119,46 @@ export function BoundarySurveyWorkAreaPage() {
     return s
   }, [parcelsByWorkAreaId, workAreas])
 
-  // 地番クリック → 工区に取込
-  const handleImportParcelFromDataset = async (
-    feature: Feature<Polygon, ParcelFeatureProperties>,
+  // ---- 複数地番の選択状態 ----
+  //   地図上のポリゴンクリック時のポップアップから追加/解除できる。
+  //   ヘッダーの「選択した地番を取り込む」でまとめて取込。
+  const [selectedParcels, setSelectedParcels] = useState<
+    Map<string, Feature<Polygon, ParcelFeatureProperties>>
+  >(new Map())
+  const selectedKeys = useMemo(
+    () => new Set(selectedParcels.keys()),
+    [selectedParcels],
+  )
+  const toggleSelectedParcel = useCallback(
+    (feature: Feature<Polygon, ParcelFeatureProperties>) => {
+      const key = parcelFeatureKey(feature)
+      setSelectedParcels((prev) => {
+        const next = new Map(prev)
+        if (next.has(key)) next.delete(key)
+        else next.set(key, feature)
+        return next
+      })
+    },
+    [],
+  )
+  const clearSelection = () => setSelectedParcels(new Map())
+
+  /**
+   * 複数地番を一括で工区へ取り込む。
+   *   - 座標は type='map_xml'、点番号は XML000001... の連番を採る
+   *   - 既存座標 / バッチ内座標との重複は (x, y) を 0.1mm 精度で判定し統合する
+   *   - 隣接地番で境界点を共有できるので、同じ点は 1 度しか作らない
+   */
+  const handleImportParcelBatch = async (
+    features: Feature<Polygon, ParcelFeatureProperties>[],
   ) => {
     if (!currentFarm) return
-    const props = feature.properties
+    if (features.length === 0) return
 
-    // 上限チェック
-    if (currentCoordCount + props.jprc_coords.length > MAX_COORDS_PER_FARM) {
+    // 上限チェック (地番数)
+    if (currentParcelCount + features.length > MAX_PARCELS_PER_FARM) {
       alert(
-        `座標が上限 (${MAX_COORDS_PER_FARM.toLocaleString()} 点) を超えるため取込できません。`,
-      )
-      return
-    }
-    if (currentParcelCount + 1 > MAX_PARCELS_PER_FARM) {
-      alert(
-        `地番が上限 (${MAX_PARCELS_PER_FARM.toLocaleString()} 筆) に達しているため取込できません。`,
+        `地番数が上限 (${MAX_PARCELS_PER_FARM.toLocaleString()} 筆) を超えるため取込できません。`,
       )
       return
     }
@@ -142,101 +166,223 @@ export function BoundarySurveyWorkAreaPage() {
     setBusy('import')
     setMessage(null)
     try {
-      // 1) 対象工区の座標系に合わせて JPRC 座標を用意。
-      //    ・ソースが同一 zone かつ jprc_coords を保持している (JPGIS 由来) →
-      //      原座標をそのまま使う (最高精度)
-      //    ・それ以外 (異ゾーン、または GeoJSON 直接ソースで jprc_coords 空) →
-      //      WGS84 (GeoJSON 形状) から現ゾーンに再投影する
-      let jprc: Array<[number, number]>
-      if (props.source_zone === zone && props.jprc_coords.length > 0) {
-        jprc = props.jprc_coords
-      } else {
-        const ring = feature.geometry.coordinates[0].slice(0, -1) // 末尾の重複点を除外
-        const conv = new CoordinateConverter(zone)
-        jprc = ring.map(([lng, lat]) => {
-          const { x, y } = conv.toXY(lat, lng)
-          return [x, y]
+      // 1) 各 feature の JPRC 頂点を計算
+      const conv = new CoordinateConverter(zone)
+      const perFeatureJprc: Array<Array<[number, number]>> = features.map(
+        (feature) => {
+          const props = feature.properties
+          if (
+            props.source_zone === zone &&
+            props.jprc_coords.length > 0
+          ) {
+            return props.jprc_coords
+          }
+          const ring = feature.geometry.coordinates[0].slice(0, -1) as Array<
+            [number, number]
+          >
+          return ring.map(([lng, lat]) => {
+            const { x, y } = conv.toXY(lat, lng)
+            return [x, y]
+          })
+        },
+      )
+
+      // 2) 既存座標の (x, y) → id マップを作る
+      const coordKey = (x: number, y: number): string =>
+        `${x.toFixed(4)},${y.toFixed(4)}`
+      const existingIdByKey = new Map<string, string>()
+      for (const c of coordinates) {
+        existingIdByKey.set(coordKey(c.x, c.y), c.id)
+      }
+
+      // 3) 既存の XMLnnnnnn 点番号の最大値を求める
+      let maxSeq = 0
+      for (const c of coordinates) {
+        const m = c.pointNumber.match(/^XML(\d{6})$/)
+        if (m) {
+          const n = parseInt(m[1], 10)
+          if (n > maxSeq) maxSeq = n
+        }
+      }
+
+      // 4) 新規追加すべき頂点をバッチ内で一意化し、順次シーケンスを付与
+      const newVertexOrdered: Array<{
+        x: number
+        y: number
+        pointNumber: string
+      }> = []
+      const newVertexKeySeen = new Set<string>()
+      for (const jprc of perFeatureJprc) {
+        for (const [x, y] of jprc) {
+          const k = coordKey(x, y)
+          if (existingIdByKey.has(k)) continue
+          if (newVertexKeySeen.has(k)) continue
+          newVertexKeySeen.add(k)
+          maxSeq++
+          newVertexOrdered.push({
+            x,
+            y,
+            pointNumber: `XML${maxSeq.toString().padStart(6, '0')}`,
+          })
+        }
+      }
+
+      // 上限チェック (座標数)
+      if (currentCoordCount + newVertexOrdered.length > MAX_COORDS_PER_FARM) {
+        alert(
+          `座標が上限 (${MAX_COORDS_PER_FARM.toLocaleString()} 点) を超えるため取込できません。\n新規追加予定: ${newVertexOrdered.length.toLocaleString()} 点`,
+        )
+        setBusy(null)
+        return
+      }
+
+      // 5) 新規座標を batch INSERT (type='map_xml')
+      let insertedCoords: CoordinateRow[] = []
+      if (newVertexOrdered.length > 0) {
+        const newCoordRows = newVertexOrdered.map((v) => ({
+          pointNumber: v.pointNumber,
+          x: v.x,
+          y: v.y,
+          z: null as number | null,
+          type: 'map_xml' as unknown as CoordinateRow['type'],
+        }))
+        insertedCoords = await importCoordinates(newCoordRows, undefined, {
+          skipStateUpdate: true,
         })
       }
-      if (jprc.length < 3) throw new Error('頂点が 3 未満のため取込できません')
 
-      // 2) 一意な点番号を作る
-      const existingNumbers = new Set(coordinates.map((c) => c.pointNumber))
-      const parcelKey = props.parcel_name || props.parcel_number || 'p'
-      const pointNumbers: string[] = []
-      for (let i = 0; i < jprc.length; i++) {
-        let candidate = `map_${parcelKey}_${i + 1}`
-        let suffix = 1
-        while (existingNumbers.has(candidate)) {
-          suffix++
-          candidate = `map_${parcelKey}_${i + 1}_${suffix}`
-        }
-        existingNumbers.add(candidate)
-        pointNumbers.push(candidate)
+      // 6) (x, y) → 座標 id の統合マップを構築 (既存 + 新規)
+      const idByKey = new Map<string, string>(existingIdByKey)
+      for (const c of insertedCoords) {
+        idByKey.set(coordKey(c.x, c.y), c.id)
       }
 
-      // 3) 座標を境界点として一括登録
-      const newCoords = jprc.map(([x, y], i) => ({
-        pointNumber: pointNumbers[i],
-        x,
-        y,
-        z: null as number | null,
-        type: 'boundary' as unknown as CoordinateRow['type'],
-      }))
-      const insertedCoords = await importCoordinates(newCoords, undefined, {
-        skipStateUpdate: true,
-      })
-
-      // 4) 画地 (design_work_areas) を 1 件 INSERT
-      const label =
-        props.parcel_name || props.parcel_number || `画地${currentParcelCount + 1}`
-      const { data: waData, error: waErr } = await supabase
-        .from('design_work_areas')
-        .insert({
+      // 7) 各 feature を design_work_areas に INSERT する行を生成
+      const insertRows: Array<{
+        farm_id: string
+        work_type: string
+        zone_number: string
+        name: string
+        point_ids: string[]
+        area_sqm: null
+        area_ha: null
+        perimeter_m: null
+        notes: null
+      }> = []
+      const meta: Array<{
+        label: string
+        ownerName: string | null
+        area: number | null
+      }> = []
+      for (let idx = 0; idx < features.length; idx++) {
+        const feature = features[idx]
+        const jprc = perFeatureJprc[idx]
+        const props = feature.properties
+        if (jprc.length < 3) continue
+        const pointIds = jprc
+          .map(([x, y]) => idByKey.get(coordKey(x, y)))
+          .filter((id): id is string => !!id)
+        if (pointIds.length < 3) continue
+        const label =
+          props.parcel_name ||
+          props.parcel_number ||
+          `画地${currentParcelCount + insertRows.length + 1}`
+        insertRows.push({
           farm_id: currentFarm.id,
           work_type: 'boundary_survey',
           zone_number: label,
           name: label,
-          point_ids: insertedCoords.map((c) => c.id),
+          point_ids: pointIds,
           area_sqm: null,
           area_ha: null,
           perimeter_m: null,
           notes: null,
-        } as never)
-        .select('id')
-        .single()
-      if (waErr) throw waErr
-      const workAreaId = (waData as { id: string }).id
+        })
+        meta.push({
+          label,
+          ownerName: props.owner_name,
+          area: props.registered_area_sqm,
+        })
+      }
 
-      // 5) parcels に属性を upsert
-      const { error: pErr } = await supabase.from('parcels').upsert(
-        {
-          work_area_id: workAreaId,
-          parcel_number: label,
-          registered_owner_name: props.owner_name,
-          registered_area_sqm: props.registered_area_sqm,
-        } as never,
-        { onConflict: 'work_area_id' },
-      )
-      if (pErr) console.error('parcels upsert 失敗:', pErr)
+      // 8) チャンク単位で INSERT + 返却 id で parcels 属性を upsert
+      const POLY_CHUNK = 100
+      const parcelUpserts: Array<{
+        work_area_id: string
+        parcel_number: string
+        registered_owner_name: string | null
+        registered_area_sqm: number | null
+      }> = []
+      let createdCount = 0
+      for (let i = 0; i < insertRows.length; i += POLY_CHUNK) {
+        const slice = insertRows.slice(i, i + POLY_CHUNK)
+        const sliceMeta = meta.slice(i, i + POLY_CHUNK)
+        const { data, error } = await supabase
+          .from('design_work_areas')
+          .insert(slice as never)
+          .select('id')
+        if (error) {
+          console.error('design_work_areas INSERT 失敗:', error)
+          continue
+        }
+        const rows = ((data as { id: string }[] | null) ?? [])
+        createdCount += rows.length
+        for (let j = 0; j < rows.length; j++) {
+          const m = sliceMeta[j]
+          if (!m) continue
+          parcelUpserts.push({
+            work_area_id: rows[j].id,
+            parcel_number: m.label,
+            registered_owner_name: m.ownerName,
+            registered_area_sqm: m.area,
+          })
+        }
+      }
 
-      // 6) 再取得
+      if (parcelUpserts.length > 0) {
+        const PARCEL_CHUNK = 200
+        for (let i = 0; i < parcelUpserts.length; i += PARCEL_CHUNK) {
+          const slice = parcelUpserts.slice(i, i + PARCEL_CHUNK)
+          const { error } = await supabase
+            .from('parcels')
+            .upsert(slice as never, { onConflict: 'work_area_id' })
+          if (error) console.error('parcels upsert 失敗:', error)
+        }
+      }
+
+      // 9) キャッシュ無効化 + 再取得
       invalidateCoordCache()
       invalidateWorkAreaCache()
       await fetchWorkAreas(currentFarm.id)
       await fetchCoordinates(currentFarm.id)
-      const areasAfter = useWorkAreaStore.getState().workAreas['boundary_survey'] ?? []
+      const areasAfter =
+        useWorkAreaStore.getState().workAreas['boundary_survey'] ?? []
       await useParcelStore
         .getState()
         .fetchByWorkAreaIds(areasAfter.map((a) => a.id))
 
-      setMessage(`地番「${label}」を取り込みました`)
+      // 10) 選択解除
+      setSelectedParcels(new Map())
+
+      const sharedCount =
+        perFeatureJprc.reduce((sum, jprc) => sum + jprc.length, 0) -
+        newVertexOrdered.length
+      setMessage(
+        `${createdCount} 件の地番を取り込みました (新規座標 ${newVertexOrdered.length.toLocaleString()} 点、共有点 ${sharedCount.toLocaleString()} 点)`,
+      )
     } catch (err) {
       console.error(err)
       setMessage(err instanceof Error ? err.message : '取込に失敗しました')
     } finally {
       setBusy(null)
     }
+  }
+
+  // 地番クリック → 単体で工区に取込 (batch のショートカット)
+  const handleImportParcelFromDataset = async (
+    feature: Feature<Polygon, ParcelFeatureProperties>,
+  ) => {
+    await handleImportParcelBatch([feature])
   }
 
   // 工区あたりの上限。SIMA 取り込みで上限を超える場合は弾く。
@@ -759,6 +905,39 @@ export function BoundarySurveyWorkAreaPage() {
                 地番マップ
               </button>
             )}
+            {/* 選択中の地番数 + まとめて取り込む */}
+            {selectedParcels.size > 0 && (
+              <>
+                <span className="text-xs text-slate-700 px-2 py-1 bg-blue-50 rounded border border-blue-200">
+                  選択中: <b className="font-mono">{selectedParcels.size}</b> 件
+                </span>
+                <button
+                  onClick={() =>
+                    handleImportParcelBatch(
+                      Array.from(selectedParcels.values()),
+                    )
+                  }
+                  disabled={busy !== null || !currentFarm}
+                  className="flex items-center gap-1 px-3 py-1.5 text-sm bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50"
+                  title="選択中の地番をまとめて工区に取り込む"
+                >
+                  {busy === 'import' ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4" />
+                  )}
+                  選択した地番を取り込む
+                </button>
+                <button
+                  onClick={clearSelection}
+                  disabled={busy !== null}
+                  className="flex items-center gap-1 px-2 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
+                  title="選択を全て解除"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </>
+            )}
             <button
               onClick={handleOpenImport}
               disabled={busy !== null || !currentFarm}
@@ -813,6 +992,8 @@ export function BoundarySurveyWorkAreaPage() {
               bbox={effectiveParcelBbox}
               onImport={handleImportParcelFromDataset}
               importedParcelNumbers={importedParcelNumbers}
+              selectedKeys={selectedKeys}
+              onToggleSelect={toggleSelectedParcel}
             />
           ) : null
         }

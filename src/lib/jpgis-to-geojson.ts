@@ -79,12 +79,16 @@ export function jpgisToGeoJson(
       ring.push([first[0], first[1]])
     }
 
+    // parcel_number は「地番」(Kakuchi.Name 例: "67", "1-24") を優先で入れる。
+    // Kakuchi.Number は SIMA 内の連番であり地図表示には不向き。
+    // (GeoJSON 直接インポートと整合させるため)
+    const chibanText = poly.parcelName || poly.parcelNumber
     features.push({
       type: 'Feature',
       geometry: { type: 'Polygon', coordinates: [ring] },
       properties: {
-        parcel_number: poly.parcelNumber,
-        parcel_name: poly.parcelName,
+        parcel_number: chibanText,
+        parcel_name: chibanText,
         owner_name: poly.ownerName,
         registered_area_sqm: poly.registeredAreaSqm,
         jprc_coords: jprc,
