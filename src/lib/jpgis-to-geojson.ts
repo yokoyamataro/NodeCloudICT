@@ -17,6 +17,9 @@ import { CoordinateConverter } from './coordinates'
 export interface ParcelFeatureProperties {
   parcel_number: string
   parcel_name: string
+  /** 所在 (大字名 + 丁目名 等)。GeoJSON 由来なら「字富士」「朝日町一丁目」等が入る。
+   *  JPGIS XML 由来なら null (XML には大字情報が無い)。 */
+  location: string | null
   owner_name: string | null
   registered_area_sqm: number | null
   /** 原 JPRC 座標系での頂点 (x, y) の順序付きリスト。閉じた多角形として polygon
@@ -82,6 +85,7 @@ export function jpgisToGeoJson(
     // parcel_number は「地番」(Kakuchi.Name 例: "67", "1-24") を優先で入れる。
     // Kakuchi.Number は SIMA 内の連番であり地図表示には不向き。
     // (GeoJSON 直接インポートと整合させるため)
+    // XML には大字情報が無いので location は null。
     const chibanText = poly.parcelName || poly.parcelNumber
     features.push({
       type: 'Feature',
@@ -89,6 +93,7 @@ export function jpgisToGeoJson(
       properties: {
         parcel_number: chibanText,
         parcel_name: chibanText,
+        location: null,
         owner_name: poly.ownerName,
         registered_area_sqm: poly.registeredAreaSqm,
         jprc_coords: jprc,
@@ -148,15 +153,25 @@ function extractZone(csText: unknown): number | null {
   return n >= 1 && n <= 19 ? n : null
 }
 
-/** 大字名 + 地番 を「字富士 152-4」の形で組み立てる */
-function buildParcelName(props: GovProps): { number: string; label: string } {
+/** 所在 (大字名 + 丁目名) + 地番 に分解する。
+ *  - number: "10-10" 等
+ *  - location: "朝日町" / "字富士 一丁目" 等 (properties にあれば結合)
+ *  - label:   表示用の "朝日町 10-10" (popup 見出しなどで使う) */
+function buildParcelName(props: GovProps): {
+  number: string
+  location: string | null
+  label: string
+} {
   const chiban = toStringOrNull(props['地番']) ?? ''
   const ooaza = toStringOrNull(props['大字名']) ?? ''
   const chome = toStringOrNull(props['丁目名']) ?? ''
   const idFallback = toStringOrNull(props['ID']) ?? ''
   const number = chiban || idFallback
-  const label = [ooaza, chome, chiban].filter((s) => s.length > 0).join(' ') || number
-  return { number, label }
+  const locationParts = [ooaza, chome].filter((s) => s.length > 0)
+  const location = locationParts.length > 0 ? locationParts.join(' ') : null
+  const label =
+    location != null ? `${location} ${chiban}`.trim() : chiban || number
+  return { number, location, label }
 }
 
 export function normalizeGovParcelGeoJson(
@@ -188,7 +203,7 @@ export function normalizeGovParcelGeoJson(
     if (!Array.isArray(coords) || coords.length === 0) continue
 
     const props: GovProps = f.properties ?? {}
-    const { number, label } = buildParcelName(props)
+    const { number, location, label } = buildParcelName(props)
     const zoneHere = extractZone(props['座標系'])
     if (detectedZone == null && zoneHere != null) detectedZone = zoneHere
 
@@ -209,6 +224,7 @@ export function normalizeGovParcelGeoJson(
       properties: {
         parcel_number: number,
         parcel_name: label,
+        location,
         owner_name: toStringOrNull(props['所有者']),
         registered_area_sqm: toNumberOrNull(props['面積']),
         // GeoJSON 直接ソースは原 JPRC を持たない。取込時は WGS84 から再投影する。

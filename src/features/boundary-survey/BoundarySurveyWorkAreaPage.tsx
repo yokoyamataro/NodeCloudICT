@@ -103,18 +103,22 @@ export function BoundarySurveyWorkAreaPage() {
   const effectiveParcelBbox: Bbox | null =
     (currentFarm?.parcel_map_bbox as Bbox | null | undefined) ?? farmCoordBbox
 
-  // 取込済 parcel_number セット (背景レイヤで色分けに使う)
+  // 取込済セット (背景レイヤで色分けに使う)。
+  // キーは "所在|地番" の複合値。所在の異なる同一地番 (例: 朝日町 10-10 と
+  // 桜町 10-10) を別物として扱う。
   const parcelsByWorkAreaId = useParcelStore((s) => s.byWorkAreaId)
-  const importedParcelNumbers = useMemo(() => {
+  const importedParcelKeys = useMemo(() => {
     const s = new Set<string>()
     for (const p of parcelsByWorkAreaId.values()) {
-      if (p.parcel_number) s.add(p.parcel_number)
+      if (!p.parcel_number) continue
+      s.add(`${p.location ?? ''}|${p.parcel_number}`)
     }
-    // 工区管理側の name/zone_number にも入れておく (parcels 未 upsert のケース)
+    // parcels 未 upsert のケース: 工区一覧の name / zone_number も入れておく
+    // (所在情報は付与できないので "|地番" 形式でフォールバック)
     const areas = workAreas['boundary_survey'] ?? []
     for (const a of areas) {
-      if (a.name) s.add(a.name)
-      if (a.zoneNumber) s.add(a.zoneNumber)
+      if (a.name) s.add(`|${a.name}`)
+      if (a.zoneNumber && a.zoneNumber !== a.name) s.add(`|${a.zoneNumber}`)
     }
     return s
   }, [parcelsByWorkAreaId, workAreas])
@@ -270,7 +274,8 @@ export function BoundarySurveyWorkAreaPage() {
         notes: null
       }> = []
       const meta: Array<{
-        label: string
+        parcelNumber: string
+        location: string | null
         ownerName: string | null
         area: number | null
       }> = []
@@ -283,15 +288,17 @@ export function BoundarySurveyWorkAreaPage() {
           .map(([x, y]) => idByKey.get(coordKey(x, y)))
           .filter((id): id is string => !!id)
         if (pointIds.length < 3) continue
-        const label =
-          props.parcel_name ||
+        // 工区一覧の name / zone_number には「地番」だけを入れる
+        // (所在 = 大字名 は parcels.location へ別で保存)
+        const parcelNumber =
           props.parcel_number ||
+          props.parcel_name ||
           `画地${currentParcelCount + insertRows.length + 1}`
         insertRows.push({
           farm_id: currentFarm.id,
           work_type: 'boundary_survey',
-          zone_number: label,
-          name: label,
+          zone_number: parcelNumber,
+          name: parcelNumber,
           point_ids: pointIds,
           area_sqm: null,
           area_ha: null,
@@ -299,7 +306,8 @@ export function BoundarySurveyWorkAreaPage() {
           notes: null,
         })
         meta.push({
-          label,
+          parcelNumber,
+          location: props.location,
           ownerName: props.owner_name,
           area: props.registered_area_sqm,
         })
@@ -310,6 +318,7 @@ export function BoundarySurveyWorkAreaPage() {
       const parcelUpserts: Array<{
         work_area_id: string
         parcel_number: string
+        location: string | null
         registered_owner_name: string | null
         registered_area_sqm: number | null
       }> = []
@@ -332,7 +341,8 @@ export function BoundarySurveyWorkAreaPage() {
           if (!m) continue
           parcelUpserts.push({
             work_area_id: rows[j].id,
-            parcel_number: m.label,
+            parcel_number: m.parcelNumber,
+            location: m.location,
             registered_owner_name: m.ownerName,
             registered_area_sqm: m.area,
           })
@@ -378,12 +388,6 @@ export function BoundarySurveyWorkAreaPage() {
     }
   }
 
-  // 地番クリック → 単体で工区に取込 (batch のショートカット)
-  const handleImportParcelFromDataset = async (
-    feature: Feature<Polygon, ParcelFeatureProperties>,
-  ) => {
-    await handleImportParcelBatch([feature])
-  }
 
   // 工区あたりの上限。SIMA 取り込みで上限を超える場合は弾く。
   const MAX_COORDS_PER_FARM = 5000
@@ -990,8 +994,7 @@ export function BoundarySurveyWorkAreaPage() {
             <ParcelMapLayer
               visible={showParcelLayer}
               bbox={effectiveParcelBbox}
-              onImport={handleImportParcelFromDataset}
-              importedParcelNumbers={importedParcelNumbers}
+              importedParcelKeys={importedParcelKeys}
               selectedKeys={selectedKeys}
               onToggleSelect={toggleSelectedParcel}
             />
