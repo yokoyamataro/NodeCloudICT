@@ -4,6 +4,7 @@ import type { User, Session } from '@supabase/supabase-js'
 
 interface AuthProfile {
   full_name: string | null
+  organization_id: string | null
 }
 
 interface AuthContextType {
@@ -13,6 +14,10 @@ interface AuthContextType {
   profile: AuthProfile | null
   /** 表示用の名前。profiles.full_name があればそれ、無ければメールアドレス */
   displayName: string
+  /** ログイン中ユーザーが所属する組織名 (無所属 or 取得中は null) */
+  organizationName: string | null
+  /** ログイン中ユーザーが所属組織の管理者 (organizations.admin_user_id) か */
+  isOrgAdmin: boolean
   signIn: (email: string, password: string) => Promise<void>
   signOut: () => Promise<void>
 }
@@ -24,6 +29,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
   const [profile, setProfile] = useState<AuthProfile | null>(null)
+  const [organizationName, setOrganizationName] = useState<string | null>(null)
+  const [isOrgAdmin, setIsOrgAdmin] = useState<boolean>(false)
 
   useEffect(() => {
     // 初期セッション取得
@@ -45,22 +52,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe()
   }, [])
 
-  // ログイン中ユーザーの profile.full_name を取得
+  // ログイン中ユーザーの profile + 所属組織を取得
   useEffect(() => {
     if (!user) {
       setProfile(null)
+      setOrganizationName(null)
+      setIsOrgAdmin(false)
       return
     }
     let cancelled = false
-    supabase
-      .from('profiles')
-      .select('user_id, full_name')
-      .eq('user_id', user.id)
-      .maybeSingle<{ user_id: string; full_name: string | null }>()
-      .then(({ data }) => {
-        if (cancelled) return
-        setProfile({ full_name: data?.full_name ?? null })
-      })
+    ;(async () => {
+      const { data: profileRow } = await supabase
+        .from('profiles')
+        .select('user_id, full_name, organization_id')
+        .eq('user_id', user.id)
+        .maybeSingle<{
+          user_id: string
+          full_name: string | null
+          organization_id: string | null
+        }>()
+      if (cancelled) return
+      const nextProfile: AuthProfile = {
+        full_name: profileRow?.full_name ?? null,
+        organization_id: profileRow?.organization_id ?? null,
+      }
+      setProfile(nextProfile)
+
+      if (!nextProfile.organization_id) {
+        setOrganizationName(null)
+        setIsOrgAdmin(false)
+        return
+      }
+      const { data: orgRow } = await supabase
+        .from('organizations')
+        .select('name, admin_user_id')
+        .eq('id', nextProfile.organization_id)
+        .maybeSingle<{ name: string; admin_user_id: string | null }>()
+      if (cancelled) return
+      setOrganizationName(orgRow?.name ?? null)
+      setIsOrgAdmin(orgRow?.admin_user_id === user.id)
+    })()
     return () => {
       cancelled = true
     }
@@ -82,7 +113,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, profile, displayName, signIn, signOut }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        session,
+        loading,
+        profile,
+        displayName,
+        organizationName,
+        isOrgAdmin,
+        signIn,
+        signOut,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   )

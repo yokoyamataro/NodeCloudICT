@@ -152,7 +152,7 @@ const navigation: NavGroup[] = [
 export function AppLayout() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { user, displayName, signOut } = useAuth()
+  const { user, displayName, organizationName, isOrgAdmin, signOut } = useAuth()
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
     new Set(['暗渠工事']) // デフォルトで暗渠工事を展開
   )
@@ -424,6 +424,22 @@ export function AppLayout() {
 
             <div className="flex items-center gap-2">
               <User className="h-4 w-4 text-slate-400" />
+              {organizationName && (
+                <span
+                  className="text-sm text-slate-300"
+                  title={`所属: ${organizationName}`}
+                >
+                  {organizationName}
+                </span>
+              )}
+              {isOrgAdmin && (
+                <span
+                  className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-amber-500/20 text-amber-300 border border-amber-400/40"
+                  title="この組織の管理者"
+                >
+                  管理者
+                </span>
+              )}
               <span className="text-sm text-slate-300" title={user?.email ?? ''}>{displayName}</span>
             </div>
             <button
