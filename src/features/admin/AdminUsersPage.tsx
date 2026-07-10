@@ -8,7 +8,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { Link, Navigate } from 'react-router-dom'
-import { Loader2, RefreshCw, ArrowLeft, Users, Save } from 'lucide-react'
+import { Loader2, RefreshCw, ArrowLeft, Users, Save, Trash2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdmin } from '@/lib/admin'
@@ -22,6 +22,9 @@ interface RowDraft {
   error: string | null
 }
 
+// 削除処理中の user_id の集合 (行内スピナー用)
+type DeletingSet = Set<string>
+
 export function AdminUsersPage() {
   const { user } = useAuth()
   const [rows, setRows] = useState<AdminUserRow[]>([])
@@ -30,6 +33,7 @@ export function AdminUsersPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
+  const [deleting, setDeleting] = useState<DeletingSet>(new Set())
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
@@ -143,6 +147,56 @@ export function AdminUsersPage() {
     }
   }
 
+  const handleDelete = async (row: AdminUserRow) => {
+    if (row.user_id === user?.id) {
+      alert('自分自身は削除できません')
+      return
+    }
+    const label = row.full_name ? `${row.full_name} (${row.email})` : row.email
+    if (
+      !confirm(
+        `ユーザー「${label}」をアカウントごと完全削除します。\n\n` +
+          '・ログイン不可になります\n' +
+          '・プロフィール / 組織所属 / 共有メンバー登録 も自動的に消えます\n' +
+          '・工事 (現場) を 1 件でも所有していると削除できません\n\n' +
+          'この操作は元に戻せません。よろしいですか?',
+      )
+    ) {
+      return
+    }
+    setDeleting((prev) => {
+      const next = new Set(prev)
+      next.add(row.user_id)
+      return next
+    })
+    setError(null)
+    try {
+      const { data, error: invErr } = await supabase.functions.invoke(
+        'admin-delete-user',
+        { body: { user_id: row.user_id } },
+      )
+      if (invErr) throw invErr
+      const result = data as { ok?: boolean; error?: string }
+      if (!result?.ok) {
+        throw new Error(result?.error ?? '削除に失敗しました')
+      }
+      setRows((prev) => prev.filter((r) => r.user_id !== row.user_id))
+      setDrafts((prev) => {
+        const next = new Map(prev)
+        next.delete(row.user_id)
+        return next
+      })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '削除に失敗しました')
+    } finally {
+      setDeleting((prev) => {
+        const next = new Set(prev)
+        next.delete(row.user_id)
+        return next
+      })
+    }
+  }
+
   if (!isAdmin(user?.email)) {
     return <Navigate to="/" replace />
   }
@@ -225,7 +279,7 @@ export function AdminUsersPage() {
                 <th className="text-left px-3 py-2 w-44">所属組織</th>
                 <th className="text-left px-3 py-2 w-36">最終ログイン</th>
                 <th className="text-left px-3 py-2 w-32">登録日</th>
-                <th className="text-left px-3 py-2 w-24"></th>
+                <th className="text-left px-3 py-2 w-36"></th>
               </tr>
             </thead>
             <tbody>
@@ -274,22 +328,38 @@ export function AdminUsersPage() {
                       {new Date(r.created_at).toLocaleString('ja-JP')}
                     </td>
                     <td className="px-3 py-2 align-top">
-                      <button
-                        onClick={() => handleSave(r.user_id)}
-                        disabled={!d.dirty || d.saving}
-                        className={`flex items-center gap-1 px-2 py-1 text-xs rounded ${
-                          d.dirty
-                            ? 'bg-blue-600 text-white hover:bg-blue-700'
-                            : 'bg-slate-200 text-slate-500 cursor-not-allowed'
-                        } disabled:opacity-50`}
-                      >
-                        {d.saving ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <Save className="h-3 w-3" />
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleSave(r.user_id)}
+                          disabled={!d.dirty || d.saving}
+                          className={`flex items-center gap-1 px-2 py-1 text-xs rounded ${
+                            d.dirty
+                              ? 'bg-blue-600 text-white hover:bg-blue-700'
+                              : 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                          } disabled:opacity-50`}
+                        >
+                          {d.saving ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Save className="h-3 w-3" />
+                          )}
+                          保存
+                        </button>
+                        {r.user_id !== user?.id && (
+                          <button
+                            onClick={() => handleDelete(r)}
+                            disabled={deleting.has(r.user_id)}
+                            className="p-1 text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
+                            title="このユーザーをアカウントごと削除"
+                          >
+                            {deleting.has(r.user_id) ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3.5 w-3.5" />
+                            )}
+                          </button>
                         )}
-                        保存
-                      </button>
+                      </div>
                       {d.error && (
                         <div className="mt-1 text-[10px] text-red-600">{d.error}</div>
                       )}
