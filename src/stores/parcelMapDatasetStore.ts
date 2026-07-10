@@ -18,6 +18,7 @@ import type { ParcelMapDataset } from '@/types/database'
 import { loadJpgisXmlFile } from '@/lib/jpgis-parser'
 import {
   jpgisToGeoJson,
+  normalizeGovParcelGeoJson,
   type ParcelFeatureProperties,
 } from '@/lib/jpgis-to-geojson'
 
@@ -137,34 +138,83 @@ export const useParcelMapDatasetStore = create<State>((set, get) => ({
   uploadDataset: async ({ file, name, description, zone }) => {
     set({ error: null })
     try {
-      // 1) クライアント側でパース + GeoJSON 変換
-      const parsed = await loadJpgisXmlFile(file)
-      const conv = jpgisToGeoJson(parsed, zone)
+      // 拡張子 (フォールバックで MIME) から XML か GeoJSON かを判定
+      const lowerName = file.name.toLowerCase()
+      const isGeoJson =
+        /\.(geo)?json$/i.test(file.name) ||
+        file.type === 'application/geo+json' ||
+        file.type === 'application/json'
+      const isXml =
+        lowerName.endsWith('.xml') ||
+        file.type === 'application/xml' ||
+        file.type === 'text/xml'
+      if (!isGeoJson && !isXml) {
+        throw new Error(
+          'ファイル形式を判定できません。.xml もしくは .geojson を指定してください',
+        )
+      }
+
+      // 1) クライアント側で変換 or パース
+      let featureCollection
+      let bbox: ParcelMapDataset['bbox'] = null
+      let parcelCount = 0
+      let sourceKind: 'jpgis_xml' | 'geojson'
+      let effectiveZone = zone
+      if (isGeoJson) {
+        const raw = JSON.parse(await file.text())
+        const norm = normalizeGovParcelGeoJson(raw)
+        featureCollection = norm.featureCollection
+        bbox = norm.bbox
+        parcelCount = norm.parcelCount
+        sourceKind = 'geojson'
+        // properties の「座標系」から系番号を検出できた場合はそちらを優先
+        if (norm.detectedZone != null) effectiveZone = norm.detectedZone
+        // ソース由来 zone が拾えたら feature の source_zone を上書き (取込時の
+        // 「同一 zone なら jprc をそのまま」判定に効くよう合わせる。ただし
+        // jprc_coords は空なので実質は再投影パス)
+        for (const f of featureCollection.features) {
+          if (f.properties.source_zone === 0) f.properties.source_zone = effectiveZone
+        }
+      } else {
+        const parsed = await loadJpgisXmlFile(file)
+        const conv = jpgisToGeoJson(parsed, zone)
+        featureCollection = conv.featureCollection
+        bbox = conv.bbox
+        parcelCount = conv.parcelCount
+        sourceKind = 'jpgis_xml'
+      }
 
       // 2) dataset id を先に確保
       const datasetId =
         crypto.randomUUID?.() ??
         `${Date.now()}-${Math.random().toString(36).slice(2)}`
-      const xmlPath = `${datasetId}/source.xml`
+      const xmlPath = isXml ? `${datasetId}/source.xml` : null
       const geoJsonPath = `${datasetId}/parcels.geojson`
 
-      // 3) Storage に並行アップロード
-      const geoJsonBlob = new Blob(
-        [JSON.stringify(conv.featureCollection)],
-        { type: 'application/geo+json' },
-      )
-      const [xmlRes, jsonRes] = await Promise.all([
-        supabase.storage.from(BUCKET).upload(xmlPath, file, {
-          contentType: 'application/xml',
-          upsert: false,
-        }),
-        supabase.storage.from(BUCKET).upload(geoJsonPath, geoJsonBlob, {
-          contentType: 'application/geo+json',
-          upsert: false,
-        }),
-      ])
-      if (xmlRes.error) throw xmlRes.error
-      if (jsonRes.error) throw jsonRes.error
+      // 3) Storage にアップロード。GeoJSON 側は正規化したものを、XML 側は原本をそのまま。
+      const geoJsonBlob = new Blob([JSON.stringify(featureCollection)], {
+        type: 'application/geo+json',
+      })
+      const uploadOps: Promise<{ error: unknown }>[] = [
+        supabase.storage
+          .from(BUCKET)
+          .upload(geoJsonPath, geoJsonBlob, {
+            contentType: 'application/geo+json',
+            upsert: false,
+          }) as unknown as Promise<{ error: unknown }>,
+      ]
+      if (xmlPath) {
+        uploadOps.push(
+          supabase.storage.from(BUCKET).upload(xmlPath, file, {
+            contentType: 'application/xml',
+            upsert: false,
+          }) as unknown as Promise<{ error: unknown }>,
+        )
+      }
+      const results = await Promise.all(uploadOps)
+      for (const r of results) {
+        if (r.error) throw r.error
+      }
 
       // 4) メタデータ INSERT
       const { data: userData } = await supabase.auth.getUser()
@@ -172,13 +222,13 @@ export const useParcelMapDatasetStore = create<State>((set, get) => ({
         id: datasetId,
         name,
         description,
-        coordinate_zone: zone,
-        source_kind: 'jpgis_xml',
+        coordinate_zone: effectiveZone,
+        source_kind: sourceKind,
         storage_xml_path: xmlPath,
         storage_geojson_path: geoJsonPath,
         tile_format: 'geojson',
-        bbox: conv.bbox,
-        parcel_count: conv.parcelCount,
+        bbox,
+        parcel_count: parcelCount,
         active: false,
         uploaded_by_user_id: userData.user?.id ?? null,
       }
@@ -189,7 +239,9 @@ export const useParcelMapDatasetStore = create<State>((set, get) => ({
         .single()
       if (error) {
         // Storage のオーファンを掃除
-        await supabase.storage.from(BUCKET).remove([xmlPath, geoJsonPath]).catch(() => {})
+        const paths = [geoJsonPath]
+        if (xmlPath) paths.push(xmlPath)
+        await supabase.storage.from(BUCKET).remove(paths).catch(() => {})
         throw error
       }
       const created = data as ParcelMapDataset
@@ -248,9 +300,12 @@ export const useParcelMapDatasetStore = create<State>((set, get) => ({
     try {
       // Storage のオブジェクトを消してからメタ行を削除
       if (target) {
-        const paths = [target.storage_xml_path]
+        const paths: string[] = []
+        if (target.storage_xml_path) paths.push(target.storage_xml_path)
         if (target.storage_geojson_path) paths.push(target.storage_geojson_path)
-        await supabase.storage.from(BUCKET).remove(paths).catch(() => {})
+        if (paths.length > 0) {
+          await supabase.storage.from(BUCKET).remove(paths).catch(() => {})
+        }
       }
       const { error } = await supabase
         .from('parcel_map_datasets')

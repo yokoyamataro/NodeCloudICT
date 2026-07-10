@@ -272,13 +272,16 @@ export type ProjectMemberRole = 'owner' | 'editor' | 'viewer'
 // アップロードしたもの。境界測量モードの背景レイヤとして全ユーザーに提供する。
 export type TileFormat = 'geojson' | 'pmtiles'
 
+export type ParcelMapSourceKind = 'jpgis_xml' | 'geojson'
+
 export interface ParcelMapDataset {
   id: string
   name: string
   description: string | null
   coordinate_zone: number
-  source_kind: 'jpgis_xml'
-  storage_xml_path: string
+  source_kind: ParcelMapSourceKind
+  /** 元 XML のパス。GeoJSON 直接アップロードの場合は null (元ファイル = geojson 側) */
+  storage_xml_path: string | null
   storage_geojson_path: string | null
   tile_format: TileFormat
   bbox: { minLng: number; minLat: number; maxLng: number; maxLat: number } | null

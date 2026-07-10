@@ -123,12 +123,15 @@ export function BoundarySurveyWorkAreaPage() {
     setBusy('import')
     setMessage(null)
     try {
-      // 1) 対象工区の座標系に合わせて JPRC 座標を用意
+      // 1) 対象工区の座標系に合わせて JPRC 座標を用意。
+      //    ・ソースが同一 zone かつ jprc_coords を保持している (JPGIS 由来) →
+      //      原座標をそのまま使う (最高精度)
+      //    ・それ以外 (異ゾーン、または GeoJSON 直接ソースで jprc_coords 空) →
+      //      WGS84 (GeoJSON 形状) から現ゾーンに再投影する
       let jprc: Array<[number, number]>
-      if (props.source_zone === zone) {
+      if (props.source_zone === zone && props.jprc_coords.length > 0) {
         jprc = props.jprc_coords
       } else {
-        // 異ゾーン: WGS84 (GeoJSON) → 現ゾーンに再投影
         const ring = feature.geometry.coordinates[0].slice(0, -1) // 末尾の重複点を除外
         const conv = new CoordinateConverter(zone)
         jprc = ring.map(([lng, lat]) => {

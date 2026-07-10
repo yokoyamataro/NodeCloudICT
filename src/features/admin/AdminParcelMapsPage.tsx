@@ -181,14 +181,18 @@ export function AdminParcelMapsPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="text-xs sm:col-span-2">
               <span className="block text-slate-600 mb-0.5">
-                JPGIS/JSIMA XML ファイル *
+                JPGIS/JSIMA XML または GeoJSON ファイル *
               </span>
               <input
                 type="file"
-                accept=".xml,.XML,application/xml,text/xml"
+                accept=".xml,.XML,.geojson,.json,application/xml,text/xml,application/geo+json,application/json"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                 className="block w-full text-xs"
               />
+              <span className="block mt-0.5 text-[10px] text-slate-500">
+                G 空間情報センターの 法務省登記所備付地図データ (WGS84 GeoJSON) を
+                そのままアップロードできます。属性の「座標系」から系番号は自動検出します。
+              </span>
             </label>
             <label className="text-xs">
               <span className="block text-slate-600 mb-0.5">データセット名 *</span>
@@ -278,7 +282,7 @@ export function AdminParcelMapsPage() {
                 <th className="text-left px-3 py-2">名称</th>
                 <th className="text-left px-3 py-2 w-24">系</th>
                 <th className="text-left px-3 py-2 w-24">地番数</th>
-                <th className="text-left px-3 py-2 w-32">形式</th>
+                <th className="text-left px-3 py-2 w-24">元形式</th>
                 <th className="text-left px-3 py-2 w-32">登録日</th>
                 <th className="text-left px-3 py-2 w-36">状態</th>
                 <th className="text-left px-3 py-2 w-20"></th>
@@ -305,7 +309,7 @@ export function AdminParcelMapsPage() {
                     {d.parcel_count?.toLocaleString() ?? '-'}
                   </td>
                   <td className="px-3 py-2 align-top text-xs">
-                    {d.tile_format === 'geojson' ? 'GeoJSON' : 'PMTiles'}
+                    {d.source_kind === 'geojson' ? 'GeoJSON' : 'JPGIS'}
                   </td>
                   <td className="px-3 py-2 align-top text-xs text-slate-500">
                     {new Date(d.created_at).toLocaleDateString('ja-JP')}
