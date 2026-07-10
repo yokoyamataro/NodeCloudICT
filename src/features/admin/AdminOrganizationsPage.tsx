@@ -7,6 +7,9 @@
 //
 // ユーザー数 / プランは現時点で他の挙動に影響を与えない管理データ。
 //
+// レイアウト:
+//   1 組織 = 1 行の表形式。フィールドが多いので固定幅 + 横スクロール。
+//
 // RLS:
 //   SELECT は全認証ユーザー可、INSERT/UPDATE/DELETE は is_site_owner() のみ。
 
@@ -20,6 +23,7 @@ import {
   Plus,
   Save,
   Trash2,
+  X,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
@@ -307,47 +311,30 @@ export function AdminOrganizationsPage() {
       )}
 
       {showNewForm && (
-        <div className="px-4 py-3 bg-blue-50 border-b border-blue-200">
+        <div className="px-4 py-3 bg-blue-50 border-b border-blue-200 overflow-x-auto">
           <div className="text-xs font-semibold text-slate-700 mb-2">新規組織</div>
-          <OrgFields
+          <NewOrgRow
             draft={newDraft}
             userOptions={userOptions}
             onChange={(patch) =>
               setNewDraft((prev) => ({ ...prev, ...patch, dirty: true }))
             }
+            onCancel={() => {
+              setShowNewForm(false)
+              setNewDraft({
+                ...EMPTY_DRAFT,
+                dirty: false,
+                saving: false,
+                error: null,
+              })
+            }}
+            onCreate={handleCreate}
+            creating={creating}
           />
-          <div className="mt-2 flex justify-end gap-2">
-            <button
-              onClick={() => {
-                setShowNewForm(false)
-                setNewDraft({
-                  ...EMPTY_DRAFT,
-                  dirty: false,
-                  saving: false,
-                  error: null,
-                })
-              }}
-              className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
-            >
-              キャンセル
-            </button>
-            <button
-              onClick={handleCreate}
-              disabled={creating || !newDraft.name.trim()}
-              className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-            >
-              {creating ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Plus className="h-3.5 w-3.5" />
-              )}
-              作成
-            </button>
-          </div>
         </div>
       )}
 
-      <div className="flex-1 overflow-auto p-4 space-y-3">
+      <div className="flex-1 overflow-auto">
         {loading && orgs.length === 0 ? (
           <div className="h-full flex items-center justify-center text-slate-500 text-sm">
             <Loader2 className="h-5 w-5 animate-spin mr-2" />
@@ -358,162 +345,285 @@ export function AdminOrganizationsPage() {
             組織がまだありません。右上の「新規組織」から追加してください。
           </div>
         ) : (
-          orgs.map((o) => {
-            const d = drafts.get(o.id)
-            if (!d) return null
-            return (
-              <div
-                key={o.id}
-                className="bg-white border rounded-lg shadow-sm p-3 space-y-2"
-              >
-                <div className="flex items-center gap-2">
-                  <Building2 className="h-4 w-4 text-slate-400 shrink-0" />
-                  <span className="text-[10px] text-slate-400 font-mono truncate">
-                    {o.id}
-                  </span>
-                  <span className="ml-auto text-[11px] text-slate-500">
-                    登録: {new Date(o.created_at).toLocaleDateString('ja-JP')}
-                  </span>
-                </div>
-                <OrgFields
-                  draft={d}
-                  userOptions={userOptions}
-                  onChange={(patch) => updateDraft(o.id, patch)}
-                />
-                <div className="flex items-center gap-2 pt-1">
-                  <button
-                    onClick={() => handleSave(o.id)}
-                    disabled={!d.dirty || d.saving}
-                    className={`flex items-center gap-1 px-3 py-1.5 text-xs rounded ${
-                      d.dirty
-                        ? 'bg-blue-600 text-white hover:bg-blue-700'
-                        : 'bg-slate-200 text-slate-500 cursor-not-allowed'
-                    } disabled:opacity-50`}
-                  >
-                    {d.saving ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <Save className="h-3 w-3" />
-                    )}
-                    保存
-                  </button>
-                  <button
-                    onClick={() => handleDelete(o.id)}
-                    className="flex items-center gap-1 px-2 py-1.5 text-xs text-red-600 hover:bg-red-50 rounded"
-                    title="削除"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    削除
-                  </button>
-                  {d.error && (
-                    <div className="text-[11px] text-red-600">{d.error}</div>
-                  )}
-                </div>
-              </div>
-            )
-          })
+          <table className="text-sm border-separate border-spacing-0 min-w-max">
+            <thead className="bg-slate-100 text-slate-600 text-xs sticky top-0 z-10">
+              <tr>
+                <Th w="w-52">組織名 *</Th>
+                <Th w="w-32">代表者</Th>
+                <Th w="w-36">電話番号</Th>
+                <Th w="w-64">住所</Th>
+                <Th w="w-52">管理者</Th>
+                <Th w="w-28">プラン</Th>
+                <Th w="w-20">ユーザー数</Th>
+                <Th w="w-52">メモ</Th>
+                <Th w="w-28">登録日</Th>
+                <Th w="w-28">操作</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {orgs.map((o) => {
+                const d = drafts.get(o.id)
+                if (!d) return null
+                return (
+                  <tr key={o.id} className="border-b hover:bg-slate-50/50">
+                    <Td>
+                      <input
+                        type="text"
+                        value={d.name}
+                        onChange={(e) => updateDraft(o.id, { name: e.target.value })}
+                        className="w-full px-2 py-1 text-sm border rounded font-medium"
+                      />
+                    </Td>
+                    <Td>
+                      <input
+                        type="text"
+                        value={d.representative}
+                        onChange={(e) =>
+                          updateDraft(o.id, { representative: e.target.value })
+                        }
+                        className="w-full px-2 py-1 text-sm border rounded"
+                      />
+                    </Td>
+                    <Td>
+                      <input
+                        type="tel"
+                        value={d.phone}
+                        onChange={(e) => updateDraft(o.id, { phone: e.target.value })}
+                        className="w-full px-2 py-1 text-sm border rounded"
+                      />
+                    </Td>
+                    <Td>
+                      <input
+                        type="text"
+                        value={d.address}
+                        onChange={(e) => updateDraft(o.id, { address: e.target.value })}
+                        className="w-full px-2 py-1 text-sm border rounded"
+                      />
+                    </Td>
+                    <Td>
+                      <select
+                        value={d.admin_user_id}
+                        onChange={(e) =>
+                          updateDraft(o.id, { admin_user_id: e.target.value })
+                        }
+                        className="w-full px-2 py-1 text-sm border rounded bg-white"
+                      >
+                        <option value="">（未設定）</option>
+                        {userOptions.map((u) => (
+                          <option key={u.user_id} value={u.user_id}>
+                            {u.full_name ? `${u.full_name} (${u.email})` : u.email}
+                          </option>
+                        ))}
+                      </select>
+                    </Td>
+                    <Td>
+                      <input
+                        type="text"
+                        value={d.plan}
+                        onChange={(e) => updateDraft(o.id, { plan: e.target.value })}
+                        placeholder="任意"
+                        className="w-full px-2 py-1 text-sm border rounded"
+                      />
+                    </Td>
+                    <Td>
+                      <input
+                        type="number"
+                        min={0}
+                        value={d.user_count_limit}
+                        onChange={(e) =>
+                          updateDraft(o.id, { user_count_limit: e.target.value })
+                        }
+                        placeholder="任意"
+                        className="w-full px-2 py-1 text-sm border rounded text-right"
+                      />
+                    </Td>
+                    <Td>
+                      <input
+                        type="text"
+                        value={d.note}
+                        onChange={(e) => updateDraft(o.id, { note: e.target.value })}
+                        placeholder="（メモなし）"
+                        className="w-full px-2 py-1 text-sm border rounded"
+                      />
+                    </Td>
+                    <Td>
+                      <div className="text-xs text-slate-500">
+                        {new Date(o.created_at).toLocaleDateString('ja-JP')}
+                      </div>
+                    </Td>
+                    <Td>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleSave(o.id)}
+                          disabled={!d.dirty || d.saving}
+                          className={`flex items-center gap-1 px-2 py-1 text-xs rounded ${
+                            d.dirty
+                              ? 'bg-blue-600 text-white hover:bg-blue-700'
+                              : 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                          } disabled:opacity-50`}
+                        >
+                          {d.saving ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Save className="h-3 w-3" />
+                          )}
+                          保存
+                        </button>
+                        <button
+                          onClick={() => handleDelete(o.id)}
+                          className="p-1 text-red-600 hover:bg-red-50 rounded"
+                          title="削除"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      {d.error && (
+                        <div className="mt-1 text-[10px] text-red-600">{d.error}</div>
+                      )}
+                    </Td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         )}
       </div>
     </div>
   )
 }
 
-function OrgFields({
+function Th({ children, w }: { children: React.ReactNode; w?: string }) {
+  return (
+    <th className={`text-left px-2 py-2 border-b bg-slate-100 ${w ?? ''}`}>{children}</th>
+  )
+}
+
+function Td({ children }: { children: React.ReactNode }) {
+  return <td className="px-2 py-1.5 align-top">{children}</td>
+}
+
+function NewOrgRow({
   draft,
   userOptions,
   onChange,
+  onCancel,
+  onCreate,
+  creating,
 }: {
   draft: Draft
   userOptions: AdminUserRow[]
   onChange: (patch: Partial<Draft>) => void
+  onCancel: () => void
+  onCreate: () => void
+  creating: boolean
 }) {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1.5">
-      <Field label="組織名 *">
-        <input
-          type="text"
-          value={draft.name}
-          onChange={(e) => onChange({ name: e.target.value })}
-          className="w-full px-2 py-1 text-sm border rounded"
-        />
-      </Field>
-      <Field label="代表者">
-        <input
-          type="text"
-          value={draft.representative}
-          onChange={(e) => onChange({ representative: e.target.value })}
-          className="w-full px-2 py-1 text-sm border rounded"
-        />
-      </Field>
-      <Field label="電話番号">
-        <input
-          type="tel"
-          value={draft.phone}
-          onChange={(e) => onChange({ phone: e.target.value })}
-          className="w-full px-2 py-1 text-sm border rounded"
-        />
-      </Field>
-      <Field label="住所">
-        <input
-          type="text"
-          value={draft.address}
-          onChange={(e) => onChange({ address: e.target.value })}
-          className="w-full px-2 py-1 text-sm border rounded"
-        />
-      </Field>
-      <Field label="管理者">
-        <select
-          value={draft.admin_user_id}
-          onChange={(e) => onChange({ admin_user_id: e.target.value })}
-          className="w-full px-2 py-1 text-sm border rounded bg-white"
+    <div className="min-w-max flex items-start gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-x-3 gap-y-1.5 flex-1">
+        <label className="text-xs">
+          <span className="block text-slate-600 mb-0.5">組織名 *</span>
+          <input
+            type="text"
+            value={draft.name}
+            onChange={(e) => onChange({ name: e.target.value })}
+            autoFocus
+            className="w-full px-2 py-1 border rounded"
+          />
+        </label>
+        <label className="text-xs">
+          <span className="block text-slate-600 mb-0.5">代表者</span>
+          <input
+            type="text"
+            value={draft.representative}
+            onChange={(e) => onChange({ representative: e.target.value })}
+            className="w-full px-2 py-1 border rounded"
+          />
+        </label>
+        <label className="text-xs">
+          <span className="block text-slate-600 mb-0.5">電話番号</span>
+          <input
+            type="tel"
+            value={draft.phone}
+            onChange={(e) => onChange({ phone: e.target.value })}
+            className="w-full px-2 py-1 border rounded"
+          />
+        </label>
+        <label className="text-xs">
+          <span className="block text-slate-600 mb-0.5">住所</span>
+          <input
+            type="text"
+            value={draft.address}
+            onChange={(e) => onChange({ address: e.target.value })}
+            className="w-full px-2 py-1 border rounded"
+          />
+        </label>
+        <label className="text-xs">
+          <span className="block text-slate-600 mb-0.5">管理者</span>
+          <select
+            value={draft.admin_user_id}
+            onChange={(e) => onChange({ admin_user_id: e.target.value })}
+            className="w-full px-2 py-1 border rounded bg-white"
+          >
+            <option value="">（未設定）</option>
+            {userOptions.map((u) => (
+              <option key={u.user_id} value={u.user_id}>
+                {u.full_name ? `${u.full_name} (${u.email})` : u.email}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs">
+          <span className="block text-slate-600 mb-0.5">プラン</span>
+          <input
+            type="text"
+            value={draft.plan}
+            onChange={(e) => onChange({ plan: e.target.value })}
+            placeholder="任意"
+            className="w-full px-2 py-1 border rounded"
+          />
+        </label>
+        <label className="text-xs">
+          <span className="block text-slate-600 mb-0.5">ユーザー数</span>
+          <input
+            type="number"
+            min={0}
+            value={draft.user_count_limit}
+            onChange={(e) => onChange({ user_count_limit: e.target.value })}
+            placeholder="任意"
+            className="w-full px-2 py-1 border rounded text-right"
+          />
+        </label>
+        <label className="text-xs">
+          <span className="block text-slate-600 mb-0.5">メモ</span>
+          <input
+            type="text"
+            value={draft.note}
+            onChange={(e) => onChange({ note: e.target.value })}
+            className="w-full px-2 py-1 border rounded"
+          />
+        </label>
+      </div>
+      <div className="shrink-0 flex flex-col gap-1 mt-4">
+        <button
+          onClick={onCreate}
+          disabled={creating || !draft.name.trim()}
+          className="flex items-center justify-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
         >
-          <option value="">（未設定）</option>
-          {userOptions.map((u) => (
-            <option key={u.user_id} value={u.user_id}>
-              {u.full_name ? `${u.full_name} (${u.email})` : u.email}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <Field label="プラン">
-        <input
-          type="text"
-          value={draft.plan}
-          onChange={(e) => onChange({ plan: e.target.value })}
-          placeholder="任意 (例: ベーシック)"
-          className="w-full px-2 py-1 text-sm border rounded"
-        />
-      </Field>
-      <Field label="ユーザー数">
-        <input
-          type="number"
-          min={0}
-          value={draft.user_count_limit}
-          onChange={(e) => onChange({ user_count_limit: e.target.value })}
-          placeholder="任意"
-          className="w-full px-2 py-1 text-sm border rounded"
-        />
-      </Field>
-      <Field label="メモ">
-        <input
-          type="text"
-          value={draft.note}
-          onChange={(e) => onChange({ note: e.target.value })}
-          className="w-full px-2 py-1 text-sm border rounded"
-        />
-      </Field>
+          {creating ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Plus className="h-3.5 w-3.5" />
+          )}
+          作成
+        </button>
+        <button
+          onClick={onCancel}
+          className="flex items-center justify-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
+        >
+          <X className="h-3.5 w-3.5" />
+          閉じる
+        </button>
+      </div>
     </div>
   )
 }
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="flex items-center gap-2">
-      <span className="text-[11px] text-slate-500 shrink-0 w-16 text-right">
-        {label}
-      </span>
-      <span className="flex-1 min-w-0">{children}</span>
-    </label>
-  )
-}
-
