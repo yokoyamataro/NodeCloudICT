@@ -32,6 +32,7 @@ import type { Organization, AdminUserRow } from '@/types/database'
 
 interface Draft {
   name: string
+  postal_code: string
   phone: string
   address: string
   representative: string
@@ -46,6 +47,7 @@ interface Draft {
 
 const EMPTY_DRAFT: Omit<Draft, 'dirty' | 'saving' | 'error'> = {
   name: '',
+  postal_code: '',
   phone: '',
   address: '',
   representative: '',
@@ -58,6 +60,7 @@ const EMPTY_DRAFT: Omit<Draft, 'dirty' | 'saving' | 'error'> = {
 function toDraft(o: Organization): Draft {
   return {
     name: o.name,
+    postal_code: o.postal_code ?? '',
     phone: o.phone ?? '',
     address: o.address ?? '',
     representative: o.representative ?? '',
@@ -73,6 +76,7 @@ function toDraft(o: Organization): Draft {
 
 function toPayload(d: Draft): {
   name: string
+  postal_code: string | null
   phone: string | null
   address: string | null
   representative: string | null
@@ -91,6 +95,7 @@ function toPayload(d: Draft): {
   }
   return {
     name: d.name.trim(),
+    postal_code: d.postal_code.trim() || null,
     phone: d.phone.trim() || null,
     address: d.address.trim() || null,
     representative: d.representative.trim() || null,
@@ -350,8 +355,10 @@ export function AdminOrganizationsPage() {
                 <Th w="w-52">組織名 *</Th>
                 <Th w="w-32">代表者</Th>
                 <Th w="w-36">電話番号</Th>
+                <Th w="w-28">郵便番号</Th>
                 <Th w="w-64">住所</Th>
                 <Th w="w-52">管理者</Th>
+                <Th w="w-56">所属メンバー</Th>
                 <Th w="w-28">プラン</Th>
                 <Th w="w-20">ユーザー数</Th>
                 <Th w="w-52">メモ</Th>
@@ -394,6 +401,17 @@ export function AdminOrganizationsPage() {
                     <Td>
                       <input
                         type="text"
+                        value={d.postal_code}
+                        onChange={(e) =>
+                          updateDraft(o.id, { postal_code: e.target.value })
+                        }
+                        placeholder="例: 999-0000"
+                        className="w-full px-2 py-1 text-sm border rounded"
+                      />
+                    </Td>
+                    <Td>
+                      <input
+                        type="text"
                         value={d.address}
                         onChange={(e) => updateDraft(o.id, { address: e.target.value })}
                         className="w-full px-2 py-1 text-sm border rounded"
@@ -405,6 +423,15 @@ export function AdminOrganizationsPage() {
                         onChange={(v) => updateDraft(o.id, { admin_user_id: v })}
                         members={userOptions.filter(
                           (u) => u.organization_id === o.id,
+                        )}
+                      />
+                    </Td>
+                    <Td>
+                      <MemberList
+                        members={userOptions.filter(
+                          (u) =>
+                            u.organization_id === o.id &&
+                            u.user_id !== d.admin_user_id,
                         )}
                       />
                     </Td>
@@ -494,6 +521,28 @@ function Td({ children }: { children: React.ReactNode }) {
   return <td className="px-2 py-1.5 align-top">{children}</td>
 }
 
+// 組織の所属メンバー (管理者を除いた残り) を chip 状に一覧表示する。
+function MemberList({ members }: { members: AdminUserRow[] }) {
+  if (members.length === 0) {
+    return (
+      <span className="text-[11px] text-slate-400">（他のメンバーなし）</span>
+    )
+  }
+  return (
+    <div className="flex flex-wrap gap-1">
+      {members.map((u) => (
+        <span
+          key={u.user_id}
+          className="inline-block px-1.5 py-0.5 text-[11px] rounded bg-slate-100 border border-slate-200 text-slate-700"
+          title={u.email}
+        >
+          {u.full_name || u.email}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 // 管理者プルダウン。選択肢は「その組織に所属するユーザー」に限定される。
 // members が空の時は「所属メンバーがいません」を表示して選択を促さない。
 // 現在設定されている admin_user_id が members に含まれない場合 (先に profile の
@@ -574,6 +623,16 @@ function NewOrgRow({
             type="tel"
             value={draft.phone}
             onChange={(e) => onChange({ phone: e.target.value })}
+            className="w-full px-2 py-1 border rounded"
+          />
+        </label>
+        <label className="text-xs">
+          <span className="block text-slate-600 mb-0.5">郵便番号</span>
+          <input
+            type="text"
+            value={draft.postal_code}
+            onChange={(e) => onChange({ postal_code: e.target.value })}
+            placeholder="例: 999-0000"
             className="w-full px-2 py-1 border rounded"
           />
         </label>

@@ -284,6 +284,7 @@ export interface Organization {
   id: string
   name: string
   note: string | null
+  postal_code: string | null
   phone: string | null
   address: string | null
   representative: string | null
