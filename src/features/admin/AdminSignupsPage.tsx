@@ -2,10 +2,11 @@
 // /admin/signups（要ログイン＋管理者メール）。
 import { useEffect, useState, useCallback } from 'react'
 import { Link, Navigate } from 'react-router-dom'
-import { Loader2, RefreshCw, ArrowLeft } from 'lucide-react'
+import { Loader2, RefreshCw, ArrowLeft, Building2, X, Plus } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdmin } from '@/lib/admin'
+import type { Organization } from '@/types/database'
 
 interface SignupRequest {
   id: string
@@ -45,6 +46,9 @@ export function AdminSignupsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState<string>('all')
+
+  // 「組織を作成」承認ダイアログのソース申込。null なら閉じている
+  const [creatingFor, setCreatingFor] = useState<SignupRequest | null>(null)
 
   const fetchRows = useCallback(async () => {
     setLoading(true)
@@ -180,6 +184,16 @@ export function AdminSignupsPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-slate-400">{fmt(r.created_at)}</span>
+                    {r.status !== 'closed' && (
+                      <button
+                        onClick={() => setCreatingFor(r)}
+                        className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-emerald-600 text-white rounded border border-emerald-700 hover:bg-emerald-700"
+                        title="申込内容を元に組織を作成する"
+                      >
+                        <Building2 className="h-3.5 w-3.5" />
+                        組織を作成
+                      </button>
+                    )}
                     <select
                       value={r.status}
                       onChange={(e) => updateStatus(r.id, e.target.value)}
@@ -219,6 +233,245 @@ export function AdminSignupsPage() {
           </div>
         )}
       </div>
+
+      {creatingFor && (
+        <CreateOrgFromSignupDialog
+          signup={creatingFor}
+          onClose={() => setCreatingFor(null)}
+          onCreated={async () => {
+            // 申込ステータスを完了に遷移し、閉じる
+            await updateStatus(creatingFor.id, 'closed')
+            setCreatingFor(null)
+          }}
+          onError={(msg) => setError(msg)}
+        />
+      )}
+    </div>
+  )
+}
+
+// 承認 (組織作成) ダイアログ。申込内容を元にフィールドを事前入力し、
+// サイトオーナーが確認/微修正して organizations に INSERT する。
+// admin_user_id は NULL (未設定)。ユーザー登録後にユーザー管理から紐付ける運用。
+function CreateOrgFromSignupDialog({
+  signup,
+  onClose,
+  onCreated,
+  onError,
+}: {
+  signup: SignupRequest
+  onClose: () => void
+  onCreated: () => void | Promise<void>
+  onError: (msg: string) => void
+}) {
+  const [name, setName] = useState(signup.company_name)
+  const [postalCode, setPostalCode] = useState(signup.postal_code ?? '')
+  const [address, setAddress] = useState(signup.address ?? '')
+  const [phone, setPhone] = useState(signup.phone ?? '')
+  const [representative, setRepresentative] = useState(signup.contact_name)
+  const [userCountLimit, setUserCountLimit] = useState<string>(
+    signup.user_count == null ? '' : String(signup.user_count),
+  )
+  const [plan, setPlan] = useState(
+    signup.plan_interest ? PLAN_LABEL[signup.plan_interest] ?? signup.plan_interest : '',
+  )
+  const [note, setNote] = useState(
+    signup.message ? `申込時メッセージ:\n${signup.message}` : '',
+  )
+  const [saving, setSaving] = useState(false)
+  const [localError, setLocalError] = useState<string | null>(null)
+
+  const handleCreate = async () => {
+    if (!name.trim()) {
+      setLocalError('組織名は必須です')
+      return
+    }
+    let limit: number | null = null
+    if (userCountLimit.trim() !== '') {
+      const n = Number(userCountLimit)
+      if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+        setLocalError('ユーザー数は 0 以上の整数で入力してください')
+        return
+      }
+      limit = n
+    }
+    setSaving(true)
+    setLocalError(null)
+    try {
+      const payload = {
+        name: name.trim(),
+        postal_code: postalCode.trim() || null,
+        address: address.trim() || null,
+        phone: phone.trim() || null,
+        representative: representative.trim() || null,
+        user_count_limit: limit,
+        plan: plan.trim() || null,
+        note: note.trim() || null,
+        // admin_user_id は明示的に未設定 (トリガー制約回避のため NULL)
+        admin_user_id: null,
+      }
+      const { error } = await supabase
+        .from('organizations')
+        .insert(payload as never)
+        .select()
+        .single<Organization>()
+      if (error) throw error
+      await onCreated()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '組織の作成に失敗しました'
+      setLocalError(msg)
+      onError(msg)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[3500] p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white w-full max-w-lg rounded-xl shadow-xl flex flex-col max-h-[92vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-4 py-3 border-b flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2">
+            <Building2 className="h-5 w-5 text-emerald-600" />
+            <h3 className="text-base font-semibold">申込を承認して組織を作成</h3>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded hover:bg-slate-100 text-slate-500"
+            title="閉じる"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="p-4 overflow-y-auto flex-1 space-y-2">
+          <div className="text-[11px] text-slate-500 leading-relaxed bg-slate-50 border rounded p-2">
+            申込内容を元に組織を新規作成します。管理者は未設定のまま作成され、
+            申込者がユーザー登録した後にユーザー管理画面で組織へ紐付け、
+            組織管理画面で管理者を指定してください。承認完了で申込のステータスは
+            自動的に「完了」になります。
+          </div>
+          <FormRow label="組織名 *">
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full px-2 py-1.5 border rounded text-sm"
+            />
+          </FormRow>
+          <FormRow label="代表者">
+            <input
+              type="text"
+              value={representative}
+              onChange={(e) => setRepresentative(e.target.value)}
+              className="w-full px-2 py-1.5 border rounded text-sm"
+            />
+          </FormRow>
+          <FormRow label="電話番号">
+            <input
+              type="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              className="w-full px-2 py-1.5 border rounded text-sm"
+            />
+          </FormRow>
+          <FormRow label="郵便番号">
+            <input
+              type="text"
+              value={postalCode}
+              onChange={(e) => setPostalCode(e.target.value)}
+              placeholder="例: 999-0000"
+              className="w-full px-2 py-1.5 border rounded text-sm"
+            />
+          </FormRow>
+          <FormRow label="住所">
+            <input
+              type="text"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              className="w-full px-2 py-1.5 border rounded text-sm"
+            />
+          </FormRow>
+          <FormRow label="プラン">
+            <input
+              type="text"
+              value={plan}
+              onChange={(e) => setPlan(e.target.value)}
+              placeholder="任意"
+              className="w-full px-2 py-1.5 border rounded text-sm"
+            />
+          </FormRow>
+          <FormRow label="ユーザー数">
+            <input
+              type="number"
+              min={0}
+              value={userCountLimit}
+              onChange={(e) => setUserCountLimit(e.target.value)}
+              placeholder="任意"
+              className="w-full px-2 py-1.5 border rounded text-sm text-right"
+            />
+          </FormRow>
+          <FormRow label="メモ" alignTop>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="任意"
+              className="w-full px-2 py-1.5 border rounded text-sm h-16"
+            />
+          </FormRow>
+        </div>
+        {localError && (
+          <div className="px-4 py-2 border-t bg-red-50 text-xs text-red-700 shrink-0">
+            {localError}
+          </div>
+        )}
+        <div className="px-4 py-3 border-t shrink-0 flex gap-2">
+          <button
+            onClick={handleCreate}
+            disabled={saving || !name.trim()}
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {saving ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Plus className="h-4 w-4" />
+            )}
+            組織を作成
+          </button>
+          <button
+            onClick={onClose}
+            disabled={saving}
+            className="flex-1 px-4 py-2.5 text-sm border rounded-lg hover:bg-slate-50 disabled:opacity-50"
+          >
+            キャンセル
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function FormRow({
+  label,
+  children,
+  alignTop,
+}: {
+  label: string
+  children: React.ReactNode
+  alignTop?: boolean
+}) {
+  return (
+    <div className={`flex ${alignTop ? 'items-start' : 'items-center'} gap-2`}>
+      <span
+        className={`text-xs text-slate-500 shrink-0 w-20 ${alignTop ? 'pt-1.5' : ''}`}
+      >
+        {label}
+      </span>
+      <div className="flex-1 min-w-0">{children}</div>
     </div>
   )
 }
