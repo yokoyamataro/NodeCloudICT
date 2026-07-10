@@ -268,6 +268,27 @@ export interface OrthoLayer {
 // プロジェクトメンバーのロール
 export type ProjectMemberRole = 'owner' | 'editor' | 'viewer'
 
+// 法務省地図データ (JPGIS/JSIMA) をサイトオーナーがマスターデータとして
+// アップロードしたもの。境界測量モードの背景レイヤとして全ユーザーに提供する。
+export type TileFormat = 'geojson' | 'pmtiles'
+
+export interface ParcelMapDataset {
+  id: string
+  name: string
+  description: string | null
+  coordinate_zone: number
+  source_kind: 'jpgis_xml'
+  storage_xml_path: string
+  storage_geojson_path: string | null
+  tile_format: TileFormat
+  bbox: { minLng: number; minLat: number; maxLng: number; maxLat: number } | null
+  parcel_count: number | null
+  active: boolean
+  uploaded_by_user_id: string | null
+  created_at: string
+  updated_at: string
+}
+
 // 開発者からのお知らせ
 export interface Announcement {
   id: string

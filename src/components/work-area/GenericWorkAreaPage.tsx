@@ -169,9 +169,11 @@ interface GenericWorkAreaPageProps {
   areaLabel?: string
   /** PageHeader 右側に表示する追加アクション（例: SIM 入出力ボタン） */
   headerActions?: React.ReactNode
+  /** CoordinateMap の MapContainer の中に差し込む追加レイヤ (例: 地番マップの背景) */
+  mapChildren?: React.ReactNode
 }
 
-export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', headerActions }: GenericWorkAreaPageProps) {
+export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', headerActions, mapChildren }: GenericWorkAreaPageProps) {
   const [calculationSheet, setCalculationSheet] = useState<AreaCalculationSheetType | null>(null)
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
   // 編集中ポリゴン: 選択中の構成点 ID（DEL/BACKSPACE で削除する対象）
@@ -1137,7 +1139,9 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                 ? handleMapMouseLeave
                 : undefined
             }
-          />
+          >
+            {mapChildren}
+          </CoordinateMap>
         </div>
       </div>
 

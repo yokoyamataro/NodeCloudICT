@@ -334,7 +334,7 @@ export function AppLayout() {
               <Smartphone className="h-3.5 w-3.5" />
               スマホ表示
             </button>
-            {/* 工事名／工区番号 */}
+            {/* 現場名／工区番号 */}
             {(currentProject || currentFarm) && (
               <span className="text-sm flex items-center">
                 {currentProject && (
@@ -382,6 +382,13 @@ export function AppLayout() {
                   title="お知らせ管理"
                 >
                   お知らせ
+                </Link>
+                <Link
+                  to="/admin/parcel-maps"
+                  className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+                  title="地番マップ (法務省地図)"
+                >
+                  地番マップ
                 </Link>
               </>
             )}

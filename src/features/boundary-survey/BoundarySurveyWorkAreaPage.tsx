@@ -3,23 +3,37 @@
 // SIMA インポート: 座標 → design_coordinates (type='boundary'), 画地 → design_work_areas
 // SIMA エクスポート: 現工区の boundary 座標 + boundary_survey 工事区域を出力
 
-import { useRef, useState } from 'react'
-import { Download, Upload, Loader2, FileSpreadsheet } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Download,
+  Upload,
+  Loader2,
+  FileSpreadsheet,
+  Map as MapIcon,
+} from 'lucide-react'
 import { GenericWorkAreaPage } from '@/components/work-area/GenericWorkAreaPage'
 import { CadastralCsvExportModal } from './CadastralCsvExportModal'
 import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
+import { useParcelStore } from '@/stores/parcelStore'
+import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import {
   loadSimaFile,
   downloadSimaFile,
   type SimaExportPolygon,
 } from '@/lib/sima-parser'
 import { loadJpgisXmlFile } from '@/lib/jpgis-parser'
+import { CoordinateConverter } from '@/lib/coordinates'
+import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
+import type { Feature, Polygon } from 'geojson'
 import { supabase } from '@/lib/supabase'
 import type { CoordinateRow } from '@/stores/coordinateStore'
 import type { DesignWorkArea } from '@/types/database'
+import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
+
+const PARCEL_LAYER_STORAGE_KEY = 'boundary-survey:parcel-map-layer'
 
 export function BoundarySurveyWorkAreaPage() {
   const fileRef = useRef<HTMLInputElement>(null)
@@ -48,6 +62,160 @@ export function BoundarySurveyWorkAreaPage() {
     ? projects.find((p) => p.id === currentFarm.project_id)
     : null
   const zone = project?.coordinate_zone ?? 13
+
+  // ---- 地番マップ (法務省地図) の背景レイヤ ----
+  const parcelDatasets = useParcelMapDatasetStore((s) => s.datasets)
+  const fetchDatasets = useParcelMapDatasetStore((s) => s.fetchAll)
+  const hasActiveDataset = parcelDatasets.some((d) => d.active)
+  const [showParcelLayer, setShowParcelLayer] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    return window.localStorage.getItem(PARCEL_LAYER_STORAGE_KEY) === '1'
+  })
+
+  useEffect(() => {
+    void fetchDatasets()
+  }, [fetchDatasets])
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(
+      PARCEL_LAYER_STORAGE_KEY,
+      showParcelLayer ? '1' : '0',
+    )
+  }, [showParcelLayer])
+
+  // 取込済 parcel_number セット (背景レイヤで色分けに使う)
+  const parcelsByWorkAreaId = useParcelStore((s) => s.byWorkAreaId)
+  const importedParcelNumbers = useMemo(() => {
+    const s = new Set<string>()
+    for (const p of parcelsByWorkAreaId.values()) {
+      if (p.parcel_number) s.add(p.parcel_number)
+    }
+    // 工区管理側の name/zone_number にも入れておく (parcels 未 upsert のケース)
+    const areas = workAreas['boundary_survey'] ?? []
+    for (const a of areas) {
+      if (a.name) s.add(a.name)
+      if (a.zoneNumber) s.add(a.zoneNumber)
+    }
+    return s
+  }, [parcelsByWorkAreaId, workAreas])
+
+  // 地番クリック → 工区に取込
+  const handleImportParcelFromDataset = async (
+    feature: Feature<Polygon, ParcelFeatureProperties>,
+  ) => {
+    if (!currentFarm) return
+    const props = feature.properties
+
+    // 上限チェック
+    if (currentCoordCount + props.jprc_coords.length > MAX_COORDS_PER_FARM) {
+      alert(
+        `座標が上限 (${MAX_COORDS_PER_FARM.toLocaleString()} 点) を超えるため取込できません。`,
+      )
+      return
+    }
+    if (currentParcelCount + 1 > MAX_PARCELS_PER_FARM) {
+      alert(
+        `地番が上限 (${MAX_PARCELS_PER_FARM.toLocaleString()} 筆) に達しているため取込できません。`,
+      )
+      return
+    }
+
+    setBusy('import')
+    setMessage(null)
+    try {
+      // 1) 対象工区の座標系に合わせて JPRC 座標を用意
+      let jprc: Array<[number, number]>
+      if (props.source_zone === zone) {
+        jprc = props.jprc_coords
+      } else {
+        // 異ゾーン: WGS84 (GeoJSON) → 現ゾーンに再投影
+        const ring = feature.geometry.coordinates[0].slice(0, -1) // 末尾の重複点を除外
+        const conv = new CoordinateConverter(zone)
+        jprc = ring.map(([lng, lat]) => {
+          const { x, y } = conv.toXY(lat, lng)
+          return [x, y]
+        })
+      }
+      if (jprc.length < 3) throw new Error('頂点が 3 未満のため取込できません')
+
+      // 2) 一意な点番号を作る
+      const existingNumbers = new Set(coordinates.map((c) => c.pointNumber))
+      const parcelKey = props.parcel_name || props.parcel_number || 'p'
+      const pointNumbers: string[] = []
+      for (let i = 0; i < jprc.length; i++) {
+        let candidate = `map_${parcelKey}_${i + 1}`
+        let suffix = 1
+        while (existingNumbers.has(candidate)) {
+          suffix++
+          candidate = `map_${parcelKey}_${i + 1}_${suffix}`
+        }
+        existingNumbers.add(candidate)
+        pointNumbers.push(candidate)
+      }
+
+      // 3) 座標を境界点として一括登録
+      const newCoords = jprc.map(([x, y], i) => ({
+        pointNumber: pointNumbers[i],
+        x,
+        y,
+        z: null as number | null,
+        type: 'boundary' as unknown as CoordinateRow['type'],
+      }))
+      const insertedCoords = await importCoordinates(newCoords, undefined, {
+        skipStateUpdate: true,
+      })
+
+      // 4) 画地 (design_work_areas) を 1 件 INSERT
+      const label =
+        props.parcel_name || props.parcel_number || `画地${currentParcelCount + 1}`
+      const { data: waData, error: waErr } = await supabase
+        .from('design_work_areas')
+        .insert({
+          farm_id: currentFarm.id,
+          work_type: 'boundary_survey',
+          zone_number: label,
+          name: label,
+          point_ids: insertedCoords.map((c) => c.id),
+          area_sqm: null,
+          area_ha: null,
+          perimeter_m: null,
+          notes: null,
+        } as never)
+        .select('id')
+        .single()
+      if (waErr) throw waErr
+      const workAreaId = (waData as { id: string }).id
+
+      // 5) parcels に属性を upsert
+      const { error: pErr } = await supabase.from('parcels').upsert(
+        {
+          work_area_id: workAreaId,
+          parcel_number: label,
+          registered_owner_name: props.owner_name,
+          registered_area_sqm: props.registered_area_sqm,
+        } as never,
+        { onConflict: 'work_area_id' },
+      )
+      if (pErr) console.error('parcels upsert 失敗:', pErr)
+
+      // 6) 再取得
+      invalidateCoordCache()
+      invalidateWorkAreaCache()
+      await fetchWorkAreas(currentFarm.id)
+      await fetchCoordinates(currentFarm.id)
+      const areasAfter = useWorkAreaStore.getState().workAreas['boundary_survey'] ?? []
+      await useParcelStore
+        .getState()
+        .fetchByWorkAreaIds(areasAfter.map((a) => a.id))
+
+      setMessage(`地番「${label}」を取り込みました`)
+    } catch (err) {
+      console.error(err)
+      setMessage(err instanceof Error ? err.message : '取込に失敗しました')
+    } finally {
+      setBusy(null)
+    }
+  }
 
   // 工区あたりの上限。SIMA 取り込みで上限を超える場合は弾く。
   const MAX_COORDS_PER_FARM = 5000
@@ -554,6 +722,21 @@ export function BoundarySurveyWorkAreaPage() {
                 {message}
               </span>
             )}
+            {/* 地番マップ (法務省地図) の背景レイヤ ON/OFF */}
+            {hasActiveDataset && (
+              <button
+                onClick={() => setShowParcelLayer((v) => !v)}
+                className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border ${
+                  showParcelLayer
+                    ? 'bg-orange-500 text-white border-orange-500 hover:bg-orange-600'
+                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                }`}
+                title="法務省地図データを背景に表示する"
+              >
+                <MapIcon className="h-4 w-4" />
+                地番マップ
+              </button>
+            )}
             <button
               onClick={handleOpenImport}
               disabled={busy !== null || !currentFarm}
@@ -600,6 +783,15 @@ export function BoundarySurveyWorkAreaPage() {
               CSV 出力
             </button>
           </div>
+        }
+        mapChildren={
+          hasActiveDataset ? (
+            <ParcelMapLayer
+              visible={showParcelLayer}
+              onImport={handleImportParcelFromDataset}
+              importedParcelNumbers={importedParcelNumbers}
+            />
+          ) : null
         }
       />
       {csvOpen && <CadastralCsvExportModal onClose={() => setCsvOpen(false)} />}
