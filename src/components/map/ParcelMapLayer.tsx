@@ -6,6 +6,9 @@
 // * 対話: ポリゴンクリック → Leaflet ネイティブの Popup で属性 + 「工区に取り込む」
 //   ボタンを表示。ボタンは onImport(feature) を呼ぶ。呼出側 (親) が
 //   design_coordinates / design_work_areas / parcels に INSERT する。
+// * 地番名ラベル: 各ポリゴンの中心に permanent tooltip で地番名を出す。
+//   数万件規模で全ズームで出すと重いので、地図コンテナに `.parcel-labels-visible`
+//   クラスをズームレベル閾値以上でだけ付け、CSS で表示/非表示する。
 
 import { useEffect, useMemo, useRef } from 'react'
 import { GeoJSON, useMap } from 'react-leaflet'
@@ -39,6 +42,9 @@ const STYLE_IMPORTED = {
   fillOpacity: 0.35,
 }
 
+/** このズーム以上でラベル表示。市町村・大字レベルでは出さず、街区/宅地レベルで出す */
+const LABEL_MIN_ZOOM = 17
+
 export function ParcelMapLayer({
   visible,
   onImport,
@@ -59,6 +65,30 @@ export function ParcelMapLayer({
   // Canvas レンダラを使うと数千地番でも軽い。ズームアウト時のパン中も
   // タイル型のように振る舞う
   const renderer = useMemo(() => L.canvas({ padding: 0.2 }), [])
+
+  // ズームレベルに応じてラベルの表示 / 非表示を切り替える。DOM 側は常に生成
+  // しておき、地図コンテナのクラスで CSS 表示を制御することで、31k 件規模の
+  // ラベル生成コストを一度に抑える。
+  useEffect(() => {
+    const container = map.getContainer()
+    const update = () => {
+      if (!visible) {
+        container.classList.remove('parcel-labels-visible')
+        return
+      }
+      if (map.getZoom() >= LABEL_MIN_ZOOM) {
+        container.classList.add('parcel-labels-visible')
+      } else {
+        container.classList.remove('parcel-labels-visible')
+      }
+    }
+    update()
+    map.on('zoomend', update)
+    return () => {
+      map.off('zoomend', update)
+      container.classList.remove('parcel-labels-visible')
+    }
+  }, [map, visible])
 
   if (!visible || !geoJson) return null
 
@@ -112,6 +142,17 @@ function GeoJson({
       }}
       onEachFeature={(feature, layer) => {
         const props = feature.properties as ParcelFeatureProperties
+        const labelText = props.parcel_name || props.parcel_number || ''
+        // 地番名ラベル (常に bind するが CSS でズーム閾値以下は非表示)
+        if (labelText) {
+          layer.bindTooltip(labelText, {
+            permanent: true,
+            direction: 'center',
+            className: 'parcel-map-label',
+            opacity: 1,
+          })
+        }
+        // クリック時のポップアップ (取込ボタン付き)
         const container = document.createElement('div')
         container.style.minWidth = '180px'
         container.innerHTML = `

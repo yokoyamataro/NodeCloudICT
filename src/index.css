@@ -154,6 +154,31 @@ input[type="number"] {
   display: none !important;
 }
 
+/* 地番マップ (法務省地図) レイヤの地番名ラベル。
+   ズームアウト時は非表示にするため、地図コンテナの class で切り替える */
+.parcel-map-label {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  font-size: 10px !important;
+  font-weight: 600 !important;
+  color: #7c2d12 !important; /* orange-900 */
+  text-shadow:
+    -1px -1px 0 #fff,
+    1px -1px 0 #fff,
+    -1px 1px 0 #fff,
+    1px 1px 0 #fff;
+  white-space: nowrap !important;
+  pointer-events: none !important;
+}
+.parcel-map-label::before {
+  display: none !important;
+}
+.leaflet-container:not(.parcel-labels-visible) .parcel-map-label {
+  display: none !important;
+}
+
 /* カスタムマーカー（デフォルトのLeafletマーカースタイルを上書き） */
 .custom-marker {
   background: transparent !important;
