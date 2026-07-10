@@ -93,13 +93,11 @@ export function AdminParcelMapsPage() {
           const label =
             p.phase === 'parsing'
               ? 'ファイル解析'
-              : p.phase === 'tiling'
-                ? 'タイル分割'
-                : p.phase === 'uploading'
-                  ? 'アップロード'
-                  : p.phase === 'saving'
-                    ? 'メタデータ保存'
-                    : '完了'
+              : p.phase === 'uploading'
+                ? 'アップロード'
+                : p.phase === 'saving'
+                  ? 'メタデータ保存'
+                  : '完了'
           setUploadProgress({ phase: label, done: p.done, total: p.total })
         },
       })

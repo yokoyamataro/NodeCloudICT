@@ -1,12 +1,14 @@
 // サイトオーナーがマスターデータとしてアップロードした地番マップを
 // CoordinateMap の背景レイヤとして重ねる。
 //
-// * 描画: 与えられた bbox 内のタイルだけダウンロード → merge → <GeoJSON>。
-//   Canvas レンダラで大量地番も軽く描画。
-// * 対話: ポリゴンクリック → Leaflet の Popup で属性 + 「工区に取り込む」ボタン。
-//   Popup content は初回クリック時にだけ生成 (lazy) して 31k 件 upfront 生成を避ける。
-// * 地番名ラベル: ズーム閾値以上のときにだけ bindTooltip する (lazy)。
-//   数千件規模でも初期化は速い。
+// 動作方針:
+//   * データは active な dataset の parcels.geojson を 1 度だけダウンロードし、
+//     ストアのメモリキャッシュで再利用する。
+//   * 描画は effectiveBbox (工区座標由来 / farm.parcel_map_bbox / ビューポート追従)
+//     でクライアント側フィルタしてから <GeoJSON> に渡す。数百〜数千の feature に
+//     絞られるので Canvas レンダラで軽い。
+//   * ポップアップは初回クリック時にだけ生成 (lazy)。tooltip (地番名) は
+//     ズーム LABEL_MIN_ZOOM 以上に達したときに 1 度だけ全 layer に bind する。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { GeoJSON, useMap } from 'react-leaflet'
@@ -22,7 +24,7 @@ import type { Bbox } from '@/lib/tile-math'
 interface Props {
   visible: boolean
   /** 明示的な表示範囲 (farm.parcel_map_bbox 経由の固定範囲や工区座標由来の bbox)。
-   *  null の場合は地図の現在ビューポートに追従して debounced fetch する。 */
+   *  null の場合は地図の現在ビューポートに追従する。 */
   bbox: Bbox | null
   onImport: (
     feature: Feature<Polygon, ParcelFeatureProperties>,
@@ -47,6 +49,34 @@ const STYLE_IMPORTED = {
 /** このズーム以上でラベル表示 */
 const LABEL_MIN_ZOOM = 17
 
+/** Feature の geometry.outer が bbox と交差するか */
+function featureIntersectsBbox(
+  feature: Feature<Polygon, ParcelFeatureProperties>,
+  bbox: Bbox,
+): boolean {
+  const outer = feature.geometry.coordinates[0] as Array<[number, number]>
+  if (!outer || outer.length === 0) return false
+  let minLng = Infinity
+  let minLat = Infinity
+  let maxLng = -Infinity
+  let maxLat = -Infinity
+  for (const p of outer) {
+    const lng = p[0]
+    const lat = p[1]
+    if (lng < minLng) minLng = lng
+    if (lat < minLat) minLat = lat
+    if (lng > maxLng) maxLng = lng
+    if (lat > maxLat) maxLat = lat
+  }
+  // AABB 交差判定
+  return !(
+    maxLng < bbox.minLng ||
+    minLng > bbox.maxLng ||
+    maxLat < bbox.minLat ||
+    minLat > bbox.maxLat
+  )
+}
+
 export function ParcelMapLayer({
   visible,
   bbox,
@@ -54,12 +84,19 @@ export function ParcelMapLayer({
   importedParcelNumbers,
 }: Props) {
   const map = useMap()
-  const fetchTiles = useParcelMapDatasetStore((s) => s.fetchTilesForBbox)
+  const allFc = useParcelMapDatasetStore((s) => s.activeGeoJson?.data ?? null)
+  const fetchActive = useParcelMapDatasetStore((s) => s.fetchActiveGeoJson)
   const importingRef = useRef<Set<string>>(new Set())
-  const [fc, setFc] = useState<ParcelFeatureCollection | null>(null)
   const [viewportBbox, setViewportBbox] = useState<Bbox | null>(null)
 
-  // bbox 未指定のときは、地図のビューポートを追跡してフェッチ範囲とする
+  // 可視化されたタイミングで一度だけ全体フェッチ (メモリキャッシュ)
+  useEffect(() => {
+    if (!visible) return
+    if (allFc) return
+    void fetchActive()
+  }, [visible, allFc, fetchActive])
+
+  // bbox 未指定のときは、地図のビューポートを追跡してフィルタ範囲とする
   useEffect(() => {
     if (!visible) {
       setViewportBbox(null)
@@ -79,7 +116,6 @@ export function ParcelMapLayer({
         maxLat: b.getNorth(),
       }
     }
-    // 初回反映
     setViewportBbox(readBounds())
     let t: ReturnType<typeof setTimeout> | null = null
     const debounced = () => {
@@ -95,22 +131,13 @@ export function ParcelMapLayer({
 
   const effectiveBbox = bbox ?? viewportBbox
 
-  // bbox が変わったらタイルをフェッチ (bbox が null の間は fetch しない)
-  useEffect(() => {
-    if (!visible || !effectiveBbox) {
-      setFc(null)
-      return
-    }
-    let cancelled = false
-    void (async () => {
-      const result = await fetchTiles(effectiveBbox)
-      if (cancelled) return
-      setFc(result)
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [visible, effectiveBbox, fetchTiles])
+  // bbox でフィルタした FeatureCollection (メモ化)
+  const filteredFc = useMemo((): ParcelFeatureCollection | null => {
+    if (!allFc || !effectiveBbox) return null
+    const features = allFc.features.filter((f) => featureIntersectsBbox(f, effectiveBbox))
+    if (features.length === 0) return null
+    return { type: 'FeatureCollection', features }
+  }, [allFc, effectiveBbox])
 
   // Canvas レンダラ
   const renderer = useMemo(() => L.canvas({ padding: 0.2 }), [])
@@ -137,15 +164,15 @@ export function ParcelMapLayer({
     }
   }, [map, visible])
 
-  if (!visible || !fc || fc.features.length === 0) return null
+  if (!visible || !filteredFc) return null
 
   return (
     <GeoJsonInner
-      data={fc}
+      data={filteredFc}
       renderer={renderer}
       importedParcelNumbers={importedParcelNumbers}
       onImport={async (feature) => {
-        const key = feature.properties.parcel_number
+        const key = feature.properties.parcel_name || feature.properties.parcel_number
         if (importingRef.current.has(key)) return
         importingRef.current.add(key)
         try {
@@ -212,7 +239,6 @@ function GeoJsonInner({
       })
       labelsBoundRef.current = true
     }
-    // マウント直後は layer 生成が済んでいないので少し待ってからも試す
     const t = setTimeout(bindLabelsIfNeeded, 100)
     map.on('zoomend', bindLabelsIfNeeded)
     return () => {
@@ -276,14 +302,16 @@ function GeoJsonInner({
       style={(feature) => {
         const props = feature?.properties as ParcelFeatureProperties | undefined
         const imported =
-          !!props && !!importedParcelNumbers?.has(props.parcel_number)
+          !!props &&
+          !!importedParcelNumbers?.has(
+            props.parcel_name || props.parcel_number,
+          )
         return {
           renderer,
           ...(imported ? STYLE_IMPORTED : STYLE_DEFAULT),
         }
       }}
       eventHandlers={{
-        // FeatureGroup 全体で 1 つの click ハンドラ。propagatedFrom に個別 layer が入る
         click: (e: L.LeafletMouseEvent & { propagatedFrom?: L.Layer }) => {
           const layer = e.propagatedFrom as L.Layer & {
             feature?: Feature<Polygon, ParcelFeatureProperties>

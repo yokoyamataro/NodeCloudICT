@@ -3,16 +3,20 @@
 // 責任:
 //   * parcel_map_datasets メタデータの一覧取得 / active な 1 件の取得
 //   * サイトオーナー用: アップロード時にクライアントでパース → 正規化 →
-//     タイル分割 (z=tile_zoom, デフォ 14) → Storage に個別タイルとして保存
-//   * 工区表示用: 与えられた bbox に含まれるタイルだけダウンロードし、
-//     重複排除して 1 つの FeatureCollection を返す (fetchTilesForBbox)
+//     単一の parcels.geojson として Storage に保存
+//   * 工区表示用: active データセットの GeoJSON を 1 度だけダウンロードして
+//     メモリキャッシュ。表示側 (ParcelMapLayer) で bbox によりフィルタする
 //   * active トグル / 削除
 //
 // Storage レイアウト:
-//   {dataset_id}/parcels.geojson         ... 旧形式 (フォールバック用)
-//   {dataset_id}/tiles/index.json        ... TileIndex (JSON)
-//   {dataset_id}/tiles/{z}/{x}/{y}.geojson ... 各タイルの FeatureCollection
-//   {dataset_id}/source.xml              ... JPGIS 原本 (GeoJSON 直接時は無し)
+//   {dataset_id}/parcels.geojson     ... 正規化済みの FeatureCollection
+//   {dataset_id}/source.xml          ... JPGIS 原本 (GeoJSON 直接時は無し)
+//
+// 旧仕様 (タイル分割) との互換:
+//   tile_zoom 列や tiles/ 配下のフォルダが残っている旧データセットに対しては、
+//   parcels.geojson が無ければ tiles/index.json と各タイルをまとめてダウンロードし、
+//   単一の FeatureCollection に統合するフォールバックを持つ。
+//   タイル間の feature 重複は同一 ID / 同一形状で dedup する。
 
 import { create } from 'zustand'
 import type { FeatureCollection, Polygon } from 'geojson'
@@ -24,16 +28,10 @@ import {
   normalizeGovParcelGeoJson,
   type ParcelFeatureProperties,
 } from '@/lib/jpgis-to-geojson'
-import {
-  tileFeatureCollection,
-  mergeAndDedup,
-  type TileIndex,
-} from '@/lib/geojson-tiler'
-import { bboxToTiles, tileKey, type Bbox } from '@/lib/tile-math'
 
 const BUCKET = 'parcel-maps'
 const SIGNED_URL_TTL_SEC = 60 * 30 // 30 分。1 セッション用なら十分
-const TILE_UPLOAD_CONCURRENCY = 6
+const LEGACY_TILE_DL_CONCURRENCY = 6
 
 export type ParcelFeatureCollection = FeatureCollection<
   Polygon,
@@ -41,16 +39,9 @@ export type ParcelFeatureCollection = FeatureCollection<
 >
 
 export interface UploadProgress {
-  phase: 'parsing' | 'tiling' | 'uploading' | 'saving' | 'done'
+  phase: 'parsing' | 'uploading' | 'saving' | 'done'
   done: number
   total: number
-}
-
-interface TileCache {
-  datasetId: string
-  index: TileIndex | null
-  /** タイルキー ('z/x/y') → その FeatureCollection */
-  tiles: Map<string, ParcelFeatureCollection>
 }
 
 interface State {
@@ -58,23 +49,26 @@ interface State {
   loading: boolean
   error: string | null
 
-  tileCache: TileCache | null
-  tilesLoading: boolean
+  /** 現在キャッシュ中の GeoJSON。null は未取得または active なし */
+  activeGeoJson: {
+    datasetId: string
+    data: ParcelFeatureCollection
+  } | null
+  geoJsonLoading: boolean
 
   fetchAll: () => Promise<void>
   /**
-   * active な dataset のうち、bbox に交差するタイルを Storage からダウンロードし、
-   * 重複排除した FeatureCollection を返す。
-   * 既に取得済のタイルは再ダウンロードしない (メモリキャッシュ)。
+   * active な dataset の GeoJSON を全体ダウンロードして返す。
+   * 既に同じ id のものをキャッシュ済みならそれを再利用する。
+   * 旧タイル形式のデータセットには tiles/ 配下から全タイルを merge するフォールバック付き。
    */
-  fetchTilesForBbox: (bbox: Bbox) => Promise<ParcelFeatureCollection | null>
+  fetchActiveGeoJson: () => Promise<ParcelFeatureCollection | null>
 
   uploadDataset: (params: {
     file: File
     name: string
     description: string | null
     zone: number
-    tileZoom?: number
     onProgress?: (p: UploadProgress) => void
   }) => Promise<ParcelMapDataset | null>
 
@@ -96,10 +90,7 @@ function msg(err: unknown, fallback: string): string {
   return parts.length > 0 ? parts.join(' — ') : fallback
 }
 
-async function downloadJson<T>(
-  bucket: string,
-  path: string,
-): Promise<T> {
+async function downloadJson<T>(bucket: string, path: string): Promise<T> {
   const { data: signed, error } = await supabase.storage
     .from(bucket)
     .createSignedUrl(path, SIGNED_URL_TTL_SEC)
@@ -109,7 +100,6 @@ async function downloadJson<T>(
   return (await res.json()) as T
 }
 
-// 指定 URL が存在するか (HEAD 相当)。存在しなければ null を返す
 async function tryDownloadJson<T>(
   bucket: string,
   path: string,
@@ -121,7 +111,6 @@ async function tryDownloadJson<T>(
   }
 }
 
-// promise をキューで並列制御しつつ実行
 async function runWithConcurrency<T>(
   tasks: (() => Promise<T>)[],
   concurrency: number,
@@ -146,12 +135,30 @@ async function runWithConcurrency<T>(
   return results
 }
 
+/** レガシー tile index (旧仕様) の最低限の型 */
+interface LegacyTileIndex {
+  zoom: number
+  tiles: Array<{ z: number; x: number; y: number }>
+}
+
+/** feature のユニークキー: geometry の第 1 頂点 + parcel_name。同一 feature の
+ *  タイル境界重複を消しつつ、別大字の同名地番は別物として残す。 */
+function featureDedupKey(f: {
+  properties: ParcelFeatureProperties
+  geometry: { coordinates: number[][][] }
+}): string {
+  const outer = f.geometry.coordinates[0]
+  const head = outer?.[0]
+  const headKey = head ? `${head[0].toFixed(7)},${head[1].toFixed(7)}` : ''
+  return `${f.properties.parcel_name}|${headKey}`
+}
+
 export const useParcelMapDatasetStore = create<State>((set, get) => ({
   datasets: [],
   loading: false,
   error: null,
-  tileCache: null,
-  tilesLoading: false,
+  activeGeoJson: null,
+  geoJsonLoading: false,
 
   fetchAll: async () => {
     set({ loading: true, error: null })
@@ -170,121 +177,86 @@ export const useParcelMapDatasetStore = create<State>((set, get) => ({
     }
   },
 
-  fetchTilesForBbox: async (bbox) => {
+  fetchActiveGeoJson: async () => {
     const active = get().datasets.find((d) => d.active) ?? null
     if (!active) {
-      set({ tileCache: null })
+      set({ activeGeoJson: null })
       return null
     }
+    const cached = get().activeGeoJson
+    if (cached && cached.datasetId === active.id) return cached.data
 
-    // データセットが変わったらキャッシュを破棄
-    let cache = get().tileCache
-    if (!cache || cache.datasetId !== active.id) {
-      cache = { datasetId: active.id, index: null, tiles: new Map() }
-    }
+    set({ geoJsonLoading: true })
+    try {
+      let fc: ParcelFeatureCollection | null = null
 
-    // インデックス取得 (初回のみ)
-    if (!cache.index) {
-      set({ tilesLoading: true })
-      const idx = await tryDownloadJson<TileIndex>(
-        BUCKET,
-        `${active.id}/tiles/index.json`,
-      )
-      if (idx) {
-        cache.index = idx
-      } else {
-        // 旧形式のデータセット (タイル分割前) → parcels.geojson を丸ごとダウンロードして
-        // メモリで bbox フィルタする
-        if (active.storage_geojson_path) {
-          const fc = await tryDownloadJson<ParcelFeatureCollection>(
-            BUCKET,
-            active.storage_geojson_path,
+      // 経路 1: 新形式または旧非タイル形式 — 単一 parcels.geojson を取得
+      if (active.storage_geojson_path) {
+        fc = await tryDownloadJson<ParcelFeatureCollection>(
+          BUCKET,
+          active.storage_geojson_path,
+        )
+      }
+
+      // 経路 2: 旧タイル形式 — tiles/index.json を辿って全タイルを結合
+      if (!fc) {
+        const idx = await tryDownloadJson<LegacyTileIndex>(
+          BUCKET,
+          `${active.id}/tiles/index.json`,
+        )
+        if (idx) {
+          const tasks = idx.tiles.map(
+            (t) => () =>
+              tryDownloadJson<ParcelFeatureCollection>(
+                BUCKET,
+                `${active.id}/tiles/${t.z}/${t.x}/${t.y}.geojson`,
+              ),
           )
-          if (fc) {
-            // 1 個の擬似タイル (全体) として cache に入れる
-            cache.tiles.set('legacy/0/0', fc)
-            cache.index = {
-              zoom: 0,
-              bbox: active.bbox ?? {
-                minLng: -180,
-                minLat: -90,
-                maxLng: 180,
-                maxLat: 90,
-              },
-              tiles: [{ z: 0, x: 0, y: 0, count: fc.features.length }],
+          const results = await runWithConcurrency(tasks, LEGACY_TILE_DL_CONCURRENCY)
+          const nonNull = results.filter(
+            (r): r is ParcelFeatureCollection => r != null,
+          )
+          const seen = new Set<string>()
+          const combined: ParcelFeatureCollection = {
+            type: 'FeatureCollection',
+            features: [],
+          }
+          for (const t of nonNull) {
+            for (const f of t.features) {
+              const key = featureDedupKey(f)
+              if (seen.has(key)) continue
+              seen.add(key)
+              combined.features.push(f)
             }
           }
+          fc = combined
         }
       }
-      set({ tileCache: cache, tilesLoading: false })
-    }
 
-    if (!cache.index) return null
+      if (!fc) {
+        throw new Error(
+          'データセットのファイルが見つかりません。管理画面から再アップロードしてください。',
+        )
+      }
 
-    // legacy 分岐: 全 feature が cache.tiles['legacy/0/0'] にある
-    if (cache.index.zoom === 0) {
-      const legacy = cache.tiles.get('legacy/0/0')
-      if (!legacy) return null
-      // メモリで bbox フィルタして返す (旧形式のみのフォールバック)
-      const features = legacy.features.filter((f) => {
-        const outer = f.geometry.coordinates[0] as Array<[number, number]>
-        if (outer.length === 0) return false
-        for (const [lng, lat] of outer) {
-          if (
-            lng >= bbox.minLng &&
-            lng <= bbox.maxLng &&
-            lat >= bbox.minLat &&
-            lat <= bbox.maxLat
-          ) {
-            return true
-          }
-        }
-        return false
+      set({
+        activeGeoJson: { datasetId: active.id, data: fc },
+        geoJsonLoading: false,
       })
-      return { type: 'FeatureCollection', features }
+      return fc
+    } catch (err) {
+      set({
+        geoJsonLoading: false,
+        error: msg(err, 'GeoJSON の取得に失敗しました'),
+      })
+      return null
     }
-
-    // タイル分岐: bbox に交差するタイルを列挙し、まだキャッシュに無いものだけダウンロード
-    const wanted = bboxToTiles(bbox, cache.index.zoom)
-    // 索引に載っているタイル (空タイルはリクエストしない) だけに絞る
-    const populated = new Set(
-      cache.index.tiles.map((t) => tileKey({ z: t.z, x: t.x, y: t.y })),
-    )
-    const wantedKeys = wanted
-      .filter((t) => populated.has(tileKey(t)))
-      .map((t) => tileKey(t))
-    const missing = wantedKeys.filter((k) => !cache!.tiles.has(k))
-
-    if (missing.length > 0) {
-      set({ tilesLoading: true })
-      const tasks = missing.map(
-        (k) => () =>
-          tryDownloadJson<ParcelFeatureCollection>(
-            BUCKET,
-            `${active.id}/tiles/${k}.geojson`,
-          ).then((fc) => ({ key: k, fc })),
-      )
-      const results = await runWithConcurrency(tasks, TILE_UPLOAD_CONCURRENCY)
-      for (const r of results) {
-        if (r.fc) cache.tiles.set(r.key, r.fc)
-      }
-      set({ tileCache: cache, tilesLoading: false })
-    }
-
-    // マージ + 重複排除
-    const fcs: ParcelFeatureCollection[] = []
-    for (const k of wantedKeys) {
-      const fc = cache.tiles.get(k)
-      if (fc) fcs.push(fc)
-    }
-    return mergeAndDedup(fcs)
   },
 
-  uploadDataset: async ({ file, name, description, zone, tileZoom = 14, onProgress }) => {
+  uploadDataset: async ({ file, name, description, zone, onProgress }) => {
     set({ error: null })
     try {
       onProgress?.({ phase: 'parsing', done: 0, total: 1 })
-      // 拡張子 (フォールバックで MIME) から XML か GeoJSON かを判定
       const lowerName = file.name.toLowerCase()
       const isGeoJson =
         /\.(geo)?json$/i.test(file.name) ||
@@ -315,7 +287,8 @@ export const useParcelMapDatasetStore = create<State>((set, get) => ({
         sourceKind = 'geojson'
         if (norm.detectedZone != null) effectiveZone = norm.detectedZone
         for (const f of featureCollection.features) {
-          if (f.properties.source_zone === 0) f.properties.source_zone = effectiveZone
+          if (f.properties.source_zone === 0)
+            f.properties.source_zone = effectiveZone
         }
       } else {
         const parsed = await loadJpgisXmlFile(file)
@@ -327,73 +300,41 @@ export const useParcelMapDatasetStore = create<State>((set, get) => ({
       }
       onProgress?.({ phase: 'parsing', done: 1, total: 1 })
 
-      // 2) タイル分割
-      onProgress?.({ phase: 'tiling', done: 0, total: 1 })
-      const tiled = tileFeatureCollection(featureCollection, tileZoom)
-      onProgress?.({ phase: 'tiling', done: 1, total: 1 })
-
-      // 3) dataset id を確保 + パス
+      // 2) dataset id と Storage パス
       const datasetId =
         crypto.randomUUID?.() ??
         `${Date.now()}-${Math.random().toString(36).slice(2)}`
       const xmlPath = isXml ? `${datasetId}/source.xml` : null
-      const indexPath = `${datasetId}/tiles/index.json`
+      const geoJsonPath = `${datasetId}/parcels.geojson`
 
-      // 4) Storage にタイル群 + インデックス + (XML 原本) をアップロード
-      const uploads: (() => Promise<{ error: unknown }>)[] = []
-
-      // index.json
-      uploads.push(async () => {
-        const blob = new Blob([JSON.stringify(tiled.index)], {
-          type: 'application/json',
-        })
-        return (await supabase.storage.from(BUCKET).upload(indexPath, blob, {
-          contentType: 'application/json',
+      // 3) Storage にアップロード (GeoJSON 単一 + 任意で XML 原本)
+      const geoJsonBlob = new Blob([JSON.stringify(featureCollection)], {
+        type: 'application/geo+json',
+      })
+      const totalUploads = 1 + (xmlPath ? 1 : 0)
+      onProgress?.({ phase: 'uploading', done: 0, total: totalUploads })
+      const { error: gjErr } = (await supabase.storage
+        .from(BUCKET)
+        .upload(geoJsonPath, geoJsonBlob, {
+          contentType: 'application/geo+json',
           upsert: false,
         })) as unknown as { error: unknown }
-      })
-
-      // 各タイル
-      for (const [key, fc] of tiled.tiles.entries()) {
-        const tilePath = `${datasetId}/tiles/${key}.geojson`
-        uploads.push(async () => {
-          const blob = new Blob([JSON.stringify(fc)], {
-            type: 'application/geo+json',
-          })
-          return (await supabase.storage.from(BUCKET).upload(tilePath, blob, {
-            contentType: 'application/geo+json',
-            upsert: false,
-          })) as unknown as { error: unknown }
-        })
-      }
-
-      // XML 原本 (JPGIS 由来なら)
+      if (gjErr) throw gjErr
+      onProgress?.({ phase: 'uploading', done: 1, total: totalUploads })
       if (xmlPath) {
-        uploads.push(async () => {
-          return (await supabase.storage.from(BUCKET).upload(xmlPath, file, {
+        const { error: xErr } = (await supabase.storage.from(BUCKET).upload(
+          xmlPath,
+          file,
+          {
             contentType: 'application/xml',
             upsert: false,
-          })) as unknown as { error: unknown }
-        })
+          },
+        )) as unknown as { error: unknown }
+        if (xErr) throw xErr
+        onProgress?.({ phase: 'uploading', done: 2, total: totalUploads })
       }
 
-      const totalUploads = uploads.length
-      onProgress?.({ phase: 'uploading', done: 0, total: totalUploads })
-      const results = await runWithConcurrency(
-        uploads,
-        TILE_UPLOAD_CONCURRENCY,
-        (i) => {
-          onProgress?.({
-            phase: 'uploading',
-            done: i + 1,
-            total: totalUploads,
-          })
-        },
-      )
-      const firstError = results.find((r) => r.error)?.error
-      if (firstError) throw firstError
-
-      // 5) メタデータ INSERT (旧 storage_geojson_path は無し = null で保存)
+      // 4) メタデータ INSERT
       onProgress?.({ phase: 'saving', done: 0, total: 1 })
       const { data: userData } = await supabase.auth.getUser()
       const insertBody = {
@@ -403,9 +344,8 @@ export const useParcelMapDatasetStore = create<State>((set, get) => ({
         coordinate_zone: effectiveZone,
         source_kind: sourceKind,
         storage_xml_path: xmlPath,
-        storage_geojson_path: null,
+        storage_geojson_path: geoJsonPath,
         tile_format: 'geojson',
-        tile_zoom: tileZoom,
         bbox,
         parcel_count: parcelCount,
         active: false,
@@ -417,21 +357,9 @@ export const useParcelMapDatasetStore = create<State>((set, get) => ({
         .select('*')
         .single()
       if (error) {
-        // 失敗時は Storage 掃除
-        const cleanupPaths = [
-          indexPath,
-          ...Array.from(tiled.tiles.keys()).map(
-            (k) => `${datasetId}/tiles/${k}.geojson`,
-          ),
-        ]
-        if (xmlPath) cleanupPaths.push(xmlPath)
-        // remove の 1000 件制限に注意して分割
-        for (let i = 0; i < cleanupPaths.length; i += 100) {
-          await supabase.storage
-            .from(BUCKET)
-            .remove(cleanupPaths.slice(i, i + 100))
-            .catch(() => {})
-        }
+        const cleanup = [geoJsonPath]
+        if (xmlPath) cleanup.push(xmlPath)
+        await supabase.storage.from(BUCKET).remove(cleanup).catch(() => {})
         throw error
       }
       const created = data as ParcelMapDataset
@@ -453,8 +381,8 @@ export const useParcelMapDatasetStore = create<State>((set, get) => ({
       : prev.map((d) => (d.id === datasetId ? { ...d, active: false } : d))
     set({
       datasets: next,
-      // active が変わったのでタイルキャッシュも破棄
-      tileCache: null,
+      // active が変わったのでキャッシュも破棄
+      activeGeoJson: null,
     })
     try {
       if (active) {
@@ -480,13 +408,14 @@ export const useParcelMapDatasetStore = create<State>((set, get) => ({
     const target = prev.find((d) => d.id === datasetId)
     set({
       datasets: prev.filter((d) => d.id !== datasetId),
-      tileCache:
-        get().tileCache?.datasetId === datasetId ? null : get().tileCache,
+      activeGeoJson:
+        get().activeGeoJson?.datasetId === datasetId
+          ? null
+          : get().activeGeoJson,
     })
     try {
       if (target) {
-        // タイルを含むフォルダ配下を全部消す
-        // Storage には「フォルダ削除」が無いので list → remove
+        // tiles/ フォルダ配下も含めてまるごと消す (旧タイル形式の掃除)
         const listAll = async (prefix: string, acc: string[]) => {
           const { data, error } = await supabase.storage
             .from(BUCKET)
@@ -494,7 +423,6 @@ export const useParcelMapDatasetStore = create<State>((set, get) => ({
           if (error) throw error
           for (const item of data ?? []) {
             const p = `${prefix}/${item.name}`
-            // フォルダ判定は item.id === null で行う (Supabase 仕様)
             if ((item as { id: string | null }).id === null) {
               await listAll(p, acc)
             } else {
@@ -503,10 +431,12 @@ export const useParcelMapDatasetStore = create<State>((set, get) => ({
           }
         }
         const paths: string[] = []
-        await listAll(`${target.id}`, paths).catch(() => {})
-        // 100 件ずつ remove
+        await listAll(target.id, paths).catch(() => {})
         for (let i = 0; i < paths.length; i += 100) {
-          await supabase.storage.from(BUCKET).remove(paths.slice(i, i + 100)).catch(() => {})
+          await supabase.storage
+            .from(BUCKET)
+            .remove(paths.slice(i, i + 100))
+            .catch(() => {})
         }
       }
       const { error } = await supabase
