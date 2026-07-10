@@ -16,6 +16,10 @@ export interface Farm {
   deleted_at: string | null
   started_at: string | null
   completed_at: string | null
+  /** 地番マップ (法務省地図) の表示範囲。null なら工区座標から自動計算 or ビューポート追従 */
+  parcel_map_bbox:
+    | { minLng: number; minLat: number; maxLng: number; maxLat: number }
+    | null
 }
 
 // 工区の先頭座標情報
