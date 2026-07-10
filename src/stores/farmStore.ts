@@ -95,7 +95,16 @@ interface FarmState {
   createFarm: (projectId: string, name: string, description?: string) => Promise<Farm | null>
   updateFarm: (
     id: string,
-    updates: Partial<Pick<Farm, 'name' | 'description' | 'started_at' | 'completed_at'>>,
+    updates: Partial<
+      Pick<
+        Farm,
+        | 'name'
+        | 'description'
+        | 'started_at'
+        | 'completed_at'
+        | 'parcel_map_bbox'
+      >
+    >,
   ) => Promise<void>
   /** ゴミ箱へ移動 (soft delete)。保持期間経過で物理削除される。 */
   deleteFarm: (id: string) => Promise<void>

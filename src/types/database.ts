@@ -284,6 +284,8 @@ export interface ParcelMapDataset {
   storage_xml_path: string | null
   storage_geojson_path: string | null
   tile_format: TileFormat
+  /** タイル分割時のズームレベル (デフォルト 14) */
+  tile_zoom: number
   bbox: { minLng: number; minLat: number; maxLng: number; maxLat: number } | null
   parcel_count: number | null
   active: boolean
@@ -499,6 +501,8 @@ export interface Farm {
   deleted_at: string | null      // ゴミ箱運用: NULL 以外は削除済み
   started_at: string | null      // 着手日 (作成時に created_at を初期値、以後編集可能)
   completed_at: string | null    // 完成日 (完了チェック ON で now() を初期値、以後編集可能。OFF なら NULL)
+  /** 地番マップの表示範囲 (bbox)。null なら「工区周辺を自動計算」する */
+  parcel_map_bbox: { minLng: number; minLat: number; maxLng: number; maxLat: number } | null
 }
 
 // 後方互換性のためのエイリアス

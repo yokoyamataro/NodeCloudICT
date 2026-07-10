@@ -32,8 +32,11 @@ import { supabase } from '@/lib/supabase'
 import type { CoordinateRow } from '@/stores/coordinateStore'
 import type { DesignWorkArea } from '@/types/database'
 import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
+import { expandBbox, ringBbox, type Bbox } from '@/lib/tile-math'
 
 const PARCEL_LAYER_STORAGE_KEY = 'boundary-survey:parcel-map-layer'
+/** 工区座標から自動計算した bbox に対して足すバッファ (メートル) */
+const AUTO_BBOX_BUFFER_M = 500
 
 export function BoundarySurveyWorkAreaPage() {
   const fileRef = useRef<HTMLInputElement>(null)
@@ -82,6 +85,22 @@ export function BoundarySurveyWorkAreaPage() {
       showParcelLayer ? '1' : '0',
     )
   }, [showParcelLayer])
+
+  // 地番マップの表示範囲: farm.parcel_map_bbox (手動保存) → 工区座標から自動計算
+  //   → いずれも無ければ null → ParcelMapLayer 側で「現在ビューポート」に追従する。
+  const farmCoordBbox = useMemo((): Bbox | null => {
+    if (coordinates.length === 0) return null
+    const conv = new CoordinateConverter(zone)
+    const points: Array<[number, number]> = coordinates.map((c) => {
+      const { lat, lng } = conv.toLatLng(c.x, c.y)
+      return [lng, lat]
+    })
+    if (points.length === 0) return null
+    return expandBbox(ringBbox(points), AUTO_BBOX_BUFFER_M)
+  }, [coordinates, zone])
+
+  const effectiveParcelBbox: Bbox | null =
+    (currentFarm?.parcel_map_bbox as Bbox | null | undefined) ?? farmCoordBbox
 
   // 取込済 parcel_number セット (背景レイヤで色分けに使う)
   const parcelsByWorkAreaId = useParcelStore((s) => s.byWorkAreaId)
@@ -791,6 +810,7 @@ export function BoundarySurveyWorkAreaPage() {
           hasActiveDataset ? (
             <ParcelMapLayer
               visible={showParcelLayer}
+              bbox={effectiveParcelBbox}
               onImport={handleImportParcelFromDataset}
               importedParcelNumbers={importedParcelNumbers}
             />

@@ -43,6 +43,11 @@ export function AdminParcelMapsPage() {
   const [showUpload, setShowUpload] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
+  const [uploadProgress, setUploadProgress] = useState<{
+    phase: string
+    done: number
+    total: number
+  } | null>(null)
 
   // upload form state
   const [file, setFile] = useState<File | null>(null)
@@ -77,12 +82,26 @@ export function AdminParcelMapsPage() {
     }
     setUploading(true)
     setUploadError(null)
+    setUploadProgress(null)
     try {
       const created = await uploadDataset({
         file,
         name: name.trim(),
         description: description.trim() || null,
         zone,
+        onProgress: (p) => {
+          const label =
+            p.phase === 'parsing'
+              ? 'ファイル解析'
+              : p.phase === 'tiling'
+                ? 'タイル分割'
+                : p.phase === 'uploading'
+                  ? 'アップロード'
+                  : p.phase === 'saving'
+                    ? 'メタデータ保存'
+                    : '完了'
+          setUploadProgress({ phase: label, done: p.done, total: p.total })
+        },
       })
       if (!created) {
         setUploadError(
@@ -95,6 +114,7 @@ export function AdminParcelMapsPage() {
       resetForm()
     } finally {
       setUploading(false)
+      setUploadProgress(null)
     }
   }
 
@@ -229,6 +249,35 @@ export function AdminParcelMapsPage() {
               />
             </label>
           </div>
+          {uploadProgress && (
+            <div className="mt-2 flex items-center gap-2 text-xs text-slate-700 bg-white border border-slate-200 rounded p-2">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" />
+              <span>
+                {uploadProgress.phase}
+                {uploadProgress.total > 0 && (
+                  <>
+                    <span className="font-mono ml-1">
+                      {uploadProgress.done.toLocaleString()} /{' '}
+                      {uploadProgress.total.toLocaleString()}
+                    </span>
+                    <span className="ml-1 text-slate-500">
+                      (
+                      {Math.round((uploadProgress.done / uploadProgress.total) * 100)}
+                      %)
+                    </span>
+                  </>
+                )}
+              </span>
+              <div className="flex-1 h-2 bg-slate-200 rounded overflow-hidden">
+                <div
+                  className="h-full bg-blue-600 transition-[width] duration-150"
+                  style={{
+                    width: `${Math.min(100, (uploadProgress.done / Math.max(1, uploadProgress.total)) * 100)}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
           {uploadError && (
             <div className="mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
               {uploadError}
