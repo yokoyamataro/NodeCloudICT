@@ -315,7 +315,6 @@ export function AdminOrganizationsPage() {
           <div className="text-xs font-semibold text-slate-700 mb-2">新規組織</div>
           <NewOrgRow
             draft={newDraft}
-            userOptions={userOptions}
             onChange={(patch) =>
               setNewDraft((prev) => ({ ...prev, ...patch, dirty: true }))
             }
@@ -401,20 +400,13 @@ export function AdminOrganizationsPage() {
                       />
                     </Td>
                     <Td>
-                      <select
+                      <AdminSelect
                         value={d.admin_user_id}
-                        onChange={(e) =>
-                          updateDraft(o.id, { admin_user_id: e.target.value })
-                        }
-                        className="w-full px-2 py-1 text-sm border rounded bg-white"
-                      >
-                        <option value="">（未設定）</option>
-                        {userOptions.map((u) => (
-                          <option key={u.user_id} value={u.user_id}>
-                            {u.full_name ? `${u.full_name} (${u.email})` : u.email}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(v) => updateDraft(o.id, { admin_user_id: v })}
+                        members={userOptions.filter(
+                          (u) => u.organization_id === o.id,
+                        )}
+                      />
                     </Td>
                     <Td>
                       <input
@@ -502,16 +494,53 @@ function Td({ children }: { children: React.ReactNode }) {
   return <td className="px-2 py-1.5 align-top">{children}</td>
 }
 
+// 管理者プルダウン。選択肢は「その組織に所属するユーザー」に限定される。
+// members が空の時は「所属メンバーがいません」を表示して選択を促さない。
+// 現在設定されている admin_user_id が members に含まれない場合 (先に profile の
+// organization_id が変わった等) は「(所属外)」を頭に付けて表示するだけに留める。
+function AdminSelect({
+  value,
+  onChange,
+  members,
+}: {
+  value: string
+  onChange: (v: string) => void
+  members: AdminUserRow[]
+}) {
+  const currentInList = members.some((m) => m.user_id === value)
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full px-2 py-1 text-sm border rounded bg-white"
+    >
+      <option value="">（未設定）</option>
+      {!currentInList && value && (
+        <option value={value}>（所属外のユーザー）</option>
+      )}
+      {members.length === 0 ? (
+        <option value="" disabled>
+          — この組織の所属メンバーがいません —
+        </option>
+      ) : (
+        members.map((u) => (
+          <option key={u.user_id} value={u.user_id}>
+            {u.full_name ? `${u.full_name} (${u.email})` : u.email}
+          </option>
+        ))
+      )}
+    </select>
+  )
+}
+
 function NewOrgRow({
   draft,
-  userOptions,
   onChange,
   onCancel,
   onCreate,
   creating,
 }: {
   draft: Draft
-  userOptions: AdminUserRow[]
   onChange: (patch: Partial<Draft>) => void
   onCancel: () => void
   onCreate: () => void
@@ -560,16 +589,11 @@ function NewOrgRow({
         <label className="text-xs">
           <span className="block text-slate-600 mb-0.5">管理者</span>
           <select
-            value={draft.admin_user_id}
-            onChange={(e) => onChange({ admin_user_id: e.target.value })}
-            className="w-full px-2 py-1 border rounded bg-white"
+            disabled
+            className="w-full px-2 py-1 border rounded bg-slate-100 text-slate-400"
+            title="組織を作成後、所属メンバーの中から選択できます"
           >
-            <option value="">（未設定）</option>
-            {userOptions.map((u) => (
-              <option key={u.user_id} value={u.user_id}>
-                {u.full_name ? `${u.full_name} (${u.email})` : u.email}
-              </option>
-            ))}
+            <option>（作成後に選択）</option>
           </select>
         </label>
         <label className="text-xs">
