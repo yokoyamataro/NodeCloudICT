@@ -207,7 +207,7 @@ export function MobileProjectChooserPage() {
             </div>
             <div className="p-4 overflow-y-auto flex-1 space-y-3">
               <div>
-                <label className="block text-xs text-slate-600 mb-1">工事名</label>
+                <label className="block text-xs text-slate-600 mb-1">現場名</label>
                 <input
                   type="text"
                   value={newName}

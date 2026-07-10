@@ -2613,7 +2613,7 @@ export function MobileStakingPage() {
 
   return (
     <div className="mobile-screen flex flex-col">
-      {/* ヘッダー（1 行目: 戻る・工事名・工区名・ユーザー名） */}
+      {/* ヘッダー（1 行目: 戻る・現場名・工区名・ユーザー名） */}
       <div className="px-2 py-1.5 bg-slate-800 text-white flex items-center gap-2 text-sm">
         <button
           onClick={() => navigate('/mobile')}

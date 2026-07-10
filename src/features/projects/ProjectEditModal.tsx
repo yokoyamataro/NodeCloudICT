@@ -1,7 +1,7 @@
 // 現場 (project) の情報編集モーダル (共有コンポーネント)。
 //   一覧の 編集ボタンで開く。
 //   フィールド:
-//     基本    : 工事名 / 説明 / 種別 / 座標系
+//     基本    : 現場名 / 説明 / 種別 / 座標系
 //     関係者  : 発注者 / 受託者
 //     工期    : 工期開始日 / 工期終了日 (予定)
 //     進捗    : 着手日 / 完成日 (実際の作業実績) + 完了チェック
@@ -407,9 +407,9 @@ export function ProjectEditModal({
           </button>
         </div>
         <div className="p-3 overflow-y-auto flex-1 space-y-1.5">
-          {/* 工事名 */}
+          {/* 現場名 */}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500 shrink-0 w-16">工事名</span>
+            <span className="text-xs text-slate-500 shrink-0 w-16">現場名</span>
             <input
               type="text"
               value={name}

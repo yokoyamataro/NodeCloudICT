@@ -158,7 +158,7 @@ export function CadastralCsvExportModal({ onClose }: Props) {
 
       const csv = rows.map((r) => r.map(escapeCsv).join(',')).join('\r\n')
 
-      // ファイル名: {工事名}_{工区名}_地番_{yyyymmdd}.csv
+      // ファイル名: {現場名}_{工区名}_地番_{yyyymmdd}.csv
       const now = new Date()
       const y = now.getFullYear()
       const m = String(now.getMonth() + 1).padStart(2, '0')
