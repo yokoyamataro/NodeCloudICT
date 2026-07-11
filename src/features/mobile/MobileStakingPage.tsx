@@ -56,6 +56,13 @@ import { useAttachmentStore } from '@/stores/attachmentStore'
 import { PhotoEditModal } from '@/features/coordinates/PhotoEditModal'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useParcelStore } from '@/stores/parcelStore'
+import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
+import { ParcelMapLayer, parcelFeatureKey } from '@/components/map/ParcelMapLayer'
+import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
+import type { Feature, Polygon as GeoJsonPolygon } from 'geojson'
+import { expandBbox, ringBbox, type Bbox } from '@/lib/tile-math'
+import { importParcelBatch } from '@/features/parcel-maps/importParcelBatch'
+import { Map as MapIcon } from 'lucide-react'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
 import { useOrthophotoStore } from '@/stores/orthophotoStore'
 import { parseLandXml } from '@/lib/landxml/parser'
@@ -922,6 +929,38 @@ export function MobileStakingPage() {
     try { localStorage.setItem('mobile:baseLayer', baseLayer) } catch { /* ignore */ }
   }, [baseLayer])
   const currentBase = BASE_LAYERS[baseLayer]
+
+  // ---- 法務省地図 (地番マップ) ----
+  const parcelDatasets = useParcelMapDatasetStore((s) => s.datasets)
+  const fetchParcelDatasets = useParcelMapDatasetStore((s) => s.fetchAll)
+  const hasActiveParcelDataset = parcelDatasets.some((d) => d.active)
+  const [showParcelLayer, setShowParcelLayer] = useState(false)
+  const [parcelSelectionMode, setParcelSelectionMode] = useState(false)
+  const [selectedParcels, setSelectedParcels] = useState<
+    Map<string, Feature<GeoJsonPolygon, ParcelFeatureProperties>>
+  >(new Map())
+  const [parcelBusy, setParcelBusy] = useState(false)
+  const [parcelMessage, setParcelMessage] = useState<string | null>(null)
+  const selectedParcelKeys = useMemo(
+    () => new Set(selectedParcels.keys()),
+    [selectedParcels],
+  )
+  const toggleSelectedParcel = useCallback(
+    (feature: Feature<GeoJsonPolygon, ParcelFeatureProperties>) => {
+      const key = parcelFeatureKey(feature)
+      setSelectedParcels((prev) => {
+        const next = new Map(prev)
+        if (next.has(key)) next.delete(key)
+        else next.set(key, feature)
+        return next
+      })
+    },
+    [],
+  )
+  const clearParcelSelection = () => setSelectedParcels(new Map())
+  useEffect(() => {
+    void fetchParcelDatasets()
+  }, [fetchParcelDatasets])
   // 点数が多いとラベル描画が重くなるため、低ズーム時は自動で非表示にする
   const [mapZoom, setMapZoom] = useState(17)
   const LABEL_MIN_ZOOM = 18
@@ -1375,6 +1414,56 @@ export function MobileStakingPage() {
 
   const zone = project?.coordinate_zone ?? 13
   const converter = useMemo(() => new CoordinateConverter(zone), [zone])
+
+  // ---- 法務省地図の bbox / 取込済セット / 一括取込ハンドラ ----
+  const isCadastralProject = project?.category === 'cadastral'
+  const parcelsByWorkAreaId = useParcelStore((s) => s.byWorkAreaId)
+  const farmCoordBbox = useMemo((): Bbox | null => {
+    if (coordinates.length === 0) return null
+    const conv = new CoordinateConverter(zone)
+    const points: Array<[number, number]> = coordinates.map((c) => {
+      const { lat, lng } = conv.toLatLng(c.x, c.y)
+      return [lng, lat]
+    })
+    if (points.length === 0) return null
+    return expandBbox(ringBbox(points), 500)
+  }, [coordinates, zone])
+  const effectiveParcelBbox: Bbox | null =
+    (farm?.parcel_map_bbox as Bbox | null | undefined) ?? farmCoordBbox
+  const importedParcelKeys = useMemo(() => {
+    const s = new Set<string>()
+    for (const p of parcelsByWorkAreaId.values()) {
+      if (!p.parcel_number) continue
+      s.add(`${p.location ?? ''}|${p.parcel_number}`)
+    }
+    const areas = workAreasAll['boundary_survey'] ?? []
+    for (const a of areas) {
+      if (a.name) s.add(`|${a.name}`)
+      if (a.zoneNumber && a.zoneNumber !== a.name) s.add(`|${a.zoneNumber}`)
+    }
+    return s
+  }, [parcelsByWorkAreaId, workAreasAll])
+  const handleImportParcelBatch = async (
+    features: Feature<GeoJsonPolygon, ParcelFeatureProperties>[],
+  ) => {
+    if (!farm || !project) return
+    if (features.length === 0) return
+    setParcelBusy(true)
+    setParcelMessage(null)
+    try {
+      const result = await importParcelBatch(features, {
+        farmId: farm.id,
+        zone: project.coordinate_zone,
+      })
+      setSelectedParcels(new Map())
+      setParcelMessage(result.message)
+    } catch (err) {
+      console.error(err)
+      setParcelMessage(err instanceof Error ? err.message : '取込に失敗しました')
+    } finally {
+      setParcelBusy(false)
+    }
+  }
 
   // ========== 施工管理モード関連 ==========
   // セグメントを離散化してポリラインに変換
@@ -3582,6 +3671,92 @@ export function MobileStakingPage() {
           })}
         </div>
 
+        {/* 法務省地図 (地籍測量プロジェクトのみ) — 背景セレクタの上に配置 */}
+        {isCadastralProject && hasActiveParcelDataset && (
+          <div className="absolute bottom-14 right-1 z-[1000] flex flex-col items-end gap-1">
+            {/* 選択モード時の追加コントロール */}
+            {showParcelLayer && (
+              <div className="flex items-center gap-1">
+                {parcelMessage && (
+                  <span
+                    className="max-w-[10rem] px-1.5 py-0.5 text-[10px] bg-white/90 border border-slate-300 rounded text-slate-700 truncate"
+                    title={parcelMessage}
+                  >
+                    {parcelMessage}
+                  </span>
+                )}
+                {parcelSelectionMode && selectedParcels.size > 0 && (
+                  <button
+                    onClick={clearParcelSelection}
+                    disabled={parcelBusy}
+                    className="px-1.5 py-1 text-[11px] rounded shadow bg-white/95 border border-slate-300 disabled:opacity-50"
+                    title="選択を全て解除"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    if (!parcelSelectionMode) {
+                      setParcelSelectionMode(true)
+                    } else if (selectedParcels.size === 0) {
+                      setParcelSelectionMode(false)
+                    } else {
+                      void (async () => {
+                        await handleImportParcelBatch(
+                          Array.from(selectedParcels.values()),
+                        )
+                        setParcelSelectionMode(false)
+                      })()
+                    }
+                  }}
+                  disabled={parcelBusy}
+                  className={`flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded shadow border ${
+                    !parcelSelectionMode
+                      ? 'bg-white/95 border-slate-300 text-slate-800'
+                      : selectedParcels.size === 0
+                        ? 'bg-blue-600 border-blue-500 text-white'
+                        : 'bg-emerald-600 border-emerald-500 text-white'
+                  } disabled:opacity-50`}
+                >
+                  {parcelBusy ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Download className="h-3.5 w-3.5" />
+                  )}
+                  {!parcelSelectionMode
+                    ? '地番データ取込'
+                    : selectedParcels.size === 0
+                      ? 'キャンセル'
+                      : `取り込む (${selectedParcels.size})`}
+                </button>
+              </div>
+            )}
+            {/* 法務省地図トグル */}
+            <button
+              onClick={() => {
+                setShowParcelLayer((v) => {
+                  const next = !v
+                  if (!next) {
+                    setParcelSelectionMode(false)
+                    clearParcelSelection()
+                  }
+                  return next
+                })
+              }}
+              className={`flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded shadow border ${
+                showParcelLayer
+                  ? 'bg-orange-500 border-orange-500 text-white'
+                  : 'bg-white/95 border-slate-300 text-slate-800'
+              }`}
+              title="法務省地図データを背景に表示する"
+            >
+              <MapIcon className="h-3.5 w-3.5" />
+              法務省地図
+            </button>
+          </div>
+        )}
+
         {/* 背景地図セレクタ（右下、Leaflet 帰属の上） */}
         <div className="absolute bottom-5 right-1 z-[1000] flex items-center gap-1 px-1.5 py-0.5 rounded shadow border border-slate-300 bg-white/95 text-[11px]">
           <span className="text-slate-500">背景</span>
@@ -4062,6 +4237,18 @@ export function MobileStakingPage() {
               pathOptions={{ color: '#1d4ed8', weight: 5, opacity: 0.95 }}
             />
           ))}
+
+          {/* 法務省地図 (背景 + 地番選択) */}
+          {isCadastralProject && hasActiveParcelDataset && (
+            <ParcelMapLayer
+              visible={showParcelLayer}
+              bbox={effectiveParcelBbox}
+              importedParcelKeys={importedParcelKeys}
+              selectedKeys={selectedParcelKeys}
+              onToggleSelect={toggleSelectedParcel}
+              selectionMode={parcelSelectionMode}
+            />
+          )}
         </MapContainer>
 
         {/* 2D（断面）パネル: MAP/3D と併用なら下半分、単独なら全画面 */}
