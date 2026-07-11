@@ -41,6 +41,8 @@ interface UnifiedFieldMapProps {
   layers: LayerVisibility
   /** オルソタイル取得用の工区ID（指定時のみオルソを読み込む） */
   farmId?: string | null
+  /** MapContainer の中に追加で差し込むレイヤ (地番マップ等) */
+  children?: React.ReactNode
 }
 
 // === 色/スタイル定義 ===
@@ -245,7 +247,7 @@ function MapBackgroundClick({ onClick }: { onClick: () => void }) {
 }
 
 
-export function UnifiedFieldMap({ baseLayer = 'osm', layers, farmId }: UnifiedFieldMapProps) {
+export function UnifiedFieldMap({ baseLayer = 'osm', layers, farmId, children }: UnifiedFieldMapProps) {
   const { coordinates, zone, route } = useCoordinateStore()
   const { pipes } = useUnderdrainStore()
   const workAreasByType = useWorkAreaStore((state) => state.workAreas)
@@ -728,6 +730,9 @@ export function UnifiedFieldMap({ baseLayer = 'osm', layers, farmId }: UnifiedFi
 
       {/* 現在位置（Geolocation） */}
       {layers.currentLocation && <CurrentLocationLayer />}
+
+      {/* 呼び出し側が差し込む追加レイヤ (例: 法務省地図の地番ポリゴン) */}
+      {children}
     </MapContainer>
   )
 }

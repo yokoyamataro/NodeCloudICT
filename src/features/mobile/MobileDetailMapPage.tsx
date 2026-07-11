@@ -1,6 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Loader2, ArrowLeft, Layers, Crosshair, Image as ImageIcon } from 'lucide-react'
+import {
+  Loader2,
+  ArrowLeft,
+  Layers,
+  Crosshair,
+  Image as ImageIcon,
+  Map as MapIcon,
+  Download,
+  X,
+} from 'lucide-react'
+import type { Feature, Polygon } from 'geojson'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
@@ -9,9 +19,18 @@ import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useSurveyStore } from '@/stores/surveyStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
+import { useParcelStore } from '@/stores/parcelStore'
+import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { UnifiedFieldMap, type BaseLayerType, type LayerVisibility } from '@/components/map/UnifiedFieldMap'
+import { ParcelMapLayer, parcelFeatureKey } from '@/components/map/ParcelMapLayer'
 import type { Project } from '@/types/database'
+import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
+import { CoordinateConverter } from '@/lib/coordinates'
+import { expandBbox, ringBbox, type Bbox } from '@/lib/tile-math'
+import { importParcelBatch } from '@/features/parcel-maps/importParcelBatch'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
+
+const AUTO_BBOX_BUFFER_M = 500
 
 export function MobileDetailMapPage() {
   const navigate = useNavigate()
@@ -43,6 +62,98 @@ export function MobileDetailMapPage() {
     orthophoto: true,
   })
   const [showLayerPanel, setShowLayerPanel] = useState(false)
+
+  // ---- 法務省地図 (地番マップ) レイヤ ----
+  const parcelDatasets = useParcelMapDatasetStore((s) => s.datasets)
+  const fetchParcelDatasets = useParcelMapDatasetStore((s) => s.fetchAll)
+  const hasActiveParcelDataset = parcelDatasets.some((d) => d.active)
+  const [showParcelLayer, setShowParcelLayer] = useState(false)
+  const [selectionMode, setSelectionMode] = useState(false)
+  const [selectedParcels, setSelectedParcels] = useState<
+    Map<string, Feature<Polygon, ParcelFeatureProperties>>
+  >(new Map())
+  const [parcelBusy, setParcelBusy] = useState(false)
+  const [parcelMessage, setParcelMessage] = useState<string | null>(null)
+  const selectedParcelKeys = useMemo(
+    () => new Set(selectedParcels.keys()),
+    [selectedParcels],
+  )
+  const toggleSelectedParcel = useCallback(
+    (feature: Feature<Polygon, ParcelFeatureProperties>) => {
+      const key = parcelFeatureKey(feature)
+      setSelectedParcels((prev) => {
+        const next = new Map(prev)
+        if (next.has(key)) next.delete(key)
+        else next.set(key, feature)
+        return next
+      })
+    },
+    [],
+  )
+  const clearSelection = () => setSelectedParcels(new Map())
+
+  useEffect(() => {
+    void fetchParcelDatasets()
+  }, [fetchParcelDatasets])
+
+  const { coordinates } = useCoordinateStore()
+  const { workAreas } = useWorkAreaStore()
+  const parcelsByWorkAreaId = useParcelStore((s) => s.byWorkAreaId)
+
+  const isCadastralProject = project?.category === 'cadastral'
+
+  // 工区座標由来の bbox (+ 500m バッファ)。null なら ParcelMapLayer が地図
+  // ビューポートに追従する
+  const farmCoordBbox = useMemo((): Bbox | null => {
+    if (!project || coordinates.length === 0) return null
+    const conv = new CoordinateConverter(project.coordinate_zone)
+    const points: Array<[number, number]> = coordinates.map((c) => {
+      const { lat, lng } = conv.toLatLng(c.x, c.y)
+      return [lng, lat]
+    })
+    if (points.length === 0) return null
+    return expandBbox(ringBbox(points), AUTO_BBOX_BUFFER_M)
+  }, [coordinates, project])
+
+  const effectiveParcelBbox: Bbox | null =
+    (farm?.parcel_map_bbox as Bbox | null | undefined) ?? farmCoordBbox
+
+  // 取込済 "所在|地番" セット
+  const importedParcelKeys = useMemo(() => {
+    const s = new Set<string>()
+    for (const p of parcelsByWorkAreaId.values()) {
+      if (!p.parcel_number) continue
+      s.add(`${p.location ?? ''}|${p.parcel_number}`)
+    }
+    const areas = workAreas['boundary_survey'] ?? []
+    for (const a of areas) {
+      if (a.name) s.add(`|${a.name}`)
+      if (a.zoneNumber && a.zoneNumber !== a.name) s.add(`|${a.zoneNumber}`)
+    }
+    return s
+  }, [parcelsByWorkAreaId, workAreas])
+
+  const handleImportParcelBatch = async (
+    features: Feature<Polygon, ParcelFeatureProperties>[],
+  ) => {
+    if (!farm || !project) return
+    if (features.length === 0) return
+    setParcelBusy(true)
+    setParcelMessage(null)
+    try {
+      const result = await importParcelBatch(features, {
+        farmId: farm.id,
+        zone: project.coordinate_zone,
+      })
+      setSelectedParcels(new Map())
+      setParcelMessage(result.message)
+    } catch (err) {
+      console.error(err)
+      setParcelMessage(err instanceof Error ? err.message : '取込に失敗しました')
+    } finally {
+      setParcelBusy(false)
+    }
+  }
 
   useEffect(() => {
     if (!farmId) {
@@ -190,6 +301,29 @@ export function MobileDetailMapPage() {
         >
           <Layers className="h-3.5 w-3.5" />
         </button>
+        {/* 法務省地図 (地籍測量プロジェクトのみ、公開データセット有り時のみ) */}
+        {isCadastralProject && hasActiveParcelDataset && (
+          <button
+            onClick={() => {
+              setShowParcelLayer((v) => {
+                const next = !v
+                if (!next) {
+                  setSelectionMode(false)
+                  clearSelection()
+                }
+                return next
+              })
+            }}
+            className={`flex items-center gap-1 px-2 py-1 text-xs rounded border ${
+              showParcelLayer
+                ? 'bg-orange-500 border-orange-400'
+                : 'bg-slate-700 border-slate-500 hover:bg-slate-600'
+            }`}
+            title="法務省地図データを背景に表示する"
+          >
+            <MapIcon className="h-3.5 w-3.5" />
+          </button>
+        )}
         <select
           value={baseLayer}
           onChange={(e) => setBaseLayer(e.target.value as BaseLayerType)}
@@ -202,8 +336,80 @@ export function MobileDetailMapPage() {
         <FeedbackButton variant="mobile" />
       </div>
 
+      {/* 地番データ取込用のサブメニュー (法務省地図 ON 時のみ) */}
+      {isCadastralProject && hasActiveParcelDataset && showParcelLayer && (
+        <div className="px-2 py-1.5 bg-slate-700 text-white flex items-center gap-2 text-xs border-b border-slate-600">
+          <button
+            onClick={() => {
+              if (!selectionMode) {
+                setSelectionMode(true)
+              } else if (selectedParcels.size === 0) {
+                setSelectionMode(false)
+              } else {
+                void (async () => {
+                  await handleImportParcelBatch(
+                    Array.from(selectedParcels.values()),
+                  )
+                  setSelectionMode(false)
+                })()
+              }
+            }}
+            disabled={parcelBusy}
+            className={`flex items-center gap-1 px-2 py-1 text-xs rounded border ${
+              !selectionMode
+                ? 'bg-slate-800 border-slate-500'
+                : selectedParcels.size === 0
+                  ? 'bg-blue-600 border-blue-400'
+                  : 'bg-emerald-600 border-emerald-400'
+            } disabled:opacity-50`}
+          >
+            {parcelBusy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Download className="h-3.5 w-3.5" />
+            )}
+            {!selectionMode
+              ? '地番データ取込'
+              : selectedParcels.size === 0
+                ? '選択中… (キャンセル)'
+                : `取り込む (${selectedParcels.size} 件)`}
+          </button>
+          {selectionMode && selectedParcels.size > 0 && (
+            <button
+              onClick={clearSelection}
+              disabled={parcelBusy}
+              className="flex items-center gap-1 px-2 py-1 text-xs rounded border bg-slate-800 border-slate-500 disabled:opacity-50"
+              title="選択を全て解除"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {parcelMessage && (
+            <span className="text-[11px] text-slate-300 truncate flex-1" title={parcelMessage}>
+              {parcelMessage}
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="flex-1 relative">
-        <UnifiedFieldMap key={farmId ?? 'no-farm'} baseLayer={baseLayer} layers={layers} farmId={farmId} />
+        <UnifiedFieldMap
+          key={farmId ?? 'no-farm'}
+          baseLayer={baseLayer}
+          layers={layers}
+          farmId={farmId}
+        >
+          {isCadastralProject && hasActiveParcelDataset && (
+            <ParcelMapLayer
+              visible={showParcelLayer}
+              bbox={effectiveParcelBbox}
+              importedParcelKeys={importedParcelKeys}
+              selectedKeys={selectedParcelKeys}
+              onToggleSelect={toggleSelectedParcel}
+              selectionMode={selectionMode}
+            />
+          )}
+        </UnifiedFieldMap>
 
         {showLayerPanel && (
           <div className="absolute top-2 right-2 z-[1000] w-56 bg-white border border-slate-300 rounded shadow-lg">
