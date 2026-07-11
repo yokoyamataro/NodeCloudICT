@@ -16,6 +16,7 @@ import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useParcelStore } from '@/stores/parcelStore'
+import { useFarmStore } from '@/stores/farmStore'
 import type { CoordinateRow } from '@/stores/coordinateStore'
 
 const MAX_COORDS_PER_FARM = 5000
@@ -253,6 +254,11 @@ export async function importParcelBatch(
   waState.invalidateCache()
   await waState.fetchWorkAreas(farmId)
   await coordState.fetchCoordinates(farmId)
+  // モバイル (MobileStakingPage / MobileTopPage) の地番ポリゴン描画は
+  // useFarmStore.workAreaPolygons を参照するため、こちらも refresh する。
+  // PC の CoordinateMap は useWorkAreaStore 経由なので不要だが、副作用として
+  // 呼んでも実害はない。
+  await useFarmStore.getState().fetchWorkAreaPolygons()
   const areasAfter =
     useWorkAreaStore.getState().workAreas['boundary_survey'] ?? []
   await parcelStoreGet().fetchByWorkAreaIds(areasAfter.map((a) => a.id))
