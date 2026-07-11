@@ -30,8 +30,11 @@ interface Props {
   importedParcelKeys?: Set<string>
   /** 選択中の feature キー集合 (parcelFeatureKey で作る) */
   selectedKeys?: Set<string>
-  /** 選択トグル (popup の「選択に追加/解除」で呼ぶ) */
+  /** 選択トグル (selectionMode=true で polygon クリック時、または popup ボタン) */
   onToggleSelect?: (feature: Feature<Polygon, ParcelFeatureProperties>) => void
+  /** true のとき polygon クリック = 即トグル (popup 非表示)。
+   *  false のとき polygon クリック = 属性情報の popup を開く (読み取り専用) */
+  selectionMode?: boolean
 }
 
 /** 取込済判定用の複合キーを作る。所在と地番を "|" 区切りで結合。 */
@@ -104,6 +107,7 @@ export function ParcelMapLayer({
   importedParcelKeys,
   selectedKeys,
   onToggleSelect,
+  selectionMode = false,
 }: Props) {
   const map = useMap()
   const allFc = useParcelMapDatasetStore((s) => s.activeGeoJson?.data ?? null)
@@ -193,6 +197,7 @@ export function ParcelMapLayer({
       renderer={renderer}
       importedParcelKeys={importedParcelKeys}
       selectedKeys={selectedKeys}
+      selectionMode={selectionMode}
       onToggleSelect={
         onToggleSelect
           ? (feature) => {
@@ -214,12 +219,14 @@ function GeoJsonInner({
   importedParcelKeys,
   selectedKeys,
   onToggleSelect,
+  selectionMode,
 }: {
   data: ParcelFeatureCollection
   renderer: L.Renderer
   importedParcelKeys?: Set<string>
   selectedKeys?: Set<string>
   onToggleSelect?: (feature: Feature<Polygon, ParcelFeatureProperties>) => void
+  selectionMode?: boolean
 }) {
   const map = useMap()
   const layerRef = useRef<L.GeoJSON | null>(null)
@@ -292,16 +299,14 @@ function GeoJsonInner({
   }, [map, data])
 
   // クリック時のポップアップ (lazy 生成)。
-  // 単体取込は廃止したので、ポップアップは 属性表示 + 「選択に追加/解除」だけ。
-  // まとめて取り込むにはヘッダー側の「選択した地番を取り込む」ボタンを使う。
-  const openImportPopup = useCallback(
+  // - selectionMode=false: 属性表示のみの読み取り popup を開く。取込済みなら緑バッジ
+  // - selectionMode=true : popup を開かず、そのまま onToggleSelect が呼ばれる (別ハンドラ)
+  const openInfoPopup = useCallback(
     (
       feature: Feature<Polygon, ParcelFeatureProperties>,
       latlng: L.LatLng,
     ) => {
       const props = feature.properties
-      const featureKey = parcelFeatureKey(feature)
-      const isSelected = !!selectedKeys?.has(featureKey)
       const isImported = !!importedParcelKeys?.has(parcelImportKey(props))
       const container = document.createElement('div')
       container.style.minWidth = '200px'
@@ -331,25 +336,13 @@ function GeoJsonInner({
           ${
             isImported
               ? `<div style="margin-top:6px;padding:6px 8px;border-radius:6px;background:#d1fae5;color:#065f46;font-size:12px;font-weight:600;text-align:center;">取込済み</div>`
-              : onToggleSelect
-                ? `<button
-                    type="button"
-                    data-select-btn="1"
-                    style="margin-top:6px;width:100%;padding:6px 8px;border-radius:6px;background:${isSelected ? '#f59e0b' : '#2563eb'};color:white;font-size:12px;font-weight:600;border:none;cursor:pointer;"
-                  >
-                    ${isSelected ? '選択を解除' : '選択に追加'}
-                  </button>`
-                : ''
+              : `<div style="margin-top:6px;padding:6px 8px;border-radius:6px;background:#f1f5f9;color:#64748b;font-size:11px;text-align:center;">「地番データ取込」を押してから選択してください</div>`
           }
         </div>
       `
-      const selectBtn = container.querySelector<HTMLButtonElement>(
-        'button[data-select-btn="1"]',
-      )
-      selectBtn?.addEventListener('click', () => onToggleSelect?.(feature))
       L.popup({ maxWidth: 280 }).setLatLng(latlng).setContent(container).openOn(map)
     },
-    [map, onToggleSelect, importedParcelKeys, selectedKeys],
+    [map, importedParcelKeys],
   )
 
   return (
@@ -379,7 +372,18 @@ function GeoJsonInner({
             feature?: Feature<Polygon, ParcelFeatureProperties>
           }
           const feature = layer?.feature
-          if (feature) openImportPopup(feature, e.latlng)
+          if (!feature) return
+          // 取込済みは常に情報表示 (誤って再選択しないように)
+          const isImported = !!importedParcelKeys?.has(
+            parcelImportKey(feature.properties),
+          )
+          if (selectionMode && !isImported && onToggleSelect) {
+            // 選択モード: 即トグル (popup は開かない)
+            onToggleSelect(feature)
+          } else {
+            // 通常モード or 取込済み: 情報表示 popup
+            openInfoPopup(feature, e.latlng)
+          }
         },
       }}
     />

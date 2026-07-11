@@ -129,6 +129,7 @@ export function BoundarySurveyWorkAreaPage() {
   const [selectedParcels, setSelectedParcels] = useState<
     Map<string, Feature<Polygon, ParcelFeatureProperties>>
   >(new Map())
+  const [selectionMode, setSelectionMode] = useState(false)
   const selectedKeys = useMemo(
     () => new Set(selectedParcels.keys()),
     [selectedParcels],
@@ -894,10 +895,20 @@ export function BoundarySurveyWorkAreaPage() {
                 {message}
               </span>
             )}
-            {/* 地番マップ (法務省地図) の背景レイヤ ON/OFF */}
+            {/* 法務省地図 (背景レイヤ) の ON/OFF */}
             {hasActiveDataset && (
               <button
-                onClick={() => setShowParcelLayer((v) => !v)}
+                onClick={() => {
+                  setShowParcelLayer((v) => {
+                    const next = !v
+                    if (!next) {
+                      // レイヤ非表示にしたら選択モードもクリア
+                      setSelectionMode(false)
+                      clearSelection()
+                    }
+                    return next
+                  })
+                }}
                 className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border ${
                   showParcelLayer
                     ? 'bg-orange-500 text-white border-orange-500 hover:bg-orange-600'
@@ -906,40 +917,67 @@ export function BoundarySurveyWorkAreaPage() {
                 title="法務省地図データを背景に表示する"
               >
                 <MapIcon className="h-4 w-4" />
-                地番マップ
+                法務省地図
               </button>
             )}
-            {/* 選択中の地番数 + まとめて取り込む */}
-            {selectedParcels.size > 0 && (
+            {/* 地番データ取込 (選択モード + 一括取込を兼ねる) */}
+            {hasActiveDataset && showParcelLayer && (
               <>
-                <span className="text-xs text-slate-700 px-2 py-1 bg-blue-50 rounded border border-blue-200">
-                  選択中: <b className="font-mono">{selectedParcels.size}</b> 件
-                </span>
                 <button
-                  onClick={() =>
-                    handleImportParcelBatch(
-                      Array.from(selectedParcels.values()),
-                    )
-                  }
+                  onClick={() => {
+                    if (!selectionMode) {
+                      // OFF → 選択モードへ
+                      setSelectionMode(true)
+                    } else if (selectedParcels.size === 0) {
+                      // 選択モード + 0 件 → キャンセル
+                      setSelectionMode(false)
+                    } else {
+                      // 選択モード + N 件 → 取込実行
+                      void (async () => {
+                        await handleImportParcelBatch(
+                          Array.from(selectedParcels.values()),
+                        )
+                        setSelectionMode(false)
+                      })()
+                    }
+                  }}
                   disabled={busy !== null || !currentFarm}
-                  className="flex items-center gap-1 px-3 py-1.5 text-sm bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50"
-                  title="選択中の地番をまとめて工区に取り込む"
+                  className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border ${
+                    !selectionMode
+                      ? 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                      : selectedParcels.size === 0
+                        ? 'bg-blue-500 text-white border-blue-500 hover:bg-blue-600'
+                        : 'bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700'
+                  } disabled:opacity-50`}
+                  title={
+                    !selectionMode
+                      ? '地番を選択して工区に取り込むモードに入る'
+                      : selectedParcels.size === 0
+                        ? '選択モードをキャンセル'
+                        : '選択中の地番を工区に取り込む'
+                  }
                 >
                   {busy === 'import' ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
                     <Download className="h-4 w-4" />
                   )}
-                  選択した地番を取り込む
+                  {!selectionMode
+                    ? '地番データ取込'
+                    : selectedParcels.size === 0
+                      ? '選択中… (キャンセル)'
+                      : `取り込む (${selectedParcels.size} 件)`}
                 </button>
-                <button
-                  onClick={clearSelection}
-                  disabled={busy !== null}
-                  className="flex items-center gap-1 px-2 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
-                  title="選択を全て解除"
-                >
-                  <X className="h-4 w-4" />
-                </button>
+                {selectionMode && selectedParcels.size > 0 && (
+                  <button
+                    onClick={clearSelection}
+                    disabled={busy !== null}
+                    className="flex items-center gap-1 px-2 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
+                    title="選択を全て解除"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
               </>
             )}
             <button
@@ -997,6 +1035,7 @@ export function BoundarySurveyWorkAreaPage() {
               importedParcelKeys={importedParcelKeys}
               selectedKeys={selectedKeys}
               onToggleSelect={toggleSelectedParcel}
+              selectionMode={selectionMode}
             />
           ) : null
         }
