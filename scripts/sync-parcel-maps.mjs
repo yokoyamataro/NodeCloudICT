@@ -34,11 +34,15 @@ import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
+import { Readable } from 'node:stream'
 import { config as loadEnv } from 'node:process' // (Node 22+ 用フォールバックなし)
 
 // ---- 動的 import (依存が入っているかチェック) ----
 let createSupabaseClient
 let proj4
+let streamJsonParser
+let streamJsonPick
+let streamJsonArray
 
 try {
   createSupabaseClient = (await import('@supabase/supabase-js')).createClient
@@ -51,6 +55,16 @@ try {
 } catch {
   console.error('[sync] proj4 がありません (通常はあるはず)')
   process.exit(1)
+}
+// stream-json: 巨大 GeoJSON (V8 の string 上限 ~512MB を超える) をストリーミング
+// パースするため。無ければ従来の buf.toString('utf8') 経路にフォールバック。
+try {
+  streamJsonParser = (await import('stream-json')).parser
+  streamJsonPick = (await import('stream-json/filters/Pick.js')).pick
+  streamJsonArray = (await import('stream-json/streamers/StreamArray.js')).streamArray
+} catch {
+  streamJsonParser = null
+  console.warn('[sync] stream-json が無いので巨大 GeoJSON は無理。npm i -D stream-json 推奨')
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -249,6 +263,15 @@ function normalizeGovParcelGeoJson(raw, filenameHintZone) {
   ) {
     throw new Error('GeoJSON の形式が正しくありません')
   }
+  const acc = createNormalizeAccumulator(filenameHintZone)
+  for (const f of raw.features) acc.push(f)
+  return acc.finalize()
+}
+
+/** ストリーミング / 一括両方から使える正規化アキュムレータ。
+ *  push(feature) を Feature ごとに呼ぶ → 最後に finalize() で結果を得る。
+ *  これで巨大 GeoJSON でも buf.toString('utf8') せず処理できる。 */
+function createNormalizeAccumulator(filenameHintZone) {
   const features = []
   let detectedZone = null
   let minLng = Infinity,
@@ -256,59 +279,92 @@ function normalizeGovParcelGeoJson(raw, filenameHintZone) {
     maxLng = -Infinity,
     maxLat = -Infinity
 
-  for (const f of raw.features) {
-    if (!f || f.type !== 'Feature') continue
-    if (!f.geometry || f.geometry.type !== 'Polygon') continue
-    const coords = f.geometry.coordinates
-    if (!Array.isArray(coords) || coords.length === 0) continue
-
-    const props = f.properties ?? {}
-    const chiban = String(props['地番'] ?? '').trim()
-    const ooaza = String(props['大字名'] ?? '').trim()
-    const chome = String(props['丁目名'] ?? '').trim()
-    const idFallback = String(props['ID'] ?? '').trim()
-    const parcel_number = chiban || idFallback
-    const locationParts = [ooaza, chome].filter((s) => s.length > 0)
-    const location = locationParts.length > 0 ? locationParts.join(' ') : null
-    const parcel_name = location
-      ? `${location} ${chiban}`.trim()
-      : chiban || parcel_number
-
-    const zoneHere = extractZone(props['座標系']) ?? filenameHintZone ?? 0
-    if (detectedZone == null && zoneHere > 0) detectedZone = zoneHere
-
-    const outer = coords[0]
-    for (const p of outer) {
-      const lng = p[0],
-        lat = p[1]
-      if (lng < minLng) minLng = lng
-      if (lat < minLat) minLat = lat
-      if (lng > maxLng) maxLng = lng
-      if (lat > maxLat) maxLat = lat
-    }
-
-    features.push({
-      type: 'Feature',
-      geometry: f.geometry,
-      properties: {
-        parcel_number,
-        parcel_name,
-        location,
-        owner_name: null, // G 空間の登記所備付地図には所有者情報が無い
-        registered_area_sqm: null,
-        jprc_coords: [],
-        source_zone: zoneHere ?? 0,
-      },
-    })
-  }
-
-  const bbox = Number.isFinite(minLng) ? { minLng, minLat, maxLng, maxLat } : null
   return {
-    featureCollection: { type: 'FeatureCollection', features },
-    bbox,
-    parcelCount: features.length,
-    detectedZone,
+    push(f) {
+      if (!f || f.type !== 'Feature') return
+      if (!f.geometry || f.geometry.type !== 'Polygon') return
+      const coords = f.geometry.coordinates
+      if (!Array.isArray(coords) || coords.length === 0) return
+
+      const props = f.properties ?? {}
+      const chiban = String(props['地番'] ?? '').trim()
+      const ooaza = String(props['大字名'] ?? '').trim()
+      const chome = String(props['丁目名'] ?? '').trim()
+      const idFallback = String(props['ID'] ?? '').trim()
+      const parcel_number = chiban || idFallback
+      const locationParts = [ooaza, chome].filter((s) => s.length > 0)
+      const location = locationParts.length > 0 ? locationParts.join(' ') : null
+      const parcel_name = location
+        ? `${location} ${chiban}`.trim()
+        : chiban || parcel_number
+
+      const zoneHere = extractZone(props['座標系']) ?? filenameHintZone ?? 0
+      if (detectedZone == null && zoneHere > 0) detectedZone = zoneHere
+
+      const outer = coords[0]
+      for (const p of outer) {
+        const lng = p[0],
+          lat = p[1]
+        if (lng < minLng) minLng = lng
+        if (lat < minLat) minLat = lat
+        if (lng > maxLng) maxLng = lng
+        if (lat > maxLat) maxLat = lat
+      }
+
+      features.push({
+        type: 'Feature',
+        geometry: f.geometry,
+        properties: {
+          parcel_number,
+          parcel_name,
+          location,
+          owner_name: null,
+          registered_area_sqm: null,
+          jprc_coords: [],
+          source_zone: zoneHere ?? 0,
+        },
+      })
+    },
+    finalize() {
+      const bbox = Number.isFinite(minLng)
+        ? { minLng, minLat, maxLng, maxLat }
+        : null
+      return {
+        featureCollection: { type: 'FeatureCollection', features },
+        bbox,
+        parcelCount: features.length,
+        detectedZone,
+      }
+    },
   }
+}
+
+// ---- 大 Buffer をチャンクとして流すためのジェネレータ (stream-json のトークナイザ用) ----
+function* chunkBuffer(buf, size = 4 * 1024 * 1024) {
+  for (let i = 0; i < buf.length; i += size) {
+    yield buf.subarray(i, i + size)
+  }
+}
+
+/** 巨大 GeoJSON (V8 の string 上限 ~512MB 超) を Buffer.toString せずに正規化する。
+ *  stream-json でトップの features 配列を stream し、Feature ごとに accumulator へ push。 */
+async function normalizeStreaming(buf, filenameHintZone) {
+  if (!streamJsonParser) {
+    throw new Error(
+      'stream-json が入っていないので巨大 GeoJSON は処理できません: npm i -D stream-json',
+    )
+  }
+  const acc = createNormalizeAccumulator(filenameHintZone)
+  const src = Readable.from(chunkBuffer(buf))
+  const pipeline = src
+    .pipe(streamJsonParser())
+    .pipe(streamJsonPick({ filter: 'features' }))
+    .pipe(streamJsonArray())
+  // stream-json の StreamArray は { key, value } を emit する。value が Feature 本体。
+  for await (const chunk of pipeline) {
+    acc.push(chunk.value)
+  }
+  return acc.finalize()
 }
 
 // ---- リトライ付き fetch (大きい GeoJSON の DL が途中で切れる対策) ----
@@ -434,22 +490,44 @@ async function processResource(supabase, item, prefixLog) {
   } catch (e) {
     return { status: 'error', reason: `DL failed after retries: ${e.message ?? e}` }
   }
-  let raw
+  // V8 の string 上限 (0x1fffffe8 ≈ 536MB) を安全マージンで超えるものは
+  // 最初からストリーミングパースに回す。それ以下でも一度失敗したらフォールバック。
+  const SAFE_STRING_MAX = 400 * 1024 * 1024
+  let norm
   try {
-    raw = JSON.parse(buf.toString('utf8'))
-  } catch (e) {
-    return { status: 'error', reason: 'invalid JSON: ' + e.message }
-  }
-  if (raw?.type !== 'FeatureCollection' || !Array.isArray(raw?.features)) {
-    return {
-      status: 'error',
-      reason: `not a FeatureCollection (type=${raw?.type ?? 'null'})`,
+    if (buf.byteLength > SAFE_STRING_MAX) {
+      prefixLog(`streaming parse (${(buf.byteLength / 1024 / 1024).toFixed(1)} MB)...`)
+      norm = await normalizeStreaming(buf, undefined)
+    } else {
+      let raw
+      try {
+        raw = JSON.parse(buf.toString('utf8'))
+      } catch (e) {
+        if (
+          streamJsonParser &&
+          typeof e?.message === 'string' &&
+          e.message.includes('Cannot create a string longer than')
+        ) {
+          prefixLog('streaming parse fallback (string length overflow)...')
+          norm = await normalizeStreaming(buf, undefined)
+        } else {
+          return { status: 'error', reason: 'invalid JSON: ' + e.message }
+        }
+      }
+      if (norm === undefined) {
+        if (raw?.type !== 'FeatureCollection' || !Array.isArray(raw?.features)) {
+          return {
+            status: 'error',
+            reason: `not a FeatureCollection (type=${raw?.type ?? 'null'})`,
+          }
+        }
+        prefixLog('normalizing...')
+        norm = normalizeGovParcelGeoJson(raw)
+      }
     }
+  } catch (e) {
+    return { status: 'error', reason: 'parse failed: ' + (e?.message ?? e) }
   }
-
-  // 正規化
-  prefixLog('normalizing...')
-  const norm = normalizeGovParcelGeoJson(raw)
   const effectiveZone = norm.detectedZone ?? 0
   for (const f of norm.featureCollection.features) {
     if (f.properties.source_zone === 0) f.properties.source_zone = effectiveZone
