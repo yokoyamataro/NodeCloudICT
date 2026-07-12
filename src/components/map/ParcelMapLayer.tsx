@@ -73,6 +73,12 @@ const STYLE_SELECTED = {
 
 /** このズーム以上でラベル表示 */
 const LABEL_MIN_ZOOM = 17
+/** このズーム未満では地番レイヤ自体を描画しない (モバイル pan/pinch 対策)。
+ *  zoom 14 未満だと 1 筆が 1px 以下になり、Canvas 描画コストだけかかって見えない。 */
+const MIN_RENDER_ZOOM = 14
+/** viewport 追跡のバッファ倍率 (0.5 = 上下左右に viewport の 50% 分拡張 = 総 2x エリア)。
+ *  小さな pan では filteredFc が変わらないので <GeoJSON> の remount が起きない */
+const VIEWPORT_BUFFER_FACTOR = 0.5
 
 /** Feature の geometry.outer が bbox と交差するか */
 function featureIntersectsBbox(
@@ -102,6 +108,28 @@ function featureIntersectsBbox(
   )
 }
 
+/** outer が inner を完全に包含するか (viewport が buffered bbox 内に収まっているかの判定) */
+function bboxContains(outer: Bbox, inner: Bbox): boolean {
+  return (
+    outer.minLng <= inner.minLng &&
+    outer.minLat <= inner.minLat &&
+    outer.maxLng >= inner.maxLng &&
+    outer.maxLat >= inner.maxLat
+  )
+}
+
+/** bbox を factor 倍 (各方向) 拡張 */
+function expandBbox(b: Bbox, factor: number): Bbox {
+  const dLng = (b.maxLng - b.minLng) * factor
+  const dLat = (b.maxLat - b.minLat) * factor
+  return {
+    minLng: b.minLng - dLng,
+    minLat: b.minLat - dLat,
+    maxLng: b.maxLng + dLng,
+    maxLat: b.maxLat + dLat,
+  }
+}
+
 export function ParcelMapLayer({
   visible,
   bbox,
@@ -117,10 +145,26 @@ export function ParcelMapLayer({
     (s) => s.ensureLoadedForBbox,
   )
   const [viewportBbox, setViewportBbox] = useState<Bbox | null>(null)
+  const [zoomHidden, setZoomHidden] = useState(
+    () => map.getZoom() < MIN_RENDER_ZOOM,
+  )
 
-  // bbox 未指定のときは、地図のビューポートを追跡してフィルタ範囲とする
+  // ズームが閾値未満の間は描画自体をスキップ (pinch-zoom がカクつく最大の原因)
   useEffect(() => {
-    if (!visible) {
+    const update = () => setZoomHidden(map.getZoom() < MIN_RENDER_ZOOM)
+    update()
+    map.on('zoomend', update)
+    return () => {
+      map.off('zoomend', update)
+    }
+  }, [map])
+
+  // bbox 未指定のときは、地図のビューポートを追跡してフィルタ範囲とする。
+  // ただし viewport の 2x に拡張したバッファ bbox を保持しておき、
+  // viewport がそのバッファ内に収まっている間は state を更新しない
+  // (= filteredFc の再計算と <GeoJSON> の remount を抑制する)。
+  useEffect(() => {
+    if (!visible || zoomHidden) {
       setViewportBbox(null)
       return
     }
@@ -138,18 +182,25 @@ export function ParcelMapLayer({
         maxLat: b.getNorth(),
       }
     }
-    setViewportBbox(readBounds())
+    setViewportBbox(expandBbox(readBounds(), VIEWPORT_BUFFER_FACTOR))
     let t: ReturnType<typeof setTimeout> | null = null
     const debounced = () => {
       if (t) clearTimeout(t)
-      t = setTimeout(() => setViewportBbox(readBounds()), 300)
+      t = setTimeout(() => {
+        const view = readBounds()
+        setViewportBbox((prev) => {
+          // 既存バッファ内に viewport が完全に収まっているなら再計算しない
+          if (prev && bboxContains(prev, view)) return prev
+          return expandBbox(view, VIEWPORT_BUFFER_FACTOR)
+        })
+      }, 300)
     }
     map.on('moveend', debounced)
     return () => {
       if (t) clearTimeout(t)
       map.off('moveend', debounced)
     }
-  }, [map, visible, bbox])
+  }, [map, visible, bbox, zoomHidden])
 
   const effectiveBbox = bbox ?? viewportBbox
 
@@ -201,7 +252,7 @@ export function ParcelMapLayer({
     }
   }, [map, visible])
 
-  if (!visible || !filteredFc) return null
+  if (!visible || zoomHidden || !filteredFc) return null
 
   return (
     <GeoJsonInner
