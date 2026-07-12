@@ -41,6 +41,7 @@ import {
   type NewFarmFromParcelSelection,
 } from '@/features/projects/NewFarmFromParcelPanel'
 import { importParcelBatch } from '@/features/parcel-maps/importParcelBatch'
+import { useCoordinateStore } from '@/stores/coordinateStore'
 import type { Bbox } from '@/lib/tile-math'
 
 // 工種ごとのポリゴン色
@@ -425,6 +426,12 @@ export function ProjectListPage() {
         setCreateFromParcelError('工区の作成に失敗しました')
         return
       }
+      // importParcelBatch は内部で useFarmStore.getState().currentFarm.id と
+      // useCoordinateStore.getState().zone を読むので、作成した farm に切替 +
+      // 座標系を確定してから呼ぶ。
+      setCurrentProject(project)
+      setCurrentFarm(farm)
+      useCoordinateStore.getState().setZone(project.coordinate_zone)
       // 選んだ 1 筆を取込 (design_coordinates + design_work_areas + parcels に INSERT)
       try {
         await importParcelBatch(
@@ -470,7 +477,10 @@ export function ProjectListPage() {
           console.warn('[NewFarmFromParcel] updateFarm bbox failed', err)
         }
       }
+      // 境界測量画面 (地籍測量プロジェクト向け) に遷移し、
+      // 取込んだ地番の座標が UnifiedFieldMap の FitBounds によって画面にフィット。
       closeNewFarmDialog()
+      navigate('/boundary-survey/work-area')
     } finally {
       setCreating(false)
     }
