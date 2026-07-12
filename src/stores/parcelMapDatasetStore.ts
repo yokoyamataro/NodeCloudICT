@@ -70,6 +70,10 @@ interface State {
   /** メタデータから bbox 交差する active dataset の id を返す (フェッチ待たず即返す) */
   visibleDatasetIds: (bbox: Bbox) => string[]
 
+  /** 特定 dataset の GeoJSON を DL してキャッシュに載せる。既に cache 済みなら返すだけ。
+   *  bbox 指定不要なので「地番から作成」フロー等の bbox 未確定シーンで使う */
+  loadDatasetById: (datasetId: string) => Promise<ParcelFeatureCollection | null>
+
   uploadDataset: (params: {
     file: File
     name: string
@@ -266,6 +270,46 @@ export const useParcelMapDatasetStore = create<State>((set, get) => ({
     return get()
       .datasets.filter((d) => d.active && datasetIntersectsBbox(d, bbox))
       .map((d) => d.id)
+  },
+
+  loadDatasetById: async (datasetId) => {
+    const state = get()
+    const cached = state.geoJsonCache[datasetId]
+    if (cached) return cached
+    const dataset = state.datasets.find((d) => d.id === datasetId)
+    if (!dataset) return null
+    if (state.loadingIds.has(datasetId)) {
+      // 別の呼び出しが進行中: cache に載るまで軽くポーリング
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 200))
+        const c = get().geoJsonCache[datasetId]
+        if (c) return c
+      }
+      return null
+    }
+    set((s) => {
+      const next = new Set(s.loadingIds)
+      next.add(datasetId)
+      return { loadingIds: next }
+    })
+    try {
+      const fc = await downloadDatasetGeoJson(dataset)
+      if (fc) {
+        set((s) => ({
+          geoJsonCache: { ...s.geoJsonCache, [datasetId]: fc },
+        }))
+      }
+      return fc
+    } catch (err) {
+      console.warn(`[parcel-map] loadDatasetById ${datasetId} failed:`, err)
+      return null
+    } finally {
+      set((s) => {
+        const next = new Set(s.loadingIds)
+        next.delete(datasetId)
+        return { loadingIds: next }
+      })
+    }
   },
 
   ensureLoadedForBbox: async (bbox) => {

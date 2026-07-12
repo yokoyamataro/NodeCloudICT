@@ -36,6 +36,12 @@ import { JGD2011_ZONES } from '@/lib/coordinates'
 import { useAuth } from '@/contexts/AuthContext'
 import type { Project, ProjectCategory, ProjectMemberRole } from '@/types/database'
 import { PROJECT_CATEGORY_LABEL } from '@/types/database'
+import {
+  NewFarmFromParcelPanel,
+  type NewFarmFromParcelSelection,
+} from '@/features/projects/NewFarmFromParcelPanel'
+import { importParcelBatch } from '@/features/parcel-maps/importParcelBatch'
+import type { Bbox } from '@/lib/tile-math'
 
 // 工種ごとのポリゴン色
 const WORK_TYPE_COLORS: Record<string, string> = {
@@ -168,7 +174,13 @@ export function ProjectListPage() {
   const [newProjectZone, setNewProjectZone] = useState(13)
   const [newFarmName, setNewFarmName] = useState('')
   const [newFarmDescription, setNewFarmDescription] = useState('')
+  const [newFarmMode, setNewFarmMode] = useState<'normal' | 'from-parcel'>('normal')
+  const [parcelSelection, setParcelSelection] =
+    useState<NewFarmFromParcelSelection | null>(null)
   const [creating, setCreating] = useState(false)
+  const [createFromParcelError, setCreateFromParcelError] = useState<string | null>(
+    null,
+  )
   const [showMapDialog, setShowMapDialog] = useState<{ farm: Farm; location: FarmLocation } | null>(null)
 
   // プロジェクト編集モーダル (ProjectEditModal を呼ぶだけになったので state は 1 つ)
@@ -367,15 +379,100 @@ export function ProjectListPage() {
     }
   }
 
+  const closeNewFarmDialog = () => {
+    setShowNewFarmDialog(null)
+    setNewFarmName('')
+    setNewFarmDescription('')
+    setNewFarmMode('normal')
+    setParcelSelection(null)
+    setCreateFromParcelError(null)
+  }
+
   const handleCreateFarm = async () => {
-    if (!newFarmName.trim() || !showNewFarmDialog) return
+    if (!showNewFarmDialog) return
+
+    // 通常作成
+    if (newFarmMode === 'normal') {
+      if (!newFarmName.trim()) return
+      setCreating(true)
+      const farm = await createFarm(
+        showNewFarmDialog,
+        newFarmName,
+        newFarmDescription,
+      )
+      setCreating(false)
+      if (farm) closeNewFarmDialog()
+      return
+    }
+
+    // 地番から作成
+    if (!parcelSelection) return
+    // 工区名は入力欄の値を優先 (未入力なら parcel_name の提案値)
+    const nameToUse =
+      newFarmName.trim() || parcelSelection.suggestedFarmName.trim()
+    if (!nameToUse) return
+    const project = allProjects.find((p) => p.id === showNewFarmDialog)
+    if (!project) return
     setCreating(true)
-    const farm = await createFarm(showNewFarmDialog, newFarmName, newFarmDescription)
-    setCreating(false)
-    if (farm) {
-      setShowNewFarmDialog(null)
-      setNewFarmName('')
-      setNewFarmDescription('')
+    setCreateFromParcelError(null)
+    try {
+      const farm = await createFarm(
+        showNewFarmDialog,
+        nameToUse,
+        newFarmDescription,
+      )
+      if (!farm) {
+        setCreateFromParcelError('工区の作成に失敗しました')
+        return
+      }
+      // 選んだ 1 筆を取込 (design_coordinates + design_work_areas + parcels に INSERT)
+      try {
+        await importParcelBatch(
+          [parcelSelection.feature],
+          { farmId: farm.id, zone: project.coordinate_zone },
+        )
+      } catch (err) {
+        // 取込は失敗したが farm 自体は作成済み → 作成は成功として閉じ、
+        // ユーザーが後から手動取込できるようにする
+        console.error('[NewFarmFromParcel] importParcelBatch failed', err)
+        setCreateFromParcelError(
+          err instanceof Error
+            ? `工区は作成しましたが地番取込に失敗しました: ${err.message}`
+            : '工区は作成しましたが地番取込に失敗しました',
+        )
+        return
+      }
+      // 地番の bbox を farm.parcel_map_bbox に保存 → 開いた時に地番マップが
+      // その周辺だけレンダリング (300m デフォルトより優先される)
+      const outer = parcelSelection.feature.geometry.coordinates[0]
+      if (outer && outer.length > 0) {
+        let minLng = Infinity,
+          minLat = Infinity,
+          maxLng = -Infinity,
+          maxLat = -Infinity
+        for (const p of outer) {
+          if (p[0] < minLng) minLng = p[0]
+          if (p[1] < minLat) minLat = p[1]
+          if (p[0] > maxLng) maxLng = p[0]
+          if (p[1] > maxLat) maxLat = p[1]
+        }
+        // 周辺 100m 相当のバッファを足す (経度緯度換算: 100m ≈ 0.0009°)
+        const buf = 0.001
+        const bbox: Bbox = {
+          minLng: minLng - buf,
+          minLat: minLat - buf,
+          maxLng: maxLng + buf,
+          maxLat: maxLat + buf,
+        }
+        try {
+          await updateFarm(farm.id, { parcel_map_bbox: bbox })
+        } catch (err) {
+          console.warn('[NewFarmFromParcel] updateFarm bbox failed', err)
+        }
+      }
+      closeNewFarmDialog()
+    } finally {
+      setCreating(false)
     }
   }
 
@@ -1012,52 +1109,139 @@ export function ProjectListPage() {
       )}
 
       {/* 新規工区ダイアログ */}
-      {showNewFarmDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
-            <h2 className="text-lg font-bold mb-4">新規工区</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">工区名 *</label>
-                <input
-                  type="text"
-                  value={newFarmName}
-                  onChange={(e) => setNewFarmName(e.target.value)}
-                  className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="例: 1-1"
-                  autoFocus
-                />
+      {showNewFarmDialog && (() => {
+        const projectForDialog = allProjects.find(
+          (p) => p.id === showNewFarmDialog,
+        )
+        const isCadastral = projectForDialog?.category === 'cadastral'
+        const canSubmit =
+          newFarmMode === 'normal'
+            ? newFarmName.trim().length > 0
+            : parcelSelection != null &&
+              (newFarmName.trim() || parcelSelection.suggestedFarmName.trim())
+                .length > 0
+        return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000] p-4">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
+              <h2 className="text-lg font-bold mb-3">新規工区</h2>
+              {/* タブ (地籍測量プロジェクトのみ「地番から作成」を提示) */}
+              {isCadastral && (
+                <div className="flex border-b mb-4 -mx-1">
+                  <button
+                    onClick={() => setNewFarmMode('normal')}
+                    className={`flex-1 mx-1 py-2 text-sm font-medium border-b-2 ${
+                      newFarmMode === 'normal'
+                        ? 'border-blue-600 text-blue-700'
+                        : 'border-transparent text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    通常作成
+                  </button>
+                  <button
+                    onClick={() => setNewFarmMode('from-parcel')}
+                    className={`flex-1 mx-1 py-2 text-sm font-medium border-b-2 ${
+                      newFarmMode === 'from-parcel'
+                        ? 'border-blue-600 text-blue-700'
+                        : 'border-transparent text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    地番から作成
+                  </button>
+                </div>
+              )}
+
+              {newFarmMode === 'from-parcel' && isCadastral ? (
+                <div className="space-y-4">
+                  <NewFarmFromParcelPanel
+                    onSelectionChange={(sel) => {
+                      setParcelSelection(sel)
+                      // 未入力なら提案名を自動セット
+                      if (sel && !newFarmName.trim()) {
+                        setNewFarmName(sel.suggestedFarmName)
+                      }
+                    }}
+                  />
+                  <div>
+                    <label className="block text-xs font-medium mb-1 text-slate-600">
+                      工区名 *{' '}
+                      <span className="text-slate-400 font-normal">
+                        (地番から自動入力・編集可)
+                      </span>
+                    </label>
+                    <input
+                      type="text"
+                      value={newFarmName}
+                      onChange={(e) => setNewFarmName(e.target.value)}
+                      className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                      placeholder={
+                        parcelSelection?.suggestedFarmName ?? '地番を選択すると自動入力されます'
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium mb-1 text-slate-600">
+                      説明
+                    </label>
+                    <textarea
+                      value={newFarmDescription}
+                      onChange={(e) => setNewFarmDescription(e.target.value)}
+                      className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                      rows={2}
+                      placeholder="工区の説明（任意）"
+                    />
+                  </div>
+                  {createFromParcelError && (
+                    <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
+                      {createFromParcelError}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">工区名 *</label>
+                    <input
+                      type="text"
+                      value={newFarmName}
+                      onChange={(e) => setNewFarmName(e.target.value)}
+                      className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="例: 1-1"
+                      autoFocus
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">説明</label>
+                    <textarea
+                      value={newFarmDescription}
+                      onChange={(e) => setNewFarmDescription(e.target.value)}
+                      className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      rows={2}
+                      placeholder="工区の説明（任意）"
+                    />
+                  </div>
+                </div>
+              )}
+              <div className="flex justify-end gap-2 mt-6">
+                <button
+                  onClick={closeNewFarmDialog}
+                  disabled={creating}
+                  className="px-4 py-2 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={handleCreateFarm}
+                  disabled={!canSubmit || creating}
+                  className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {creating && <Loader2 className="h-4 w-4 animate-spin" />}
+                  作成
+                </button>
               </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">説明</label>
-                <textarea
-                  value={newFarmDescription}
-                  onChange={(e) => setNewFarmDescription(e.target.value)}
-                  className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  rows={2}
-                  placeholder="工区の説明（任意）"
-                />
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 mt-6">
-              <button
-                onClick={() => setShowNewFarmDialog(null)}
-                className="px-4 py-2 text-sm border rounded hover:bg-slate-50"
-              >
-                キャンセル
-              </button>
-              <button
-                onClick={handleCreateFarm}
-                disabled={!newFarmName.trim() || creating}
-                className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              >
-                {creating && <Loader2 className="h-4 w-4 animate-spin" />}
-                作成
-              </button>
             </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
 
       {/* プロジェクト編集モーダル: ProjectChooserPage と共有 (共有者も編集可) */}
       {editingProject && (
