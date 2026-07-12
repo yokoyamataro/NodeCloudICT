@@ -11,6 +11,7 @@ import type { Feature, Polygon } from 'geojson'
 import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import type { ParcelMapDataset } from '@/types/database'
 import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
+import { Combobox, type ComboboxOption } from '@/components/ui/Combobox'
 
 /** 総務省 全国地方公共団体コード 2 桁 → 表示名 */
 const PREFECTURE_NAMES: Record<string, string> = {
@@ -222,26 +223,42 @@ export function NewFarmFromParcelPanel({ onSelectionChange }: Props) {
   }, [location])
   useEffect(() => { setSelectedBranch('') }, [selectedParent])
 
+  const prefectureOptions: ComboboxOption[] = useMemo(
+    () =>
+      prefectures.map((code) => ({
+        value: code,
+        label: PREFECTURE_NAMES[code] ?? code,
+      })),
+    [prefectures],
+  )
+  const municipalityOptions: ComboboxOption[] = useMemo(
+    () =>
+      municipalities.map((m) => ({
+        value: m.id,
+        label: `${m.registry_code} ${m.label}`,
+      })),
+    [municipalities],
+  )
+  const locationOptions: ComboboxOption[] = useMemo(
+    () => locations.map((loc) => ({ value: loc, label: loc })),
+    [locations],
+  )
+  const parentOptions: ComboboxOption[] = useMemo(
+    () => parentNumbers.map((n) => ({ value: n, label: n })),
+    [parentNumbers],
+  )
+
   return (
     <div className="space-y-3">
       {/* 都道府県 */}
       <div>
         <label className="block text-xs font-medium mb-1 text-slate-600">都道府県 *</label>
-        <div className="relative">
-          <select
-            value={prefectureCode}
-            onChange={(e) => setPrefectureCode(e.target.value)}
-            className="w-full px-3 py-2 border rounded appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-          >
-            <option value="">選択してください</option>
-            {prefectures.map((code) => (
-              <option key={code} value={code}>
-                {PREFECTURE_NAMES[code] ?? code}
-              </option>
-            ))}
-          </select>
-          <ChevronDown className="h-4 w-4 absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-        </div>
+        <Combobox
+          value={prefectureCode}
+          onChange={setPrefectureCode}
+          options={prefectureOptions}
+          placeholder="都道府県名で検索 (例: 北)"
+        />
         {prefectures.length === 0 && (
           <p className="text-[11px] text-slate-500 mt-1">
             公開中の地番マップが 1 つもありません。管理画面から公開してください。
@@ -252,22 +269,13 @@ export function NewFarmFromParcelPanel({ onSelectionChange }: Props) {
       {/* 市町村 */}
       <div>
         <label className="block text-xs font-medium mb-1 text-slate-600">市町村 *</label>
-        <div className="relative">
-          <select
-            value={datasetId}
-            onChange={(e) => setDatasetId(e.target.value)}
-            disabled={!prefectureCode}
-            className="w-full px-3 py-2 border rounded appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:bg-slate-100 disabled:text-slate-500"
-          >
-            <option value="">選択してください</option>
-            {municipalities.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.registry_code} {m.label}
-              </option>
-            ))}
-          </select>
-          <ChevronDown className="h-4 w-4 absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-        </div>
+        <Combobox
+          value={datasetId}
+          onChange={setDatasetId}
+          options={municipalityOptions}
+          disabled={!prefectureCode}
+          placeholder="市町村名で検索"
+        />
         {prefectureCode && municipalities.length === 0 && (
           <p className="text-[11px] text-slate-500 mt-1">
             この都道府県で公開中の地番マップがありません。
@@ -284,22 +292,13 @@ export function NewFarmFromParcelPanel({ onSelectionChange }: Props) {
             地番データを読み込み中…
           </div>
         ) : (
-          <div className="relative">
-            <select
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              disabled={!fc}
-              className="w-full px-3 py-2 border rounded appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:bg-slate-100 disabled:text-slate-500"
-            >
-              <option value="">選択してください</option>
-              {locations.map((loc) => (
-                <option key={loc} value={loc}>
-                  {loc}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="h-4 w-4 absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-          </div>
+          <Combobox
+            value={location}
+            onChange={setLocation}
+            options={locationOptions}
+            disabled={!fc}
+            placeholder="大字名で検索 (例: 錦町)"
+          />
         )}
       </div>
 
@@ -314,22 +313,13 @@ export function NewFarmFromParcelPanel({ onSelectionChange }: Props) {
               </span>
             )}
           </label>
-          <div className="relative">
-            <select
-              value={selectedParent}
-              onChange={(e) => setSelectedParent(e.target.value)}
-              disabled={!location}
-              className="w-full px-3 py-2 border rounded appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:bg-slate-100 disabled:text-slate-500"
-            >
-              <option value="">選択してください</option>
-              {parentNumbers.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="h-4 w-4 absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-          </div>
+          <Combobox
+            value={selectedParent}
+            onChange={setSelectedParent}
+            options={parentOptions}
+            disabled={!location}
+            placeholder="本番"
+          />
         </div>
         <div>
           <label className="block text-xs font-medium mb-1 text-slate-600">
