@@ -120,6 +120,12 @@ function msg(err: unknown, fallback: string): string {
   return parts.length > 0 ? parts.join(' — ') : fallback
 }
 
+/** JSON.parse は大きな文字列に対して同期で数秒ブロックする。
+ *  次の frame まで await して UI を描画させてから parse する。 */
+async function yieldToBrowser(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+}
+
 async function downloadJson<T>(bucket: string, path: string): Promise<T> {
   const { data: signed, error } = await supabase.storage
     .from(bucket)
@@ -132,8 +138,12 @@ async function downloadJson<T>(bucket: string, path: string): Promise<T> {
     if (!res.body) throw new Error('Empty response body for gz file')
     const decompressed = res.body.pipeThrough(new DecompressionStream('gzip'))
     const text = await new Response(decompressed).text()
+    await yieldToBrowser()
     return JSON.parse(text) as T
   }
+  // res.json() は fetch 内部で pretokenize されるらしく、同期ブロックが軽い
+  // ため yield は不要。とはいえ次のフレームに parse を進めるだけの効果はある。
+  await yieldToBrowser()
   return (await res.json()) as T
 }
 

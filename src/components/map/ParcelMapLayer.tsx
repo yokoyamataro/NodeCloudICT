@@ -12,9 +12,11 @@
 //     ズーム LABEL_MIN_ZOOM 以上に達したときに 1 度だけ全 layer に bind する。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { GeoJSON, useMap } from 'react-leaflet'
 import type { Feature, Polygon } from 'geojson'
 import L from 'leaflet'
+import { Loader2 } from 'lucide-react'
 import {
   useParcelMapDatasetStore,
   type ParcelFeatureCollection,
@@ -145,6 +147,7 @@ export function ParcelMapLayer({
   const map = useMap()
   const datasets = useParcelMapDatasetStore((s) => s.datasets)
   const cache = useParcelMapDatasetStore((s) => s.geoJsonCache)
+  const loadingIds = useParcelMapDatasetStore((s) => s.loadingIds)
   const ensureLoadedForBbox = useParcelMapDatasetStore(
     (s) => s.ensureLoadedForBbox,
   )
@@ -210,9 +213,15 @@ export function ParcelMapLayer({
 
   // 効いてる bbox に active な dataset のうち交差するものだけを、必要に応じて DL する。
   // dataset 一覧の active フラグや bbox が変わったら再評価される。
+  //
+  // 100ms 遅延を入れて先に UI (「地番マップ読込中…」インジケータ等) を描画させる。
+  // これで toggle 直後の 1 フレーム目でスピナが出てから DL / パースが始まる。
   useEffect(() => {
     if (!visible || !effectiveBbox) return
-    void ensureLoadedForBbox(effectiveBbox)
+    const t = setTimeout(() => {
+      void ensureLoadedForBbox(effectiveBbox)
+    }, 100)
+    return () => clearTimeout(t)
   }, [visible, effectiveBbox, ensureLoadedForBbox, datasets])
 
   // bbox に交差する active dataset のうち、cache に載っているものの feature を合体
@@ -257,26 +266,49 @@ export function ParcelMapLayer({
     }
   }, [map, visible, showLabels])
 
-  if (!visible || zoomHidden || !filteredFc) return null
+  // 「地番マップ読込中…」インジケータ。dataset の DL 中 or filteredFc がまだ null の間、
+  // 地図右上に固定表示する。地図操作は塞がない (pointer-events-none)。
+  const isDownloading = visible && !zoomHidden && loadingIds.size > 0
+  const showLoadingIndicator = isDownloading || (visible && !zoomHidden && !filteredFc && !!effectiveBbox && loadingIds.size > 0)
+  const indicator = showLoadingIndicator
+    ? createPortal(
+        <div
+          className="absolute top-2 right-2 z-[1200] bg-white/95 border border-slate-300 rounded shadow px-2 py-1 text-xs flex items-center gap-1.5 pointer-events-none"
+        >
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" />
+          <span className="text-slate-700">
+            地番マップ読込中… ({loadingIds.size})
+          </span>
+        </div>,
+        map.getContainer(),
+      )
+    : null
+
+  if (!visible || zoomHidden || !filteredFc) {
+    return <>{indicator}</>
+  }
 
   return (
-    <GeoJsonInner
-      data={filteredFc}
-      renderer={renderer}
-      importedParcelKeys={importedParcelKeys}
-      selectedKeys={selectedKeys}
-      selectionMode={selectionMode}
-      showLabels={showLabels}
-      onToggleSelect={
-        onToggleSelect
-          ? (feature) => {
-              onToggleSelect(feature)
-              // 選択トグル後は Popup を閉じる (色が変わるので再クリックで最新状態)
-              map.closePopup()
-            }
-          : undefined
-      }
-    />
+    <>
+      {indicator}
+      <GeoJsonInner
+        data={filteredFc}
+        renderer={renderer}
+        importedParcelKeys={importedParcelKeys}
+        selectedKeys={selectedKeys}
+        selectionMode={selectionMode}
+        showLabels={showLabels}
+        onToggleSelect={
+          onToggleSelect
+            ? (feature) => {
+                onToggleSelect(feature)
+                // 選択トグル後は Popup を閉じる (色が変わるので再クリックで最新状態)
+                map.closePopup()
+              }
+            : undefined
+        }
+      />
+    </>
   )
 }
 
