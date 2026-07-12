@@ -81,13 +81,14 @@ const LABEL_MIN_ZOOM = 17
 /** このズーム未満では地番レイヤ自体を描画しない (モバイル pan/pinch 対策)。
  *  zoom 14 未満だと 1 筆が 1px 以下になり、Canvas 描画コストだけかかって見えない。 */
 const MIN_RENDER_ZOOM = 14
-/** viewport 追跡のバッファ倍率 (0.5 = 上下左右に viewport の 50% 分拡張 = 総 2x エリア)。
- *  小さな pan では filteredFc が変わらないので <GeoJSON> の remount が起きない */
-const VIEWPORT_BUFFER_FACTOR = 0.5
-/** ラベル bind を分割するチャンクサイズ (1 フレームあたりの bindTooltip 呼び出し数)。
- *  一気に 100-500 個の bindTooltip を呼ぶと数百 ms 固まるので、フレームごとに
- *  少しずつ bind してユーザー操作をブロックしないようにする。 */
+/** viewport 追跡のバッファ倍率 (0.1 = 上下左右に viewport の 10% 分拡張)。
+ *  小さな pan でも新しい bbox に切替わるが、features 数を tight に保つ方が優先。 */
+const VIEWPORT_BUFFER_FACTOR = 0.1
+/** ラベル bind を分割するチャンクサイズ (1 フレームあたりの bindTooltip 呼び出し数) */
 const LABEL_BIND_CHUNK = 30
+/** ラベル bind の上限 features 数。これを超える場合はラベルを省略する
+ *  (permanent tooltip は DOM ノードなので多いと重い) */
+const LABEL_MAX_FEATURES = 500
 
 /** Feature の geometry.outer が bbox と交差するか */
 function featureIntersectsBbox(
@@ -324,10 +325,23 @@ export function ParcelMapLayer({
 
   // 地番名ラベルのバインド進捗 ({done, total} または null)。バインド中は
   // インジケータを「地番名 X/Y 適用中…」表示にする。
+  // done = -1 は「上限超過で省略した」ことを表す (総数だけ表示)。
   const [labelBindProgress, setLabelBindProgress] = useState<{
     done: number
     total: number
   } | null>(null)
+  // 上限超過メッセージは一定時間経ったら自動で閉じる (常時表示だと目障り)
+  useEffect(() => {
+    if (labelBindProgress?.done === -1) {
+      const t = setTimeout(() => setLabelBindProgress(null), 5000)
+      return () => clearTimeout(t)
+    }
+  }, [labelBindProgress])
+
+  const isBindingProgressing =
+    labelBindProgress != null && labelBindProgress.done !== -1
+  const isBindingSkipped =
+    labelBindProgress != null && labelBindProgress.done === -1
 
   // 「地番マップ読込中…」インジケータ。dataset の DL 中 or Leaflet レイヤの
   // 差替え待ち (renderPending) 中 or 地番名バインド中に、地図右上に固定表示する。
@@ -335,11 +349,17 @@ export function ParcelMapLayer({
   const showLoadingIndicator =
     visible &&
     !zoomHidden &&
-    (loadingIds.size > 0 || renderPending || labelBindProgress != null)
+    (loadingIds.size > 0 ||
+      renderPending ||
+      isBindingProgressing ||
+      isBindingSkipped)
   const indicatorLabel = (() => {
     if (loadingIds.size > 0) return `地番マップ読込中… (${loadingIds.size})`
-    if (labelBindProgress) {
-      return `地番名 適用中… ${labelBindProgress.done.toLocaleString()}/${labelBindProgress.total.toLocaleString()}`
+    if (isBindingProgressing) {
+      return `地番名 適用中… ${labelBindProgress!.done.toLocaleString()}/${labelBindProgress!.total.toLocaleString()}`
+    }
+    if (isBindingSkipped) {
+      return `地番数が多いためラベル省略 (${labelBindProgress!.total.toLocaleString()} 件)`
     }
     return '地番マップを描画中…'
   })()
@@ -486,6 +506,16 @@ function GeoJsonInner({
 
       if (targets.length === 0) {
         labelsBoundRef.current = true
+        return
+      }
+      // 上限を超える feature 数のときはラベルを省略する。visible = many polygons
+      // に一気に bindTooltip すると数秒固まるので、tight viewport にしてもらう。
+      if (targets.length > LABEL_MAX_FEATURES) {
+        labelsBoundRef.current = true
+        onLabelBindProgress?.({
+          done: -1,
+          total: targets.length,
+        })
         return
       }
 

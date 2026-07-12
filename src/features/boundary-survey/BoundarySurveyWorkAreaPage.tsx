@@ -33,17 +33,10 @@ import type { CoordinateRow } from '@/stores/coordinateStore'
 import type { DesignWorkArea } from '@/types/database'
 import { ParcelMapLayer, parcelFeatureKey } from '@/components/map/ParcelMapLayer'
 import { type Bbox } from '@/lib/tile-math'
-import {
-  PARCEL_RANGE_OPTIONS,
-  computeParcelBbox,
-  parseParcelRange,
-  type ParcelRange,
-} from '@/lib/parcel-map-range'
 import { importParcelBatch } from '@/features/parcel-maps/importParcelBatch'
 
 const PARCEL_LAYER_STORAGE_KEY = 'boundary-survey:parcel-map-layer'
 const PARCEL_LABELS_STORAGE_KEY = 'boundary-survey:parcel-map-labels'
-const PARCEL_RANGE_STORAGE_KEY = 'boundary-survey:parcel-map-range'
 
 export function BoundarySurveyWorkAreaPage() {
   const fileRef = useRef<HTMLInputElement>(null)
@@ -85,10 +78,6 @@ export function BoundarySurveyWorkAreaPage() {
     if (typeof window === 'undefined') return false
     return window.localStorage.getItem(PARCEL_LABELS_STORAGE_KEY) === '1'
   })
-  const [parcelRange, setParcelRange] = useState<ParcelRange>(() => {
-    if (typeof window === 'undefined') return parseParcelRange(null)
-    return parseParcelRange(window.localStorage.getItem(PARCEL_RANGE_STORAGE_KEY))
-  })
 
   useEffect(() => {
     void fetchDatasets()
@@ -107,19 +96,13 @@ export function BoundarySurveyWorkAreaPage() {
       showParcelLabels ? '1' : '0',
     )
   }, [showParcelLabels])
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    window.localStorage.setItem(PARCEL_RANGE_STORAGE_KEY, parcelRange)
-  }, [parcelRange])
 
-  // 地番マップの表示範囲:
-  //   * farm.parcel_map_bbox に保存済み bbox があれば最優先 (管理者が手動固定)
-  //   * それ以外は parcelRange プリセット (工区+Nm / viewport) に従う
-  const effectiveParcelBbox = useMemo((): Bbox | null => {
-    const farmBbox = currentFarm?.parcel_map_bbox as Bbox | null | undefined
-    if (farmBbox) return farmBbox
-    return computeParcelBbox(parcelRange, coordinates, zone)
-  }, [currentFarm, coordinates, zone, parcelRange])
+  // 地番マップの表示範囲は常に「現在の地図ビュー」に追従する。
+  // 以前は「工区+Nm」プリセットで固定していたが、features 数が数千〜数万
+  // になってラベル bind が固まる原因になるため撤去。
+  // (farm.parcel_map_bbox に管理者が手動固定した bbox があれば尊重する)
+  const effectiveParcelBbox: Bbox | null =
+    (currentFarm?.parcel_map_bbox as Bbox | null | undefined) ?? null
 
   // 取込済セット (背景レイヤで色分けに使う)。
   // キーは "所在|地番" の複合値。所在の異なる同一地番 (例: 朝日町 10-10 と
@@ -721,33 +704,19 @@ export function BoundarySurveyWorkAreaPage() {
                 法務省地図
               </button>
             )}
-            {/* 表示範囲プリセット + 地番名ラベル ON/OFF (法務省地図が表示中のみ) */}
+            {/* 地番名ラベル ON/OFF (法務省地図が表示中のみ) */}
             {hasActiveDataset && showParcelLayer && (
-              <>
-                <select
-                  value={parcelRange}
-                  onChange={(e) => setParcelRange(e.target.value as ParcelRange)}
-                  className="px-2 py-1.5 text-sm border border-slate-300 rounded bg-white"
-                  title="法務省地図の表示範囲。狭くすると描画が軽くなります"
-                >
-                  {PARCEL_RANGE_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  onClick={() => setShowParcelLabels((v) => !v)}
-                  className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border ${
-                    showParcelLabels
-                      ? 'bg-slate-800 text-white border-slate-800 hover:bg-slate-700'
-                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                  }`}
-                  title="地番名 (例: 10-10) を常時ラベル表示。ズームが小さい間は自動で非表示"
-                >
-                  {showParcelLabels ? '地番名 ON' : '地番名 OFF'}
-                </button>
-              </>
+              <button
+                onClick={() => setShowParcelLabels((v) => !v)}
+                className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border ${
+                  showParcelLabels
+                    ? 'bg-slate-800 text-white border-slate-800 hover:bg-slate-700'
+                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                }`}
+                title="地番名 (例: 10-10) を常時ラベル表示。地番数が多い時は自動で省略"
+              >
+                {showParcelLabels ? '地番名 ON' : '地番名 OFF'}
+              </button>
             )}
             {/* 地番データ取込 (選択モード + 一括取込を兼ねる) */}
             {hasActiveDataset && showParcelLayer && (
