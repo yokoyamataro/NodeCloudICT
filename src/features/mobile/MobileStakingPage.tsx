@@ -60,7 +60,13 @@ import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { ParcelMapLayer, parcelFeatureKey } from '@/components/map/ParcelMapLayer'
 import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
 import type { Feature, Polygon as GeoJsonPolygon } from 'geojson'
-import { expandBbox, ringBbox, type Bbox } from '@/lib/tile-math'
+import { type Bbox } from '@/lib/tile-math'
+import {
+  PARCEL_RANGE_OPTIONS,
+  computeParcelBbox,
+  parseParcelRange,
+  type ParcelRange,
+} from '@/lib/parcel-map-range'
 import { importParcelBatch } from '@/features/parcel-maps/importParcelBatch'
 import { Map as MapIcon } from 'lucide-react'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
@@ -1419,18 +1425,25 @@ export function MobileStakingPage() {
   // ---- 法務省地図の bbox / 取込済セット / 一括取込ハンドラ ----
   const isCadastralProject = project?.category === 'cadastral'
   const parcelsByWorkAreaId = useParcelStore((s) => s.byWorkAreaId)
-  const farmCoordBbox = useMemo((): Bbox | null => {
-    if (coordinates.length === 0) return null
-    const conv = new CoordinateConverter(zone)
-    const points: Array<[number, number]> = coordinates.map((c) => {
-      const { lat, lng } = conv.toLatLng(c.x, c.y)
-      return [lng, lat]
-    })
-    if (points.length === 0) return null
-    return expandBbox(ringBbox(points), 500)
-  }, [coordinates, zone])
-  const effectiveParcelBbox: Bbox | null =
-    (farm?.parcel_map_bbox as Bbox | null | undefined) ?? farmCoordBbox
+  const [parcelRange, setParcelRange] = useState<ParcelRange>(() => {
+    try {
+      return parseParcelRange(localStorage.getItem('mobile:staking:parcelRange'))
+    } catch {
+      return parseParcelRange(null)
+    }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('mobile:staking:parcelRange', parcelRange)
+    } catch {
+      /* ignore */
+    }
+  }, [parcelRange])
+  const effectiveParcelBbox: Bbox | null = useMemo(() => {
+    const farmBbox = farm?.parcel_map_bbox as Bbox | null | undefined
+    if (farmBbox) return farmBbox
+    return computeParcelBbox(parcelRange, coordinates, zone)
+  }, [farm, coordinates, zone, parcelRange])
   const importedParcelKeys = useMemo(() => {
     const s = new Set<string>()
     for (const p of parcelsByWorkAreaId.values()) {
@@ -3733,20 +3746,34 @@ export function MobileStakingPage() {
                 </button>
               </div>
             )}
-            {/* 法務省地図トグル + 地番名ラベル ON/OFF */}
+            {/* 法務省地図トグル + 表示範囲プリセット + 地番名ラベル ON/OFF */}
             <div className="flex items-center gap-1">
               {showParcelLayer && (
-                <button
-                  onClick={() => setShowParcelMapLabels((v) => !v)}
-                  className={`px-2 py-1 text-[11px] font-medium rounded shadow border ${
-                    showParcelMapLabels
-                      ? 'bg-slate-800 border-slate-800 text-white'
-                      : 'bg-white/95 border-slate-300 text-slate-800'
-                  }`}
-                  title="法務省地図の地番名を常時ラベル表示 (ズームが小さい間は自動非表示)"
-                >
-                  {showParcelMapLabels ? '地番名 ON' : '地番名 OFF'}
-                </button>
+                <>
+                  <select
+                    value={parcelRange}
+                    onChange={(e) => setParcelRange(e.target.value as ParcelRange)}
+                    className="px-1.5 py-1 text-[11px] font-medium rounded shadow border bg-white/95 border-slate-300 text-slate-800"
+                    title="法務省地図の表示範囲。狭くすると描画が軽くなります"
+                  >
+                    {PARCEL_RANGE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => setShowParcelMapLabels((v) => !v)}
+                    className={`px-2 py-1 text-[11px] font-medium rounded shadow border ${
+                      showParcelMapLabels
+                        ? 'bg-slate-800 border-slate-800 text-white'
+                        : 'bg-white/95 border-slate-300 text-slate-800'
+                    }`}
+                    title="法務省地図の地番名を常時ラベル表示 (ズームが小さい間は自動非表示)"
+                  >
+                    {showParcelMapLabels ? '地番名 ON' : '地番名 OFF'}
+                  </button>
+                </>
               )}
               <button
                 onClick={() => {

@@ -25,12 +25,16 @@ import { UnifiedFieldMap, type BaseLayerType, type LayerVisibility } from '@/com
 import { ParcelMapLayer, parcelFeatureKey } from '@/components/map/ParcelMapLayer'
 import type { Project } from '@/types/database'
 import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
-import { CoordinateConverter } from '@/lib/coordinates'
-import { expandBbox, ringBbox, type Bbox } from '@/lib/tile-math'
+import {
+  PARCEL_RANGE_OPTIONS,
+  computeParcelBbox,
+  parseParcelRange,
+  type ParcelRange,
+} from '@/lib/parcel-map-range'
+import { type Bbox } from '@/lib/tile-math'
 import { importParcelBatch } from '@/features/parcel-maps/importParcelBatch'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
 
-const AUTO_BBOX_BUFFER_M = 500
 
 export function MobileDetailMapPage() {
   const navigate = useNavigate()
@@ -69,6 +73,20 @@ export function MobileDetailMapPage() {
   const hasActiveParcelDataset = parcelDatasets.some((d) => d.active)
   const [showParcelLayer, setShowParcelLayer] = useState(false)
   const [showParcelLabels, setShowParcelLabels] = useState(false)
+  const [parcelRange, setParcelRange] = useState<ParcelRange>(() => {
+    try {
+      return parseParcelRange(localStorage.getItem('mobile:detail:parcelRange'))
+    } catch {
+      return parseParcelRange(null)
+    }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('mobile:detail:parcelRange', parcelRange)
+    } catch {
+      /* ignore */
+    }
+  }, [parcelRange])
   const [selectionMode, setSelectionMode] = useState(false)
   const [selectedParcels, setSelectedParcels] = useState<
     Map<string, Feature<Polygon, ParcelFeatureProperties>>
@@ -103,21 +121,15 @@ export function MobileDetailMapPage() {
 
   const isCadastralProject = project?.category === 'cadastral'
 
-  // 工区座標由来の bbox (+ 500m バッファ)。null なら ParcelMapLayer が地図
-  // ビューポートに追従する
-  const farmCoordBbox = useMemo((): Bbox | null => {
-    if (!project || coordinates.length === 0) return null
-    const conv = new CoordinateConverter(project.coordinate_zone)
-    const points: Array<[number, number]> = coordinates.map((c) => {
-      const { lat, lng } = conv.toLatLng(c.x, c.y)
-      return [lng, lat]
-    })
-    if (points.length === 0) return null
-    return expandBbox(ringBbox(points), AUTO_BBOX_BUFFER_M)
-  }, [coordinates, project])
-
-  const effectiveParcelBbox: Bbox | null =
-    (farm?.parcel_map_bbox as Bbox | null | undefined) ?? farmCoordBbox
+  const effectiveParcelBbox: Bbox | null = useMemo(() => {
+    const farmBbox = farm?.parcel_map_bbox as Bbox | null | undefined
+    if (farmBbox) return farmBbox
+    return computeParcelBbox(
+      parcelRange,
+      coordinates,
+      project?.coordinate_zone ?? 13,
+    )
+  }, [farm, coordinates, project, parcelRange])
 
   // 取込済 "所在|地番" セット
   const importedParcelKeys = useMemo(() => {
@@ -340,6 +352,18 @@ export function MobileDetailMapPage() {
       {/* 地番データ取込用のサブメニュー (法務省地図 ON 時のみ) */}
       {isCadastralProject && hasActiveParcelDataset && showParcelLayer && (
         <div className="px-2 py-1.5 bg-slate-700 text-white flex items-center gap-2 text-xs border-b border-slate-600">
+          <select
+            value={parcelRange}
+            onChange={(e) => setParcelRange(e.target.value as ParcelRange)}
+            className="px-1.5 py-0.5 text-[11px] rounded border bg-slate-600 border-slate-500 hover:bg-slate-500 text-white"
+            title="法務省地図の表示範囲。狭くすると描画が軽くなります"
+          >
+            {PARCEL_RANGE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value} className="text-black">
+                {o.label}
+              </option>
+            ))}
+          </select>
           <button
             onClick={() => setShowParcelLabels((v) => !v)}
             className={`px-2 py-0.5 rounded border text-[11px] ${
