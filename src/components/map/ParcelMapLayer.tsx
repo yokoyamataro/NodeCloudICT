@@ -240,6 +240,58 @@ export function ParcelMapLayer({
     return { type: 'FeatureCollection', features }
   }, [datasets, cache, effectiveBbox])
 
+  // 実際に <GeoJsonInner> に流す data は 2 段階遅延で反映する。
+  //   Phase 1: filteredFc 変化 → renderPending=true → indicator 描画
+  //   Phase 2: 2 RAF 後 → displayFc に反映 → Leaflet がレイヤ生成 (同期ブロック)。
+  //            renderPending はまだ true のまま (indicator は残ってる)。
+  //   Phase 3: displayFc = filteredFc になった後、さらに 2 RAF 後 →
+  //            renderPending=false → indicator 消える
+  // これで Leaflet の重い commit 中も indicator が画面に残る。
+  const [displayFc, setDisplayFc] =
+    useState<ParcelFeatureCollection | null>(null)
+  const [renderPending, setRenderPending] = useState(false)
+
+  // Phase 1 + 2: filteredFc 変化 → 2 RAF 後に displayFc に反映
+  useEffect(() => {
+    if (!filteredFc) {
+      setDisplayFc(null)
+      setRenderPending(false)
+      return
+    }
+    if (filteredFc === displayFc) return
+    setRenderPending(true)
+    let raf1 = 0
+    let raf2 = 0
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        setDisplayFc(filteredFc)
+        // ここでは renderPending を落とさない。Phase 3 で処理する。
+      })
+    })
+    return () => {
+      if (raf1) cancelAnimationFrame(raf1)
+      if (raf2) cancelAnimationFrame(raf2)
+    }
+  }, [filteredFc, displayFc])
+
+  // Phase 3: displayFc === filteredFc になった後、ブラウザが painted するまで
+  // 待ってから renderPending を落とす。
+  useEffect(() => {
+    if (!renderPending) return
+    if (displayFc !== filteredFc) return
+    let raf1 = 0
+    let raf2 = 0
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        setRenderPending(false)
+      })
+    })
+    return () => {
+      if (raf1) cancelAnimationFrame(raf1)
+      if (raf2) cancelAnimationFrame(raf2)
+    }
+  }, [displayFc, filteredFc, renderPending])
+
   // Canvas レンダラ
   const renderer = useMemo(() => L.canvas({ padding: 0.2 }), [])
 
@@ -266,25 +318,30 @@ export function ParcelMapLayer({
     }
   }, [map, visible, showLabels])
 
-  // 「地番マップ読込中…」インジケータ。dataset の DL 中 or filteredFc がまだ null の間、
-  // 地図右上に固定表示する。地図操作は塞がない (pointer-events-none)。
-  const isDownloading = visible && !zoomHidden && loadingIds.size > 0
-  const showLoadingIndicator = isDownloading || (visible && !zoomHidden && !filteredFc && !!effectiveBbox && loadingIds.size > 0)
+  // 「地番マップ読込中…」インジケータ。dataset の DL 中 or Leaflet レイヤの
+  // 差替え待ち (renderPending) の間、地図右上に固定表示する。
+  // 地図操作は塞がない (pointer-events-none)。
+  const showLoadingIndicator =
+    visible &&
+    !zoomHidden &&
+    (loadingIds.size > 0 || renderPending)
+  const indicatorLabel =
+    loadingIds.size > 0
+      ? `地番マップ読込中… (${loadingIds.size})`
+      : '地番マップを描画中…'
   const indicator = showLoadingIndicator
     ? createPortal(
         <div
           className="absolute top-2 right-2 z-[1200] bg-white/95 border border-slate-300 rounded shadow px-2 py-1 text-xs flex items-center gap-1.5 pointer-events-none"
         >
           <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" />
-          <span className="text-slate-700">
-            地番マップ読込中… ({loadingIds.size})
-          </span>
+          <span className="text-slate-700">{indicatorLabel}</span>
         </div>,
         map.getContainer(),
       )
     : null
 
-  if (!visible || zoomHidden || !filteredFc) {
+  if (!visible || zoomHidden || !displayFc) {
     return <>{indicator}</>
   }
 
@@ -292,7 +349,7 @@ export function ParcelMapLayer({
     <>
       {indicator}
       <GeoJsonInner
-        data={filteredFc}
+        data={displayFc}
         renderer={renderer}
         importedParcelKeys={importedParcelKeys}
         selectedKeys={selectedKeys}
