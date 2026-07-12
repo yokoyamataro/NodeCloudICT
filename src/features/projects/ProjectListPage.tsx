@@ -449,11 +449,8 @@ export function ProjectListPage() {
         return
       }
       // 境界測量画面に遷移。取込んだ地番の座標が UnifiedFieldMap の FitBounds に
-      // よって画面フィットする。
-      // 法務省地図レイヤの表示範囲は工区座標由来の bbox + parcelRange プリセット
-      // (デフォルト 300m) に従うので、パン/ズームアウトで周辺の地番も見える。
-      // ※ 以前 farm.parcel_map_bbox に地番+100m を保存していたが、
-      //    最優先で効いてしまい「以降表示範囲が広がらない」問題があったので取りやめ。
+      // よって画面フィットする。地番マップは現在ビューに追従するので、
+      // パン/ズームアウトで周辺の地番も見える。
       closeNewFarmDialog()
       navigate('/boundary-survey/work-area')
     } finally {
