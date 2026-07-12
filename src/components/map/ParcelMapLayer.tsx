@@ -38,8 +38,9 @@ interface Props {
   /** true のとき polygon クリック = 即トグル (popup 非表示)。
    *  false のとき polygon クリック = 属性情報の popup を開く (読み取り専用) */
   selectionMode?: boolean
-  /** 地番名 (parcel_number) の常時ラベル表示を有効にするか。default: false。
-   *  true でも zoom < LABEL_MIN_ZOOM の間は強制的に非表示 (描画コスト回避) */
+  /** 地番名 (parcel_number) の常時ラベル表示を有効にするか。default: true。
+   *  true でも zoom < LABEL_MIN_ZOOM の間は強制的に非表示 (描画コスト回避)。
+   *  feature 数が LABEL_MAX_FEATURES を超えた場合は自動的にラベルを省略。 */
   showLabels?: boolean
 }
 
@@ -147,7 +148,7 @@ export function ParcelMapLayer({
   selectedKeys,
   onToggleSelect,
   selectionMode = false,
-  showLabels = false,
+  showLabels = true,
 }: Props) {
   const map = useMap()
   const datasets = useParcelMapDatasetStore((s) => s.datasets)

@@ -935,7 +935,6 @@ export function MobileStakingPage() {
   const fetchParcelDatasets = useParcelMapDatasetStore((s) => s.fetchAll)
   const hasActiveParcelDataset = parcelDatasets.some((d) => d.active)
   const [showParcelLayer, setShowParcelLayer] = useState(false)
-  const [showParcelMapLabels, setShowParcelMapLabels] = useState(false)
   const [parcelSelectionMode, setParcelSelectionMode] = useState(false)
   const [selectedParcels, setSelectedParcels] = useState<
     Map<string, Feature<GeoJsonPolygon, ParcelFeatureProperties>>
@@ -3747,23 +3746,8 @@ export function MobileStakingPage() {
                 </button>
               </div>
             )}
-            {/* 法務省地図トグル + 地番名ラベル ON/OFF */}
+            {/* 法務省地図トグル */}
             <div className="flex items-center gap-1">
-              {showParcelLayer && (
-                <>
-                  <button
-                    onClick={() => setShowParcelMapLabels((v) => !v)}
-                    className={`px-2 py-1 text-[11px] font-medium rounded shadow border ${
-                      showParcelMapLabels
-                        ? 'bg-slate-800 border-slate-800 text-white'
-                        : 'bg-white/95 border-slate-300 text-slate-800'
-                    }`}
-                    title="法務省地図の地番名を常時ラベル表示 (地番数が多い時は自動省略)"
-                  >
-                    {showParcelMapLabels ? '地番名 ON' : '地番名 OFF'}
-                  </button>
-                </>
-              )}
               <button
                 onClick={() => {
                   setShowParcelLayer((v) => {
@@ -4279,7 +4263,6 @@ export function MobileStakingPage() {
               selectedKeys={selectedParcelKeys}
               onToggleSelect={toggleSelectedParcel}
               selectionMode={parcelSelectionMode}
-              showLabels={showParcelMapLabels}
             />
           )}
         </MapContainer>

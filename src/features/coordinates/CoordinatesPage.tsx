@@ -30,6 +30,9 @@ import {
   getCoordinateTypeOptions,
 } from '@/stores/coordinatePointTypeStore'
 import { CoordinateMap, type BaseLayerType, type ExternalPolygon } from '@/components/map/CoordinateMap'
+import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
+import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
+import { Map as MapIcon } from 'lucide-react'
 import { ResizableSplit } from '@/components/layout/ResizableSplit'
 import { loadSimaFile, downloadSimaFile } from '@/lib/sima-parser'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -478,6 +481,29 @@ export function CoordinatesPage() {
   const { currentFarm } = useFarmStore()
   const navigate = useNavigate()
   const { projects, members, fetchMembers } = useProjectListStore()
+
+  // 法務省地図 (地番マップ) の背景レイヤ
+  const parcelDatasets = useParcelMapDatasetStore((s) => s.datasets)
+  const fetchParcelDatasets = useParcelMapDatasetStore((s) => s.fetchAll)
+  const hasActiveParcelDataset = parcelDatasets.some((d) => d.active)
+  const currentProjectForParcel = currentFarm
+    ? projects.find((p) => p.id === currentFarm.project_id) ?? null
+    : null
+  const isCadastralProject = currentProjectForParcel?.category === 'cadastral'
+  const [showParcelLayer, setShowParcelLayer] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    return window.localStorage.getItem('coordinates:parcel-map-layer') === '1'
+  })
+  useEffect(() => {
+    void fetchParcelDatasets()
+  }, [fetchParcelDatasets])
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(
+      'coordinates:parcel-map-layer',
+      showParcelLayer ? '1' : '0',
+    )
+  }, [showParcelLayer])
   const { fetchByEntityIds: fetchAttachments, getSignedUrl } = useAttachmentStore()
   const attachmentsByEntity = useAttachmentStore((s) => s.byEntity)
   const { workAreas, fetchWorkAreas } = useWorkAreaStore()
@@ -1963,7 +1989,7 @@ export function CoordinatesPage() {
             <option value="gsi-std">地理院地図</option>
           </select>
         </div>
-        <div className="flex-1">
+        <div className="flex-1 relative">
           <CoordinateMap
             key={currentFarm?.id ?? 'no-farm'}
             selectedPointId={selectedPointId}
@@ -1989,7 +2015,35 @@ export function CoordinatesPage() {
             showPolygonLabels={showPolygonLabels}
             lineSelectMode={!!calcLineAssign}
             onLineSelect={(a, b) => calcLineAssign?.(a, b)}
-          />
+          >
+            {isCadastralProject && hasActiveParcelDataset && (
+              <ParcelMapLayer
+                visible={showParcelLayer}
+                bbox={
+                  (currentFarm?.parcel_map_bbox as
+                    | { minLng: number; minLat: number; maxLng: number; maxLat: number }
+                    | null
+                    | undefined) ?? null
+                }
+              />
+            )}
+          </CoordinateMap>
+          {isCadastralProject && hasActiveParcelDataset && (
+            <div className="absolute bottom-6 right-2 z-[1000]">
+              <button
+                onClick={() => setShowParcelLayer((v) => !v)}
+                className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border shadow ${
+                  showParcelLayer
+                    ? 'bg-orange-500 text-white border-orange-500 hover:bg-orange-600'
+                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                }`}
+                title="法務省地図データを背景に表示する"
+              >
+                <MapIcon className="h-4 w-4" />
+                法務省地図
+              </button>
+            </div>
+          )}
         </div>
       </div>
     )
@@ -2705,7 +2759,35 @@ export function CoordinatesPage() {
               showPolygonLabels={showPolygonLabels}
               lineSelectMode={!!calcLineAssign}
               onLineSelect={(a, b) => calcLineAssign?.(a, b)}
-            />
+            >
+              {isCadastralProject && hasActiveParcelDataset && (
+                <ParcelMapLayer
+                  visible={showParcelLayer}
+                  bbox={
+                    (currentFarm?.parcel_map_bbox as
+                      | { minLng: number; minLat: number; maxLng: number; maxLat: number }
+                      | null
+                      | undefined) ?? null
+                  }
+                />
+              )}
+            </CoordinateMap>
+            {isCadastralProject && hasActiveParcelDataset && (
+              <div className="absolute bottom-6 right-2 z-[1000]">
+                <button
+                  onClick={() => setShowParcelLayer((v) => !v)}
+                  className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border shadow ${
+                    showParcelLayer
+                      ? 'bg-orange-500 text-white border-orange-500 hover:bg-orange-600'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                  }`}
+                  title="法務省地図データを背景に表示する"
+                >
+                  <MapIcon className="h-4 w-4" />
+                  法務省地図
+                </button>
+              </div>
+            )}
 
             {/* 経路パネル（地図右上にオーバーレイ） */}
             {(routeMode || route.length > 0) && (

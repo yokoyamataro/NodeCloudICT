@@ -66,7 +66,6 @@ export function MobileDetailMapPage() {
   const fetchParcelDatasets = useParcelMapDatasetStore((s) => s.fetchAll)
   const hasActiveParcelDataset = parcelDatasets.some((d) => d.active)
   const [showParcelLayer, setShowParcelLayer] = useState(false)
-  const [showParcelLabels, setShowParcelLabels] = useState(false)
   const [selectionMode, setSelectionMode] = useState(false)
   const [selectedParcels, setSelectedParcels] = useState<
     Map<string, Feature<Polygon, ParcelFeatureProperties>>
@@ -327,17 +326,6 @@ export function MobileDetailMapPage() {
       {isCadastralProject && hasActiveParcelDataset && showParcelLayer && (
         <div className="px-2 py-1.5 bg-slate-700 text-white flex items-center gap-2 text-xs border-b border-slate-600">
           <button
-            onClick={() => setShowParcelLabels((v) => !v)}
-            className={`px-2 py-0.5 rounded border text-[11px] ${
-              showParcelLabels
-                ? 'bg-slate-900 border-slate-800'
-                : 'bg-slate-600 border-slate-500 hover:bg-slate-500'
-            }`}
-            title="地番名を常時ラベル表示 (地番数が多い時は自動省略)"
-          >
-            {showParcelLabels ? '地番名 ON' : '地番名 OFF'}
-          </button>
-          <button
             onClick={() => {
               if (!selectionMode) {
                 setSelectionMode(true)
@@ -405,7 +393,6 @@ export function MobileDetailMapPage() {
               selectedKeys={selectedParcelKeys}
               onToggleSelect={toggleSelectedParcel}
               selectionMode={selectionMode}
-              showLabels={showParcelLabels}
             />
           )}
         </UnifiedFieldMap>

@@ -36,7 +36,6 @@ import { type Bbox } from '@/lib/tile-math'
 import { importParcelBatch } from '@/features/parcel-maps/importParcelBatch'
 
 const PARCEL_LAYER_STORAGE_KEY = 'boundary-survey:parcel-map-layer'
-const PARCEL_LABELS_STORAGE_KEY = 'boundary-survey:parcel-map-labels'
 
 export function BoundarySurveyWorkAreaPage() {
   const fileRef = useRef<HTMLInputElement>(null)
@@ -74,11 +73,6 @@ export function BoundarySurveyWorkAreaPage() {
     if (typeof window === 'undefined') return false
     return window.localStorage.getItem(PARCEL_LAYER_STORAGE_KEY) === '1'
   })
-  const [showParcelLabels, setShowParcelLabels] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false
-    return window.localStorage.getItem(PARCEL_LABELS_STORAGE_KEY) === '1'
-  })
-
   useEffect(() => {
     void fetchDatasets()
   }, [fetchDatasets])
@@ -89,13 +83,6 @@ export function BoundarySurveyWorkAreaPage() {
       showParcelLayer ? '1' : '0',
     )
   }, [showParcelLayer])
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    window.localStorage.setItem(
-      PARCEL_LABELS_STORAGE_KEY,
-      showParcelLabels ? '1' : '0',
-    )
-  }, [showParcelLabels])
 
   // 地番マップの表示範囲は常に「現在の地図ビュー」に追従する。
   // 以前は「工区+Nm」プリセットで固定していたが、features 数が数千〜数万
@@ -679,105 +666,7 @@ export function BoundarySurveyWorkAreaPage() {
                 {message}
               </span>
             )}
-            {/* 法務省地図 (背景レイヤ) の ON/OFF */}
-            {hasActiveDataset && (
-              <button
-                onClick={() => {
-                  setShowParcelLayer((v) => {
-                    const next = !v
-                    if (!next) {
-                      // レイヤ非表示にしたら選択モードもクリア
-                      setSelectionMode(false)
-                      clearSelection()
-                    }
-                    return next
-                  })
-                }}
-                className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border ${
-                  showParcelLayer
-                    ? 'bg-orange-500 text-white border-orange-500 hover:bg-orange-600'
-                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                }`}
-                title="法務省地図データを背景に表示する"
-              >
-                <MapIcon className="h-4 w-4" />
-                法務省地図
-              </button>
-            )}
-            {/* 地番名ラベル ON/OFF (法務省地図が表示中のみ) */}
-            {hasActiveDataset && showParcelLayer && (
-              <button
-                onClick={() => setShowParcelLabels((v) => !v)}
-                className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border ${
-                  showParcelLabels
-                    ? 'bg-slate-800 text-white border-slate-800 hover:bg-slate-700'
-                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                }`}
-                title="地番名 (例: 10-10) を常時ラベル表示。地番数が多い時は自動で省略"
-              >
-                {showParcelLabels ? '地番名 ON' : '地番名 OFF'}
-              </button>
-            )}
-            {/* 地番データ取込 (選択モード + 一括取込を兼ねる) */}
-            {hasActiveDataset && showParcelLayer && (
-              <>
-                <button
-                  onClick={() => {
-                    if (!selectionMode) {
-                      // OFF → 選択モードへ
-                      setSelectionMode(true)
-                    } else if (selectedParcels.size === 0) {
-                      // 選択モード + 0 件 → キャンセル
-                      setSelectionMode(false)
-                    } else {
-                      // 選択モード + N 件 → 取込実行
-                      void (async () => {
-                        await handleImportParcelBatch(
-                          Array.from(selectedParcels.values()),
-                        )
-                        setSelectionMode(false)
-                      })()
-                    }
-                  }}
-                  disabled={busy !== null || !currentFarm}
-                  className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border ${
-                    !selectionMode
-                      ? 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                      : selectedParcels.size === 0
-                        ? 'bg-blue-500 text-white border-blue-500 hover:bg-blue-600'
-                        : 'bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700'
-                  } disabled:opacity-50`}
-                  title={
-                    !selectionMode
-                      ? '地番を選択して工区に取り込むモードに入る'
-                      : selectedParcels.size === 0
-                        ? '選択モードをキャンセル'
-                        : '選択中の地番を工区に取り込む'
-                  }
-                >
-                  {busy === 'import' ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Download className="h-4 w-4" />
-                  )}
-                  {!selectionMode
-                    ? '地番データ取込'
-                    : selectedParcels.size === 0
-                      ? '選択中… (キャンセル)'
-                      : `取り込む (${selectedParcels.size} 件)`}
-                </button>
-                {selectionMode && selectedParcels.size > 0 && (
-                  <button
-                    onClick={clearSelection}
-                    disabled={busy !== null}
-                    className="flex items-center gap-1 px-2 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
-                    title="選択を全て解除"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                )}
-              </>
-            )}
+            {/* 法務省地図関連の操作は地図右下に移動 (下記 mapBottomRightOverlay 参照) */}
             <button
               onClick={handleOpenImport}
               disabled={busy !== null || !currentFarm}
@@ -834,8 +723,92 @@ export function BoundarySurveyWorkAreaPage() {
               selectedKeys={selectedKeys}
               onToggleSelect={toggleSelectedParcel}
               selectionMode={selectionMode}
-              showLabels={showParcelLabels}
             />
+          ) : null
+        }
+        mapBottomRightOverlay={
+          hasActiveDataset ? (
+            <>
+              {/* 地番データ取込 (法務省地図 ON 時のみ、選択モードで一括取込) */}
+              {showParcelLayer && (
+                <div className="flex items-center gap-1">
+                  {selectionMode && selectedParcels.size > 0 && (
+                    <button
+                      onClick={clearSelection}
+                      disabled={busy !== null}
+                      className="flex items-center gap-1 px-2 py-1.5 text-sm border rounded shadow bg-white text-slate-700 border-slate-300 hover:bg-slate-50 disabled:opacity-50"
+                      title="選択を全て解除"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      if (!selectionMode) {
+                        setSelectionMode(true)
+                      } else if (selectedParcels.size === 0) {
+                        setSelectionMode(false)
+                      } else {
+                        void (async () => {
+                          await handleImportParcelBatch(
+                            Array.from(selectedParcels.values()),
+                          )
+                          setSelectionMode(false)
+                        })()
+                      }
+                    }}
+                    disabled={busy !== null || !currentFarm}
+                    className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border shadow ${
+                      !selectionMode
+                        ? 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                        : selectedParcels.size === 0
+                          ? 'bg-blue-500 text-white border-blue-500 hover:bg-blue-600'
+                          : 'bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700'
+                    } disabled:opacity-50`}
+                    title={
+                      !selectionMode
+                        ? '地番を選択して工区に取り込むモードに入る'
+                        : selectedParcels.size === 0
+                          ? '選択モードをキャンセル'
+                          : '選択中の地番を工区に取り込む'
+                    }
+                  >
+                    {busy === 'import' ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4" />
+                    )}
+                    {!selectionMode
+                      ? '地番データ取込'
+                      : selectedParcels.size === 0
+                        ? '選択中… (キャンセル)'
+                        : `取り込む (${selectedParcels.size} 件)`}
+                  </button>
+                </div>
+              )}
+              {/* 法務省地図 (背景レイヤ) の ON/OFF */}
+              <button
+                onClick={() => {
+                  setShowParcelLayer((v) => {
+                    const next = !v
+                    if (!next) {
+                      setSelectionMode(false)
+                      clearSelection()
+                    }
+                    return next
+                  })
+                }}
+                className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border shadow ${
+                  showParcelLayer
+                    ? 'bg-orange-500 text-white border-orange-500 hover:bg-orange-600'
+                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                }`}
+                title="法務省地図データを背景に表示する"
+              >
+                <MapIcon className="h-4 w-4" />
+                法務省地図
+              </button>
+            </>
           ) : null
         }
       />

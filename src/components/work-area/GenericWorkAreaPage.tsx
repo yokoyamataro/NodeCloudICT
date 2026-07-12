@@ -171,9 +171,11 @@ interface GenericWorkAreaPageProps {
   headerActions?: React.ReactNode
   /** CoordinateMap の MapContainer の中に差し込む追加レイヤ (例: 地番マップの背景) */
   mapChildren?: React.ReactNode
+  /** 地図右下 (出典の上) に固定表示するオーバーレイ (例: 地番マップの操作ボタン) */
+  mapBottomRightOverlay?: React.ReactNode
 }
 
-export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', headerActions, mapChildren }: GenericWorkAreaPageProps) {
+export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', headerActions, mapChildren, mapBottomRightOverlay }: GenericWorkAreaPageProps) {
   const [calculationSheet, setCalculationSheet] = useState<AreaCalculationSheetType | null>(null)
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
   // 編集中ポリゴン: 選択中の構成点 ID（DEL/BACKSPACE で削除する対象）
@@ -1142,6 +1144,12 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
           >
             {mapChildren}
           </CoordinateMap>
+          {/* 地図右下 (出典の上) の追加オーバーレイ (地番マップ操作等) */}
+          {mapBottomRightOverlay && (
+            <div className="absolute bottom-6 right-2 z-[1000] flex flex-col items-end gap-2">
+              {mapBottomRightOverlay}
+            </div>
+          )}
         </div>
       </div>
 
