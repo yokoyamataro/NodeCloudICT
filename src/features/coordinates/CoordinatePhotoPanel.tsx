@@ -169,7 +169,7 @@ export function CoordinatePhotoPanel({
       <button
         type="button"
         onClick={onToggle}
-        className="absolute bottom-2 right-2 z-[1100] flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 rounded shadow text-xs font-medium text-slate-700 hover:bg-slate-50"
+        className="absolute bottom-2 left-2 z-[1100] flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 rounded shadow text-xs font-medium text-slate-700 hover:bg-slate-50"
         title="写真パネルを開く"
       >
         <Camera className="h-3.5 w-3.5 text-blue-600" />
