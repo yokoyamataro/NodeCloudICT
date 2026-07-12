@@ -203,10 +203,16 @@ export function NewFarmFromParcelPanel({ onSelectionChange }: Props) {
       onSelectionChange(null)
       return
     }
-    const name = currentFeature.properties.parcel_name?.trim()
-    const suggestedFarmName = name && name.length > 0
-      ? name
-      : currentFeature.properties.parcel_number
+    // 例: 「山形市 錦町 10-10」
+    //   parcel_name = "location parcel_number" 形式なので、市町村名を頭に足すだけ。
+    //   parcel_name が空の場合は parcel_number を使う。
+    const municipality = extractMunicipalityLabel(currentDataset)
+    const nameCore =
+      currentFeature.properties.parcel_name?.trim() ||
+      currentFeature.properties.parcel_number
+    const suggestedFarmName = municipality
+      ? `${municipality} ${nameCore}`.trim()
+      : nameCore
     onSelectionChange({
       dataset: currentDataset,
       feature: currentFeature,
