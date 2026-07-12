@@ -1507,7 +1507,11 @@ export function MobileStakingPage() {
   }
 
   // LandXML テキストをパースして TIN / 線形をセット
-  const applyLandxmlText = (text: string, displayName: string) => {
+  // parseLandXml は数十 MB の TIN に対して数秒〜数十秒かかる同期処理なので、
+  // 呼び出し前に setLandxmlBusy(true) が React に描画される機会を確保する
+  // (setTimeout 0 で 1 フレーム譲る) → 「読込中…」オーバーレイが出てから固まる。
+  const applyLandxmlText = async (text: string, displayName: string) => {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
     const result = parseLandXml(text, displayName)
     const trenchSurf =
       result.surfaces.find((s) => /trench|床掘|excav/i.test(s.name)) ??
@@ -1528,7 +1532,7 @@ export function MobileStakingPage() {
     setLandxmlBusy(true)
     try {
       const text = await file.text()
-      applyLandxmlText(text, file.name)
+      await applyLandxmlText(text, file.name)
       // 工区に自動アップロード（既存 active を退避し、新規 active に）
       if (farmId) {
         try {
@@ -1575,7 +1579,7 @@ export function MobileStakingPage() {
         setLandxmlBusy(true)
         const text = await downloadLandxmlText(active.storagePath)
         if (cancelled) return
-        applyLandxmlText(text, active.name)
+        await applyLandxmlText(text, active.name)
         setActiveLandxmlId(active.id)
       } catch (err) {
         if (!cancelled)
@@ -1599,7 +1603,7 @@ export function MobileStakingPage() {
     setLandxmlBusy(true)
     try {
       const text = await downloadLandxmlText(row.storagePath)
-      applyLandxmlText(text, row.name)
+      await applyLandxmlText(text, row.name)
       if (!row.isActive) await setActiveLandxmlFile(row)
       setActiveLandxmlId(row.id)
       if (farmId) setSavedLandxmls(await listLandxmlFiles(farmId))
@@ -2691,8 +2695,12 @@ export function MobileStakingPage() {
 
   if (loading) {
     return (
-      <div className="mobile-min-screen flex items-center justify-center bg-slate-100">
-        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+      <div className="mobile-min-screen flex flex-col items-center justify-center bg-slate-100 gap-3 px-6 text-center">
+        <Loader2 className="h-10 w-10 animate-spin text-blue-600" />
+        <div className="text-sm font-medium text-slate-800">工区データを読込中…</div>
+        <div className="text-xs text-slate-500">
+          座標・工事区域・地番などを取得しています。初回は数秒〜数十秒かかります。
+        </div>
       </div>
     )
   }
@@ -2716,6 +2724,20 @@ export function MobileStakingPage() {
 
   return (
     <div className="mobile-screen flex flex-col">
+      {/* LandXML 読込中のオーバーレイ (大 TIN のパースは数秒〜数十秒固まる) */}
+      {landxmlBusy && (
+        <div className="fixed inset-0 z-[9999] bg-black/40 flex items-center justify-center pointer-events-none">
+          <div className="bg-white rounded-lg shadow-xl px-5 py-4 flex items-center gap-3 max-w-xs pointer-events-auto">
+            <Loader2 className="h-6 w-6 animate-spin text-cyan-700 flex-shrink-0" />
+            <div>
+              <div className="font-medium text-slate-800 text-sm">LandXML を読込中…</div>
+              <div className="text-[11px] text-slate-500 mt-0.5">
+                大きな TIN は数十秒かかることがあります
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {/* ヘッダー（1 行目: 戻る・現場名・工区名・ユーザー名） */}
       <div className="px-2 py-1.5 bg-slate-800 text-white flex items-center gap-2 text-sm">
         <button

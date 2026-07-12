@@ -1555,14 +1555,16 @@ function FarmMarkerPopup({
               }}
               className="h-3.5 w-3.5"
             />
-            {isCompleted ? (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium">
-                <Check className="h-3 w-3" strokeWidth={3} />
-                完了
-              </span>
-            ) : (
-              <span className="text-slate-600 font-medium">未完了</span>
-            )}
+            <span
+              className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded font-medium ${
+                isCompleted
+                  ? 'bg-emerald-100 text-emerald-700'
+                  : 'text-slate-600'
+              }`}
+            >
+              {isCompleted && <Check className="h-3 w-3" strokeWidth={3} />}
+              完了
+            </span>
           </label>
         </div>
         <div className="flex items-center gap-1">
