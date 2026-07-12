@@ -43,6 +43,7 @@ let proj4
 let streamJsonParser
 let streamJsonPick
 let streamJsonArray
+let streamChain
 
 try {
   createSupabaseClient = (await import('@supabase/supabase-js')).createClient
@@ -59,12 +60,22 @@ try {
 // stream-json: 巨大 GeoJSON (V8 の string 上限 ~512MB を超える) をストリーミング
 // パースするため。無ければ従来の buf.toString('utf8') 経路にフォールバック。
 try {
+  // stream-json v3 では parser() / pick() / streamArray() は「transformer 関数」を
+  // 返し、そのまま Node.js Stream にはならない。stream-chain の chain() で
+  // 合成すると 1 本の Duplex stream になり、pipe / async iteration が使える。
   streamJsonParser = (await import('stream-json')).parser
-  streamJsonPick = (await import('stream-json/filters/Pick.js')).pick
-  streamJsonArray = (await import('stream-json/streamers/StreamArray.js')).streamArray
-} catch {
+  streamJsonPick = (await import('stream-json/filters/pick.js')).pick
+  streamJsonArray = (await import('stream-json/streamers/stream-array.js')).streamArray
+  streamChain = (await import('stream-chain')).chain
+  if (!streamJsonParser || !streamJsonPick || !streamJsonArray || !streamChain) {
+    throw new Error('stream-json exports missing')
+  }
+} catch (err) {
   streamJsonParser = null
-  console.warn('[sync] stream-json が無いので巨大 GeoJSON は無理。npm i -D stream-json 推奨')
+  console.warn(
+    '[sync] stream-json をロードできません。巨大 GeoJSON は失敗します:',
+    err?.message ?? err,
+  )
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -349,18 +360,20 @@ function* chunkBuffer(buf, size = 4 * 1024 * 1024) {
 /** 巨大 GeoJSON (V8 の string 上限 ~512MB 超) を Buffer.toString せずに正規化する。
  *  stream-json でトップの features 配列を stream し、Feature ごとに accumulator へ push。 */
 async function normalizeStreaming(buf, filenameHintZone) {
-  if (!streamJsonParser) {
+  if (!streamJsonParser || !streamChain) {
     throw new Error(
       'stream-json が入っていないので巨大 GeoJSON は処理できません: npm i -D stream-json',
     )
   }
   const acc = createNormalizeAccumulator(filenameHintZone)
-  const src = Readable.from(chunkBuffer(buf))
-  const pipeline = src
-    .pipe(streamJsonParser())
-    .pipe(streamJsonPick({ filter: 'features' }))
-    .pipe(streamJsonArray())
-  // stream-json の StreamArray は { key, value } を emit する。value が Feature 本体。
+  // chain([...]) は 複数の transformer 関数と Readable を 1 本の Duplex stream に合成する
+  const pipeline = streamChain([
+    Readable.from(chunkBuffer(buf)),
+    streamJsonParser(),
+    streamJsonPick({ filter: 'features' }),
+    streamJsonArray(),
+  ])
+  // StreamArray の出力は { key, value } オブジェクト。value が Feature 本体。
   for await (const chunk of pipeline) {
     acc.push(chunk.value)
   }
