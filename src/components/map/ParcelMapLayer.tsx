@@ -84,6 +84,10 @@ const MIN_RENDER_ZOOM = 14
 /** viewport 追跡のバッファ倍率 (0.5 = 上下左右に viewport の 50% 分拡張 = 総 2x エリア)。
  *  小さな pan では filteredFc が変わらないので <GeoJSON> の remount が起きない */
 const VIEWPORT_BUFFER_FACTOR = 0.5
+/** ラベル bind を分割するチャンクサイズ (1 フレームあたりの bindTooltip 呼び出し数)。
+ *  一気に 100-500 個の bindTooltip を呼ぶと数百 ms 固まるので、フレームごとに
+ *  少しずつ bind してユーザー操作をブロックしないようにする。 */
+const LABEL_BIND_CHUNK = 30
 
 /** Feature の geometry.outer が bbox と交差するか */
 function featureIntersectsBbox(
@@ -318,17 +322,27 @@ export function ParcelMapLayer({
     }
   }, [map, visible, showLabels])
 
+  // 地番名ラベルのバインド進捗 ({done, total} または null)。バインド中は
+  // インジケータを「地番名 X/Y 適用中…」表示にする。
+  const [labelBindProgress, setLabelBindProgress] = useState<{
+    done: number
+    total: number
+  } | null>(null)
+
   // 「地番マップ読込中…」インジケータ。dataset の DL 中 or Leaflet レイヤの
-  // 差替え待ち (renderPending) の間、地図右上に固定表示する。
+  // 差替え待ち (renderPending) 中 or 地番名バインド中に、地図右上に固定表示する。
   // 地図操作は塞がない (pointer-events-none)。
   const showLoadingIndicator =
     visible &&
     !zoomHidden &&
-    (loadingIds.size > 0 || renderPending)
-  const indicatorLabel =
-    loadingIds.size > 0
-      ? `地番マップ読込中… (${loadingIds.size})`
-      : '地番マップを描画中…'
+    (loadingIds.size > 0 || renderPending || labelBindProgress != null)
+  const indicatorLabel = (() => {
+    if (loadingIds.size > 0) return `地番マップ読込中… (${loadingIds.size})`
+    if (labelBindProgress) {
+      return `地番名 適用中… ${labelBindProgress.done.toLocaleString()}/${labelBindProgress.total.toLocaleString()}`
+    }
+    return '地番マップを描画中…'
+  })()
   const indicator = showLoadingIndicator
     ? createPortal(
         <div
@@ -355,6 +369,7 @@ export function ParcelMapLayer({
         selectedKeys={selectedKeys}
         selectionMode={selectionMode}
         showLabels={showLabels}
+        onLabelBindProgress={setLabelBindProgress}
         onToggleSelect={
           onToggleSelect
             ? (feature) => {
@@ -381,6 +396,7 @@ function GeoJsonInner({
   onToggleSelect,
   selectionMode,
   showLabels,
+  onLabelBindProgress,
 }: {
   data: ParcelFeatureCollection
   renderer: L.Renderer
@@ -389,6 +405,9 @@ function GeoJsonInner({
   onToggleSelect?: (feature: Feature<Polygon, ParcelFeatureProperties>) => void
   selectionMode?: boolean
   showLabels: boolean
+  onLabelBindProgress?: (
+    progress: { done: number; total: number } | null,
+  ) => void
 }) {
   const map = useMap()
   const layerRef = useRef<L.GeoJSON | null>(null)
@@ -427,8 +446,12 @@ function GeoJsonInner({
   }, [selectedKeys, importedParcelKeys, renderer, data])
 
   // showLabels=true かつ zoom >= LABEL_MIN_ZOOM のときのみ tooltip を bind する。
-  // showLabels=false に切り替わったら全 tooltip を unbind して DOM ノード削減。
+  // 100〜500 個の bindTooltip を一気に呼ぶと数百 ms 固まるので、1 フレーム
+  // あたり LABEL_BIND_CHUNK 個ずつ requestAnimationFrame で分割 bind する。
+  // 途中で ON→OFF に切り替わったり feature が変わったら cancel。
   useEffect(() => {
+    let cancelled = false
+    let scheduledRaf = 0
     const unbindAllLabels = () => {
       const layerGroup = layerRef.current
       if (!layerGroup) return
@@ -439,13 +462,17 @@ function GeoJsonInner({
     }
     if (!showLabels) {
       unbindAllLabels()
+      onLabelBindProgress?.(null)
       return
     }
     const bindLabelsIfNeeded = () => {
-      if (labelsBoundRef.current) return
+      if (cancelled || labelsBoundRef.current) return
       const layerGroup = layerRef.current
       if (!layerGroup) return
       if (map.getZoom() < LABEL_MIN_ZOOM) return
+
+      // bind 対象を先に列挙 (Leaflet の内部イテレータを回すので同期でも軽い)
+      const targets: Array<{ layer: L.Layer; text: string }> = []
       layerGroup.eachLayer((layer) => {
         const feature = (layer as L.GeoJSON & { feature?: unknown }).feature as
           | Feature<Polygon, ParcelFeatureProperties>
@@ -454,25 +481,49 @@ function GeoJsonInner({
         // ラベルは 地番 のみ ("10-10" 等)。大字名は含めない
         const text =
           feature.properties.parcel_number || feature.properties.parcel_name
-        if (text) {
-          ;(layer as L.Layer).bindTooltip(text, {
+        if (text) targets.push({ layer, text })
+      })
+
+      if (targets.length === 0) {
+        labelsBoundRef.current = true
+        return
+      }
+
+      let idx = 0
+      onLabelBindProgress?.({ done: 0, total: targets.length })
+      const bindChunk = () => {
+        if (cancelled) return
+        const end = Math.min(idx + LABEL_BIND_CHUNK, targets.length)
+        for (let i = idx; i < end; i++) {
+          targets[i].layer.bindTooltip(targets[i].text, {
             permanent: true,
             direction: 'center',
             className: 'parcel-map-label',
             opacity: 1,
           })
         }
-      })
-      labelsBoundRef.current = true
+        idx = end
+        onLabelBindProgress?.({ done: idx, total: targets.length })
+        if (idx < targets.length) {
+          scheduledRaf = requestAnimationFrame(bindChunk)
+        } else {
+          labelsBoundRef.current = true
+          onLabelBindProgress?.(null)
+        }
+      }
+      scheduledRaf = requestAnimationFrame(bindChunk)
     }
     const t = setTimeout(bindLabelsIfNeeded, 100)
     map.on('zoomend', bindLabelsIfNeeded)
     return () => {
+      cancelled = true
+      if (scheduledRaf) cancelAnimationFrame(scheduledRaf)
       clearTimeout(t)
       map.off('zoomend', bindLabelsIfNeeded)
       unbindAllLabels()
+      onLabelBindProgress?.(null)
     }
-  }, [map, data, showLabels])
+  }, [map, data, showLabels, onLabelBindProgress])
 
   // クリック時のポップアップ (lazy 生成)。
   // - selectionMode=false: 属性表示のみの読み取り popup を開く。取込済みなら緑バッジ
