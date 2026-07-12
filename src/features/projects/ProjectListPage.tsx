@@ -42,7 +42,6 @@ import {
 } from '@/features/projects/NewFarmFromParcelPanel'
 import { importParcelBatch } from '@/features/parcel-maps/importParcelBatch'
 import { useCoordinateStore } from '@/stores/coordinateStore'
-import type { Bbox } from '@/lib/tile-math'
 
 // 工種ごとのポリゴン色
 const WORK_TYPE_COLORS: Record<string, string> = {
@@ -449,36 +448,12 @@ export function ProjectListPage() {
         )
         return
       }
-      // 地番の bbox を farm.parcel_map_bbox に保存 → 開いた時に地番マップが
-      // その周辺だけレンダリング (300m デフォルトより優先される)
-      const outer = parcelSelection.feature.geometry.coordinates[0]
-      if (outer && outer.length > 0) {
-        let minLng = Infinity,
-          minLat = Infinity,
-          maxLng = -Infinity,
-          maxLat = -Infinity
-        for (const p of outer) {
-          if (p[0] < minLng) minLng = p[0]
-          if (p[1] < minLat) minLat = p[1]
-          if (p[0] > maxLng) maxLng = p[0]
-          if (p[1] > maxLat) maxLat = p[1]
-        }
-        // 周辺 100m 相当のバッファを足す (経度緯度換算: 100m ≈ 0.0009°)
-        const buf = 0.001
-        const bbox: Bbox = {
-          minLng: minLng - buf,
-          minLat: minLat - buf,
-          maxLng: maxLng + buf,
-          maxLat: maxLat + buf,
-        }
-        try {
-          await updateFarm(farm.id, { parcel_map_bbox: bbox })
-        } catch (err) {
-          console.warn('[NewFarmFromParcel] updateFarm bbox failed', err)
-        }
-      }
-      // 境界測量画面 (地籍測量プロジェクト向け) に遷移し、
-      // 取込んだ地番の座標が UnifiedFieldMap の FitBounds によって画面にフィット。
+      // 境界測量画面に遷移。取込んだ地番の座標が UnifiedFieldMap の FitBounds に
+      // よって画面フィットする。
+      // 法務省地図レイヤの表示範囲は工区座標由来の bbox + parcelRange プリセット
+      // (デフォルト 300m) に従うので、パン/ズームアウトで周辺の地番も見える。
+      // ※ 以前 farm.parcel_map_bbox に地番+100m を保存していたが、
+      //    最優先で効いてしまい「以降表示範囲が広がらない」問題があったので取りやめ。
       closeNewFarmDialog()
       navigate('/boundary-survey/work-area')
     } finally {
