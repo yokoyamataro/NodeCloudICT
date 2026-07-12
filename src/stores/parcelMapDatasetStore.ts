@@ -238,12 +238,22 @@ export const useParcelMapDatasetStore = create<State>((set, get) => ({
   fetchAll: async () => {
     set({ loading: true, error: null })
     try {
-      const { data, error } = await supabase
-        .from('parcel_map_datasets')
-        .select('*')
-        .order('created_at', { ascending: false })
-      if (error) throw error
-      set({ datasets: (data ?? []) as ParcelMapDataset[], loading: false })
+      // Supabase の select() はデフォルトで 1000 行上限。全国 1700+ 市町村を扱うため
+      // .range() で明示的にページング取得する。
+      const PAGE = 1000
+      const all: ParcelMapDataset[] = []
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase
+          .from('parcel_map_datasets')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .range(from, from + PAGE - 1)
+        if (error) throw error
+        const rows = (data ?? []) as ParcelMapDataset[]
+        all.push(...rows)
+        if (rows.length < PAGE) break
+      }
+      set({ datasets: all, loading: false })
     } catch (err) {
       set({
         loading: false,
