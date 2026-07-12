@@ -39,6 +39,28 @@ function extractMunicipalityLabel(d: ParcelMapDataset): string {
   return raw
 }
 
+/** 「10 が 9 より先に来る」文字列比較を避けるため、先頭の数値部分でまず比較 →
+ *  同値なら残りを文字列比較する。"10-5" と "10-10" の枝番同士でも数値順を維持。 */
+function compareNumericStr(a: string, b: string): number {
+  const numA = a.match(/^(\d+)/)?.[1]
+  const numB = b.match(/^(\d+)/)?.[1]
+  if (numA != null && numB != null) {
+    const nA = parseInt(numA, 10)
+    const nB = parseInt(numB, 10)
+    if (nA !== nB) return nA - nB
+    // 数値が同じ場合、残り (ハイフン以降を含む) を再帰的に numeric compare
+    const restA = a.slice(numA.length).replace(/^-/, '')
+    const restB = b.slice(numB.length).replace(/^-/, '')
+    if (restA === '' && restB === '') return 0
+    if (restA === '') return -1
+    if (restB === '') return 1
+    return compareNumericStr(restA, restB)
+  }
+  if (numA != null) return -1 // 数値ありを先に
+  if (numB != null) return 1
+  return a.localeCompare(b, 'ja')
+}
+
 export interface NewFarmFromParcelSelection {
   dataset: ParcelMapDataset
   feature: Feature<Polygon, ParcelFeatureProperties>
@@ -61,8 +83,8 @@ export function NewFarmFromParcelPanel({ onSelectionChange }: Props) {
   const [prefectureCode, setPrefectureCode] = useState<string>('')
   const [datasetId, setDatasetId] = useState<string>('')
   const [location, setLocation] = useState<string>('')
-  const [parcelQuery, setParcelQuery] = useState<string>('')
-  const [selectedParcelKey, setSelectedParcelKey] = useState<string>('')
+  const [selectedParent, setSelectedParent] = useState<string>('') // 本番
+  const [selectedBranch, setSelectedBranch] = useState<string>('') // 枝番 ("" = 本番のみ)
 
   useEffect(() => {
     void fetchAll()
@@ -98,7 +120,7 @@ export function NewFarmFromParcelPanel({ onSelectionChange }: Props) {
   const isLoading = datasetId ? loadingIds.has(datasetId) : false
   const fc = datasetId ? cache[datasetId] : undefined
 
-  // 所在 (location) の一覧
+  // 所在 (location) の一覧 (日本語ソート)
   const locations = useMemo(() => {
     if (!fc) return []
     const set = new Set<string>()
@@ -106,46 +128,75 @@ export function NewFarmFromParcelPanel({ onSelectionChange }: Props) {
       const loc = (f.properties.location ?? '').trim()
       if (loc) set.add(loc)
     }
-    return [...set].sort()
+    return [...set].sort((a, b) => a.localeCompare(b, 'ja'))
   }, [fc])
 
-  // 所在フィルタしたあとの地番一覧
+  // 所在フィルタしたあとの地番一覧 (parent + branch に分解)
+  //   parent = 先頭 "-" より前 (本番), branch = 残り (枝番、"" は本番のみ)
+  //   例: "10"     → { parent: "10", branch: "" }
+  //       "10-5"   → { parent: "10", branch: "5" }
+  //       "10-5-1" → { parent: "10", branch: "5-1" }
   const parcelCandidates = useMemo(() => {
     if (!fc || !location) return []
     const list: Array<{
       key: string
       parcel_number: string
+      parent: string
+      branch: string
       feature: Feature<Polygon, ParcelFeatureProperties>
     }> = []
     for (const f of fc.features as Array<Feature<Polygon, ParcelFeatureProperties>>) {
       if ((f.properties.location ?? '').trim() !== location) continue
       const num = (f.properties.parcel_number ?? '').trim()
       if (!num) continue
+      const dash = num.indexOf('-')
+      const parent = dash < 0 ? num : num.slice(0, dash)
+      const branch = dash < 0 ? '' : num.slice(dash + 1)
       const outer = f.geometry.coordinates[0]?.[0]
       const key = `${num}|${outer?.[0] ?? ''}|${outer?.[1] ?? ''}`
-      list.push({ key, parcel_number: num, feature: f })
+      list.push({ key, parcel_number: num, parent, branch, feature: f })
     }
-    list.sort((a, b) => a.parcel_number.localeCompare(b.parcel_number, 'ja'))
     return list
   }, [fc, location])
 
-  // 検索フィルタ
-  const filteredCandidates = useMemo(() => {
-    const q = parcelQuery.trim().toLowerCase()
-    if (!q) return parcelCandidates
-    return parcelCandidates.filter((p) =>
-      p.parcel_number.toLowerCase().includes(q),
+  // 本番の一覧 (数値昇順 → 非数値は末尾)
+  const parentNumbers = useMemo(() => {
+    const set = new Set<string>()
+    for (const p of parcelCandidates) set.add(p.parent)
+    return [...set].sort(compareNumericStr)
+  }, [parcelCandidates])
+
+  // 選択中の本番に紐づく枝番の一覧 (数値昇順、"" = 本番のみ を先頭に)
+  const branchNumbers = useMemo(() => {
+    if (!selectedParent) return []
+    const set = new Set<string>()
+    for (const p of parcelCandidates) {
+      if (p.parent === selectedParent) set.add(p.branch)
+    }
+    const arr = [...set]
+    arr.sort((a, b) => {
+      if (a === '' && b !== '') return -1
+      if (b === '' && a !== '') return 1
+      return compareNumericStr(a, b)
+    })
+    return arr
+  }, [parcelCandidates, selectedParent])
+
+  // 決定済み地番 (parent + branch 一致)
+  const currentEntry = useMemo(() => {
+    if (!selectedParent) return null
+    return (
+      parcelCandidates.find(
+        (p) => p.parent === selectedParent && p.branch === selectedBranch,
+      ) ?? null
     )
-  }, [parcelCandidates, parcelQuery])
+  }, [parcelCandidates, selectedParent, selectedBranch])
 
   // 親に選択結果を通知
   const currentDataset = datasetId
     ? datasets.find((d) => d.id === datasetId) ?? null
     : null
-  const currentFeature =
-    selectedParcelKey
-      ? parcelCandidates.find((p) => p.key === selectedParcelKey)?.feature
-      : undefined
+  const currentFeature = currentEntry?.feature
   useEffect(() => {
     if (!currentDataset || !currentFeature) {
       onSelectionChange(null)
@@ -166,9 +217,10 @@ export function NewFarmFromParcelPanel({ onSelectionChange }: Props) {
   useEffect(() => { setDatasetId('') }, [prefectureCode])
   useEffect(() => { setLocation('') }, [datasetId])
   useEffect(() => {
-    setParcelQuery('')
-    setSelectedParcelKey('')
+    setSelectedParent('')
+    setSelectedBranch('')
   }, [location])
+  useEffect(() => { setSelectedBranch('') }, [selectedParent])
 
   return (
     <div className="space-y-3">
@@ -251,42 +303,68 @@ export function NewFarmFromParcelPanel({ onSelectionChange }: Props) {
         )}
       </div>
 
-      {/* 地番 (検索付き) */}
-      <div>
-        <label className="block text-xs font-medium mb-1 text-slate-600">
-          地番 * {parcelCandidates.length > 0 && (
-            <span className="text-slate-400 font-normal">
-              ({filteredCandidates.length.toLocaleString()} / {parcelCandidates.length.toLocaleString()} 件)
-            </span>
-          )}
-        </label>
-        <input
-          type="text"
-          value={parcelQuery}
-          onChange={(e) => setParcelQuery(e.target.value)}
-          disabled={!location}
-          placeholder={location ? '地番で絞り込み (例: 10-10)' : ''}
-          className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm mb-1 disabled:bg-slate-100"
-        />
-        <select
-          size={6}
-          value={selectedParcelKey}
-          onChange={(e) => setSelectedParcelKey(e.target.value)}
-          disabled={!location}
-          className="w-full px-2 py-1 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:bg-slate-100"
-        >
-          {filteredCandidates.slice(0, 500).map((p) => (
-            <option key={p.key} value={p.key}>
-              {p.parcel_number}
-            </option>
-          ))}
-        </select>
-        {filteredCandidates.length > 500 && (
-          <p className="text-[11px] text-amber-700 mt-1">
-            先頭 500 件だけ表示しています。検索で絞り込んでください。
-          </p>
-        )}
+      {/* 地番 (本番 → 枝番 の 2 段階) */}
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="block text-xs font-medium mb-1 text-slate-600">
+            本番 *{' '}
+            {parentNumbers.length > 0 && (
+              <span className="text-slate-400 font-normal">
+                ({parentNumbers.length.toLocaleString()})
+              </span>
+            )}
+          </label>
+          <div className="relative">
+            <select
+              value={selectedParent}
+              onChange={(e) => setSelectedParent(e.target.value)}
+              disabled={!location}
+              className="w-full px-3 py-2 border rounded appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:bg-slate-100 disabled:text-slate-500"
+            >
+              <option value="">選択してください</option>
+              {parentNumbers.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="h-4 w-4 absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs font-medium mb-1 text-slate-600">
+            枝番{' '}
+            {branchNumbers.length > 0 && (
+              <span className="text-slate-400 font-normal">
+                ({branchNumbers.length.toLocaleString()})
+              </span>
+            )}
+          </label>
+          <div className="relative">
+            <select
+              value={selectedBranch}
+              onChange={(e) => setSelectedBranch(e.target.value)}
+              disabled={!selectedParent}
+              className="w-full px-3 py-2 border rounded appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:bg-slate-100 disabled:text-slate-500"
+            >
+              {branchNumbers.length === 0 && (
+                <option value="">選択してください</option>
+              )}
+              {branchNumbers.map((b) => (
+                <option key={b} value={b}>
+                  {b === '' ? '(なし)' : b}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="h-4 w-4 absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+          </div>
+        </div>
       </div>
+      {currentEntry && (
+        <div className="mt-1 text-xs text-slate-600">
+          選択中: <span className="font-semibold text-slate-800">{currentEntry.parcel_number}</span>
+        </div>
+      )}
     </div>
   )
 }
