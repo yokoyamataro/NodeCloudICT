@@ -1,15 +1,17 @@
 // サイトオーナー管理の「地番マップ (JPGIS ベース)」データセットを扱う Zustand ストア。
 //
 // 責任:
-//   * parcel_map_datasets メタデータの一覧取得 / active な 1 件の取得
+//   * parcel_map_datasets メタデータの一覧取得
 //   * サイトオーナー用: アップロード時にクライアントでパース → 正規化 →
 //     単一の parcels.geojson として Storage に保存
-//   * 工区表示用: active データセットの GeoJSON を 1 度だけダウンロードして
-//     メモリキャッシュ。表示側 (ParcelMapLayer) で bbox によりフィルタする
-//   * active トグル / 削除
+//   * 工区表示用: active な複数データセットの中から、地図 bbox と交差するものだけ
+//     オンデマンド DL してメモリキャッシュ (Phase 2b: 全国 1700+ 市町村を溜めても
+//     視野内の 5〜10 件しか読まない)
+//   * active トグル (複数同時 active 可) / 削除
 //
 // Storage レイアウト:
-//   {dataset_id}/parcels.geojson     ... 正規化済みの FeatureCollection
+//   {dataset_id}/parcels.geojson.gz  ... 自動同期分 (gzip 圧縮、DecompressionStream で展開)
+//   {dataset_id}/parcels.geojson     ... 手動アップロード分 (非圧縮)
 //   {dataset_id}/source.xml          ... JPGIS 原本 (GeoJSON 直接時は無し)
 //
 // 旧仕様 (タイル分割) との互換:
@@ -22,6 +24,7 @@ import { create } from 'zustand'
 import type { FeatureCollection, Polygon } from 'geojson'
 import { supabase } from '@/lib/supabase'
 import type { ParcelMapDataset } from '@/types/database'
+import type { Bbox } from '@/lib/tile-math'
 import { loadJpgisXmlFile } from '@/lib/jpgis-parser'
 import {
   jpgisToGeoJson,
@@ -32,6 +35,7 @@ import {
 const BUCKET = 'parcel-maps'
 const SIGNED_URL_TTL_SEC = 60 * 30 // 30 分。1 セッション用なら十分
 const LEGACY_TILE_DL_CONCURRENCY = 6
+const DATASET_DL_CONCURRENCY = 4 // 複数 dataset 同時 DL の上限
 
 export type ParcelFeatureCollection = FeatureCollection<
   Polygon,
@@ -49,20 +53,22 @@ interface State {
   loading: boolean
   error: string | null
 
-  /** 現在キャッシュ中の GeoJSON。null は未取得または active なし */
-  activeGeoJson: {
-    datasetId: string
-    data: ParcelFeatureCollection
-  } | null
-  geoJsonLoading: boolean
+  /** dataset id ごとの GeoJSON キャッシュ。ensureLoadedForBbox が視野内で必要なものだけ埋める */
+  geoJsonCache: Record<string, ParcelFeatureCollection>
+  /** 現在 DL 中の dataset id 集合 (UI で表示) */
+  loadingIds: Set<string>
 
   fetchAll: () => Promise<void>
   /**
-   * active な dataset の GeoJSON を全体ダウンロードして返す。
-   * 既に同じ id のものをキャッシュ済みならそれを再利用する。
+   * 与えた bbox と交差する active dataset の GeoJSON を必要に応じて DL してキャッシュする。
+   * 既に cache 済みのものは再取得しない。並列度は DATASET_DL_CONCURRENCY で制御。
    * 旧タイル形式のデータセットには tiles/ 配下から全タイルを merge するフォールバック付き。
+   * 戻り値: 実際にキャッシュに載っている ids のリスト (視野内に entered / まだ downloading は含まない)
    */
-  fetchActiveGeoJson: () => Promise<ParcelFeatureCollection | null>
+  ensureLoadedForBbox: (bbox: Bbox) => Promise<string[]>
+
+  /** メタデータから bbox 交差する active dataset の id を返す (フェッチ待たず即返す) */
+  visibleDatasetIds: (bbox: Bbox) => string[]
 
   uploadDataset: (params: {
     file: File
@@ -73,7 +79,27 @@ interface State {
   }) => Promise<ParcelMapDataset | null>
 
   setActive: (datasetId: string, active: boolean) => Promise<void>
+  /** 複数 dataset を一括で active/非 active に (都道府県単位まとめ切替用) */
+  setActiveMany: (datasetIds: string[], active: boolean) => Promise<void>
   deleteDataset: (datasetId: string) => Promise<void>
+}
+
+/** dataset のスカラー bbox 列と地図 bbox の AABB 交差判定。列が欠けている場合は
+ *  jsonb bbox にフォールバック。両方無い場合は true (常に候補として扱う) */
+function datasetIntersectsBbox(d: ParcelMapDataset, view: Bbox): boolean {
+  const minLng = d.bbox_min_lng ?? d.bbox?.minLng ?? null
+  const minLat = d.bbox_min_lat ?? d.bbox?.minLat ?? null
+  const maxLng = d.bbox_max_lng ?? d.bbox?.maxLng ?? null
+  const maxLat = d.bbox_max_lat ?? d.bbox?.maxLat ?? null
+  if (minLng == null || minLat == null || maxLng == null || maxLat == null) {
+    return true
+  }
+  return !(
+    maxLng < view.minLng ||
+    minLng > view.maxLng ||
+    maxLat < view.minLat ||
+    minLat > view.maxLat
+  )
 }
 
 function msg(err: unknown, fallback: string): string {
@@ -97,6 +123,13 @@ async function downloadJson<T>(bucket: string, path: string): Promise<T> {
   if (error) throw error
   const res = await fetch(signed.signedUrl)
   if (!res.ok) throw new Error(`Fetch failed (${res.status})`)
+  if (path.endsWith('.gz')) {
+    // sync CLI で gzip 圧縮した .geojson.gz を DecompressionStream で解凍
+    if (!res.body) throw new Error('Empty response body for gz file')
+    const decompressed = res.body.pipeThrough(new DecompressionStream('gzip'))
+    const text = await new Response(decompressed).text()
+    return JSON.parse(text) as T
+  }
   return (await res.json()) as T
 }
 
@@ -153,12 +186,54 @@ function featureDedupKey(f: {
   return `${f.properties.parcel_name}|${headKey}`
 }
 
+/** 1 dataset の GeoJSON を DL (新形式 → 旧タイル形式の順にフォールバック) */
+async function downloadDatasetGeoJson(
+  dataset: ParcelMapDataset,
+): Promise<ParcelFeatureCollection | null> {
+  if (dataset.storage_geojson_path) {
+    const fc = await tryDownloadJson<ParcelFeatureCollection>(
+      BUCKET,
+      dataset.storage_geojson_path,
+    )
+    if (fc) return fc
+  }
+  // 旧タイル形式: tiles/index.json から全タイルを結合
+  const idx = await tryDownloadJson<LegacyTileIndex>(
+    BUCKET,
+    `${dataset.id}/tiles/index.json`,
+  )
+  if (!idx) return null
+  const tasks = idx.tiles.map(
+    (t) => () =>
+      tryDownloadJson<ParcelFeatureCollection>(
+        BUCKET,
+        `${dataset.id}/tiles/${t.z}/${t.x}/${t.y}.geojson`,
+      ),
+  )
+  const results = await runWithConcurrency(tasks, LEGACY_TILE_DL_CONCURRENCY)
+  const nonNull = results.filter((r): r is ParcelFeatureCollection => r != null)
+  const seen = new Set<string>()
+  const combined: ParcelFeatureCollection = {
+    type: 'FeatureCollection',
+    features: [],
+  }
+  for (const t of nonNull) {
+    for (const f of t.features) {
+      const key = featureDedupKey(f)
+      if (seen.has(key)) continue
+      seen.add(key)
+      combined.features.push(f)
+    }
+  }
+  return combined
+}
+
 export const useParcelMapDatasetStore = create<State>((set, get) => ({
   datasets: [],
   loading: false,
   error: null,
-  activeGeoJson: null,
-  geoJsonLoading: false,
+  geoJsonCache: {},
+  loadingIds: new Set<string>(),
 
   fetchAll: async () => {
     set({ loading: true, error: null })
@@ -177,80 +252,51 @@ export const useParcelMapDatasetStore = create<State>((set, get) => ({
     }
   },
 
-  fetchActiveGeoJson: async () => {
-    const active = get().datasets.find((d) => d.active) ?? null
-    if (!active) {
-      set({ activeGeoJson: null })
-      return null
-    }
-    const cached = get().activeGeoJson
-    if (cached && cached.datasetId === active.id) return cached.data
+  visibleDatasetIds: (bbox) => {
+    return get()
+      .datasets.filter((d) => d.active && datasetIntersectsBbox(d, bbox))
+      .map((d) => d.id)
+  },
 
-    set({ geoJsonLoading: true })
-    try {
-      let fc: ParcelFeatureCollection | null = null
-
-      // 経路 1: 新形式または旧非タイル形式 — 単一 parcels.geojson を取得
-      if (active.storage_geojson_path) {
-        fc = await tryDownloadJson<ParcelFeatureCollection>(
-          BUCKET,
-          active.storage_geojson_path,
-        )
-      }
-
-      // 経路 2: 旧タイル形式 — tiles/index.json を辿って全タイルを結合
-      if (!fc) {
-        const idx = await tryDownloadJson<LegacyTileIndex>(
-          BUCKET,
-          `${active.id}/tiles/index.json`,
-        )
-        if (idx) {
-          const tasks = idx.tiles.map(
-            (t) => () =>
-              tryDownloadJson<ParcelFeatureCollection>(
-                BUCKET,
-                `${active.id}/tiles/${t.z}/${t.x}/${t.y}.geojson`,
-              ),
-          )
-          const results = await runWithConcurrency(tasks, LEGACY_TILE_DL_CONCURRENCY)
-          const nonNull = results.filter(
-            (r): r is ParcelFeatureCollection => r != null,
-          )
-          const seen = new Set<string>()
-          const combined: ParcelFeatureCollection = {
-            type: 'FeatureCollection',
-            features: [],
+  ensureLoadedForBbox: async (bbox) => {
+    const state = get()
+    const targets = state.datasets.filter(
+      (d) => d.active && datasetIntersectsBbox(d, bbox),
+    )
+    // cache 済みでもなく、DL 中でもないものだけ取りに行く
+    const toFetch = targets.filter(
+      (d) => !state.geoJsonCache[d.id] && !state.loadingIds.has(d.id),
+    )
+    if (toFetch.length > 0) {
+      // loadingIds に追加
+      set((s) => {
+        const next = new Set(s.loadingIds)
+        for (const d of toFetch) next.add(d.id)
+        return { loadingIds: next }
+      })
+      const tasks = toFetch.map((d) => async () => {
+        try {
+          const fc = await downloadDatasetGeoJson(d)
+          if (fc) {
+            set((s) => ({
+              geoJsonCache: { ...s.geoJsonCache, [d.id]: fc },
+            }))
           }
-          for (const t of nonNull) {
-            for (const f of t.features) {
-              const key = featureDedupKey(f)
-              if (seen.has(key)) continue
-              seen.add(key)
-              combined.features.push(f)
-            }
-          }
-          fc = combined
+        } catch (err) {
+          console.warn(`[parcel-map] dataset ${d.id} DL failed:`, err)
+        } finally {
+          set((s) => {
+            const next = new Set(s.loadingIds)
+            next.delete(d.id)
+            return { loadingIds: next }
+          })
         }
-      }
-
-      if (!fc) {
-        throw new Error(
-          'データセットのファイルが見つかりません。管理画面から再アップロードしてください。',
-        )
-      }
-
-      set({
-        activeGeoJson: { datasetId: active.id, data: fc },
-        geoJsonLoading: false,
       })
-      return fc
-    } catch (err) {
-      set({
-        geoJsonLoading: false,
-        error: msg(err, 'GeoJSON の取得に失敗しました'),
-      })
-      return null
+      await runWithConcurrency(tasks, DATASET_DL_CONCURRENCY)
     }
+    // 実際にキャッシュに乗った id を返す
+    const cache = get().geoJsonCache
+    return targets.filter((d) => cache[d.id]).map((d) => d.id)
   },
 
   uploadDataset: async ({ file, name, description, zone, onProgress }) => {
@@ -374,25 +420,16 @@ export const useParcelMapDatasetStore = create<State>((set, get) => ({
 
   setActive: async (datasetId, active) => {
     const prev = get().datasets
-    const next = active
-      ? prev.map((d) =>
-          d.id === datasetId ? { ...d, active: true } : { ...d, active: false },
-        )
-      : prev.map((d) => (d.id === datasetId ? { ...d, active: false } : d))
-    set({
-      datasets: next,
-      // active が変わったのでキャッシュも破棄
-      activeGeoJson: null,
-    })
+    const next = prev.map((d) => (d.id === datasetId ? { ...d, active } : d))
+    // 非表示化した dataset のキャッシュは破棄 (メモリ節約)
+    let nextCache = get().geoJsonCache
+    if (!active && nextCache[datasetId]) {
+      const { [datasetId]: _drop, ...rest } = nextCache
+      void _drop
+      nextCache = rest
+    }
+    set({ datasets: next, geoJsonCache: nextCache })
     try {
-      if (active) {
-        const { error: e1 } = await supabase
-          .from('parcel_map_datasets')
-          .update({ active: false } as never)
-          .neq('id', datasetId)
-          .eq('active', true)
-        if (e1) throw e1
-      }
       const { error } = await supabase
         .from('parcel_map_datasets')
         .update({ active } as never)
@@ -403,15 +440,44 @@ export const useParcelMapDatasetStore = create<State>((set, get) => ({
     }
   },
 
+  setActiveMany: async (datasetIds, active) => {
+    if (datasetIds.length === 0) return
+    const idSet = new Set(datasetIds)
+    const prev = get().datasets
+    const next = prev.map((d) => (idSet.has(d.id) ? { ...d, active } : d))
+    let nextCache = get().geoJsonCache
+    if (!active) {
+      // 非公開化する id のキャッシュは全て破棄
+      nextCache = Object.fromEntries(
+        Object.entries(nextCache).filter(([id]) => !idSet.has(id)),
+      )
+    }
+    set({ datasets: next, geoJsonCache: nextCache })
+    try {
+      // Supabase の in() は数千 id でも 1 リクエストで送れる (URL 長は問題になる可能性
+      // があるので 500 件ずつチャンク分割)
+      for (let i = 0; i < datasetIds.length; i += 500) {
+        const chunk = datasetIds.slice(i, i + 500)
+        const { error } = await supabase
+          .from('parcel_map_datasets')
+          .update({ active } as never)
+          .in('id', chunk)
+        if (error) throw error
+      }
+    } catch (err) {
+      set({ datasets: prev, error: msg(err, '一括 active 切替に失敗しました') })
+    }
+  },
+
   deleteDataset: async (datasetId) => {
     const prev = get().datasets
     const target = prev.find((d) => d.id === datasetId)
+    const prevCache = get().geoJsonCache
+    const { [datasetId]: _drop, ...restCache } = prevCache
+    void _drop
     set({
       datasets: prev.filter((d) => d.id !== datasetId),
-      activeGeoJson:
-        get().activeGeoJson?.datasetId === datasetId
-          ? null
-          : get().activeGeoJson,
+      geoJsonCache: restCache,
     })
     try {
       if (target) {

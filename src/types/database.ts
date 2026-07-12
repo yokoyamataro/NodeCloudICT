@@ -292,6 +292,19 @@ export interface ParcelMapDataset {
   uploaded_by_user_id: string | null
   created_at: string
   updated_at: string
+  // G 空間情報センターからの自動同期用メタ (scripts/sync-parcel-maps.mjs)
+  registry_code: string | null
+  registry_sub: string | null
+  prefecture_code: string | null
+  source_year: number | null
+  source_url: string | null
+  ckan_package_id: string | null
+  ckan_resource_id: string | null
+  // Phase 2b: bbox 交差クエリ用スカラー列
+  bbox_min_lng: number | null
+  bbox_min_lat: number | null
+  bbox_max_lng: number | null
+  bbox_max_lat: number | null
 }
 
 // 開発者からのお知らせ

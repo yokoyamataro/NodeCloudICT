@@ -1,12 +1,13 @@
 // サイトオーナーがマスターデータとしてアップロードした地番マップを
 // CoordinateMap の背景レイヤとして重ねる。
 //
-// 動作方針:
-//   * データは active な dataset の parcels.geojson を 1 度だけダウンロードし、
-//     ストアのメモリキャッシュで再利用する。
-//   * 描画は effectiveBbox (工区座標由来 / farm.parcel_map_bbox / ビューポート追従)
-//     でクライアント側フィルタしてから <GeoJSON> に渡す。数百〜数千の feature に
-//     絞られるので Canvas レンダラで軽い。
+// 動作方針 (Phase 2b):
+//   * bbox (工区座標由来 / farm.parcel_map_bbox / ビューポート追従) と交差する
+//     active dataset の GeoJSON だけを、必要になった時点でオンデマンド DL する。
+//     全国 1700+ 市町村を溜めても、視野内の 5〜10 dataset しか読まない。
+//   * 各 dataset の GeoJSON は dataset id 単位でメモリキャッシュ (再訪時に再 DL しない)
+//   * 描画は cache に載っている dataset の feature を合体し、effectiveBbox でさらに
+//     クライアント側フィルタしてから <GeoJSON> に渡す。Canvas レンダラで軽い。
 //   * ポップアップは初回クリック時にだけ生成 (lazy)。tooltip (地番名) は
 //     ズーム LABEL_MIN_ZOOM 以上に達したときに 1 度だけ全 layer に bind する。
 
@@ -110,16 +111,12 @@ export function ParcelMapLayer({
   selectionMode = false,
 }: Props) {
   const map = useMap()
-  const allFc = useParcelMapDatasetStore((s) => s.activeGeoJson?.data ?? null)
-  const fetchActive = useParcelMapDatasetStore((s) => s.fetchActiveGeoJson)
+  const datasets = useParcelMapDatasetStore((s) => s.datasets)
+  const cache = useParcelMapDatasetStore((s) => s.geoJsonCache)
+  const ensureLoadedForBbox = useParcelMapDatasetStore(
+    (s) => s.ensureLoadedForBbox,
+  )
   const [viewportBbox, setViewportBbox] = useState<Bbox | null>(null)
-
-  // 可視化されたタイミングで一度だけ全体フェッチ (メモリキャッシュ)
-  useEffect(() => {
-    if (!visible) return
-    if (allFc) return
-    void fetchActive()
-  }, [visible, allFc, fetchActive])
 
   // bbox 未指定のときは、地図のビューポートを追跡してフィルタ範囲とする
   useEffect(() => {
@@ -156,13 +153,28 @@ export function ParcelMapLayer({
 
   const effectiveBbox = bbox ?? viewportBbox
 
-  // bbox でフィルタした FeatureCollection (メモ化)
+  // 効いてる bbox に active な dataset のうち交差するものだけを、必要に応じて DL する。
+  // dataset 一覧の active フラグや bbox が変わったら再評価される。
+  useEffect(() => {
+    if (!visible || !effectiveBbox) return
+    void ensureLoadedForBbox(effectiveBbox)
+  }, [visible, effectiveBbox, ensureLoadedForBbox, datasets])
+
+  // bbox に交差する active dataset のうち、cache に載っているものの feature を合体
   const filteredFc = useMemo((): ParcelFeatureCollection | null => {
-    if (!allFc || !effectiveBbox) return null
-    const features = allFc.features.filter((f) => featureIntersectsBbox(f, effectiveBbox))
+    if (!effectiveBbox) return null
+    const features: ParcelFeatureCollection['features'] = []
+    for (const d of datasets) {
+      if (!d.active) continue
+      const fc = cache[d.id]
+      if (!fc) continue
+      for (const f of fc.features) {
+        if (featureIntersectsBbox(f, effectiveBbox)) features.push(f)
+      }
+    }
     if (features.length === 0) return null
     return { type: 'FeatureCollection', features }
-  }, [allFc, effectiveBbox])
+  }, [datasets, cache, effectiveBbox])
 
   // Canvas レンダラ
   const renderer = useMemo(() => L.canvas({ padding: 0.2 }), [])
