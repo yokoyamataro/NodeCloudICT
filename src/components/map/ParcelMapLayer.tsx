@@ -36,6 +36,9 @@ interface Props {
   /** true のとき polygon クリック = 即トグル (popup 非表示)。
    *  false のとき polygon クリック = 属性情報の popup を開く (読み取り専用) */
   selectionMode?: boolean
+  /** 地番名 (parcel_number) の常時ラベル表示を有効にするか。default: false。
+   *  true でも zoom < LABEL_MIN_ZOOM の間は強制的に非表示 (描画コスト回避) */
+  showLabels?: boolean
 }
 
 /** 取込済判定用の複合キーを作る。所在と地番を "|" 区切りで結合。 */
@@ -137,6 +140,7 @@ export function ParcelMapLayer({
   selectedKeys,
   onToggleSelect,
   selectionMode = false,
+  showLabels = false,
 }: Props) {
   const map = useMap()
   const datasets = useParcelMapDatasetStore((s) => s.datasets)
@@ -230,11 +234,12 @@ export function ParcelMapLayer({
   // Canvas レンダラ
   const renderer = useMemo(() => L.canvas({ padding: 0.2 }), [])
 
-  // ズームで地番名ラベルの表示クラスを切替
+  // ズームで地番名ラベルの表示クラスを切替。
+  // showLabels=false のときは常に非表示。true でも zoom < LABEL_MIN_ZOOM は強制非表示。
   useEffect(() => {
     const container = map.getContainer()
     const update = () => {
-      if (!visible) {
+      if (!visible || !showLabels) {
         container.classList.remove('parcel-labels-visible')
         return
       }
@@ -250,7 +255,7 @@ export function ParcelMapLayer({
       map.off('zoomend', update)
       container.classList.remove('parcel-labels-visible')
     }
-  }, [map, visible])
+  }, [map, visible, showLabels])
 
   if (!visible || zoomHidden || !filteredFc) return null
 
@@ -261,6 +266,7 @@ export function ParcelMapLayer({
       importedParcelKeys={importedParcelKeys}
       selectedKeys={selectedKeys}
       selectionMode={selectionMode}
+      showLabels={showLabels}
       onToggleSelect={
         onToggleSelect
           ? (feature) => {
@@ -275,7 +281,9 @@ export function ParcelMapLayer({
 }
 
 /** GeoJSON 描画本体。data 参照が変わると再マウントされ、地番名 tooltip は
- *  「一度でもズーム閾値以上に上がったら全 layer に bind」ワンショット方式。 */
+ *  「showLabels=true かつ zoom >= LABEL_MIN_ZOOM に達したら全 layer に bind」方式。
+ *  showLabels=false の間は tooltip 自体を作らないので、pan/pinch のレンダーコストが
+ *  地番数×パーマネントラベル分だけ削れる。 */
 function GeoJsonInner({
   data,
   renderer,
@@ -283,6 +291,7 @@ function GeoJsonInner({
   selectedKeys,
   onToggleSelect,
   selectionMode,
+  showLabels,
 }: {
   data: ParcelFeatureCollection
   renderer: L.Renderer
@@ -290,6 +299,7 @@ function GeoJsonInner({
   selectedKeys?: Set<string>
   onToggleSelect?: (feature: Feature<Polygon, ParcelFeatureProperties>) => void
   selectionMode?: boolean
+  showLabels: boolean
 }) {
   const map = useMap()
   const layerRef = useRef<L.GeoJSON | null>(null)
@@ -327,8 +337,21 @@ function GeoJsonInner({
     })
   }, [selectedKeys, importedParcelKeys, renderer, data])
 
-  // ズームレベルが LABEL_MIN_ZOOM 以上に達したら、一度だけ全 layer に tooltip を bind
+  // showLabels=true かつ zoom >= LABEL_MIN_ZOOM のときのみ tooltip を bind する。
+  // showLabels=false に切り替わったら全 tooltip を unbind して DOM ノード削減。
   useEffect(() => {
+    const unbindAllLabels = () => {
+      const layerGroup = layerRef.current
+      if (!layerGroup) return
+      layerGroup.eachLayer((layer) => {
+        ;(layer as L.Layer).unbindTooltip()
+      })
+      labelsBoundRef.current = false
+    }
+    if (!showLabels) {
+      unbindAllLabels()
+      return
+    }
     const bindLabelsIfNeeded = () => {
       if (labelsBoundRef.current) return
       const layerGroup = layerRef.current
@@ -358,8 +381,9 @@ function GeoJsonInner({
     return () => {
       clearTimeout(t)
       map.off('zoomend', bindLabelsIfNeeded)
+      unbindAllLabels()
     }
-  }, [map, data])
+  }, [map, data, showLabels])
 
   // クリック時のポップアップ (lazy 生成)。
   // - selectionMode=false: 属性表示のみの読み取り popup を開く。取込済みなら緑バッジ

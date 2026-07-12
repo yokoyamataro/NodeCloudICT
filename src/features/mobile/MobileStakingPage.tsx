@@ -935,6 +935,7 @@ export function MobileStakingPage() {
   const fetchParcelDatasets = useParcelMapDatasetStore((s) => s.fetchAll)
   const hasActiveParcelDataset = parcelDatasets.some((d) => d.active)
   const [showParcelLayer, setShowParcelLayer] = useState(false)
+  const [showParcelMapLabels, setShowParcelMapLabels] = useState(false)
   const [parcelSelectionMode, setParcelSelectionMode] = useState(false)
   const [selectedParcels, setSelectedParcels] = useState<
     Map<string, Feature<GeoJsonPolygon, ParcelFeatureProperties>>
@@ -3732,28 +3733,43 @@ export function MobileStakingPage() {
                 </button>
               </div>
             )}
-            {/* 法務省地図トグル */}
-            <button
-              onClick={() => {
-                setShowParcelLayer((v) => {
-                  const next = !v
-                  if (!next) {
-                    setParcelSelectionMode(false)
-                    clearParcelSelection()
-                  }
-                  return next
-                })
-              }}
-              className={`flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded shadow border ${
-                showParcelLayer
-                  ? 'bg-orange-500 border-orange-500 text-white'
-                  : 'bg-white/95 border-slate-300 text-slate-800'
-              }`}
-              title="法務省地図データを背景に表示する"
-            >
-              <MapIcon className="h-3.5 w-3.5" />
-              法務省地図
-            </button>
+            {/* 法務省地図トグル + 地番名ラベル ON/OFF */}
+            <div className="flex items-center gap-1">
+              {showParcelLayer && (
+                <button
+                  onClick={() => setShowParcelMapLabels((v) => !v)}
+                  className={`px-2 py-1 text-[11px] font-medium rounded shadow border ${
+                    showParcelMapLabels
+                      ? 'bg-slate-800 border-slate-800 text-white'
+                      : 'bg-white/95 border-slate-300 text-slate-800'
+                  }`}
+                  title="法務省地図の地番名を常時ラベル表示 (ズームが小さい間は自動非表示)"
+                >
+                  {showParcelMapLabels ? '地番名 ON' : '地番名 OFF'}
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  setShowParcelLayer((v) => {
+                    const next = !v
+                    if (!next) {
+                      setParcelSelectionMode(false)
+                      clearParcelSelection()
+                    }
+                    return next
+                  })
+                }}
+                className={`flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded shadow border ${
+                  showParcelLayer
+                    ? 'bg-orange-500 border-orange-500 text-white'
+                    : 'bg-white/95 border-slate-300 text-slate-800'
+                }`}
+                title="法務省地図データを背景に表示する"
+              >
+                <MapIcon className="h-3.5 w-3.5" />
+                法務省地図
+              </button>
+            </div>
           </div>
         )}
 
@@ -4247,6 +4263,7 @@ export function MobileStakingPage() {
               selectedKeys={selectedParcelKeys}
               onToggleSelect={toggleSelectedParcel}
               selectionMode={parcelSelectionMode}
+              showLabels={showParcelMapLabels}
             />
           )}
         </MapContainer>

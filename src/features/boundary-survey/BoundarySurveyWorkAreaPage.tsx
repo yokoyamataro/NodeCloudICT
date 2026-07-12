@@ -37,6 +37,7 @@ import { expandBbox, ringBbox, type Bbox } from '@/lib/tile-math'
 import { importParcelBatch } from '@/features/parcel-maps/importParcelBatch'
 
 const PARCEL_LAYER_STORAGE_KEY = 'boundary-survey:parcel-map-layer'
+const PARCEL_LABELS_STORAGE_KEY = 'boundary-survey:parcel-map-labels'
 /** 工区座標から自動計算した bbox に対して足すバッファ (メートル) */
 const AUTO_BBOX_BUFFER_M = 500
 
@@ -76,6 +77,10 @@ export function BoundarySurveyWorkAreaPage() {
     if (typeof window === 'undefined') return false
     return window.localStorage.getItem(PARCEL_LAYER_STORAGE_KEY) === '1'
   })
+  const [showParcelLabels, setShowParcelLabels] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    return window.localStorage.getItem(PARCEL_LABELS_STORAGE_KEY) === '1'
+  })
 
   useEffect(() => {
     void fetchDatasets()
@@ -87,6 +92,13 @@ export function BoundarySurveyWorkAreaPage() {
       showParcelLayer ? '1' : '0',
     )
   }, [showParcelLayer])
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(
+      PARCEL_LABELS_STORAGE_KEY,
+      showParcelLabels ? '1' : '0',
+    )
+  }, [showParcelLabels])
 
   // 地番マップの表示範囲: farm.parcel_map_bbox (手動保存) → 工区座標から自動計算
   //   → いずれも無ければ null → ParcelMapLayer 側で「現在ビューポート」に追従する。
@@ -704,6 +716,20 @@ export function BoundarySurveyWorkAreaPage() {
                 法務省地図
               </button>
             )}
+            {/* 地番名ラベル ON/OFF (法務省地図が表示中のみ) */}
+            {hasActiveDataset && showParcelLayer && (
+              <button
+                onClick={() => setShowParcelLabels((v) => !v)}
+                className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border ${
+                  showParcelLabels
+                    ? 'bg-slate-800 text-white border-slate-800 hover:bg-slate-700'
+                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                }`}
+                title="地番名 (例: 10-10) を常時ラベル表示。ズームが小さい間は自動で非表示"
+              >
+                {showParcelLabels ? '地番名 ON' : '地番名 OFF'}
+              </button>
+            )}
             {/* 地番データ取込 (選択モード + 一括取込を兼ねる) */}
             {hasActiveDataset && showParcelLayer && (
               <>
@@ -820,6 +846,7 @@ export function BoundarySurveyWorkAreaPage() {
               selectedKeys={selectedKeys}
               onToggleSelect={toggleSelectedParcel}
               selectionMode={selectionMode}
+              showLabels={showParcelLabels}
             />
           ) : null
         }
