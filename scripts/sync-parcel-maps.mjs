@@ -562,14 +562,20 @@ async function processResource(supabase, item, prefixLog) {
   }
 
   // Storage upload
-  prefixLog(
-    `uploading to storage (${useGzip ? `gzip ${uploadBlob.byteLength}B / raw ${rawJson.byteLength}B` : `${uploadBlob.byteLength}B`})...`,
+  const uploadSizeMb = (uploadBlob.byteLength / 1024 / 1024).toFixed(1)
+  const rawSizeMb = (rawJson.byteLength / 1024 / 1024).toFixed(1)
+  console.log(
+    `[sync]   uploading ${item.filename}: gzip ${uploadSizeMb} MB (raw ${rawSizeMb} MB)`,
   )
   const uploadRes = await supabase.storage.from(args.bucket).upload(geoJsonPath, uploadBlob, {
     contentType,
     upsert: true,
   })
-  if (uploadRes.error) throw new Error(`storage upload failed: ${uploadRes.error.message}`)
+  if (uploadRes.error) {
+    throw new Error(
+      `storage upload failed (gzip ${uploadSizeMb} MB): ${uploadRes.error.message}`,
+    )
+  }
 
   // DB upsert
   prefixLog('upserting DB row...')
