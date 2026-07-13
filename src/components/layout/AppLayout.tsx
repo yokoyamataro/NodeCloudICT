@@ -353,6 +353,17 @@ export function AppLayout() {
 
           {/* 右側：ログイン情報 */}
           <div className="flex items-center gap-4">
+            {/* 組織管理者 (サイトオーナーではない) 向けにメンバー管理リンク。
+                サイトオーナーは下の「ユーザー」リンクからアクセス可能なので二重表示しない。 */}
+            {!isAdmin(user?.email) && isOrgAdmin && (
+              <Link
+                to="/admin/users"
+                className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+                title="組織のメンバーを管理"
+              >
+                メンバー
+              </Link>
+            )}
             {/* サイトオーナー: 各種管理画面 */}
             {isAdmin(user?.email) && (
               <>

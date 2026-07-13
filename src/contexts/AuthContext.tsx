@@ -16,7 +16,7 @@ interface AuthContextType {
   displayName: string
   /** ログイン中ユーザーが所属する組織名 (無所属 or 取得中は null) */
   organizationName: string | null
-  /** ログイン中ユーザーが所属組織の管理者 (organizations.admin_user_id) か */
+  /** ログイン中ユーザーが 1 つ以上の組織の管理者 (organization_members.role='admin') か */
   isOrgAdmin: boolean
   signIn: (email: string, password: string) => Promise<void>
   /** メールに Magic Link を送る。既存ユーザーはリンククリックで自動ログイン、
@@ -82,19 +82,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       setProfile(nextProfile)
 
-      if (!nextProfile.organization_id) {
+      if (nextProfile.organization_id) {
+        const { data: orgRow } = await supabase
+          .from('organizations')
+          .select('name')
+          .eq('id', nextProfile.organization_id)
+          .maybeSingle<{ name: string }>()
+        if (cancelled) return
+        setOrganizationName(orgRow?.name ?? null)
+      } else {
         setOrganizationName(null)
-        setIsOrgAdmin(false)
-        return
       }
-      const { data: orgRow } = await supabase
-        .from('organizations')
-        .select('name, admin_user_id')
-        .eq('id', nextProfile.organization_id)
-        .maybeSingle<{ name: string; admin_user_id: string | null }>()
+
+      // 組織 admin 判定は organization_members から取る。1 個以上あれば admin。
+      // (旧: organizations.admin_user_id との一致判定は複数管理者対応後は不十分)
+      const { data: adminOrgs } = (await supabase.rpc(
+        'list_my_admin_org_ids' as never,
+      )) as unknown as {
+        data: Array<{ organization_id: string }> | null
+        error: unknown
+      }
       if (cancelled) return
-      setOrganizationName(orgRow?.name ?? null)
-      setIsOrgAdmin(orgRow?.admin_user_id === user.id)
+      setIsOrgAdmin(Array.isArray(adminOrgs) && adminOrgs.length > 0)
     })()
     return () => {
       cancelled = true

@@ -1,10 +1,16 @@
-// サイトオーナー用: ユーザー一覧 + フルネーム・所属組織の編集。
-// /admin/users（要ログイン + サイトオーナー判定）。
+// /admin/users: ユーザー管理。
+//   - サイトオーナー: 全ユーザー一覧 + フルネーム・所属組織の編集 (従来通り)
+//   - 組織管理者 (organization_members.role='admin'): 自組織のメンバー管理ビューへ切替
 //
-// データソース:
+// サイトオーナー用データソース:
 //   - 一覧: admin_list_users RPC（SECURITY DEFINER で auth.users と JOIN）
 //   - 更新: admin_upsert_profile RPC
 //   - 組織一覧: organizations テーブル（SELECT は全認証ユーザー可）
+//
+// 組織管理者判定:
+//   - list_my_admin_org_ids RPC で「自分が admin である組織」を取得
+//   - 1 個以上あればアクセス許可、UI は OrgMembersView に切替
+//   - 複数組織を管理していれば組織セレクタで切替 (通常は 1 個の想定)
 
 import { useEffect, useState, useCallback } from 'react'
 import { Link, Navigate } from 'react-router-dom'
@@ -13,6 +19,12 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdmin } from '@/lib/admin'
 import type { AdminUserRow, Organization } from '@/types/database'
+import { OrgMembersView } from './OrgMembersView'
+
+interface AdminOrgRow {
+  organization_id: string
+  organization_name: string
+}
 
 interface RowDraft {
   full_name: string
@@ -27,6 +39,37 @@ type DeletingSet = Set<string>
 
 export function AdminUsersPage() {
   const { user } = useAuth()
+  const siteOwner = isAdmin(user?.email)
+  const [myAdminOrgs, setMyAdminOrgs] = useState<AdminOrgRow[] | null>(null)
+  // 「複数組織を admin する」場合の切替 (通常 1 個)
+  const [activeOrgId, setActiveOrgId] = useState<string | null>(null)
+
+  // 組織 admin 判定
+  useEffect(() => {
+    if (!user) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { data, error } = (await supabase.rpc(
+          'list_my_admin_org_ids' as never,
+        )) as unknown as {
+          data: AdminOrgRow[] | null
+          error: { message: string } | null
+        }
+        if (error) throw error
+        if (cancelled) return
+        const list = (data ?? []) as AdminOrgRow[]
+        setMyAdminOrgs(list)
+        if (list.length > 0) setActiveOrgId(list[0].organization_id)
+      } catch {
+        if (!cancelled) setMyAdminOrgs([])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [user])
+
   const [rows, setRows] = useState<AdminUserRow[]>([])
   const [orgs, setOrgs] = useState<Organization[]>([])
   const [drafts, setDrafts] = useState<Map<string, RowDraft>>(new Map())
@@ -36,6 +79,12 @@ export function AdminUsersPage() {
   const [deleting, setDeleting] = useState<DeletingSet>(new Set())
 
   const fetchAll = useCallback(async () => {
+    // サイトオーナーでない場合は admin_list_users を叩かない (RPC が
+    // 'Not authorized' で失敗する)。組織 admin ビューは OrgMembersView に委譲。
+    if (!siteOwner) {
+      setLoading(false)
+      return
+    }
     setLoading(true)
     setError(null)
     try {
@@ -74,7 +123,7 @@ export function AdminUsersPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [siteOwner])
 
   useEffect(() => {
     fetchAll()
@@ -197,8 +246,59 @@ export function AdminUsersPage() {
     }
   }
 
-  if (!isAdmin(user?.email)) {
-    return <Navigate to="/" replace />
+  // アクセス制御:
+  //   - サイトオーナー: 通常のフル一覧ビュー
+  //   - 組織 admin (list_my_admin_org_ids > 0): 自組織のメンバービュー
+  //   - どちらでもない: トップへリダイレクト
+  //   myAdminOrgs はまだ null (取得中) の間は待機
+  if (!siteOwner) {
+    if (myAdminOrgs === null) {
+      return (
+        <div className="h-screen flex items-center justify-center bg-slate-50">
+          <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
+        </div>
+      )
+    }
+    if (myAdminOrgs.length === 0) {
+      return <Navigate to="/" replace />
+    }
+    // 組織管理者向けビュー
+    const activeOrg =
+      myAdminOrgs.find((o) => o.organization_id === activeOrgId) ??
+      myAdminOrgs[0]
+    return (
+      <div className="h-screen flex flex-col bg-slate-50">
+        <header className="bg-white border-b px-4 py-3 flex items-center gap-3">
+          <Link
+            to="/"
+            className="p-1.5 hover:bg-slate-100 rounded"
+            title="トップへ"
+          >
+            <ArrowLeft className="h-4 w-4 text-slate-600" />
+          </Link>
+          <Users className="h-5 w-5 text-blue-600" />
+          <h1 className="text-lg font-bold flex-1">メンバー管理</h1>
+          {myAdminOrgs.length > 1 && (
+            <select
+              value={activeOrg.organization_id}
+              onChange={(e) => setActiveOrgId(e.target.value)}
+              className="px-2 py-1 text-sm border rounded bg-white"
+            >
+              {myAdminOrgs.map((o) => (
+                <option key={o.organization_id} value={o.organization_id}>
+                  {o.organization_name}
+                </option>
+              ))}
+            </select>
+          )}
+        </header>
+        <OrgMembersView
+          key={activeOrg.organization_id}
+          organizationId={activeOrg.organization_id}
+          organizationName={activeOrg.organization_name}
+        />
+      </div>
+    )
   }
 
   const filtered = filter
