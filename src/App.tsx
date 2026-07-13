@@ -4,6 +4,7 @@ import { getDisplayModeOverride, isMobileDevice } from '@/lib/displayMode'
 import { AuthProvider, useAuth } from '@/contexts/AuthContext'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { LoginPage } from '@/features/auth/LoginPage'
+import { ResetPasswordPage } from '@/features/auth/ResetPasswordPage'
 import { AcceptInvitePage } from '@/features/auth/AcceptInvitePage'
 import { ShareFarmViewPage } from '@/features/share/ShareFarmViewPage'
 import { LandingPage } from '@/features/marketing/LandingPage'
@@ -53,6 +54,7 @@ import { OpenChannelAlignmentPage } from '@/features/open-channel/OpenChannelAli
 import { TrashPage } from '@/features/trash/TrashPage'
 // 個人設定
 import { RegistryCredentialsPage } from '@/features/settings/RegistryCredentialsPage'
+import { PasswordSettingsPage } from '@/features/settings/PasswordSettingsPage'
 import { Loader2 } from 'lucide-react'
 
 // 認証が必要なルートのラッパー
@@ -139,6 +141,8 @@ function AppRoutes() {
         <Route path="/login" element={<LoginPage />} />
         {/* 招待リンク受領（Supabase Auth がセッション付きでここへ戻す） */}
         <Route path="/accept-invite" element={<AcceptInvitePage />} />
+        {/* パスワード再設定のコールバック (メールリンククリック後) */}
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         {/* 公開: 紹介・申し込みページ（認証不要） */}
         <Route path="/lp" element={<LandingPage />} />
         <Route path="/apply" element={<ApplyPage />} />
@@ -195,6 +199,15 @@ function AppRoutes() {
           element={
             <ProtectedRoute>
               <RegistryCredentialsPage />
+            </ProtectedRoute>
+          }
+        />
+        {/* 個人設定: パスワード変更 */}
+        <Route
+          path="/settings/password"
+          element={
+            <ProtectedRoute>
+              <PasswordSettingsPage />
             </ProtectedRoute>
           }
         />

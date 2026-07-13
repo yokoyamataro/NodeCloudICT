@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
-import { LogIn, Loader2, Mail, KeyRound, Check } from 'lucide-react'
+import { supabase } from '@/lib/supabase'
+import { LogIn, Loader2, Mail, KeyRound, Check, X } from 'lucide-react'
 
 /** ハイブリッド認証: パスワード or メール Magic Link を選べる。
  *  - 通常運用はパスワードでサッと入る (現場の通信不安定時にも強い)
@@ -13,8 +14,40 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [magicLinkSent, setMagicLinkSent] = useState<string | null>(null) // 送信済メールを表示
+  // パスワードリセット用モーダル
+  const [showResetModal, setShowResetModal] = useState(false)
+  const [resetEmail, setResetEmail] = useState('')
+  const [resetSending, setResetSending] = useState(false)
+  const [resetSentTo, setResetSentTo] = useState<string | null>(null)
+  const [resetError, setResetError] = useState<string | null>(null)
   const { signIn, sendMagicLink } = useAuth()
   const navigate = useNavigate()
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setResetError(null)
+    setResetSending(true)
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      })
+      if (error) throw error
+      setResetSentTo(resetEmail)
+    } catch (err) {
+      setResetError(
+        err instanceof Error ? err.message : 'メール送信に失敗しました',
+      )
+    } finally {
+      setResetSending(false)
+    }
+  }
+
+  const closeResetModal = () => {
+    setShowResetModal(false)
+    setResetEmail('')
+    setResetSentTo(null)
+    setResetError(null)
+  }
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -171,7 +204,19 @@ export function LoginPage() {
                 ログイン
               </button>
               <div className="text-xs text-center text-slate-500">
-                パスワードを忘れた方は{' '}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowResetModal(true)
+                    setResetEmail(email)
+                    setResetError(null)
+                    setResetSentTo(null)
+                  }}
+                  className="text-blue-600 hover:underline"
+                >
+                  パスワードを忘れた方
+                </button>
+                <span className="mx-1 text-slate-300">/</span>
                 <button
                   type="button"
                   onClick={() => {
@@ -181,8 +226,7 @@ export function LoginPage() {
                   className="text-blue-600 hover:underline"
                 >
                   メールでログイン
-                </button>{' '}
-                をご利用ください
+                </button>
               </div>
             </form>
           ) : (
@@ -258,6 +302,94 @@ export function LoginPage() {
           </p>
         </div>
       </div>
+
+      {/* パスワード再設定モーダル */}
+      {showResetModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[3000] p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-base font-semibold text-slate-900">
+                パスワード再設定
+              </h3>
+              <button
+                onClick={closeResetModal}
+                className="p-1 text-slate-400 hover:text-slate-700 rounded"
+                aria-label="閉じる"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            {resetSentTo ? (
+              <div className="space-y-3">
+                <div className="flex items-start gap-2 p-3 bg-emerald-50 border border-emerald-200 rounded text-sm text-emerald-800">
+                  <Check className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-medium">
+                      再設定用リンクを送信しました
+                    </div>
+                    <div className="text-xs mt-1 break-all">{resetSentTo}</div>
+                    <div className="text-xs mt-2 text-emerald-700">
+                      メールを開いて「パスワードを再設定」ボタンをクリックしてください。
+                      リンクは 1 時間有効です。届かない場合は迷惑メールもご確認ください。
+                    </div>
+                  </div>
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    onClick={closeResetModal}
+                    className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
+                  >
+                    閉じる
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleResetPassword} className="space-y-3">
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  ご登録のメールアドレスを入力してください。
+                  パスワード再設定用のリンクを送信します。
+                </p>
+                {resetError && (
+                  <div className="p-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded">
+                    {resetError}
+                  </div>
+                )}
+                <input
+                  type="email"
+                  value={resetEmail}
+                  onChange={(e) => setResetEmail(e.target.value)}
+                  autoComplete="email"
+                  required
+                  placeholder="example@email.com"
+                  className="w-full px-3 py-2 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={closeResetModal}
+                    disabled={resetSending}
+                    className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={resetSending || !resetEmail}
+                    className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {resetSending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Mail className="h-4 w-4" />
+                    )}
+                    再設定リンクを送信
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

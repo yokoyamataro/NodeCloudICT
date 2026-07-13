@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   Map,
@@ -450,21 +450,7 @@ export function AppLayout() {
               )}
               <span className="text-sm text-slate-300" title={user?.email ?? ''}>{displayName}</span>
             </div>
-            <Link
-              to="/settings/registry"
-              className="flex items-center gap-1 px-2 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
-              title="登記情報提供サービスの認証情報 (ID/PW) を登録・変更"
-            >
-              <KeyRound className="h-4 w-4" />
-              登記情報
-            </Link>
-            <button
-              onClick={handleSignOut}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
-            >
-              <LogOut className="h-4 w-4" />
-              ログアウト
-            </button>
+            <UserMenu onSignOut={handleSignOut} />
           </div>
         </div>
       </header>
@@ -627,5 +613,67 @@ export function AppLayout() {
       </main>
     </div>
   </div>
+  )
+}
+
+/** ヘッダ右端のユーザーメニュー。個人設定 (登記情報、パスワード変更) と
+ *  ログアウトをドロップダウンに集約する。 */
+function UserMenu({ onSignOut }: { onSignOut: () => void }) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+
+  // 外側クリックで閉じる
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (!rootRef.current) return
+      if (!rootRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 px-2 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+        title="個人設定 / ログアウト"
+      >
+        <User className="h-4 w-4" />
+        <ChevronDown className="h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 w-48 bg-white text-slate-800 border border-slate-200 rounded-md shadow-lg z-[5000] overflow-hidden">
+          <Link
+            to="/settings/registry"
+            onClick={() => setOpen(false)}
+            className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-slate-50"
+          >
+            <KeyRound className="h-4 w-4 text-slate-500" />
+            登記情報 (touki.or.jp)
+          </Link>
+          <Link
+            to="/settings/password"
+            onClick={() => setOpen(false)}
+            className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-slate-50"
+          >
+            <KeyRound className="h-4 w-4 text-slate-500" />
+            パスワード変更
+          </Link>
+          <div className="border-t" />
+          <button
+            onClick={() => {
+              setOpen(false)
+              onSignOut()
+            }}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-700 hover:bg-red-50 text-left"
+          >
+            <LogOut className="h-4 w-4" />
+            ログアウト
+          </button>
+        </div>
+      )}
+    </div>
   )
 }
