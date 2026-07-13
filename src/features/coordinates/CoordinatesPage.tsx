@@ -604,11 +604,6 @@ export function CoordinatesPage() {
     () => getCoordinateTypeOptions(projectId, pointTypesByProject),
     [projectId, pointTypesByProject],
   )
-  const typeLabelByCode = useMemo(() => {
-    const m: Record<string, string> = {}
-    for (const o of typeOptions) m[o.code] = o.label
-    return m
-  }, [typeOptions])
   const [showPointTypeModal, setShowPointTypeModal] = useState(false)
 
   // 写真モーダル: 開いている座標 ID
@@ -2916,7 +2911,7 @@ export function CoordinatesPage() {
                   ? coordinates.find((c) => c.id === selectedPointId) ?? null
                   : null
               }
-              typeLabelMap={typeLabelByCode}
+              typeOptions={typeOptions}
             />
           </div>
         </div>

@@ -15,8 +15,18 @@ import {
 import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
 import { PhotoEditModal, type PhotoEditMeta } from './PhotoEditModal'
 import { PhotoTileWithMeta } from './PhotoTileWithMeta'
-import type { CoordinateRow } from '@/stores/coordinateStore'
-import { STAKE_STATUS_LABEL, STAKE_STATUS_BADGE } from '@/types/database'
+import {
+  useCoordinateStore,
+  type CoordinateRow,
+} from '@/stores/coordinateStore'
+import {
+  STAKE_STATUS_LABEL,
+  STAKE_STATUS_BADGE,
+  STAKE_STATUS_OPTIONS,
+  type StakeStatus,
+  type CoordinateType,
+} from '@/types/database'
+import { STAKE_TYPE_OPTIONS } from '@/lib/stakeTypes'
 
 // 「その他」は DB 上の category 値ではなく、遠景/近景以外をまとめて表示する論理カテゴリ。
 const PRIMARY_CATEGORIES = ['遠景', '近景'] as const
@@ -29,7 +39,7 @@ export function CoordinatePhotoPanel({
   coordinateId,
   pointNumber,
   coordinate,
-  typeLabelMap,
+  typeOptions,
 }: {
   open: boolean
   onToggle: () => void
@@ -38,8 +48,8 @@ export function CoordinatePhotoPanel({
   pointNumber: string | null
   /** 選択中の座標行 (存在すれば X/Y/Z / 点種 / 設置 / 備考 をパネル上部に表示) */
   coordinate?: CoordinateRow | null
-  /** 点種 code → label のマップ (存在しない code は生値表示) */
-  typeLabelMap?: Record<string, string>
+  /** 点種の選択肢 (code + label)。編集用 select のオプションに使う */
+  typeOptions?: { code: string; label: string }[]
 }) {
   const {
     byEntity,
@@ -227,11 +237,13 @@ export function CoordinatePhotoPanel({
           </div>
         ) : (
           <div className="flex-1 overflow-auto p-3 flex flex-col gap-2">
-            {/* 点の詳細情報 (座標 X/Y/Z / 点種 / 設置 / 備考) */}
+            {/* 点の詳細情報 (座標 X/Y/Z / 点種 / 設置 / 備考)。
+                X/Y/Z 以外は編集可能で store 経由で保存 (点種は pendingChanges、
+                設置は即時 DB 反映)。 */}
             {coordinate && (
               <CoordinateInfoStrip
                 coordinate={coordinate}
-                typeLabelMap={typeLabelMap}
+                typeOptions={typeOptions ?? []}
               />
             )}
             {/* 遠景 / 近景 / その他 を横並びで表示。各カラムは縦方向にスクロールする。 */}
@@ -310,19 +322,36 @@ export function CoordinatePhotoPanel({
 
 /** パネル上部の座標情報ストリップ。
  *  スマホ版 (MobileStakingPage) の「点情報モーダル」相当を PC 用に横並びで表示。
- *  ここでは編集 UI は用意しない (テーブル側で編集する)。閲覧専用。 */
+ *  X / Y / Z は編集不可 (テーブル側で編集)。それ以外 (点種 / 杭種 / 設置 / 備考)
+ *  は座標ストア経由で編集可。 */
 function CoordinateInfoStrip({
   coordinate,
-  typeLabelMap,
+  typeOptions,
 }: {
   coordinate: CoordinateRow
-  typeLabelMap?: Record<string, string>
+  typeOptions: { code: string; label: string }[]
 }) {
-  const typeLabel = typeLabelMap?.[coordinate.type] ?? coordinate.type
-  const statusLabel = STAKE_STATUS_LABEL[coordinate.stakeStatus]
+  const setCoordinateType = useCoordinateStore((s) => s.setCoordinateType)
+  const setStakeStatus = useCoordinateStore((s) => s.setStakeStatus)
+  const updateCoordinate = useCoordinateStore((s) => s.updateCoordinate)
+
+  // 備考 / 杭種はローカル編集して blur で確定 (テーブル側と同じ挙動)
+  const [notesDraft, setNotesDraft] = useState<string>(coordinate.notes ?? '')
+  const [stakeTypeDraft, setStakeTypeDraft] = useState<string>(
+    coordinate.stakeType ?? '',
+  )
+  // 座標行が変わったら draft をリセット
+  useEffect(() => {
+    setNotesDraft(coordinate.notes ?? '')
+    setStakeTypeDraft(coordinate.stakeType ?? '')
+  }, [coordinate.id, coordinate.notes, coordinate.stakeType])
+
+  const stakeTypeListId = `stake-type-options-info-strip-${coordinate.id}`
   const statusBadge = STAKE_STATUS_BADGE[coordinate.stakeStatus]
+
   return (
-    <div className="flex-shrink-0 flex flex-wrap items-baseline gap-x-4 gap-y-1 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded text-xs">
+    <div className="flex-shrink-0 flex flex-wrap items-center gap-x-3 gap-y-1 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded text-xs">
+      {/* X / Y / Z (読取専用) */}
       <div className="font-mono">
         <span className="text-[10px] text-slate-500 mr-1">X</span>
         <span className="text-slate-800">{coordinate.x.toFixed(3)}</span>
@@ -337,30 +366,93 @@ function CoordinateInfoStrip({
           {coordinate.z != null ? coordinate.z.toFixed(3) : '-'}
         </span>
       </div>
-      <div>
-        <span className="text-[10px] text-slate-500 mr-1">点種</span>
-        <span className="text-slate-800">{typeLabel}</span>
-      </div>
-      {coordinate.stakeType && (
-        <div>
-          <span className="text-[10px] text-slate-500 mr-1">杭種</span>
-          <span className="text-slate-800">{coordinate.stakeType}</span>
-        </div>
-      )}
-      <div>
-        <span className="text-[10px] text-slate-500 mr-1">設置</span>
-        <span
-          className={`inline-block px-1.5 py-0.5 rounded font-medium ${statusBadge}`}
+      {/* 点種 (select、選択直後に即時保存) */}
+      <label className="flex items-center gap-1">
+        <span className="text-[10px] text-slate-500">点種</span>
+        <select
+          value={coordinate.type}
+          onChange={(e) =>
+            void setCoordinateType(
+              coordinate.id,
+              e.target.value as CoordinateType,
+            )
+          }
+          className="px-1.5 py-0.5 text-xs border rounded bg-white"
         >
-          {statusLabel}
-        </span>
-      </div>
-      {coordinate.notes && (
-        <div className="flex-1 min-w-[120px] text-slate-600 truncate" title={coordinate.notes}>
-          <span className="text-[10px] text-slate-500 mr-1">備考</span>
-          {coordinate.notes}
-        </div>
-      )}
+          {typeOptions.length === 0 && (
+            <option value={coordinate.type}>{coordinate.type}</option>
+          )}
+          {typeOptions.map((o) => (
+            <option key={o.code} value={o.code}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      {/* 杭種 (自由入力 + プリセット候補、blur で保存) */}
+      <label className="flex items-center gap-1">
+        <span className="text-[10px] text-slate-500">杭種</span>
+        <input
+          type="text"
+          list={stakeTypeListId}
+          value={stakeTypeDraft}
+          onChange={(e) => setStakeTypeDraft(e.target.value)}
+          onBlur={() => {
+            const v = stakeTypeDraft.trim()
+            if (v !== (coordinate.stakeType ?? '')) {
+              updateCoordinate(
+                coordinate.id,
+                'stakeType',
+                v === '' ? null : v,
+              )
+            }
+          }}
+          placeholder="(任意)"
+          className="px-1.5 py-0.5 text-xs border rounded bg-white w-24"
+        />
+        <datalist id={stakeTypeListId}>
+          {STAKE_TYPE_OPTIONS.map((o) => (
+            <option key={o.label} value={o.label} />
+          ))}
+        </datalist>
+      </label>
+      {/* 設置状態 (即時 DB 反映)。バッジ色を select 背景に反映 */}
+      <label className="flex items-center gap-1">
+        <span className="text-[10px] text-slate-500">設置</span>
+        <select
+          value={coordinate.stakeStatus}
+          onChange={(e) =>
+            void setStakeStatus(coordinate.id, e.target.value as StakeStatus)
+          }
+          className={`px-1.5 py-0.5 text-xs border rounded font-medium ${statusBadge}`}
+        >
+          {STAKE_STATUS_OPTIONS.map((s) => (
+            <option key={s} value={s} className="bg-white text-slate-900">
+              {STAKE_STATUS_LABEL[s]}
+            </option>
+          ))}
+        </select>
+      </label>
+      {/* 備考 (blur で pendingChanges に積む → 保存ボタン待ち) */}
+      <label className="flex items-center gap-1 flex-1 min-w-[160px]">
+        <span className="text-[10px] text-slate-500 flex-shrink-0">備考</span>
+        <input
+          type="text"
+          value={notesDraft}
+          onChange={(e) => setNotesDraft(e.target.value)}
+          onBlur={() => {
+            if (notesDraft !== (coordinate.notes ?? '')) {
+              updateCoordinate(
+                coordinate.id,
+                'notes',
+                notesDraft === '' ? null : notesDraft,
+              )
+            }
+          }}
+          placeholder="(任意)"
+          className="flex-1 px-1.5 py-0.5 text-xs border rounded bg-white"
+        />
+      </label>
     </div>
   )
 }
