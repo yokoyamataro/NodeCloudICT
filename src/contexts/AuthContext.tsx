@@ -19,6 +19,10 @@ interface AuthContextType {
   /** ログイン中ユーザーが所属組織の管理者 (organizations.admin_user_id) か */
   isOrgAdmin: boolean
   signIn: (email: string, password: string) => Promise<void>
+  /** メールに Magic Link を送る。既存ユーザーはリンククリックで自動ログイン、
+   *  未登録ユーザーは shouldCreateUser=false で拒否 (勝手にアカウントが
+   *  作られない)。リダイレクト先はサイト URL のルート。 */
+  sendMagicLink: (email: string) => Promise<void>
   signOut: () => Promise<void>
 }
 
@@ -107,6 +111,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) throw error
   }
 
+  const sendMagicLink = async (email: string) => {
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        // 未登録メールでは Magic Link 発行時にサイレントで新規ユーザー登録
+        // されないようにする (招待フローを通した人だけログインさせるため)
+        shouldCreateUser: false,
+        // クリック後に戻ってくる URL。onAuthStateChange が拾って自動ログイン
+        emailRedirectTo:
+          typeof window !== 'undefined' ? `${window.location.origin}/` : undefined,
+      },
+    })
+    if (error) throw error
+  }
+
   const signOut = async () => {
     const { error } = await supabase.auth.signOut()
     if (error) throw error
@@ -123,6 +142,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         organizationName,
         isOrgAdmin,
         signIn,
+        sendMagicLink,
         signOut,
       }}
     >
