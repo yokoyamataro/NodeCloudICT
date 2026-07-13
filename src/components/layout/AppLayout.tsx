@@ -37,6 +37,7 @@ import {
   PanelLeftOpen,
   Image as ImageIcon,
   Users,
+  KeyRound,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
@@ -449,6 +450,14 @@ export function AppLayout() {
               )}
               <span className="text-sm text-slate-300" title={user?.email ?? ''}>{displayName}</span>
             </div>
+            <Link
+              to="/settings/registry"
+              className="flex items-center gap-1 px-2 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"
+              title="登記情報提供サービスの認証情報 (ID/PW) を登録・変更"
+            >
+              <KeyRound className="h-4 w-4" />
+              登記情報
+            </Link>
             <button
               onClick={handleSignOut}
               className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-300 hover:text-white hover:bg-slate-800 rounded transition-colors"

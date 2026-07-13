@@ -51,6 +51,8 @@ import { SubsoilWorkAreaPage } from '@/features/subsoil/SubsoilWorkAreaPage'
 import { StoneRemovalWorkAreaPage } from '@/features/stone-removal/StoneRemovalWorkAreaPage'
 import { OpenChannelAlignmentPage } from '@/features/open-channel/OpenChannelAlignmentPage'
 import { TrashPage } from '@/features/trash/TrashPage'
+// 個人設定
+import { RegistryCredentialsPage } from '@/features/settings/RegistryCredentialsPage'
 import { Loader2 } from 'lucide-react'
 
 // 認証が必要なルートのラッパー
@@ -184,6 +186,15 @@ function AppRoutes() {
           element={
             <ProtectedRoute>
               <AdminParcelMapsPage />
+            </ProtectedRoute>
+          }
+        />
+        {/* 個人設定: 登記情報提供サービスの認証情報 */}
+        <Route
+          path="/settings/registry"
+          element={
+            <ProtectedRoute>
+              <RegistryCredentialsPage />
             </ProtectedRoute>
           }
         />
