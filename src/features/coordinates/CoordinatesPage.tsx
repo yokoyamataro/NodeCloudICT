@@ -604,12 +604,19 @@ export function CoordinatesPage() {
     () => getCoordinateTypeOptions(projectId, pointTypesByProject),
     [projectId, pointTypesByProject],
   )
+  const typeLabelByCode = useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const o of typeOptions) m[o.code] = o.label
+    return m
+  }, [typeOptions])
   const [showPointTypeModal, setShowPointTypeModal] = useState(false)
 
   // 写真モーダル: 開いている座標 ID
   const [photoCoordId, setPhotoCoordId] = useState<string | null>(null)
   // 地図右下の折りたたみ写真パネルの開閉
   const [photoPanelOpen, setPhotoPanelOpen] = useState(false)
+  // 座標クリック時に自動でパネルを開く。手動で閉じたら再オープンしない (userClosedRef で追跡)
+  const userClosedPhotoPanelRef = useRef(false)
 
   // 新しく追加されたカスタム点種は既定で表示する。
   // 加えて、実データに存在する点種コードが visibleTypes に含まれていない場合も
@@ -1453,6 +1460,11 @@ export function CoordinatesPage() {
       return
     }
     setSelectedPointId(id)
+    // 地図の測点をクリックしたら、スマホと同様に写真パネルを自動で開く。
+    // ただしユーザーが直近で明示的に閉じた場合は開かない (連続作業を邪魔しない)。
+    if (!userClosedPhotoPanelRef.current) {
+      setPhotoPanelOpen(true)
+    }
     if (routeMode) {
       appendRoutePoint(id, 'down')
     }
@@ -2878,10 +2890,20 @@ export function CoordinatesPage() {
               </div>
             )}
 
-            {/* 地図右下: 折りたたみ式の写真パネル。開くと地図の下半分を覆う */}
+            {/* 地図右下: 折りたたみ式の写真パネル。開くと地図の下半分を覆う。
+                スマホ側の「点情報モーダル」に相当する情報 (X/Y/Z / 点種 / 設置 / 備考)
+                をパネル上部のストリップに表示する。 */}
             <CoordinatePhotoPanel
               open={photoPanelOpen}
-              onToggle={() => setPhotoPanelOpen((v) => !v)}
+              onToggle={() => {
+                setPhotoPanelOpen((v) => {
+                  const next = !v
+                  // 「閉じる」操作は明示的な意図として記録
+                  if (!next) userClosedPhotoPanelRef.current = true
+                  else userClosedPhotoPanelRef.current = false
+                  return next
+                })
+              }}
               projectId={projectId}
               coordinateId={selectedPointId}
               pointNumber={
@@ -2889,6 +2911,12 @@ export function CoordinatesPage() {
                   ? coordinates.find((c) => c.id === selectedPointId)?.pointNumber ?? null
                   : null
               }
+              coordinate={
+                selectedPointId
+                  ? coordinates.find((c) => c.id === selectedPointId) ?? null
+                  : null
+              }
+              typeLabelMap={typeLabelByCode}
             />
           </div>
         </div>

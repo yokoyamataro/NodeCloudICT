@@ -15,6 +15,8 @@ import {
 import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
 import { PhotoEditModal, type PhotoEditMeta } from './PhotoEditModal'
 import { PhotoTileWithMeta } from './PhotoTileWithMeta'
+import type { CoordinateRow } from '@/stores/coordinateStore'
+import { STAKE_STATUS_LABEL, STAKE_STATUS_BADGE } from '@/types/database'
 
 // 「その他」は DB 上の category 値ではなく、遠景/近景以外をまとめて表示する論理カテゴリ。
 const PRIMARY_CATEGORIES = ['遠景', '近景'] as const
@@ -26,12 +28,18 @@ export function CoordinatePhotoPanel({
   projectId,
   coordinateId,
   pointNumber,
+  coordinate,
+  typeLabelMap,
 }: {
   open: boolean
   onToggle: () => void
   projectId: string | null
   coordinateId: string | null
   pointNumber: string | null
+  /** 選択中の座標行 (存在すれば X/Y/Z / 点種 / 設置 / 備考 をパネル上部に表示) */
+  coordinate?: CoordinateRow | null
+  /** 点種 code → label のマップ (存在しない code は生値表示) */
+  typeLabelMap?: Record<string, string>
 }) {
   const {
     byEntity,
@@ -218,9 +226,16 @@ export function CoordinatePhotoPanel({
             表または地図で測点を選択すると、ここに写真が表示されます
           </div>
         ) : (
-          <div className="flex-1 overflow-auto p-3">
+          <div className="flex-1 overflow-auto p-3 flex flex-col gap-2">
+            {/* 点の詳細情報 (座標 X/Y/Z / 点種 / 設置 / 備考) */}
+            {coordinate && (
+              <CoordinateInfoStrip
+                coordinate={coordinate}
+                typeLabelMap={typeLabelMap}
+              />
+            )}
             {/* 遠景 / 近景 / その他 を横並びで表示。各カラムは縦方向にスクロールする。 */}
-            <div className="grid grid-cols-3 gap-3 h-full">
+            <div className="grid grid-cols-3 gap-3 flex-1 min-h-0">
               {PRIMARY_CATEGORIES.map((category) => (
                 <PrimaryColumn
                   key={category}
@@ -290,6 +305,63 @@ export function CoordinatePhotoPanel({
         />
       )}
     </>
+  )
+}
+
+/** パネル上部の座標情報ストリップ。
+ *  スマホ版 (MobileStakingPage) の「点情報モーダル」相当を PC 用に横並びで表示。
+ *  ここでは編集 UI は用意しない (テーブル側で編集する)。閲覧専用。 */
+function CoordinateInfoStrip({
+  coordinate,
+  typeLabelMap,
+}: {
+  coordinate: CoordinateRow
+  typeLabelMap?: Record<string, string>
+}) {
+  const typeLabel = typeLabelMap?.[coordinate.type] ?? coordinate.type
+  const statusLabel = STAKE_STATUS_LABEL[coordinate.stakeStatus]
+  const statusBadge = STAKE_STATUS_BADGE[coordinate.stakeStatus]
+  return (
+    <div className="flex-shrink-0 flex flex-wrap items-baseline gap-x-4 gap-y-1 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded text-xs">
+      <div className="font-mono">
+        <span className="text-[10px] text-slate-500 mr-1">X</span>
+        <span className="text-slate-800">{coordinate.x.toFixed(3)}</span>
+      </div>
+      <div className="font-mono">
+        <span className="text-[10px] text-slate-500 mr-1">Y</span>
+        <span className="text-slate-800">{coordinate.y.toFixed(3)}</span>
+      </div>
+      <div className="font-mono">
+        <span className="text-[10px] text-slate-500 mr-1">Z</span>
+        <span className="text-slate-800">
+          {coordinate.z != null ? coordinate.z.toFixed(3) : '-'}
+        </span>
+      </div>
+      <div>
+        <span className="text-[10px] text-slate-500 mr-1">点種</span>
+        <span className="text-slate-800">{typeLabel}</span>
+      </div>
+      {coordinate.stakeType && (
+        <div>
+          <span className="text-[10px] text-slate-500 mr-1">杭種</span>
+          <span className="text-slate-800">{coordinate.stakeType}</span>
+        </div>
+      )}
+      <div>
+        <span className="text-[10px] text-slate-500 mr-1">設置</span>
+        <span
+          className={`inline-block px-1.5 py-0.5 rounded font-medium ${statusBadge}`}
+        >
+          {statusLabel}
+        </span>
+      </div>
+      {coordinate.notes && (
+        <div className="flex-1 min-w-[120px] text-slate-600 truncate" title={coordinate.notes}>
+          <span className="text-[10px] text-slate-500 mr-1">備考</span>
+          {coordinate.notes}
+        </div>
+      )}
+    </div>
   )
 }
 
