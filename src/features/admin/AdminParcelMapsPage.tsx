@@ -291,10 +291,10 @@ export function AdminParcelMapsPage() {
         <MapIcon className="h-5 w-5 text-blue-600" />
         <h1 className="text-lg font-bold flex-1">地番マップ (法務省地図)</h1>
         <Link
-          to="/admin/users"
+          to="/admin/organizations"
           className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
         >
-          ユーザー管理
+          組織・メンバー管理
         </Link>
         <button
           onClick={() => {

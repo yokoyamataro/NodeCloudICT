@@ -12,7 +12,6 @@ import { ApplyPage } from '@/features/marketing/ApplyPage'
 import { TermsPage } from '@/features/marketing/TermsPage'
 import { PrivacyPage } from '@/features/marketing/PrivacyPage'
 import { AdminSignupsPage } from '@/features/admin/AdminSignupsPage'
-import { AdminUsersPage } from '@/features/admin/AdminUsersPage'
 import { AdminOrganizationsPage } from '@/features/admin/AdminOrganizationsPage'
 import { AdminAnnouncementsPage } from '@/features/admin/AdminAnnouncementsPage'
 import { AdminParcelMapsPage } from '@/features/admin/AdminParcelMapsPage'
@@ -157,16 +156,9 @@ function AppRoutes() {
             </ProtectedRoute>
           }
         />
-        {/* 管理者: ユーザー管理 */}
-        <Route
-          path="/admin/users"
-          element={
-            <ProtectedRoute>
-              <AdminUsersPage />
-            </ProtectedRoute>
-          }
-        />
-        {/* 管理者: 組織管理 */}
+        {/* 旧 /admin/users は /admin/organizations に統合 (メンバー管理は組織単位のビュー内) */}
+        <Route path="/admin/users" element={<Navigate to="/admin/organizations" replace />} />
+        {/* 管理者: 組織・メンバー管理 */}
         <Route
           path="/admin/organizations"
           element={
