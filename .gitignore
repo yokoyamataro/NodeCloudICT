@@ -48,3 +48,7 @@ doc/*.sim
 doc/*.SIM
 doc/*.pdf
 doc/*.PDF
+
+# 検証用の GeoJSON / 大容量 inventory (法務省地図から DL したテストデータ)
+doc/*.geojson
+doc/parcel-map-inventory.json
