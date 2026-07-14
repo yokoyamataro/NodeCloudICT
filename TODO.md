@@ -7,7 +7,7 @@ NodeCloud (ICT 農業土木施工システム) の未対応タスク一覧。
 
 ## 🔥 直近ホットな保留 (すぐ動かせる)
 
-- [ ] **Supabase Dashboard: Redirect URLs に `/reset-password` を追加** (パスワード再設定リンク先)
+- [x] ~~Supabase Dashboard: Redirect URLs に `/reset-password` を追加~~ — 既存の `.../*` パターンでカバー済み (2026-07-15 確認)
 - [ ] **Supabase Dashboard: Email Template 日本語化** (Magic Link / Reset Password / Invite user / Confirm signup の 4 種)
 - [ ] **巨大 7 市 (天草/唐津/岩国/高松/東広島/佐渡/一関) の Storage upload 失敗**
   - bucket `file_size_limit = 1 GiB` に引き上げ済でも 50MB 上限エラー
