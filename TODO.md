@@ -9,10 +9,9 @@ NodeCloud (ICT 農業土木施工システム) の未対応タスク一覧。
 
 - [x] ~~Supabase Dashboard: Redirect URLs に `/reset-password` を追加~~ — 既存の `.../*` パターンでカバー済み (2026-07-15 確認)
 - [x] ~~Supabase Dashboard: Email Template 日本語化~~ (2026-07-15 完了、5 種すべて対応)
-- [ ] **巨大 7 市 (天草/唐津/岩国/高松/東広島/佐渡/一関) の Storage upload 失敗**
-  - bucket `file_size_limit = 1 GiB` に引き上げ済でも 50MB 上限エラー
-  - **プロジェクトレベルの upload 上限** (Dashboard → Project Settings → Storage → File upload size limit) を確認 → 1000 MB 以上に変更が必要
-  - 修正後 `node scripts/sync-parcel-maps.mjs --prefecture 03,15,34,35,37,41,43 --concurrency 2` で再取得
+- [x] ~~**巨大 7 市 (天草/唐津/岩国/高松/東広島/佐渡/一関) の Storage upload 失敗**~~ (2026-07-15 完全解決)
+  - Dashboard の File upload size limit を 1 GB に引き上げ + sync CLI に stream-json 導入で全 7 市成功
+  - **全国 1740 / 1740 達成** (エラー 0、59 分で完走)
 
 ## 🧪 実装済み・エンド-エンド検証待ち (2026-07 追加分)
 
