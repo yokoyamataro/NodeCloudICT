@@ -29,6 +29,7 @@ interface OrgMemberRow {
   user_id: string
   email: string
   full_name: string | null
+  phone: string | null
   role: 'admin' | 'member'
   joined_at: string
   invited_by: string | null
@@ -57,8 +58,9 @@ export function OrgMembersView({ organizationId, organizationName }: Props) {
   const [members, setMembers] = useState<OrgMemberRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  // 各行の氏名編集ドラフト (user_id -> draft name)
+  // 各行の氏名・電話番号編集ドラフト (user_id -> draft)
   const [nameDrafts, setNameDrafts] = useState<Map<string, string>>(new Map())
+  const [phoneDrafts, setPhoneDrafts] = useState<Map<string, string>>(new Map())
   const [savingUsers, setSavingUsers] = useState<Set<string>>(new Set())
   const [inviteOpen, setInviteOpen] = useState(false)
 
@@ -73,9 +75,14 @@ export function OrgMembersView({ organizationId, organizationName }: Props) {
       if (error) throw error
       const list = (data ?? []) as OrgMemberRow[]
       setMembers(list)
-      const drafts = new Map<string, string>()
-      for (const m of list) drafts.set(m.user_id, m.full_name ?? '')
-      setNameDrafts(drafts)
+      const names = new Map<string, string>()
+      const phones = new Map<string, string>()
+      for (const m of list) {
+        names.set(m.user_id, m.full_name ?? '')
+        phones.set(m.user_id, m.phone ?? '')
+      }
+      setNameDrafts(names)
+      setPhoneDrafts(phones)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'メンバー取得に失敗しました')
     } finally {
@@ -120,6 +127,27 @@ export function OrgMembersView({ organizationId, organizationName }: Props) {
       setMembers((prev) =>
         prev.map((x) =>
           x.user_id === m.user_id ? { ...x, full_name: draft.trim() } : x,
+        ),
+      )
+    })
+  }
+
+  const handleSavePhone = (m: OrgMemberRow) => {
+    const draft = phoneDrafts.get(m.user_id) ?? ''
+    // 空白 trim + hyphen 等の見た目を保持 (server 側で NULLIF して保存)
+    const normalized = draft.trim()
+    if (normalized === (m.phone ?? '').trim()) return
+    void withSaving(m.user_id, async () => {
+      const { error } = await callRpc('org_admin_set_phone', {
+        p_user_id: m.user_id,
+        p_phone: normalized,
+      })
+      if (error) throw error
+      setMembers((prev) =>
+        prev.map((x) =>
+          x.user_id === m.user_id
+            ? { ...x, phone: normalized === '' ? null : normalized }
+            : x,
         ),
       )
     })
@@ -242,19 +270,24 @@ export function OrgMembersView({ organizationId, organizationName }: Props) {
           <thead className="bg-slate-100 text-slate-600 text-xs sticky top-0">
             <tr>
               <th className="text-left px-3 py-2">メール</th>
-              <th className="text-left px-3 py-2 w-44">氏名</th>
-              <th className="text-left px-3 py-2 w-28">役割</th>
-              <th className="text-left px-3 py-2 w-32">参加日</th>
-              <th className="text-left px-3 py-2 w-32">最終ログイン</th>
-              <th className="text-left px-3 py-2 w-40"></th>
+              <th className="text-left px-3 py-2 w-40">氏名</th>
+              <th className="text-left px-3 py-2 w-36">電話番号</th>
+              <th className="text-left px-3 py-2 w-24">役割</th>
+              <th className="text-left px-3 py-2 w-28">参加日</th>
+              <th className="text-left px-3 py-2 w-28">最終ログイン</th>
+              <th className="text-left px-3 py-2 w-32"></th>
             </tr>
           </thead>
           <tbody>
             {members.map((m) => {
-              const draft = nameDrafts.get(m.user_id) ?? ''
+              const nameDraft = nameDrafts.get(m.user_id) ?? ''
+              const phoneDraft = phoneDrafts.get(m.user_id) ?? ''
               const saving = savingUsers.has(m.user_id)
               const isSelf = m.user_id === user?.id
-              const nameChanged = draft.trim() !== (m.full_name ?? '').trim()
+              const nameChanged =
+                nameDraft.trim() !== (m.full_name ?? '').trim()
+              const phoneChanged =
+                phoneDraft.trim() !== (m.phone ?? '').trim()
               return (
                 <tr key={m.user_id} className="border-b hover:bg-slate-50/50">
                   <td className="px-3 py-2 align-top">
@@ -268,7 +301,7 @@ export function OrgMembersView({ organizationId, organizationName }: Props) {
                   <td className="px-3 py-2 align-top">
                     <input
                       type="text"
-                      value={draft}
+                      value={nameDraft}
                       onChange={(e) =>
                         setNameDrafts((prev) => {
                           const next = new Map(prev)
@@ -279,6 +312,29 @@ export function OrgMembersView({ organizationId, organizationName }: Props) {
                       onBlur={() => handleSaveName(m)}
                       placeholder="(未設定)"
                       className="w-full px-2 py-1 text-sm border rounded"
+                    />
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    <input
+                      type="tel"
+                      value={phoneDraft}
+                      onChange={(e) => {
+                        // 自由入力を許可 (数字 / ハイフン / 括弧 / 空白 / + )
+                        // 明らかなノイズは除去
+                        const cleaned = e.target.value.replace(
+                          /[^\d\-() +]/g,
+                          '',
+                        )
+                        setPhoneDrafts((prev) => {
+                          const next = new Map(prev)
+                          next.set(m.user_id, cleaned)
+                          return next
+                        })
+                      }}
+                      onBlur={() => handleSavePhone(m)}
+                      placeholder="090-1234-5678"
+                      className="w-full px-2 py-1 text-sm border rounded font-mono"
+                      autoComplete="tel"
                     />
                   </td>
                   <td className="px-3 py-2 align-top">
@@ -307,10 +363,13 @@ export function OrgMembersView({ organizationId, organizationName }: Props) {
                       : '-'}
                   </td>
                   <td className="px-3 py-2 align-top">
-                    <div className="flex items-center gap-1">
-                      {nameChanged && (
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {(nameChanged || phoneChanged) && (
                         <button
-                          onClick={() => handleSaveName(m)}
+                          onClick={() => {
+                            if (nameChanged) handleSaveName(m)
+                            if (phoneChanged) handleSavePhone(m)
+                          }}
                           disabled={saving}
                           className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                         >
