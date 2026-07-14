@@ -13,7 +13,11 @@ ALTER TABLE public.profiles
 
 -- ============================================================
 -- list_org_members RPC: phone 列を返すように再定義
+-- 戻り値の型 (TABLE 列) が変わるので DROP FUNCTION が必須。
+-- CREATE OR REPLACE だと "cannot change return type" で弾かれる。
 -- ============================================================
+DROP FUNCTION IF EXISTS public.list_org_members(uuid);
+
 CREATE OR REPLACE FUNCTION public.list_org_members(p_org_id uuid)
 RETURNS TABLE (
   user_id uuid,
