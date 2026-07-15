@@ -5,7 +5,7 @@ import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore
 import { useFarmStore } from '@/stores/farmStore'
 import { useParcelStore } from '@/stores/parcelStore'
 import { useLandownerStore } from '@/stores/landownerStore'
-import { CoordinateMap, type ExternalPolygon, type EdgeRounding, type BaseLayerType } from '@/components/map/CoordinateMap'
+import { CoordinateMap, type ExternalPolygon, type EdgeRounding } from '@/components/map/CoordinateMap'
 import { PageHeader } from '@/components/layout/PageHeader'
 import {
   CadastralRowFields,
@@ -191,8 +191,6 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   // オルソ表示・背景地図・点種フィルタは座標管理と mapViewStore で共有
   const showOrtho = useMapViewStore((s) => s.showOrtho)
   const setShowOrtho = useMapViewStore((s) => s.setShowOrtho)
-  const baseLayer = useMapViewStore((s) => s.baseLayer)
-  const setBaseLayer = useMapViewStore((s) => s.setBaseLayer)
   const visibleTypes = useMapViewStore((s) => s.visibleTypes)
   const visibleStakeStatuses = useMapViewStore((s) => s.visibleStakeStatuses)
   const [showEdgeLengths, setShowEdgeLengths] = useState(false)
@@ -1095,16 +1093,6 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
               <ImageIcon className="h-3 w-3" />
               オルソ
             </button>
-            <select
-              value={baseLayer}
-              onChange={(e) => setBaseLayer(e.target.value as BaseLayerType)}
-              className="px-2 py-1 text-xs border border-slate-300 rounded bg-white shadow"
-              title="背景地図"
-            >
-              <option value="osm">地図</option>
-              <option value="gsi-photo">航空写真</option>
-              <option value="gsi-std">地理院地図</option>
-            </select>
           </div>
           <CoordinateMap
             selectedPointId={selectedPointId}
@@ -1113,7 +1101,6 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
             editingExternalPolygonId={editingAreaId}
             selectedExternalPolygonId={isBoundarySurvey ? selectedAreaId : null}
             onPolygonSelect={isBoundarySurvey ? setSelectedAreaId : undefined}
-            baseLayer={baseLayer}
             farmId={farmId ?? null}
             showOrtho={showOrtho}
             showEdgeLengths={showEdgeLengths}

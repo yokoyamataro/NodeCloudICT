@@ -29,7 +29,7 @@ import {
   useCoordinatePointTypeStore,
   getCoordinateTypeOptions,
 } from '@/stores/coordinatePointTypeStore'
-import { CoordinateMap, type BaseLayerType, type ExternalPolygon } from '@/components/map/CoordinateMap'
+import { CoordinateMap, type ExternalPolygon } from '@/components/map/CoordinateMap'
 import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
 import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { Map as MapIcon } from 'lucide-react'
@@ -447,8 +447,6 @@ export function CoordinatesPage() {
   // ドラッグ並べ替え中の行 ID
   const [draggingOrderId, setDraggingOrderId] = useState<string | null>(null)
   const setVisibleTypes = useMapViewStore((s) => s.setVisibleTypes)
-  const baseLayer = useMapViewStore((s) => s.baseLayer)
-  const setBaseLayer = useMapViewStore((s) => s.setBaseLayer)
   const showOrtho = useMapViewStore((s) => s.showOrtho)
   const setShowOrtho = useMapViewStore((s) => s.setShowOrtho)
   const [showPasteModal, setShowPasteModal] = useState(false)
@@ -1986,15 +1984,6 @@ export function CoordinatesPage() {
             オルソ
           </button>
           {renderWorkAreaLayers()}
-          <select
-            value={baseLayer}
-            onChange={(e) => setBaseLayer(e.target.value as BaseLayerType)}
-            className="px-2 py-1 text-xs border rounded bg-white"
-          >
-            <option value="osm">地図</option>
-            <option value="gsi-photo">航空写真</option>
-            <option value="gsi-std">地理院地図</option>
-          </select>
         </div>
         <div className="flex-1 relative">
           <CoordinateMap
@@ -2013,7 +2002,6 @@ export function CoordinatesPage() {
             farmPhotos={farmPhotosForMap}
             photoGetSignedUrl={getSignedUrl}
             onMapLongPress={() => navigate('/orthophoto')}
-            baseLayer={baseLayer}
             route={route}
             showRoute={true}
             farmId={currentFarm?.id ?? null}
@@ -2730,15 +2718,6 @@ export function CoordinatesPage() {
               オルソ
             </button>
             {renderWorkAreaLayers()}
-            <select
-              value={baseLayer}
-              onChange={(e) => setBaseLayer(e.target.value as BaseLayerType)}
-              className="px-2 py-1 text-xs border rounded bg-white"
-            >
-              <option value="osm">地図</option>
-              <option value="gsi-photo">航空写真</option>
-              <option value="gsi-std">地理院地図</option>
-            </select>
           </div>
           <div className="flex-1 relative">
             <CoordinateMap
@@ -2757,7 +2736,6 @@ export function CoordinatesPage() {
             farmPhotos={farmPhotosForMap}
             photoGetSignedUrl={getSignedUrl}
             onMapLongPress={() => navigate('/orthophoto')}
-              baseLayer={baseLayer}
               route={route}
               showRoute={true}
               farmId={currentFarm?.id ?? null}

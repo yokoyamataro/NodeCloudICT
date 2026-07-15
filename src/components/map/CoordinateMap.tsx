@@ -491,7 +491,6 @@ interface CoordinateMapProps {
   onPhotoDelete?: (photoId: string) => void
   /** 地図の長押し（右クリック / モバイル長押し）で呼ぶ。メモ作成等に利用 */
   onMapLongPress?: (lat: number, lng: number) => void
-  baseLayer?: BaseLayerType
   externalPolygons?: ExternalPolygon[]
   editingExternalPolygonId?: string | null
   /** ポリゴンクリックで親に通知（地番管理で一覧スクロール+選択ハイライトに使う） */
@@ -555,7 +554,6 @@ export function CoordinateMap({
   onPhotoEdit,
   onPhotoDelete,
   onMapLongPress,
-  baseLayer = 'osm',
   externalPolygons = [],
   editingExternalPolygonId,
   onPolygonSelect,
@@ -580,6 +578,10 @@ export function CoordinateMap({
   children,
 }: CoordinateMapProps) {
   const { coordinates } = useCoordinateStore()
+  // 背景地図の選択は全ページ共有 (座標管理 / 地番管理 / 全体図 で一貫)。
+  // 地図右下 HUD の <select> でここを書き換える。
+  const baseLayer = useMapViewStore((s) => s.baseLayer)
+  const setBaseLayer = useMapViewStore((s) => s.setBaseLayer)
   const {
     byFarm: orthoByFarm,
     fetchByFarm: fetchOrthos,
@@ -617,13 +619,27 @@ export function CoordinateMap({
 
   return (
     <div className="relative h-full w-full">
-      {/* +/- ボタン直下のズーム値表示。Leaflet の zoom control が
-          top:10px + 60px (2 ボタン分) 程度なので、その下に余白少しで配置 */}
-      <div
-        className="absolute left-[10px] top-[78px] z-[1000] w-[30px] h-[30px] flex items-center justify-center bg-white border border-slate-300 rounded text-xs font-mono font-bold text-slate-700 shadow select-none"
-        title="現在のズームレベル"
-      >
-        {Math.round(currentZoom)}
+      {/* 地図 HUD (右下、Leaflet attribution の上)。
+          背景地図セレクタ + 現ズームレベルを 3 ページ (座標管理 / 地番管理 / 全体図)
+          で共通表示するため CoordinateMap 内に集約している。設定は useMapViewStore
+          で永続化・ページ間共有される。 */}
+      <div className="absolute right-2 bottom-6 z-[1000] flex items-center gap-1">
+        <div
+          className="h-[26px] px-2 flex items-center justify-center bg-white border border-slate-300 rounded text-[11px] font-mono font-bold text-slate-700 shadow select-none"
+          title="現在のズームレベル"
+        >
+          z{Math.round(currentZoom)}
+        </div>
+        <select
+          value={baseLayer}
+          onChange={(e) => setBaseLayer(e.target.value as BaseLayerType)}
+          className="h-[26px] px-2 text-xs border border-slate-300 rounded bg-white shadow"
+          title="背景地図を切替 (全ページで共有)"
+        >
+          <option value="osm">地図</option>
+          <option value="gsi-photo">航空写真</option>
+          <option value="gsi-std">地理院地図</option>
+        </select>
       </div>
       <MapContainer
       center={initialCenter}

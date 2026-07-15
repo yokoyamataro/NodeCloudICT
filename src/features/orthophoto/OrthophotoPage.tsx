@@ -32,8 +32,7 @@ import { useOrthophotoStore, tileBoundsLatLng } from '@/stores/orthophotoStore'
 import { useFarmMemoStore, EMPTY_FARM_MEMOS, type FarmMemo } from '@/stores/farmMemoStore'
 import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
 import { PhotoEditModal } from '@/features/coordinates/PhotoEditModal'
-import { CoordinateMap, type BaseLayerType, type ExternalPolygon } from '@/components/map/CoordinateMap'
-import { useMapViewStore } from '@/stores/mapViewStore'
+import { CoordinateMap, type ExternalPolygon } from '@/components/map/CoordinateMap'
 import { CoordinateConverter } from '@/lib/coordinates'
 import {
   OrthophotoAnnotations,
@@ -269,9 +268,6 @@ export function OrthophotoPage() {
   const writeVis = (key: string, v: boolean) => {
     try { localStorage.setItem(`orthophoto:vis:${key}`, v ? '1' : '0') } catch { /* ignore */ }
   }
-  // 背景地図 (座標管理と共有: useMapViewStore で永続化される)
-  const baseLayer = useMapViewStore((s) => s.baseLayer)
-  const setBaseLayer = useMapViewStore((s) => s.setBaseLayer)
   const [showPointsLayer, setShowPointsLayer] = useState<boolean>(() => readVis('points', true))
   const [showParcelsLayer, setShowParcelsLayer] = useState<boolean>(() => readVis('parcels', true))
   const [showCamerasLayer, setShowCamerasLayer] = useState<boolean>(() => readVis('cameras', true))
@@ -986,7 +982,6 @@ export function OrthophotoPage() {
           key={currentFarm.id}
           farmId={currentFarm.id}
           showOrtho
-          baseLayer={baseLayer}
           externalPolygons={showParcelsLayer ? workAreaPolygons : []}
           coordinatesInteractive={false}
           farmMemos={showMemosLayer ? memosForMap : []}
@@ -1021,20 +1016,6 @@ export function OrthophotoPage() {
             hideDrawn={!showAnnotationsLayer}
           />
         </CoordinateMap>
-
-        {/* 背景地図切替（右下、Leaflet attribution の上）。座標管理と useMapViewStore で共有 */}
-        <div className="absolute bottom-6 right-2 z-[1000]">
-          <select
-            value={baseLayer}
-            onChange={(e) => setBaseLayer(e.target.value as BaseLayerType)}
-            className="px-2 py-1 text-xs border rounded bg-white shadow"
-            title="背景地図を切替"
-          >
-            <option value="osm">地図</option>
-            <option value="gsi-photo">航空写真</option>
-            <option value="gsi-std">地理院地図</option>
-          </select>
-        </div>
 
         {/* ツールヘルプ＋計測結果（左下） */}
         {(tool !== 'none' || lastMeasure) && (
