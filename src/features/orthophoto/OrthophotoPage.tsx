@@ -32,7 +32,8 @@ import { useOrthophotoStore, tileBoundsLatLng } from '@/stores/orthophotoStore'
 import { useFarmMemoStore, EMPTY_FARM_MEMOS, type FarmMemo } from '@/stores/farmMemoStore'
 import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
 import { PhotoEditModal } from '@/features/coordinates/PhotoEditModal'
-import { CoordinateMap, type ExternalPolygon } from '@/components/map/CoordinateMap'
+import { CoordinateMap, type BaseLayerType, type ExternalPolygon } from '@/components/map/CoordinateMap'
+import { useMapViewStore } from '@/stores/mapViewStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import {
   OrthophotoAnnotations,
@@ -268,6 +269,9 @@ export function OrthophotoPage() {
   const writeVis = (key: string, v: boolean) => {
     try { localStorage.setItem(`orthophoto:vis:${key}`, v ? '1' : '0') } catch { /* ignore */ }
   }
+  // 背景地図 (座標管理と共有: useMapViewStore で永続化される)
+  const baseLayer = useMapViewStore((s) => s.baseLayer)
+  const setBaseLayer = useMapViewStore((s) => s.setBaseLayer)
   const [showPointsLayer, setShowPointsLayer] = useState<boolean>(() => readVis('points', true))
   const [showParcelsLayer, setShowParcelsLayer] = useState<boolean>(() => readVis('parcels', true))
   const [showCamerasLayer, setShowCamerasLayer] = useState<boolean>(() => readVis('cameras', true))
@@ -769,6 +773,16 @@ export function OrthophotoPage() {
         </button>
         {showVisMenu && (
           <div className="absolute right-0 mt-1 z-[2000] bg-white border rounded-lg shadow-lg p-2 w-52 text-sm">
+            <div className="text-[11px] text-slate-500 mb-1 px-1">背景地図</div>
+            <select
+              value={baseLayer}
+              onChange={(e) => setBaseLayer(e.target.value as BaseLayerType)}
+              className="w-full px-2 py-1 text-xs border rounded bg-white mb-2"
+            >
+              <option value="osm">地図 (OSM)</option>
+              <option value="gsi-photo">航空写真 (地理院)</option>
+              <option value="gsi-std">地理院地図</option>
+            </select>
             <div className="text-[11px] text-slate-500 mb-1 px-1">表示するレイヤ</div>
             {(
               [
@@ -982,6 +996,7 @@ export function OrthophotoPage() {
           key={currentFarm.id}
           farmId={currentFarm.id}
           showOrtho
+          baseLayer={baseLayer}
           externalPolygons={showParcelsLayer ? workAreaPolygons : []}
           coordinatesInteractive={false}
           farmMemos={showMemosLayer ? memosForMap : []}

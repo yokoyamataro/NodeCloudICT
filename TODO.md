@@ -75,6 +75,7 @@ NodeCloud (ICT 農業土木施工システム) の未対応タスク一覧。
 ## ✅ 対応済み (履歴、直近 3 ヶ月)
 
 ### 2026-07 追加分
+- [x] 全体図 (OrthophotoPage) にも背景地図切替 (航空写真 / 地理院地図 / OSM) を追加、座標管理と共有 (useMapViewStore)
 - [x] 全国 1740 市町村の法務省地図データ自動同期 (gzip + streaming JSON parse + chunked upload)
 - [x] 地番マップ layer: label toggle 廃止 → 常時 ON + zoom / feature 数で自動抑制
 - [x] 地番マップ layer: 表示範囲プリセット撤廃 → 常に現在ビュー限定
