@@ -3,13 +3,11 @@
 // SIMA インポート: 座標 → design_coordinates (type='boundary'), 画地 → design_work_areas
 // SIMA エクスポート: 現工区の boundary 座標 + boundary_survey 工事区域を出力
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Download,
   Upload,
   Loader2,
   FileSpreadsheet,
-  X,
 } from 'lucide-react'
 import { GenericWorkAreaPage } from '@/components/work-area/GenericWorkAreaPage'
 import { CadastralCsvExportModal } from './CadastralCsvExportModal'
@@ -30,9 +28,10 @@ import type { Feature, Polygon } from 'geojson'
 import { supabase } from '@/lib/supabase'
 import type { CoordinateRow } from '@/stores/coordinateStore'
 import type { DesignWorkArea } from '@/types/database'
-import { ParcelMapLayer, parcelFeatureKey } from '@/components/map/ParcelMapLayer'
+import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
 import { type Bbox } from '@/lib/tile-math'
-import { importParcelBatch } from '@/features/parcel-maps/importParcelBatch'
+import { useParcelImportSelection } from '@/features/parcel-maps/useParcelImportSelection'
+import { ParcelBatchImportBar } from '@/features/parcel-maps/ParcelBatchImportBar'
 import { useMapViewStore } from '@/stores/mapViewStore'
 
 export function BoundarySurveyWorkAreaPage() {
@@ -97,63 +96,22 @@ export function BoundarySurveyWorkAreaPage() {
     return s
   }, [parcelsByWorkAreaId, workAreas])
 
-  // ---- 複数地番の選択状態 ----
-  //   地図上のポリゴンクリック時のポップアップから追加/解除できる。
-  //   ヘッダーの「選択した地番を取り込む」でまとめて取込。
-  const [selectedParcels, setSelectedParcels] = useState<
-    Map<string, Feature<Polygon, ParcelFeatureProperties>>
-  >(new Map())
-  const [selectionMode, setSelectionMode] = useState(false)
-  const selectedKeys = useMemo(
-    () => new Set(selectedParcels.keys()),
-    [selectedParcels],
-  )
-  const toggleSelectedParcel = useCallback(
-    (feature: Feature<Polygon, ParcelFeatureProperties>) => {
-      const key = parcelFeatureKey(feature)
-      setSelectedParcels((prev) => {
-        const next = new Map(prev)
-        if (next.has(key)) next.delete(key)
-        else next.set(key, feature)
-        return next
-      })
-    },
-    [],
-  )
-  const clearSelection = () => setSelectedParcels(new Map())
-
-  // 法務省地図が OFF になったら選択モードもリセット (他ページからトグルされた
-  // 場合も含めて追随)
+  // ---- 複数地番の選択状態 (共通フックへ委譲) ----
+  // 地図上のポリゴンクリック時のポップアップから追加/解除できる。
+  // 法務省地図が OFF になったら resetTrigger で自動的に選択解除される。
+  const parcelSelection = useParcelImportSelection({ resetTrigger: showParcelLayer })
+  const {
+    selectionMode,
+    selectedParcels,
+    selectedKeys,
+    toggleSelect: toggleSelectedParcel,
+    message: parcelImportMessage,
+    busy: parcelImportBusy,
+  } = parcelSelection
+  // parcelSelection.message は SIMA 取込等の共通 message state と混ぜる
   useEffect(() => {
-    if (!showParcelLayer) {
-      setSelectionMode(false)
-      clearSelection()
-    }
-  }, [showParcelLayer])
-
-  /** 複数地番の一括取込。実処理は共通の importParcelBatch へ委譲。 */
-  const handleImportParcelBatch = async (
-    features: Feature<Polygon, ParcelFeatureProperties>[],
-  ) => {
-    if (!currentFarm) return
-    if (features.length === 0) return
-
-    setBusy('import')
-    setMessage(null)
-    try {
-      const result = await importParcelBatch(features, {
-        farmId: currentFarm.id,
-        zone,
-      })
-      setSelectedParcels(new Map())
-      setMessage(result.message)
-    } catch (err) {
-      console.error(err)
-      setMessage(err instanceof Error ? err.message : '取込に失敗しました')
-    } finally {
-      setBusy(null)
-    }
-  }
+    if (parcelImportMessage) setMessage(parcelImportMessage)
+  }, [parcelImportMessage])
 
 
   // 工区あたりの上限。SIMA 取り込みで上限を超える場合は弾く。
@@ -724,62 +682,13 @@ export function BoundarySurveyWorkAreaPage() {
         suppressDefaultParcelMapLayer
         mapBottomLeftOverlay={
           hasActiveDataset && showParcelLayer ? (
-            /* 地番データ取込 (法務省地図 ON 時のみ、選択モードで一括取込)。
-               法務省地図トグルボタン自体は GenericWorkAreaPage が bottom-left に描く。 */
-            <div className="flex items-center gap-1">
-              {selectionMode && selectedParcels.size > 0 && (
-                <button
-                  onClick={clearSelection}
-                  disabled={busy !== null}
-                  className="flex items-center gap-1 px-2 py-1.5 text-sm border rounded shadow bg-white text-slate-700 border-slate-300 hover:bg-slate-50 disabled:opacity-50"
-                  title="選択を全て解除"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              )}
-              <button
-                onClick={() => {
-                  if (!selectionMode) {
-                    setSelectionMode(true)
-                  } else if (selectedParcels.size === 0) {
-                    setSelectionMode(false)
-                  } else {
-                    void (async () => {
-                      await handleImportParcelBatch(
-                        Array.from(selectedParcels.values()),
-                      )
-                      setSelectionMode(false)
-                    })()
-                  }
-                }}
-                disabled={busy !== null || !currentFarm}
-                className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border shadow ${
-                  !selectionMode
-                    ? 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                    : selectedParcels.size === 0
-                      ? 'bg-blue-500 text-white border-blue-500 hover:bg-blue-600'
-                      : 'bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700'
-                } disabled:opacity-50`}
-                title={
-                  !selectionMode
-                    ? '地番を選択して工区に取り込むモードに入る'
-                    : selectedParcels.size === 0
-                      ? '選択モードをキャンセル'
-                      : '選択中の地番を工区に取り込む'
-                }
-              >
-                {busy === 'import' ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Download className="h-4 w-4" />
-                )}
-                {!selectionMode
-                  ? '地番データ取込'
-                  : selectedParcels.size === 0
-                    ? '選択中… (キャンセル)'
-                    : `取り込む (${selectedParcels.size} 件)`}
-              </button>
-            </div>
+            /* 地番データ取込ボタン (共通)。法務省地図トグル自体は GenericWorkAreaPage が
+               bottom-left に描く。 */
+            <ParcelBatchImportBar
+              farmId={currentFarm?.id ?? null}
+              zone={zone}
+              selection={parcelSelection}
+            />
           ) : null
         }
       />

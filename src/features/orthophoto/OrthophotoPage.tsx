@@ -36,6 +36,8 @@ import { PhotoEditModal } from '@/features/coordinates/PhotoEditModal'
 import { CoordinateMap, type ExternalPolygon } from '@/components/map/CoordinateMap'
 import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
 import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
+import { useParcelImportSelection } from '@/features/parcel-maps/useParcelImportSelection'
+import { ParcelBatchImportBar } from '@/features/parcel-maps/ParcelBatchImportBar'
 import { useMapViewStore } from '@/stores/mapViewStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import {
@@ -281,6 +283,17 @@ export function OrthophotoPage() {
   useEffect(() => {
     void fetchParcelDatasets()
   }, [fetchParcelDatasets])
+  // 一括取込 (共通フック)。法務省地図 OFF で自動リセット
+  const parcelSelection = useParcelImportSelection({ resetTrigger: showParcelMap })
+  const {
+    selectionMode,
+    selectedKeys,
+    toggleSelect: toggleSelectedParcel,
+    message: parcelImportMessage,
+  } = parcelSelection
+  useEffect(() => {
+    if (parcelImportMessage) setMessage(parcelImportMessage)
+  }, [parcelImportMessage])
 
   const [showPointsLayer, setShowPointsLayer] = useState<boolean>(() => readVis('points', true))
   const [showParcelsLayer, setShowParcelsLayer] = useState<boolean>(() => readVis('parcels', true))
@@ -1029,15 +1042,29 @@ export function OrthophotoPage() {
             parallelOffset={parallelOffset}
             hideDrawn={!showAnnotationsLayer}
           />
-          {/* 法務省地図 (地番) の背景レイヤ。表示は useMapViewStore で他ページと共有 */}
+          {/* 法務省地図 (地番) の背景レイヤ。表示 + 選択モードは useMapViewStore /
+              useParcelImportSelection で他ページと共通挙動 */}
           {hasActiveParcelDataset && showParcelMap && (
-            <ParcelMapLayer visible={true} bbox={null} />
+            <ParcelMapLayer
+              visible={true}
+              bbox={null}
+              selectedKeys={selectedKeys}
+              onToggleSelect={toggleSelectedParcel}
+              selectionMode={selectionMode}
+            />
           )}
         </CoordinateMap>
 
-        {/* 法務省地図トグル (左下、Leaflet attribution の対角) */}
+        {/* 法務省地図トグル + 一括取込ボタン (左下、Leaflet attribution の対角) */}
         {hasActiveParcelDataset && (
-          <div className="absolute bottom-6 left-2 z-[1000]">
+          <div className="absolute bottom-6 left-2 z-[1000] flex flex-col items-start gap-2">
+            {showParcelMap && (
+              <ParcelBatchImportBar
+                farmId={currentFarm.id}
+                zone={projectZone}
+                selection={parcelSelection}
+              />
+            )}
             <button
               onClick={() => setShowParcelMap(!showParcelMap)}
               className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border shadow ${
