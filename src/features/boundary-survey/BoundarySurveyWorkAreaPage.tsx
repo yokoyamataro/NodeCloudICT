@@ -5,6 +5,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Download,
   Upload,
   Loader2,
   FileSpreadsheet,
@@ -23,8 +24,6 @@ import {
   type SimaExportPolygon,
 } from '@/lib/sima-parser'
 import { loadJpgisXmlFile } from '@/lib/jpgis-parser'
-import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
-import type { Feature, Polygon } from 'geojson'
 import { supabase } from '@/lib/supabase'
 import type { CoordinateRow } from '@/stores/coordinateStore'
 import type { DesignWorkArea } from '@/types/database'
@@ -102,11 +101,9 @@ export function BoundarySurveyWorkAreaPage() {
   const parcelSelection = useParcelImportSelection({ resetTrigger: showParcelLayer })
   const {
     selectionMode,
-    selectedParcels,
     selectedKeys,
     toggleSelect: toggleSelectedParcel,
     message: parcelImportMessage,
-    busy: parcelImportBusy,
   } = parcelSelection
   // parcelSelection.message は SIMA 取込等の共通 message state と混ぜる
   useEffect(() => {

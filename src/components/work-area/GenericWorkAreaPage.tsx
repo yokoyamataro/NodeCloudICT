@@ -9,7 +9,6 @@ import { CoordinateMap, type ExternalPolygon, type EdgeRounding } from '@/compon
 import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
 import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { Map as MapIcon } from 'lucide-react'
-import type { Bbox } from '@/lib/tile-math'
 import { PageHeader } from '@/components/layout/PageHeader'
 import {
   CadastralRowFields,

@@ -2014,7 +2014,7 @@ export function CoordinatesPage() {
           {hasActiveParcelDataset && (
             <div className="absolute bottom-6 left-2 z-[1000]">
               <button
-                onClick={() => setShowParcelLayer((v) => !v)}
+                onClick={() => setShowParcelLayer(!showParcelLayer)}
                 className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border shadow ${
                   showParcelLayer
                     ? 'bg-orange-500 text-white border-orange-500 hover:bg-orange-600'
@@ -2748,7 +2748,7 @@ export function CoordinatesPage() {
             {hasActiveParcelDataset && (
               <div className="absolute bottom-6 left-2 z-[1000]">
                 <button
-                  onClick={() => setShowParcelLayer((v) => !v)}
+                  onClick={() => setShowParcelLayer(!showParcelLayer)}
                   className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border shadow ${
                     showParcelLayer
                       ? 'bg-orange-500 text-white border-orange-500 hover:bg-orange-600'
