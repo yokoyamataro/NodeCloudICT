@@ -1131,10 +1131,9 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
           >
             {mapChildren}
           </CoordinateMap>
-          {/* 地図右下 (出典 + HUD の上) の追加オーバーレイ (地番マップ操作等)。
-              CoordinateMap 内の右下 HUD (zoom + 背景地図) を避けるため bottom-16 から積む。 */}
+          {/* 地図右下 (出典の上) の追加オーバーレイ (地番マップ操作等) */}
           {mapBottomRightOverlay && (
-            <div className="absolute bottom-16 right-2 z-[1000] flex flex-col items-end gap-2">
+            <div className="absolute bottom-6 right-2 z-[1000] flex flex-col items-end gap-2">
               {mapBottomRightOverlay}
             </div>
           )}
