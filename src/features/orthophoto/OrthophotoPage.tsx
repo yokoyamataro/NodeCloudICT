@@ -773,16 +773,6 @@ export function OrthophotoPage() {
         </button>
         {showVisMenu && (
           <div className="absolute right-0 mt-1 z-[2000] bg-white border rounded-lg shadow-lg p-2 w-52 text-sm">
-            <div className="text-[11px] text-slate-500 mb-1 px-1">背景地図</div>
-            <select
-              value={baseLayer}
-              onChange={(e) => setBaseLayer(e.target.value as BaseLayerType)}
-              className="w-full px-2 py-1 text-xs border rounded bg-white mb-2"
-            >
-              <option value="osm">地図 (OSM)</option>
-              <option value="gsi-photo">航空写真 (地理院)</option>
-              <option value="gsi-std">地理院地図</option>
-            </select>
             <div className="text-[11px] text-slate-500 mb-1 px-1">表示するレイヤ</div>
             {(
               [
@@ -1031,6 +1021,20 @@ export function OrthophotoPage() {
             hideDrawn={!showAnnotationsLayer}
           />
         </CoordinateMap>
+
+        {/* 背景地図切替（右下、Leaflet attribution の上）。座標管理と useMapViewStore で共有 */}
+        <div className="absolute bottom-6 right-2 z-[1000]">
+          <select
+            value={baseLayer}
+            onChange={(e) => setBaseLayer(e.target.value as BaseLayerType)}
+            className="px-2 py-1 text-xs border rounded bg-white shadow"
+            title="背景地図を切替"
+          >
+            <option value="osm">地図</option>
+            <option value="gsi-photo">航空写真</option>
+            <option value="gsi-std">地理院地図</option>
+          </select>
+        </div>
 
         {/* ツールヘルプ＋計測結果（左下） */}
         {(tool !== 'none' || lastMeasure) && (
