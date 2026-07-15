@@ -726,7 +726,7 @@ export function BoundarySurveyWorkAreaPage() {
             />
           ) : null
         }
-        mapBottomRightOverlay={
+        mapBottomLeftOverlay={
           hasActiveDataset ? (
             <>
               {/* 地番データ取込 (法務省地図 ON 時のみ、選択モードで一括取込) */}

@@ -619,12 +619,12 @@ export function CoordinateMap({
 
   return (
     <div className="relative h-full w-full">
-      {/* 地図 HUD (左上、Leaflet zoom control の直下)。
+      {/* 地図 HUD (右下、Leaflet attribution の上)。
           背景地図セレクタ + 現ズームレベルを 3 ページ (座標管理 / 地番管理 / 全体図)
           で共通表示するため CoordinateMap 内に集約している。設定は useMapViewStore
-          で永続化・ページ間共有される。右下は各ページ固有ボタン (法務省地図 /
-          地番データ取込 等) が集まるため避けている。 */}
-      <div className="absolute left-[10px] top-[78px] z-[1000] flex items-center gap-1">
+          で永続化・ページ間共有される。ページ固有ボタン (法務省地図 / 地番データ取込)
+          は bottom-left に置いて棲み分け。 */}
+      <div className="absolute right-2 bottom-6 z-[1000] flex items-center gap-1">
         <div
           className="h-[26px] px-2 flex items-center justify-center bg-white border border-slate-300 rounded text-[11px] font-mono font-bold text-slate-700 shadow select-none"
           title="現在のズームレベル"

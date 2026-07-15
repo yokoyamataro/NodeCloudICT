@@ -2024,7 +2024,7 @@ export function CoordinatesPage() {
             )}
           </CoordinateMap>
           {isCadastralProject && hasActiveParcelDataset && (
-            <div className="absolute bottom-6 right-2 z-[1000]">
+            <div className="absolute bottom-6 left-2 z-[1000]">
               <button
                 onClick={() => setShowParcelLayer((v) => !v)}
                 className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border shadow ${
@@ -2758,7 +2758,7 @@ export function CoordinatesPage() {
               )}
             </CoordinateMap>
             {isCadastralProject && hasActiveParcelDataset && (
-              <div className="absolute bottom-6 right-2 z-[1000]">
+              <div className="absolute bottom-6 left-2 z-[1000]">
                 <button
                   onClick={() => setShowParcelLayer((v) => !v)}
                   className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border shadow ${
