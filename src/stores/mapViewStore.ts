@@ -31,6 +31,8 @@ interface MapViewState {
   showOrtho: boolean
   /** 背景地図の種類 */
   baseLayer: BaseLayerType
+  /** 法務省地図 (地番) を背景レイヤとして表示するか。全ページ共有 */
+  showParcelMap: boolean
 
   setVisibleTypes: (next: Set<string>) => void
   /** 1 件トグル。結果が空集合なら無視 */
@@ -39,6 +41,7 @@ interface MapViewState {
   toggleVisibleStakeStatus: (status: StakeStatus) => void
   setShowOrtho: (v: boolean) => void
   setBaseLayer: (l: BaseLayerType) => void
+  setShowParcelMap: (v: boolean) => void
 }
 
 const SETTINGS_KEY = 'mapView:settings:v1'
@@ -50,6 +53,7 @@ interface PersistShape {
   visibleStakeStatuses?: string[]
   showOrtho?: boolean
   baseLayer?: BaseLayerType
+  showParcelMap?: boolean
 }
 
 function loadSettings(): {
@@ -57,12 +61,14 @@ function loadSettings(): {
   visibleStakeStatuses: Set<StakeStatus>
   showOrtho: boolean
   baseLayer: BaseLayerType
+  showParcelMap: boolean
 } {
   const fallback = {
     visibleTypes: new Set(DEFAULT_VISIBLE),
     visibleStakeStatuses: new Set(DEFAULT_VISIBLE_STATUSES),
     showOrtho: true,
     baseLayer: 'osm' as BaseLayerType,
+    showParcelMap: false,
   }
   if (typeof window === 'undefined') return fallback
   try {
@@ -97,6 +103,7 @@ function loadSettings(): {
       visibleStakeStatuses: vss,
       showOrtho: typeof parsed.showOrtho === 'boolean' ? parsed.showOrtho : true,
       baseLayer,
+      showParcelMap: typeof parsed.showParcelMap === 'boolean' ? parsed.showParcelMap : false,
     }
   } catch {
     return fallback
@@ -108,6 +115,7 @@ function saveSettings(
   visibleStakeStatuses: Set<StakeStatus>,
   showOrtho: boolean,
   baseLayer: BaseLayerType,
+  showParcelMap: boolean,
 ) {
   if (typeof window === 'undefined') return
   try {
@@ -118,6 +126,7 @@ function saveSettings(
         visibleStakeStatuses: Array.from(visibleStakeStatuses),
         showOrtho,
         baseLayer,
+        showParcelMap,
       }),
     )
   } catch {
@@ -148,12 +157,13 @@ export const useMapViewStore = create<MapViewState>()((set, get) => {
     visibleStakeStatuses: initial.visibleStakeStatuses,
     showOrtho: initial.showOrtho,
     baseLayer: initial.baseLayer,
+    showParcelMap: initial.showParcelMap,
 
     setVisibleTypes: (next) => {
       if (next.size === 0) return
       set({ visibleTypes: next })
       const s = get()
-      saveSettings(next, s.visibleStakeStatuses, s.showOrtho, s.baseLayer)
+      saveSettings(next, s.visibleStakeStatuses, s.showOrtho, s.baseLayer, s.showParcelMap)
     },
     toggleVisibleType: (code) => {
       const next = new Set(get().visibleTypes)
@@ -162,13 +172,13 @@ export const useMapViewStore = create<MapViewState>()((set, get) => {
       if (next.size === 0) return
       set({ visibleTypes: next })
       const s = get()
-      saveSettings(next, s.visibleStakeStatuses, s.showOrtho, s.baseLayer)
+      saveSettings(next, s.visibleStakeStatuses, s.showOrtho, s.baseLayer, s.showParcelMap)
     },
     setVisibleStakeStatuses: (next) => {
       if (next.size === 0) return
       set({ visibleStakeStatuses: next })
       const s = get()
-      saveSettings(s.visibleTypes, next, s.showOrtho, s.baseLayer)
+      saveSettings(s.visibleTypes, next, s.showOrtho, s.baseLayer, s.showParcelMap)
     },
     toggleVisibleStakeStatus: (status) => {
       const next = new Set(get().visibleStakeStatuses)
@@ -177,17 +187,22 @@ export const useMapViewStore = create<MapViewState>()((set, get) => {
       if (next.size === 0) return
       set({ visibleStakeStatuses: next })
       const s = get()
-      saveSettings(s.visibleTypes, next, s.showOrtho, s.baseLayer)
+      saveSettings(s.visibleTypes, next, s.showOrtho, s.baseLayer, s.showParcelMap)
     },
     setShowOrtho: (v) => {
       set({ showOrtho: v })
       const s = get()
-      saveSettings(s.visibleTypes, s.visibleStakeStatuses, v, s.baseLayer)
+      saveSettings(s.visibleTypes, s.visibleStakeStatuses, v, s.baseLayer, s.showParcelMap)
     },
     setBaseLayer: (l) => {
       set({ baseLayer: l })
       const s = get()
-      saveSettings(s.visibleTypes, s.visibleStakeStatuses, s.showOrtho, l)
+      saveSettings(s.visibleTypes, s.visibleStakeStatuses, s.showOrtho, l, s.showParcelMap)
+    },
+    setShowParcelMap: (v) => {
+      set({ showParcelMap: v })
+      const s = get()
+      saveSettings(s.visibleTypes, s.visibleStakeStatuses, s.showOrtho, s.baseLayer, v)
     },
   }
 })

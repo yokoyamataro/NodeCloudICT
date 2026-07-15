@@ -6,6 +6,10 @@ import { useFarmStore } from '@/stores/farmStore'
 import { useParcelStore } from '@/stores/parcelStore'
 import { useLandownerStore } from '@/stores/landownerStore'
 import { CoordinateMap, type ExternalPolygon, type EdgeRounding } from '@/components/map/CoordinateMap'
+import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
+import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
+import { Map as MapIcon } from 'lucide-react'
+import type { Bbox } from '@/lib/tile-math'
 import { PageHeader } from '@/components/layout/PageHeader'
 import {
   CadastralRowFields,
@@ -171,12 +175,16 @@ interface GenericWorkAreaPageProps {
   headerActions?: React.ReactNode
   /** CoordinateMap の MapContainer の中に差し込む追加レイヤ (例: 地番マップの背景) */
   mapChildren?: React.ReactNode
-  /** 地図左下に固定表示するオーバーレイ (例: 地番マップの操作ボタン)。
-   *  右下は CoordinateMap 内 HUD (zoom + 背景地図セレクタ) の領域なので棲み分け。 */
+  /** 地図左下に固定表示するオーバーレイ (例: 地番データ取込ボタン)。法務省地図トグルは
+   *  GenericWorkAreaPage が自前で bottom-left に描くのでその上に積まれる。 */
   mapBottomLeftOverlay?: React.ReactNode
+  /** true の場合、GenericWorkAreaPage 側のデフォルト ParcelMapLayer を描画せず
+   *  mapChildren で consumer が渡す拡張版 (選択モード付き等) を使う。
+   *  法務省地図トグルボタンは常に GenericWorkAreaPage が描く。 */
+  suppressDefaultParcelMapLayer?: boolean
 }
 
-export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', headerActions, mapChildren, mapBottomLeftOverlay }: GenericWorkAreaPageProps) {
+export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', headerActions, mapChildren, mapBottomLeftOverlay, suppressDefaultParcelMapLayer }: GenericWorkAreaPageProps) {
   const [calculationSheet, setCalculationSheet] = useState<AreaCalculationSheetType | null>(null)
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
   // 編集中ポリゴン: 選択中の構成点 ID（DEL/BACKSPACE で削除する対象）
@@ -194,6 +202,15 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   const setShowOrtho = useMapViewStore((s) => s.setShowOrtho)
   const visibleTypes = useMapViewStore((s) => s.visibleTypes)
   const visibleStakeStatuses = useMapViewStore((s) => s.visibleStakeStatuses)
+  // 法務省地図 (地番) の背景表示。全ページ共通 (座標管理 / 地番管理 / 全体図)
+  const showParcelMap = useMapViewStore((s) => s.showParcelMap)
+  const setShowParcelMap = useMapViewStore((s) => s.setShowParcelMap)
+  const parcelDatasets = useParcelMapDatasetStore((s) => s.datasets)
+  const fetchParcelDatasets = useParcelMapDatasetStore((s) => s.fetchAll)
+  const hasActiveParcelDataset = parcelDatasets.some((d) => d.active)
+  useEffect(() => {
+    void fetchParcelDatasets()
+  }, [fetchParcelDatasets])
   const [showEdgeLengths, setShowEdgeLengths] = useState(false)
   // 辺長の桁数・端数設定は境界測量のみ。それ以外は 2桁・四捨五入 固定
   const isBoundarySurvey = workType === 'boundary_survey'
@@ -1131,12 +1148,30 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
             }
           >
             {mapChildren}
+            {/* デフォルト法務省地図レイヤ (consumer が拡張版を渡す場合は suppress) */}
+            {hasActiveParcelDataset && showParcelMap && !suppressDefaultParcelMapLayer && (
+              <ParcelMapLayer visible={true} bbox={null} />
+            )}
           </CoordinateMap>
-          {/* 地図左下 (出典の反対側) の追加オーバーレイ (地番マップ操作等)。
+          {/* 地図左下: 法務省地図トグル (常時) + consumer の追加ボタン (地番データ取込 等)。
               右下は CoordinateMap 内 HUD の領域なので棲み分け。 */}
-          {mapBottomLeftOverlay && (
+          {(mapBottomLeftOverlay || hasActiveParcelDataset) && (
             <div className="absolute bottom-6 left-2 z-[1000] flex flex-col items-start gap-2">
               {mapBottomLeftOverlay}
+              {hasActiveParcelDataset && (
+                <button
+                  onClick={() => setShowParcelMap(!showParcelMap)}
+                  className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border shadow ${
+                    showParcelMap
+                      ? 'bg-orange-500 text-white border-orange-500 hover:bg-orange-600'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                  }`}
+                  title="法務省地図データを背景に表示する"
+                >
+                  <MapIcon className="h-4 w-4" />
+                  法務省地図
+                </button>
+              )}
             </div>
           )}
         </div>

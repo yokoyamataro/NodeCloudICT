@@ -9,7 +9,6 @@ import {
   Upload,
   Loader2,
   FileSpreadsheet,
-  Map as MapIcon,
   X,
 } from 'lucide-react'
 import { GenericWorkAreaPage } from '@/components/work-area/GenericWorkAreaPage'
@@ -34,8 +33,7 @@ import type { DesignWorkArea } from '@/types/database'
 import { ParcelMapLayer, parcelFeatureKey } from '@/components/map/ParcelMapLayer'
 import { type Bbox } from '@/lib/tile-math'
 import { importParcelBatch } from '@/features/parcel-maps/importParcelBatch'
-
-const PARCEL_LAYER_STORAGE_KEY = 'boundary-survey:parcel-map-layer'
+import { useMapViewStore } from '@/stores/mapViewStore'
 
 export function BoundarySurveyWorkAreaPage() {
   const fileRef = useRef<HTMLInputElement>(null)
@@ -66,23 +64,11 @@ export function BoundarySurveyWorkAreaPage() {
   const zone = project?.coordinate_zone ?? 13
 
   // ---- 地番マップ (法務省地図) の背景レイヤ ----
+  // トグル・データセット取得は GenericWorkAreaPage 側に集約。ここでは
+  // 表示状態を store から購読するだけ (選択モード連動のため)。
   const parcelDatasets = useParcelMapDatasetStore((s) => s.datasets)
-  const fetchDatasets = useParcelMapDatasetStore((s) => s.fetchAll)
   const hasActiveDataset = parcelDatasets.some((d) => d.active)
-  const [showParcelLayer, setShowParcelLayer] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false
-    return window.localStorage.getItem(PARCEL_LAYER_STORAGE_KEY) === '1'
-  })
-  useEffect(() => {
-    void fetchDatasets()
-  }, [fetchDatasets])
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    window.localStorage.setItem(
-      PARCEL_LAYER_STORAGE_KEY,
-      showParcelLayer ? '1' : '0',
-    )
-  }, [showParcelLayer])
+  const showParcelLayer = useMapViewStore((s) => s.showParcelMap)
 
   // 地番マップの表示範囲は常に「現在の地図ビュー」に追従する。
   // 以前は「工区+Nm」プリセットで固定していたが、features 数が数千〜数万
@@ -135,6 +121,15 @@ export function BoundarySurveyWorkAreaPage() {
     [],
   )
   const clearSelection = () => setSelectedParcels(new Map())
+
+  // 法務省地図が OFF になったら選択モードもリセット (他ページからトグルされた
+  // 場合も含めて追随)
+  useEffect(() => {
+    if (!showParcelLayer) {
+      setSelectionMode(false)
+      clearSelection()
+    }
+  }, [showParcelLayer])
 
   /** 複数地番の一括取込。実処理は共通の importParcelBatch へ委譲。 */
   const handleImportParcelBatch = async (
@@ -726,89 +721,65 @@ export function BoundarySurveyWorkAreaPage() {
             />
           ) : null
         }
+        suppressDefaultParcelMapLayer
         mapBottomLeftOverlay={
-          hasActiveDataset ? (
-            <>
-              {/* 地番データ取込 (法務省地図 ON 時のみ、選択モードで一括取込) */}
-              {showParcelLayer && (
-                <div className="flex items-center gap-1">
-                  {selectionMode && selectedParcels.size > 0 && (
-                    <button
-                      onClick={clearSelection}
-                      disabled={busy !== null}
-                      className="flex items-center gap-1 px-2 py-1.5 text-sm border rounded shadow bg-white text-slate-700 border-slate-300 hover:bg-slate-50 disabled:opacity-50"
-                      title="選択を全て解除"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  )}
-                  <button
-                    onClick={() => {
-                      if (!selectionMode) {
-                        setSelectionMode(true)
-                      } else if (selectedParcels.size === 0) {
-                        setSelectionMode(false)
-                      } else {
-                        void (async () => {
-                          await handleImportParcelBatch(
-                            Array.from(selectedParcels.values()),
-                          )
-                          setSelectionMode(false)
-                        })()
-                      }
-                    }}
-                    disabled={busy !== null || !currentFarm}
-                    className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border shadow ${
-                      !selectionMode
-                        ? 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                        : selectedParcels.size === 0
-                          ? 'bg-blue-500 text-white border-blue-500 hover:bg-blue-600'
-                          : 'bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700'
-                    } disabled:opacity-50`}
-                    title={
-                      !selectionMode
-                        ? '地番を選択して工区に取り込むモードに入る'
-                        : selectedParcels.size === 0
-                          ? '選択モードをキャンセル'
-                          : '選択中の地番を工区に取り込む'
-                    }
-                  >
-                    {busy === 'import' ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Download className="h-4 w-4" />
-                    )}
-                    {!selectionMode
-                      ? '地番データ取込'
-                      : selectedParcels.size === 0
-                        ? '選択中… (キャンセル)'
-                        : `取り込む (${selectedParcels.size} 件)`}
-                  </button>
-                </div>
+          hasActiveDataset && showParcelLayer ? (
+            /* 地番データ取込 (法務省地図 ON 時のみ、選択モードで一括取込)。
+               法務省地図トグルボタン自体は GenericWorkAreaPage が bottom-left に描く。 */
+            <div className="flex items-center gap-1">
+              {selectionMode && selectedParcels.size > 0 && (
+                <button
+                  onClick={clearSelection}
+                  disabled={busy !== null}
+                  className="flex items-center gap-1 px-2 py-1.5 text-sm border rounded shadow bg-white text-slate-700 border-slate-300 hover:bg-slate-50 disabled:opacity-50"
+                  title="選択を全て解除"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               )}
-              {/* 法務省地図 (背景レイヤ) の ON/OFF */}
               <button
                 onClick={() => {
-                  setShowParcelLayer((v) => {
-                    const next = !v
-                    if (!next) {
+                  if (!selectionMode) {
+                    setSelectionMode(true)
+                  } else if (selectedParcels.size === 0) {
+                    setSelectionMode(false)
+                  } else {
+                    void (async () => {
+                      await handleImportParcelBatch(
+                        Array.from(selectedParcels.values()),
+                      )
                       setSelectionMode(false)
-                      clearSelection()
-                    }
-                    return next
-                  })
+                    })()
+                  }
                 }}
+                disabled={busy !== null || !currentFarm}
                 className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border shadow ${
-                  showParcelLayer
-                    ? 'bg-orange-500 text-white border-orange-500 hover:bg-orange-600'
-                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                }`}
-                title="法務省地図データを背景に表示する"
+                  !selectionMode
+                    ? 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                    : selectedParcels.size === 0
+                      ? 'bg-blue-500 text-white border-blue-500 hover:bg-blue-600'
+                      : 'bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700'
+                } disabled:opacity-50`}
+                title={
+                  !selectionMode
+                    ? '地番を選択して工区に取り込むモードに入る'
+                    : selectedParcels.size === 0
+                      ? '選択モードをキャンセル'
+                      : '選択中の地番を工区に取り込む'
+                }
               >
-                <MapIcon className="h-4 w-4" />
-                法務省地図
+                {busy === 'import' ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4" />
+                )}
+                {!selectionMode
+                  ? '地番データ取込'
+                  : selectedParcels.size === 0
+                    ? '選択中… (キャンセル)'
+                    : `取り込む (${selectedParcels.size} 件)`}
               </button>
-            </>
+            </div>
           ) : null
         }
       />

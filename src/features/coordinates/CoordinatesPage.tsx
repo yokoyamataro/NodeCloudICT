@@ -480,28 +480,16 @@ export function CoordinatesPage() {
   const navigate = useNavigate()
   const { projects, members, fetchMembers } = useProjectListStore()
 
-  // 法務省地図 (地番マップ) の背景レイヤ
+  // 法務省地図 (地番マップ) の背景レイヤ。トグル状態は mapViewStore で全ページ共有。
+  // isCadastralProject ゲートは廃止し、土木プロジェクトでも同じ地番背景を使えるようにする。
   const parcelDatasets = useParcelMapDatasetStore((s) => s.datasets)
   const fetchParcelDatasets = useParcelMapDatasetStore((s) => s.fetchAll)
   const hasActiveParcelDataset = parcelDatasets.some((d) => d.active)
-  const currentProjectForParcel = currentFarm
-    ? projects.find((p) => p.id === currentFarm.project_id) ?? null
-    : null
-  const isCadastralProject = currentProjectForParcel?.category === 'cadastral'
-  const [showParcelLayer, setShowParcelLayer] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false
-    return window.localStorage.getItem('coordinates:parcel-map-layer') === '1'
-  })
+  const showParcelLayer = useMapViewStore((s) => s.showParcelMap)
+  const setShowParcelLayer = useMapViewStore((s) => s.setShowParcelMap)
   useEffect(() => {
     void fetchParcelDatasets()
   }, [fetchParcelDatasets])
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    window.localStorage.setItem(
-      'coordinates:parcel-map-layer',
-      showParcelLayer ? '1' : '0',
-    )
-  }, [showParcelLayer])
   const { fetchByEntityIds: fetchAttachments, getSignedUrl } = useAttachmentStore()
   const attachmentsByEntity = useAttachmentStore((s) => s.byEntity)
   const { workAreas, fetchWorkAreas } = useWorkAreaStore()
@@ -2011,7 +1999,7 @@ export function CoordinatesPage() {
             lineSelectMode={!!calcLineAssign}
             onLineSelect={(a, b) => calcLineAssign?.(a, b)}
           >
-            {isCadastralProject && hasActiveParcelDataset && (
+            {hasActiveParcelDataset && (
               <ParcelMapLayer
                 visible={showParcelLayer}
                 bbox={
@@ -2023,7 +2011,7 @@ export function CoordinatesPage() {
               />
             )}
           </CoordinateMap>
-          {isCadastralProject && hasActiveParcelDataset && (
+          {hasActiveParcelDataset && (
             <div className="absolute bottom-6 left-2 z-[1000]">
               <button
                 onClick={() => setShowParcelLayer((v) => !v)}
@@ -2745,7 +2733,7 @@ export function CoordinatesPage() {
               lineSelectMode={!!calcLineAssign}
               onLineSelect={(a, b) => calcLineAssign?.(a, b)}
             >
-              {isCadastralProject && hasActiveParcelDataset && (
+              {hasActiveParcelDataset && (
                 <ParcelMapLayer
                   visible={showParcelLayer}
                   bbox={
@@ -2757,7 +2745,7 @@ export function CoordinatesPage() {
                 />
               )}
             </CoordinateMap>
-            {isCadastralProject && hasActiveParcelDataset && (
+            {hasActiveParcelDataset && (
               <div className="absolute bottom-6 left-2 z-[1000]">
                 <button
                   onClick={() => setShowParcelLayer((v) => !v)}

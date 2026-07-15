@@ -16,6 +16,7 @@ import {
   PanelTopOpen,
   PanelTopClose,
   MapPin,
+  Map as MapIcon,
   Eye,
   Edit3,
   Maximize2,
@@ -33,6 +34,9 @@ import { useFarmMemoStore, EMPTY_FARM_MEMOS, type FarmMemo } from '@/stores/farm
 import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
 import { PhotoEditModal } from '@/features/coordinates/PhotoEditModal'
 import { CoordinateMap, type ExternalPolygon } from '@/components/map/CoordinateMap'
+import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
+import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
+import { useMapViewStore } from '@/stores/mapViewStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import {
   OrthophotoAnnotations,
@@ -268,6 +272,16 @@ export function OrthophotoPage() {
   const writeVis = (key: string, v: boolean) => {
     try { localStorage.setItem(`orthophoto:vis:${key}`, v ? '1' : '0') } catch { /* ignore */ }
   }
+  // 法務省地図 (地番) の背景表示。全ページ共通 (useMapViewStore)
+  const showParcelMap = useMapViewStore((s) => s.showParcelMap)
+  const setShowParcelMap = useMapViewStore((s) => s.setShowParcelMap)
+  const parcelDatasets = useParcelMapDatasetStore((s) => s.datasets)
+  const fetchParcelDatasets = useParcelMapDatasetStore((s) => s.fetchAll)
+  const hasActiveParcelDataset = parcelDatasets.some((d) => d.active)
+  useEffect(() => {
+    void fetchParcelDatasets()
+  }, [fetchParcelDatasets])
+
   const [showPointsLayer, setShowPointsLayer] = useState<boolean>(() => readVis('points', true))
   const [showParcelsLayer, setShowParcelsLayer] = useState<boolean>(() => readVis('parcels', true))
   const [showCamerasLayer, setShowCamerasLayer] = useState<boolean>(() => readVis('cameras', true))
@@ -1015,7 +1029,29 @@ export function OrthophotoPage() {
             parallelOffset={parallelOffset}
             hideDrawn={!showAnnotationsLayer}
           />
+          {/* 法務省地図 (地番) の背景レイヤ。表示は useMapViewStore で他ページと共有 */}
+          {hasActiveParcelDataset && showParcelMap && (
+            <ParcelMapLayer visible={true} bbox={null} />
+          )}
         </CoordinateMap>
+
+        {/* 法務省地図トグル (左下、Leaflet attribution の対角) */}
+        {hasActiveParcelDataset && (
+          <div className="absolute bottom-6 left-2 z-[1000]">
+            <button
+              onClick={() => setShowParcelMap(!showParcelMap)}
+              className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border shadow ${
+                showParcelMap
+                  ? 'bg-orange-500 text-white border-orange-500 hover:bg-orange-600'
+                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+              }`}
+              title="法務省地図データを背景に表示する"
+            >
+              <MapIcon className="h-4 w-4" />
+              法務省地図
+            </button>
+          </div>
+        )}
 
         {/* ツールヘルプ＋計測結果（左下） */}
         {(tool !== 'none' || lastMeasure) && (
