@@ -432,18 +432,12 @@ function GeoJsonInner({
 }) {
   const map = useMap()
   const layerRef = useRef<L.GeoJSON | null>(null)
-  const labelsBoundRef = useRef(false)
 
   // FeatureCollection が変わったら key を変えて再マウント
   const key = useMemo(
     () => `parcel-map-${data.features.length}-${Date.now()}`,
     [data],
   )
-
-  // 別 FC に切り替わったらフラグをリセット
-  useEffect(() => {
-    labelsBoundRef.current = false
-  }, [data])
 
   // 選択 / 取込済セットが変わったら明示的に setStyle して再描画する
   // (<GeoJSON> の style prop は初回のみ評価されるため、選択切替時は手動更新が必要)
@@ -467,38 +461,63 @@ function GeoJsonInner({
   }, [selectedKeys, importedParcelKeys, renderer, data])
 
   // showLabels=true かつ zoom >= LABEL_MIN_ZOOM のときのみ tooltip を bind する。
+  // 描画済 polygon は viewport バッファ (2x) 全域だが、ラベルは**実 viewport**
+  // に絞ることで LABEL_MAX_FEATURES に引っかかりにくくする。
   // 100〜500 個の bindTooltip を一気に呼ぶと数百 ms 固まるので、1 フレーム
   // あたり LABEL_BIND_CHUNK 個ずつ requestAnimationFrame で分割 bind する。
-  // 途中で ON→OFF に切り替わったり feature が変わったら cancel。
+  // pan / zoom のたびに再評価 (300ms debounce)。前の viewport 分は unbind してから
+  // 新しい viewport で bind し直す。
   useEffect(() => {
     let cancelled = false
     let scheduledRaf = 0
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null
     const unbindAllLabels = () => {
       const layerGroup = layerRef.current
       if (!layerGroup) return
       layerGroup.eachLayer((layer) => {
         ;(layer as L.Layer).unbindTooltip()
       })
-      labelsBoundRef.current = false
     }
     if (!showLabels) {
       unbindAllLabels()
       onLabelBindProgress?.(null)
       return
     }
-    const bindLabelsIfNeeded = () => {
-      if (cancelled || labelsBoundRef.current) return
+    const rebindForViewport = () => {
+      if (cancelled) return
+      // 進行中の bind chunk があればキャンセルしてやり直す (viewport が変わったので)
+      if (scheduledRaf) {
+        cancelAnimationFrame(scheduledRaf)
+        scheduledRaf = 0
+      }
       const layerGroup = layerRef.current
       if (!layerGroup) return
-      if (map.getZoom() < LABEL_MIN_ZOOM) return
 
-      // bind 対象を先に列挙 (Leaflet の内部イテレータを回すので同期でも軽い)
+      // 前 viewport 分の tooltip を一旦全 unbind
+      unbindAllLabels()
+
+      if (map.getZoom() < LABEL_MIN_ZOOM) {
+        onLabelBindProgress?.(null)
+        return
+      }
+
+      // 実 viewport (buffer なし)。ここで targets を絞ることで、
+      // バッファ内 2000+ 件でも画面に映る 100 件だけラベル bind できる。
+      const vb = map.getBounds()
+      const viewportBox: Bbox = {
+        minLng: vb.getWest(),
+        minLat: vb.getSouth(),
+        maxLng: vb.getEast(),
+        maxLat: vb.getNorth(),
+      }
+
       const targets: Array<{ layer: L.Layer; text: string }> = []
       layerGroup.eachLayer((layer) => {
         const feature = (layer as L.GeoJSON & { feature?: unknown }).feature as
           | Feature<Polygon, ParcelFeatureProperties>
           | undefined
         if (!feature) return
+        if (!featureIntersectsBbox(feature, viewportBox)) return
         // ラベルは 地番 のみ ("10-10" 等)。大字名は含めない
         const text =
           feature.properties.parcel_number || feature.properties.parcel_name
@@ -506,17 +525,12 @@ function GeoJsonInner({
       })
 
       if (targets.length === 0) {
-        labelsBoundRef.current = true
+        onLabelBindProgress?.(null)
         return
       }
-      // 上限を超える feature 数のときはラベルを省略する。visible = many polygons
-      // に一気に bindTooltip すると数秒固まるので、tight viewport にしてもらう。
+      // 実 viewport でも上限超えのときはラベル省略
       if (targets.length > LABEL_MAX_FEATURES) {
-        labelsBoundRef.current = true
-        onLabelBindProgress?.({
-          done: -1,
-          total: targets.length,
-        })
+        onLabelBindProgress?.({ done: -1, total: targets.length })
         return
       }
 
@@ -538,19 +552,26 @@ function GeoJsonInner({
         if (idx < targets.length) {
           scheduledRaf = requestAnimationFrame(bindChunk)
         } else {
-          labelsBoundRef.current = true
           onLabelBindProgress?.(null)
         }
       }
       scheduledRaf = requestAnimationFrame(bindChunk)
     }
-    const t = setTimeout(bindLabelsIfNeeded, 100)
-    map.on('zoomend', bindLabelsIfNeeded)
+    const scheduleRebind = () => {
+      if (debounceTimer) clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(rebindForViewport, 300)
+    }
+    // 初回は data 差替直後を待って 100ms 後に実行 (Leaflet がレイヤを追加し終わるまで)
+    const initialTimer = setTimeout(rebindForViewport, 100)
+    map.on('zoomend', scheduleRebind)
+    map.on('moveend', scheduleRebind)
     return () => {
       cancelled = true
       if (scheduledRaf) cancelAnimationFrame(scheduledRaf)
-      clearTimeout(t)
-      map.off('zoomend', bindLabelsIfNeeded)
+      if (debounceTimer) clearTimeout(debounceTimer)
+      clearTimeout(initialTimer)
+      map.off('zoomend', scheduleRebind)
+      map.off('moveend', scheduleRebind)
       unbindAllLabels()
       onLabelBindProgress?.(null)
     }
