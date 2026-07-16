@@ -6,7 +6,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Camera,
   ChevronDown,
-  ChevronUp,
   Image as ImageIcon,
   Loader2,
   Plus,
@@ -181,24 +180,9 @@ export function CoordinatePhotoPanel({
     setCustomName('')
   }
 
-  // 折りたたみ時: 右下にコンパクトなタブだけ表示。
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={onToggle}
-        className="absolute bottom-2 left-2 z-[1100] flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 rounded shadow text-xs font-medium text-slate-700 hover:bg-slate-50"
-        title="写真パネルを開く"
-      >
-        <Camera className="h-3.5 w-3.5 text-blue-600" />
-        写真
-        {coordinateId && photos.length > 0 && (
-          <span className="text-[10px] text-slate-500">({photos.length})</span>
-        )}
-        <ChevronUp className="h-3.5 w-3.5" />
-      </button>
-    )
-  }
+  // 折りたたみ時: 何も出さない。測点クリック時に自動で開く導線があるため、
+  // 手動オープン用のタブ (旧「写真」ボタン) は削除した。
+  if (!open) return null
 
   // 展開時: 地図の下半分を覆う。
   return (
