@@ -1,5 +1,8 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Plus, Trash2, GripVertical, Calculator, Download, X, Image as ImageIcon, Ruler, Pencil, Tag, Hash, FileText } from 'lucide-react'
+import { Plus, Trash2, GripVertical, Calculator, Download, X, Image as ImageIcon, Ruler, Pencil, Tag, Hash, FileText, KeyRound } from 'lucide-react'
+import { useAuth } from '@/contexts/AuthContext'
+import { isAdmin } from '@/lib/admin'
+import { RegistryFetchOneModal } from '@/features/parcel-maps/RegistryFetchOneModal'
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
@@ -184,6 +187,10 @@ interface GenericWorkAreaPageProps {
 }
 
 export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', headerActions, mapChildren, mapBottomLeftOverlay, suppressDefaultParcelMapLayer }: GenericWorkAreaPageProps) {
+  const { user } = useAuth()
+  const isSiteOwner = isAdmin(user?.email)
+  // 「登記取得」モーダルを開く対象 work_area id。1 度に 1 件だけ。
+  const [registryFetchTargetId, setRegistryFetchTargetId] = useState<string | null>(null)
   const [calculationSheet, setCalculationSheet] = useState<AreaCalculationSheetType | null>(null)
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
   // 編集中ポリゴン: 選択中の構成点 ID（DEL/BACKSPACE で削除する対象）
@@ -762,7 +769,7 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                   別々の overflow-x-auto を持たせない。 */}
               <div className={isBoundarySurvey ? 'min-w-max' : ''}>
                 {isBoundarySurvey && (
-                  <CadastralHeader visibleColumns={visibleColumns} leadingWidth="w-20" />
+                  <CadastralHeader visibleColumns={visibleColumns} leadingWidth={isSiteOwner ? 'w-28' : 'w-20'} />
                 )}
                 <div>
               {sortedAreas.map((area) => {
@@ -794,9 +801,10 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                       }
                     >
                       {isBoundarySurvey && (
-                        // 行頭の「構成点編集」+「登記PDFを開く」。横スクロール時も見えるよう sticky で 2 ボタン
+                        // 行頭の「構成点編集」+「登記PDFを開く」(+ site owner のみ「登記取得」)。
+                        // 横スクロール時も見えるよう sticky。ボタン数に応じて幅を可変。
                         <div
-                          className="w-20 shrink-0 flex items-center justify-center gap-1 sticky left-3 z-10"
+                          className={`${isSiteOwner ? 'w-28' : 'w-20'} shrink-0 flex items-center justify-center gap-1 sticky left-3 z-10`}
                           onClick={(e) => e.stopPropagation()}
                         >
                           <button
@@ -837,6 +845,19 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                               </button>
                             )
                           })()}
+                          {isSiteOwner && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setRegistryFetchTargetId(area.id)
+                              }}
+                              className="w-9 h-7 flex items-center justify-center rounded border bg-white border-slate-300 text-slate-600 hover:bg-blue-50"
+                              title="登記情報 (所有者事項 / 全部事項) を touki.or.jp から自動取得 (site owner のみ)"
+                            >
+                              <KeyRound className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                         </div>
                       )}
                       {isBoundarySurvey ? (
@@ -1198,6 +1219,33 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
           onClose={() => setShowRegistryImport(false)}
         />
       )}
+
+      {/* 登記情報 自動取得モーダル (touki.or.jp、site owner のみ) */}
+      {registryFetchTargetId && isSiteOwner && farmId && (() => {
+        const targetArea = sortedAreas.find((a) => a.id === registryFetchTargetId)
+        const targetParcel = targetArea
+          ? parcelByWorkAreaId.get(targetArea.id) ?? null
+          : null
+        const parcelNumber =
+          targetParcel?.parcel_number || targetArea?.zoneNumber || targetArea?.name || ''
+        const location = targetParcel?.location ?? ''
+        return (
+          <RegistryFetchOneModal
+            workAreaId={registryFetchTargetId}
+            parcelNumber={parcelNumber}
+            location={location}
+            farmId={farmId}
+            onClose={() => setRegistryFetchTargetId(null)}
+            onDone={() => {
+              // 取得完了 → attachments を再取得して「登記PDFを開く」ボタンを有効に
+              void fetchAttachmentsByEntityIds(
+                'work_area',
+                sortedAreas.map((a) => a.id),
+              )
+            }}
+          />
+        )
+      })()}
     </div>
   )
 }
