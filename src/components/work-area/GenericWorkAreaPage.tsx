@@ -346,7 +346,14 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
     if (!isBoundarySurvey) return m
     for (const a of areas) {
       const list = attachmentsByEntity.get(`work_area:${a.id}`) ?? []
-      const pdfs = list.filter((x) => x.category === REGISTRY_PDF_CATEGORY)
+      // 手動アップロード (registry_pdf) + 自動取得 (registry_ownership / registry_full)
+      // をまとめて対象にする。ボタンは最新 1 件を開くので種別は問わない。
+      const pdfs = list.filter(
+        (x) =>
+          x.category === REGISTRY_PDF_CATEGORY ||
+          x.category === 'registry_ownership' ||
+          x.category === 'registry_full',
+      )
       if (pdfs.length === 0) continue
       pdfs.sort((p, q) => (q.createdAt ?? '').localeCompare(p.createdAt ?? ''))
       m.set(a.id, pdfs[0])
