@@ -133,7 +133,13 @@ export function RegistryCredentialsPage() {
       setMessage('保存しました')
       await refetchStatus()
     } catch (err) {
-      setError(err instanceof Error ? err.message : '保存に失敗しました')
+      setError(
+        err instanceof Error
+          ? err.message
+          : typeof err === 'object' && err && 'message' in err && typeof (err as { message: unknown }).message === 'string'
+            ? (err as { message: string }).message
+            : `保存に失敗しました: ${JSON.stringify(err)}`,
+      )
     } finally {
       setSaving(false)
     }
