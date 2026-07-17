@@ -453,7 +453,7 @@ export function AppLayout() {
               )}
               <span className="text-sm text-slate-300" title={user?.email ?? ''}>{displayName}</span>
             </div>
-            <UserMenu onSignOut={handleSignOut} />
+            <UserMenu onSignOut={handleSignOut} isSiteOwner={isAdmin(user?.email)} />
           </div>
         </div>
       </header>
@@ -621,7 +621,7 @@ export function AppLayout() {
 
 /** ヘッダ右端のユーザーメニュー。個人設定 (登記情報、パスワード変更) と
  *  ログアウトをドロップダウンに集約する。 */
-function UserMenu({ onSignOut }: { onSignOut: () => void }) {
+function UserMenu({ onSignOut, isSiteOwner }: { onSignOut: () => void; isSiteOwner: boolean }) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement | null>(null)
 
@@ -648,14 +648,16 @@ function UserMenu({ onSignOut }: { onSignOut: () => void }) {
       </button>
       {open && (
         <div className="absolute right-0 top-full mt-1 w-48 bg-white text-slate-800 border border-slate-200 rounded-md shadow-lg z-[5000] overflow-hidden">
-          <Link
-            to="/settings/registry"
-            onClick={() => setOpen(false)}
-            className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-slate-50"
-          >
-            <KeyRound className="h-4 w-4 text-slate-500" />
-            登記情報 (touki.or.jp)
-          </Link>
+          {isSiteOwner && (
+            <Link
+              to="/settings/registry"
+              onClick={() => setOpen(false)}
+              className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-slate-50"
+            >
+              <KeyRound className="h-4 w-4 text-slate-500" />
+              登記情報 (touki.or.jp)
+            </Link>
+          )}
           <Link
             to="/settings/password"
             onClick={() => setOpen(false)}

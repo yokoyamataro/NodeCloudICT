@@ -55,6 +55,7 @@ import { TrashPage } from '@/features/trash/TrashPage'
 import { RegistryCredentialsPage } from '@/features/settings/RegistryCredentialsPage'
 import { PasswordSettingsPage } from '@/features/settings/PasswordSettingsPage'
 import { Loader2 } from 'lucide-react'
+import { isAdmin } from '@/lib/admin'
 
 // 認証が必要なルートのラッパー
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -71,6 +72,24 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   if (!user) {
     return <Navigate to="/login" replace />
   }
+
+  return <>{children}</>
+}
+
+// サイトオーナー限定ルート。非オーナーは /coordinates に飛ばす
+function SiteOwnerRoute({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth()
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+      </div>
+    )
+  }
+
+  if (!user) return <Navigate to="/login" replace />
+  if (!isAdmin(user.email)) return <Navigate to="/coordinates" replace />
 
   return <>{children}</>
 }
@@ -185,13 +204,13 @@ function AppRoutes() {
             </ProtectedRoute>
           }
         />
-        {/* 個人設定: 登記情報提供サービスの認証情報 */}
+        {/* 個人設定: 登記情報提供サービスの認証情報 (Phase 1 はサイトオーナー限定) */}
         <Route
           path="/settings/registry"
           element={
-            <ProtectedRoute>
+            <SiteOwnerRoute>
               <RegistryCredentialsPage />
-            </ProtectedRoute>
+            </SiteOwnerRoute>
           }
         />
         {/* 個人設定: パスワード変更 */}
