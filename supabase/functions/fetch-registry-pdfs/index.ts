@@ -69,6 +69,50 @@ const json = (status: number, body: unknown, origin?: string) =>
     headers: { 'Content-Type': 'application/json', ...makeCors(origin) },
   })
 
+/**
+ * Supabase Edge Function は proxy レイヤに 150s の idle timeout がある。
+ * Playwright の処理は数十秒〜数分かかるため、その間バイトが流れないと proxy が
+ * 接続を切ってしまう。5s ごとに whitespace (JSON パーサが無視できる) を書き込み、
+ * 最後に本体 JSON を書いて close する streaming response を返す。
+ */
+function streamingJsonResponse(
+  work: () => Promise<{ status: number; body: unknown }>,
+  origin?: string,
+): Response {
+  const stream = new ReadableStream({
+    async start(controller) {
+      const enc = new TextEncoder()
+      const heartbeat = setInterval(() => {
+        try {
+          controller.enqueue(enc.encode(' '))
+        } catch { /* stream closed */ }
+      }, 5_000)
+      try {
+        const { body } = await work()
+        clearInterval(heartbeat)
+        controller.enqueue(enc.encode(JSON.stringify(body)))
+      } catch (err) {
+        clearInterval(heartbeat)
+        controller.enqueue(
+          enc.encode(
+            JSON.stringify({
+              ok: false,
+              error: 'unexpected_error: ' + (err instanceof Error ? err.message : String(err)),
+            }),
+          ),
+        )
+      } finally {
+        controller.close()
+      }
+    },
+  })
+  // 200 status で返す — 個別失敗は body の ok / error で表現
+  return new Response(stream, {
+    status: 200,
+    headers: { 'Content-Type': 'application/json', ...makeCors(origin) },
+  })
+}
+
 function isValidItem(x: unknown): x is ParcelReqItem {
   if (!x || typeof x !== 'object') return false
   const o = x as Record<string, unknown>
@@ -202,49 +246,59 @@ Deno.serve(async (req) => {
     if (farms?.project_id) projectByWorkAreaId.set(row.id, farms.project_id)
   }
 
-  // --- 5. Fly.io app へ丸投げ ---
-  const flyPayload = {
-    username,
-    password,
-    requests: requests.map((r) => ({
-      id: r.work_area_id,
-      prefecture: r.prefecture,
-      city: r.city,
-      location: r.location,
-      parcel_number: r.parcel_number,
-      kind,
-    })),
-  }
-  let flyResults: FlyResult[]
-  try {
-    const flyRes = await fetch(`${flyUrl}/fetch`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Auth-Token': flySecret,
-      },
-      body: JSON.stringify(flyPayload),
-    })
-    if (!flyRes.ok) {
-      const text = await flyRes.text().catch(() => '')
-      return json(502, {
-        ok: false,
-        error: `Fly.io service returned ${flyRes.status}: ${text.slice(0, 500)}`,
-      }, origin)
+  // --- 5+6 は streaming response で包む (Playwright の 60-120s 処理中に
+  //     Supabase proxy の 150s idle timeout に切られないよう heartbeat を流す) ---
+  return streamingJsonResponse(async () => {
+    const flyPayload = {
+      username,
+      password,
+      requests: requests.map((r) => ({
+        id: r.work_area_id,
+        prefecture: r.prefecture,
+        city: r.city,
+        location: r.location,
+        parcel_number: r.parcel_number,
+        kind,
+      })),
     }
-    const parsed = (await flyRes.json()) as { results?: FlyResult[] }
-    flyResults = Array.isArray(parsed.results) ? parsed.results : []
-  } catch (err) {
-    return json(502, {
-      ok: false,
-      error: 'Fly.io service unreachable: ' + (err instanceof Error ? err.message : String(err)),
-    }, origin)
-  }
+    let flyResults: FlyResult[]
+    try {
+      const flyRes = await fetch(`${flyUrl}/fetch`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Auth-Token': flySecret,
+        },
+        body: JSON.stringify(flyPayload),
+      })
+      if (!flyRes.ok) {
+        const text = await flyRes.text().catch(() => '')
+        return {
+          status: 502,
+          body: {
+            ok: false,
+            error: `Fly.io service returned ${flyRes.status}: ${text.slice(0, 500)}`,
+          },
+        }
+      }
+      const parsed = (await flyRes.json()) as { results?: FlyResult[] }
+      flyResults = Array.isArray(parsed.results) ? parsed.results : []
+    } catch (err) {
+      return {
+        status: 502,
+        body: {
+          ok: false,
+          error:
+            'Fly.io service unreachable: ' +
+            (err instanceof Error ? err.message : String(err)),
+        },
+      }
+    }
 
-  // --- 6. per-parcel: Storage 保存 + attachments INSERT ---
-  const now = new Date().toISOString().replace(/[:.]/g, '-')
-  const out: EdgeResult[] = []
-  for (const fly of flyResults) {
+    // --- 6. per-parcel: Storage 保存 + attachments INSERT ---
+    const now = new Date().toISOString().replace(/[:.]/g, '-')
+    const out: EdgeResult[] = []
+    for (const fly of flyResults) {
     const src = requests.find((r) => r.work_area_id === fly.id)
     const projectId = projectByWorkAreaId.get(fly.id)
     if (!src || !projectId) {
@@ -346,5 +400,6 @@ Deno.serve(async (req) => {
     })
   }
 
-  return json(200, { ok: true, results: out }, origin)
+    return { status: 200, body: { ok: true, results: out } }
+  }, origin)
 })
