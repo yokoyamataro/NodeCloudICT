@@ -46,9 +46,29 @@ export async function fetchRegistryPdfs(
     { body: { requests, kind } },
   )
   if (error) {
+    // Supabase の FunctionsHttpError は非 2xx の Response をラップしている。
+    // 中の JSON エラー本文を取り出して詳細を返す (デバッグ性向上)。
+    const anyErr = error as {
+      message?: string
+      context?: Response
+    }
+    let detail: string | undefined
+    if (anyErr.context && typeof anyErr.context.text === 'function') {
+      try {
+        const text = await anyErr.context.text()
+        try {
+          const parsed = JSON.parse(text) as { error?: string; message?: string }
+          detail = parsed.error ?? parsed.message ?? text
+        } catch {
+          detail = text
+        }
+      } catch {
+        /* ignore */
+      }
+    }
     return {
       ok: false,
-      error: (error as { message?: string }).message ?? String(error),
+      error: detail ?? anyErr.message ?? String(error),
     }
   }
   if (!data) {
