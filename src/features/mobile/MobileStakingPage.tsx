@@ -1349,6 +1349,10 @@ export function MobileStakingPage() {
   const consecutiveRejectsRef = useRef(0)
   const positioningModeRef = useRef(positioningMode)
   const rtkFixAccuracyRef = useRef(rtkFixAccuracyM)
+  // 位置更新の最終受信時刻。RTK 受信機が抜けたりして更新が止まった場合、
+  // 以下の閾値を超えたら「FIX 喪失」とみなしてビープと表示を止める。
+  const lastPosTimeRef = useRef(0)
+  const POSITION_STALE_MS = 3_000
   useEffect(() => { positioningModeRef.current = positioningMode }, [positioningMode])
   useEffect(() => { rtkFixAccuracyRef.current = rtkFixAccuracyM }, [rtkFixAccuracyM])
   // 棄却中フラグ (>0 の間は FIX 音を鳴らさない)。ref と state の両方を持つ
@@ -1401,6 +1405,9 @@ export function MobileStakingPage() {
         setCurrentPos(ll)
         setCurrentAcc(acc)
         setCurrentAlt(pos.coords.altitude)
+        // 位置更新の鮮度計測: この時刻を beep ループから参照して「更新が
+        // 止まった (RTK 受信機切断等)」ときにビープを停止するために使う。
+        lastPosTimeRef.current = Date.now()
         // FIX相当の精度のときだけ追従用の安定位置を更新（外れたら据え置き）
         if (acc != null && acc <= FOLLOW_FIX_THRESHOLD_M) {
           setStablePos(ll)
@@ -2007,6 +2014,13 @@ export function MobileStakingPage() {
     const id = window.setInterval(() => {
       // 棄却フェーズ (連続 1〜5 回) の間は FIX 音を止める
       if (rejectingCountRef.current > 0) return
+      // 位置更新が途絶えている (RTK 受信機切断等) → FIX 状態ではないのでビープしない
+      if (
+        lastPosTimeRef.current === 0 ||
+        Date.now() - lastPosTimeRef.current > POSITION_STALE_MS
+      ) {
+        return
+      }
       const acc = soundAccRef.current
       const fix = acc != null && acc <= rtkFixAccuracyM
       if (!fix) return
@@ -2019,8 +2033,22 @@ export function MobileStakingPage() {
     return () => window.clearInterval(id)
   }, [soundEnabled, rtkFixAccuracyM])
 
-  // FIX→喪失の瞬間に警告音（ブーッ）を 1 回
-  const soundIsFix = currentAcc != null && currentAcc <= rtkFixAccuracyM
+  // 位置更新の鮮度を state 化 (React で useEffect が反応するように 1Hz でチェック)。
+  // これで「更新が止まって FIX 喪失扱い」の遷移を warning buzzer トリガに繋げられる。
+  const [posStale, setPosStale] = useState(false)
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const stale =
+        lastPosTimeRef.current === 0 ||
+        Date.now() - lastPosTimeRef.current > POSITION_STALE_MS
+      setPosStale((prev) => (prev === stale ? prev : stale))
+    }, 500)
+    return () => window.clearInterval(id)
+  }, [])
+
+  // FIX→喪失の瞬間に警告音（ブーッ）を 1 回。「精度悪化」と「更新途絶」の両方を FIX 喪失とみなす。
+  const soundIsFix =
+    !posStale && currentAcc != null && currentAcc <= rtkFixAccuracyM
   useEffect(() => {
     if (!soundEnabled) {
       prevFixRef.current = soundIsFix
