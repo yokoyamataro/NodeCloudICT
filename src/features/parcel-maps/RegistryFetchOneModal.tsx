@@ -43,13 +43,24 @@ const PREFECTURES: Array<{ code: string; name: string }> = [
 interface Props {
   workAreaId: string
   parcelNumber: string
-  /** parcels.location (所在。例: 「青葉町」) */
+  /** parcels.location (字名。例: 「青葉町」) */
   location: string
+  /** parcels.prefecture (取込時 or 前回モーダル入力で既に埋まっていれば渡す) */
+  initialPrefecture?: string | null
+  /** parcels.municipality (取込時 or 前回モーダル入力で既に埋まっていれば渡す) */
+  initialCity?: string | null
   /** farm.id (localStorage キー用) */
   farmId: string
   onClose: () => void
   /** 成功時: 呼び出し側で attachments 再取得等をトリガする */
-  onDone: (result: { attachmentId: string; signedUrl: string | null; kind: RegistryKind }) => void
+  onDone: (result: {
+    attachmentId: string
+    signedUrl: string | null
+    kind: RegistryKind
+    /** 取得に使った prefecture / municipality (呼び出し側で parcels に upsert したい) */
+    prefecture: string
+    municipality: string
+  }) => void
 }
 
 const LS_PREFIX = 'registry:place:'
@@ -111,13 +122,18 @@ export function RegistryFetchOneModal({
   workAreaId,
   parcelNumber,
   location,
+  initialPrefecture,
+  initialCity,
   farmId,
   onClose,
   onDone,
 }: Props) {
   const persisted = loadPersisted(farmId)
-  const [prefecture, setPrefecture] = useState(persisted.prefecture ?? '北海道')
-  const [city, setCity] = useState(persisted.city ?? '')
+  // 優先順位: parcels の値 > localStorage > デフォルト
+  const [prefecture, setPrefecture] = useState(
+    initialPrefecture ?? persisted.prefecture ?? '北海道',
+  )
+  const [city, setCity] = useState(initialCity ?? persisted.city ?? '')
   const [kind, setKind] = useState<RegistryKind>('ownership')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -170,6 +186,8 @@ export function RegistryFetchOneModal({
         attachmentId: item.attachment_id,
         signedUrl: item.signed_url,
         kind,
+        prefecture,
+        municipality: city.trim(),
       })
       onClose()
     } catch (err) {

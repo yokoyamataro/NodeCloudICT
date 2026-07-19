@@ -33,6 +33,18 @@ import {
 } from '@/lib/jpgis-to-geojson'
 
 const BUCKET = 'parcel-maps'
+
+/** cache に載せる直前に、各 feature に source_dataset_id を付与する。
+ *  取込 (importParcelBatch) 側で「この feature はどの dataset 由来か」を辿るために使う。 */
+function tagFeaturesWithDatasetId(
+  fc: ParcelFeatureCollection,
+  datasetId: string,
+): ParcelFeatureCollection {
+  for (const f of fc.features) {
+    if (f.properties) f.properties.source_dataset_id = datasetId
+  }
+  return fc
+}
 const SIGNED_URL_TTL_SEC = 60 * 30 // 30 分。1 セッション用なら十分
 const LEGACY_TILE_DL_CONCURRENCY = 6
 const DATASET_DL_CONCURRENCY = 4 // 複数 dataset 同時 DL の上限
@@ -305,6 +317,7 @@ export const useParcelMapDatasetStore = create<State>((set, get) => ({
     try {
       const fc = await downloadDatasetGeoJson(dataset)
       if (fc) {
+        tagFeaturesWithDatasetId(fc, datasetId)
         set((s) => ({
           geoJsonCache: { ...s.geoJsonCache, [datasetId]: fc },
         }))
@@ -342,6 +355,7 @@ export const useParcelMapDatasetStore = create<State>((set, get) => ({
         try {
           const fc = await downloadDatasetGeoJson(d)
           if (fc) {
+            tagFeaturesWithDatasetId(fc, d.id)
             set((s) => ({
               geoJsonCache: { ...s.geoJsonCache, [d.id]: fc },
             }))

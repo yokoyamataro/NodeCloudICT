@@ -27,6 +27,9 @@ export interface ParcelFeatureProperties {
   jprc_coords: Array<[number, number]>
   /** ソースデータの JPRC 系番号 (1-19) */
   source_zone: number
+  /** ソースの parcel_map_datasets.id (取込時に prefecture / municipality を紐付ける用途)。
+   *  cache から取り出した瞬間に enrich する。JPGIS パーサ側では null で OK。 */
+  source_dataset_id?: string | null
 }
 
 export interface JpgisToGeoJsonResult {

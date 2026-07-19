@@ -181,16 +181,29 @@ export function CadastralRowFields({ area, visibleColumns }: Props) {
   const cellFor = (key: CadastralColumnKey): React.ReactNode => {
     switch (key) {
       case 'location':
+        // 「郡町村 (municipality)」は import 時 (or 登記取得モーダル) で埋まる。
+        // 表示では左側に薄色の prefix として出す。編集対象は字名のみ。
+        // 都道府県は touki.or.jp 通信時に使うだけで、行表示には出さない。
         return (
-          <input
-            type="text"
-            value={location}
-            onChange={(e) => setLocation(e.target.value)}
-            onClick={stop}
-            onBlur={() => save({ location: location.trim() || null })}
-            className="w-full px-1.5 py-1 border rounded text-sm"
-            placeholder="A市B町一丁目"
-          />
+          <div className="flex items-center w-full border rounded overflow-hidden">
+            {parcel?.municipality && (
+              <span
+                className="px-1.5 py-1 text-xs text-slate-500 bg-slate-50 border-r shrink-0 truncate max-w-[120px]"
+                title={`郡町村: ${parcel.municipality}${parcel.prefecture ? ` (${parcel.prefecture})` : ''}`}
+              >
+                {parcel.municipality}
+              </span>
+            )}
+            <input
+              type="text"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              onClick={stop}
+              onBlur={() => save({ location: location.trim() || null })}
+              className="w-full px-1.5 py-1 text-sm outline-none"
+              placeholder="字名 (例: 青葉町)"
+            />
+          </div>
         )
       case 'parcel_number':
         return (

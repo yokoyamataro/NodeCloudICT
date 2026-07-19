@@ -370,10 +370,15 @@ export interface DocumentTemplateShare {
 export interface Parcel {
   id: string
   work_area_id: string
-  /** 所在（例: A市B町一丁目）。並び順のキーにも使う */
+  /** 所在の「字名」部分 (例: 「青葉町」「朝日町一丁目」)。並び順のキーにも使う。
+   *  郡町村より上位の階層は prefecture / municipality に分離して保持する。 */
   location: string | null
   parcel_number: string | null
   notes: string | null
+  /** 都道府県名 (例: 「北海道」)。表示では隠すが touki.or.jp 送信時に使う */
+  prefecture: string | null
+  /** 郡町村名 (例: 「斜里郡斜里町」)。表示は "municipality + location" を連結 */
+  municipality: string | null
   registered_land_category: string | null
   registered_area_sqm: number | null
   updated_land_category: string | null

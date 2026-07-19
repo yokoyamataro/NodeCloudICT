@@ -19,6 +19,8 @@ interface RawParcel {
   location: string | null
   parcel_number: string | null
   notes: string | null
+  prefecture: string | null
+  municipality: string | null
   registered_land_category: string | null
   registered_area_sqm: number | null
   updated_land_category: string | null
@@ -35,6 +37,8 @@ const toParcel = (r: RawParcel): Parcel => ({
   location: r.location,
   parcel_number: r.parcel_number,
   notes: r.notes,
+  prefecture: r.prefecture,
+  municipality: r.municipality,
   registered_land_category: r.registered_land_category,
   registered_area_sqm: r.registered_area_sqm,
   updated_land_category: r.updated_land_category,
@@ -50,6 +54,8 @@ export type ParcelEditableFields = Pick<
   | 'location'
   | 'parcel_number'
   | 'notes'
+  | 'prefecture'
+  | 'municipality'
   | 'registered_land_category'
   | 'registered_area_sqm'
   | 'updated_land_category'
@@ -108,6 +114,8 @@ export const useParcelStore = create<ParcelState>((set, get) => ({
       location: fields.location ?? prev?.location ?? null,
       parcel_number: fields.parcel_number ?? prev?.parcel_number ?? null,
       notes: fields.notes ?? prev?.notes ?? null,
+      prefecture: fields.prefecture ?? prev?.prefecture ?? null,
+      municipality: fields.municipality ?? prev?.municipality ?? null,
       registered_land_category:
         fields.registered_land_category ?? prev?.registered_land_category ?? null,
       registered_area_sqm: fields.registered_area_sqm ?? prev?.registered_area_sqm ?? null,

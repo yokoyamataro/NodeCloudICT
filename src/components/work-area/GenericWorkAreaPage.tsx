@@ -1234,14 +1234,26 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
             workAreaId={registryFetchTargetId}
             parcelNumber={parcelNumber}
             location={location}
+            initialPrefecture={targetParcel?.prefecture ?? null}
+            initialCity={targetParcel?.municipality ?? null}
             farmId={farmId}
             onClose={() => setRegistryFetchTargetId(null)}
-            onDone={() => {
-              // 取得完了 → attachments を再取得して「登記PDFを開く」ボタンを有効に
+            onDone={(r) => {
+              // 取得完了 → attachments を再取得 + parcels に prefecture/municipality を保存
               void fetchAttachmentsByEntityIds(
                 'work_area',
                 sortedAreas.map((a) => a.id),
               )
+              // 前回入力値を parcels に反映 (次回モーダルで自動入力される)
+              if (
+                (targetParcel?.prefecture ?? null) !== r.prefecture ||
+                (targetParcel?.municipality ?? null) !== r.municipality
+              ) {
+                void upsertParcel(registryFetchTargetId, {
+                  prefecture: r.prefecture,
+                  municipality: r.municipality,
+                })
+              }
             }}
           />
         )

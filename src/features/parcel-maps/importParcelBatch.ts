@@ -17,6 +17,11 @@ import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useParcelStore } from '@/stores/parcelStore'
 import { useFarmStore } from '@/stores/farmStore'
+import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
+import {
+  extractMunicipalityFromDatasetName,
+  prefectureNameByCode,
+} from '@/lib/prefectures'
 import type { CoordinateRow } from '@/stores/coordinateStore'
 
 const MAX_COORDS_PER_FARM = 5000
@@ -169,7 +174,33 @@ export async function importParcelBatch(
     location: string | null
     ownerName: string | null
     area: number | null
+    prefecture: string | null
+    municipality: string | null
   }> = []
+
+  // dataset id → { prefecture, municipality } の memo (同じ dataset を何度も引かないため)
+  const datasetInfo = useParcelMapDatasetStore.getState().datasets
+  const datasetById = new Map(datasetInfo.map((d) => [d.id, d]))
+  const locationCache = new Map<string, { prefecture: string | null; municipality: string | null }>()
+  const resolveLocation = (
+    datasetId: string | null | undefined,
+  ): { prefecture: string | null; municipality: string | null } => {
+    if (!datasetId) return { prefecture: null, municipality: null }
+    const hit = locationCache.get(datasetId)
+    if (hit) return hit
+    const d = datasetById.get(datasetId)
+    const val = d
+      ? {
+          prefecture: prefectureNameByCode(d.prefecture_code),
+          municipality: extractMunicipalityFromDatasetName(
+            d.name,
+            d.prefecture_code,
+          ),
+        }
+      : { prefecture: null, municipality: null }
+    locationCache.set(datasetId, val)
+    return val
+  }
   for (let idx = 0; idx < features.length; idx++) {
     const feature = features[idx]
     const jprc = perFeatureJprc[idx]
@@ -194,11 +225,14 @@ export async function importParcelBatch(
       perimeter_m: null,
       notes: null,
     })
+    const loc = resolveLocation(props.source_dataset_id)
     meta.push({
       parcelNumber,
       location: props.location,
       ownerName: props.owner_name,
       area: props.registered_area_sqm,
+      prefecture: loc.prefecture,
+      municipality: loc.municipality,
     })
   }
 
@@ -208,6 +242,8 @@ export async function importParcelBatch(
     work_area_id: string
     parcel_number: string
     location: string | null
+    prefecture: string | null
+    municipality: string | null
     registered_owner_name: string | null
     registered_area_sqm: number | null
   }> = []
@@ -232,6 +268,8 @@ export async function importParcelBatch(
         work_area_id: rows[j].id,
         parcel_number: m.parcelNumber,
         location: m.location,
+        prefecture: m.prefecture,
+        municipality: m.municipality,
         registered_owner_name: m.ownerName,
         registered_area_sqm: m.area,
       })
