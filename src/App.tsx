@@ -54,6 +54,7 @@ import { TrashPage } from '@/features/trash/TrashPage'
 // 個人設定
 import { RegistryCredentialsPage } from '@/features/settings/RegistryCredentialsPage'
 import { PasswordSettingsPage } from '@/features/settings/PasswordSettingsPage'
+import { FarmSettingsPage } from '@/features/settings/FarmSettingsPage'
 import { Loader2 } from 'lucide-react'
 import { isAdmin } from '@/lib/admin'
 
@@ -328,7 +329,7 @@ function AppRoutes() {
         <Route path="open-channel">
           <Route path="alignment" element={<OpenChannelAlignmentPage />} />
         </Route>
-        <Route path="settings" element={<PlaceholderPage title="設定" />} />
+        <Route path="settings" element={<FarmSettingsPage />} />
         <Route path="trash" element={<TrashPage />} />
         </Route>
       </Routes>
