@@ -267,6 +267,23 @@ export function AdminParcelMapsPage() {
     await setActiveMany(targets, active)
   }
 
+  // 全国一括: 現在の datasets 全体 (フィルタ非依存) を対象に active を揃える
+  const handleBulkActiveNationwide = async (active: boolean) => {
+    const targets = datasets.filter((d) => d.active !== active).map((d) => d.id)
+    if (targets.length === 0) {
+      alert(active ? '既に全て公開されています' : '既に全て非公開です')
+      return
+    }
+    if (
+      !confirm(
+        `全国 ${targets.length.toLocaleString()} 件を${active ? '一括公開' : '一括非公開'}にします。よろしいですか?`,
+      )
+    ) {
+      return
+    }
+    await setActiveMany(targets, active)
+  }
+
   const handleDelete = async (datasetId: string, datasetName: string) => {
     if (
       !confirm(
@@ -492,6 +509,25 @@ export function AdminParcelMapsPage() {
               公開 {activeCount.toLocaleString()} 件
             </span>
           </span>
+          {/* 全国まとめて公開/非公開 */}
+          <div className="flex items-center gap-1 pl-2 border-l border-slate-300 ml-1">
+            <button
+              onClick={() => void handleBulkActiveNationwide(true)}
+              disabled={activeCount === datasets.length}
+              className="px-2 py-1 text-xs rounded border border-emerald-300 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 disabled:cursor-not-allowed"
+              title="全国のすべてのデータセットを公開状態にする"
+            >
+              全国 一括公開
+            </button>
+            <button
+              onClick={() => void handleBulkActiveNationwide(false)}
+              disabled={activeCount === 0}
+              className="px-2 py-1 text-xs rounded border border-slate-300 text-slate-700 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
+              title="全国のすべてのデータセットを非公開にする"
+            >
+              全国 一括非公開
+            </button>
+          </div>
         </div>
       )}
 
