@@ -54,6 +54,37 @@ interface Props {
 
 const LS_PREFIX = 'registry:place:'
 
+/** サーバから返ってきた技術的エラー文字列を、UI 表示用に日本語で整える。 */
+function friendlyError(raw: string): string {
+  if (/service_hours_out/.test(raw)) {
+    return (
+      '登記情報提供サービスは現在利用時間外です。\n' +
+      '利用可能時間: 平日 8:30-21:00 / 土日 8:30-17:00 (JST)\n' +
+      '(参考: ' + raw + ')'
+    )
+  }
+  if (/maintenance/.test(raw)) {
+    return (
+      '登記情報提供サービスがメンテナンス中です。しばらく待って再度お試しください。\n' +
+      '(参考: ' + raw + ')'
+    )
+  }
+  if (/unavailable/.test(raw)) {
+    return (
+      '登記情報提供サービスが利用できない状態です。\n' +
+      '(参考: ' + raw + ')'
+    )
+  }
+  if (/login_failed/.test(raw)) {
+    return (
+      '登記情報提供サービスへのログインに失敗しました。\n' +
+      '設定 → 登記情報 で ID / パスワードを再確認してください。\n' +
+      '(参考: ' + raw + ')'
+    )
+  }
+  return raw
+}
+
 interface Persisted {
   prefecture?: string
   city?: string
@@ -128,7 +159,7 @@ export function RegistryFetchOneModal({
         return
       }
       if (item.error) {
-        setError(item.error)
+        setError(friendlyError(item.error))
         return
       }
       if (!item.attachment_id) {
