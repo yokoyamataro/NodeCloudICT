@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertCircle, Folder, Loader2, LogOut, MapPin, Monitor, Plus, X } from 'lucide-react'
+import { AlertCircle, Folder, Loader2, LogOut, MapPin, Monitor, Pencil, Plus, X } from 'lucide-react'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { useAuth } from '@/contexts/AuthContext'
@@ -13,6 +13,7 @@ import { FeedbackButton } from '@/components/layout/FeedbackButton'
 import { JGD2011_ZONES } from '@/lib/coordinates'
 import type { Project, ProjectCategory } from '@/types/database'
 import { PROJECT_CATEGORY_LABEL } from '@/types/database'
+import { MobileProjectEditModal } from './MobileProjectEditModal'
 
 export function MobileProjectChooserPage() {
   const navigate = useNavigate()
@@ -25,6 +26,9 @@ export function MobileProjectChooserPage() {
     fetchProjects()
     fetchFarms()
   }, [fetchProjects, fetchFarms])
+
+  // 編集モーダル (現場情報 + 削除ボタン)
+  const [editProject, setEditProject] = useState<Project | null>(null)
 
   // 新規工事作成ダイアログ
   const [showNewDialog, setShowNewDialog] = useState<ProjectCategory | null>(null)
@@ -95,7 +99,7 @@ export function MobileProjectChooserPage() {
   return (
     <div className="mobile-screen flex flex-col bg-slate-50">
       <div className="px-3 py-2 bg-slate-800 text-white flex items-center gap-2 text-sm">
-        <span className="font-medium">工事一覧（スマホ）</span>
+        <span className="font-medium">現場一覧（スマホ）</span>
         <button
           onClick={handleGoPC}
           className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-500 hover:bg-slate-700"
@@ -158,6 +162,7 @@ export function MobileProjectChooserPage() {
               emptyText="地籍測量の工事はありません。"
               farmCountByProject={farmCountByProject}
               onSelect={(p) => navigate(`/mobile/farms/${p.id}`)}
+              onEdit={(p) => setEditProject(p)}
             />
             <MobileProjectsSection
               title="土木工事"
@@ -166,6 +171,7 @@ export function MobileProjectChooserPage() {
               emptyText="土木工事の工事はありません。"
               farmCountByProject={farmCountByProject}
               onSelect={(p) => navigate(`/mobile/farms/${p.id}`)}
+              onEdit={(p) => setEditProject(p)}
             />
             {uncategorizedProjects.length > 0 && (
               <MobileProjectsSection
@@ -173,15 +179,28 @@ export function MobileProjectChooserPage() {
                 accentClass="bg-amber-500"
                 projects={uncategorizedProjects}
                 emptyText="未分類はありません。"
-                hint="PC で種別（地籍測量 / 土木工事）を設定してください。"
+                hint="編集ボタンから種別（地籍測量 / 土木工事）を設定してください。"
                 hintIcon={<AlertCircle className="h-3 w-3" />}
                 farmCountByProject={farmCountByProject}
                 onSelect={(p) => navigate(`/mobile/farms/${p.id}`)}
+                onEdit={(p) => setEditProject(p)}
               />
             )}
           </>
         )}
       </div>
+
+      {/* 編集モーダル */}
+      {editProject && (
+        <MobileProjectEditModal
+          project={editProject}
+          onClose={() => setEditProject(null)}
+          onDone={() => {
+            void fetchProjects()
+            void fetchFarms()
+          }}
+        />
+      )}
 
       {/* 新規工事作成ダイアログ (モバイル向けボトムシート) */}
       {showNewDialog && (
@@ -272,6 +291,7 @@ function MobileProjectsSection({
   hintIcon,
   farmCountByProject,
   onSelect,
+  onEdit,
 }: {
   title: string
   accentClass: string
@@ -281,6 +301,7 @@ function MobileProjectsSection({
   hintIcon?: React.ReactNode
   farmCountByProject: (id: string) => number
   onSelect: (p: Project) => void
+  onEdit: (p: Project) => void
 }) {
   return (
     <section>
@@ -304,10 +325,10 @@ function MobileProjectsSection({
           {projects.map((p) => {
             const count = farmCountByProject(p.id)
             return (
-              <li key={p.id}>
+              <li key={p.id} className="relative">
                 <button
                   onClick={() => onSelect(p)}
-                  className="w-full text-left bg-white border rounded-lg p-3 hover:border-blue-400 active:bg-blue-50"
+                  className="w-full text-left bg-white border rounded-lg p-3 pr-11 hover:border-blue-400 active:bg-blue-50"
                 >
                   <div className="flex items-center gap-2 mb-1">
                     <Folder className="h-4 w-4 text-blue-600 flex-shrink-0" />
@@ -331,6 +352,17 @@ function MobileProjectsSection({
                       {p.contractor && `受託: ${p.contractor}`}
                     </div>
                   )}
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onEdit(p)
+                  }}
+                  className="absolute top-2 right-2 p-1.5 rounded border border-slate-300 bg-white text-slate-500 hover:text-slate-800 hover:bg-slate-50"
+                  title="現場を編集"
+                  aria-label="現場を編集"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
                 </button>
               </li>
             )

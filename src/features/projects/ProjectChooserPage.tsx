@@ -120,7 +120,7 @@ export function ProjectChooserPage() {
       {/* タイトル + 種別ごとの新規作成ボタン */}
       <div className="p-4 bg-white border-b flex items-center gap-3 flex-wrap">
         <Folder className="h-5 w-5 text-blue-600" />
-        <h1 className="text-lg font-bold flex-1">工事一覧</h1>
+        <h1 className="text-lg font-bold flex-1">現場一覧</h1>
         <button
           type="button"
           onClick={() => setHideCompletedProjects((v) => !v)}
