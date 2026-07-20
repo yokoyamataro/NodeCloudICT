@@ -50,6 +50,8 @@ interface OrgDraft {
   representative: string
   user_count_limit: string
   plan: string
+  /** 利用期限 (YYYY-MM-DD、空文字は無期限)。サイトオーナーのみ設定可 */
+  expires_at: string
   note: string
 }
 
@@ -61,6 +63,7 @@ const EMPTY_ORG_DRAFT: OrgDraft = {
   representative: '',
   user_count_limit: '',
   plan: '',
+  expires_at: '',
   note: '',
 }
 
@@ -73,6 +76,7 @@ function toDraft(o: Organization): OrgDraft {
     representative: o.representative ?? '',
     user_count_limit: o.user_count_limit == null ? '' : String(o.user_count_limit),
     plan: o.plan ?? '',
+    expires_at: o.expires_at ? o.expires_at.slice(0, 10) : '',
     note: o.note ?? '',
   }
 }
@@ -86,6 +90,17 @@ function toPayload(d: OrgDraft) {
     }
     limit = n
   }
+  // 期限は YYYY-MM-DD → その日の 23:59:59 JST (= 14:59:59 UTC) までを許容する。
+  // (「7/31 まで」と入れたら 7/31 中は使えるようにする)
+  let expiresAt: string | null = null
+  const raw = d.expires_at.trim()
+  if (raw !== '') {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      throw new Error('利用期限は YYYY-MM-DD 形式で入力してください')
+    }
+    // "2026-07-31" → "2026-07-31T14:59:59Z" (= JST 23:59:59)
+    expiresAt = `${raw}T14:59:59Z`
+  }
   return {
     name: d.name.trim(),
     postal_code: d.postal_code.trim() || null,
@@ -94,6 +109,7 @@ function toPayload(d: OrgDraft) {
     representative: d.representative.trim() || null,
     user_count_limit: limit,
     plan: d.plan.trim() || null,
+    expires_at: expiresAt,
     note: d.note.trim() || null,
   }
 }
@@ -334,6 +350,7 @@ function SiteOwnerUnifiedView() {
                 key={selectedOrg.id}
                 org={selectedOrg}
                 editable={true}
+                siteOwner={true}
                 onSaved={handleOrgUpdated}
                 onDeleted={handleOrgDeleted}
               />
@@ -342,6 +359,8 @@ function SiteOwnerUnifiedView() {
                   key={selectedOrg.id}
                   organizationId={selectedOrg.id}
                   organizationName={selectedOrg.name}
+                  userCountLimit={selectedOrg.user_count_limit}
+                  expiresAt={selectedOrg.expires_at}
                 />
               </div>
             </>
@@ -433,6 +452,8 @@ function OrgAdminUnifiedView({ adminOrgs }: { adminOrgs: AdminOrgRow[] }) {
               <OrgMembersView
                 organizationId={org.id}
                 organizationName={org.name}
+                userCountLimit={org.user_count_limit}
+                expiresAt={org.expires_at}
               />
             </div>
           </>
@@ -448,11 +469,14 @@ function OrgAdminUnifiedView({ adminOrgs }: { adminOrgs: AdminOrgRow[] }) {
 function OrgInfoForm({
   org,
   editable,
+  siteOwner = false,
   onSaved,
   onDeleted,
 }: {
   org: Organization
   editable: boolean
+  /** サイトオーナー限定フィールド (利用期限) を活性化するか */
+  siteOwner?: boolean
   onSaved?: (org: Organization) => void
   onDeleted?: (id: string) => void
 }) {
@@ -653,6 +677,30 @@ function OrgInfoForm({
             className={inputClass}
             placeholder="(制限なし)"
           />
+        </FormField>
+        <FormField label={siteOwner ? '利用期限' : '利用期限 (site owner のみ)'}>
+          <input
+            type="date"
+            value={draft.expires_at}
+            onChange={(e) =>
+              setDraft((d) => ({ ...d, expires_at: e.target.value }))
+            }
+            disabled={!editable || !siteOwner}
+            className={inputClass}
+            placeholder="(無期限)"
+          />
+          {draft.expires_at && (
+            <div className="mt-0.5 text-[10px] text-slate-500">
+              {(() => {
+                const d = new Date(`${draft.expires_at}T14:59:59Z`)
+                const now = new Date()
+                const days = Math.ceil((d.getTime() - now.getTime()) / 86400000)
+                if (days < 0) return <span className="text-red-600 font-medium">期限切れ ({-days} 日経過)</span>
+                if (days === 0) return <span className="text-amber-700">本日まで</span>
+                return <span>残 {days} 日</span>
+              })()}
+            </div>
+          )}
         </FormField>
         <FormField label="メモ" span={3}>
           <textarea

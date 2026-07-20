@@ -330,6 +330,8 @@ export interface Organization {
   admin_user_id: string | null
   user_count_limit: number | null
   plan: string | null
+  /** 組織の利用期限。NULL は無期限。past → 新規メンバー追加を拒否 (既存アクセスは影響なし) */
+  expires_at: string | null
   created_at: string
   updated_at: string
 }

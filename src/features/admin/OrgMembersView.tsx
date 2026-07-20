@@ -39,6 +39,10 @@ interface OrgMemberRow {
 interface Props {
   organizationId: string
   organizationName: string
+  /** organizations.user_count_limit (null = 無制限)。招待ボタン活性判定に使う */
+  userCountLimit?: number | null
+  /** organizations.expires_at (null = 無期限)。招待ボタン活性判定に使う */
+  expiresAt?: string | null
 }
 
 /** SECURITY DEFINER RPC を型なしで呼ぶための thin ラッパ (Supabase の生成型に
@@ -53,7 +57,12 @@ async function callRpc<T = unknown>(
   }
 }
 
-export function OrgMembersView({ organizationId, organizationName }: Props) {
+export function OrgMembersView({
+  organizationId,
+  organizationName,
+  userCountLimit = null,
+  expiresAt = null,
+}: Props) {
   const { user } = useAuth()
   const [members, setMembers] = useState<OrgMemberRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -223,17 +232,54 @@ export function OrgMembersView({ organizationId, organizationName }: Props) {
             {organizationName}
           </span>
           <span className="ml-2 text-slate-400 text-xs">
-            ({members.length} 名 / 管理者 {adminCount})
+            ({members.length} 名{userCountLimit != null ? ` / 上限 ${userCountLimit}` : ''}
+            {' · '}管理者 {adminCount})
           </span>
+          {(() => {
+            const isExpired = !!expiresAt && new Date(expiresAt) < new Date()
+            const atLimit =
+              userCountLimit != null && members.length >= userCountLimit
+            if (isExpired) {
+              return (
+                <span className="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-red-100 text-red-800 border border-red-200">
+                  期限切れ
+                </span>
+              )
+            }
+            if (atLimit) {
+              return (
+                <span className="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">
+                  上限到達
+                </span>
+              )
+            }
+            return null
+          })()}
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <button
-            onClick={() => setInviteOpen(true)}
-            className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
-          >
-            <UserPlus className="h-3.5 w-3.5" />
-            メンバー招待
-          </button>
+          {(() => {
+            const isExpired = !!expiresAt && new Date(expiresAt) < new Date()
+            const atLimit =
+              userCountLimit != null && members.length >= userCountLimit
+            const blocked = isExpired || atLimit
+            return (
+              <button
+                onClick={() => setInviteOpen(true)}
+                disabled={blocked}
+                title={
+                  isExpired
+                    ? '組織の利用期限が切れているため招待できません'
+                    : atLimit
+                      ? `ユーザー数上限 (${userCountLimit}) に達しているため招待できません`
+                      : ''
+                }
+                className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <UserPlus className="h-3.5 w-3.5" />
+                メンバー招待
+              </button>
+            )
+          })()}
           <button
             onClick={fetchMembers}
             disabled={loading}
