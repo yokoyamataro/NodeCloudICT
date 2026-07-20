@@ -1,20 +1,38 @@
 // モバイル向けの現場 (project) 編集モーダル。
-// PC 版 ProjectEditModal は共有メンバー管理・工期・進捗まで扱う重量級だが、
-// モバイルでは頻度の高い項目 (現場名 / 説明 / 発注 / 受託 / 座標系 / 種別) と
-// 「削除」だけに絞る。削除はプロジェクトオーナー (project.user_id === user.id) のみ。
+// PC 版 ProjectEditModal から必要な項目を抜粋:
+//   基本   : 現場名 / 説明 / 発注 / 受託 / 座標系 / 種別
+//   共有   : 占有 / 共有 / 公開 + 共有メンバーの一覧・追加・削除・権限変更
+//   削除   : プロジェクトオーナー (project.user_id === user.id) のみ
+// 保存ボタン押下で基本項目 + visibility をまとめて DB へ。メンバー操作は即時反映。
 
-import { useState } from 'react'
-import { AlertTriangle, Loader2, Trash2, X } from 'lucide-react'
-import type { Project, ProjectCategory } from '@/types/database'
-import { PROJECT_CATEGORY_LABEL } from '@/types/database'
+import { useCallback, useEffect, useState } from 'react'
+import { AlertTriangle, Loader2, Trash2, UserPlus, X } from 'lucide-react'
+import type {
+  Project,
+  ProjectCategory,
+  ProjectMember,
+  ProjectMemberRole,
+  ProjectVisibility,
+} from '@/types/database'
+import {
+  PROJECT_CATEGORY_LABEL,
+  PROJECT_VISIBILITY_LABEL,
+} from '@/types/database'
 import { JGD2011_ZONES } from '@/lib/coordinates'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useAuth } from '@/contexts/AuthContext'
+import { supabase } from '@/lib/supabase'
 
 type EditablePatch = Partial<
   Pick<
     Project,
-    'name' | 'description' | 'client' | 'contractor' | 'coordinate_zone' | 'category'
+    | 'name'
+    | 'description'
+    | 'client'
+    | 'contractor'
+    | 'coordinate_zone'
+    | 'category'
+    | 'visibility'
   >
 >
 
@@ -30,6 +48,9 @@ export function MobileProjectEditModal({ project, onClose, onDone }: Props) {
   const isOwner = user?.id === project.user_id
   const updateProject = useProjectListStore((s) => s.updateProject)
   const deleteProject = useProjectListStore((s) => s.deleteProject)
+  const inviteMember = useProjectListStore((s) => s.inviteMember)
+  const updateMemberRole = useProjectListStore((s) => s.updateMemberRole)
+  const removeMember = useProjectListStore((s) => s.removeMember)
 
   const [name, setName] = useState(project.name)
   const [description, setDescription] = useState(project.description ?? '')
@@ -39,11 +60,90 @@ export function MobileProjectEditModal({ project, onClose, onDone }: Props) {
   const [category, setCategory] = useState<ProjectCategory | ''>(
     project.category ?? '',
   )
+  const [visibility, setVisibility] = useState<ProjectVisibility>(project.visibility)
 
-  const [busy, setBusy] = useState<'save' | 'delete' | null>(null)
+  const [busy, setBusy] = useState<'save' | 'delete' | 'member' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [deleteText, setDeleteText] = useState('')
+
+  // 共有メンバー一覧 (visibility=shared のときのみ操作)
+  const [members, setMembers] = useState<ProjectMember[]>([])
+  const [membersLoading, setMembersLoading] = useState(false)
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteRole, setInviteRole] = useState<ProjectMemberRole>('editor')
+
+  const refetchMembers = useCallback(async () => {
+    setMembersLoading(true)
+    try {
+      const { data, error: rpcErr } = await (
+        supabase.rpc as unknown as (
+          fn: string,
+          args: { p_project_id: string },
+        ) => Promise<{ data: ProjectMember[] | null; error: { message: string } | null }>
+      )('get_project_members', { p_project_id: project.id })
+      if (rpcErr) throw rpcErr
+      setMembers((data ?? []) as ProjectMember[])
+    } catch (err) {
+      console.warn('[MobileProjectEditModal] fetch members failed', err)
+    } finally {
+      setMembersLoading(false)
+    }
+  }, [project.id])
+
+  // visibility=shared に切り替えた瞬間 / モーダル起動時に一覧を引く
+  useEffect(() => {
+    if (visibility !== 'shared') return
+    void refetchMembers()
+  }, [visibility, refetchMembers])
+
+  const handleInvite = async () => {
+    const email = inviteEmail.trim()
+    if (!email) {
+      setError('メールアドレスを入力してください')
+      return
+    }
+    setError(null)
+    setBusy('member')
+    try {
+      const res = await inviteMember(project.id, email, inviteRole)
+      if (!res.ok) {
+        setError(res.error ?? '招待に失敗しました')
+        return
+      }
+      setInviteEmail('')
+      await refetchMembers()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handleChangeRole = async (memberId: string, role: ProjectMemberRole) => {
+    setBusy('member')
+    try {
+      await updateMemberRole(memberId, role)
+      await refetchMembers()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handleRemoveMember = async (m: ProjectMember) => {
+    if (!confirm(`${m.email ?? m.display_name ?? m.user_id} を共有から外しますか?`)) return
+    setBusy('member')
+    try {
+      await removeMember(m.id)
+      await refetchMembers()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(null)
+    }
+  }
 
   const handleSave = async () => {
     setError(null)
@@ -58,6 +158,7 @@ export function MobileProjectEditModal({ project, onClose, onDone }: Props) {
       contractor: contractor.trim() || null,
       coordinate_zone: zone,
       category: category === '' ? null : (category as ProjectCategory),
+      visibility,
     }
     setBusy('save')
     try {
@@ -180,6 +281,145 @@ export function MobileProjectEditModal({ project, onClose, onDone }: Props) {
               ))}
             </select>
           </div>
+
+          {/* 共有設定: 占有 / 共有 / 公開 */}
+          <div className="pt-3 mt-3 border-t border-slate-200">
+            <label className="block text-xs text-slate-600 mb-1.5">共有設定</label>
+            <div className="grid grid-cols-3 gap-1">
+              {(['private', 'shared', 'public'] as ProjectVisibility[]).map((v) => {
+                const on = visibility === v
+                return (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setVisibility(v)}
+                    disabled={!!busy}
+                    className={`px-2 py-1.5 text-sm rounded border ${
+                      on
+                        ? 'bg-blue-600 border-blue-600 text-white'
+                        : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
+                    } disabled:opacity-50`}
+                  >
+                    {PROJECT_VISIBILITY_LABEL[v]}
+                  </button>
+                )
+              })}
+            </div>
+            <p className="mt-1.5 text-[11px] text-slate-500 leading-relaxed">
+              {visibility === 'private' && '自分のみ閲覧・編集できます。'}
+              {visibility === 'shared' && '下の共有ユーザだけが閲覧・編集できます。'}
+              {visibility === 'public' && '認証なしでも閲覧できます (編集は所有者・エディタのみ)。'}
+            </p>
+          </div>
+
+          {/* 共有メンバー: visibility=shared のときだけ表示 */}
+          {visibility === 'shared' && (
+            <div className="pt-2">
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-medium text-slate-700">
+                  共有ユーザー ({members.length})
+                </label>
+                {membersLoading && (
+                  <Loader2 className="h-3 w-3 text-slate-400 animate-spin" />
+                )}
+              </div>
+
+              {members.length === 0 && !membersLoading ? (
+                <div className="text-[11px] text-slate-400 border border-dashed rounded px-2 py-2 text-center">
+                  共有ユーザーが未登録です
+                </div>
+              ) : (
+                <ul className="space-y-1">
+                  {members.map((m) => (
+                    <li
+                      key={m.id}
+                      className="flex items-center gap-1.5 bg-slate-50 border rounded px-2 py-1.5"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm truncate">
+                          {m.display_name || m.email || m.user_id.slice(0, 8)}
+                        </div>
+                        {m.email && m.email !== m.display_name && (
+                          <div className="text-[10px] text-slate-500 truncate">{m.email}</div>
+                        )}
+                      </div>
+                      {isOwner ? (
+                        <select
+                          value={m.role}
+                          onChange={(e) =>
+                            void handleChangeRole(m.id, e.target.value as ProjectMemberRole)
+                          }
+                          disabled={!!busy}
+                          className="px-1 py-0.5 text-xs border rounded bg-white"
+                        >
+                          <option value="viewer">閲覧</option>
+                          <option value="editor">編集</option>
+                          <option value="owner">管理</option>
+                        </select>
+                      ) : (
+                        <span className="px-1.5 py-0.5 text-[11px] text-slate-600 bg-white border rounded">
+                          {m.role === 'owner' ? '管理' : m.role === 'editor' ? '編集' : '閲覧'}
+                        </span>
+                      )}
+                      {isOwner && (
+                        <button
+                          type="button"
+                          onClick={() => void handleRemoveMember(m)}
+                          disabled={!!busy}
+                          className="p-1 text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
+                          title="共有から外す"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {/* 招待フォーム: オーナーのみ (project_members INSERT の RLS で editors は弾かれるため) */}
+              {isOwner ? (
+                <>
+                  <div className="mt-2 flex items-center gap-1">
+                    <input
+                      type="email"
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      disabled={!!busy}
+                      placeholder="user@example.com"
+                      className="flex-1 min-w-0 px-2 py-1.5 text-sm border rounded"
+                    />
+                    <select
+                      value={inviteRole}
+                      onChange={(e) => setInviteRole(e.target.value as ProjectMemberRole)}
+                      disabled={!!busy}
+                      className="px-1 py-1.5 text-xs border rounded bg-white shrink-0"
+                    >
+                      <option value="viewer">閲覧</option>
+                      <option value="editor">編集</option>
+                      <option value="owner">管理</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => void handleInvite()}
+                      disabled={!!busy || !inviteEmail.trim()}
+                      className="flex items-center gap-0.5 px-2 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 shrink-0"
+                    >
+                      <UserPlus className="h-3.5 w-3.5" />
+                      追加
+                    </button>
+                  </div>
+                  <p className="mt-1 text-[10px] text-slate-500 leading-relaxed">
+                    未登録メールなら、承認案内メールが自動で送信されます。
+                  </p>
+                </>
+              ) : (
+                <p className="mt-2 text-[10px] text-slate-500 leading-relaxed">
+                  共有ユーザーの追加・削除・権限変更は所有者のみ可能です。
+                </p>
+              )}
+            </div>
+          )}
 
           {error && (
             <div className="flex items-start gap-1 text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
