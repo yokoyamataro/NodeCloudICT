@@ -19,13 +19,29 @@ export function MobileProjectChooserPage() {
   const navigate = useNavigate()
   const { signOut, user, profile } = useAuth()
   const userLabel = profile?.full_name?.trim() || (user?.email ? user.email.split('@')[0] : '')
-  const { projects, loading, error, fetchProjects, createProject } = useProjectListStore()
+  const {
+    projects,
+    loading,
+    error,
+    fetchProjects,
+    createProject,
+    fetchUserRoles,
+    userRolesByProject,
+  } = useProjectListStore()
   const { farms, fetchFarms } = useFarmStore()
 
   useEffect(() => {
     fetchProjects()
     fetchFarms()
-  }, [fetchProjects, fetchFarms])
+    fetchUserRoles()
+  }, [fetchProjects, fetchFarms, fetchUserRoles])
+
+  // 現場ごとの編集権限: プロジェクト作成者 (user_id) or 共有メンバー role が owner/editor
+  const canEditProject = (p: Project): boolean => {
+    if (user?.id && p.user_id === user.id) return true
+    const role = userRolesByProject.get(p.id)
+    return role === 'owner' || role === 'editor'
+  }
 
   // 編集モーダル (現場情報 + 削除ボタン)
   const [editProject, setEditProject] = useState<Project | null>(null)
@@ -161,6 +177,7 @@ export function MobileProjectChooserPage() {
               projects={cadastralProjects}
               emptyText="地籍測量の工事はありません。"
               farmCountByProject={farmCountByProject}
+              canEditProject={canEditProject}
               onSelect={(p) => navigate(`/mobile/farms/${p.id}`)}
               onEdit={(p) => setEditProject(p)}
             />
@@ -170,6 +187,7 @@ export function MobileProjectChooserPage() {
               projects={civilProjects}
               emptyText="土木工事の工事はありません。"
               farmCountByProject={farmCountByProject}
+              canEditProject={canEditProject}
               onSelect={(p) => navigate(`/mobile/farms/${p.id}`)}
               onEdit={(p) => setEditProject(p)}
             />
@@ -182,6 +200,7 @@ export function MobileProjectChooserPage() {
                 hint="編集ボタンから種別（地籍測量 / 土木工事）を設定してください。"
                 hintIcon={<AlertCircle className="h-3 w-3" />}
                 farmCountByProject={farmCountByProject}
+                canEditProject={canEditProject}
                 onSelect={(p) => navigate(`/mobile/farms/${p.id}`)}
                 onEdit={(p) => setEditProject(p)}
               />
@@ -290,6 +309,7 @@ function MobileProjectsSection({
   hint,
   hintIcon,
   farmCountByProject,
+  canEditProject,
   onSelect,
   onEdit,
 }: {
@@ -300,6 +320,7 @@ function MobileProjectsSection({
   hint?: string
   hintIcon?: React.ReactNode
   farmCountByProject: (id: string) => number
+  canEditProject: (p: Project) => boolean
   onSelect: (p: Project) => void
   onEdit: (p: Project) => void
 }) {
@@ -324,11 +345,12 @@ function MobileProjectsSection({
         <ul className="space-y-2">
           {projects.map((p) => {
             const count = farmCountByProject(p.id)
+            const editable = canEditProject(p)
             return (
               <li key={p.id} className="relative">
                 <button
                   onClick={() => onSelect(p)}
-                  className="w-full text-left bg-white border rounded-lg p-3 pr-11 hover:border-blue-400 active:bg-blue-50"
+                  className={`w-full text-left bg-white border rounded-lg p-3 ${editable ? 'pr-11' : ''} hover:border-blue-400 active:bg-blue-50`}
                 >
                   <div className="flex items-center gap-2 mb-1">
                     <Folder className="h-4 w-4 text-blue-600 flex-shrink-0" />
@@ -353,17 +375,19 @@ function MobileProjectsSection({
                     </div>
                   )}
                 </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onEdit(p)
-                  }}
-                  className="absolute top-2 right-2 p-1.5 rounded border border-slate-300 bg-white text-slate-500 hover:text-slate-800 hover:bg-slate-50"
-                  title="現場を編集"
-                  aria-label="現場を編集"
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </button>
+                {editable && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onEdit(p)
+                    }}
+                    className="absolute top-2 right-2 p-1.5 rounded border border-slate-300 bg-white text-slate-500 hover:text-slate-800 hover:bg-slate-50"
+                    title="現場を編集"
+                    aria-label="現場を編集"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </li>
             )
           })}
