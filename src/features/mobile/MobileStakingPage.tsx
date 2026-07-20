@@ -29,6 +29,7 @@ import {
   ExternalLink,
   Info,
   RefreshCw,
+  AlertTriangle,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { playStartChime, playStopChime, unlockAudio } from '@/lib/beep'
@@ -674,6 +675,8 @@ export function MobileStakingPage() {
   const [showSettings, setShowSettings] = useState(false)
   const [showTargetList, setShowTargetList] = useState(false)
   const [showRecordList, setShowRecordList] = useState(false)
+  // 座標一覧タブ内から手入力で 1 点追加するモーダル
+  const [showManualCoordEntry, setShowManualCoordEntry] = useState(false)
   // 現場を開いたときの開始前チェック（ジオイド補正・目標高(アンテナ高)・既知点精度確認の喚起）
   // 工区IDごとにセッション中 1 回だけ表示する。
   const [showStartupCheck, setShowStartupCheck] = useState(false)
@@ -4830,8 +4833,16 @@ export function MobileStakingPage() {
               <span className="text-xs text-slate-500">{filteredTargets.length} 件</span>
               {/* SIMA インポート / エクスポート を「閉じる」の左に配置 */}
               <button
+                onClick={() => setShowManualCoordEntry(true)}
+                className="ml-auto flex items-center gap-1 text-xs px-2 py-0.5 border rounded text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+                title="X / Y 座標を手入力で 1 点追加"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                手入力
+              </button>
+              <button
                 onClick={handleOpenSimImport}
-                className="ml-auto flex items-center gap-1 text-xs px-2 py-0.5 border rounded text-blue-700 border-blue-300 hover:bg-blue-50"
+                className="flex items-center gap-1 text-xs px-2 py-0.5 border rounded text-blue-700 border-blue-300 hover:bg-blue-50"
                 title="SIMA インポート"
               >
                 <Download className="h-3.5 w-3.5" />
@@ -5401,6 +5412,20 @@ export function MobileStakingPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* 座標を手入力で 1 点追加するモーダル (座標一覧タブの「手入力」から起動) */}
+      {showManualCoordEntry && farm && (
+        <ManualCoordEntryModal
+          farmId={farm.id}
+          zone={zone}
+          existingPointNumbers={coordinates.map((c) => c.pointNumber)}
+          typeOptions={typeOptions}
+          onCancel={() => setShowManualCoordEntry(false)}
+          onSaved={() => {
+            setShowManualCoordEntry(false)
+          }}
+        />
       )}
 
       {/* 点情報モーダル（座標一覧の行タップ / マップマーカータップで開く） */}
@@ -6288,6 +6313,223 @@ function MobileMemoCreateModal({
             className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
           >
             {busy ? '保存中…' : '保存'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ============================================================
+// 座標一覧タブの「手入力」ボタンから開く 1 点追加モーダル。
+// 点名 / X / Y / Z / 種類 を入力して useCoordinateStore.importCoordinates に流す。
+// 既存の pointNumber と重複したら自動でサフィックスを付ける (P001 → P001_2 等)。
+// ============================================================
+function ManualCoordEntryModal({
+  farmId: _farmId,
+  zone,
+  existingPointNumbers,
+  typeOptions,
+  onCancel,
+  onSaved,
+}: {
+  farmId: string
+  zone: number
+  existingPointNumbers: string[]
+  typeOptions: { code: string; label: string; builtIn: boolean }[]
+  onCancel: () => void
+  onSaved: () => void
+}) {
+  // 次番の初期値: P001 / P002 ... の最大値 + 1、無ければ P001
+  const nextP = useMemo(() => {
+    let max = 0
+    for (const pn of existingPointNumbers) {
+      const m = /^P(\d+)$/.exec(pn)
+      if (m) {
+        const n = parseInt(m[1], 10)
+        if (n > max) max = n
+      }
+    }
+    return `P${String(max + 1).padStart(3, '0')}`
+  }, [existingPointNumbers])
+
+  const [pointNumber, setPointNumber] = useState(nextP)
+  const [xStr, setXStr] = useState('')
+  const [yStr, setYStr] = useState('')
+  const [zStr, setZStr] = useState('')
+  const [typeCode, setTypeCode] = useState<string>(
+    typeOptions.some((o) => o.code === 'current') ? 'current' : typeOptions[0]?.code ?? 'current',
+  )
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const parseNum = (s: string): number | null => {
+    const t = s.trim()
+    if (t === '') return null
+    const n = Number(t)
+    return Number.isFinite(n) ? n : null
+  }
+
+  const handleSave = async () => {
+    setError(null)
+    const trimmedPn = pointNumber.trim()
+    if (!trimmedPn) {
+      setError('点名を入力してください')
+      return
+    }
+    const x = parseNum(xStr)
+    const y = parseNum(yStr)
+    if (x === null || y === null) {
+      setError('X / Y を数値で入力してください')
+      return
+    }
+    const z = parseNum(zStr) // null OK
+
+    // 点名重複回避
+    const existingSet = new Set(existingPointNumbers)
+    let finalPn = trimmedPn
+    if (existingSet.has(finalPn)) {
+      let i = 2
+      while (existingSet.has(`${finalPn}_${i}`)) i++
+      finalPn = `${finalPn}_${i}`
+    }
+
+    setBusy(true)
+    try {
+      const inserted = await useCoordinateStore.getState().importCoordinates([
+        {
+          pointNumber: finalPn,
+          x,
+          y,
+          z,
+          type: typeCode as unknown as CoordinateRow['type'],
+          notes: 'mobile_manual_entry',
+        },
+      ])
+      if (inserted.length === 0) {
+        setError(
+          useCoordinateStore.getState().error ?? '追加に失敗しました (詳細不明)',
+        )
+        return
+      }
+      onSaved()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[3000] bg-black/40 flex items-end sm:items-center justify-center p-3">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-sm">
+        <div className="px-3 py-2 border-b flex items-center justify-between">
+          <span className="text-sm font-semibold">座標を手入力で追加</span>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="text-slate-400 hover:text-slate-700 disabled:opacity-50"
+            title="閉じる"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="p-3 space-y-2.5">
+          <div>
+            <label className="block text-[11px] font-medium text-slate-600 mb-0.5">点名 *</label>
+            <input
+              type="text"
+              value={pointNumber}
+              onChange={(e) => setPointNumber(e.target.value)}
+              disabled={busy}
+              className="w-full px-2 py-1.5 text-sm border rounded"
+              placeholder="例: P001"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[11px] font-medium text-slate-600 mb-0.5">X (m) *</label>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.001"
+                value={xStr}
+                onChange={(e) => setXStr(e.target.value)}
+                disabled={busy}
+                className="w-full px-2 py-1.5 text-sm border rounded font-mono"
+                placeholder="12345.678"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-medium text-slate-600 mb-0.5">Y (m) *</label>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.001"
+                value={yStr}
+                onChange={(e) => setYStr(e.target.value)}
+                disabled={busy}
+                className="w-full px-2 py-1.5 text-sm border rounded font-mono"
+                placeholder="98765.432"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-[11px] font-medium text-slate-600 mb-0.5">Z (m) (任意)</label>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.001"
+              value={zStr}
+              onChange={(e) => setZStr(e.target.value)}
+              disabled={busy}
+              className="w-full px-2 py-1.5 text-sm border rounded font-mono"
+              placeholder="標高 (未入力なら null)"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] font-medium text-slate-600 mb-0.5">種類</label>
+            <select
+              value={typeCode}
+              onChange={(e) => setTypeCode(e.target.value)}
+              disabled={busy}
+              className="w-full px-2 py-1.5 text-sm border rounded bg-white"
+            >
+              {typeOptions.map((o) => (
+                <option key={o.code} value={o.code}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {error && (
+            <div className="flex items-start gap-1 text-xs text-red-700 bg-red-50 border border-red-200 rounded p-1.5">
+              <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+              <span className="break-all">{error}</span>
+            </div>
+          )}
+
+          <p className="text-[10px] text-slate-500 leading-relaxed">
+            X / Y は現在の工区座標系 (系 {zone}) の平面直角座標。緯度経度は自動計算されます。
+          </p>
+        </div>
+        <div className="px-3 py-2 border-t flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
+          >
+            キャンセル
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={busy}
+            className="flex items-center gap-1 px-3 py-1.5 text-sm bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {busy ? '追加中…' : '追加'}
           </button>
         </div>
       </div>
