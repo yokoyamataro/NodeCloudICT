@@ -41,6 +41,9 @@ export function extractMunicipalityFromDatasetName(
       }
     }
   }
+  // 都道府県と市町村の間に入りがちなセパレータを剥がす。
+  // Unicode の文字/数字が現れるまで先頭の記号類を全部除去 (\p{L}\p{N} 以外)
+  s = s.replace(/^[^\p{L}\p{N}]+/u, '').trim()
   // 末尾の「R6地図」「R7地図」「2024地図」等の年次サフィックスを剥がす
   s = s.replace(/\s*R\d+\s*地図$/, '').trim()
   s = s.replace(/\s*\d{4}\s*地図$/, '').trim()

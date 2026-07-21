@@ -65,6 +65,14 @@ interface Props {
 
 const LS_PREFIX = 'registry:place:'
 
+/** parcels.municipality に残った先頭セパレータ (「-厚岸郡浜中町」等) を除去。
+ *  Unicode の文字 (Letter) or 数字 (Number) が現れるまで先頭を全部剥がす。
+ *  日本語市町村名は必ず漢字/かなで始まるので、この方針で漏れなく掃除できる。 */
+function sanitizeCity(v: string | null | undefined): string {
+  if (!v) return ''
+  return v.trim().replace(/^[^\p{L}\p{N}]+/u, '').trim()
+}
+
 /** サーバから返ってきた技術的エラー文字列を、UI 表示用に日本語で整える。 */
 function friendlyError(raw: string): string {
   if (/service_hours_out/.test(raw)) {
@@ -133,7 +141,9 @@ export function RegistryFetchOneModal({
   const [prefecture, setPrefecture] = useState(
     initialPrefecture ?? persisted.prefecture ?? '北海道',
   )
-  const [city, setCity] = useState(initialCity ?? persisted.city ?? '')
+  const [city, setCity] = useState(
+    sanitizeCity(initialCity) || sanitizeCity(persisted.city) || '',
+  )
   const [kind, setKind] = useState<RegistryKind>('ownership')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -147,10 +157,13 @@ export function RegistryFetchOneModal({
 
   const handleSubmit = async () => {
     setError(null)
-    if (!city.trim()) {
+    const cityClean = sanitizeCity(city)
+    if (!cityClean) {
       setError('市町村を入力してください (例: 斜里郡斜里町)')
       return
     }
+    // サニタイズ結果を state にも反映 (次回以降 localStorage に綺麗な値が入る)
+    if (cityClean !== city) setCity(cityClean)
     setBusy(true)
     try {
       const res = await fetchRegistryPdfs(
@@ -158,7 +171,7 @@ export function RegistryFetchOneModal({
           {
             work_area_id: workAreaId,
             prefecture,
-            city: city.trim(),
+            city: cityClean,
             location,
             parcel_number: parcelNumber,
           },
@@ -187,7 +200,7 @@ export function RegistryFetchOneModal({
         signedUrl: item.signed_url,
         kind,
         prefecture,
-        municipality: city.trim(),
+        municipality: cityClean,
       })
       onClose()
     } catch (err) {

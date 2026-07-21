@@ -3,6 +3,7 @@ import { Plus, Trash2, GripVertical, Calculator, Download, X, Image as ImageIcon
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdmin } from '@/lib/admin'
 import { RegistryFetchOneModal } from '@/features/parcel-maps/RegistryFetchOneModal'
+import { parseRegistryPdf } from '@/lib/registryPdf'
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
@@ -1239,6 +1240,7 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
             farmId={farmId}
             onClose={() => setRegistryFetchTargetId(null)}
             onDone={(r) => {
+              const targetId = registryFetchTargetId
               // 取得完了 → attachments を再取得 + parcels に prefecture/municipality を保存
               void fetchAttachmentsByEntityIds(
                 'work_area',
@@ -1249,10 +1251,46 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                 (targetParcel?.prefecture ?? null) !== r.prefecture ||
                 (targetParcel?.municipality ?? null) !== r.municipality
               ) {
-                void upsertParcel(registryFetchTargetId, {
+                void upsertParcel(targetId, {
                   prefecture: r.prefecture,
                   municipality: r.municipality,
                 })
+              }
+              // 取得した PDF を自動パースして parcels の登記情報カラムに反映
+              if (r.signedUrl) {
+                void (async () => {
+                  try {
+                    const resp = await fetch(r.signedUrl!)
+                    if (!resp.ok) {
+                      console.warn('[registry] PDF fetch failed', resp.status)
+                      return
+                    }
+                    const blob = await resp.blob()
+                    const file = new File([blob], `${r.kind}_${targetId}.pdf`, {
+                      type: 'application/pdf',
+                    })
+                    const parsed = await parseRegistryPdf(file)
+                    const patch: Partial<import('@/stores/parcelStore').ParcelEditableFields> = {}
+                    if (parsed.location && !targetParcel?.location) {
+                      patch.location = parsed.location
+                    }
+                    if (parsed.landCategory) {
+                      patch.registered_land_category = parsed.landCategory
+                    }
+                    if (parsed.areaSqm != null) {
+                      patch.registered_area_sqm = parsed.areaSqm
+                    }
+                    if (parsed.owners.length > 0) {
+                      patch.registered_owner_name = parsed.owners[0].fullName
+                      patch.registered_owner_address = parsed.owners[0].address
+                    }
+                    if (Object.keys(patch).length > 0) {
+                      await upsertParcel(targetId, patch)
+                    }
+                  } catch (err) {
+                    console.error('[registry] auto parse failed', err)
+                  }
+                })()
               }
             }}
           />
