@@ -147,6 +147,32 @@ export function RegistryFetchOneModal({
   const [kind, setKind] = useState<RegistryKind>('ownership')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [elapsed, setElapsed] = useState(0)
+
+  // 取得中は経過秒数を 1s ごとにカウントアップ (UI 進捗表示用)
+  useEffect(() => {
+    if (!busy) {
+      setElapsed(0)
+      return
+    }
+    const started = Date.now()
+    const timer = window.setInterval(() => {
+      setElapsed(Math.floor((Date.now() - started) / 1000))
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [busy])
+
+  // 経過秒数から現在フェーズを推定 (touki.or.jp 実測ベース)
+  //   0- 15s: touki.or.jp ログイン + 検索フォーム入力
+  //  15- 30s: 課金確定 + マイページ遷移
+  //  30- 90s: 「取得中 → 請求済」への遷移待ち (touki.or.jp サーバ処理)
+  //  90s+  : PDF ダウンロード + パース + Storage 保存
+  const currentPhase = (() => {
+    if (elapsed < 15) return 'touki.or.jp にログイン中...'
+    if (elapsed < 30) return '課金確定 + マイページ遷移中...'
+    if (elapsed < 90) return 'PDF 生成待ち (touki.or.jp 側で処理中)...'
+    return 'PDF ダウンロード + データ反映中...'
+  })()
 
   // localStorage に prefecture / city を保存 (submit 前でも入力中に随時)
   useEffect(() => {
@@ -298,6 +324,18 @@ export function RegistryFetchOneModal({
               重複請求の場合も同額が発生します。
             </span>
           </div>
+
+          {busy && (
+            <div className="flex items-start gap-2 text-xs text-blue-800 bg-blue-50 border border-blue-200 rounded p-2">
+              <Loader2 className="h-3.5 w-3.5 flex-shrink-0 mt-0.5 animate-spin" />
+              <div className="flex-1">
+                <div className="font-medium">{currentPhase}</div>
+                <div className="text-slate-500 mt-0.5">
+                  経過 {elapsed}s (通常 45〜90 秒。長い場合 touki.or.jp が混雑中)
+                </div>
+              </div>
+            </div>
+          )}
 
           {error && (
             <div className="flex items-start gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
