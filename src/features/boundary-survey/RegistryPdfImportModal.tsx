@@ -9,7 +9,7 @@
 import { useMemo, useState } from 'react'
 import { Loader2, Upload, X, AlertTriangle, Check } from 'lucide-react'
 import {
-  parseRegistryPdf,
+  parseRegistryPdfViaAI,
   normalizeParcelNumber,
   type ParsedRegistry,
 } from '@/lib/registryPdf'
@@ -109,7 +109,8 @@ export function RegistryPdfImportModal({ areas, onClose }: Props) {
     // 1 件ずつ並列で解析（重い PDF が来ても他がブロックされないように）
     for (const row of newRows) {
       try {
-        const parsed = await parseRegistryPdf(row.file)
+        // 手動アップロードは 全部事項 前提 (地目・地積・所有者すべてを含む)
+        const parsed = await parseRegistryPdfViaAI(row.file, 'full')
         const matched = autoMatch(parsed)
         setRows((prev) =>
           prev.map((r) =>
