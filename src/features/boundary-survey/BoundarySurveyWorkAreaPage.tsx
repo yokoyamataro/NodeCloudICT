@@ -651,7 +651,7 @@ export function BoundarySurveyWorkAreaPage() {
               ) : (
                 <Upload className="h-4 w-4" />
               )}
-              SIMA 出力
+              地番SIM 出力
             </button>
             <button
               onClick={() => setCsvOpen(true)}

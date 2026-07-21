@@ -369,13 +369,36 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
     return m
   }, [isBoundarySurvey, areas, attachmentsByEntity])
 
-  const openRegistryPdf = async (att: Attachment) => {
+  const downloadRegistryPdf = async (att: Attachment) => {
     const url = await getAttachmentSignedUrl(att.filePath)
     if (!url) {
       alert('PDF の取得に失敗しました（権限 / 保管状態を確認してください）')
       return
     }
-    window.open(url, '_blank', 'noopener,noreferrer')
+    // storage 上のファイル名から basename を抽出、なければ category から生成
+    const basename = att.filePath.split('/').pop() ?? ''
+    const fallback =
+      att.category === 'registry_ownership'
+        ? '所有者事項.pdf'
+        : att.category === 'registry_full'
+        ? '全部事項.pdf'
+        : '登記情報.pdf'
+    const filename = basename && basename.endsWith('.pdf') ? basename : fallback
+    try {
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`fetch failed: ${res.status}`)
+      const blob = await res.blob()
+      const objUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = objUrl
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(objUrl)
+    } catch (err) {
+      alert('PDF ダウンロードに失敗しました: ' + (err instanceof Error ? err.message : String(err)))
+    }
   }
 
   // 地籍モード: 工区が変わったら地権者一覧を取り直す
@@ -832,7 +855,7 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation()
-                                  if (pdf) void openRegistryPdf(pdf)
+                                  if (pdf) void downloadRegistryPdf(pdf)
                                 }}
                                 disabled={!pdf}
                                 className={`w-9 h-7 flex items-center justify-center rounded border ${
@@ -840,9 +863,9 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                                     ? 'bg-white border-slate-300 text-slate-600 hover:bg-slate-100'
                                     : 'bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed'
                                 }`}
-                                title={pdf ? '登記PDFを別ウィンドウで開く' : '登記PDF未登録'}
+                                title={pdf ? '登記PDFをダウンロード' : '登記PDF未登録'}
                               >
-                                <FileText className="h-3.5 w-3.5" />
+                                <Download className="h-3.5 w-3.5" />
                               </button>
                             )
                           })()}
