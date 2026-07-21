@@ -159,7 +159,9 @@ export interface SimaExportPoint {
 export interface SimaExportPolygon {
   parcelNumber: string // 例: '463'
   parcelName: string   // 例: '1-2'
-  pointNumbers: string[] // B01 で参照する点名のリスト（順序付き）
+  /** B01 で参照する opts.points の 0-based index リスト (順序付き)。
+   *  ID/index ベースなので、点名が重複していても正しく B01 に書ける。 */
+  pointIndices: number[]
 }
 
 export interface SimaExportOptions {
@@ -183,11 +185,10 @@ export function buildSimaContent(opts: SimaExportOptions): string {
   lines.push(`Z01,${opts.zone},`)
   lines.push('A00,')
 
-  // 点名 → 1ベースの行番号（B01 参照用）
-  const pointIndexByName = new Map<string, number>()
+  // A01: 全 point を 1-based 連番で書き出す。点番 (index) が 点名 と食い違って
+  // いても外部ソフトは 点番 で一意識別できるので問題ない。
   opts.points.forEach((p, idx) => {
     const indexNum = idx + 1
-    pointIndexByName.set(p.pointNumber, indexNum)
     const numStr = indexNum.toString().padStart(5, ' ')
     const paddedName = p.pointNumber.padEnd(20, ' ')
     const xStr = p.x.toFixed(3).padStart(10, ' ')
@@ -198,24 +199,27 @@ export function buildSimaContent(opts: SimaExportOptions): string {
 
   lines.push('A99,')
 
-  // 画地データセクション
+  // 画地データセクション。B01 の 点番/点名 は index ベースで確定するので、
+  // 点名の重複を気にせず正しく書ける。
   if (opts.polygons && opts.polygons.length > 0) {
     lines.push('Z00, /* 画地データ */,')
     for (const poly of opts.polygons) {
       const numStr = poly.parcelNumber.toString().padStart(5, ' ')
       const nameStr = poly.parcelName.padEnd(10, ' ')
       lines.push(`D00,${numStr},${nameStr},1,`)
-      for (const pn of poly.pointNumbers) {
-        const idx = pointIndexByName.get(pn)
-        if (idx === undefined) {
-          // A01 に無い点を B01 で参照するのは壊れた SIMA。0 を出さず throw する
-          // (呼び出し側で座標集合と polygon 参照を必ず整合させること)
+      for (const zeroBasedIdx of poly.pointIndices) {
+        if (
+          zeroBasedIdx < 0 ||
+          zeroBasedIdx >= opts.points.length ||
+          !Number.isInteger(zeroBasedIdx)
+        ) {
           throw new Error(
-            `SIMA export: polygon "${poly.parcelName}" references unknown point "${pn}" (not present in A01 section)`,
+            `SIMA export: polygon "${poly.parcelName}" references invalid point index ${zeroBasedIdx}`,
           )
         }
-        const idxStr = idx.toString().padStart(5, ' ')
-        const paddedName = pn.padEnd(20, ' ')
+        const point = opts.points[zeroBasedIdx]
+        const idxStr = (zeroBasedIdx + 1).toString().padStart(5, ' ')
+        const paddedName = point.pointNumber.padEnd(20, ' ')
         lines.push(`B01,${idxStr},${paddedName},`)
       }
       lines.push('D99,')

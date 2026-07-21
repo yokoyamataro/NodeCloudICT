@@ -494,22 +494,16 @@ export function BoundarySurveyWorkAreaPage() {
     setBusy('export')
     try {
       const areas = workAreas['boundary_survey'] ?? []
-      // 出力対象の座標集合:
-      //   ・すべての polygon (画地) が参照している座標 (どの点種でも取り込む。
-      //     confirmed_boundary / measured / cadastral_diagram 等が
-      //     boundary で無いだけで export から漏れると B01 の点番が 0 になって
-      //     壊れた SIMA が出るため)
-      //   ・加えて type='boundary' の座標も含める (ポリゴン未参照の境界点も
-      //     出力に載せておきたいという運用要望)
+      // 出力対象 = 「地番構成点」= polygon (画地) が参照している全座標。
+      // 点種 (boundary / confirmed_boundary / measured / cadastral_diagram
+      // 等) でフィルタしない — 型が boundary で無いだけで地番構成点となる
+      // べき座標が抜け落ちてしまうため。
+      // ポリゴンに含まれていない点 (control / current / staking 等) は
+      // 地番構成点ではないので出力しない。
       const coordById = new Map<string, CoordinateRow>()
       for (const c of coordinates) coordById.set(c.id, c)
-      const referencedIds = new Set<string>()
-      for (const a of areas) {
-        for (const id of a.pointIds) referencedIds.add(id)
-      }
       const exportCoords: CoordinateRow[] = []
       const seen = new Set<string>()
-      // 1) polygon が参照している点を order で入れる
       for (const a of areas) {
         for (const id of a.pointIds) {
           if (seen.has(id)) continue
@@ -519,52 +513,37 @@ export function BoundarySurveyWorkAreaPage() {
           exportCoords.push(c)
         }
       }
-      // 2) boundary 型のうち未追加のものを追加
-      for (const c of coordinates) {
-        if (c.type !== 'boundary') continue
-        if (seen.has(c.id)) continue
-        seen.add(c.id)
-        exportCoords.push(c)
-      }
       if (exportCoords.length === 0) {
-        setMessage('出力対象の座標がありません')
+        setMessage('出力対象の地番構成点がありません (画地が未定義)')
         setBusy(null)
         return
       }
 
-      // 重複する pointNumber (同名異点) は SIMA では区別できないので警告 + 二番目以降に
-      // 接尾辞を付けて回避する
-      const nameCount = new Map<string, number>()
-      const uniquePoints = exportCoords.map((c) => {
-        const base = c.pointNumber?.trim() || `P${nameCount.size + 1}`
-        const seenCount = nameCount.get(base) ?? 0
-        nameCount.set(base, seenCount + 1)
-        const uniqName = seenCount === 0 ? base : `${base}_${seenCount + 1}`
-        return { id: c.id, pointNumber: uniqName, x: c.x, y: c.y, z: c.z }
-      })
-      // id → 出力用 unique 点名
-      const outNameById = new Map<string, string>()
-      uniquePoints.forEach((p) => outNameById.set(p.id, p.pointNumber))
+      // coord.id → exportCoords 内の 0-based index。B01 は index ベースで
+      // 参照するので、同名点があっても正しく地番形状に紐付けできる。
+      const seqIdxById = new Map<string, number>()
+      exportCoords.forEach((c, i) => seqIdxById.set(c.id, i))
 
       const polygons: SimaExportPolygon[] = []
       const missingRefs: string[] = []
       areas.forEach((a, idx) => {
-        const pns = a.pointIds
-          .map((id) => {
-            const nm = outNameById.get(id)
-            if (!nm) missingRefs.push(`${a.name ?? a.id}: ${id}`)
-            return nm
-          })
-          .filter((p): p is string => !!p)
-        if (pns.length < 3) return
+        const indices: number[] = []
+        for (const id of a.pointIds) {
+          const i = seqIdxById.get(id)
+          if (i === undefined) {
+            missingRefs.push(`${a.name ?? a.id}: ${id}`)
+            continue
+          }
+          indices.push(i)
+        }
+        if (indices.length < 3) return
         polygons.push({
           parcelNumber: String(idx + 1),
           parcelName: a.name || a.zoneNumber || `画地${idx + 1}`,
-          pointNumbers: pns,
+          pointIndices: indices,
         })
       })
       if (missingRefs.length > 0) {
-        // 参照解決に失敗したものはコンソールに詳細を出す (ユーザは何かがおかしいと分かる)
         console.warn('[SIMA export] polygon references failed:', missingRefs)
       }
 
@@ -573,23 +552,22 @@ export function BoundarySurveyWorkAreaPage() {
         {
           projectName,
           zone,
-          points: uniquePoints.map(({ pointNumber, x, y, z }) => ({
-            pointNumber,
-            x,
-            y,
-            z,
+          // 点名 は NodeCloud に保存されている元の pointNumber をそのまま出力。
+          // 点番 (A01 index) は writer 側で 1 から順に自動割り当てされる。
+          points: exportCoords.map((c) => ({
+            pointNumber: c.pointNumber,
+            x: c.x,
+            y: c.y,
+            z: c.z,
           })),
           polygons,
         },
         `${projectName}_境界測量.sim`,
       )
-      const dupCount = referencedIds.size - polygons.reduce((s, p) => s + p.pointNumbers.length, 0)
-      const msg = `座標 ${uniquePoints.length} 点 / 画地 ${polygons.length} 件を出力しました`
+      const msg = `座標 ${exportCoords.length} 点 / 画地 ${polygons.length} 件を出力しました`
       const warn =
         missingRefs.length > 0
           ? ` (画地から未解決参照 ${missingRefs.length} 件をスキップ)`
-          : dupCount < 0
-          ? ' (重複する点名を自動リネーム)'
           : ''
       setMessage(msg + warn)
     } catch (err) {
