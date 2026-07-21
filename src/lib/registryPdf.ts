@@ -298,6 +298,136 @@ function extractOwners(text: string): ParsedOwner[] {
   return found.length > 0 ? [found[found.length - 1]] : []
 }
 
+// ============================================================
+// 所有者事項 (¥140) PDF 用のシンプルパーサ
+// ============================================================
+//
+// 「所有者事項」PDF は 全部事項 と構造がまったく異なる:
+//   ・地目 / 地積 は含まれない (所有者だけ)
+//   ・レイアウトは「住所 | 氏名」の 2 列テーブルのみ
+//   ・ヘッダ (「2026/07/21 12:23 現在の情報です。」等) を area/owner 抽出の
+//     ヒューリスティックが誤マッチしがちなので、専用ロジックで処理する
+//
+// アプローチ: X 座標で「住所列」「氏名列」を分割し、ヘッダ行より下の各 Y 行を
+// 左右に分けてペアリングする。
+export async function parseOwnershipPdf(file: File): Promise<ParsedRegistry> {
+  const fileMeta = parseFromFileName(file.name)
+  const arrayBuffer = await file.arrayBuffer()
+  const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise
+
+  // (x, y, s) の生アイテムを収集
+  const items: Array<{ x: number; y: number; s: string }> = []
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p)
+    const tc = await page.getTextContent()
+    for (const item of tc.items as Array<{
+      str: string
+      transform: number[]
+    }>) {
+      if (!item.str) continue
+      items.push({
+        x: item.transform[4],
+        y: Math.round(item.transform[5]),
+        s: item.str,
+      })
+    }
+  }
+
+  // Y でグルーピング (行として扱う)
+  const yBuckets = new Map<number, Array<{ x: number; s: string }>>()
+  for (const it of items) {
+    const arr = yBuckets.get(it.y) ?? []
+    arr.push({ x: it.x, s: it.s })
+    yBuckets.set(it.y, arr)
+  }
+  const yList = Array.from(yBuckets.keys()).sort((a, b) => b - a) // 上→下
+
+  // 「住所」「氏名」ヘッダ行を探す。両方が同じ Y に居るはず。
+  let headerY: number | null = null
+  let jushoX: number | null = null
+  let shimeiX: number | null = null
+  for (const y of yList) {
+    const row = yBuckets.get(y)!
+    const joined = row.map((i) => i.s).join('')
+    if (/住[\s　]*所/.test(joined) && /氏[\s　]*名/.test(joined)) {
+      headerY = y
+      // 各語のおおよその X 位置を拾う
+      for (const it of row) {
+        const s = it.s.replace(/[\s　]/g, '')
+        if (s.includes('住所') && jushoX == null) jushoX = it.x
+        if (s.includes('氏名') && shimeiX == null) shimeiX = it.x
+      }
+      // 語がバラバラの item に分かれている場合の fallback: 「住」「氏」の X を使う
+      if (jushoX == null || shimeiX == null) {
+        for (const it of row) {
+          if (jushoX == null && /住/.test(it.s)) jushoX = it.x
+          if (shimeiX == null && /氏/.test(it.s)) shimeiX = it.x
+        }
+      }
+      break
+    }
+  }
+
+  const owners: ParsedOwner[] = []
+  if (headerY !== null && jushoX !== null && shimeiX !== null) {
+    // 左右列の中間 X で行を分割
+    const midX = (jushoX + shimeiX) / 2
+    // ヘッダより下 (Y が小さい) の行だけ処理
+    const dataYs = yList.filter((y) => y < headerY)
+    for (const y of dataYs) {
+      const row = yBuckets.get(y)!
+      const left = row
+        .filter((i) => i.x < midX)
+        .sort((a, b) => a.x - b.x)
+        .map((i) => i.s)
+        .join('')
+        .replace(/[│|｜┃─-╿\s　]/g, '')
+      const right = row
+        .filter((i) => i.x >= midX)
+        .sort((a, b) => a.x - b.x)
+        .map((i) => i.s)
+        .join('')
+        .replace(/[│|｜┃─-╿\s　]/g, '')
+      // 罫線のみの行や、片方だけしか無い行は無視
+      if (!left || !right) continue
+      // フッタ (「*下線のあるものは...」等) を除外
+      if (/^[*※＊]/.test(left) || /下線|抹消|注記/.test(left)) continue
+      owners.push({ address: left, fullName: joinSpacedName(right) })
+    }
+  }
+
+  // 所在 / 地番: ファイル名優先、なければヘッダから雑に抽出
+  let location: string | null = fileMeta.location
+  let parcelNumber: string | null = fileMeta.parcelNumber
+  const rawText = yList
+    .map((y) =>
+      yBuckets
+        .get(y)!
+        .sort((a, b) => a.x - b.x)
+        .map((i) => i.s)
+        .join(''),
+    )
+    .join('\n')
+  if (!location) location = extractLocation(rawText)
+  if (!parcelNumber) parcelNumber = extractParcelNumber(rawText)
+
+  const warnings: string[] = []
+  if (owners.length === 0) warnings.push('所有者を抽出できませんでした')
+  if (!location) warnings.push('所在を抽出できませんでした')
+  if (!parcelNumber) warnings.push('地番を抽出できませんでした')
+
+  return {
+    fileName: file.name,
+    location,
+    parcelNumber,
+    landCategory: null, // 所有者事項 PDF には地目情報なし
+    areaSqm: null, // 所有者事項 PDF には地積情報なし
+    owners,
+    warnings,
+    rawText,
+  }
+}
+
 export async function parseRegistryPdf(file: File): Promise<ParsedRegistry> {
   const fileMeta = parseFromFileName(file.name)
   const lines = await extractLinesFromPdf(file)

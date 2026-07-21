@@ -3,7 +3,7 @@ import { Plus, Trash2, GripVertical, Calculator, Download, X, Image as ImageIcon
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdmin } from '@/lib/admin'
 import { RegistryFetchOneModal } from '@/features/parcel-maps/RegistryFetchOneModal'
-import { parseRegistryPdf } from '@/lib/registryPdf'
+import { parseRegistryPdf, parseOwnershipPdf } from '@/lib/registryPdf'
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
@@ -1269,7 +1269,12 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                     const file = new File([blob], `${r.kind}_${targetId}.pdf`, {
                       type: 'application/pdf',
                     })
-                    const parsed = await parseRegistryPdf(file)
+                    // 所有者事項 (¥140) と 全部事項 (¥334) は PDF レイアウトが
+                    // まったく違うため、種別ごとに専用パーサを使う
+                    const parsed =
+                      r.kind === 'ownership'
+                        ? await parseOwnershipPdf(file)
+                        : await parseRegistryPdf(file)
                     const patch: Partial<import('@/stores/parcelStore').ParcelEditableFields> = {}
                     if (parsed.location && !targetParcel?.location) {
                       patch.location = parsed.location
