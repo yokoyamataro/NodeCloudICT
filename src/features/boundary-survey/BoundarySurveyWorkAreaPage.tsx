@@ -493,45 +493,105 @@ export function BoundarySurveyWorkAreaPage() {
     if (!currentFarm) return
     setBusy('export')
     try {
-      const boundaryCoords = coordinates.filter((c) => c.type === 'boundary')
-      if (boundaryCoords.length === 0) {
-        setMessage('境界座標がありません')
+      const areas = workAreas['boundary_survey'] ?? []
+      // 出力対象の座標集合:
+      //   ・すべての polygon (画地) が参照している座標 (どの点種でも取り込む。
+      //     confirmed_boundary / measured / cadastral_diagram 等が
+      //     boundary で無いだけで export から漏れると B01 の点番が 0 になって
+      //     壊れた SIMA が出るため)
+      //   ・加えて type='boundary' の座標も含める (ポリゴン未参照の境界点も
+      //     出力に載せておきたいという運用要望)
+      const coordById = new Map<string, CoordinateRow>()
+      for (const c of coordinates) coordById.set(c.id, c)
+      const referencedIds = new Set<string>()
+      for (const a of areas) {
+        for (const id of a.pointIds) referencedIds.add(id)
+      }
+      const exportCoords: CoordinateRow[] = []
+      const seen = new Set<string>()
+      // 1) polygon が参照している点を order で入れる
+      for (const a of areas) {
+        for (const id of a.pointIds) {
+          if (seen.has(id)) continue
+          const c = coordById.get(id)
+          if (!c) continue
+          seen.add(id)
+          exportCoords.push(c)
+        }
+      }
+      // 2) boundary 型のうち未追加のものを追加
+      for (const c of coordinates) {
+        if (c.type !== 'boundary') continue
+        if (seen.has(c.id)) continue
+        seen.add(c.id)
+        exportCoords.push(c)
+      }
+      if (exportCoords.length === 0) {
+        setMessage('出力対象の座標がありません')
         setBusy(null)
         return
       }
+
+      // 重複する pointNumber (同名異点) は SIMA では区別できないので警告 + 二番目以降に
+      // 接尾辞を付けて回避する
+      const nameCount = new Map<string, number>()
+      const uniquePoints = exportCoords.map((c) => {
+        const base = c.pointNumber?.trim() || `P${nameCount.size + 1}`
+        const seenCount = nameCount.get(base) ?? 0
+        nameCount.set(base, seenCount + 1)
+        const uniqName = seenCount === 0 ? base : `${base}_${seenCount + 1}`
+        return { id: c.id, pointNumber: uniqName, x: c.x, y: c.y, z: c.z }
+      })
+      // id → 出力用 unique 点名
+      const outNameById = new Map<string, string>()
+      uniquePoints.forEach((p) => outNameById.set(p.id, p.pointNumber))
+
       const polygons: SimaExportPolygon[] = []
-      const areas = workAreas['boundary_survey'] ?? []
-      // point_ids → 点名（pointNumber）
-      const nameById = new Map<string, string>()
-      for (const c of coordinates) nameById.set(c.id, c.pointNumber)
+      const missingRefs: string[] = []
       areas.forEach((a, idx) => {
         const pns = a.pointIds
-          .map((id) => nameById.get(id))
+          .map((id) => {
+            const nm = outNameById.get(id)
+            if (!nm) missingRefs.push(`${a.name ?? a.id}: ${id}`)
+            return nm
+          })
           .filter((p): p is string => !!p)
         if (pns.length < 3) return
-        // 出力時の番号は連番、名称は地番名（zone_number/name は同じ地番名が入っている）
         polygons.push({
           parcelNumber: String(idx + 1),
           parcelName: a.name || a.zoneNumber || `画地${idx + 1}`,
           pointNumbers: pns,
         })
       })
+      if (missingRefs.length > 0) {
+        // 参照解決に失敗したものはコンソールに詳細を出す (ユーザは何かがおかしいと分かる)
+        console.warn('[SIMA export] polygon references failed:', missingRefs)
+      }
+
       const projectName = currentFarm.name || 'NoName'
       downloadSimaFile(
         {
           projectName,
           zone,
-          points: boundaryCoords.map((c) => ({
-            pointNumber: c.pointNumber,
-            x: c.x,
-            y: c.y,
-            z: c.z,
+          points: uniquePoints.map(({ pointNumber, x, y, z }) => ({
+            pointNumber,
+            x,
+            y,
+            z,
           })),
           polygons,
         },
         `${projectName}_境界測量.sim`,
       )
-      setMessage(`座標 ${boundaryCoords.length} 点 / 画地 ${polygons.length} 件を出力しました`)
+      const dupCount = referencedIds.size - polygons.reduce((s, p) => s + p.pointNumbers.length, 0)
+      const msg = `座標 ${uniquePoints.length} 点 / 画地 ${polygons.length} 件を出力しました`
+      const warn =
+        missingRefs.length > 0
+          ? ` (画地から未解決参照 ${missingRefs.length} 件をスキップ)`
+          : dupCount < 0
+          ? ' (重複する点名を自動リネーム)'
+          : ''
+      setMessage(msg + warn)
     } catch (err) {
       console.error(err)
       setMessage(err instanceof Error ? err.message : 'エクスポートに失敗しました')
