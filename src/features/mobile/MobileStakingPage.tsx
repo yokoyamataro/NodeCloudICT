@@ -30,6 +30,7 @@ import {
   Info,
   RefreshCw,
   AlertTriangle,
+  Crosshair,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { playStartChime, playStopChime, unlockAudio } from '@/lib/beep'
@@ -2783,32 +2784,7 @@ export function MobileStakingPage() {
       {/* ヘッダー（2 行目: ツールボタン群）。すべて日本語ラベル。
           音声ガイダンスと SIMA インポート/エクスポートは別画面へ移動。 */}
       <div className="px-2 py-1.5 bg-slate-800 text-white flex items-center gap-1.5 text-xs border-t border-slate-700 overflow-x-auto">
-        <button
-          onClick={() => setFollowMode((m) => NEXT_FOLLOW_MODE[m])}
-          className={`shrink-0 px-2 py-1.5 rounded font-medium ${
-            followMode === 'self' ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'
-          }`}
-          title={`地図表示モード: ${MAP_FOLLOW_LABEL[followMode]}（クリックで切替）`}
-        >
-          現在地
-        </button>
-        <button
-          onClick={() => void refreshData()}
-          disabled={refreshing}
-          className="shrink-0 flex items-center gap-1 px-2 py-1.5 rounded font-medium bg-slate-700 hover:bg-slate-600 disabled:opacity-60"
-          title={
-            refreshing
-              ? 'データを更新中…'
-              : `データを最新に更新（60 秒ごとに自動）${
-                  lastRefreshAt
-                    ? `\n最終更新: ${lastRefreshAt.toLocaleTimeString('ja-JP', { hour12: false })}`
-                    : ''
-                }`
-          }
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-          更新
-        </button>
+        {/* 現在地・更新 ボタンは地図左上のズームコントロール下に移動 (下記 map overlay 参照) */}
         {farmOrthos.length > 0 && (
           <button
             onClick={() => setShowOrtho((v) => !v)}
@@ -3694,6 +3670,40 @@ export function MobileStakingPage() {
 
       {/* 地図 */}
       <div className="flex-1 relative">
+        {/* 現在地 (追従モード切替) + 更新 ボタン。地図左上のズームコントロール直下に縦並び。 */}
+        <div className="absolute top-[88px] left-2 z-[1200] flex flex-col gap-1">
+          <button
+            type="button"
+            onClick={() => setFollowMode((m) => NEXT_FOLLOW_MODE[m])}
+            className={`w-9 h-9 flex items-center justify-center rounded shadow-md border ${
+              followMode === 'self'
+                ? 'bg-blue-600 border-blue-600 text-white'
+                : 'bg-white border-slate-400 text-slate-700 hover:bg-slate-50'
+            }`}
+            title={`地図表示モード: ${MAP_FOLLOW_LABEL[followMode]}（クリックで切替）`}
+            aria-label="現在地"
+          >
+            <Crosshair className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => void refreshData()}
+            disabled={refreshing}
+            className="w-9 h-9 flex items-center justify-center rounded shadow-md border bg-white border-slate-400 text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            title={
+              refreshing
+                ? 'データを更新中…'
+                : `データを最新に更新（60 秒ごとに自動）${
+                    lastRefreshAt
+                      ? `\n最終更新: ${lastRefreshAt.toLocaleTimeString('ja-JP', { hour12: false })}`
+                      : ''
+                  }`
+            }
+            aria-label="更新"
+          >
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
         {/* MAP / 3D / 2D 切替（地図右上に縦並び、ズームコントロールの対側）
             z は 2D パネル (z-[1000]) より高く、常に上に出す。 */}
         <div className="absolute top-2 right-2 z-[1200] flex flex-col gap-0.5 rounded overflow-hidden shadow-md border border-slate-400 bg-white">
