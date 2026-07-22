@@ -2362,7 +2362,7 @@ export function MobileStakingPage() {
       if (existing >= MAX_PER_TARGET) {
         alert(
           `${selectedTarget.name} は既に ${existing} 回 実測済みです（上限 ${MAX_PER_TARGET} 回）。\n` +
-            `古い記録を「測設記録」画面で削除してから再測してください。`,
+            `古い記録を「実測記録」画面で削除してから再測してください。`,
         )
         return
       }
