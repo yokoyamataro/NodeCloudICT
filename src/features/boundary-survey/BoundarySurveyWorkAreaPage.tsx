@@ -11,6 +11,7 @@ import {
   FileSpreadsheet,
   X,
   Check,
+  ChevronDown,
 } from 'lucide-react'
 import { GenericWorkAreaPage } from '@/components/work-area/GenericWorkAreaPage'
 import { CadastralCsvExportModal } from './CadastralCsvExportModal'
@@ -43,8 +44,8 @@ export function BoundarySurveyWorkAreaPage() {
   const [csvOpen, setCsvOpen] = useState(false)
   // インポート進捗
   const [progress, setProgress] = useState<{ phase: string; done: number; total: number } | null>(null)
-  // 地番SIM 出力: ボタン脇の「全地番 / 対象地選択」メニューの開閉
-  const [simMenuOpen, setSimMenuOpen] = useState(false)
+  // 「地番入力」「地番出力」ドロップダウンの開閉 (座標入力/出力と同じパターン)
+  const [openMenu, setOpenMenu] = useState<'import' | 'export' | null>(null)
   // 地番SIM 出力: 「対象地選択」モード中の選択済 area ID 集合。null なら選択モード OFF
   const [simSelectedIds, setSimSelectedIds] = useState<Set<string> | null>(null)
 
@@ -668,64 +669,99 @@ export function BoundarySurveyWorkAreaPage() {
                 {message}
               </span>
             )}
-            {/* 法務省地図関連の操作は地図右下に移動 (下記 mapBottomRightOverlay 参照) */}
-            <button
-              onClick={handleOpenImport}
-              disabled={busy !== null || !currentFarm}
-              className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-            >
-              {busy === 'import' ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Download className="h-4 w-4" />
-              )}
-              地番SIM取り込み
-            </button>
-            <button
-              onClick={handleOpenJpgisImport}
-              disabled={busy !== null || !currentFarm}
-              className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-            >
-              {busy === 'import' ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Download className="h-4 w-4" />
-              )}
-              地番SIM(JPGIS.XML)取り込み
-            </button>
+            {/* 地番入力 / 地番出力 ボタンは「区域登録」ヘッダに移動
+                (座標入力 / 座標出力 と同じ配置ポリシー) */}
+          </div>
+        }
+        areaListActions={
+          <>
+            {/* 地番入力: SIM取り込み / JPGIS.XML取り込み */}
             <div className="relative">
               <button
-                onClick={() => {
-                  if (simSelectedIds) return
-                  setSimMenuOpen((v) => !v)
-                }}
-                disabled={busy !== null || !currentFarm || !!simSelectedIds}
-                className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
-                title={
-                  simSelectedIds
-                    ? '対象地選択モード中 — 地図上で地番をクリックして選択'
-                    : '地番SIM 出力'
+                type="button"
+                onClick={() =>
+                  setOpenMenu(openMenu === 'import' ? null : 'import')
                 }
+                disabled={busy !== null || !currentFarm}
+                title="地番入力 (SIM / JPGIS.XML)"
+                className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50 disabled:opacity-50"
               >
-                {busy === 'export' ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                {busy === 'import' ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : (
-                  <Upload className="h-4 w-4" />
+                  <Download className="h-3.5 w-3.5" />
                 )}
-                地番SIM 出力
+                地番入力
+                <ChevronDown className="h-3 w-3" />
               </button>
-              {simMenuOpen && (
+              {openMenu === 'import' && (
                 <div
-                  className="absolute right-0 top-full mt-1 z-[1200] min-w-[14rem] rounded border bg-white shadow-lg text-sm"
-                  onMouseLeave={() => setSimMenuOpen(false)}
+                  className="absolute right-0 top-full mt-1 w-52 bg-white border rounded shadow-lg z-[1200] text-sm"
+                  onMouseLeave={() => setOpenMenu(null)}
                 >
                   <button
                     type="button"
                     onClick={() => {
-                      setSimMenuOpen(false)
+                      setOpenMenu(null)
+                      handleOpenImport()
+                    }}
+                    className="w-full text-left px-3 py-2 hover:bg-slate-50 border-b"
+                  >
+                    SIM取り込み (.sim)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpenMenu(null)
+                      handleOpenJpgisImport()
+                    }}
+                    className="w-full text-left px-3 py-2 hover:bg-slate-50"
+                  >
+                    JPGIS.XML取り込み (.xml)
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* 地番出力: 地番SIM (全 / 対象地選択) / CSV */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  if (simSelectedIds) return
+                  setOpenMenu(openMenu === 'export' ? null : 'export')
+                }}
+                disabled={busy !== null || !currentFarm || !!simSelectedIds}
+                title={
+                  simSelectedIds
+                    ? '対象地選択モード中 — 地図上で地番をクリックして選択'
+                    : '地番出力 (地番SIM / CSV)'
+                }
+                className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50 disabled:opacity-50"
+              >
+                {busy === 'export' ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Upload className="h-3.5 w-3.5" />
+                )}
+                地番出力
+                <ChevronDown className="h-3 w-3" />
+              </button>
+              {openMenu === 'export' && (
+                <div
+                  className="absolute right-0 top-full mt-1 w-56 bg-white border rounded shadow-lg z-[1200] text-sm"
+                  onMouseLeave={() => setOpenMenu(null)}
+                >
+                  <div className="px-3 pt-2 pb-1 text-[10px] text-slate-400 uppercase tracking-wide">
+                    地番SIM
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpenMenu(null)
                       handleExport()
                     }}
-                    className="w-full flex items-center justify-between gap-2 px-3 py-2 hover:bg-slate-50 border-b"
+                    className="w-full text-left px-3 py-2 hover:bg-slate-50 flex items-center justify-between gap-2"
                   >
                     <span>全地番を出力</span>
                     <span className="text-xs text-slate-500">
@@ -735,26 +771,31 @@ export function BoundarySurveyWorkAreaPage() {
                   <button
                     type="button"
                     onClick={() => {
-                      setSimMenuOpen(false)
+                      setOpenMenu(null)
                       setSimSelectedIds(new Set())
                     }}
-                    className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50"
+                    className="w-full text-left px-3 py-2 hover:bg-slate-50 border-b"
                   >
-                    <span>対象地を選択して出力</span>
+                    対象地を選択して出力
+                  </button>
+                  <div className="px-3 pt-2 pb-1 text-[10px] text-slate-400 uppercase tracking-wide">
+                    CSV
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpenMenu(null)
+                      setCsvOpen(true)
+                    }}
+                    className="w-full text-left px-3 py-2 hover:bg-slate-50 flex items-center gap-2"
+                  >
+                    <FileSpreadsheet className="h-3.5 w-3.5 text-slate-500" />
+                    CSV出力
                   </button>
                 </div>
               )}
             </div>
-            <button
-              onClick={() => setCsvOpen(true)}
-              disabled={busy !== null || !currentFarm}
-              className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
-              title="地番一覧を CSV で出力（列を選べます）"
-            >
-              <FileSpreadsheet className="h-4 w-4" />
-              CSV 出力
-            </button>
-          </div>
+          </>
         }
         mapChildren={
           hasActiveDataset ? (

@@ -190,9 +190,12 @@ interface GenericWorkAreaPageProps {
    *  (通常の onPolygonSelect / setSelectedAreaId は呼ばない)。 */
   checkedPolygonIds?: Set<string>
   onPolygonToggleCheck?: (id: string) => void
+  /** 「区域登録」ヘッダの CadastralColumnPicker / 登記PDF取込 の右側に差し込む
+   *  追加アクション (例: 地番入力 / 地番出力 ドロップダウン) */
+  areaListActions?: React.ReactNode
 }
 
-export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', headerActions, mapChildren, mapBottomLeftOverlay, suppressDefaultParcelMapLayer, checkedPolygonIds, onPolygonToggleCheck }: GenericWorkAreaPageProps) {
+export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', headerActions, mapChildren, mapBottomLeftOverlay, suppressDefaultParcelMapLayer, checkedPolygonIds, onPolygonToggleCheck, areaListActions }: GenericWorkAreaPageProps) {
   const { user } = useAuth()
   const isSiteOwner = isAdmin(user?.email)
   // 「登記取得」モーダルを開く対象 work_area id。1 度に 1 件だけ。
@@ -765,6 +768,7 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                     <FileText className="h-3.5 w-3.5" />
                     登記PDF取込
                   </button>
+                  {areaListActions}
                 </>
               )}
               {/* 地籍は最下行の空入力で追加するためボタン不要。他の工種では従来通り */}
