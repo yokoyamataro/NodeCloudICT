@@ -185,9 +185,14 @@ interface GenericWorkAreaPageProps {
    *  mapChildren で consumer が渡す拡張版 (選択モード付き等) を使う。
    *  法務省地図トグルボタンは常に GenericWorkAreaPage が描く。 */
   suppressDefaultParcelMapLayer?: boolean
+  /** 地番 (work_area polygon) 複数選択モード用: 選択済 ID 集合。指定されると
+   *  該当 polygon をハイライト + polygon click で onPolygonToggleCheck を呼ぶ
+   *  (通常の onPolygonSelect / setSelectedAreaId は呼ばない)。 */
+  checkedPolygonIds?: Set<string>
+  onPolygonToggleCheck?: (id: string) => void
 }
 
-export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', headerActions, mapChildren, mapBottomLeftOverlay, suppressDefaultParcelMapLayer }: GenericWorkAreaPageProps) {
+export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', headerActions, mapChildren, mapBottomLeftOverlay, suppressDefaultParcelMapLayer, checkedPolygonIds, onPolygonToggleCheck }: GenericWorkAreaPageProps) {
   const { user } = useAuth()
   const isSiteOwner = isAdmin(user?.email)
   // 「登記取得」モーダルを開く対象 work_area id。1 度に 1 件だけ。
@@ -1168,8 +1173,17 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
             onPointSelect={handlePointClick}
             externalPolygons={externalPolygons}
             editingExternalPolygonId={editingAreaId}
-            selectedExternalPolygonId={isBoundarySurvey ? selectedAreaId : null}
-            onPolygonSelect={isBoundarySurvey ? setSelectedAreaId : undefined}
+            selectedExternalPolygonId={
+              onPolygonToggleCheck ? null : isBoundarySurvey ? selectedAreaId : null
+            }
+            checkedExternalPolygonIds={checkedPolygonIds}
+            onPolygonSelect={
+              onPolygonToggleCheck
+                ? onPolygonToggleCheck
+                : isBoundarySurvey
+                ? setSelectedAreaId
+                : undefined
+            }
             farmId={farmId ?? null}
             showOrtho={showOrtho}
             showEdgeLengths={showEdgeLengths}

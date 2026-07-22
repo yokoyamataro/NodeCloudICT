@@ -496,6 +496,9 @@ interface CoordinateMapProps {
   /** ポリゴンクリックで親に通知（地番管理で一覧スクロール+選択ハイライトに使う） */
   onPolygonSelect?: (id: string) => void
   selectedExternalPolygonId?: string | null
+  /** 複数選択モード時の選択済 polygon ID 集合。指定されると該当 polygon を
+   *  オレンジハイライトする。地番SIM 出力の対象地選択等で使用。 */
+  checkedExternalPolygonIds?: Set<string>
   /** 編集中ポリゴンの構成点 ID 一覧（順序付き）。指定すると辺の中点に
    *  + ボタンが出る（click で挿入待機モード → 続けて座標 click で挿入確定） */
   editingConstituentPointIds?: string[]
@@ -558,6 +561,7 @@ export function CoordinateMap({
   editingExternalPolygonId,
   onPolygonSelect,
   selectedExternalPolygonId,
+  checkedExternalPolygonIds,
   editingConstituentPointIds,
   selectedConstituentPointId,
   onMidpointClick,
@@ -709,16 +713,34 @@ export function CoordinateMap({
         getPolygonPositions={(p) => p.positions}
         render={(polygon, { showLabel }) => {
           const isEditing = polygon.id === editingExternalPolygonId
-          const isSelected = !isEditing && polygon.id === selectedExternalPolygonId
+          const isChecked = checkedExternalPolygonIds?.has(polygon.id) ?? false
+          const isSelected =
+            !isEditing && polygon.id === selectedExternalPolygonId
+          // 優先度: editing (緑破線) > checked (オレンジ濃) > selected (オレンジ薄) > 通常 (緑)
+          const color = isEditing
+            ? '#16a34a'
+            : isChecked
+            ? '#ea580c'
+            : isSelected
+            ? '#f97316'
+            : '#22c55e'
+          const fillOpacity = isEditing
+            ? 0.3
+            : isChecked
+            ? 0.5
+            : isSelected
+            ? 0.35
+            : 0.2
+          const weight = isEditing ? 3 : isChecked ? 3 : isSelected ? 3 : 2
           return (
             <Polygon
               key={polygon.id}
               positions={polygon.positions}
               pathOptions={{
-                color: isEditing ? '#16a34a' : isSelected ? '#f97316' : '#22c55e',
-                fillColor: isEditing ? '#16a34a' : isSelected ? '#f97316' : '#22c55e',
-                fillOpacity: isEditing ? 0.3 : isSelected ? 0.35 : 0.2,
-                weight: isEditing ? 3 : isSelected ? 3 : 2,
+                color,
+                fillColor: color,
+                fillOpacity,
+                weight,
                 dashArray: isEditing ? '5, 5' : undefined,
               }}
               eventHandlers={

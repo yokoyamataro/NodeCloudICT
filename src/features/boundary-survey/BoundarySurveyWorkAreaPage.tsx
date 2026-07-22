@@ -9,6 +9,8 @@ import {
   Upload,
   Loader2,
   FileSpreadsheet,
+  X,
+  Check,
 } from 'lucide-react'
 import { GenericWorkAreaPage } from '@/components/work-area/GenericWorkAreaPage'
 import { CadastralCsvExportModal } from './CadastralCsvExportModal'
@@ -41,6 +43,10 @@ export function BoundarySurveyWorkAreaPage() {
   const [csvOpen, setCsvOpen] = useState(false)
   // インポート進捗
   const [progress, setProgress] = useState<{ phase: string; done: number; total: number } | null>(null)
+  // 地番SIM 出力: ボタン脇の「全地番 / 対象地選択」メニューの開閉
+  const [simMenuOpen, setSimMenuOpen] = useState(false)
+  // 地番SIM 出力: 「対象地選択」モード中の選択済 area ID 集合。null なら選択モード OFF
+  const [simSelectedIds, setSimSelectedIds] = useState<Set<string> | null>(null)
 
   const { currentFarm } = useFarmStore()
   const { projects } = useProjectListStore()
@@ -489,11 +495,19 @@ export function BoundarySurveyWorkAreaPage() {
     }
   }
 
-  const handleExport = () => {
+  const handleExport = (filterAreaIds?: Set<string>) => {
     if (!currentFarm) return
     setBusy('export')
     try {
-      const areas = workAreas['boundary_survey'] ?? []
+      const allAreas = workAreas['boundary_survey'] ?? []
+      const areas = filterAreaIds
+        ? allAreas.filter((a) => filterAreaIds.has(a.id))
+        : allAreas
+      if (filterAreaIds && areas.length === 0) {
+        setMessage('選択された地番がありません')
+        setBusy(null)
+        return
+      }
       // 出力対象 = 「地番構成点」= polygon (画地) が参照している全座標。
       // 点種 (boundary / confirmed_boundary / measured / cadastral_diagram
       // 等) でフィルタしない — 型が boundary で無いだけで地番構成点となる
@@ -679,18 +693,58 @@ export function BoundarySurveyWorkAreaPage() {
               )}
               地番SIM(JPGIS.XML)取り込み
             </button>
-            <button
-              onClick={handleExport}
-              disabled={busy !== null || !currentFarm}
-              className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
-            >
-              {busy === 'export' ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Upload className="h-4 w-4" />
+            <div className="relative">
+              <button
+                onClick={() => {
+                  if (simSelectedIds) return
+                  setSimMenuOpen((v) => !v)
+                }}
+                disabled={busy !== null || !currentFarm || !!simSelectedIds}
+                className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
+                title={
+                  simSelectedIds
+                    ? '対象地選択モード中 — 地図上で地番をクリックして選択'
+                    : '地番SIM 出力'
+                }
+              >
+                {busy === 'export' ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Upload className="h-4 w-4" />
+                )}
+                地番SIM 出力
+              </button>
+              {simMenuOpen && (
+                <div
+                  className="absolute right-0 top-full mt-1 z-[1200] min-w-[14rem] rounded border bg-white shadow-lg text-sm"
+                  onMouseLeave={() => setSimMenuOpen(false)}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSimMenuOpen(false)
+                      handleExport()
+                    }}
+                    className="w-full flex items-center justify-between gap-2 px-3 py-2 hover:bg-slate-50 border-b"
+                  >
+                    <span>全地番を出力</span>
+                    <span className="text-xs text-slate-500">
+                      {(workAreas['boundary_survey'] ?? []).length} 筆
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSimMenuOpen(false)
+                      setSimSelectedIds(new Set())
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50"
+                  >
+                    <span>対象地を選択して出力</span>
+                  </button>
+                </div>
               )}
-              地番SIM 出力
-            </button>
+            </div>
             <button
               onClick={() => setCsvOpen(true)}
               disabled={busy !== null || !currentFarm}
@@ -715,6 +769,20 @@ export function BoundarySurveyWorkAreaPage() {
           ) : null
         }
         suppressDefaultParcelMapLayer
+        checkedPolygonIds={simSelectedIds ?? undefined}
+        onPolygonToggleCheck={
+          simSelectedIds
+            ? (id: string) => {
+                setSimSelectedIds((prev) => {
+                  if (!prev) return prev
+                  const next = new Set(prev)
+                  if (next.has(id)) next.delete(id)
+                  else next.add(id)
+                  return next
+                })
+              }
+            : undefined
+        }
         mapBottomLeftOverlay={
           hasActiveDataset && showParcelLayer ? (
             /* 地番データ取込ボタン (共通)。法務省地図トグル自体は GenericWorkAreaPage が
@@ -728,6 +796,62 @@ export function BoundarySurveyWorkAreaPage() {
         }
       />
       {csvOpen && <CadastralCsvExportModal onClose={() => setCsvOpen(false)} />}
+
+      {/* 地番SIM 出力: 対象地選択モードのフローティングバナー */}
+      {simSelectedIds && (
+        <div
+          className="fixed top-20 left-1/2 -translate-x-1/2 z-[1300] flex items-center gap-3 rounded-lg bg-orange-500 px-4 py-2 text-sm font-medium text-white shadow-xl"
+          role="dialog"
+        >
+          <span>
+            対象地選択中: {simSelectedIds.size} 筆 /{' '}
+            {(workAreas['boundary_survey'] ?? []).length} 筆
+          </span>
+          <div className="flex items-center gap-2 border-l border-white/40 pl-3">
+            <button
+              type="button"
+              onClick={() => {
+                const all = new Set(
+                  (workAreas['boundary_survey'] ?? []).map((a) => a.id),
+                )
+                setSimSelectedIds(all)
+              }}
+              className="rounded bg-white/20 px-2 py-1 text-xs hover:bg-white/30"
+            >
+              全選択
+            </button>
+            <button
+              type="button"
+              onClick={() => setSimSelectedIds(new Set())}
+              className="rounded bg-white/20 px-2 py-1 text-xs hover:bg-white/30"
+              disabled={simSelectedIds.size === 0}
+            >
+              全解除
+            </button>
+            <button
+              type="button"
+              onClick={() => setSimSelectedIds(null)}
+              className="flex items-center gap-1 rounded bg-white/20 px-2 py-1 text-xs hover:bg-white/30"
+            >
+              <X className="h-3 w-3" />
+              キャンセル
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const sel = simSelectedIds
+                setSimSelectedIds(null)
+                if (sel && sel.size > 0) handleExport(sel)
+              }}
+              disabled={simSelectedIds.size === 0}
+              className="flex items-center gap-1 rounded bg-white px-3 py-1 text-xs font-bold text-orange-600 hover:bg-orange-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Check className="h-3 w-3" />
+              確定 ({simSelectedIds.size}筆)
+            </button>
+          </div>
+        </div>
+      )}
       <input
         ref={fileRef}
         type="file"
