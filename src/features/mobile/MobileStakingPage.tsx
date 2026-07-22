@@ -31,6 +31,7 @@ import {
   RefreshCw,
   AlertTriangle,
   Crosshair,
+  Settings2,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { playStartChime, playStopChime, unlockAudio } from '@/lib/beep'
@@ -67,6 +68,15 @@ import { importParcelBatch } from '@/features/parcel-maps/importParcelBatch'
 import { Map as MapIcon } from 'lucide-react'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
 import { MobileHamburgerMenu } from './MobileHamburgerMenu'
+import {
+  MobileParcelListPanel,
+  PARCEL_COLUMN_KEYS,
+  type ParcelColumnKey,
+} from './MobileParcelListPanel'
+import {
+  MobileListColumnPicker,
+  type ColumnDef,
+} from './MobileListColumnPicker'
 import { useOrthophotoStore } from '@/stores/orthophotoStore'
 import { parseLandXml } from '@/lib/landxml/parser'
 import {
@@ -166,6 +176,60 @@ const FIX_ACCURACY_MAX_M = 0.05
 const POST_FIX_REJECT_ACC_M = 0.50
 // この回数を超えて連続で棄却が続いたら FIX 喪失とみなして受け入れる。
 const MAX_CONSECUTIVE_REJECTS = 5
+
+// 座標パネル: 表示列 定義
+const COORD_COLUMN_KEYS = [
+  'name',
+  'xy',
+  'z',
+  'type',
+  'stakeType',
+  'stakeStatus',
+  'photo',
+  'updatedBy',
+  'updatedAt',
+] as const
+type CoordColumnKey = (typeof COORD_COLUMN_KEYS)[number]
+
+const COORD_COLUMNS: ReadonlyArray<ColumnDef<CoordColumnKey>> = [
+  { key: 'name', label: '点名' },
+  { key: 'xy', label: 'XY' },
+  { key: 'z', label: 'Z' },
+  { key: 'type', label: '点種' },
+  { key: 'stakeType', label: '杭種' },
+  { key: 'stakeStatus', label: '設置' },
+  { key: 'photo', label: 'カメラ' },
+  { key: 'updatedBy', label: '更新者' },
+  { key: 'updatedAt', label: '更新日' },
+]
+const COORD_REQUIRED_KEYS: ReadonlyArray<CoordColumnKey> = ['name']
+
+// 表示列の localStorage 永続化用 helper
+const COORD_COLS_LS_PREFIX = 'mobile:coord-cols:'
+const PARCEL_COLS_LS_PREFIX = 'mobile:parcel-cols:'
+function loadColumnSet<K extends string>(
+  key: string,
+  fallback: ReadonlyArray<K>,
+  validKeys: ReadonlyArray<K>,
+): ReadonlySet<K> {
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return new Set(fallback)
+    const arr = JSON.parse(raw) as string[]
+    const valid = new Set(validKeys as ReadonlyArray<string>)
+    const filtered = arr.filter((k) => valid.has(k)) as K[]
+    return new Set(filtered.length > 0 ? filtered : fallback)
+  } catch {
+    return new Set(fallback)
+  }
+}
+function saveColumnSet(key: string, set: ReadonlySet<string>): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(Array.from(set)))
+  } catch {
+    /* ignore quota */
+  }
+}
 
 // 「ピッ」を count 回、短い間隔で鳴らす（Web Audio）
 function playBeeps(ctx: AudioContext, count: number) {
@@ -679,6 +743,38 @@ export function MobileStakingPage() {
   const [showRecordList, setShowRecordList] = useState(
     () => params.get('openCoords') === '1',
   )
+  const [showParcelList, setShowParcelList] = useState(false)
+  // 座標 / 地番 パネルの表示列設定 (farm 単位で localStorage に保存)
+  const [coordColumns, setCoordColumnsState] = useState<ReadonlySet<CoordColumnKey>>(
+    () =>
+      loadColumnSet<CoordColumnKey>(
+        COORD_COLS_LS_PREFIX + (farmId ?? ''),
+        COORD_COLUMN_KEYS,
+        COORD_COLUMN_KEYS,
+      ),
+  )
+  const [parcelColumns, setParcelColumnsState] = useState<ReadonlySet<ParcelColumnKey>>(
+    () =>
+      loadColumnSet<ParcelColumnKey>(
+        PARCEL_COLS_LS_PREFIX + (farmId ?? ''),
+        PARCEL_COLUMN_KEYS,
+        PARCEL_COLUMN_KEYS,
+      ),
+  )
+  const [showCoordColumnPicker, setShowCoordColumnPicker] = useState(false)
+  const setCoordColumns = (next: ReadonlySet<CoordColumnKey>) => {
+    // 必須列を常に含める
+    const withReq = new Set(next)
+    for (const r of COORD_REQUIRED_KEYS) withReq.add(r)
+    setCoordColumnsState(withReq)
+    saveColumnSet(COORD_COLS_LS_PREFIX + (farmId ?? ''), withReq)
+  }
+  const setParcelColumns = (next: ReadonlySet<ParcelColumnKey>) => {
+    const withReq = new Set(next)
+    withReq.add('parcel_number')
+    setParcelColumnsState(withReq)
+    saveColumnSet(PARCEL_COLS_LS_PREFIX + (farmId ?? ''), withReq)
+  }
   // 座標一覧タブ内から手入力で 1 点追加するモーダル
   const [showManualCoordEntry, setShowManualCoordEntry] = useState(false)
   // 現場を開いたときの開始前チェック（ジオイド補正・目標高(アンテナ高)・既知点精度確認の喚起）
@@ -2816,14 +2912,36 @@ export function MobileStakingPage() {
           計算
         </button>
         <button
-          onClick={() => setShowRecordList((v) => !v)}
-          className="shrink-0 relative px-2 py-1.5 rounded font-medium bg-slate-700 hover:bg-slate-600"
+          onClick={() => {
+            setShowParcelList(false)
+            setShowRecordList((v) => !v)
+          }}
+          className={`shrink-0 relative px-2 py-1.5 rounded font-medium ${
+            showRecordList ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'
+          }`}
           title="座標一覧（SIMA インポート/エクスポートもここから）"
         >
-          座標一覧
+          座標
           {coordinates.length > 0 && (
             <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">
               {coordinates.length > 9 ? '9+' : coordinates.length}
+            </span>
+          )}
+        </button>
+        <button
+          onClick={() => {
+            setShowRecordList(false)
+            setShowParcelList((v) => !v)
+          }}
+          className={`shrink-0 relative px-2 py-1.5 rounded font-medium ${
+            showParcelList ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'
+          }`}
+          title="地番一覧（工区配下の地番属性を表示）"
+        >
+          地番
+          {parcelAreas.length > 0 && (
+            <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">
+              {parcelAreas.length > 9 ? '9+' : parcelAreas.length}
             </span>
           )}
         </button>
@@ -4846,7 +4964,7 @@ export function MobileStakingPage() {
         {showRecordList && (
           <div className="absolute inset-x-0 bottom-0 z-[1000] bg-white border-t shadow-xl max-h-[65%] flex flex-col">
             <div className="px-3 py-2 border-b flex items-center gap-2 text-sm">
-              <span className="font-semibold">座標一覧</span>
+              <span className="font-semibold">座標</span>
               <span className="text-xs text-slate-500">{filteredTargets.length} 件</span>
               {/* SIMA インポート / エクスポート を「閉じる」の左に配置 */}
               <button
@@ -4874,6 +4992,14 @@ export function MobileStakingPage() {
                 SIMA 出力
               </button>
               <button
+                onClick={() => setShowCoordColumnPicker(true)}
+                className="flex items-center gap-1 text-xs px-2 py-0.5 border rounded hover:bg-slate-50"
+                title="表示列を設定"
+              >
+                <Settings2 className="h-3.5 w-3.5" />
+                表示列
+              </button>
+              <button
                 onClick={() => setShowRecordList(false)}
                 className="text-xs px-2 py-0.5 border rounded hover:bg-slate-50"
               >
@@ -4887,13 +5013,36 @@ export function MobileStakingPage() {
                 <table className="w-full text-[11px]">
                   <thead className="sticky top-0 bg-slate-50 z-10">
                     <tr className="text-slate-500">
-                      <th className="px-2 py-1 text-left">点名</th>
-                      <th className="px-2 py-1 text-right">X</th>
-                      <th className="px-2 py-1 text-right">Y</th>
-                      <th className="px-2 py-1 text-right">Z</th>
-                      <th className="px-2 py-1 text-left">種類</th>
-                      <th className="px-2 py-1 text-left">設置</th>
-                      <th className="px-2 py-1 text-center">写真</th>
+                      {coordColumns.has('name') && (
+                        <th className="px-2 py-1 text-left">点名</th>
+                      )}
+                      {coordColumns.has('xy') && (
+                        <>
+                          <th className="px-2 py-1 text-right">X</th>
+                          <th className="px-2 py-1 text-right">Y</th>
+                        </>
+                      )}
+                      {coordColumns.has('z') && (
+                        <th className="px-2 py-1 text-right">Z</th>
+                      )}
+                      {coordColumns.has('type') && (
+                        <th className="px-2 py-1 text-left">点種</th>
+                      )}
+                      {coordColumns.has('stakeType') && (
+                        <th className="px-2 py-1 text-left">杭種</th>
+                      )}
+                      {coordColumns.has('stakeStatus') && (
+                        <th className="px-2 py-1 text-left">設置</th>
+                      )}
+                      {coordColumns.has('photo') && (
+                        <th className="px-2 py-1 text-center">カメラ</th>
+                      )}
+                      {coordColumns.has('updatedBy') && (
+                        <th className="px-2 py-1 text-left">更新者</th>
+                      )}
+                      {coordColumns.has('updatedAt') && (
+                        <th className="px-2 py-1 text-left">更新日</th>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
@@ -4906,34 +5055,89 @@ export function MobileStakingPage() {
                         t.kind === 'coordinate' && t.stakeStatus
                           ? STAKE_STATUS_LABEL[t.stakeStatus] ?? ''
                           : ''
+                      // coordinate 由来なら生 CoordinateRow から stakeType / updatedAt / updatedBy を拾う
+                      const rawCoord =
+                        t.kind === 'coordinate'
+                          ? coordinates.find((c) => c.id === t.refId) ?? null
+                          : null
+                      const stakeTypeLabel = rawCoord?.stakeType ?? ''
+                      const updatedAtLabel = rawCoord?.updatedAt
+                        ? new Date(rawCoord.updatedAt).toLocaleString('ja-JP', {
+                            year: '2-digit',
+                            month: '2-digit',
+                            day: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })
+                        : ''
+                      const updatedByLabel = rawCoord?.updatedBy
+                        ? rawCoord.updatedBy === user?.id
+                          ? '自分'
+                          : rawCoord.updatedBy.slice(0, 6)
+                        : ''
                       return (
                         <tr
                           key={t.id}
                           className="border-t hover:bg-blue-50 cursor-pointer"
                           onClick={() => setPointInfoTarget(t)}
                         >
-                          <td className="px-2 py-1 font-medium text-slate-800 whitespace-nowrap max-w-[6rem] truncate">
-                            {t.name}
-                          </td>
-                          <td className="px-2 py-1 text-right font-mono">{t.x.toFixed(3)}</td>
-                          <td className="px-2 py-1 text-right font-mono">{t.y.toFixed(3)}</td>
-                          <td className="px-2 py-1 text-right font-mono">
-                            {t.z != null ? t.z.toFixed(3) : '-'}
-                          </td>
-                          <td className="px-2 py-1 text-slate-600 whitespace-nowrap max-w-[5rem] truncate">
-                            {t.subTypeLabel}
-                          </td>
-                          <td className="px-2 py-1 text-slate-600">{statusLabel || '-'}</td>
-                          <td className="px-2 py-1 text-center">
-                            {photoCount > 0 ? (
-                              <span className="inline-flex items-center gap-0.5 text-slate-700">
-                                <Camera className="h-3 w-3" />
-                                {photoCount}
-                              </span>
-                            ) : (
-                              <span className="text-slate-300">-</span>
-                            )}
-                          </td>
+                          {coordColumns.has('name') && (
+                            <td className="px-2 py-1 font-medium text-slate-800 whitespace-nowrap max-w-[6rem] truncate">
+                              {t.name}
+                            </td>
+                          )}
+                          {coordColumns.has('xy') && (
+                            <>
+                              <td className="px-2 py-1 text-right font-mono">
+                                {t.x.toFixed(3)}
+                              </td>
+                              <td className="px-2 py-1 text-right font-mono">
+                                {t.y.toFixed(3)}
+                              </td>
+                            </>
+                          )}
+                          {coordColumns.has('z') && (
+                            <td className="px-2 py-1 text-right font-mono">
+                              {t.z != null ? t.z.toFixed(3) : '-'}
+                            </td>
+                          )}
+                          {coordColumns.has('type') && (
+                            <td className="px-2 py-1 text-slate-600 whitespace-nowrap max-w-[5rem] truncate">
+                              {t.subTypeLabel}
+                            </td>
+                          )}
+                          {coordColumns.has('stakeType') && (
+                            <td className="px-2 py-1 text-slate-600 whitespace-nowrap max-w-[5rem] truncate">
+                              {stakeTypeLabel || '-'}
+                            </td>
+                          )}
+                          {coordColumns.has('stakeStatus') && (
+                            <td className="px-2 py-1 text-slate-600">
+                              {statusLabel || '-'}
+                            </td>
+                          )}
+                          {coordColumns.has('photo') && (
+                            <td className="px-2 py-1 text-center">
+                              {photoCount > 0 ? (
+                                <span className="inline-flex items-center gap-0.5 text-slate-700">
+                                  <Camera className="h-3 w-3" />
+                                  {photoCount}
+                                </span>
+                              ) : (
+                                <span className="text-slate-300">-</span>
+                              )}
+                            </td>
+                          )}
+                          {coordColumns.has('updatedBy') && (
+                            <td className="px-2 py-1 text-slate-600 whitespace-nowrap max-w-[5rem] truncate">
+                              {updatedByLabel || '-'}
+                            </td>
+                          )}
+                          {coordColumns.has('updatedAt') && (
+                            <td className="px-2 py-1 text-slate-600 whitespace-nowrap">
+                              {updatedAtLabel || '-'}
+                            </td>
+                          )}
                         </tr>
                       )
                     })}
@@ -4942,6 +5146,28 @@ export function MobileStakingPage() {
               )}
             </div>
           </div>
+        )}
+
+        {/* 地番一覧パネル */}
+        {showParcelList && farmId && (
+          <MobileParcelListPanel
+            farmId={farmId}
+            visibleColumns={parcelColumns}
+            onChangeColumns={setParcelColumns}
+            onClose={() => setShowParcelList(false)}
+          />
+        )}
+
+        {/* 座標: 表示列 picker */}
+        {showCoordColumnPicker && (
+          <MobileListColumnPicker
+            title="座標: 表示列"
+            columns={COORD_COLUMNS}
+            requiredKeys={COORD_REQUIRED_KEYS}
+            visible={coordColumns}
+            onChange={setCoordColumns}
+            onClose={() => setShowCoordColumnPicker(false)}
+          />
         )}
       </div>
 
