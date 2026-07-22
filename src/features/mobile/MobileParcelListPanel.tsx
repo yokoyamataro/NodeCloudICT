@@ -9,6 +9,7 @@ import { useParcelStore } from '@/stores/parcelStore'
 import { useLandownerStore } from '@/stores/landownerStore'
 import { compareByLocationAndParcel } from '@/lib/parcelSort'
 import { MobileListColumnPicker, type ColumnDef } from './MobileListColumnPicker'
+import { MobileParcelEditModal } from './MobileParcelEditModal'
 
 export const PARCEL_COLUMN_KEYS = [
   'parcel_number',
@@ -67,6 +68,11 @@ export function MobileParcelListPanel({
   const fetchLandowners = useLandownerStore((s) => s.fetchByFarm)
   const fetchAssignments = useLandownerStore((s) => s.fetchAssignmentsByFarm)
   const [showPicker, setShowPicker] = useState(false)
+  // タップで開く 地番編集モーダル
+  const [editingRow, setEditingRow] = useState<{
+    areaId: string
+    parcelNumber: string
+  } | null>(null)
 
   useEffect(() => {
     void fetchLandowners(farmId)
@@ -193,7 +199,13 @@ export function MobileParcelListPanel({
                   return (
                     <tr
                       key={r.areaId}
-                      className="border-t hover:bg-blue-50"
+                      className="border-t hover:bg-blue-50 cursor-pointer"
+                      onClick={() =>
+                        setEditingRow({
+                          areaId: r.areaId,
+                          parcelNumber: r.parcelNumber,
+                        })
+                      }
                     >
                       {isVisible('parcel_number') && (
                         <td className="px-2 py-1 font-medium text-slate-800 whitespace-nowrap max-w-[6rem] truncate">
@@ -258,6 +270,14 @@ export function MobileParcelListPanel({
           visible={visibleColumns}
           onChange={onChangeColumns}
           onClose={() => setShowPicker(false)}
+        />
+      )}
+      {editingRow && (
+        <MobileParcelEditModal
+          workAreaId={editingRow.areaId}
+          parcelNumberFallback={editingRow.parcelNumber}
+          parcel={parcelsByWorkAreaId.get(editingRow.areaId) ?? null}
+          onClose={() => setEditingRow(null)}
         />
       )}
     </>

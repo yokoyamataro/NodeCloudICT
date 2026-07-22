@@ -614,6 +614,8 @@ export function MobileStakingPage() {
     setStakeStatus,
     setCoordinateType,
     setNotes,
+    setPointNumber: updatePointNumberStore,
+    setStakeType: updateStakeTypeStore,
   } = useCoordinateStore()
   // 設置状態フィルタ（PC と共有。localStorage 永続化）
   const visibleStakeStatuses = useMapViewStore((s) => s.visibleStakeStatuses)
@@ -5730,46 +5732,82 @@ export function MobileStakingPage() {
                   </div>
                 </div>
 
+                {/* 点名 (coordinate のみ編集可) */}
+                {isCoord && (
+                  <div>
+                    <div className="text-[10px] text-slate-500 mb-0.5">点名</div>
+                    <input
+                      type="text"
+                      defaultValue={liveCoord?.pointNumber ?? t.name}
+                      onBlur={(e) => {
+                        const v = e.target.value.trim()
+                        if (!v) return
+                        if (v === (liveCoord?.pointNumber ?? t.name)) return
+                        void updatePointNumberStore(t.refId, v)
+                      }}
+                      className="w-full px-2 py-1 text-sm border rounded bg-white"
+                    />
+                  </div>
+                )}
+
                 {/* 点種 / 設置 を横並び（coordinate のみ編集可） */}
                 {isCoord ? (
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <div className="text-[10px] text-slate-500 mb-0.5">点種</div>
-                      <select
-                        value={currentType}
-                        onChange={(e) =>
-                          void setCoordinateType(
-                            t.refId,
-                            e.target.value as CoordinateRow['type'],
-                          )
-                        }
-                        className="w-full px-2 py-1 text-sm border rounded bg-white"
-                      >
-                        {typeOptions.map((o) => (
-                          <option key={o.code} value={o.code}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
+                  <>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <div className="text-[10px] text-slate-500 mb-0.5">点種</div>
+                        <select
+                          value={currentType}
+                          onChange={(e) =>
+                            void setCoordinateType(
+                              t.refId,
+                              e.target.value as CoordinateRow['type'],
+                            )
+                          }
+                          className="w-full px-2 py-1 text-sm border rounded bg-white"
+                        >
+                          {typeOptions.map((o) => (
+                            <option key={o.code} value={o.code}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-slate-500 mb-0.5">設置</div>
+                        <select
+                          value={currentStatus || ''}
+                          onChange={(e) => {
+                            const v = e.target.value as typeof currentStatus
+                            void setStakeStatus(t.refId, v)
+                          }}
+                          className="w-full px-2 py-1 text-sm border rounded bg-white"
+                        >
+                          {STAKE_STATUS_OPTIONS.map((s) => (
+                            <option key={s} value={s}>
+                              {STAKE_STATUS_LABEL[s]}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
+                    {/* 杭種 (自由入力。任意) */}
                     <div>
-                      <div className="text-[10px] text-slate-500 mb-0.5">設置</div>
-                      <select
-                        value={currentStatus || ''}
-                        onChange={(e) => {
-                          const v = e.target.value as typeof currentStatus
-                          void setStakeStatus(t.refId, v)
+                      <div className="text-[10px] text-slate-500 mb-0.5">杭種</div>
+                      <input
+                        type="text"
+                        defaultValue={liveCoord?.stakeType ?? ''}
+                        onBlur={(e) => {
+                          const v = e.target.value.trim()
+                          const cur = liveCoord?.stakeType ?? ''
+                          if (v === cur) return
+                          void updateStakeTypeStore(t.refId, v.length > 0 ? v : null)
                         }}
+                        placeholder="任意 (例: プラ杭 / 木杭)"
                         className="w-full px-2 py-1 text-sm border rounded bg-white"
-                      >
-                        {STAKE_STATUS_OPTIONS.map((s) => (
-                          <option key={s} value={s}>
-                            {STAKE_STATUS_LABEL[s]}
-                          </option>
-                        ))}
-                      </select>
+                      />
                     </div>
-                  </div>
+                  </>
                 ) : (
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     <div>

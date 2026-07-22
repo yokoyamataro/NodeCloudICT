@@ -133,6 +133,10 @@ interface CoordinateState {
   setCoordinateType: (id: string, type: CoordinateType) => Promise<void>
   /** 備考を即時 DB に反映（スマホからの編集用。pendingChanges は通さない） */
   setNotes: (id: string, notes: string | null) => Promise<void>
+  /** 点名を即時 DB に反映（スマホからの編集用） */
+  setPointNumber: (id: string, pointNumber: string) => Promise<void>
+  /** 杭種を即時 DB に反映（スマホからの編集用） */
+  setStakeType: (id: string, stakeType: string | null) => Promise<void>
 
   // フィルタリング
   selectedType: CoordinateType
@@ -439,6 +443,64 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
       set((state) => ({
         coordinates: state.coordinates.map((c) => (c.id === id ? { ...c, type: prev.type } : c)),
         error: extractSupabaseErrorMessage(err, '点種の保存に失敗しました'),
+      }))
+    }
+  },
+
+  // 点名 (pointNumber) の即時反映（スマホの点情報モーダル用）。
+  setPointNumber: async (id: string, pointNumber: string) => {
+    const prev = get().coordinates.find((c) => c.id === id)
+    if (!prev) return
+    set((state) => ({
+      coordinates: state.coordinates.map((c) =>
+        c.id === id ? { ...c, pointNumber } : c,
+      ),
+    }))
+    try {
+      const { error } = await supabase
+        .from('design_coordinates')
+        .update({ point_number: pointNumber } as never)
+        .eq('id', id)
+      if (error) throw error
+    } catch (err) {
+      console.error('[coordinateStore] setPointNumber failed', err, {
+        id,
+        pointNumber,
+      })
+      set((state) => ({
+        coordinates: state.coordinates.map((c) =>
+          c.id === id ? { ...c, pointNumber: prev.pointNumber } : c,
+        ),
+        error: extractSupabaseErrorMessage(err, '点名の保存に失敗しました'),
+      }))
+    }
+  },
+
+  // 杭種 (stakeType) の即時反映（スマホの点情報モーダル用）。
+  setStakeType: async (id: string, stakeType: string | null) => {
+    const prev = get().coordinates.find((c) => c.id === id)
+    if (!prev) return
+    set((state) => ({
+      coordinates: state.coordinates.map((c) =>
+        c.id === id ? { ...c, stakeType } : c,
+      ),
+    }))
+    try {
+      const { error } = await supabase
+        .from('design_coordinates')
+        .update({ stake_type: stakeType } as never)
+        .eq('id', id)
+      if (error) throw error
+    } catch (err) {
+      console.error('[coordinateStore] setStakeType failed', err, {
+        id,
+        stakeType,
+      })
+      set((state) => ({
+        coordinates: state.coordinates.map((c) =>
+          c.id === id ? { ...c, stakeType: prev.stakeType } : c,
+        ),
+        error: extractSupabaseErrorMessage(err, '杭種の保存に失敗しました'),
       }))
     }
   },
