@@ -28,6 +28,7 @@ import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
 import { type Bbox } from '@/lib/tile-math'
 import { importParcelBatch } from '@/features/parcel-maps/importParcelBatch'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
+import { MobileHamburgerMenu } from './MobileHamburgerMenu'
 
 
 export function MobileDetailMapPage() {
@@ -245,6 +246,7 @@ export function MobileDetailMapPage() {
   return (
     <div className="mobile-screen flex flex-col">
       <div className="px-2 py-2 bg-slate-800 text-white flex items-center gap-2 text-sm">
+        <MobileHamburgerMenu />
         <button
           onClick={() => navigate('/mobile')}
           className="flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-700"

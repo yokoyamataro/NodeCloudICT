@@ -10,6 +10,7 @@ import { useFarmStore } from '@/stores/farmStore'
 import { useAuth } from '@/contexts/AuthContext'
 import { setDisplayModeOverride } from '@/lib/displayMode'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
+import { MobileHamburgerMenu } from './MobileHamburgerMenu'
 import { JGD2011_ZONES } from '@/lib/coordinates'
 import type { Project, ProjectCategory } from '@/types/database'
 import { PROJECT_CATEGORY_LABEL } from '@/types/database'
@@ -115,6 +116,7 @@ export function MobileProjectChooserPage() {
   return (
     <div className="mobile-screen flex flex-col bg-slate-50">
       <div className="px-3 py-2 bg-slate-800 text-white flex items-center gap-2 text-sm">
+        <MobileHamburgerMenu />
         <span className="font-medium">現場一覧（スマホ）</span>
         <button
           onClick={handleGoPC}

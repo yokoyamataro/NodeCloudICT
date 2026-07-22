@@ -11,6 +11,7 @@ import { FarmEditModal } from '@/features/farms/FarmEditModal'
 import { CurrentLocationLayer } from '@/components/map/CurrentLocationLayer'
 import { setDisplayModeOverride } from '@/lib/displayMode'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
+import { MobileHamburgerMenu } from './MobileHamburgerMenu'
 import {
   NewFarmFromParcelPanel,
   type NewFarmFromParcelSelection,
@@ -250,6 +251,7 @@ export function MobileTopPage() {
   return (
     <div className="mobile-screen flex flex-col">
       <div className="px-3 py-2 bg-slate-800 text-white flex items-center gap-2 text-sm">
+        <MobileHamburgerMenu />
         {routeProjectId && (
           <button
             onClick={() => navigate('/mobile')}

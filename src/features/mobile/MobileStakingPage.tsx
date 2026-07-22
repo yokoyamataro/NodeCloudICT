@@ -65,6 +65,7 @@ import { type Bbox } from '@/lib/tile-math'
 import { importParcelBatch } from '@/features/parcel-maps/importParcelBatch'
 import { Map as MapIcon } from 'lucide-react'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
+import { MobileHamburgerMenu } from './MobileHamburgerMenu'
 import { useOrthophotoStore } from '@/stores/orthophotoStore'
 import { parseLandXml } from '@/lib/landxml/parser'
 import {
@@ -674,7 +675,9 @@ export function MobileStakingPage() {
   }, [useGeoidCorrection, geoidGrid])
   const [showSettings, setShowSettings] = useState(false)
   const [showTargetList, setShowTargetList] = useState(false)
-  const [showRecordList, setShowRecordList] = useState(false)
+  const [showRecordList, setShowRecordList] = useState(
+    () => params.get('openCoords') === '1',
+  )
   // 座標一覧タブ内から手入力で 1 点追加するモーダル
   const [showManualCoordEntry, setShowManualCoordEntry] = useState(false)
   // 現場を開いたときの開始前チェック（ジオイド補正・目標高(アンテナ高)・既知点精度確認の喚起）
@@ -2747,8 +2750,12 @@ export function MobileStakingPage() {
           </div>
         </div>
       )}
-      {/* ヘッダー（1 行目: 戻る・現場名・工区名・ユーザー名） */}
+      {/* ヘッダー（1 行目: メニュー・戻る・現場名・工区名・ユーザー名） */}
       <div className="px-2 py-1.5 bg-slate-800 text-white flex items-center gap-2 text-sm">
+        <MobileHamburgerMenu
+          farmId={farm?.id ?? null}
+          onOpenCoords={() => setShowRecordList(true)}
+        />
         <button
           onClick={() => navigate('/mobile')}
           className="flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-700"
