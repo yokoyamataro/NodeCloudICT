@@ -73,6 +73,7 @@ import {
   PARCEL_COLUMN_KEYS,
   type ParcelColumnKey,
 } from './MobileParcelListPanel'
+import { MobileParcelEditModal } from './MobileParcelEditModal'
 import {
   MobileListColumnPicker,
   type ColumnDef,
@@ -764,6 +765,11 @@ export function MobileStakingPage() {
       ),
   )
   const [showCoordColumnPicker, setShowCoordColumnPicker] = useState(false)
+  // 地図で地番ポリゴンをタップ → 開く 地番編集モーダルの target
+  const [parcelInfoTarget, setParcelInfoTarget] = useState<{
+    areaId: string
+    parcelNumber: string
+  } | null>(null)
   const setCoordColumns = (next: ReadonlySet<CoordColumnKey>) => {
     // 必須列を常に含める
     const withReq = new Set(next)
@@ -4066,6 +4072,7 @@ export function MobileStakingPage() {
                 ? '#ec4899'
                 : '#6b7280'
             const labelVisible = showParcelLabels && mapZoom >= PARCEL_LABEL_MIN_ZOOM
+            const isParcel = polygon.workType === 'boundary_survey'
             return (
               <Polygon
                 key={polygon.id}
@@ -4076,6 +4083,17 @@ export function MobileStakingPage() {
                   fillOpacity: 0.18,
                   weight: 2,
                 }}
+                eventHandlers={
+                  isParcel
+                    ? {
+                        click: () =>
+                          setParcelInfoTarget({
+                            areaId: polygon.id,
+                            parcelNumber: polygon.name,
+                          }),
+                      }
+                    : undefined
+                }
               >
                 {polygon.name && (
                   <Tooltip
@@ -5169,6 +5187,16 @@ export function MobileStakingPage() {
             visible={coordColumns}
             onChange={setCoordColumns}
             onClose={() => setShowCoordColumnPicker(false)}
+          />
+        )}
+
+        {/* 地図でポリゴンをタップ → 地番情報モーダル */}
+        {parcelInfoTarget && (
+          <MobileParcelEditModal
+            workAreaId={parcelInfoTarget.areaId}
+            parcelNumberFallback={parcelInfoTarget.parcelNumber}
+            parcel={parcelsByWorkAreaId.get(parcelInfoTarget.areaId) ?? null}
+            onClose={() => setParcelInfoTarget(null)}
           />
         )}
       </div>
