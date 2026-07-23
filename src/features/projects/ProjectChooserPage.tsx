@@ -13,6 +13,11 @@ import type { Project, ProjectCategory, ProjectVisibility } from '@/types/databa
 import { PROJECT_CATEGORY_LABEL } from '@/types/database'
 import { AnnouncementsSection } from '@/features/announcements/AnnouncementsSection'
 import { ProjectEditModal } from '@/features/projects/ProjectEditModal'
+import {
+  useProjectPermission,
+  ROLE_LABEL,
+  ROLE_BADGE_CLASS,
+} from '@/lib/useProjectPermission'
 
 export function ProjectChooserPage() {
   const navigate = useNavigate()
@@ -21,6 +26,7 @@ export function ProjectChooserPage() {
     loading,
     error,
     fetchProjects,
+    fetchUserRoles,
     createProject,
     updateProject,
     deleteProject,
@@ -49,10 +55,12 @@ export function ProjectChooserPage() {
   useEffect(() => {
     fetchProjects()
     fetchFarms()
+    // 各プロジェクトごとの自分の role をキャッシュ (useProjectPermission で参照)
+    void fetchUserRoles()
     // トップページに来た時点で選択状態を解除（リロードしてもトップのまま）
     setCurrentFarm(null)
     setCurrentProject(null)
-  }, [fetchProjects, fetchFarms, setCurrentFarm, setCurrentProject])
+  }, [fetchProjects, fetchFarms, fetchUserRoles, setCurrentFarm, setCurrentProject])
 
   // 完了現場フィルタ (hideCompletedProjects=true の時は completed_at != null を除外)
   const visibleProjects = useMemo(
@@ -330,78 +338,121 @@ function ProjectsSection({
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-          {projects.map((p) => {
-            const count = farmCountByProject(p.id)
-            const zoneName =
-              JGD2011_ZONES[p.coordinate_zone]?.name ?? `第${p.coordinate_zone}系`
-            const done = p.completed_at != null
-            return (
-              <div
-                key={p.id}
-                onClick={() => onSelectProject(p)}
-                className={`relative text-left border rounded-lg p-3 hover:shadow transition-shadow cursor-pointer group ${
-                  done
-                    ? 'bg-emerald-50 hover:border-emerald-400'
-                    : 'bg-white hover:border-blue-400'
-                }`}
-              >
-                {/* 右上: 編集ボタン (現場情報編集モーダルを開く) */}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onEditProject(p)
-                  }}
-                  className="absolute top-1.5 right-1.5 p-1 rounded text-slate-400 hover:text-blue-600 hover:bg-white/80 opacity-70 group-hover:opacity-100"
-                  title="現場情報を編集"
-                >
-                  <Edit3 className="h-3.5 w-3.5" />
-                </button>
-                <div className="flex items-center gap-1.5 mb-1 pr-6">
-                  <Folder className={`h-4 w-4 flex-shrink-0 ${done ? 'text-emerald-600' : 'text-blue-600'}`} />
-                  <span className="font-semibold truncate flex-1" title={p.name}>
-                    {p.name}
-                  </span>
-                  <VisibilityBadge visibility={p.visibility} />
-                  {done && (
-                    <span className="text-[10px] px-1.5 py-0.5 bg-emerald-200 text-emerald-800 rounded">
-                      完了
-                    </span>
-                  )}
-                  {p.category == null && (
-                    <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded">
-                      未分類
-                    </span>
-                  )}
-                </div>
-                {p.description && (
-                  <div className="text-xs text-slate-500 mb-2 line-clamp-2">
-                    {p.description}
-                  </div>
-                )}
-                <div className="flex items-center gap-3 text-xs text-slate-500 mt-2">
-                  <span className="inline-flex items-center gap-1">
-                    <MapPin className="h-3 w-3" />
-                    工区 {count}
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <Users className="h-3 w-3" />
-                    {zoneName.replace(/（.*$/, '')}
-                  </span>
-                </div>
-                {(p.client || p.contractor) && (
-                  <div className="text-[11px] text-slate-400 mt-1 truncate">
-                    {p.client && `発注: ${p.client}`}
-                    {p.client && p.contractor && ' / '}
-                    {p.contractor && `受託: ${p.contractor}`}
-                  </div>
-                )}
-              </div>
-            )
-          })}
+          {projects.map((p) => (
+            <ProjectCard
+              key={p.id}
+              project={p}
+              farmCount={farmCountByProject(p.id)}
+              onSelect={onSelectProject}
+              onEdit={onEditProject}
+            />
+          ))}
         </div>
       )}
     </section>
+  )
+}
+
+/** 現場カード 1 件。permission を判定して編集ボタンの表示可否・役割バッジを出す。 */
+function ProjectCard({
+  project: p,
+  farmCount,
+  onSelect,
+  onEdit,
+}: {
+  project: Project
+  farmCount: number
+  onSelect: (p: Project) => void
+  onEdit: (p: Project) => void
+}) {
+  const perm = useProjectPermission(p)
+  const zoneName =
+    JGD2011_ZONES[p.coordinate_zone]?.name ?? `第${p.coordinate_zone}系`
+  const done = p.completed_at != null
+
+  const editBtnClass = perm.canEdit
+    ? 'absolute top-1.5 right-1.5 p-1 rounded text-slate-400 hover:text-blue-600 hover:bg-white/80 opacity-70 group-hover:opacity-100'
+    : 'absolute top-1.5 right-1.5 p-1 rounded text-slate-300 cursor-not-allowed opacity-40'
+
+  return (
+    <div
+      onClick={() => onSelect(p)}
+      className={`relative text-left border rounded-lg p-3 hover:shadow transition-shadow cursor-pointer group ${
+        done ? 'bg-emerald-50 hover:border-emerald-400' : 'bg-white hover:border-blue-400'
+      }`}
+    >
+      {/* 右上: 編集ボタン (現場情報編集モーダルを開く) - 権限がなければ disabled */}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          if (perm.canEdit) onEdit(p)
+        }}
+        disabled={!perm.canEdit}
+        className={editBtnClass}
+        title={
+          perm.canEdit
+            ? '現場情報を編集'
+            : '閲覧権限のみです (編集にはオーナーまたは編集者権限が必要)'
+        }
+      >
+        <Edit3 className="h-3.5 w-3.5" />
+      </button>
+      <div className="flex items-center gap-1.5 mb-1 pr-6">
+        <Folder
+          className={`h-4 w-4 flex-shrink-0 ${done ? 'text-emerald-600' : 'text-blue-600'}`}
+        />
+        <span className="font-semibold truncate flex-1" title={p.name}>
+          {p.name}
+        </span>
+        <VisibilityBadge visibility={p.visibility} />
+        {done && (
+          <span className="text-[10px] px-1.5 py-0.5 bg-emerald-200 text-emerald-800 rounded">
+            完了
+          </span>
+        )}
+        {p.category == null && (
+          <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded">
+            未分類
+          </span>
+        )}
+      </div>
+      {/* 自分の役割バッジ (owner/editor/viewer)。null (public 閲覧のみ) は非表示 */}
+      {perm.role && (
+        <div className="mb-1">
+          <span
+            className={`inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border font-medium ${
+              ROLE_BADGE_CLASS[perm.role]
+            }`}
+            title={`あなたの役割: ${ROLE_LABEL[perm.role]}`}
+          >
+            {ROLE_LABEL[perm.role]}
+          </span>
+        </div>
+      )}
+      {p.description && (
+        <div className="text-xs text-slate-500 mb-2 line-clamp-2">
+          {p.description}
+        </div>
+      )}
+      <div className="flex items-center gap-3 text-xs text-slate-500 mt-2">
+        <span className="inline-flex items-center gap-1">
+          <MapPin className="h-3 w-3" />
+          工区 {farmCount}
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <Users className="h-3 w-3" />
+          {zoneName.replace(/（.*$/, '')}
+        </span>
+      </div>
+      {(p.client || p.contractor) && (
+        <div className="text-[11px] text-slate-400 mt-1 truncate">
+          {p.client && `発注: ${p.client}`}
+          {p.client && p.contractor && ' / '}
+          {p.contractor && `受託: ${p.contractor}`}
+        </div>
+      )}
+    </div>
   )
 }
 

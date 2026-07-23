@@ -15,6 +15,8 @@ import { JGD2011_ZONES } from '@/lib/coordinates'
 import type { Project, ProjectCategory } from '@/types/database'
 import { PROJECT_CATEGORY_LABEL } from '@/types/database'
 import { MobileProjectEditModal } from './MobileProjectEditModal'
+import { ROLE_LABEL, ROLE_BADGE_CLASS } from '@/lib/useProjectPermission'
+import type { ProjectMemberRole } from '@/types/database'
 
 export function MobileProjectChooserPage() {
   const navigate = useNavigate()
@@ -37,10 +39,15 @@ export function MobileProjectChooserPage() {
     fetchUserRoles()
   }, [fetchProjects, fetchFarms, fetchUserRoles])
 
-  // 現場ごとの編集権限: プロジェクト作成者 (user_id) or 共有メンバー role が owner/editor
+  // 現場ごとの実効ロールを返す。lib/useProjectPermission と同じ判定ロジック。
+  // MobileProjectChooserPage は各行を map で描画するため、hook では per-row 呼出が
+  // 難しく、ここに関数形で持たせる。
+  const getRole = (p: Project): ProjectMemberRole | null => {
+    if (user?.id && p.user_id === user.id) return 'owner'
+    return userRolesByProject.get(p.id) ?? null
+  }
   const canEditProject = (p: Project): boolean => {
-    if (user?.id && p.user_id === user.id) return true
-    const role = userRolesByProject.get(p.id)
+    const role = getRole(p)
     return role === 'owner' || role === 'editor'
   }
 
@@ -180,6 +187,7 @@ export function MobileProjectChooserPage() {
               emptyText="地籍測量の工事はありません。"
               farmCountByProject={farmCountByProject}
               canEditProject={canEditProject}
+              getRole={getRole}
               onSelect={(p) => navigate(`/mobile/farms/${p.id}`)}
               onEdit={(p) => setEditProject(p)}
             />
@@ -190,6 +198,7 @@ export function MobileProjectChooserPage() {
               emptyText="土木工事の工事はありません。"
               farmCountByProject={farmCountByProject}
               canEditProject={canEditProject}
+              getRole={getRole}
               onSelect={(p) => navigate(`/mobile/farms/${p.id}`)}
               onEdit={(p) => setEditProject(p)}
             />
@@ -203,6 +212,7 @@ export function MobileProjectChooserPage() {
                 hintIcon={<AlertCircle className="h-3 w-3" />}
                 farmCountByProject={farmCountByProject}
                 canEditProject={canEditProject}
+                getRole={getRole}
                 onSelect={(p) => navigate(`/mobile/farms/${p.id}`)}
                 onEdit={(p) => setEditProject(p)}
               />
@@ -312,6 +322,7 @@ function MobileProjectsSection({
   hintIcon,
   farmCountByProject,
   canEditProject,
+  getRole,
   onSelect,
   onEdit,
 }: {
@@ -323,6 +334,7 @@ function MobileProjectsSection({
   hintIcon?: React.ReactNode
   farmCountByProject: (id: string) => number
   canEditProject: (p: Project) => boolean
+  getRole: (p: Project) => ProjectMemberRole | null
   onSelect: (p: Project) => void
   onEdit: (p: Project) => void
 }) {
@@ -348,6 +360,7 @@ function MobileProjectsSection({
           {projects.map((p) => {
             const count = farmCountByProject(p.id)
             const editable = canEditProject(p)
+            const role = getRole(p)
             return (
               <li key={p.id} className="relative">
                 <button
@@ -359,6 +372,14 @@ function MobileProjectsSection({
                     <span className="font-semibold flex-1 truncate" title={p.name}>
                       {p.name}
                     </span>
+                    {role && (
+                      <span
+                        className={`inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border font-medium ${ROLE_BADGE_CLASS[role]}`}
+                        title={`あなたの役割: ${ROLE_LABEL[role]}`}
+                      >
+                        {ROLE_LABEL[role]}
+                      </span>
+                    )}
                     <span className="inline-flex items-center gap-1 text-xs text-slate-500 flex-shrink-0">
                       <MapPin className="h-3 w-3" />
                       {count}

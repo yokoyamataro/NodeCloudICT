@@ -20,7 +20,7 @@ import {
 } from '@/types/database'
 import { JGD2011_ZONES } from '@/lib/coordinates'
 import { useProjectListStore } from '@/stores/projectListStore'
-import { useAuth } from '@/contexts/AuthContext'
+import { useProjectPermission } from '@/lib/useProjectPermission'
 import { supabase } from '@/lib/supabase'
 
 type EditablePatch = Partial<
@@ -44,8 +44,10 @@ interface Props {
 }
 
 export function MobileProjectEditModal({ project, onClose, onDone }: Props) {
-  const { user } = useAuth()
-  const isOwner = user?.id === project.user_id
+  // 権限判定は useProjectPermission に統一。owner 相当を isOwner としてローカル alias。
+  // 現行の UI ロジックは基本 owner 権限を前提にしているため、 canManageMembers をそのまま使う。
+  const perm = useProjectPermission(project)
+  const isOwner = perm.canManageMembers
   const updateProject = useProjectListStore((s) => s.updateProject)
   const deleteProject = useProjectListStore((s) => s.deleteProject)
   const inviteMember = useProjectListStore((s) => s.inviteMember)

@@ -842,9 +842,34 @@ export function ProjectEditModal({
                   共有ポリシーを「{PROJECT_VISIBILITY_LABEL[pendingVisibility]}」に変更します
                 </h4>
               </div>
-              <p className="text-sm text-slate-600 mb-4 leading-relaxed">
+              <p className="text-sm text-slate-600 mb-3 leading-relaxed">
                 {visibilityWarningText(visibility, pendingVisibility)}
               </p>
+              {/* 具体的な影響 (現在のメンバー数) を表示 */}
+              {(() => {
+                const activeMemberCount =
+                  members.filter((m) => !pendingRemoves.has(m.id)).length +
+                  pendingAdds.length
+                if (activeMemberCount === 0) return null
+                if (pendingVisibility === 'private') {
+                  return (
+                    <div className="mb-3 text-xs bg-amber-50 border border-amber-200 rounded p-2 leading-relaxed">
+                      現在 <b>{activeMemberCount} 名</b> の共有メンバーがいます。
+                      占有に変更するとこの全員がアクセス不可になります。
+                      (メンバー行自体は削除されず残るため、後で共有に戻せば復帰できます。)
+                    </div>
+                  )
+                }
+                if (pendingVisibility === 'public') {
+                  return (
+                    <div className="mb-3 text-xs bg-amber-50 border border-amber-200 rounded p-2 leading-relaxed">
+                      現在 <b>{activeMemberCount} 名</b> の共有メンバーは引き続き編集可能です。
+                      加えて、URL を知る誰でも (未ログインを含む) が閲覧できるようになります。
+                    </div>
+                  )
+                }
+                return null
+              })()}
               <div className="flex gap-2">
                 <button
                   onClick={() => setPendingVisibility(null)}
