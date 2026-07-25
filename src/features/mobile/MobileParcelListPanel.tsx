@@ -7,12 +7,15 @@ import { Settings2, X } from 'lucide-react'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useParcelStore } from '@/stores/parcelStore'
 import { useLandownerStore } from '@/stores/landownerStore'
+import { useFarmStore } from '@/stores/farmStore'
+import { useParcelAttributeTypesStore } from '@/stores/parcelAttributeTypesStore'
 import { compareByLocationAndParcel } from '@/lib/parcelSort'
 import { MobileListColumnPicker, type ColumnDef } from './MobileListColumnPicker'
 import { MobileParcelEditModal } from './MobileParcelEditModal'
 
 export const PARCEL_COLUMN_KEYS = [
   'parcel_number',
+  'attribute',
   'location',
   'registered_land_category',
   'registered_area_sqm',
@@ -26,6 +29,7 @@ export type ParcelColumnKey = (typeof PARCEL_COLUMN_KEYS)[number]
 
 const PARCEL_COLUMNS: ReadonlyArray<ColumnDef<ParcelColumnKey>> = [
   { key: 'parcel_number', label: '地番' },
+  { key: 'attribute', label: '属性' },
   { key: 'location', label: '所在' },
   { key: 'registered_land_category', label: '登記地目' },
   { key: 'registered_area_sqm', label: '登記地積(m²)' },
@@ -67,6 +71,21 @@ export function MobileParcelListPanel({
   )
   const fetchLandowners = useLandownerStore((s) => s.fetchByFarm)
   const fetchAssignments = useLandownerStore((s) => s.fetchAssignmentsByFarm)
+  // 地番属性: プロジェクト単位で fetch し、code → 属性 の lookup を作る
+  const projectId = useFarmStore((s) => s.currentFarm?.project_id ?? null)
+  const attributeTypes = useParcelAttributeTypesStore((s) =>
+    projectId ? s.byProject.get(projectId) ?? [] : [],
+  )
+  const fetchAttributeTypes = useParcelAttributeTypesStore((s) => s.fetchForProject)
+  useEffect(() => {
+    if (projectId) void fetchAttributeTypes(projectId)
+  }, [projectId, fetchAttributeTypes])
+  const attributeByCode = useMemo(() => {
+    const m = new Map<string, { label: string; color: string }>()
+    for (const t of attributeTypes) m.set(t.code, { label: t.label, color: t.color })
+    return m
+  }, [attributeTypes])
+
   const [showPicker, setShowPicker] = useState(false)
   // タップで開く 地番編集モーダル
   const [editingRow, setEditingRow] = useState<{
@@ -155,6 +174,9 @@ export function MobileParcelListPanel({
                   {isVisible('parcel_number') && (
                     <th className="px-2 py-1 text-left whitespace-nowrap">地番</th>
                   )}
+                  {isVisible('attribute') && (
+                    <th className="px-2 py-1 text-left whitespace-nowrap">属性</th>
+                  )}
                   {isVisible('location') && (
                     <th className="px-2 py-1 text-left whitespace-nowrap">所在</th>
                   )}
@@ -210,6 +232,27 @@ export function MobileParcelListPanel({
                       {isVisible('parcel_number') && (
                         <td className="px-2 py-1 font-medium text-slate-800 whitespace-nowrap max-w-[6rem] truncate">
                           {r.parcelNumber || '-'}
+                        </td>
+                      )}
+                      {isVisible('attribute') && (
+                        <td className="px-2 py-1 whitespace-nowrap">
+                          {(() => {
+                            const at = p?.attribute_code
+                              ? attributeByCode.get(p.attribute_code)
+                              : null
+                            if (!at) {
+                              return <span className="text-slate-400">-</span>
+                            }
+                            return (
+                              <span className="inline-flex items-center gap-1">
+                                <span
+                                  className="inline-block w-2.5 h-2.5 rounded border border-slate-300"
+                                  style={{ backgroundColor: at.color }}
+                                />
+                                <span className="text-slate-700">{at.label}</span>
+                              </span>
+                            )
+                          })()}
                         </td>
                       )}
                       {isVisible('location') && (

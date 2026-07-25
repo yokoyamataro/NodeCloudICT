@@ -59,6 +59,7 @@ import { useAttachmentStore } from '@/stores/attachmentStore'
 import { PhotoEditModal } from '@/features/coordinates/PhotoEditModal'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useParcelStore } from '@/stores/parcelStore'
+import { useParcelAttributeTypesStore } from '@/stores/parcelAttributeTypesStore'
 import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { ParcelMapLayer, parcelFeatureKey } from '@/components/map/ParcelMapLayer'
 import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
@@ -1536,6 +1537,21 @@ export function MobileStakingPage() {
   // ---- 法務省地図の bbox / 取込済セット / 一括取込ハンドラ ----
   const isCadastralProject = project?.category === 'cadastral'
   const parcelsByWorkAreaId = useParcelStore((s) => s.byWorkAreaId)
+
+  // 地番属性: polygon の塗り色を attribute_code から解決するための lookup
+  const projectIdForAttrs = project?.id ?? null
+  const parcelAttrTypes = useParcelAttributeTypesStore((s) =>
+    projectIdForAttrs ? s.byProject.get(projectIdForAttrs) ?? [] : [],
+  )
+  const fetchParcelAttrTypes = useParcelAttributeTypesStore((s) => s.fetchForProject)
+  useEffect(() => {
+    if (projectIdForAttrs) void fetchParcelAttrTypes(projectIdForAttrs)
+  }, [projectIdForAttrs, fetchParcelAttrTypes])
+  const parcelAttrColorByCode = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const t of parcelAttrTypes) m.set(t.code, t.color)
+    return m
+  }, [parcelAttrTypes])
   // 常に「現在の地図ビュー」に追従する (以前は 工区+Nm プリセットがあったが、
   // features 数が数千〜数万に膨れてラベル bind が固まる原因になるため撤去)
   const effectiveParcelBbox: Bbox | null =
@@ -4055,9 +4071,9 @@ export function MobileStakingPage() {
             }
           />
 
-          {/* 工事区域ポリゴン（境界測量=シアン 等）。showParcelPolygons でまとめて非表示にできる */}
+          {/* 工事区域ポリゴン（境界測量=属性色 / その他=工種色）。showParcelPolygons でまとめて非表示にできる */}
           {showParcelPolygons && farmPolygons.map((polygon) => {
-            const color =
+            const workTypeColor =
               polygon.workType === 'boundary_survey'
                 ? '#0ea5e9'
                 : polygon.workType === 'underdrain'
@@ -4073,6 +4089,14 @@ export function MobileStakingPage() {
                 : '#6b7280'
             const labelVisible = showParcelLabels && mapZoom >= PARCEL_LABEL_MIN_ZOOM
             const isParcel = polygon.workType === 'boundary_survey'
+            // 地番なら parcel.attribute_code から色を解決 (未選択なら従来の workType 色)
+            const parcelRow = isParcel ? parcelsByWorkAreaId.get(polygon.id) : null
+            const attrColor =
+              parcelRow?.attribute_code
+                ? parcelAttrColorByCode.get(parcelRow.attribute_code)
+                : null
+            const color = attrColor ?? workTypeColor
+            const fillOpacity = attrColor ? 0.4 : 0.18
             return (
               <Polygon
                 key={polygon.id}
@@ -4080,7 +4104,7 @@ export function MobileStakingPage() {
                 pathOptions={{
                   color,
                   fillColor: color,
-                  fillOpacity: 0.18,
+                  fillOpacity,
                   weight: 2,
                 }}
                 eventHandlers={

@@ -8,10 +8,16 @@ import { useEffect, useState } from 'react'
 import type { WorkAreaRow } from '@/stores/workAreaStore'
 import { useParcelStore, type ParcelEditableFields } from '@/stores/parcelStore'
 import { useLandownerStore } from '@/stores/landownerStore'
+import { useFarmStore } from '@/stores/farmStore'
+import {
+  useParcelAttributeTypesStore,
+  UNSELECTED_ATTRIBUTE,
+} from '@/stores/parcelAttributeTypesStore'
 import { LAND_CATEGORIES } from '@/lib/landCategory'
 
 // 列の正準キー。表示順を兼ねる。
 export const CADASTRAL_COLUMN_KEYS = [
+  'attribute',
   'location',
   'parcel_number',
   'registered_land_category',
@@ -28,6 +34,7 @@ export const CADASTRAL_COLUMN_KEYS = [
 export type CadastralColumnKey = (typeof CADASTRAL_COLUMN_KEYS)[number]
 
 export const CADASTRAL_COLUMN_LABELS: Record<CadastralColumnKey, string> = {
+  attribute: '属性',
   location: '所在',
   parcel_number: '地番',
   registered_land_category: '登記地目',
@@ -61,6 +68,7 @@ const num = (s: string): number | null => {
 
 // 各列の幅クラス。CadastralHeader と CadastralRowFields で共有して見出しと行を揃える。
 export const CADASTRAL_COLUMN_WIDTH: Record<CadastralColumnKey, string> = {
+  attribute: 'w-24',
   location: 'w-40',
   parcel_number: 'w-28',
   registered_land_category: 'w-24',
@@ -76,6 +84,7 @@ export const CADASTRAL_COLUMN_WIDTH: Record<CadastralColumnKey, string> = {
 
 // 同上を px 換算（sticky-left の left 値計算に使う）
 const CADASTRAL_COLUMN_WIDTH_PX: Record<CadastralColumnKey, number> = {
+  attribute: 96,
   location: 160,
   parcel_number: 112,
   registered_land_category: 96,
@@ -160,6 +169,15 @@ export function CadastralRowFields({ area, visibleColumns }: Props) {
     setOwnerAddress(parcel?.registered_owner_address ?? '')
   }, [parcel, parcelNumberFallback])
 
+  // 地番属性 (parcel_attribute_types)。プロジェクト単位で fetch 済みを参照。
+  const projectId = useFarmStore((s) => s.currentFarm?.project_id ?? null)
+  const attributeTypes = useParcelAttributeTypesStore((s) =>
+    projectId ? s.byProject.get(projectId) ?? [] : [],
+  )
+  const currentAttribute = parcel?.attribute_code
+    ? attributeTypes.find((t) => t.code === parcel.attribute_code)
+    : undefined
+
   // 地番に割り当てられた地権者（複数可）
   const landownersOfFarm = useLandownerStore((s) => s.landowners)
   const assignmentMap = useLandownerStore((s) => s.landownersByParcelId)
@@ -180,6 +198,39 @@ export function CadastralRowFields({ area, visibleColumns }: Props) {
 
   const cellFor = (key: CadastralColumnKey): React.ReactNode => {
     switch (key) {
+      case 'attribute':
+        return (
+          <div className="flex items-center border rounded overflow-hidden bg-white">
+            <span
+              className="w-3 h-6 shrink-0"
+              style={{
+                backgroundColor:
+                  currentAttribute?.color ?? UNSELECTED_ATTRIBUTE.color,
+              }}
+              title={
+                currentAttribute
+                  ? currentAttribute.label
+                  : UNSELECTED_ATTRIBUTE.label
+              }
+            />
+            <select
+              value={parcel?.attribute_code ?? ''}
+              onChange={(e) => {
+                const v = e.target.value
+                save({ attribute_code: v ? v : null })
+              }}
+              onClick={stop}
+              className="w-full px-1 py-1 text-xs outline-none bg-transparent"
+            >
+              <option value="">未選択</option>
+              {attributeTypes.map((t) => (
+                <option key={t.id} value={t.code}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )
       case 'location':
         // 「郡町村 (municipality)」は import 時 (or 登記取得モーダル) で埋まる。
         // 表示では左側に薄色の prefix として出す。編集対象は字名のみ。

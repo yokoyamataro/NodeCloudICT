@@ -389,6 +389,26 @@ export interface Parcel {
   registered_owner_address: string | null
   /** 登記簿上の所有者氏名（旧 owner_name） */
   registered_owner_name: string | null
+  /** 属性コード (parcel_attribute_types.code を参照。NULL=未選択) */
+  attribute_code: string | null
+  created_at: string
+  updated_at: string
+}
+
+// 地番属性の型 (parcel_attribute_types テーブル)。
+// 組み込み (target/adjacent/road/river/other) 5 種類 + ユーザー任意追加。
+export interface ParcelAttributeType {
+  id: string
+  project_id: string
+  /** プロジェクト内でユニークな属性コード (例: 'target') */
+  code: string
+  /** 表示ラベル (例: '対象地') */
+  label: string
+  /** 塗り色 '#rrggbb' */
+  color: string
+  sort_order: number
+  /** 組み込み属性 (削除不可、label/color は編集可) */
+  is_builtin: boolean
   created_at: string
   updated_at: string
 }

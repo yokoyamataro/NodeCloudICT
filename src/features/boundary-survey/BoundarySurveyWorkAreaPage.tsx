@@ -12,11 +12,14 @@ import {
   X,
   Check,
   ChevronDown,
+  Palette,
 } from 'lucide-react'
 import { GenericWorkAreaPage } from '@/components/work-area/GenericWorkAreaPage'
 import { CadastralCsvExportModal } from './CadastralCsvExportModal'
 import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
+import { useParcelAttributeTypesStore } from '@/stores/parcelAttributeTypesStore'
+import { ParcelAttributeTypesModal } from './ParcelAttributeTypesModal'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useParcelStore } from '@/stores/parcelStore'
@@ -48,6 +51,8 @@ export function BoundarySurveyWorkAreaPage() {
   const [openMenu, setOpenMenu] = useState<'import' | 'export' | null>(null)
   // 地番SIM 出力: 「対象地選択」モード中の選択済 area ID 集合。null なら選択モード OFF
   const [simSelectedIds, setSimSelectedIds] = useState<Set<string> | null>(null)
+  // 属性管理モーダル
+  const [showAttributeMgmt, setShowAttributeMgmt] = useState(false)
 
   const { currentFarm } = useFarmStore()
   const { projects } = useProjectListStore()
@@ -116,6 +121,13 @@ export function BoundarySurveyWorkAreaPage() {
   useEffect(() => {
     if (parcelImportMessage) setMessage(parcelImportMessage)
   }, [parcelImportMessage])
+
+  // 地番属性 (parcel_attribute_types) をプロジェクト単位で fetch
+  const fetchAttributeTypes = useParcelAttributeTypesStore((s) => s.fetchForProject)
+  useEffect(() => {
+    const pid = currentFarm?.project_id
+    if (pid) void fetchAttributeTypes(pid)
+  }, [currentFarm?.project_id, fetchAttributeTypes])
 
 
   // 工区あたりの上限。SIMA 取り込みで上限を超える場合は弾く。
@@ -675,6 +687,18 @@ export function BoundarySurveyWorkAreaPage() {
         }
         areaListActions={
           <>
+            {/* 属性管理 (地番属性の色/ラベル/追加削除) */}
+            <button
+              type="button"
+              onClick={() => setShowAttributeMgmt(true)}
+              disabled={!currentFarm}
+              title="地番属性の管理 (対象地/隣接地/道路/河川/その他 の色・ラベル + 任意属性追加)"
+              className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50 disabled:opacity-50"
+            >
+              <Palette className="h-3.5 w-3.5" />
+              属性管理
+            </button>
+
             {/* 地番入力: SIM取り込み / JPGIS.XML取り込み */}
             <div className="relative">
               <button
@@ -837,6 +861,12 @@ export function BoundarySurveyWorkAreaPage() {
         }
       />
       {csvOpen && <CadastralCsvExportModal onClose={() => setCsvOpen(false)} />}
+      {showAttributeMgmt && currentFarm?.project_id && (
+        <ParcelAttributeTypesModal
+          projectId={currentFarm.project_id}
+          onClose={() => setShowAttributeMgmt(false)}
+        />
+      )}
 
       {/* 地番SIM 出力: 対象地選択モードのフローティングバナー */}
       {simSelectedIds && (

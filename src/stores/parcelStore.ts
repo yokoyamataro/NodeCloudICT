@@ -27,6 +27,7 @@ interface RawParcel {
   updated_area_sqm: number | null
   registered_owner_address: string | null
   registered_owner_name: string | null
+  attribute_code: string | null
   created_at: string
   updated_at: string
 }
@@ -45,6 +46,7 @@ const toParcel = (r: RawParcel): Parcel => ({
   updated_area_sqm: r.updated_area_sqm,
   registered_owner_address: r.registered_owner_address,
   registered_owner_name: r.registered_owner_name,
+  attribute_code: r.attribute_code,
   created_at: r.created_at,
   updated_at: r.updated_at,
 })
@@ -62,6 +64,7 @@ export type ParcelEditableFields = Pick<
   | 'updated_area_sqm'
   | 'registered_owner_address'
   | 'registered_owner_name'
+  | 'attribute_code'
 >
 
 interface ParcelState {
@@ -125,6 +128,7 @@ export const useParcelStore = create<ParcelState>((set, get) => ({
       registered_owner_address:
         fields.registered_owner_address ?? prev?.registered_owner_address ?? null,
       registered_owner_name: fields.registered_owner_name ?? prev?.registered_owner_name ?? null,
+      attribute_code: fields.attribute_code ?? prev?.attribute_code ?? null,
       created_at: prev?.created_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }

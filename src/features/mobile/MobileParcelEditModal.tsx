@@ -2,9 +2,11 @@
 // 地番 (parcel_number) / 所在 (location) / 登記地目・地積 / 変更地目・地積 /
 // 登記所有者住所・氏名 を編集し、blur (フォーカス外し) で即 upsert する。
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { X, Loader2 } from 'lucide-react'
 import { useParcelStore } from '@/stores/parcelStore'
+import { useFarmStore } from '@/stores/farmStore'
+import { useParcelAttributeTypesStore } from '@/stores/parcelAttributeTypesStore'
 import type { Parcel } from '@/types/database'
 
 interface Props {
@@ -30,6 +32,19 @@ export function MobileParcelEditModal({
   const upsertParcel = useParcelStore((s) => s.upsertParcel)
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
+
+  // 地番属性 (parcel_attribute_types)
+  const projectId = useFarmStore((s) => s.currentFarm?.project_id ?? null)
+  const attributeTypes = useParcelAttributeTypesStore((s) =>
+    projectId ? s.byProject.get(projectId) ?? [] : [],
+  )
+  const fetchAttributeTypes = useParcelAttributeTypesStore((s) => s.fetchForProject)
+  useEffect(() => {
+    if (projectId) void fetchAttributeTypes(projectId)
+  }, [projectId, fetchAttributeTypes])
+  const currentAttribute = parcel?.attribute_code
+    ? attributeTypes.find((t) => t.code === parcel.attribute_code)
+    : null
 
   // 「blur で 1 フィールドだけ upsert」する。値変化があった時だけ発火。
   const commit = async (
@@ -105,6 +120,33 @@ export function MobileParcelEditModal({
               onBlur={(e) => void commit('parcel_number', e.target.value, 'text')}
               className="w-full px-2 py-1 border rounded bg-white"
             />
+          </div>
+          <div>
+            <div className="text-[10px] text-slate-500 mb-0.5">属性</div>
+            <div className="flex items-center gap-2 border rounded bg-white overflow-hidden">
+              <span
+                className="w-3 h-8 shrink-0"
+                style={{
+                  backgroundColor: currentAttribute?.color ?? '#e5e7eb',
+                }}
+                title={currentAttribute?.label ?? '未選択'}
+              />
+              <select
+                value={p?.attribute_code ?? ''}
+                onChange={(e) => {
+                  const v = e.target.value
+                  void commit('attribute_code', v, 'text')
+                }}
+                className="w-full px-1 py-1 outline-none bg-transparent"
+              >
+                <option value="">未選択</option>
+                {attributeTypes.map((t) => (
+                  <option key={t.id} value={t.code}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
           <div>
             <div className="text-[10px] text-slate-500 mb-0.5">所在</div>

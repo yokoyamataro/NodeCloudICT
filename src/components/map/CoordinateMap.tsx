@@ -442,6 +442,9 @@ export interface ExternalPolygon {
   pointIds?: string[]
   /** 各辺の中点・辺長(m)・画面上の傾き(deg)。測量座標(X,Y)から算出 */
   edges?: Array<{ mid: [number, number]; length: number; angle: number }>
+  /** 属性色 '#rrggbb'。指定されると polygon の fill/stroke に使う。
+   *  未指定 (未選択属性) の場合は従来のデフォルト色 (緑) にフォールバック。 */
+  attributeColor?: string
 }
 
 interface CoordinateMapProps {
@@ -716,20 +719,24 @@ export function CoordinateMap({
           const isChecked = checkedExternalPolygonIds?.has(polygon.id) ?? false
           const isSelected =
             !isEditing && polygon.id === selectedExternalPolygonId
-          // 優先度: editing (緑破線) > checked (オレンジ濃) > selected (オレンジ薄) > 通常 (緑)
+          // 優先度: editing (緑破線) > checked (オレンジ濃) > selected (オレンジ薄) >
+          //         属性色 (指定されていれば) > デフォルト (緑)
+          const baseColor = polygon.attributeColor ?? '#22c55e'
           const color = isEditing
             ? '#16a34a'
             : isChecked
             ? '#ea580c'
             : isSelected
             ? '#f97316'
-            : '#22c55e'
+            : baseColor
           const fillOpacity = isEditing
             ? 0.3
             : isChecked
             ? 0.5
             : isSelected
             ? 0.35
+            : polygon.attributeColor
+            ? 0.4
             : 0.2
           const weight = isEditing ? 3 : isChecked ? 3 : isSelected ? 3 : 2
           return (

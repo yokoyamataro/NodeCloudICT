@@ -8,6 +8,7 @@ import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { useParcelStore } from '@/stores/parcelStore'
+import { useParcelAttributeTypesStore } from '@/stores/parcelAttributeTypesStore'
 import { useLandownerStore } from '@/stores/landownerStore'
 import { CoordinateMap, type ExternalPolygon, type EdgeRounding } from '@/components/map/CoordinateMap'
 import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
@@ -289,6 +290,18 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   const clearParcels = useParcelStore((s) => s.clear)
   const parcelByWorkAreaId = useParcelStore((s) => s.byWorkAreaId)
   const upsertParcel = useParcelStore((s) => s.upsertParcel)
+
+  // 地番属性: polygon の塗り色を attribute_code から解決するために code→color の
+  // lookup を用意する。projectId は currentFarm 経由で取得。
+  const projectId = useFarmStore((s) => s.currentFarm?.project_id ?? null)
+  const attributeTypes = useParcelAttributeTypesStore((s) =>
+    projectId ? s.byProject.get(projectId) ?? [] : [],
+  )
+  const attributeColorByCode = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const t of attributeTypes) m.set(t.code, t.color)
+    return m
+  }, [attributeTypes])
 
   // 点種フィルター UI は座標管理側に集約したため、ここでの一覧取得は不要。
 
@@ -696,10 +709,16 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
       }
       // 地番ラベルは parcels.parcel_number を優先。SIMA 由来の area.zoneNumber/name を
       // 編集前のフォールバックに使う。
+      const parcelRow = isBoundarySurvey ? parcelByWorkAreaId.get(area.id) : null
       const labelName = isBoundarySurvey
-        ? parcelByWorkAreaId.get(area.id)?.parcel_number || area.zoneNumber || area.name
+        ? parcelRow?.parcel_number || area.zoneNumber || area.name
         : area.name
-      return { id: area.id, name: labelName, positions, edges }
+      // 属性色: 地籍モードで attribute_code があれば code → 色に解決
+      const attributeColor =
+        isBoundarySurvey && parcelRow?.attribute_code
+          ? attributeColorByCode.get(parcelRow.attribute_code)
+          : undefined
+      return { id: area.id, name: labelName, positions, edges, attributeColor }
     })
     .filter(p => p.positions.length >= 3)
 
