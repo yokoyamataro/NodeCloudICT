@@ -1539,6 +1539,11 @@ export function MobileStakingPage() {
 
   // ---- 法務省地図の bbox / 取込済セット / 一括取込ハンドラ ----
   const isCadastralProject = project?.category === 'cadastral'
+
+  // 土木工事モードで 地番タブ を開いていたら強制的に閉じる (プロジェクト種別変更時の保険)
+  useEffect(() => {
+    if (!isCadastralProject && showParcelList) setShowParcelList(false)
+  }, [isCadastralProject, showParcelList])
   const parcelsByWorkAreaId = useParcelStore((s) => s.byWorkAreaId)
 
   // 地番属性: polygon の塗り色を attribute_code から解決するための lookup
@@ -2957,23 +2962,26 @@ export function MobileStakingPage() {
             </span>
           )}
         </button>
-        <button
-          onClick={() => {
-            setShowRecordList(false)
-            setShowParcelList((v) => !v)
-          }}
-          className={`shrink-0 relative px-2 py-1.5 rounded font-medium ${
-            showParcelList ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'
-          }`}
-          title="地番一覧（工区配下の地番属性を表示）"
-        >
-          地番
-          {parcelAreas.length > 0 && (
-            <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">
-              {parcelAreas.length > 9 ? '9+' : parcelAreas.length}
-            </span>
-          )}
-        </button>
+        {/* 地番タブは地籍測量プロジェクトのみ表示 (土木工事モードでは非表示) */}
+        {isCadastralProject && (
+          <button
+            onClick={() => {
+              setShowRecordList(false)
+              setShowParcelList((v) => !v)
+            }}
+            className={`shrink-0 relative px-2 py-1.5 rounded font-medium ${
+              showParcelList ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'
+            }`}
+            title="地番一覧（工区配下の地番属性を表示）"
+          >
+            地番
+            {parcelAreas.length > 0 && (
+              <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">
+                {parcelAreas.length > 9 ? '9+' : parcelAreas.length}
+              </span>
+            )}
+          </button>
+        )}
         <button
           onClick={handleShare}
           className="shrink-0 px-2 py-1.5 rounded font-medium bg-slate-700 hover:bg-slate-600"
