@@ -17,6 +17,7 @@ const MIGRATION_KEY = 'cadastral:visibleColumns:migrations'
 
 interface MigrationState {
   location?: boolean
+  attribute?: boolean
 }
 
 function readMigrations(): MigrationState {
@@ -65,6 +66,10 @@ function load(): Set<CadastralColumnKey> {
     if (valid.length > 0 && !migrations.location) {
       if (!valid.includes('location')) valid.unshift('location')
       writeMigrations({ ...migrations, location: true })
+    }
+    if (valid.length > 0 && !migrations.attribute) {
+      if (!valid.includes('attribute')) valid.unshift('attribute')
+      writeMigrations({ ...readMigrations(), attribute: true })
     }
     // 空配列で全部消えるのは事故っぽいので、最低 1 列は残す
     return valid.length > 0 ? new Set(valid) : new Set(DEFAULT_VISIBLE_COLUMNS)
