@@ -2,10 +2,13 @@
 // 将来: 工区名の変更、削除、メンバー招待などをここに集約する想定。
 
 import { useCallback, useEffect, useState } from 'react'
-import { AlertTriangle, HardDrive, Loader2, RefreshCw } from 'lucide-react'
+import { AlertTriangle, HardDrive, Layers, Loader2, RefreshCw } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
+import { useCoordinateStore } from '@/stores/coordinateStore'
+import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { supabase } from '@/lib/supabase'
+import { MAX_COORDS_PER_FARM, MAX_PARCELS_PER_FARM } from '@/lib/farmLimits'
 
 interface StorageUsage {
   photos_bytes: number
@@ -32,6 +35,12 @@ export function FarmSettingsPage() {
   const [usage, setUsage] = useState<StorageUsage | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // 工区あたり件数使用量 (座標 / 地番)
+  const coordCount = useCoordinateStore((s) => s.coordinates.length)
+  const parcelCount = useWorkAreaStore(
+    (s) => s.workAreas['boundary_survey']?.length ?? 0,
+  )
 
   const load = useCallback(async () => {
     if (!currentFarm) return
@@ -79,10 +88,105 @@ export function FarmSettingsPage() {
       ]
     : []
 
+  const coordPercent = (coordCount / MAX_COORDS_PER_FARM) * 100
+  const parcelPercent = (parcelCount / MAX_PARCELS_PER_FARM) * 100
+  const coordCls =
+    coordCount >= MAX_COORDS_PER_FARM
+      ? 'text-red-600'
+      : coordCount >= MAX_COORDS_PER_FARM * 0.9
+      ? 'text-amber-600'
+      : 'text-slate-800'
+  const parcelCls =
+    parcelCount >= MAX_PARCELS_PER_FARM
+      ? 'text-red-600'
+      : parcelCount >= MAX_PARCELS_PER_FARM * 0.9
+      ? 'text-amber-600'
+      : 'text-slate-800'
+  const coordBarCls =
+    coordCount >= MAX_COORDS_PER_FARM
+      ? 'bg-red-500'
+      : coordCount >= MAX_COORDS_PER_FARM * 0.9
+      ? 'bg-amber-500'
+      : 'bg-blue-500'
+  const parcelBarCls =
+    parcelCount >= MAX_PARCELS_PER_FARM
+      ? 'bg-red-500'
+      : parcelCount >= MAX_PARCELS_PER_FARM * 0.9
+      ? 'bg-amber-500'
+      : 'bg-blue-500'
+
   return (
     <div className="h-full flex flex-col">
       <PageHeader title="設定" subtitle={`工区: ${currentFarm.name}`} />
       <div className="flex-1 overflow-auto p-4 space-y-4">
+        {/* 座標数 / 地番数 の工区使用量 (旧: 地番管理ページ ヘッダ に表示) */}
+        <section className="bg-white border rounded-lg p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Layers className="h-5 w-5 text-blue-600" />
+            <h2 className="text-base font-semibold">工区使用量</h2>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-xs text-slate-500 border-b">
+                <th className="text-left font-medium py-1.5">項目</th>
+                <th className="text-right font-medium py-1.5">現在</th>
+                <th className="text-right font-medium py-1.5">上限</th>
+                <th className="w-40 font-medium py-1.5 pl-3">%</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              <tr>
+                <td className="py-2 text-slate-700">座標</td>
+                <td className={`py-2 text-right font-mono font-semibold ${coordCls}`}>
+                  {coordCount.toLocaleString()}
+                </td>
+                <td className="py-2 text-right text-slate-500 font-mono">
+                  {MAX_COORDS_PER_FARM.toLocaleString()}
+                </td>
+                <td className="py-2 pl-3">
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-2 bg-slate-200 rounded overflow-hidden">
+                      <div
+                        className={`h-full ${coordBarCls} transition-[width] duration-150`}
+                        style={{ width: `${Math.min(100, coordPercent)}%` }}
+                      />
+                    </div>
+                    <span className="text-[11px] text-slate-500 font-mono w-10 text-right">
+                      {coordPercent.toFixed(0)}%
+                    </span>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td className="py-2 text-slate-700">地番</td>
+                <td className={`py-2 text-right font-mono font-semibold ${parcelCls}`}>
+                  {parcelCount.toLocaleString()}
+                </td>
+                <td className="py-2 text-right text-slate-500 font-mono">
+                  {MAX_PARCELS_PER_FARM.toLocaleString()}
+                </td>
+                <td className="py-2 pl-3">
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-2 bg-slate-200 rounded overflow-hidden">
+                      <div
+                        className={`h-full ${parcelBarCls} transition-[width] duration-150`}
+                        style={{ width: `${Math.min(100, parcelPercent)}%` }}
+                      />
+                    </div>
+                    <span className="text-[11px] text-slate-500 font-mono w-10 text-right">
+                      {parcelPercent.toFixed(0)}%
+                    </span>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p className="mt-3 text-[11px] text-slate-500 leading-relaxed">
+            ※ 上限に達すると地番SIM / JPGIS.XML 取込がブロックされます。
+            9 割を超えたら黄色、上限到達で赤色になります。
+          </p>
+        </section>
+
         <section className="bg-white border rounded-lg p-4">
           <div className="flex items-center gap-2 mb-3">
             <HardDrive className="h-5 w-5 text-blue-600" />

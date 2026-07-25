@@ -20,6 +20,7 @@ import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useParcelAttributeTypesStore } from '@/stores/parcelAttributeTypesStore'
 import { ParcelAttributeTypesModal } from './ParcelAttributeTypesModal'
+import { MAX_COORDS_PER_FARM, MAX_PARCELS_PER_FARM } from '@/lib/farmLimits'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useParcelStore } from '@/stores/parcelStore'
@@ -130,9 +131,8 @@ export function BoundarySurveyWorkAreaPage() {
   }, [currentFarm?.project_id, fetchAttributeTypes])
 
 
-  // 工区あたりの上限。SIMA 取り込みで上限を超える場合は弾く。
-  const MAX_COORDS_PER_FARM = 5000
-  const MAX_PARCELS_PER_FARM = 1000
+  // 工区あたりの上限 (SIMA 取り込みで上限を超える場合は弾く)。
+  // 使用量表示自体は設定画面 (FarmSettingsPage) に移動、ここでは検証にのみ使う。
   const currentParcelCount = workAreas['boundary_survey']?.length ?? 0
   const currentCoordCount = coordinates.length
 
@@ -615,41 +615,8 @@ export function BoundarySurveyWorkAreaPage() {
         areaLabel="地番管理"
         headerActions={
           <div className="flex items-center gap-2">
-            {/* 工区あたりの使用量 (上限の何 % か) */}
-            {!progress && (
-              <div className="flex items-center gap-3 text-[11px] text-slate-600 px-2 py-1 border rounded bg-slate-50">
-                <span>
-                  座標{' '}
-                  <span
-                    className={
-                      currentCoordCount >= MAX_COORDS_PER_FARM
-                        ? 'font-mono font-semibold text-red-600'
-                        : currentCoordCount >= MAX_COORDS_PER_FARM * 0.9
-                          ? 'font-mono font-semibold text-amber-600'
-                          : 'font-mono'
-                    }
-                  >
-                    {currentCoordCount.toLocaleString()}
-                  </span>
-                  <span className="text-slate-400"> / {MAX_COORDS_PER_FARM.toLocaleString()}</span>
-                </span>
-                <span>
-                  地番{' '}
-                  <span
-                    className={
-                      currentParcelCount >= MAX_PARCELS_PER_FARM
-                        ? 'font-mono font-semibold text-red-600'
-                        : currentParcelCount >= MAX_PARCELS_PER_FARM * 0.9
-                          ? 'font-mono font-semibold text-amber-600'
-                          : 'font-mono'
-                    }
-                  >
-                    {currentParcelCount.toLocaleString()}
-                  </span>
-                  <span className="text-slate-400"> / {MAX_PARCELS_PER_FARM.toLocaleString()}</span>
-                </span>
-              </div>
-            )}
+            {/* 座標数 / 地番数 の使用量表示は設定画面 (FarmSettingsPage) に集約。
+                このヘッダにはインポート進捗・メッセージだけを残す。 */}
             {progress && (
               <div className="flex items-center gap-2 text-xs text-slate-700">
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" />
