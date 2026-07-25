@@ -59,7 +59,10 @@ import { useAttachmentStore } from '@/stores/attachmentStore'
 import { PhotoEditModal } from '@/features/coordinates/PhotoEditModal'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useParcelStore } from '@/stores/parcelStore'
-import { useParcelAttributeTypesStore } from '@/stores/parcelAttributeTypesStore'
+import {
+  useParcelAttributeTypesStore,
+  EMPTY_ATTRIBUTES,
+} from '@/stores/parcelAttributeTypesStore'
 import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { ParcelMapLayer, parcelFeatureKey } from '@/components/map/ParcelMapLayer'
 import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
@@ -1541,7 +1544,9 @@ export function MobileStakingPage() {
   // 地番属性: polygon の塗り色を attribute_code から解決するための lookup
   const projectIdForAttrs = project?.id ?? null
   const parcelAttrTypes = useParcelAttributeTypesStore((s) =>
-    projectIdForAttrs ? s.byProject.get(projectIdForAttrs) ?? [] : [],
+    projectIdForAttrs
+      ? s.byProject.get(projectIdForAttrs) ?? EMPTY_ATTRIBUTES
+      : EMPTY_ATTRIBUTES,
   )
   const fetchParcelAttrTypes = useParcelAttributeTypesStore((s) => s.fetchForProject)
   useEffect(() => {

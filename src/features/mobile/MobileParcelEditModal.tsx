@@ -6,7 +6,10 @@ import { useEffect, useState } from 'react'
 import { X, Loader2 } from 'lucide-react'
 import { useParcelStore } from '@/stores/parcelStore'
 import { useFarmStore } from '@/stores/farmStore'
-import { useParcelAttributeTypesStore } from '@/stores/parcelAttributeTypesStore'
+import {
+  useParcelAttributeTypesStore,
+  EMPTY_ATTRIBUTES,
+} from '@/stores/parcelAttributeTypesStore'
 import type { Parcel } from '@/types/database'
 
 interface Props {
@@ -36,7 +39,7 @@ export function MobileParcelEditModal({
   // 地番属性 (parcel_attribute_types)
   const projectId = useFarmStore((s) => s.currentFarm?.project_id ?? null)
   const attributeTypes = useParcelAttributeTypesStore((s) =>
-    projectId ? s.byProject.get(projectId) ?? [] : [],
+    projectId ? s.byProject.get(projectId) ?? EMPTY_ATTRIBUTES : EMPTY_ATTRIBUTES,
   )
   const fetchAttributeTypes = useParcelAttributeTypesStore((s) => s.fetchForProject)
   useEffect(() => {

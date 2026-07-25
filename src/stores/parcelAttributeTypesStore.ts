@@ -13,6 +13,11 @@ export const UNSELECTED_ATTRIBUTE = {
   color: '#e5e7eb',
 } as const
 
+/** zustand セレクタで「未 fetch」時に返す安定参照。毎回 `[]` を返すと
+ *  React が state 変化と誤認して無限ループ (React error #185) になる。
+ *  各 caller は `s.byProject.get(projectId) ?? EMPTY_ATTRIBUTES` の形で使うこと。 */
+export const EMPTY_ATTRIBUTES: ReadonlyArray<ParcelAttributeType> = Object.freeze([])
+
 interface State {
   /** projectId -> attribute types (sort_order 順) */
   byProject: Map<string, ParcelAttributeType[]>

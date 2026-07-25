@@ -12,6 +12,7 @@ import { useFarmStore } from '@/stores/farmStore'
 import {
   useParcelAttributeTypesStore,
   UNSELECTED_ATTRIBUTE,
+  EMPTY_ATTRIBUTES,
 } from '@/stores/parcelAttributeTypesStore'
 import { LAND_CATEGORIES } from '@/lib/landCategory'
 
@@ -172,7 +173,7 @@ export function CadastralRowFields({ area, visibleColumns }: Props) {
   // 地番属性 (parcel_attribute_types)。プロジェクト単位で fetch 済みを参照。
   const projectId = useFarmStore((s) => s.currentFarm?.project_id ?? null)
   const attributeTypes = useParcelAttributeTypesStore((s) =>
-    projectId ? s.byProject.get(projectId) ?? [] : [],
+    projectId ? s.byProject.get(projectId) ?? EMPTY_ATTRIBUTES : EMPTY_ATTRIBUTES,
   )
   const currentAttribute = parcel?.attribute_code
     ? attributeTypes.find((t) => t.code === parcel.attribute_code)

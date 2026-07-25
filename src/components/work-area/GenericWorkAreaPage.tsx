@@ -8,7 +8,10 @@ import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { useParcelStore } from '@/stores/parcelStore'
-import { useParcelAttributeTypesStore } from '@/stores/parcelAttributeTypesStore'
+import {
+  useParcelAttributeTypesStore,
+  EMPTY_ATTRIBUTES,
+} from '@/stores/parcelAttributeTypesStore'
 import { useLandownerStore } from '@/stores/landownerStore'
 import { CoordinateMap, type ExternalPolygon, type EdgeRounding } from '@/components/map/CoordinateMap'
 import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
@@ -295,7 +298,7 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   // lookup を用意する。projectId は currentFarm 経由で取得。
   const projectId = useFarmStore((s) => s.currentFarm?.project_id ?? null)
   const attributeTypes = useParcelAttributeTypesStore((s) =>
-    projectId ? s.byProject.get(projectId) ?? [] : [],
+    projectId ? s.byProject.get(projectId) ?? EMPTY_ATTRIBUTES : EMPTY_ATTRIBUTES,
   )
   const attributeColorByCode = useMemo(() => {
     const m = new Map<string, string>()

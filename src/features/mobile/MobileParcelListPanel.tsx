@@ -8,7 +8,10 @@ import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useParcelStore } from '@/stores/parcelStore'
 import { useLandownerStore } from '@/stores/landownerStore'
 import { useFarmStore } from '@/stores/farmStore'
-import { useParcelAttributeTypesStore } from '@/stores/parcelAttributeTypesStore'
+import {
+  useParcelAttributeTypesStore,
+  EMPTY_ATTRIBUTES,
+} from '@/stores/parcelAttributeTypesStore'
 import { compareByLocationAndParcel } from '@/lib/parcelSort'
 import { MobileListColumnPicker, type ColumnDef } from './MobileListColumnPicker'
 import { MobileParcelEditModal } from './MobileParcelEditModal'
@@ -74,7 +77,7 @@ export function MobileParcelListPanel({
   // 地番属性: プロジェクト単位で fetch し、code → 属性 の lookup を作る
   const projectId = useFarmStore((s) => s.currentFarm?.project_id ?? null)
   const attributeTypes = useParcelAttributeTypesStore((s) =>
-    projectId ? s.byProject.get(projectId) ?? [] : [],
+    projectId ? s.byProject.get(projectId) ?? EMPTY_ATTRIBUTES : EMPTY_ATTRIBUTES,
   )
   const fetchAttributeTypes = useParcelAttributeTypesStore((s) => s.fetchForProject)
   useEffect(() => {
