@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { Upload, Trash2, FileSearch, Download, ArrowUpDown, Edit3, X, Navigation, Link2, Merge, Split, Tag, MapPin, ChevronUp, ChevronDown, Target, Square, Map, Maximize2, Minimize2, Printer } from 'lucide-react'
+import { Upload, Trash2, FileSearch, Download, ArrowUpDown, Edit3, X, Navigation, Link2, Merge, Split, Tag, MapPin, ChevronUp, ChevronDown, Target, Square, Map, Maximize2, Minimize2, Printer, Sparkles } from 'lucide-react'
+import { CadAiImportModal } from './CadAiImportModal'
 import { parseDxf, calculateLineLength } from '@/lib/dxf-parser'
 import { autoConnectFromOutlet } from '@/lib/pipe-connection'
 import {
@@ -56,6 +57,9 @@ export function CadAnalysisPage() {
     layers: string[]
   } | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('import')
+
+  // AI 解析モーダル (別フロー)
+  const [showAiImport, setShowAiImport] = useState(false)
 
   // 一括訂正モード（連番機能を統合）
   const [isBulkEditMode, setIsBulkEditMode] = useState(false)
@@ -795,6 +799,14 @@ export function CadAnalysisPage() {
               >
                 <Upload className="h-4 w-4" />
                 DXF
+              </button>
+              <button
+                onClick={() => setShowAiImport(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 whitespace-nowrap"
+                title="DXF を AI (Claude Sonnet) で解析し、管径・延長を自動抽出して取込"
+              >
+                <Sparkles className="h-4 w-4" />
+                AI 解析
               </button>
               {pipes.length > 0 && !isBulkEditMode && editMode === 'normal' && autoConnectMode === 'idle' && (
                 <>
@@ -1754,6 +1766,14 @@ export function CadAnalysisPage() {
             />
           </div>
         </div>
+      )}
+      {showAiImport && currentFarm?.project_id && (
+        <CadAiImportModal
+          projectId={currentFarm.project_id}
+          farmId={currentFarm.id}
+          onClose={() => setShowAiImport(false)}
+          onDone={() => setShowAiImport(false)}
+        />
       )}
     </div>
   )
