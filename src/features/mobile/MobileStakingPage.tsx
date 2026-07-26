@@ -3852,25 +3852,7 @@ export function MobileStakingPage() {
 
       {/* 地図 */}
       <div className="flex-1 relative">
-        {/* 描画ツールバー: showDrawing = true のときだけ表示。地図上部中央にフローティング。 */}
-        {showDrawing && farm?.id && (
-          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[1250]">
-            <MapDrawingToolbar
-              mode={drawingMode}
-              onChangeMode={setDrawingMode}
-              color={drawingColor}
-              onChangeColor={setDrawingColor}
-              widthPx={drawingWidth}
-              onChangeWidth={setDrawingWidth}
-              lineStyle={drawingLineStyle}
-              onChangeLineStyle={setDrawingLineStyle}
-              canUndo={drawingUndoLen > 0}
-              canRedo={drawingRedoLen > 0}
-              onUndo={() => void drawingUndo()}
-              onRedo={() => void drawingRedo()}
-            />
-          </div>
-        )}
+        {/* 描画ツールバーは下部パネル (ターゲット選択の位置) に統合 */}
         {/* 現在地 (追従モード切替) + 更新 ボタン。地図左上のズームコントロール直下に縦並び。 */}
         <div className="absolute top-[88px] left-2 z-[1200] flex flex-col gap-1">
           <button
@@ -5367,7 +5349,23 @@ export function MobileStakingPage() {
         )}
 
         {/* MAP モード行: ターゲット設定 → 誘導表示 */}
-        {showMap && (selectedTarget ? (
+        {/* 描画モード中は「ターゲットを選択」の代わりにペイントツールバーを表示 */}
+        {showMap && showDrawing && farm?.id ? (
+          <MapDrawingToolbar
+            mode={drawingMode}
+            onChangeMode={setDrawingMode}
+            color={drawingColor}
+            onChangeColor={setDrawingColor}
+            widthPx={drawingWidth}
+            onChangeWidth={setDrawingWidth}
+            lineStyle={drawingLineStyle}
+            onChangeLineStyle={setDrawingLineStyle}
+            canUndo={drawingUndoLen > 0}
+            canRedo={drawingRedoLen > 0}
+            onUndo={() => void drawingUndo()}
+            onRedo={() => void drawingRedo()}
+          />
+        ) : showMap && (selectedTarget ? (
           <div className="flex flex-col gap-1">
             {/* 1 行目: 点名 (伸縮) + 解除 X + 矢印/距離。
                 点名を最大限に表示するため、測定/詳細ボタンは 2 行目に配置。 */}
