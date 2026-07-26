@@ -73,6 +73,26 @@ export const useMapDrawingStore = create<State>((set, get) => ({
 
   addStroke: async ({ farmId, color, widthPx, lineStyle, points }) => {
     if (points.length < 2) return null
+    // 楽観追加: temp ID で先にストアに入れる (画面から一瞬消える現象の防止)
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const now = new Date().toISOString()
+    const optimistic: MapDrawingStroke = {
+      id: tempId,
+      farm_id: farmId,
+      created_by: null,
+      color,
+      width_px: widthPx,
+      line_style: lineStyle,
+      points,
+      created_at: now,
+      updated_at: now,
+    }
+    {
+      const map = new Map(get().byFarm)
+      const list = [...(map.get(farmId) ?? []), optimistic]
+      map.set(farmId, list)
+      set({ byFarm: map })
+    }
     try {
       const { data: userData } = await supabase.auth.getUser()
       const uid = userData.user?.id ?? null
@@ -90,14 +110,19 @@ export const useMapDrawingStore = create<State>((set, get) => ({
         .single()
       if (error) throw error
       const stroke = data as MapDrawingStroke
+      // temp を実 ID に差し替え
       const map = new Map(get().byFarm)
-      const list = [...(map.get(farmId) ?? []), stroke]
+      const list = (map.get(farmId) ?? []).map((s) => (s.id === tempId ? stroke : s))
       map.set(farmId, list)
       set({ byFarm: map })
       return stroke
     } catch (err) {
       console.error('[mapDrawingStore] add failed', err)
-      set({ error: err instanceof Error ? err.message : String(err) })
+      // ロールバック: temp を除去
+      const map = new Map(get().byFarm)
+      const list = (map.get(farmId) ?? []).filter((s) => s.id !== tempId)
+      map.set(farmId, list)
+      set({ byFarm: map, error: err instanceof Error ? err.message : String(err) })
       return null
     }
   },
