@@ -1,10 +1,13 @@
-// 地図描画モードのツールバー (ペン / 消しゴム / 色 / 太さ / 全消し)。
+// 地図描画モードのツールバー (ペン / 消しゴム / 色 / 線種 / 太さ / 全消し)。
 //
-// 呼び出し側で mode / color / widthPx の state を持ち、この toolbar は
-// UI と callback のみを提供する (pure)。
+// レイアウト方針:
+//   ・モバイル (幅狭) でも収まるように flex-wrap + max-width で自動改行
+//   ・線種はプルダウン (ボタン + 展開メニュー) にしてスペース節約
+//   ・色ピッカーも同様の展開メニュー
+//   ・ボタンは 32px 四方に抑える
 
-import { useState } from 'react'
-import { Eraser, Pen, Trash2, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { ChevronDown, Eraser, Pen, Trash2, X } from 'lucide-react'
 import type { DrawingMode } from './MapDrawingLayer'
 import type { LineStyle } from '@/stores/mapDrawingStore'
 
@@ -37,6 +40,29 @@ const LINE_STYLE_LABEL: Record<LineStyle, string> = {
   dashed: '破線',
   dotted: '点線',
 }
+const LINE_STYLE_DASH: Record<LineStyle, string | undefined> = {
+  solid: undefined,
+  dashed: '6,3',
+  dotted: '0.1,3',
+}
+
+/** 線種プレビュー用 SVG */
+function LineStyleSvg({ style, width = 30 }: { style: LineStyle; width?: number }) {
+  return (
+    <svg width={width} height="10" viewBox={`0 0 ${width} 10`}>
+      <line
+        x1="0"
+        y1="5"
+        x2={width}
+        y2="5"
+        stroke="currentColor"
+        strokeWidth={2}
+        strokeDasharray={LINE_STYLE_DASH[style]}
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
 
 export function MapDrawingToolbar({
   mode,
@@ -51,14 +77,34 @@ export function MapDrawingToolbar({
   onClearAll,
 }: Props) {
   const [colorPickerOpen, setColorPickerOpen] = useState(false)
+  const [linePickerOpen, setLinePickerOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  // 外側クリックでポップアップを閉じる (mobile でも動くよう pointerdown を使用)
+  useEffect(() => {
+    if (!colorPickerOpen && !linePickerOpen) return
+    const onDown = (e: PointerEvent) => {
+      if (!rootRef.current) return
+      if (!rootRef.current.contains(e.target as Node)) {
+        setColorPickerOpen(false)
+        setLinePickerOpen(false)
+      }
+    }
+    document.addEventListener('pointerdown', onDown)
+    return () => document.removeEventListener('pointerdown', onDown)
+  }, [colorPickerOpen, linePickerOpen])
+
   return (
-    <div className="bg-white border rounded-lg shadow-lg p-2 flex items-center gap-1.5 text-xs">
+    <div
+      ref={rootRef}
+      className="bg-white border rounded-lg shadow-lg p-1.5 flex flex-wrap items-center gap-1 text-xs max-w-[calc(100vw-1rem)]"
+    >
       {/* ペン */}
       <button
         type="button"
         onClick={() => onChangeMode(mode === 'pen' ? 'off' : 'pen')}
         title="ペン (ドラッグで描画)"
-        className={`w-9 h-9 flex items-center justify-center rounded ${
+        className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
           mode === 'pen'
             ? 'bg-blue-600 text-white'
             : 'text-slate-600 hover:bg-slate-100'
@@ -71,7 +117,7 @@ export function MapDrawingToolbar({
         type="button"
         onClick={() => onChangeMode(mode === 'eraser' ? 'off' : 'eraser')}
         title="消しゴム (ストロークをクリックで削除)"
-        className={`w-9 h-9 flex items-center justify-center rounded ${
+        className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
           mode === 'eraser'
             ? 'bg-red-500 text-white'
             : 'text-slate-600 hover:bg-slate-100'
@@ -80,15 +126,16 @@ export function MapDrawingToolbar({
         <Eraser className="h-4 w-4" />
       </button>
 
-      <div className="w-px h-6 bg-slate-200 mx-1" />
-
       {/* 色 (プリセット + カスタム) */}
-      <div className="relative">
+      <div className="relative shrink-0">
         <button
           type="button"
-          onClick={() => setColorPickerOpen((v) => !v)}
+          onClick={() => {
+            setColorPickerOpen((v) => !v)
+            setLinePickerOpen(false)
+          }}
           title="ペンの色"
-          className="w-9 h-9 flex items-center justify-center rounded hover:bg-slate-100 border"
+          className="w-8 h-8 flex items-center justify-center rounded hover:bg-slate-100 border shrink-0"
           style={{ backgroundColor: color }}
         >
           <span className="sr-only">色を選ぶ</span>
@@ -123,41 +170,46 @@ export function MapDrawingToolbar({
         )}
       </div>
 
-      {/* 線種 (実線 / 破線 / 点線) */}
-      <div className="flex items-center gap-0.5 rounded overflow-hidden border">
-        {(['solid', 'dashed', 'dotted'] as const).map((s) => (
-          <button
-            key={s}
-            type="button"
-            onClick={() => onChangeLineStyle(s)}
-            title={LINE_STYLE_LABEL[s]}
-            className={`px-1.5 h-8 flex items-center justify-center ${
-              lineStyle === s
-                ? 'bg-slate-800 text-white'
-                : 'bg-white text-slate-700 hover:bg-slate-100'
-            }`}
-          >
-            <svg width="26" height="12" viewBox="0 0 26 12">
-              <line
-                x1="0"
-                y1="6"
-                x2="26"
-                y2="6"
-                stroke="currentColor"
-                strokeWidth={2}
-                strokeDasharray={
-                  s === 'solid' ? undefined : s === 'dashed' ? '6,3' : '0.1,3'
-                }
-                strokeLinecap="round"
-              />
-            </svg>
-          </button>
-        ))}
+      {/* 線種 (プルダウン) */}
+      <div className="relative shrink-0">
+        <button
+          type="button"
+          onClick={() => {
+            setLinePickerOpen((v) => !v)
+            setColorPickerOpen(false)
+          }}
+          title={`線種: ${LINE_STYLE_LABEL[lineStyle]}`}
+          className="h-8 px-1.5 flex items-center gap-0.5 rounded border hover:bg-slate-100 text-slate-700"
+        >
+          <LineStyleSvg style={lineStyle} width={22} />
+          <ChevronDown className="h-3 w-3" />
+        </button>
+        {linePickerOpen && (
+          <div className="absolute top-full left-0 mt-1 z-[3000] bg-white border rounded shadow-lg py-1 min-w-[7rem]">
+            {(['solid', 'dashed', 'dotted'] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => {
+                  onChangeLineStyle(s)
+                  setLinePickerOpen(false)
+                }}
+                className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs ${
+                  lineStyle === s
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <LineStyleSvg style={s} width={34} />
+                <span>{LINE_STYLE_LABEL[s]}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 太さスライダ */}
-      <div className="flex items-center gap-1 pl-1">
-        <span className="text-[10px] text-slate-500">太さ</span>
+      <div className="flex items-center gap-1 pl-1 shrink-0">
         <input
           type="range"
           min={1}
@@ -165,7 +217,7 @@ export function MapDrawingToolbar({
           step={1}
           value={widthPx}
           onChange={(e) => onChangeWidth(Number(e.target.value))}
-          className="w-16"
+          className="w-14"
           title={`太さ: ${widthPx}px`}
         />
         <span className="text-[10px] font-mono text-slate-600 w-6 text-right">
@@ -173,10 +225,10 @@ export function MapDrawingToolbar({
         </span>
       </div>
 
-      <div className="w-px h-6 bg-slate-200 mx-1" />
-
       {/* 件数 + 全消し */}
-      <span className="text-[10px] text-slate-500">{strokeCount} 本</span>
+      <span className="text-[10px] text-slate-500 shrink-0 pl-1">
+        {strokeCount} 本
+      </span>
       <button
         type="button"
         onClick={() => {
@@ -187,7 +239,7 @@ export function MapDrawingToolbar({
         }}
         disabled={strokeCount === 0}
         title="全消し"
-        className="w-9 h-9 flex items-center justify-center rounded text-slate-600 hover:bg-red-50 hover:text-red-600 disabled:opacity-30"
+        className="w-8 h-8 flex items-center justify-center rounded text-slate-600 hover:bg-red-50 hover:text-red-600 disabled:opacity-30 shrink-0"
       >
         <Trash2 className="h-4 w-4" />
       </button>
@@ -198,7 +250,7 @@ export function MapDrawingToolbar({
           type="button"
           onClick={() => onChangeMode('off')}
           title="描画モードを終了"
-          className="w-9 h-9 flex items-center justify-center rounded text-slate-500 hover:bg-slate-100"
+          className="w-8 h-8 flex items-center justify-center rounded text-slate-500 hover:bg-slate-100 shrink-0"
         >
           <X className="h-4 w-4" />
         </button>
