@@ -7,7 +7,7 @@
 //   ・ボタンは 32px 四方に抑える
 
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, Eraser, Pen, Redo2, Type, Undo2, X } from 'lucide-react'
+import { ChevronDown, Eraser, Pen, Redo2, StickyNote, Type, Undo2, X } from 'lucide-react'
 import type { DrawingMode } from './MapDrawingLayer'
 import type { LineStyle } from '@/stores/mapDrawingStore'
 
@@ -35,6 +35,8 @@ interface Props {
   canRedo: boolean
   onUndo: () => void
   onRedo: () => void
+  /** 付箋メモ (現在位置に従来のメモを残す) を発火。未指定なら非表示。 */
+  onMemo?: () => void
 }
 
 const LINE_STYLE_LABEL: Record<LineStyle, string> = {
@@ -79,6 +81,7 @@ export function MapDrawingToolbar({
   canRedo,
   onUndo,
   onRedo,
+  onMemo,
 }: Props) {
   const [colorPickerOpen, setColorPickerOpen] = useState(false)
   const [linePickerOpen, setLinePickerOpen] = useState(false)
@@ -129,6 +132,20 @@ export function MapDrawingToolbar({
       >
         <Type className="h-4 w-4" />
       </button>
+      {/* 付箋メモ (現在位置に従来型のメモを残す) */}
+      {onMemo && (
+        <button
+          type="button"
+          onClick={() => {
+            onMemo()
+            onChangeMode('off')
+          }}
+          title="付箋メモ (現在位置にメモを残す)"
+          className="w-8 h-8 flex items-center justify-center rounded shrink-0 text-amber-600 hover:bg-amber-50"
+        >
+          <StickyNote className="h-4 w-4" />
+        </button>
+      )}
       {/* 消しゴム */}
       <button
         type="button"

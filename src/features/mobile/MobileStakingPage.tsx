@@ -25,6 +25,7 @@ import {
   Volume2,
   VolumeX,
   Plus,
+  Pen,
   StickyNote,
   ExternalLink,
   Info,
@@ -2999,16 +3000,6 @@ export function MobileStakingPage() {
             )}
           </button>
         )}
-        {/* 描画タブ: 地図に手書きペイント */}
-        <button
-          onClick={() => setShowDrawing((v) => !v)}
-          className={`shrink-0 relative px-2 py-1.5 rounded font-medium ${
-            showDrawing ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'
-          }`}
-          title="描画 (地図に手書きペイント)"
-        >
-          描画
-        </button>
         <button
           onClick={handleShare}
           className="shrink-0 px-2 py-1.5 rounded font-medium bg-slate-700 hover:bg-slate-600"
@@ -5364,6 +5355,12 @@ export function MobileStakingPage() {
             canRedo={drawingRedoLen > 0}
             onUndo={() => void drawingUndo()}
             onRedo={() => void drawingRedo()}
+            onMemo={() =>
+              setMemoModalState({
+                lat: currentPos ? currentPos[0] : null,
+                lng: currentPos ? currentPos[1] : null,
+              })
+            }
           />
         ) : showMap && (selectedTarget ? (
           <div className="flex flex-col gap-1">
@@ -5564,20 +5561,19 @@ export function MobileStakingPage() {
                 </button>
               )}
 
-              {/* メモ — 現在位置でメモを残す */}
+              {/* 描画メモ — 地図に手書き / テキスト / 付箋メモを配置する描画ツールを開く */}
               <button
                 type="button"
-                onClick={() =>
-                  setMemoModalState({
-                    lat: currentPos ? currentPos[0] : null,
-                    lng: currentPos ? currentPos[1] : null,
-                  })
-                }
-                className="flex-1 basis-0 flex items-center justify-center gap-1 px-2 py-3 rounded-lg border border-amber-400 bg-amber-50 text-amber-800 font-semibold active:bg-amber-100"
-                title="現在位置でメモを残す"
+                onClick={() => setShowDrawing((v) => !v)}
+                className={`flex-1 basis-0 flex items-center justify-center gap-1 px-2 py-3 rounded-lg font-semibold ${
+                  showDrawing
+                    ? 'bg-blue-600 text-white'
+                    : 'border border-amber-400 bg-amber-50 text-amber-800 active:bg-amber-100'
+                }`}
+                title="描画メモ (地図に手書きペイント・テキスト・付箋メモ)"
               >
-                <StickyNote className="h-5 w-5" />
-                メモ
+                <Pen className="h-5 w-5" />
+                描画メモ
               </button>
 
               {/* 設置済 トグル（ターゲットありのときだけ追加表示） */}
