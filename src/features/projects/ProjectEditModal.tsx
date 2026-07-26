@@ -3,7 +3,6 @@
 //   フィールド:
 //     基本    : 現場名 / 説明 / 種別 / 座標系
 //     関係者  : 発注者 / 受託者
-//     工期    : 工期開始日 / 工期終了日 (予定)
 //     進捗    : 着手日 / 完成日 (実際の作業実績) + 完了チェック
 //     共有    : 占有 / 共有 / 公開 (+ 共有メンバー管理)
 //     アクション: 現場を削除する (ゴミ箱へ)
@@ -59,12 +58,6 @@ interface PendingAdd {
   is_internal: boolean
 }
 
-// YYYY-MM-DD 形式の日付 (DATE 型: start_date / end_date) → date input value
-function dateStringToInput(s: string | null): string {
-  if (!s) return ''
-  return s.slice(0, 10)
-}
-
 // 共有ポリシー変更時の注意文
 function visibilityWarningText(
   from: ProjectVisibility,
@@ -97,8 +90,6 @@ export function ProjectEditModal({
         Project,
         | 'name'
         | 'description'
-        | 'start_date'
-        | 'end_date'
         | 'client'
         | 'contractor'
         | 'coordinate_zone'
@@ -118,8 +109,6 @@ export function ProjectEditModal({
   const [description, setDescription] = useState(project.description ?? '')
   const [client, setClient] = useState(project.client ?? '')
   const [contractor, setContractor] = useState(project.contractor ?? '')
-  const [startDate, setStartDate] = useState(dateStringToInput(project.start_date))
-  const [endDate, setEndDate] = useState(dateStringToInput(project.end_date))
   const [zone, setZone] = useState<number>(project.coordinate_zone ?? 13)
   const category = project.category
   const [startedAt, setStartedAt] = useState<string>(isoToDateInput(project.started_at))
@@ -142,8 +131,6 @@ export function ProjectEditModal({
     setDescription(project.description ?? '')
     setClient(project.client ?? '')
     setContractor(project.contractor ?? '')
-    setStartDate(dateStringToInput(project.start_date))
-    setEndDate(dateStringToInput(project.end_date))
     setZone(project.coordinate_zone ?? 13)
     setStartedAt(isoToDateInput(project.started_at))
     setCompletedAt(isoToDateInput(project.completed_at))
@@ -162,8 +149,6 @@ export function ProjectEditModal({
     project.description,
     project.client,
     project.contractor,
-    project.start_date,
-    project.end_date,
     project.coordinate_zone,
     project.category,
     project.started_at,
@@ -312,11 +297,6 @@ export function ProjectEditModal({
     const prevContractor = project.contractor ?? ''
     if (contractor.trim() !== prevContractor)
       patch.contractor = contractor.trim() || null
-    const nextStartDate = startDate || null
-    if (nextStartDate !== (project.start_date ?? null))
-      patch.start_date = nextStartDate
-    const nextEndDate = endDate || null
-    if (nextEndDate !== (project.end_date ?? null)) patch.end_date = nextEndDate
     if (zone !== (project.coordinate_zone ?? 13)) patch.coordinate_zone = zone
     const nextStartedAt = dateInputToIso(startedAt)
     if (nextStartedAt !== project.started_at) patch.started_at = nextStartedAt
@@ -332,8 +312,6 @@ export function ProjectEditModal({
     description,
     client,
     contractor,
-    startDate,
-    endDate,
     zone,
     startedAt,
     completedAt,
@@ -343,8 +321,6 @@ export function ProjectEditModal({
     project.description,
     project.client,
     project.contractor,
-    project.start_date,
-    project.end_date,
     project.coordinate_zone,
     project.started_at,
     project.completed_at,
@@ -415,6 +391,17 @@ export function ProjectEditModal({
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="flex-1 px-2 py-1.5 border rounded text-sm"
+            />
+          </div>
+
+          {/* 説明 (現場名の直下) */}
+          <div className="flex items-start gap-2">
+            <span className="text-xs text-slate-500 shrink-0 w-16 pt-1">説明</span>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="任意"
+              className="flex-1 px-2 py-1.5 border rounded text-sm h-14"
             />
           </div>
 
@@ -658,18 +645,7 @@ export function ProjectEditModal({
             </div>
           )}
 
-          {/* 説明 */}
-          <div className="flex items-start gap-2">
-            <span className="text-xs text-slate-500 shrink-0 w-16 pt-1">説明</span>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="任意"
-              className="flex-1 px-2 py-1.5 border rounded text-sm h-14"
-            />
-          </div>
-
-          {/* 発注者 */}
+          {/* 発注者 / 受託者 を 1 行に */}
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-500 shrink-0 w-16">発注者</span>
             <input
@@ -679,11 +655,7 @@ export function ProjectEditModal({
               placeholder="任意"
               className="flex-1 px-2 py-1.5 border rounded text-sm"
             />
-          </div>
-
-          {/* 受託者 */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500 shrink-0 w-16">受託者</span>
+            <span className="text-xs text-slate-500 shrink-0 pl-2">受託者</span>
             <input
               type="text"
               value={contractor}
@@ -709,27 +681,7 @@ export function ProjectEditModal({
             </select>
           </div>
 
-          {/* 工期 (予定): 開始 / 終了 を 1 行に */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500 shrink-0 w-16">工期予定</span>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="flex-1 px-2 py-1.5 border rounded text-sm"
-              title="工期開始日"
-            />
-            <span className="text-xs text-slate-400">〜</span>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="flex-1 px-2 py-1.5 border rounded text-sm"
-              title="工期終了日"
-            />
-          </div>
-
-          {/* 着手日 (実績) */}
+          {/* 着手日 (実績) + 完了チェック + 完成日 を 1 行に */}
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-500 shrink-0 w-16">着手日</span>
             <input
@@ -738,23 +690,16 @@ export function ProjectEditModal({
               onChange={(e) => setStartedAt(e.target.value)}
               className="flex-1 px-2 py-1.5 border rounded text-sm"
             />
-          </div>
-
-          {/* 進捗 / 完成日: 完了チェック + 完成日 を 1 行に */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500 shrink-0 w-16">進捗</span>
-            <label className="flex items-center gap-1.5 px-2 py-1.5 border rounded cursor-pointer">
+            <label className="flex items-center gap-1.5 px-2 py-1.5 border rounded cursor-pointer shrink-0">
               <input
                 type="checkbox"
                 checked={isCompleted}
                 onChange={(e) => {
                   const checked = e.target.checked
                   setIsCompleted(checked)
-                  if (checked) {
-                    if (!completedAt) {
-                      const now = new Date().toISOString()
-                      setCompletedAt(isoToDateInput(now))
-                    }
+                  if (checked && !completedAt) {
+                    const now = new Date().toISOString()
+                    setCompletedAt(isoToDateInput(now))
                   }
                 }}
                 className="h-3.5 w-3.5"

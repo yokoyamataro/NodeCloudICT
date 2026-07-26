@@ -496,8 +496,6 @@ export interface Project {
   user_id: string
   name: string
   description: string | null
-  start_date: string | null      // 工期開始日 (予定期間)
-  end_date: string | null        // 工期終了日 (予定期間)
   client: string | null          // 発注者
   contractor: string | null      // 受託者
   coordinate_zone: number        // 座標系（平面直角座標系の系番号、デフォルト13系）
