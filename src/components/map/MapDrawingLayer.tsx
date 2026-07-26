@@ -15,6 +15,7 @@
 // 保存座標は lat/lng なので、地図を伸縮・移動しても地図上の位置は保持される。
 
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Circle as LeafletCircle,
   Marker,
@@ -251,6 +252,21 @@ export function MapDrawingLayer({
     points: Array<{ lat: number; lng: number }>
   } | null>(null)
 
+  // テキスト追加ダイアログ (window.prompt を使わずページ内モーダルで入力させる。
+  // ブラウザで「追加のダイアログを表示しない」がチェックされている状況でも動くように)
+  const [textDialog, setTextDialog] = useState<{
+    lat: number
+    lng: number
+    value: string
+  } | null>(null)
+  const textDialogInputRef = useRef<HTMLInputElement | null>(null)
+  useEffect(() => {
+    if (textDialog) {
+      // 開いた瞬間にフォーカス
+      requestAnimationFrame(() => textDialogInputRef.current?.focus())
+    }
+  }, [textDialog])
+
   // farm 切替時に fetch + 状態リセット
   useEffect(() => {
     if (farmId) void fetchByFarm(farmId)
@@ -264,6 +280,7 @@ export function MapDrawingLayer({
     if (mode !== 'circle' && mode !== 'arc' && mode !== 'polygon') {
       setShapeProgress(null)
     }
+    if (mode !== 'text') setTextDialog(null)
     if (mode !== 'select') {
       setSelectedId(null)
       setDragPreview(null)
@@ -314,18 +331,7 @@ export function MapDrawingLayer({
     click: (e) => {
       if (!farmId) return
       if (mode === 'text') {
-        const input = prompt('テキストを入力', '')
-        if (input == null) return
-        const trimmed = input.trim()
-        if (!trimmed) return
-        void addText({
-          farmId,
-          color,
-          widthPx,
-          lat: e.latlng.lat,
-          lng: e.latlng.lng,
-          text: trimmed,
-        })
+        setTextDialog({ lat: e.latlng.lat, lng: e.latlng.lng, value: '' })
         return
       }
       if (mode === 'circle') {
@@ -895,6 +901,82 @@ export function MapDrawingLayer({
             }}
           />
         ))}
+      {/* テキスト入力ダイアログ (window.prompt の代替。Portal で map の外に出す) */}
+      {textDialog &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[4000] flex items-center justify-center bg-black/40 p-4"
+            onClick={() => setTextDialog(null)}
+          >
+            <div
+              className="bg-white rounded-lg shadow-xl p-4 w-full max-w-sm flex flex-col gap-3"
+              onClick={(ev) => ev.stopPropagation()}
+            >
+              <div className="text-sm font-semibold text-slate-800">
+                テキストを入力
+              </div>
+              <input
+                ref={textDialogInputRef}
+                type="text"
+                value={textDialog.value}
+                onChange={(ev) =>
+                  setTextDialog({ ...textDialog, value: ev.target.value })
+                }
+                onKeyDown={(ev) => {
+                  if (ev.key === 'Enter') {
+                    const trimmed = textDialog.value.trim()
+                    if (trimmed && farmId) {
+                      void addText({
+                        farmId,
+                        color,
+                        widthPx,
+                        lat: textDialog.lat,
+                        lng: textDialog.lng,
+                        text: trimmed,
+                      })
+                    }
+                    setTextDialog(null)
+                  } else if (ev.key === 'Escape') {
+                    setTextDialog(null)
+                  }
+                }}
+                placeholder="ここに文字を入力"
+                className="w-full border rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setTextDialog(null)}
+                  className="px-3 py-1.5 text-sm rounded border text-slate-700 hover:bg-slate-50"
+                >
+                  キャンセル
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const trimmed = textDialog.value.trim()
+                    if (trimmed && farmId) {
+                      void addText({
+                        farmId,
+                        color,
+                        widthPx,
+                        lat: textDialog.lat,
+                        lng: textDialog.lng,
+                        text: trimmed,
+                      })
+                    }
+                    setTextDialog(null)
+                  }}
+                  disabled={!textDialog.value.trim()}
+                  className="px-3 py-1.5 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"
+                >
+                  追加
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </Pane>
   )
 }
