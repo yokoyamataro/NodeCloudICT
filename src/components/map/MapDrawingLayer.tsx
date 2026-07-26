@@ -1,16 +1,15 @@
 // 地図上に手書きペイント + テキスト注釈を重ねるレイヤ (touch / mouse 対応)。
 //
-// 6 モード:
+// 5 モード:
 //   ・'off'    描画無効。既存アイテムだけ表示。マップ操作は通常通り。
-//   ・'pen'    ドラッグでストロークを描く。地図の pan/zoom (touchZoom は除く) は無効化。
+//   ・'pen'    ドラッグでフリーハンドのストロークを描く。地図の pan/zoom (touchZoom は除く) は無効化。
 //   ・'line'   ドラッグで始点/終点だけ記録し 2 点の直線を描く。
 //   ・'text'   タップした点にテキスト注釈を追加 (prompt 経由)。
-//   ・'select' ストロークをタップで選択し、端点ハンドルをドラッグして頂点を移動。
 //   ・'eraser' アイテムをクリックで削除。
 //
 // 保存座標は lat/lng なので、地図を伸縮・移動しても地図上の位置は保持される。
 
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Marker, Pane, Polyline, useMap, useMapEvents } from 'react-leaflet'
 import L, { type LatLng } from 'leaflet'
 import {
@@ -20,15 +19,7 @@ import {
   type LineStyle,
 } from '@/stores/mapDrawingStore'
 
-export type DrawingMode = 'off' | 'pen' | 'line' | 'text' | 'select' | 'eraser'
-
-/** 端点ハンドル用の divIcon (青丸 + 白フチ、選択モードで表示) */
-const HANDLE_ICON = L.divIcon({
-  className: 'map-drawing-handle',
-  html: '<div style="width:16px;height:16px;border-radius:50%;background:#3b82f6;border:2px solid white;box-shadow:0 0 4px rgba(0,0,0,0.6);"></div>',
-  iconSize: [20, 20],
-  iconAnchor: [10, 10],
-})
+export type DrawingMode = 'off' | 'pen' | 'line' | 'text' | 'eraser'
 
 interface Props {
   farmId: string | null
@@ -88,32 +79,9 @@ export function MapDrawingLayer({
   const addStroke = useMapDrawingStore((s) => s.addStroke)
   const addText = useMapDrawingStore((s) => s.addText)
   const deleteStroke = useMapDrawingStore((s) => s.deleteStroke)
-  const updateStrokePoints = useMapDrawingStore((s) => s.updateStrokePoints)
 
   const [currentPositions, setCurrentPositions] = useState<[number, number][]>([])
   const currentRef = useRef<LatLng[] | null>(null)
-
-  // select モードで選択中のストローク ID
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  // 端点ドラッグ中のプレビュー (dragend で store に commit する前の中間状態)
-  const [dragPreview, setDragPreview] = useState<{
-    strokeId: string
-    points: Array<{ lat: number; lng: number }>
-  } | null>(null)
-
-  // mode が select 以外になったら選択解除 (ハンドルの描画を止める)
-  useEffect(() => {
-    if (mode !== 'select') {
-      setSelectedId(null)
-      setDragPreview(null)
-    }
-  }, [mode])
-
-  // farm 切替時も選択解除
-  useEffect(() => {
-    setSelectedId(null)
-    setDragPreview(null)
-  }, [farmId])
 
   // farm 切替時に fetch
   useEffect(() => {
@@ -140,8 +108,7 @@ export function MapDrawingLayer({
       map.doubleClickZoom.enable()
       map.scrollWheelZoom.enable()
       map.boxZoom.enable()
-      container.style.cursor =
-        mode === 'eraser' ? 'not-allowed' : mode === 'select' ? 'pointer' : ''
+      container.style.cursor = mode === 'eraser' ? 'not-allowed' : ''
       container.style.touchAction = ''
     }
     return () => {
@@ -305,75 +272,31 @@ export function MapDrawingLayer({
           )
         }
         // stroke
-        // ドラッグ中は preview の points を採用してリアルタイム反映
-        const pointsForRender =
-          dragPreview?.strokeId === s.id ? dragPreview.points : s.points
-        const positions = pointsForRender.map(
-          (p) => [p.lat, p.lng] as [number, number],
-        )
-        const isSelected = mode === 'select' && s.id === selectedId
         return (
-          <Fragment key={s.id}>
-            {/* 選択時のハイライト halo (元の線より太く半透明の青を裏に敷く) */}
-            {isSelected && (
-              <Polyline
-                positions={positions}
-                pathOptions={{
-                  color: '#3b82f6',
-                  weight: s.width_px + 8,
-                  opacity: 0.35,
-                  lineCap: 'round',
-                  lineJoin: 'round',
-                }}
-                interactive={false}
-              />
-            )}
-            <Polyline
-              positions={positions}
-              pathOptions={{
-                color: s.color,
-                weight: s.width_px,
-                opacity: 0.9,
-                lineCap: 'round',
-                lineJoin: 'round',
-                dashArray: dashArrayFor(
-                  (s.line_style ?? 'solid') as LineStyle,
-                  s.width_px,
-                ),
-              }}
-              eventHandlers={
-                mode === 'eraser'
-                  ? { click: () => void deleteStroke(s.id) }
-                  : mode === 'select'
-                    ? { click: () => setSelectedId(s.id) }
-                    : undefined
-              }
-            />
-          </Fragment>
+          <Polyline
+            key={s.id}
+            positions={s.points.map((p) => [p.lat, p.lng] as [number, number])}
+            pathOptions={{
+              color: s.color,
+              weight: s.width_px,
+              opacity: 0.9,
+              lineCap: 'round',
+              lineJoin: 'round',
+              dashArray: dashArrayFor(
+                (s.line_style ?? 'solid') as LineStyle,
+                s.width_px,
+              ),
+            }}
+            eventHandlers={
+              mode === 'eraser'
+                ? { click: () => void deleteStroke(s.id) }
+                : undefined
+            }
+          />
         )
       }),
-    [items, mode, deleteStroke, selectedId, dragPreview],
+    [items, mode, deleteStroke],
   )
-
-  // 選択中のストローク (端点ハンドル用)
-  const selectedStroke = useMemo(
-    () =>
-      mode === 'select' && selectedId
-        ? items.find((s) => s.id === selectedId && s.kind === 'stroke') ?? null
-        : null,
-    [items, mode, selectedId],
-  )
-  const handlePoints = selectedStroke
-    ? dragPreview?.strokeId === selectedStroke.id
-      ? dragPreview.points
-      : selectedStroke.points
-    : null
-  const handleIndices =
-    handlePoints && handlePoints.length >= 2
-      ? [0, handlePoints.length - 1]
-      : handlePoints && handlePoints.length === 1
-        ? [0]
-        : []
 
   return (
     <Pane name="map-drawing" style={{ zIndex: 500 }}>
@@ -391,39 +314,6 @@ export function MapDrawingLayer({
           }}
         />
       )}
-      {/* 選択中ストロークの端点ハンドル (ドラッグで頂点を移動) */}
-      {selectedStroke &&
-        handlePoints &&
-        handleIndices.map((idx) => {
-          const p = handlePoints[idx]
-          return (
-            <Marker
-              key={`handle-${selectedStroke.id}-${idx}`}
-              position={[p.lat, p.lng]}
-              icon={HANDLE_ICON}
-              draggable
-              eventHandlers={{
-                drag: (e) => {
-                  const marker = e.target as L.Marker
-                  const latlng = marker.getLatLng()
-                  const nextPoints = selectedStroke.points.map((pp, i) =>
-                    i === idx ? { lat: latlng.lat, lng: latlng.lng } : pp,
-                  )
-                  setDragPreview({ strokeId: selectedStroke.id, points: nextPoints })
-                },
-                dragend: (e) => {
-                  const marker = e.target as L.Marker
-                  const latlng = marker.getLatLng()
-                  const nextPoints = selectedStroke.points.map((pp, i) =>
-                    i === idx ? { lat: latlng.lat, lng: latlng.lng } : pp,
-                  )
-                  setDragPreview(null)
-                  void updateStrokePoints(selectedStroke.id, nextPoints)
-                },
-              }}
-            />
-          )
-        })}
     </Pane>
   )
 }

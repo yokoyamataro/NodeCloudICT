@@ -10,7 +10,6 @@ import { useEffect, useRef, useState } from 'react'
 import {
   ChevronDown,
   Eraser,
-  MousePointer2,
   Pen,
   Redo2,
   Slash,
@@ -142,19 +141,6 @@ export function MapDrawingToolbar({
         }`}
       >
         <Slash className="h-4 w-4" />
-      </button>
-      {/* 選択 (ストロークをタップして端点ハンドルをドラッグ) */}
-      <button
-        type="button"
-        onClick={() => onChangeMode(mode === 'select' ? 'off' : 'select')}
-        title="選択 (ストロークをタップ → 端点ハンドルをドラッグして頂点を移動)"
-        className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
-          mode === 'select'
-            ? 'bg-blue-600 text-white'
-            : 'text-slate-600 hover:bg-slate-100'
-        }`}
-      >
-        <MousePointer2 className="h-4 w-4" />
       </button>
       {/* テキスト */}
       <button
