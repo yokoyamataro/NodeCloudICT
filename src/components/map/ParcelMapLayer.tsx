@@ -42,6 +42,9 @@ interface Props {
    *  true でも zoom < LABEL_MIN_ZOOM の間は強制的に非表示 (描画コスト回避)。
    *  feature 数が LABEL_MAX_FEATURES を超えた場合は自動的にラベルを省略。 */
   showLabels?: boolean
+  /** true のとき polygon click 時の popup / トグル動作を全てスキップする。
+   *  ペイント描画モード中に地番の popup が邪魔しないようにするために使う。 */
+  disableClicks?: boolean
 }
 
 /** 取込済判定用の複合キーを作る。所在と地番を "|" 区切りで結合。 */
@@ -149,6 +152,7 @@ export function ParcelMapLayer({
   onToggleSelect,
   selectionMode = false,
   showLabels = true,
+  disableClicks = false,
 }: Props) {
   const map = useMap()
   const datasets = useParcelMapDatasetStore((s) => s.datasets)
@@ -390,6 +394,7 @@ export function ParcelMapLayer({
         selectedKeys={selectedKeys}
         selectionMode={selectionMode}
         showLabels={showLabels}
+        disableClicks={disableClicks}
         onLabelBindProgress={setLabelBindProgress}
         onToggleSelect={
           onToggleSelect
@@ -417,6 +422,7 @@ function GeoJsonInner({
   onToggleSelect,
   selectionMode,
   showLabels,
+  disableClicks,
   onLabelBindProgress,
 }: {
   data: ParcelFeatureCollection
@@ -426,6 +432,7 @@ function GeoJsonInner({
   onToggleSelect?: (feature: Feature<Polygon, ParcelFeatureProperties>) => void
   selectionMode?: boolean
   showLabels: boolean
+  disableClicks?: boolean
   onLabelBindProgress?: (
     progress: { done: number; total: number } | null,
   ) => void
@@ -647,6 +654,8 @@ function GeoJsonInner({
       }}
       eventHandlers={{
         click: (e: L.LeafletMouseEvent & { propagatedFrom?: L.Layer }) => {
+          // ペイント描画モード中は全ての parcel click を無視
+          if (disableClicks) return
           const layer = e.propagatedFrom as L.Layer & {
             feature?: Feature<Polygon, ParcelFeatureProperties>
           }

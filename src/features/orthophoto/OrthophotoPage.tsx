@@ -1105,6 +1105,7 @@ export function OrthophotoPage() {
               selectedKeys={selectedKeys}
               onToggleSelect={toggleSelectedParcel}
               selectionMode={selectionMode}
+              disableClicks={showDrawing && drawingMode !== 'off'}
             />
           )}
           {/* 描画レイヤ: showDrawing OFF でも既存ストロークは表示。ON でペン/消しゴム有効 */}

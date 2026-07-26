@@ -4167,7 +4167,7 @@ export function MobileStakingPage() {
                   weight: 2,
                 }}
                 eventHandlers={
-                  isParcel
+                  isParcel && !(showDrawing && drawingMode !== 'off')
                     ? {
                         click: () =>
                           setParcelInfoTarget({
@@ -4532,6 +4532,7 @@ export function MobileStakingPage() {
               selectedKeys={selectedParcelKeys}
               onToggleSelect={toggleSelectedParcel}
               selectionMode={parcelSelectionMode}
+              disableClicks={showDrawing && drawingMode !== 'off'}
             />
           )}
           {/* 描画レイヤ: showDrawing のときのみ描画モード有効。オフでも既存ストロークは表示 */}

@@ -17,7 +17,7 @@
 //     touchAction: none で iOS のスクロールも抑止する。
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Polyline, useMap } from 'react-leaflet'
+import { Pane, Polyline, useMap } from 'react-leaflet'
 import type { LatLng } from 'leaflet'
 import {
   useMapDrawingStore,
@@ -241,8 +241,11 @@ export function MapDrawingLayer({
     [strokes, mode, deleteStroke],
   )
 
+  // 描画レイヤは z-index を高めた custom pane に置く。
+  // これで法務省地図の parcel polygon (overlayPane, z-index 400) より前面になり、
+  // 消しゴム モードでストロークを click しても他レイヤに click が奪われない。
   return (
-    <>
+    <Pane name="map-drawing" style={{ zIndex: 500 }}>
       {strokesRendered}
       {currentPositions.length >= 2 && (
         <Polyline
@@ -257,6 +260,6 @@ export function MapDrawingLayer({
           }}
         />
       )}
-    </>
+    </Pane>
   )
 }
