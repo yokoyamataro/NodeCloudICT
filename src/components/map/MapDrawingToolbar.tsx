@@ -6,11 +6,14 @@
 //   ・色ピッカーも同様の展開メニュー
 //   ・ボタンは 32px 四方に抑える
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   ChevronDown,
+  Circle as CircleIcon,
   Eraser,
+  MousePointer2,
   Pen,
+  Pentagon,
   Redo2,
   Slash,
   StickyNote,
@@ -20,6 +23,40 @@ import {
 } from 'lucide-react'
 import type { DrawingMode } from './MapDrawingLayer'
 import type { LineStyle } from '@/stores/mapDrawingStore'
+
+/** 形状ボタンで扱う描画モード (ドロップダウンで直線 / 円 / 円弧 / 面 を切替) */
+type ShapeMode = 'line' | 'circle' | 'arc' | 'polygon'
+const SHAPE_LABEL: Record<ShapeMode, string> = {
+  line: '直線',
+  circle: '円',
+  arc: '円弧',
+  polygon: '面',
+}
+
+/** 円弧はぴったりの lucide アイコンが無いので四分弧を自前 SVG で描く */
+function ArcSvg({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <path d="M4 20 A 16 16 0 0 1 20 4" />
+    </svg>
+  )
+}
+
+function shapeIcon(shape: ShapeMode): ReactNode {
+  if (shape === 'line') return <Slash className="h-4 w-4" />
+  if (shape === 'circle') return <CircleIcon className="h-4 w-4" />
+  if (shape === 'arc') return <ArcSvg size={16} />
+  return <Pentagon className="h-4 w-4" />
+}
 
 const COLOR_PRESETS = [
   '#ef4444', // 赤
@@ -95,21 +132,35 @@ export function MapDrawingToolbar({
 }: Props) {
   const [colorPickerOpen, setColorPickerOpen] = useState(false)
   const [linePickerOpen, setLinePickerOpen] = useState(false)
+  const [shapePickerOpen, setShapePickerOpen] = useState(false)
+  // 形状ボタンで最後に選ばれた形状 (直線 / 円 / 円弧 / 面)。
+  // ボタンをタップした時に「今どの形状に入るか」を決めるために保持する。
+  const [currentShape, setCurrentShape] = useState<ShapeMode>('line')
   const rootRef = useRef<HTMLDivElement>(null)
+
+  // mode が形状系に切り替わったら currentShape を追従させる (外部から強制設定された場合)
+  useEffect(() => {
+    if (mode === 'line' || mode === 'circle' || mode === 'arc' || mode === 'polygon') {
+      setCurrentShape(mode)
+    }
+  }, [mode])
 
   // 外側クリックでポップアップを閉じる (mobile でも動くよう pointerdown を使用)
   useEffect(() => {
-    if (!colorPickerOpen && !linePickerOpen) return
+    if (!colorPickerOpen && !linePickerOpen && !shapePickerOpen) return
     const onDown = (e: PointerEvent) => {
       if (!rootRef.current) return
       if (!rootRef.current.contains(e.target as Node)) {
         setColorPickerOpen(false)
         setLinePickerOpen(false)
+        setShapePickerOpen(false)
       }
     }
     document.addEventListener('pointerdown', onDown)
     return () => document.removeEventListener('pointerdown', onDown)
-  }, [colorPickerOpen, linePickerOpen])
+  }, [colorPickerOpen, linePickerOpen, shapePickerOpen])
+
+  const isShapeMode = mode === currentShape
 
   return (
     <div
@@ -129,18 +180,74 @@ export function MapDrawingToolbar({
       >
         <Pen className="h-4 w-4" />
       </button>
-      {/* 直線 (2 点だけ記録) */}
+      {/* 形状 (直線 / 円 / 円弧 / 面 のドロップダウン) */}
+      <div className="relative shrink-0 flex items-stretch">
+        <button
+          type="button"
+          onClick={() => onChangeMode(isShapeMode ? 'off' : currentShape)}
+          title={`${SHAPE_LABEL[currentShape]} (▼ で切替)`}
+          className={`h-8 w-8 flex items-center justify-center rounded-l shrink-0 ${
+            isShapeMode
+              ? 'bg-blue-600 text-white'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          {shapeIcon(currentShape)}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setShapePickerOpen((v) => !v)
+            setColorPickerOpen(false)
+            setLinePickerOpen(false)
+          }}
+          title="形状を選ぶ"
+          className={`h-8 w-4 flex items-center justify-center rounded-r border-l ${
+            isShapeMode
+              ? 'bg-blue-600 text-white border-blue-500'
+              : 'text-slate-600 hover:bg-slate-100 border-slate-300'
+          }`}
+        >
+          <ChevronDown className="h-3 w-3" />
+        </button>
+        {shapePickerOpen && (
+          <div className="absolute top-full left-0 mt-1 z-[3000] bg-white border rounded shadow-lg py-1 min-w-[7rem]">
+            {(['line', 'circle', 'arc', 'polygon'] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => {
+                  setCurrentShape(s)
+                  onChangeMode(s)
+                  setShapePickerOpen(false)
+                }}
+                className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs ${
+                  currentShape === s
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <span className="w-4 h-4 flex items-center justify-center">
+                  {shapeIcon(s)}
+                </span>
+                <span>{SHAPE_LABEL[s]}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {/* 選択 (ストロークをタップ → 頂点ドラッグ / 長押しで削除 / + タップで追加) */}
       <button
         type="button"
-        onClick={() => onChangeMode(mode === 'line' ? 'off' : 'line')}
-        title="直線 (ドラッグで始点/終点だけ記録)"
+        onClick={() => onChangeMode(mode === 'select' ? 'off' : 'select')}
+        title="選択 (タップで選択 → ハンドルをドラッグで移動、長押しで削除、辺の + で頂点追加)"
         className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
-          mode === 'line'
+          mode === 'select'
             ? 'bg-blue-600 text-white'
             : 'text-slate-600 hover:bg-slate-100'
         }`}
       >
-        <Slash className="h-4 w-4" />
+        <MousePointer2 className="h-4 w-4" />
       </button>
       {/* テキスト */}
       <button

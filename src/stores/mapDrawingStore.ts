@@ -1,11 +1,14 @@
 // 地図上のペイント (map_drawings) を工区単位でキャッシュ + CRUD するストア。
 //
 // 種別 (kind):
-//   ・'stroke' 手書き線 (points: 頂点列)
-//   ・'text'   テキスト注釈 (points: [ラベル位置 1 点] + text)
+//   ・'stroke'  手書きストローク: 頂点列 (n 点)
+//   ・'text'    テキスト注釈: [ラベル位置] の 1 点 + text
+//   ・'circle'  円: [中心, 縁] の 2 点。半径 = 2 点間距離
+//   ・'arc'     円弧: [始点, 通過点, 終点] の 3 点
+//   ・'polygon' 面: 頂点列 (n 点、レンダ時に自動閉合、半透明で塗り潰し)
 //
 // undo/redo:
-//   ・セッション内の add/delete 操作を undoStack に積む
+//   ・セッション内の add / delete / update 操作を undoStack に積む
 //   ・undo: 操作を反転して DB + ストアに反映、redoStack に移動
 //   ・新規操作が入ったら redoStack はクリア
 
@@ -13,7 +16,7 @@ import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
 
 export type LineStyle = 'solid' | 'dashed' | 'dotted'
-export type DrawingKind = 'stroke' | 'text'
+export type DrawingKind = 'stroke' | 'text' | 'circle' | 'arc' | 'polygon'
 
 export interface MapDrawingStroke {
   id: string
@@ -35,6 +38,13 @@ export interface MapDrawingStroke {
 type HistoryOp =
   | { op: 'add'; farmId: string; item: MapDrawingStroke }
   | { op: 'delete'; farmId: string; item: MapDrawingStroke }
+  | {
+      op: 'update'
+      farmId: string
+      id: string
+      before: Array<{ lat: number; lng: number }>
+      after: Array<{ lat: number; lng: number }>
+    }
 
 interface State {
   byFarm: Map<string, MapDrawingStroke[]>
@@ -44,8 +54,13 @@ interface State {
   redoStack: HistoryOp[]
 
   fetchByFarm: (farmId: string) => Promise<void>
+  /**
+   * ストロークまたは幾何形状 (直線・円・円弧・面) を追加する汎用 API。
+   * kind を省略すると 'stroke' (フリーハンド) 扱い。
+   */
   addStroke: (input: {
     farmId: string
+    kind?: 'stroke' | 'circle' | 'arc' | 'polygon'
     color: string
     widthPx: number
     lineStyle: LineStyle
@@ -60,6 +75,11 @@ interface State {
     text: string
   }) => Promise<MapDrawingStroke | null>
   deleteStroke: (id: string) => Promise<void>
+  /** 頂点座標列を差し替える (端点移動 / 折点追加・削除) */
+  updateStrokePoints: (
+    id: string,
+    points: Array<{ lat: number; lng: number }>,
+  ) => Promise<void>
   undo: () => Promise<void>
   redo: () => Promise<void>
   invalidate: (farmId?: string) => void
@@ -131,7 +151,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
     }
   },
 
-  addStroke: async ({ farmId, color, widthPx, lineStyle, points }) => {
+  addStroke: async ({ farmId, kind = 'stroke', color, widthPx, lineStyle, points }) => {
     if (points.length < 2) return null
     // 楽観追加: temp ID で先にストアに入れる
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -140,7 +160,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
       id: tempId,
       farm_id: farmId,
       created_by: null,
-      kind: 'stroke',
+      kind,
       color,
       width_px: widthPx,
       line_style: lineStyle,
@@ -158,7 +178,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
     try {
       const stroke = await insertItemInternal({
         farmId,
-        kind: 'stroke',
+        kind,
         color,
         widthPx,
         lineStyle,
@@ -278,6 +298,56 @@ export const useMapDrawingStore = create<State>((set, get) => ({
     }
   },
 
+  updateStrokePoints: async (id, points) => {
+    // 現在の points を before として控えつつ、楽観的に置換
+    let farmId: string | null = null
+    let before: Array<{ lat: number; lng: number }> | null = null
+    {
+      const map = new Map(get().byFarm)
+      for (const [fid, list] of map.entries()) {
+        const idx = list.findIndex((s) => s.id === id)
+        if (idx >= 0) {
+          farmId = fid
+          before = list[idx].points
+          const next = [...list]
+          next[idx] = { ...list[idx], points }
+          map.set(fid, next)
+          set({ byFarm: map })
+          break
+        }
+      }
+    }
+    if (!farmId || !before) return
+    try {
+      const { error } = await supabase
+        .from('map_drawings')
+        .update({ points } as never)
+        .eq('id', id)
+      if (error) throw error
+      set({
+        undoStack: [
+          ...get().undoStack,
+          { op: 'update', farmId, id, before, after: points },
+        ],
+        redoStack: [],
+      })
+    } catch (err) {
+      // ロールバック
+      const cur = new Map(get().byFarm)
+      const list = (cur.get(farmId) ?? []).map((s) =>
+        s.id === id
+          ? { ...s, points: before as Array<{ lat: number; lng: number }> }
+          : s,
+      )
+      cur.set(farmId, list)
+      set({
+        byFarm: cur,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      console.error('[mapDrawingStore] update failed', err)
+    }
+  },
+
   undo: async () => {
     const stack = get().undoStack
     if (stack.length === 0) return
@@ -295,6 +365,23 @@ export const useMapDrawingStore = create<State>((set, get) => ({
         if (error) throw error
         const map = new Map(get().byFarm)
         const list = (map.get(last.farmId) ?? []).filter((s) => s.id !== last.item.id)
+        map.set(last.farmId, list)
+        set({
+          byFarm: map,
+          undoStack: rest,
+          redoStack: [...get().redoStack, last],
+        })
+      } else if (last.op === 'update') {
+        // update を undo = before に戻す
+        const { error } = await supabase
+          .from('map_drawings')
+          .update({ points: last.before } as never)
+          .eq('id', last.id)
+        if (error) throw error
+        const map = new Map(get().byFarm)
+        const list = (map.get(last.farmId) ?? []).map((s) =>
+          s.id === last.id ? { ...s, points: last.before } : s,
+        )
         map.set(last.farmId, list)
         set({
           byFarm: map,
@@ -361,6 +448,23 @@ export const useMapDrawingStore = create<State>((set, get) => ({
             ...get().undoStack,
             { op: 'add', farmId: last.farmId, item },
           ],
+        })
+      } else if (last.op === 'update') {
+        // update を redo = after に戻す
+        const { error } = await supabase
+          .from('map_drawings')
+          .update({ points: last.after } as never)
+          .eq('id', last.id)
+        if (error) throw error
+        const map = new Map(get().byFarm)
+        const list = (map.get(last.farmId) ?? []).map((s) =>
+          s.id === last.id ? { ...s, points: last.after } : s,
+        )
+        map.set(last.farmId, list)
+        set({
+          byFarm: map,
+          redoStack: rest,
+          undoStack: [...get().undoStack, last],
         })
       } else {
         // delete を redo = 実際に delete
