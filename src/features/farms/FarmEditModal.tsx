@@ -106,44 +106,46 @@ export function FarmEditModal({
               className="w-full px-2 py-2 border rounded text-sm h-20"
             />
           </div>
+          {/* 着手日 + 完了チェック + 完成日 を 1 行に */}
           <div>
-            <label className="block text-[11px] text-slate-500 mb-1">着手日</label>
-            <input
-              type="date"
-              value={startedAt}
-              onChange={(e) => setStartedAt(e.target.value)}
-              onBlur={commitStartedAt}
-              className="w-full px-2 py-2 border rounded text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-[11px] text-slate-500 mb-1">進捗 / 完成日</label>
-            <label className="flex items-center gap-2 px-2 py-2 border rounded cursor-pointer mb-2">
+            <label className="block text-[11px] text-slate-500 mb-1">着手日 / 完成日</label>
+            <div className="flex items-center gap-2">
               <input
-                type="checkbox"
-                checked={isCompleted}
-                onChange={(e) => {
-                  if (e.target.checked) {
-                    const iso = farm.completed_at ?? new Date().toISOString()
-                    onUpdateFarm({ completed_at: iso })
-                    setCompletedAt(isoToDateInput(iso))
-                  } else {
-                    onUpdateFarm({ completed_at: null })
-                    setCompletedAt('')
-                  }
-                }}
-                className="h-4 w-4"
+                type="date"
+                value={startedAt}
+                onChange={(e) => setStartedAt(e.target.value)}
+                onBlur={commitStartedAt}
+                className="flex-1 px-2 py-2 border rounded text-sm"
+                title="着手日"
               />
-              <span className="text-sm">完了</span>
-            </label>
-            <input
-              type="date"
-              value={completedAt}
-              onChange={(e) => setCompletedAt(e.target.value)}
-              onBlur={commitCompletedAt}
-              disabled={!isCompleted}
-              className="w-full px-2 py-2 border rounded text-sm disabled:bg-slate-50 disabled:text-slate-400"
-            />
+              <label className="flex items-center gap-1.5 px-2 py-2 border rounded cursor-pointer shrink-0">
+                <input
+                  type="checkbox"
+                  checked={isCompleted}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      const iso = farm.completed_at ?? new Date().toISOString()
+                      onUpdateFarm({ completed_at: iso })
+                      setCompletedAt(isoToDateInput(iso))
+                    } else {
+                      onUpdateFarm({ completed_at: null })
+                      setCompletedAt('')
+                    }
+                  }}
+                  className="h-4 w-4"
+                />
+                <span className="text-xs">完了</span>
+              </label>
+              <input
+                type="date"
+                value={completedAt}
+                onChange={(e) => setCompletedAt(e.target.value)}
+                onBlur={commitCompletedAt}
+                disabled={!isCompleted}
+                className="flex-1 px-2 py-2 border rounded text-sm disabled:bg-slate-50 disabled:text-slate-400"
+                title="完成日"
+              />
+            </div>
           </div>
 
           {/* 完了日の下: 工区を削除するボタン (onDelete が渡されたときのみ表示) */}

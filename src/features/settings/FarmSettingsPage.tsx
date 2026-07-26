@@ -2,13 +2,17 @@
 // 将来: 工区名の変更、削除、メンバー招待などをここに集約する想定。
 
 import { useCallback, useEffect, useState } from 'react'
-import { AlertTriangle, HardDrive, Layers, Loader2, RefreshCw } from 'lucide-react'
+import { AlertTriangle, HardDrive, Layers, Loader2, Pencil, RefreshCw } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { supabase } from '@/lib/supabase'
 import { MAX_COORDS_PER_FARM, MAX_PARCELS_PER_FARM } from '@/lib/farmLimits'
+import {
+  dateInputToIso,
+  isoToDateInput,
+} from '@/features/farms/FarmEditModal'
 
 interface StorageUsage {
   photos_bytes: number
@@ -32,9 +36,50 @@ function formatBytes(n: number): string {
 
 export function FarmSettingsPage() {
   const currentFarm = useFarmStore((s) => s.currentFarm)
+  const updateFarm = useFarmStore((s) => s.updateFarm)
   const [usage, setUsage] = useState<StorageUsage | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // -------- 工区情報の編集 (最上部セクション) --------
+  const [name, setName] = useState(currentFarm?.name ?? '')
+  const [description, setDescription] = useState(currentFarm?.description ?? '')
+  const [startedAt, setStartedAt] = useState(
+    isoToDateInput(currentFarm?.started_at ?? null),
+  )
+  const [completedAt, setCompletedAt] = useState(
+    isoToDateInput(currentFarm?.completed_at ?? null),
+  )
+  useEffect(() => {
+    setName(currentFarm?.name ?? '')
+    setDescription(currentFarm?.description ?? '')
+    setStartedAt(isoToDateInput(currentFarm?.started_at ?? null))
+    setCompletedAt(isoToDateInput(currentFarm?.completed_at ?? null))
+  }, [currentFarm?.id, currentFarm?.name, currentFarm?.description, currentFarm?.started_at, currentFarm?.completed_at])
+  const isCompleted = currentFarm?.completed_at != null
+  const commitName = () => {
+    if (!currentFarm) return
+    const v = name.trim()
+    if (v && v !== currentFarm.name) void updateFarm(currentFarm.id, { name: v })
+    else if (!v) setName(currentFarm.name)
+  }
+  const commitDesc = () => {
+    if (!currentFarm) return
+    const v = description.trim()
+    const prev = currentFarm.description ?? ''
+    if (v !== prev) void updateFarm(currentFarm.id, { description: v || null })
+  }
+  const commitStarted = () => {
+    if (!currentFarm) return
+    const iso = dateInputToIso(startedAt)
+    if (iso !== currentFarm.started_at) void updateFarm(currentFarm.id, { started_at: iso })
+  }
+  const commitCompleted = () => {
+    if (!currentFarm) return
+    const iso = dateInputToIso(completedAt)
+    if (iso !== currentFarm.completed_at)
+      void updateFarm(currentFarm.id, { completed_at: iso })
+  }
 
   // 工区あたり件数使用量 (座標 / 地番)
   const coordCount = useCoordinateStore((s) => s.coordinates.length)
@@ -119,6 +164,78 @@ export function FarmSettingsPage() {
     <div className="h-full flex flex-col">
       <PageHeader title="設定" subtitle={`工区: ${currentFarm.name}`} />
       <div className="flex-1 overflow-auto p-4 space-y-4">
+        {/* 工区情報 (工区名 / 説明 / 着手日 / 完成日) — blur で即保存 */}
+        <section className="bg-white border rounded-lg p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Pencil className="h-4 w-4 text-blue-600" />
+            <h2 className="text-base font-semibold">工区情報</h2>
+            <span className="text-[10px] text-slate-400 ml-auto">
+              変更は入力欄からフォーカスを外すと自動保存
+            </span>
+          </div>
+          <div>
+            <label className="block text-[11px] text-slate-500 mb-1">工区名</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={commitName}
+              className="w-full px-2 py-1.5 border rounded text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] text-slate-500 mb-1">説明</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              onBlur={commitDesc}
+              placeholder="任意"
+              className="w-full px-2 py-1.5 border rounded text-sm h-16"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] text-slate-500 mb-1">着手日 / 完成日</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={startedAt}
+                onChange={(e) => setStartedAt(e.target.value)}
+                onBlur={commitStarted}
+                className="flex-1 px-2 py-1.5 border rounded text-sm"
+                title="着手日"
+              />
+              <label className="flex items-center gap-1.5 px-2 py-1.5 border rounded cursor-pointer shrink-0">
+                <input
+                  type="checkbox"
+                  checked={isCompleted}
+                  onChange={(e) => {
+                    if (!currentFarm) return
+                    if (e.target.checked) {
+                      const iso = currentFarm.completed_at ?? new Date().toISOString()
+                      void updateFarm(currentFarm.id, { completed_at: iso })
+                      setCompletedAt(isoToDateInput(iso))
+                    } else {
+                      void updateFarm(currentFarm.id, { completed_at: null })
+                      setCompletedAt('')
+                    }
+                  }}
+                  className="h-3.5 w-3.5"
+                />
+                <span className="text-xs">完了</span>
+              </label>
+              <input
+                type="date"
+                value={completedAt}
+                onChange={(e) => setCompletedAt(e.target.value)}
+                onBlur={commitCompleted}
+                disabled={!isCompleted}
+                className="flex-1 px-2 py-1.5 border rounded text-sm disabled:bg-slate-50 disabled:text-slate-400"
+                title="完成日"
+              />
+            </div>
+          </div>
+        </section>
+
         {/* 座標数 / 地番数 の工区使用量 (旧: 地番管理ページ ヘッダ に表示) */}
         <section className="bg-white border rounded-lg p-4">
           <div className="flex items-center gap-2 mb-3">

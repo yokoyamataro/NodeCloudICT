@@ -632,14 +632,26 @@ export function ProjectListPage() {
           {/* ヘッダー */}
           <div className="p-3 border-b flex items-center justify-between gap-1">
             {routeProjectId ? (
-              <button
-                onClick={() => navigate('/')}
-                className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50"
-                title="工事一覧に戻る"
-              >
-                <ArrowLeft className="h-3 w-3" />
-                工事一覧
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => navigate('/')}
+                  className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50"
+                  title="現場一覧に戻る"
+                >
+                  <ArrowLeft className="h-3 w-3" />
+                  現場一覧
+                </button>
+                {currentRouteProject && (
+                  <button
+                    onClick={() => setEditingProject(currentRouteProject)}
+                    className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50"
+                    title="現場情報を編集"
+                  >
+                    <Edit3 className="h-3 w-3" />
+                    現場編集
+                  </button>
+                )}
+              </div>
             ) : (
               <span className="font-medium text-sm">プロジェクト</span>
             )}
