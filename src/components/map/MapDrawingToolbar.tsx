@@ -6,6 +6,7 @@
 import { useState } from 'react'
 import { Eraser, Pen, Trash2, X } from 'lucide-react'
 import type { DrawingMode } from './MapDrawingLayer'
+import type { LineStyle } from '@/stores/mapDrawingStore'
 
 const COLOR_PRESETS = [
   '#ef4444', // 赤
@@ -25,8 +26,16 @@ interface Props {
   onChangeColor: (color: string) => void
   widthPx: number
   onChangeWidth: (widthPx: number) => void
+  lineStyle: LineStyle
+  onChangeLineStyle: (style: LineStyle) => void
   strokeCount: number
   onClearAll: () => void
+}
+
+const LINE_STYLE_LABEL: Record<LineStyle, string> = {
+  solid: '実線',
+  dashed: '破線',
+  dotted: '点線',
 }
 
 export function MapDrawingToolbar({
@@ -36,6 +45,8 @@ export function MapDrawingToolbar({
   onChangeColor,
   widthPx,
   onChangeWidth,
+  lineStyle,
+  onChangeLineStyle,
   strokeCount,
   onClearAll,
 }: Props) {
@@ -110,6 +121,38 @@ export function MapDrawingToolbar({
             />
           </div>
         )}
+      </div>
+
+      {/* 線種 (実線 / 破線 / 点線) */}
+      <div className="flex items-center gap-0.5 rounded overflow-hidden border">
+        {(['solid', 'dashed', 'dotted'] as const).map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => onChangeLineStyle(s)}
+            title={LINE_STYLE_LABEL[s]}
+            className={`px-1.5 h-8 flex items-center justify-center ${
+              lineStyle === s
+                ? 'bg-slate-800 text-white'
+                : 'bg-white text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            <svg width="26" height="12" viewBox="0 0 26 12">
+              <line
+                x1="0"
+                y1="6"
+                x2="26"
+                y2="6"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeDasharray={
+                  s === 'solid' ? undefined : s === 'dashed' ? '6,3' : '0.1,3'
+                }
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
+        ))}
       </div>
 
       {/* 太さスライダ */}

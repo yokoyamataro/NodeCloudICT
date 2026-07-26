@@ -7,12 +7,15 @@
 import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
 
+export type LineStyle = 'solid' | 'dashed' | 'dotted'
+
 export interface MapDrawingStroke {
   id: string
   farm_id: string
   created_by: string | null
   color: string
   width_px: number
+  line_style: LineStyle
   /** ストロークを構成する頂点 (lat/lng) */
   points: Array<{ lat: number; lng: number }>
   created_at: string
@@ -29,6 +32,7 @@ interface State {
     farmId: string
     color: string
     widthPx: number
+    lineStyle: LineStyle
     points: Array<{ lat: number; lng: number }>
   }) => Promise<MapDrawingStroke | null>
   deleteStroke: (id: string) => Promise<void>
@@ -67,7 +71,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
     }
   },
 
-  addStroke: async ({ farmId, color, widthPx, points }) => {
+  addStroke: async ({ farmId, color, widthPx, lineStyle, points }) => {
     if (points.length < 2) return null
     try {
       const { data: userData } = await supabase.auth.getUser()
@@ -79,6 +83,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
           created_by: uid,
           color,
           width_px: widthPx,
+          line_style: lineStyle,
           points,
         } as never)
         .select()

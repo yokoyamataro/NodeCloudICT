@@ -37,7 +37,7 @@ import { CoordinateMap, type ExternalPolygon } from '@/components/map/Coordinate
 import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
 import { MapDrawingLayer } from '@/components/map/MapDrawingLayer'
 import { MapDrawingToolbar } from '@/components/map/MapDrawingToolbar'
-import { useMapDrawingStore, EMPTY_STROKES } from '@/stores/mapDrawingStore'
+import { useMapDrawingStore, EMPTY_STROKES, type LineStyle } from '@/stores/mapDrawingStore'
 import { Paintbrush } from 'lucide-react'
 import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { useParcelImportSelection } from '@/features/parcel-maps/useParcelImportSelection'
@@ -310,6 +310,7 @@ export function OrthophotoPage() {
   const [drawingMode, setDrawingMode] = useState<'off' | 'pen' | 'eraser'>('off')
   const [drawingColor, setDrawingColor] = useState('#ef4444')
   const [drawingWidth, setDrawingWidth] = useState(3)
+  const [drawingLineStyle, setDrawingLineStyle] = useState<LineStyle>('solid')
   useEffect(() => {
     if (!showDrawing) setDrawingMode('off')
   }, [showDrawing])
@@ -1049,6 +1050,8 @@ export function OrthophotoPage() {
               onChangeColor={setDrawingColor}
               widthPx={drawingWidth}
               onChangeWidth={setDrawingWidth}
+              lineStyle={drawingLineStyle}
+              onChangeLineStyle={setDrawingLineStyle}
               strokeCount={drawingStrokes.length}
               onClearAll={() => {
                 if (currentFarm?.id) void clearAllDrawings(currentFarm.id)
@@ -1110,6 +1113,7 @@ export function OrthophotoPage() {
             mode={showDrawing ? drawingMode : 'off'}
             color={drawingColor}
             widthPx={drawingWidth}
+            lineStyle={drawingLineStyle}
           />
         </CoordinateMap>
 

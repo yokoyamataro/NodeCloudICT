@@ -67,7 +67,7 @@ import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { ParcelMapLayer, parcelFeatureKey } from '@/components/map/ParcelMapLayer'
 import { MapDrawingLayer } from '@/components/map/MapDrawingLayer'
 import { MapDrawingToolbar } from '@/components/map/MapDrawingToolbar'
-import { useMapDrawingStore, EMPTY_STROKES } from '@/stores/mapDrawingStore'
+import { useMapDrawingStore, EMPTY_STROKES, type LineStyle } from '@/stores/mapDrawingStore'
 import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
 import type { Feature, Polygon as GeoJsonPolygon } from 'geojson'
 import { type Bbox } from '@/lib/tile-math'
@@ -782,6 +782,7 @@ export function MobileStakingPage() {
   const [drawingMode, setDrawingMode] = useState<'off' | 'pen' | 'eraser'>('off')
   const [drawingColor, setDrawingColor] = useState('#ef4444')
   const [drawingWidth, setDrawingWidth] = useState(3)
+  const [drawingLineStyle, setDrawingLineStyle] = useState<LineStyle>('solid')
   const drawingStrokes = useMapDrawingStore((s) =>
     farmId ? s.byFarm.get(farmId) ?? EMPTY_STROKES : EMPTY_STROKES,
   )
@@ -3861,6 +3862,8 @@ export function MobileStakingPage() {
               onChangeColor={setDrawingColor}
               widthPx={drawingWidth}
               onChangeWidth={setDrawingWidth}
+              lineStyle={drawingLineStyle}
+              onChangeLineStyle={setDrawingLineStyle}
               strokeCount={drawingStrokes.length}
               onClearAll={() => {
                 if (farm?.id) void clearAllDrawings(farm.id)
@@ -4537,6 +4540,7 @@ export function MobileStakingPage() {
             mode={showDrawing ? drawingMode : 'off'}
             color={drawingColor}
             widthPx={drawingWidth}
+            lineStyle={drawingLineStyle}
           />
         </MapContainer>
 

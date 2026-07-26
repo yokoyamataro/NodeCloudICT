@@ -1,4 +1,4 @@
-// 地図上に手書きペイントを重ねるレイヤ。
+// 地図上に手書きペイントを重ねるレイヤ (touch / stylus / mouse 対応)。
 //
 // 3 モード:
 //   ・'off'    描画無効。既存ストロークだけ表示。マップ操作は通常通り。
@@ -6,14 +6,24 @@
 //   ・'eraser' ストロークをクリックで削除。
 //
 // 保存座標は lat/lng なので、地図を伸縮・移動しても地図上の位置は保持される。
+//
+// 実装メモ:
+//   ・入力は Pointer Events (mouse / touch / pen 統一) を map.getContainer() に
+//     直接 addEventListener で拾う。Leaflet の 'mousemove' はブラウザ実装差で
+//     touchmove から発火しないケースがあり、モバイル実機で「線が残らない」
+//     現象があった。Pointer Events + setPointerCapture でモバイル safari も含めて
+//     取りこぼしを防ぐ。
+//   ・pen モード中は Leaflet の dragging/zoom を全部 disable、container の
+//     touchAction: none で iOS のスクロールも抑止する。
 
-import { useEffect, useMemo, useState } from 'react'
-import { Polyline, useMap, useMapEvents } from 'react-leaflet'
-import type { LatLng, LeafletMouseEvent } from 'leaflet'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Polyline, useMap } from 'react-leaflet'
+import type { LatLng } from 'leaflet'
 import {
   useMapDrawingStore,
   EMPTY_STROKES,
   type MapDrawingStroke,
+  type LineStyle,
 } from '@/stores/mapDrawingStore'
 
 export type DrawingMode = 'off' | 'pen' | 'eraser'
@@ -23,9 +33,24 @@ interface Props {
   mode: DrawingMode
   color: string
   widthPx: number
+  lineStyle: LineStyle
 }
 
-export function MapDrawingLayer({ farmId, mode, color, widthPx }: Props) {
+/** LineStyle → Leaflet Polyline の dashArray に変換 (太さに合わせて自動調整) */
+function dashArrayFor(style: LineStyle, widthPx: number): string | undefined {
+  if (style === 'solid') return undefined
+  if (style === 'dashed') return `${widthPx * 3},${widthPx * 2}`
+  // dotted: 点(円点) は lineCap=round と併せて短い dash で表現
+  return `0.1,${widthPx * 1.8}`
+}
+
+export function MapDrawingLayer({
+  farmId,
+  mode,
+  color,
+  widthPx,
+  lineStyle,
+}: Props) {
   const map = useMap()
   const strokes = useMapDrawingStore((s) =>
     farmId ? s.byFarm.get(farmId) ?? EMPTY_STROKES : EMPTY_STROKES,
@@ -34,81 +59,124 @@ export function MapDrawingLayer({ farmId, mode, color, widthPx }: Props) {
   const addStroke = useMapDrawingStore((s) => s.addStroke)
   const deleteStroke = useMapDrawingStore((s) => s.deleteStroke)
 
-  const [currentPoints, setCurrentPoints] = useState<LatLng[] | null>(null)
+  // 描画中の 1 ストローク (プレビュー用)
+  const [currentPositions, setCurrentPositions] = useState<[number, number][]>([])
+  // ref も持つ: pointermove コールバックから setState 経由でも良いが、
+  // event ハンドラを毎回 re-attach しないよう ref で共有する。
+  const currentRef = useRef<LatLng[] | null>(null)
 
   // farm 切替時に fetch
   useEffect(() => {
     if (farmId) void fetchByFarm(farmId)
   }, [farmId, fetchByFarm])
 
-  // 描画中は地図の pan/zoom (drag / touchDrag / scrollWheelZoom / doubleClickZoom) を止める
+  // 描画中は地図の pan/zoom を止める + カーソル + touchAction を制御
   useEffect(() => {
     const drawing = mode === 'pen'
+    const container = map.getContainer()
     if (drawing) {
       map.dragging.disable()
       map.touchZoom.disable()
       map.doubleClickZoom.disable()
       map.scrollWheelZoom.disable()
       map.boxZoom.disable()
-      // 地図コンテナのカーソルを crosshair に
-      map.getContainer().style.cursor = 'crosshair'
+      container.style.cursor = 'crosshair'
+      container.style.touchAction = 'none'
     } else {
       map.dragging.enable()
       map.touchZoom.enable()
       map.doubleClickZoom.enable()
       map.scrollWheelZoom.enable()
       map.boxZoom.enable()
-      if (mode === 'eraser') {
-        map.getContainer().style.cursor = 'not-allowed'
-      } else {
-        map.getContainer().style.cursor = ''
-      }
+      container.style.cursor = mode === 'eraser' ? 'not-allowed' : ''
+      container.style.touchAction = ''
     }
     return () => {
-      map.getContainer().style.cursor = ''
+      container.style.cursor = ''
+      container.style.touchAction = ''
     }
   }, [mode, map])
 
-  // ペンモード時のマップイベント: mousedown → mousemove → mouseup で 1 ストローク
-  useMapEvents(
-    mode === 'pen'
-      ? {
-          mousedown: (e: LeafletMouseEvent) => {
-            setCurrentPoints([e.latlng])
-          },
-          mousemove: (e: LeafletMouseEvent) => {
-            setCurrentPoints((prev) => (prev == null ? null : [...prev, e.latlng]))
-          },
-          mouseup: () => {
-            const pts = currentPoints
-            setCurrentPoints(null)
-            if (!pts || pts.length < 2 || !farmId) return
-            const geo = pts.map((p) => ({ lat: p.lat, lng: p.lng }))
-            void addStroke({ farmId, color, widthPx, points: geo })
-          },
-          // 画面外に出た時にストロークを確定
-          mouseout: () => {
-            const pts = currentPoints
-            if (!pts || pts.length < 2 || !farmId) {
-              setCurrentPoints(null)
-              return
-            }
-            setCurrentPoints(null)
-            const geo = pts.map((p) => ({ lat: p.lat, lng: p.lng }))
-            void addStroke({ farmId, color, widthPx, points: geo })
-          },
-        }
-      : {},
-  )
+  // ペンモード時: pointer events を container に直接バインド
+  useEffect(() => {
+    if (mode !== 'pen') return
+    const container = map.getContainer()
 
-  const currentPositions = useMemo<[number, number][]>(
-    () => (currentPoints ? currentPoints.map((p) => [p.lat, p.lng]) : []),
-    [currentPoints],
-  )
+    const commit = () => {
+      const pts = currentRef.current
+      currentRef.current = null
+      setCurrentPositions([])
+      if (!pts || pts.length < 2 || !farmId) return
+      const geo = pts.map((p) => ({ lat: p.lat, lng: p.lng }))
+      void addStroke({ farmId, color, widthPx, lineStyle, points: geo })
+    }
 
-  return (
-    <>
-      {strokes.map((s: MapDrawingStroke) => (
+    const eventToLatLng = (e: PointerEvent): LatLng | null => {
+      try {
+        // Leaflet の型定義は MouseEvent 前提だが、PointerEvent は MouseEvent の
+        // 派生型なので実行時は問題無く動く。cast で通す。
+        return map.mouseEventToLatLng(e as unknown as MouseEvent)
+      } catch {
+        return null
+      }
+    }
+
+    const onDown = (e: PointerEvent) => {
+      // 右クリック / 中クリックは無視 (button != 0)
+      if (e.pointerType === 'mouse' && e.button !== 0) return
+      const latlng = eventToLatLng(e)
+      if (!latlng) return
+      currentRef.current = [latlng]
+      setCurrentPositions([[latlng.lat, latlng.lng]])
+      // 以降のイベントを container 外でも受け取る
+      try {
+        container.setPointerCapture(e.pointerId)
+      } catch {
+        /* ignore */
+      }
+      e.preventDefault()
+    }
+    const onMove = (e: PointerEvent) => {
+      if (!currentRef.current) return
+      const latlng = eventToLatLng(e)
+      if (!latlng) return
+      currentRef.current.push(latlng)
+      // 頻繁な setState は重いので coalescing なしのシンプル実装
+      setCurrentPositions(currentRef.current.map((p) => [p.lat, p.lng]))
+      e.preventDefault()
+    }
+    const onUp = (e: PointerEvent) => {
+      if (!currentRef.current) return
+      commit()
+      try {
+        container.releasePointerCapture(e.pointerId)
+      } catch {
+        /* ignore */
+      }
+    }
+    const onCancel = () => {
+      if (!currentRef.current) return
+      // 進行中ストロークを保存 (leave/cancel でも失わないよう)
+      commit()
+    }
+
+    container.addEventListener('pointerdown', onDown)
+    container.addEventListener('pointermove', onMove)
+    container.addEventListener('pointerup', onUp)
+    container.addEventListener('pointercancel', onCancel)
+    container.addEventListener('pointerleave', onCancel)
+    return () => {
+      container.removeEventListener('pointerdown', onDown)
+      container.removeEventListener('pointermove', onMove)
+      container.removeEventListener('pointerup', onUp)
+      container.removeEventListener('pointercancel', onCancel)
+      container.removeEventListener('pointerleave', onCancel)
+    }
+  }, [mode, map, farmId, color, widthPx, lineStyle, addStroke])
+
+  const strokesRendered = useMemo(
+    () =>
+      strokes.map((s: MapDrawingStroke) => (
         <Polyline
           key={s.id}
           positions={s.points.map((p) => [p.lat, p.lng] as [number, number])}
@@ -118,6 +186,10 @@ export function MapDrawingLayer({ farmId, mode, color, widthPx }: Props) {
             opacity: 0.9,
             lineCap: 'round',
             lineJoin: 'round',
+            dashArray: dashArrayFor(
+              (s.line_style ?? 'solid') as LineStyle,
+              s.width_px,
+            ),
           }}
           eventHandlers={
             mode === 'eraser'
@@ -125,7 +197,13 @@ export function MapDrawingLayer({ farmId, mode, color, widthPx }: Props) {
               : undefined
           }
         />
-      ))}
+      )),
+    [strokes, mode, deleteStroke],
+  )
+
+  return (
+    <>
+      {strokesRendered}
       {currentPositions.length >= 2 && (
         <Polyline
           positions={currentPositions}
@@ -135,7 +213,7 @@ export function MapDrawingLayer({ farmId, mode, color, widthPx }: Props) {
             opacity: 0.7,
             lineCap: 'round',
             lineJoin: 'round',
-            dashArray: '4,4',
+            dashArray: dashArrayFor(lineStyle, widthPx),
           }}
         />
       )}
