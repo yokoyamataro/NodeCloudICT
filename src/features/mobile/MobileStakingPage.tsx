@@ -65,6 +65,9 @@ import {
 } from '@/stores/parcelAttributeTypesStore'
 import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { ParcelMapLayer, parcelFeatureKey } from '@/components/map/ParcelMapLayer'
+import { MapDrawingLayer } from '@/components/map/MapDrawingLayer'
+import { MapDrawingToolbar } from '@/components/map/MapDrawingToolbar'
+import { useMapDrawingStore, EMPTY_STROKES } from '@/stores/mapDrawingStore'
 import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
 import type { Feature, Polygon as GeoJsonPolygon } from 'geojson'
 import { type Bbox } from '@/lib/tile-math'
@@ -774,6 +777,19 @@ export function MobileStakingPage() {
     areaId: string
     parcelNumber: string
   } | null>(null)
+  // 描画タブ + ペイント設定
+  const [showDrawing, setShowDrawing] = useState(false)
+  const [drawingMode, setDrawingMode] = useState<'off' | 'pen' | 'eraser'>('off')
+  const [drawingColor, setDrawingColor] = useState('#ef4444')
+  const [drawingWidth, setDrawingWidth] = useState(3)
+  const drawingStrokes = useMapDrawingStore((s) =>
+    farmId ? s.byFarm.get(farmId) ?? EMPTY_STROKES : EMPTY_STROKES,
+  )
+  const clearAllDrawings = useMapDrawingStore((s) => s.clearFarm)
+  // showDrawing OFF に切替時はモードもリセット
+  useEffect(() => {
+    if (!showDrawing) setDrawingMode('off')
+  }, [showDrawing])
   const setCoordColumns = (next: ReadonlySet<CoordColumnKey>) => {
     // 必須列を常に含める
     const withReq = new Set(next)
@@ -2982,6 +2998,16 @@ export function MobileStakingPage() {
             )}
           </button>
         )}
+        {/* 描画タブ: 地図に手書きペイント */}
+        <button
+          onClick={() => setShowDrawing((v) => !v)}
+          className={`shrink-0 relative px-2 py-1.5 rounded font-medium ${
+            showDrawing ? 'bg-blue-600' : 'bg-slate-700 hover:bg-slate-600'
+          }`}
+          title="描画 (地図に手書きペイント)"
+        >
+          描画
+        </button>
         <button
           onClick={handleShare}
           className="shrink-0 px-2 py-1.5 rounded font-medium bg-slate-700 hover:bg-slate-600"
@@ -3825,6 +3851,23 @@ export function MobileStakingPage() {
 
       {/* 地図 */}
       <div className="flex-1 relative">
+        {/* 描画ツールバー: showDrawing = true のときだけ表示。地図上部中央にフローティング。 */}
+        {showDrawing && farm?.id && (
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[1250]">
+            <MapDrawingToolbar
+              mode={drawingMode}
+              onChangeMode={setDrawingMode}
+              color={drawingColor}
+              onChangeColor={setDrawingColor}
+              widthPx={drawingWidth}
+              onChangeWidth={setDrawingWidth}
+              strokeCount={drawingStrokes.length}
+              onClearAll={() => {
+                if (farm?.id) void clearAllDrawings(farm.id)
+              }}
+            />
+          </div>
+        )}
         {/* 現在地 (追従モード切替) + 更新 ボタン。地図左上のズームコントロール直下に縦並び。 */}
         <div className="absolute top-[88px] left-2 z-[1200] flex flex-col gap-1">
           <button
@@ -4488,6 +4531,13 @@ export function MobileStakingPage() {
               selectionMode={parcelSelectionMode}
             />
           )}
+          {/* 描画レイヤ: showDrawing のときのみ描画モード有効。オフでも既存ストロークは表示 */}
+          <MapDrawingLayer
+            farmId={farm?.id ?? null}
+            mode={showDrawing ? drawingMode : 'off'}
+            color={drawingColor}
+            widthPx={drawingWidth}
+          />
         </MapContainer>
 
         {/* 2D（断面）パネル: MAP/3D と併用なら下半分、単独なら全画面 */}

@@ -35,6 +35,10 @@ import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
 import { PhotoEditModal } from '@/features/coordinates/PhotoEditModal'
 import { CoordinateMap, type ExternalPolygon } from '@/components/map/CoordinateMap'
 import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
+import { MapDrawingLayer } from '@/components/map/MapDrawingLayer'
+import { MapDrawingToolbar } from '@/components/map/MapDrawingToolbar'
+import { useMapDrawingStore, EMPTY_STROKES } from '@/stores/mapDrawingStore'
+import { Paintbrush } from 'lucide-react'
 import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { useParcelImportSelection } from '@/features/parcel-maps/useParcelImportSelection'
 import { ParcelBatchImportBar } from '@/features/parcel-maps/ParcelBatchImportBar'
@@ -300,6 +304,19 @@ export function OrthophotoPage() {
   const [showCamerasLayer, setShowCamerasLayer] = useState<boolean>(() => readVis('cameras', true))
   const [showMemosLayer, setShowMemosLayer] = useState<boolean>(() => readVis('memos', true))
   const [showAnnotationsLayer, setShowAnnotationsLayer] = useState<boolean>(() => readVis('annotations', true))
+
+  // ペイント描画: 起動 / モード / 色 / 太さ
+  const [showDrawing, setShowDrawing] = useState(false)
+  const [drawingMode, setDrawingMode] = useState<'off' | 'pen' | 'eraser'>('off')
+  const [drawingColor, setDrawingColor] = useState('#ef4444')
+  const [drawingWidth, setDrawingWidth] = useState(3)
+  useEffect(() => {
+    if (!showDrawing) setDrawingMode('off')
+  }, [showDrawing])
+  const drawingStrokes = useMapDrawingStore((s) =>
+    currentFarm ? s.byFarm.get(currentFarm.id) ?? EMPTY_STROKES : EMPTY_STROKES,
+  )
+  const clearAllDrawings = useMapDrawingStore((s) => s.clearFarm)
   useEffect(() => writeVis('points', showPointsLayer), [showPointsLayer])
   useEffect(() => writeVis('parcels', showParcelsLayer), [showParcelsLayer])
   useEffect(() => writeVis('cameras', showCamerasLayer), [showCamerasLayer])
@@ -832,6 +849,23 @@ export function OrthophotoPage() {
         {annotations.length > 0 && <span className="ml-1 text-xs text-blue-600">({annotations.length})</span>}
       </button>
       <button
+        onClick={() => setShowDrawing((v) => !v)}
+        className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded ${
+          showDrawing
+            ? 'bg-blue-600 text-white border-blue-600'
+            : 'hover:bg-slate-50'
+        }`}
+        title="地図に手書きペイント (ペン / 消しゴム / 色 / 太さ)"
+      >
+        <Paintbrush className="h-4 w-4" />
+        ペイント
+        {drawingStrokes.length > 0 && (
+          <span className={`ml-1 text-xs ${showDrawing ? 'text-white/80' : 'text-blue-600'}`}>
+            ({drawingStrokes.length})
+          </span>
+        )}
+      </button>
+      <button
         onClick={() => setShowList(true)}
         className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
         title="登録済みオルソ一覧"
@@ -1005,6 +1039,23 @@ export function OrthophotoPage() {
       {/* 横並び: 左=大きな地図（オルソ＋座標＋区域＋作図＋メモ＋写真）、右=折りたたみパネル */}
       <div className="flex-1 flex min-h-0 relative">
       <div className="flex-1 relative">
+        {/* ペイント描画ツールバー: 起動中のみ表示。地図上部中央にフローティング */}
+        {showDrawing && currentFarm?.id && (
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[1250]">
+            <MapDrawingToolbar
+              mode={drawingMode}
+              onChangeMode={setDrawingMode}
+              color={drawingColor}
+              onChangeColor={setDrawingColor}
+              widthPx={drawingWidth}
+              onChangeWidth={setDrawingWidth}
+              strokeCount={drawingStrokes.length}
+              onClearAll={() => {
+                if (currentFarm?.id) void clearAllDrawings(currentFarm.id)
+              }}
+            />
+          </div>
+        )}
         <CoordinateMap
           key={currentFarm.id}
           farmId={currentFarm.id}
@@ -1053,6 +1104,13 @@ export function OrthophotoPage() {
               selectionMode={selectionMode}
             />
           )}
+          {/* 描画レイヤ: showDrawing OFF でも既存ストロークは表示。ON でペン/消しゴム有効 */}
+          <MapDrawingLayer
+            farmId={currentFarm.id}
+            mode={showDrawing ? drawingMode : 'off'}
+            color={drawingColor}
+            widthPx={drawingWidth}
+          />
         </CoordinateMap>
 
         {/* 法務省地図トグル + 一括取込ボタン (左下、Leaflet attribution の対角) */}
