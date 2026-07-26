@@ -35,7 +35,7 @@ import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
 import { PhotoEditModal } from '@/features/coordinates/PhotoEditModal'
 import { CoordinateMap, type ExternalPolygon } from '@/components/map/CoordinateMap'
 import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
-import { MapDrawingLayer } from '@/components/map/MapDrawingLayer'
+import { MapDrawingLayer, type DrawingMode } from '@/components/map/MapDrawingLayer'
 import { MapDrawingToolbar } from '@/components/map/MapDrawingToolbar'
 import { useMapDrawingStore, EMPTY_STROKES, type LineStyle } from '@/stores/mapDrawingStore'
 import { Paintbrush } from 'lucide-react'
@@ -307,7 +307,7 @@ export function OrthophotoPage() {
 
   // ペイント描画: 起動 / モード / 色 / 太さ
   const [showDrawing, setShowDrawing] = useState(false)
-  const [drawingMode, setDrawingMode] = useState<'off' | 'pen' | 'text' | 'eraser'>('off')
+  const [drawingMode, setDrawingMode] = useState<DrawingMode>('off')
   const [drawingColor, setDrawingColor] = useState('#ef4444')
   const [drawingWidth, setDrawingWidth] = useState(3)
   const [drawingLineStyle, setDrawingLineStyle] = useState<LineStyle>('solid')

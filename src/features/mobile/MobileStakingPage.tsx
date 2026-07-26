@@ -66,7 +66,7 @@ import {
 } from '@/stores/parcelAttributeTypesStore'
 import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { ParcelMapLayer, parcelFeatureKey } from '@/components/map/ParcelMapLayer'
-import { MapDrawingLayer } from '@/components/map/MapDrawingLayer'
+import { MapDrawingLayer, type DrawingMode } from '@/components/map/MapDrawingLayer'
 import { MapDrawingToolbar } from '@/components/map/MapDrawingToolbar'
 import { useMapDrawingStore, type LineStyle } from '@/stores/mapDrawingStore'
 import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
@@ -780,7 +780,7 @@ export function MobileStakingPage() {
   } | null>(null)
   // 描画タブ + ペイント設定
   const [showDrawing, setShowDrawing] = useState(false)
-  const [drawingMode, setDrawingMode] = useState<'off' | 'pen' | 'text' | 'eraser'>('off')
+  const [drawingMode, setDrawingMode] = useState<DrawingMode>('off')
   const [drawingColor, setDrawingColor] = useState('#ef4444')
   const [drawingWidth, setDrawingWidth] = useState(3)
   const [drawingLineStyle, setDrawingLineStyle] = useState<LineStyle>('solid')

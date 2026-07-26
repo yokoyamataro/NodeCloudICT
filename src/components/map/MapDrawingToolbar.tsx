@@ -7,7 +7,18 @@
 //   ・ボタンは 32px 四方に抑える
 
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, Eraser, Pen, Redo2, StickyNote, Type, Undo2, X } from 'lucide-react'
+import {
+  ChevronDown,
+  Eraser,
+  MousePointer2,
+  Pen,
+  Redo2,
+  Slash,
+  StickyNote,
+  Type,
+  Undo2,
+  X,
+} from 'lucide-react'
 import type { DrawingMode } from './MapDrawingLayer'
 import type { LineStyle } from '@/stores/mapDrawingStore'
 
@@ -106,11 +117,11 @@ export function MapDrawingToolbar({
       ref={rootRef}
       className="bg-white border rounded-lg shadow-lg p-1.5 flex flex-wrap items-center gap-1 text-xs max-w-[calc(100vw-1rem)]"
     >
-      {/* ペン */}
+      {/* ペン (フリーハンド) */}
       <button
         type="button"
         onClick={() => onChangeMode(mode === 'pen' ? 'off' : 'pen')}
-        title="ペン (ドラッグで描画)"
+        title="ペン (ドラッグでフリーハンド描画)"
         className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
           mode === 'pen'
             ? 'bg-blue-600 text-white'
@@ -118,6 +129,32 @@ export function MapDrawingToolbar({
         }`}
       >
         <Pen className="h-4 w-4" />
+      </button>
+      {/* 直線 (2 点だけ記録) */}
+      <button
+        type="button"
+        onClick={() => onChangeMode(mode === 'line' ? 'off' : 'line')}
+        title="直線 (ドラッグで始点/終点だけ記録)"
+        className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
+          mode === 'line'
+            ? 'bg-blue-600 text-white'
+            : 'text-slate-600 hover:bg-slate-100'
+        }`}
+      >
+        <Slash className="h-4 w-4" />
+      </button>
+      {/* 選択 (ストロークをタップして端点ハンドルをドラッグ) */}
+      <button
+        type="button"
+        onClick={() => onChangeMode(mode === 'select' ? 'off' : 'select')}
+        title="選択 (ストロークをタップ → 端点ハンドルをドラッグして頂点を移動)"
+        className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
+          mode === 'select'
+            ? 'bg-blue-600 text-white'
+            : 'text-slate-600 hover:bg-slate-100'
+        }`}
+      >
+        <MousePointer2 className="h-4 w-4" />
       </button>
       {/* テキスト */}
       <button
