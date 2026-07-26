@@ -7,7 +7,7 @@
 //   ・ボタンは 32px 四方に抑える
 
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, Eraser, Pen, Trash2, X } from 'lucide-react'
+import { ChevronDown, Eraser, Pen, Redo2, Type, Undo2, X } from 'lucide-react'
 import type { DrawingMode } from './MapDrawingLayer'
 import type { LineStyle } from '@/stores/mapDrawingStore'
 
@@ -31,8 +31,10 @@ interface Props {
   onChangeWidth: (widthPx: number) => void
   lineStyle: LineStyle
   onChangeLineStyle: (style: LineStyle) => void
-  strokeCount: number
-  onClearAll: () => void
+  canUndo: boolean
+  canRedo: boolean
+  onUndo: () => void
+  onRedo: () => void
 }
 
 const LINE_STYLE_LABEL: Record<LineStyle, string> = {
@@ -73,8 +75,10 @@ export function MapDrawingToolbar({
   onChangeWidth,
   lineStyle,
   onChangeLineStyle,
-  strokeCount,
-  onClearAll,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
 }: Props) {
   const [colorPickerOpen, setColorPickerOpen] = useState(false)
   const [linePickerOpen, setLinePickerOpen] = useState(false)
@@ -112,11 +116,24 @@ export function MapDrawingToolbar({
       >
         <Pen className="h-4 w-4" />
       </button>
+      {/* テキスト */}
+      <button
+        type="button"
+        onClick={() => onChangeMode(mode === 'text' ? 'off' : 'text')}
+        title="テキスト (タップした場所に文字を追加)"
+        className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
+          mode === 'text'
+            ? 'bg-blue-600 text-white'
+            : 'text-slate-600 hover:bg-slate-100'
+        }`}
+      >
+        <Type className="h-4 w-4" />
+      </button>
       {/* 消しゴム */}
       <button
         type="button"
         onClick={() => onChangeMode(mode === 'eraser' ? 'off' : 'eraser')}
-        title="消しゴム (ストロークをクリックで削除)"
+        title="消しゴム (アイテムをクリックで削除)"
         className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
           mode === 'eraser'
             ? 'bg-red-500 text-white'
@@ -225,23 +242,24 @@ export function MapDrawingToolbar({
         </span>
       </div>
 
-      {/* 件数 + 全消し */}
-      <span className="text-[10px] text-slate-500 shrink-0 pl-1">
-        {strokeCount} 本
-      </span>
+      {/* undo / redo */}
       <button
         type="button"
-        onClick={() => {
-          if (strokeCount === 0) return
-          if (confirm(`すべての描画 (${strokeCount} 本) を削除しますか？`)) {
-            onClearAll()
-          }
-        }}
-        disabled={strokeCount === 0}
-        title="全消し"
-        className="w-8 h-8 flex items-center justify-center rounded text-slate-600 hover:bg-red-50 hover:text-red-600 disabled:opacity-30 shrink-0"
+        onClick={onUndo}
+        disabled={!canUndo}
+        title="元に戻す (この画面での操作のみ)"
+        className="w-8 h-8 flex items-center justify-center rounded text-slate-600 hover:bg-slate-100 disabled:opacity-30 shrink-0"
       >
-        <Trash2 className="h-4 w-4" />
+        <Undo2 className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        onClick={onRedo}
+        disabled={!canRedo}
+        title="やり直す"
+        className="w-8 h-8 flex items-center justify-center rounded text-slate-600 hover:bg-slate-100 disabled:opacity-30 shrink-0"
+      >
+        <Redo2 className="h-4 w-4" />
       </button>
 
       {/* 閉じる (モード解除) */}

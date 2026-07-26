@@ -67,7 +67,7 @@ import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { ParcelMapLayer, parcelFeatureKey } from '@/components/map/ParcelMapLayer'
 import { MapDrawingLayer } from '@/components/map/MapDrawingLayer'
 import { MapDrawingToolbar } from '@/components/map/MapDrawingToolbar'
-import { useMapDrawingStore, EMPTY_STROKES, type LineStyle } from '@/stores/mapDrawingStore'
+import { useMapDrawingStore, type LineStyle } from '@/stores/mapDrawingStore'
 import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
 import type { Feature, Polygon as GeoJsonPolygon } from 'geojson'
 import { type Bbox } from '@/lib/tile-math'
@@ -779,14 +779,14 @@ export function MobileStakingPage() {
   } | null>(null)
   // 描画タブ + ペイント設定
   const [showDrawing, setShowDrawing] = useState(false)
-  const [drawingMode, setDrawingMode] = useState<'off' | 'pen' | 'eraser'>('off')
+  const [drawingMode, setDrawingMode] = useState<'off' | 'pen' | 'text' | 'eraser'>('off')
   const [drawingColor, setDrawingColor] = useState('#ef4444')
   const [drawingWidth, setDrawingWidth] = useState(3)
   const [drawingLineStyle, setDrawingLineStyle] = useState<LineStyle>('solid')
-  const drawingStrokes = useMapDrawingStore((s) =>
-    farmId ? s.byFarm.get(farmId) ?? EMPTY_STROKES : EMPTY_STROKES,
-  )
-  const clearAllDrawings = useMapDrawingStore((s) => s.clearFarm)
+  const drawingUndoLen = useMapDrawingStore((s) => s.undoStack.length)
+  const drawingRedoLen = useMapDrawingStore((s) => s.redoStack.length)
+  const drawingUndo = useMapDrawingStore((s) => s.undo)
+  const drawingRedo = useMapDrawingStore((s) => s.redo)
   // showDrawing OFF に切替時はモードもリセット
   useEffect(() => {
     if (!showDrawing) setDrawingMode('off')
@@ -3864,10 +3864,10 @@ export function MobileStakingPage() {
               onChangeWidth={setDrawingWidth}
               lineStyle={drawingLineStyle}
               onChangeLineStyle={setDrawingLineStyle}
-              strokeCount={drawingStrokes.length}
-              onClearAll={() => {
-                if (farm?.id) void clearAllDrawings(farm.id)
-              }}
+              canUndo={drawingUndoLen > 0}
+              canRedo={drawingRedoLen > 0}
+              onUndo={() => void drawingUndo()}
+              onRedo={() => void drawingRedo()}
             />
           </div>
         )}

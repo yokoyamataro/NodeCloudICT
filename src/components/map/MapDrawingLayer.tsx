@@ -1,24 +1,16 @@
-// 地図上に手書きペイントを重ねるレイヤ (touch / stylus / mouse 対応)。
+// 地図上に手書きペイント + テキスト注釈を重ねるレイヤ (touch / mouse 対応)。
 //
-// 3 モード:
-//   ・'off'    描画無効。既存ストロークだけ表示。マップ操作は通常通り。
-//   ・'pen'    ドラッグでストロークを描く。地図の pan/zoom は無効化。
-//   ・'eraser' ストロークをクリックで削除。
+// 4 モード:
+//   ・'off'    描画無効。既存アイテムだけ表示。マップ操作は通常通り。
+//   ・'pen'    ドラッグでストロークを描く。地図の pan/zoom (touchZoom は除く) は無効化。
+//   ・'text'   タップした点にテキスト注釈を追加 (prompt 経由)。
+//   ・'eraser' アイテムをクリックで削除。
 //
 // 保存座標は lat/lng なので、地図を伸縮・移動しても地図上の位置は保持される。
-//
-// 実装メモ:
-//   ・入力は Pointer Events (mouse / touch / pen 統一) を map.getContainer() に
-//     直接 addEventListener で拾う。Leaflet の 'mousemove' はブラウザ実装差で
-//     touchmove から発火しないケースがあり、モバイル実機で「線が残らない」
-//     現象があった。Pointer Events + setPointerCapture でモバイル safari も含めて
-//     取りこぼしを防ぐ。
-//   ・pen モード中は Leaflet の dragging/zoom を全部 disable、container の
-//     touchAction: none で iOS のスクロールも抑止する。
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Pane, Polyline, useMap } from 'react-leaflet'
-import type { LatLng } from 'leaflet'
+import { Marker, Pane, Polyline, useMap, useMapEvents } from 'react-leaflet'
+import L, { type LatLng } from 'leaflet'
 import {
   useMapDrawingStore,
   EMPTY_STROKES,
@@ -26,7 +18,7 @@ import {
   type LineStyle,
 } from '@/stores/mapDrawingStore'
 
-export type DrawingMode = 'off' | 'pen' | 'eraser'
+export type DrawingMode = 'off' | 'pen' | 'text' | 'eraser'
 
 interface Props {
   farmId: string | null
@@ -40,8 +32,35 @@ interface Props {
 function dashArrayFor(style: LineStyle, widthPx: number): string | undefined {
   if (style === 'solid') return undefined
   if (style === 'dashed') return `${widthPx * 3},${widthPx * 2}`
-  // dotted: 点(円点) は lineCap=round と併せて短い dash で表現
   return `0.1,${widthPx * 1.8}`
+}
+
+/** width_px (1-20) → テキストの font-size px。1→10px, 5→18px, 10→28px 相当 */
+function textFontSizePx(widthPx: number): number {
+  return Math.max(10, 8 + widthPx * 2)
+}
+
+/** テキスト注釈用の divIcon (背景なし、測点ラベルと同じ「白フチ + 色本体」スタイル) */
+function makeTextIcon(text: string, color: string, widthPx: number, interactive: boolean): L.DivIcon {
+  const size = textFontSizePx(widthPx)
+  // 白フチは text-shadow を 8 方向に敷いて表現 (測点ラベルと同じ)
+  const shadow =
+    '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff'
+  const escaped = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+  const html = `<span style="color:${color};font-size:${size}px;font-weight:bold;text-shadow:${shadow};white-space:nowrap;pointer-events:${
+    interactive ? 'auto' : 'none'
+  };cursor:${interactive ? 'pointer' : 'default'};">${escaped}</span>`
+  return L.divIcon({
+    className: 'map-drawing-text-label',
+    html,
+    // 起点はテキストの左中央 (measurement label と同じ配置)
+    iconSize: undefined as unknown as L.PointExpression,
+    iconAnchor: [0, size / 2],
+  })
 }
 
 export function MapDrawingLayer({
@@ -52,17 +71,15 @@ export function MapDrawingLayer({
   lineStyle,
 }: Props) {
   const map = useMap()
-  const strokes = useMapDrawingStore((s) =>
+  const items = useMapDrawingStore((s) =>
     farmId ? s.byFarm.get(farmId) ?? EMPTY_STROKES : EMPTY_STROKES,
   )
   const fetchByFarm = useMapDrawingStore((s) => s.fetchByFarm)
   const addStroke = useMapDrawingStore((s) => s.addStroke)
+  const addText = useMapDrawingStore((s) => s.addText)
   const deleteStroke = useMapDrawingStore((s) => s.deleteStroke)
 
-  // 描画中の 1 ストローク (プレビュー用)
   const [currentPositions, setCurrentPositions] = useState<[number, number][]>([])
-  // ref も持つ: pointermove コールバックから setState 経由でも良いが、
-  // event ハンドラを毎回 re-attach しないよう ref で共有する。
   const currentRef = useRef<LatLng[] | null>(null)
 
   // farm 切替時に fetch
@@ -70,23 +87,19 @@ export function MapDrawingLayer({
     if (farmId) void fetchByFarm(farmId)
   }, [farmId, fetchByFarm])
 
-  // 描画中は地図の 1 本指 pan を止める + カーソル + touchAction を制御。
-  // ただし 2 本指 pinch zoom (touchZoom) は無効化しない — pen モード中でも
-  // 2 本指でズームできるようにする。1 本目の pointer が来て描画開始した
-  // 直後に 2 本目が来たら、以降のロジックで stroke をキャンセルする。
+  // 描画中は地図の 1 本指 pan を止める。text モードでも同じ (単発 click だが誤 pan 防止)
   useEffect(() => {
-    const drawing = mode === 'pen'
+    const drawing = mode === 'pen' || mode === 'text'
     const container = map.getContainer()
     if (drawing) {
-      map.dragging.disable()
+      // pen だけ dragging を止める。text は click だけなので普通に pan させても OK
+      // だが誤操作防止で pen 同様に止める。
+      if (mode === 'pen') map.dragging.disable()
       map.doubleClickZoom.disable()
       map.scrollWheelZoom.disable()
       map.boxZoom.disable()
-      // touchZoom は残す (2 本指 pinch を使えるように)
       map.touchZoom.enable()
-      container.style.cursor = 'crosshair'
-      // touchAction = 'pinch-zoom' でブラウザにピンチだけ許容させる。
-      // 'none' にすると Chrome/Safari が pinch を止めてしまう。
+      container.style.cursor = mode === 'pen' ? 'crosshair' : 'text'
       container.style.touchAction = 'pinch-zoom'
     } else {
       map.dragging.enable()
@@ -103,50 +116,60 @@ export function MapDrawingLayer({
     }
   }, [mode, map])
 
-  // ペンモード時: pointer events を container に直接バインド
+  // text モード: 単発 click でテキスト追加
+  useMapEvents(
+    mode === 'text'
+      ? {
+          click: (e) => {
+            if (!farmId) return
+            const input = prompt('テキストを入力', '')
+            if (input == null) return
+            const trimmed = input.trim()
+            if (!trimmed) return
+            void addText({
+              farmId,
+              color,
+              widthPx,
+              lat: e.latlng.lat,
+              lng: e.latlng.lng,
+              text: trimmed,
+            })
+          },
+        }
+      : {},
+  )
+
+  // pen モード: pointer events
   useEffect(() => {
     if (mode !== 'pen') return
     const container = map.getContainer()
 
-    // アクティブな pointer ID を追跡 (multi-touch 判定用)
     const activePointers = new Set<number>()
-    // 現在の描画に使っている pointer ID (単一)
     let drawingPointerId: number | null = null
 
     const commit = () => {
       const pts = currentRef.current
       currentRef.current = null
-      // 描画終了時に即クリア。store 側で楽観追加済みなので、preview を消しても
-      // 実ストロークが即座に描画されるため「一瞬消える」現象は起きない。
       setCurrentPositions([])
       if (!pts || pts.length < 2 || !farmId) return
       const geo = pts.map((p) => ({ lat: p.lat, lng: p.lng }))
       void addStroke({ farmId, color, widthPx, lineStyle, points: geo })
     }
-
-    /** 描画中止 (multi-touch 検知時)。DB には保存しない。 */
     const abortDrawing = () => {
       currentRef.current = null
       setCurrentPositions([])
       drawingPointerId = null
     }
-
     const eventToLatLng = (e: PointerEvent): LatLng | null => {
       try {
-        // Leaflet の型定義は MouseEvent 前提だが、PointerEvent は MouseEvent の
-        // 派生型なので実行時は問題無く動く。cast で通す。
         return map.mouseEventToLatLng(e as unknown as MouseEvent)
       } catch {
         return null
       }
     }
-
     const onDown = (e: PointerEvent) => {
-      // 右クリック / 中クリックは無視 (button != 0)
       if (e.pointerType === 'mouse' && e.button !== 0) return
       activePointers.add(e.pointerId)
-      // 2 本目以降の指が置かれた瞬間 = pinch zoom 開始 → 現在の描画を中止し、
-      // touchZoom に処理を委ねる。
       if (activePointers.size > 1) {
         if (drawingPointerId != null) {
           try {
@@ -158,7 +181,6 @@ export function MapDrawingLayer({
         abortDrawing()
         return
       }
-      // 1 本目 (単一 pointer): 描画開始
       const latlng = eventToLatLng(e)
       if (!latlng) return
       drawingPointerId = e.pointerId
@@ -172,7 +194,6 @@ export function MapDrawingLayer({
       e.preventDefault()
     }
     const onMove = (e: PointerEvent) => {
-      // 別 pointer からの move は無視 (multi-touch pinch 中は既に abort 済み)
       if (drawingPointerId == null || e.pointerId !== drawingPointerId) return
       if (activePointers.size > 1) return
       if (!currentRef.current) return
@@ -196,7 +217,6 @@ export function MapDrawingLayer({
     const onCancel = (e: PointerEvent) => {
       activePointers.delete(e.pointerId)
       if (e.pointerId !== drawingPointerId) return
-      // 単一 pointer が cancel された場合も一応 commit (取りこぼし救済)
       drawingPointerId = null
       commit()
     }
@@ -205,7 +225,6 @@ export function MapDrawingLayer({
     container.addEventListener('pointermove', onMove)
     container.addEventListener('pointerup', onUp)
     container.addEventListener('pointercancel', onCancel)
-    // pointerleave は multi-touch 中に頻繁に fire するため使わない
     return () => {
       container.removeEventListener('pointerdown', onDown)
       container.removeEventListener('pointermove', onMove)
@@ -214,39 +233,60 @@ export function MapDrawingLayer({
     }
   }, [mode, map, farmId, color, widthPx, lineStyle, addStroke])
 
-  const strokesRendered = useMemo(
+  const rendered = useMemo(
     () =>
-      strokes.map((s: MapDrawingStroke) => (
-        <Polyline
-          key={s.id}
-          positions={s.points.map((p) => [p.lat, p.lng] as [number, number])}
-          pathOptions={{
-            color: s.color,
-            weight: s.width_px,
-            opacity: 0.9,
-            lineCap: 'round',
-            lineJoin: 'round',
-            dashArray: dashArrayFor(
-              (s.line_style ?? 'solid') as LineStyle,
-              s.width_px,
-            ),
-          }}
-          eventHandlers={
-            mode === 'eraser'
-              ? { click: () => void deleteStroke(s.id) }
-              : undefined
-          }
-        />
-      )),
-    [strokes, mode, deleteStroke],
+      items.map((s: MapDrawingStroke) => {
+        if (s.kind === 'text') {
+          const pt = s.points[0]
+          if (!pt) return null
+          const isEraser = mode === 'eraser'
+          return (
+            <Marker
+              key={s.id}
+              position={[pt.lat, pt.lng]}
+              icon={makeTextIcon(
+                s.text ?? '',
+                s.color,
+                s.width_px,
+                isEraser,
+              )}
+              interactive={isEraser}
+              eventHandlers={
+                isEraser ? { click: () => void deleteStroke(s.id) } : undefined
+              }
+            />
+          )
+        }
+        // stroke
+        return (
+          <Polyline
+            key={s.id}
+            positions={s.points.map((p) => [p.lat, p.lng] as [number, number])}
+            pathOptions={{
+              color: s.color,
+              weight: s.width_px,
+              opacity: 0.9,
+              lineCap: 'round',
+              lineJoin: 'round',
+              dashArray: dashArrayFor(
+                (s.line_style ?? 'solid') as LineStyle,
+                s.width_px,
+              ),
+            }}
+            eventHandlers={
+              mode === 'eraser'
+                ? { click: () => void deleteStroke(s.id) }
+                : undefined
+            }
+          />
+        )
+      }),
+    [items, mode, deleteStroke],
   )
 
-  // 描画レイヤは z-index を高めた custom pane に置く。
-  // これで法務省地図の parcel polygon (overlayPane, z-index 400) より前面になり、
-  // 消しゴム モードでストロークを click しても他レイヤに click が奪われない。
   return (
     <Pane name="map-drawing" style={{ zIndex: 500 }}>
-      {strokesRendered}
+      {rendered}
       {currentPositions.length >= 2 && (
         <Polyline
           positions={currentPositions}

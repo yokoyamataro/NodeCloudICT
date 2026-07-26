@@ -307,17 +307,20 @@ export function OrthophotoPage() {
 
   // ペイント描画: 起動 / モード / 色 / 太さ
   const [showDrawing, setShowDrawing] = useState(false)
-  const [drawingMode, setDrawingMode] = useState<'off' | 'pen' | 'eraser'>('off')
+  const [drawingMode, setDrawingMode] = useState<'off' | 'pen' | 'text' | 'eraser'>('off')
   const [drawingColor, setDrawingColor] = useState('#ef4444')
   const [drawingWidth, setDrawingWidth] = useState(3)
   const [drawingLineStyle, setDrawingLineStyle] = useState<LineStyle>('solid')
   useEffect(() => {
     if (!showDrawing) setDrawingMode('off')
   }, [showDrawing])
-  const drawingStrokes = useMapDrawingStore((s) =>
+  const drawingItems = useMapDrawingStore((s) =>
     currentFarm ? s.byFarm.get(currentFarm.id) ?? EMPTY_STROKES : EMPTY_STROKES,
   )
-  const clearAllDrawings = useMapDrawingStore((s) => s.clearFarm)
+  const drawingUndoLen = useMapDrawingStore((s) => s.undoStack.length)
+  const drawingRedoLen = useMapDrawingStore((s) => s.redoStack.length)
+  const drawingUndo = useMapDrawingStore((s) => s.undo)
+  const drawingRedo = useMapDrawingStore((s) => s.redo)
   useEffect(() => writeVis('points', showPointsLayer), [showPointsLayer])
   useEffect(() => writeVis('parcels', showParcelsLayer), [showParcelsLayer])
   useEffect(() => writeVis('cameras', showCamerasLayer), [showCamerasLayer])
@@ -860,9 +863,9 @@ export function OrthophotoPage() {
       >
         <Paintbrush className="h-4 w-4" />
         ペイント
-        {drawingStrokes.length > 0 && (
+        {drawingItems.length > 0 && (
           <span className={`ml-1 text-xs ${showDrawing ? 'text-white/80' : 'text-blue-600'}`}>
-            ({drawingStrokes.length})
+            ({drawingItems.length})
           </span>
         )}
       </button>
@@ -1052,10 +1055,10 @@ export function OrthophotoPage() {
               onChangeWidth={setDrawingWidth}
               lineStyle={drawingLineStyle}
               onChangeLineStyle={setDrawingLineStyle}
-              strokeCount={drawingStrokes.length}
-              onClearAll={() => {
-                if (currentFarm?.id) void clearAllDrawings(currentFarm.id)
-              }}
+              canUndo={drawingUndoLen > 0}
+              canRedo={drawingRedoLen > 0}
+              onUndo={() => void drawingUndo()}
+              onRedo={() => void drawingRedo()}
             />
           </div>
         )}
