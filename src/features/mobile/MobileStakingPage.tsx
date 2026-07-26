@@ -4243,10 +4243,13 @@ export function MobileStakingPage() {
           ))}
 
           {/* 地図の長押し / 右クリックで「測点追加 / メモを残す」の選択シートを開く。
-              Leaflet の contextmenu イベントはスマホでも長押しで発火する */}
-          <MapLongPressHandler
-            onLongPress={(lat, lng) => setLongPressChoice({ lat, lng })}
-          />
+              Leaflet の contextmenu イベントはスマホでも長押しで発火する。
+              描画メモ使用中は選択モードの頂点削除 (contextmenu) と衝突するので無効化 */}
+          {!showDrawing && (
+            <MapLongPressHandler
+              onLongPress={(lat, lng) => setLongPressChoice({ lat, lng })}
+            />
+          )}
 
           {/* 配線ライン（吸水=青・集水=緑、選択中はオレンジ）
               タップ判定を確実にするため、透明な太い「ヒットレイヤ」を上に重ねる */}
