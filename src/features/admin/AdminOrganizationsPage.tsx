@@ -521,7 +521,20 @@ function OrgInfoForm({
       setMessage('保存しました')
       onSaved?.(updated)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '保存に失敗しました')
+      // Supabase の PostgrestError は Error インスタンスとは限らないので
+      // message / details / hint / code を全部拾って表示する
+      console.error('[AdminOrganizationsPage] save failed', err)
+      const parts: string[] = []
+      if (err instanceof Error) {
+        parts.push(err.message)
+      } else if (err && typeof err === 'object') {
+        const obj = err as Record<string, unknown>
+        if (typeof obj.message === 'string') parts.push(obj.message)
+        if (typeof obj.details === 'string') parts.push(obj.details)
+        if (typeof obj.hint === 'string') parts.push(`hint: ${obj.hint}`)
+        if (typeof obj.code === 'string') parts.push(`(${obj.code})`)
+      }
+      setError(parts.length ? parts.join(' — ') : '保存に失敗しました')
     } finally {
       setSaving(false)
     }
@@ -774,7 +787,18 @@ function NewOrgDialog({
       if (error) throw error
       onCreated(data as Organization)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '作成に失敗しました')
+      console.error('[AdminOrganizationsPage] create failed', err)
+      const parts: string[] = []
+      if (err instanceof Error) {
+        parts.push(err.message)
+      } else if (err && typeof err === 'object') {
+        const obj = err as Record<string, unknown>
+        if (typeof obj.message === 'string') parts.push(obj.message)
+        if (typeof obj.details === 'string') parts.push(obj.details)
+        if (typeof obj.hint === 'string') parts.push(`hint: ${obj.hint}`)
+        if (typeof obj.code === 'string') parts.push(`(${obj.code})`)
+      }
+      setError(parts.length ? parts.join(' — ') : '作成に失敗しました')
     } finally {
       setBusy(false)
     }
