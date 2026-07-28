@@ -496,16 +496,25 @@ function InviteMemberModal({
         ok?: boolean
         status?: 'invited' | 'added_existing_user' | string
         error?: string
+        /** 既存ユーザー追加時に通知メールが送れたか */
+        notified?: boolean
+        notify_error?: string | null
       }
       if (!result.ok) {
         throw new Error(result.error ?? 'メンバー招待に失敗しました')
       }
-      setMessage(
-        result.status === 'added_existing_user'
-          ? '既登録ユーザーを組織に追加しました'
-          : `${email} に招待メールを送信しました`,
-      )
-      setTimeout(onInvited, 1200)
+      if (result.status === 'added_existing_user') {
+        setMessage(
+          result.notified
+            ? `${email} を組織に追加し、通知メールを送信しました`
+            : `${email} を組織に追加しました${
+                result.notify_error ? ` (通知メール失敗: ${result.notify_error})` : ''
+              }`,
+        )
+      } else {
+        setMessage(`${email} に招待メールを送信しました`)
+      }
+      setTimeout(onInvited, 1600)
     } catch (err) {
       setError(err instanceof Error ? err.message : '招待に失敗しました')
     } finally {

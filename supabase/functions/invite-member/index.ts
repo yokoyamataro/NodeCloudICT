@@ -12,6 +12,8 @@
 // 必要な環境変数:
 //   SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY (runtime で自動注入)
 //   PUBLIC_APP_URL — 招待リンク遷移先 (例: https://app.example.com)
+//   RESEND_API_KEY — 既存ユーザーに「組織に追加されました」通知メールを送るのに使用
+//   NOTIFY_FROM    — 通知メールの From (省略時 'NodeCloud <onboarding@resend.dev>')
 //
 // デプロイ: supabase functions deploy invite-member
 
@@ -116,6 +118,50 @@ Deno.serve(async (req) => {
       redirectTo,
     })
     if (error) throw new Error(error.message)
+  }
+
+  // 既にアプリに登録済みのユーザーを組織に追加した際に「追加されました」
+  // 通知メールを Resend 経由で送る (Supabase Invite は再登録扱いになって
+  // しまうため既存ユーザーには使えない)。RESEND_API_KEY が無ければ黙ってスキップ。
+  async function sendOrgAddedNotification(
+    toEmail: string,
+    orgName: string,
+    inviterEmail: string,
+  ) {
+    const apiKey = Deno.env.get('RESEND_API_KEY')
+    if (!apiKey) {
+      console.warn('[invite-member] RESEND_API_KEY not set, skipping org-added notification')
+      return
+    }
+    const from = Deno.env.get('NOTIFY_FROM') ?? 'NodeCloud <onboarding@resend.dev>'
+    const loginUrl = redirectBase ? redirectBase.replace(/\/$/, '') : ''
+    const subject = `「${orgName}」の組織メンバーに追加されました`
+    const escaped = (s: string) =>
+      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const html = `
+      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;color:#111;line-height:1.6;">
+        <p>${escaped(inviterEmail)} が、あなたを NodeCloud の組織 <strong>「${escaped(orgName)}」</strong> のメンバーとして追加しました。</p>
+        ${
+          loginUrl
+            ? `<p><a href="${loginUrl}" style="display:inline-block;padding:8px 16px;background:#2563eb;color:white;text-decoration:none;border-radius:6px;">NodeCloud を開く</a></p>
+               <p style="color:#666;font-size:12px;">リンクが開かない場合はこちらをコピー: ${loginUrl}</p>`
+            : ''
+        }
+        <p style="color:#666;font-size:12px;margin-top:24px;">このメールに心当たりが無い場合は破棄してください。</p>
+      </div>
+    `
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ from, to: toEmail, subject, html }),
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`Resend ${res.status}: ${text}`)
+    }
   }
 
   // サイトオーナー判定 (フロントと同じくメールでハードコード)
@@ -301,7 +347,29 @@ Deno.serve(async (req) => {
       // 失敗しても組織メンバー登録自体は成功しているので警告のみ
       console.warn('[invite-member] profile upsert failed:', upErr.message)
     }
-    return json(200, { ok: true, status: 'added_existing_user' }, origin)
+
+    // 既存ユーザーに「組織に追加されました」通知メールを送る。失敗しても
+    // 組織追加自体は成功しているので警告のみ (レスポンスの notified で伝える)
+    let notified = false
+    let notifyError: string | null = null
+    try {
+      const { data: orgRow } = await admin
+        .from('organizations')
+        .select('name')
+        .eq('id', orgId)
+        .maybeSingle()
+      const orgName = (orgRow as { name?: string } | null)?.name ?? '組織'
+      await sendOrgAddedNotification(emailRaw, orgName, callerEmail)
+      notified = true
+    } catch (err) {
+      notifyError = (err as Error).message
+      console.warn('[invite-member] org-added notification failed:', notifyError)
+    }
+    return json(
+      200,
+      { ok: true, status: 'added_existing_user', notified, notify_error: notifyError },
+      origin,
+    )
   }
 
   // 未登録 → pending_invitations (organization_id + org_role) + 招待メール
