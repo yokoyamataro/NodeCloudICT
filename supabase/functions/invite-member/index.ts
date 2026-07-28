@@ -164,6 +164,52 @@ Deno.serve(async (req) => {
     }
   }
 
+  // 既存ユーザーをプロジェクト共有メンバーに追加した際の通知メール。
+  // 組織版と同じく Supabase Invite は使えないため Resend 経由。
+  async function sendProjectAddedNotification(
+    toEmail: string,
+    projectName: string,
+    inviterEmail: string,
+    role: ProjectRole,
+  ) {
+    const apiKey = Deno.env.get('RESEND_API_KEY')
+    if (!apiKey) {
+      console.warn('[invite-member] RESEND_API_KEY not set, skipping project-added notification')
+      return
+    }
+    const from = Deno.env.get('NOTIFY_FROM') ?? 'NodeCloud <onboarding@resend.dev>'
+    const loginUrl = redirectBase ? redirectBase.replace(/\/$/, '') : ''
+    const roleLabel =
+      role === 'owner' ? '管理者' : role === 'editor' ? '編集者' : '閲覧者'
+    const subject = `現場「${projectName}」の共有メンバーに追加されました`
+    const escaped = (s: string) =>
+      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const html = `
+      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;color:#111;line-height:1.6;">
+        <p>${escaped(inviterEmail)} が、あなたを NodeCloud の現場 <strong>「${escaped(projectName)}」</strong> の <strong>${escaped(roleLabel)}</strong> として共有メンバーに追加しました。</p>
+        ${
+          loginUrl
+            ? `<p><a href="${loginUrl}" style="display:inline-block;padding:8px 16px;background:#2563eb;color:white;text-decoration:none;border-radius:6px;">NodeCloud を開く</a></p>
+               <p style="color:#666;font-size:12px;">リンクが開かない場合はこちらをコピー: ${loginUrl}</p>`
+            : ''
+        }
+        <p style="color:#666;font-size:12px;margin-top:24px;">このメールに心当たりが無い場合は破棄してください。</p>
+      </div>
+    `
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ from, to: toEmail, subject, html }),
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`Resend ${res.status}: ${text}`)
+    }
+  }
+
   // サイトオーナー判定 (フロントと同じくメールでハードコード)
   const SITE_OWNER_EMAILS = new Set(['yokoyama1980@gmail.com'])
   const isSiteOwner = SITE_OWNER_EMAILS.has(callerEmail)
@@ -218,6 +264,8 @@ Deno.serve(async (req) => {
         .eq('project_id', projectId)
         .eq('user_id', existingUserId)
         .maybeSingle()
+      let roleChanged = false
+      let newlyAdded = false
       if (existing) {
         const cur = existing as { id: string; role: string }
         if (cur.role === 'owner') {
@@ -231,16 +279,41 @@ Deno.serve(async (req) => {
           if (updErr) {
             return json(500, { error: 'Member update failed: ' + updErr.message }, origin)
           }
+          roleChanged = true
         }
-        return json(200, { ok: true, status: 'added_existing_user' }, origin)
+      } else {
+        const { error } = await admin
+          .from('project_members')
+          .insert({ project_id: projectId, user_id: existingUserId, role })
+        if (error) {
+          return json(500, { error: 'Member insert failed: ' + error.message }, origin)
+        }
+        newlyAdded = true
       }
-      const { error } = await admin
-        .from('project_members')
-        .insert({ project_id: projectId, user_id: existingUserId, role })
-      if (error) {
-        return json(500, { error: 'Member insert failed: ' + error.message }, origin)
+
+      // 通知メール: 新規追加 or ロール変更のあった時だけ送る (何もしなかったら送らない)
+      let notified = false
+      let notifyError: string | null = null
+      if (newlyAdded || roleChanged) {
+        try {
+          const { data: projRow } = await admin
+            .from('projects')
+            .select('name')
+            .eq('id', projectId)
+            .maybeSingle()
+          const projectName = (projRow as { name?: string } | null)?.name ?? '現場'
+          await sendProjectAddedNotification(emailRaw, projectName, callerEmail, role)
+          notified = true
+        } catch (err) {
+          notifyError = (err as Error).message
+          console.warn('[invite-member] project-added notification failed:', notifyError)
+        }
       }
-      return json(200, { ok: true, status: 'added_existing_user' }, origin)
+      return json(
+        200,
+        { ok: true, status: 'added_existing_user', notified, notify_error: notifyError },
+        origin,
+      )
     }
 
     // 未登録 → pending_invitations + 招待メール
