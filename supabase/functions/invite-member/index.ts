@@ -120,6 +120,9 @@ Deno.serve(async (req) => {
     if (error) throw new Error(error.message)
   }
 
+  const escapeHtml = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
   // 既にアプリに登録済みのユーザーを組織に追加した際に「追加されました」
   // 通知メールを Resend 経由で送る (Supabase Invite は再登録扱いになって
   // しまうため既存ユーザーには使えない)。RESEND_API_KEY が無ければ黙ってスキップ。
@@ -135,20 +138,42 @@ Deno.serve(async (req) => {
     }
     const from = Deno.env.get('NOTIFY_FROM') ?? 'NodeCloud <onboarding@resend.dev>'
     const loginUrl = redirectBase ? redirectBase.replace(/\/$/, '') : ''
-    const subject = `「${orgName}」の組織メンバーに追加されました`
-    const escaped = (s: string) =>
-      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const subject = `【NodeCloud】組織「${orgName}」のメンバーに追加されました`
+    const orgNameEsc = escapeHtml(orgName)
+    const inviterEsc = escapeHtml(inviterEmail)
+    const loginUrlEsc = escapeHtml(loginUrl)
     const html = `
-      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;color:#111;line-height:1.6;">
-        <p>${escaped(inviterEmail)} が、あなたを NodeCloud の組織 <strong>「${escaped(orgName)}」</strong> のメンバーとして追加しました。</p>
-        ${
-          loginUrl
-            ? `<p><a href="${loginUrl}" style="display:inline-block;padding:8px 16px;background:#2563eb;color:white;text-decoration:none;border-radius:6px;">NodeCloud を開く</a></p>
-               <p style="color:#666;font-size:12px;">リンクが開かない場合はこちらをコピー: ${loginUrl}</p>`
-            : ''
-        }
-        <p style="color:#666;font-size:12px;margin-top:24px;">このメールに心当たりが無い場合は破棄してください。</p>
-      </div>
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Meiryo,sans-serif;font-size:14px;color:#111;line-height:1.75;max-width:560px;margin:0 auto;padding:8px;">
+  <p style="margin:0 0 12px;">お世話になっております。NodeCloud 事務局です。</p>
+  <p style="margin:0 0 12px;">
+    このたび <strong>${inviterEsc}</strong> 様より、お客様を NodeCloud の組織
+    <strong>「${orgNameEsc}」</strong> のメンバーとしてご追加いただきました。<br />
+    今後、当該組織に紐づく現場情報の閲覧・編集等をご利用いただけます。
+  </p>
+  ${
+    loginUrl
+      ? `<p style="margin:16px 0 8px;">下記のリンクよりログインのうえ、ご確認ください。</p>
+         <p style="margin:0 0 16px;">
+           <a href="${loginUrlEsc}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;">
+             NodeCloud を開く
+           </a>
+         </p>
+         <p style="color:#666;font-size:12px;margin:0 0 16px;">
+           リンクが開かない場合は、下記 URL をブラウザに貼り付けてご利用ください。<br />
+           ${loginUrlEsc}
+         </p>`
+      : ''
+  }
+  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px 12px;margin:12px 0;font-size:13px;">
+    <div style="color:#64748b;margin-bottom:4px;">■ 詳細</div>
+    <div>組織名: <strong>${orgNameEsc}</strong></div>
+    <div>招待者: ${inviterEsc}</div>
+  </div>
+  <p style="color:#666;font-size:12px;margin-top:20px;border-top:1px solid #e2e8f0;padding-top:12px;">
+    本メールにお心当たりが無い場合は、恐れ入りますがそのまま破棄いただきますようお願いいたします。
+  </p>
+  <p style="color:#94a3b8;font-size:12px;margin:4px 0 0;">NodeCloud 事務局</p>
+</div>
     `
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -166,8 +191,10 @@ Deno.serve(async (req) => {
 
   // 既存ユーザーをプロジェクト共有メンバーに追加した際の通知メール。
   // 組織版と同じく Supabase Invite は使えないため Resend 経由。
+  // メール内には「現場を直接開くリンク」「トップページのリンク」を両方掲載。
   async function sendProjectAddedNotification(
     toEmail: string,
+    projectId: string,
     projectName: string,
     inviterEmail: string,
     role: ProjectRole,
@@ -178,23 +205,70 @@ Deno.serve(async (req) => {
       return
     }
     const from = Deno.env.get('NOTIFY_FROM') ?? 'NodeCloud <onboarding@resend.dev>'
-    const loginUrl = redirectBase ? redirectBase.replace(/\/$/, '') : ''
+    const base = redirectBase ? redirectBase.replace(/\/$/, '') : ''
+    const topUrl = base
+    const projectUrl = base ? `${base}/projects/${projectId}` : ''
     const roleLabel =
       role === 'owner' ? '管理者' : role === 'editor' ? '編集者' : '閲覧者'
-    const subject = `現場「${projectName}」の共有メンバーに追加されました`
-    const escaped = (s: string) =>
-      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const subject = `【NodeCloud】現場「${projectName}」の共有メンバーに追加されました`
+
+    const projectNameEsc = escapeHtml(projectName)
+    const inviterEsc = escapeHtml(inviterEmail)
+    const roleLabelEsc = escapeHtml(roleLabel)
+    const topUrlEsc = escapeHtml(topUrl)
+    const projectUrlEsc = escapeHtml(projectUrl)
+
     const html = `
-      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;color:#111;line-height:1.6;">
-        <p>${escaped(inviterEmail)} が、あなたを NodeCloud の現場 <strong>「${escaped(projectName)}」</strong> の <strong>${escaped(roleLabel)}</strong> として共有メンバーに追加しました。</p>
-        ${
-          loginUrl
-            ? `<p><a href="${loginUrl}" style="display:inline-block;padding:8px 16px;background:#2563eb;color:white;text-decoration:none;border-radius:6px;">NodeCloud を開く</a></p>
-               <p style="color:#666;font-size:12px;">リンクが開かない場合はこちらをコピー: ${loginUrl}</p>`
-            : ''
-        }
-        <p style="color:#666;font-size:12px;margin-top:24px;">このメールに心当たりが無い場合は破棄してください。</p>
-      </div>
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Meiryo,sans-serif;font-size:14px;color:#111;line-height:1.75;max-width:560px;margin:0 auto;padding:8px;">
+  <p style="margin:0 0 12px;">お世話になっております。NodeCloud 事務局です。</p>
+  <p style="margin:0 0 12px;">
+    このたび <strong>${inviterEsc}</strong> 様より、お客様を NodeCloud の現場
+    <strong>「${projectNameEsc}」</strong> の <strong>${roleLabelEsc}</strong>
+    として共有メンバーにご追加いただきました。
+  </p>
+  ${
+    projectUrl || topUrl
+      ? `<p style="margin:16px 0 8px;">下記のリンクからご確認いただけます。</p>
+         <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 16px;">
+           <tr>
+             ${
+               projectUrl
+                 ? `<td style="padding:0 8px 8px 0;">
+                      <a href="${projectUrlEsc}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;">
+                        現場「${projectNameEsc}」を開く
+                      </a>
+                    </td>`
+                 : ''
+             }
+             ${
+               topUrl
+                 ? `<td style="padding:0 0 8px 0;">
+                      <a href="${topUrlEsc}" style="display:inline-block;padding:10px 20px;background:#ffffff;color:#111;text-decoration:none;border-radius:6px;border:1px solid #cbd5e1;font-weight:600;">
+                        トップページを開く
+                      </a>
+                    </td>`
+                 : ''
+             }
+           </tr>
+         </table>
+         <p style="color:#666;font-size:12px;margin:0 0 16px;">
+           リンクが開かない場合は、下記 URL をブラウザに貼り付けてご利用ください。<br />
+           ${projectUrl ? `現場: ${projectUrlEsc}<br />` : ''}
+           ${topUrl ? `トップ: ${topUrlEsc}` : ''}
+         </p>`
+      : ''
+  }
+  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px 12px;margin:12px 0;font-size:13px;">
+    <div style="color:#64748b;margin-bottom:4px;">■ 詳細</div>
+    <div>現場名: <strong>${projectNameEsc}</strong></div>
+    <div>権限: <strong>${roleLabelEsc}</strong></div>
+    <div>招待者: ${inviterEsc}</div>
+  </div>
+  <p style="color:#666;font-size:12px;margin-top:20px;border-top:1px solid #e2e8f0;padding-top:12px;">
+    本メールにお心当たりが無い場合は、恐れ入りますがそのまま破棄いただきますようお願いいたします。
+  </p>
+  <p style="color:#94a3b8;font-size:12px;margin:4px 0 0;">NodeCloud 事務局</p>
+</div>
     `
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -302,7 +376,13 @@ Deno.serve(async (req) => {
             .eq('id', projectId)
             .maybeSingle()
           const projectName = (projRow as { name?: string } | null)?.name ?? '現場'
-          await sendProjectAddedNotification(emailRaw, projectName, callerEmail, role)
+          await sendProjectAddedNotification(
+            emailRaw,
+            projectId,
+            projectName,
+            callerEmail,
+            role,
+          )
           notified = true
         } catch (err) {
           notifyError = (err as Error).message
