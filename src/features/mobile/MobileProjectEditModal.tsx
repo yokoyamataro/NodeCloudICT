@@ -5,8 +5,8 @@
 //   削除   : プロジェクトオーナー (project.user_id === user.id) のみ
 // 保存ボタン押下で基本項目 + visibility をまとめて DB へ。メンバー操作は即時反映。
 
-import { useCallback, useEffect, useState } from 'react'
-import { AlertTriangle, Loader2, Trash2, UserPlus, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { AlertTriangle, Loader2, Mail, Plus, Trash2, X } from 'lucide-react'
 import type {
   Project,
   ProjectCategory,
@@ -74,6 +74,12 @@ export function MobileProjectEditModal({ project, onClose, onDone }: Props) {
   const [membersLoading, setMembersLoading] = useState(false)
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState<ProjectMemberRole>('editor')
+  // 組織内メンバー候補 (list_share_candidates RPC の is_internal=true のみ)
+  const [internalCandidates, setInternalCandidates] = useState<
+    { user_id: string; email: string; full_name: string | null }[]
+  >([])
+  const [selectedCandidate, setSelectedCandidate] = useState('')
+  const [candidateRole, setCandidateRole] = useState<ProjectMemberRole>('editor')
 
   const refetchMembers = useCallback(async () => {
     setMembersLoading(true)
@@ -93,11 +99,46 @@ export function MobileProjectEditModal({ project, onClose, onDone }: Props) {
     }
   }, [project.id])
 
+  const refetchCandidates = useCallback(async () => {
+    try {
+      const { data, error: rpcErr } = await (
+        supabase.rpc as unknown as (
+          fn: string,
+        ) => Promise<{
+          data:
+            | { user_id: string; email: string; full_name: string | null; is_internal: boolean }[]
+            | null
+          error: { message: string } | null
+        }>
+      )('list_share_candidates')
+      if (rpcErr) throw rpcErr
+      setInternalCandidates(
+        (data ?? [])
+          .filter((c) => c.is_internal)
+          .map(({ user_id, email, full_name }) => ({ user_id, email, full_name })),
+      )
+    } catch (err) {
+      console.warn('[MobileProjectEditModal] fetch candidates failed', err)
+    }
+  }, [])
+
   // visibility=shared に切り替えた瞬間 / モーダル起動時に一覧を引く
   useEffect(() => {
     if (visibility !== 'shared') return
     void refetchMembers()
-  }, [visibility, refetchMembers])
+    void refetchCandidates()
+  }, [visibility, refetchMembers, refetchCandidates])
+
+  // 追加ドロップダウンには、まだメンバーになっていない組織内候補だけを出す
+  const availableInternal = useMemo(
+    () =>
+      internalCandidates.filter(
+        (c) =>
+          c.user_id !== project.user_id &&
+          !members.some((m) => m.user_id === c.user_id),
+      ),
+    [internalCandidates, members, project.user_id],
+  )
 
   const handleInvite = async () => {
     const email = inviteEmail.trim()
@@ -115,6 +156,29 @@ export function MobileProjectEditModal({ project, onClose, onDone }: Props) {
       }
       setInviteEmail('')
       await refetchMembers()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // 組織内メンバー (プルダウン選択) を追加。inviteMember 経由で Edge Function に投げる
+  // (既存ユーザーなので即時 project_members に反映される)。
+  const handleAddInternal = async () => {
+    const cand = availableInternal.find((c) => c.user_id === selectedCandidate)
+    if (!cand) return
+    setError(null)
+    setBusy('member')
+    try {
+      const res = await inviteMember(project.id, cand.email, candidateRole)
+      if (!res.ok) {
+        setError(res.error ?? '追加に失敗しました')
+        return
+      }
+      setSelectedCandidate('')
+      await refetchMembers()
+      await refetchCandidates()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -379,40 +443,88 @@ export function MobileProjectEditModal({ project, onClose, onDone }: Props) {
                 </ul>
               )}
 
-              {/* 招待フォーム: オーナーのみ (project_members INSERT の RLS で editors は弾かれるため) */}
+              {/* 追加フォーム: オーナーのみ (project_members INSERT の RLS で editors は弾かれるため)
+                    上段: 組織内メンバーをプルダウンから選択
+                    下段: 組織外はメールアドレスを直接入力して招待 */}
               {isOwner ? (
                 <>
-                  <div className="mt-2 flex items-center gap-1">
-                    <input
-                      type="email"
-                      value={inviteEmail}
-                      onChange={(e) => setInviteEmail(e.target.value)}
-                      disabled={!!busy}
-                      placeholder="user@example.com"
-                      className="flex-1 min-w-0 px-2 py-1.5 text-sm border rounded"
-                    />
-                    <select
-                      value={inviteRole}
-                      onChange={(e) => setInviteRole(e.target.value as ProjectMemberRole)}
-                      disabled={!!busy}
-                      className="px-1 py-1.5 text-xs border rounded bg-white shrink-0"
-                    >
-                      <option value="viewer">閲覧</option>
-                      <option value="editor">編集</option>
-                      <option value="owner">管理</option>
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => void handleInvite()}
-                      disabled={!!busy || !inviteEmail.trim()}
-                      className="flex items-center gap-0.5 px-2 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 shrink-0"
-                    >
-                      <UserPlus className="h-3.5 w-3.5" />
-                      追加
-                    </button>
+                  <div className="mt-2">
+                    <label className="block text-[10px] text-slate-500 mb-0.5">組織内</label>
+                    <div className="flex items-center gap-1">
+                      <select
+                        value={selectedCandidate}
+                        onChange={(e) => setSelectedCandidate(e.target.value)}
+                        disabled={!!busy || availableInternal.length === 0}
+                        className="flex-1 min-w-0 px-2 py-1.5 text-xs border rounded bg-white disabled:bg-slate-50 disabled:text-slate-400"
+                      >
+                        <option value="">
+                          {availableInternal.length === 0
+                            ? '追加可能な組織メンバーはいません'
+                            : '-- メンバーを選択 --'}
+                        </option>
+                        {availableInternal.map((c) => (
+                          <option key={c.user_id} value={c.user_id}>
+                            {c.full_name || c.email} ({c.email})
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={candidateRole}
+                        onChange={(e) =>
+                          setCandidateRole(e.target.value as ProjectMemberRole)
+                        }
+                        disabled={!!busy}
+                        className="px-1 py-1.5 text-xs border rounded bg-white shrink-0"
+                      >
+                        <option value="viewer">閲覧</option>
+                        <option value="editor">編集</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => void handleAddInternal()}
+                        disabled={!!busy || !selectedCandidate}
+                        className="flex items-center gap-0.5 px-2 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 shrink-0"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        追加
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-2">
+                    <label className="block text-[10px] text-slate-500 mb-0.5">
+                      組織外 (メール招待)
+                    </label>
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="email"
+                        value={inviteEmail}
+                        onChange={(e) => setInviteEmail(e.target.value)}
+                        disabled={!!busy}
+                        placeholder="user@example.com"
+                        className="flex-1 min-w-0 px-2 py-1.5 text-sm border rounded"
+                      />
+                      <select
+                        value={inviteRole}
+                        onChange={(e) => setInviteRole(e.target.value as ProjectMemberRole)}
+                        disabled={!!busy}
+                        className="px-1 py-1.5 text-xs border rounded bg-white shrink-0"
+                      >
+                        <option value="viewer">閲覧</option>
+                        <option value="editor">編集</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => void handleInvite()}
+                        disabled={!!busy || !inviteEmail.trim()}
+                        className="flex items-center gap-0.5 px-2 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 shrink-0"
+                      >
+                        <Mail className="h-3.5 w-3.5" />
+                        招待
+                      </button>
+                    </div>
                   </div>
                   <p className="mt-1 text-[10px] text-slate-500 leading-relaxed">
-                    未登録メールなら、承認案内メールが自動で送信されます。
+                    登録済みユーザーには通知メール、未登録ユーザーには新規登録案内が送信されます。
                   </p>
                 </>
               ) : (

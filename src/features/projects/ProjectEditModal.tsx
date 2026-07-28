@@ -29,6 +29,7 @@ import {
   RotateCcw,
   AlertTriangle,
   Loader2,
+  Mail,
 } from 'lucide-react'
 import type {
   Project,
@@ -51,12 +52,16 @@ interface ShareCandidate {
 }
 
 interface PendingAdd {
-  user_id: string
+  // user_id: 社内候補ドロップダウンから追加された場合のみセット。
+  //   組織外メール入力で未登録の可能性がある場合は null (Edge Function 側で解決)。
+  user_id: string | null
   email: string
   display_name: string
   role: ProjectMemberRole
   is_internal: boolean
 }
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 // 共有ポリシー変更時の注意文
 function visibilityWarningText(
@@ -141,6 +146,9 @@ export function ProjectEditModal({
     setPendingRoleChanges(new Map())
     setSelectedCandidate('')
     setNewMemberRole('editor')
+    setInviteEmail('')
+    setInviteEmailRole('editor')
+    setInviteEmailError(null)
     setSaveError(null)
     setPendingVisibility(null)
   }, [
@@ -170,6 +178,10 @@ export function ProjectEditModal({
   >(new Map())
   const [selectedCandidate, setSelectedCandidate] = useState('')
   const [newMemberRole, setNewMemberRole] = useState<ProjectMemberRole>('editor')
+  // 組織外メール直接入力
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteEmailRole, setInviteEmailRole] = useState<ProjectMemberRole>('editor')
+  const [inviteEmailError, setInviteEmailError] = useState<string | null>(null)
 
   const refetchMembers = useCallback(async () => {
     try {
@@ -208,22 +220,26 @@ export function ProjectEditModal({
     void refetchCandidates()
   }, [visibility, refetchMembers, refetchCandidates])
 
-  // 追加候補: 全候補 - オーナー - 既存メンバー - 追加予定
-  const availableCandidates = useMemo(
+  // 組織内候補: 社内候補 - オーナー - 既存メンバー - 追加予定
+  //   組織外メンバーはドロップダウンには出さず、メール直接入力から追加させる。
+  const internalCandidates = useMemo(
     () =>
       candidates.filter(
         (c) =>
+          c.is_internal &&
           c.user_id !== project.user_id &&
           !members.some((m) => m.user_id === c.user_id) &&
-          !pendingAdds.some((a) => a.user_id === c.user_id),
+          !pendingAdds.some(
+            (a) =>
+              a.user_id === c.user_id ||
+              a.email.toLowerCase() === c.email.toLowerCase(),
+          ),
       ),
     [candidates, members, project.user_id, pendingAdds],
   )
-  const internalCandidates = availableCandidates.filter((c) => c.is_internal)
-  const externalCandidates = availableCandidates.filter((c) => !c.is_internal)
 
   const queueAdd = () => {
-    const cand = availableCandidates.find((c) => c.user_id === selectedCandidate)
+    const cand = internalCandidates.find((c) => c.user_id === selectedCandidate)
     if (!cand) return
     setPendingAdds((prev) => [
       ...prev,
@@ -238,13 +254,49 @@ export function ProjectEditModal({
     setSelectedCandidate('')
   }
 
-  const cancelPendingAdd = (userId: string) => {
-    setPendingAdds((prev) => prev.filter((a) => a.user_id !== userId))
+  // 組織外メールから追加予定に登録。
+  //   * 形式チェックだけしてキューへ。実際の「登録済み判定 / 招待送信 / 組織登録誘導」は
+  //     保存時に Edge Function 'invite-member' が担う (未登録メールは invite メール送信)。
+  //   * 入力メールが偶然 candidates に含まれる (社内メンバー) 場合は user_id を紐付ける。
+  const queueEmailInvite = () => {
+    const email = inviteEmail.trim().toLowerCase()
+    if (!email) {
+      setInviteEmailError('メールアドレスを入力してください')
+      return
+    }
+    if (!EMAIL_REGEX.test(email)) {
+      setInviteEmailError('メールアドレスの形式が正しくありません')
+      return
+    }
+    if (
+      members.some((m) => (m.email ?? '').toLowerCase() === email) ||
+      pendingAdds.some((a) => a.email.toLowerCase() === email)
+    ) {
+      setInviteEmailError('このメールアドレスは既に追加されています')
+      return
+    }
+    const cand = candidates.find((c) => c.email.toLowerCase() === email)
+    setPendingAdds((prev) => [
+      ...prev,
+      {
+        user_id: cand?.user_id ?? null,
+        email,
+        display_name: cand?.full_name || email,
+        role: inviteEmailRole,
+        is_internal: cand?.is_internal ?? false,
+      },
+    ])
+    setInviteEmail('')
+    setInviteEmailError(null)
   }
 
-  const updatePendingAddRole = (userId: string, role: ProjectMemberRole) => {
+  const cancelPendingAdd = (email: string) => {
+    setPendingAdds((prev) => prev.filter((a) => a.email !== email))
+  }
+
+  const updatePendingAddRole = (email: string, role: ProjectMemberRole) => {
     setPendingAdds((prev) =>
-      prev.map((a) => (a.user_id === userId ? { ...a, role } : a)),
+      prev.map((a) => (a.email === email ? { ...a, role } : a)),
     )
   }
 
@@ -469,33 +521,25 @@ export function ProjectEditModal({
           {/* 共有メンバー管理 (visibility='shared' のときのみ) */}
           {visibility === 'shared' && (
             <div className="mt-1 rounded border bg-slate-50">
-              {/* メンバー追加行 */}
+              {/* 組織内メンバー追加行 */}
               <div className="flex items-center gap-2 px-2 py-1.5 border-b bg-white">
-                <span className="text-xs text-slate-500 shrink-0 w-16">追加</span>
+                <span className="text-xs text-slate-500 shrink-0 w-16">組織内</span>
                 <select
                   value={selectedCandidate}
                   onChange={(e) => setSelectedCandidate(e.target.value)}
-                  className="flex-1 min-w-0 px-2 py-1 text-xs border rounded"
+                  disabled={internalCandidates.length === 0}
+                  className="flex-1 min-w-0 px-2 py-1 text-xs border rounded disabled:bg-slate-50 disabled:text-slate-400"
                 >
-                  <option value="">-- ユーザーを選択 --</option>
-                  {internalCandidates.length > 0 && (
-                    <optgroup label="社内メンバー">
-                      {internalCandidates.map((c) => (
-                        <option key={c.user_id} value={c.user_id}>
-                          {c.full_name || c.email} ({c.email})
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {externalCandidates.length > 0 && (
-                    <optgroup label="社外 (過去に共有したことがある)">
-                      {externalCandidates.map((c) => (
-                        <option key={c.user_id} value={c.user_id}>
-                          {c.full_name || c.email} ({c.email})
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
+                  <option value="">
+                    {internalCandidates.length === 0
+                      ? '追加可能な組織メンバーはいません'
+                      : '-- メンバーを選択 --'}
+                  </option>
+                  {internalCandidates.map((c) => (
+                    <option key={c.user_id} value={c.user_id}>
+                      {c.full_name || c.email} ({c.email})
+                    </option>
+                  ))}
                 </select>
                 <select
                   value={newMemberRole}
@@ -514,6 +558,53 @@ export function ProjectEditModal({
                   <Plus className="h-3 w-3" />
                   追加
                 </button>
+              </div>
+              {/* 組織外メール招待行 */}
+              <div className="flex items-center gap-2 px-2 py-1.5 border-b bg-white">
+                <span className="text-xs text-slate-500 shrink-0 w-16">組織外</span>
+                <input
+                  type="email"
+                  value={inviteEmail}
+                  onChange={(e) => {
+                    setInviteEmail(e.target.value)
+                    if (inviteEmailError) setInviteEmailError(null)
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && inviteEmail.trim()) {
+                      e.preventDefault()
+                      queueEmailInvite()
+                    }
+                  }}
+                  placeholder="user@example.com"
+                  className="flex-1 min-w-0 px-2 py-1 text-xs border rounded"
+                />
+                <select
+                  value={inviteEmailRole}
+                  onChange={(e) =>
+                    setInviteEmailRole(e.target.value as ProjectMemberRole)
+                  }
+                  className="shrink-0 px-1.5 py-1 text-xs border rounded"
+                >
+                  <option value="editor">編集</option>
+                  <option value="viewer">閲覧</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={queueEmailInvite}
+                  disabled={!inviteEmail.trim()}
+                  className="shrink-0 inline-flex items-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                >
+                  <Mail className="h-3 w-3" />
+                  招待
+                </button>
+              </div>
+              {inviteEmailError && (
+                <div className="px-2 py-1 bg-red-50 text-[10px] text-red-700 border-b">
+                  {inviteEmailError}
+                </div>
+              )}
+              <div className="px-2 py-1 bg-white text-[10px] text-slate-500 border-b leading-relaxed">
+                登録済みユーザーは即座に共有され通知メール、未登録ユーザーには招待メールが送信されます。
               </div>
               {/* メンバー一覧 */}
               <ul className="divide-y">
@@ -604,7 +695,7 @@ export function ProjectEditModal({
                     })}
                     {pendingAdds.map((a) => (
                       <li
-                        key={`add-${a.user_id}`}
+                        key={`add-${a.email}`}
                         className="flex items-center gap-2 px-2 py-1 bg-emerald-50"
                       >
                         <span className="flex-1 min-w-0 text-xs truncate">
@@ -613,14 +704,20 @@ export function ProjectEditModal({
                             <span className="text-slate-400 ml-1">({a.email})</span>
                           )}
                         </span>
-                        <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-700 border border-emerald-300">
-                          追加予定
+                        <span
+                          className={`shrink-0 px-1.5 py-0.5 text-[10px] rounded border ${
+                            a.is_internal
+                              ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
+                              : 'bg-sky-100 text-sky-700 border-sky-300'
+                          }`}
+                        >
+                          {a.is_internal ? '追加予定 (組織内)' : '招待予定 (組織外)'}
                         </span>
                         <select
                           value={a.role}
                           onChange={(e) =>
                             updatePendingAddRole(
-                              a.user_id,
+                              a.email,
                               e.target.value as ProjectMemberRole,
                             )
                           }
@@ -631,7 +728,7 @@ export function ProjectEditModal({
                         </select>
                         <button
                           type="button"
-                          onClick={() => cancelPendingAdd(a.user_id)}
+                          onClick={() => cancelPendingAdd(a.email)}
                           className="shrink-0 p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded"
                           title="追加予定を取り消す"
                         >
