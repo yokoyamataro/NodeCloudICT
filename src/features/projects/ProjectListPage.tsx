@@ -575,6 +575,15 @@ export function ProjectListPage() {
   const loading = projectsLoading || farmsLoading
   const error = projectsError || farmsError
 
+  // 地籍測量モードに切り替わったら拡大表示は強制的に閉じる。
+  //   Rules of Hooks 上、下の early return より前に置く必要がある。
+  //   これより後ろに置くと、fetch 前 (early return) → fetch 後 (通常 render) で
+  //   hooks 数が変わり React error #300 になる (メールから直接 /projects/:id を
+  //   開いたケースで発火する)。
+  useEffect(() => {
+    if (isCadastral) setExpandedList(false)
+  }, [isCadastral])
+
   if (loading && projects.length === 0) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -583,11 +592,6 @@ export function ProjectListPage() {
       </div>
     )
   }
-
-  // 地籍測量モードに切り替わったら拡大表示は強制的に閉じる
-  useEffect(() => {
-    if (isCadastral) setExpandedList(false)
-  }, [isCadastral])
 
   return (
     <div className="h-full flex flex-col">
