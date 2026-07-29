@@ -134,7 +134,26 @@ Deno.serve(async (req) => {
       email,
       options: redirectTo ? { redirectTo } : undefined,
     })
-    if (error) throw new Error(`generateLink: ${error.message}`)
+    if (error) {
+      // Supabase Auth の AuthError は場合によって message が空/欠落するので、
+      // 主要フィールドを全部拾って診断できるようにする。
+      const e = error as {
+        message?: string
+        error_description?: string
+        code?: string
+        status?: number
+        name?: string
+      }
+      const parts: string[] = []
+      if (e.message) parts.push(e.message)
+      if (e.error_description) parts.push(e.error_description)
+      if (e.code) parts.push(`code=${e.code}`)
+      if (e.status != null) parts.push(`status=${e.status}`)
+      if (e.name) parts.push(`name=${e.name}`)
+      const summary = parts.length > 0 ? parts.join(' | ') : JSON.stringify(error)
+      console.error('[invite-member] generateLink failed:', JSON.stringify(error))
+      throw new Error(`generateLink: ${summary}`)
+    }
     const link = (data as { properties?: { action_link?: string } })?.properties?.action_link
     if (!link) throw new Error('generateLink returned no action_link')
     return link
