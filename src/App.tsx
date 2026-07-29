@@ -55,6 +55,8 @@ import { TrashPage } from '@/features/trash/TrashPage'
 import { RegistryCredentialsPage } from '@/features/settings/RegistryCredentialsPage'
 import { PasswordSettingsPage } from '@/features/settings/PasswordSettingsPage'
 import { FarmSettingsPage } from '@/features/settings/FarmSettingsPage'
+// モビリティ (社員/車両/重機の位置管理) - 現状はサイトオーナーのみプレビュー
+import { MobilityPlaceholderPage } from '@/features/mobility/MobilityPlaceholderPage'
 import { Loader2 } from 'lucide-react'
 import { isAdmin } from '@/lib/admin'
 
@@ -331,6 +333,15 @@ function AppRoutes() {
         </Route>
         <Route path="settings" element={<FarmSettingsPage />} />
         <Route path="trash" element={<TrashPage />} />
+        {/* モビリティ (準備中): サイトオーナーだけが入れる。ページ側でも判定するが二重にゲート */}
+        <Route
+          path="mobility"
+          element={
+            <SiteOwnerRoute>
+              <MobilityPlaceholderPage />
+            </SiteOwnerRoute>
+          }
+        />
         </Route>
       </Routes>
   )

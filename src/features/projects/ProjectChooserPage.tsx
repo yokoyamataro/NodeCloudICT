@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Folder, Loader2, Users, MapPin, AlertCircle, Trash2, Edit3, Check, Lock, Globe } from 'lucide-react'
+import { Plus, Folder, Loader2, Users, MapPin, AlertCircle, Trash2, Edit3, Check, Lock, Globe, Car, ChevronRight } from 'lucide-react'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { JGD2011_ZONES } from '@/lib/coordinates'
@@ -18,6 +18,7 @@ import {
   ROLE_LABEL,
   ROLE_BADGE_CLASS,
 } from '@/lib/useProjectPermission'
+import { useCanUseMobility } from '@/lib/useCanUseMobility'
 
 export function ProjectChooserPage() {
   const navigate = useNavigate()
@@ -33,6 +34,7 @@ export function ProjectChooserPage() {
     setCurrentProject,
   } = useProjectListStore()
   const { farms, fetchFarms, setCurrentFarm } = useFarmStore()
+  const canUseMobility = useCanUseMobility()
 
   // 新規作成ダイアログは category を持つ
   const [showNewDialog, setShowNewDialog] = useState<ProjectCategory | null>(null)
@@ -208,6 +210,8 @@ export function ProjectChooserPage() {
             onEditProject={(p) => setEditProject(p)}
           />
         )}
+        {/* モビリティ (準備中): サイトオーナーだけに表示。現場と違いタイル 1 個で入口を提供する */}
+        {canUseMobility && <MobilityTile onOpen={() => navigate('/mobility')} />}
       </div>
 
       {/* 現場情報編集モーダル */}
@@ -292,6 +296,44 @@ export function ProjectChooserPage() {
         </div>
       )}
     </div>
+  )
+}
+
+// モビリティ入口タイル。現場と違い 1 枚の CTA タイルとして描画する。
+// 現状はプレースホルダページ (/mobility) に飛ばすだけ。将来的には
+// mobility.nodecloud.jp へ full navigation する形に差し替える。
+function MobilityTile({ onOpen }: { onOpen: () => void }) {
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-2">
+        <div className="w-1 h-5 rounded bg-indigo-500" />
+        <h2 className="text-sm font-semibold text-slate-700">モビリティ</h2>
+        <span className="px-1.5 py-0.5 text-[10px] rounded bg-amber-100 text-amber-800 border border-amber-300">
+          開発中
+        </span>
+        <span className="text-[10px] text-slate-400">
+          サイトオーナーのみ表示中
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="w-full flex items-center gap-3 p-4 bg-white rounded-lg border shadow-sm hover:border-indigo-400 hover:bg-indigo-50/40 transition text-left"
+      >
+        <div className="h-10 w-10 rounded-full bg-indigo-100 flex items-center justify-center shrink-0">
+          <Car className="h-5 w-5 text-indigo-600" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-semibold text-slate-800">
+            社員・車両・重機の現在地を管理
+          </div>
+          <div className="text-xs text-slate-500 mt-0.5">
+            走行ログの記録と地図表示 (準備中)
+          </div>
+        </div>
+        <ChevronRight className="h-5 w-5 text-slate-400" />
+      </button>
+    </section>
   )
 }
 

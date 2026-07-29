@@ -4,10 +4,11 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertCircle, Folder, Loader2, LogOut, MapPin, Monitor, Pencil, Plus, X } from 'lucide-react'
+import { AlertCircle, Car, ChevronRight, Folder, Loader2, LogOut, MapPin, Monitor, Pencil, Plus, X } from 'lucide-react'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { useAuth } from '@/contexts/AuthContext'
+import { useCanUseMobility } from '@/lib/useCanUseMobility'
 import { setDisplayModeOverride } from '@/lib/displayMode'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
 import { MobileHamburgerMenu } from './MobileHamburgerMenu'
@@ -32,6 +33,7 @@ export function MobileProjectChooserPage() {
     userRolesByProject,
   } = useProjectListStore()
   const { farms, fetchFarms } = useFarmStore()
+  const canUseMobility = useCanUseMobility()
 
   useEffect(() => {
     fetchProjects()
@@ -218,6 +220,36 @@ export function MobileProjectChooserPage() {
               />
             )}
           </>
+        )}
+        {/* モビリティ (準備中): サイトオーナーだけに表示。モバイルは /mobility に遷移 */}
+        {canUseMobility && (
+          <section>
+            <div className="flex items-center gap-2 mb-1.5">
+              <div className="w-1 h-4 rounded bg-indigo-500" />
+              <h2 className="text-xs font-semibold text-slate-700">モビリティ</h2>
+              <span className="px-1.5 py-0.5 text-[9px] rounded bg-amber-100 text-amber-800 border border-amber-300">
+                開発中
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/mobility')}
+              className="w-full flex items-center gap-2 p-3 bg-white rounded-lg border shadow-sm active:bg-indigo-50 text-left"
+            >
+              <div className="h-9 w-9 rounded-full bg-indigo-100 flex items-center justify-center shrink-0">
+                <Car className="h-4 w-4 text-indigo-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold text-slate-800">
+                  社員・車両・重機の現在地
+                </div>
+                <div className="text-[11px] text-slate-500 mt-0.5">
+                  走行ログの記録・地図表示 (準備中)
+                </div>
+              </div>
+              <ChevronRight className="h-4 w-4 text-slate-400" />
+            </button>
+          </section>
         )}
       </div>
 
