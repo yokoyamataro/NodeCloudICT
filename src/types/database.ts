@@ -336,6 +336,25 @@ export interface Organization {
   updated_at: string
 }
 
+// 組織が契約している製品 (地籍測量 / 土木工事 / モビリティ) を表す行。
+// PK は (organization_id, product)。1 組織あたり最大 3 行入りうる。
+// expires_at 経過後は has_org_product / i_have_product が false を返す。
+export type OrgProduct = 'cadastral' | 'civil' | 'mobility'
+
+export interface OrganizationProduct {
+  organization_id: string
+  product: OrgProduct
+  plan: string | null
+  /** その製品を利用する社員数の上限。NULL は無制限 */
+  seat_limit: number | null
+  starts_at: string | null
+  /** その製品の契約終了。NULL は無期限。past → 製品利用不可 */
+  expires_at: string | null
+  memo: string | null
+  created_at: string
+  updated_at: string
+}
+
 // アカウント単位の付加情報（auth.users と 1:1）
 export interface Profile {
   user_id: string
@@ -790,6 +809,13 @@ export interface Database {
         Row: Profile
         Insert: Omit<Profile, 'created_at' | 'updated_at'>
         Update: Partial<Omit<Profile, 'user_id' | 'created_at' | 'updated_at'>>
+      }
+      organization_products: {
+        Row: OrganizationProduct
+        Insert: Omit<OrganizationProduct, 'created_at' | 'updated_at'>
+        Update: Partial<
+          Omit<OrganizationProduct, 'organization_id' | 'product' | 'created_at' | 'updated_at'>
+        >
       }
     }
   }
