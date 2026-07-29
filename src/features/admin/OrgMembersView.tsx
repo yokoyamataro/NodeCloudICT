@@ -491,7 +491,22 @@ function InviteMemberModal({
           },
         },
       )
-      if (fnErr) throw fnErr
+      if (fnErr) {
+        // Supabase JS は 4xx/5xx を「Edge Function returned a non-2xx status code」の
+        // 一般メッセージにしてしまうので、EF が返した JSON 本文から実メッセージを抽出する。
+        //   例: 409 { error: "このユーザーは既に別の組織に所属しています" }
+        let msg = fnErr.message || '招待に失敗しました'
+        const ctx = (fnErr as unknown as { context?: { body?: string } }).context
+        if (ctx?.body) {
+          try {
+            const parsed = JSON.parse(ctx.body) as { error?: string }
+            if (parsed.error) msg = parsed.error
+          } catch {
+            /* body が JSON でない場合は元の generic メッセージを使う */
+          }
+        }
+        throw new Error(msg)
+      }
       const result = (data ?? {}) as {
         ok?: boolean
         status?: 'invited' | 'added_existing_user' | string
