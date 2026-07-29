@@ -9,11 +9,17 @@
 //                        へ upsert / 未登録なら pending_invitations + invite mail
 //                        既登録者が別組織所属なら 409 (併属禁止)
 //
+// メール送信は全て Resend 経由:
+//   * Supabase の組み込み SMTP は 1 時間 4 通のレート制限があり実運用に耐えない
+//   * 未登録ユーザー → admin.generateLink({type:'invite'}) で action_link を取り、
+//                     Resend で自前 HTML テンプレを送信
+//   * 既存ユーザー → 通知メール (「追加されました」) を Resend で送信
+//
 // 必要な環境変数:
 //   SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY (runtime で自動注入)
 //   PUBLIC_APP_URL — 招待リンク遷移先 (例: https://app.example.com)
-//   RESEND_API_KEY — 既存ユーザーに「組織に追加されました」通知メールを送るのに使用
-//   NOTIFY_FROM    — 通知メールの From (省略時 'NodeCloud <onboarding@resend.dev>')
+//   RESEND_API_KEY — 全メール送信で必須 (未設定だと招待メール自体が送れない)
+//   NOTIFY_FROM    — メールの From (省略時 'NodeCloud <onboarding@resend.dev>')
 //
 // デプロイ: supabase functions deploy invite-member
 
@@ -109,19 +115,157 @@ Deno.serve(async (req) => {
     return null
   }
 
-  // 招待メール送信 (Supabase Invite テンプレを利用)
-  async function sendInvite(email: string) {
+  const escapeHtml = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+  // Supabase Auth に「未確認ユーザー行を作って action_link だけ受け取る」ヘルパ。
+  // メール自体は Supabase からは送らない (Resend で自前送信する)。
+  //   * redirectTo は /accept-invite を指す。
+  //   * このヘルパを呼んだ時点で auth.users に unconfirmed 行が作られ、
+  //     handle_pending_invitations トリガが pending_invitations を取り込む。
+  //     そのため呼び出し順は「pending_invitations INSERT → generateInviteLink」
+  //     でなければならない。
+  async function generateInviteLink(email: string): Promise<string> {
     const redirectTo = redirectBase
       ? `${redirectBase.replace(/\/$/, '')}/accept-invite`
       : undefined
-    const { error } = await admin.auth.admin.inviteUserByEmail(email, {
-      redirectTo,
+    const { data, error } = await admin.auth.admin.generateLink({
+      type: 'invite',
+      email,
+      options: redirectTo ? { redirectTo } : undefined,
     })
-    if (error) throw new Error(error.message)
+    if (error) throw new Error(`generateLink: ${error.message}`)
+    const link = (data as { properties?: { action_link?: string } })?.properties?.action_link
+    if (!link) throw new Error('generateLink returned no action_link')
+    return link
   }
 
-  const escapeHtml = (s: string) =>
-    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  // Resend で HTML メールを送る低レベルヘルパ。
+  async function sendResendMail(params: {
+    to: string
+    subject: string
+    html: string
+  }) {
+    const apiKey = Deno.env.get('RESEND_API_KEY')
+    if (!apiKey) {
+      throw new Error('RESEND_API_KEY not configured; cannot send email')
+    }
+    const from = Deno.env.get('NOTIFY_FROM') ?? 'NodeCloud <onboarding@resend.dev>'
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from,
+        to: params.to,
+        subject: params.subject,
+        html: params.html,
+      }),
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`Resend ${res.status}: ${text}`)
+    }
+  }
+
+  // 未登録ユーザーへの「プロジェクト招待」メール送信 (Resend 経由)。
+  //   1. generateInviteLink で action_link を取得
+  //   2. 丁寧トーンの HTML テンプレで Resend に投げる
+  async function sendProjectInviteEmail(
+    toEmail: string,
+    projectName: string,
+    inviterEmail: string,
+    role: ProjectRole,
+  ) {
+    const actionLink = await generateInviteLink(toEmail)
+    const roleLabel =
+      role === 'owner' ? '管理者' : role === 'editor' ? '編集者' : '閲覧者'
+    const projectNameEsc = escapeHtml(projectName)
+    const inviterEsc = escapeHtml(inviterEmail)
+    const roleLabelEsc = escapeHtml(roleLabel)
+    const linkEsc = escapeHtml(actionLink)
+    const subject = `【NodeCloud】現場「${projectName}」へご招待いただきました`
+    const html = `
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Meiryo,sans-serif;font-size:14px;color:#111;line-height:1.75;max-width:560px;margin:0 auto;padding:8px;">
+  <p style="margin:0 0 12px;">お世話になっております。NodeCloud 事務局です。</p>
+  <p style="margin:0 0 12px;">
+    このたび <strong>${inviterEsc}</strong> 様より、お客様を NodeCloud の現場
+    <strong>「${projectNameEsc}」</strong> の <strong>${roleLabelEsc}</strong>
+    として共有メンバーにご招待いただきました。
+  </p>
+  <p style="margin:16px 0 8px;">下記のリンクからアカウント登録・ログインを行っていただくと、共有された現場をご利用いただけます。</p>
+  <p style="margin:0 0 16px;">
+    <a href="${linkEsc}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;">
+      招待を受ける
+    </a>
+  </p>
+  <p style="color:#666;font-size:12px;margin:0 0 16px;">
+    リンクが開かない場合は、下記 URL をブラウザに貼り付けてご利用ください。<br />
+    ${linkEsc}
+  </p>
+  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px 12px;margin:12px 0;font-size:13px;">
+    <div style="color:#64748b;margin-bottom:4px;">■ 詳細</div>
+    <div>現場名: <strong>${projectNameEsc}</strong></div>
+    <div>権限: <strong>${roleLabelEsc}</strong></div>
+    <div>招待者: ${inviterEsc}</div>
+  </div>
+  <p style="color:#666;font-size:12px;margin-top:20px;border-top:1px solid #e2e8f0;padding-top:12px;">
+    本メールにお心当たりが無い場合は、恐れ入りますがそのまま破棄いただきますようお願いいたします。
+  </p>
+  <p style="color:#94a3b8;font-size:12px;margin:4px 0 0;">NodeCloud 事務局</p>
+</div>
+    `
+    await sendResendMail({ to: toEmail, subject, html })
+  }
+
+  // 未登録ユーザーへの「組織招待」メール送信 (Resend 経由)。
+  async function sendOrgInviteEmail(
+    toEmail: string,
+    orgName: string,
+    inviterEmail: string,
+    orgRole: OrgRole,
+  ) {
+    const actionLink = await generateInviteLink(toEmail)
+    const roleLabel = orgRole === 'admin' ? '管理者' : '一般メンバー'
+    const orgNameEsc = escapeHtml(orgName)
+    const inviterEsc = escapeHtml(inviterEmail)
+    const roleLabelEsc = escapeHtml(roleLabel)
+    const linkEsc = escapeHtml(actionLink)
+    const subject = `【NodeCloud】組織「${orgName}」へご招待いただきました`
+    const html = `
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Meiryo,sans-serif;font-size:14px;color:#111;line-height:1.75;max-width:560px;margin:0 auto;padding:8px;">
+  <p style="margin:0 0 12px;">お世話になっております。NodeCloud 事務局です。</p>
+  <p style="margin:0 0 12px;">
+    このたび <strong>${inviterEsc}</strong> 様より、お客様を NodeCloud の組織
+    <strong>「${orgNameEsc}」</strong> の <strong>${roleLabelEsc}</strong>
+    としてご招待いただきました。
+  </p>
+  <p style="margin:16px 0 8px;">下記のリンクからアカウント登録・ログインを行っていただくと、当該組織に紐づく現場情報の閲覧・編集等をご利用いただけます。</p>
+  <p style="margin:0 0 16px;">
+    <a href="${linkEsc}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;">
+      招待を受ける
+    </a>
+  </p>
+  <p style="color:#666;font-size:12px;margin:0 0 16px;">
+    リンクが開かない場合は、下記 URL をブラウザに貼り付けてご利用ください。<br />
+    ${linkEsc}
+  </p>
+  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px 12px;margin:12px 0;font-size:13px;">
+    <div style="color:#64748b;margin-bottom:4px;">■ 詳細</div>
+    <div>組織名: <strong>${orgNameEsc}</strong></div>
+    <div>権限: <strong>${roleLabelEsc}</strong></div>
+    <div>招待者: ${inviterEsc}</div>
+  </div>
+  <p style="color:#666;font-size:12px;margin-top:20px;border-top:1px solid #e2e8f0;padding-top:12px;">
+    本メールにお心当たりが無い場合は、恐れ入りますがそのまま破棄いただきますようお願いいたします。
+  </p>
+  <p style="color:#94a3b8;font-size:12px;margin:4px 0 0;">NodeCloud 事務局</p>
+</div>
+    `
+    await sendResendMail({ to: toEmail, subject, html })
+  }
 
   // 既にアプリに登録済みのユーザーを組織に追加した際に「追加されました」
   // 通知メールを Resend 経由で送る (Supabase Invite は再登録扱いになって
@@ -396,7 +540,7 @@ Deno.serve(async (req) => {
       )
     }
 
-    // 未登録 → pending_invitations + 招待メール
+    // 未登録 → pending_invitations に upsert し、Resend で招待メール送信
     const { error: pendErr } = await admin
       .from('pending_invitations')
       .upsert(
@@ -411,8 +555,15 @@ Deno.serve(async (req) => {
     if (pendErr) {
       return json(500, { error: 'Pending insert failed: ' + pendErr.message }, origin)
     }
+    // メール本文に現場名を入れるため fetch (取れなければ '現場' で妥協)
+    const { data: projRow } = await admin
+      .from('projects')
+      .select('name')
+      .eq('id', projectId)
+      .maybeSingle()
+    const projectName = (projRow as { name?: string } | null)?.name ?? '現場'
     try {
-      await sendInvite(emailRaw)
+      await sendProjectInviteEmail(emailRaw, projectName, callerEmail, role)
     } catch (err) {
       return json(500, { error: 'Invite send failed: ' + (err as Error).message }, origin)
     }
@@ -525,24 +676,32 @@ Deno.serve(async (req) => {
     )
   }
 
-  // 未登録 → pending_invitations (organization_id + org_role) + 招待メール
+  // 未登録 → pending_invitations に upsert (organization_id + email が UNIQUE)。
+  //   同じ (org, email) で以前招待した行があれば org_role を上書きする。
   const { error: pendErr } = await admin
     .from('pending_invitations')
-    .insert({
-      organization_id: orgId,
-      email: emailRaw,
-      org_role: orgRole,
-      invited_by: callerId,
-    })
+    .upsert(
+      {
+        organization_id: orgId,
+        email: emailRaw,
+        org_role: orgRole,
+        invited_by: callerId,
+      },
+      { onConflict: 'organization_id,email' },
+    )
   if (pendErr) {
-    // 同メールで既に pending がある場合は 409 相当のエラー。UI 側でハンドリング。
-    if ((pendErr as { code?: string }).code === '23505') {
-      return json(409, { error: '既に招待中のメールアドレスです' }, origin)
-    }
     return json(500, { error: 'Pending insert failed: ' + pendErr.message }, origin)
   }
+
+  // Resend 経由で組織招待メール送信 (Supabase Invite のレート制限回避)
+  const { data: orgRowForMail } = await admin
+    .from('organizations')
+    .select('name')
+    .eq('id', orgId)
+    .maybeSingle()
+  const orgNameForMail = (orgRowForMail as { name?: string } | null)?.name ?? '組織'
   try {
-    await sendInvite(emailRaw)
+    await sendOrgInviteEmail(emailRaw, orgNameForMail, callerEmail, orgRole)
   } catch (err) {
     return json(500, { error: 'Invite send failed: ' + (err as Error).message }, origin)
   }
