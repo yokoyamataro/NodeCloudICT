@@ -355,6 +355,46 @@ export interface OrganizationProduct {
   updated_at: string
 }
 
+// モビリティ機能: 車両・重機マスタ (組織単位)
+export type VehicleKind = 'car' | 'truck' | 'heavy_equipment' | 'other'
+
+export interface Vehicle {
+  id: string
+  organization_id: string
+  name: string
+  plate_or_serial: string | null
+  kind: VehicleKind
+  active: boolean
+  memo: string | null
+  created_at: string
+  updated_at: string
+}
+
+// モビリティ機能: 「誰がいつからいつまでこの車両に乗ったか」の時系列。
+// ended_at IS NULL = 稼働中。1 車両につき稼働中は最大 1 件 (DB 側の部分 UNIQUE で保証)。
+export interface VehicleAssignment {
+  id: string
+  vehicle_id: string
+  user_id: string
+  started_at: string
+  ended_at: string | null
+  memo: string | null
+  created_at: string
+}
+
+// モビリティ機能: GPS ping。assignment_id 経由で車両・運転者を辿れる。immutable。
+export interface MobilityPosition {
+  id: number
+  assignment_id: string
+  recorded_at: string
+  lat: number
+  lon: number
+  accuracy_m: number | null
+  speed_kmh: number | null
+  heading_deg: number | null
+  altitude_m: number | null
+}
+
 // アカウント単位の付加情報（auth.users と 1:1）
 export interface Profile {
   user_id: string
@@ -816,6 +856,25 @@ export interface Database {
         Update: Partial<
           Omit<OrganizationProduct, 'organization_id' | 'product' | 'created_at' | 'updated_at'>
         >
+      }
+      vehicles: {
+        Row: Vehicle
+        Insert: Omit<Vehicle, 'id' | 'created_at' | 'updated_at'>
+        Update: Partial<
+          Omit<Vehicle, 'id' | 'organization_id' | 'created_at' | 'updated_at'>
+        >
+      }
+      vehicle_assignments: {
+        Row: VehicleAssignment
+        Insert: Omit<VehicleAssignment, 'id' | 'created_at'>
+        Update: Partial<
+          Omit<VehicleAssignment, 'id' | 'vehicle_id' | 'user_id' | 'created_at'>
+        >
+      }
+      mobility_positions: {
+        Row: MobilityPosition
+        Insert: Omit<MobilityPosition, 'id'>
+        Update: never
       }
     }
   }
