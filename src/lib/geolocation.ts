@@ -100,6 +100,11 @@ function normalizeError(err: unknown): GeoError {
 
 /** 権限を確認し、必要なら要求する。ユーザーが拒否したら PermissionDenied を throw */
 export async function ensureGeoPermission(): Promise<void> {
+  // Web は checkPermissions が navigator.permissions API に依存しており、
+  // 一部モバイルブラウザで throw する。navigator.geolocation.watchPosition
+  // 自体はブラウザが自動的に権限プロンプトを出すため、事前チェックは不要。
+  // ネイティブ (iOS/Android) のみ明示的にリクエストする。
+  if (typeof window !== 'undefined' && !Capacitor.isNativePlatform()) return
   try {
     const cur = await Geolocation.checkPermissions()
     if (cur.location === 'granted') return
