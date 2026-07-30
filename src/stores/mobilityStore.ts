@@ -130,6 +130,16 @@ interface State {
     assignmentIds: string[],
     limitPerAssignment?: number,
   ) => Promise<Map<string, MobilityPosition[]>>
+
+  /**
+   * 指定 org の指定期間内に started_at がある assignment を全部取得。
+   * 日別運行ログ集計用。ドライバー名も enrich して返す。
+   */
+  fetchOrgAssignmentsBetween: (
+    orgId: string,
+    startIso: string,
+    endIso: string,
+  ) => Promise<AssignmentWithNames[]>
 }
 
 // profiles + auth.users から表示名を組み立てるヘルパ (RLS で読める範囲だけ)
@@ -409,6 +419,33 @@ export const useMobilityStore = create<State>((set, get) => ({
       return []
     }
     return (data ?? []) as MobilityPosition[]
+  },
+
+  fetchOrgAssignmentsBetween: async (orgId, startIso, endIso) => {
+    // まず org 内の車両 id を取る
+    const { data: vRows, error: vErr } = await supabase
+      .from('vehicles')
+      .select('id')
+      .eq('organization_id', orgId)
+    if (vErr) {
+      console.warn('[mobilityStore] fetchOrgAssignmentsBetween (vehicles) failed', vErr)
+      return []
+    }
+    const vehicleIds = ((vRows ?? []) as { id: string }[]).map((r) => r.id)
+    if (vehicleIds.length === 0) return []
+    // started_at がその日に含まれる assignment を取得
+    const { data, error } = await supabase
+      .from('vehicle_assignments')
+      .select('*')
+      .in('vehicle_id', vehicleIds)
+      .gte('started_at', startIso)
+      .lt('started_at', endIso)
+      .order('started_at', { ascending: true })
+    if (error) {
+      console.warn('[mobilityStore] fetchOrgAssignmentsBetween failed', error)
+      return []
+    }
+    return enrichAssignments((data ?? []) as VehicleAssignment[])
   },
 
   fetchPositionsForAssignments: async (assignmentIds, limitPerAssignment = 500) => {

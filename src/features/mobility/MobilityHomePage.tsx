@@ -14,6 +14,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
+  Calendar,
   Car,
   Construction,
   Loader2,
@@ -163,7 +164,10 @@ export function MobilityHomePage() {
 
   return (
     <div className="h-full flex flex-col bg-slate-50">
-      <MobilityHeader onBack={() => navigate('/')} />
+      <MobilityHeader
+        onBack={() => navigate('/')}
+        onOpenLogs={() => navigate('/mobility/logs')}
+      />
 
       {vehiclesError && (
         <div className="mx-4 mt-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
@@ -404,7 +408,13 @@ export function MobilityHomePage() {
   )
 }
 
-function MobilityHeader({ onBack }: { onBack: () => void }) {
+function MobilityHeader({
+  onBack,
+  onOpenLogs,
+}: {
+  onBack: () => void
+  onOpenLogs?: () => void
+}) {
   return (
     <div className="p-4 bg-white border-b flex items-center gap-3 shrink-0">
       <button
@@ -419,6 +429,16 @@ function MobilityHeader({ onBack }: { onBack: () => void }) {
       <span className="px-2 py-0.5 text-[10px] rounded bg-amber-100 text-amber-800 border border-amber-300">
         開発中
       </span>
+      {onOpenLogs && (
+        <button
+          onClick={onOpenLogs}
+          className="flex items-center gap-1 px-3 py-1.5 text-sm border border-slate-300 rounded hover:bg-slate-50"
+          title="日別運行ログを見る"
+        >
+          <Calendar className="h-4 w-4" />
+          運行ログ
+        </button>
+      )}
     </div>
   )
 }
