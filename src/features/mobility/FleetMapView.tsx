@@ -9,6 +9,7 @@ import {
   MapContainer,
   TileLayer,
   CircleMarker,
+  Polyline,
   Popup,
   Tooltip,
   useMap,
@@ -21,6 +22,16 @@ import { useMobilityStore } from '@/stores/mobilityStore'
 import type { MobilityPosition } from '@/types/database'
 
 const COLOR_ACTIVE = '#10b981'
+
+// assignment_id からハッシュベースで安定した HSL 色を生成 (車両ごとに色分け)
+function colorForAssignment(id: string): string {
+  let h = 0
+  for (let i = 0; i < id.length; i++) {
+    h = (h * 31 + id.charCodeAt(i)) >>> 0
+  }
+  const hue = h % 360
+  return `hsl(${hue}, 70%, 50%)`
+}
 
 function AutoFitBounds({ positions }: { positions: MobilityPosition[] }) {
   const map = useMap()
@@ -53,10 +64,15 @@ export function FleetMapView({ organizationId, onSelectVehicle }: FleetMapViewPr
     fetchVehicles,
     fetchActiveAssignments,
     fetchLatestPositions,
+    fetchPositionsForAssignments,
   } = useMobilityStore()
 
   const [latestPositions, setLatestPositions] = useState<
     Map<string, MobilityPosition>
+  >(new Map())
+  // 稼働中車両の走行軌跡 (assignment_id → positions 昇順)
+  const [trackPositions, setTrackPositions] = useState<
+    Map<string, MobilityPosition[]>
   >(new Map())
   const [loading, setLoading] = useState(true)
 
@@ -68,12 +84,22 @@ export function FleetMapView({ organizationId, onSelectVehicle }: FleetMapViewPr
       const ids = Array.from(useMobilityStore.getState().activeAssignments.values()).map(
         (a) => a.id,
       )
-      const positions = await fetchLatestPositions(ids)
+      const [positions, tracks] = await Promise.all([
+        fetchLatestPositions(ids),
+        fetchPositionsForAssignments(ids, 500),
+      ])
       setLatestPositions(positions)
+      setTrackPositions(tracks)
     } finally {
       setLoading(false)
     }
-  }, [organizationId, fetchVehicles, fetchActiveAssignments, fetchLatestPositions])
+  }, [
+    organizationId,
+    fetchVehicles,
+    fetchActiveAssignments,
+    fetchLatestPositions,
+    fetchPositionsForAssignments,
+  ])
 
   useEffect(() => {
     void refreshAll()
@@ -102,6 +128,20 @@ export function FleetMapView({ organizationId, onSelectVehicle }: FleetMapViewPr
                 new Date(existing.recorded_at).getTime()
             ) {
               next.set(row.assignment_id, row)
+            }
+            return next
+          })
+          // 軌跡にも追加 (末尾に append)
+          setTrackPositions((prev) => {
+            const next = new Map(prev)
+            const arr = next.get(row.assignment_id)
+            if (arr) {
+              // 同 id を重複追加しないよう最終要素と比較
+              if (!arr.length || arr[arr.length - 1].id !== row.id) {
+                next.set(row.assignment_id, [...arr, row])
+              }
+            } else {
+              next.set(row.assignment_id, [row])
             }
             return next
           })
@@ -190,6 +230,22 @@ export function FleetMapView({ organizationId, onSelectVehicle }: FleetMapViewPr
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <AutoFitBounds positions={positionsForBounds} />
+        {/* 稼働中車両ごとの走行軌跡 (assignment 単位で色分け) */}
+        {Array.from(trackPositions.entries()).map(([assignmentId, points]) => {
+          if (points.length < 2) return null
+          const line = points.map((p) => [p.lat, p.lon] as [number, number])
+          return (
+            <Polyline
+              key={`track-${assignmentId}`}
+              positions={line}
+              pathOptions={{
+                color: colorForAssignment(assignmentId),
+                weight: 3,
+                opacity: 0.85,
+              }}
+            />
+          )
+        })}
         {markers.map((m) => (
           <CircleMarker
             key={m.assignmentId}

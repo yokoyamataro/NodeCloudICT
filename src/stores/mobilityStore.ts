@@ -121,6 +121,15 @@ interface State {
     vehicleId: string,
     sinceIso: string,
   ) => Promise<MobilityPosition[]>
+
+  /**
+   * 複数 assignment の全位置を一括取得 (フリート地図の軌跡描画用)。
+   * assignment_id → 位置配列 (recorded_at 昇順) の Map を返す。
+   */
+  fetchPositionsForAssignments: (
+    assignmentIds: string[],
+    limitPerAssignment?: number,
+  ) => Promise<Map<string, MobilityPosition[]>>
 }
 
 // profiles + auth.users から表示名を組み立てるヘルパ (RLS で読める範囲だけ)
@@ -400,6 +409,27 @@ export const useMobilityStore = create<State>((set, get) => ({
       return []
     }
     return (data ?? []) as MobilityPosition[]
+  },
+
+  fetchPositionsForAssignments: async (assignmentIds, limitPerAssignment = 500) => {
+    if (assignmentIds.length === 0) return new Map()
+    const { data, error } = await supabase
+      .from('mobility_positions')
+      .select('*')
+      .in('assignment_id', assignmentIds)
+      .order('recorded_at', { ascending: true })
+      .limit(assignmentIds.length * limitPerAssignment)
+    if (error) {
+      console.warn('[mobilityStore] fetchPositionsForAssignments failed', error)
+      return new Map()
+    }
+    const map = new Map<string, MobilityPosition[]>()
+    for (const row of (data ?? []) as MobilityPosition[]) {
+      const arr = map.get(row.assignment_id)
+      if (arr) arr.push(row)
+      else map.set(row.assignment_id, [row])
+    }
+    return map
   },
 
   fetchLatestPositions: async (assignmentIds) => {
