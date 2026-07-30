@@ -32,6 +32,13 @@ import type { Vehicle, VehicleKind } from '@/types/database'
 import { FleetMapView } from '@/features/mobility/FleetMapView'
 import { supabase } from '@/lib/supabase'
 
+// 電話番号 + SMS 招待 UI の表示フラグ。
+//   下地 (DB migration / Edge Function / ダイアログ) は push 済みだが、
+//   SMS プロバイダ (Twilio) が未設定なので UI からは一時的に隠している。
+//   復活させるには true にして、SQL migration 20260731 適用 +
+//   supabase functions deploy invite-member + Twilio 設定を済ませる。
+const PHONE_INVITE_ENABLED = false
+
 /** 日本の電話番号を E.164 (+81 xx xxxx xxxx) に正規化。無効なら null。 */
 function normalizeJpPhone(raw: string): string | null {
   const trimmed = raw.trim()
@@ -512,15 +519,17 @@ function UserModeSidebar({
           <h2 className="text-sm font-semibold text-slate-700 flex-1">
             組織メンバー ({orgMembers.length})
           </h2>
-          <button
-            type="button"
-            onClick={onInviteByPhone}
-            className="flex items-center gap-1 px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700"
-            title="電話番号でドライバーを招待する"
-          >
-            <Phone className="h-3 w-3" />
-            電話で招待
-          </button>
+          {PHONE_INVITE_ENABLED && (
+            <button
+              type="button"
+              onClick={onInviteByPhone}
+              className="flex items-center gap-1 px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700"
+              title="電話番号でドライバーを招待する"
+            >
+              <Phone className="h-3 w-3" />
+              電話で招待
+            </button>
+          )}
         </div>
         {loading ? (
           <div className="p-4 text-center text-slate-400">
