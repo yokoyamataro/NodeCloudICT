@@ -1,15 +1,58 @@
 // 位置情報取得の薄いラッパ。
 //
-// なぜラップするか:
-//   ・@capacitor/geolocation はブラウザ/ネイティブ両方に自動でフォールバック
-//     するので、直接呼んでもほぼ動く。ただし呼び側で毎回 (id, position, err)
-//     の3 引数を扱うより、単一化した send-position-getter があると差替が楽
-//   ・将来 4-e 後半で background-geolocation を導入するときも、ここに
-//     `useBackground: true` オプションだけ足せば呼び側は変えなくて済む
+// 3 種類の API:
+//   getCurrentSample()          — 1 発だけ (@capacitor/geolocation)
+//   watchSamples()              — フォアグラウンド連続 (@capacitor/geolocation)
+//   watchSamplesInBackground()  — バックグラウンド継続追跡
+//                                 (@capacitor-community/background-geolocation)
 //
-// 参考: https://capacitorjs.com/docs/apis/geolocation
+// 参考:
+//   https://capacitorjs.com/docs/apis/geolocation
+//   https://github.com/capacitor-community/background-geolocation
 
 import { Geolocation, type Position } from '@capacitor/geolocation'
+import { registerPlugin } from '@capacitor/core'
+
+// バックグラウンド追跡プラグイン。@capacitor-community/background-geolocation は
+// registerPlugin ベースの薄い型を提供している。呼び出し側では
+// addWatcher で開始し、removeWatcher で停止する。
+interface BgLocation {
+  latitude: number
+  longitude: number
+  accuracy: number
+  altitude: number | null
+  altitudeAccuracy: number | null
+  simulated: boolean
+  speed: number | null
+  bearing: number | null
+  time: number
+}
+
+interface BgWatcherOptions {
+  /** true にすると Android で foreground service 起動 + 常駐通知を出す */
+  backgroundMessage?: string
+  /** 通知タイトル (Android のみ) */
+  backgroundTitle?: string
+  /** 初回のパーミッションダイアログを出すか */
+  requestPermissions?: boolean
+  /** 古いキャッシュ位置を許すか (通常 false) */
+  stale?: boolean
+  /** 移動距離が N メートル以上変わった時のみ通知 */
+  distanceFilter?: number
+}
+
+interface BackgroundGeolocationPlugin {
+  addWatcher(
+    options: BgWatcherOptions,
+    callback: (location?: BgLocation, error?: { code: string; message: string }) => void,
+  ): Promise<string>
+  removeWatcher(options: { id: string }): Promise<void>
+  openSettings(): Promise<void>
+}
+
+const BackgroundGeolocation = registerPlugin<BackgroundGeolocationPlugin>(
+  'BackgroundGeolocation',
+)
 
 export interface GeoSample {
   lat: number
@@ -113,5 +156,80 @@ export async function watchSamples(
     clear: () => {
       void Geolocation.clearWatch({ id: watchId })
     },
+  }
+}
+
+// ============================================================================
+// バックグラウンド継続追跡 (Capacitor Community plugin)
+// ============================================================================
+
+function normalizeBgLocation(loc: BgLocation): GeoSample {
+  return {
+    lat: loc.latitude,
+    lon: loc.longitude,
+    accuracy_m: loc.accuracy ?? null,
+    // BG plugin の speed は m/s
+    speed_kmh: loc.speed != null ? loc.speed * 3.6 : null,
+    heading_deg: loc.bearing ?? null,
+    altitude_m: loc.altitude ?? null,
+    recorded_at: new Date(loc.time).toISOString(),
+  }
+}
+
+/**
+ * バックグラウンドで位置を追跡し続ける。
+ *   Android: Foreground service + 通知が常駐 (アプリを閉じても継続)
+ *   iOS:     Background modes = location updates が有効ならバックグラウンド継続
+ *   Web:     フォアグラウンド watchPosition と同じ (バックグラウンド不可)
+ *
+ * @param callback 位置 or エラー通知
+ * @param options.notificationTitle / .notificationBody Android 通知の表示
+ * @param options.distanceFilter 位置更新の距離しきい値 (メートル)
+ * @returns clear() で停止するハンドル
+ */
+export async function watchSamplesInBackground(
+  callback: (sample: GeoSample | null, err: GeoError | null) => void,
+  options?: {
+    notificationTitle?: string
+    notificationBody?: string
+    distanceFilter?: number
+  },
+): Promise<{ clear: () => Promise<void> }> {
+  const watcherId = await BackgroundGeolocation.addWatcher(
+    {
+      backgroundTitle: options?.notificationTitle ?? 'NodeCloud モビリティ',
+      backgroundMessage: options?.notificationBody ?? '現在地を送信中',
+      requestPermissions: true,
+      stale: false,
+      distanceFilter: options?.distanceFilter ?? 5,
+    },
+    (location, error) => {
+      if (error) {
+        // BG plugin のエラーコード: 'NOT_AUTHORIZED' | 'NOT_ENABLED' | 'PERMISSION_DENIED' ...
+        const code = (error.code || '').toUpperCase()
+        const mapped: GeoErrorCode = code.includes('PERMISSION') || code.includes('AUTHORIZED')
+          ? 'permission_denied'
+          : code.includes('ENABLED')
+            ? 'position_unavailable'
+            : 'unknown'
+        callback(null, { code: mapped, message: error.message })
+        return
+      }
+      if (location) callback(normalizeBgLocation(location), null)
+    },
+  )
+  return {
+    clear: async () => {
+      await BackgroundGeolocation.removeWatcher({ id: watcherId })
+    },
+  }
+}
+
+/** バックグラウンド追跡の権限拒否時に OS 設定画面を開く (ユーザー案内用) */
+export async function openLocationSettings(): Promise<void> {
+  try {
+    await BackgroundGeolocation.openSettings()
+  } catch {
+    // web / 非対応環境では何もしない
   }
 }

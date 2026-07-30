@@ -42,6 +42,14 @@
     <!-- 位置情報 (モビリティ機能: 4-e Capacitor Geolocation) -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- バックグラウンド追跡 (Android 10+ で別権限、11+ で「常に許可」が必要) -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- Foreground Service (アプリ閉時も位置送信を続けるための常駐サービス) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Android 14+ では location タイプの foreground service 明示が必須 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <!-- 通知は Android 13+ でランタイム権限 (foreground service の常駐通知に必要) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 車両利用時に GPS 精度優先で正確な位置が取れるようにする hint -->
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 </manifest>

@@ -33,7 +33,7 @@ import {
 import 'leaflet/dist/leaflet.css'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCanUseMobility } from '@/lib/useCanUseMobility'
-import { watchSamples } from '@/lib/geolocation'
+import { watchSamples, watchSamplesInBackground } from '@/lib/geolocation'
 import { useMobilityStore } from '@/stores/mobilityStore'
 import type { MobilityPosition, Vehicle, VehicleKind } from '@/types/database'
 
@@ -148,6 +148,60 @@ export function MobilityDriverPage() {
     // 依存に currentPos は入れない (何度も送らないため)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoSend, myActive, sendPosition])
+
+  // ------------------------------------------------------------------
+  // バックグラウンド追跡 (4-e 後半)
+  //   自動 ON + 乗車中 の間、background-geolocation プラグインで watcher を
+  //   セット。Android では foreground service + 常駐通知が立ち、アプリを閉じても
+  //   位置送信が継続する。フォアグラウンドの watchSamples とは独立に動くが、
+  //   同じ GPS プロバイダを共有するのでバッテリー消費は 2 倍にはならない。
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    if (!autoSend || !myActive) return
+    let handle: { clear: () => Promise<void> } | null = null
+    let cancelled = false
+    void (async () => {
+      try {
+        handle = await watchSamplesInBackground(
+          (sample, err) => {
+            if (err) {
+              // 通知だけ出す (フォアグラウンド watch のエラーで既に表示済みかもしれない)
+              console.warn('[MobilityDriverPage] bg geo error', err)
+              return
+            }
+            if (!sample) return
+            const active = myActiveRef.current
+            if (!autoSendRef.current || !active) return
+            const now = Date.now()
+            if (now - lastSentAtRef.current < PING_INTERVAL_MS) return
+            lastSentAtRef.current = now
+            setLastAutoSentAt(new Date(now))
+            void sendPositionRef.current(active.id, {
+              lat: sample.lat,
+              lon: sample.lon,
+              accuracy_m: sample.accuracy_m,
+              speed_kmh: sample.speed_kmh,
+              heading_deg: sample.heading_deg,
+              altitude_m: sample.altitude_m,
+            })
+          },
+          {
+            notificationTitle: 'NodeCloud モビリティ',
+            notificationBody: `${myVehicle?.name ?? '車両'} の現在地を送信中`,
+            distanceFilter: 5,
+          },
+        )
+        if (cancelled) void handle.clear()
+      } catch (err) {
+        const geoErr = err as { message?: string }
+        console.warn('[MobilityDriverPage] bg watcher start failed', geoErr)
+      }
+    })()
+    return () => {
+      cancelled = true
+      void handle?.clear()
+    }
+  }, [autoSend, myActive, myVehicle])
 
   useEffect(() => {
     let handle: { clear: () => void } | null = null

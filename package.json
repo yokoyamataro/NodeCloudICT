@@ -12,6 +12,7 @@
     "sync:parcel-maps": "node scripts/sync-parcel-maps.mjs"
   },
   "dependencies": {
+    "@capacitor-community/background-geolocation": "^1.2.26",
     "@capacitor/android": "8.3.1",
     "@capacitor/cli": "8.3.1",
     "@capacitor/core": "8.3.1",
