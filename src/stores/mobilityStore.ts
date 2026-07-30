@@ -105,6 +105,16 @@ interface State {
   fetchLatestPositions: (
     assignmentIds: string[],
   ) => Promise<Map<string, MobilityPosition>>
+
+  /**
+   * 指定 user_id の「since 以降」の位置を全部取得 (走行距離集計用)。
+   * 直近 24h 分の 10 秒 ping なら最大 8640 行 → limit 上げてクライアント側で
+   * 距離集計する想定。
+   */
+  fetchPositionsForUserSince: (
+    userId: string,
+    sinceIso: string,
+  ) => Promise<MobilityPosition[]>
 }
 
 // profiles + auth.users から表示名を組み立てるヘルパ (RLS で読める範囲だけ)
@@ -328,6 +338,33 @@ export const useMobilityStore = create<State>((set, get) => ({
       .limit(limit)
     if (error) {
       console.warn('[mobilityStore] fetchRecentPositions failed', error)
+      return []
+    }
+    return (data ?? []) as MobilityPosition[]
+  },
+
+  fetchPositionsForUserSince: async (userId, sinceIso) => {
+    // 自分の assignment の id を先に引く (positions は assignment 経由なので)
+    const { data: aRows, error: aErr } = await supabase
+      .from('vehicle_assignments')
+      .select('id')
+      .eq('user_id', userId)
+      .gte('started_at', sinceIso)
+    if (aErr) {
+      console.warn('[mobilityStore] fetchPositionsForUserSince (assignments) failed', aErr)
+      return []
+    }
+    const ids = ((aRows ?? []) as { id: string }[]).map((r) => r.id)
+    if (ids.length === 0) return []
+    const { data, error } = await supabase
+      .from('mobility_positions')
+      .select('*')
+      .in('assignment_id', ids)
+      .gte('recorded_at', sinceIso)
+      .order('recorded_at', { ascending: true })
+      .limit(10000)
+    if (error) {
+      console.warn('[mobilityStore] fetchPositionsForUserSince failed', error)
       return []
     }
     return (data ?? []) as MobilityPosition[]

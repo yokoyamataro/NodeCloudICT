@@ -34,6 +34,7 @@ import 'leaflet/dist/leaflet.css'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCanUseMobility } from '@/lib/useCanUseMobility'
 import { watchSamples, watchSamplesInBackground } from '@/lib/geolocation'
+import { computeTotalDistanceMeters } from '@/lib/geoDistance'
 import { useMobilityStore } from '@/stores/mobilityStore'
 import type { MobilityPosition, Vehicle, VehicleKind } from '@/types/database'
 
@@ -53,6 +54,13 @@ const KIND_ICON: Record<VehicleKind, typeof Car> = {
 
 // 送信間隔 (ms)
 const PING_INTERVAL_MS = 10_000
+
+// 今日 0 時 (ローカルタイム)
+function startOfTodayLocal(): Date {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  return d
+}
 
 function FollowMe({ pos }: { pos: [number, number] | null }) {
   const map = useMap()
@@ -77,6 +85,7 @@ export function MobilityDriverPage() {
     endAssignment,
     sendPosition,
     fetchRecentPositions,
+    fetchPositionsForUserSince,
   } = useMobilityStore()
 
   useEffect(() => {
@@ -109,9 +118,26 @@ export function MobilityDriverPage() {
   //   位置権限プロンプトが再表示されたり最終取得位置が失われたりして UX が悪い。
   const [currentPos, setCurrentPos] = useState<[number, number] | null>(null)
   const [accuracy, setAccuracy] = useState<number | null>(null)
+  const [currentSpeedKmh, setCurrentSpeedKmh] = useState<number | null>(null)
   const [locationError, setLocationError] = useState<string | null>(null)
   const [lastAutoSentAt, setLastAutoSentAt] = useState<Date | null>(null)
   const [autoSend, setAutoSend] = useState(false)
+
+  // 本日走行距離 (自分の位置ログを resetAt 以降で累積)
+  //   resetAt は localStorage に永続化 (キーは user_id ごと)。既定は今日 00:00 (JST)
+  //   ユーザーが「リセット」ボタンを押すと現在時刻に更新される
+  const resetKey = user ? `mobility:distanceResetAt:${user.id}` : null
+  const [resetAt, setResetAt] = useState<Date>(() => {
+    if (typeof window === 'undefined' || !resetKey) return startOfTodayLocal()
+    const saved = localStorage.getItem(resetKey)
+    if (saved) {
+      const d = new Date(saved)
+      // 前日以前の保存値なら今日 00:00 にリセット
+      if (d.getTime() >= startOfTodayLocal().getTime()) return d
+    }
+    return startOfTodayLocal()
+  })
+  const [todayDistanceM, setTodayDistanceM] = useState(0)
 
   const autoSendRef = useRef(false)
   const myActiveRef = useRef<typeof myActive>(null)
@@ -217,6 +243,7 @@ export function MobilityDriverPage() {
             if (!sample) return
             setCurrentPos([sample.lat, sample.lon])
             setAccuracy(sample.accuracy_m)
+            setCurrentSpeedKmh(sample.speed_kmh)
             setLocationError(null)
 
             // 乗車中 + 自動送信 ON なら throttle して送る
@@ -249,6 +276,45 @@ export function MobilityDriverPage() {
       handle?.clear()
     }
   }, [])
+
+  // 本日走行距離の計算 (resetAt 以降の自分の全 assignment の位置を対象)
+  //   - 送信 (lastAutoSentAt) or リセット時刻 (resetAt) or 乗車状態 (myActive) の
+  //     変化で再計算
+  //   - myActive がある間は 20 秒ごとにも軽く refresh (バックグラウンドで
+  //     ping が増えていくケース)
+  useEffect(() => {
+    if (!user) {
+      setTodayDistanceM(0)
+      return
+    }
+    let cancelled = false
+    const compute = async () => {
+      const rows = await fetchPositionsForUserSince(user.id, resetAt.toISOString())
+      if (cancelled) return
+      const m = computeTotalDistanceMeters(rows)
+      setTodayDistanceM(m)
+    }
+    void compute()
+    const timer = myActive ? setInterval(compute, 20_000) : null
+    return () => {
+      cancelled = true
+      if (timer) clearInterval(timer)
+    }
+  }, [user, resetAt, myActive, lastAutoSentAt, fetchPositionsForUserSince])
+
+  const handleResetDistance = () => {
+    if (!confirm('本日の走行距離をリセットしますか?')) return
+    const now = new Date()
+    setResetAt(now)
+    setTodayDistanceM(0)
+    if (resetKey) {
+      try {
+        localStorage.setItem(resetKey, now.toISOString())
+      } catch {
+        /* ignore quota errors */
+      }
+    }
+  }
 
   // 走行軌跡 (自分の active assignment のもの)
   const [trackPositions, setTrackPositions] = useState<MobilityPosition[]>([])
@@ -353,6 +419,45 @@ export function MobilityDriverPage() {
           <span className="text-slate-300 shrink-0">
             · {KIND_LABEL[myVehicle.kind]} · 稼働中
           </span>
+        </div>
+      )}
+
+      {/* 速度・本日走行距離パネル (乗車中のみ) */}
+      {myActive && (
+        <div className="mx-3 mt-2 grid grid-cols-2 gap-2 shrink-0">
+          <div className="bg-slate-800 border border-slate-700 rounded-lg p-2 text-white">
+            <div className="text-[10px] text-slate-400">現在速度</div>
+            <div className="text-2xl font-bold leading-tight">
+              {currentSpeedKmh != null && currentSpeedKmh >= 0
+                ? Math.round(currentSpeedKmh)
+                : '—'}
+              <span className="text-xs font-normal text-slate-300 ml-1">km/h</span>
+            </div>
+          </div>
+          <div className="bg-slate-800 border border-slate-700 rounded-lg p-2 text-white">
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-slate-400 flex-1">本日走行</span>
+              <button
+                type="button"
+                onClick={handleResetDistance}
+                className="text-[9px] text-slate-400 hover:text-white underline"
+                title="本日の走行距離をリセット"
+              >
+                リセット
+              </button>
+            </div>
+            <div className="text-2xl font-bold leading-tight">
+              {(todayDistanceM / 1000).toFixed(1)}
+              <span className="text-xs font-normal text-slate-300 ml-1">km</span>
+            </div>
+            <div className="text-[9px] text-slate-500 mt-0.5">
+              {resetAt.toLocaleTimeString('ja-JP', {
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
+              〜
+            </div>
+          </div>
         </div>
       )}
 
