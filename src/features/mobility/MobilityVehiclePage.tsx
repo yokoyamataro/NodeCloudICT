@@ -30,6 +30,7 @@ import 'leaflet/dist/leaflet.css'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCanUseMobility } from '@/lib/useCanUseMobility'
+import { getCurrentSample } from '@/lib/geolocation'
 import { useMobilityStore, type AssignmentWithNames } from '@/stores/mobilityStore'
 import type { MobilityPosition, VehicleKind } from '@/types/database'
 
@@ -227,45 +228,31 @@ export function MobilityVehiclePage() {
   const handleSendPing = async () => {
     if (!active) return
     setError(null)
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      setError('この環境では現在地を取得できません')
-      return
-    }
     setBusy('ping')
     try {
-      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 0,
-        })
+      const sample = await getCurrentSample({
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
       })
-      const c = pos.coords
       const res = await sendPosition(active.id, {
-        lat: c.latitude,
-        lon: c.longitude,
-        accuracy_m: c.accuracy ?? null,
-        speed_kmh: c.speed != null ? c.speed * 3.6 : null,
-        heading_deg: c.heading ?? null,
-        altitude_m: c.altitude ?? null,
+        lat: sample.lat,
+        lon: sample.lon,
+        accuracy_m: sample.accuracy_m,
+        speed_kmh: sample.speed_kmh,
+        heading_deg: sample.heading_deg,
+        altitude_m: sample.altitude_m,
       })
       if (!res.ok) throw new Error(res.error)
       setLastPingInfo(
-        `${c.latitude.toFixed(6)}, ${c.longitude.toFixed(6)} (±${Math.round(c.accuracy)}m)`,
+        `${sample.lat.toFixed(6)}, ${sample.lon.toFixed(6)}${
+          sample.accuracy_m != null ? ` (±${Math.round(sample.accuracy_m)}m)` : ''
+        }`,
       )
       await refetchPositions()
     } catch (err) {
-      const msg =
-        err instanceof GeolocationPositionError
-          ? err.code === 1
-            ? '位置情報の許可が必要です (ブラウザ設定を確認)'
-            : err.code === 2
-              ? '位置情報を取得できませんでした'
-              : 'タイムアウトしました'
-          : err instanceof Error
-            ? err.message
-            : String(err)
-      setError(msg)
+      const anyErr = err as { message?: string }
+      setError(anyErr.message ?? String(err))
     } finally {
       setBusy(null)
     }

@@ -38,4 +38,10 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- 位置情報 (モビリティ機能: 4-e Capacitor Geolocation) -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- 車両利用時に GPS 精度優先で正確な位置が取れるようにする hint -->
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 </manifest>

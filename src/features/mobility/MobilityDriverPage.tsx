@@ -33,6 +33,7 @@ import {
 import 'leaflet/dist/leaflet.css'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCanUseMobility } from '@/lib/useCanUseMobility'
+import { watchSamples } from '@/lib/geolocation'
 import { useMobilityStore } from '@/stores/mobilityStore'
 import type { MobilityPosition, Vehicle, VehicleKind } from '@/types/database'
 
@@ -149,47 +150,50 @@ export function MobilityDriverPage() {
   }, [autoSend, myActive, sendPosition])
 
   useEffect(() => {
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      setLocationError('この端末では位置情報を取得できません')
-      return
-    }
-    const id = navigator.geolocation.watchPosition(
-      (p) => {
-        const lat = p.coords.latitude
-        const lon = p.coords.longitude
-        setCurrentPos([lat, lon])
-        setAccuracy(p.coords.accuracy)
-        setLocationError(null)
+    let handle: { clear: () => void } | null = null
+    let cancelled = false
+    void (async () => {
+      try {
+        handle = await watchSamples(
+          (sample, err) => {
+            if (err) {
+              setLocationError(err.message)
+              return
+            }
+            if (!sample) return
+            setCurrentPos([sample.lat, sample.lon])
+            setAccuracy(sample.accuracy_m)
+            setLocationError(null)
 
-        // 乗車中 + 自動送信 ON なら throttle して送る (setInterval を使わないので
-        // mobile browser の throttle に強い)
-        const active = myActiveRef.current
-        if (!autoSendRef.current || !active) return
-        const now = Date.now()
-        if (now - lastSentAtRef.current < PING_INTERVAL_MS) return
-        lastSentAtRef.current = now
-        setLastAutoSentAt(new Date(now))
-        void sendPositionRef.current(active.id, {
-          lat,
-          lon,
-          accuracy_m: p.coords.accuracy,
-          speed_kmh: p.coords.speed != null ? p.coords.speed * 3.6 : null,
-          heading_deg: p.coords.heading ?? null,
-          altitude_m: p.coords.altitude ?? null,
-        })
-      },
-      (err) => {
-        setLocationError(
-          err.code === 1
-            ? '位置情報の許可が必要です'
-            : err.code === 2
-              ? '位置情報を取得できません'
-              : 'タイムアウトしました',
+            // 乗車中 + 自動送信 ON なら throttle して送る
+            const active = myActiveRef.current
+            if (!autoSendRef.current || !active) return
+            const now = Date.now()
+            if (now - lastSentAtRef.current < PING_INTERVAL_MS) return
+            lastSentAtRef.current = now
+            setLastAutoSentAt(new Date(now))
+            void sendPositionRef.current(active.id, {
+              lat: sample.lat,
+              lon: sample.lon,
+              accuracy_m: sample.accuracy_m,
+              speed_kmh: sample.speed_kmh,
+              heading_deg: sample.heading_deg,
+              altitude_m: sample.altitude_m,
+            })
+          },
+          { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 },
         )
-      },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 },
-    )
-    return () => navigator.geolocation.clearWatch(id)
+        // アンマウント時対策: watch 開始中にアンマウントされていたら即クリア
+        if (cancelled) handle.clear()
+      } catch (err) {
+        const geoErr = err as { message?: string }
+        setLocationError(geoErr.message ?? '位置情報の取得に失敗しました')
+      }
+    })()
+    return () => {
+      cancelled = true
+      handle?.clear()
+    }
   }, [])
 
   // 走行軌跡 (自分の active assignment のもの)
