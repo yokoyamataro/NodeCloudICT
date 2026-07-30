@@ -15,7 +15,9 @@ import {
   Car,
   Construction,
   Loader2,
+  MapPin,
   PlayCircle,
+  Send,
   StopCircle,
   Truck,
   User,
@@ -26,7 +28,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCanUseMobility } from '@/lib/useCanUseMobility'
 import { useMobilityStore, type AssignmentWithNames } from '@/stores/mobilityStore'
-import type { VehicleKind } from '@/types/database'
+import type { MobilityPosition, VehicleKind } from '@/types/database'
 
 const KIND_LABEL: Record<VehicleKind, string> = {
   car: '普通車',
@@ -76,6 +78,8 @@ export function MobilityVehiclePage() {
     fetchAssignmentHistory,
     startAssignment,
     endAssignment,
+    sendPosition,
+    fetchRecentPositions,
   } = useMobilityStore()
 
   const vehicle = useMemo(
@@ -85,11 +89,28 @@ export function MobilityVehiclePage() {
 
   const [history, setHistory] = useState<AssignmentWithNames[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
-  const [busy, setBusy] = useState<'start' | 'end' | null>(null)
+  const [busy, setBusy] = useState<'start' | 'end' | 'ping' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showDriverPicker, setShowDriverPicker] = useState(false)
+  const [recentPositions, setRecentPositions] = useState<MobilityPosition[]>([])
+  const [lastPingInfo, setLastPingInfo] = useState<string | null>(null)
 
   const active = vehicleId ? activeAssignments.get(vehicleId) ?? null : null
+  const isSelfActive = active?.user_id === user?.id
+  const canSendPing = !!active && isSelfActive
+
+  const refetchPositions = useCallback(async () => {
+    if (!active) {
+      setRecentPositions([])
+      return
+    }
+    const rows = await fetchRecentPositions(active.id, 20)
+    setRecentPositions(rows)
+  }, [active, fetchRecentPositions])
+
+  useEffect(() => {
+    void refetchPositions()
+  }, [refetchPositions])
 
   const refetchHistory = useCallback(async () => {
     if (!vehicleId) return
@@ -149,6 +170,56 @@ export function MobilityVehiclePage() {
       await refetchHistory()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // ブラウザ Geolocation で現在地を取り、mobility_positions に 1 件 INSERT。
+  //   本番モバイル (Capacitor) では別 API 経由になるが、Web でも同じ RLS を通る形で
+  //   動作確認できる。
+  const handleSendPing = async () => {
+    if (!active) return
+    setError(null)
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setError('この環境では現在地を取得できません')
+      return
+    }
+    setBusy('ping')
+    try {
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 0,
+        })
+      })
+      const c = pos.coords
+      const res = await sendPosition(active.id, {
+        lat: c.latitude,
+        lon: c.longitude,
+        accuracy_m: c.accuracy ?? null,
+        speed_kmh: c.speed != null ? c.speed * 3.6 : null,
+        heading_deg: c.heading ?? null,
+        altitude_m: c.altitude ?? null,
+      })
+      if (!res.ok) throw new Error(res.error)
+      setLastPingInfo(
+        `${c.latitude.toFixed(6)}, ${c.longitude.toFixed(6)} (±${Math.round(c.accuracy)}m)`,
+      )
+      await refetchPositions()
+    } catch (err) {
+      const msg =
+        err instanceof GeolocationPositionError
+          ? err.code === 1
+            ? '位置情報の許可が必要です (ブラウザ設定を確認)'
+            : err.code === 2
+              ? '位置情報を取得できませんでした'
+              : 'タイムアウトしました'
+          : err instanceof Error
+            ? err.message
+            : String(err)
+      setError(msg)
     } finally {
       setBusy(null)
     }
@@ -303,6 +374,80 @@ export function MobilityVehiclePage() {
                 </div>
               )}
             </section>
+
+            {/* 位置情報 (乗車中の本人のみ送信ボタンが出る) */}
+            {active && (
+              <section>
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-1 h-5 rounded bg-sky-500" />
+                  <h2 className="text-sm font-semibold text-slate-700 flex-1">
+                    位置情報 ({recentPositions.length})
+                  </h2>
+                  {canSendPing && (
+                    <button
+                      type="button"
+                      onClick={handleSendPing}
+                      disabled={busy === 'ping'}
+                      className="flex items-center gap-1 px-2.5 py-1 text-xs bg-sky-600 text-white rounded hover:bg-sky-700 disabled:opacity-50"
+                      title="ブラウザの位置情報を 1 件送信 (テスト用)"
+                    >
+                      {busy === 'ping' ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Send className="h-3 w-3" />
+                      )}
+                      現在地を送信
+                    </button>
+                  )}
+                </div>
+                {!canSendPing && (
+                  <div className="text-[11px] text-slate-500 mb-1.5 pl-3">
+                    現在この車両を運転しているのは自分ではないため、送信ボタンは表示されません。
+                  </div>
+                )}
+                {lastPingInfo && (
+                  <div className="mb-1.5 p-2 bg-sky-50 border border-sky-200 rounded text-[11px] text-sky-700">
+                    ✓ 送信しました: {lastPingInfo}
+                  </div>
+                )}
+                {recentPositions.length === 0 ? (
+                  <div className="p-3 bg-white rounded border text-xs text-slate-400 text-center">
+                    まだ位置ログはありません
+                  </div>
+                ) : (
+                  <ul className="space-y-1">
+                    {recentPositions.map((p) => (
+                      <li
+                        key={p.id}
+                        className="flex items-center gap-2 p-2 bg-white rounded border text-[11px]"
+                      >
+                        <MapPin className="h-3 w-3 text-sky-500 shrink-0" />
+                        <span className="flex-1 min-w-0 font-mono truncate">
+                          {p.lat.toFixed(6)}, {p.lon.toFixed(6)}
+                        </span>
+                        {p.accuracy_m != null && (
+                          <span className="shrink-0 text-slate-400">
+                            ±{Math.round(p.accuracy_m)}m
+                          </span>
+                        )}
+                        {p.speed_kmh != null && p.speed_kmh > 0 && (
+                          <span className="shrink-0 text-slate-500">
+                            {Math.round(p.speed_kmh)}km/h
+                          </span>
+                        )}
+                        <span className="shrink-0 text-slate-500 w-16 text-right">
+                          {new Date(p.recorded_at).toLocaleTimeString('ja-JP', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit',
+                          })}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            )}
 
             {/* 履歴 */}
             <section>

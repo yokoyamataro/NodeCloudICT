@@ -10,7 +10,12 @@
 
 import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
-import type { Vehicle, VehicleAssignment, VehicleKind } from '@/types/database'
+import type {
+  MobilityPosition,
+  Vehicle,
+  VehicleAssignment,
+  VehicleKind,
+} from '@/types/database'
 
 // Supabase の PostgrestError は Error インスタンスではなくプレーンオブジェクトなので、
 // String(err) だと "[object Object]" になる。message + details + hint + code を組み立てる。
@@ -75,6 +80,26 @@ interface State {
 
   /** 特定車両の割当履歴 (started_at DESC, 最大 100 件) */
   fetchAssignmentHistory: (vehicleId: string) => Promise<AssignmentWithNames[]>
+
+  /** 稼働中割当に位置 ping を 1 件 INSERT。RLS は「本人 + ended_at IS NULL」を強制。 */
+  sendPosition: (
+    assignmentId: string,
+    input: {
+      lat: number
+      lon: number
+      accuracy_m?: number | null
+      speed_kmh?: number | null
+      heading_deg?: number | null
+      altitude_m?: number | null
+      recorded_at?: string
+    },
+  ) => Promise<{ ok: true } | { ok: false; error: string }>
+
+  /** 特定 assignment の最近の位置 (recorded_at DESC, 最大 n 件) */
+  fetchRecentPositions: (
+    assignmentId: string,
+    limit?: number,
+  ) => Promise<MobilityPosition[]>
 }
 
 // profiles + auth.users から表示名を組み立てるヘルパ (RLS で読める範囲だけ)
@@ -266,5 +291,40 @@ export const useMobilityStore = create<State>((set, get) => ({
       return []
     }
     return enrichAssignments((data ?? []) as VehicleAssignment[])
+  },
+
+  sendPosition: async (assignmentId, input) => {
+    try {
+      const { error } = await supabase
+        .from('mobility_positions')
+        .insert({
+          assignment_id: assignmentId,
+          recorded_at: input.recorded_at ?? new Date().toISOString(),
+          lat: input.lat,
+          lon: input.lon,
+          accuracy_m: input.accuracy_m ?? null,
+          speed_kmh: input.speed_kmh ?? null,
+          heading_deg: input.heading_deg ?? null,
+          altitude_m: input.altitude_m ?? null,
+        } as never)
+      if (error) throw error
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: extractErr(err) }
+    }
+  },
+
+  fetchRecentPositions: async (assignmentId, limit = 20) => {
+    const { data, error } = await supabase
+      .from('mobility_positions')
+      .select('*')
+      .eq('assignment_id', assignmentId)
+      .order('recorded_at', { ascending: false })
+      .limit(limit)
+    if (error) {
+      console.warn('[mobilityStore] fetchRecentPositions failed', error)
+      return []
+    }
+    return (data ?? []) as MobilityPosition[]
   },
 }))
