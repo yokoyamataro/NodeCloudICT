@@ -119,6 +119,10 @@ function MobileAutoRedirect() {
       path === '/accept-invite' ||
       path.startsWith('/admin') ||
       path.startsWith('/mobile') ||
+      // モビリティは PC/モバイル共通で /mobility 配下を使うので自動リダイレクト対象外。
+      //   注意: '/mobility'.startsWith('/mobile') は false (7 文字目が 'i' vs 'e')
+      //   なので '/mobile' 検査で誤って包含されない
+      path.startsWith('/mobility') ||
       path.startsWith('/share')
     ) {
       return
