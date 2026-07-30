@@ -98,10 +98,55 @@ export function MobilityDriverPage() {
     [myActive, vehicles],
   )
 
-  // Geolocation
+  // Geolocation & 自動送信
+  //
+  //   モバイルブラウザで setInterval は throttle され期待通り発火しないことが
+  //   多いため、watchPosition のコールバック内で throttled send する方式に変更。
+  //   GPS が動くたびに来る (通常 1-3 秒) ので、10 秒経っていたら送る。
+  //
+  //   autoSend / myActive は ref に逃がして watch を再登録しない。再登録すると
+  //   位置権限プロンプトが再表示されたり最終取得位置が失われたりして UX が悪い。
   const [currentPos, setCurrentPos] = useState<[number, number] | null>(null)
   const [accuracy, setAccuracy] = useState<number | null>(null)
   const [locationError, setLocationError] = useState<string | null>(null)
+  const [lastAutoSentAt, setLastAutoSentAt] = useState<Date | null>(null)
+  const [autoSend, setAutoSend] = useState(false)
+
+  const autoSendRef = useRef(false)
+  const myActiveRef = useRef<typeof myActive>(null)
+  const lastSentAtRef = useRef<number>(0)
+  useEffect(() => {
+    autoSendRef.current = autoSend
+  }, [autoSend])
+  useEffect(() => {
+    myActiveRef.current = myActive
+    // 割当が消えたら送信間隔もリセット (次に乗車した時はすぐ 1 発送る)
+    if (!myActive) {
+      lastSentAtRef.current = 0
+      setLastAutoSentAt(null)
+    }
+  }, [myActive])
+
+  const sendPositionRef = useRef(sendPosition)
+  useEffect(() => {
+    sendPositionRef.current = sendPosition
+  }, [sendPosition])
+
+  // 「自動 ON」に切り替えた瞬間は 1 発すぐ送る (次の watchPosition を待たない)
+  useEffect(() => {
+    if (!autoSend || !myActive) return
+    const pos = currentPos
+    if (!pos) return
+    lastSentAtRef.current = Date.now()
+    setLastAutoSentAt(new Date())
+    void sendPosition(myActive.id, {
+      lat: pos[0],
+      lon: pos[1],
+      accuracy_m: accuracy,
+    })
+    // 依存に currentPos は入れない (何度も送らないため)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSend, myActive, sendPosition])
 
   useEffect(() => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
@@ -110,9 +155,28 @@ export function MobilityDriverPage() {
     }
     const id = navigator.geolocation.watchPosition(
       (p) => {
-        setCurrentPos([p.coords.latitude, p.coords.longitude])
+        const lat = p.coords.latitude
+        const lon = p.coords.longitude
+        setCurrentPos([lat, lon])
         setAccuracy(p.coords.accuracy)
         setLocationError(null)
+
+        // 乗車中 + 自動送信 ON なら throttle して送る (setInterval を使わないので
+        // mobile browser の throttle に強い)
+        const active = myActiveRef.current
+        if (!autoSendRef.current || !active) return
+        const now = Date.now()
+        if (now - lastSentAtRef.current < PING_INTERVAL_MS) return
+        lastSentAtRef.current = now
+        setLastAutoSentAt(new Date(now))
+        void sendPositionRef.current(active.id, {
+          lat,
+          lon,
+          accuracy_m: p.coords.accuracy,
+          speed_kmh: p.coords.speed != null ? p.coords.speed * 3.6 : null,
+          heading_deg: p.coords.heading ?? null,
+          altitude_m: p.coords.altitude ?? null,
+        })
       },
       (err) => {
         setLocationError(
@@ -127,39 +191,6 @@ export function MobilityDriverPage() {
     )
     return () => navigator.geolocation.clearWatch(id)
   }, [])
-
-  // 自分の active assignment がある間、一定間隔で ping を送る。
-  //   GPS 更新のたびに currentPos が変わるが、useEffect の依存に入れると
-  //   setInterval が毎回 clear/reset されて永遠に発火しないバグになるため、
-  //   currentPos/accuracy は ref に流して依存から外す。
-  const lastSentAtRef = useRef<number>(0)
-  const currentPosRef = useRef<[number, number] | null>(null)
-  const accuracyRef = useRef<number | null>(null)
-  useEffect(() => {
-    currentPosRef.current = currentPos
-    accuracyRef.current = accuracy
-  }, [currentPos, accuracy])
-
-  const [autoSend, setAutoSend] = useState(false)
-  useEffect(() => {
-    if (!myActive || !autoSend) return
-    const send = async () => {
-      const pos = currentPosRef.current
-      if (!pos) return
-      const now = Date.now()
-      if (now - lastSentAtRef.current < PING_INTERVAL_MS - 500) return
-      lastSentAtRef.current = now
-      await sendPosition(myActive.id, {
-        lat: pos[0],
-        lon: pos[1],
-        accuracy_m: accuracyRef.current,
-      })
-    }
-    // 初回はすぐ 1 発。そのあと定期送信。
-    void send()
-    const timer = setInterval(send, PING_INTERVAL_MS)
-    return () => clearInterval(timer)
-  }, [myActive, autoSend, sendPosition])
 
   // 走行軌跡 (自分の active assignment のもの)
   const [trackPositions, setTrackPositions] = useState<MobilityPosition[]>([])
@@ -302,6 +333,21 @@ export function MobilityDriverPage() {
       {busyError && (
         <div className="mx-3 my-2 p-2 bg-red-900/60 border border-red-700 rounded text-xs text-red-100">
           {busyError}
+        </div>
+      )}
+
+      {/* 自動送信の直近状態 (デバッグ + フィードバック用) */}
+      {myActive && autoSend && (
+        <div className="mx-3 mb-1 mt-2 px-2 py-1 text-[10px] rounded bg-emerald-900/40 border border-emerald-700 text-emerald-100 flex items-center gap-1">
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          自動送信中 · 最終:{' '}
+          {lastAutoSentAt
+            ? lastAutoSentAt.toLocaleTimeString('ja-JP', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+              })
+            : '待機'}
         </div>
       )}
 
