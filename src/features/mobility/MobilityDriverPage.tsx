@@ -269,7 +269,7 @@ export function MobilityDriverPage() {
   )
 
   return (
-    <div className="mobile-screen flex flex-col bg-slate-900 relative">
+    <div className="h-full min-h-0 flex flex-col bg-slate-900 relative">
       {/* ヘッダ */}
       <div className="p-3 bg-slate-800 text-white flex items-center gap-2 shrink-0">
         <button
