@@ -221,7 +221,7 @@ export function MobileProjectChooserPage() {
             )}
           </>
         )}
-        {/* モビリティ (準備中): サイトオーナーだけに表示。モバイルは /mobility に遷移 */}
+        {/* モビリティ (準備中): サイトオーナーだけに表示。モバイルはドライバー地図画面へ */}
         {canUseMobility && (
           <section>
             <div className="flex items-center gap-2 mb-1.5">
@@ -233,7 +233,7 @@ export function MobileProjectChooserPage() {
             </div>
             <button
               type="button"
-              onClick={() => navigate('/mobility')}
+              onClick={() => navigate('/mobility/drive')}
               className="w-full flex items-center gap-2 p-3 bg-white rounded-lg border shadow-sm active:bg-indigo-50 text-left"
             >
               <div className="h-9 w-9 rounded-full bg-indigo-100 flex items-center justify-center shrink-0">
@@ -241,10 +241,10 @@ export function MobileProjectChooserPage() {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-semibold text-slate-800">
-                  社員・車両・重機の現在地
+                  乗車 / 現在地送信
                 </div>
                 <div className="text-[11px] text-slate-500 mt-0.5">
-                  走行ログの記録・地図表示 (準備中)
+                  地図を見ながら乗車 / 降車 / 位置送信
                 </div>
               </div>
               <ChevronRight className="h-4 w-4 text-slate-400" />

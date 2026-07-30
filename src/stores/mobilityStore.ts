@@ -100,6 +100,11 @@ interface State {
     assignmentId: string,
     limit?: number,
   ) => Promise<MobilityPosition[]>
+
+  /** 複数 assignment のそれぞれ最新 1 件を取得 (フリート地図用) */
+  fetchLatestPositions: (
+    assignmentIds: string[],
+  ) => Promise<Map<string, MobilityPosition>>
 }
 
 // profiles + auth.users から表示名を組み立てるヘルパ (RLS で読める範囲だけ)
@@ -326,5 +331,27 @@ export const useMobilityStore = create<State>((set, get) => ({
       return []
     }
     return (data ?? []) as MobilityPosition[]
+  },
+
+  fetchLatestPositions: async (assignmentIds) => {
+    if (assignmentIds.length === 0) return new Map()
+    // PostgREST では DISTINCT ON が直接使えないので、単純に IN で取って
+    // クライアント側で assignment_id ごとに最新 1 件を選ぶ。
+    // 件数が多い場合 (数百以上) はサーバ側 RPC を検討する。
+    const { data, error } = await supabase
+      .from('mobility_positions')
+      .select('*')
+      .in('assignment_id', assignmentIds)
+      .order('recorded_at', { ascending: false })
+      .limit(assignmentIds.length * 50) // 各 assignment につき最大 50 件見れば十分
+    if (error) {
+      console.warn('[mobilityStore] fetchLatestPositions failed', error)
+      return new Map()
+    }
+    const map = new Map<string, MobilityPosition>()
+    for (const row of (data ?? []) as MobilityPosition[]) {
+      if (!map.has(row.assignment_id)) map.set(row.assignment_id, row)
+    }
+    return map
   },
 }))
