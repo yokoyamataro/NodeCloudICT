@@ -24,6 +24,9 @@ import {
   UserPlus,
   X,
 } from 'lucide-react'
+import { MapContainer, TileLayer, CircleMarker, Polyline, Tooltip, useMap } from 'react-leaflet'
+import type { LatLngBoundsExpression } from 'leaflet'
+import 'leaflet/dist/leaflet.css'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCanUseMobility } from '@/lib/useCanUseMobility'
@@ -94,6 +97,10 @@ export function MobilityVehiclePage() {
   const [showDriverPicker, setShowDriverPicker] = useState(false)
   const [recentPositions, setRecentPositions] = useState<MobilityPosition[]>([])
   const [lastPingInfo, setLastPingInfo] = useState<string | null>(null)
+  // 地図に描画する assignment の ID。null なら「稼働中割当」or「履歴最新」を自動選択
+  const [selectedAssignmentId, setSelectedAssignmentId] = useState<string | null>(null)
+  const [trackPositions, setTrackPositions] = useState<MobilityPosition[]>([])
+  const [trackLoading, setTrackLoading] = useState(false)
 
   const active = vehicleId ? activeAssignments.get(vehicleId) ?? null : null
   const isSelfActive = active?.user_id === user?.id
@@ -139,6 +146,45 @@ export function MobilityVehiclePage() {
     void fetchVehicles(orgId)
     void fetchActiveAssignments(orgId)
   }, [profile?.organization_id, vehicles.length, fetchVehicles, fetchActiveAssignments])
+
+  // 地図に描く対象の解決:
+  //   selectedAssignmentId が指定されていればそれ、
+  //   さもなくば稼働中割当、それも無ければ履歴の最新
+  const effectiveAssignmentId = useMemo(() => {
+    if (selectedAssignmentId) return selectedAssignmentId
+    if (active) return active.id
+    if (history.length > 0) return history[0].id
+    return null
+  }, [selectedAssignmentId, active, history])
+
+  // 描画対象 assignment の情報 (ラベル用)
+  const effectiveAssignment = useMemo<AssignmentWithNames | null>(() => {
+    if (!effectiveAssignmentId) return null
+    if (active?.id === effectiveAssignmentId) return active
+    return history.find((h) => h.id === effectiveAssignmentId) ?? null
+  }, [effectiveAssignmentId, active, history])
+
+  // 軌跡ロード。recentPositions.length を依存に含めることで
+  // 「現在の割当にピングを送るたびに地図側も自動更新」される。
+  useEffect(() => {
+    if (!effectiveAssignmentId) {
+      setTrackPositions([])
+      return
+    }
+    let cancelled = false
+    setTrackLoading(true)
+    ;(async () => {
+      const rows = await fetchRecentPositions(effectiveAssignmentId, 500)
+      if (!cancelled) {
+        // recorded_at DESC で返る → polyline に流し込むため昇順に反転
+        setTrackPositions(rows.slice().reverse())
+        setTrackLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [effectiveAssignmentId, fetchRecentPositions, recentPositions.length])
 
   if (!canUse) return <Navigate to="/" replace />
   if (!vehicleId) return <Navigate to="/mobility" replace />
@@ -375,6 +421,63 @@ export function MobilityVehiclePage() {
               )}
             </section>
 
+            {/* 走行軌跡地図 (現在の割当 or 履歴選択の polyline) */}
+            {effectiveAssignmentId && (
+              <section>
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-1 h-5 rounded bg-indigo-500" />
+                  <h2 className="text-sm font-semibold text-slate-700 flex-1">
+                    走行軌跡
+                    {effectiveAssignment && (
+                      <span className="text-slate-500 text-xs ml-2 font-normal">
+                        {effectiveAssignment.driver_name || '(名前未設定)'} ·{' '}
+                        {new Date(effectiveAssignment.started_at).toLocaleString(
+                          'ja-JP',
+                          {
+                            month: '2-digit',
+                            day: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          },
+                        )}
+                        {!effectiveAssignment.ended_at && (
+                          <span className="ml-1 text-emerald-600">(稼働中)</span>
+                        )}
+                      </span>
+                    )}
+                  </h2>
+                  {trackLoading && (
+                    <Loader2 className="h-3 w-3 text-slate-400 animate-spin" />
+                  )}
+                  {selectedAssignmentId && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedAssignmentId(null)}
+                      className="text-[10px] text-slate-500 hover:text-slate-700 underline"
+                      title="表示中の履歴選択を解除して稼働中/最新に戻す"
+                    >
+                      解除
+                    </button>
+                  )}
+                </div>
+                <div
+                  className="rounded border overflow-hidden bg-slate-100"
+                  style={{ height: 320 }}
+                >
+                  {trackPositions.length === 0 ? (
+                    <div className="h-full flex items-center justify-center text-xs text-slate-400">
+                      この割当には位置ログがありません
+                    </div>
+                  ) : (
+                    <TrackMap positions={trackPositions} />
+                  )}
+                </div>
+                <div className="text-[10px] text-slate-500 mt-1 pl-3">
+                  {trackPositions.length} 点表示 · 履歴の行をクリックすると別の割当を表示できます
+                </div>
+              </section>
+            )}
+
             {/* 位置情報 (乗車中の本人のみ送信ボタンが出る) */}
             {active && (
               <section>
@@ -475,38 +578,45 @@ export function MobilityVehiclePage() {
                     const mins = Math.floor(
                       (durationMs % (60 * 60 * 1000)) / (60 * 1000),
                     )
+                    const isSelected = a.id === effectiveAssignmentId
                     return (
-                      <li
-                        key={a.id}
-                        className="flex items-center gap-2 p-2 bg-white rounded border text-xs"
-                      >
-                        <User className="h-3 w-3 text-slate-400 shrink-0" />
-                        <span className="flex-1 min-w-0 truncate">
-                          {a.driver_name || a.user_id.slice(0, 8)}
-                        </span>
-                        <span className="text-slate-500 shrink-0">
-                          {new Date(a.started_at).toLocaleString('ja-JP', {
-                            month: '2-digit',
-                            day: '2-digit',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                          {a.ended_at ? (
-                            <>
-                              {' '}
-                              〜{' '}
-                              {new Date(a.ended_at).toLocaleTimeString('ja-JP', {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}
-                            </>
-                          ) : (
-                            <span className="ml-1 text-emerald-600">(稼働中)</span>
-                          )}
-                        </span>
-                        <span className="text-slate-400 shrink-0 w-14 text-right">
-                          {hours}h {mins}m
-                        </span>
+                      <li key={a.id}>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedAssignmentId(a.id)}
+                          className={`w-full flex items-center gap-2 p-2 bg-white rounded border text-xs text-left hover:border-indigo-400 ${
+                            isSelected ? 'ring-1 ring-indigo-500 border-indigo-400' : ''
+                          }`}
+                          title="この割当の走行軌跡を上の地図に表示"
+                        >
+                          <User className="h-3 w-3 text-slate-400 shrink-0" />
+                          <span className="flex-1 min-w-0 truncate">
+                            {a.driver_name || a.user_id.slice(0, 8)}
+                          </span>
+                          <span className="text-slate-500 shrink-0">
+                            {new Date(a.started_at).toLocaleString('ja-JP', {
+                              month: '2-digit',
+                              day: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                            {a.ended_at ? (
+                              <>
+                                {' '}
+                                〜{' '}
+                                {new Date(a.ended_at).toLocaleTimeString('ja-JP', {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                              </>
+                            ) : (
+                              <span className="ml-1 text-emerald-600">(稼働中)</span>
+                            )}
+                          </span>
+                          <span className="text-slate-400 shrink-0 w-14 text-right">
+                            {hours}h {mins}m
+                          </span>
+                        </button>
                       </li>
                     )
                   })}
@@ -529,6 +639,84 @@ export function MobilityVehiclePage() {
 }
 
 // 組織メンバーからドライバーを 1 人選ぶダイアログ (admin 想定)
+// 走行軌跡地図: positions は昇順 (古い→新しい) で渡される想定。
+// polyline を描画し、開始/最新点にマーカー、地図領域を自動フィット。
+function TrackMap({ positions }: { positions: MobilityPosition[] }) {
+  const line = useMemo(
+    () => positions.map((p) => [p.lat, p.lon] as [number, number]),
+    [positions],
+  )
+  const start = positions[0]
+  const end = positions[positions.length - 1]
+  const isLive = end && !end.recorded_at ? false : true // 全部レコード済みは常に true; live 表示は呼び出し側で判断
+  return (
+    <MapContainer
+      center={start ? [start.lat, start.lon] : [35.681236, 139.767125]}
+      zoom={15}
+      className="h-full w-full"
+    >
+      <TileLayer
+        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+      />
+      <AutoFitTrack positions={line} />
+      {line.length > 1 && (
+        <Polyline positions={line} pathOptions={{ color: '#6366f1', weight: 4 }} />
+      )}
+      {start && (
+        <CircleMarker
+          center={[start.lat, start.lon]}
+          radius={7}
+          pathOptions={{
+            color: '#ffffff',
+            fillColor: '#22c55e',
+            fillOpacity: 1,
+            weight: 2,
+          }}
+        >
+          <Tooltip direction="top" offset={[0, -6]}>
+            開始 · {new Date(start.recorded_at).toLocaleTimeString('ja-JP')}
+          </Tooltip>
+        </CircleMarker>
+      )}
+      {end && end.id !== start?.id && (
+        <CircleMarker
+          center={[end.lat, end.lon]}
+          radius={8}
+          pathOptions={{
+            color: '#ffffff',
+            fillColor: isLive ? '#ef4444' : '#64748b',
+            fillOpacity: 1,
+            weight: 2,
+          }}
+        >
+          <Tooltip direction="top" offset={[0, -6]}>
+            最新 · {new Date(end.recorded_at).toLocaleTimeString('ja-JP')}
+          </Tooltip>
+        </CircleMarker>
+      )}
+    </MapContainer>
+  )
+}
+
+// 初回表示時に polyline 全体が収まるように fitBounds
+function AutoFitTrack({ positions }: { positions: [number, number][] }) {
+  const map = useMap()
+  useEffect(() => {
+    if (positions.length === 0) return
+    if (positions.length === 1) {
+      map.setView(positions[0], 15, { animate: false })
+      return
+    }
+    const bounds: LatLngBoundsExpression = positions
+    map.fitBounds(bounds, { padding: [30, 30], maxZoom: 16, animate: false })
+    // positions が変化する = 別割当を選び直した/軌跡が伸びた の両方あるが、
+    // 伸びた場合に毎回 fitBounds し直すと拡大表示中でも縮小してしまう。
+    // → 「点数が大きく変わった (2 倍以上) 場合だけ再フィット」等の工夫は後日
+  }, [positions, map])
+  return null
+}
+
 function DriverPickerDialog({
   organizationId,
   onPick,
