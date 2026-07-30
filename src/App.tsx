@@ -365,15 +365,18 @@ function AppRoutes() {
             </SiteOwnerRoute>
           }
         />
+        </Route>
+        {/* モビリティのドライバー地図画面: AppLayout をバイパスして全画面表示。
+            スマホ乗車中はサイドバー/組織情報などの装飾は不要なので、内部で
+            最小ヘッダ「NodeCloud」+ 車両状態のみを描画する。 */}
         <Route
-          path="mobility/drive"
+          path="/mobility/drive"
           element={
             <SiteOwnerRoute>
               <MobilityDriverPage />
             </SiteOwnerRoute>
           }
         />
-        </Route>
       </Routes>
   )
 }

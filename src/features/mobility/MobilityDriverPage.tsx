@@ -269,36 +269,34 @@ export function MobilityDriverPage() {
   )
 
   return (
-    <div className="h-full min-h-0 flex flex-col bg-slate-900 relative">
-      {/* ヘッダ */}
-      <div className="p-3 bg-slate-800 text-white flex items-center gap-2 shrink-0">
+    <div className="mobile-screen flex flex-col bg-slate-900 relative">
+      {/* ヘッダ: NodeCloud ブランド 1 行のみ (組織情報等は載せない) */}
+      <div className="px-3 py-2 bg-slate-800 text-white flex items-center gap-2 shrink-0">
         <button
-          onClick={() => navigate('/mobility')}
-          className="p-1 rounded hover:bg-slate-700"
+          onClick={() => navigate('/')}
+          className="p-1 rounded hover:bg-slate-700 shrink-0"
+          title="トップに戻る"
         >
           <ArrowLeft className="h-5 w-5" />
         </button>
-        <Car className="h-5 w-5 text-indigo-300" />
-        <div className="flex-1 min-w-0">
-          {myActive && myVehicle ? (
-            <>
-              <div className="text-sm font-semibold truncate">
-                {myVehicle.name}
-              </div>
-              <div className="text-[10px] text-slate-300">
-                {KIND_LABEL[myVehicle.kind]} · 稼働中
-              </div>
-            </>
-          ) : (
-            <div className="text-sm">乗車待ち</div>
-          )}
-        </div>
+        <div className="text-base font-bold flex-1">NodeCloud</div>
         {locationError && (
-          <span className="text-[10px] text-amber-300 max-w-[8rem] text-right">
+          <span className="text-[10px] text-amber-300 max-w-[10rem] text-right leading-tight">
             {locationError}
           </span>
         )}
       </div>
+
+      {/* サブヘッダ: 現在の車両状態 (乗車中のときだけ) */}
+      {myActive && myVehicle && (
+        <div className="px-3 py-1.5 bg-slate-700 text-white flex items-center gap-2 shrink-0 text-xs">
+          <Car className="h-4 w-4 text-indigo-300 shrink-0" />
+          <span className="font-semibold truncate">{myVehicle.name}</span>
+          <span className="text-slate-300 shrink-0">
+            · {KIND_LABEL[myVehicle.kind]} · 稼働中
+          </span>
+        </div>
+      )}
 
       {/* 地図 */}
       <div className="flex-1 relative">
