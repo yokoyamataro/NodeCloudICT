@@ -31,6 +31,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCanUseMobility } from '@/lib/useCanUseMobility'
 import { getCurrentSample } from '@/lib/geolocation'
+import { computeTotalDistanceMeters } from '@/lib/geoDistance'
 import { useMobilityStore, type AssignmentWithNames } from '@/stores/mobilityStore'
 import type { MobilityPosition, VehicleKind } from '@/types/database'
 
@@ -84,6 +85,7 @@ export function MobilityVehiclePage() {
     endAssignment,
     sendPosition,
     fetchRecentPositions,
+    fetchPositionsForVehicleSince,
   } = useMobilityStore()
 
   const vehicle = useMemo(
@@ -102,6 +104,8 @@ export function MobilityVehiclePage() {
   const [selectedAssignmentId, setSelectedAssignmentId] = useState<string | null>(null)
   const [trackPositions, setTrackPositions] = useState<MobilityPosition[]>([])
   const [trackLoading, setTrackLoading] = useState(false)
+  // 本日の位置ログ (この車両分)。速度・走行距離集計に使う
+  const [todayPositions, setTodayPositions] = useState<MobilityPosition[]>([])
 
   const active = vehicleId ? activeAssignments.get(vehicleId) ?? null : null
   const isSelfActive = active?.user_id === user?.id
@@ -186,6 +190,57 @@ export function MobilityVehiclePage() {
       cancelled = true
     }
   }, [effectiveAssignmentId, fetchRecentPositions, recentPositions.length])
+
+  // 本日 (ローカル 00:00〜) の位置ログをこの車両分だけまとめて取る。
+  //   速度・走行距離集計と、履歴行の per-assignment 距離バッジに使う。
+  //   稼働中は 20 秒毎に軽く refresh。
+  useEffect(() => {
+    if (!vehicleId) return
+    const startOfToday = new Date()
+    startOfToday.setHours(0, 0, 0, 0)
+    const sinceIso = startOfToday.toISOString()
+    let cancelled = false
+    const load = async () => {
+      const rows = await fetchPositionsForVehicleSince(vehicleId, sinceIso)
+      if (!cancelled) setTodayPositions(rows)
+    }
+    void load()
+    const timer = active ? setInterval(load, 20_000) : null
+    return () => {
+      cancelled = true
+      if (timer) clearInterval(timer)
+    }
+  }, [vehicleId, active, fetchPositionsForVehicleSince])
+
+  // 本日ポジションを assignment_id ごとにグループ化
+  const todayByAssignment = useMemo(() => {
+    const map = new Map<string, MobilityPosition[]>()
+    for (const p of todayPositions) {
+      const arr = map.get(p.assignment_id)
+      if (arr) arr.push(p)
+      else map.set(p.assignment_id, [p])
+    }
+    return map
+  }, [todayPositions])
+
+  // 本日この車両の合計走行距離 (メートル)
+  const todayVehicleDistanceM = useMemo(() => {
+    let total = 0
+    for (const rows of todayByAssignment.values()) {
+      total += computeTotalDistanceMeters(rows)
+    }
+    return total
+  }, [todayByAssignment])
+
+  // 稼働中割当の最新位置から現在速度 (km/h)
+  const currentSpeedKmh = useMemo(() => {
+    if (!active) return null
+    const rows = todayByAssignment.get(active.id)
+    if (!rows || rows.length === 0) return null
+    // fetchPositionsForVehicleSince は昇順で返るので末尾が最新
+    const last = rows[rows.length - 1]
+    return last.speed_kmh
+  }, [active, todayByAssignment])
 
   if (!canUse) return <Navigate to="/" replace />
   if (!vehicleId) return <Navigate to="/mobility" replace />
@@ -327,6 +382,34 @@ export function MobilityVehiclePage() {
                     <div className="whitespace-pre-wrap">{vehicle.memo}</div>
                   </>
                 )}
+              </div>
+            </section>
+
+            {/* 速度・本日走行距離パネル */}
+            <section className="grid grid-cols-2 gap-2">
+              <div className="p-3 bg-white rounded-lg border">
+                <div className="text-[10px] text-slate-500">現在速度</div>
+                <div className="text-2xl font-bold leading-tight text-slate-800">
+                  {active && currentSpeedKmh != null && currentSpeedKmh >= 0
+                    ? Math.round(currentSpeedKmh)
+                    : '—'}
+                  <span className="text-xs font-normal text-slate-500 ml-1">km/h</span>
+                </div>
+                {!active && (
+                  <div className="text-[10px] text-slate-400 mt-0.5">
+                    稼働中の割当なし
+                  </div>
+                )}
+              </div>
+              <div className="p-3 bg-white rounded-lg border">
+                <div className="text-[10px] text-slate-500">本日走行 (この車両)</div>
+                <div className="text-2xl font-bold leading-tight text-slate-800">
+                  {(todayVehicleDistanceM / 1000).toFixed(1)}
+                  <span className="text-xs font-normal text-slate-500 ml-1">km</span>
+                </div>
+                <div className="text-[10px] text-slate-400 mt-0.5">
+                  00:00 〜 · 今日の全ドライバー合計
+                </div>
               </div>
             </section>
 
@@ -566,6 +649,11 @@ export function MobilityVehiclePage() {
                       (durationMs % (60 * 60 * 1000)) / (60 * 1000),
                     )
                     const isSelected = a.id === effectiveAssignmentId
+                    // 本日分の位置ログがあるならここから距離を計算 (過去日の割当は '—')
+                    const rowsToday = todayByAssignment.get(a.id)
+                    const distanceKm = rowsToday
+                      ? computeTotalDistanceMeters(rowsToday) / 1000
+                      : null
                     return (
                       <li key={a.id}>
                         <button
@@ -602,6 +690,16 @@ export function MobilityVehiclePage() {
                           </span>
                           <span className="text-slate-400 shrink-0 w-14 text-right">
                             {hours}h {mins}m
+                          </span>
+                          <span
+                            className="text-slate-500 shrink-0 w-14 text-right font-medium"
+                            title={
+                              distanceKm != null
+                                ? '本日ログから計算した走行距離'
+                                : '本日以外の割当のため距離は非表示'
+                            }
+                          >
+                            {distanceKm != null ? `${distanceKm.toFixed(1)} km` : '—'}
                           </span>
                         </button>
                       </li>

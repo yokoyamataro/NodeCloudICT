@@ -115,6 +115,12 @@ interface State {
     userId: string,
     sinceIso: string,
   ) => Promise<MobilityPosition[]>
+
+  /** 指定 vehicle_id の「since 以降」の位置を全 assignment 横断で取得 */
+  fetchPositionsForVehicleSince: (
+    vehicleId: string,
+    sinceIso: string,
+  ) => Promise<MobilityPosition[]>
 }
 
 // profiles + auth.users から表示名を組み立てるヘルパ (RLS で読める範囲だけ)
@@ -365,6 +371,32 @@ export const useMobilityStore = create<State>((set, get) => ({
       .limit(10000)
     if (error) {
       console.warn('[mobilityStore] fetchPositionsForUserSince failed', error)
+      return []
+    }
+    return (data ?? []) as MobilityPosition[]
+  },
+
+  fetchPositionsForVehicleSince: async (vehicleId, sinceIso) => {
+    const { data: aRows, error: aErr } = await supabase
+      .from('vehicle_assignments')
+      .select('id')
+      .eq('vehicle_id', vehicleId)
+      .gte('started_at', sinceIso)
+    if (aErr) {
+      console.warn('[mobilityStore] fetchPositionsForVehicleSince (assignments) failed', aErr)
+      return []
+    }
+    const ids = ((aRows ?? []) as { id: string }[]).map((r) => r.id)
+    if (ids.length === 0) return []
+    const { data, error } = await supabase
+      .from('mobility_positions')
+      .select('*')
+      .in('assignment_id', ids)
+      .gte('recorded_at', sinceIso)
+      .order('recorded_at', { ascending: true })
+      .limit(20000)
+    if (error) {
+      console.warn('[mobilityStore] fetchPositionsForVehicleSince failed', error)
       return []
     }
     return (data ?? []) as MobilityPosition[]
