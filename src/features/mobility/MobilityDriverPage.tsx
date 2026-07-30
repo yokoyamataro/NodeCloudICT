@@ -128,24 +128,38 @@ export function MobilityDriverPage() {
     return () => navigator.geolocation.clearWatch(id)
   }, [])
 
-  // 自分の active assignment がある間、一定間隔で ping を送る
+  // 自分の active assignment がある間、一定間隔で ping を送る。
+  //   GPS 更新のたびに currentPos が変わるが、useEffect の依存に入れると
+  //   setInterval が毎回 clear/reset されて永遠に発火しないバグになるため、
+  //   currentPos/accuracy は ref に流して依存から外す。
   const lastSentAtRef = useRef<number>(0)
+  const currentPosRef = useRef<[number, number] | null>(null)
+  const accuracyRef = useRef<number | null>(null)
+  useEffect(() => {
+    currentPosRef.current = currentPos
+    accuracyRef.current = accuracy
+  }, [currentPos, accuracy])
+
   const [autoSend, setAutoSend] = useState(false)
   useEffect(() => {
     if (!myActive || !autoSend) return
-    const timer = setInterval(async () => {
-      if (!currentPos) return
+    const send = async () => {
+      const pos = currentPosRef.current
+      if (!pos) return
       const now = Date.now()
       if (now - lastSentAtRef.current < PING_INTERVAL_MS - 500) return
       lastSentAtRef.current = now
       await sendPosition(myActive.id, {
-        lat: currentPos[0],
-        lon: currentPos[1],
-        accuracy_m: accuracy,
+        lat: pos[0],
+        lon: pos[1],
+        accuracy_m: accuracyRef.current,
       })
-    }, PING_INTERVAL_MS)
+    }
+    // 初回はすぐ 1 発。そのあと定期送信。
+    void send()
+    const timer = setInterval(send, PING_INTERVAL_MS)
     return () => clearInterval(timer)
-  }, [myActive, autoSend, currentPos, accuracy, sendPosition])
+  }, [myActive, autoSend, sendPosition])
 
   // 走行軌跡 (自分の active assignment のもの)
   const [trackPositions, setTrackPositions] = useState<MobilityPosition[]>([])
