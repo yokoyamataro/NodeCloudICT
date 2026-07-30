@@ -11,7 +11,7 @@
 //   https://github.com/capacitor-community/background-geolocation
 
 import { Geolocation, type Position } from '@capacitor/geolocation'
-import { registerPlugin } from '@capacitor/core'
+import { Capacitor, registerPlugin } from '@capacitor/core'
 
 // バックグラウンド追跡プラグイン。@capacitor-community/background-geolocation は
 // registerPlugin ベースの薄い型を提供している。呼び出し側では
@@ -176,11 +176,18 @@ function normalizeBgLocation(loc: BgLocation): GeoSample {
   }
 }
 
+/** true ならブラウザ (Capacitor ネイティブでない) */
+export function isWebPlatform(): boolean {
+  return !Capacitor.isNativePlatform()
+}
+
 /**
  * バックグラウンドで位置を追跡し続ける。
  *   Android: Foreground service + 通知が常駐 (アプリを閉じても継続)
  *   iOS:     Background modes = location updates が有効ならバックグラウンド継続
- *   Web:     フォアグラウンド watchPosition と同じ (バックグラウンド不可)
+ *   Web:     background-geolocation プラグインは Web 実装が無いため、
+ *            フォアグラウンドの watchSamples にフォールバック
+ *            (バックグラウンド継続はできない)
  *
  * @param callback 位置 or エラー通知
  * @param options.notificationTitle / .notificationBody Android 通知の表示
@@ -195,6 +202,12 @@ export async function watchSamplesInBackground(
     distanceFilter?: number
   },
 ): Promise<{ clear: () => Promise<void> }> {
+  // Web ではネイティブプラグイン未対応。フォアグラウンド watch にフォールバック
+  // することで、モバイルブラウザでのテスト時にも位置送信が継続する。
+  if (isWebPlatform()) {
+    const handle = await watchSamples(callback, { enableHighAccuracy: true })
+    return { clear: async () => handle.clear() }
+  }
   const watcherId = await BackgroundGeolocation.addWatcher(
     {
       backgroundTitle: options?.notificationTitle ?? 'NodeCloud モビリティ',
