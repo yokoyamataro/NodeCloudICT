@@ -58,7 +58,6 @@ import { FarmSettingsPage } from '@/features/settings/FarmSettingsPage'
 // モビリティ (社員/車両/重機の位置管理) - 現状はサイトオーナーのみプレビュー
 import { MobilityHomePage } from '@/features/mobility/MobilityHomePage'
 import { MobilityVehiclePage } from '@/features/mobility/MobilityVehiclePage'
-import { MobilityFleetMapPage } from '@/features/mobility/MobilityFleetMapPage'
 import { MobilityDriverPage } from '@/features/mobility/MobilityDriverPage'
 import { Loader2 } from 'lucide-react'
 import { isAdmin } from '@/lib/admin'
@@ -357,14 +356,8 @@ function AppRoutes() {
             </SiteOwnerRoute>
           }
         />
-        <Route
-          path="mobility/map"
-          element={
-            <SiteOwnerRoute>
-              <MobilityFleetMapPage />
-            </SiteOwnerRoute>
-          }
-        />
+        {/* /mobility/map は /mobility に統合 (地図が Home に埋め込まれた) */}
+        <Route path="mobility/map" element={<Navigate to="/mobility" replace />} />
         </Route>
         {/* モビリティのドライバー地図画面: AppLayout をバイパスして全画面表示。
             スマホ乗車中はサイドバー/組織情報などの装飾は不要なので、内部で

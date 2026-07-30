@@ -17,7 +17,6 @@ import {
   Car,
   Construction,
   Loader2,
-  Map as MapIcon,
   Pencil,
   Plus,
   Trash2,
@@ -29,6 +28,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useCanUseMobility } from '@/lib/useCanUseMobility'
 import { useMobilityStore } from '@/stores/mobilityStore'
 import type { Vehicle, VehicleKind } from '@/types/database'
+import { FleetMapView } from '@/features/mobility/FleetMapView'
 
 const KIND_LABEL: Record<VehicleKind, string> = {
   car: '普通車',
@@ -99,11 +99,8 @@ export function MobilityHomePage() {
   }
 
   return (
-    <div className="h-full flex flex-col bg-slate-50 overflow-auto">
-      <MobilityHeader
-        onBack={() => navigate('/')}
-        onOpenMap={() => navigate('/mobility/map')}
-      />
+    <div className="h-full flex flex-col bg-slate-50">
+      <MobilityHeader onBack={() => navigate('/')} />
 
       {vehiclesError && (
         <div className="mx-4 mt-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
@@ -111,7 +108,18 @@ export function MobilityHomePage() {
         </div>
       )}
 
-      <div className="flex-1 overflow-auto p-4 space-y-5">
+      {/* PC は左に地図 + 右に車両パネル。画面幅が狭い時 (< lg) は上下配置 */}
+      <div className="flex-1 flex flex-col lg:flex-row min-h-0">
+        {/* 地図エリア */}
+        <div className="h-64 lg:h-auto lg:flex-1 relative border-b lg:border-b-0 lg:border-r">
+          <FleetMapView
+            organizationId={orgId}
+            onSelectVehicle={(vid) => navigate(`/mobility/vehicles/${vid}`)}
+          />
+        </div>
+
+        {/* 右サイドパネル: 稼働中 + 車両マスタ */}
+        <div className="lg:w-96 xl:w-[28rem] overflow-y-auto p-4 space-y-5">
         {/* 稼働中サマリ */}
         <section>
           <div className="flex items-center gap-2 mb-2">
@@ -232,6 +240,7 @@ export function MobilityHomePage() {
             </>
           )}
         </section>
+        </div>
       </div>
 
       {showNewDialog && (
@@ -283,13 +292,7 @@ export function MobilityHomePage() {
   )
 }
 
-function MobilityHeader({
-  onBack,
-  onOpenMap,
-}: {
-  onBack: () => void
-  onOpenMap?: () => void
-}) {
+function MobilityHeader({ onBack }: { onBack: () => void }) {
   return (
     <div className="p-4 bg-white border-b flex items-center gap-3 shrink-0">
       <button
@@ -304,16 +307,6 @@ function MobilityHeader({
       <span className="px-2 py-0.5 text-[10px] rounded bg-amber-100 text-amber-800 border border-amber-300">
         開発中
       </span>
-      {onOpenMap && (
-        <button
-          onClick={onOpenMap}
-          className="flex items-center gap-1 px-3 py-1.5 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700"
-          title="稼働中車両を地図で見る"
-        >
-          <MapIcon className="h-4 w-4" />
-          地図
-        </button>
-      )}
     </div>
   )
 }
