@@ -58,6 +58,7 @@ import { FarmSettingsPage } from '@/features/settings/FarmSettingsPage'
 // モビリティ (社員/車両/重機の位置管理) - 現状はサイトオーナーのみプレビュー
 import { MobilityHomePage } from '@/features/mobility/MobilityHomePage'
 import { MobilityVehiclePage } from '@/features/mobility/MobilityVehiclePage'
+import { MobilityUserPage } from '@/features/mobility/MobilityUserPage'
 import { MobilityDriverPage } from '@/features/mobility/MobilityDriverPage'
 import { Loader2 } from 'lucide-react'
 import { isAdmin } from '@/lib/admin'
@@ -353,6 +354,14 @@ function AppRoutes() {
           element={
             <SiteOwnerRoute>
               <MobilityVehiclePage />
+            </SiteOwnerRoute>
+          }
+        />
+        <Route
+          path="mobility/users/:userId"
+          element={
+            <SiteOwnerRoute>
+              <MobilityUserPage />
             </SiteOwnerRoute>
           }
         />

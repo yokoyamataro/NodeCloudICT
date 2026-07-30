@@ -29,6 +29,18 @@ import { useCanUseMobility } from '@/lib/useCanUseMobility'
 import { useMobilityStore } from '@/stores/mobilityStore'
 import type { Vehicle, VehicleKind } from '@/types/database'
 import { FleetMapView } from '@/features/mobility/FleetMapView'
+import { supabase } from '@/lib/supabase'
+
+interface OrgMemberRow {
+  user_id: string
+  email: string
+  full_name: string | null
+  phone: string | null
+  role: 'admin' | 'member'
+  joined_at: string
+  invited_by: string | null
+  last_sign_in_at: string | null
+}
 
 const KIND_LABEL: Record<VehicleKind, string> = {
   car: '普通車',
@@ -70,6 +82,29 @@ export function MobilityHomePage() {
 
   const [showNewDialog, setShowNewDialog] = useState(false)
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null)
+  const [mode, setMode] = useState<'vehicle' | 'user'>('vehicle')
+  const [orgMembers, setOrgMembers] = useState<OrgMemberRow[]>([])
+  const [orgMembersLoading, setOrgMembersLoading] = useState(false)
+
+  // ユーザー一覧を取得 (user モード時)
+  useEffect(() => {
+    if (!orgId || mode !== 'user') return
+    let cancelled = false
+    setOrgMembersLoading(true)
+    ;(async () => {
+      const { data } = (await supabase.rpc(
+        'list_org_members' as never,
+        { p_org_id: orgId } as never,
+      )) as unknown as { data: OrgMemberRow[] | null; error: unknown }
+      if (!cancelled) {
+        setOrgMembers(data ?? [])
+        setOrgMembersLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [orgId, mode])
 
   const activeVehicles = useMemo(
     () => vehicles.filter((v) => v.active),
@@ -120,6 +155,46 @@ export function MobilityHomePage() {
 
         {/* 右サイドパネル: 稼働中 + 車両マスタ */}
         <div className="lg:w-96 xl:w-[28rem] overflow-y-auto p-4 space-y-5">
+        {/* モード切替タブ */}
+        <div className="flex gap-1 p-1 bg-slate-200 rounded">
+          <button
+            type="button"
+            onClick={() => setMode('vehicle')}
+            className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-xs font-medium rounded ${
+              mode === 'vehicle'
+                ? 'bg-white text-indigo-700 shadow'
+                : 'text-slate-600 hover:text-slate-800'
+            }`}
+          >
+            <Car className="h-3.5 w-3.5" />
+            車両単位
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('user')}
+            className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-xs font-medium rounded ${
+              mode === 'user'
+                ? 'bg-white text-indigo-700 shadow'
+                : 'text-slate-600 hover:text-slate-800'
+            }`}
+          >
+            <User className="h-3.5 w-3.5" />
+            ユーザー単位
+          </button>
+        </div>
+
+        {mode === 'user' && (
+          <UserModeSidebar
+            activeAssignments={activeAssignments}
+            vehicles={vehicles}
+            orgMembers={orgMembers}
+            loading={orgMembersLoading}
+            onOpenUser={(userId) => navigate(`/mobility/users/${userId}`)}
+          />
+        )}
+
+        {mode === 'vehicle' && (
+          <>
         {/* 稼働中サマリ */}
         <section>
           <div className="flex items-center gap-2 mb-2">
@@ -240,6 +315,8 @@ export function MobilityHomePage() {
             </>
           )}
         </section>
+          </>
+        )}
         </div>
       </div>
 
@@ -307,6 +384,159 @@ function MobilityHeader({ onBack }: { onBack: () => void }) {
       <span className="px-2 py-0.5 text-[10px] rounded bg-amber-100 text-amber-800 border border-amber-300">
         開発中
       </span>
+    </div>
+  )
+}
+
+// ユーザーモード時のサイドパネル: 稼働中ドライバー + 組織メンバー一覧
+function UserModeSidebar({
+  activeAssignments,
+  vehicles,
+  orgMembers,
+  loading,
+  onOpenUser,
+}: {
+  activeAssignments: Map<string, { id: string; user_id: string; vehicle_id: string; driver_name: string | null; started_at: string }>
+  vehicles: Vehicle[]
+  orgMembers: OrgMemberRow[]
+  loading: boolean
+  onOpenUser: (userId: string) => void
+}) {
+  const activeUsers = useMemo(() => {
+    const rows: {
+      userId: string
+      driverName: string
+      vehicleName: string
+      startedAt: string
+    }[] = []
+    for (const a of activeAssignments.values()) {
+      const v = vehicles.find((vv) => vv.id === a.vehicle_id)
+      rows.push({
+        userId: a.user_id,
+        driverName: a.driver_name || '(名前未設定)',
+        vehicleName: v?.name ?? '(不明車両)',
+        startedAt: a.started_at,
+      })
+    }
+    return rows
+  }, [activeAssignments, vehicles])
+
+  const activeUserIds = useMemo(
+    () => new Set(activeUsers.map((u) => u.userId)),
+    [activeUsers],
+  )
+
+  return (
+    <div className="space-y-5">
+      {/* 稼働中ドライバー */}
+      <section>
+        <div className="flex items-center gap-2 mb-2">
+          <div className="w-1 h-5 rounded bg-emerald-500" />
+          <h2 className="text-sm font-semibold text-slate-700">
+            稼働中ドライバー ({activeUsers.length})
+          </h2>
+        </div>
+        {activeUsers.length === 0 ? (
+          <div className="p-3 bg-white rounded border text-xs text-slate-400 text-center">
+            現在乗車中のドライバーはいません
+          </div>
+        ) : (
+          <ul className="space-y-1.5">
+            {activeUsers.map((u) => (
+              <li
+                key={u.userId}
+                className="flex items-center gap-3 p-3 bg-white rounded border hover:border-indigo-400 cursor-pointer"
+                onClick={() => onOpenUser(u.userId)}
+              >
+                <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
+                  <User className="h-4 w-4 text-emerald-700" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-slate-800 truncate">
+                    {u.driverName}
+                  </div>
+                  <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
+                    <Car className="h-3 w-3" />
+                    {u.vehicleName}
+                    <span className="mx-1">·</span>
+                    {new Date(u.startedAt).toLocaleTimeString('ja-JP', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                    〜
+                  </div>
+                </div>
+                <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-700 border border-emerald-300">
+                  乗車中
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* 組織メンバー一覧 */}
+      <section>
+        <div className="flex items-center gap-2 mb-2">
+          <div className="w-1 h-5 rounded bg-indigo-500" />
+          <h2 className="text-sm font-semibold text-slate-700 flex-1">
+            組織メンバー ({orgMembers.length})
+          </h2>
+        </div>
+        {loading ? (
+          <div className="p-4 text-center text-slate-400">
+            <Loader2 className="h-4 w-4 animate-spin inline mr-2" />
+            読み込み中...
+          </div>
+        ) : orgMembers.length === 0 ? (
+          <div className="p-3 bg-white rounded border text-xs text-slate-400 text-center">
+            メンバーがいません
+          </div>
+        ) : (
+          <ul className="space-y-1.5">
+            {orgMembers.map((m) => {
+              const isActive = activeUserIds.has(m.user_id)
+              return (
+                <li
+                  key={m.user_id}
+                  className="flex items-center gap-2 p-2.5 bg-white rounded border hover:border-indigo-400 cursor-pointer"
+                  onClick={() => onOpenUser(m.user_id)}
+                >
+                  <div
+                    className={`h-7 w-7 rounded-full flex items-center justify-center shrink-0 ${
+                      isActive ? 'bg-emerald-100' : 'bg-slate-100'
+                    }`}
+                  >
+                    <User
+                      className={`h-3.5 w-3.5 ${
+                        isActive ? 'text-emerald-700' : 'text-slate-500'
+                      }`}
+                    />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-slate-800 truncate">
+                      {m.full_name || m.email}
+                    </div>
+                    {m.full_name && m.email !== m.full_name && (
+                      <div className="text-[10px] text-slate-500 truncate">
+                        {m.email}
+                      </div>
+                    )}
+                  </div>
+                  {m.role === 'admin' && (
+                    <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-amber-100 text-amber-800">
+                      管理者
+                    </span>
+                  )}
+                  {isActive && (
+                    <span className="shrink-0 text-[10px] text-emerald-600">●</span>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </section>
     </div>
   )
 }
