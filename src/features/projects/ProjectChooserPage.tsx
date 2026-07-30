@@ -18,7 +18,7 @@ import {
   ROLE_LABEL,
   ROLE_BADGE_CLASS,
 } from '@/lib/useProjectPermission'
-import { useCanUseMobility } from '@/lib/useCanUseMobility'
+import { useCanUseMobility, useCanManageMobility } from '@/lib/useCanUseMobility'
 
 export function ProjectChooserPage() {
   const navigate = useNavigate()
@@ -35,6 +35,7 @@ export function ProjectChooserPage() {
   } = useProjectListStore()
   const { farms, fetchFarms, setCurrentFarm } = useFarmStore()
   const canUseMobility = useCanUseMobility()
+  const canManageMobility = useCanManageMobility()
 
   // 新規作成ダイアログは category を持つ
   const [showNewDialog, setShowNewDialog] = useState<ProjectCategory | null>(null)
@@ -211,7 +212,15 @@ export function ProjectChooserPage() {
           />
         )}
         {/* モビリティ (準備中): サイトオーナーだけに表示。現場と違いタイル 1 個で入口を提供する */}
-        {canUseMobility && <MobilityTile onOpen={() => navigate('/mobility')} />}
+        {canUseMobility && (
+          <MobilityTile
+            onOpen={() =>
+              // 管理者は管理画面へ、それ以外はドライバー画面へ
+              navigate(canManageMobility ? '/mobility' : '/mobility/drive')
+            }
+            isAdmin={canManageMobility}
+          />
+        )}
       </div>
 
       {/* 現場情報編集モーダル */}
@@ -300,9 +309,14 @@ export function ProjectChooserPage() {
 }
 
 // モビリティ入口タイル。現場と違い 1 枚の CTA タイルとして描画する。
-// 現状はプレースホルダページ (/mobility) に飛ばすだけ。将来的には
-// mobility.nodecloud.jp へ full navigation する形に差し替える。
-function MobilityTile({ onOpen }: { onOpen: () => void }) {
+// 管理者向けは「管理画面へ」、ドライバー向けは「乗車 / 現在地送信」
+function MobilityTile({
+  onOpen,
+  isAdmin,
+}: {
+  onOpen: () => void
+  isAdmin: boolean
+}) {
   return (
     <section>
       <div className="flex items-center gap-2 mb-2">
@@ -310,9 +324,6 @@ function MobilityTile({ onOpen }: { onOpen: () => void }) {
         <h2 className="text-sm font-semibold text-slate-700">モビリティ</h2>
         <span className="px-1.5 py-0.5 text-[10px] rounded bg-amber-100 text-amber-800 border border-amber-300">
           開発中
-        </span>
-        <span className="text-[10px] text-slate-400">
-          サイトオーナーのみ表示中
         </span>
       </div>
       <button
@@ -325,10 +336,14 @@ function MobilityTile({ onOpen }: { onOpen: () => void }) {
         </div>
         <div className="flex-1 min-w-0">
           <div className="text-sm font-semibold text-slate-800">
-            社員・車両・重機の現在地を管理
+            {isAdmin
+              ? '社員・車両・重機の現在地を管理'
+              : '乗車 / 現在地送信'}
           </div>
           <div className="text-xs text-slate-500 mt-0.5">
-            走行ログの記録と地図表示 (準備中)
+            {isAdmin
+              ? '走行ログ・地図・車両マスタ (管理者向け)'
+              : '地図を見ながら乗車 / 降車 / 位置送信'}
           </div>
         </div>
         <ChevronRight className="h-5 w-5 text-slate-400" />

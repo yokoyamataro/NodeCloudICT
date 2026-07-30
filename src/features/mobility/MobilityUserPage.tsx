@@ -22,7 +22,7 @@ import type { LatLngBoundsExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
-import { useCanUseMobility } from '@/lib/useCanUseMobility'
+import { useCanManageMobility } from '@/lib/useCanUseMobility'
 import { useMobilityStore } from '@/stores/mobilityStore'
 import { computeTotalDistanceMeters } from '@/lib/geoDistance'
 import type { MobilityPosition, VehicleAssignment } from '@/types/database'
@@ -58,7 +58,7 @@ function AutoFitTrack({ positions }: { positions: [number, number][] }) {
 export function MobilityUserPage() {
   const { userId } = useParams<{ userId: string }>()
   const navigate = useNavigate()
-  const canUse = useCanUseMobility()
+  const canUse = useCanManageMobility()
   const { profile } = useAuth()
   const orgId = profile?.organization_id ?? null
 

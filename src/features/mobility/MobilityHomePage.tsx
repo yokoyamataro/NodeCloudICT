@@ -6,7 +6,7 @@
 //   ・車両マスタ一覧 (新規/編集/廃止/削除)
 //
 // 権限:
-//   ・useCanUseMobility() で site owner のみ通す (未契約組織を弾く)
+//   ・useCanManageMobility() で org admin + site owner のみ通す
 //   ・組織 admin のみ車両編集 (RLS 側でも二重ガードなので UI 判定は
 //     楽観的に「所属組織があれば触れる」形で始めて、失敗時にサーバから戻す)
 
@@ -27,7 +27,7 @@ import {
   X,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { useCanUseMobility } from '@/lib/useCanUseMobility'
+import { useCanManageMobility } from '@/lib/useCanUseMobility'
 import { useMobilityStore } from '@/stores/mobilityStore'
 import type { Vehicle, VehicleKind } from '@/types/database'
 import { FleetMapView } from '@/features/mobility/FleetMapView'
@@ -86,7 +86,7 @@ const KIND_ICON: Record<VehicleKind, typeof Car> = {
 
 export function MobilityHomePage() {
   const navigate = useNavigate()
-  const canUse = useCanUseMobility()
+  const canUse = useCanManageMobility()
   const { profile } = useAuth()
   const orgId = profile?.organization_id ?? null
 

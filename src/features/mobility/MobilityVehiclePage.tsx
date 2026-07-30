@@ -29,7 +29,7 @@ import type { LatLngBoundsExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
-import { useCanUseMobility } from '@/lib/useCanUseMobility'
+import { useCanManageMobility } from '@/lib/useCanUseMobility'
 import { getCurrentSample } from '@/lib/geolocation'
 import { computeTotalDistanceMeters } from '@/lib/geoDistance'
 import { useMobilityStore, type AssignmentWithNames } from '@/stores/mobilityStore'
@@ -72,7 +72,7 @@ async function fetchOrgMembers(orgId: string): Promise<OrgMemberRow[]> {
 export function MobilityVehiclePage() {
   const { vehicleId } = useParams<{ vehicleId: string }>()
   const navigate = useNavigate()
-  const canUse = useCanUseMobility()
+  const canUse = useCanManageMobility()
   const { user, profile } = useAuth()
 
   const {

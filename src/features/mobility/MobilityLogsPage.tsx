@@ -22,7 +22,7 @@ import {
 import type { LatLngBoundsExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useAuth } from '@/contexts/AuthContext'
-import { useCanUseMobility } from '@/lib/useCanUseMobility'
+import { useCanManageMobility } from '@/lib/useCanUseMobility'
 import { useMobilityStore, type AssignmentWithNames } from '@/stores/mobilityStore'
 import { computeTotalDistanceMeters } from '@/lib/geoDistance'
 import type { MobilityPosition } from '@/types/database'
@@ -78,7 +78,7 @@ interface UserAggregate {
 
 export function MobilityLogsPage() {
   const navigate = useNavigate()
-  const canUse = useCanUseMobility()
+  const canUse = useCanManageMobility()
   const { profile } = useAuth()
   const orgId = profile?.organization_id ?? null
 

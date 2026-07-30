@@ -83,6 +83,27 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+// モビリティ管理画面向け: サイトオーナー or 組織 admin のみ通す。
+// 非 admin は /mobility/drive (ドライバー画面) にリダイレクトする。
+function MobilityAdminRoute({ children }: { children: React.ReactNode }) {
+  const { user, loading, isOrgAdmin } = useAuth()
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+      </div>
+    )
+  }
+
+  if (!user) return <Navigate to="/login" replace />
+  if (!isAdmin(user.email) && !isOrgAdmin) {
+    return <Navigate to="/mobility/drive" replace />
+  }
+
+  return <>{children}</>
+}
+
 // サイトオーナー限定ルート。非オーナーは /coordinates に飛ばす
 function SiteOwnerRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -341,37 +362,39 @@ function AppRoutes() {
         </Route>
         <Route path="settings" element={<FarmSettingsPage />} />
         <Route path="trash" element={<TrashPage />} />
-        {/* モビリティ (開発中): サイトオーナーだけが入れる。ページ側でも判定するが二重にゲート */}
+        {/* モビリティ管理画面: サイトオーナー or 組織 admin のみ。
+            非 admin は自動的に /mobility/drive にリダイレクトされる (Site owner 以外の
+            ドライバーがトップからタイル押下しても迷わないように) */}
         <Route
           path="mobility"
           element={
-            <SiteOwnerRoute>
+            <MobilityAdminRoute>
               <MobilityHomePage />
-            </SiteOwnerRoute>
+            </MobilityAdminRoute>
           }
         />
         <Route
           path="mobility/vehicles/:vehicleId"
           element={
-            <SiteOwnerRoute>
+            <MobilityAdminRoute>
               <MobilityVehiclePage />
-            </SiteOwnerRoute>
+            </MobilityAdminRoute>
           }
         />
         <Route
           path="mobility/users/:userId"
           element={
-            <SiteOwnerRoute>
+            <MobilityAdminRoute>
               <MobilityUserPage />
-            </SiteOwnerRoute>
+            </MobilityAdminRoute>
           }
         />
         <Route
           path="mobility/logs"
           element={
-            <SiteOwnerRoute>
+            <MobilityAdminRoute>
               <MobilityLogsPage />
-            </SiteOwnerRoute>
+            </MobilityAdminRoute>
           }
         />
         {/* /mobility/map は /mobility に統合 (地図が Home に埋め込まれた) */}
@@ -379,13 +402,14 @@ function AppRoutes() {
         </Route>
         {/* モビリティのドライバー地図画面: AppLayout をバイパスして全画面表示。
             スマホ乗車中はサイドバー/組織情報などの装飾は不要なので、内部で
-            最小ヘッダ「NodeCloud」+ 車両状態のみを描画する。 */}
+            最小ヘッダ「NodeCloud」+ 車両状態のみを描画する。
+            権限は組織メンバーなら誰でも OK (ページ側で useCanUseMobility も判定) */}
         <Route
           path="/mobility/drive"
           element={
-            <SiteOwnerRoute>
+            <ProtectedRoute>
               <MobilityDriverPage />
-            </SiteOwnerRoute>
+            </ProtectedRoute>
           }
         />
       </Routes>
