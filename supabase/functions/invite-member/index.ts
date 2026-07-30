@@ -35,8 +35,36 @@ interface InviteBody {
   // 組織招待
   organization_id?: string
   org_role?: OrgRole
-  // 共通
+  // 共通 - email または phone のどちらか
   email?: string
+  phone?: string
+}
+
+/** 日本の電話番号を E.164 に正規化。
+ *   '090-1234-5678' / '09012345678' → '+819012345678'
+ *   '+819012345678' / '819012345678' → '+819012345678'
+ *   国際形式 '+xx...' は先頭 + を保ったまま数字だけ抽出
+ *   0 始まりの 10-11 桁は日本国内番号として +81 を付与
+ *   マッチしない場合は null (呼び出し側でエラー)
+ */
+function normalizeJpPhone(raw: string): string | null {
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  const isIntl = trimmed.startsWith('+')
+  const digits = trimmed.replace(/\D/g, '')
+  if (isIntl) {
+    if (digits.length < 8 || digits.length > 15) return null
+    return `+${digits}`
+  }
+  // 日本国内: 先頭 0 を除去し +81 を付ける
+  if (digits.length >= 10 && digits.length <= 11 && digits.startsWith('0')) {
+    return `+81${digits.substring(1)}`
+  }
+  // 81 で始まる 12-13 桁 (先頭 + が省略された国際表記)
+  if (digits.startsWith('81') && digits.length >= 11 && digits.length <= 13) {
+    return `+${digits}`
+  }
+  return null
 }
 
 function makeCors(origin?: string) {
@@ -87,8 +115,14 @@ Deno.serve(async (req) => {
     return json(400, { error: 'Bad Request' }, origin)
   }
 
-  const emailRaw = body.email?.trim().toLowerCase()
-  if (!emailRaw) return json(400, { error: 'Missing email' }, origin)
+  const emailRaw = body.email?.trim().toLowerCase() || null
+  const phoneRaw = body.phone ? normalizeJpPhone(body.phone) : null
+  if (!emailRaw && !phoneRaw) {
+    return json(400, { error: 'Missing email or phone' }, origin)
+  }
+  if (body.phone && !phoneRaw) {
+    return json(400, { error: '電話番号の形式が正しくありません' }, origin)
+  }
 
   // 排他: project or organization どちらか一方 (両方指定はエラー)
   const hasProject = !!body.project_id
@@ -97,6 +131,11 @@ Deno.serve(async (req) => {
     return json(400, {
       error: 'Specify exactly one of project_id or organization_id',
     }, origin)
+  }
+
+  // プロジェクト招待は現状 email のみ対応 (電話番号招待は組織のみ)
+  if (hasProject && !emailRaw) {
+    return json(400, { error: 'プロジェクト招待は電話番号非対応 (email 必須)' }, origin)
   }
 
   // 既存ユーザーをメールで検索するヘルパ
@@ -109,6 +148,21 @@ Deno.serve(async (req) => {
       })
       if (error) throw error
       const hit = data.users.find((u) => (u.email ?? '').toLowerCase() === email)
+      if (hit) return hit.id
+      if (data.users.length < 200) break
+    }
+    return null
+  }
+
+  // 既存ユーザーを電話番号で検索するヘルパ
+  async function findUserIdByPhone(phone: string): Promise<string | null> {
+    for (let page = 1; page <= 10; page++) {
+      const { data, error } = await admin.auth.admin.listUsers({
+        page,
+        perPage: 200,
+      })
+      if (error) throw error
+      const hit = data.users.find((u) => (u.phone ?? '') === phone)
       if (hit) return hit.id
       if (data.users.length < 200) break
     }
@@ -613,10 +667,15 @@ Deno.serve(async (req) => {
   }
   if (!orgOk) return json(403, { error: 'Not organization admin' }, origin)
 
-  // 既存ユーザー検索
+  // 既存ユーザー検索 (email 優先、無ければ phone)
   let existingUserId: string | null = null
   try {
-    existingUserId = await findUserIdByEmail(emailRaw)
+    if (emailRaw) {
+      existingUserId = await findUserIdByEmail(emailRaw)
+    }
+    if (!existingUserId && phoneRaw) {
+      existingUserId = await findUserIdByPhone(phoneRaw)
+    }
   } catch (err) {
     return json(500, { error: 'User lookup failed: ' + (err as Error).message }, origin)
   }
@@ -671,22 +730,24 @@ Deno.serve(async (req) => {
       console.warn('[invite-member] profile upsert failed:', upErr.message)
     }
 
-    // 既存ユーザーに「組織に追加されました」通知メールを送る。失敗しても
-    // 組織追加自体は成功しているので警告のみ (レスポンスの notified で伝える)
+    // 既存ユーザーに「組織に追加されました」通知メールを送る。
+    // email が無いユーザー (phone 招待) は通知メールをスキップ。
     let notified = false
     let notifyError: string | null = null
-    try {
-      const { data: orgRow } = await admin
-        .from('organizations')
-        .select('name')
-        .eq('id', orgId)
-        .maybeSingle()
-      const orgName = (orgRow as { name?: string } | null)?.name ?? '組織'
-      await sendOrgAddedNotification(emailRaw, orgName, callerEmail)
-      notified = true
-    } catch (err) {
-      notifyError = (err as Error).message
-      console.warn('[invite-member] org-added notification failed:', notifyError)
+    if (emailRaw) {
+      try {
+        const { data: orgRow } = await admin
+          .from('organizations')
+          .select('name')
+          .eq('id', orgId)
+          .maybeSingle()
+        const orgName = (orgRow as { name?: string } | null)?.name ?? '組織'
+        await sendOrgAddedNotification(emailRaw, orgName, callerEmail)
+        notified = true
+      } catch (err) {
+        notifyError = (err as Error).message
+        console.warn('[invite-member] org-added notification failed:', notifyError)
+      }
     }
     return json(
       200,
@@ -695,34 +756,53 @@ Deno.serve(async (req) => {
     )
   }
 
-  // 未登録 → pending_invitations に upsert (organization_id + email が UNIQUE)。
-  //   同じ (org, email) で以前招待した行があれば org_role を上書きする。
+  // 未登録 → pending_invitations に upsert
+  //   email 招待: onConflict: 'organization_id,email'
+  //   phone 招待: onConflict: 'organization_id,phone'
+  //   両方あるケースは email 優先。
+  const conflictKey = emailRaw ? 'organization_id,email' : 'organization_id,phone'
   const { error: pendErr } = await admin
     .from('pending_invitations')
     .upsert(
       {
         organization_id: orgId,
         email: emailRaw,
+        phone: phoneRaw,
         org_role: orgRole,
         invited_by: callerId,
       },
-      { onConflict: 'organization_id,email' },
+      { onConflict: conflictKey },
     )
   if (pendErr) {
     return json(500, { error: 'Pending insert failed: ' + pendErr.message }, origin)
   }
 
-  // Resend 経由で組織招待メール送信 (Supabase Invite のレート制限回避)
-  const { data: orgRowForMail } = await admin
-    .from('organizations')
-    .select('name')
-    .eq('id', orgId)
-    .maybeSingle()
-  const orgNameForMail = (orgRowForMail as { name?: string } | null)?.name ?? '組織'
-  try {
-    await sendOrgInviteEmail(emailRaw, orgNameForMail, callerEmail, orgRole)
-  } catch (err) {
-    return json(500, { error: 'Invite send failed: ' + (err as Error).message }, origin)
+  // email 招待: Resend で招待メール送信
+  // phone 招待: SMS 送信は Supabase Auth の signInWithOtp 経由で
+  //   ユーザーがログイン試行した時に自動で走る。ここでは通知しない。
+  if (emailRaw) {
+    const { data: orgRowForMail } = await admin
+      .from('organizations')
+      .select('name')
+      .eq('id', orgId)
+      .maybeSingle()
+    const orgNameForMail = (orgRowForMail as { name?: string } | null)?.name ?? '組織'
+    try {
+      await sendOrgInviteEmail(emailRaw, orgNameForMail, callerEmail, orgRole)
+    } catch (err) {
+      return json(500, { error: 'Invite send failed: ' + (err as Error).message }, origin)
+    }
   }
-  return json(200, { ok: true, status: 'invited' }, origin)
+  return json(
+    200,
+    {
+      ok: true,
+      status: emailRaw ? 'invited' : 'invited_by_phone',
+      /** phone 招待は、ユーザーが自分で電話番号でログインしに来る必要がある旨を UI に伝える */
+      note: phoneRaw
+        ? '電話番号での招待を受け付けました。招待された方がアプリで電話番号ログインをすると自動的に組織に追加されます。'
+        : undefined,
+    },
+    origin,
+  )
 })

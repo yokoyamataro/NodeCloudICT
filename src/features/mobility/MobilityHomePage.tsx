@@ -18,6 +18,7 @@ import {
   Construction,
   Loader2,
   Pencil,
+  Phone,
   Plus,
   Trash2,
   Truck,
@@ -30,6 +31,25 @@ import { useMobilityStore } from '@/stores/mobilityStore'
 import type { Vehicle, VehicleKind } from '@/types/database'
 import { FleetMapView } from '@/features/mobility/FleetMapView'
 import { supabase } from '@/lib/supabase'
+
+/** 日本の電話番号を E.164 (+81 xx xxxx xxxx) に正規化。無効なら null。 */
+function normalizeJpPhone(raw: string): string | null {
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  const isIntl = trimmed.startsWith('+')
+  const digits = trimmed.replace(/\D/g, '')
+  if (isIntl) {
+    if (digits.length < 8 || digits.length > 15) return null
+    return `+${digits}`
+  }
+  if (digits.length >= 10 && digits.length <= 11 && digits.startsWith('0')) {
+    return `+81${digits.substring(1)}`
+  }
+  if (digits.startsWith('81') && digits.length >= 11 && digits.length <= 13) {
+    return `+${digits}`
+  }
+  return null
+}
 
 interface OrgMemberRow {
   user_id: string
@@ -85,6 +105,7 @@ export function MobilityHomePage() {
   const [mode, setMode] = useState<'vehicle' | 'user'>('vehicle')
   const [orgMembers, setOrgMembers] = useState<OrgMemberRow[]>([])
   const [orgMembersLoading, setOrgMembersLoading] = useState(false)
+  const [showPhoneInvite, setShowPhoneInvite] = useState(false)
 
   // ユーザー一覧を取得 (user モード時)
   useEffect(() => {
@@ -190,6 +211,7 @@ export function MobilityHomePage() {
             orgMembers={orgMembers}
             loading={orgMembersLoading}
             onOpenUser={(userId) => navigate(`/mobility/users/${userId}`)}
+            onInviteByPhone={() => setShowPhoneInvite(true)}
           />
         )}
 
@@ -365,6 +387,12 @@ export function MobilityHomePage() {
           onClose={() => setEditingVehicle(null)}
         />
       )}
+      {showPhoneInvite && (
+        <PhoneInviteDialog
+          organizationId={orgId}
+          onClose={() => setShowPhoneInvite(false)}
+        />
+      )}
     </div>
   )
 }
@@ -395,12 +423,14 @@ function UserModeSidebar({
   orgMembers,
   loading,
   onOpenUser,
+  onInviteByPhone,
 }: {
   activeAssignments: Map<string, { id: string; user_id: string; vehicle_id: string; driver_name: string | null; started_at: string }>
   vehicles: Vehicle[]
   orgMembers: OrgMemberRow[]
   loading: boolean
   onOpenUser: (userId: string) => void
+  onInviteByPhone: () => void
 }) {
   const activeUsers = useMemo(() => {
     const rows: {
@@ -482,6 +512,15 @@ function UserModeSidebar({
           <h2 className="text-sm font-semibold text-slate-700 flex-1">
             組織メンバー ({orgMembers.length})
           </h2>
+          <button
+            type="button"
+            onClick={onInviteByPhone}
+            className="flex items-center gap-1 px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700"
+            title="電話番号でドライバーを招待する"
+          >
+            <Phone className="h-3 w-3" />
+            電話で招待
+          </button>
         </div>
         {loading ? (
           <div className="p-4 text-center text-slate-400">
@@ -750,6 +789,178 @@ function VehicleEditDialog({
             保存
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+// 電話番号でドライバーを招待するダイアログ (Edge Function invite-member を phone で呼ぶ)
+function PhoneInviteDialog({
+  organizationId,
+  onClose,
+}: {
+  organizationId: string
+  onClose: () => void
+}) {
+  const [phoneInput, setPhoneInput] = useState('')
+  const [role, setRole] = useState<'admin' | 'member'>('member')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+
+  const normalized = normalizeJpPhone(phoneInput)
+  const canSubmit = !!normalized && !busy
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+    setMessage(null)
+    if (!normalized) {
+      setError('電話番号の形式が正しくありません (例: 090-1234-5678)')
+      return
+    }
+    setBusy(true)
+    try {
+      const { data, error: fnErr } = await supabase.functions.invoke(
+        'invite-member',
+        {
+          body: {
+            organization_id: organizationId,
+            phone: normalized,
+            org_role: role,
+          },
+        },
+      )
+      if (fnErr) {
+        let msg = fnErr.message || '招待に失敗しました'
+        const ctx = (fnErr as unknown as { context?: { body?: string } }).context
+        if (ctx?.body) {
+          try {
+            const parsed = JSON.parse(ctx.body) as { error?: string }
+            if (parsed.error) msg = parsed.error
+          } catch {
+            /* ignore */
+          }
+        }
+        throw new Error(msg)
+      }
+      const result = (data ?? {}) as {
+        ok?: boolean
+        status?: string
+        note?: string
+        error?: string
+      }
+      if (!result.ok) throw new Error(result.error ?? '招待に失敗しました')
+      setMessage(
+        result.status === 'added_existing_user'
+          ? `${normalized} は既にアカウントを持っているため、組織に追加しました。`
+          : result.note ??
+              `${normalized} を招待しました。相手方が電話番号ログインすると自動で組織に追加されます。`,
+      )
+      setPhoneInput('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[3500]"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white w-full max-w-md rounded-xl shadow-xl flex flex-col max-h-[92vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-4 py-3 border-b flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2">
+            <Phone className="h-4 w-4 text-indigo-600" />
+            <h3 className="text-base font-semibold">電話番号で招待</h3>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded hover:bg-slate-100 text-slate-500"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-4 space-y-3 overflow-y-auto">
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">
+              電話番号 <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="tel"
+              value={phoneInput}
+              onChange={(e) => setPhoneInput(e.target.value)}
+              placeholder="090-1234-5678"
+              autoFocus
+              className="w-full px-2 py-1.5 text-sm border rounded"
+            />
+            <div className="text-[10px] text-slate-500 mt-1">
+              {normalized ? (
+                <span className="text-emerald-700">
+                  正規化: <span className="font-mono">{normalized}</span>
+                </span>
+              ) : (
+                phoneInput && '⚠ 電話番号の形式が正しくありません'
+              )}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">役割</label>
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value as 'admin' | 'member')}
+              className="w-full px-2 py-1.5 text-sm border rounded bg-white"
+            >
+              <option value="member">一般メンバー</option>
+              <option value="admin">管理者</option>
+            </select>
+          </div>
+          <div className="p-3 bg-slate-50 border rounded text-[11px] text-slate-600 leading-relaxed">
+            招待の流れ:
+            <br />
+            1. 招待を送信 → 一時 pending として保存
+            <br />
+            2. 相手方がアプリで「電話番号でログイン」→ SMS で 6 桁コード受信
+            <br />
+            3. コード入力後にアカウント作成 → 自動的にこの組織に所属
+            <br />
+            <span className="text-amber-700">
+              ※ SMS 送信料は Supabase Auth プロバイダ (Twilio 等) 経由でかかります
+            </span>
+          </div>
+          {error && (
+            <div className="p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+              {error}
+            </div>
+          )}
+          {message && (
+            <div className="p-2 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-700">
+              {message}
+            </div>
+          )}
+          <div className="flex gap-2 pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 px-3 py-2 text-sm border rounded hover:bg-slate-50"
+            >
+              閉じる
+            </button>
+            <button
+              type="submit"
+              disabled={!canSubmit}
+              className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+              招待を送る
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   )
