@@ -12,6 +12,33 @@ import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
 import type { Vehicle, VehicleAssignment, VehicleKind } from '@/types/database'
 
+// Supabase の PostgrestError は Error インスタンスではなくプレーンオブジェクトなので、
+// String(err) だと "[object Object]" になる。message + details + hint + code を組み立てる。
+function extractErr(err: unknown): string {
+  if (!err) return 'unknown error'
+  if (err instanceof Error) return err.message
+  if (typeof err === 'string') return err
+  if (typeof err === 'object' && err !== null) {
+    const e = err as {
+      message?: string
+      details?: string
+      hint?: string
+      code?: string
+    }
+    const parts: string[] = []
+    if (e.message) parts.push(e.message)
+    if (e.details) parts.push(`details=${e.details}`)
+    if (e.hint) parts.push(`hint=${e.hint}`)
+    if (e.code) parts.push(`code=${e.code}`)
+    if (parts.length > 0) return parts.join(' | ')
+  }
+  try {
+    return JSON.stringify(err)
+  } catch {
+    return String(err)
+  }
+}
+
 /** ドロップダウン等で使う割当情報 + 補助フィールド (メンバー名など) */
 export interface AssignmentWithNames extends VehicleAssignment {
   driver_name: string | null
@@ -91,7 +118,7 @@ export const useMobilityStore = create<State>((set, get) => ({
       set({ vehicles: (data ?? []) as Vehicle[], vehiclesLoading: false })
     } catch (err) {
       set({
-        vehiclesError: err instanceof Error ? err.message : String(err),
+        vehiclesError: extractErr(err),
         vehiclesLoading: false,
       })
     }
@@ -116,7 +143,7 @@ export const useMobilityStore = create<State>((set, get) => ({
       set((s) => ({ vehicles: [v, ...s.vehicles] }))
       return v
     } catch (err) {
-      set({ vehiclesError: err instanceof Error ? err.message : String(err) })
+      set({ vehiclesError: extractErr(err) })
       return null
     }
   },
@@ -134,7 +161,7 @@ export const useMobilityStore = create<State>((set, get) => ({
     } catch (err) {
       set({
         vehicles: prev,
-        vehiclesError: err instanceof Error ? err.message : String(err),
+        vehiclesError: extractErr(err),
       })
     }
   },
@@ -148,7 +175,7 @@ export const useMobilityStore = create<State>((set, get) => ({
     } catch (err) {
       set({
         vehicles: prev,
-        vehiclesError: err instanceof Error ? err.message : String(err),
+        vehiclesError: extractErr(err),
       })
     }
   },
@@ -202,7 +229,7 @@ export const useMobilityStore = create<State>((set, get) => ({
       })
       return enriched
     } catch (err) {
-      set({ vehiclesError: err instanceof Error ? err.message : String(err) })
+      set({ vehiclesError: extractErr(err) })
       return null
     }
   },
@@ -223,7 +250,7 @@ export const useMobilityStore = create<State>((set, get) => ({
         return { activeAssignments: map }
       })
     } catch (err) {
-      set({ vehiclesError: err instanceof Error ? err.message : String(err) })
+      set({ vehiclesError: extractErr(err) })
     }
   },
 
