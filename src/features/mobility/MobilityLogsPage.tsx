@@ -105,7 +105,11 @@ export function MobilityLogsPage() {
   const orgId = profile?.organization_id ?? null
 
   const [searchParams, setSearchParams] = useSearchParams()
-  const selectedDate = parseDateParam(searchParams.get('date'))
+  // URL の date パラメータをそのまま useMemo のキーにして、Date オブジェクトを
+  // 参照安定させる。文字列を deps に使わないと毎レンダーで new Date() が作られ、
+  // useEffect が無限に再実行されて loading=true のまま固まる。
+  const dateParam = searchParams.get('date')
+  const selectedDate = useMemo(() => parseDateParam(dateParam), [dateParam])
 
   const setDate = useCallback(
     (d: Date) => {
