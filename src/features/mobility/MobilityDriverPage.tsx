@@ -155,7 +155,14 @@ function MapControlStack({
   onToggleHeading: () => void
 }) {
   const map = useMap()
-  const btn = 'w-9 h-9 flex items-center justify-center bg-white text-slate-700 border border-slate-300 shadow'
+  // 「基本」と「アクティブ」の bg/text/border を一切重複させない
+  // (以前は `bg-white text-slate-700 ... + bg-emerald-500 text-white` と重ねていて
+  //  Tailwind の CSS 出力順で bg-white が勝ち、アクティブ時に白背景+白アイコン=見えない
+  //  という状態になっていた)
+  const btnBase = 'w-9 h-9 flex items-center justify-center shadow border'
+  const btnInactive = 'bg-white text-slate-700 border-slate-300'
+  const btnFollowActive = 'bg-emerald-500 text-white border-emerald-600'
+  const btnHeadingActive = 'bg-indigo-500 text-white border-indigo-600'
   return (
     <div className="absolute top-3 left-3 z-[500] flex flex-col rounded overflow-hidden">
       <button
@@ -164,7 +171,7 @@ function MapControlStack({
           e.stopPropagation()
           onToggleFollow()
         }}
-        className={`${btn} rounded-t ${followMe ? 'bg-emerald-500 text-white border-emerald-600' : ''}`}
+        className={`${btnBase} rounded-t ${followMe ? btnFollowActive : btnInactive}`}
         title={followMe ? '追跡中 (タップで停止)' : '自車を追跡'}
       >
         <Crosshair className="h-4 w-4" />
@@ -175,7 +182,7 @@ function MapControlStack({
           e.stopPropagation()
           onToggleHeading()
         }}
-        className={`${btn} -mt-px ${headingUp ? 'bg-indigo-500 text-white border-indigo-600' : ''}`}
+        className={`${btnBase} -mt-px ${headingUp ? btnHeadingActive : btnInactive}`}
         title={headingUp ? 'ヘディングアップ中 (タップで北向き)' : '北向き (タップでヘディングアップ)'}
       >
         <Compass className="h-4 w-4" />
@@ -186,7 +193,7 @@ function MapControlStack({
           e.stopPropagation()
           map.zoomIn()
         }}
-        className={`${btn} -mt-px`}
+        className={`${btnBase} -mt-px ${btnInactive}`}
         title="拡大"
       >
         <Plus className="h-4 w-4" />
@@ -197,7 +204,7 @@ function MapControlStack({
           e.stopPropagation()
           map.zoomOut()
         }}
-        className={`${btn} -mt-px rounded-b`}
+        className={`${btnBase} -mt-px rounded-b ${btnInactive}`}
         title="縮小"
       >
         <Minus className="h-4 w-4" />
