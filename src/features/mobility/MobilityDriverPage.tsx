@@ -223,6 +223,7 @@ export function MobilityDriverPage() {
     sendPosition,
     fetchRecentPositions,
     fetchPositionsForUserSince,
+    fetchUserAssignmentHistory,
     fetchMyAssignedProjects,
     fetchProjectPoints,
   } = useMobilityStore()
@@ -310,6 +311,24 @@ export function MobilityDriverPage() {
   // 単位 (現在の乗車) 走行距離。myActive.started_at 以降を累積する。
   // 降車で新しい単位に切り替わり、次回乗車時は自動的に 0 から始まる。
   const [unitDistanceM, setUnitDistanceM] = useState(0)
+
+  // 本日走行距離 (今日 00:00 以降の全乗車の合計)
+  const [todayDistanceM, setTodayDistanceM] = useState(0)
+  // 本日の全 assignment (時間集計に使う)
+  const [todayAssignments, setTodayAssignments] = useState<
+    { started_at: string; ended_at: string | null }[]
+  >([])
+
+  // 走行時間表示を「単位」/「本日」で切替 (パネルタップで反転)
+  const [distanceMode, setDistanceMode] = useState<'unit' | 'today'>('unit')
+
+  // 走行時間 (経過時間) の即時更新用に定期 tick する now
+  const [nowTick, setNowTick] = useState(() => Date.now())
+  useEffect(() => {
+    if (!myActive) return
+    const id = setInterval(() => setNowTick(Date.now()), 30_000)
+    return () => clearInterval(id)
+  }, [myActive])
 
   // 地図追跡状態 (現在地に自動でセンタリング)。初期値 true。
   // ユーザーが地図をドラッグすると false になり、現在地ボタンで戻す。
@@ -482,6 +501,73 @@ export function MobilityDriverPage() {
     }
   }, [user, myActive, lastAutoSentAt, fetchPositionsForUserSince])
 
+  // 本日走行距離: 今日 00:00 以降の自分の位置ログ全体から累積 (全 assignment 横断)
+  useEffect(() => {
+    if (!user) {
+      setTodayDistanceM(0)
+      return
+    }
+    let cancelled = false
+    const compute = async () => {
+      const startOfToday = new Date()
+      startOfToday.setHours(0, 0, 0, 0)
+      const rows = await fetchPositionsForUserSince(
+        user.id,
+        startOfToday.toISOString(),
+      )
+      if (cancelled) return
+      setTodayDistanceM(computeTotalDistanceMeters(rows))
+    }
+    void compute()
+    const timer = myActive ? setInterval(compute, 30_000) : null
+    return () => {
+      cancelled = true
+      if (timer) clearInterval(timer)
+    }
+  }, [user, myActive, lastAutoSentAt, fetchPositionsForUserSince])
+
+  // 本日の全 assignment (走行時間の合計に使う)。fetchUserAssignmentHistory は
+  // 直近 100 件を返すので、その中から今日 00:00 以降を started_at で絞る。
+  useEffect(() => {
+    if (!user) {
+      setTodayAssignments([])
+      return
+    }
+    let cancelled = false
+    const load = async () => {
+      const startOfToday = new Date()
+      startOfToday.setHours(0, 0, 0, 0)
+      const rows = await fetchUserAssignmentHistory(user.id)
+      if (cancelled) return
+      const startMs = startOfToday.getTime()
+      setTodayAssignments(
+        rows
+          .filter((r) => new Date(r.started_at).getTime() >= startMs)
+          .map((r) => ({ started_at: r.started_at, ended_at: r.ended_at })),
+      )
+    }
+    void load()
+    // 乗車状態が変わったら (乗車 / 降車) 即再取得。
+    // それ以外の更新は次回 myActive 変化で拾えばよい (時間だけは nowTick で流れる)
+    return () => {
+      cancelled = true
+    }
+  }, [user, myActive, fetchUserAssignmentHistory])
+
+  // 走行時間の計算 (単位 / 本日)
+  const unitDurationMs = myActive
+    ? Math.max(0, nowTick - new Date(myActive.started_at).getTime())
+    : 0
+  const todayDurationMs = useMemo(() => {
+    let total = 0
+    for (const a of todayAssignments) {
+      const start = new Date(a.started_at).getTime()
+      const end = a.ended_at ? new Date(a.ended_at).getTime() : nowTick
+      total += Math.max(0, end - start)
+    }
+    return total
+  }, [todayAssignments, nowTick])
+
   // 走行軌跡 (自分の active assignment のもの)
   const [trackPositions, setTrackPositions] = useState<MobilityPosition[]>([])
   useEffect(() => {
@@ -640,20 +726,41 @@ export function MobilityDriverPage() {
               <span className="text-xs font-normal text-slate-300 ml-1">km/h</span>
             </div>
           </div>
-          <div className="bg-slate-800 border border-slate-700 rounded-lg p-2 text-white">
-            <div className="text-[10px] text-slate-400">単位走行</div>
+          <button
+            type="button"
+            onClick={() =>
+              setDistanceMode((m) => (m === 'unit' ? 'today' : 'unit'))
+            }
+            style={{ touchAction: 'manipulation' }}
+            className="bg-slate-800 border border-slate-700 rounded-lg p-2 text-white text-left active:bg-slate-700"
+            title="タップで 単位走行 / 本日走行 を切替"
+          >
+            <div className="text-[10px] text-slate-400 flex items-center gap-1">
+              <span className="flex-1">
+                {distanceMode === 'unit' ? '単位走行' : '本日走行'}
+              </span>
+              <span className="text-[9px] text-slate-500">↔</span>
+            </div>
             <div className="text-2xl font-bold leading-tight">
-              {(unitDistanceM / 1000).toFixed(1)}
+              {(
+                (distanceMode === 'unit' ? unitDistanceM : todayDistanceM) / 1000
+              ).toFixed(1)}
               <span className="text-xs font-normal text-slate-300 ml-1">km</span>
+              <span className="text-[10px] font-normal text-slate-400 ml-2">
+                {formatDurationShort(
+                  distanceMode === 'unit' ? unitDurationMs : todayDurationMs,
+                )}
+              </span>
             </div>
             <div className="text-[9px] text-slate-500 mt-0.5">
-              {new Date(myActive.started_at).toLocaleTimeString('ja-JP', {
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
-              〜
+              {distanceMode === 'unit'
+                ? `${new Date(myActive.started_at).toLocaleTimeString('ja-JP', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })} 〜`
+                : `本日 00:00 〜 · ${todayAssignments.length} 単位合計`}
             </div>
-          </div>
+          </button>
           {selectedDestination && destInfo && (
             <div className="bg-slate-800 border border-amber-600/70 rounded-lg p-2 text-white relative min-w-0">
               <div className="flex items-center gap-1">
@@ -914,6 +1021,16 @@ function buildDestinationIcon(name: string): L.DivIcon {
 function formatDistance(meters: number): string {
   if (meters < 1000) return `${Math.round(meters)} m`
   return `${(meters / 1000).toFixed(meters < 10_000 ? 2 : 1)} km`
+}
+
+/** 走行時間を "Xh Ym" / "Ym" にまとめる (0m 以下は "0m") */
+function formatDurationShort(ms: number): string {
+  if (ms <= 0) return '0m'
+  const totalMins = Math.floor(ms / 60_000)
+  const h = Math.floor(totalMins / 60)
+  const m = totalMins % 60
+  if (h > 0) return `${h}h ${m}m`
+  return `${m}m`
 }
 
 // -----------------------------------------------------------------------------
