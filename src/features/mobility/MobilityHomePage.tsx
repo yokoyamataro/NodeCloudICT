@@ -10,12 +10,14 @@
 //   ・組織 admin のみ車両編集 (RLS 側でも二重ガードなので UI 判定は
 //     楽観的に「所属組織があれば触れる」形で始めて、失敗時にサーバから戻す)
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
   Calendar,
   Car,
+  CheckSquare,
+  ChevronDown,
   Construction,
   Folder,
   Loader2,
@@ -23,6 +25,7 @@ import {
   Pencil,
   Phone,
   Plus,
+  Square,
   Trash2,
   Truck,
   User,
@@ -30,9 +33,13 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCanManageMobility } from '@/lib/useCanUseMobility'
-import { useMobilityStore } from '@/stores/mobilityStore'
-import type { Vehicle, VehicleKind } from '@/types/database'
+import {
+  useMobilityStore,
+  type AssignmentWithNames,
+} from '@/stores/mobilityStore'
+import type { MobilityPosition, Vehicle, VehicleKind } from '@/types/database'
 import { FleetMapView } from '@/features/mobility/FleetMapView'
+import { computeTotalDistanceMeters } from '@/lib/geoDistance'
 import { supabase } from '@/lib/supabase'
 
 // 電話番号 + SMS 招待 UI の表示フラグ。
@@ -117,6 +124,38 @@ export function MobilityHomePage() {
   const [orgMembersLoading, setOrgMembersLoading] = useState(false)
   const [showPhoneInvite, setShowPhoneInvite] = useState(false)
 
+  // インライン展開する行 (同時に 1 台/1 人のみ)
+  const [expandedVehicleId, setExpandedVehicleId] = useState<string | null>(null)
+  const [expandedUserId, setExpandedUserId] = useState<string | null>(null)
+  // 履歴チェックで地図に軌跡を出す assignment 群 (縦の複数選択可能)
+  const [checkedAssignmentIds, setCheckedAssignmentIds] = useState<Set<string>>(
+    () => new Set(),
+  )
+
+  const toggleAssignmentCheck = useCallback((assignmentId: string) => {
+    setCheckedAssignmentIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(assignmentId)) next.delete(assignmentId)
+      else next.add(assignmentId)
+      return next
+    })
+  }, [])
+
+  const checkedAssignmentIdsArr = useMemo(
+    () => Array.from(checkedAssignmentIds),
+    [checkedAssignmentIds],
+  )
+
+  const toggleExpandVehicle = useCallback((vehicleId: string) => {
+    setExpandedVehicleId((prev) => (prev === vehicleId ? null : vehicleId))
+    setExpandedUserId(null)
+  }, [])
+
+  const toggleExpandUser = useCallback((userId: string) => {
+    setExpandedUserId((prev) => (prev === userId ? null : userId))
+    setExpandedVehicleId(null)
+  }, [])
+
   // ユーザー一覧を取得 (user モード時)
   useEffect(() => {
     if (!orgId || mode !== 'user') return
@@ -184,7 +223,13 @@ export function MobilityHomePage() {
         <div className="h-64 lg:h-auto lg:flex-1 relative border-b lg:border-b-0 lg:border-r">
           <FleetMapView
             organizationId={orgId}
-            onSelectVehicle={(vid) => navigate(`/mobility/vehicles/${vid}`)}
+            extraTrackAssignmentIds={checkedAssignmentIdsArr}
+            onSelectVehicle={(vid) => {
+              // 別画面に飛ばさず、右パネルの該当行を展開する
+              setMode('vehicle')
+              setExpandedVehicleId(vid)
+              setExpandedUserId(null)
+            }}
           />
         </div>
 
@@ -224,7 +269,10 @@ export function MobilityHomePage() {
             vehicles={vehicles}
             orgMembers={orgMembers}
             loading={orgMembersLoading}
-            onOpenUser={(userId) => navigate(`/mobility/users/${userId}`)}
+            expandedUserId={expandedUserId}
+            checkedIds={checkedAssignmentIds}
+            onToggleExpand={toggleExpandUser}
+            onToggleCheck={toggleAssignmentCheck}
             onInviteByPhone={() => setShowPhoneInvite(true)}
           />
         )}
@@ -249,48 +297,69 @@ export function MobilityHomePage() {
                 const v = vehicles.find((x) => x.id === vehicleId)
                 if (!v) return null
                 const Icon = KIND_ICON[v.kind]
+                const expanded = expandedVehicleId === v.id
                 return (
                   <li
                     key={a.id}
-                    className="flex items-center gap-3 p-3 bg-white rounded border hover:border-indigo-400 cursor-pointer"
-                    onClick={() => navigate(`/mobility/vehicles/${v.id}`)}
+                    className={`bg-white rounded border ${
+                      expanded ? 'ring-1 ring-indigo-500 border-indigo-400' : 'hover:border-indigo-400'
+                    }`}
                   >
-                    <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
-                      <Icon className="h-4 w-4 text-emerald-700" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-slate-800 truncate">
-                        {v.name}
-                        {v.plate_or_serial && (
-                          <span className="text-slate-400 text-xs ml-1.5">
-                            ({v.plate_or_serial})
-                          </span>
+                    <button
+                      type="button"
+                      onClick={() => toggleExpandVehicle(v.id)}
+                      className="w-full flex items-center gap-3 p-3 text-left"
+                    >
+                      <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
+                        <Icon className="h-4 w-4 text-emerald-700" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-slate-800 truncate">
+                          {v.name}
+                          {v.plate_or_serial && (
+                            <span className="text-slate-400 text-xs ml-1.5">
+                              ({v.plate_or_serial})
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
+                          <User className="h-3 w-3" />
+                          {a.driver_name || '(名前未設定)'}
+                          <span className="mx-1">·</span>
+                          {new Date(a.started_at).toLocaleString('ja-JP', {
+                            month: '2-digit',
+                            day: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                          〜
+                        </div>
+                        {a.destination_point && (
+                          <div className="text-[11px] text-amber-700 flex items-center gap-1 mt-0.5 truncate">
+                            <MapPin className="h-3 w-3 shrink-0" />
+                            <span className="truncate">
+                              行き先: {a.destination_point.name}
+                            </span>
+                          </div>
                         )}
                       </div>
-                      <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
-                        <User className="h-3 w-3" />
-                        {a.driver_name || '(名前未設定)'}
-                        <span className="mx-1">·</span>
-                        {new Date(a.started_at).toLocaleString('ja-JP', {
-                          month: '2-digit',
-                          day: '2-digit',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                        〜
-                      </div>
-                      {a.destination_point && (
-                        <div className="text-[11px] text-amber-700 flex items-center gap-1 mt-0.5 truncate">
-                          <MapPin className="h-3 w-3 shrink-0" />
-                          <span className="truncate">
-                            行き先: {a.destination_point.name}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                    <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-700 border border-emerald-300">
-                      稼働中
-                    </span>
+                      <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-700 border border-emerald-300">
+                        稼働中
+                      </span>
+                      <ChevronDown
+                        className={`h-4 w-4 text-slate-400 shrink-0 transition-transform ${
+                          expanded ? 'rotate-180' : ''
+                        }`}
+                      />
+                    </button>
+                    {expanded && (
+                      <VehicleInlineDetail
+                        vehicleId={v.id}
+                        activeAssignment={a}
+                        checkedIds={checkedAssignmentIds}
+                        onToggleCheck={toggleAssignmentCheck}
+                      />
+                    )}
                   </li>
                 )
               })}
@@ -330,7 +399,11 @@ export function MobilityHomePage() {
                     key={v.id}
                     vehicle={v}
                     active={activeAssignments.has(v.id)}
-                    onOpen={() => navigate(`/mobility/vehicles/${v.id}`)}
+                    activeAssignment={activeAssignments.get(v.id) ?? null}
+                    expanded={expandedVehicleId === v.id}
+                    checkedIds={checkedAssignmentIds}
+                    onToggleExpand={() => toggleExpandVehicle(v.id)}
+                    onToggleCheck={toggleAssignmentCheck}
                     onEdit={() => setEditingVehicle(v)}
                   />
                 ))}
@@ -349,7 +422,11 @@ export function MobilityHomePage() {
                         key={v.id}
                         vehicle={v}
                         active={false}
-                        onOpen={() => navigate(`/mobility/vehicles/${v.id}`)}
+                        activeAssignment={null}
+                        expanded={expandedVehicleId === v.id}
+                        checkedIds={checkedAssignmentIds}
+                        onToggleExpand={() => toggleExpandVehicle(v.id)}
+                        onToggleCheck={toggleAssignmentCheck}
                         onEdit={() => setEditingVehicle(v)}
                       />
                     ))}
@@ -472,24 +549,20 @@ function UserModeSidebar({
   vehicles,
   orgMembers,
   loading,
-  onOpenUser,
+  expandedUserId,
+  checkedIds,
+  onToggleExpand,
+  onToggleCheck,
   onInviteByPhone,
 }: {
-  activeAssignments: Map<
-    string,
-    {
-      id: string
-      user_id: string
-      vehicle_id: string
-      driver_name: string | null
-      started_at: string
-      destination_point?: { id: string; name: string } | null
-    }
-  >
+  activeAssignments: Map<string, AssignmentWithNames>
   vehicles: Vehicle[]
   orgMembers: OrgMemberRow[]
   loading: boolean
-  onOpenUser: (userId: string) => void
+  expandedUserId: string | null
+  checkedIds: Set<string>
+  onToggleExpand: (userId: string) => void
+  onToggleCheck: (assignmentId: string) => void
   onInviteByPhone: () => void
 }) {
   const activeUsers = useMemo(() => {
@@ -534,41 +607,67 @@ function UserModeSidebar({
           </div>
         ) : (
           <ul className="space-y-1.5">
-            {activeUsers.map((u) => (
-              <li
-                key={u.userId}
-                className="flex items-center gap-3 p-3 bg-white rounded border hover:border-indigo-400 cursor-pointer"
-                onClick={() => onOpenUser(u.userId)}
-              >
-                <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
-                  <User className="h-4 w-4 text-emerald-700" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-slate-800 truncate">
-                    {u.driverName}
-                  </div>
-                  <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
-                    <Car className="h-3 w-3" />
-                    {u.vehicleName}
-                    <span className="mx-1">·</span>
-                    {new Date(u.startedAt).toLocaleTimeString('ja-JP', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                    〜
-                  </div>
-                  {u.destinationName && (
-                    <div className="text-[11px] text-amber-700 flex items-center gap-1 mt-0.5 truncate">
-                      <MapPin className="h-3 w-3 shrink-0" />
-                      <span className="truncate">行き先: {u.destinationName}</span>
+            {activeUsers.map((u) => {
+              const expanded = expandedUserId === u.userId
+              const active = Array.from(activeAssignments.values()).find(
+                (a) => a.user_id === u.userId,
+              )
+              return (
+                <li
+                  key={u.userId}
+                  className={`bg-white rounded border ${
+                    expanded ? 'ring-1 ring-indigo-500 border-indigo-400' : 'hover:border-indigo-400'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onToggleExpand(u.userId)}
+                    className="w-full flex items-center gap-3 p-3 text-left"
+                  >
+                    <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
+                      <User className="h-4 w-4 text-emerald-700" />
                     </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-slate-800 truncate">
+                        {u.driverName}
+                      </div>
+                      <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
+                        <Car className="h-3 w-3" />
+                        {u.vehicleName}
+                        <span className="mx-1">·</span>
+                        {new Date(u.startedAt).toLocaleTimeString('ja-JP', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                        〜
+                      </div>
+                      {u.destinationName && (
+                        <div className="text-[11px] text-amber-700 flex items-center gap-1 mt-0.5 truncate">
+                          <MapPin className="h-3 w-3 shrink-0" />
+                          <span className="truncate">行き先: {u.destinationName}</span>
+                        </div>
+                      )}
+                    </div>
+                    <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-700 border border-emerald-300">
+                      乗車中
+                    </span>
+                    <ChevronDown
+                      className={`h-4 w-4 text-slate-400 shrink-0 transition-transform ${
+                        expanded ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </button>
+                  {expanded && (
+                    <UserInlineDetail
+                      userId={u.userId}
+                      activeAssignment={active ?? null}
+                      checkedIds={checkedIds}
+                      onToggleCheck={onToggleCheck}
+                    />
                   )}
-                </div>
-                <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-700 border border-emerald-300">
-                  乗車中
-                </span>
-              </li>
-            ))}
+                </li>
+              )
+            })}
           </ul>
         )}
       </section>
@@ -605,40 +704,64 @@ function UserModeSidebar({
           <ul className="space-y-1.5">
             {orgMembers.map((m) => {
               const isActive = activeUserIds.has(m.user_id)
+              const expanded = expandedUserId === m.user_id
+              const active = Array.from(activeAssignments.values()).find(
+                (a) => a.user_id === m.user_id,
+              )
               return (
                 <li
                   key={m.user_id}
-                  className="flex items-center gap-2 p-2.5 bg-white rounded border hover:border-indigo-400 cursor-pointer"
-                  onClick={() => onOpenUser(m.user_id)}
+                  className={`bg-white rounded border ${
+                    expanded ? 'ring-1 ring-indigo-500 border-indigo-400' : 'hover:border-indigo-400'
+                  }`}
                 >
-                  <div
-                    className={`h-7 w-7 rounded-full flex items-center justify-center shrink-0 ${
-                      isActive ? 'bg-emerald-100' : 'bg-slate-100'
-                    }`}
+                  <button
+                    type="button"
+                    onClick={() => onToggleExpand(m.user_id)}
+                    className="w-full flex items-center gap-2 p-2.5 text-left"
                   >
-                    <User
-                      className={`h-3.5 w-3.5 ${
-                        isActive ? 'text-emerald-700' : 'text-slate-500'
+                    <div
+                      className={`h-7 w-7 rounded-full flex items-center justify-center shrink-0 ${
+                        isActive ? 'bg-emerald-100' : 'bg-slate-100'
+                      }`}
+                    >
+                      <User
+                        className={`h-3.5 w-3.5 ${
+                          isActive ? 'text-emerald-700' : 'text-slate-500'
+                        }`}
+                      />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-slate-800 truncate">
+                        {m.full_name || m.email}
+                      </div>
+                      {m.full_name && m.email !== m.full_name && (
+                        <div className="text-[10px] text-slate-500 truncate">
+                          {m.email}
+                        </div>
+                      )}
+                    </div>
+                    {m.role === 'admin' && (
+                      <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-amber-100 text-amber-800">
+                        管理者
+                      </span>
+                    )}
+                    {isActive && (
+                      <span className="shrink-0 text-[10px] text-emerald-600">●</span>
+                    )}
+                    <ChevronDown
+                      className={`h-4 w-4 text-slate-400 shrink-0 transition-transform ${
+                        expanded ? 'rotate-180' : ''
                       }`}
                     />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-slate-800 truncate">
-                      {m.full_name || m.email}
-                    </div>
-                    {m.full_name && m.email !== m.full_name && (
-                      <div className="text-[10px] text-slate-500 truncate">
-                        {m.email}
-                      </div>
-                    )}
-                  </div>
-                  {m.role === 'admin' && (
-                    <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-amber-100 text-amber-800">
-                      管理者
-                    </span>
-                  )}
-                  {isActive && (
-                    <span className="shrink-0 text-[10px] text-emerald-600">●</span>
+                  </button>
+                  {expanded && (
+                    <UserInlineDetail
+                      userId={m.user_id}
+                      activeAssignment={active ?? null}
+                      checkedIds={checkedIds}
+                      onToggleCheck={onToggleCheck}
+                    />
                   )}
                 </li>
               )
@@ -653,54 +776,86 @@ function UserModeSidebar({
 function VehicleRow({
   vehicle,
   active,
-  onOpen,
+  activeAssignment,
+  expanded,
+  checkedIds,
+  onToggleExpand,
+  onToggleCheck,
   onEdit,
 }: {
   vehicle: Vehicle
   active: boolean
-  onOpen: () => void
+  activeAssignment: AssignmentWithNames | null
+  expanded: boolean
+  checkedIds: Set<string>
+  onToggleExpand: () => void
+  onToggleCheck: (assignmentId: string) => void
   onEdit: () => void
 }) {
   const Icon = KIND_ICON[vehicle.kind]
   return (
-    <li className="flex items-center gap-2 p-3 bg-white rounded border hover:border-indigo-400">
-      <button
-        type="button"
-        onClick={onOpen}
-        className="flex items-center gap-3 flex-1 min-w-0 text-left"
-      >
-        <div
-          className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${
-            active ? 'bg-emerald-100' : 'bg-slate-100'
-          }`}
+    <li
+      className={`bg-white rounded border ${
+        expanded ? 'ring-1 ring-indigo-500 border-indigo-400' : 'hover:border-indigo-400'
+      }`}
+    >
+      <div className="flex items-center gap-2 p-3">
+        <button
+          type="button"
+          onClick={onToggleExpand}
+          className="flex items-center gap-3 flex-1 min-w-0 text-left"
         >
-          <Icon
-            className={`h-4 w-4 ${active ? 'text-emerald-700' : 'text-slate-500'}`}
+          <div
+            className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${
+              active ? 'bg-emerald-100' : 'bg-slate-100'
+            }`}
+          >
+            <Icon
+              className={`h-4 w-4 ${active ? 'text-emerald-700' : 'text-slate-500'}`}
+            />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-medium text-slate-800 truncate">
+              {vehicle.name}
+              {vehicle.plate_or_serial && (
+                <span className="text-slate-400 text-xs ml-1.5">
+                  ({vehicle.plate_or_serial})
+                </span>
+              )}
+            </div>
+            <div className="text-[11px] text-slate-500">
+              {KIND_LABEL[vehicle.kind]}
+              {active && <span className="ml-2 text-emerald-600">● 稼働中</span>}
+            </div>
+          </div>
+        </button>
+        <button
+          type="button"
+          onClick={onEdit}
+          className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded shrink-0"
+          title="編集"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={onToggleExpand}
+          className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded shrink-0"
+          title={expanded ? '詳細を閉じる' : '詳細を表示'}
+        >
+          <ChevronDown
+            className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''}`}
           />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium text-slate-800 truncate">
-            {vehicle.name}
-            {vehicle.plate_or_serial && (
-              <span className="text-slate-400 text-xs ml-1.5">
-                ({vehicle.plate_or_serial})
-              </span>
-            )}
-          </div>
-          <div className="text-[11px] text-slate-500">
-            {KIND_LABEL[vehicle.kind]}
-            {active && <span className="ml-2 text-emerald-600">● 稼働中</span>}
-          </div>
-        </div>
-      </button>
-      <button
-        type="button"
-        onClick={onEdit}
-        className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded shrink-0"
-        title="編集"
-      >
-        <Pencil className="h-3.5 w-3.5" />
-      </button>
+        </button>
+      </div>
+      {expanded && (
+        <VehicleInlineDetail
+          vehicleId={vehicle.id}
+          activeAssignment={activeAssignment}
+          checkedIds={checkedIds}
+          onToggleCheck={onToggleCheck}
+        />
+      )}
     </li>
   )
 }
@@ -1033,5 +1188,354 @@ function PhoneInviteDialog({
         </form>
       </div>
     </div>
+  )
+}
+
+// -----------------------------------------------------------------------------
+// インライン展開の詳細ペイン (共通ロジック)
+// -----------------------------------------------------------------------------
+function startOfTodayLocalIso(): string {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  return d.toISOString()
+}
+
+interface HistoryDetailProps {
+  history: AssignmentWithNames[]
+  historyLoading: boolean
+  positionsByAssignment: Map<string, MobilityPosition[]>
+  vehiclesById: Map<string, Vehicle>
+  currentSpeedKmh: number | null
+  todayDistanceM: number
+  distanceLabel: string
+  checkedIds: Set<string>
+  onToggleCheck: (assignmentId: string) => void
+  /** 履歴の 1 行に何を「主タイトル」として出すか。車両詳細ならドライバー名、ユーザー詳細なら車両名 */
+  primaryLabel: (a: AssignmentWithNames) => string
+}
+
+function InlineDetailBody({
+  history,
+  historyLoading,
+  positionsByAssignment,
+  currentSpeedKmh,
+  todayDistanceM,
+  distanceLabel,
+  checkedIds,
+  onToggleCheck,
+  primaryLabel,
+}: HistoryDetailProps) {
+  return (
+    <div className="border-t bg-slate-50/60 p-3 space-y-3">
+      {/* 速度・走行距離 */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="p-2 bg-white rounded border">
+          <div className="text-[10px] text-slate-500">現在速度</div>
+          <div className="text-xl font-bold leading-tight text-slate-800">
+            {currentSpeedKmh != null && currentSpeedKmh >= 0
+              ? Math.round(currentSpeedKmh)
+              : '—'}
+            <span className="text-[10px] font-normal text-slate-500 ml-1">km/h</span>
+          </div>
+        </div>
+        <div className="p-2 bg-white rounded border">
+          <div className="text-[10px] text-slate-500">{distanceLabel}</div>
+          <div className="text-xl font-bold leading-tight text-slate-800">
+            {(todayDistanceM / 1000).toFixed(1)}
+            <span className="text-[10px] font-normal text-slate-500 ml-1">km</span>
+          </div>
+        </div>
+      </div>
+
+      {/* 運行履歴 */}
+      <div>
+        <div className="flex items-center gap-2 mb-1.5">
+          <div className="w-0.5 h-4 rounded bg-slate-400" />
+          <h3 className="text-xs font-semibold text-slate-700 flex-1">
+            運行履歴 ({history.length})
+          </h3>
+          {historyLoading && (
+            <Loader2 className="h-3 w-3 text-slate-400 animate-spin" />
+          )}
+          <span className="text-[10px] text-slate-500">
+            チェックで地図に軌跡
+          </span>
+        </div>
+        {history.length === 0 && !historyLoading ? (
+          <div className="p-2 bg-white rounded border text-[11px] text-slate-400 text-center">
+            履歴はありません
+          </div>
+        ) : (
+          <ul className="space-y-1">
+            {history.map((a) => {
+              const checked = checkedIds.has(a.id)
+              const rowsToday = positionsByAssignment.get(a.id)
+              const distanceKm = rowsToday
+                ? computeTotalDistanceMeters(rowsToday) / 1000
+                : null
+              return (
+                <li key={a.id}>
+                  <button
+                    type="button"
+                    onClick={() => onToggleCheck(a.id)}
+                    className={`w-full flex items-center gap-2 p-2 bg-white rounded border text-[11px] text-left hover:border-indigo-400 ${
+                      checked
+                        ? 'ring-1 ring-indigo-400 border-indigo-300'
+                        : ''
+                    }`}
+                    title={
+                      checked
+                        ? 'クリックで地図から軌跡を消す'
+                        : 'クリックで地図にこの割当の軌跡を出す'
+                    }
+                  >
+                    {checked ? (
+                      <CheckSquare className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+                    ) : (
+                      <Square className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                    )}
+                    <span className="flex-1 min-w-0 truncate font-medium">
+                      {primaryLabel(a)}
+                    </span>
+                    <span className="text-slate-500 shrink-0">
+                      {new Date(a.started_at).toLocaleString('ja-JP', {
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                      {a.ended_at ? (
+                        <>
+                          {' '}
+                          〜{' '}
+                          {new Date(a.ended_at).toLocaleTimeString('ja-JP', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </>
+                      ) : (
+                        <span className="ml-1 text-emerald-600">(稼働中)</span>
+                      )}
+                    </span>
+                    <span
+                      className="text-slate-500 shrink-0 w-12 text-right font-medium"
+                      title={
+                        distanceKm != null
+                          ? '本日ログから計算した走行距離'
+                          : '本日以外の割当のため距離は非表示'
+                      }
+                    >
+                      {distanceKm != null ? `${distanceKm.toFixed(1)}km` : '—'}
+                    </span>
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function VehicleInlineDetail({
+  vehicleId,
+  activeAssignment,
+  checkedIds,
+  onToggleCheck,
+}: {
+  vehicleId: string
+  activeAssignment: AssignmentWithNames | null
+  checkedIds: Set<string>
+  onToggleCheck: (assignmentId: string) => void
+}) {
+  const {
+    vehicles,
+    fetchAssignmentHistory,
+    fetchPositionsForVehicleSince,
+  } = useMobilityStore()
+
+  const vehiclesById = useMemo(() => {
+    const m = new Map<string, Vehicle>()
+    for (const v of vehicles) m.set(v.id, v)
+    return m
+  }, [vehicles])
+
+  const [history, setHistory] = useState<AssignmentWithNames[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [todayPositions, setTodayPositions] = useState<MobilityPosition[]>([])
+
+  useEffect(() => {
+    let cancelled = false
+    setHistoryLoading(true)
+    void (async () => {
+      const rows = await fetchAssignmentHistory(vehicleId)
+      if (!cancelled) {
+        setHistory(rows)
+        setHistoryLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [vehicleId, fetchAssignmentHistory])
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      const rows = await fetchPositionsForVehicleSince(
+        vehicleId,
+        startOfTodayLocalIso(),
+      )
+      if (!cancelled) setTodayPositions(rows)
+    }
+    void load()
+    const timer = activeAssignment ? setInterval(load, 20_000) : null
+    return () => {
+      cancelled = true
+      if (timer) clearInterval(timer)
+    }
+  }, [vehicleId, activeAssignment, fetchPositionsForVehicleSince])
+
+  const positionsByAssignment = useMemo(() => {
+    const map = new Map<string, MobilityPosition[]>()
+    for (const p of todayPositions) {
+      const arr = map.get(p.assignment_id)
+      if (arr) arr.push(p)
+      else map.set(p.assignment_id, [p])
+    }
+    return map
+  }, [todayPositions])
+
+  const todayDistanceM = useMemo(() => {
+    let total = 0
+    for (const rows of positionsByAssignment.values()) {
+      total += computeTotalDistanceMeters(rows)
+    }
+    return total
+  }, [positionsByAssignment])
+
+  const currentSpeedKmh = useMemo(() => {
+    if (!activeAssignment) return null
+    const rows = positionsByAssignment.get(activeAssignment.id)
+    if (!rows || rows.length === 0) return null
+    const last = rows[rows.length - 1]
+    return last.speed_kmh
+  }, [activeAssignment, positionsByAssignment])
+
+  return (
+    <InlineDetailBody
+      history={history}
+      historyLoading={historyLoading}
+      positionsByAssignment={positionsByAssignment}
+      vehiclesById={vehiclesById}
+      currentSpeedKmh={currentSpeedKmh}
+      todayDistanceM={todayDistanceM}
+      distanceLabel="本日走行 (この車両)"
+      checkedIds={checkedIds}
+      onToggleCheck={onToggleCheck}
+      primaryLabel={(a) => a.driver_name || '(名前未設定)'}
+    />
+  )
+}
+
+function UserInlineDetail({
+  userId,
+  activeAssignment,
+  checkedIds,
+  onToggleCheck,
+}: {
+  userId: string
+  activeAssignment: AssignmentWithNames | null
+  checkedIds: Set<string>
+  onToggleCheck: (assignmentId: string) => void
+}) {
+  const {
+    vehicles,
+    fetchUserAssignmentHistory,
+    fetchPositionsForUserSince,
+  } = useMobilityStore()
+
+  const vehiclesById = useMemo(() => {
+    const m = new Map<string, Vehicle>()
+    for (const v of vehicles) m.set(v.id, v)
+    return m
+  }, [vehicles])
+
+  const [history, setHistory] = useState<AssignmentWithNames[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [todayPositions, setTodayPositions] = useState<MobilityPosition[]>([])
+
+  useEffect(() => {
+    let cancelled = false
+    setHistoryLoading(true)
+    void (async () => {
+      const rows = await fetchUserAssignmentHistory(userId)
+      if (!cancelled) {
+        setHistory(rows)
+        setHistoryLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [userId, fetchUserAssignmentHistory])
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      const rows = await fetchPositionsForUserSince(
+        userId,
+        startOfTodayLocalIso(),
+      )
+      if (!cancelled) setTodayPositions(rows)
+    }
+    void load()
+    const timer = activeAssignment ? setInterval(load, 20_000) : null
+    return () => {
+      cancelled = true
+      if (timer) clearInterval(timer)
+    }
+  }, [userId, activeAssignment, fetchPositionsForUserSince])
+
+  const positionsByAssignment = useMemo(() => {
+    const map = new Map<string, MobilityPosition[]>()
+    for (const p of todayPositions) {
+      const arr = map.get(p.assignment_id)
+      if (arr) arr.push(p)
+      else map.set(p.assignment_id, [p])
+    }
+    return map
+  }, [todayPositions])
+
+  const todayDistanceM = useMemo(() => {
+    let total = 0
+    for (const rows of positionsByAssignment.values()) {
+      total += computeTotalDistanceMeters(rows)
+    }
+    return total
+  }, [positionsByAssignment])
+
+  const currentSpeedKmh = useMemo(() => {
+    if (!activeAssignment) return null
+    const rows = positionsByAssignment.get(activeAssignment.id)
+    if (!rows || rows.length === 0) return null
+    const last = rows[rows.length - 1]
+    return last.speed_kmh
+  }, [activeAssignment, positionsByAssignment])
+
+  return (
+    <InlineDetailBody
+      history={history}
+      historyLoading={historyLoading}
+      positionsByAssignment={positionsByAssignment}
+      vehiclesById={vehiclesById}
+      currentSpeedKmh={currentSpeedKmh}
+      todayDistanceM={todayDistanceM}
+      distanceLabel="本日走行 (この人)"
+      checkedIds={checkedIds}
+      onToggleCheck={onToggleCheck}
+      primaryLabel={(a) => vehiclesById.get(a.vehicle_id)?.name ?? '(不明車両)'}
+    />
   )
 }

@@ -77,9 +77,19 @@ interface FleetMapViewProps {
   organizationId: string
   /** マーカー押下で車両詳細へ飛ばす等の親フック */
   onSelectVehicle?: (vehicleId: string) => void
+  /**
+   * 稼働中割当の軌跡に加えて、追加で地図に描画したい assignment id 群。
+   * 通常は「サイドバーで運行履歴のチェックボックスを ON にしたもの」。
+   * 稼働中割当と重複しても構わない (Map で dedup される)。
+   */
+  extraTrackAssignmentIds?: string[]
 }
 
-export function FleetMapView({ organizationId, onSelectVehicle }: FleetMapViewProps) {
+export function FleetMapView({
+  organizationId,
+  onSelectVehicle,
+  extraTrackAssignmentIds,
+}: FleetMapViewProps) {
   const {
     vehicles,
     activeAssignments,
@@ -94,6 +104,10 @@ export function FleetMapView({ organizationId, onSelectVehicle }: FleetMapViewPr
   >(new Map())
   // 稼働中車両の走行軌跡 (assignment_id → positions 昇順)
   const [trackPositions, setTrackPositions] = useState<
+    Map<string, MobilityPosition[]>
+  >(new Map())
+  // サイドバーから明示的に「地図に出したい」と指示された assignment の軌跡
+  const [extraTracks, setExtraTracks] = useState<
     Map<string, MobilityPosition[]>
   >(new Map())
   const [loading, setLoading] = useState(true)
@@ -175,6 +189,24 @@ export function FleetMapView({ organizationId, onSelectVehicle }: FleetMapViewPr
     }
   }, [organizationId])
 
+  // サイドバーの履歴チェックで指定された assignment の位置ログを都度取得。
+  // 差分だけ fetch すれば十分だが、件数は多くて数十件なので毎回まとめて取り直す。
+  useEffect(() => {
+    const ids = extraTrackAssignmentIds ?? []
+    if (ids.length === 0) {
+      setExtraTracks(new Map())
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const map = await fetchPositionsForAssignments(ids, 1000)
+      if (!cancelled) setExtraTracks(map)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [extraTrackAssignmentIds, fetchPositionsForAssignments])
+
   // vehicle_assignments の UPDATE を購読して、ドライバーが行き先を変えたら
   // 管理画面に即反映させる。start/end (INSERT / ended_at) はこの購読では
   // 拾わないので、その辺の変化は fetchActiveAssignments に依存 (再取得ボタン)。
@@ -248,8 +280,16 @@ export function FleetMapView({ organizationId, onSelectVehicle }: FleetMapViewPr
     for (const m of markers) {
       if (m.destination) rows.push({ lat: m.destination.lat, lon: m.destination.lon })
     }
+    // 履歴選択の軌跡端点も収める (全点だと重いので開始/最終のみ)
+    for (const arr of extraTracks.values()) {
+      if (arr.length === 0) continue
+      const first = arr[0]
+      const last = arr[arr.length - 1]
+      rows.push({ lat: first.lat, lon: first.lon })
+      if (last.id !== first.id) rows.push({ lat: last.lat, lon: last.lon })
+    }
     return rows
-  }, [latestPositions, markers])
+  }, [latestPositions, markers, extraTracks])
 
   return (
     <div className="relative h-full w-full">
@@ -302,6 +342,25 @@ export function FleetMapView({ organizationId, onSelectVehicle }: FleetMapViewPr
                 color: colorForAssignment(assignmentId),
                 weight: 3,
                 opacity: 0.85,
+              }}
+            />
+          )
+        })}
+        {/* サイドバー履歴チェックの追加軌跡 (稼働中と同じ色で描画。
+            稼働中割当と重複したら trackPositions 側が上書きするので二重描画のみ) */}
+        {Array.from(extraTracks.entries()).map(([assignmentId, points]) => {
+          if (points.length < 2) return null
+          if (trackPositions.has(assignmentId)) return null // 稼働中軌跡と重複
+          const line = points.map((p) => [p.lat, p.lon] as [number, number])
+          return (
+            <Polyline
+              key={`extra-track-${assignmentId}`}
+              positions={line}
+              pathOptions={{
+                color: colorForAssignment(assignmentId),
+                weight: 3,
+                opacity: 0.85,
+                dashArray: '4 6',
               }}
             />
           )

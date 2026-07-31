@@ -93,6 +93,8 @@ interface State {
 
   /** 特定車両の割当履歴 (started_at DESC, 最大 100 件) */
   fetchAssignmentHistory: (vehicleId: string) => Promise<AssignmentWithNames[]>
+  /** 特定ユーザーの割当履歴 (started_at DESC, 最大 100 件) */
+  fetchUserAssignmentHistory: (userId: string) => Promise<AssignmentWithNames[]>
 
   /** 稼働中割当に位置 ping を 1 件 INSERT。RLS は「本人 + ended_at IS NULL」を強制。 */
   sendPosition: (
@@ -440,6 +442,20 @@ export const useMobilityStore = create<State>((set, get) => ({
       .limit(100)
     if (error) {
       console.warn('[mobilityStore] fetchAssignmentHistory failed', error)
+      return []
+    }
+    return enrichAssignments((data ?? []) as VehicleAssignment[])
+  },
+
+  fetchUserAssignmentHistory: async (userId) => {
+    const { data, error } = await supabase
+      .from('vehicle_assignments')
+      .select('*')
+      .eq('user_id', userId)
+      .order('started_at', { ascending: false })
+      .limit(100)
+    if (error) {
+      console.warn('[mobilityStore] fetchUserAssignmentHistory failed', error)
       return []
     }
     return enrichAssignments((data ?? []) as VehicleAssignment[])
