@@ -21,6 +21,7 @@ import {
   Construction,
   Folder,
   Loader2,
+  LogOut,
   MapPin,
   Pencil,
   Phone,
@@ -117,6 +118,7 @@ export function MobilityHomePage() {
     createVehicle,
     updateVehicle,
     deleteVehicle,
+    endAssignment,
     fetchProjects,
     createProject,
     updateProject,
@@ -280,6 +282,32 @@ export function MobilityHomePage() {
     [expandedProjectId, expandedProjectPoints.length, createPoint],
   )
 
+  // 管理者による強制降車。ドライバー端末で降車されていない稼働中割当を admin 権限で終了する。
+  // RLS: vehicle_assignments_update ポリシーで is_org_admin_of_vehicle が許可済み。
+  const [forceLeaveBusyId, setForceLeaveBusyId] = useState<string | null>(null)
+  const handleForceLeave = useCallback(
+    async (
+      assignmentId: string,
+      driverName: string | null,
+      vehicleName: string,
+    ) => {
+      if (
+        !confirm(
+          `${driverName || '(名前未設定)'} が乗車中の車両「${vehicleName}」を、\n管理者権限で降車させますか?\n\nドライバー端末での自動送信もあわせて停止させたい場合は、\nドライバー本人にも通知してください。`,
+        )
+      )
+        return
+      setForceLeaveBusyId(assignmentId)
+      try {
+        await endAssignment(assignmentId)
+        if (orgId) await fetchActiveAssignments(orgId)
+      } finally {
+        setForceLeaveBusyId(null)
+      }
+    },
+    [endAssignment, fetchActiveAssignments, orgId],
+  )
+
   const activeVehicles = useMemo(
     () => vehicles.filter((v) => v.active),
     [vehicles],
@@ -417,8 +445,10 @@ export function MobilityHomePage() {
             loading={orgMembersLoading}
             expandedUserId={expandedUserId}
             checkedIds={checkedAssignmentIds}
+            forceLeaveBusyId={forceLeaveBusyId}
             onToggleExpand={toggleExpandUser}
             onToggleCheck={toggleAssignmentCheck}
+            onForceLeave={handleForceLeave}
             onInviteByPhone={() => setShowPhoneInvite(true)}
           />
         )}
@@ -498,6 +528,30 @@ export function MobilityHomePage() {
                         }`}
                       />
                     </button>
+                    {/* 管理者による強制降車 (ドライバー端末で降車忘れの救済) */}
+                    <div className="px-3 pb-2 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          void handleForceLeave(
+                            a.id,
+                            a.driver_name,
+                            v.name,
+                          )
+                        }}
+                        disabled={forceLeaveBusyId === a.id}
+                        className="flex items-center gap-1 px-2 py-0.5 text-[10px] border border-red-300 text-red-700 rounded hover:bg-red-50 disabled:opacity-50"
+                        title="管理者権限で降車させる"
+                      >
+                        {forceLeaveBusyId === a.id ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <LogOut className="h-3 w-3" />
+                        )}
+                        強制降車
+                      </button>
+                    </div>
                     {expanded && (
                       <VehicleInlineDetail
                         vehicleId={v.id}
@@ -774,8 +828,10 @@ function UserModeSidebar({
   loading,
   expandedUserId,
   checkedIds,
+  forceLeaveBusyId,
   onToggleExpand,
   onToggleCheck,
+  onForceLeave,
   onInviteByPhone,
 }: {
   activeAssignments: Map<string, AssignmentWithNames>
@@ -784,13 +840,20 @@ function UserModeSidebar({
   loading: boolean
   expandedUserId: string | null
   checkedIds: Set<string>
+  forceLeaveBusyId: string | null
   onToggleExpand: (userId: string) => void
   onToggleCheck: (assignmentId: string) => void
+  onForceLeave: (
+    assignmentId: string,
+    driverName: string | null,
+    vehicleName: string,
+  ) => Promise<void>
   onInviteByPhone: () => void
 }) {
   const activeUsers = useMemo(() => {
     const rows: {
       userId: string
+      assignmentId: string
       driverName: string
       vehicleName: string
       startedAt: string
@@ -800,6 +863,7 @@ function UserModeSidebar({
       const v = vehicles.find((vv) => vv.id === a.vehicle_id)
       rows.push({
         userId: a.user_id,
+        assignmentId: a.id,
         driverName: a.driver_name || '(名前未設定)',
         vehicleName: v?.name ?? '(不明車両)',
         startedAt: a.started_at,
@@ -880,6 +944,30 @@ function UserModeSidebar({
                       }`}
                     />
                   </button>
+                  {/* 管理者による強制降車 */}
+                  <div className="px-3 pb-2 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void onForceLeave(
+                          u.assignmentId,
+                          u.driverName,
+                          u.vehicleName,
+                        )
+                      }}
+                      disabled={forceLeaveBusyId === u.assignmentId}
+                      className="flex items-center gap-1 px-2 py-0.5 text-[10px] border border-red-300 text-red-700 rounded hover:bg-red-50 disabled:opacity-50"
+                      title="管理者権限で降車させる"
+                    >
+                      {forceLeaveBusyId === u.assignmentId ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <LogOut className="h-3 w-3" />
+                      )}
+                      強制降車
+                    </button>
+                  </div>
                   {expanded && (
                     <UserInlineDetail
                       userId={u.userId}
