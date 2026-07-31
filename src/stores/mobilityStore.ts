@@ -12,6 +12,9 @@ import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
 import type {
   MobilityPosition,
+  MobilityProject,
+  MobilityProjectMember,
+  MobilityProjectPoint,
   Vehicle,
   VehicleAssignment,
   VehicleKind,
@@ -140,6 +143,46 @@ interface State {
     startIso: string,
     endIso: string,
   ) => Promise<AssignmentWithNames[]>
+
+  // ============================================================
+  // 運行現場 (mobility_projects)
+  // ============================================================
+  fetchProjects: (organizationId: string) => Promise<MobilityProject[]>
+  createProject: (input: {
+    organization_id: string
+    name: string
+    description?: string | null
+  }) => Promise<MobilityProject | null>
+  updateProject: (
+    id: string,
+    patch: Partial<Pick<MobilityProject, 'name' | 'description' | 'active'>>,
+  ) => Promise<void>
+  deleteProject: (id: string) => Promise<void>
+
+  fetchProjectMembers: (projectId: string) => Promise<MobilityProjectMember[]>
+  addProjectMember: (projectId: string, userId: string) => Promise<void>
+  removeProjectMember: (projectId: string, userId: string) => Promise<void>
+
+  fetchProjectPoints: (projectId: string) => Promise<MobilityProjectPoint[]>
+  createPoint: (input: {
+    project_id: string
+    name: string
+    kind?: string | null
+    lat: number
+    lon: number
+    memo?: string | null
+    display_order?: number
+  }) => Promise<MobilityProjectPoint | null>
+  updatePoint: (
+    id: string,
+    patch: Partial<
+      Pick<
+        MobilityProjectPoint,
+        'name' | 'kind' | 'lat' | 'lon' | 'memo' | 'active' | 'display_order'
+      >
+    >,
+  ) => Promise<void>
+  deletePoint: (id: string) => Promise<void>
 }
 
 // profiles + auth.users から表示名を組み立てるヘルパ (RLS で読める範囲だけ)
@@ -489,5 +532,136 @@ export const useMobilityStore = create<State>((set, get) => ({
       if (!map.has(row.assignment_id)) map.set(row.assignment_id, row)
     }
     return map
+  },
+
+  // ============================================================
+  // 運行現場 (mobility_projects)
+  // ============================================================
+  fetchProjects: async (organizationId) => {
+    const { data, error } = await supabase
+      .from('mobility_projects')
+      .select('*')
+      .eq('organization_id', organizationId)
+      .order('active', { ascending: false })
+      .order('name')
+    if (error) {
+      console.warn('[mobilityStore] fetchProjects failed', error)
+      return []
+    }
+    return (data ?? []) as MobilityProject[]
+  },
+
+  createProject: async (input) => {
+    const { data: userData } = await supabase.auth.getUser()
+    const { data, error } = await supabase
+      .from('mobility_projects')
+      .insert({
+        organization_id: input.organization_id,
+        name: input.name,
+        description: input.description ?? null,
+        active: true,
+        created_by: userData.user?.id ?? null,
+      } as never)
+      .select()
+      .single()
+    if (error) {
+      console.warn('[mobilityStore] createProject failed', error)
+      return null
+    }
+    return data as MobilityProject
+  },
+
+  updateProject: async (id, patch) => {
+    const { error } = await supabase
+      .from('mobility_projects')
+      .update(patch as never)
+      .eq('id', id)
+    if (error) console.warn('[mobilityStore] updateProject failed', error)
+  },
+
+  deleteProject: async (id) => {
+    const { error } = await supabase.from('mobility_projects').delete().eq('id', id)
+    if (error) console.warn('[mobilityStore] deleteProject failed', error)
+  },
+
+  fetchProjectMembers: async (projectId) => {
+    const { data, error } = await supabase
+      .from('mobility_project_members')
+      .select('*')
+      .eq('project_id', projectId)
+    if (error) {
+      console.warn('[mobilityStore] fetchProjectMembers failed', error)
+      return []
+    }
+    return (data ?? []) as MobilityProjectMember[]
+  },
+
+  addProjectMember: async (projectId, userId) => {
+    const { data: userData } = await supabase.auth.getUser()
+    const { error } = await supabase.from('mobility_project_members').insert({
+      project_id: projectId,
+      user_id: userId,
+      role: 'driver',
+      added_by: userData.user?.id ?? null,
+    } as never)
+    if (error) console.warn('[mobilityStore] addProjectMember failed', error)
+  },
+
+  removeProjectMember: async (projectId, userId) => {
+    const { error } = await supabase
+      .from('mobility_project_members')
+      .delete()
+      .eq('project_id', projectId)
+      .eq('user_id', userId)
+    if (error) console.warn('[mobilityStore] removeProjectMember failed', error)
+  },
+
+  fetchProjectPoints: async (projectId) => {
+    const { data, error } = await supabase
+      .from('mobility_project_points')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('display_order', { ascending: true })
+      .order('name')
+    if (error) {
+      console.warn('[mobilityStore] fetchProjectPoints failed', error)
+      return []
+    }
+    return (data ?? []) as MobilityProjectPoint[]
+  },
+
+  createPoint: async (input) => {
+    const { data, error } = await supabase
+      .from('mobility_project_points')
+      .insert({
+        project_id: input.project_id,
+        name: input.name,
+        kind: input.kind ?? null,
+        lat: input.lat,
+        lon: input.lon,
+        memo: input.memo ?? null,
+        active: true,
+        display_order: input.display_order ?? 0,
+      } as never)
+      .select()
+      .single()
+    if (error) {
+      console.warn('[mobilityStore] createPoint failed', error)
+      return null
+    }
+    return data as MobilityProjectPoint
+  },
+
+  updatePoint: async (id, patch) => {
+    const { error } = await supabase
+      .from('mobility_project_points')
+      .update(patch as never)
+      .eq('id', id)
+    if (error) console.warn('[mobilityStore] updatePoint failed', error)
+  },
+
+  deletePoint: async (id) => {
+    const { error } = await supabase.from('mobility_project_points').delete().eq('id', id)
+    if (error) console.warn('[mobilityStore] deletePoint failed', error)
   },
 }))

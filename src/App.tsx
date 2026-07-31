@@ -61,6 +61,8 @@ import { MobilityVehiclePage } from '@/features/mobility/MobilityVehiclePage'
 import { MobilityUserPage } from '@/features/mobility/MobilityUserPage'
 import { MobilityDriverPage } from '@/features/mobility/MobilityDriverPage'
 import { MobilityLogsPage } from '@/features/mobility/MobilityLogsPage'
+import { MobilityProjectsPage } from '@/features/mobility/MobilityProjectsPage'
+import { MobilityProjectPage } from '@/features/mobility/MobilityProjectPage'
 import { Loader2 } from 'lucide-react'
 import { isAdmin } from '@/lib/admin'
 
@@ -394,6 +396,22 @@ function AppRoutes() {
           element={
             <MobilityAdminRoute>
               <MobilityLogsPage />
+            </MobilityAdminRoute>
+          }
+        />
+        <Route
+          path="mobility/projects"
+          element={
+            <MobilityAdminRoute>
+              <MobilityProjectsPage />
+            </MobilityAdminRoute>
+          }
+        />
+        <Route
+          path="mobility/projects/:projectId"
+          element={
+            <MobilityAdminRoute>
+              <MobilityProjectPage />
             </MobilityAdminRoute>
           }
         />
