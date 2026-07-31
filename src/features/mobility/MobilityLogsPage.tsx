@@ -10,7 +10,17 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Calendar, ChevronLeft, ChevronRight, Loader2, User } from 'lucide-react'
+import {
+  ArrowLeft,
+  Calendar,
+  Car,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  MapPin,
+  User,
+} from 'lucide-react'
 import {
   MapContainer,
   TileLayer,
@@ -25,7 +35,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useCanManageMobility } from '@/lib/useCanUseMobility'
 import { useMobilityStore, type AssignmentWithNames } from '@/stores/mobilityStore'
 import { computeTotalDistanceMeters } from '@/lib/geoDistance'
-import type { MobilityPosition } from '@/types/database'
+import type { MobilityPosition, Vehicle } from '@/types/database'
 
 // user_id からハッシュベースで安定した HSL 色を生成
 function colorForUser(id: string): string {
@@ -68,11 +78,23 @@ function AutoFit({ positions }: { positions: [number, number][] }) {
   return null
 }
 
+/** 1 乗車→降車 = 1 ユニット */
+interface AssignmentUnit {
+  assignmentId: string
+  vehicleId: string
+  vehicleName: string
+  destinationName: string | null
+  startedAt: string
+  endedAt: string | null
+  distanceM: number
+  positions: MobilityPosition[]
+}
+
 interface UserAggregate {
   userId: string
   driverName: string
   distanceM: number
-  assignmentIds: string[]
+  units: AssignmentUnit[]
   positions: MobilityPosition[]
 }
 
@@ -95,6 +117,8 @@ export function MobilityLogsPage() {
   )
 
   const {
+    vehicles,
+    fetchVehicles,
     fetchOrgAssignmentsBetween,
     fetchPositionsForAssignments,
   } = useMobilityStore()
@@ -105,12 +129,19 @@ export function MobilityLogsPage() {
   >(new Map())
   const [loading, setLoading] = useState(false)
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
+  const [expandedUserId, setExpandedUserId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!orgId) return
+    void fetchVehicles(orgId)
+  }, [orgId, fetchVehicles])
 
   useEffect(() => {
     if (!orgId) return
     let cancelled = false
     setLoading(true)
     setSelectedUserId(null)
+    setExpandedUserId(null)
     ;(async () => {
       const dayStart = new Date(selectedDate)
       dayStart.setHours(0, 0, 0, 0)
@@ -141,40 +172,56 @@ export function MobilityLogsPage() {
     }
   }, [orgId, selectedDate, fetchOrgAssignmentsBetween, fetchPositionsForAssignments])
 
-  // user_id ごとに集計
+  const vehicleById = useMemo(() => {
+    const m = new Map<string, Vehicle>()
+    for (const v of vehicles) m.set(v.id, v)
+    return m
+  }, [vehicles])
+
+  // user_id ごとに集計。各 assignment を「単位 (乗車→降車)」として保持する。
   const perUser = useMemo<UserAggregate[]>(() => {
     const byUser = new Map<string, UserAggregate>()
     for (const a of assignments) {
       const pos = positionsByAssignment.get(a.id) ?? []
+      const v = vehicleById.get(a.vehicle_id)
+      const unit: AssignmentUnit = {
+        assignmentId: a.id,
+        vehicleId: a.vehicle_id,
+        vehicleName: v?.name ?? '(不明車両)',
+        destinationName: a.destination_point?.name ?? null,
+        startedAt: a.started_at,
+        endedAt: a.ended_at,
+        distanceM: computeTotalDistanceMeters(pos),
+        positions: pos,
+      }
       const existing = byUser.get(a.user_id)
       if (existing) {
-        existing.assignmentIds.push(a.id)
+        existing.units.push(unit)
         existing.positions.push(...pos)
       } else {
         byUser.set(a.user_id, {
           userId: a.user_id,
           driverName: a.driver_name || '(名前未設定)',
           distanceM: 0,
-          assignmentIds: [a.id],
+          units: [unit],
           positions: [...pos],
         })
       }
     }
-    // 距離計算 (各 assignment を独立に計算して合算 = ノイズ除外が assignment 単位に効く)
+    // 集計 + ソート (単位は乗車時刻昇順)
     for (const u of byUser.values()) {
-      let d = 0
-      for (const id of u.assignmentIds) {
-        d += computeTotalDistanceMeters(positionsByAssignment.get(id) ?? [])
-      }
-      u.distanceM = d
-      // 表示用に positions を recorded_at 昇順ソート (各 assignment 内では既に昇順)
+      u.units.sort(
+        (x, y) =>
+          new Date(x.startedAt).getTime() - new Date(y.startedAt).getTime(),
+      )
+      u.distanceM = u.units.reduce((sum, x) => sum + x.distanceM, 0)
       u.positions.sort(
         (a, b) =>
           new Date(a.recorded_at).getTime() - new Date(b.recorded_at).getTime(),
       )
     }
     return Array.from(byUser.values()).sort((a, b) => b.distanceM - a.distanceM)
-  }, [assignments, positionsByAssignment])
+  }, [assignments, positionsByAssignment, vehicleById])
 
   const totalDistanceM = useMemo(
     () => perUser.reduce((sum, u) => sum + u.distanceM, 0),
@@ -384,36 +431,101 @@ export function MobilityLogsPage() {
               <ul className="space-y-1">
                 {perUser.map((u) => {
                   const isSelected = selectedUserId === u.userId
+                  const isExpanded = expandedUserId === u.userId
                   const color = colorForUser(u.userId)
                   return (
-                    <li key={u.userId}>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setSelectedUserId(isSelected ? null : u.userId)
-                        }
-                        className={`w-full flex items-center gap-2 p-2 bg-white rounded border text-xs text-left hover:border-indigo-400 ${
-                          isSelected
-                            ? 'ring-1 ring-indigo-500 border-indigo-400'
-                            : ''
-                        }`}
-                        title="クリックでこのドライバーだけ地図に表示"
-                      >
-                        <span
-                          className="inline-block h-3 w-3 rounded-full shrink-0"
-                          style={{ backgroundColor: color }}
-                        />
-                        <User className="h-3 w-3 text-slate-400 shrink-0" />
-                        <span className="flex-1 min-w-0 truncate font-medium">
-                          {u.driverName}
-                        </span>
-                        <span className="text-slate-500 shrink-0">
-                          {u.assignmentIds.length} 回
-                        </span>
-                        <span className="text-slate-800 shrink-0 w-16 text-right font-semibold">
-                          {(u.distanceM / 1000).toFixed(1)} km
-                        </span>
-                      </button>
+                    <li
+                      key={u.userId}
+                      className={`bg-white rounded border ${
+                        isSelected
+                          ? 'ring-1 ring-indigo-500 border-indigo-400'
+                          : ''
+                      }`}
+                    >
+                      <div className="flex items-center">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSelectedUserId(isSelected ? null : u.userId)
+                          }
+                          className="flex-1 flex items-center gap-2 p-2 text-xs text-left hover:bg-slate-50 min-w-0"
+                          title="クリックでこのドライバーだけ地図に表示"
+                        >
+                          <span
+                            className="inline-block h-3 w-3 rounded-full shrink-0"
+                            style={{ backgroundColor: color }}
+                          />
+                          <User className="h-3 w-3 text-slate-400 shrink-0" />
+                          <span className="flex-1 min-w-0 truncate font-medium">
+                            {u.driverName}
+                          </span>
+                          <span className="text-slate-500 shrink-0">
+                            {u.units.length} 回
+                          </span>
+                          <span className="text-slate-800 shrink-0 w-16 text-right font-semibold">
+                            {(u.distanceM / 1000).toFixed(1)} km
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedUserId(isExpanded ? null : u.userId)
+                          }
+                          className="p-2 text-slate-400 hover:text-slate-700 shrink-0"
+                          title={isExpanded ? '折りたたむ' : '単位ごとの内訳を表示'}
+                        >
+                          <ChevronDown
+                            className={`h-4 w-4 transition-transform ${
+                              isExpanded ? 'rotate-180' : ''
+                            }`}
+                          />
+                        </button>
+                      </div>
+                      {isExpanded && (
+                        <ul className="border-t divide-y bg-slate-50/60">
+                          {u.units.map((unit) => (
+                            <li
+                              key={unit.assignmentId}
+                              className="px-3 py-2 text-[11px]"
+                            >
+                              <div className="flex items-center gap-1.5 text-slate-700">
+                                <Car className="h-3 w-3 text-slate-400 shrink-0" />
+                                <span className="font-medium truncate flex-1">
+                                  {unit.vehicleName}
+                                </span>
+                                <span className="text-slate-800 font-semibold shrink-0">
+                                  {(unit.distanceM / 1000).toFixed(2)} km
+                                </span>
+                              </div>
+                              <div className="text-slate-500 mt-0.5 flex items-center gap-1">
+                                <span>
+                                  {new Date(unit.startedAt).toLocaleTimeString(
+                                    'ja-JP',
+                                    { hour: '2-digit', minute: '2-digit' },
+                                  )}
+                                </span>
+                                <span>–</span>
+                                <span>
+                                  {unit.endedAt
+                                    ? new Date(unit.endedAt).toLocaleTimeString(
+                                        'ja-JP',
+                                        { hour: '2-digit', minute: '2-digit' },
+                                      )
+                                    : '(乗車中)'}
+                                </span>
+                              </div>
+                              {unit.destinationName && (
+                                <div className="text-amber-700 mt-0.5 flex items-center gap-1 truncate">
+                                  <MapPin className="h-3 w-3 shrink-0" />
+                                  <span className="truncate">
+                                    行き先: {unit.destinationName}
+                                  </span>
+                                </div>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </li>
                   )
                 })}

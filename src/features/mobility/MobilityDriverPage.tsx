@@ -16,12 +16,16 @@ import {
   ArrowLeft,
   Car,
   ChevronRight,
+  Compass,
   Construction,
+  Crosshair,
   Loader2,
   LogOut,
   MapPin,
+  Minus,
   Navigation,
   Play,
+  Plus,
   Truck,
   X,
 } from 'lucide-react'
@@ -35,6 +39,10 @@ import {
 } from 'react-leaflet'
 import { VehicleMarker } from '@/features/mobility/VehicleMarker'
 import 'leaflet/dist/leaflet.css'
+// leaflet-rotate は L.Map に rotate/setBearing を注入する副作用 import。
+// ヘディングアップ用に必要 (MobileStakingPage が既に import 済みだが、直接
+// このページを開いても動くよう明示的に import しておく)。
+import 'leaflet-rotate'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCanUseMobility } from '@/lib/useCanUseMobility'
 import { isMobileDevice } from '@/lib/displayMode'
@@ -71,19 +79,131 @@ const KIND_ICON: Record<VehicleKind, typeof Car> = {
 // 送信間隔 (ms)
 const PING_INTERVAL_MS = 10_000
 
-// 今日 0 時 (ローカルタイム)
-function startOfTodayLocal(): Date {
-  const d = new Date()
-  d.setHours(0, 0, 0, 0)
-  return d
-}
-
-function FollowMe({ pos }: { pos: [number, number] | null }) {
+// 現在地追跡: followMe=true の間は pos が変わる度に自車を画面中央に維持。
+// programmatic な setView は「ユーザー操作 pan/zoom」と区別するため、直後に
+// ignore フラグを立てて MapUserGestureWatcher の追跡 OFF を抑止する。
+function FollowMe({
+  pos,
+  followMe,
+  onProgrammaticMove,
+}: {
+  pos: [number, number] | null
+  followMe: boolean
+  onProgrammaticMove: () => void
+}) {
   const map = useMap()
   useEffect(() => {
-    if (pos) map.setView(pos, Math.max(map.getZoom(), 15), { animate: true })
-  }, [pos, map])
+    if (!followMe || !pos) return
+    onProgrammaticMove()
+    map.setView(pos, Math.max(map.getZoom(), 15), { animate: true })
+  }, [pos, followMe, map, onProgrammaticMove])
   return null
+}
+
+// ユーザーが地図をドラッグしたら追跡を OFF にする。zoom は追跡と両立するので
+// 触らない (ズーム後もセンタリングは続く)。
+function MapUserGestureWatcher({
+  onUserPan,
+}: {
+  onUserPan: () => void
+}) {
+  const map = useMap()
+  useEffect(() => {
+    const handler = () => onUserPan()
+    map.on('dragstart', handler)
+    return () => {
+      map.off('dragstart', handler)
+    }
+  }, [map, onUserPan])
+  return null
+}
+
+// leaflet-rotate の bearing を車両ヘディングに追従させる。
+// enabled=false の時は 0 (北向き) に戻す。
+function MapBearingUpdater({
+  enabled,
+  heading,
+}: {
+  enabled: boolean
+  heading: number | null
+}) {
+  const map = useMap() as L.Map & {
+    setBearing?: (deg: number) => void
+  }
+  useEffect(() => {
+    if (typeof map.setBearing !== 'function') return
+    const desired = enabled && heading != null ? -heading : 0
+    try {
+      map.setBearing(desired)
+    } catch {
+      /* ignore */
+    }
+  }, [map, enabled, heading])
+  return null
+}
+
+// 現在地/ヘディング/ズームのカスタムコントロール (Leaflet 既定を差し替える)
+function MapControlStack({
+  followMe,
+  headingUp,
+  onToggleFollow,
+  onToggleHeading,
+}: {
+  followMe: boolean
+  headingUp: boolean
+  onToggleFollow: () => void
+  onToggleHeading: () => void
+}) {
+  const map = useMap()
+  const btn = 'w-9 h-9 flex items-center justify-center bg-white text-slate-700 border border-slate-300 shadow'
+  return (
+    <div className="absolute top-3 left-3 z-[500] flex flex-col rounded overflow-hidden">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          onToggleFollow()
+        }}
+        className={`${btn} rounded-t ${followMe ? 'bg-emerald-500 text-white border-emerald-600' : ''}`}
+        title={followMe ? '追跡中 (タップで停止)' : '自車を追跡'}
+      >
+        <Crosshair className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          onToggleHeading()
+        }}
+        className={`${btn} -mt-px ${headingUp ? 'bg-indigo-500 text-white border-indigo-600' : ''}`}
+        title={headingUp ? 'ヘディングアップ中 (タップで北向き)' : '北向き (タップでヘディングアップ)'}
+      >
+        <Compass className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          map.zoomIn()
+        }}
+        className={`${btn} -mt-px`}
+        title="拡大"
+      >
+        <Plus className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          map.zoomOut()
+        }}
+        className={`${btn} -mt-px rounded-b`}
+        title="縮小"
+      >
+        <Minus className="h-4 w-4" />
+      </button>
+    </div>
+  )
 }
 
 export function MobilityDriverPage() {
@@ -187,21 +307,17 @@ export function MobilityDriverPage() {
   const [lastAutoSentAt, setLastAutoSentAt] = useState<Date | null>(null)
   const [autoSend, setAutoSend] = useState(false)
 
-  // 本日走行距離 (自分の位置ログを resetAt 以降で累積)
-  //   resetAt は localStorage に永続化 (キーは user_id ごと)。既定は今日 00:00 (JST)
-  //   ユーザーが「リセット」ボタンを押すと現在時刻に更新される
-  const resetKey = user ? `mobility:distanceResetAt:${user.id}` : null
-  const [resetAt, setResetAt] = useState<Date>(() => {
-    if (typeof window === 'undefined' || !resetKey) return startOfTodayLocal()
-    const saved = localStorage.getItem(resetKey)
-    if (saved) {
-      const d = new Date(saved)
-      // 前日以前の保存値なら今日 00:00 にリセット
-      if (d.getTime() >= startOfTodayLocal().getTime()) return d
-    }
-    return startOfTodayLocal()
-  })
-  const [todayDistanceM, setTodayDistanceM] = useState(0)
+  // 単位 (現在の乗車) 走行距離。myActive.started_at 以降を累積する。
+  // 降車で新しい単位に切り替わり、次回乗車時は自動的に 0 から始まる。
+  const [unitDistanceM, setUnitDistanceM] = useState(0)
+
+  // 地図追跡状態 (現在地に自動でセンタリング)。初期値 true。
+  // ユーザーが地図をドラッグすると false になり、現在地ボタンで戻す。
+  const [followMe, setFollowMe] = useState(true)
+  // ヘディングアップ (地図を進行方向に回転)。初期値 false = 北向き。
+  const [headingUp, setHeadingUp] = useState(false)
+  // 直前に自分で setView した直後は dragstart ハンドラを 1 tick 抑制するフラグ
+  const ignoreNextGestureRef = useRef(false)
 
   const autoSendRef = useRef(false)
   const myActiveRef = useRef<typeof myActive>(null)
@@ -342,44 +458,29 @@ export function MobilityDriverPage() {
     }
   }, [])
 
-  // 本日走行距離の計算 (resetAt 以降の自分の全 assignment の位置を対象)
-  //   - 送信 (lastAutoSentAt) or リセット時刻 (resetAt) or 乗車状態 (myActive) の
-  //     変化で再計算
-  //   - myActive がある間は 20 秒ごとにも軽く refresh (バックグラウンドで
-  //     ping が増えていくケース)
+  // 単位走行距離: 現在の乗車 (myActive.started_at) 以降の自分の位置から累積。
+  // - 送信 (lastAutoSentAt) or 乗車状態 (myActive) の変化で再計算
+  // - myActive がある間は 20 秒ごとに軽く refresh
+  // 降車すると myActive=null → 0 にリセット、次回乗車で新しい単位から再カウント。
   useEffect(() => {
-    if (!user) {
-      setTodayDistanceM(0)
+    if (!user || !myActive) {
+      setUnitDistanceM(0)
       return
     }
     let cancelled = false
     const compute = async () => {
-      const rows = await fetchPositionsForUserSince(user.id, resetAt.toISOString())
+      const rows = await fetchPositionsForUserSince(user.id, myActive.started_at)
       if (cancelled) return
       const m = computeTotalDistanceMeters(rows)
-      setTodayDistanceM(m)
+      setUnitDistanceM(m)
     }
     void compute()
-    const timer = myActive ? setInterval(compute, 20_000) : null
+    const timer = setInterval(compute, 20_000)
     return () => {
       cancelled = true
-      if (timer) clearInterval(timer)
+      clearInterval(timer)
     }
-  }, [user, resetAt, myActive, lastAutoSentAt, fetchPositionsForUserSince])
-
-  const handleResetDistance = () => {
-    if (!confirm('本日の走行距離をリセットしますか?')) return
-    const now = new Date()
-    setResetAt(now)
-    setTodayDistanceM(0)
-    if (resetKey) {
-      try {
-        localStorage.setItem(resetKey, now.toISOString())
-      } catch {
-        /* ignore quota errors */
-      }
-    }
-  }
+  }, [user, myActive, lastAutoSentAt, fetchPositionsForUserSince])
 
   // 走行軌跡 (自分の active assignment のもの)
   const [trackPositions, setTrackPositions] = useState<MobilityPosition[]>([])
@@ -523,9 +624,13 @@ export function MobilityDriverPage() {
         </div>
       )}
 
-      {/* 速度・本日走行距離パネル (乗車中のみ) */}
+      {/* 速度・単位走行距離・方向距離パネル (乗車中のみ) */}
       {myActive && (
-        <div className="mx-3 mt-2 grid grid-cols-2 gap-2 shrink-0">
+        <div
+          className={`mx-3 mt-2 grid gap-2 shrink-0 ${
+            selectedDestination && destInfo ? 'grid-cols-3' : 'grid-cols-2'
+          }`}
+        >
           <div className="bg-slate-800 border border-slate-700 rounded-lg p-2 text-white">
             <div className="text-[10px] text-slate-400">現在速度</div>
             <div className="text-2xl font-bold leading-tight">
@@ -536,29 +641,60 @@ export function MobilityDriverPage() {
             </div>
           </div>
           <div className="bg-slate-800 border border-slate-700 rounded-lg p-2 text-white">
-            <div className="flex items-center gap-1">
-              <span className="text-[10px] text-slate-400 flex-1">本日走行</span>
-              <button
-                type="button"
-                onClick={handleResetDistance}
-                className="text-[9px] text-slate-400 hover:text-white underline"
-                title="本日の走行距離をリセット"
-              >
-                リセット
-              </button>
-            </div>
+            <div className="text-[10px] text-slate-400">単位走行</div>
             <div className="text-2xl font-bold leading-tight">
-              {(todayDistanceM / 1000).toFixed(1)}
+              {(unitDistanceM / 1000).toFixed(1)}
               <span className="text-xs font-normal text-slate-300 ml-1">km</span>
             </div>
             <div className="text-[9px] text-slate-500 mt-0.5">
-              {resetAt.toLocaleTimeString('ja-JP', {
+              {new Date(myActive.started_at).toLocaleTimeString('ja-JP', {
                 hour: '2-digit',
                 minute: '2-digit',
               })}
               〜
             </div>
           </div>
+          {selectedDestination && destInfo && (
+            <div className="bg-slate-800 border border-amber-600/70 rounded-lg p-2 text-white relative min-w-0">
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] text-amber-200 flex-1 truncate">
+                  → {selectedDestination.name}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void applyDestination(null)}
+                  disabled={destBusy}
+                  className="shrink-0 h-4 w-4 rounded hover:bg-slate-700 flex items-center justify-center disabled:opacity-50 text-slate-400"
+                  title="行き先を解除"
+                >
+                  {destBusy ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <X className="h-3 w-3" />
+                  )}
+                </button>
+              </div>
+              <div className="flex items-center gap-1 mt-0.5">
+                <Navigation
+                  className="h-5 w-5 text-amber-300 shrink-0"
+                  style={{
+                    transform: `rotate(${
+                      headingUp
+                        ? destInfo.deg - (currentHeadingDeg ?? 0)
+                        : destInfo.deg
+                    }deg)`,
+                    transition: 'transform 250ms',
+                  }}
+                />
+                <div className="text-lg font-bold leading-tight">
+                  {formatDistance(destInfo.meters)}
+                </div>
+              </div>
+              <div className="text-[9px] text-amber-200/80 mt-0.5">
+                {destInfo.label} {Math.round(destInfo.deg)}°
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -567,13 +703,32 @@ export function MobilityDriverPage() {
         <MapContainer
           center={[35.681236, 139.767125]}
           zoom={15}
+          zoomControl={false}
           className="h-full w-full"
+          {...({ rotate: true, bearing: 0, rotateControl: false } as Record<string, unknown>)}
         >
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
-          <FollowMe pos={currentPos} />
+          <FollowMe
+            pos={currentPos}
+            followMe={followMe}
+            onProgrammaticMove={() => {
+              ignoreNextGestureRef.current = true
+              // 次の tick までは dragstart を追跡 OFF に使わない
+              setTimeout(() => {
+                ignoreNextGestureRef.current = false
+              }, 500)
+            }}
+          />
+          <MapUserGestureWatcher
+            onUserPan={() => {
+              if (ignoreNextGestureRef.current) return
+              setFollowMe(false)
+            }}
+          />
+          <MapBearingUpdater enabled={headingUp} heading={currentHeadingDeg} />
           {trackLine.length > 1 && (
             <Polyline positions={trackLine} pathOptions={{ color: '#6366f1', weight: 4 }} />
           )}
@@ -602,48 +757,16 @@ export function MobilityDriverPage() {
               size={22}
             />
           )}
+          <MapControlStack
+            followMe={followMe}
+            headingUp={headingUp}
+            onToggleFollow={() => {
+              // OFF → ON にする時は即センタリング
+              setFollowMe((prev) => !prev)
+            }}
+            onToggleHeading={() => setHeadingUp((prev) => !prev)}
+          />
         </MapContainer>
-
-        {/* 目的地までの方位・距離オーバーレイ */}
-        {selectedDestination && destInfo && (
-          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[500] bg-slate-900/85 backdrop-blur text-white rounded-lg px-3 py-2 border border-amber-500/60 shadow-lg max-w-[92%]">
-            <div className="flex items-center gap-2">
-              <div className="relative shrink-0 h-9 w-9 rounded-full bg-amber-500/20 border border-amber-400 flex items-center justify-center">
-                <Navigation
-                  className="h-5 w-5 text-amber-300"
-                  style={{
-                    transform: `rotate(${destInfo.deg - (currentHeadingDeg ?? 0)}deg)`,
-                    transition: 'transform 250ms',
-                  }}
-                />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-[10px] text-amber-200 truncate">
-                  目的地: {selectedDestination.name}
-                </div>
-                <div className="text-sm font-bold leading-tight">
-                  {destInfo.label} ({Math.round(destInfo.deg)}°)
-                  <span className="ml-2 text-amber-200">
-                    {formatDistance(destInfo.meters)}
-                  </span>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => void applyDestination(null)}
-                disabled={destBusy}
-                className="shrink-0 h-7 w-7 rounded hover:bg-slate-700 flex items-center justify-center disabled:opacity-50"
-                title="行き先を解除"
-              >
-                {destBusy ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <X className="h-4 w-4" />
-                )}
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
       {busyError && (
@@ -699,9 +822,11 @@ export function MobilityDriverPage() {
                 自動送信 {autoSend ? 'ON' : 'OFF'}
               </button>
               <button
+                type="button"
                 onClick={handleLeave}
                 disabled={busy}
-                className="flex items-center gap-1 px-3 py-3 text-sm border border-red-500 text-red-300 rounded-lg disabled:opacity-50"
+                style={{ touchAction: 'manipulation' }}
+                className="shrink-0 flex items-center gap-1 px-4 py-3 text-sm font-semibold border border-red-500 bg-red-950/40 text-red-200 rounded-lg active:bg-red-900/60 disabled:opacity-50"
               >
                 {busy ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
