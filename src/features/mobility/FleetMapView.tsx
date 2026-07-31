@@ -5,15 +5,8 @@
 // - onMarkerClick で親コンポーネントに車両クリックを通知
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  MapContainer,
-  TileLayer,
-  CircleMarker,
-  Polyline,
-  Popup,
-  Tooltip,
-  useMap,
-} from 'react-leaflet'
+import { MapContainer, TileLayer, Polyline, useMap } from 'react-leaflet'
+import { VehicleMarker } from '@/features/mobility/VehicleMarker'
 import type { LatLngBoundsExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { Loader2, RotateCcw } from 'lucide-react'
@@ -164,6 +157,7 @@ export function FleetMapView({ organizationId, onSelectVehicle }: FleetMapViewPr
       recordedAt: string
       accuracy_m: number | null
       speed_kmh: number | null
+      heading_deg: number | null
     }[] = []
     for (const [assignmentId, pos] of latestPositions) {
       const assignment = Array.from(activeAssignments.values()).find(
@@ -181,6 +175,7 @@ export function FleetMapView({ organizationId, onSelectVehicle }: FleetMapViewPr
         recordedAt: pos.recorded_at,
         accuracy_m: pos.accuracy_m,
         speed_kmh: pos.speed_kmh,
+        heading_deg: pos.heading_deg,
       })
     }
     return rows
@@ -246,62 +241,22 @@ export function FleetMapView({ organizationId, onSelectVehicle }: FleetMapViewPr
             />
           )
         })}
-        {markers.map((m) => (
-          <CircleMarker
-            key={m.assignmentId}
-            center={[m.lat, m.lon]}
-            radius={9}
-            pathOptions={{
-              color: COLOR_ACTIVE,
-              fillColor: COLOR_ACTIVE,
-              fillOpacity: 0.85,
-              weight: 2,
-            }}
-            eventHandlers={
-              onSelectVehicle
-                ? { click: () => onSelectVehicle(m.vehicleId) }
-                : undefined
-            }
-          >
-            <Tooltip
-              direction="top"
-              offset={[0, -8]}
-              permanent
-              className="!bg-white !border !border-slate-300 !text-slate-800 !font-medium"
-            >
-              {m.vehicleName}
-              {m.speed_kmh != null && m.speed_kmh >= 0 && (
-                <span className="ml-1 text-slate-500">
-                  {Math.round(m.speed_kmh)}km/h
-                </span>
-              )}
-            </Tooltip>
-            <Popup>
-              <div className="text-xs space-y-1">
-                <div className="font-semibold">{m.vehicleName}</div>
-                <div className="text-slate-600">ドライバー: {m.driverName}</div>
-                <div className="text-slate-500">
-                  最終送信:{' '}
-                  {new Date(m.recordedAt).toLocaleTimeString('ja-JP', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit',
-                  })}
-                </div>
-                {m.speed_kmh != null && m.speed_kmh >= 0 && (
-                  <div className="text-slate-500">
-                    速度: {Math.round(m.speed_kmh)}km/h
-                  </div>
-                )}
-                {m.accuracy_m != null && (
-                  <div className="text-slate-400">
-                    精度: ±{Math.round(m.accuracy_m)}m
-                  </div>
-                )}
-              </div>
-            </Popup>
-          </CircleMarker>
-        ))}
+        {markers.map((m) => {
+          const label = m.speed_kmh != null && m.speed_kmh >= 0
+            ? `${m.vehicleName} ${Math.round(m.speed_kmh)}km/h`
+            : m.vehicleName
+          return (
+            <VehicleMarker
+              key={m.assignmentId}
+              position={[m.lat, m.lon]}
+              heading={m.heading_deg}
+              color={COLOR_ACTIVE}
+              size={22}
+              label={label}
+              onClick={onSelectVehicle ? () => onSelectVehicle(m.vehicleId) : undefined}
+            />
+          )
+        })}
       </MapContainer>
     </div>
   )

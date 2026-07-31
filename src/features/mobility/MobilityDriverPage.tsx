@@ -5,12 +5,12 @@
 //   ・上部ヘッダに現在の車両/割当情報
 //   ・下部に大きな行動ボタン
 //       - 割当なし: 「乗車」→ 車両ピッカー
-//       - 自分の割当あり: 「現在地を送信」「降車」
+//       - 自分の割当あり: 「自動送信 ON/OFF」トグル + 「降車」
 //       - 他人の割当: 読み取り専用 (別画面推奨)
 //   ・現在地は Geolocation で自動追跡し watchPosition で連続送信
 //     (画面表示中のみ。バックグラウンドは Capacitor 統合で対応)
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -19,20 +19,20 @@ import {
   Loader2,
   LogOut,
   Play,
-  Send,
   Truck,
   X,
 } from 'lucide-react'
 import {
   MapContainer,
   TileLayer,
-  CircleMarker,
   Polyline,
   useMap,
 } from 'react-leaflet'
+import { VehicleMarker } from '@/features/mobility/VehicleMarker'
 import 'leaflet/dist/leaflet.css'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCanUseMobility } from '@/lib/useCanUseMobility'
+import { isMobileDevice } from '@/lib/displayMode'
 import { watchSamples, watchSamplesInBackground } from '@/lib/geolocation'
 import { computeTotalDistanceMeters } from '@/lib/geoDistance'
 import { useMobilityStore } from '@/stores/mobilityStore'
@@ -119,6 +119,7 @@ export function MobilityDriverPage() {
   const [currentPos, setCurrentPos] = useState<[number, number] | null>(null)
   const [accuracy, setAccuracy] = useState<number | null>(null)
   const [currentSpeedKmh, setCurrentSpeedKmh] = useState<number | null>(null)
+  const [currentHeadingDeg, setCurrentHeadingDeg] = useState<number | null>(null)
   const [locationError, setLocationError] = useState<string | null>(null)
   const [lastAutoSentAt, setLastAutoSentAt] = useState<Date | null>(null)
   const [autoSend, setAutoSend] = useState(false)
@@ -244,6 +245,7 @@ export function MobilityDriverPage() {
             setCurrentPos([sample.lat, sample.lon])
             setAccuracy(sample.accuracy_m)
             setCurrentSpeedKmh(sample.speed_kmh)
+            setCurrentHeadingDeg(sample.heading_deg)
             setLocationError(null)
 
             // 乗車中 + 自動送信 ON なら throttle して送る
@@ -333,24 +335,14 @@ export function MobilityDriverPage() {
     }
   }, [myActive, fetchRecentPositions])
 
-  // ping を送るたびに軌跡も伸ばす
-  const handleManualSend = useCallback(async () => {
-    if (!myActive || !currentPos) return
-    const res = await sendPosition(myActive.id, {
-      lat: currentPos[0],
-      lon: currentPos[1],
-      accuracy_m: accuracy,
-    })
-    if (res.ok) {
-      // 軌跡を再取得 (簡易: サーバから 1 件だけ足す方が理想)
-      const rows = await fetchRecentPositions(myActive.id, 200)
-      setTrackPositions(rows)
-    }
-  }, [myActive, currentPos, accuracy, sendPosition, fetchRecentPositions])
+  // 手動送信は仕様変更で削除 (自動送信トグルのみで十分)
+
 
   const [showPicker, setShowPicker] = useState(false)
   const [busy, setBusy] = useState(false)
   const [busyError, setBusyError] = useState<string | null>(null)
+  // PC からアクセスしていたら警告を出す (ドライバー画面はモバイル専用)
+  const [showPcWarning, setShowPcWarning] = useState(() => !isMobileDevice())
 
   const handleBoard = async (vehicleId: string) => {
     setBusyError(null)
@@ -410,6 +402,33 @@ export function MobilityDriverPage() {
           </span>
         )}
       </div>
+
+      {/* PC 検知警告 (モバイル専用画面である旨) */}
+      {showPcWarning && (
+        <div className="mx-3 mt-2 p-2 bg-amber-900/40 border border-amber-700 rounded text-[11px] text-amber-100 flex items-start gap-2">
+          <span className="shrink-0">⚠</span>
+          <span className="flex-1">
+            この画面はスマートフォン専用に設計されています。PC から操作するとレイアウトや位置情報が正しく動作しない場合があります。
+            管理画面は
+            <button
+              type="button"
+              onClick={() => navigate('/mobility')}
+              className="mx-1 underline text-amber-200 hover:text-white"
+            >
+              /mobility
+            </button>
+            からご利用ください。
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowPcWarning(false)}
+            className="shrink-0 px-1.5 text-amber-200 hover:text-white"
+            title="警告を閉じる"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* サブヘッダ: 現在の車両状態 (乗車中のときだけ) */}
       {myActive && myVehicle && (
@@ -477,15 +496,11 @@ export function MobilityDriverPage() {
             <Polyline positions={trackLine} pathOptions={{ color: '#6366f1', weight: 4 }} />
           )}
           {currentPos && (
-            <CircleMarker
-              center={currentPos}
-              radius={9}
-              pathOptions={{
-                color: '#ffffff',
-                fillColor: myActive ? '#10b981' : '#3b82f6',
-                fillOpacity: 1,
-                weight: 3,
-              }}
+            <VehicleMarker
+              position={currentPos}
+              heading={currentHeadingDeg}
+              color={myActive ? '#10b981' : '#3b82f6'}
+              size={22}
             />
           )}
         </MapContainer>
@@ -516,25 +531,31 @@ export function MobilityDriverPage() {
       <div className="p-3 bg-slate-800 flex gap-2 shrink-0">
         {myActive ? (
           <>
-            <button
-              onClick={handleManualSend}
-              disabled={busy || !currentPos}
-              className="flex-1 flex items-center justify-center gap-1 px-3 py-3 text-sm font-semibold bg-sky-600 text-white rounded-lg disabled:opacity-50"
-            >
-              <Send className="h-4 w-4" />
-              現在地を送信
-            </button>
+            {/* 自動送信トグル: メインの大ボタン */}
             <button
               onClick={() => setAutoSend((v) => !v)}
               disabled={busy}
-              className={`px-3 py-3 text-xs rounded-lg font-semibold ${
+              role="switch"
+              aria-checked={autoSend}
+              className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 text-base font-semibold rounded-lg transition ${
                 autoSend
-                  ? 'bg-emerald-600 text-white'
-                  : 'bg-slate-600 text-slate-200'
+                  ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                  : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
               }`}
-              title={autoSend ? '自動送信 ON' : '自動送信 OFF'}
+              title={autoSend ? 'タップで自動送信を停止' : 'タップで自動送信を開始'}
             >
-              {autoSend ? '自動 ON' : '自動 OFF'}
+              <span
+                className={`inline-block h-4 w-8 rounded-full relative ${
+                  autoSend ? 'bg-emerald-300' : 'bg-slate-500'
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${
+                    autoSend ? 'left-4' : 'left-0.5'
+                  }`}
+                />
+              </span>
+              自動送信 {autoSend ? 'ON' : 'OFF'}
             </button>
             <button
               onClick={handleLeave}
