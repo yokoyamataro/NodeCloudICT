@@ -5,7 +5,15 @@
 // - onMarkerClick で親コンポーネントに車両クリックを通知
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { MapContainer, Marker, TileLayer, Polyline, useMap } from 'react-leaflet'
+import {
+  MapContainer,
+  Marker,
+  TileLayer,
+  Polyline,
+  Tooltip,
+  useMap,
+  useMapEvents,
+} from 'react-leaflet'
 import { VehicleMarker } from '@/features/mobility/VehicleMarker'
 import L, { type LatLngBoundsExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -13,7 +21,7 @@ import { Loader2, RotateCcw } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useMobilityStore } from '@/stores/mobilityStore'
 import { bearingLabel, bearingDeg, haversineMeters } from '@/lib/geoDistance'
-import type { MobilityPosition } from '@/types/database'
+import type { MobilityPosition, MobilityProjectPoint } from '@/types/database'
 
 const COLOR_ACTIVE = '#10b981'
 
@@ -57,6 +65,38 @@ function formatDistance(meters: number): string {
   return `${(meters / 1000).toFixed(meters < 10_000 ? 2 : 1)} km`
 }
 
+// 運行現場ポイント用 (青ピン)。編集中は赤にハイライト。
+function projectPointIcon(highlight: boolean): L.DivIcon {
+  const color = highlight ? '#dc2626' : '#6366f1'
+  return L.divIcon({
+    className: 'mobility-point-marker',
+    html: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="34" viewBox="0 0 28 34" style="overflow:visible;">
+      <path d="M14 0 C6 0 0 6 0 14 C0 24 14 34 14 34 C14 34 28 24 28 14 C28 6 22 0 14 0 Z"
+            fill="${color}" stroke="white" stroke-width="2"/>
+      <circle cx="14" cy="13" r="5" fill="white"/>
+    </svg>`,
+    iconSize: [28, 34],
+    iconAnchor: [14, 34],
+  })
+}
+
+// 地図クリックを親に通知する (addPointMode 中のみ)
+function MapClickHandler({
+  enabled,
+  onClick,
+}: {
+  enabled: boolean
+  onClick: (lat: number, lon: number) => void
+}) {
+  useMapEvents({
+    click: (e) => {
+      if (!enabled) return
+      onClick(e.latlng.lat, e.latlng.lng)
+    },
+  })
+  return null
+}
+
 function AutoFitBounds({
   positions,
 }: {
@@ -89,12 +129,27 @@ interface FleetMapViewProps {
    * 稼働中割当と重複しても構わない (Map で dedup される)。
    */
   extraTrackAssignmentIds?: string[]
+  /** 現在パネルで展開中の運行現場のポイント (青ピンで地図に表示) */
+  projectPoints?: MobilityProjectPoint[]
+  /** ハイライトするポイント (編集中など)。id で指定 */
+  highlightPointId?: string | null
+  /** 地図クリックで新規ポイントを配置するモード */
+  addPointMode?: boolean
+  /** 新規ポイント配置時のクリック位置 */
+  onMapClick?: (lat: number, lon: number) => void
+  /** ポイントマーカー押下で編集開始等 */
+  onSelectPoint?: (pointId: string) => void
 }
 
 export function FleetMapView({
   organizationId,
   onSelectVehicle,
   extraTrackAssignmentIds,
+  projectPoints,
+  highlightPointId,
+  addPointMode,
+  onMapClick,
+  onSelectPoint,
 }: FleetMapViewProps) {
   const {
     vehicles,
@@ -294,8 +349,10 @@ export function FleetMapView({
       rows.push({ lat: first.lat, lon: first.lon })
       if (last.id !== first.id) rows.push({ lat: last.lat, lon: last.lon })
     }
+    // 展開中の運行現場のポイントも
+    for (const p of projectPoints ?? []) rows.push({ lat: p.lat, lon: p.lon })
     return rows
-  }, [latestPositions, markers, extraTracks])
+  }, [latestPositions, markers, extraTracks, projectPoints])
 
   return (
     <div className="relative h-full w-full">
@@ -326,16 +383,43 @@ export function FleetMapView({
           </div>
         </div>
       )}
+      {addPointMode && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[1000] bg-indigo-600 text-white text-xs rounded-full px-3 py-1 shadow flex items-center gap-2">
+          <span>地図をクリックしてポイントを配置</span>
+        </div>
+      )}
       <MapContainer
         center={[35.681236, 139.767125]}
         zoom={5}
         className="h-full w-full"
+        style={addPointMode ? { cursor: 'crosshair' } : undefined}
       >
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <AutoFitBounds positions={positionsForBounds} />
+        {onMapClick && (
+          <MapClickHandler enabled={!!addPointMode} onClick={onMapClick} />
+        )}
+        {/* 運行現場ポイント (展開中の現場のもの) */}
+        {(projectPoints ?? []).map((p) => (
+          <Marker
+            key={`project-point-${p.id}`}
+            position={[p.lat, p.lon]}
+            icon={projectPointIcon(highlightPointId === p.id)}
+            eventHandlers={
+              onSelectPoint ? { click: () => onSelectPoint(p.id) } : undefined
+            }
+          >
+            <Tooltip direction="top" offset={[0, -30]} permanent>
+              <span className="text-xs font-medium">
+                {p.name}
+                {p.kind && <span className="text-slate-500 ml-1">({p.kind})</span>}
+              </span>
+            </Tooltip>
+          </Marker>
+        ))}
         {/* 稼働中車両ごとの走行軌跡 (assignment 単位で色分け) */}
         {Array.from(trackPositions.entries()).map(([assignmentId, points]) => {
           if (points.length < 2) return null

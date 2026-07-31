@@ -29,6 +29,7 @@ import {
   Trash2,
   Truck,
   User,
+  UserPlus,
   X,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
@@ -37,7 +38,14 @@ import {
   useMobilityStore,
   type AssignmentWithNames,
 } from '@/stores/mobilityStore'
-import type { MobilityPosition, Vehicle, VehicleKind } from '@/types/database'
+import type {
+  MobilityPosition,
+  MobilityProject,
+  MobilityProjectMember,
+  MobilityProjectPoint,
+  Vehicle,
+  VehicleKind,
+} from '@/types/database'
 import { FleetMapView } from '@/features/mobility/FleetMapView'
 import { computeTotalDistanceMeters } from '@/lib/geoDistance'
 import { supabase } from '@/lib/supabase'
@@ -109,6 +117,17 @@ export function MobilityHomePage() {
     createVehicle,
     updateVehicle,
     deleteVehicle,
+    fetchProjects,
+    createProject,
+    updateProject,
+    deleteProject,
+    fetchProjectMembers,
+    addProjectMember,
+    removeProjectMember,
+    fetchProjectPoints,
+    createPoint,
+    updatePoint,
+    deletePoint,
   } = useMobilityStore()
 
   useEffect(() => {
@@ -119,10 +138,29 @@ export function MobilityHomePage() {
 
   const [showNewDialog, setShowNewDialog] = useState(false)
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null)
-  const [mode, setMode] = useState<'vehicle' | 'user'>('vehicle')
+  // 既定は ドライバー (ユーザー) タブ
+  const [mode, setMode] = useState<'vehicle' | 'user'>('user')
   const [orgMembers, setOrgMembers] = useState<OrgMemberRow[]>([])
   const [orgMembersLoading, setOrgMembersLoading] = useState(false)
   const [showPhoneInvite, setShowPhoneInvite] = useState(false)
+
+  // 運行現場 (左パネル) の state
+  const [projects, setProjects] = useState<MobilityProject[]>([])
+  const [projectsLoading, setProjectsLoading] = useState(false)
+  const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null)
+  const [expandedProjectPoints, setExpandedProjectPoints] = useState<
+    MobilityProjectPoint[]
+  >([])
+  const [expandedProjectMembers, setExpandedProjectMembers] = useState<
+    MobilityProjectMember[]
+  >([])
+  const [addPointMode, setAddPointMode] = useState(false)
+  const [editingPoint, setEditingPoint] = useState<MobilityProjectPoint | null>(null)
+  const [showNewProjectDialog, setShowNewProjectDialog] = useState(false)
+  const [showEditProjectId, setShowEditProjectId] = useState<string | null>(null)
+  const [showMemberPickerForProject, setShowMemberPickerForProject] = useState<
+    string | null
+  >(null)
 
   // インライン展開する行 (同時に 1 台/1 人のみ)
   const [expandedVehicleId, setExpandedVehicleId] = useState<string | null>(null)
@@ -156,9 +194,9 @@ export function MobilityHomePage() {
     setExpandedVehicleId(null)
   }, [])
 
-  // ユーザー一覧を取得 (user モード時)
+  // ユーザー一覧を取得。運行現場のメンバー割当ダイアログでも使うので mode 問わず取得。
   useEffect(() => {
-    if (!orgId || mode !== 'user') return
+    if (!orgId) return
     let cancelled = false
     setOrgMembersLoading(true)
     ;(async () => {
@@ -174,7 +212,73 @@ export function MobilityHomePage() {
     return () => {
       cancelled = true
     }
-  }, [orgId, mode])
+  }, [orgId])
+
+  // 運行現場一覧を取得
+  const refreshProjects = useCallback(async () => {
+    if (!orgId) return
+    setProjectsLoading(true)
+    try {
+      const rows = await fetchProjects(orgId)
+      setProjects(rows)
+    } finally {
+      setProjectsLoading(false)
+    }
+  }, [orgId, fetchProjects])
+
+  useEffect(() => {
+    void refreshProjects()
+  }, [refreshProjects])
+
+  // 展開中の現場のメンバー + ポイントを取得
+  useEffect(() => {
+    if (!expandedProjectId) {
+      setExpandedProjectPoints([])
+      setExpandedProjectMembers([])
+      setAddPointMode(false)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const [pts, mems] = await Promise.all([
+        fetchProjectPoints(expandedProjectId),
+        fetchProjectMembers(expandedProjectId),
+      ])
+      if (!cancelled) {
+        setExpandedProjectPoints(pts)
+        setExpandedProjectMembers(mems)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [expandedProjectId, fetchProjectPoints, fetchProjectMembers])
+
+  const toggleExpandProject = useCallback((id: string) => {
+    setExpandedProjectId((prev) => (prev === id ? null : id))
+  }, [])
+
+  // 地図クリックで新規ポイント配置
+  const handleMapClickForNewPoint = useCallback(
+    async (lat: number, lon: number) => {
+      if (!expandedProjectId) return
+      setAddPointMode(false)
+      const name = window.prompt('ポイント名 (例: 土取場, 現場A)')
+      if (!name || !name.trim()) return
+      const kind =
+        window.prompt('種別 (例: 土取場, 採石場, 雪捨場, 農場A)  ※任意') || null
+      const created = await createPoint({
+        project_id: expandedProjectId,
+        name: name.trim(),
+        kind,
+        lat,
+        lon,
+        display_order: expandedProjectPoints.length,
+      })
+      if (created) setExpandedProjectPoints((prev) => [...prev, created])
+    },
+    [expandedProjectId, expandedProjectPoints.length, createPoint],
+  )
 
   const activeVehicles = useMemo(
     () => vehicles.filter((v) => v.active),
@@ -217,13 +321,55 @@ export function MobilityHomePage() {
         </div>
       )}
 
-      {/* PC は左に地図 + 右に車両パネル。画面幅が狭い時 (< lg) は上下配置 */}
+      {/* PC は 左: 運行現場 | 中央: 地図 | 右: ドライバー/車両。狭い画面は縦積み */}
       <div className="flex-1 flex flex-col lg:flex-row min-h-0">
+        {/* 左サイドパネル: 運行現場 (現場 > ポイント / メンバー) */}
+        <div className="lg:w-80 xl:w-96 overflow-y-auto p-4 space-y-3 border-b lg:border-b-0 lg:border-r bg-slate-50">
+          <ProjectsLeftPanel
+            projects={projects}
+            projectsLoading={projectsLoading}
+            expandedProjectId={expandedProjectId}
+            expandedProjectMembers={expandedProjectMembers}
+            expandedProjectPoints={expandedProjectPoints}
+            orgMembers={orgMembers}
+            addPointMode={addPointMode}
+            onToggleExpand={toggleExpandProject}
+            onNewProject={() => setShowNewProjectDialog(true)}
+            onEditProject={setShowEditProjectId}
+            onOpenMemberPicker={setShowMemberPickerForProject}
+            onRemoveMember={async (projectId, userId) => {
+              if (!confirm('このドライバーを外しますか?')) return
+              await removeProjectMember(projectId, userId)
+              setExpandedProjectMembers((prev) =>
+                prev.filter((m) => m.user_id !== userId),
+              )
+            }}
+            onEnterAddPointMode={() => setAddPointMode(true)}
+            onCancelAddPointMode={() => setAddPointMode(false)}
+            onEditPoint={setEditingPoint}
+            onDeletePoint={async (pointId) => {
+              if (!confirm('このポイントを削除しますか?')) return
+              await deletePoint(pointId)
+              setExpandedProjectPoints((prev) =>
+                prev.filter((p) => p.id !== pointId),
+              )
+            }}
+          />
+        </div>
+
         {/* 地図エリア */}
         <div className="h-64 lg:h-auto lg:flex-1 relative border-b lg:border-b-0 lg:border-r">
           <FleetMapView
             organizationId={orgId}
             extraTrackAssignmentIds={checkedAssignmentIdsArr}
+            projectPoints={expandedProjectPoints}
+            highlightPointId={editingPoint?.id ?? null}
+            addPointMode={addPointMode}
+            onMapClick={handleMapClickForNewPoint}
+            onSelectPoint={(pid) => {
+              const pt = expandedProjectPoints.find((p) => p.id === pid) ?? null
+              setEditingPoint(pt)
+            }}
             onSelectVehicle={(vid) => {
               // 別画面に飛ばさず、右パネルの該当行を展開する
               setMode('vehicle')
@@ -490,6 +636,83 @@ export function MobilityHomePage() {
         <PhoneInviteDialog
           organizationId={orgId}
           onClose={() => setShowPhoneInvite(false)}
+        />
+      )}
+
+      {/* 運行現場 関連ダイアログ */}
+      {showNewProjectDialog && (
+        <ProjectCreateDialog
+          onCreate={async ({ name, description }) => {
+            const p = await createProject({
+              organization_id: orgId,
+              name,
+              description,
+            })
+            setShowNewProjectDialog(false)
+            await refreshProjects()
+            if (p) setExpandedProjectId(p.id)
+          }}
+          onClose={() => setShowNewProjectDialog(false)}
+        />
+      )}
+      {showEditProjectId && (
+        <ProjectEditDialog
+          project={projects.find((p) => p.id === showEditProjectId) ?? null}
+          onSave={async (patch) => {
+            if (!showEditProjectId) return
+            await updateProject(showEditProjectId, patch)
+            setShowEditProjectId(null)
+            await refreshProjects()
+          }}
+          onDelete={async () => {
+            if (!showEditProjectId) return
+            const p = projects.find((x) => x.id === showEditProjectId)
+            if (
+              !confirm(
+                `運行現場「${p?.name ?? ''}」を完全削除しますか?\nメンバー割当・ポイント・履歴も連鎖削除されます。`,
+              )
+            )
+              return
+            await deleteProject(showEditProjectId)
+            if (expandedProjectId === showEditProjectId) setExpandedProjectId(null)
+            setShowEditProjectId(null)
+            await refreshProjects()
+          }}
+          onClose={() => setShowEditProjectId(null)}
+        />
+      )}
+      {showMemberPickerForProject && (
+        <ProjectMemberPickerDialog
+          candidates={orgMembers.filter(
+            (m) =>
+              !expandedProjectMembers.some((x) => x.user_id === m.user_id),
+          )}
+          onPick={async (userId) => {
+            if (!showMemberPickerForProject) return
+            await addProjectMember(showMemberPickerForProject, userId)
+            setShowMemberPickerForProject(null)
+            // 展開中の場合はリフレッシュ
+            if (expandedProjectId === showMemberPickerForProject) {
+              const ms = await fetchProjectMembers(expandedProjectId)
+              setExpandedProjectMembers(ms)
+            }
+          }}
+          onClose={() => setShowMemberPickerForProject(null)}
+        />
+      )}
+      {editingPoint && (
+        <PointEditDialog
+          point={editingPoint}
+          onSave={async (patch) => {
+            await updatePoint(editingPoint.id, patch)
+            setExpandedProjectPoints((prev) =>
+              prev.map((p) =>
+                p.id === editingPoint.id ? { ...p, ...patch } : p,
+              ),
+            )
+            setEditingPoint(null)
+          }}
+          onClose={() => setEditingPoint(null)}
         />
       )}
     </div>
@@ -1537,5 +1760,704 @@ function UserInlineDetail({
       onToggleCheck={onToggleCheck}
       primaryLabel={(a) => vehiclesById.get(a.vehicle_id)?.name ?? '(不明車両)'}
     />
+  )
+}
+
+// -----------------------------------------------------------------------------
+// 運行現場 左サイドパネル
+// -----------------------------------------------------------------------------
+function ProjectsLeftPanel({
+  projects,
+  projectsLoading,
+  expandedProjectId,
+  expandedProjectMembers,
+  expandedProjectPoints,
+  orgMembers,
+  addPointMode,
+  onToggleExpand,
+  onNewProject,
+  onEditProject,
+  onOpenMemberPicker,
+  onRemoveMember,
+  onEnterAddPointMode,
+  onCancelAddPointMode,
+  onEditPoint,
+  onDeletePoint,
+}: {
+  projects: MobilityProject[]
+  projectsLoading: boolean
+  expandedProjectId: string | null
+  expandedProjectMembers: MobilityProjectMember[]
+  expandedProjectPoints: MobilityProjectPoint[]
+  orgMembers: OrgMemberRow[]
+  addPointMode: boolean
+  onToggleExpand: (id: string) => void
+  onNewProject: () => void
+  onEditProject: (id: string) => void
+  onOpenMemberPicker: (projectId: string) => void
+  onRemoveMember: (projectId: string, userId: string) => Promise<void>
+  onEnterAddPointMode: () => void
+  onCancelAddPointMode: () => void
+  onEditPoint: (p: MobilityProjectPoint) => void
+  onDeletePoint: (pointId: string) => Promise<void>
+}) {
+  const memberNameMap = useMemo(() => {
+    const m = new Map<string, OrgMemberRow>()
+    for (const r of orgMembers) m.set(r.user_id, r)
+    return m
+  }, [orgMembers])
+
+  const active = projects.filter((p) => p.active)
+  const inactive = projects.filter((p) => !p.active)
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <Folder className="h-4 w-4 text-indigo-600" />
+        <h2 className="text-sm font-semibold text-slate-700 flex-1">
+          運行現場 ({projects.length})
+        </h2>
+        <button
+          type="button"
+          onClick={onNewProject}
+          className="flex items-center gap-1 px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700"
+        >
+          <Plus className="h-3 w-3" />
+          新規
+        </button>
+      </div>
+
+      {projectsLoading && projects.length === 0 ? (
+        <div className="p-4 text-center text-slate-400">
+          <Loader2 className="h-4 w-4 animate-spin inline mr-2" />
+          読み込み中...
+        </div>
+      ) : projects.length === 0 ? (
+        <div className="p-3 bg-white rounded border text-xs text-slate-400 text-center">
+          運行現場がありません。「新規」から作成してください。
+        </div>
+      ) : (
+        <>
+          <ul className="space-y-1.5">
+            {active.map((p) => (
+              <ProjectRow
+                key={p.id}
+                project={p}
+                expanded={expandedProjectId === p.id}
+                members={
+                  expandedProjectId === p.id ? expandedProjectMembers : []
+                }
+                points={
+                  expandedProjectId === p.id ? expandedProjectPoints : []
+                }
+                memberNameMap={memberNameMap}
+                addPointMode={addPointMode && expandedProjectId === p.id}
+                onToggleExpand={() => onToggleExpand(p.id)}
+                onEdit={() => onEditProject(p.id)}
+                onOpenMemberPicker={() => onOpenMemberPicker(p.id)}
+                onRemoveMember={(userId) => onRemoveMember(p.id, userId)}
+                onEnterAddPointMode={onEnterAddPointMode}
+                onCancelAddPointMode={onCancelAddPointMode}
+                onEditPoint={onEditPoint}
+                onDeletePoint={onDeletePoint}
+              />
+            ))}
+          </ul>
+          {inactive.length > 0 && (
+            <>
+              <div className="flex items-center gap-2 mt-3 mb-1">
+                <div className="w-1 h-4 rounded bg-slate-400" />
+                <h3 className="text-xs font-medium text-slate-500">
+                  無効化済み ({inactive.length})
+                </h3>
+              </div>
+              <ul className="space-y-1.5 opacity-60">
+                {inactive.map((p) => (
+                  <ProjectRow
+                    key={p.id}
+                    project={p}
+                    expanded={expandedProjectId === p.id}
+                    members={
+                      expandedProjectId === p.id ? expandedProjectMembers : []
+                    }
+                    points={
+                      expandedProjectId === p.id ? expandedProjectPoints : []
+                    }
+                    memberNameMap={memberNameMap}
+                    addPointMode={
+                      addPointMode && expandedProjectId === p.id
+                    }
+                    onToggleExpand={() => onToggleExpand(p.id)}
+                    onEdit={() => onEditProject(p.id)}
+                    onOpenMemberPicker={() => onOpenMemberPicker(p.id)}
+                    onRemoveMember={(userId) => onRemoveMember(p.id, userId)}
+                    onEnterAddPointMode={onEnterAddPointMode}
+                    onCancelAddPointMode={onCancelAddPointMode}
+                    onEditPoint={onEditPoint}
+                    onDeletePoint={onDeletePoint}
+                  />
+                ))}
+              </ul>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+function ProjectRow({
+  project,
+  expanded,
+  members,
+  points,
+  memberNameMap,
+  addPointMode,
+  onToggleExpand,
+  onEdit,
+  onOpenMemberPicker,
+  onRemoveMember,
+  onEnterAddPointMode,
+  onCancelAddPointMode,
+  onEditPoint,
+  onDeletePoint,
+}: {
+  project: MobilityProject
+  expanded: boolean
+  members: MobilityProjectMember[]
+  points: MobilityProjectPoint[]
+  memberNameMap: Map<string, OrgMemberRow>
+  addPointMode: boolean
+  onToggleExpand: () => void
+  onEdit: () => void
+  onOpenMemberPicker: () => void
+  onRemoveMember: (userId: string) => Promise<void>
+  onEnterAddPointMode: () => void
+  onCancelAddPointMode: () => void
+  onEditPoint: (p: MobilityProjectPoint) => void
+  onDeletePoint: (pointId: string) => Promise<void>
+}) {
+  return (
+    <li
+      className={`bg-white rounded border ${
+        expanded ? 'ring-1 ring-indigo-500 border-indigo-400' : 'hover:border-indigo-400'
+      }`}
+    >
+      <div className="flex items-center gap-2 p-2.5">
+        <button
+          type="button"
+          onClick={onToggleExpand}
+          className="flex items-center gap-2 flex-1 min-w-0 text-left"
+        >
+          <div className="h-7 w-7 rounded-full bg-indigo-100 flex items-center justify-center shrink-0">
+            <Folder className="h-3.5 w-3.5 text-indigo-600" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-medium text-slate-800 truncate">
+              {project.name}
+            </div>
+            {project.description && (
+              <div className="text-[10px] text-slate-500 truncate">
+                {project.description}
+              </div>
+            )}
+          </div>
+        </button>
+        <button
+          type="button"
+          onClick={onEdit}
+          className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded shrink-0"
+          title="現場を編集"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={onToggleExpand}
+          className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded shrink-0"
+          title={expanded ? '折りたたむ' : '展開'}
+        >
+          <ChevronDown
+            className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''}`}
+          />
+        </button>
+      </div>
+      {expanded && (
+        <div className="border-t bg-slate-50/60 p-2.5 space-y-3">
+          {/* メンバー */}
+          <section>
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <div className="w-0.5 h-4 rounded bg-emerald-500" />
+              <h3 className="text-[11px] font-semibold text-slate-700 flex-1">
+                ドライバー ({members.length})
+              </h3>
+              <button
+                type="button"
+                onClick={onOpenMemberPicker}
+                className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] bg-emerald-600 text-white rounded hover:bg-emerald-700"
+              >
+                <UserPlus className="h-3 w-3" /> 追加
+              </button>
+            </div>
+            {members.length === 0 ? (
+              <div className="p-2 bg-white rounded border text-[11px] text-slate-400 text-center">
+                ドライバー未割当
+              </div>
+            ) : (
+              <ul className="space-y-1">
+                {members.map((m) => {
+                  const om = memberNameMap.get(m.user_id)
+                  return (
+                    <li
+                      key={m.user_id}
+                      className="flex items-center gap-1.5 p-1.5 bg-white rounded border text-[11px]"
+                    >
+                      <User className="h-3 w-3 text-slate-400 shrink-0" />
+                      <span className="flex-1 min-w-0 truncate">
+                        {om?.full_name || om?.email || m.user_id.slice(0, 8)}
+                      </span>
+                      {om?.role === 'admin' && (
+                        <span className="shrink-0 px-1 py-0 text-[9px] rounded bg-amber-100 text-amber-800">
+                          管理者
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void onRemoveMember(m.user_id)}
+                        className="p-0.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded"
+                        title="削除"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </section>
+
+          {/* ポイント */}
+          <section>
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <div className="w-0.5 h-4 rounded bg-indigo-500" />
+              <h3 className="text-[11px] font-semibold text-slate-700 flex-1">
+                ポイント ({points.length})
+              </h3>
+              {addPointMode ? (
+                <button
+                  type="button"
+                  onClick={onCancelAddPointMode}
+                  className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] bg-slate-500 text-white rounded hover:bg-slate-600"
+                >
+                  取消
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onEnterAddPointMode}
+                  className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                >
+                  <Plus className="h-3 w-3" /> 地図から追加
+                </button>
+              )}
+            </div>
+            {points.length === 0 ? (
+              <div className="p-2 bg-white rounded border text-[11px] text-slate-400 text-center">
+                ポイント未登録
+              </div>
+            ) : (
+              <ul className="space-y-1">
+                {points.map((pt) => (
+                  <li
+                    key={pt.id}
+                    className="flex items-center gap-1.5 p-1.5 bg-white rounded border text-[11px]"
+                  >
+                    <MapPin className="h-3 w-3 text-indigo-500 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium truncate">
+                        {pt.name}
+                        {pt.kind && (
+                          <span className="text-slate-400 ml-1">
+                            ({pt.kind})
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onEditPoint(pt)}
+                      className="p-0.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded"
+                      title="編集"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void onDeletePoint(pt.id)}
+                      className="p-0.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded"
+                      title="削除"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
+      )}
+    </li>
+  )
+}
+
+// -----------------------------------------------------------------------------
+// 運行現場ダイアログ (作成 / 編集 / メンバー追加 / ポイント編集)
+// MobilityProjectsPage / MobilityProjectPage と同じ実装だが、この画面内で完結させる
+// -----------------------------------------------------------------------------
+
+function ProjectCreateDialog({
+  onCreate,
+  onClose,
+}: {
+  onCreate: (input: { name: string; description: string | null }) => Promise<void>
+  onClose: () => void
+}) {
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [busy, setBusy] = useState(false)
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[3500]"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white w-full max-w-md rounded-xl shadow-xl flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-4 py-3 border-b flex items-center justify-between">
+          <h3 className="text-base font-semibold">新規運行現場</h3>
+          <button onClick={onClose} className="p-1 rounded hover:bg-slate-100 text-slate-500">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="p-4 space-y-3">
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">
+              現場名 <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="例: A地区運搬"
+              autoFocus
+              className="w-full px-2 py-1.5 text-sm border rounded"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">説明 (任意)</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="w-full px-2 py-1.5 text-sm border rounded h-16"
+            />
+          </div>
+        </div>
+        <div className="px-4 py-3 border-t flex gap-2">
+          <button
+            onClick={onClose}
+            className="flex-1 px-3 py-2 text-sm border rounded hover:bg-slate-50"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={async () => {
+              if (!name.trim() || busy) return
+              setBusy(true)
+              await onCreate({
+                name: name.trim(),
+                description: description.trim() || null,
+              })
+              setBusy(false)
+            }}
+            disabled={!name.trim() || busy}
+            className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
+          >
+            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+            作成
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ProjectEditDialog({
+  project,
+  onSave,
+  onDelete,
+  onClose,
+}: {
+  project: MobilityProject | null
+  onSave: (patch: {
+    name: string
+    description: string | null
+    active: boolean
+  }) => Promise<void>
+  onDelete: () => Promise<void>
+  onClose: () => void
+}) {
+  const [name, setName] = useState(project?.name ?? '')
+  const [description, setDescription] = useState(project?.description ?? '')
+  const [active, setActive] = useState(project?.active ?? true)
+  const [busy, setBusy] = useState(false)
+  if (!project) return null
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[3500]"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white w-full max-w-md rounded-xl shadow-xl flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-4 py-3 border-b flex items-center justify-between">
+          <h3 className="text-base font-semibold">運行現場を編集</h3>
+          <button onClick={onClose} className="p-1 rounded hover:bg-slate-100 text-slate-500">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="p-4 space-y-3">
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">現場名</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full px-2 py-1.5 text-sm border rounded"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">説明</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="w-full px-2 py-1.5 text-sm border rounded h-16"
+            />
+          </div>
+          <label className="flex items-center gap-2 pt-1">
+            <input
+              type="checkbox"
+              checked={active}
+              onChange={(e) => setActive(e.target.checked)}
+              className="h-3.5 w-3.5"
+            />
+            <span className="text-xs">有効な現場</span>
+          </label>
+          <div className="pt-2 border-t">
+            <button
+              type="button"
+              onClick={async () => {
+                setBusy(true)
+                try {
+                  await onDelete()
+                } finally {
+                  setBusy(false)
+                }
+              }}
+              disabled={busy}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm border border-red-300 text-red-700 rounded hover:bg-red-50"
+            >
+              <Trash2 className="h-4 w-4" />
+              完全削除
+            </button>
+          </div>
+        </div>
+        <div className="px-4 py-3 border-t flex gap-2">
+          <button
+            onClick={onClose}
+            className="flex-1 px-3 py-2 text-sm border rounded hover:bg-slate-50"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={async () => {
+              if (!name.trim() || busy) return
+              setBusy(true)
+              await onSave({
+                name: name.trim(),
+                description: description.trim() || null,
+                active,
+              })
+              setBusy(false)
+            }}
+            disabled={!name.trim() || busy}
+            className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
+          >
+            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+            保存
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ProjectMemberPickerDialog({
+  candidates,
+  onPick,
+  onClose,
+}: {
+  candidates: OrgMemberRow[]
+  onPick: (userId: string) => Promise<void>
+  onClose: () => void
+}) {
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[3500]"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white w-full max-w-md rounded-xl shadow-xl flex flex-col max-h-[80vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-4 py-3 border-b flex items-center justify-between shrink-0">
+          <h3 className="text-base font-semibold">ドライバーを追加</h3>
+          <button onClick={onClose} className="p-1 rounded hover:bg-slate-100 text-slate-500">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="p-2 overflow-y-auto flex-1">
+          {candidates.length === 0 ? (
+            <div className="p-4 text-center text-xs text-slate-400">
+              追加可能なメンバーがいません
+            </div>
+          ) : (
+            <ul className="divide-y">
+              {candidates.map((m) => (
+                <li key={m.user_id}>
+                  <button
+                    type="button"
+                    onClick={() => void onPick(m.user_id)}
+                    className="w-full flex items-center gap-2 p-3 text-left hover:bg-indigo-50"
+                  >
+                    <User className="h-4 w-4 text-slate-400 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate">
+                        {m.full_name || m.email}
+                      </div>
+                      <div className="text-[11px] text-slate-500 truncate">
+                        {m.email}
+                      </div>
+                    </div>
+                    {m.role === 'admin' && (
+                      <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-amber-100 text-amber-800">
+                        管理者
+                      </span>
+                    )}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PointEditDialog({
+  point,
+  onSave,
+  onClose,
+}: {
+  point: MobilityProjectPoint
+  onSave: (patch: {
+    name: string
+    kind: string | null
+    memo: string | null
+  }) => Promise<void>
+  onClose: () => void
+}) {
+  const [name, setName] = useState(point.name)
+  const [kind, setKind] = useState(point.kind ?? '')
+  const [memo, setMemo] = useState(point.memo ?? '')
+  const [busy, setBusy] = useState(false)
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[3500]"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white w-full max-w-md rounded-xl shadow-xl flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-4 py-3 border-b flex items-center justify-between">
+          <h3 className="text-base font-semibold">ポイントを編集</h3>
+          <button onClick={onClose} className="p-1 rounded hover:bg-slate-100 text-slate-500">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="p-4 space-y-3">
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">名前</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full px-2 py-1.5 text-sm border rounded"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">
+              種別 (例: 土取場, 採石場, 雪捨場, 農場A)
+            </label>
+            <input
+              type="text"
+              value={kind}
+              onChange={(e) => setKind(e.target.value)}
+              placeholder="任意"
+              className="w-full px-2 py-1.5 text-sm border rounded"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">メモ</label>
+            <textarea
+              value={memo}
+              onChange={(e) => setMemo(e.target.value)}
+              className="w-full px-2 py-1.5 text-sm border rounded h-16"
+            />
+          </div>
+          <div className="text-[10px] text-slate-500 font-mono">
+            座標: {point.lat.toFixed(6)}, {point.lon.toFixed(6)}
+          </div>
+        </div>
+        <div className="px-4 py-3 border-t flex gap-2">
+          <button
+            onClick={onClose}
+            className="flex-1 px-3 py-2 text-sm border rounded hover:bg-slate-50"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={async () => {
+              if (!name.trim() || busy) return
+              setBusy(true)
+              await onSave({
+                name: name.trim(),
+                kind: kind.trim() || null,
+                memo: memo.trim() || null,
+              })
+              setBusy(false)
+            }}
+            disabled={!name.trim() || busy}
+            className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
+          >
+            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+            保存
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
