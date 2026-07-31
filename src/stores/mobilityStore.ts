@@ -51,6 +51,8 @@ function extractErr(err: unknown): string {
 export interface AssignmentWithNames extends VehicleAssignment {
   driver_name: string | null
   driver_email: string | null
+  /** ドライバーが選択中の行き先ポイント (RLS で読める範囲でのみ埋まる) */
+  destination_point: MobilityProjectPoint | null
 }
 
 interface State {
@@ -80,6 +82,14 @@ interface State {
   startAssignment: (vehicleId: string, driverUserId?: string) => Promise<AssignmentWithNames | null>
   /** 割当を終了 (ended_at = now) */
   endAssignment: (assignmentId: string) => Promise<void>
+  /**
+   * 稼働中割当に「行き先ポイント」をセット/解除。ドライバー本人 or 組織 admin が呼ぶ。
+   * pointId=null で解除。成功すると activeAssignments 内の該当行も更新する。
+   */
+  setAssignmentDestination: (
+    assignmentId: string,
+    pointId: string | null,
+  ) => Promise<{ ok: true } | { ok: false; error: string }>
 
   /** 特定車両の割当履歴 (started_at DESC, 最大 100 件) */
   fetchAssignmentHistory: (vehicleId: string) => Promise<AssignmentWithNames[]>
@@ -201,11 +211,34 @@ async function enrichAssignments(
   for (const p of (profs ?? []) as { user_id: string; full_name: string | null }[]) {
     profMap.set(p.user_id, p.full_name)
   }
+
+  // 行き先ポイントも一括取得 (RLS: 同組織メンバーは mobility_project_points を読める)
+  const destIds = Array.from(
+    new Set(
+      rows
+        .map((r) => r.destination_point_id)
+        .filter((v): v is string => v != null),
+    ),
+  )
+  const destMap = new Map<string, MobilityProjectPoint>()
+  if (destIds.length > 0) {
+    const { data: pts } = await supabase
+      .from('mobility_project_points')
+      .select('*')
+      .in('id', destIds)
+    for (const p of (pts ?? []) as MobilityProjectPoint[]) {
+      destMap.set(p.id, p)
+    }
+  }
+
   // email は auth.users にあるが RLS で通常引けない。当面 null で妥協
   return rows.map((r) => ({
     ...r,
     driver_name: profMap.get(r.user_id) ?? null,
     driver_email: null,
+    destination_point: r.destination_point_id
+      ? destMap.get(r.destination_point_id) ?? null
+      : null,
   }))
 }
 
@@ -361,6 +394,40 @@ export const useMobilityStore = create<State>((set, get) => ({
       })
     } catch (err) {
       set({ vehiclesError: extractErr(err) })
+    }
+  },
+
+  setAssignmentDestination: async (assignmentId, pointId) => {
+    try {
+      const patch = pointId
+        ? {
+            destination_point_id: pointId,
+            destination_set_at: new Date().toISOString(),
+          }
+        : { destination_point_id: null, destination_set_at: null }
+      const { data, error } = await supabase
+        .from('vehicle_assignments')
+        .update(patch as never)
+        .eq('id', assignmentId)
+        .select()
+        .single()
+      if (error) throw error
+      const updated = data as VehicleAssignment
+      // enrich (destination_point を埋め直す) してから activeAssignments を差し替え
+      const [enriched] = await enrichAssignments([updated])
+      set((s) => {
+        const map = new Map(s.activeAssignments)
+        // 既存の driver_name などが失われないように必要ならマージ
+        const existing = map.get(updated.vehicle_id)
+        map.set(updated.vehicle_id, {
+          ...(existing ?? enriched),
+          ...enriched,
+        })
+        return { activeAssignments: map }
+      })
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: extractErr(err) }
     }
   },
 

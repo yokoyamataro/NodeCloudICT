@@ -380,6 +380,8 @@ export interface VehicleAssignment {
   ended_at: string | null
   memo: string | null
   created_at: string
+  destination_point_id: string | null
+  destination_set_at: string | null
 }
 
 // モビリティ機能: GPS ping。assignment_id 経由で車両・運転者を辿れる。immutable。

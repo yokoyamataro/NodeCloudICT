@@ -5,13 +5,14 @@
 // - onMarkerClick で親コンポーネントに車両クリックを通知
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { MapContainer, TileLayer, Polyline, useMap } from 'react-leaflet'
+import { MapContainer, Marker, TileLayer, Polyline, useMap } from 'react-leaflet'
 import { VehicleMarker } from '@/features/mobility/VehicleMarker'
-import type { LatLngBoundsExpression } from 'leaflet'
+import L, { type LatLngBoundsExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { Loader2, RotateCcw } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useMobilityStore } from '@/stores/mobilityStore'
+import { bearingLabel, bearingDeg, haversineMeters } from '@/lib/geoDistance'
 import type { MobilityPosition } from '@/types/database'
 
 const COLOR_ACTIVE = '#10b981'
@@ -26,7 +27,35 @@ function colorForAssignment(id: string): string {
   return `hsl(${hue}, 70%, 50%)`
 }
 
-function AutoFitBounds({ positions }: { positions: MobilityPosition[] }) {
+// 目的地ピン (吹き出しに名称)。オレンジで統一。
+function buildDestinationIcon(name: string): L.DivIcon {
+  const safe = name
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+  const html = `
+    <div style="position:relative;transform:translate(-50%,-100%);pointer-events:none;">
+      <div style="background:#f59e0b;color:#111827;font-size:11px;font-weight:600;padding:2px 6px;border-radius:6px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.4);max-width:200px;overflow:hidden;text-overflow:ellipsis;">🚩 ${safe}</div>
+      <div style="width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:8px solid #f59e0b;margin:0 auto;"></div>
+    </div>`
+  return L.divIcon({
+    className: 'mobility-destination-icon',
+    html,
+    iconSize: [1, 1],
+    iconAnchor: [0, 0],
+  })
+}
+
+function formatDistance(meters: number): string {
+  if (meters < 1000) return `${Math.round(meters)} m`
+  return `${(meters / 1000).toFixed(meters < 10_000 ? 2 : 1)} km`
+}
+
+function AutoFitBounds({
+  positions,
+}: {
+  positions: Array<{ lat: number; lon: number }>
+}) {
   const map = useMap()
   const didFitRef = useRef(false)
   useEffect(() => {
@@ -146,6 +175,27 @@ export function FleetMapView({ organizationId, onSelectVehicle }: FleetMapViewPr
     }
   }, [organizationId])
 
+  // vehicle_assignments の UPDATE を購読して、ドライバーが行き先を変えたら
+  // 管理画面に即反映させる。start/end (INSERT / ended_at) はこの購読では
+  // 拾わないので、その辺の変化は fetchActiveAssignments に依存 (再取得ボタン)。
+  useEffect(() => {
+    const channel = supabase
+      .channel(`vehicle-assignments-fleet-${organizationId}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'vehicle_assignments' },
+        () => {
+          // 差分適用は destination_point の enrich が必要で面倒なので、
+          // 割当一覧を丸ごと再取得 (件数はせいぜい 数十件)
+          void useMobilityStore.getState().fetchActiveAssignments(organizationId)
+        },
+      )
+      .subscribe()
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [organizationId])
+
   const markers = useMemo(() => {
     const rows: {
       assignmentId: string
@@ -158,6 +208,12 @@ export function FleetMapView({ organizationId, onSelectVehicle }: FleetMapViewPr
       accuracy_m: number | null
       speed_kmh: number | null
       heading_deg: number | null
+      destination: {
+        id: string
+        name: string
+        lat: number
+        lon: number
+      } | null
     }[] = []
     for (const [assignmentId, pos] of latestPositions) {
       const assignment = Array.from(activeAssignments.values()).find(
@@ -165,6 +221,7 @@ export function FleetMapView({ organizationId, onSelectVehicle }: FleetMapViewPr
       )
       if (!assignment) continue
       const vehicle = vehicles.find((v) => v.id === assignment.vehicle_id)
+      const dp = assignment.destination_point
       rows.push({
         assignmentId,
         vehicleId: assignment.vehicle_id,
@@ -176,15 +233,23 @@ export function FleetMapView({ organizationId, onSelectVehicle }: FleetMapViewPr
         accuracy_m: pos.accuracy_m,
         speed_kmh: pos.speed_kmh,
         heading_deg: pos.heading_deg,
+        destination: dp
+          ? { id: dp.id, name: dp.name, lat: dp.lat, lon: dp.lon }
+          : null,
       })
     }
     return rows
   }, [latestPositions, activeAssignments, vehicles])
 
-  const positionsForBounds = useMemo(
-    () => Array.from(latestPositions.values()),
-    [latestPositions],
-  )
+  const positionsForBounds = useMemo(() => {
+    const rows: { lat: number; lon: number }[] = []
+    for (const p of latestPositions.values()) rows.push({ lat: p.lat, lon: p.lon })
+    // 目的地も画面に収める
+    for (const m of markers) {
+      if (m.destination) rows.push({ lat: m.destination.lat, lon: m.destination.lon })
+    }
+    return rows
+  }, [latestPositions, markers])
 
   return (
     <div className="relative h-full w-full">
@@ -241,10 +306,55 @@ export function FleetMapView({ organizationId, onSelectVehicle }: FleetMapViewPr
             />
           )
         })}
+        {/* 各車両の「現在地→行き先」オレンジ破線 (行き先セット中のみ) */}
         {markers.map((m) => {
-          const label = m.speed_kmh != null && m.speed_kmh >= 0
-            ? `${m.vehicleName} ${Math.round(m.speed_kmh)}km/h`
-            : m.vehicleName
+          if (!m.destination) return null
+          return (
+            <Polyline
+              key={`dest-line-${m.assignmentId}`}
+              positions={[
+                [m.lat, m.lon],
+                [m.destination.lat, m.destination.lon],
+              ]}
+              pathOptions={{
+                color: '#f59e0b',
+                weight: 3,
+                opacity: 0.9,
+                dashArray: '6 8',
+              }}
+            />
+          )
+        })}
+        {/* 行き先ピン (複数車両が同じピンを見ていても重ねて表示) */}
+        {markers.map((m) => {
+          if (!m.destination) return null
+          return (
+            <Marker
+              key={`dest-marker-${m.assignmentId}`}
+              position={[m.destination.lat, m.destination.lon]}
+              icon={buildDestinationIcon(m.destination.name)}
+            />
+          )
+        })}
+        {markers.map((m) => {
+          const parts: string[] = [m.vehicleName]
+          if (m.speed_kmh != null && m.speed_kmh >= 0) {
+            parts.push(`${Math.round(m.speed_kmh)}km/h`)
+          }
+          if (m.destination) {
+            const dist = haversineMeters(
+              { lat: m.lat, lon: m.lon },
+              { lat: m.destination.lat, lon: m.destination.lon },
+            )
+            const deg = bearingDeg(
+              { lat: m.lat, lon: m.lon },
+              { lat: m.destination.lat, lon: m.destination.lon },
+            )
+            parts.push(
+              `→${m.destination.name} (${bearingLabel(deg)} ${formatDistance(dist)})`,
+            )
+          }
+          const label = parts.join(' ')
           return (
             <VehicleMarker
               key={m.assignmentId}

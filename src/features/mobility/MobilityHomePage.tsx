@@ -19,6 +19,7 @@ import {
   Construction,
   Folder,
   Loader2,
+  MapPin,
   Pencil,
   Phone,
   Plus,
@@ -278,6 +279,14 @@ export function MobilityHomePage() {
                         })}
                         〜
                       </div>
+                      {a.destination_point && (
+                        <div className="text-[11px] text-amber-700 flex items-center gap-1 mt-0.5 truncate">
+                          <MapPin className="h-3 w-3 shrink-0" />
+                          <span className="truncate">
+                            行き先: {a.destination_point.name}
+                          </span>
+                        </div>
+                      )}
                     </div>
                     <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-700 border border-emerald-300">
                       稼働中
@@ -466,7 +475,17 @@ function UserModeSidebar({
   onOpenUser,
   onInviteByPhone,
 }: {
-  activeAssignments: Map<string, { id: string; user_id: string; vehicle_id: string; driver_name: string | null; started_at: string }>
+  activeAssignments: Map<
+    string,
+    {
+      id: string
+      user_id: string
+      vehicle_id: string
+      driver_name: string | null
+      started_at: string
+      destination_point?: { id: string; name: string } | null
+    }
+  >
   vehicles: Vehicle[]
   orgMembers: OrgMemberRow[]
   loading: boolean
@@ -479,6 +498,7 @@ function UserModeSidebar({
       driverName: string
       vehicleName: string
       startedAt: string
+      destinationName: string | null
     }[] = []
     for (const a of activeAssignments.values()) {
       const v = vehicles.find((vv) => vv.id === a.vehicle_id)
@@ -487,6 +507,7 @@ function UserModeSidebar({
         driverName: a.driver_name || '(名前未設定)',
         vehicleName: v?.name ?? '(不明車両)',
         startedAt: a.started_at,
+        destinationName: a.destination_point?.name ?? null,
       })
     }
     return rows
@@ -536,6 +557,12 @@ function UserModeSidebar({
                     })}
                     〜
                   </div>
+                  {u.destinationName && (
+                    <div className="text-[11px] text-amber-700 flex items-center gap-1 mt-0.5 truncate">
+                      <MapPin className="h-3 w-3 shrink-0" />
+                      <span className="truncate">行き先: {u.destinationName}</span>
+                    </div>
+                  )}
                 </div>
                 <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-700 border border-emerald-300">
                   乗車中

@@ -99,6 +99,7 @@ export function MobilityDriverPage() {
     fetchActiveAssignments,
     startAssignment,
     endAssignment,
+    setAssignmentDestination,
     sendPosition,
     fetchRecentPositions,
     fetchPositionsForUserSince,
@@ -129,34 +130,6 @@ export function MobilityDriverPage() {
     }
   }, [user, fetchMyAssignedProjects])
 
-  // 選択済みの行き先 (localStorage で永続化 — アプリを閉じても保持)
-  const destKey = user ? `mobility:destination:${user.id}` : null
-  const [selectedDestination, setSelectedDestination] =
-    useState<MobilityProjectPoint | null>(() => {
-      if (typeof window === 'undefined' || !destKey) return null
-      const raw = localStorage.getItem(destKey)
-      if (!raw) return null
-      try {
-        return JSON.parse(raw) as MobilityProjectPoint
-      } catch {
-        return null
-      }
-    })
-  useEffect(() => {
-    if (!destKey) return
-    try {
-      if (selectedDestination) {
-        localStorage.setItem(destKey, JSON.stringify(selectedDestination))
-      } else {
-        localStorage.removeItem(destKey)
-      }
-    } catch {
-      /* ignore quota errors */
-    }
-  }, [selectedDestination, destKey])
-
-  const [showDestSheet, setShowDestSheet] = useState(false)
-
   // 自分の稼働中割当を探す
   const myActive = useMemo(() => {
     if (!user) return null
@@ -170,6 +143,33 @@ export function MobilityDriverPage() {
     () => (myActive ? vehicles.find((v) => v.id === myActive.vehicle_id) : null),
     [myActive, vehicles],
   )
+
+  // 選択済みの行き先はサーバー (vehicle_assignments.destination_point_id) が正。
+  // myActive.destination_point を通じて反映され、管理画面とも共有される。
+  const selectedDestination: MobilityProjectPoint | null =
+    myActive?.destination_point ?? null
+
+  const [showDestSheet, setShowDestSheet] = useState(false)
+  const [destBusy, setDestBusy] = useState(false)
+  const [destError, setDestError] = useState<string | null>(null)
+
+  const applyDestination = async (
+    point: MobilityProjectPoint | null,
+  ): Promise<boolean> => {
+    if (!myActive) return false
+    setDestBusy(true)
+    setDestError(null)
+    try {
+      const res = await setAssignmentDestination(myActive.id, point?.id ?? null)
+      if (!res.ok) {
+        setDestError(res.error)
+        return false
+      }
+      return true
+    } finally {
+      setDestBusy(false)
+    }
+  }
 
   // Geolocation & 自動送信
   //
@@ -630,11 +630,16 @@ export function MobilityDriverPage() {
               </div>
               <button
                 type="button"
-                onClick={() => setSelectedDestination(null)}
-                className="shrink-0 h-7 w-7 rounded hover:bg-slate-700 flex items-center justify-center"
+                onClick={() => void applyDestination(null)}
+                disabled={destBusy}
+                className="shrink-0 h-7 w-7 rounded hover:bg-slate-700 flex items-center justify-center disabled:opacity-50"
                 title="行き先を解除"
               >
-                <X className="h-4 w-4" />
+                {destBusy ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <X className="h-4 w-4" />
+                )}
               </button>
             </div>
           </div>
@@ -745,13 +750,15 @@ export function MobilityDriverPage() {
           projects={myProjects}
           currentPos={currentPos}
           fetchProjectPoints={fetchProjectPoints}
-          onConfirm={(point) => {
-            setSelectedDestination(point)
-            setShowDestSheet(false)
+          busy={destBusy}
+          error={destError}
+          onConfirm={async (point) => {
+            const ok = await applyDestination(point)
+            if (ok) setShowDestSheet(false)
           }}
-          onClear={() => {
-            setSelectedDestination(null)
-            setShowDestSheet(false)
+          onClear={async () => {
+            const ok = await applyDestination(null)
+            if (ok) setShowDestSheet(false)
           }}
           onClose={() => setShowDestSheet(false)}
         />
@@ -791,6 +798,8 @@ function DestinationPickerSheet({
   projects,
   currentPos,
   fetchProjectPoints,
+  busy,
+  error,
   onConfirm,
   onClear,
   onClose,
@@ -798,8 +807,10 @@ function DestinationPickerSheet({
   projects: MobilityProject[]
   currentPos: [number, number] | null
   fetchProjectPoints: (projectId: string) => Promise<MobilityProjectPoint[]>
-  onConfirm: (point: MobilityProjectPoint) => void
-  onClear: () => void
+  busy: boolean
+  error: string | null
+  onConfirm: (point: MobilityProjectPoint) => void | Promise<void>
+  onClear: () => void | Promise<void>
   onClose: () => void
 }) {
   const [step, setStep] = useState<'projects' | 'points' | 'preview'>('projects')
@@ -1049,22 +1060,35 @@ function DestinationPickerSheet({
         </div>
 
         {step === 'preview' && previewPoint && (
-          <div className="p-3 border-t flex gap-2">
-            <button
-              type="button"
-              onClick={onClear}
-              className="px-3 py-2 text-sm text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded"
-            >
-              行き先を解除
-            </button>
-            <button
-              type="button"
-              onClick={() => onConfirm(previewPoint)}
-              className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-amber-500 text-white font-semibold rounded hover:bg-amber-600"
-            >
-              <Navigation className="h-4 w-4" />
-              この行き先で確定
-            </button>
+          <div className="p-3 border-t space-y-2">
+            {error && (
+              <div className="p-2 bg-red-50 border border-red-200 rounded text-[11px] text-red-700">
+                {error}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onClear}
+                disabled={busy}
+                className="px-3 py-2 text-sm text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded disabled:opacity-50"
+              >
+                行き先を解除
+              </button>
+              <button
+                type="button"
+                onClick={() => onConfirm(previewPoint)}
+                disabled={busy}
+                className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-amber-500 text-white font-semibold rounded hover:bg-amber-600 disabled:opacity-60"
+              >
+                {busy ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Navigation className="h-4 w-4" />
+                )}
+                この行き先で確定
+              </button>
+            </div>
           </div>
         )}
       </div>
