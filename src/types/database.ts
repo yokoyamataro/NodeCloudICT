@@ -395,6 +395,43 @@ export interface MobilityPosition {
   altitude_m: number | null
 }
 
+// モビリティ機能: 運行現場マスタ (組織単位)
+export interface MobilityProject {
+  id: string
+  organization_id: string
+  name: string
+  description: string | null
+  active: boolean
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+// 運行現場のドライバー割当。現状は role='driver' のみ。
+export type MobilityProjectMemberRole = 'driver'
+export interface MobilityProjectMember {
+  project_id: string
+  user_id: string
+  role: MobilityProjectMemberRole
+  added_by: string | null
+  added_at: string
+}
+
+// 運行現場内のポイント (土取場・採石場・雪捨場・農場A 等)
+export interface MobilityProjectPoint {
+  id: string
+  project_id: string
+  name: string
+  kind: string | null
+  lat: number
+  lon: number
+  memo: string | null
+  active: boolean
+  display_order: number
+  created_at: string
+  updated_at: string
+}
+
 // アカウント単位の付加情報（auth.users と 1:1）
 export interface Profile {
   user_id: string
@@ -875,6 +912,27 @@ export interface Database {
         Row: MobilityPosition
         Insert: Omit<MobilityPosition, 'id'>
         Update: never
+      }
+      mobility_projects: {
+        Row: MobilityProject
+        Insert: Omit<MobilityProject, 'id' | 'created_at' | 'updated_at'>
+        Update: Partial<
+          Omit<MobilityProject, 'id' | 'organization_id' | 'created_at' | 'updated_at'>
+        >
+      }
+      mobility_project_members: {
+        Row: MobilityProjectMember
+        Insert: Omit<MobilityProjectMember, 'added_at'>
+        Update: Partial<
+          Omit<MobilityProjectMember, 'project_id' | 'user_id' | 'added_at'>
+        >
+      }
+      mobility_project_points: {
+        Row: MobilityProjectPoint
+        Insert: Omit<MobilityProjectPoint, 'id' | 'created_at' | 'updated_at'>
+        Update: Partial<
+          Omit<MobilityProjectPoint, 'id' | 'project_id' | 'created_at' | 'updated_at'>
+        >
       }
     }
   }
