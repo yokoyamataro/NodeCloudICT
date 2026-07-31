@@ -7,6 +7,32 @@ function toRad(deg: number): number {
   return (deg * Math.PI) / 180
 }
 
+/**
+ * 起点 → 終点 の初期方位を度で返す (北=0、東=90、南=180、西=270)。
+ * 球面近似 (Haversine と同じ精度)。
+ */
+export function bearingDeg(
+  from: { lat: number; lon: number },
+  to: { lat: number; lon: number },
+): number {
+  const lat1 = toRad(from.lat)
+  const lat2 = toRad(to.lat)
+  const dLon = toRad(to.lon - from.lon)
+  const y = Math.sin(dLon) * Math.cos(lat2)
+  const x =
+    Math.cos(lat1) * Math.sin(lat2) -
+    Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon)
+  const deg = (Math.atan2(y, x) * 180) / Math.PI
+  return (deg + 360) % 360
+}
+
+/** 方位角を「北 / 北東 / 東 / 南東 / 南 / 南西 / 西 / 北西」に丸めた日本語ラベル */
+export function bearingLabel(deg: number): string {
+  const labels = ['北', '北東', '東', '南東', '南', '南西', '西', '北西']
+  const idx = Math.round(deg / 45) % 8
+  return labels[idx]
+}
+
 /** 2 点間の大圏距離をメートルで返す */
 export function haversineMeters(
   a: { lat: number; lon: number },

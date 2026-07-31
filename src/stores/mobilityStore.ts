@@ -148,6 +148,8 @@ interface State {
   // 運行現場 (mobility_projects)
   // ============================================================
   fetchProjects: (organizationId: string) => Promise<MobilityProject[]>
+  /** 指定ユーザーが割当てられている現場の一覧 (ドライバー画面用) */
+  fetchMyAssignedProjects: (userId: string) => Promise<MobilityProject[]>
   createProject: (input: {
     organization_id: string
     name: string
@@ -546,6 +548,31 @@ export const useMobilityStore = create<State>((set, get) => ({
       .order('name')
     if (error) {
       console.warn('[mobilityStore] fetchProjects failed', error)
+      return []
+    }
+    return (data ?? []) as MobilityProject[]
+  },
+
+  fetchMyAssignedProjects: async (userId) => {
+    // まず自分の割当を取得 → project_id を集める
+    const { data: mRows, error: mErr } = await supabase
+      .from('mobility_project_members')
+      .select('project_id')
+      .eq('user_id', userId)
+    if (mErr) {
+      console.warn('[mobilityStore] fetchMyAssignedProjects (members) failed', mErr)
+      return []
+    }
+    const ids = ((mRows ?? []) as { project_id: string }[]).map((r) => r.project_id)
+    if (ids.length === 0) return []
+    const { data, error } = await supabase
+      .from('mobility_projects')
+      .select('*')
+      .in('id', ids)
+      .eq('active', true)
+      .order('name')
+    if (error) {
+      console.warn('[mobilityStore] fetchMyAssignedProjects (projects) failed', error)
       return []
     }
     return (data ?? []) as MobilityProject[]

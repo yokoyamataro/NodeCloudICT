@@ -15,17 +15,22 @@ import { Navigate, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
   Car,
+  ChevronRight,
   Construction,
   Loader2,
   LogOut,
+  MapPin,
+  Navigation,
   Play,
   Truck,
   X,
 } from 'lucide-react'
+import L from 'leaflet'
 import {
   MapContainer,
-  TileLayer,
+  Marker,
   Polyline,
+  TileLayer,
   useMap,
 } from 'react-leaflet'
 import { VehicleMarker } from '@/features/mobility/VehicleMarker'
@@ -34,9 +39,20 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useCanUseMobility } from '@/lib/useCanUseMobility'
 import { isMobileDevice } from '@/lib/displayMode'
 import { watchSamples, watchSamplesInBackground } from '@/lib/geolocation'
-import { computeTotalDistanceMeters } from '@/lib/geoDistance'
+import {
+  bearingDeg,
+  bearingLabel,
+  computeTotalDistanceMeters,
+  haversineMeters,
+} from '@/lib/geoDistance'
 import { useMobilityStore } from '@/stores/mobilityStore'
-import type { MobilityPosition, Vehicle, VehicleKind } from '@/types/database'
+import type {
+  MobilityPosition,
+  MobilityProject,
+  MobilityProjectPoint,
+  Vehicle,
+  VehicleKind,
+} from '@/types/database'
 
 const KIND_LABEL: Record<VehicleKind, string> = {
   car: '普通車',
@@ -86,6 +102,8 @@ export function MobilityDriverPage() {
     sendPosition,
     fetchRecentPositions,
     fetchPositionsForUserSince,
+    fetchMyAssignedProjects,
+    fetchProjectPoints,
   } = useMobilityStore()
 
   useEffect(() => {
@@ -93,6 +111,51 @@ export function MobilityDriverPage() {
     void fetchVehicles(orgId)
     void fetchActiveAssignments(orgId)
   }, [orgId, fetchVehicles, fetchActiveAssignments])
+
+  // 割り当てられた運行現場 (プロジェクト) の一覧
+  const [myProjects, setMyProjects] = useState<MobilityProject[]>([])
+  useEffect(() => {
+    if (!user) {
+      setMyProjects([])
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const rows = await fetchMyAssignedProjects(user.id)
+      if (!cancelled) setMyProjects(rows)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [user, fetchMyAssignedProjects])
+
+  // 選択済みの行き先 (localStorage で永続化 — アプリを閉じても保持)
+  const destKey = user ? `mobility:destination:${user.id}` : null
+  const [selectedDestination, setSelectedDestination] =
+    useState<MobilityProjectPoint | null>(() => {
+      if (typeof window === 'undefined' || !destKey) return null
+      const raw = localStorage.getItem(destKey)
+      if (!raw) return null
+      try {
+        return JSON.parse(raw) as MobilityProjectPoint
+      } catch {
+        return null
+      }
+    })
+  useEffect(() => {
+    if (!destKey) return
+    try {
+      if (selectedDestination) {
+        localStorage.setItem(destKey, JSON.stringify(selectedDestination))
+      } else {
+        localStorage.removeItem(destKey)
+      }
+    } catch {
+      /* ignore quota errors */
+    }
+  }, [selectedDestination, destKey])
+
+  const [showDestSheet, setShowDestSheet] = useState(false)
 
   // 自分の稼働中割当を探す
   const myActive = useMemo(() => {
@@ -384,6 +447,25 @@ export function MobilityDriverPage() {
     [trackPositions],
   )
 
+  // 目的地までの方位 / 距離
+  const destInfo = useMemo(() => {
+    if (!currentPos || !selectedDestination) return null
+    const from = { lat: currentPos[0], lon: currentPos[1] }
+    const to = { lat: selectedDestination.lat, lon: selectedDestination.lon }
+    const deg = bearingDeg(from, to)
+    const dist = haversineMeters(from, to)
+    return {
+      deg,
+      label: bearingLabel(deg),
+      meters: dist,
+    }
+  }, [currentPos, selectedDestination])
+
+  const destLine = useMemo<[number, number][] | null>(() => {
+    if (!currentPos || !selectedDestination) return null
+    return [currentPos, [selectedDestination.lat, selectedDestination.lon]]
+  }, [currentPos, selectedDestination])
+
   return (
     <div className="mobile-screen flex flex-col bg-slate-900 relative">
       {/* ヘッダ: NodeCloud ブランド 1 行のみ (組織情報等は載せない) */}
@@ -495,6 +577,23 @@ export function MobilityDriverPage() {
           {trackLine.length > 1 && (
             <Polyline positions={trackLine} pathOptions={{ color: '#6366f1', weight: 4 }} />
           )}
+          {destLine && (
+            <Polyline
+              positions={destLine}
+              pathOptions={{
+                color: '#f59e0b',
+                weight: 3,
+                dashArray: '6 8',
+                opacity: 0.9,
+              }}
+            />
+          )}
+          {selectedDestination && (
+            <Marker
+              position={[selectedDestination.lat, selectedDestination.lon]}
+              icon={buildDestinationIcon(selectedDestination.name)}
+            />
+          )}
           {currentPos && (
             <VehicleMarker
               position={currentPos}
@@ -504,6 +603,42 @@ export function MobilityDriverPage() {
             />
           )}
         </MapContainer>
+
+        {/* 目的地までの方位・距離オーバーレイ */}
+        {selectedDestination && destInfo && (
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[500] bg-slate-900/85 backdrop-blur text-white rounded-lg px-3 py-2 border border-amber-500/60 shadow-lg max-w-[92%]">
+            <div className="flex items-center gap-2">
+              <div className="relative shrink-0 h-9 w-9 rounded-full bg-amber-500/20 border border-amber-400 flex items-center justify-center">
+                <Navigation
+                  className="h-5 w-5 text-amber-300"
+                  style={{
+                    transform: `rotate(${destInfo.deg - (currentHeadingDeg ?? 0)}deg)`,
+                    transition: 'transform 250ms',
+                  }}
+                />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] text-amber-200 truncate">
+                  目的地: {selectedDestination.name}
+                </div>
+                <div className="text-sm font-bold leading-tight">
+                  {destInfo.label} ({Math.round(destInfo.deg)}°)
+                  <span className="ml-2 text-amber-200">
+                    {formatDistance(destInfo.meters)}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedDestination(null)}
+                className="shrink-0 h-7 w-7 rounded hover:bg-slate-700 flex items-center justify-center"
+                title="行き先を解除"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {busyError && (
@@ -528,46 +663,60 @@ export function MobilityDriverPage() {
       )}
 
       {/* フッタアクション */}
-      <div className="p-3 bg-slate-800 flex gap-2 shrink-0">
+      <div className="p-3 bg-slate-800 flex flex-col gap-2 shrink-0">
         {myActive ? (
           <>
-            {/* 自動送信トグル: メインの大ボタン */}
-            <button
-              onClick={() => setAutoSend((v) => !v)}
-              disabled={busy}
-              role="switch"
-              aria-checked={autoSend}
-              className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 text-base font-semibold rounded-lg transition ${
-                autoSend
-                  ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-                  : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
-              }`}
-              title={autoSend ? 'タップで自動送信を停止' : 'タップで自動送信を開始'}
-            >
-              <span
-                className={`inline-block h-4 w-8 rounded-full relative ${
-                  autoSend ? 'bg-emerald-300' : 'bg-slate-500'
+            <div className="flex gap-2">
+              {/* 自動送信トグル: メインの大ボタン */}
+              <button
+                onClick={() => setAutoSend((v) => !v)}
+                disabled={busy}
+                role="switch"
+                aria-checked={autoSend}
+                className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 text-base font-semibold rounded-lg transition ${
+                  autoSend
+                    ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                    : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
                 }`}
+                title={autoSend ? 'タップで自動送信を停止' : 'タップで自動送信を開始'}
               >
                 <span
-                  className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${
-                    autoSend ? 'left-4' : 'left-0.5'
+                  className={`inline-block h-4 w-8 rounded-full relative ${
+                    autoSend ? 'bg-emerald-300' : 'bg-slate-500'
                   }`}
-                />
-              </span>
-              自動送信 {autoSend ? 'ON' : 'OFF'}
-            </button>
+                >
+                  <span
+                    className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${
+                      autoSend ? 'left-4' : 'left-0.5'
+                    }`}
+                  />
+                </span>
+                自動送信 {autoSend ? 'ON' : 'OFF'}
+              </button>
+              <button
+                onClick={handleLeave}
+                disabled={busy}
+                className="flex items-center gap-1 px-3 py-3 text-sm border border-red-500 text-red-300 rounded-lg disabled:opacity-50"
+              >
+                {busy ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <LogOut className="h-4 w-4" />
+                )}
+                降車
+              </button>
+            </div>
+            {/* 行き先ピッカー起動ボタン (割当あり中のみ) */}
             <button
-              onClick={handleLeave}
+              type="button"
+              onClick={() => setShowDestSheet(true)}
               disabled={busy}
-              className="flex items-center gap-1 px-3 py-3 text-sm border border-red-500 text-red-300 rounded-lg disabled:opacity-50"
+              className="flex items-center justify-center gap-2 px-3 py-2 text-sm rounded-lg border border-amber-500 text-amber-200 hover:bg-amber-950/40 disabled:opacity-50"
             >
-              {busy ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <LogOut className="h-4 w-4" />
-              )}
-              降車
+              <MapPin className="h-4 w-4" />
+              {selectedDestination
+                ? `行き先: ${selectedDestination.name} を変更`
+                : '行き先を選ぶ'}
             </button>
           </>
         ) : (
@@ -590,6 +739,335 @@ export function MobilityDriverPage() {
           onClose={() => setShowPicker(false)}
         />
       )}
+
+      {showDestSheet && (
+        <DestinationPickerSheet
+          projects={myProjects}
+          currentPos={currentPos}
+          fetchProjectPoints={fetchProjectPoints}
+          onConfirm={(point) => {
+            setSelectedDestination(point)
+            setShowDestSheet(false)
+          }}
+          onClear={() => {
+            setSelectedDestination(null)
+            setShowDestSheet(false)
+          }}
+          onClose={() => setShowDestSheet(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+// 目的地 (ピン) の Leaflet アイコン。名称を吹き出しに表示。
+function buildDestinationIcon(name: string): L.DivIcon {
+  const safe = name
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+  const html = `
+    <div style="position:relative;transform:translate(-50%,-100%);pointer-events:none;">
+      <div style="background:#f59e0b;color:#111827;font-size:11px;font-weight:600;padding:2px 6px;border-radius:6px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.4);max-width:160px;overflow:hidden;text-overflow:ellipsis;">${safe}</div>
+      <div style="width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:8px solid #f59e0b;margin:0 auto;"></div>
+    </div>`
+  return L.divIcon({
+    className: 'mobility-destination-icon',
+    html,
+    iconSize: [1, 1],
+    iconAnchor: [0, 0],
+  })
+}
+
+function formatDistance(meters: number): string {
+  if (meters < 1000) return `${Math.round(meters)} m`
+  return `${(meters / 1000).toFixed(meters < 10_000 ? 2 : 1)} km`
+}
+
+// -----------------------------------------------------------------------------
+// 行き先ピッカー (3 ステップ: プロジェクト → ポイント → プレビュー → 確定)
+// -----------------------------------------------------------------------------
+function DestinationPickerSheet({
+  projects,
+  currentPos,
+  fetchProjectPoints,
+  onConfirm,
+  onClear,
+  onClose,
+}: {
+  projects: MobilityProject[]
+  currentPos: [number, number] | null
+  fetchProjectPoints: (projectId: string) => Promise<MobilityProjectPoint[]>
+  onConfirm: (point: MobilityProjectPoint) => void
+  onClear: () => void
+  onClose: () => void
+}) {
+  const [step, setStep] = useState<'projects' | 'points' | 'preview'>('projects')
+  const [selectedProject, setSelectedProject] = useState<MobilityProject | null>(null)
+  const [points, setPoints] = useState<MobilityProjectPoint[]>([])
+  const [loadingPoints, setLoadingPoints] = useState(false)
+  const [pointsError, setPointsError] = useState<string | null>(null)
+  const [previewPoint, setPreviewPoint] = useState<MobilityProjectPoint | null>(null)
+
+  const openProject = (project: MobilityProject) => {
+    setSelectedProject(project)
+    setStep('points')
+    setPoints([])
+    setPointsError(null)
+    setLoadingPoints(true)
+    void (async () => {
+      try {
+        const rows = await fetchProjectPoints(project.id)
+        setPoints(rows.filter((p) => p.active))
+      } catch (err) {
+        setPointsError(err instanceof Error ? err.message : String(err))
+      } finally {
+        setLoadingPoints(false)
+      }
+    })()
+  }
+
+  const openPreview = (point: MobilityProjectPoint) => {
+    setPreviewPoint(point)
+    setStep('preview')
+  }
+
+  const goBack = () => {
+    if (step === 'preview') {
+      setStep('points')
+      setPreviewPoint(null)
+    } else if (step === 'points') {
+      setStep('projects')
+      setSelectedProject(null)
+      setPoints([])
+    }
+  }
+
+  const previewInfo = useMemo(() => {
+    if (!currentPos || !previewPoint) return null
+    const from = { lat: currentPos[0], lon: currentPos[1] }
+    const to = { lat: previewPoint.lat, lon: previewPoint.lon }
+    const deg = bearingDeg(from, to)
+    return {
+      deg,
+      label: bearingLabel(deg),
+      meters: haversineMeters(from, to),
+    }
+  }, [currentPos, previewPoint])
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/60 flex items-end z-[9999]"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white w-full rounded-t-2xl max-h-[85vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-3 border-b flex items-center gap-2">
+          {step !== 'projects' && (
+            <button
+              type="button"
+              onClick={goBack}
+              className="p-1 rounded hover:bg-slate-100"
+              title="戻る"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+          )}
+          <h3 className="text-base font-semibold flex-1 truncate">
+            {step === 'projects' && '運行現場を選ぶ'}
+            {step === 'points' && (selectedProject?.name ?? 'ポイントを選ぶ')}
+            {step === 'preview' && (previewPoint?.name ?? '行き先を確認')}
+          </h3>
+          <button onClick={onClose} className="p-1 rounded hover:bg-slate-100">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto flex-1">
+          {step === 'projects' && (
+            <>
+              {projects.length === 0 ? (
+                <div className="p-6 text-center text-sm text-slate-400">
+                  割り当てられた運行現場がありません
+                </div>
+              ) : (
+                <ul className="divide-y">
+                  {projects.map((p) => (
+                    <li key={p.id}>
+                      <button
+                        type="button"
+                        onClick={() => openProject(p)}
+                        className="w-full flex items-center gap-3 p-4 text-left active:bg-indigo-50"
+                      >
+                        <div className="h-9 w-9 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                          <MapPin className="h-4 w-4 text-amber-600" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-semibold truncate">
+                            {p.name}
+                          </div>
+                          {p.description && (
+                            <div className="text-[11px] text-slate-500 truncate">
+                              {p.description}
+                            </div>
+                          )}
+                        </div>
+                        <ChevronRight className="h-4 w-4 text-slate-400 shrink-0" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+
+          {step === 'points' && (
+            <>
+              {loadingPoints ? (
+                <div className="p-6 flex justify-center text-slate-400">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                </div>
+              ) : pointsError ? (
+                <div className="p-4 text-xs text-red-600">
+                  ポイントの取得に失敗: {pointsError}
+                </div>
+              ) : points.length === 0 ? (
+                <div className="p-6 text-center text-sm text-slate-400">
+                  この現場にはポイントが登録されていません
+                </div>
+              ) : (
+                <ul className="divide-y">
+                  {points.map((pt) => {
+                    const dist =
+                      currentPos != null
+                        ? haversineMeters(
+                            { lat: currentPos[0], lon: currentPos[1] },
+                            { lat: pt.lat, lon: pt.lon },
+                          )
+                        : null
+                    return (
+                      <li key={pt.id}>
+                        <button
+                          type="button"
+                          onClick={() => openPreview(pt)}
+                          className="w-full flex items-center gap-3 p-4 text-left active:bg-amber-50"
+                        >
+                          <div className="h-9 w-9 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                            <MapPin className="h-4 w-4 text-amber-600" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-semibold truncate">
+                              {pt.name}
+                            </div>
+                            <div className="text-[11px] text-slate-500">
+                              {pt.kind && <span className="mr-2">{pt.kind}</span>}
+                              {dist != null && <span>{formatDistance(dist)}</span>}
+                            </div>
+                          </div>
+                          <ChevronRight className="h-4 w-4 text-slate-400 shrink-0" />
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </>
+          )}
+
+          {step === 'preview' && previewPoint && (
+            <div className="flex flex-col">
+              <div className="h-64 w-full">
+                <MapContainer
+                  center={[previewPoint.lat, previewPoint.lon]}
+                  zoom={15}
+                  className="h-full w-full"
+                  scrollWheelZoom={false}
+                >
+                  <TileLayer
+                    attribution='&copy; OpenStreetMap'
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  />
+                  <Marker
+                    position={[previewPoint.lat, previewPoint.lon]}
+                    icon={buildDestinationIcon(previewPoint.name)}
+                  />
+                  {currentPos && (
+                    <>
+                      <Polyline
+                        positions={[
+                          currentPos,
+                          [previewPoint.lat, previewPoint.lon],
+                        ]}
+                        pathOptions={{
+                          color: '#f59e0b',
+                          weight: 3,
+                          dashArray: '6 8',
+                        }}
+                      />
+                      <VehicleMarker
+                        position={currentPos}
+                        heading={null}
+                        color="#10b981"
+                        size={18}
+                      />
+                    </>
+                  )}
+                </MapContainer>
+              </div>
+              <div className="p-4 space-y-2">
+                <div className="text-base font-semibold">{previewPoint.name}</div>
+                {previewPoint.kind && (
+                  <div className="text-xs text-slate-500">
+                    種別: {previewPoint.kind}
+                  </div>
+                )}
+                {previewPoint.memo && (
+                  <div className="text-xs text-slate-600 whitespace-pre-wrap">
+                    {previewPoint.memo}
+                  </div>
+                )}
+                {previewInfo && (
+                  <div className="mt-2 p-2 rounded bg-amber-50 border border-amber-200 text-sm">
+                    <div className="font-semibold text-amber-900">
+                      現在地から {previewInfo.label} ({Math.round(previewInfo.deg)}°)
+                    </div>
+                    <div className="text-amber-800">
+                      距離 (直線): {formatDistance(previewInfo.meters)}
+                    </div>
+                  </div>
+                )}
+                {!currentPos && (
+                  <div className="mt-2 text-[11px] text-slate-400">
+                    現在地未取得のため距離・方向は計算できません。
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {step === 'preview' && previewPoint && (
+          <div className="p-3 border-t flex gap-2">
+            <button
+              type="button"
+              onClick={onClear}
+              className="px-3 py-2 text-sm text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded"
+            >
+              行き先を解除
+            </button>
+            <button
+              type="button"
+              onClick={() => onConfirm(previewPoint)}
+              className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-amber-500 text-white font-semibold rounded hover:bg-amber-600"
+            >
+              <Navigation className="h-4 w-4" />
+              この行き先で確定
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
