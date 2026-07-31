@@ -603,7 +603,7 @@ export function MobilityDriverPage() {
       setShowPicker(false)
       setAutoSend(true) // 乗車と同時に自動送信 ON
     } catch (err) {
-      setBusyError(err instanceof Error ? err.message : String(err))
+      setBusyError(friendlyMobilityError(err))
     } finally {
       setBusy(false)
     }
@@ -617,7 +617,7 @@ export function MobilityDriverPage() {
       await endAssignment(myActive.id)
       setAutoSend(false)
     } catch (err) {
-      setBusyError(err instanceof Error ? err.message : String(err))
+      setBusyError(friendlyMobilityError(err))
     } finally {
       setBusy(false)
     }
@@ -854,12 +854,18 @@ export function MobilityDriverPage() {
             <Marker
               position={[selectedDestination.lat, selectedDestination.lon]}
               icon={buildDestinationIcon(selectedDestination.name)}
+              // 車両マーカーより手前に描く (近接時に埋もれないように)
+              zIndexOffset={1000}
             />
           )}
           {currentPos && (
             <VehicleMarker
               position={currentPos}
-              heading={currentHeadingDeg}
+              // ヘディングアップ中は地図側が回転するので、マーカーは常に
+              // 画面上向き = 進行方向を向くよう cone を 0° 固定にする。
+              // (leaflet-rotate は divIcon を counter-rotate して画面基準で
+              //  上を保つため、cone の SVG 内回転を 0 にすれば実世界の進行方向と一致)
+              heading={headingUp ? 0 : currentHeadingDeg}
               color={myActive ? '#10b981' : '#3b82f6'}
               size={22}
             />
@@ -877,8 +883,16 @@ export function MobilityDriverPage() {
       </div>
 
       {busyError && (
-        <div className="mx-3 my-2 p-2 bg-red-900/60 border border-red-700 rounded text-xs text-red-100">
-          {busyError}
+        <div className="mx-3 my-2 p-2 bg-red-900/60 border border-red-700 rounded text-xs text-red-100 flex items-start gap-2">
+          <span className="flex-1 whitespace-pre-wrap break-words">{busyError}</span>
+          <button
+            type="button"
+            onClick={() => setBusyError(null)}
+            className="shrink-0 p-1 rounded hover:bg-red-800/60"
+            title="エラーを閉じる"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
         </div>
       )}
 
@@ -999,28 +1013,55 @@ export function MobilityDriverPage() {
   )
 }
 
-// 目的地 (ピン) の Leaflet アイコン。名称を吹き出しに表示。
+// 目的地 (ピン) の Leaflet アイコン。名称吹き出し + 下向き三角形。
+// 描画は: 幅 W x 高さ H の bounding box を用意し、iconAnchor をボックス下端中央 (W/2, H)
+// に置く。ボックスの下端に三角形の tip が来るよう配置する。
+// これで pin の tip がちょうど destination の緯度経度に刺さる。
+const DEST_ICON_W = 200
+const DEST_ICON_TAIL_H = 8
+const DEST_ICON_BODY_H = 22
+const DEST_ICON_H = DEST_ICON_BODY_H + DEST_ICON_TAIL_H
+
 function buildDestinationIcon(name: string): L.DivIcon {
   const safe = name
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
+  // display:inline-block の bubble + 三角形。overflow:visible にして
+  // 親コンテナの clipping を防ぐ。
   const html = `
-    <div style="position:relative;transform:translate(-50%,-100%);pointer-events:none;">
-      <div style="background:#f59e0b;color:#111827;font-size:11px;font-weight:600;padding:2px 6px;border-radius:6px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.4);max-width:160px;overflow:hidden;text-overflow:ellipsis;">${safe}</div>
-      <div style="width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:8px solid #f59e0b;margin:0 auto;"></div>
+    <div style="width:${DEST_ICON_W}px;height:${DEST_ICON_H}px;overflow:visible;pointer-events:none;text-align:center;">
+      <div style="display:inline-block;background:#f59e0b;color:#111827;font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.5);max-width:${DEST_ICON_W - 8}px;overflow:hidden;text-overflow:ellipsis;line-height:${DEST_ICON_BODY_H - 6}px;">🚩 ${safe}</div>
+      <div style="width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:${DEST_ICON_TAIL_H}px solid #f59e0b;margin:0 auto;"></div>
     </div>`
   return L.divIcon({
     className: 'mobility-destination-icon',
     html,
-    iconSize: [1, 1],
-    iconAnchor: [0, 0],
+    iconSize: [DEST_ICON_W, DEST_ICON_H],
+    // 下端中央に geo 位置が来るように iconAnchor を [W/2, H] に置く
+    iconAnchor: [DEST_ICON_W / 2, DEST_ICON_H],
   })
 }
 
 function formatDistance(meters: number): string {
   if (meters < 1000) return `${Math.round(meters)} m`
   return `${(meters / 1000).toFixed(meters < 10_000 ? 2 : 1)} km`
+}
+
+/**
+ * サーバーエラーをユーザー向けにわかりやすく訳す。
+ * PostgreSQL の unique constraint violation (23505) など、
+ * 生の英文だと何のことかわからないケースを日本語に置き換える。
+ */
+function friendlyMobilityError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err)
+  if (raw.includes('uidx_vehicle_assignments_one_active_per_vehicle')) {
+    return 'この車両はすでに別の割当が稼働中です。降車操作が反映される数秒お待ちください。'
+  }
+  if (raw.includes('23505')) {
+    return `重複するデータがあり登録できませんでした。\n${raw}`
+  }
+  return raw
 }
 
 /** 走行時間を "Xh Ym" / "Ym" にまとめる (0m 以下は "0m") */
@@ -1245,6 +1286,7 @@ function DestinationPickerSheet({
                   <Marker
                     position={[previewPoint.lat, previewPoint.lon]}
                     icon={buildDestinationIcon(previewPoint.name)}
+                    zIndexOffset={1000}
                   />
                   {currentPos && (
                     <>

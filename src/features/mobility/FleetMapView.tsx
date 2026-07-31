@@ -28,21 +28,27 @@ function colorForAssignment(id: string): string {
 }
 
 // 目的地ピン (吹き出しに名称)。オレンジで統一。
+// iconAnchor をボックス下端中央にすることで pin の tip が緯度経度に刺さる。
+const DEST_ICON_W = 220
+const DEST_ICON_TAIL_H = 8
+const DEST_ICON_BODY_H = 22
+const DEST_ICON_H = DEST_ICON_BODY_H + DEST_ICON_TAIL_H
+
 function buildDestinationIcon(name: string): L.DivIcon {
   const safe = name
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
   const html = `
-    <div style="position:relative;transform:translate(-50%,-100%);pointer-events:none;">
-      <div style="background:#f59e0b;color:#111827;font-size:11px;font-weight:600;padding:2px 6px;border-radius:6px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.4);max-width:200px;overflow:hidden;text-overflow:ellipsis;">🚩 ${safe}</div>
-      <div style="width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:8px solid #f59e0b;margin:0 auto;"></div>
+    <div style="width:${DEST_ICON_W}px;height:${DEST_ICON_H}px;overflow:visible;pointer-events:none;text-align:center;">
+      <div style="display:inline-block;background:#f59e0b;color:#111827;font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.5);max-width:${DEST_ICON_W - 8}px;overflow:hidden;text-overflow:ellipsis;line-height:${DEST_ICON_BODY_H - 6}px;">🚩 ${safe}</div>
+      <div style="width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:${DEST_ICON_TAIL_H}px solid #f59e0b;margin:0 auto;"></div>
     </div>`
   return L.divIcon({
     className: 'mobility-destination-icon',
     html,
-    iconSize: [1, 1],
-    iconAnchor: [0, 0],
+    iconSize: [DEST_ICON_W, DEST_ICON_H],
+    iconAnchor: [DEST_ICON_W / 2, DEST_ICON_H],
   })
 }
 
@@ -392,6 +398,7 @@ export function FleetMapView({
               key={`dest-marker-${m.assignmentId}`}
               position={[m.destination.lat, m.destination.lon]}
               icon={buildDestinationIcon(m.destination.name)}
+              zIndexOffset={1000}
             />
           )
         })}
