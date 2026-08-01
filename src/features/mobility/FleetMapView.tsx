@@ -77,7 +77,7 @@ export function formatAgeShort(ms: number): string {
 
 // 走行スピード可視化用のカラー階段。
 // 0-5: 灰(停止) / 5-20: 青 / 20-40: 緑 / 40-60: 黄 / 60-80: 橙 / 80+: 赤
-const SPEED_BANDS: Array<{ min: number; label: string; color: string }> = [
+export const SPEED_BANDS: Array<{ min: number; label: string; color: string }> = [
   { min: 0, label: '0-5', color: '#94a3b8' },
   { min: 5, label: '5-20', color: '#3b82f6' },
   { min: 20, label: '20-40', color: '#22c55e' },
@@ -110,7 +110,7 @@ function segmentSpeedKmh(a: MobilityPosition, b: MobilityPosition): number {
 
 // 位置列を「同一色の連続区間」でまとめて返す。1 セクションが数千点あっても
 // polyline 数を減らせるので Leaflet の負荷を抑えられる。
-function speedSegments(
+export function speedSegments(
   points: MobilityPosition[],
 ): Array<{ color: string; positions: [number, number][] }> {
   const out: Array<{ color: string; positions: [number, number][] }> = []

@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
+  History,
   Car,
   ChevronRight,
   Compass,
@@ -38,6 +39,7 @@ import {
   useMap,
 } from 'react-leaflet'
 import { VehicleMarker } from '@/features/mobility/VehicleMarker'
+import { SPEED_BANDS, speedSegments } from '@/features/mobility/FleetMapView'
 import 'leaflet/dist/leaflet.css'
 // leaflet-rotate は L.Map に rotate/setBearing を注入する副作用 import。
 // ヘディングアップ用に必要 (MobileStakingPage が既に import 済みだが、直接
@@ -65,8 +67,10 @@ import type {
   MobilityProject,
   MobilityProjectPoint,
   Vehicle,
+  VehicleAssignment,
   VehicleKind,
 } from '@/types/database'
+import type { AssignmentWithNames } from '@/stores/mobilityStore'
 
 const KIND_LABEL: Record<VehicleKind, string> = {
   car: '普通車',
@@ -286,6 +290,57 @@ export function MobilityDriverPage() {
   const [showDestSheet, setShowDestSheet] = useState(false)
   const [destBusy, setDestBusy] = useState(false)
   const [destError, setDestError] = useState<string | null>(null)
+
+  // 自分の運行履歴シート
+  const [showLogsSheet, setShowLogsSheet] = useState(false)
+  const [myLogSections, setMyLogSections] = useState<AssignmentWithNames[]>([])
+  const [logsLoading, setLogsLoading] = useState(false)
+  // 履歴で「タップで表示」した 1 セクション。地図にスピード色軌跡を描く。
+  const [selectedLogSection, setSelectedLogSection] =
+    useState<VehicleAssignment | null>(null)
+  const [selectedLogPositions, setSelectedLogPositions] = useState<
+    MobilityPosition[]
+  >([])
+  const [selectedLogLoading, setSelectedLogLoading] = useState(false)
+
+  // シートを開いたら自分の履歴を fetch
+  useEffect(() => {
+    if (!showLogsSheet || !user) return
+    let cancelled = false
+    setLogsLoading(true)
+    void (async () => {
+      const rows = await fetchUserAssignmentHistory(user.id)
+      if (!cancelled) {
+        setMyLogSections(rows)
+        setLogsLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [showLogsSheet, user, fetchUserAssignmentHistory])
+
+  // 選択セクションの位置ログを fetch
+  useEffect(() => {
+    if (!selectedLogSection) {
+      setSelectedLogPositions([])
+      return
+    }
+    let cancelled = false
+    setSelectedLogLoading(true)
+    void (async () => {
+      // 大きくても数千点なので一発で取る
+      const rows = await fetchRecentPositions(selectedLogSection.id, 5000)
+      if (!cancelled) {
+        // fetchRecentPositions は DESC 返却 → 昇順に反転
+        setSelectedLogPositions(rows.slice().reverse())
+        setSelectedLogLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedLogSection, fetchRecentPositions])
 
   const applyDestination = async (
     point: MobilityProjectPoint | null,
@@ -986,6 +1041,15 @@ export function MobilityDriverPage() {
           {trackLine.length > 1 && (
             <Polyline positions={trackLine} pathOptions={{ color: '#6366f1', weight: 4 }} />
           )}
+          {/* 履歴シートで選んだセクションを スピード色 で重ね描画 */}
+          {selectedLogPositions.length > 1 &&
+            speedSegments(selectedLogPositions).map((seg, idx) => (
+              <Polyline
+                key={`log-seg-${selectedLogSection?.id ?? 'x'}-${idx}`}
+                positions={seg.positions}
+                pathOptions={{ color: seg.color, weight: 4, opacity: 0.95 }}
+              />
+            ))}
           {destLine && (
             <Polyline
               positions={destLine}
@@ -1082,8 +1146,51 @@ export function MobilityDriverPage() {
         </div>
       )}
 
+      {/* 選択中のログセクションを解除するミニバー (選ばれている間だけ表示) */}
+      {selectedLogSection && (
+        <div className="mx-3 mb-1 mt-2 px-2 py-1 text-[10px] rounded bg-indigo-900/40 border border-indigo-700 text-indigo-100 flex items-center gap-2">
+          <History className="h-3 w-3 shrink-0" />
+          <span className="flex-1 truncate">
+            履歴表示中:{' '}
+            {new Date(selectedLogSection.started_at).toLocaleString('ja-JP', {
+              month: '2-digit',
+              day: '2-digit',
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+            {selectedLogSection.ended_at && (
+              <>
+                {' '}
+                〜{' '}
+                {new Date(selectedLogSection.ended_at).toLocaleTimeString('ja-JP', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+              </>
+            )}
+            {selectedLogLoading && <Loader2 className="h-3 w-3 animate-spin inline ml-1" />}
+          </span>
+          <button
+            type="button"
+            onClick={() => setSelectedLogSection(null)}
+            className="shrink-0 h-6 px-2 rounded text-[10px] border border-indigo-500 hover:bg-indigo-800"
+          >
+            解除
+          </button>
+        </div>
+      )}
+
       {/* フッタアクション */}
       <div className="p-3 bg-slate-800 flex flex-col gap-2 shrink-0">
+        {/* 履歴シートを開くボタン (乗車/未乗車どちらでも常に見える) */}
+        <button
+          type="button"
+          onClick={() => setShowLogsSheet(true)}
+          className="flex items-center justify-center gap-2 px-3 py-2 text-sm rounded-lg border border-indigo-500 text-indigo-200 hover:bg-indigo-950/40"
+        >
+          <History className="h-4 w-4" />
+          運行履歴
+        </button>
         {myActive ? (
           <>
             <div className="flex gap-2">
@@ -1178,6 +1285,20 @@ export function MobilityDriverPage() {
             if (ok) setShowDestSheet(false)
           }}
           onClose={() => setShowDestSheet(false)}
+        />
+      )}
+
+      {showLogsSheet && (
+        <MyLogsSheet
+          sections={myLogSections}
+          loading={logsLoading}
+          selectedId={selectedLogSection?.id ?? null}
+          vehicles={vehicles}
+          onSelect={(a) => {
+            setSelectedLogSection(a)
+            setShowLogsSheet(false)
+          }}
+          onClose={() => setShowLogsSheet(false)}
         />
       )}
     </div>
@@ -1618,6 +1739,191 @@ function VehiclePickerSheet({
               })}
             </ul>
           )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// -----------------------------------------------------------------------------
+// 自分の運行履歴シート (ドライバー本人向け)
+// - fetchUserAssignmentHistory で自分の割当を DESC で受け取ってそのまま列挙
+// - 「今日 / 昨日 / それ以前」でグループ表示
+// - タップで親に選択セクションを渡し、地図にスピード色軌跡を出す
+// -----------------------------------------------------------------------------
+function MyLogsSheet({
+  sections,
+  loading,
+  selectedId,
+  vehicles,
+  onSelect,
+  onClose,
+}: {
+  sections: AssignmentWithNames[]
+  loading: boolean
+  selectedId: string | null
+  vehicles: Vehicle[]
+  onSelect: (a: AssignmentWithNames) => void
+  onClose: () => void
+}) {
+  const vehicleById = useMemo(() => {
+    const m = new Map<string, Vehicle>()
+    for (const v of vehicles) m.set(v.id, v)
+    return m
+  }, [vehicles])
+
+  // グルーピング用の「日付ラベル」を返す (JST)
+  const groupKey = (iso: string): string => {
+    const d = new Date(iso)
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const yesterday = new Date(today)
+    yesterday.setDate(today.getDate() - 1)
+    const start = new Date(d)
+    start.setHours(0, 0, 0, 0)
+    if (start.getTime() === today.getTime()) return '今日'
+    if (start.getTime() === yesterday.getTime()) return '昨日'
+    return `${start.getMonth() + 1}/${start.getDate()}`
+  }
+
+  const grouped = useMemo(() => {
+    const map = new Map<string, AssignmentWithNames[]>()
+    for (const s of sections) {
+      const k = groupKey(s.started_at)
+      const arr = map.get(k)
+      if (arr) arr.push(s)
+      else map.set(k, [s])
+    }
+    return Array.from(map.entries())
+  }, [sections])
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/60 flex items-end z-[9999]"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white w-full rounded-t-2xl max-h-[85vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-3 border-b flex items-center gap-2">
+          <History className="h-4 w-4 text-indigo-600" />
+          <h3 className="text-base font-semibold flex-1">
+            自分の運行履歴 ({sections.length})
+          </h3>
+          <button onClick={onClose} className="p-1 rounded hover:bg-slate-100">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="overflow-y-auto flex-1">
+          {loading ? (
+            <div className="p-6 flex justify-center text-slate-400">
+              <Loader2 className="h-5 w-5 animate-spin" />
+            </div>
+          ) : sections.length === 0 ? (
+            <div className="p-6 text-center text-sm text-slate-400">
+              運行履歴がありません
+            </div>
+          ) : (
+            grouped.map(([label, rows]) => (
+              <div key={label}>
+                <div className="sticky top-0 px-3 py-1.5 bg-slate-100 text-[11px] text-slate-600 font-semibold">
+                  {label}
+                </div>
+                <ul className="divide-y">
+                  {rows.map((a) => {
+                    const v = vehicleById.get(a.vehicle_id)
+                    const durationMs = a.ended_at
+                      ? new Date(a.ended_at).getTime() -
+                        new Date(a.started_at).getTime()
+                      : Date.now() - new Date(a.started_at).getTime()
+                    const h = Math.floor(durationMs / 3_600_000)
+                    const m = Math.floor((durationMs % 3_600_000) / 60_000)
+                    const isSelected = selectedId === a.id
+                    return (
+                      <li key={a.id}>
+                        <button
+                          type="button"
+                          onClick={() => onSelect(a)}
+                          className={`w-full flex items-center gap-3 p-3 text-left active:bg-indigo-50 ${
+                            isSelected ? 'bg-indigo-50' : ''
+                          }`}
+                        >
+                          <div
+                            className={`h-9 w-9 rounded-full flex items-center justify-center shrink-0 ${
+                              isSelected ? 'bg-indigo-200' : 'bg-slate-100'
+                            }`}
+                          >
+                            <Car
+                              className={`h-4 w-4 ${
+                                isSelected ? 'text-indigo-700' : 'text-slate-500'
+                              }`}
+                            />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-semibold truncate">
+                              {v?.name ?? '(不明車両)'}
+                            </div>
+                            <div className="text-[11px] text-slate-500">
+                              {new Date(a.started_at).toLocaleTimeString('ja-JP', {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                              {a.ended_at ? (
+                                <>
+                                  {' 〜 '}
+                                  {new Date(a.ended_at).toLocaleTimeString(
+                                    'ja-JP',
+                                    {
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                    },
+                                  )}
+                                </>
+                              ) : (
+                                <span className="ml-1 text-emerald-600">
+                                  (乗車中)
+                                </span>
+                              )}
+                              <span className="ml-2 text-slate-400">
+                                · {h > 0 ? `${h}h ` : ''}{m}m
+                              </span>
+                            </div>
+                            {a.destination_point && (
+                              <div className="text-[11px] text-amber-700 flex items-center gap-1 mt-0.5 truncate">
+                                <MapPin className="h-3 w-3 shrink-0" />
+                                <span className="truncate">
+                                  {a.destination_point.name}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                          <ChevronRight className="h-4 w-4 text-slate-400 shrink-0" />
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+            ))
+          )}
+        </div>
+        {/* スピード凡例 */}
+        <div className="p-3 border-t bg-slate-50">
+          <div className="text-[10px] text-slate-600 font-semibold mb-1">
+            軌跡は速度で色分け (km/h)
+          </div>
+          <div className="flex flex-wrap gap-x-3 gap-y-1">
+            {SPEED_BANDS.map((b) => (
+              <div key={b.min} className="flex items-center gap-1">
+                <span
+                  className="inline-block h-2 w-4 rounded"
+                  style={{ backgroundColor: b.color }}
+                />
+                <span className="text-[10px] text-slate-600">{b.label}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
