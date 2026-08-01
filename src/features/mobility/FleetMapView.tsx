@@ -172,6 +172,10 @@ export function FleetMapView({
     Map<string, MobilityPosition[]>
   >(new Map())
   const [loading, setLoading] = useState(true)
+  // 自動更新: 15 秒ごとに refreshAll を叩く (Realtime が届かない環境向けの保険 +
+  // start/end assignment を確実に取り込むため)
+  const [autoUpdate, setAutoUpdate] = useState(true)
+  const AUTO_UPDATE_INTERVAL_MS = 15_000
 
   const refreshAll = useCallback(async () => {
     setLoading(true)
@@ -201,6 +205,15 @@ export function FleetMapView({
   useEffect(() => {
     void refreshAll()
   }, [refreshAll])
+
+  // 自動更新の定期ポーリング (Realtime のフォールバック兼 assignment 数の反映)
+  useEffect(() => {
+    if (!autoUpdate) return
+    const id = setInterval(() => {
+      void refreshAll()
+    }, AUTO_UPDATE_INTERVAL_MS)
+    return () => clearInterval(id)
+  }, [autoUpdate, refreshAll])
 
   useEffect(() => {
     const channel = supabase
@@ -274,12 +287,21 @@ export function FleetMapView({
   useEffect(() => {
     const channel = supabase
       .channel(`vehicle-assignments-fleet-${organizationId}`)
+      // UPDATE (行き先変更 / 降車=ended_at セット) を購読
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'vehicle_assignments' },
         () => {
           // 差分適用は destination_point の enrich が必要で面倒なので、
           // 割当一覧を丸ごと再取得 (件数はせいぜい 数十件)
+          void useMobilityStore.getState().fetchActiveAssignments(organizationId)
+        },
+      )
+      // INSERT (新規乗車) も購読 → 新しい稼働マーカーを即出す
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'vehicle_assignments' },
+        () => {
           void useMobilityStore.getState().fetchActiveAssignments(organizationId)
         },
       )
@@ -356,11 +378,41 @@ export function FleetMapView({
 
   return (
     <div className="relative h-full w-full">
-      {/* 右上オーバーレイ: 稼働数と再取得ボタン */}
+      {/* 右上オーバーレイ: 稼働数 + 自動更新トグル + 再取得ボタン */}
       <div className="absolute top-3 right-3 z-[1000] flex items-center gap-2 bg-white/95 rounded-lg border shadow px-3 py-1.5 text-xs">
         <span className="text-slate-600">
           稼働中 {markers.length} / {activeAssignments.size}
         </span>
+        {/* 自動更新トグル */}
+        <button
+          type="button"
+          onClick={() => setAutoUpdate((v) => !v)}
+          role="switch"
+          aria-checked={autoUpdate}
+          title={
+            autoUpdate
+              ? `${AUTO_UPDATE_INTERVAL_MS / 1000} 秒ごとに自動更新中 (クリックで停止)`
+              : '自動更新は停止中 (クリックで開始)'
+          }
+          className={`flex items-center gap-1 px-2 py-0.5 rounded border transition ${
+            autoUpdate
+              ? 'bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700'
+              : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+          }`}
+        >
+          <span
+            className={`inline-block h-2.5 w-4 rounded-full relative ${
+              autoUpdate ? 'bg-emerald-200' : 'bg-slate-300'
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 h-1.5 w-1.5 rounded-full bg-white transition-all ${
+                autoUpdate ? 'left-2' : 'left-0.5'
+              }`}
+            />
+          </span>
+          自動更新
+        </button>
         <button
           type="button"
           onClick={refreshAll}
