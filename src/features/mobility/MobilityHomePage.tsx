@@ -47,7 +47,7 @@ import type {
   Vehicle,
   VehicleKind,
 } from '@/types/database'
-import { FleetMapView } from '@/features/mobility/FleetMapView'
+import { FleetMapView, formatAgeShort } from '@/features/mobility/FleetMapView'
 import { computeTotalDistanceMeters } from '@/lib/geoDistance'
 import { supabase } from '@/lib/supabase'
 
@@ -119,6 +119,7 @@ export function MobilityHomePage() {
     updateVehicle,
     deleteVehicle,
     endAssignment,
+    latestPositionsByAssignment,
     fetchProjects,
     createProject,
     updateProject,
@@ -190,6 +191,22 @@ export function MobilityHomePage() {
     setExpandedVehicleId((prev) => (prev === vehicleId ? null : vehicleId))
     setExpandedUserId(null)
   }, [])
+
+  // 通信断バッジの再描画用 tick + しきい値
+  const [staleTick, setStaleTick] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setStaleTick(Date.now()), 10_000)
+    return () => clearInterval(id)
+  }, [])
+  const STALE_THRESHOLD_MS = 60_000
+  const ageMsForAssignment = useCallback(
+    (assignmentId: string): number | null => {
+      const p = latestPositionsByAssignment.get(assignmentId)
+      if (!p) return null
+      return staleTick - new Date(p.recorded_at).getTime()
+    },
+    [latestPositionsByAssignment, staleTick],
+  )
 
   const toggleExpandUser = useCallback((userId: string) => {
     setExpandedUserId((prev) => (prev === userId ? null : userId))
@@ -446,6 +463,8 @@ export function MobilityHomePage() {
             expandedUserId={expandedUserId}
             checkedIds={checkedAssignmentIds}
             forceLeaveBusyId={forceLeaveBusyId}
+            ageMsForAssignment={ageMsForAssignment}
+            staleThresholdMs={STALE_THRESHOLD_MS}
             onToggleExpand={toggleExpandUser}
             onToggleCheck={toggleAssignmentCheck}
             onForceLeave={handleForceLeave}
@@ -519,9 +538,24 @@ export function MobilityHomePage() {
                           </div>
                         )}
                       </div>
-                      <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-700 border border-emerald-300">
-                        稼働中
-                      </span>
+                      {(() => {
+                        const age = ageMsForAssignment(a.id)
+                        if (age != null && age > STALE_THRESHOLD_MS) {
+                          return (
+                            <span
+                              className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-red-100 text-red-700 border border-red-300"
+                              title={`最終 ping から ${formatAgeShort(age)}`}
+                            >
+                              ⚠ 通信断 {formatAgeShort(age)}
+                            </span>
+                          )
+                        }
+                        return (
+                          <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-700 border border-emerald-300">
+                            稼働中
+                          </span>
+                        )
+                      })()}
                       <ChevronDown
                         className={`h-4 w-4 text-slate-400 shrink-0 transition-transform ${
                           expanded ? 'rotate-180' : ''
@@ -829,6 +863,8 @@ function UserModeSidebar({
   expandedUserId,
   checkedIds,
   forceLeaveBusyId,
+  ageMsForAssignment,
+  staleThresholdMs,
   onToggleExpand,
   onToggleCheck,
   onForceLeave,
@@ -841,6 +877,8 @@ function UserModeSidebar({
   expandedUserId: string | null
   checkedIds: Set<string>
   forceLeaveBusyId: string | null
+  ageMsForAssignment: (assignmentId: string) => number | null
+  staleThresholdMs: number
   onToggleExpand: (userId: string) => void
   onToggleCheck: (assignmentId: string) => void
   onForceLeave: (
@@ -935,9 +973,24 @@ function UserModeSidebar({
                         </div>
                       )}
                     </div>
-                    <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-700 border border-emerald-300">
-                      乗車中
-                    </span>
+                    {(() => {
+                      const age = ageMsForAssignment(u.assignmentId)
+                      if (age != null && age > staleThresholdMs) {
+                        return (
+                          <span
+                            className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-red-100 text-red-700 border border-red-300"
+                            title={`最終 ping から ${formatAgeShort(age)}`}
+                          >
+                            ⚠ 通信断 {formatAgeShort(age)}
+                          </span>
+                        )
+                      }
+                      return (
+                        <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-700 border border-emerald-300">
+                          乗車中
+                        </span>
+                      )
+                    })()}
                     <ChevronDown
                       className={`h-4 w-4 text-slate-400 shrink-0 transition-transform ${
                         expanded ? 'rotate-180' : ''

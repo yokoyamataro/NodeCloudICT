@@ -10,7 +10,7 @@
 //   ・現在地は Geolocation で自動追跡し watchPosition で連続送信
 //     (画面表示中のみ。バックグラウンドは Capacitor 統合で対応)
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -47,6 +47,11 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useCanUseMobility } from '@/lib/useCanUseMobility'
 import { isMobileDevice } from '@/lib/displayMode'
 import { watchSamples, watchSamplesInBackground } from '@/lib/geolocation'
+import {
+  enqueuePing,
+  flushQueue,
+  getQueueLength,
+} from '@/lib/mobilityOfflineQueue'
 import {
   bearingDeg,
   bearingLabel,
@@ -337,6 +342,28 @@ export function MobilityDriverPage() {
     return () => clearInterval(id)
   }, [myActive])
 
+  // ネットワーク接続状態 + オフラインキュー長 (UI 表示 + 送信ロジック用)
+  const [isOnline, setIsOnline] = useState<boolean>(() =>
+    typeof navigator === 'undefined' ? true : navigator.onLine,
+  )
+  const [queueLen, setQueueLen] = useState(0)
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const on = () => setIsOnline(true)
+    const off = () => setIsOnline(false)
+    window.addEventListener('online', on)
+    window.addEventListener('offline', off)
+    return () => {
+      window.removeEventListener('online', on)
+      window.removeEventListener('offline', off)
+    }
+  }, [])
+  // マウント時にキュー長を再読み込み (アプリ再起動で残っているぶん)
+  useEffect(() => {
+    if (!user) return
+    setQueueLen(getQueueLength(user.id))
+  }, [user])
+
   // 地図追跡状態 (現在地に自動でセンタリング)。初期値 true。
   // ユーザーが地図をドラッグすると false になり、現在地ボタンで戻す。
   const [followMe, setFollowMe] = useState(true)
@@ -365,6 +392,68 @@ export function MobilityDriverPage() {
     sendPositionRef.current = sendPosition
   }, [sendPosition])
 
+  // キュー介在の送信ヘルパー。
+  //   1) 常に enqueue (localStorage に貯める)
+  //   2) flushQueue で古い順から送信を試みる。1 件でも失敗したら残りは次回持越し
+  //   3) UI 表示用に queueLen を最新化
+  // これにより、電波が切れても最大 20 分ぶん貯めておいて後で一括送信できる。
+  const userIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    userIdRef.current = user?.id ?? null
+  }, [user])
+  const sendWithQueue = useCallback(
+    async (
+      assignmentId: string,
+      sample: {
+        lat: number
+        lon: number
+        accuracy_m: number | null
+        speed_kmh: number | null
+        heading_deg: number | null
+        altitude_m: number | null
+        recorded_at?: string
+      },
+    ) => {
+      const uid = userIdRef.current
+      if (!uid) return
+      enqueuePing(uid, {
+        assignmentId,
+        lat: sample.lat,
+        lon: sample.lon,
+        accuracy_m: sample.accuracy_m ?? null,
+        speed_kmh: sample.speed_kmh ?? null,
+        heading_deg: sample.heading_deg ?? null,
+        altitude_m: sample.altitude_m ?? null,
+        recorded_at: sample.recorded_at ?? new Date().toISOString(),
+      })
+      const { remaining } = await flushQueue(uid, sendPositionRef.current)
+      setQueueLen(remaining)
+    },
+    [],
+  )
+
+  // オンライン復帰時に即キュー flush を試みる
+  useEffect(() => {
+    if (!isOnline || !user) return
+    void (async () => {
+      const { remaining } = await flushQueue(user.id, sendPositionRef.current)
+      setQueueLen(remaining)
+    })()
+  }, [isOnline, user])
+
+  // 定期リトライ: 30 秒ごとにキューに何かあれば flush を試す
+  // (online/offline イベントが取りこぼされたケースの保険)
+  useEffect(() => {
+    if (!user) return
+    const id = setInterval(async () => {
+      const before = getQueueLength(user.id)
+      if (before === 0) return
+      const { remaining } = await flushQueue(user.id, sendPositionRef.current)
+      setQueueLen(remaining)
+    }, 30_000)
+    return () => clearInterval(id)
+  }, [user])
+
   // 「自動 ON」に切り替えた瞬間は 1 発すぐ送る (次の watchPosition を待たない)
   useEffect(() => {
     if (!autoSend || !myActive) return
@@ -372,14 +461,17 @@ export function MobilityDriverPage() {
     if (!pos) return
     lastSentAtRef.current = Date.now()
     setLastAutoSentAt(new Date())
-    void sendPosition(myActive.id, {
+    void sendWithQueue(myActive.id, {
       lat: pos[0],
       lon: pos[1],
       accuracy_m: accuracy,
+      speed_kmh: null,
+      heading_deg: null,
+      altitude_m: null,
     })
     // 依存に currentPos は入れない (何度も送らないため)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoSend, myActive, sendPosition])
+  }, [autoSend, myActive, sendWithQueue])
 
   // ------------------------------------------------------------------
   // バックグラウンド追跡 (4-e 後半)
@@ -408,7 +500,7 @@ export function MobilityDriverPage() {
             if (now - lastSentAtRef.current < PING_INTERVAL_MS) return
             lastSentAtRef.current = now
             setLastAutoSentAt(new Date(now))
-            void sendPositionRef.current(active.id, {
+            void sendWithQueue(active.id, {
               lat: sample.lat,
               lon: sample.lon,
               accuracy_m: sample.accuracy_m,
@@ -460,7 +552,7 @@ export function MobilityDriverPage() {
             if (now - lastSentAtRef.current < PING_INTERVAL_MS) return
             lastSentAtRef.current = now
             setLastAutoSentAt(new Date(now))
-            void sendPositionRef.current(active.id, {
+            void sendWithQueue(active.id, {
               lat: sample.lat,
               lon: sample.lon,
               accuracy_m: sample.accuracy_m,
@@ -903,18 +995,42 @@ export function MobilityDriverPage() {
         </div>
       )}
 
-      {/* 自動送信の直近状態 (デバッグ + フィードバック用) */}
+      {/* 自動送信 / 通信状態 */}
       {myActive && autoSend && (
-        <div className="mx-3 mb-1 mt-2 px-2 py-1 text-[10px] rounded bg-emerald-900/40 border border-emerald-700 text-emerald-100 flex items-center gap-1">
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          自動送信中 · 最終:{' '}
-          {lastAutoSentAt
-            ? lastAutoSentAt.toLocaleTimeString('ja-JP', {
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-              })
-            : '待機'}
+        <div
+          className={`mx-3 mb-1 mt-2 px-2 py-1 text-[10px] rounded border flex items-center gap-1 ${
+            !isOnline
+              ? 'bg-red-900/50 border-red-700 text-red-100'
+              : queueLen > 0
+                ? 'bg-amber-900/40 border-amber-700 text-amber-100'
+                : 'bg-emerald-900/40 border-emerald-700 text-emerald-100'
+          }`}
+        >
+          <span
+            className={`inline-block h-1.5 w-1.5 rounded-full ${
+              !isOnline
+                ? 'bg-red-400'
+                : queueLen > 0
+                  ? 'bg-amber-400 animate-pulse'
+                  : 'bg-emerald-400 animate-pulse'
+            }`}
+          />
+          {!isOnline ? (
+            <>通信断 · バッファ {queueLen} 件 (復旧後に自動送信)</>
+          ) : queueLen > 0 ? (
+            <>再送中 · 残 {queueLen} 件</>
+          ) : (
+            <>
+              自動送信中 · 最終:{' '}
+              {lastAutoSentAt
+                ? lastAutoSentAt.toLocaleTimeString('ja-JP', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                  })
+                : '待機'}
+            </>
+          )}
         </div>
       )}
 

@@ -65,6 +65,16 @@ function formatDistance(meters: number): string {
   return `${(meters / 1000).toFixed(meters < 10_000 ? 2 : 1)} km`
 }
 
+// 経過時間を "N分前" / "N時間前" などの短い日本語ラベルに
+export function formatAgeShort(ms: number): string {
+  const s = Math.floor(ms / 1000)
+  if (s < 60) return `${s}秒前`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}分前`
+  const h = Math.floor(m / 60)
+  return `${h}時間前`
+}
+
 // 運行現場ポイント用 (青ピン)。編集中は赤にハイライト。
 function projectPointIcon(highlight: boolean): L.DivIcon {
   const color = highlight ? '#dc2626' : '#6366f1'
@@ -176,6 +186,14 @@ export function FleetMapView({
   // start/end assignment を確実に取り込むため)
   const [autoUpdate, setAutoUpdate] = useState(true)
   const AUTO_UPDATE_INTERVAL_MS = 15_000
+  // 通信断表示の再描画用 tick (最終 ping からの経過を UI に反映)
+  const [nowTick, setNowTick] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 10_000)
+    return () => clearInterval(id)
+  }, [])
+  // 60 秒以上 ping が来ていなければ「通信断」扱い
+  const STALE_THRESHOLD_MS = 60_000
 
   const refreshAll = useCallback(async () => {
     setLoading(true)
@@ -229,6 +247,8 @@ export function FleetMapView({
             (a) => a.id === row.assignment_id,
           )
           if (!isOurs) return
+          // store の共有 map も更新 (サイドバーの通信断バッジ計算で使う)
+          useMobilityStore.getState().applyLatestPosition(row)
           setLatestPositions((prev) => {
             const next = new Map(prev)
             const existing = next.get(row.assignment_id)
@@ -539,9 +559,14 @@ export function FleetMapView({
           )
         })}
         {markers.map((m) => {
+          const ageMs = nowTick - new Date(m.recordedAt).getTime()
+          const isStale = ageMs > STALE_THRESHOLD_MS
           const parts: string[] = [m.vehicleName]
-          if (m.speed_kmh != null && m.speed_kmh >= 0) {
+          if (m.speed_kmh != null && m.speed_kmh >= 0 && !isStale) {
             parts.push(`${Math.round(m.speed_kmh)}km/h`)
+          }
+          if (isStale) {
+            parts.push(`⚠ 通信断 ${formatAgeShort(ageMs)}`)
           }
           if (m.destination) {
             const dist = haversineMeters(
@@ -562,7 +587,7 @@ export function FleetMapView({
               key={m.assignmentId}
               position={[m.lat, m.lon]}
               heading={m.heading_deg}
-              color={COLOR_ACTIVE}
+              color={isStale ? '#94a3b8' : COLOR_ACTIVE}
               size={22}
               label={label}
               onClick={onSelectVehicle ? () => onSelectVehicle(m.vehicleId) : undefined}

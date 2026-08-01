@@ -63,6 +63,12 @@ interface State {
   /** vehicle_id → 現在稼働中の assignment (ended_at IS NULL) */
   activeAssignments: Map<string, AssignmentWithNames>
 
+  /**
+   * assignment_id → 最新 ping。管理画面で通信断バッジ (最終 ping からの経過時間)
+   * 計算に使うため store にも保持する。Realtime INSERT / 定期 refresh で更新される。
+   */
+  latestPositionsByAssignment: Map<string, MobilityPosition>
+
   fetchVehicles: (organizationId: string) => Promise<void>
   createVehicle: (input: {
     organization_id: string
@@ -120,6 +126,8 @@ interface State {
   fetchLatestPositions: (
     assignmentIds: string[],
   ) => Promise<Map<string, MobilityPosition>>
+  /** Realtime で受け取った 1 件を latestPositionsByAssignment にマージする */
+  applyLatestPosition: (row: MobilityPosition) => void
 
   /**
    * 指定 user_id の「since 以降」の位置を全部取得 (走行距離集計用)。
@@ -249,6 +257,7 @@ export const useMobilityStore = create<State>((set, get) => ({
   vehiclesLoading: false,
   vehiclesError: null,
   activeAssignments: new Map(),
+  latestPositionsByAssignment: new Map(),
 
   fetchVehicles: async (organizationId: string) => {
     set({ vehiclesLoading: true, vehiclesError: null })
@@ -598,7 +607,10 @@ export const useMobilityStore = create<State>((set, get) => ({
   },
 
   fetchLatestPositions: async (assignmentIds) => {
-    if (assignmentIds.length === 0) return new Map()
+    if (assignmentIds.length === 0) {
+      set({ latestPositionsByAssignment: new Map() })
+      return new Map()
+    }
     // PostgREST では DISTINCT ON が直接使えないので、単純に IN で取って
     // クライアント側で assignment_id ごとに最新 1 件を選ぶ。
     // 件数が多い場合 (数百以上) はサーバ側 RPC を検討する。
@@ -616,7 +628,25 @@ export const useMobilityStore = create<State>((set, get) => ({
     for (const row of (data ?? []) as MobilityPosition[]) {
       if (!map.has(row.assignment_id)) map.set(row.assignment_id, row)
     }
+    // ストアにも保持 (通信断判定に使う)
+    set({ latestPositionsByAssignment: map })
     return map
+  },
+
+  applyLatestPosition: (row) => {
+    set((s) => {
+      const existing = s.latestPositionsByAssignment.get(row.assignment_id)
+      if (
+        existing &&
+        new Date(existing.recorded_at).getTime() >=
+          new Date(row.recorded_at).getTime()
+      ) {
+        return s // 既存の方が新しい → 何もしない
+      }
+      const next = new Map(s.latestPositionsByAssignment)
+      next.set(row.assignment_id, row)
+      return { latestPositionsByAssignment: next }
+    })
   },
 
   // ============================================================
