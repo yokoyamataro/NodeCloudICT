@@ -129,6 +129,43 @@ function AutoFitBounds({
   return null
 }
 
+// サイドバーで「セクション (=assignment)」を選択した時、その軌跡全体が
+// 画面に収まるように 1 度だけ fitBounds する。
+// 選択が変わる度に再フィット。同じ選択のまま数が増えても再フィットしない
+// (常時ズームアウトされ続けるのを防ぐ)。
+function FitToExtraTracks({
+  tracks,
+}: {
+  tracks: Map<string, MobilityPosition[]>
+}) {
+  const map = useMap()
+  const lastKeyRef = useRef<string | null>(null)
+  useEffect(() => {
+    const keys = Array.from(tracks.keys()).sort().join(',')
+    if (!keys) {
+      lastKeyRef.current = null
+      return
+    }
+    if (keys === lastKeyRef.current) return
+    lastKeyRef.current = keys
+    const points: [number, number][] = []
+    for (const arr of tracks.values()) {
+      for (const p of arr) points.push([p.lat, p.lon])
+    }
+    if (points.length === 0) return
+    if (points.length === 1) {
+      map.setView(points[0], 16, { animate: true })
+    } else {
+      map.fitBounds(points as LatLngBoundsExpression, {
+        padding: [40, 40],
+        maxZoom: 16,
+        animate: true,
+      })
+    }
+  }, [tracks, map])
+  return null
+}
+
 // 追跡ターゲット (assignment) の位置に地図を追従させる。
 //
 // 挙動:
@@ -574,6 +611,7 @@ export function FleetMapView({
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <AutoFitBounds positions={positionsForBounds} />
+        <FitToExtraTracks tracks={extraTracks} />
         <FollowTarget
           target={followTarget}
           onUserPan={() => setFollowSuspended(true)}

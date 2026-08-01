@@ -615,7 +615,7 @@ export function MobilityDriverPage() {
     }
   }, [])
 
-  // 単位走行距離: 現在の乗車 (myActive.started_at) 以降の自分の位置から累積。
+  // セクション距離: 現在の乗車 (myActive.started_at) 以降の自分の位置から累積。
   // - 送信 (lastAutoSentAt) or 乗車状態 (myActive) の変化で再計算
   // - myActive がある間は 20 秒ごとに軽く refresh
   // 降車すると myActive=null → 0 にリセット、次回乗車で新しい単位から再カウント。
@@ -857,7 +857,7 @@ export function MobilityDriverPage() {
         </div>
       )}
 
-      {/* 速度・単位走行距離・方向距離パネル (乗車中のみ) */}
+      {/* 速度・セクション距離・方向距離パネル (乗車中のみ) */}
       {myActive && (
         <div
           className={`mx-3 mt-2 grid gap-2 shrink-0 ${
@@ -880,11 +880,11 @@ export function MobilityDriverPage() {
             }
             style={{ touchAction: 'manipulation' }}
             className="bg-slate-800 border border-slate-700 rounded-lg p-2 text-white text-left active:bg-slate-700"
-            title="タップで 単位走行 / 本日走行 を切替"
+            title="タップで セクション走行 / 本日走行 を切替"
           >
             <div className="text-[10px] text-slate-400 flex items-center gap-1">
               <span className="flex-1">
-                {distanceMode === 'unit' ? '単位走行' : '本日走行'}
+                {distanceMode === 'unit' ? 'セクション' : '本日走行'}
               </span>
               <span className="text-[9px] text-slate-500">↔</span>
             </div>
@@ -905,7 +905,7 @@ export function MobilityDriverPage() {
                     hour: '2-digit',
                     minute: '2-digit',
                   })} 〜`
-                : `本日 00:00 〜 · ${todayAssignments.length} 単位合計`}
+                : `本日 00:00 〜 · ${todayAssignments.length} セクション合計`}
             </div>
           </button>
           {selectedDestination && destInfo && (

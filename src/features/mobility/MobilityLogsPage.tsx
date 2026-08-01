@@ -78,7 +78,7 @@ function AutoFit({ positions }: { positions: [number, number][] }) {
   return null
 }
 
-/** 1 乗車→降車 = 1 ユニット */
+/** 1 乗車→降車 = 1 セクション */
 interface AssignmentUnit {
   assignmentId: string
   vehicleId: string
@@ -182,7 +182,7 @@ export function MobilityLogsPage() {
     return m
   }, [vehicles])
 
-  // user_id ごとに集計。各 assignment を「単位 (乗車→降車)」として保持する。
+  // user_id ごとに集計。各 assignment を「セクション (乗車→降車)」として保持する。
   const perUser = useMemo<UserAggregate[]>(() => {
     const byUser = new Map<string, UserAggregate>()
     for (const a of assignments) {
@@ -212,7 +212,7 @@ export function MobilityLogsPage() {
         })
       }
     }
-    // 集計 + ソート (単位は乗車時刻昇順)
+    // 集計 + ソート (セクションは乗車時刻昇順)
     for (const u of byUser.values()) {
       u.units.sort(
         (x, y) =>
@@ -464,7 +464,7 @@ export function MobilityLogsPage() {
                             {u.driverName}
                           </span>
                           <span className="text-slate-500 shrink-0">
-                            {u.units.length} 回
+                            {u.units.length} セクション
                           </span>
                           <span className="text-slate-800 shrink-0 w-16 text-right font-semibold">
                             {(u.distanceM / 1000).toFixed(1)} km
@@ -476,7 +476,7 @@ export function MobilityLogsPage() {
                             setExpandedUserId(isExpanded ? null : u.userId)
                           }
                           className="p-2 text-slate-400 hover:text-slate-700 shrink-0"
-                          title={isExpanded ? '折りたたむ' : '単位ごとの内訳を表示'}
+                          title={isExpanded ? '折りたたむ' : 'セクションごとの内訳を表示'}
                         >
                           <ChevronDown
                             className={`h-4 w-4 transition-transform ${

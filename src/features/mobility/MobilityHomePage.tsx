@@ -16,7 +16,6 @@ import {
   ArrowLeft,
   Calendar,
   Car,
-  CheckSquare,
   ChevronDown,
   Construction,
   Folder,
@@ -26,7 +25,6 @@ import {
   Pencil,
   Phone,
   Plus,
-  Square,
   Trash2,
   Truck,
   User,
@@ -168,28 +166,28 @@ export function MobilityHomePage() {
   // インライン展開する行 (同時に 1 台/1 人のみ)
   const [expandedVehicleId, setExpandedVehicleId] = useState<string | null>(null)
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null)
-  // 履歴チェックで地図に軌跡を出す assignment 群 (縦の複数選択可能)
-  const [checkedAssignmentIds, setCheckedAssignmentIds] = useState<Set<string>>(
-    () => new Set(),
-  )
+  // 運行履歴で選択中の「セクション」(1 回の乗車 = 1 assignment)。単選択。
+  // 選択されている間、その assignment の軌跡だけが地図に表示される。
+  const [selectedSectionAssignmentId, setSelectedSectionAssignmentId] =
+    useState<string | null>(null)
 
-  const toggleAssignmentCheck = useCallback((assignmentId: string) => {
-    setCheckedAssignmentIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(assignmentId)) next.delete(assignmentId)
-      else next.add(assignmentId)
-      return next
-    })
+  const selectSection = useCallback((assignmentId: string) => {
+    setSelectedSectionAssignmentId((prev) =>
+      prev === assignmentId ? null : assignmentId,
+    )
   }, [])
 
-  const checkedAssignmentIdsArr = useMemo(
-    () => Array.from(checkedAssignmentIds),
-    [checkedAssignmentIds],
+  // FleetMapView は複数対応 (extraTrackAssignmentIds[]) のままなので、
+  // 0 or 1 要素の配列に包んで渡す
+  const selectedSectionIdArr = useMemo(
+    () => (selectedSectionAssignmentId ? [selectedSectionAssignmentId] : []),
+    [selectedSectionAssignmentId],
   )
 
   const toggleExpandVehicle = useCallback((vehicleId: string) => {
     setExpandedVehicleId((prev) => (prev === vehicleId ? null : vehicleId))
     setExpandedUserId(null)
+    setSelectedSectionAssignmentId(null)
   }, [])
 
   // 追跡対象の assignment id を導出:
@@ -228,6 +226,7 @@ export function MobilityHomePage() {
   const toggleExpandUser = useCallback((userId: string) => {
     setExpandedUserId((prev) => (prev === userId ? null : userId))
     setExpandedVehicleId(null)
+    setSelectedSectionAssignmentId(null)
   }, [])
 
   // ユーザー一覧を取得。運行現場のメンバー割当ダイアログでも使うので mode 問わず取得。
@@ -423,7 +422,7 @@ export function MobilityHomePage() {
         <div className="h-64 lg:h-auto lg:flex-1 relative border-b lg:border-b-0 lg:border-r">
           <FleetMapView
             organizationId={orgId}
-            extraTrackAssignmentIds={checkedAssignmentIdsArr}
+            extraTrackAssignmentIds={selectedSectionIdArr}
             projectPoints={expandedProjectPoints}
             highlightPointId={editingPoint?.id ?? null}
             addPointMode={addPointMode}
@@ -479,12 +478,12 @@ export function MobilityHomePage() {
             orgMembers={orgMembers}
             loading={orgMembersLoading}
             expandedUserId={expandedUserId}
-            checkedIds={checkedAssignmentIds}
+            selectedId={selectedSectionAssignmentId}
             forceLeaveBusyId={forceLeaveBusyId}
             ageMsForAssignment={ageMsForAssignment}
             staleThresholdMs={STALE_THRESHOLD_MS}
             onToggleExpand={toggleExpandUser}
-            onToggleCheck={toggleAssignmentCheck}
+            onSelect={selectSection}
             onForceLeave={handleForceLeave}
             onInviteByPhone={() => setShowPhoneInvite(true)}
           />
@@ -608,8 +607,8 @@ export function MobilityHomePage() {
                       <VehicleInlineDetail
                         vehicleId={v.id}
                         activeAssignment={a}
-                        checkedIds={checkedAssignmentIds}
-                        onToggleCheck={toggleAssignmentCheck}
+                        selectedId={selectedSectionAssignmentId}
+                        onSelect={selectSection}
                       />
                     )}
                   </li>
@@ -653,9 +652,9 @@ export function MobilityHomePage() {
                     active={activeAssignments.has(v.id)}
                     activeAssignment={activeAssignments.get(v.id) ?? null}
                     expanded={expandedVehicleId === v.id}
-                    checkedIds={checkedAssignmentIds}
+                    selectedId={selectedSectionAssignmentId}
                     onToggleExpand={() => toggleExpandVehicle(v.id)}
-                    onToggleCheck={toggleAssignmentCheck}
+                    onSelect={selectSection}
                     onEdit={() => setEditingVehicle(v)}
                   />
                 ))}
@@ -676,9 +675,9 @@ export function MobilityHomePage() {
                         active={false}
                         activeAssignment={null}
                         expanded={expandedVehicleId === v.id}
-                        checkedIds={checkedAssignmentIds}
+                        selectedId={selectedSectionAssignmentId}
                         onToggleExpand={() => toggleExpandVehicle(v.id)}
-                        onToggleCheck={toggleAssignmentCheck}
+                        onSelect={selectSection}
                         onEdit={() => setEditingVehicle(v)}
                       />
                     ))}
@@ -879,12 +878,12 @@ function UserModeSidebar({
   orgMembers,
   loading,
   expandedUserId,
-  checkedIds,
+  selectedId,
   forceLeaveBusyId,
   ageMsForAssignment,
   staleThresholdMs,
   onToggleExpand,
-  onToggleCheck,
+  onSelect,
   onForceLeave,
   onInviteByPhone,
 }: {
@@ -893,12 +892,12 @@ function UserModeSidebar({
   orgMembers: OrgMemberRow[]
   loading: boolean
   expandedUserId: string | null
-  checkedIds: Set<string>
+  selectedId: string | null
   forceLeaveBusyId: string | null
   ageMsForAssignment: (assignmentId: string) => number | null
   staleThresholdMs: number
   onToggleExpand: (userId: string) => void
-  onToggleCheck: (assignmentId: string) => void
+  onSelect: (assignmentId: string) => void
   onForceLeave: (
     assignmentId: string,
     driverName: string | null,
@@ -1043,8 +1042,8 @@ function UserModeSidebar({
                     <UserInlineDetail
                       userId={u.userId}
                       activeAssignment={active ?? null}
-                      checkedIds={checkedIds}
-                      onToggleCheck={onToggleCheck}
+                      selectedId={selectedId}
+                      onSelect={onSelect}
                     />
                   )}
                 </li>
@@ -1141,8 +1140,8 @@ function UserModeSidebar({
                     <UserInlineDetail
                       userId={m.user_id}
                       activeAssignment={active ?? null}
-                      checkedIds={checkedIds}
-                      onToggleCheck={onToggleCheck}
+                      selectedId={selectedId}
+                      onSelect={onSelect}
                     />
                   )}
                 </li>
@@ -1160,18 +1159,18 @@ function VehicleRow({
   active,
   activeAssignment,
   expanded,
-  checkedIds,
+  selectedId,
   onToggleExpand,
-  onToggleCheck,
+  onSelect,
   onEdit,
 }: {
   vehicle: Vehicle
   active: boolean
   activeAssignment: AssignmentWithNames | null
   expanded: boolean
-  checkedIds: Set<string>
+  selectedId: string | null
   onToggleExpand: () => void
-  onToggleCheck: (assignmentId: string) => void
+  onSelect: (assignmentId: string) => void
   onEdit: () => void
 }) {
   const Icon = KIND_ICON[vehicle.kind]
@@ -1234,8 +1233,8 @@ function VehicleRow({
         <VehicleInlineDetail
           vehicleId={vehicle.id}
           activeAssignment={activeAssignment}
-          checkedIds={checkedIds}
-          onToggleCheck={onToggleCheck}
+          selectedId={selectedId}
+          onSelect={onSelect}
         />
       )}
     </li>
@@ -1590,8 +1589,8 @@ interface HistoryDetailProps {
   currentSpeedKmh: number | null
   todayDistanceM: number
   distanceLabel: string
-  checkedIds: Set<string>
-  onToggleCheck: (assignmentId: string) => void
+  selectedId: string | null
+  onSelect: (assignmentId: string) => void
   /** 履歴の 1 行に何を「主タイトル」として出すか。車両詳細ならドライバー名、ユーザー詳細なら車両名 */
   primaryLabel: (a: AssignmentWithNames) => string
 }
@@ -1603,8 +1602,8 @@ function InlineDetailBody({
   currentSpeedKmh,
   todayDistanceM,
   distanceLabel,
-  checkedIds,
-  onToggleCheck,
+  selectedId,
+  onSelect,
   primaryLabel,
 }: HistoryDetailProps) {
   return (
@@ -1634,13 +1633,13 @@ function InlineDetailBody({
         <div className="flex items-center gap-2 mb-1.5">
           <div className="w-0.5 h-4 rounded bg-slate-400" />
           <h3 className="text-xs font-semibold text-slate-700 flex-1">
-            運行履歴 ({history.length})
+            運行履歴 ({history.length} セクション)
           </h3>
           {historyLoading && (
             <Loader2 className="h-3 w-3 text-slate-400 animate-spin" />
           )}
           <span className="text-[10px] text-slate-500">
-            チェックで地図に軌跡
+            クリックで地図に軌跡
           </span>
         </div>
         {history.length === 0 && !historyLoading ? (
@@ -1650,7 +1649,7 @@ function InlineDetailBody({
         ) : (
           <ul className="space-y-1">
             {history.map((a) => {
-              const checked = checkedIds.has(a.id)
+              const isSelected = selectedId === a.id
               const rowsToday = positionsByAssignment.get(a.id)
               const distanceKm = rowsToday
                 ? computeTotalDistanceMeters(rowsToday) / 1000
@@ -1659,24 +1658,30 @@ function InlineDetailBody({
                 <li key={a.id}>
                   <button
                     type="button"
-                    onClick={() => onToggleCheck(a.id)}
-                    className={`w-full flex items-center gap-2 p-2 bg-white rounded border text-[11px] text-left hover:border-indigo-400 ${
-                      checked
-                        ? 'ring-1 ring-indigo-400 border-indigo-300'
-                        : ''
+                    onClick={() => onSelect(a.id)}
+                    className={`w-full flex items-center gap-2 p-2 rounded border text-[11px] text-left transition ${
+                      isSelected
+                        ? 'bg-indigo-50 ring-2 ring-indigo-500 border-indigo-500'
+                        : 'bg-white hover:border-indigo-400'
                     }`}
                     title={
-                      checked
-                        ? 'クリックで地図から軌跡を消す'
-                        : 'クリックで地図にこの割当の軌跡を出す'
+                      isSelected
+                        ? '選択中 (もう一度クリックで解除)'
+                        : 'クリックでこのセクションの軌跡を地図に表示'
                     }
                   >
-                    {checked ? (
-                      <CheckSquare className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
-                    ) : (
-                      <Square className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                    )}
-                    <span className="flex-1 min-w-0 truncate font-medium">
+                    <span
+                      className={`inline-block h-2 w-2 rounded-full shrink-0 ${
+                        isSelected ? 'bg-indigo-600' : 'bg-slate-300'
+                      }`}
+                    />
+                    <span
+                      className={`flex-1 min-w-0 truncate ${
+                        isSelected
+                          ? 'font-semibold text-indigo-800'
+                          : 'font-medium'
+                      }`}
+                    >
                       {primaryLabel(a)}
                     </span>
                     <span className="text-slate-500 shrink-0">
@@ -1723,13 +1728,13 @@ function InlineDetailBody({
 function VehicleInlineDetail({
   vehicleId,
   activeAssignment,
-  checkedIds,
-  onToggleCheck,
+  selectedId,
+  onSelect,
 }: {
   vehicleId: string
   activeAssignment: AssignmentWithNames | null
-  checkedIds: Set<string>
-  onToggleCheck: (assignmentId: string) => void
+  selectedId: string | null
+  onSelect: (assignmentId: string) => void
 }) {
   const {
     vehicles,
@@ -1814,8 +1819,8 @@ function VehicleInlineDetail({
       currentSpeedKmh={currentSpeedKmh}
       todayDistanceM={todayDistanceM}
       distanceLabel="本日走行 (この車両)"
-      checkedIds={checkedIds}
-      onToggleCheck={onToggleCheck}
+      selectedId={selectedId}
+      onSelect={onSelect}
       primaryLabel={(a) => a.driver_name || '(名前未設定)'}
     />
   )
@@ -1824,13 +1829,13 @@ function VehicleInlineDetail({
 function UserInlineDetail({
   userId,
   activeAssignment,
-  checkedIds,
-  onToggleCheck,
+  selectedId,
+  onSelect,
 }: {
   userId: string
   activeAssignment: AssignmentWithNames | null
-  checkedIds: Set<string>
-  onToggleCheck: (assignmentId: string) => void
+  selectedId: string | null
+  onSelect: (assignmentId: string) => void
 }) {
   const {
     vehicles,
@@ -1915,8 +1920,8 @@ function UserInlineDetail({
       currentSpeedKmh={currentSpeedKmh}
       todayDistanceM={todayDistanceM}
       distanceLabel="本日走行 (この人)"
-      checkedIds={checkedIds}
-      onToggleCheck={onToggleCheck}
+      selectedId={selectedId}
+      onSelect={onSelect}
       primaryLabel={(a) => vehiclesById.get(a.vehicle_id)?.name ?? '(不明車両)'}
     />
   )
