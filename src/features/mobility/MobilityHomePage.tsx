@@ -373,7 +373,6 @@ export function MobilityHomePage() {
       <MobilityHeader
         onBack={() => navigate('/')}
         onOpenLogs={() => navigate('/mobility/logs')}
-        onOpenProjects={() => navigate('/mobility/projects')}
       />
 
       {vehiclesError && (
@@ -827,11 +826,9 @@ export function MobilityHomePage() {
 function MobilityHeader({
   onBack,
   onOpenLogs,
-  onOpenProjects,
 }: {
   onBack: () => void
   onOpenLogs?: () => void
-  onOpenProjects?: () => void
 }) {
   return (
     <div className="p-4 bg-white border-b flex items-center gap-3 shrink-0">
@@ -847,16 +844,6 @@ function MobilityHeader({
       <span className="px-2 py-0.5 text-[10px] rounded bg-amber-100 text-amber-800 border border-amber-300">
         開発中
       </span>
-      {onOpenProjects && (
-        <button
-          onClick={onOpenProjects}
-          className="flex items-center gap-1 px-3 py-1.5 text-sm border border-slate-300 rounded hover:bg-slate-50"
-          title="運行現場を管理"
-        >
-          <Folder className="h-4 w-4" />
-          運行現場
-        </button>
-      )}
       {onOpenLogs && (
         <button
           onClick={onOpenLogs}
