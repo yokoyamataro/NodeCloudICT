@@ -75,6 +75,67 @@ export function formatAgeShort(ms: number): string {
   return `${h}時間前`
 }
 
+// 走行スピード可視化用のカラー階段。
+// 0-5: 灰(停止) / 5-20: 青 / 20-40: 緑 / 40-60: 黄 / 60-80: 橙 / 80+: 赤
+const SPEED_BANDS: Array<{ min: number; label: string; color: string }> = [
+  { min: 0, label: '0-5', color: '#94a3b8' },
+  { min: 5, label: '5-20', color: '#3b82f6' },
+  { min: 20, label: '20-40', color: '#22c55e' },
+  { min: 40, label: '40-60', color: '#eab308' },
+  { min: 60, label: '60-80', color: '#f97316' },
+  { min: 80, label: '80+', color: '#ef4444' },
+]
+
+function speedColor(kmh: number): string {
+  let found = SPEED_BANDS[0].color
+  for (const b of SPEED_BANDS) {
+    if (kmh >= b.min) found = b.color
+  }
+  return found
+}
+
+// 2 点間の平均スピード km/h。ping の speed_kmh を優先し、無ければ距離÷時間で推定。
+function segmentSpeedKmh(a: MobilityPosition, b: MobilityPosition): number {
+  const sa = a.speed_kmh
+  const sb = b.speed_kmh
+  if (sa != null && sa >= 0 && sb != null && sb >= 0) return (sa + sb) / 2
+  if (sa != null && sa >= 0) return sa
+  if (sb != null && sb >= 0) return sb
+  // fallback: 距離 / 時間
+  const dist = haversineMeters({ lat: a.lat, lon: a.lon }, { lat: b.lat, lon: b.lon })
+  const dt = new Date(b.recorded_at).getTime() - new Date(a.recorded_at).getTime()
+  if (dt <= 0) return 0
+  return (dist / (dt / 1000)) * 3.6
+}
+
+// 位置列を「同一色の連続区間」でまとめて返す。1 セクションが数千点あっても
+// polyline 数を減らせるので Leaflet の負荷を抑えられる。
+function speedSegments(
+  points: MobilityPosition[],
+): Array<{ color: string; positions: [number, number][] }> {
+  const out: Array<{ color: string; positions: [number, number][] }> = []
+  if (points.length < 2) return out
+  for (let i = 0; i < points.length - 1; i++) {
+    const p1 = points[i]
+    const p2 = points[i + 1]
+    const speed = segmentSpeedKmh(p1, p2)
+    const color = speedColor(speed)
+    const last = out[out.length - 1]
+    if (last && last.color === color) {
+      last.positions.push([p2.lat, p2.lon])
+    } else {
+      out.push({
+        color,
+        positions: [
+          [p1.lat, p1.lon],
+          [p2.lat, p2.lon],
+        ],
+      })
+    }
+  }
+  return out
+}
+
 // 運行現場ポイント用 (青ピン)。編集中は赤にハイライト。
 function projectPointIcon(highlight: boolean): L.DivIcon {
   const color = highlight ? '#dc2626' : '#6366f1'
@@ -514,8 +575,26 @@ export function FleetMapView({
     return rows
   }, [latestPositions, markers, extraTracks, projectPoints])
 
+  const hasExtraTracks = extraTracks.size > 0
   return (
     <div className="relative h-full w-full">
+      {/* 右下: スピード凡例 (セクション選択中のみ) */}
+      {hasExtraTracks && (
+        <div className="absolute bottom-4 right-3 z-[1000] bg-white/95 rounded-lg border shadow px-2.5 py-2 text-[10px]">
+          <div className="text-slate-600 font-semibold mb-1">スピード (km/h)</div>
+          <div className="flex flex-col gap-0.5">
+            {SPEED_BANDS.map((b) => (
+              <div key={b.min} className="flex items-center gap-1.5">
+                <span
+                  className="inline-block h-2 w-4 rounded"
+                  style={{ backgroundColor: b.color }}
+                />
+                <span className="text-slate-600">{b.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {/* 右上オーバーレイ: 稼働数 + 自動更新トグル + 再取得ボタン */}
       <div className="absolute top-3 right-3 z-[1000] flex items-center gap-2 bg-white/95 rounded-lg border shadow px-3 py-1.5 text-xs">
         <span className="text-slate-600">
@@ -646,24 +725,23 @@ export function FleetMapView({
             />
           )
         })}
-        {/* サイドバー履歴チェックの追加軌跡 (稼働中と同じ色で描画。
-            稼働中割当と重複したら trackPositions 側が上書きするので二重描画のみ) */}
+        {/* サイドバーで選択した「セクション」の軌跡はスピードで色分け。
+            5〜20 青 → 20〜40 緑 → 40〜60 黄 → 60〜80 橙 → 80+ 赤、停車は灰 */}
         {Array.from(extraTracks.entries()).map(([assignmentId, points]) => {
           if (points.length < 2) return null
           if (trackPositions.has(assignmentId)) return null // 稼働中軌跡と重複
-          const line = points.map((p) => [p.lat, p.lon] as [number, number])
-          return (
+          const segments = speedSegments(points)
+          return segments.map((seg, idx) => (
             <Polyline
-              key={`extra-track-${assignmentId}`}
-              positions={line}
+              key={`extra-track-${assignmentId}-${idx}`}
+              positions={seg.positions}
               pathOptions={{
-                color: colorForAssignment(assignmentId),
-                weight: 3,
-                opacity: 0.85,
-                dashArray: '4 6',
+                color: seg.color,
+                weight: 4,
+                opacity: 0.95,
               }}
             />
-          )
+          ))
         })}
         {/* 各車両の「現在地→行き先」オレンジ破線 (行き先セット中のみ) */}
         {markers.map((m) => {
