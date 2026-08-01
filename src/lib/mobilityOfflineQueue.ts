@@ -85,37 +85,58 @@ export function enqueuePing(userId: string, item: QueuedPing): number {
   return trimmed.length
 }
 
+// ユーザーごとに「進行中の flush の Promise」を保持し、並列呼び出しを 1 本化する。
+// GPS callback から throttle 外でも flushQueue が呼ばれる + sendWithQueue 内でも
+// flushQueue が呼ばれる、というパスがあるため、これがないと同一キュー項目を
+// 複数の Promise が同時に読んで **重複 INSERT** してしまう (実際に発生した)。
+const inflightFlush = new Map<
+  string,
+  Promise<{ sent: number; remaining: number }>
+>()
+
 /**
  * キューを古い順に flush する。1 件でも失敗したらそこで打ち切り、
  * 残りをキューに戻して { sent, remaining } を返す。
  * (offline なら 0 件送って全件残る)
+ *
+ * 並列に呼ばれた場合は同じ Promise を返す (dedupe)。呼び出し側は
+ * 「今回の flush で何件残ったか」を毎回もらえるので await で問題ない。
  */
-export async function flushQueue(
+export function flushQueue(
   userId: string,
   sender: PingSender,
 ): Promise<{ sent: number; remaining: number }> {
-  const queue = readQueue(userId)
-  if (queue.length === 0) return { sent: 0, remaining: 0 }
-  let sent = 0
-  for (let i = 0; i < queue.length; i++) {
-    const item = queue[i]
-    const res = await sender(item.assignmentId, {
-      lat: item.lat,
-      lon: item.lon,
-      accuracy_m: item.accuracy_m,
-      speed_kmh: item.speed_kmh,
-      heading_deg: item.heading_deg,
-      altitude_m: item.altitude_m,
-      recorded_at: item.recorded_at,
-    })
-    if (!res.ok) {
-      // ここで残りを戻して終了
-      const remaining = queue.slice(i)
-      writeQueue(userId, remaining)
-      return { sent, remaining: remaining.length }
+  const existing = inflightFlush.get(userId)
+  if (existing) return existing
+  const p = (async () => {
+    try {
+      const queue = readQueue(userId)
+      if (queue.length === 0) return { sent: 0, remaining: 0 }
+      let sent = 0
+      for (let i = 0; i < queue.length; i++) {
+        const item = queue[i]
+        const res = await sender(item.assignmentId, {
+          lat: item.lat,
+          lon: item.lon,
+          accuracy_m: item.accuracy_m,
+          speed_kmh: item.speed_kmh,
+          heading_deg: item.heading_deg,
+          altitude_m: item.altitude_m,
+          recorded_at: item.recorded_at,
+        })
+        if (!res.ok) {
+          const remaining = queue.slice(i)
+          writeQueue(userId, remaining)
+          return { sent, remaining: remaining.length }
+        }
+        sent++
+      }
+      writeQueue(userId, [])
+      return { sent, remaining: 0 }
+    } finally {
+      inflightFlush.delete(userId)
     }
-    sent++
-  }
-  writeQueue(userId, [])
-  return { sent, remaining: 0 }
+  })()
+  inflightFlush.set(userId, p)
+  return p
 }
