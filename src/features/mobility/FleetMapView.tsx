@@ -130,31 +130,49 @@ function AutoFitBounds({
 }
 
 // 追跡ターゲット (assignment) の位置に地図を追従させる。
-// - target が変わったら enabled をリセットして即センタリング
-// - target の位置が更新されたら再センタリング
-// - ユーザーが地図をドラッグしたら enabled=false にして黙って離脱
+//
+// 挙動:
+//   - **対象が切り替わった時のみ** setView (ズームを 16 まで確保)
+//   - 同じ対象の位置更新は panTo で滑らかに (ズーム再計算しないので polyline
+//     の再描画チラつきを抑える)
+//   - 「地図の viewport 内に対象がまだ入っている」場合は panTo すらしない
+//     (無駄な再描画を避ける)
+//   - ユーザーが地図をドラッグしたら onUserPan で親に停止指示
 function FollowTarget({
   target,
   onUserPan,
 }: {
-  target: { lat: number; lon: number; key: string } | null
+  target: { lat: number; lon: number; targetId: string } | null
   onUserPan: () => void
 }) {
   const map = useMap()
-  const currentKeyRef = useRef<string | null>(null)
+  const currentTargetIdRef = useRef<string | null>(null)
   const suppressPanUntilRef = useRef<number>(0)
 
   useEffect(() => {
     if (!target) {
-      currentKeyRef.current = null
+      currentTargetIdRef.current = null
       return
     }
-    // 追跡対象が切り替わった or 位置が更新された
+    // ユーザー pan 検知を短時間抑止 (自前の setView/panTo が dragstart を
+    // 発火させないはずだが念のため)
     suppressPanUntilRef.current = Date.now() + 500
-    map.setView([target.lat, target.lon], Math.max(map.getZoom(), 16), {
-      animate: true,
-    })
-    currentKeyRef.current = target.key
+    if (currentTargetIdRef.current !== target.targetId) {
+      // 対象が切り替わった → ズームを保証しつつセンタリング
+      map.setView([target.lat, target.lon], Math.max(map.getZoom(), 16), {
+        animate: true,
+      })
+      currentTargetIdRef.current = target.targetId
+      return
+    }
+    // 同じ対象の位置更新: 画面内なら何もしない、画面外に出そうなら panTo
+    const bounds = map.getBounds()
+    const targetLatLng = L.latLng(target.lat, target.lon)
+    if (bounds.pad(-0.2).contains(targetLatLng)) {
+      // 画面内側 80% に収まっている → 動かさない (再描画チラつき回避)
+      return
+    }
+    map.panTo(targetLatLng, { animate: true, duration: 0.4 })
   }, [target, map])
 
   useEffect(() => {
@@ -250,12 +268,12 @@ export function FleetMapView({
   useEffect(() => {
     setFollowSuspended(false)
   }, [followAssignmentId])
-  // 追跡対象の position (key = recorded_at で更新検知)
+  // 追跡対象の position (targetId が変わったら「別対象」、それ以外は位置更新のみ)
   const followTarget = useMemo(() => {
     if (!followAssignmentId || followSuspended) return null
     const p = latestPositions.get(followAssignmentId)
     if (!p) return null
-    return { lat: p.lat, lon: p.lon, key: `${followAssignmentId}:${p.recorded_at}` }
+    return { lat: p.lat, lon: p.lon, targetId: followAssignmentId }
   }, [followAssignmentId, followSuspended, latestPositions])
 
   const refreshAll = useCallback(async () => {
