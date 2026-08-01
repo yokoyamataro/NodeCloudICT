@@ -588,13 +588,6 @@ export function FleetMapView({
         </button>
       </div>
 
-      {markers.length === 0 && !loading && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[1000]">
-          <div className="bg-white/95 border rounded-lg px-4 py-3 shadow text-sm text-slate-500 pointer-events-auto">
-            現在地送信されている稼働中の車両はありません
-          </div>
-        </div>
-      )}
       {addPointMode && (
         <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[1000] bg-indigo-600 text-white text-xs rounded-full px-3 py-1 shadow flex items-center gap-2">
           <span>地図をクリックしてポイントを配置</span>
