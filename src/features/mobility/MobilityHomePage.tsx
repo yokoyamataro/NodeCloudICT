@@ -192,6 +192,23 @@ export function MobilityHomePage() {
     setExpandedUserId(null)
   }, [])
 
+  // 追跡対象の assignment id を導出:
+  //   - 車両モードで expandedVehicleId が指す active assignment
+  //   - ユーザーモードで expandedUserId が指す active assignment
+  //   - どちらも該当なしなら null (=追跡しない)
+  const followAssignmentId = useMemo<string | null>(() => {
+    if (expandedVehicleId) {
+      return activeAssignments.get(expandedVehicleId)?.id ?? null
+    }
+    if (expandedUserId) {
+      const a = Array.from(activeAssignments.values()).find(
+        (x) => x.user_id === expandedUserId,
+      )
+      return a?.id ?? null
+    }
+    return null
+  }, [expandedVehicleId, expandedUserId, activeAssignments])
+
   // 通信断バッジの再描画用 tick + しきい値
   const [staleTick, setStaleTick] = useState(() => Date.now())
   useEffect(() => {
@@ -410,6 +427,7 @@ export function MobilityHomePage() {
             projectPoints={expandedProjectPoints}
             highlightPointId={editingPoint?.id ?? null}
             addPointMode={addPointMode}
+            followAssignmentId={followAssignmentId}
             onMapClick={handleMapClickForNewPoint}
             onSelectPoint={(pid) => {
               const pt = expandedProjectPoints.find((p) => p.id === pid) ?? null

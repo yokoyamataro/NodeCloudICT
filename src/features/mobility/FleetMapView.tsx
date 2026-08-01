@@ -129,6 +129,47 @@ function AutoFitBounds({
   return null
 }
 
+// 追跡ターゲット (assignment) の位置に地図を追従させる。
+// - target が変わったら enabled をリセットして即センタリング
+// - target の位置が更新されたら再センタリング
+// - ユーザーが地図をドラッグしたら enabled=false にして黙って離脱
+function FollowTarget({
+  target,
+  onUserPan,
+}: {
+  target: { lat: number; lon: number; key: string } | null
+  onUserPan: () => void
+}) {
+  const map = useMap()
+  const currentKeyRef = useRef<string | null>(null)
+  const suppressPanUntilRef = useRef<number>(0)
+
+  useEffect(() => {
+    if (!target) {
+      currentKeyRef.current = null
+      return
+    }
+    // 追跡対象が切り替わった or 位置が更新された
+    suppressPanUntilRef.current = Date.now() + 500
+    map.setView([target.lat, target.lon], Math.max(map.getZoom(), 16), {
+      animate: true,
+    })
+    currentKeyRef.current = target.key
+  }, [target, map])
+
+  useEffect(() => {
+    const handler = () => {
+      if (Date.now() < suppressPanUntilRef.current) return
+      onUserPan()
+    }
+    map.on('dragstart', handler)
+    return () => {
+      map.off('dragstart', handler)
+    }
+  }, [map, onUserPan])
+  return null
+}
+
 interface FleetMapViewProps {
   organizationId: string
   /** マーカー押下で車両詳細へ飛ばす等の親フック */
@@ -149,6 +190,13 @@ interface FleetMapViewProps {
   onMapClick?: (lat: number, lon: number) => void
   /** ポイントマーカー押下で編集開始等 */
   onSelectPoint?: (pointId: string) => void
+  /**
+   * 地図で追跡したい assignment id。null の間は追跡しない。
+   * 指定した assignment の位置が更新される度に地図を再センタリング。
+   * ユーザーが地図をドラッグすると追跡は一時停止 (別の id を渡すか、
+   * 同じ id が再指定されたら再開)。
+   */
+  followAssignmentId?: string | null
 }
 
 export function FleetMapView({
@@ -160,6 +208,7 @@ export function FleetMapView({
   addPointMode,
   onMapClick,
   onSelectPoint,
+  followAssignmentId,
 }: FleetMapViewProps) {
   const {
     vehicles,
@@ -194,6 +243,20 @@ export function FleetMapView({
   }, [])
   // 60 秒以上 ping が来ていなければ「通信断」扱い
   const STALE_THRESHOLD_MS = 60_000
+
+  // 追跡: ユーザーが地図をドラッグしたら一時停止するローカルフラグ。
+  // followAssignmentId が親から変わったらリセット (=再度追跡開始)
+  const [followSuspended, setFollowSuspended] = useState(false)
+  useEffect(() => {
+    setFollowSuspended(false)
+  }, [followAssignmentId])
+  // 追跡対象の position (key = recorded_at で更新検知)
+  const followTarget = useMemo(() => {
+    if (!followAssignmentId || followSuspended) return null
+    const p = latestPositions.get(followAssignmentId)
+    if (!p) return null
+    return { lat: p.lat, lon: p.lon, key: `${followAssignmentId}:${p.recorded_at}` }
+  }, [followAssignmentId, followSuspended, latestPositions])
 
   const refreshAll = useCallback(async () => {
     setLoading(true)
@@ -403,6 +466,28 @@ export function FleetMapView({
         <span className="text-slate-600">
           稼働中 {markers.length} / {activeAssignments.size}
         </span>
+        {/* 追跡状態 */}
+        {followAssignmentId && (
+          <span
+            className={`flex items-center gap-1 px-1.5 py-0.5 rounded border ${
+              followSuspended
+                ? 'bg-slate-100 text-slate-600 border-slate-300'
+                : 'bg-indigo-100 text-indigo-700 border-indigo-300'
+            }`}
+            title={
+              followSuspended
+                ? '追跡は手動で停止中 (もう一度対象を選び直すと再開)'
+                : '対象を追跡中 (地図をドラッグすると解除)'
+            }
+          >
+            <span
+              className={`inline-block h-1.5 w-1.5 rounded-full ${
+                followSuspended ? 'bg-slate-400' : 'bg-indigo-500 animate-pulse'
+              }`}
+            />
+            {followSuspended ? '追跡停止中' : '追跡中'}
+          </span>
+        )}
         {/* 自動更新トグル */}
         <button
           type="button"
@@ -471,6 +556,10 @@ export function FleetMapView({
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <AutoFitBounds positions={positionsForBounds} />
+        <FollowTarget
+          target={followTarget}
+          onUserPan={() => setFollowSuspended(true)}
+        />
         {onMapClick && (
           <MapClickHandler enabled={!!addPointMode} onClick={onMapClick} />
         )}
