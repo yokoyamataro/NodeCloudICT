@@ -108,7 +108,6 @@ export function MobilityHomePage() {
 
   const {
     vehicles,
-    vehiclesLoading,
     vehiclesError,
     activeAssignments,
     fetchVehicles,
@@ -141,7 +140,6 @@ export function MobilityHomePage() {
   const [showNewDialog, setShowNewDialog] = useState(false)
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null)
   // 既定は ドライバー (ユーザー) タブ
-  const [mode, setMode] = useState<'vehicle' | 'user'>('user')
   const [orgMembers, setOrgMembers] = useState<OrgMemberRow[]>([])
   const [orgMembersLoading, setOrgMembersLoading] = useState(false)
   const [showPhoneInvite, setShowPhoneInvite] = useState(false)
@@ -369,15 +367,6 @@ export function MobilityHomePage() {
     ],
   )
 
-  const activeVehicles = useMemo(
-    () => vehicles.filter((v) => v.active),
-    [vehicles],
-  )
-  const inactiveVehicles = useMemo(
-    () => vehicles.filter((v) => !v.active),
-    [vehicles],
-  )
-
   if (!canUse) return <Navigate to="/" replace />
 
   if (!orgId) {
@@ -409,10 +398,57 @@ export function MobilityHomePage() {
         </div>
       )}
 
-      {/* PC は 左: 運行現場 | 中央: 地図 | 右: ドライバー/車両。狭い画面は縦積み */}
+      {/* PC は 左: 車両・ユーザー | 中央: 地図 | 右: 運行現場。狭い画面は縦積み */}
       <div className="flex-1 flex flex-col lg:flex-row min-h-0">
-        {/* 左サイドパネル: 運行現場 (現場 > ポイント / メンバー) */}
-        <div className="lg:w-80 xl:w-96 overflow-y-auto p-4 space-y-3 border-b lg:border-b-0 lg:border-r bg-slate-50">
+        {/* 左サイドパネル: 車両・ユーザー (稼働中ペア + 未乗車ユーザー + 未使用車両) */}
+        <div className="lg:w-96 xl:w-[28rem] overflow-y-auto p-4 border-b lg:border-b-0 lg:border-r">
+          <FleetSidebar
+            activeAssignments={activeAssignments}
+            vehicles={vehicles}
+            orgMembers={orgMembers}
+            loading={orgMembersLoading}
+            expandedUserId={expandedUserId}
+            expandedVehicleId={expandedVehicleId}
+            selectedSectionAssignmentId={selectedSectionAssignmentId}
+            ageMsForAssignment={ageMsForAssignment}
+            staleThresholdMs={STALE_THRESHOLD_MS}
+            forceLeaveBusyId={forceLeaveBusyId}
+            sectionHistoryTick={sectionHistoryTick}
+            onToggleExpandUser={toggleExpandUser}
+            onToggleExpandVehicle={toggleExpandVehicle}
+            onSelectSection={selectSection}
+            onDeleteSection={handleDeleteSection}
+            onForceLeave={handleForceLeave}
+            onEditVehicle={setEditingVehicle}
+            onNewVehicle={() => setShowNewDialog(true)}
+            onInviteByPhone={() => setShowPhoneInvite(true)}
+          />
+        </div>
+
+        {/* 地図エリア */}
+        <div className="h-64 lg:h-auto lg:flex-1 relative border-b lg:border-b-0 lg:border-r">
+          <FleetMapView
+            organizationId={orgId}
+            extraTrackAssignmentIds={selectedSectionIdArr}
+            projectPoints={expandedProjectPoints}
+            highlightPointId={editingPoint?.id ?? null}
+            addPointMode={addPointMode}
+            followAssignmentId={followAssignmentId}
+            onMapClick={handleMapClickForNewPoint}
+            onSelectPoint={(pid) => {
+              const pt = expandedProjectPoints.find((p) => p.id === pid) ?? null
+              setEditingPoint(pt)
+            }}
+            onSelectVehicle={(vid) => {
+              // 別画面に飛ばさず、左パネルの該当車両を展開する
+              setExpandedVehicleId(vid)
+              setExpandedUserId(null)
+            }}
+          />
+        </div>
+
+        {/* 右サイドパネル: 運行現場 (現場 > ポイント / メンバー) */}
+        <div className="lg:w-80 xl:w-96 overflow-y-auto p-4 space-y-3 bg-slate-50">
           <ProjectsLeftPanel
             projects={projects}
             projectsLoading={projectsLoading}
@@ -445,284 +481,6 @@ export function MobilityHomePage() {
           />
         </div>
 
-        {/* 地図エリア */}
-        <div className="h-64 lg:h-auto lg:flex-1 relative border-b lg:border-b-0 lg:border-r">
-          <FleetMapView
-            organizationId={orgId}
-            extraTrackAssignmentIds={selectedSectionIdArr}
-            projectPoints={expandedProjectPoints}
-            highlightPointId={editingPoint?.id ?? null}
-            addPointMode={addPointMode}
-            followAssignmentId={followAssignmentId}
-            onMapClick={handleMapClickForNewPoint}
-            onSelectPoint={(pid) => {
-              const pt = expandedProjectPoints.find((p) => p.id === pid) ?? null
-              setEditingPoint(pt)
-            }}
-            onSelectVehicle={(vid) => {
-              // 別画面に飛ばさず、右パネルの該当行を展開する
-              setMode('vehicle')
-              setExpandedVehicleId(vid)
-              setExpandedUserId(null)
-            }}
-          />
-        </div>
-
-        {/* 右サイドパネル: 稼働中 + 車両マスタ */}
-        <div className="lg:w-96 xl:w-[28rem] overflow-y-auto p-4 space-y-5">
-        {/* モード切替タブ */}
-        <div className="flex gap-1 p-1 bg-slate-200 rounded">
-          <button
-            type="button"
-            onClick={() => setMode('vehicle')}
-            className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-xs font-medium rounded ${
-              mode === 'vehicle'
-                ? 'bg-white text-indigo-700 shadow'
-                : 'text-slate-600 hover:text-slate-800'
-            }`}
-          >
-            <Car className="h-3.5 w-3.5" />
-            車両単位
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('user')}
-            className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-xs font-medium rounded ${
-              mode === 'user'
-                ? 'bg-white text-indigo-700 shadow'
-                : 'text-slate-600 hover:text-slate-800'
-            }`}
-          >
-            <User className="h-3.5 w-3.5" />
-            ユーザー単位
-          </button>
-        </div>
-
-        {mode === 'user' && (
-          <UserModeSidebar
-            activeAssignments={activeAssignments}
-            vehicles={vehicles}
-            orgMembers={orgMembers}
-            loading={orgMembersLoading}
-            expandedUserId={expandedUserId}
-            selectedId={selectedSectionAssignmentId}
-            forceLeaveBusyId={forceLeaveBusyId}
-            ageMsForAssignment={ageMsForAssignment}
-            staleThresholdMs={STALE_THRESHOLD_MS}
-            onToggleExpand={toggleExpandUser}
-            onSelect={selectSection}
-            onDeleteSection={handleDeleteSection}
-            historyReloadKey={sectionHistoryTick}
-            onForceLeave={handleForceLeave}
-            onInviteByPhone={() => setShowPhoneInvite(true)}
-          />
-        )}
-
-        {mode === 'vehicle' && (
-          <>
-        {/* 稼働中サマリ */}
-        <section>
-          <div className="flex items-center gap-2 mb-2">
-            <div className="w-1 h-5 rounded bg-emerald-500" />
-            <h2 className="text-sm font-semibold text-slate-700">
-              稼働中 ({activeAssignments.size} / {activeVehicles.length})
-            </h2>
-          </div>
-          {activeAssignments.size === 0 ? (
-            <div className="p-3 bg-white rounded border text-xs text-slate-400 text-center">
-              現在稼働中の車両はありません
-            </div>
-          ) : (
-            <ul className="space-y-1.5">
-              {Array.from(activeAssignments.entries()).map(([vehicleId, a]) => {
-                const v = vehicles.find((x) => x.id === vehicleId)
-                if (!v) return null
-                const Icon = KIND_ICON[v.kind]
-                const expanded = expandedVehicleId === v.id
-                return (
-                  <li
-                    key={a.id}
-                    className={`bg-white rounded border ${
-                      expanded ? 'ring-1 ring-indigo-500 border-indigo-400' : 'hover:border-indigo-400'
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => toggleExpandVehicle(v.id)}
-                      className="w-full flex items-center gap-3 p-3 text-left"
-                    >
-                      <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
-                        <Icon className="h-4 w-4 text-emerald-700" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-slate-800 truncate">
-                          {v.name}
-                          {v.plate_or_serial && (
-                            <span className="text-slate-400 text-xs ml-1.5">
-                              ({v.plate_or_serial})
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
-                          <User className="h-3 w-3" />
-                          {a.driver_name || '(名前未設定)'}
-                          <span className="mx-1">·</span>
-                          {new Date(a.started_at).toLocaleString('ja-JP', {
-                            month: '2-digit',
-                            day: '2-digit',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                          〜
-                        </div>
-                        {a.destination_point && (
-                          <div className="text-[11px] text-amber-700 flex items-center gap-1 mt-0.5 truncate">
-                            <MapPin className="h-3 w-3 shrink-0" />
-                            <span className="truncate">
-                              行き先: {a.destination_point.name}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                      {(() => {
-                        const age = ageMsForAssignment(a.id)
-                        if (age != null && age > STALE_THRESHOLD_MS) {
-                          return (
-                            <span
-                              className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-red-100 text-red-700 border border-red-300"
-                              title={`最終 ping から ${formatAgeShort(age)}`}
-                            >
-                              ⚠ 通信断 {formatAgeShort(age)}
-                            </span>
-                          )
-                        }
-                        return (
-                          <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-700 border border-emerald-300">
-                            稼働中
-                          </span>
-                        )
-                      })()}
-                      <ChevronDown
-                        className={`h-4 w-4 text-slate-400 shrink-0 transition-transform ${
-                          expanded ? 'rotate-180' : ''
-                        }`}
-                      />
-                    </button>
-                    {/* 管理者による強制降車 (ドライバー端末で降車忘れの救済) */}
-                    <div className="px-3 pb-2 flex justify-end">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          void handleForceLeave(
-                            a.id,
-                            a.driver_name,
-                            v.name,
-                          )
-                        }}
-                        disabled={forceLeaveBusyId === a.id}
-                        className="flex items-center gap-1 px-2 py-0.5 text-[10px] border border-red-300 text-red-700 rounded hover:bg-red-50 disabled:opacity-50"
-                        title="管理者権限で降車させる"
-                      >
-                        {forceLeaveBusyId === a.id ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <LogOut className="h-3 w-3" />
-                        )}
-                        強制降車
-                      </button>
-                    </div>
-                    {expanded && (
-                      <VehicleInlineDetail
-                        vehicleId={v.id}
-                        activeAssignment={a}
-                        selectedId={selectedSectionAssignmentId}
-                        onSelect={selectSection}
-                        onDeleteSection={handleDeleteSection}
-                        historyReloadKey={sectionHistoryTick}
-                      />
-                    )}
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-        </section>
-
-        {/* 車両マスタ */}
-        <section>
-          <div className="flex items-center gap-2 mb-2">
-            <div className="w-1 h-5 rounded bg-indigo-500" />
-            <h2 className="text-sm font-semibold text-slate-700 flex-1">車両マスタ</h2>
-            <button
-              type="button"
-              onClick={() => setShowNewDialog(true)}
-              className="flex items-center gap-1 px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700"
-            >
-              <Plus className="h-3 w-3" />
-              新規車両
-            </button>
-          </div>
-
-          {vehiclesLoading && vehicles.length === 0 ? (
-            <div className="p-4 text-center text-slate-400">
-              <Loader2 className="h-4 w-4 animate-spin inline mr-2" />
-              読み込み中...
-            </div>
-          ) : activeVehicles.length === 0 && inactiveVehicles.length === 0 ? (
-            <div className="p-3 bg-white rounded border text-xs text-slate-400 text-center">
-              車両が登録されていません。「新規車両」から追加してください
-            </div>
-          ) : (
-            <>
-              <ul className="space-y-1.5">
-                {activeVehicles.map((v) => (
-                  <VehicleRow
-                    key={v.id}
-                    vehicle={v}
-                    active={activeAssignments.has(v.id)}
-                    activeAssignment={activeAssignments.get(v.id) ?? null}
-                    expanded={expandedVehicleId === v.id}
-                    selectedId={selectedSectionAssignmentId}
-                    onToggleExpand={() => toggleExpandVehicle(v.id)}
-                    onSelect={selectSection}
-                    onDeleteSection={handleDeleteSection}
-                    historyReloadKey={sectionHistoryTick}
-                    onEdit={() => setEditingVehicle(v)}
-                  />
-                ))}
-              </ul>
-              {inactiveVehicles.length > 0 && (
-                <>
-                  <div className="flex items-center gap-2 mt-4 mb-2">
-                    <div className="w-1 h-5 rounded bg-slate-400" />
-                    <h3 className="text-xs font-medium text-slate-500">
-                      廃止済み ({inactiveVehicles.length})
-                    </h3>
-                  </div>
-                  <ul className="space-y-1.5 opacity-60">
-                    {inactiveVehicles.map((v) => (
-                      <VehicleRow
-                        key={v.id}
-                        vehicle={v}
-                        active={false}
-                        activeAssignment={null}
-                        expanded={expandedVehicleId === v.id}
-                        selectedId={selectedSectionAssignmentId}
-                        onToggleExpand={() => toggleExpandVehicle(v.id)}
-                        onSelect={selectSection}
-                        onEdit={() => setEditingVehicle(v)}
-                      />
-                    ))}
-                  </ul>
-                </>
-              )}
-            </>
-          )}
-        </section>
-          </>
-        )}
-        </div>
       </div>
 
       {showNewDialog && (
@@ -913,296 +671,6 @@ function MobilityHeader({
   )
 }
 
-// ユーザーモード時のサイドパネル: 稼働中ドライバー + 組織メンバー一覧
-function UserModeSidebar({
-  activeAssignments,
-  vehicles,
-  orgMembers,
-  loading,
-  expandedUserId,
-  selectedId,
-  forceLeaveBusyId,
-  ageMsForAssignment,
-  staleThresholdMs,
-  onToggleExpand,
-  onSelect,
-  onDeleteSection,
-  historyReloadKey,
-  onForceLeave,
-  onInviteByPhone,
-}: {
-  activeAssignments: Map<string, AssignmentWithNames>
-  vehicles: Vehicle[]
-  orgMembers: OrgMemberRow[]
-  loading: boolean
-  expandedUserId: string | null
-  selectedId: string | null
-  forceLeaveBusyId: string | null
-  ageMsForAssignment: (assignmentId: string) => number | null
-  staleThresholdMs: number
-  onToggleExpand: (userId: string) => void
-  onSelect: (assignmentId: string) => void
-  onDeleteSection?: (assignmentId: string, label: string) => void
-  historyReloadKey?: number
-  onForceLeave: (
-    assignmentId: string,
-    driverName: string | null,
-    vehicleName: string,
-  ) => Promise<void>
-  onInviteByPhone: () => void
-}) {
-  const activeUsers = useMemo(() => {
-    const rows: {
-      userId: string
-      assignmentId: string
-      driverName: string
-      vehicleName: string
-      startedAt: string
-      destinationName: string | null
-    }[] = []
-    for (const a of activeAssignments.values()) {
-      const v = vehicles.find((vv) => vv.id === a.vehicle_id)
-      rows.push({
-        userId: a.user_id,
-        assignmentId: a.id,
-        driverName: a.driver_name || '(名前未設定)',
-        vehicleName: v?.name ?? '(不明車両)',
-        startedAt: a.started_at,
-        destinationName: a.destination_point?.name ?? null,
-      })
-    }
-    return rows
-  }, [activeAssignments, vehicles])
-
-  const activeUserIds = useMemo(
-    () => new Set(activeUsers.map((u) => u.userId)),
-    [activeUsers],
-  )
-
-  return (
-    <div className="space-y-5">
-      {/* 稼働中ドライバー */}
-      <section>
-        <div className="flex items-center gap-2 mb-2">
-          <div className="w-1 h-5 rounded bg-emerald-500" />
-          <h2 className="text-sm font-semibold text-slate-700">
-            稼働中ドライバー ({activeUsers.length})
-          </h2>
-        </div>
-        {activeUsers.length === 0 ? (
-          <div className="p-3 bg-white rounded border text-xs text-slate-400 text-center">
-            現在乗車中のドライバーはいません
-          </div>
-        ) : (
-          <ul className="space-y-1.5">
-            {activeUsers.map((u) => {
-              const expanded = expandedUserId === u.userId
-              const active = Array.from(activeAssignments.values()).find(
-                (a) => a.user_id === u.userId,
-              )
-              return (
-                <li
-                  key={u.userId}
-                  className={`bg-white rounded border ${
-                    expanded ? 'ring-1 ring-indigo-500 border-indigo-400' : 'hover:border-indigo-400'
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => onToggleExpand(u.userId)}
-                    className="w-full flex items-center gap-3 p-3 text-left"
-                  >
-                    <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
-                      <User className="h-4 w-4 text-emerald-700" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-slate-800 truncate">
-                        {u.driverName}
-                      </div>
-                      <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
-                        <Car className="h-3 w-3" />
-                        {u.vehicleName}
-                        <span className="mx-1">·</span>
-                        {new Date(u.startedAt).toLocaleTimeString('ja-JP', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                        〜
-                      </div>
-                      {u.destinationName && (
-                        <div className="text-[11px] text-amber-700 flex items-center gap-1 mt-0.5 truncate">
-                          <MapPin className="h-3 w-3 shrink-0" />
-                          <span className="truncate">行き先: {u.destinationName}</span>
-                        </div>
-                      )}
-                    </div>
-                    {(() => {
-                      const age = ageMsForAssignment(u.assignmentId)
-                      if (age != null && age > staleThresholdMs) {
-                        return (
-                          <span
-                            className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-red-100 text-red-700 border border-red-300"
-                            title={`最終 ping から ${formatAgeShort(age)}`}
-                          >
-                            ⚠ 通信断 {formatAgeShort(age)}
-                          </span>
-                        )
-                      }
-                      return (
-                        <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-700 border border-emerald-300">
-                          乗車中
-                        </span>
-                      )
-                    })()}
-                    <ChevronDown
-                      className={`h-4 w-4 text-slate-400 shrink-0 transition-transform ${
-                        expanded ? 'rotate-180' : ''
-                      }`}
-                    />
-                  </button>
-                  {/* 管理者による強制降車 */}
-                  <div className="px-3 pb-2 flex justify-end">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        void onForceLeave(
-                          u.assignmentId,
-                          u.driverName,
-                          u.vehicleName,
-                        )
-                      }}
-                      disabled={forceLeaveBusyId === u.assignmentId}
-                      className="flex items-center gap-1 px-2 py-0.5 text-[10px] border border-red-300 text-red-700 rounded hover:bg-red-50 disabled:opacity-50"
-                      title="管理者権限で降車させる"
-                    >
-                      {forceLeaveBusyId === u.assignmentId ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <LogOut className="h-3 w-3" />
-                      )}
-                      強制降車
-                    </button>
-                  </div>
-                  {expanded && (
-                    <UserInlineDetail
-                      userId={u.userId}
-                      activeAssignment={active ?? null}
-                      selectedId={selectedId}
-                      onSelect={onSelect}
-                      onDeleteSection={onDeleteSection}
-                      historyReloadKey={historyReloadKey}
-                    />
-                  )}
-                </li>
-              )
-            })}
-          </ul>
-        )}
-      </section>
-
-      {/* 組織メンバー一覧 */}
-      <section>
-        <div className="flex items-center gap-2 mb-2">
-          <div className="w-1 h-5 rounded bg-indigo-500" />
-          <h2 className="text-sm font-semibold text-slate-700 flex-1">
-            組織メンバー ({orgMembers.length})
-          </h2>
-          {PHONE_INVITE_ENABLED && (
-            <button
-              type="button"
-              onClick={onInviteByPhone}
-              className="flex items-center gap-1 px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700"
-              title="電話番号でドライバーを招待する"
-            >
-              <Phone className="h-3 w-3" />
-              電話で招待
-            </button>
-          )}
-        </div>
-        {loading ? (
-          <div className="p-4 text-center text-slate-400">
-            <Loader2 className="h-4 w-4 animate-spin inline mr-2" />
-            読み込み中...
-          </div>
-        ) : orgMembers.length === 0 ? (
-          <div className="p-3 bg-white rounded border text-xs text-slate-400 text-center">
-            メンバーがいません
-          </div>
-        ) : (
-          <ul className="space-y-1.5">
-            {orgMembers.map((m) => {
-              const isActive = activeUserIds.has(m.user_id)
-              const expanded = expandedUserId === m.user_id
-              const active = Array.from(activeAssignments.values()).find(
-                (a) => a.user_id === m.user_id,
-              )
-              return (
-                <li
-                  key={m.user_id}
-                  className={`bg-white rounded border ${
-                    expanded ? 'ring-1 ring-indigo-500 border-indigo-400' : 'hover:border-indigo-400'
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => onToggleExpand(m.user_id)}
-                    className="w-full flex items-center gap-2 p-2.5 text-left"
-                  >
-                    <div
-                      className={`h-7 w-7 rounded-full flex items-center justify-center shrink-0 ${
-                        isActive ? 'bg-emerald-100' : 'bg-slate-100'
-                      }`}
-                    >
-                      <User
-                        className={`h-3.5 w-3.5 ${
-                          isActive ? 'text-emerald-700' : 'text-slate-500'
-                        }`}
-                      />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-slate-800 truncate">
-                        {m.full_name || m.email}
-                      </div>
-                      {m.full_name && m.email !== m.full_name && (
-                        <div className="text-[10px] text-slate-500 truncate">
-                          {m.email}
-                        </div>
-                      )}
-                    </div>
-                    {m.role === 'admin' && (
-                      <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-amber-100 text-amber-800">
-                        管理者
-                      </span>
-                    )}
-                    {isActive && (
-                      <span className="shrink-0 text-[10px] text-emerald-600">●</span>
-                    )}
-                    <ChevronDown
-                      className={`h-4 w-4 text-slate-400 shrink-0 transition-transform ${
-                        expanded ? 'rotate-180' : ''
-                      }`}
-                    />
-                  </button>
-                  {expanded && (
-                    <UserInlineDetail
-                      userId={m.user_id}
-                      activeAssignment={active ?? null}
-                      selectedId={selectedId}
-                      onSelect={onSelect}
-                      onDeleteSection={onDeleteSection}
-                      historyReloadKey={historyReloadKey}
-                    />
-                  )}
-                </li>
-              )
-            })}
-          </ul>
-        )}
-      </section>
-    </div>
-  )
-}
 
 function VehicleRow({
   vehicle,
@@ -2794,5 +2262,486 @@ function PointCreateDialog({
         </div>
       </div>
     </div>
+  )
+}
+
+// -----------------------------------------------------------------------------
+// 車両・ユーザー統合サイドバー (左)
+//   - 稼働中: ユーザー+車両のペアカードを上に (くっつけて表示)
+//   - 稼働していないユーザー: 下段に (組織メンバー全体)
+//   - 稼働していない車両: さらに下段に
+// -----------------------------------------------------------------------------
+interface FleetSidebarProps {
+  activeAssignments: Map<string, AssignmentWithNames>
+  vehicles: Vehicle[]
+  orgMembers: OrgMemberRow[]
+  loading: boolean
+  expandedUserId: string | null
+  expandedVehicleId: string | null
+  selectedSectionAssignmentId: string | null
+  ageMsForAssignment: (assignmentId: string) => number | null
+  staleThresholdMs: number
+  forceLeaveBusyId: string | null
+  sectionHistoryTick: number
+  onToggleExpandUser: (userId: string) => void
+  onToggleExpandVehicle: (vehicleId: string) => void
+  onSelectSection: (assignmentId: string) => void
+  onDeleteSection: (assignmentId: string, label: string) => void
+  onForceLeave: (
+    assignmentId: string,
+    driverName: string | null,
+    vehicleName: string,
+  ) => Promise<void>
+  onEditVehicle: (v: Vehicle) => void
+  onNewVehicle: () => void
+  onInviteByPhone: () => void
+}
+
+function FleetSidebar(props: FleetSidebarProps) {
+  const {
+    activeAssignments,
+    vehicles,
+    orgMembers,
+    loading,
+    expandedUserId,
+    expandedVehicleId,
+    selectedSectionAssignmentId,
+    ageMsForAssignment,
+    staleThresholdMs,
+    forceLeaveBusyId,
+    sectionHistoryTick,
+    onToggleExpandUser,
+    onToggleExpandVehicle,
+    onSelectSection,
+    onDeleteSection,
+    onForceLeave,
+    onEditVehicle,
+    onNewVehicle,
+    onInviteByPhone,
+  } = props
+
+  const memberByUserId = useMemo(() => {
+    const m = new Map<string, OrgMemberRow>()
+    for (const r of orgMembers) m.set(r.user_id, r)
+    return m
+  }, [orgMembers])
+
+  const activePairs = useMemo(() => {
+    const rows: {
+      assignment: AssignmentWithNames
+      vehicle: Vehicle | null
+      userInfo: OrgMemberRow | null
+    }[] = []
+    for (const [vid, a] of activeAssignments) {
+      rows.push({
+        assignment: a,
+        vehicle: vehicles.find((v) => v.id === vid) ?? null,
+        userInfo: memberByUserId.get(a.user_id) ?? null,
+      })
+    }
+    // ドライバー名でソート
+    rows.sort((x, y) =>
+      (x.assignment.driver_name ?? '').localeCompare(y.assignment.driver_name ?? ''),
+    )
+    return rows
+  }, [activeAssignments, vehicles, memberByUserId])
+
+  const activeUserIds = useMemo(
+    () => new Set(activePairs.map((p) => p.assignment.user_id)),
+    [activePairs],
+  )
+  const activeVehicleIds = useMemo(
+    () => new Set(activePairs.map((p) => p.vehicle?.id).filter((id): id is string => !!id)),
+    [activePairs],
+  )
+  const inactiveUsers = useMemo(
+    () => orgMembers.filter((m) => !activeUserIds.has(m.user_id)),
+    [orgMembers, activeUserIds],
+  )
+  const availableVehicles = useMemo(
+    () => vehicles.filter((v) => v.active && !activeVehicleIds.has(v.id)),
+    [vehicles, activeVehicleIds],
+  )
+  const retiredVehicles = useMemo(() => vehicles.filter((v) => !v.active), [vehicles])
+
+  return (
+    <div className="space-y-5">
+      {/* 稼働中ペア (user + vehicle) */}
+      <section>
+        <div className="flex items-center gap-2 mb-2">
+          <div className="w-1 h-5 rounded bg-emerald-500" />
+          <h2 className="text-sm font-semibold text-slate-700 flex-1">
+            稼働中 ({activePairs.length})
+          </h2>
+        </div>
+        {activePairs.length === 0 ? (
+          <div className="p-3 bg-white rounded border text-xs text-slate-400 text-center">
+            現在乗車中のドライバーはいません
+          </div>
+        ) : (
+          <ul className="space-y-2">
+            {activePairs.map(({ assignment, vehicle, userInfo }) => (
+              <ActivePairCard
+                key={assignment.id}
+                assignment={assignment}
+                vehicle={vehicle}
+                userInfo={userInfo}
+                expanded={expandedUserId === assignment.user_id}
+                ageMs={ageMsForAssignment(assignment.id)}
+                staleThresholdMs={staleThresholdMs}
+                forceLeaveBusyId={forceLeaveBusyId}
+                onToggleExpand={() => onToggleExpandUser(assignment.user_id)}
+                onForceLeave={() =>
+                  onForceLeave(
+                    assignment.id,
+                    assignment.driver_name,
+                    vehicle?.name ?? '(不明車両)',
+                  )
+                }
+                selectedId={selectedSectionAssignmentId}
+                onSelect={onSelectSection}
+                onDeleteSection={onDeleteSection}
+                historyReloadKey={sectionHistoryTick}
+              />
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* 未乗車ユーザー (組織メンバー全体) */}
+      <section>
+        <div className="flex items-center gap-2 mb-2">
+          <div className="w-1 h-5 rounded bg-slate-400" />
+          <h2 className="text-sm font-semibold text-slate-700 flex-1">
+            未乗車ユーザー ({inactiveUsers.length})
+          </h2>
+          {PHONE_INVITE_ENABLED && (
+            <button
+              type="button"
+              onClick={onInviteByPhone}
+              className="flex items-center gap-1 px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700"
+              title="電話番号でドライバーを招待する"
+            >
+              <Phone className="h-3 w-3" />
+              電話で招待
+            </button>
+          )}
+        </div>
+        {loading ? (
+          <div className="p-4 text-center text-slate-400">
+            <Loader2 className="h-4 w-4 animate-spin inline mr-2" />
+            読み込み中...
+          </div>
+        ) : inactiveUsers.length === 0 ? (
+          <div className="p-3 bg-white rounded border text-xs text-slate-400 text-center">
+            全員乗車中 or メンバーがいません
+          </div>
+        ) : (
+          <ul className="space-y-1.5">
+            {inactiveUsers.map((m) => (
+              <InactiveUserCard
+                key={m.user_id}
+                member={m}
+                expanded={expandedUserId === m.user_id}
+                onToggleExpand={() => onToggleExpandUser(m.user_id)}
+                selectedId={selectedSectionAssignmentId}
+                onSelect={onSelectSection}
+                onDeleteSection={onDeleteSection}
+                historyReloadKey={sectionHistoryTick}
+              />
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* 未使用車両 */}
+      <section>
+        <div className="flex items-center gap-2 mb-2">
+          <div className="w-1 h-5 rounded bg-indigo-500" />
+          <h2 className="text-sm font-semibold text-slate-700 flex-1">
+            未使用車両 ({availableVehicles.length})
+          </h2>
+          <button
+            type="button"
+            onClick={onNewVehicle}
+            className="flex items-center gap-1 px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700"
+          >
+            <Plus className="h-3 w-3" />
+            新規車両
+          </button>
+        </div>
+        {availableVehicles.length === 0 ? (
+          <div className="p-3 bg-white rounded border text-xs text-slate-400 text-center">
+            全車両稼働中 or 未登録
+          </div>
+        ) : (
+          <ul className="space-y-1.5">
+            {availableVehicles.map((v) => (
+              <VehicleRow
+                key={v.id}
+                vehicle={v}
+                active={false}
+                activeAssignment={null}
+                expanded={expandedVehicleId === v.id}
+                selectedId={selectedSectionAssignmentId}
+                onToggleExpand={() => onToggleExpandVehicle(v.id)}
+                onSelect={onSelectSection}
+                onDeleteSection={onDeleteSection}
+                historyReloadKey={sectionHistoryTick}
+                onEdit={() => onEditVehicle(v)}
+              />
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* 廃止済み車両 */}
+      {retiredVehicles.length > 0 && (
+        <section>
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-1 h-5 rounded bg-slate-400" />
+            <h3 className="text-xs font-medium text-slate-500">
+              廃止済み車両 ({retiredVehicles.length})
+            </h3>
+          </div>
+          <ul className="space-y-1.5 opacity-60">
+            {retiredVehicles.map((v) => (
+              <VehicleRow
+                key={v.id}
+                vehicle={v}
+                active={false}
+                activeAssignment={null}
+                expanded={expandedVehicleId === v.id}
+                selectedId={selectedSectionAssignmentId}
+                onToggleExpand={() => onToggleExpandVehicle(v.id)}
+                onSelect={onSelectSection}
+                onDeleteSection={onDeleteSection}
+                historyReloadKey={sectionHistoryTick}
+                onEdit={() => onEditVehicle(v)}
+              />
+            ))}
+          </ul>
+        </section>
+      )}
+    </div>
+  )
+}
+
+// 稼働中ペアカード: ユーザー行 + 車両行を 1 枚のカードにまとめる
+function ActivePairCard({
+  assignment,
+  vehicle,
+  userInfo,
+  expanded,
+  ageMs,
+  staleThresholdMs,
+  forceLeaveBusyId,
+  onToggleExpand,
+  onForceLeave,
+  selectedId,
+  onSelect,
+  onDeleteSection,
+  historyReloadKey,
+}: {
+  assignment: AssignmentWithNames
+  vehicle: Vehicle | null
+  userInfo: OrgMemberRow | null
+  expanded: boolean
+  ageMs: number | null
+  staleThresholdMs: number
+  forceLeaveBusyId: string | null
+  onToggleExpand: () => void
+  onForceLeave: () => void
+  selectedId: string | null
+  onSelect: (assignmentId: string) => void
+  onDeleteSection: (assignmentId: string, label: string) => void
+  historyReloadKey: number
+}) {
+  const stale = ageMs != null && ageMs > staleThresholdMs
+  const VIcon = vehicle ? KIND_ICON[vehicle.kind] : Car
+  return (
+    <li
+      className={`bg-white rounded border ${
+        expanded
+          ? 'ring-1 ring-indigo-500 border-indigo-400'
+          : 'hover:border-indigo-400'
+      }`}
+    >
+      <button
+        type="button"
+        onClick={onToggleExpand}
+        className="w-full text-left"
+      >
+        {/* User part */}
+        <div className="flex items-center gap-3 p-3">
+          <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
+            <User className="h-4 w-4 text-emerald-700" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-medium text-slate-800 truncate">
+              {assignment.driver_name || userInfo?.email || '(名前未設定)'}
+            </div>
+            {userInfo?.email && assignment.driver_name && (
+              <div className="text-[10px] text-slate-500 truncate">
+                {userInfo.email}
+              </div>
+            )}
+          </div>
+          {stale ? (
+            <span
+              className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-red-100 text-red-700 border border-red-300"
+              title={ageMs != null ? `最終 ping から ${formatAgeShort(ageMs)}` : ''}
+            >
+              ⚠ 通信断 {ageMs != null && formatAgeShort(ageMs)}
+            </span>
+          ) : (
+            <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-700 border border-emerald-300">
+              乗車中
+            </span>
+          )}
+          <ChevronDown
+            className={`h-4 w-4 text-slate-400 shrink-0 transition-transform ${
+              expanded ? 'rotate-180' : ''
+            }`}
+          />
+        </div>
+        {/* Vehicle part (glued below with border-top) */}
+        <div className="flex items-center gap-3 px-3 pb-2.5 pt-1.5 border-t bg-slate-50/60">
+          <div className="h-6 w-6 rounded-full bg-indigo-100 flex items-center justify-center shrink-0 ml-1">
+            <VIcon className="h-3.5 w-3.5 text-indigo-600" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-xs font-semibold text-slate-700 truncate">
+              {vehicle?.name ?? '(不明車両)'}
+              {vehicle?.plate_or_serial && (
+                <span className="text-slate-400 ml-1.5 font-normal">
+                  ({vehicle.plate_or_serial})
+                </span>
+              )}
+            </div>
+            <div className="text-[10px] text-slate-500 flex items-center gap-1 mt-0.5">
+              {vehicle && <span>{KIND_LABEL[vehicle.kind]}</span>}
+              <span>·</span>
+              <span>
+                {new Date(assignment.started_at).toLocaleString('ja-JP', {
+                  month: '2-digit',
+                  day: '2-digit',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+                〜
+              </span>
+            </div>
+            {assignment.destination_point && (
+              <div className="text-[10px] text-amber-700 flex items-center gap-1 mt-0.5 truncate">
+                <MapPin className="h-3 w-3 shrink-0" />
+                <span className="truncate">
+                  行き先: {assignment.destination_point.name}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      </button>
+      {/* 強制降車ボタン */}
+      <div className="px-3 pb-2 flex justify-end">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onForceLeave()
+          }}
+          disabled={forceLeaveBusyId === assignment.id}
+          className="flex items-center gap-1 px-2 py-0.5 text-[10px] border border-red-300 text-red-700 rounded hover:bg-red-50 disabled:opacity-50"
+          title="管理者権限で降車させる"
+        >
+          {forceLeaveBusyId === assignment.id ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <LogOut className="h-3 w-3" />
+          )}
+          強制降車
+        </button>
+      </div>
+      {expanded && (
+        <UserInlineDetail
+          userId={assignment.user_id}
+          activeAssignment={assignment}
+          selectedId={selectedId}
+          onSelect={onSelect}
+          onDeleteSection={onDeleteSection}
+          historyReloadKey={historyReloadKey}
+        />
+      )}
+    </li>
+  )
+}
+
+// 未乗車ユーザーカード
+function InactiveUserCard({
+  member,
+  expanded,
+  onToggleExpand,
+  selectedId,
+  onSelect,
+  onDeleteSection,
+  historyReloadKey,
+}: {
+  member: OrgMemberRow
+  expanded: boolean
+  onToggleExpand: () => void
+  selectedId: string | null
+  onSelect: (assignmentId: string) => void
+  onDeleteSection: (assignmentId: string, label: string) => void
+  historyReloadKey: number
+}) {
+  return (
+    <li
+      className={`bg-white rounded border ${
+        expanded
+          ? 'ring-1 ring-indigo-500 border-indigo-400'
+          : 'hover:border-indigo-400'
+      }`}
+    >
+      <button
+        type="button"
+        onClick={onToggleExpand}
+        className="w-full flex items-center gap-2 p-2.5 text-left"
+      >
+        <div className="h-7 w-7 rounded-full bg-slate-100 flex items-center justify-center shrink-0">
+          <User className="h-3.5 w-3.5 text-slate-500" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium text-slate-800 truncate">
+            {member.full_name || member.email}
+          </div>
+          {member.full_name && member.email !== member.full_name && (
+            <div className="text-[10px] text-slate-500 truncate">
+              {member.email}
+            </div>
+          )}
+        </div>
+        {member.role === 'admin' && (
+          <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-amber-100 text-amber-800">
+            管理者
+          </span>
+        )}
+        <ChevronDown
+          className={`h-4 w-4 text-slate-400 shrink-0 transition-transform ${
+            expanded ? 'rotate-180' : ''
+          }`}
+        />
+      </button>
+      {expanded && (
+        <UserInlineDetail
+          userId={member.user_id}
+          activeAssignment={null}
+          selectedId={selectedId}
+          onSelect={onSelect}
+          onDeleteSection={onDeleteSection}
+          historyReloadKey={historyReloadKey}
+        />
+      )}
+    </li>
   )
 }
