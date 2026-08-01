@@ -625,7 +625,7 @@ export function FleetMapView({
             <Tooltip direction="top" offset={[0, -30]} permanent>
               <span className="text-xs font-medium">
                 {p.name}
-                {p.kind && <span className="text-slate-500 ml-1">({p.kind})</span>}
+                {p.memo && <span className="text-slate-500 ml-1">({p.memo})</span>}
               </span>
             </Tooltip>
           </Marker>

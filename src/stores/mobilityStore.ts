@@ -89,6 +89,11 @@ interface State {
   /** 割当を終了 (ended_at = now) */
   endAssignment: (assignmentId: string) => Promise<void>
   /**
+   * 割当 (=セクション) を完全削除。関連する mobility_positions も
+   * ON DELETE CASCADE で自動的に消える。組織 admin のみ実行可能 (RLS)。
+   */
+  deleteAssignment: (assignmentId: string) => Promise<{ ok: true } | { ok: false; error: string }>
+  /**
    * 稼働中割当に「行き先ポイント」をセット/解除。ドライバー本人 or 組織 admin が呼ぶ。
    * pointId=null で解除。成功すると activeAssignments 内の該当行も更新する。
    */
@@ -438,6 +443,30 @@ export const useMobilityStore = create<State>((set, get) => ({
       })
     } catch (err) {
       set({ vehiclesError: extractErr(err) })
+    }
+  },
+
+  deleteAssignment: async (assignmentId) => {
+    try {
+      const { error } = await supabase
+        .from('vehicle_assignments')
+        .delete()
+        .eq('id', assignmentId)
+      if (error) throw error
+      // activeAssignments から消す (vehicle_id が特定できないので線形探索)
+      set((s) => {
+        const map = new Map(s.activeAssignments)
+        for (const [vid, a] of map) {
+          if (a.id === assignmentId) {
+            map.delete(vid)
+            break
+          }
+        }
+        return { activeAssignments: map }
+      })
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: extractErr(err) }
     }
   },
 

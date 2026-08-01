@@ -117,6 +117,7 @@ export function MobilityHomePage() {
     updateVehicle,
     deleteVehicle,
     endAssignment,
+    deleteAssignment,
     latestPositionsByAssignment,
     fetchProjects,
     createProject,
@@ -294,25 +295,18 @@ export function MobilityHomePage() {
   }, [])
 
   // 地図クリックで新規ポイント配置
+  // 新規ポイントの一時座標。地図クリックで捕捉 → ダイアログで名前+備考を入力 → 保存
+  const [pendingNewPoint, setPendingNewPoint] = useState<{
+    lat: number
+    lon: number
+  } | null>(null)
   const handleMapClickForNewPoint = useCallback(
-    async (lat: number, lon: number) => {
+    (lat: number, lon: number) => {
       if (!expandedProjectId) return
       setAddPointMode(false)
-      const name = window.prompt('ポイント名 (例: 土取場, 現場A)')
-      if (!name || !name.trim()) return
-      const kind =
-        window.prompt('種別 (例: 土取場, 採石場, 雪捨場, 農場A)  ※任意') || null
-      const created = await createPoint({
-        project_id: expandedProjectId,
-        name: name.trim(),
-        kind,
-        lat,
-        lon,
-        display_order: expandedProjectPoints.length,
-      })
-      if (created) setExpandedProjectPoints((prev) => [...prev, created])
+      setPendingNewPoint({ lat, lon })
     },
-    [expandedProjectId, expandedProjectPoints.length, createPoint],
+    [expandedProjectId],
   )
 
   // 管理者による強制降車。ドライバー端末で降車されていない稼働中割当を admin 権限で終了する。
@@ -339,6 +333,40 @@ export function MobilityHomePage() {
       }
     },
     [endAssignment, fetchActiveAssignments, orgId],
+  )
+
+  // セクション削除。位置ログも CASCADE 削除される。
+  // 削除後は活動割当一覧を refetch し、選択中セクションと展開状態を初期化。
+  // 展開中の InlineDetailBody に「履歴を再取得しろ」と伝えるための tick。
+  const [sectionHistoryTick, setSectionHistoryTick] = useState(0)
+  const handleDeleteSection = useCallback(
+    async (
+      assignmentId: string,
+      label: string,
+    ) => {
+      if (
+        !confirm(
+          `セクション「${label}」を完全に削除しますか?\n\nこのセクション中に記録された位置情報 (GPS ping) もすべて消えます。この操作は元に戻せません。`,
+        )
+      )
+        return
+      const res = await deleteAssignment(assignmentId)
+      if (!res.ok) {
+        alert(`削除に失敗しました: ${res.error}`)
+        return
+      }
+      if (selectedSectionAssignmentId === assignmentId) {
+        setSelectedSectionAssignmentId(null)
+      }
+      if (orgId) await fetchActiveAssignments(orgId)
+      setSectionHistoryTick((n) => n + 1)
+    },
+    [
+      deleteAssignment,
+      selectedSectionAssignmentId,
+      fetchActiveAssignments,
+      orgId,
+    ],
   )
 
   const activeVehicles = useMemo(
@@ -483,6 +511,8 @@ export function MobilityHomePage() {
             staleThresholdMs={STALE_THRESHOLD_MS}
             onToggleExpand={toggleExpandUser}
             onSelect={selectSection}
+            onDeleteSection={handleDeleteSection}
+            historyReloadKey={sectionHistoryTick}
             onForceLeave={handleForceLeave}
             onInviteByPhone={() => setShowPhoneInvite(true)}
           />
@@ -608,6 +638,8 @@ export function MobilityHomePage() {
                         activeAssignment={a}
                         selectedId={selectedSectionAssignmentId}
                         onSelect={selectSection}
+                        onDeleteSection={handleDeleteSection}
+                        historyReloadKey={sectionHistoryTick}
                       />
                     )}
                   </li>
@@ -654,6 +686,8 @@ export function MobilityHomePage() {
                     selectedId={selectedSectionAssignmentId}
                     onToggleExpand={() => toggleExpandVehicle(v.id)}
                     onSelect={selectSection}
+                    onDeleteSection={handleDeleteSection}
+                    historyReloadKey={sectionHistoryTick}
                     onEdit={() => setEditingVehicle(v)}
                   />
                 ))}
@@ -819,6 +853,27 @@ export function MobilityHomePage() {
           onClose={() => setEditingPoint(null)}
         />
       )}
+      {pendingNewPoint && expandedProjectId && (
+        <PointCreateDialog
+          lat={pendingNewPoint.lat}
+          lon={pendingNewPoint.lon}
+          onCreate={async ({ name, memo }) => {
+            const created = await createPoint({
+              project_id: expandedProjectId,
+              name,
+              memo,
+              lat: pendingNewPoint.lat,
+              lon: pendingNewPoint.lon,
+              display_order: expandedProjectPoints.length,
+            })
+            if (created) {
+              setExpandedProjectPoints((prev) => [...prev, created])
+            }
+            setPendingNewPoint(null)
+          }}
+          onClose={() => setPendingNewPoint(null)}
+        />
+      )}
     </div>
   )
 }
@@ -871,6 +926,8 @@ function UserModeSidebar({
   staleThresholdMs,
   onToggleExpand,
   onSelect,
+  onDeleteSection,
+  historyReloadKey,
   onForceLeave,
   onInviteByPhone,
 }: {
@@ -885,6 +942,8 @@ function UserModeSidebar({
   staleThresholdMs: number
   onToggleExpand: (userId: string) => void
   onSelect: (assignmentId: string) => void
+  onDeleteSection?: (assignmentId: string, label: string) => void
+  historyReloadKey?: number
   onForceLeave: (
     assignmentId: string,
     driverName: string | null,
@@ -1031,6 +1090,8 @@ function UserModeSidebar({
                       activeAssignment={active ?? null}
                       selectedId={selectedId}
                       onSelect={onSelect}
+                      onDeleteSection={onDeleteSection}
+                      historyReloadKey={historyReloadKey}
                     />
                   )}
                 </li>
@@ -1129,6 +1190,8 @@ function UserModeSidebar({
                       activeAssignment={active ?? null}
                       selectedId={selectedId}
                       onSelect={onSelect}
+                      onDeleteSection={onDeleteSection}
+                      historyReloadKey={historyReloadKey}
                     />
                   )}
                 </li>
@@ -1149,6 +1212,8 @@ function VehicleRow({
   selectedId,
   onToggleExpand,
   onSelect,
+  onDeleteSection,
+  historyReloadKey,
   onEdit,
 }: {
   vehicle: Vehicle
@@ -1158,6 +1223,8 @@ function VehicleRow({
   selectedId: string | null
   onToggleExpand: () => void
   onSelect: (assignmentId: string) => void
+  onDeleteSection?: (assignmentId: string, label: string) => void
+  historyReloadKey?: number
   onEdit: () => void
 }) {
   const Icon = KIND_ICON[vehicle.kind]
@@ -1222,6 +1289,8 @@ function VehicleRow({
           activeAssignment={activeAssignment}
           selectedId={selectedId}
           onSelect={onSelect}
+          onDeleteSection={onDeleteSection}
+          historyReloadKey={historyReloadKey}
         />
       )}
     </li>
@@ -1578,6 +1647,8 @@ interface HistoryDetailProps {
   distanceLabel: string
   selectedId: string | null
   onSelect: (assignmentId: string) => void
+  /** 削除ボタン用。null なら削除ボタンを出さない */
+  onDeleteSection?: (assignmentId: string, label: string) => void
   /** 履歴の 1 行に何を「主タイトル」として出すか。車両詳細ならドライバー名、ユーザー詳細なら車両名 */
   primaryLabel: (a: AssignmentWithNames) => string
 }
@@ -1591,6 +1662,7 @@ function InlineDetailBody({
   distanceLabel,
   selectedId,
   onSelect,
+  onDeleteSection,
   primaryLabel,
 }: HistoryDetailProps) {
   return (
@@ -1643,65 +1715,90 @@ function InlineDetailBody({
                 : null
               return (
                 <li key={a.id}>
-                  <button
-                    type="button"
-                    onClick={() => onSelect(a.id)}
-                    className={`w-full flex items-center gap-2 p-2 rounded border text-[11px] text-left transition ${
+                  <div
+                    className={`flex items-center rounded border text-[11px] transition ${
                       isSelected
                         ? 'bg-indigo-50 ring-2 ring-indigo-500 border-indigo-500'
                         : 'bg-white hover:border-indigo-400'
                     }`}
-                    title={
-                      isSelected
-                        ? '選択中 (もう一度クリックで解除)'
-                        : 'クリックでこのセクションの軌跡を地図に表示'
-                    }
                   >
-                    <span
-                      className={`inline-block h-2 w-2 rounded-full shrink-0 ${
-                        isSelected ? 'bg-indigo-600' : 'bg-slate-300'
-                      }`}
-                    />
-                    <span
-                      className={`flex-1 min-w-0 truncate ${
-                        isSelected
-                          ? 'font-semibold text-indigo-800'
-                          : 'font-medium'
-                      }`}
-                    >
-                      {primaryLabel(a)}
-                    </span>
-                    <span className="text-slate-500 shrink-0">
-                      {new Date(a.started_at).toLocaleString('ja-JP', {
-                        month: '2-digit',
-                        day: '2-digit',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                      {a.ended_at ? (
-                        <>
-                          {' '}
-                          〜{' '}
-                          {new Date(a.ended_at).toLocaleTimeString('ja-JP', {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </>
-                      ) : (
-                        <span className="ml-1 text-emerald-600">(稼働中)</span>
-                      )}
-                    </span>
-                    <span
-                      className="text-slate-500 shrink-0 w-12 text-right font-medium"
+                    <button
+                      type="button"
+                      onClick={() => onSelect(a.id)}
+                      className="flex-1 flex items-center gap-2 p-2 text-left min-w-0"
                       title={
-                        distanceKm != null
-                          ? '本日ログから計算した走行距離'
-                          : '本日以外の割当のため距離は非表示'
+                        isSelected
+                          ? '選択中 (もう一度クリックで解除)'
+                          : 'クリックでこのセクションの軌跡を地図に表示'
                       }
                     >
-                      {distanceKm != null ? `${distanceKm.toFixed(1)}km` : '—'}
-                    </span>
-                  </button>
+                      <span
+                        className={`inline-block h-2 w-2 rounded-full shrink-0 ${
+                          isSelected ? 'bg-indigo-600' : 'bg-slate-300'
+                        }`}
+                      />
+                      <span
+                        className={`flex-1 min-w-0 truncate ${
+                          isSelected
+                            ? 'font-semibold text-indigo-800'
+                            : 'font-medium'
+                        }`}
+                      >
+                        {primaryLabel(a)}
+                      </span>
+                      <span className="text-slate-500 shrink-0">
+                        {new Date(a.started_at).toLocaleString('ja-JP', {
+                          month: '2-digit',
+                          day: '2-digit',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                        {a.ended_at ? (
+                          <>
+                            {' '}
+                            〜{' '}
+                            {new Date(a.ended_at).toLocaleTimeString('ja-JP', {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </>
+                        ) : (
+                          <span className="ml-1 text-emerald-600">(稼働中)</span>
+                        )}
+                      </span>
+                      <span
+                        className="text-slate-500 shrink-0 w-12 text-right font-medium"
+                        title={
+                          distanceKm != null
+                            ? '本日ログから計算した走行距離'
+                            : '本日以外の割当のため距離は非表示'
+                        }
+                      >
+                        {distanceKm != null ? `${distanceKm.toFixed(1)}km` : '—'}
+                      </span>
+                    </button>
+                    {onDeleteSection && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const label = `${primaryLabel(a)} · ${new Date(
+                            a.started_at,
+                          ).toLocaleString('ja-JP', {
+                            month: '2-digit',
+                            day: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}`
+                          onDeleteSection(a.id, label)
+                        }}
+                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 shrink-0 rounded-r"
+                        title="このセクションを削除 (位置ログも消える)"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </li>
               )
             })}
@@ -1717,11 +1814,15 @@ function VehicleInlineDetail({
   activeAssignment,
   selectedId,
   onSelect,
+  onDeleteSection,
+  historyReloadKey,
 }: {
   vehicleId: string
   activeAssignment: AssignmentWithNames | null
   selectedId: string | null
   onSelect: (assignmentId: string) => void
+  onDeleteSection?: (assignmentId: string, label: string) => void
+  historyReloadKey?: number
 }) {
   const {
     vehicles,
@@ -1752,7 +1853,7 @@ function VehicleInlineDetail({
     return () => {
       cancelled = true
     }
-  }, [vehicleId, fetchAssignmentHistory])
+  }, [vehicleId, fetchAssignmentHistory, historyReloadKey])
 
   useEffect(() => {
     let cancelled = false
@@ -1808,6 +1909,7 @@ function VehicleInlineDetail({
       distanceLabel="本日走行 (この車両)"
       selectedId={selectedId}
       onSelect={onSelect}
+      onDeleteSection={onDeleteSection}
       primaryLabel={(a) => a.driver_name || '(名前未設定)'}
     />
   )
@@ -1818,11 +1920,15 @@ function UserInlineDetail({
   activeAssignment,
   selectedId,
   onSelect,
+  onDeleteSection,
+  historyReloadKey,
 }: {
   userId: string
   activeAssignment: AssignmentWithNames | null
   selectedId: string | null
   onSelect: (assignmentId: string) => void
+  onDeleteSection?: (assignmentId: string, label: string) => void
+  historyReloadKey?: number
 }) {
   const {
     vehicles,
@@ -1853,7 +1959,7 @@ function UserInlineDetail({
     return () => {
       cancelled = true
     }
-  }, [userId, fetchUserAssignmentHistory])
+  }, [userId, fetchUserAssignmentHistory, historyReloadKey])
 
   useEffect(() => {
     let cancelled = false
@@ -1909,6 +2015,7 @@ function UserInlineDetail({
       distanceLabel="本日走行 (この人)"
       selectedId={selectedId}
       onSelect={onSelect}
+      onDeleteSection={onDeleteSection}
       primaryLabel={(a) => vehiclesById.get(a.vehicle_id)?.name ?? '(不明車両)'}
     />
   )
@@ -2225,14 +2332,18 @@ function ProjectRow({
                   >
                     <MapPin className="h-3 w-3 text-indigo-500 shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium truncate">
-                        {pt.name}
-                        {pt.kind && (
-                          <span className="text-slate-400 ml-1">
-                            ({pt.kind})
-                          </span>
-                        )}
-                      </div>
+                      <div className="font-medium truncate">{pt.name}</div>
+                      {pt.memo && (
+                        <div className="text-[10px] text-slate-500 mt-0.5 truncate">
+                          {pt.memo}
+                        </div>
+                      )}
+                      {/* 旧「種別」データが残っていれば控えめに表示 (新規は memo のみ) */}
+                      {pt.kind && !pt.memo && (
+                        <div className="text-[10px] text-slate-400 mt-0.5 truncate">
+                          {pt.kind}
+                        </div>
+                      )}
                     </div>
                     <button
                       type="button"
@@ -2525,13 +2636,11 @@ function PointEditDialog({
   point: MobilityProjectPoint
   onSave: (patch: {
     name: string
-    kind: string | null
     memo: string | null
   }) => Promise<void>
   onClose: () => void
 }) {
   const [name, setName] = useState(point.name)
-  const [kind, setKind] = useState(point.kind ?? '')
   const [memo, setMemo] = useState(point.memo ?? '')
   const [busy, setBusy] = useState(false)
   return (
@@ -2551,7 +2660,9 @@ function PointEditDialog({
         </div>
         <div className="p-4 space-y-3">
           <div>
-            <label className="block text-xs text-slate-600 mb-1">名前</label>
+            <label className="block text-xs text-slate-600 mb-1">
+              ポイント名 <span className="text-red-500">*</span>
+            </label>
             <input
               type="text"
               value={name}
@@ -2560,23 +2671,12 @@ function PointEditDialog({
             />
           </div>
           <div>
-            <label className="block text-xs text-slate-600 mb-1">
-              種別 (例: 土取場, 採石場, 雪捨場, 農場A)
-            </label>
-            <input
-              type="text"
-              value={kind}
-              onChange={(e) => setKind(e.target.value)}
-              placeholder="任意"
-              className="w-full px-2 py-1.5 text-sm border rounded"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-slate-600 mb-1">メモ</label>
+            <label className="block text-xs text-slate-600 mb-1">備考</label>
             <textarea
               value={memo}
               onChange={(e) => setMemo(e.target.value)}
-              className="w-full px-2 py-1.5 text-sm border rounded h-16"
+              placeholder="任意 (例: 土取場、採石場、農場A、雪捨場 など)"
+              className="w-full px-2 py-1.5 text-sm border rounded h-20"
             />
           </div>
           <div className="text-[10px] text-slate-500 font-mono">
@@ -2596,7 +2696,6 @@ function PointEditDialog({
               setBusy(true)
               await onSave({
                 name: name.trim(),
-                kind: kind.trim() || null,
                 memo: memo.trim() || null,
               })
               setBusy(false)
@@ -2606,6 +2705,91 @@ function PointEditDialog({
           >
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
             保存
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PointCreateDialog({
+  lat,
+  lon,
+  onCreate,
+  onClose,
+}: {
+  lat: number
+  lon: number
+  onCreate: (input: { name: string; memo: string | null }) => Promise<void>
+  onClose: () => void
+}) {
+  const [name, setName] = useState('')
+  const [memo, setMemo] = useState('')
+  const [busy, setBusy] = useState(false)
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[3500]"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white w-full max-w-md rounded-xl shadow-xl flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-4 py-3 border-b flex items-center justify-between">
+          <h3 className="text-base font-semibold">ポイントを追加</h3>
+          <button onClick={onClose} className="p-1 rounded hover:bg-slate-100 text-slate-500">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="p-4 space-y-3">
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">
+              ポイント名 <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="例: 土取場A"
+              autoFocus
+              className="w-full px-2 py-1.5 text-sm border rounded"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600 mb-1">備考</label>
+            <textarea
+              value={memo}
+              onChange={(e) => setMemo(e.target.value)}
+              placeholder="任意 (例: 土取場、採石場、農場A、雪捨場 など)"
+              className="w-full px-2 py-1.5 text-sm border rounded h-20"
+            />
+          </div>
+          <div className="text-[10px] text-slate-500 font-mono">
+            座標: {lat.toFixed(6)}, {lon.toFixed(6)}
+          </div>
+        </div>
+        <div className="px-4 py-3 border-t flex gap-2">
+          <button
+            onClick={onClose}
+            className="flex-1 px-3 py-2 text-sm border rounded hover:bg-slate-50"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={async () => {
+              if (!name.trim() || busy) return
+              setBusy(true)
+              await onCreate({
+                name: name.trim(),
+                memo: memo.trim() || null,
+              })
+              setBusy(false)
+            }}
+            disabled={!name.trim() || busy}
+            className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
+          >
+            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+            追加
           </button>
         </div>
       </div>
