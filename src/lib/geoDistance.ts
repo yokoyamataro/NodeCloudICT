@@ -61,17 +61,29 @@ export function computeTotalDistanceMeters(
     recorded_at: string
   }>,
   options?: {
-    /** この精度より悪い (accuracy_m がこの値より大きい) 点は捨てる。既定 50m */
+    /**
+     * この精度より悪い (accuracy_m がこの値より大きい) 点は捨てる。既定 150m。
+     * 屋内・車内・トンネル出口直後などで一時的に精度が悪くなるサンプルまで
+     * 落とすと走行距離がゼロになりがちなので、既定は緩めに。
+     */
     maxAccuracyM?: number
-    /** 隣接点間の距離がこの値より小さい場合はノイズとみなす。既定 5m */
+    /**
+     * 隣接点間の距離がこの値より小さい場合はノイズとみなす。既定 1m。
+     * background-geolocation 側で distanceFilter=1m を掛けているので、
+     * ここで大きくフィルタする必要はもうない。
+     */
     minSegmentM?: number
-    /** 隣接点間の距離がこの値より大きい場合は瞬間ジャンプとみなして捨てる。既定 500m */
+    /**
+     * 隣接点間の距離がこの値より大きい場合は瞬間ジャンプとみなして捨てる。既定 2000m。
+     * 高速道路 120km/h × ping 間隔 30 秒 で 1000m 進む想定 + オフライン
+     * 復帰の飛びを許容して 2000m まで許す。それ超えは GPS 誤検知とみなす。
+     */
     maxSegmentM?: number
   },
 ): number {
-  const maxAccuracy = options?.maxAccuracyM ?? 50
-  const minSegment = options?.minSegmentM ?? 5
-  const maxSegment = options?.maxSegmentM ?? 500
+  const maxAccuracy = options?.maxAccuracyM ?? 150
+  const minSegment = options?.minSegmentM ?? 1
+  const maxSegment = options?.maxSegmentM ?? 2000
 
   const filtered = points.filter(
     (p) => p.accuracy_m == null || p.accuracy_m <= maxAccuracy,
