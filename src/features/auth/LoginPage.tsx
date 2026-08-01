@@ -55,7 +55,9 @@ export function LoginPage() {
     setLoading(true)
     try {
       await signIn(email, password)
-      navigate('/')
+      // NodeCloud Mobility バリアントではドライバー画面に直行
+      const { isMobilityApp } = await import('@/lib/appVariant')
+      navigate(isMobilityApp() ? '/mobility/drive' : '/')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'ログインに失敗しました')
     } finally {

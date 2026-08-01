@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { getDisplayModeOverride, isMobileDevice } from '@/lib/displayMode'
+import { isMobilityApp } from '@/lib/appVariant'
 import { AuthProvider, useAuth } from '@/contexts/AuthContext'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { LoginPage } from '@/features/auth/LoginPage'
@@ -122,6 +123,42 @@ function SiteOwnerRoute({ children }: { children: React.ReactNode }) {
   if (!isAdmin(user.email)) return <Navigate to="/coordinates" replace />
 
   return <>{children}</>
+}
+
+// NodeCloud Mobility (運転手専用アプリ) 用のガード。
+// このバリアントでは /mobility/drive (と認証/受入等の必要ページ) 以外は
+// 全部 /mobility/drive に強制リダイレクト。ドライバーが他機能に迷い込まないように。
+function MobilityAppGuard() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const { user } = useAuth()
+
+  useEffect(() => {
+    if (!isMobilityApp()) return
+    // 未ログインは login / accept-invite / reset-password 系だけ許可
+    if (!user) {
+      if (
+        location.pathname === '/login' ||
+        location.pathname === '/accept-invite' ||
+        location.pathname === '/reset-password'
+      ) {
+        return
+      }
+      navigate('/login', { replace: true })
+      return
+    }
+    // ログイン済み: /mobility/drive のみ許可 (認証系ページ以外)
+    if (
+      location.pathname === '/mobility/drive' ||
+      location.pathname === '/accept-invite' ||
+      location.pathname === '/reset-password'
+    ) {
+      return
+    }
+    navigate('/mobility/drive', { replace: true })
+  }, [location.pathname, navigate, user])
+
+  return null
 }
 
 // モバイル端末を自動判定して /mobile へリダイレクト
@@ -463,6 +500,7 @@ function App() {
     <BrowserRouter>
       <AuthProvider>
         <GATracker />
+        <MobilityAppGuard />
         <MobileAutoRedirect />
         <AppRoutes />
       </AuthProvider>

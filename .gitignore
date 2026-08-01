@@ -52,3 +52,19 @@ doc/*.PDF
 # 検証用の GeoJSON / 大容量 inventory (法務省地図から DL したテストデータ)
 doc/*.geojson
 doc/parcel-map-inventory.json
+
+# Capacitor / Android ビルド生成物
+android/build/
+android/app/build/
+android/.gradle/
+android/capacitor-cordova-android-plugins/build/
+android/local.properties
+android/app/src/main/assets/public/
+android-mobility/build/
+android-mobility/app/build/
+android-mobility/.gradle/
+android-mobility/capacitor-cordova-android-plugins/build/
+android-mobility/local.properties
+android-mobility/app/src/main/assets/public/
+ios/build/
+ios-mobility/build/

@@ -47,6 +47,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useCanUseMobility } from '@/lib/useCanUseMobility'
 import { isMobileDevice } from '@/lib/displayMode'
 import { watchSamples, watchSamplesInBackground } from '@/lib/geolocation'
+import { isMobilityApp } from '@/lib/appVariant'
 import {
   enqueuePing,
   flushQueue,
@@ -729,7 +730,11 @@ export function MobilityDriverPage() {
   const [busy, setBusy] = useState(false)
   const [busyError, setBusyError] = useState<string | null>(null)
   // PC からアクセスしていたら警告を出す (ドライバー画面はモバイル専用)
-  const [showPcWarning, setShowPcWarning] = useState(() => !isMobileDevice())
+  const isMobilityAppFlag = useMemo(() => isMobilityApp(), [])
+  // mobility 専用アプリ (Capacitor) では常にネイティブ環境なので PC 警告は不要
+  const [showPcWarning, setShowPcWarning] = useState(
+    () => !isMobileDevice() && !isMobilityApp(),
+  )
 
   const handleBoard = async (vehicleId: string) => {
     setBusyError(null)
@@ -794,14 +799,19 @@ export function MobilityDriverPage() {
     <div className="mobile-screen flex flex-col bg-slate-900 relative">
       {/* ヘッダ: NodeCloud ブランド 1 行のみ (組織情報等は載せない) */}
       <div className="px-3 py-2 bg-slate-800 text-white flex items-center gap-2 shrink-0">
-        <button
-          onClick={() => navigate('/')}
-          className="p-1 rounded hover:bg-slate-700 shrink-0"
-          title="トップに戻る"
-        >
-          <ArrowLeft className="h-5 w-5" />
-        </button>
-        <div className="text-base font-bold flex-1">NodeCloud</div>
+        {/* mobility 専用アプリでは他画面が無いので戻るボタンを隠す */}
+        {!isMobilityAppFlag && (
+          <button
+            onClick={() => navigate('/')}
+            className="p-1 rounded hover:bg-slate-700 shrink-0"
+            title="トップに戻る"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+        )}
+        <div className="text-base font-bold flex-1">
+          {isMobilityAppFlag ? 'NodeCloud Mobility' : 'NodeCloud'}
+        </div>
         {locationError && (
           <span className="text-[10px] text-amber-300 max-w-[10rem] text-right leading-tight">
             {locationError}
