@@ -454,6 +454,28 @@ export function MobilityDriverPage() {
     return () => clearInterval(id)
   }, [user])
 
+  // アプリが visible / focus に戻った瞬間は必ず flush を試みる。
+  // Android のアプリ切替や、画面 OFF → 画面 ON でここに来る。
+  useEffect(() => {
+    if (!user) return
+    const tryFlush = async () => {
+      const before = getQueueLength(user.id)
+      if (before === 0) return
+      const { remaining } = await flushQueue(user.id, sendPositionRef.current)
+      setQueueLen(remaining)
+    }
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void tryFlush()
+    }
+    const onFocus = () => void tryFlush()
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [user])
+
   // 「自動 ON」に切り替えた瞬間は 1 発すぐ送る (次の watchPosition を待たない)
   useEffect(() => {
     if (!autoSend || !myActive) return
@@ -496,6 +518,14 @@ export function MobilityDriverPage() {
             if (!sample) return
             const active = myActiveRef.current
             if (!autoSendRef.current || !active) return
+            const uid = userIdRef.current
+            // throttle 対象外: この callback が発火した=画面 OFF でも生きているタイミング。
+            // 通信不通後の復帰チャンスなので、キューに残ってる古い ping を先に流す。
+            if (uid) {
+              void flushQueue(uid, sendPositionRef.current).then((r) =>
+                setQueueLen(r.remaining),
+              )
+            }
             const now = Date.now()
             if (now - lastSentAtRef.current < PING_INTERVAL_MS) return
             lastSentAtRef.current = now
@@ -512,7 +542,8 @@ export function MobilityDriverPage() {
           {
             notificationTitle: 'NodeCloud モビリティ',
             notificationBody: `${myVehicle?.name ?? '車両'} の現在地を送信中`,
-            distanceFilter: 5,
+            // 停車中でも callback が起きやすいよう小さめに (バッテリー影響は僅か)
+            distanceFilter: 1,
           },
         )
         if (cancelled) void handle.clear()
@@ -548,6 +579,13 @@ export function MobilityDriverPage() {
             // 乗車中 + 自動送信 ON なら throttle して送る
             const active = myActiveRef.current
             if (!autoSendRef.current || !active) return
+            const uid = userIdRef.current
+            // throttle 対象外: この callback ごとに古い queue を flush 試行
+            if (uid) {
+              void flushQueue(uid, sendPositionRef.current).then((r) =>
+                setQueueLen(r.remaining),
+              )
+            }
             const now = Date.now()
             if (now - lastSentAtRef.current < PING_INTERVAL_MS) return
             lastSentAtRef.current = now
