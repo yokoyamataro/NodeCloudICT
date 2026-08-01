@@ -207,6 +207,39 @@ interface State {
   deletePoint: (id: string) => Promise<void>
 }
 
+// mobility_positions を assignment_id 群 × 開始時刻以降で全件取る。
+//
+// PostgREST は max_rows (Supabase 既定 1000) で暗黙的に切ってくるので、
+// 単発の .limit(...) では取りこぼす。range() でページングして全部集める。
+// 1 ドライバー 8h × 10s ping = 2880 件/日、複数 assignment 合算でも
+// 通常 5000-10000 件程度に収まる想定。安全上限 100_000 でループ打切。
+async function fetchAllPositionsByAssignmentIds(
+  assignmentIds: string[],
+  sinceIso: string,
+): Promise<MobilityPosition[]> {
+  if (assignmentIds.length === 0) return []
+  const PAGE = 1000
+  const HARD_CAP = 100_000
+  const all: MobilityPosition[] = []
+  for (let from = 0; from < HARD_CAP; from += PAGE) {
+    const { data, error } = await supabase
+      .from('mobility_positions')
+      .select('*')
+      .in('assignment_id', assignmentIds)
+      .gte('recorded_at', sinceIso)
+      .order('recorded_at', { ascending: true })
+      .range(from, from + PAGE - 1)
+    if (error) {
+      console.warn('[mobilityStore] fetchAllPositions page failed', error)
+      break
+    }
+    if (!data || data.length === 0) break
+    all.push(...(data as MobilityPosition[]))
+    if (data.length < PAGE) break
+  }
+  return all
+}
+
 // profiles + auth.users から表示名を組み立てるヘルパ (RLS で読める範囲だけ)
 async function enrichAssignments(
   rows: VehicleAssignment[],
@@ -518,18 +551,7 @@ export const useMobilityStore = create<State>((set, get) => ({
     }
     const ids = ((aRows ?? []) as { id: string }[]).map((r) => r.id)
     if (ids.length === 0) return []
-    const { data, error } = await supabase
-      .from('mobility_positions')
-      .select('*')
-      .in('assignment_id', ids)
-      .gte('recorded_at', sinceIso)
-      .order('recorded_at', { ascending: true })
-      .limit(10000)
-    if (error) {
-      console.warn('[mobilityStore] fetchPositionsForUserSince failed', error)
-      return []
-    }
-    return (data ?? []) as MobilityPosition[]
+    return fetchAllPositionsByAssignmentIds(ids, sinceIso)
   },
 
   fetchPositionsForVehicleSince: async (vehicleId, sinceIso) => {
@@ -544,18 +566,7 @@ export const useMobilityStore = create<State>((set, get) => ({
     }
     const ids = ((aRows ?? []) as { id: string }[]).map((r) => r.id)
     if (ids.length === 0) return []
-    const { data, error } = await supabase
-      .from('mobility_positions')
-      .select('*')
-      .in('assignment_id', ids)
-      .gte('recorded_at', sinceIso)
-      .order('recorded_at', { ascending: true })
-      .limit(20000)
-    if (error) {
-      console.warn('[mobilityStore] fetchPositionsForVehicleSince failed', error)
-      return []
-    }
-    return (data ?? []) as MobilityPosition[]
+    return fetchAllPositionsByAssignmentIds(ids, sinceIso)
   },
 
   fetchOrgAssignmentsBetween: async (orgId, startIso, endIso) => {
@@ -585,23 +596,31 @@ export const useMobilityStore = create<State>((set, get) => ({
     return enrichAssignments((data ?? []) as VehicleAssignment[])
   },
 
-  fetchPositionsForAssignments: async (assignmentIds, limitPerAssignment = 500) => {
+  fetchPositionsForAssignments: async (assignmentIds, _limitPerAssignment = 500) => {
     if (assignmentIds.length === 0) return new Map()
-    const { data, error } = await supabase
-      .from('mobility_positions')
-      .select('*')
-      .in('assignment_id', assignmentIds)
-      .order('recorded_at', { ascending: true })
-      .limit(assignmentIds.length * limitPerAssignment)
-    if (error) {
-      console.warn('[mobilityStore] fetchPositionsForAssignments failed', error)
-      return new Map()
-    }
+    // PostgREST の max_rows (Supabase 既定 1000) で暗黙的に切られるので、
+    // range() でページングして必要件数分ぜんぶ取る。
+    const PAGE = 1000
+    const HARD_CAP = 200_000
     const map = new Map<string, MobilityPosition[]>()
-    for (const row of (data ?? []) as MobilityPosition[]) {
-      const arr = map.get(row.assignment_id)
-      if (arr) arr.push(row)
-      else map.set(row.assignment_id, [row])
+    for (let from = 0; from < HARD_CAP; from += PAGE) {
+      const { data, error } = await supabase
+        .from('mobility_positions')
+        .select('*')
+        .in('assignment_id', assignmentIds)
+        .order('recorded_at', { ascending: true })
+        .range(from, from + PAGE - 1)
+      if (error) {
+        console.warn('[mobilityStore] fetchPositionsForAssignments page failed', error)
+        break
+      }
+      if (!data || data.length === 0) break
+      for (const row of data as MobilityPosition[]) {
+        const arr = map.get(row.assignment_id)
+        if (arr) arr.push(row)
+        else map.set(row.assignment_id, [row])
+      }
+      if (data.length < PAGE) break
     }
     return map
   },
