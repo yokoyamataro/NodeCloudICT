@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { useMapViewStore } from './mapViewStore'
 import { useProjectListStore } from './projectListStore'
+import { markFarmRecent } from '@/lib/recentProjects'
 
 export interface Farm {
   id: string
@@ -138,6 +139,7 @@ export const useFarmStore = create<FarmState>()(
     if (farm?.id !== currentFarm?.id) {
       useMapViewStore.getState().resetView()
     }
+    if (farm) markFarmRecent(farm.id)
     set({ currentFarm: farm })
   },
 

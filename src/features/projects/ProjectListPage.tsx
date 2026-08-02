@@ -25,6 +25,11 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useFarmStore, type Farm, type FarmLocation } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
+import {
+  getAllFarmRecency,
+  getAllProjectRecency,
+  sortByRecency,
+} from '@/lib/recentProjects'
 import { FarmEditModal, isoToDateInput, dateInputToIso } from '@/features/farms/FarmEditModal'
 import { ProjectEditModal } from '@/features/projects/ProjectEditModal'
 import {
@@ -147,13 +152,38 @@ export function ProjectListPage() {
   const { user: authUser } = useAuth()
 
   // URL の projectId に該当する工事だけに絞り込む
-  const projects = useMemo(
+  const filteredProjects = useMemo(
     () => (routeProjectId ? allProjects.filter((p) => p.id === routeProjectId) : allProjects),
     [allProjects, routeProjectId],
   )
-  const farms = useMemo(
+  // recency (localStorage) の新しい順 → 未使用は created_at DESC で並べる
+  const projectRecency = useMemo(() => getAllProjectRecency(), [filteredProjects])
+  const projects = useMemo(
+    () =>
+      sortByRecency(
+        filteredProjects,
+        (p) => p.id,
+        projectRecency,
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      ),
+    [filteredProjects, projectRecency],
+  )
+  const filteredFarms = useMemo(
     () => (routeProjectId ? allFarms.filter((f) => f.project_id === routeProjectId) : allFarms),
     [allFarms, routeProjectId],
+  )
+  const farmRecency = useMemo(() => getAllFarmRecency(), [filteredFarms])
+  const farms = useMemo(
+    () =>
+      sortByRecency(
+        filteredFarms,
+        (f) => f.id,
+        farmRecency,
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      ),
+    [filteredFarms, farmRecency],
   )
 
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())

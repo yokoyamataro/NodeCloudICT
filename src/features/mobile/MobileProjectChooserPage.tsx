@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AlertCircle, Car, ChevronRight, Folder, Loader2, LogOut, MapPin, Monitor, Pencil, Plus, X } from 'lucide-react'
 import { useProjectListStore } from '@/stores/projectListStore'
+import { getAllProjectRecency, sortByRecency } from '@/lib/recentProjects'
 import { useFarmStore } from '@/stores/farmStore'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCanUseMobility } from '@/lib/useCanUseMobility'
@@ -24,7 +25,7 @@ export function MobileProjectChooserPage() {
   const { signOut, user, profile } = useAuth()
   const userLabel = profile?.full_name?.trim() || (user?.email ? user.email.split('@')[0] : '')
   const {
-    projects,
+    projects: rawProjects,
     loading,
     error,
     fetchProjects,
@@ -32,6 +33,19 @@ export function MobileProjectChooserPage() {
     fetchUserRoles,
     userRolesByProject,
   } = useProjectListStore()
+  // 最近開いた現場を上位に並べる (未使用は created_at DESC のまま)
+  const projectRecency = useMemo(() => getAllProjectRecency(), [rawProjects])
+  const projects = useMemo(
+    () =>
+      sortByRecency(
+        rawProjects,
+        (p) => p.id,
+        projectRecency,
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      ),
+    [rawProjects, projectRecency],
+  )
   const { farms, fetchFarms } = useFarmStore()
   const canUseMobility = useCanUseMobility()
 

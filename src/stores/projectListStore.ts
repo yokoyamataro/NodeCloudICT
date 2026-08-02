@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { supabase } from '@/lib/supabase'
+import { markProjectRecent } from '@/lib/recentProjects'
 import type { Project, ProjectCategory, ProjectMember, ProjectMemberRole } from '@/types/database'
 
 interface ProjectListState {
@@ -414,6 +415,8 @@ export const useProjectListStore = create<ProjectListState>()(
     set({ currentProject: project, members: [], currentUserRole: null })
     // プロジェクトが選択されたらメンバーも取得
     if (project) {
+      // 「最近使った」記録 (localStorage) — 一覧で上位に来るように
+      markProjectRecent(project.id)
       get().fetchMembers(project.id)
     }
   },

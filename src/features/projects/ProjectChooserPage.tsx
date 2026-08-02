@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Folder, Loader2, Users, MapPin, AlertCircle, Trash2, Edit3, Check, Lock, Globe, Car, ChevronRight } from 'lucide-react'
 import { useProjectListStore } from '@/stores/projectListStore'
+import { getAllProjectRecency, sortByRecency } from '@/lib/recentProjects'
 import { useFarmStore } from '@/stores/farmStore'
 import { JGD2011_ZONES } from '@/lib/coordinates'
 import type { Project, ProjectCategory, ProjectVisibility } from '@/types/database'
@@ -65,13 +66,26 @@ export function ProjectChooserPage() {
     setCurrentProject(null)
   }, [fetchProjects, fetchFarms, fetchUserRoles, setCurrentFarm, setCurrentProject])
 
+  // 最近開いた現場を上位に (localStorage の recency)
+  const projectRecency = useMemo(() => getAllProjectRecency(), [projects])
+  const sortedProjects = useMemo(
+    () =>
+      sortByRecency(
+        projects,
+        (p) => p.id,
+        projectRecency,
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      ),
+    [projects, projectRecency],
+  )
   // 完了現場フィルタ (hideCompletedProjects=true の時は completed_at != null を除外)
   const visibleProjects = useMemo(
     () =>
       hideCompletedProjects
-        ? projects.filter((p) => p.completed_at == null)
-        : projects,
-    [projects, hideCompletedProjects],
+        ? sortedProjects.filter((p) => p.completed_at == null)
+        : sortedProjects,
+    [sortedProjects, hideCompletedProjects],
   )
   const cadastralProjects = useMemo(
     () => visibleProjects.filter((p) => p.category === 'cadastral'),
