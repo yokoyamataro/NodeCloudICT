@@ -629,7 +629,15 @@ export function MobilityDriverPage() {
             setCurrentPos([sample.lat, sample.lon])
             setAccuracy(sample.accuracy_m)
             setCurrentSpeedKmh(sample.speed_kmh)
-            setCurrentHeadingDeg(sample.heading_deg)
+            // heading は停車中や GPS 不安定時に null / 負の値を返すことが多いので、
+            // 有効値だけ更新し、それ以外は前回の値を保持する
+            if (
+              sample.heading_deg != null &&
+              !Number.isNaN(sample.heading_deg) &&
+              sample.heading_deg >= 0
+            ) {
+              setCurrentHeadingDeg(sample.heading_deg)
+            }
             setLocationError(null)
 
             // 乗車中 + 自動送信 ON なら throttle して送る
