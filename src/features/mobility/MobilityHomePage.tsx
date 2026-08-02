@@ -402,36 +402,70 @@ export function MobilityHomePage() {
         </div>
       )}
 
-      {/* PC は 左: 車両・ユーザー | 中央: 地図 | 右: 運行現場。狭い画面は縦積み */}
+      {/* PC は 左: 運行現場 / ユーザー / 車両 を縦に並べる、右側は地図。狭い画面は縦積み */}
       <div className="flex-1 flex flex-col lg:flex-row min-h-0">
-        {/* 左サイドパネル: 車両・ユーザー (稼働中ペア + 未乗車ユーザー + 未使用車両) */}
-        <div className="lg:w-96 xl:w-[28rem] overflow-y-auto p-4 border-b lg:border-b-0 lg:border-r">
-          <FleetSidebar
-            activeAssignments={activeAssignments}
-            vehicles={vehicles}
-            orgMembers={orgMembers}
-            loading={orgMembersLoading}
-            expandedUserId={expandedUserId}
-            expandedVehicleId={expandedVehicleId}
-            selectedSectionAssignmentIds={selectedSectionAssignmentIds}
-            ageMsForAssignment={ageMsForAssignment}
-            staleThresholdMs={STALE_THRESHOLD_MS}
-            forceLeaveBusyId={forceLeaveBusyId}
-            sectionHistoryTick={sectionHistoryTick}
-            onToggleExpandUser={toggleExpandUser}
-            onToggleExpandVehicle={toggleExpandVehicle}
-            onSelectSection={selectSection}
-            onSelectSectionsByDay={selectSectionsByDay}
-            onDeleteSection={handleDeleteSection}
-            onForceLeave={handleForceLeave}
-            onEditVehicle={setEditingVehicle}
-            onNewVehicle={() => setShowNewDialog(true)}
-            onInviteByPhone={() => setShowPhoneInvite(true)}
-          />
+        {/* 左サイドパネル: 運行現場 → 稼働中(ペア) → ユーザー → 車両 の順で縦積み */}
+        <div className="lg:w-[26rem] xl:w-[28rem] overflow-y-auto border-b lg:border-b-0 lg:border-r">
+          <div className="p-4 border-b bg-slate-50 space-y-3">
+            <ProjectsLeftPanel
+              projects={projects}
+              projectsLoading={projectsLoading}
+              expandedProjectId={expandedProjectId}
+              expandedProjectMembers={expandedProjectMembers}
+              expandedProjectPoints={expandedProjectPoints}
+              orgMembers={orgMembers}
+              addPointMode={addPointMode}
+              onToggleExpand={toggleExpandProject}
+              onNewProject={() => setShowNewProjectDialog(true)}
+              onEditProject={setShowEditProjectId}
+              onOpenMemberPicker={setShowMemberPickerForProject}
+              onRemoveMember={async (projectId, userId) => {
+                if (!confirm('このドライバーを外しますか?')) return
+                await removeProjectMember(projectId, userId)
+                setExpandedProjectMembers((prev) =>
+                  prev.filter((m) => m.user_id !== userId),
+                )
+              }}
+              onEnterAddPointMode={() => setAddPointMode(true)}
+              onCancelAddPointMode={() => setAddPointMode(false)}
+              onEditPoint={setEditingPoint}
+              onDeletePoint={async (pointId) => {
+                if (!confirm('このポイントを削除しますか?')) return
+                await deletePoint(pointId)
+                setExpandedProjectPoints((prev) =>
+                  prev.filter((p) => p.id !== pointId),
+                )
+              }}
+            />
+          </div>
+          <div className="p-4">
+            <FleetSidebar
+              activeAssignments={activeAssignments}
+              vehicles={vehicles}
+              orgMembers={orgMembers}
+              loading={orgMembersLoading}
+              expandedUserId={expandedUserId}
+              expandedVehicleId={expandedVehicleId}
+              selectedSectionAssignmentIds={selectedSectionAssignmentIds}
+              ageMsForAssignment={ageMsForAssignment}
+              staleThresholdMs={STALE_THRESHOLD_MS}
+              forceLeaveBusyId={forceLeaveBusyId}
+              sectionHistoryTick={sectionHistoryTick}
+              onToggleExpandUser={toggleExpandUser}
+              onToggleExpandVehicle={toggleExpandVehicle}
+              onSelectSection={selectSection}
+              onSelectSectionsByDay={selectSectionsByDay}
+              onDeleteSection={handleDeleteSection}
+              onForceLeave={handleForceLeave}
+              onEditVehicle={setEditingVehicle}
+              onNewVehicle={() => setShowNewDialog(true)}
+              onInviteByPhone={() => setShowPhoneInvite(true)}
+            />
+          </div>
         </div>
 
-        {/* 地図エリア */}
-        <div className="h-64 lg:h-auto lg:flex-1 relative border-b lg:border-b-0 lg:border-r">
+        {/* 地図エリア (右側、フル幅) */}
+        <div className="h-64 lg:h-auto lg:flex-1 relative">
           <FleetMapView
             organizationId={orgId}
             extraTrackAssignmentIds={selectedSectionAssignmentIds}
@@ -445,47 +479,11 @@ export function MobilityHomePage() {
               setEditingPoint(pt)
             }}
             onSelectVehicle={(vid) => {
-              // 別画面に飛ばさず、左パネルの該当車両を展開する
               setExpandedVehicleId(vid)
               setExpandedUserId(null)
             }}
           />
         </div>
-
-        {/* 右サイドパネル: 運行現場 (現場 > ポイント / メンバー) */}
-        <div className="lg:w-80 xl:w-96 overflow-y-auto p-4 space-y-3 bg-slate-50">
-          <ProjectsLeftPanel
-            projects={projects}
-            projectsLoading={projectsLoading}
-            expandedProjectId={expandedProjectId}
-            expandedProjectMembers={expandedProjectMembers}
-            expandedProjectPoints={expandedProjectPoints}
-            orgMembers={orgMembers}
-            addPointMode={addPointMode}
-            onToggleExpand={toggleExpandProject}
-            onNewProject={() => setShowNewProjectDialog(true)}
-            onEditProject={setShowEditProjectId}
-            onOpenMemberPicker={setShowMemberPickerForProject}
-            onRemoveMember={async (projectId, userId) => {
-              if (!confirm('このドライバーを外しますか?')) return
-              await removeProjectMember(projectId, userId)
-              setExpandedProjectMembers((prev) =>
-                prev.filter((m) => m.user_id !== userId),
-              )
-            }}
-            onEnterAddPointMode={() => setAddPointMode(true)}
-            onCancelAddPointMode={() => setAddPointMode(false)}
-            onEditPoint={setEditingPoint}
-            onDeletePoint={async (pointId) => {
-              if (!confirm('このポイントを削除しますか?')) return
-              await deletePoint(pointId)
-              setExpandedProjectPoints((prev) =>
-                prev.filter((p) => p.id !== pointId),
-              )
-            }}
-          />
-        </div>
-
       </div>
 
       {showNewDialog && (
@@ -2576,12 +2574,12 @@ function FleetSidebar(props: FleetSidebarProps) {
         )}
       </section>
 
-      {/* 未乗車ユーザー (組織メンバー全体) */}
+      {/* ユーザー (未乗車の組織メンバー) */}
       <section>
         <div className="flex items-center gap-2 mb-2">
           <div className="w-1 h-5 rounded bg-slate-400" />
           <h2 className="text-sm font-semibold text-slate-700 flex-1">
-            未乗車ユーザー ({inactiveUsers.length})
+            ユーザー ({inactiveUsers.length})
           </h2>
           {PHONE_INVITE_ENABLED && (
             <button
@@ -2623,12 +2621,12 @@ function FleetSidebar(props: FleetSidebarProps) {
         )}
       </section>
 
-      {/* 未使用車両 */}
+      {/* 車両 (未使用) */}
       <section>
         <div className="flex items-center gap-2 mb-2">
           <div className="w-1 h-5 rounded bg-indigo-500" />
           <h2 className="text-sm font-semibold text-slate-700 flex-1">
-            未使用車両 ({availableVehicles.length})
+            車両 ({availableVehicles.length})
           </h2>
           <button
             type="button"
