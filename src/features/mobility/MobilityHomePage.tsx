@@ -402,65 +402,91 @@ export function MobilityHomePage() {
         </div>
       )}
 
-      {/* PC は 左: 運行現場 / ユーザー / 車両 を縦に並べる、右側は地図。狭い画面は縦積み */}
+      {/* PC は 左: [運行現場 | ユーザー | 車両] の 3 列 | 右: 地図。狭い画面は縦積み */}
       <div className="flex-1 flex flex-col lg:flex-row min-h-0">
-        {/* 左サイドパネル: 運行現場 → 稼働中(ペア) → ユーザー → 車両 の順で縦積み */}
-        <div className="lg:w-[26rem] xl:w-[28rem] overflow-y-auto border-b lg:border-b-0 lg:border-r">
-          <div className="p-4 border-b bg-slate-50 space-y-3">
-            <ProjectsLeftPanel
-              projects={projects}
-              projectsLoading={projectsLoading}
-              expandedProjectId={expandedProjectId}
-              expandedProjectMembers={expandedProjectMembers}
-              expandedProjectPoints={expandedProjectPoints}
-              orgMembers={orgMembers}
-              addPointMode={addPointMode}
-              onToggleExpand={toggleExpandProject}
-              onNewProject={() => setShowNewProjectDialog(true)}
-              onEditProject={setShowEditProjectId}
-              onOpenMemberPicker={setShowMemberPickerForProject}
-              onRemoveMember={async (projectId, userId) => {
-                if (!confirm('このドライバーを外しますか?')) return
-                await removeProjectMember(projectId, userId)
-                setExpandedProjectMembers((prev) =>
-                  prev.filter((m) => m.user_id !== userId),
-                )
-              }}
-              onEnterAddPointMode={() => setAddPointMode(true)}
-              onCancelAddPointMode={() => setAddPointMode(false)}
-              onEditPoint={setEditingPoint}
-              onDeletePoint={async (pointId) => {
-                if (!confirm('このポイントを削除しますか?')) return
-                await deletePoint(pointId)
-                setExpandedProjectPoints((prev) =>
-                  prev.filter((p) => p.id !== pointId),
-                )
-              }}
-            />
-          </div>
-          <div className="p-4">
-            <FleetSidebar
-              activeAssignments={activeAssignments}
-              vehicles={vehicles}
-              orgMembers={orgMembers}
-              loading={orgMembersLoading}
-              expandedUserId={expandedUserId}
-              expandedVehicleId={expandedVehicleId}
-              selectedSectionAssignmentIds={selectedSectionAssignmentIds}
-              ageMsForAssignment={ageMsForAssignment}
-              staleThresholdMs={STALE_THRESHOLD_MS}
-              forceLeaveBusyId={forceLeaveBusyId}
-              sectionHistoryTick={sectionHistoryTick}
-              onToggleExpandUser={toggleExpandUser}
-              onToggleExpandVehicle={toggleExpandVehicle}
-              onSelectSection={selectSection}
-              onSelectSectionsByDay={selectSectionsByDay}
-              onDeleteSection={handleDeleteSection}
-              onForceLeave={handleForceLeave}
-              onEditVehicle={setEditingVehicle}
-              onNewVehicle={() => setShowNewDialog(true)}
-              onInviteByPhone={() => setShowPhoneInvite(true)}
-            />
+        {/* 左サイドパネル: 3 列 (現場 / ユーザー / 車両) */}
+        <div className="lg:w-[42rem] xl:w-[45rem] overflow-y-auto border-b lg:border-b-0 lg:border-r">
+          <div className="grid grid-cols-1 lg:grid-cols-3 divide-x divide-slate-200 min-h-full">
+            <div className="p-3 bg-slate-50">
+              <ProjectsLeftPanel
+                projects={projects}
+                projectsLoading={projectsLoading}
+                expandedProjectId={expandedProjectId}
+                expandedProjectMembers={expandedProjectMembers}
+                expandedProjectPoints={expandedProjectPoints}
+                orgMembers={orgMembers}
+                addPointMode={addPointMode}
+                onToggleExpand={toggleExpandProject}
+                onNewProject={() => setShowNewProjectDialog(true)}
+                onEditProject={setShowEditProjectId}
+                onOpenMemberPicker={setShowMemberPickerForProject}
+                onRemoveMember={async (projectId, userId) => {
+                  if (!confirm('このドライバーを外しますか?')) return
+                  await removeProjectMember(projectId, userId)
+                  setExpandedProjectMembers((prev) =>
+                    prev.filter((m) => m.user_id !== userId),
+                  )
+                }}
+                onEnterAddPointMode={() => setAddPointMode(true)}
+                onCancelAddPointMode={() => setAddPointMode(false)}
+                onEditPoint={setEditingPoint}
+                onDeletePoint={async (pointId) => {
+                  if (!confirm('このポイントを削除しますか?')) return
+                  await deletePoint(pointId)
+                  setExpandedProjectPoints((prev) =>
+                    prev.filter((p) => p.id !== pointId),
+                  )
+                }}
+              />
+            </div>
+            <div className="p-3">
+              <UsersColumn
+                activeAssignments={activeAssignments}
+                vehicles={vehicles}
+                orgMembers={orgMembers}
+                loading={orgMembersLoading}
+                expandedUserId={expandedUserId}
+                expandedVehicleId={expandedVehicleId}
+                selectedSectionAssignmentIds={selectedSectionAssignmentIds}
+                ageMsForAssignment={ageMsForAssignment}
+                staleThresholdMs={STALE_THRESHOLD_MS}
+                forceLeaveBusyId={forceLeaveBusyId}
+                sectionHistoryTick={sectionHistoryTick}
+                onToggleExpandUser={toggleExpandUser}
+                onToggleExpandVehicle={toggleExpandVehicle}
+                onSelectSection={selectSection}
+                onSelectSectionsByDay={selectSectionsByDay}
+                onDeleteSection={handleDeleteSection}
+                onForceLeave={handleForceLeave}
+                onEditVehicle={setEditingVehicle}
+                onNewVehicle={() => setShowNewDialog(true)}
+                onInviteByPhone={() => setShowPhoneInvite(true)}
+              />
+            </div>
+            <div className="p-3">
+              <VehiclesColumn
+                activeAssignments={activeAssignments}
+                vehicles={vehicles}
+                orgMembers={orgMembers}
+                loading={orgMembersLoading}
+                expandedUserId={expandedUserId}
+                expandedVehicleId={expandedVehicleId}
+                selectedSectionAssignmentIds={selectedSectionAssignmentIds}
+                ageMsForAssignment={ageMsForAssignment}
+                staleThresholdMs={STALE_THRESHOLD_MS}
+                forceLeaveBusyId={forceLeaveBusyId}
+                sectionHistoryTick={sectionHistoryTick}
+                onToggleExpandUser={toggleExpandUser}
+                onToggleExpandVehicle={toggleExpandVehicle}
+                onSelectSection={selectSection}
+                onSelectSectionsByDay={selectSectionsByDay}
+                onDeleteSection={handleDeleteSection}
+                onForceLeave={handleForceLeave}
+                onEditVehicle={setEditingVehicle}
+                onNewVehicle={() => setShowNewDialog(true)}
+                onInviteByPhone={() => setShowPhoneInvite(true)}
+              />
+            </div>
           </div>
         </div>
 
@@ -2461,27 +2487,24 @@ interface FleetSidebarProps {
   onInviteByPhone: () => void
 }
 
-function FleetSidebar(props: FleetSidebarProps) {
+// ユーザー列: 稼働中ペア (上) + 未乗車ユーザー (下)
+function UsersColumn(props: FleetSidebarProps) {
   const {
     activeAssignments,
     vehicles,
     orgMembers,
     loading,
     expandedUserId,
-    expandedVehicleId,
     selectedSectionAssignmentIds,
     ageMsForAssignment,
     staleThresholdMs,
     forceLeaveBusyId,
     sectionHistoryTick,
     onToggleExpandUser,
-    onToggleExpandVehicle,
     onSelectSection,
     onSelectSectionsByDay,
     onDeleteSection,
     onForceLeave,
-    onEditVehicle,
-    onNewVehicle,
     onInviteByPhone,
   } = props
 
@@ -2504,7 +2527,6 @@ function FleetSidebar(props: FleetSidebarProps) {
         userInfo: memberByUserId.get(a.user_id) ?? null,
       })
     }
-    // ドライバー名でソート
     rows.sort((x, y) =>
       (x.assignment.driver_name ?? '').localeCompare(y.assignment.driver_name ?? ''),
     )
@@ -2515,35 +2537,22 @@ function FleetSidebar(props: FleetSidebarProps) {
     () => new Set(activePairs.map((p) => p.assignment.user_id)),
     [activePairs],
   )
-  const activeVehicleIds = useMemo(
-    () => new Set(activePairs.map((p) => p.vehicle?.id).filter((id): id is string => !!id)),
-    [activePairs],
-  )
   const inactiveUsers = useMemo(
     () => orgMembers.filter((m) => !activeUserIds.has(m.user_id)),
     [orgMembers, activeUserIds],
   )
-  const availableVehicles = useMemo(
-    () => vehicles.filter((v) => v.active && !activeVehicleIds.has(v.id)),
-    [vehicles, activeVehicleIds],
-  )
-  const retiredVehicles = useMemo(() => vehicles.filter((v) => !v.active), [vehicles])
 
   return (
-    <div className="space-y-5">
-      {/* 稼働中ペア (user + vehicle) */}
-      <section>
-        <div className="flex items-center gap-2 mb-2">
-          <div className="w-1 h-5 rounded bg-emerald-500" />
-          <h2 className="text-sm font-semibold text-slate-700 flex-1">
-            稼働中 ({activePairs.length})
-          </h2>
-        </div>
-        {activePairs.length === 0 ? (
-          <div className="p-3 bg-white rounded border text-xs text-slate-400 text-center">
-            現在乗車中のドライバーはいません
+    <div className="space-y-4">
+      {/* 稼働中ペア */}
+      {activePairs.length > 0 && (
+        <section>
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-1 h-5 rounded bg-emerald-500" />
+            <h2 className="text-sm font-semibold text-slate-700">
+              稼働中 ({activePairs.length})
+            </h2>
           </div>
-        ) : (
           <ul className="space-y-2">
             {activePairs.map(({ assignment, vehicle, userInfo }) => (
               <ActivePairCard
@@ -2571,10 +2580,10 @@ function FleetSidebar(props: FleetSidebarProps) {
               />
             ))}
           </ul>
-        )}
-      </section>
+        </section>
+      )}
 
-      {/* ユーザー (未乗車の組織メンバー) */}
+      {/* 未乗車ユーザー */}
       <section>
         <div className="flex items-center gap-2 mb-2">
           <div className="w-1 h-5 rounded bg-slate-400" />
@@ -2589,7 +2598,7 @@ function FleetSidebar(props: FleetSidebarProps) {
               title="電話番号でドライバーを招待する"
             >
               <Phone className="h-3 w-3" />
-              電話で招待
+              招待
             </button>
           )}
         </div>
@@ -2600,7 +2609,7 @@ function FleetSidebar(props: FleetSidebarProps) {
           </div>
         ) : inactiveUsers.length === 0 ? (
           <div className="p-3 bg-white rounded border text-xs text-slate-400 text-center">
-            全員乗車中 or メンバーがいません
+            全員乗車中 or メンバー未登録
           </div>
         ) : (
           <ul className="space-y-1.5">
@@ -2620,8 +2629,82 @@ function FleetSidebar(props: FleetSidebarProps) {
           </ul>
         )}
       </section>
+    </div>
+  )
+}
 
-      {/* 車両 (未使用) */}
+// 車両列: 稼働中車両 (ドライバー付き) + 未使用車両 + 廃止済み車両
+function VehiclesColumn(props: FleetSidebarProps) {
+  const {
+    activeAssignments,
+    vehicles,
+    expandedVehicleId,
+    selectedSectionAssignmentIds,
+    sectionHistoryTick,
+    onToggleExpandVehicle,
+    onSelectSection,
+    onSelectSectionsByDay,
+    onDeleteSection,
+    onEditVehicle,
+    onNewVehicle,
+  } = props
+
+  const activeVehicles = useMemo(() => {
+    const rows: { vehicle: Vehicle; assignment: AssignmentWithNames }[] = []
+    for (const [vid, a] of activeAssignments) {
+      const v = vehicles.find((x) => x.id === vid)
+      if (v) rows.push({ vehicle: v, assignment: a })
+    }
+    rows.sort((x, y) => x.vehicle.name.localeCompare(y.vehicle.name))
+    return rows
+  }, [activeAssignments, vehicles])
+
+  const activeVehicleIds = useMemo(
+    () => new Set(activeVehicles.map((r) => r.vehicle.id)),
+    [activeVehicles],
+  )
+  const availableVehicles = useMemo(
+    () => vehicles.filter((v) => v.active && !activeVehicleIds.has(v.id)),
+    [vehicles, activeVehicleIds],
+  )
+  const retiredVehicles = useMemo(
+    () => vehicles.filter((v) => !v.active),
+    [vehicles],
+  )
+
+  return (
+    <div className="space-y-4">
+      {/* 稼働中車両 */}
+      {activeVehicles.length > 0 && (
+        <section>
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-1 h-5 rounded bg-emerald-500" />
+            <h2 className="text-sm font-semibold text-slate-700">
+              稼働中 ({activeVehicles.length})
+            </h2>
+          </div>
+          <ul className="space-y-1.5">
+            {activeVehicles.map(({ vehicle, assignment }) => (
+              <VehicleRow
+                key={vehicle.id}
+                vehicle={vehicle}
+                active={true}
+                activeAssignment={assignment}
+                expanded={expandedVehicleId === vehicle.id}
+                selectedIds={selectedSectionAssignmentIds}
+                onSelectSectionsByDay={onSelectSectionsByDay}
+                onToggleExpand={() => onToggleExpandVehicle(vehicle.id)}
+                onSelect={onSelectSection}
+                onDeleteSection={onDeleteSection}
+                historyReloadKey={sectionHistoryTick}
+                onEdit={() => onEditVehicle(vehicle)}
+              />
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {/* 未使用車両 */}
       <section>
         <div className="flex items-center gap-2 mb-2">
           <div className="w-1 h-5 rounded bg-indigo-500" />
@@ -2634,12 +2717,12 @@ function FleetSidebar(props: FleetSidebarProps) {
             className="flex items-center gap-1 px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700"
           >
             <Plus className="h-3 w-3" />
-            新規車両
+            新規
           </button>
         </div>
         {availableVehicles.length === 0 ? (
           <div className="p-3 bg-white rounded border text-xs text-slate-400 text-center">
-            全車両稼働中 or 未登録
+            未登録 or 全車両稼働中
           </div>
         ) : (
           <ul className="space-y-1.5">
@@ -2669,7 +2752,7 @@ function FleetSidebar(props: FleetSidebarProps) {
           <div className="flex items-center gap-2 mb-2">
             <div className="w-1 h-5 rounded bg-slate-400" />
             <h3 className="text-xs font-medium text-slate-500">
-              廃止済み車両 ({retiredVehicles.length})
+              廃止済み ({retiredVehicles.length})
             </h3>
           </div>
           <ul className="space-y-1.5 opacity-60">
