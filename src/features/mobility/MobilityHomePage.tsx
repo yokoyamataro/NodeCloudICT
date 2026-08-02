@@ -167,26 +167,35 @@ export function MobilityHomePage() {
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null)
   // 運行履歴で選択中の「セクション」(1 回の乗車 = 1 assignment)。単選択。
   // 選択されている間、その assignment の軌跡だけが地図に表示される。
-  const [selectedSectionAssignmentId, setSelectedSectionAssignmentId] =
-    useState<string | null>(null)
+  // 運行履歴で選択中のセクション id 群 (0 or 1 or 複数)。
+  //   - セクション行タップ: 単選択トグル ([id] ↔ [])
+  //   - 日ヘッダタップ: その日全部 (完全一致なら解除)
+  const [selectedSectionAssignmentIds, setSelectedSectionAssignmentIds] =
+    useState<string[]>([])
 
   const selectSection = useCallback((assignmentId: string) => {
-    setSelectedSectionAssignmentId((prev) =>
-      prev === assignmentId ? null : assignmentId,
+    setSelectedSectionAssignmentIds((prev) =>
+      prev.length === 1 && prev[0] === assignmentId ? [] : [assignmentId],
     )
   }, [])
 
-  // FleetMapView は複数対応 (extraTrackAssignmentIds[]) のままなので、
-  // 0 or 1 要素の配列に包んで渡す
-  const selectedSectionIdArr = useMemo(
-    () => (selectedSectionAssignmentId ? [selectedSectionAssignmentId] : []),
-    [selectedSectionAssignmentId],
-  )
+  const selectSectionsByDay = useCallback((assignmentIds: string[]) => {
+    setSelectedSectionAssignmentIds((prev) => {
+      // 完全一致トグル解除
+      if (
+        prev.length === assignmentIds.length &&
+        prev.every((id) => assignmentIds.includes(id))
+      ) {
+        return []
+      }
+      return assignmentIds
+    })
+  }, [])
 
   const toggleExpandVehicle = useCallback((vehicleId: string) => {
     setExpandedVehicleId((prev) => (prev === vehicleId ? null : vehicleId))
     setExpandedUserId(null)
-    setSelectedSectionAssignmentId(null)
+    setSelectedSectionAssignmentIds([])
   }, [])
 
   // 追跡対象の assignment id を導出:
@@ -225,7 +234,7 @@ export function MobilityHomePage() {
   const toggleExpandUser = useCallback((userId: string) => {
     setExpandedUserId((prev) => (prev === userId ? null : userId))
     setExpandedVehicleId(null)
-    setSelectedSectionAssignmentId(null)
+    setSelectedSectionAssignmentIds([])
   }, [])
 
   // ユーザー一覧を取得。運行現場のメンバー割当ダイアログでも使うので mode 問わず取得。
@@ -353,18 +362,13 @@ export function MobilityHomePage() {
         alert(`削除に失敗しました: ${res.error}`)
         return
       }
-      if (selectedSectionAssignmentId === assignmentId) {
-        setSelectedSectionAssignmentId(null)
-      }
+      setSelectedSectionAssignmentIds((prev) =>
+        prev.filter((id) => id !== assignmentId),
+      )
       if (orgId) await fetchActiveAssignments(orgId)
       setSectionHistoryTick((n) => n + 1)
     },
-    [
-      deleteAssignment,
-      selectedSectionAssignmentId,
-      fetchActiveAssignments,
-      orgId,
-    ],
+    [deleteAssignment, fetchActiveAssignments, orgId],
   )
 
   if (!canUse) return <Navigate to="/" replace />
@@ -409,7 +413,7 @@ export function MobilityHomePage() {
             loading={orgMembersLoading}
             expandedUserId={expandedUserId}
             expandedVehicleId={expandedVehicleId}
-            selectedSectionAssignmentId={selectedSectionAssignmentId}
+            selectedSectionAssignmentIds={selectedSectionAssignmentIds}
             ageMsForAssignment={ageMsForAssignment}
             staleThresholdMs={STALE_THRESHOLD_MS}
             forceLeaveBusyId={forceLeaveBusyId}
@@ -417,6 +421,7 @@ export function MobilityHomePage() {
             onToggleExpandUser={toggleExpandUser}
             onToggleExpandVehicle={toggleExpandVehicle}
             onSelectSection={selectSection}
+            onSelectSectionsByDay={selectSectionsByDay}
             onDeleteSection={handleDeleteSection}
             onForceLeave={handleForceLeave}
             onEditVehicle={setEditingVehicle}
@@ -429,7 +434,7 @@ export function MobilityHomePage() {
         <div className="h-64 lg:h-auto lg:flex-1 relative border-b lg:border-b-0 lg:border-r">
           <FleetMapView
             organizationId={orgId}
-            extraTrackAssignmentIds={selectedSectionIdArr}
+            extraTrackAssignmentIds={selectedSectionAssignmentIds}
             projectPoints={expandedProjectPoints}
             highlightPointId={editingPoint?.id ?? null}
             addPointMode={addPointMode}
@@ -677,9 +682,10 @@ function VehicleRow({
   active,
   activeAssignment,
   expanded,
-  selectedId,
+  selectedIds,
   onToggleExpand,
   onSelect,
+  onSelectSectionsByDay,
   onDeleteSection,
   historyReloadKey,
   onEdit,
@@ -688,9 +694,10 @@ function VehicleRow({
   active: boolean
   activeAssignment: AssignmentWithNames | null
   expanded: boolean
-  selectedId: string | null
+  selectedIds: string[]
   onToggleExpand: () => void
   onSelect: (assignmentId: string) => void
+  onSelectSectionsByDay: (assignmentIds: string[]) => void
   onDeleteSection?: (assignmentId: string, label: string) => void
   historyReloadKey?: number
   onEdit: () => void
@@ -755,7 +762,8 @@ function VehicleRow({
         <VehicleInlineDetail
           vehicleId={vehicle.id}
           activeAssignment={activeAssignment}
-          selectedId={selectedId}
+          selectedIds={selectedIds}
+      onSelectSectionsByDay={onSelectSectionsByDay}
           onSelect={onSelect}
           onDeleteSection={onDeleteSection}
           historyReloadKey={historyReloadKey}
@@ -1113,8 +1121,9 @@ interface HistoryDetailProps {
   currentSpeedKmh: number | null
   todayDistanceM: number
   distanceLabel: string
-  selectedId: string | null
+  selectedIds: string[]
   onSelect: (assignmentId: string) => void
+  onSelectSectionsByDay: (assignmentIds: string[]) => void
   /** 削除ボタン用。null なら削除ボタンを出さない */
   onDeleteSection?: (assignmentId: string, label: string) => void
   /** 履歴の 1 行に何を「主タイトル」として出すか。車両詳細ならドライバー名、ユーザー詳細なら車両名 */
@@ -1128,8 +1137,9 @@ function InlineDetailBody({
   currentSpeedKmh,
   todayDistanceM,
   distanceLabel,
-  selectedId,
+  selectedIds,
   onSelect,
+  onSelectSectionsByDay,
   onDeleteSection,
   primaryLabel,
 }: HistoryDetailProps) {
@@ -1166,7 +1176,7 @@ function InlineDetailBody({
             <Loader2 className="h-3 w-3 text-slate-400 animate-spin" />
           )}
           <span className="text-[10px] text-slate-500">
-            クリックで地図に軌跡
+            日/セクションをタップ
           </span>
         </div>
         {history.length === 0 && !historyLoading ? (
@@ -1174,105 +1184,254 @@ function InlineDetailBody({
             履歴はありません
           </div>
         ) : (
-          <ul className="space-y-1">
-            {history.map((a) => {
-              const isSelected = selectedId === a.id
-              const rowsToday = positionsByAssignment.get(a.id)
-              const distanceKm = rowsToday
-                ? computeTotalDistanceMeters(rowsToday) / 1000
-                : null
-              return (
-                <li key={a.id}>
-                  <div
-                    className={`flex items-center rounded border text-[11px] transition ${
-                      isSelected
-                        ? 'bg-indigo-50 ring-2 ring-indigo-500 border-indigo-500'
-                        : 'bg-white hover:border-indigo-400'
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => onSelect(a.id)}
-                      className="flex-1 flex items-center gap-2 p-2 text-left min-w-0"
-                      title={
-                        isSelected
-                          ? '選択中 (もう一度クリックで解除)'
-                          : 'クリックでこのセクションの軌跡を地図に表示'
-                      }
-                    >
-                      <span
-                        className={`inline-block h-2 w-2 rounded-full shrink-0 ${
-                          isSelected ? 'bg-indigo-600' : 'bg-slate-300'
-                        }`}
-                      />
-                      <span
-                        className={`flex-1 min-w-0 truncate ${
-                          isSelected
-                            ? 'font-semibold text-indigo-800'
-                            : 'font-medium'
-                        }`}
-                      >
-                        {primaryLabel(a)}
-                      </span>
-                      <span className="text-slate-500 shrink-0">
-                        {new Date(a.started_at).toLocaleString('ja-JP', {
-                          month: '2-digit',
-                          day: '2-digit',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                        {a.ended_at ? (
-                          <>
-                            {' '}
-                            〜{' '}
-                            {new Date(a.ended_at).toLocaleTimeString('ja-JP', {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
-                          </>
-                        ) : (
-                          <span className="ml-1 text-emerald-600">(稼働中)</span>
-                        )}
-                      </span>
-                      <span
-                        className="text-slate-500 shrink-0 w-12 text-right font-medium"
-                        title={
-                          distanceKm != null
-                            ? '本日ログから計算した走行距離'
-                            : '本日以外の割当のため距離は非表示'
-                        }
-                      >
-                        {distanceKm != null ? `${distanceKm.toFixed(1)}km` : '—'}
-                      </span>
-                    </button>
-                    {onDeleteSection && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          const label = `${primaryLabel(a)} · ${new Date(
-                            a.started_at,
-                          ).toLocaleString('ja-JP', {
-                            month: '2-digit',
-                            day: '2-digit',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}`
-                          onDeleteSection(a.id, label)
-                        }}
-                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 shrink-0 rounded-r"
-                        title="このセクションを削除 (位置ログも消える)"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
+          <DayGroupedHistory
+            history={history}
+            positionsByAssignment={positionsByAssignment}
+            selectedIds={selectedIds}
+            onSelect={onSelect}
+            onSelectSectionsByDay={onSelectSectionsByDay}
+            onDeleteSection={onDeleteSection}
+            primaryLabel={primaryLabel}
+          />
         )}
       </div>
+    </div>
+  )
+}
+
+// 履歴を「日ごと」にまとめて表示。日ヘッダをクリックするとその日全部のセクションが
+// 選択される (再クリックで解除)。セクション行のクリックは従来通り単選択。
+function DayGroupedHistory({
+  history,
+  positionsByAssignment,
+  selectedIds,
+  onSelect,
+  onSelectSectionsByDay,
+  onDeleteSection,
+  primaryLabel,
+}: {
+  history: AssignmentWithNames[]
+  positionsByAssignment: Map<string, MobilityPosition[]>
+  selectedIds: string[]
+  onSelect: (assignmentId: string) => void
+  onSelectSectionsByDay: (assignmentIds: string[]) => void
+  onDeleteSection?: (assignmentId: string, label: string) => void
+  primaryLabel: (a: AssignmentWithNames) => string
+}) {
+  // 日ラベル (今日 / 昨日 / M/D)
+  const groupKey = (iso: string): string => {
+    const d = new Date(iso)
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const yesterday = new Date(today)
+    yesterday.setDate(today.getDate() - 1)
+    const start = new Date(d)
+    start.setHours(0, 0, 0, 0)
+    if (start.getTime() === today.getTime()) return '今日'
+    if (start.getTime() === yesterday.getTime()) return '昨日'
+    return `${start.getMonth() + 1}/${start.getDate()}`
+  }
+  const grouped = useMemo(() => {
+    const map = new Map<string, AssignmentWithNames[]>()
+    for (const a of history) {
+      const k = groupKey(a.started_at)
+      const arr = map.get(k)
+      if (arr) arr.push(a)
+      else map.set(k, [a])
+    }
+    return Array.from(map.entries())
+  }, [history])
+
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
+  const [expandedDays, setExpandedDays] = useState<Set<string>>(
+    () => new Set(['今日']),
+  )
+  const toggleDay = (day: string) => {
+    setExpandedDays((prev) => {
+      const next = new Set(prev)
+      if (next.has(day)) next.delete(day)
+      else next.add(day)
+      return next
+    })
+  }
+
+  const dayAllSelected = (dayIds: string[]) =>
+    dayIds.length > 0 && dayIds.every((id) => selectedSet.has(id))
+  const daySomeSelected = (dayIds: string[]) =>
+    dayIds.some((id) => selectedSet.has(id))
+
+  // 日ごとの合計走行距離
+  const dayTotalKm = (dayIds: string[]) => {
+    let m = 0
+    for (const id of dayIds) {
+      const rows = positionsByAssignment.get(id)
+      if (rows) m += computeTotalDistanceMeters(rows)
+    }
+    return m / 1000
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {grouped.map(([day, rows]) => {
+        const dayIds = rows.map((a) => a.id)
+        const isDayAll = dayAllSelected(dayIds)
+        const isDaySome = !isDayAll && daySomeSelected(dayIds)
+        const dayKm = dayTotalKm(dayIds)
+        const isExpanded = expandedDays.has(day)
+        return (
+          <div key={day} className="rounded border overflow-hidden bg-white">
+            {/* 日ヘッダ */}
+            <div
+              className={`flex items-center border-b ${
+                isDayAll
+                  ? 'bg-indigo-100 border-indigo-300'
+                  : isDaySome
+                    ? 'bg-indigo-50'
+                    : 'bg-slate-50'
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => onSelectSectionsByDay(dayIds)}
+                className="flex-1 flex items-center gap-2 px-2.5 py-1.5 text-left"
+                title={
+                  isDayAll
+                    ? 'クリックでこの日の選択を全解除'
+                    : 'クリックでこの日 1 日分の軌跡を地図に表示'
+                }
+              >
+                <span
+                  className={`inline-block h-2.5 w-2.5 rounded-sm shrink-0 border ${
+                    isDayAll
+                      ? 'bg-indigo-600 border-indigo-700'
+                      : isDaySome
+                        ? 'bg-indigo-300 border-indigo-500'
+                        : 'bg-white border-slate-400'
+                  }`}
+                />
+                <span
+                  className={`text-xs font-semibold flex-1 ${
+                    isDayAll ? 'text-indigo-900' : 'text-slate-700'
+                  }`}
+                >
+                  {day}
+                </span>
+                <span className="text-[10px] text-slate-500 shrink-0">
+                  {rows.length} 回 · {dayKm.toFixed(1)} km
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => toggleDay(day)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 shrink-0"
+                title={isExpanded ? '折りたたむ' : '内訳を表示'}
+              >
+                <ChevronDown
+                  className={`h-3.5 w-3.5 transition-transform ${
+                    isExpanded ? 'rotate-180' : ''
+                  }`}
+                />
+              </button>
+            </div>
+            {/* セクション明細 */}
+            {isExpanded && (
+              <ul className="divide-y">
+                {rows.map((a) => {
+                  const isSelected = selectedSet.has(a.id)
+                  const posRows = positionsByAssignment.get(a.id)
+                  const distanceKm = posRows
+                    ? computeTotalDistanceMeters(posRows) / 1000
+                    : null
+                  return (
+                    <li
+                      key={a.id}
+                      className={`flex items-center text-[11px] transition ${
+                        isSelected ? 'bg-indigo-50' : 'hover:bg-slate-50'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => onSelect(a.id)}
+                        className="flex-1 flex items-center gap-2 px-2.5 py-1.5 text-left min-w-0"
+                        title={
+                          isSelected
+                            ? '選択中 (もう一度クリックで解除)'
+                            : 'クリックでこのセクションだけを表示'
+                        }
+                      >
+                        <span
+                          className={`inline-block h-2 w-2 rounded-full shrink-0 ${
+                            isSelected ? 'bg-indigo-600' : 'bg-slate-300'
+                          }`}
+                        />
+                        <span
+                          className={`flex-1 min-w-0 truncate ${
+                            isSelected
+                              ? 'font-semibold text-indigo-800'
+                              : 'font-medium text-slate-700'
+                          }`}
+                        >
+                          {primaryLabel(a)}
+                        </span>
+                        <span className="text-slate-500 shrink-0">
+                          {new Date(a.started_at).toLocaleTimeString('ja-JP', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                          {a.ended_at ? (
+                            <>
+                              {' 〜 '}
+                              {new Date(a.ended_at).toLocaleTimeString('ja-JP', {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </>
+                          ) : (
+                            <span className="ml-1 text-emerald-600">(稼働中)</span>
+                          )}
+                        </span>
+                        <span
+                          className="text-slate-500 shrink-0 w-12 text-right font-medium"
+                          title={
+                            distanceKm != null
+                              ? '本日ログから計算した走行距離'
+                              : '本日以外の割当のため距離は非表示'
+                          }
+                        >
+                          {distanceKm != null
+                            ? `${distanceKm.toFixed(1)}km`
+                            : '—'}
+                        </span>
+                      </button>
+                      {onDeleteSection && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            const label = `${primaryLabel(a)} · ${new Date(
+                              a.started_at,
+                            ).toLocaleString('ja-JP', {
+                              month: '2-digit',
+                              day: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}`
+                            onDeleteSection(a.id, label)
+                          }}
+                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 shrink-0"
+                          title="このセクションを削除 (位置ログも消える)"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -1280,15 +1439,17 @@ function InlineDetailBody({
 function VehicleInlineDetail({
   vehicleId,
   activeAssignment,
-  selectedId,
+  selectedIds,
   onSelect,
+  onSelectSectionsByDay,
   onDeleteSection,
   historyReloadKey,
 }: {
   vehicleId: string
   activeAssignment: AssignmentWithNames | null
-  selectedId: string | null
+  selectedIds: string[]
   onSelect: (assignmentId: string) => void
+  onSelectSectionsByDay: (assignmentIds: string[]) => void
   onDeleteSection?: (assignmentId: string, label: string) => void
   historyReloadKey?: number
 }) {
@@ -1375,7 +1536,8 @@ function VehicleInlineDetail({
       currentSpeedKmh={currentSpeedKmh}
       todayDistanceM={todayDistanceM}
       distanceLabel="本日走行 (この車両)"
-      selectedId={selectedId}
+      selectedIds={selectedIds}
+      onSelectSectionsByDay={onSelectSectionsByDay}
       onSelect={onSelect}
       onDeleteSection={onDeleteSection}
       primaryLabel={(a) => a.driver_name || '(名前未設定)'}
@@ -1386,15 +1548,17 @@ function VehicleInlineDetail({
 function UserInlineDetail({
   userId,
   activeAssignment,
-  selectedId,
+  selectedIds,
   onSelect,
+  onSelectSectionsByDay,
   onDeleteSection,
   historyReloadKey,
 }: {
   userId: string
   activeAssignment: AssignmentWithNames | null
-  selectedId: string | null
+  selectedIds: string[]
   onSelect: (assignmentId: string) => void
+  onSelectSectionsByDay: (assignmentIds: string[]) => void
   onDeleteSection?: (assignmentId: string, label: string) => void
   historyReloadKey?: number
 }) {
@@ -1481,7 +1645,8 @@ function UserInlineDetail({
       currentSpeedKmh={currentSpeedKmh}
       todayDistanceM={todayDistanceM}
       distanceLabel="本日走行 (この人)"
-      selectedId={selectedId}
+      selectedIds={selectedIds}
+      onSelectSectionsByDay={onSelectSectionsByDay}
       onSelect={onSelect}
       onDeleteSection={onDeleteSection}
       primaryLabel={(a) => vehiclesById.get(a.vehicle_id)?.name ?? '(不明車両)'}
@@ -2278,7 +2443,7 @@ interface FleetSidebarProps {
   loading: boolean
   expandedUserId: string | null
   expandedVehicleId: string | null
-  selectedSectionAssignmentId: string | null
+  selectedSectionAssignmentIds: string[]
   ageMsForAssignment: (assignmentId: string) => number | null
   staleThresholdMs: number
   forceLeaveBusyId: string | null
@@ -2286,6 +2451,7 @@ interface FleetSidebarProps {
   onToggleExpandUser: (userId: string) => void
   onToggleExpandVehicle: (vehicleId: string) => void
   onSelectSection: (assignmentId: string) => void
+  onSelectSectionsByDay: (assignmentIds: string[]) => void
   onDeleteSection: (assignmentId: string, label: string) => void
   onForceLeave: (
     assignmentId: string,
@@ -2305,7 +2471,7 @@ function FleetSidebar(props: FleetSidebarProps) {
     loading,
     expandedUserId,
     expandedVehicleId,
-    selectedSectionAssignmentId,
+    selectedSectionAssignmentIds,
     ageMsForAssignment,
     staleThresholdMs,
     forceLeaveBusyId,
@@ -2313,6 +2479,7 @@ function FleetSidebar(props: FleetSidebarProps) {
     onToggleExpandUser,
     onToggleExpandVehicle,
     onSelectSection,
+    onSelectSectionsByDay,
     onDeleteSection,
     onForceLeave,
     onEditVehicle,
@@ -2398,7 +2565,8 @@ function FleetSidebar(props: FleetSidebarProps) {
                     vehicle?.name ?? '(不明車両)',
                   )
                 }
-                selectedId={selectedSectionAssignmentId}
+                selectedIds={selectedSectionAssignmentIds}
+                onSelectSectionsByDay={onSelectSectionsByDay}
                 onSelect={onSelectSection}
                 onDeleteSection={onDeleteSection}
                 historyReloadKey={sectionHistoryTick}
@@ -2444,7 +2612,8 @@ function FleetSidebar(props: FleetSidebarProps) {
                 member={m}
                 expanded={expandedUserId === m.user_id}
                 onToggleExpand={() => onToggleExpandUser(m.user_id)}
-                selectedId={selectedSectionAssignmentId}
+                selectedIds={selectedSectionAssignmentIds}
+                onSelectSectionsByDay={onSelectSectionsByDay}
                 onSelect={onSelectSection}
                 onDeleteSection={onDeleteSection}
                 historyReloadKey={sectionHistoryTick}
@@ -2483,7 +2652,8 @@ function FleetSidebar(props: FleetSidebarProps) {
                 active={false}
                 activeAssignment={null}
                 expanded={expandedVehicleId === v.id}
-                selectedId={selectedSectionAssignmentId}
+                selectedIds={selectedSectionAssignmentIds}
+                onSelectSectionsByDay={onSelectSectionsByDay}
                 onToggleExpand={() => onToggleExpandVehicle(v.id)}
                 onSelect={onSelectSection}
                 onDeleteSection={onDeleteSection}
@@ -2512,7 +2682,8 @@ function FleetSidebar(props: FleetSidebarProps) {
                 active={false}
                 activeAssignment={null}
                 expanded={expandedVehicleId === v.id}
-                selectedId={selectedSectionAssignmentId}
+                selectedIds={selectedSectionAssignmentIds}
+                onSelectSectionsByDay={onSelectSectionsByDay}
                 onToggleExpand={() => onToggleExpandVehicle(v.id)}
                 onSelect={onSelectSection}
                 onDeleteSection={onDeleteSection}
@@ -2538,8 +2709,9 @@ function ActivePairCard({
   forceLeaveBusyId,
   onToggleExpand,
   onForceLeave,
-  selectedId,
+  selectedIds,
   onSelect,
+  onSelectSectionsByDay,
   onDeleteSection,
   historyReloadKey,
 }: {
@@ -2552,11 +2724,13 @@ function ActivePairCard({
   forceLeaveBusyId: string | null
   onToggleExpand: () => void
   onForceLeave: () => void
-  selectedId: string | null
+  selectedIds: string[]
   onSelect: (assignmentId: string) => void
+  onSelectSectionsByDay: (assignmentIds: string[]) => void
   onDeleteSection: (assignmentId: string, label: string) => void
   historyReloadKey: number
 }) {
+  const noPositionsYet = ageMs == null
   const stale = ageMs != null && ageMs > staleThresholdMs
   const VIcon = vehicle ? KIND_ICON[vehicle.kind] : Car
   return (
@@ -2587,7 +2761,14 @@ function ActivePairCard({
               </div>
             )}
           </div>
-          {stale ? (
+          {noPositionsYet ? (
+            <span
+              className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-amber-100 text-amber-700 border border-amber-300"
+              title="このセッション中に位置ログを 1 件も受け取っていません。ドライバー端末の自動送信 ON を確認してください。"
+            >
+              📡 位置未受信
+            </span>
+          ) : stale ? (
             <span
               className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-red-100 text-red-700 border border-red-300"
               title={ageMs != null ? `最終 ping から ${formatAgeShort(ageMs)}` : ''}
@@ -2667,7 +2848,8 @@ function ActivePairCard({
         <UserInlineDetail
           userId={assignment.user_id}
           activeAssignment={assignment}
-          selectedId={selectedId}
+          selectedIds={selectedIds}
+      onSelectSectionsByDay={onSelectSectionsByDay}
           onSelect={onSelect}
           onDeleteSection={onDeleteSection}
           historyReloadKey={historyReloadKey}
@@ -2682,16 +2864,18 @@ function InactiveUserCard({
   member,
   expanded,
   onToggleExpand,
-  selectedId,
+  selectedIds,
   onSelect,
+  onSelectSectionsByDay,
   onDeleteSection,
   historyReloadKey,
 }: {
   member: OrgMemberRow
   expanded: boolean
   onToggleExpand: () => void
-  selectedId: string | null
+  selectedIds: string[]
   onSelect: (assignmentId: string) => void
+  onSelectSectionsByDay: (assignmentIds: string[]) => void
   onDeleteSection: (assignmentId: string, label: string) => void
   historyReloadKey: number
 }) {
@@ -2736,7 +2920,8 @@ function InactiveUserCard({
         <UserInlineDetail
           userId={member.user_id}
           activeAssignment={null}
-          selectedId={selectedId}
+          selectedIds={selectedIds}
+      onSelectSectionsByDay={onSelectSectionsByDay}
           onSelect={onSelect}
           onDeleteSection={onDeleteSection}
           historyReloadKey={historyReloadKey}
