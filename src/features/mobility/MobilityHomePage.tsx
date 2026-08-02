@@ -2542,16 +2542,36 @@ function UsersColumn(props: FleetSidebarProps) {
     [orgMembers, activeUserIds],
   )
 
+  const totalUsers = activePairs.length + inactiveUsers.length
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
+      {/* 親タイトル: ユーザー (合計) */}
+      <div className="flex items-center gap-2">
+        <div className="w-1 h-5 rounded bg-indigo-500" />
+        <h2 className="text-sm font-semibold text-slate-700 flex-1">
+          ユーザー ({totalUsers})
+        </h2>
+        {PHONE_INVITE_ENABLED && (
+          <button
+            type="button"
+            onClick={onInviteByPhone}
+            className="flex items-center gap-1 px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700"
+            title="電話番号でドライバーを招待する"
+          >
+            <Phone className="h-3 w-3" />
+            招待
+          </button>
+        )}
+      </div>
+
       {/* 稼働中ペア */}
       {activePairs.length > 0 && (
         <section>
-          <div className="flex items-center gap-2 mb-2">
-            <div className="w-1 h-5 rounded bg-emerald-500" />
-            <h2 className="text-sm font-semibold text-slate-700">
+          <div className="flex items-center gap-2 mb-1.5 pl-1">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            <h3 className="text-xs font-medium text-slate-500">
               稼働中 ({activePairs.length})
-            </h2>
+            </h3>
           </div>
           <ul className="space-y-2">
             {activePairs.map(({ assignment, vehicle, userInfo }) => (
@@ -2583,24 +2603,13 @@ function UsersColumn(props: FleetSidebarProps) {
         </section>
       )}
 
-      {/* 未乗車ユーザー */}
+      {/* 待機中ユーザー */}
       <section>
-        <div className="flex items-center gap-2 mb-2">
-          <div className="w-1 h-5 rounded bg-slate-400" />
-          <h2 className="text-sm font-semibold text-slate-700 flex-1">
-            ユーザー ({inactiveUsers.length})
-          </h2>
-          {PHONE_INVITE_ENABLED && (
-            <button
-              type="button"
-              onClick={onInviteByPhone}
-              className="flex items-center gap-1 px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700"
-              title="電話番号でドライバーを招待する"
-            >
-              <Phone className="h-3 w-3" />
-              招待
-            </button>
-          )}
+        <div className="flex items-center gap-2 mb-1.5 pl-1">
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-slate-400" />
+          <h3 className="text-xs font-medium text-slate-500">
+            待機中 ({inactiveUsers.length})
+          </h3>
         </div>
         {loading ? (
           <div className="p-4 text-center text-slate-400">
@@ -2672,16 +2681,34 @@ function VehiclesColumn(props: FleetSidebarProps) {
     [vehicles],
   )
 
+  const totalVehicles =
+    activeVehicles.length + availableVehicles.length + retiredVehicles.length
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
+      {/* 親タイトル: 車両 (合計) */}
+      <div className="flex items-center gap-2">
+        <div className="w-1 h-5 rounded bg-indigo-500" />
+        <h2 className="text-sm font-semibold text-slate-700 flex-1">
+          車両 ({totalVehicles})
+        </h2>
+        <button
+          type="button"
+          onClick={onNewVehicle}
+          className="flex items-center gap-1 px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700"
+        >
+          <Plus className="h-3 w-3" />
+          新規
+        </button>
+      </div>
+
       {/* 稼働中車両 */}
       {activeVehicles.length > 0 && (
         <section>
-          <div className="flex items-center gap-2 mb-2">
-            <div className="w-1 h-5 rounded bg-emerald-500" />
-            <h2 className="text-sm font-semibold text-slate-700">
+          <div className="flex items-center gap-2 mb-1.5 pl-1">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            <h3 className="text-xs font-medium text-slate-500">
               稼働中 ({activeVehicles.length})
-            </h2>
+            </h3>
           </div>
           <ul className="space-y-1.5">
             {activeVehicles.map(({ vehicle, assignment }) => (
@@ -2704,21 +2731,13 @@ function VehiclesColumn(props: FleetSidebarProps) {
         </section>
       )}
 
-      {/* 未使用車両 */}
+      {/* 待機中車両 */}
       <section>
-        <div className="flex items-center gap-2 mb-2">
-          <div className="w-1 h-5 rounded bg-indigo-500" />
-          <h2 className="text-sm font-semibold text-slate-700 flex-1">
-            車両 ({availableVehicles.length})
-          </h2>
-          <button
-            type="button"
-            onClick={onNewVehicle}
-            className="flex items-center gap-1 px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700"
-          >
-            <Plus className="h-3 w-3" />
-            新規
-          </button>
+        <div className="flex items-center gap-2 mb-1.5 pl-1">
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-slate-400" />
+          <h3 className="text-xs font-medium text-slate-500">
+            待機中 ({availableVehicles.length})
+          </h3>
         </div>
         {availableVehicles.length === 0 ? (
           <div className="p-3 bg-white rounded border text-xs text-slate-400 text-center">
@@ -2749,8 +2768,8 @@ function VehiclesColumn(props: FleetSidebarProps) {
       {/* 廃止済み車両 */}
       {retiredVehicles.length > 0 && (
         <section>
-          <div className="flex items-center gap-2 mb-2">
-            <div className="w-1 h-5 rounded bg-slate-400" />
+          <div className="flex items-center gap-2 mb-1.5 pl-1">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-slate-300" />
             <h3 className="text-xs font-medium text-slate-500">
               廃止済み ({retiredVehicles.length})
             </h3>
@@ -2827,64 +2846,40 @@ function ActivePairCard({
         onClick={onToggleExpand}
         className="w-full text-left"
       >
-        {/* User part */}
-        <div className="flex items-center gap-3 p-3">
-          <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
-            <User className="h-4 w-4 text-emerald-700" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-slate-800 truncate">
-              {assignment.driver_name || userInfo?.email || '(名前未設定)'}
+        {/* User + Vehicle 横並び (glued with border-l on vehicle) */}
+        <div className="flex items-stretch">
+          {/* User part */}
+          <div className="flex items-center gap-2 p-2 flex-1 min-w-0">
+            <div className="h-7 w-7 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
+              <User className="h-3.5 w-3.5 text-emerald-700" />
             </div>
-            {userInfo?.email && assignment.driver_name && (
-              <div className="text-[10px] text-slate-500 truncate">
-                {userInfo.email}
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-medium text-slate-800 truncate">
+                {assignment.driver_name || userInfo?.email || '(名前未設定)'}
               </div>
-            )}
-          </div>
-          {noPositionsYet ? (
-            <span
-              className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-amber-100 text-amber-700 border border-amber-300"
-              title="このセッション中に位置ログを 1 件も受け取っていません。ドライバー端末の自動送信 ON を確認してください。"
-            >
-              📡 位置未受信
-            </span>
-          ) : stale ? (
-            <span
-              className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-red-100 text-red-700 border border-red-300"
-              title={ageMs != null ? `最終 ping から ${formatAgeShort(ageMs)}` : ''}
-            >
-              ⚠ 通信断 {ageMs != null && formatAgeShort(ageMs)}
-            </span>
-          ) : (
-            <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-700 border border-emerald-300">
-              乗車中
-            </span>
-          )}
-          <ChevronDown
-            className={`h-4 w-4 text-slate-400 shrink-0 transition-transform ${
-              expanded ? 'rotate-180' : ''
-            }`}
-          />
-        </div>
-        {/* Vehicle part (glued below with border-top) */}
-        <div className="flex items-center gap-3 px-3 pb-2.5 pt-1.5 border-t bg-slate-50/60">
-          <div className="h-6 w-6 rounded-full bg-indigo-100 flex items-center justify-center shrink-0 ml-1">
-            <VIcon className="h-3.5 w-3.5 text-indigo-600" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="text-xs font-semibold text-slate-700 truncate">
-              {vehicle?.name ?? '(不明車両)'}
-              {vehicle?.plate_or_serial && (
-                <span className="text-slate-400 ml-1.5 font-normal">
-                  ({vehicle.plate_or_serial})
-                </span>
+              {userInfo?.email && assignment.driver_name && (
+                <div className="text-[10px] text-slate-500 truncate">
+                  {userInfo.email}
+                </div>
               )}
             </div>
-            <div className="text-[10px] text-slate-500 flex items-center gap-1 mt-0.5">
-              {vehicle && <span>{KIND_LABEL[vehicle.kind]}</span>}
-              <span>·</span>
-              <span>
+          </div>
+          {/* Vehicle part (右側にくっつけて) */}
+          <div className="flex items-center gap-2 p-2 flex-1 min-w-0 border-l bg-slate-50/60">
+            <div className="h-7 w-7 rounded-full bg-indigo-100 flex items-center justify-center shrink-0">
+              <VIcon className="h-3.5 w-3.5 text-indigo-600" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-semibold text-slate-700 truncate">
+                {vehicle?.name ?? '(不明車両)'}
+                {vehicle?.plate_or_serial && (
+                  <span className="text-slate-400 ml-1 font-normal">
+                    ({vehicle.plate_or_serial})
+                  </span>
+                )}
+              </div>
+              <div className="text-[10px] text-slate-500 truncate">
+                {vehicle && KIND_LABEL[vehicle.kind]} ·{' '}
                 {new Date(assignment.started_at).toLocaleString('ja-JP', {
                   month: '2-digit',
                   day: '2-digit',
@@ -2892,17 +2887,47 @@ function ActivePairCard({
                   minute: '2-digit',
                 })}
                 〜
-              </span>
-            </div>
-            {assignment.destination_point && (
-              <div className="text-[10px] text-amber-700 flex items-center gap-1 mt-0.5 truncate">
-                <MapPin className="h-3 w-3 shrink-0" />
-                <span className="truncate">
-                  行き先: {assignment.destination_point.name}
-                </span>
               </div>
-            )}
+            </div>
           </div>
+          {/* Chevron 右端 */}
+          <div className="flex items-center pr-2">
+            <ChevronDown
+              className={`h-4 w-4 text-slate-400 shrink-0 transition-transform ${
+                expanded ? 'rotate-180' : ''
+              }`}
+            />
+          </div>
+        </div>
+        {/* ステータスバッジ + 行き先 (カード下部) */}
+        <div className="flex items-center flex-wrap gap-1.5 px-2 pb-1.5">
+          {noPositionsYet ? (
+            <span
+              className="px-1.5 py-0.5 text-[10px] rounded bg-amber-100 text-amber-700 border border-amber-300"
+              title="このセッション中に位置ログを 1 件も受け取っていません。ドライバー端末の自動送信 ON を確認してください。"
+            >
+              📡 位置未受信
+            </span>
+          ) : stale ? (
+            <span
+              className="px-1.5 py-0.5 text-[10px] rounded bg-red-100 text-red-700 border border-red-300"
+              title={ageMs != null ? `最終 ping から ${formatAgeShort(ageMs)}` : ''}
+            >
+              ⚠ 通信断 {ageMs != null && formatAgeShort(ageMs)}
+            </span>
+          ) : (
+            <span className="px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-700 border border-emerald-300">
+              乗車中
+            </span>
+          )}
+          {assignment.destination_point && (
+            <span className="text-[10px] text-amber-700 flex items-center gap-1 truncate">
+              <MapPin className="h-3 w-3 shrink-0" />
+              <span className="truncate">
+                行き先: {assignment.destination_point.name}
+              </span>
+            </span>
+          )}
         </div>
       </button>
       {/* 強制降車ボタン */}
