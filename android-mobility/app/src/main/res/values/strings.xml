@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">NodeCloud Mobility</string>
-    <string name="title_activity_main">NodeCloud Mobility</string>
+    <string name="app_name">NodeCloudモビリティ</string>
+    <string name="title_activity_main">NodeCloudモビリティ</string>
     <string name="package_name">net.nodecloud.mobility</string>
     <string name="custom_url_scheme">net.nodecloud.mobility</string>
 </resources>

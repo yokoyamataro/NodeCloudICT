@@ -215,7 +215,7 @@ export async function watchSamplesInBackground(
   }
   const watcherId = await BackgroundGeolocation.addWatcher(
     {
-      backgroundTitle: options?.notificationTitle ?? 'NodeCloud モビリティ',
+      backgroundTitle: options?.notificationTitle ?? 'NodeCloudモビリティ',
       backgroundMessage: options?.notificationBody ?? '現在地を送信中',
       requestPermissions: true,
       stale: false,

@@ -419,10 +419,6 @@ export function MobilityDriverPage() {
 
   // 本日走行距離 (今日 00:00 以降の全乗車の合計)
   const [todayDistanceM, setTodayDistanceM] = useState(0)
-  // 本日の全 assignment (時間集計に使う)
-  const [todayAssignments, setTodayAssignments] = useState<
-    { started_at: string; ended_at: string | null }[]
-  >([])
 
   // 走行時間表示を「単位」/「本日」で切替 (パネルタップで反転)
   const [distanceMode, setDistanceMode] = useState<'unit' | 'today'>('unit')
@@ -633,7 +629,7 @@ export function MobilityDriverPage() {
             })
           },
           {
-            notificationTitle: 'NodeCloud モビリティ',
+            notificationTitle: 'NodeCloudモビリティ',
             notificationBody: `${myVehicle?.name ?? '車両'} の現在地を送信中`,
             // 停車中でも callback が起きやすいよう小さめに (バッテリー影響は僅か)
             distanceFilter: 1,
@@ -772,47 +768,11 @@ export function MobilityDriverPage() {
     }
   }, [user, myActive, lastAutoSentAt, fetchPositionsForUserSince])
 
-  // 本日の全 assignment (走行時間の合計に使う)。fetchUserAssignmentHistory は
-  // 直近 100 件を返すので、その中から今日 00:00 以降を started_at で絞る。
-  useEffect(() => {
-    if (!user) {
-      setTodayAssignments([])
-      return
-    }
-    let cancelled = false
-    const load = async () => {
-      const startOfToday = new Date()
-      startOfToday.setHours(0, 0, 0, 0)
-      const rows = await fetchUserAssignmentHistory(user.id)
-      if (cancelled) return
-      const startMs = startOfToday.getTime()
-      setTodayAssignments(
-        rows
-          .filter((r) => new Date(r.started_at).getTime() >= startMs)
-          .map((r) => ({ started_at: r.started_at, ended_at: r.ended_at })),
-      )
-    }
-    void load()
-    // 乗車状態が変わったら (乗車 / 降車) 即再取得。
-    // それ以外の更新は次回 myActive 変化で拾えばよい (時間だけは nowTick で流れる)
-    return () => {
-      cancelled = true
-    }
-  }, [user, myActive, fetchUserAssignmentHistory])
-
-  // 走行時間の計算 (単位 / 本日)
+  // セクション走行時間 (myActive.started_at から現在まで)。
+  // 本日走行の合計時間は現行 UI では表示していないため計算しない。
   const unitDurationMs = myActive
     ? Math.max(0, nowTick - new Date(myActive.started_at).getTime())
     : 0
-  const todayDurationMs = useMemo(() => {
-    let total = 0
-    for (const a of todayAssignments) {
-      const start = new Date(a.started_at).getTime()
-      const end = a.ended_at ? new Date(a.ended_at).getTime() : nowTick
-      total += Math.max(0, end - start)
-    }
-    return total
-  }, [todayAssignments, nowTick])
 
   // 走行軌跡 (自分の active assignment のもの)
   const [trackPositions, setTrackPositions] = useState<MobilityPosition[]>([])
@@ -918,7 +878,7 @@ export function MobilityDriverPage() {
           </button>
         )}
         <div className="text-base font-bold flex-1">
-          {isMobilityAppFlag ? 'NodeCloud Mobility' : 'NodeCloud'}
+          {isMobilityAppFlag ? 'NodeCloudモビリティ' : 'NodeCloud'}
         </div>
         {locationError && (
           <span className="text-[10px] text-amber-300 max-w-[10rem] text-right leading-tight">
@@ -965,13 +925,10 @@ export function MobilityDriverPage() {
         </div>
       )}
 
-      {/* 速度・セクション距離・方向距離パネル (乗車中のみ) */}
+      {/* 速度・セクション距離・行き先パネル (乗車中のみ、常に 3 列) */}
       {myActive && (
-        <div
-          className={`mx-3 mt-2 grid gap-2 shrink-0 ${
-            selectedDestination && destInfo ? 'grid-cols-3' : 'grid-cols-2'
-          }`}
-        >
+        <div className="mx-3 mt-2 grid gap-2 shrink-0 grid-cols-3">
+          {/* 速度 */}
           <div className="bg-slate-800 border border-slate-700 rounded-lg p-2 text-white">
             <div className="text-[10px] text-slate-400">現在速度</div>
             <div className="text-2xl font-bold leading-tight">
@@ -981,6 +938,7 @@ export function MobilityDriverPage() {
               <span className="text-xs font-normal text-slate-300 ml-1">km/h</span>
             </div>
           </div>
+          {/* セクション / 本日走行 (切替) */}
           <button
             type="button"
             onClick={() =>
@@ -1001,27 +959,31 @@ export function MobilityDriverPage() {
                 (distanceMode === 'unit' ? unitDistanceM : todayDistanceM) / 1000
               ).toFixed(1)}
               <span className="text-xs font-normal text-slate-300 ml-1">km</span>
-              <span className="text-[10px] font-normal text-slate-400 ml-2">
-                {formatDurationShort(
-                  distanceMode === 'unit' ? unitDurationMs : todayDurationMs,
-                )}
-              </span>
             </div>
-            <div className="text-[9px] text-slate-500 mt-0.5">
-              {distanceMode === 'unit'
-                ? `${new Date(myActive.started_at).toLocaleTimeString('ja-JP', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })} 〜`
-                : `本日 00:00 〜 · ${todayAssignments.length} セクション合計`}
-            </div>
+            {distanceMode === 'unit' && (
+              <div className="text-[9px] text-slate-400 mt-0.5">
+                {new Date(myActive.started_at).toLocaleTimeString('ja-JP', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}{' '}
+                〜 {formatDurationShort(unitDurationMs)}
+              </div>
+            )}
           </button>
-          {selectedDestination && destInfo && (
+          {/* 行き先 (常に表示。未設定タップでピッカー、設定済みは方向+距離) */}
+          {selectedDestination && destInfo ? (
             <div className="bg-slate-800 border border-amber-600/70 rounded-lg p-2 text-white relative min-w-0">
               <div className="flex items-center gap-1">
-                <span className="text-[10px] text-amber-200 flex-1 truncate">
-                  → {selectedDestination.name}
-                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowDestSheet(true)}
+                  className="flex-1 min-w-0 text-left"
+                  title="タップで行き先を変更"
+                >
+                  <span className="text-[10px] text-amber-200 truncate block">
+                    → {selectedDestination.name}
+                  </span>
+                </button>
                 <button
                   type="button"
                   onClick={() => void applyDestination(null)}
@@ -1036,26 +998,46 @@ export function MobilityDriverPage() {
                   )}
                 </button>
               </div>
-              <div className="flex items-center gap-1 mt-0.5">
-                <Navigation
-                  className="h-5 w-5 text-amber-300 shrink-0"
-                  style={{
-                    transform: `rotate(${
-                      headingUp
-                        ? destInfo.deg - (currentHeadingDeg ?? 0)
-                        : destInfo.deg
-                    }deg)`,
-                    transition: 'transform 250ms',
-                  }}
-                />
-                <div className="text-lg font-bold leading-tight">
-                  {formatDistance(destInfo.meters)}
+              <button
+                type="button"
+                onClick={() => setShowDestSheet(true)}
+                className="w-full text-left"
+              >
+                <div className="flex items-center gap-1 mt-0.5">
+                  <Navigation
+                    className="h-5 w-5 text-amber-300 shrink-0"
+                    style={{
+                      transform: `rotate(${
+                        headingUp
+                          ? destInfo.deg - (currentHeadingDeg ?? 0)
+                          : destInfo.deg
+                      }deg)`,
+                      transition: 'transform 250ms',
+                    }}
+                  />
+                  <div className="text-lg font-bold leading-tight">
+                    {formatDistance(destInfo.meters)}
+                  </div>
                 </div>
-              </div>
-              <div className="text-[9px] text-amber-200/80 mt-0.5">
-                {destInfo.label} {Math.round(destInfo.deg)}°
-              </div>
+                <div className="text-[9px] text-amber-200/80 mt-0.5">
+                  {destInfo.label} {Math.round(destInfo.deg)}°
+                </div>
+              </button>
             </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowDestSheet(true)}
+              className="bg-slate-800 border border-dashed border-slate-600 rounded-lg p-2 text-left text-slate-400 hover:border-amber-500 hover:text-amber-300 active:bg-slate-700 flex flex-col justify-between min-w-0"
+              title="タップで行き先を選ぶ"
+            >
+              <div className="text-[10px] flex items-center gap-1">
+                <MapPin className="h-3 w-3 shrink-0" />
+                <span>行き先</span>
+              </div>
+              <div className="text-sm font-medium leading-tight mt-1">未設定</div>
+              <div className="text-[9px] text-slate-500 mt-0.5">タップで選択</div>
+            </button>
           )}
         </div>
       )}
@@ -1160,45 +1142,6 @@ export function MobilityDriverPage() {
         </div>
       )}
 
-      {/* 自動送信 / 通信状態 */}
-      {myActive && autoSend && (
-        <div
-          className={`mx-3 mb-1 mt-2 px-2 py-1 text-[10px] rounded border flex items-center gap-1 ${
-            !isOnline
-              ? 'bg-red-900/50 border-red-700 text-red-100'
-              : queueLen > 0
-                ? 'bg-amber-900/40 border-amber-700 text-amber-100'
-                : 'bg-emerald-900/40 border-emerald-700 text-emerald-100'
-          }`}
-        >
-          <span
-            className={`inline-block h-1.5 w-1.5 rounded-full ${
-              !isOnline
-                ? 'bg-red-400'
-                : queueLen > 0
-                  ? 'bg-amber-400 animate-pulse'
-                  : 'bg-emerald-400 animate-pulse'
-            }`}
-          />
-          {!isOnline ? (
-            <>通信断 · バッファ {queueLen} 件 (復旧後に自動送信)</>
-          ) : queueLen > 0 ? (
-            <>再送中 · 残 {queueLen} 件</>
-          ) : (
-            <>
-              自動送信中 · 最終:{' '}
-              {lastAutoSentAt
-                ? lastAutoSentAt.toLocaleTimeString('ja-JP', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit',
-                  })
-                : '待機'}
-            </>
-          )}
-        </div>
-      )}
-
       {/* 選択中のログセクションを解除するミニバー (選ばれている間だけ表示) */}
       {selectedLogSection && (
         <div className="mx-3 mb-1 mt-2 px-2 py-1 text-[10px] rounded bg-indigo-900/40 border border-indigo-700 text-indigo-100 flex items-center gap-2">
@@ -1261,21 +1204,21 @@ export function MobilityDriverPage() {
           </button>
         </div>
         {myActive ? (
-          <>
-            <div className="flex gap-2">
-              {/* 自動送信トグル: メインの大ボタン */}
-              <button
-                onClick={() => setAutoSend((v) => !v)}
-                disabled={busy}
-                role="switch"
-                aria-checked={autoSend}
-                className={`flex-1 flex items-center justify-center gap-2 px-3 py-3 text-base font-semibold rounded-lg transition ${
-                  autoSend
-                    ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-                    : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
-                }`}
-                title={autoSend ? 'タップで自動送信を停止' : 'タップで自動送信を開始'}
-              >
+          <div className="flex gap-2">
+            {/* 自動送信トグル: メインの大ボタン (下に小さくステータス) */}
+            <button
+              onClick={() => setAutoSend((v) => !v)}
+              disabled={busy}
+              role="switch"
+              aria-checked={autoSend}
+              className={`flex-1 flex flex-col items-center justify-center gap-0.5 px-3 py-2 text-base font-semibold rounded-lg transition ${
+                autoSend
+                  ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                  : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
+              }`}
+              title={autoSend ? 'タップで自動送信を停止' : 'タップで自動送信を開始'}
+            >
+              <span className="flex items-center gap-2">
                 <span
                   className={`inline-block h-4 w-8 rounded-full relative ${
                     autoSend ? 'bg-emerald-300' : 'bg-slate-500'
@@ -1288,35 +1231,59 @@ export function MobilityDriverPage() {
                   />
                 </span>
                 自動送信 {autoSend ? 'ON' : 'OFF'}
-              </button>
-              <button
-                type="button"
-                onClick={handleLeave}
-                disabled={busy}
-                style={{ touchAction: 'manipulation' }}
-                className="shrink-0 flex items-center gap-1 px-4 py-3 text-sm font-semibold border border-red-500 bg-red-950/40 text-red-200 rounded-lg active:bg-red-900/60 disabled:opacity-50"
-              >
-                {busy ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <LogOut className="h-4 w-4" />
-                )}
-                降車
-              </button>
-            </div>
-            {/* 行き先ピッカー起動ボタン (割当あり中のみ) */}
+              </span>
+              {/* ステータスをボタン内に小さく表示 (ON 時のみ) */}
+              {autoSend && (
+                <span
+                  className={`text-[10px] leading-tight font-normal flex items-center gap-1 ${
+                    !isOnline
+                      ? 'text-red-200'
+                      : queueLen > 0
+                        ? 'text-amber-200'
+                        : 'text-emerald-100/90'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-1.5 w-1.5 rounded-full ${
+                      !isOnline
+                        ? 'bg-red-300'
+                        : queueLen > 0
+                          ? 'bg-amber-300 animate-pulse'
+                          : 'bg-white animate-pulse'
+                    }`}
+                  />
+                  {!isOnline
+                    ? `通信断 · バッファ ${queueLen} 件`
+                    : queueLen > 0
+                      ? `再送中 · 残 ${queueLen} 件`
+                      : `自動送信中${
+                          lastAutoSentAt
+                            ? ' · 最終 ' +
+                              lastAutoSentAt.toLocaleTimeString('ja-JP', {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                second: '2-digit',
+                              })
+                            : ''
+                        }`}
+                </span>
+              )}
+            </button>
             <button
               type="button"
-              onClick={() => setShowDestSheet(true)}
+              onClick={handleLeave}
               disabled={busy}
-              className="flex items-center justify-center gap-2 px-3 py-2 text-sm rounded-lg border border-amber-500 text-amber-200 hover:bg-amber-950/40 disabled:opacity-50"
+              style={{ touchAction: 'manipulation' }}
+              className="shrink-0 flex items-center gap-1 px-4 py-3 text-sm font-semibold border border-red-500 bg-red-950/40 text-red-200 rounded-lg active:bg-red-900/60 disabled:opacity-50"
             >
-              <MapPin className="h-4 w-4" />
-              {selectedDestination
-                ? `行き先: ${selectedDestination.name} を変更`
-                : '行き先を選ぶ'}
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <LogOut className="h-4 w-4" />
+              )}
+              降車
             </button>
-          </>
+          </div>
         ) : (
           <button
             onClick={() => setShowPicker(true)}

@@ -11,7 +11,7 @@ import type { CapacitorConfig } from '@capacitor/cli'
 
 const config: CapacitorConfig = {
   appId: 'net.nodecloud.mobility',
-  appName: 'NodeCloud Mobility',
+  appName: 'NodeCloudモビリティ',
   webDir: 'dist',
   server: {
     // 起動 URL は /mobility/drive + ?app=mobility を付与し、
