@@ -681,16 +681,6 @@ export const useMobilityStore = create<State>((set, get) => ({
       return new Map()
     }
     const rows = (data ?? []) as MobilityPosition[]
-    // 診断: 実際に何行返ってきたか / どの assignment_id が入ったかログに出す。
-    // RLS で silent 0 rows になっているケースを判別するため。
-    console.info(
-      '[mobilityStore] fetchLatestPositions',
-      {
-        requestedIds: assignmentIds,
-        returnedRows: rows.length,
-        returnedIds: Array.from(new Set(rows.map((r) => r.assignment_id))),
-      },
-    )
     const map = new Map<string, MobilityPosition>()
     for (const row of rows) {
       if (!map.has(row.assignment_id)) map.set(row.assignment_id, row)
