@@ -22,9 +22,11 @@ import {
   Loader2,
   LogOut,
   MapPin,
+  MessageSquare,
   Pencil,
   Phone,
   Plus,
+  Send,
   Trash2,
   Truck,
   User,
@@ -37,6 +39,9 @@ import {
   useMobilityStore,
   type AssignmentWithNames,
 } from '@/stores/mobilityStore'
+import { useMobilityMessagesStore } from '@/stores/mobilityMessagesStore'
+import { MobilityInstructionDialog } from '@/features/mobility/MobilityInstructionDialog'
+import { MobilityChatPanel } from '@/features/mobility/MobilityChatPanel'
 import type {
   MobilityPosition,
   MobilityProject,
@@ -136,6 +141,26 @@ export function MobilityHomePage() {
     void fetchVehicles(orgId)
     void fetchActiveAssignments(orgId)
   }, [orgId, fetchVehicles, fetchActiveAssignments])
+
+  // 指示 / 報告 / チャット の Realtime 購読
+  const subscribeMessages = useMobilityMessagesStore((s) => s.subscribe)
+  const unsubscribeMessages = useMobilityMessagesStore((s) => s.unsubscribe)
+  useEffect(() => {
+    if (!orgId) return
+    subscribeMessages(orgId)
+    return () => {
+      unsubscribeMessages()
+    }
+  }, [orgId, subscribeMessages, unsubscribeMessages])
+
+  // 指示ダイアログの state (宛先プリセット付き)
+  const [instructionDialog, setInstructionDialog] = useState<{
+    channelKind: 'direct' | 'project'
+    channelUserId: string | null
+    channelProjectId: string | null
+    driverLabel: string | null
+    projectLabel: string | null
+  } | null>(null)
 
   const [showNewDialog, setShowNewDialog] = useState(false)
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null)
@@ -436,6 +461,16 @@ export function MobilityHomePage() {
           <div className="flex-1 overflow-y-auto p-3">
             {sidebarTab === 'drivers' && (
               <UsersColumn
+                organizationId={orgId}
+                onOpenInstructionForDriver={(userId, driverName) =>
+                  setInstructionDialog({
+                    channelKind: 'direct',
+                    channelUserId: userId,
+                    channelProjectId: null,
+                    driverLabel: driverName,
+                    projectLabel: null,
+                  })
+                }
                 activeAssignments={activeAssignments}
                 vehicles={vehicles}
                 orgMembers={orgMembers}
@@ -460,6 +495,16 @@ export function MobilityHomePage() {
             )}
             {sidebarTab === 'vehicles' && (
               <VehiclesColumn
+                organizationId={orgId}
+                onOpenInstructionForDriver={(userId, driverName) =>
+                  setInstructionDialog({
+                    channelKind: 'direct',
+                    channelUserId: userId,
+                    channelProjectId: null,
+                    driverLabel: driverName,
+                    projectLabel: null,
+                  })
+                }
                 activeAssignments={activeAssignments}
                 vehicles={vehicles}
                 orgMembers={orgMembers}
@@ -484,6 +529,16 @@ export function MobilityHomePage() {
             )}
             {sidebarTab === 'projects' && (
               <ProjectsLeftPanel
+                organizationId={orgId}
+                onOpenInstructionForProject={(projectId, projectName) =>
+                  setInstructionDialog({
+                    channelKind: 'project',
+                    channelUserId: null,
+                    channelProjectId: projectId,
+                    driverLabel: null,
+                    projectLabel: projectName,
+                  })
+                }
                 projects={projects}
                 projectsLoading={projectsLoading}
                 expandedProjectId={expandedProjectId}
@@ -539,6 +594,18 @@ export function MobilityHomePage() {
           />
         </div>
       </div>
+
+      {instructionDialog && (
+        <MobilityInstructionDialog
+          organizationId={orgId}
+          presetChannelKind={instructionDialog.channelKind}
+          presetChannelUserId={instructionDialog.channelUserId}
+          presetChannelProjectId={instructionDialog.channelProjectId}
+          presetDriverLabel={instructionDialog.driverLabel}
+          presetProjectLabel={instructionDialog.projectLabel}
+          onClose={() => setInstructionDialog(null)}
+        />
+      )}
 
       {showNewDialog && (
         <VehicleEditDialog
@@ -1710,6 +1777,7 @@ function UserInlineDetail({
 // 運行現場 左サイドパネル
 // -----------------------------------------------------------------------------
 function ProjectsLeftPanel({
+  organizationId,
   projects,
   projectsLoading,
   expandedProjectId,
@@ -1726,7 +1794,9 @@ function ProjectsLeftPanel({
   onCancelAddPointMode,
   onEditPoint,
   onDeletePoint,
+  onOpenInstructionForProject,
 }: {
+  organizationId: string
   projects: MobilityProject[]
   projectsLoading: boolean
   expandedProjectId: string | null
@@ -1743,6 +1813,7 @@ function ProjectsLeftPanel({
   onCancelAddPointMode: () => void
   onEditPoint: (p: MobilityProjectPoint) => void
   onDeletePoint: (pointId: string) => Promise<void>
+  onOpenInstructionForProject: (projectId: string, projectName: string) => void
 }) {
   const memberNameMap = useMemo(() => {
     const m = new Map<string, OrgMemberRow>()
@@ -1785,6 +1856,7 @@ function ProjectsLeftPanel({
             {active.map((p) => (
               <ProjectRow
                 key={p.id}
+                organizationId={organizationId}
                 project={p}
                 expanded={expandedProjectId === p.id}
                 members={
@@ -1803,6 +1875,9 @@ function ProjectsLeftPanel({
                 onCancelAddPointMode={onCancelAddPointMode}
                 onEditPoint={onEditPoint}
                 onDeletePoint={onDeletePoint}
+                onOpenInstruction={() =>
+                  onOpenInstructionForProject(p.id, p.name)
+                }
               />
             ))}
           </ul>
@@ -1818,6 +1893,7 @@ function ProjectsLeftPanel({
                 {inactive.map((p) => (
                   <ProjectRow
                     key={p.id}
+                    organizationId={organizationId}
                     project={p}
                     expanded={expandedProjectId === p.id}
                     members={
@@ -1838,6 +1914,9 @@ function ProjectsLeftPanel({
                     onCancelAddPointMode={onCancelAddPointMode}
                     onEditPoint={onEditPoint}
                     onDeletePoint={onDeletePoint}
+                    onOpenInstruction={() =>
+                      onOpenInstructionForProject(p.id, p.name)
+                    }
                   />
                 ))}
               </ul>
@@ -1850,6 +1929,7 @@ function ProjectsLeftPanel({
 }
 
 function ProjectRow({
+  organizationId,
   project,
   expanded,
   members,
@@ -1864,7 +1944,9 @@ function ProjectRow({
   onCancelAddPointMode,
   onEditPoint,
   onDeletePoint,
+  onOpenInstruction,
 }: {
+  organizationId: string
   project: MobilityProject
   expanded: boolean
   members: MobilityProjectMember[]
@@ -1879,6 +1961,7 @@ function ProjectRow({
   onCancelAddPointMode: () => void
   onEditPoint: (p: MobilityProjectPoint) => void
   onDeletePoint: (pointId: string) => Promise<void>
+  onOpenInstruction: () => void
 }) {
   return (
     <li
@@ -2050,6 +2133,36 @@ function ProjectRow({
                 ))}
               </ul>
             )}
+          </section>
+
+          {/* 指示送信 (現場メンバー全員宛て) */}
+          <section>
+            <button
+              type="button"
+              onClick={onOpenInstruction}
+              className="w-full flex items-center justify-center gap-1 py-1.5 text-[11px] bg-indigo-600 text-white rounded hover:bg-indigo-700"
+              title="この現場のメンバー全員に指示を送信"
+            >
+              <Send className="h-3 w-3" />
+              メンバー全員に指示を送信
+            </button>
+          </section>
+
+          {/* 現場チャット */}
+          <section>
+            <div className="text-[10px] font-medium text-slate-500 mb-1 flex items-center gap-1">
+              <MessageSquare className="h-3 w-3" />
+              現場チャット
+            </div>
+            <div className="h-64">
+              <MobilityChatPanel
+                organizationId={organizationId}
+                channelKind="project"
+                channelUserId={null}
+                channelProjectId={project.id}
+                senderRole="admin"
+              />
+            </div>
           </section>
         </div>
       )}
@@ -2489,6 +2602,7 @@ function PointCreateDialog({
 //   - 稼働していない車両: さらに下段に
 // -----------------------------------------------------------------------------
 interface FleetSidebarProps {
+  organizationId: string
   activeAssignments: Map<string, AssignmentWithNames>
   vehicles: Vehicle[]
   orgMembers: OrgMemberRow[]
@@ -2513,11 +2627,14 @@ interface FleetSidebarProps {
   onEditVehicle: (v: Vehicle) => void
   onNewVehicle: () => void
   onInviteByPhone: () => void
+  /** 指定ドライバーへの指示送信ダイアログを開く */
+  onOpenInstructionForDriver: (userId: string, driverName: string | null) => void
 }
 
 // ユーザー列: 稼働中ペア (上) + 未乗車ユーザー (下)
 function UsersColumn(props: FleetSidebarProps) {
   const {
+    organizationId,
     activeAssignments,
     vehicles,
     orgMembers,
@@ -2534,6 +2651,7 @@ function UsersColumn(props: FleetSidebarProps) {
     onDeleteSection,
     onForceLeave,
     onInviteByPhone,
+    onOpenInstructionForDriver,
   } = props
 
   const memberByUserId = useMemo(() => {
@@ -2605,6 +2723,7 @@ function UsersColumn(props: FleetSidebarProps) {
             {activePairs.map(({ assignment, vehicle, userInfo }) => (
               <ActivePairCard
                 key={assignment.id}
+                organizationId={organizationId}
                 assignment={assignment}
                 vehicle={vehicle}
                 userInfo={userInfo}
@@ -2625,6 +2744,12 @@ function UsersColumn(props: FleetSidebarProps) {
                 onSelect={onSelectSection}
                 onDeleteSection={onDeleteSection}
                 historyReloadKey={sectionHistoryTick}
+                onOpenInstruction={() =>
+                  onOpenInstructionForDriver(
+                    assignment.user_id,
+                    assignment.driver_name,
+                  )
+                }
               />
             ))}
           </ul>
@@ -2653,6 +2778,7 @@ function UsersColumn(props: FleetSidebarProps) {
             {inactiveUsers.map((m) => (
               <InactiveUserCard
                 key={m.user_id}
+                organizationId={organizationId}
                 member={m}
                 expanded={expandedUserId === m.user_id}
                 onToggleExpand={() => onToggleExpandUser(m.user_id)}
@@ -2661,6 +2787,9 @@ function UsersColumn(props: FleetSidebarProps) {
                 onSelect={onSelectSection}
                 onDeleteSection={onDeleteSection}
                 historyReloadKey={sectionHistoryTick}
+                onOpenInstruction={() =>
+                  onOpenInstructionForDriver(m.user_id, m.full_name || m.email)
+                }
               />
             ))}
           </ul>
@@ -2828,6 +2957,7 @@ function VehiclesColumn(props: FleetSidebarProps) {
 
 // 稼働中ペアカード: ユーザー行 + 車両行を 1 枚のカードにまとめる
 function ActivePairCard({
+  organizationId,
   assignment,
   vehicle,
   userInfo,
@@ -2842,7 +2972,9 @@ function ActivePairCard({
   onSelectSectionsByDay,
   onDeleteSection,
   historyReloadKey,
+  onOpenInstruction,
 }: {
+  organizationId: string
   assignment: AssignmentWithNames
   vehicle: Vehicle | null
   userInfo: OrgMemberRow | null
@@ -2857,6 +2989,7 @@ function ActivePairCard({
   onSelectSectionsByDay: (assignmentIds: string[]) => void
   onDeleteSection: (assignmentId: string, label: string) => void
   historyReloadKey: number
+  onOpenInstruction: () => void
 }) {
   const noPositionsYet = ageMs == null
   const stale = ageMs != null && ageMs > staleThresholdMs
@@ -2958,8 +3091,20 @@ function ActivePairCard({
           )}
         </div>
       </button>
-      {/* 強制降車ボタン */}
-      <div className="px-3 pb-2 flex justify-end">
+      {/* 指示送信 + 強制降車 ボタン */}
+      <div className="px-3 pb-2 flex justify-end gap-1.5">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onOpenInstruction()
+          }}
+          className="flex items-center gap-1 px-2 py-0.5 text-[10px] border border-indigo-300 text-indigo-700 rounded hover:bg-indigo-50"
+          title="このドライバーに指示を送信"
+        >
+          <Send className="h-3 w-3" />
+          指示送信
+        </button>
         <button
           type="button"
           onClick={(e) => {
@@ -2979,15 +3124,32 @@ function ActivePairCard({
         </button>
       </div>
       {expanded && (
-        <UserInlineDetail
-          userId={assignment.user_id}
-          activeAssignment={assignment}
-          selectedIds={selectedIds}
-      onSelectSectionsByDay={onSelectSectionsByDay}
-          onSelect={onSelect}
-          onDeleteSection={onDeleteSection}
-          historyReloadKey={historyReloadKey}
-        />
+        <>
+          <UserInlineDetail
+            userId={assignment.user_id}
+            activeAssignment={assignment}
+            selectedIds={selectedIds}
+            onSelectSectionsByDay={onSelectSectionsByDay}
+            onSelect={onSelect}
+            onDeleteSection={onDeleteSection}
+            historyReloadKey={historyReloadKey}
+          />
+          <div className="border-t bg-white p-2">
+            <div className="text-[10px] font-medium text-slate-500 mb-1 flex items-center gap-1">
+              <MessageSquare className="h-3 w-3" />
+              チャット
+            </div>
+            <div className="h-64">
+              <MobilityChatPanel
+                organizationId={organizationId}
+                channelKind="direct"
+                channelUserId={assignment.user_id}
+                channelProjectId={null}
+                senderRole="admin"
+              />
+            </div>
+          </div>
+        </>
       )}
     </li>
   )
@@ -2995,6 +3157,7 @@ function ActivePairCard({
 
 // 未乗車ユーザーカード
 function InactiveUserCard({
+  organizationId,
   member,
   expanded,
   onToggleExpand,
@@ -3003,7 +3166,9 @@ function InactiveUserCard({
   onSelectSectionsByDay,
   onDeleteSection,
   historyReloadKey,
+  onOpenInstruction,
 }: {
+  organizationId: string
   member: OrgMemberRow
   expanded: boolean
   onToggleExpand: () => void
@@ -3012,6 +3177,7 @@ function InactiveUserCard({
   onSelectSectionsByDay: (assignmentIds: string[]) => void
   onDeleteSection: (assignmentId: string, label: string) => void
   historyReloadKey: number
+  onOpenInstruction: () => void
 }) {
   return (
     <li
@@ -3051,15 +3217,46 @@ function InactiveUserCard({
         />
       </button>
       {expanded && (
-        <UserInlineDetail
-          userId={member.user_id}
-          activeAssignment={null}
-          selectedIds={selectedIds}
-      onSelectSectionsByDay={onSelectSectionsByDay}
-          onSelect={onSelect}
-          onDeleteSection={onDeleteSection}
-          historyReloadKey={historyReloadKey}
-        />
+        <>
+          <div className="px-3 pb-2 flex justify-end">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onOpenInstruction()
+              }}
+              className="flex items-center gap-1 px-2 py-0.5 text-[10px] border border-indigo-300 text-indigo-700 rounded hover:bg-indigo-50"
+              title="このドライバーに指示を送信"
+            >
+              <Send className="h-3 w-3" />
+              指示送信
+            </button>
+          </div>
+          <UserInlineDetail
+            userId={member.user_id}
+            activeAssignment={null}
+            selectedIds={selectedIds}
+            onSelectSectionsByDay={onSelectSectionsByDay}
+            onSelect={onSelect}
+            onDeleteSection={onDeleteSection}
+            historyReloadKey={historyReloadKey}
+          />
+          <div className="border-t bg-white p-2">
+            <div className="text-[10px] font-medium text-slate-500 mb-1 flex items-center gap-1">
+              <MessageSquare className="h-3 w-3" />
+              チャット
+            </div>
+            <div className="h-64">
+              <MobilityChatPanel
+                organizationId={organizationId}
+                channelKind="direct"
+                channelUserId={member.user_id}
+                channelProjectId={null}
+                senderRole="admin"
+              />
+            </div>
+          </div>
+        </>
       )}
     </li>
   )

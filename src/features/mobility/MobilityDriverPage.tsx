@@ -23,6 +23,7 @@ import {
   Loader2,
   LogOut,
   MapPin,
+  MessageSquare,
   Minus,
   Navigation,
   Play,
@@ -62,6 +63,8 @@ import {
   haversineMeters,
 } from '@/lib/geoDistance'
 import { useMobilityStore } from '@/stores/mobilityStore'
+import { useMobilityMessagesStore } from '@/stores/mobilityMessagesStore'
+import { MobilityChatPanel } from '@/features/mobility/MobilityChatPanel'
 import type {
   MobilityPosition,
   MobilityProject,
@@ -251,6 +254,24 @@ export function MobilityDriverPage() {
     void fetchActiveAssignments(orgId)
   }, [orgId, fetchVehicles, fetchActiveAssignments])
 
+  // 指示 / 報告 / チャット の Realtime 購読
+  const messages = useMobilityMessagesStore((s) => s.messages)
+  const subscribeMessages = useMobilityMessagesStore((s) => s.subscribe)
+  const unsubscribeMessages = useMobilityMessagesStore((s) => s.unsubscribe)
+  useEffect(() => {
+    if (!orgId) return
+    subscribeMessages(orgId)
+    return () => {
+      unsubscribeMessages()
+    }
+  }, [orgId, subscribeMessages, unsubscribeMessages])
+
+  const [showChatSheet, setShowChatSheet] = useState<
+    | { kind: 'direct'; label: string }
+    | { kind: 'project'; projectId: string; label: string }
+    | null
+  >(null)
+
   // 割り当てられた運行現場 (プロジェクト) の一覧
   const [myProjects, setMyProjects] = useState<MobilityProject[]>([])
   useEffect(() => {
@@ -267,6 +288,19 @@ export function MobilityDriverPage() {
       cancelled = true
     }
   }, [user, fetchMyAssignedProjects])
+
+  // 未読の 自分宛 direct + 参加現場 project にきた指示の件数
+  const unreadInstructionCount = useMemo(() => {
+    if (!user) return 0
+    const projectIds = new Set(myProjects.map((p) => p.id))
+    return messages.filter((m) => {
+      if (m.message_kind !== 'instruction') return false
+      if (m.read_at) return false
+      if (m.sender_user_id === user.id) return false
+      if (m.channel_kind === 'direct') return m.channel_user_id === user.id
+      return m.channel_project_id != null && projectIds.has(m.channel_project_id)
+    }).length
+  }, [messages, myProjects, user])
 
   // 自分の稼働中割当を探す
   const myActive = useMemo(() => {
@@ -1190,15 +1224,31 @@ export function MobilityDriverPage() {
 
       {/* フッタアクション */}
       <div className="p-3 bg-slate-800 flex flex-col gap-2 shrink-0">
-        {/* 履歴シートを開くボタン (乗車/未乗車どちらでも常に見える) */}
-        <button
-          type="button"
-          onClick={() => setShowLogsSheet(true)}
-          className="flex items-center justify-center gap-2 px-3 py-2 text-sm rounded-lg border border-indigo-500 text-indigo-200 hover:bg-indigo-950/40"
-        >
-          <History className="h-4 w-4" />
-          運行履歴
-        </button>
+        <div className="flex gap-2">
+          {/* 履歴シートを開くボタン (乗車/未乗車どちらでも常に見える) */}
+          <button
+            type="button"
+            onClick={() => setShowLogsSheet(true)}
+            className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm rounded-lg border border-indigo-500 text-indigo-200 hover:bg-indigo-950/40"
+          >
+            <History className="h-4 w-4" />
+            運行履歴
+          </button>
+          {/* メッセージ / 指示 バッジ付き */}
+          <button
+            type="button"
+            onClick={() => setShowChatSheet({ kind: 'direct', label: '管理者' })}
+            className="relative flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm rounded-lg border border-emerald-500 text-emerald-200 hover:bg-emerald-950/40"
+          >
+            <MessageSquare className="h-4 w-4" />
+            メッセージ
+            {unreadInstructionCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold">
+                {unreadInstructionCount}
+              </span>
+            )}
+          </button>
+        </div>
         {myActive ? (
           <>
             <div className="flex gap-2">
@@ -1309,6 +1359,135 @@ export function MobilityDriverPage() {
           onClose={() => setShowLogsSheet(false)}
         />
       )}
+
+      {showChatSheet && orgId && user && (
+        <ChatSheet
+          organizationId={orgId}
+          myUserId={user.id}
+          myProjects={myProjects}
+          selected={showChatSheet}
+          onSelectTab={(next) => setShowChatSheet(next)}
+          activeAssignmentId={myActive?.id ?? null}
+          currentLat={currentPos?.[0] ?? null}
+          currentLon={currentPos?.[1] ?? null}
+          onConfirmed={async () => {
+            // 確認で assignment が RPC 側で作られたので active を再取得
+            if (orgId) await fetchActiveAssignments(orgId)
+          }}
+          onArrived={async () => {
+            if (orgId) await fetchActiveAssignments(orgId)
+          }}
+          onClose={() => setShowChatSheet(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+// -----------------------------------------------------------------------------
+// メッセージシート (ドライバー): 直接メッセージ / 現場チャンネルをタブで切替
+// -----------------------------------------------------------------------------
+function ChatSheet({
+  organizationId,
+  myUserId,
+  myProjects,
+  selected,
+  onSelectTab,
+  activeAssignmentId,
+  currentLat,
+  currentLon,
+  onConfirmed,
+  onArrived,
+  onClose,
+}: {
+  organizationId: string
+  myUserId: string
+  myProjects: MobilityProject[]
+  selected:
+    | { kind: 'direct'; label: string }
+    | { kind: 'project'; projectId: string; label: string }
+  onSelectTab: (
+    next:
+      | { kind: 'direct'; label: string }
+      | { kind: 'project'; projectId: string; label: string },
+  ) => void
+  activeAssignmentId: string | null
+  currentLat: number | null
+  currentLon: number | null
+  onConfirmed: () => Promise<void>
+  onArrived: () => Promise<void>
+  onClose: () => void
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[3500] bg-black/60 flex items-end sm:items-center justify-center"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white w-full sm:max-w-md h-[80vh] rounded-t-2xl sm:rounded-2xl flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 px-3 py-2 border-b">
+          <MessageSquare className="h-5 w-5 text-emerald-600" />
+          <h3 className="text-base font-semibold flex-1">メッセージ</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-slate-400 hover:text-slate-700"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* タブ: 管理者 direct + 参加中プロジェクト */}
+        <div className="flex overflow-x-auto border-b bg-slate-50 shrink-0">
+          <button
+            type="button"
+            onClick={() => onSelectTab({ kind: 'direct', label: '管理者' })}
+            className={`px-3 py-2 text-xs font-medium border-b-2 whitespace-nowrap ${
+              selected.kind === 'direct'
+                ? 'border-emerald-500 text-emerald-700 bg-white'
+                : 'border-transparent text-slate-500'
+            }`}
+          >
+            管理者
+          </button>
+          {myProjects.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() =>
+                onSelectTab({ kind: 'project', projectId: p.id, label: p.name })
+              }
+              className={`px-3 py-2 text-xs font-medium border-b-2 whitespace-nowrap ${
+                selected.kind === 'project' && selected.projectId === p.id
+                  ? 'border-emerald-500 text-emerald-700 bg-white'
+                  : 'border-transparent text-slate-500'
+              }`}
+            >
+              {p.name}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 min-h-0 p-2">
+          <MobilityChatPanel
+            organizationId={organizationId}
+            channelKind={selected.kind}
+            channelUserId={selected.kind === 'direct' ? myUserId : null}
+            channelProjectId={
+              selected.kind === 'project' ? selected.projectId : null
+            }
+            senderRole="driver"
+            showDriverConfirm
+            activeAssignmentId={activeAssignmentId}
+            currentLat={currentLat}
+            currentLon={currentLon}
+            onConfirmed={() => void onConfirmed()}
+            onArrived={() => void onArrived()}
+          />
+        </div>
+      </div>
     </div>
   )
 }
