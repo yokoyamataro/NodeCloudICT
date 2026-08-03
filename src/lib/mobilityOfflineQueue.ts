@@ -104,22 +104,26 @@ const MAX_PING_AGE_MS = 24 * 60 * 60 * 1000 // 24h
  *
  * 具体例:
  *   - RLS INSERT が assignment.ended_at IS NULL を要求 → 降車後は 42501 で拒否
- *   - assignment が削除された/自分の物でない → 参照エラー
+ *   - assignment が削除された/自分の物でない → 外部キーエラー
  *
  * これらは何度リトライしても通らないので、当該 ping はキューから破棄する。
- * (逆に、ネットワーク切断や 5xx はリトライで通るので破棄しない)
+ * (逆に、ネットワーク切断や 5xx / CORS / "policy" を含む一般エラーは
+ *  リトライで通る可能性があるので破棄しない。keyword 過剰マッチによる
+ *  誤破棄で「アクティブ assignment のログが admin に届かない」事象を
+ *  起こさないよう、DB エラーコード / SQL 特化文言だけを見る。)
  */
 function isTerminalError(err: string | undefined): boolean {
   if (!err) return false
   const lower = err.toLowerCase()
   return (
+    // PostgREST が返す RLS 違反 (42501) — 最も強いシグナル
+    lower.includes('code=42501') ||
+    // Postgres の RLS 違反メッセージ本体
     lower.includes('row-level security') ||
     lower.includes('row level security') ||
-    lower.includes('code=42501') ||
-    lower.includes('policy') ||
-    lower.includes('violates') ||
-    lower.includes('foreign key') ||
-    lower.includes('not authorized')
+    // 外部キー違反 (assignment が消えた等)
+    lower.includes('code=23503') ||
+    lower.includes('foreign key constraint')
   )
 }
 
