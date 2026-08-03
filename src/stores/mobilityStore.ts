@@ -663,13 +663,15 @@ export const useMobilityStore = create<State>((set, get) => ({
   },
 
   fetchLatestPositions: async (assignmentIds) => {
-    if (assignmentIds.length === 0) {
-      set({ latestPositionsByAssignment: new Map() })
-      return new Map()
-    }
+    // 空配列で呼ばれても Store の map を wipe しない。
+    // 従来は set({ latestPositionsByAssignment: new Map() }) で消していたが、
+    // FleetMapView の refreshAll や polling が一瞬 activeAssignments が空の
+    // タイミングで走ると Realtime で入っていた位置ごとリセットされ、
+    // サイドバーが「位置未受信」に見える race condition が発生していた。
+    if (assignmentIds.length === 0) return new Map()
+
     // PostgREST では DISTINCT ON が直接使えないので、単純に IN で取って
     // クライアント側で assignment_id ごとに最新 1 件を選ぶ。
-    // 件数が多い場合 (数百以上) はサーバ側 RPC を検討する。
     const { data, error } = await supabase
       .from('mobility_positions')
       .select('*')
@@ -681,13 +683,26 @@ export const useMobilityStore = create<State>((set, get) => ({
       return new Map()
     }
     const rows = (data ?? []) as MobilityPosition[]
-    const map = new Map<string, MobilityPosition>()
+    const fresh = new Map<string, MobilityPosition>()
     for (const row of rows) {
-      if (!map.has(row.assignment_id)) map.set(row.assignment_id, row)
+      if (!fresh.has(row.assignment_id)) fresh.set(row.assignment_id, row)
     }
-    // ストアにも保持 (通信断判定に使う)
-    set({ latestPositionsByAssignment: map })
-    return map
+    // 既存 map とマージ (新しい方だけ上書き)。空応答で既存エントリを消さない。
+    set((s) => {
+      const next = new Map(s.latestPositionsByAssignment)
+      for (const [k, v] of fresh) {
+        const existing = next.get(k)
+        if (
+          !existing ||
+          new Date(existing.recorded_at).getTime() <=
+            new Date(v.recorded_at).getTime()
+        ) {
+          next.set(k, v)
+        }
+      }
+      return { latestPositionsByAssignment: next }
+    })
+    return fresh
   },
 
   applyLatestPosition: (row) => {
