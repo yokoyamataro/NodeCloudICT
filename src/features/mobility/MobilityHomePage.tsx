@@ -122,7 +122,6 @@ export function MobilityHomePage() {
     deleteVehicle,
     endAssignment,
     deleteAssignment,
-    latestPositionsByAssignment,
     fetchProjects,
     createProject,
     updateProject,
@@ -135,6 +134,10 @@ export function MobilityHomePage() {
     updatePoint,
     deletePoint,
   } = useMobilityStore()
+  // 位置マップは明示的セレクタで購読 (再レンダートリガー確実化)
+  const latestPositionsByAssignment = useMobilityStore(
+    (s) => s.latestPositionsByAssignment,
+  )
 
   useEffect(() => {
     if (!orgId) return
@@ -271,7 +274,19 @@ export function MobilityHomePage() {
   const ageMsForAssignment = useCallback(
     (assignmentId: string): number | null => {
       const p = latestPositionsByAssignment.get(assignmentId)
-      if (!p) return null
+      if (!p) {
+        // 診断ログ (残す): 位置未受信を診断するとき何が map に居るか特定用
+        console.warn('[MobilityHomePage] no position for', assignmentId, {
+          storeMapSize: latestPositionsByAssignment.size,
+          storeMapKeys: Array.from(latestPositionsByAssignment.keys()),
+          latestFromStoreState: useMobilityStore
+            .getState()
+            .latestPositionsByAssignment.get(assignmentId),
+          storeStateMapSize:
+            useMobilityStore.getState().latestPositionsByAssignment.size,
+        })
+        return null
+      }
       return staleTick - new Date(p.recorded_at).getTime()
     },
     [latestPositionsByAssignment, staleTick],
