@@ -1738,7 +1738,7 @@ function VehiclePickerSheet({
                       </div>
                       {busyBy && (
                         <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-amber-100 text-amber-700 border border-amber-300">
-                          {busyBy.driver_name || '他ユーザー'} 乗車中
+                          {busyBy.driver_name || '他ドライバー'} 乗車中
                         </span>
                       )}
                     </button>

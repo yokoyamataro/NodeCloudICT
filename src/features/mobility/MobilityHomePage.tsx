@@ -139,10 +139,13 @@ export function MobilityHomePage() {
 
   const [showNewDialog, setShowNewDialog] = useState(false)
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null)
-  // 既定は ドライバー (ユーザー) タブ
   const [orgMembers, setOrgMembers] = useState<OrgMemberRow[]>([])
   const [orgMembersLoading, setOrgMembersLoading] = useState(false)
   const [showPhoneInvite, setShowPhoneInvite] = useState(false)
+  // 左サイドバー タブ切替
+  const [sidebarTab, setSidebarTab] = useState<'drivers' | 'vehicles' | 'projects'>(
+    'drivers',
+  )
 
   // 運行現場 (左パネル) の state
   const [projects, setProjects] = useState<MobilityProject[]>([])
@@ -402,113 +405,136 @@ export function MobilityHomePage() {
         </div>
       )}
 
-      {/* PC は [ユーザー | 地図(上)+車両(下) | 現場] の 3 列。狭い画面は縦積み */}
+      {/* PC は 左: サイドバー(タブ切替) | 右: 地図。狭い画面は縦積み */}
       <div className="flex-1 flex flex-col lg:flex-row min-h-0">
-        {/* 左サイドパネル: ユーザー */}
-        <div className="lg:w-[19rem] xl:w-[22rem] overflow-y-auto border-b lg:border-b-0 lg:border-r p-3">
-          <UsersColumn
-            activeAssignments={activeAssignments}
-            vehicles={vehicles}
-            orgMembers={orgMembers}
-            loading={orgMembersLoading}
-            expandedUserId={expandedUserId}
-            expandedVehicleId={expandedVehicleId}
-            selectedSectionAssignmentIds={selectedSectionAssignmentIds}
-            ageMsForAssignment={ageMsForAssignment}
-            staleThresholdMs={STALE_THRESHOLD_MS}
-            forceLeaveBusyId={forceLeaveBusyId}
-            sectionHistoryTick={sectionHistoryTick}
-            onToggleExpandUser={toggleExpandUser}
-            onToggleExpandVehicle={toggleExpandVehicle}
-            onSelectSection={selectSection}
-            onSelectSectionsByDay={selectSectionsByDay}
-            onDeleteSection={handleDeleteSection}
-            onForceLeave={handleForceLeave}
-            onEditVehicle={setEditingVehicle}
-            onNewVehicle={() => setShowNewDialog(true)}
-            onInviteByPhone={() => setShowPhoneInvite(true)}
-          />
+        {/* 左サイドバー: タブ切替 (ドライバー / 車両 / 運行現場) */}
+        <div className="lg:w-[22rem] xl:w-[25rem] flex flex-col border-b lg:border-b-0 lg:border-r bg-white">
+          {/* タブヘッダ */}
+          <div className="flex border-b bg-slate-50 shrink-0">
+            {(
+              [
+                { key: 'drivers', label: 'ドライバー' },
+                { key: 'vehicles', label: '車両' },
+                { key: 'projects', label: '運行現場' },
+              ] as const
+            ).map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setSidebarTab(t.key)}
+                className={`flex-1 py-2 text-sm font-medium border-b-2 transition-colors ${
+                  sidebarTab === t.key
+                    ? 'border-indigo-500 text-indigo-700 bg-white'
+                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-white/60'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          {/* タブ本体 (選択されたパネルのみ表示) */}
+          <div className="flex-1 overflow-y-auto p-3">
+            {sidebarTab === 'drivers' && (
+              <UsersColumn
+                activeAssignments={activeAssignments}
+                vehicles={vehicles}
+                orgMembers={orgMembers}
+                loading={orgMembersLoading}
+                expandedUserId={expandedUserId}
+                expandedVehicleId={expandedVehicleId}
+                selectedSectionAssignmentIds={selectedSectionAssignmentIds}
+                ageMsForAssignment={ageMsForAssignment}
+                staleThresholdMs={STALE_THRESHOLD_MS}
+                forceLeaveBusyId={forceLeaveBusyId}
+                sectionHistoryTick={sectionHistoryTick}
+                onToggleExpandUser={toggleExpandUser}
+                onToggleExpandVehicle={toggleExpandVehicle}
+                onSelectSection={selectSection}
+                onSelectSectionsByDay={selectSectionsByDay}
+                onDeleteSection={handleDeleteSection}
+                onForceLeave={handleForceLeave}
+                onEditVehicle={setEditingVehicle}
+                onNewVehicle={() => setShowNewDialog(true)}
+                onInviteByPhone={() => setShowPhoneInvite(true)}
+              />
+            )}
+            {sidebarTab === 'vehicles' && (
+              <VehiclesColumn
+                activeAssignments={activeAssignments}
+                vehicles={vehicles}
+                orgMembers={orgMembers}
+                loading={orgMembersLoading}
+                expandedUserId={expandedUserId}
+                expandedVehicleId={expandedVehicleId}
+                selectedSectionAssignmentIds={selectedSectionAssignmentIds}
+                ageMsForAssignment={ageMsForAssignment}
+                staleThresholdMs={STALE_THRESHOLD_MS}
+                forceLeaveBusyId={forceLeaveBusyId}
+                sectionHistoryTick={sectionHistoryTick}
+                onToggleExpandUser={toggleExpandUser}
+                onToggleExpandVehicle={toggleExpandVehicle}
+                onSelectSection={selectSection}
+                onSelectSectionsByDay={selectSectionsByDay}
+                onDeleteSection={handleDeleteSection}
+                onForceLeave={handleForceLeave}
+                onEditVehicle={setEditingVehicle}
+                onNewVehicle={() => setShowNewDialog(true)}
+                onInviteByPhone={() => setShowPhoneInvite(true)}
+              />
+            )}
+            {sidebarTab === 'projects' && (
+              <ProjectsLeftPanel
+                projects={projects}
+                projectsLoading={projectsLoading}
+                expandedProjectId={expandedProjectId}
+                expandedProjectMembers={expandedProjectMembers}
+                expandedProjectPoints={expandedProjectPoints}
+                orgMembers={orgMembers}
+                addPointMode={addPointMode}
+                onToggleExpand={toggleExpandProject}
+                onNewProject={() => setShowNewProjectDialog(true)}
+                onEditProject={setShowEditProjectId}
+                onOpenMemberPicker={setShowMemberPickerForProject}
+                onRemoveMember={async (projectId, userId) => {
+                  if (!confirm('このドライバーを外しますか?')) return
+                  await removeProjectMember(projectId, userId)
+                  setExpandedProjectMembers((prev) =>
+                    prev.filter((m) => m.user_id !== userId),
+                  )
+                }}
+                onEnterAddPointMode={() => setAddPointMode(true)}
+                onCancelAddPointMode={() => setAddPointMode(false)}
+                onEditPoint={setEditingPoint}
+                onDeletePoint={async (pointId) => {
+                  if (!confirm('このポイントを削除しますか?')) return
+                  await deletePoint(pointId)
+                  setExpandedProjectPoints((prev) =>
+                    prev.filter((p) => p.id !== pointId),
+                  )
+                }}
+              />
+            )}
+          </div>
         </div>
 
-        {/* 中央: 地図 (上) + 車両 (下) の縦積み */}
-        <div className="flex-1 min-w-0 flex flex-col min-h-0">
-          {/* 地図エリア */}
-          <div className="h-64 lg:h-auto lg:flex-1 relative">
-            <FleetMapView
-              organizationId={orgId}
-              extraTrackAssignmentIds={selectedSectionAssignmentIds}
-              projectPoints={expandedProjectPoints}
-              highlightPointId={editingPoint?.id ?? null}
-              addPointMode={addPointMode}
-              followAssignmentId={followAssignmentId}
-              onMapClick={handleMapClickForNewPoint}
-              onSelectPoint={(pid) => {
-                const pt = expandedProjectPoints.find((p) => p.id === pid) ?? null
-                setEditingPoint(pt)
-              }}
-              onSelectVehicle={(vid) => {
-                setExpandedVehicleId(vid)
-                setExpandedUserId(null)
-              }}
-            />
-          </div>
-          {/* 地図下: 車両パネル */}
-          <div className="lg:h-[18rem] xl:h-[22rem] overflow-y-auto border-t p-3 bg-white">
-            <VehiclesColumn
-              activeAssignments={activeAssignments}
-              vehicles={vehicles}
-              orgMembers={orgMembers}
-              loading={orgMembersLoading}
-              expandedUserId={expandedUserId}
-              expandedVehicleId={expandedVehicleId}
-              selectedSectionAssignmentIds={selectedSectionAssignmentIds}
-              ageMsForAssignment={ageMsForAssignment}
-              staleThresholdMs={STALE_THRESHOLD_MS}
-              forceLeaveBusyId={forceLeaveBusyId}
-              sectionHistoryTick={sectionHistoryTick}
-              onToggleExpandUser={toggleExpandUser}
-              onToggleExpandVehicle={toggleExpandVehicle}
-              onSelectSection={selectSection}
-              onSelectSectionsByDay={selectSectionsByDay}
-              onDeleteSection={handleDeleteSection}
-              onForceLeave={handleForceLeave}
-              onEditVehicle={setEditingVehicle}
-              onNewVehicle={() => setShowNewDialog(true)}
-              onInviteByPhone={() => setShowPhoneInvite(true)}
-            />
-          </div>
-        </div>
-
-        {/* 右サイドパネル: 運行現場 (ポイント) */}
-        <div className="lg:w-[19rem] xl:w-[22rem] overflow-y-auto border-t lg:border-t-0 lg:border-l p-3 bg-slate-50">
-          <ProjectsLeftPanel
-            projects={projects}
-            projectsLoading={projectsLoading}
-            expandedProjectId={expandedProjectId}
-            expandedProjectMembers={expandedProjectMembers}
-            expandedProjectPoints={expandedProjectPoints}
-            orgMembers={orgMembers}
+        {/* 右: 地図 */}
+        <div className="h-64 lg:h-auto lg:flex-1 relative">
+          <FleetMapView
+            organizationId={orgId}
+            extraTrackAssignmentIds={selectedSectionAssignmentIds}
+            projectPoints={expandedProjectPoints}
+            highlightPointId={editingPoint?.id ?? null}
             addPointMode={addPointMode}
-            onToggleExpand={toggleExpandProject}
-            onNewProject={() => setShowNewProjectDialog(true)}
-            onEditProject={setShowEditProjectId}
-            onOpenMemberPicker={setShowMemberPickerForProject}
-            onRemoveMember={async (projectId, userId) => {
-              if (!confirm('このドライバーを外しますか?')) return
-              await removeProjectMember(projectId, userId)
-              setExpandedProjectMembers((prev) =>
-                prev.filter((m) => m.user_id !== userId),
-              )
+            followAssignmentId={followAssignmentId}
+            onMapClick={handleMapClickForNewPoint}
+            onSelectPoint={(pid) => {
+              const pt = expandedProjectPoints.find((p) => p.id === pid) ?? null
+              setEditingPoint(pt)
             }}
-            onEnterAddPointMode={() => setAddPointMode(true)}
-            onCancelAddPointMode={() => setAddPointMode(false)}
-            onEditPoint={setEditingPoint}
-            onDeletePoint={async (pointId) => {
-              if (!confirm('このポイントを削除しますか?')) return
-              await deletePoint(pointId)
-              setExpandedProjectPoints((prev) =>
-                prev.filter((p) => p.id !== pointId),
-              )
+            onSelectVehicle={(vid) => {
+              setExpandedVehicleId(vid)
+              setExpandedUserId(null)
+              setSidebarTab('vehicles')
             }}
           />
         </div>
@@ -2544,14 +2570,14 @@ function UsersColumn(props: FleetSidebarProps) {
     [orgMembers, activeUserIds],
   )
 
-  const totalUsers = activePairs.length + inactiveUsers.length
+  const totalDrivers = activePairs.length + inactiveUsers.length
   return (
     <div className="space-y-3">
-      {/* 親タイトル: ユーザー (合計) */}
+      {/* 親タイトル: ドライバー (合計) */}
       <div className="flex items-center gap-2">
         <div className="w-1 h-5 rounded bg-indigo-500" />
         <h2 className="text-sm font-semibold text-slate-700 flex-1">
-          ユーザー ({totalUsers})
+          ドライバー ({totalDrivers})
         </h2>
         {PHONE_INVITE_ENABLED && (
           <button

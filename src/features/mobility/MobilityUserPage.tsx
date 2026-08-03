@@ -227,7 +227,7 @@ export function MobilityUserPage() {
             )}
           </div>
           <div className="p-3 bg-white rounded-lg border">
-            <div className="text-[10px] text-slate-500">本日走行 (このユーザー)</div>
+            <div className="text-[10px] text-slate-500">本日走行 (このドライバー)</div>
             <div className="text-2xl font-bold leading-tight text-slate-800">
               {(todayDistanceM / 1000).toFixed(1)}
               <span className="text-xs font-normal text-slate-500 ml-1">km</span>
