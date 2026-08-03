@@ -1189,12 +1189,16 @@ export function MobileStakingPage() {
     distance: number
     resolve: (choice: 'stake' | 'free' | 'cancel') => void
   } | null>(null)
-  // 測設完了モーダル: 結果メッセージ + 写真撮影 / OK
+  // 測設完了モーダル: 結果メッセージ + 写真撮影 / 詳細編集 / OK
   const [postStakeDialog, setPostStakeDialog] = useState<{
     message: string
     target: StakingTarget
-    /** OK 押下時は 'ok'、写真撮影押下時は 'photo' を返す */
-    resolve: (action: 'ok' | 'photo') => void
+    /**
+     * - 'ok': 次のターゲットの測設状態に移行 (追加操作なし)
+     * - 'photo': 座標写真モーダルを開く
+     * - 'detail': 従来の詳細編集モーダル (点情報モーダル) を開く
+     */
+    resolve: (action: 'ok' | 'photo' | 'detail') => void
   } | null>(null)
   // 新点計測完了モーダル: 名前入力 + プレビュー + OK / 写真 / キャンセル
   const [freePointDialog, setFreePointDialog] = useState<{
@@ -2567,16 +2571,18 @@ export function MobileStakingPage() {
         const msg =
           `${stakeRecordName} を測設しました（ターゲット: ${selectedTarget.name}）\n` +
           `誤差 ${dist.toFixed(3)} m / 精度 ${maxAcc.toFixed(3)} m / ${samples.length} サンプル`
-        // 結果モーダルを開いて OK or 写真撮影 を待つ
-        const action = await new Promise<'ok' | 'photo'>((resolve) => {
+        // 結果モーダルを開いて OK / 写真撮影 / 詳細編集 を待つ
+        const action = await new Promise<'ok' | 'photo' | 'detail'>((resolve) => {
           setPostStakeDialog({ message: msg, target: selectedTarget, resolve })
         })
         const measuredTarget = selectedTarget
         const idx = filteredTargets.findIndex((t) => t.id === selectedTarget.id)
         const next = idx >= 0 ? filteredTargets[idx + 1] : null
         setSelectedTargetId(next?.id ?? null)
-        // OK なら測点モーダル、写真撮影 なら写真モーダルが postStakeDialog 側で開いているので何もしない
-        if (action === 'ok') {
+        // OK: 次のターゲットの測設状態に移行するだけ
+        // 写真撮影: postStakeDialog 側で写真モーダルが開いているので何もしない
+        // 詳細編集: 従来の点情報モーダルを開く
+        if (action === 'detail') {
           setPointInfoTarget(measuredTarget)
         }
       }
@@ -3549,12 +3555,21 @@ export function MobileStakingPage() {
               )}
               <button
                 onClick={() => {
+                  postStakeDialog.resolve('detail')
+                  setPostStakeDialog(null)
+                }}
+                className="w-full px-4 py-2.5 border border-slate-400 text-slate-700 bg-white hover:bg-slate-50 rounded-lg text-sm font-medium"
+              >
+                詳細編集
+              </button>
+              <button
+                onClick={() => {
                   postStakeDialog.resolve('ok')
                   setPostStakeDialog(null)
                 }}
-                className="w-full px-4 py-2.5 bg-slate-200 hover:bg-slate-300 rounded-lg text-sm font-medium"
+                className="w-full px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium"
               >
-                OK
+                OK（次の測点へ）
               </button>
             </div>
           </div>
@@ -5368,14 +5383,29 @@ export function MobileStakingPage() {
         ) : showMap && (selectedTarget ? (
           <div className="flex flex-col gap-1">
             {/* 1 行目: 点名 (伸縮) + 解除 X + 矢印/距離。
-                点名を最大限に表示するため、測定/詳細ボタンは 2 行目に配置。 */}
+                点名を最大限に表示するため、測定/詳細ボタンは 2 行目に配置。
+                ルートフィルタ時は「n点中m点計測」を右上に小さく表示。 */}
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setShowTargetList(true)}
                 className="flex-1 min-w-0 text-left"
                 title="ターゲット切替"
               >
-                <div className="font-bold text-base truncate">{selectedTarget.name}</div>
+                <div className="flex items-baseline gap-2">
+                  <div className="font-bold text-base truncate">
+                    {selectedTarget.name}
+                  </div>
+                  {targetFilter === 'route' && routeTargetIds.size > 0 && (
+                    <div className="text-[11px] text-orange-700 whitespace-nowrap shrink-0">
+                      {
+                        filteredTargets.filter((t) => stakedTargetIds.has(t.id))
+                          .length
+                      }
+                      <span className="text-slate-400"> / </span>
+                      {filteredTargets.length} 点
+                    </div>
+                  )}
+                </div>
               </button>
               <button
                 onClick={() => setSelectedTargetId(null)}
