@@ -62,15 +62,15 @@ export function computeTotalDistanceMeters(
   }>,
   options?: {
     /**
-     * この精度より悪い (accuracy_m がこの値より大きい) 点は捨てる。既定 150m。
-     * 屋内・車内・トンネル出口直後などで一時的に精度が悪くなるサンプルまで
-     * 落とすと走行距離がゼロになりがちなので、既定は緩めに。
+     * この精度より悪い (accuracy_m がこの値より大きい) 点は捨てる。既定 500m。
+     * スマホの GPS はビル街・地下駐車場出口・トンネル直後などで
+     * 100〜300m の精度になることが普通にあるので、閾値を厳しくすると
+     * 走行距離がゼロになりがち。極端な誤検知 (500m超) だけ捨てる。
      */
     maxAccuracyM?: number
     /**
      * 隣接点間の距離がこの値より小さい場合はノイズとみなす。既定 1m。
-     * background-geolocation 側で distanceFilter=1m を掛けているので、
-     * ここで大きくフィルタする必要はもうない。
+     * 停車中の GPS ジッタ (数十cm〜数m) を除外する目的。
      */
     minSegmentM?: number
     /**
@@ -81,7 +81,7 @@ export function computeTotalDistanceMeters(
     maxSegmentM?: number
   },
 ): number {
-  const maxAccuracy = options?.maxAccuracyM ?? 150
+  const maxAccuracy = options?.maxAccuracyM ?? 500
   const minSegment = options?.minSegmentM ?? 1
   const maxSegment = options?.maxSegmentM ?? 2000
 

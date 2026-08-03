@@ -406,6 +406,9 @@ export function MobilityDriverPage() {
   const [accuracy, setAccuracy] = useState<number | null>(null)
   const [currentSpeedKmh, setCurrentSpeedKmh] = useState<number | null>(null)
   const [currentHeadingDeg, setCurrentHeadingDeg] = useState<number | null>(null)
+  // 前回位置 (方位を「前点→現在」ベクトルで計算するため保持)。
+  // GPS の heading は停車中や低速で不安定なので、実測ベクトルで置き換える。
+  const prevPosForBearingRef = useRef<{ lat: number; lon: number } | null>(null)
   const [locationError, setLocationError] = useState<string | null>(null)
   const [lastAutoSentAt, setLastAutoSentAt] = useState<Date | null>(null)
   const [autoSend, setAutoSend] = useState(false)
@@ -663,14 +666,22 @@ export function MobilityDriverPage() {
             setCurrentPos([sample.lat, sample.lon])
             setAccuracy(sample.accuracy_m)
             setCurrentSpeedKmh(sample.speed_kmh)
-            // heading は停車中や GPS 不安定時に null / 負の値を返すことが多いので、
-            // 有効値だけ更新し、それ以外は前回の値を保持する
-            if (
-              sample.heading_deg != null &&
-              !Number.isNaN(sample.heading_deg) &&
-              sample.heading_deg >= 0
-            ) {
-              setCurrentHeadingDeg(sample.heading_deg)
+            // 方位は「前回位置 → 今回位置」のベクトルで計算する。
+            // GPS 自体の heading は停止中や低速で null / 揺らぎが大きく実感と合わないため。
+            // 動きが 3m 未満なら振れやすいので更新しない (前の方位を維持)。
+            {
+              const prev = prevPosForBearingRef.current
+              const cur = { lat: sample.lat, lon: sample.lon }
+              if (prev) {
+                const seg = haversineMeters(prev, cur)
+                if (seg >= 3) {
+                  setCurrentHeadingDeg(bearingDeg(prev, cur))
+                  prevPosForBearingRef.current = cur
+                }
+                // 3m 未満は prev を更新しない → 少しずつ動いた累積で判定できる
+              } else {
+                prevPosForBearingRef.current = cur
+              }
             }
             setLocationError(null)
 

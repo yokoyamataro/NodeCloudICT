@@ -536,6 +536,28 @@ export function FleetMapView({
       if (!assignment) continue
       const vehicle = vehicles.find((v) => v.id === assignment.vehicle_id)
       const dp = assignment.destination_point
+      // 方位は「track の最新2点」の bearing で計算する。
+      // GPS の heading_deg は停止中や低速で不安定なため、実測ベクトルで置換。
+      // 3m 未満の移動は無視し、それ以前の有効な前点まで遡って計算する。
+      let derivedHeading: number | null = null
+      const track = trackPositions.get(assignmentId)
+      if (track && track.length >= 2) {
+        const last = track[track.length - 1]
+        for (let i = track.length - 2; i >= 0; i--) {
+          const prev = track[i]
+          const seg = haversineMeters(
+            { lat: prev.lat, lon: prev.lon },
+            { lat: last.lat, lon: last.lon },
+          )
+          if (seg >= 3) {
+            derivedHeading = bearingDeg(
+              { lat: prev.lat, lon: prev.lon },
+              { lat: last.lat, lon: last.lon },
+            )
+            break
+          }
+        }
+      }
       rows.push({
         assignmentId,
         vehicleId: assignment.vehicle_id,
@@ -546,14 +568,15 @@ export function FleetMapView({
         recordedAt: pos.recorded_at,
         accuracy_m: pos.accuracy_m,
         speed_kmh: pos.speed_kmh,
-        heading_deg: pos.heading_deg,
+        // bearing から得られなかった場合のみ GPS heading にフォールバック
+        heading_deg: derivedHeading ?? pos.heading_deg,
         destination: dp
           ? { id: dp.id, name: dp.name, lat: dp.lat, lon: dp.lon }
           : null,
       })
     }
     return rows
-  }, [latestPositions, activeAssignments, vehicles])
+  }, [latestPositions, activeAssignments, vehicles, trackPositions])
 
   const positionsForBounds = useMemo(() => {
     const rows: { lat: number; lon: number }[] = []
