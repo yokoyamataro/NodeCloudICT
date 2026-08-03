@@ -95,7 +95,8 @@ export function MobilityInstructionDialog({
         let query = supabase
           .from('mobility_project_points')
           .select('*')
-          .order('order_index', { ascending: true })
+          .eq('active', true)
+          .order('display_order', { ascending: true })
         if (projectId) {
           query = query.eq('project_id', projectId)
         } else {
@@ -107,9 +108,13 @@ export function MobilityInstructionDialog({
           }
           query = query.in('project_id', projectIds)
         }
-        const { data } = await query
+        const { data, error } = await query
+        if (error) {
+          console.warn('[MobilityInstructionDialog] points fetch failed', error)
+        }
         setProjectPoints((data ?? []) as MobilityProjectPoint[])
-      } catch {
+      } catch (err) {
+        console.warn('[MobilityInstructionDialog] points fetch failed', err)
         setProjectPoints([])
       }
     })()
