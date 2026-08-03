@@ -404,18 +404,49 @@ export const useMobilityStore = create<State>((set, get) => ({
       const { data: userData } = await supabase.auth.getUser()
       const uid = driverUserId ?? userData.user?.id
       if (!uid) throw new Error('not authenticated')
-      const { data, error } = await supabase
+      // INSERT と SELECT を分離。RLS SELECT に弾かれても新規作成は成功しており、
+      // 後段の再取得で fallback できるようにする。
+      const { data: insData, error: insErr } = await supabase
         .from('vehicle_assignments')
         .insert({
           vehicle_id: vehicleId,
           user_id: uid,
         } as never)
-        .select()
-        .single()
-      if (error) throw error
-      const [enriched] = await enrichAssignments([data as VehicleAssignment])
+        .select('id')
+      if (insErr) throw insErr
+      const newId = ((insData as { id: string }[] | null)?.[0]?.id) ?? null
+      // 新規行を再取得 (RLS SELECT が通れば拾える)
+      let created: VehicleAssignment | null = null
+      if (newId) {
+        const { data: fresh } = await supabase
+          .from('vehicle_assignments')
+          .select('*')
+          .eq('id', newId)
+          .maybeSingle()
+        created = (fresh as VehicleAssignment | null) ?? null
+      }
+      // 万一 SELECT で取れない場合の最終手段: 自分の open assignment を1件引く
+      if (!created) {
+        const { data: fallback } = await supabase
+          .from('vehicle_assignments')
+          .select('*')
+          .eq('vehicle_id', vehicleId)
+          .eq('user_id', uid)
+          .is('ended_at', null)
+          .order('started_at', { ascending: false })
+          .limit(1)
+        created =
+          (fallback as VehicleAssignment[] | null)?.[0] ??
+          null
+      }
+      if (!created) throw new Error('新規 assignment の取得に失敗')
+      const [enriched] = await enrichAssignments([created])
       set((s) => {
         const map = new Map(s.activeAssignments)
+        // 同じ user の古いエントリを消してから新しい方を入れる (再乗車時の残留対策)
+        for (const [vid, a] of map) {
+          if (a.user_id === uid) map.delete(vid)
+        }
         map.set(vehicleId, enriched)
         return { activeAssignments: map }
       })
@@ -428,17 +459,27 @@ export const useMobilityStore = create<State>((set, get) => ({
 
   endAssignment: async (assignmentId) => {
     try {
-      const { data, error } = await supabase
+      // UPDATE と SELECT を分離 (setAssignmentDestination と同じ理由)。
+      // .update().select().single() では RLS SELECT policy に弾かれると
+      // PGRST116 (0 rows) が発生し、update 自体は成功していても
+      // catch に落ちて local store から削除できず、
+      // 再乗車後に古い closed assignment が残り続けて myActive が
+      // 古い ID を掴んだままになる → RLS 42501 で ping が silent drop。
+      const { error: updErr } = await supabase
         .from('vehicle_assignments')
         .update({ ended_at: new Date().toISOString() } as never)
         .eq('id', assignmentId)
-        .select()
-        .single()
-      if (error) throw error
-      const ended = data as VehicleAssignment
+      if (updErr) throw updErr
+      // 削除対象の vehicle_id を特定して store から remove。
+      // (RLS で SELECT できなくても、store に存在する行から assignment.id で引ける)
       set((s) => {
         const map = new Map(s.activeAssignments)
-        map.delete(ended.vehicle_id)
+        for (const [vid, a] of map) {
+          if (a.id === assignmentId) {
+            map.delete(vid)
+            break
+          }
+        }
         return { activeAssignments: map }
       })
     } catch (err) {
