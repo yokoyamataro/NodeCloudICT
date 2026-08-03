@@ -663,31 +663,32 @@ export const useMobilityStore = create<State>((set, get) => ({
   },
 
   fetchLatestPositions: async (assignmentIds) => {
+    console.info('[mobilityStore] fetchLatestPositions CALLED', {
+      idsCount: assignmentIds.length,
+      ids: assignmentIds,
+    })
     // 空配列で呼ばれても Store の map を wipe しない。
-    // 従来は set({ latestPositionsByAssignment: new Map() }) で消していたが、
-    // FleetMapView の refreshAll や polling が一瞬 activeAssignments が空の
-    // タイミングで走ると Realtime で入っていた位置ごとリセットされ、
-    // サイドバーが「位置未受信」に見える race condition が発生していた。
     if (assignmentIds.length === 0) return new Map()
 
-    // PostgREST では DISTINCT ON が直接使えないので、単純に IN で取って
-    // クライアント側で assignment_id ごとに最新 1 件を選ぶ。
     const { data, error } = await supabase
       .from('mobility_positions')
       .select('*')
       .in('assignment_id', assignmentIds)
       .order('recorded_at', { ascending: false })
-      .limit(assignmentIds.length * 50) // 各 assignment につき最大 50 件見れば十分
+      .limit(assignmentIds.length * 50)
     if (error) {
-      console.warn('[mobilityStore] fetchLatestPositions failed', error)
+      console.warn('[mobilityStore] fetchLatestPositions ERROR', error)
       return new Map()
     }
     const rows = (data ?? []) as MobilityPosition[]
+    console.info('[mobilityStore] fetchLatestPositions RESULT', {
+      rowsReturned: rows.length,
+      firstRow: rows[0] ?? null,
+    })
     const fresh = new Map<string, MobilityPosition>()
     for (const row of rows) {
       if (!fresh.has(row.assignment_id)) fresh.set(row.assignment_id, row)
     }
-    // 既存 map とマージ (新しい方だけ上書き)。空応答で既存エントリを消さない。
     set((s) => {
       const next = new Map(s.latestPositionsByAssignment)
       for (const [k, v] of fresh) {
@@ -700,6 +701,10 @@ export const useMobilityStore = create<State>((set, get) => ({
           next.set(k, v)
         }
       }
+      console.info('[mobilityStore] fetchLatestPositions POST-SET', {
+        mapSize: next.size,
+        mapKeys: Array.from(next.keys()),
+      })
       return { latestPositionsByAssignment: next }
     })
     return fresh
