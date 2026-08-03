@@ -863,16 +863,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
           source: 'coordinate',
           type: c.type,
         }))
-      console.info('[coordinateStore.saveRoute] dual-write', {
-        farmId,
-        routeCount: route.length,
-        pointsCount: points.length,
-        coordinatesCount: coordinates.length,
-      })
-      const ok = await useExportRouteStore.getState().saveRoute(farmId, points)
-      console.info('[coordinateStore.saveRoute] export_point_routes result', {
-        ok,
-      })
+      await useExportRouteStore.getState().saveRoute(farmId, points)
     } catch (err) {
       console.error('経路の保存に失敗:', err)
       throw err

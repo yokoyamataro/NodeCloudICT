@@ -569,6 +569,8 @@ export function CoordinatesPage() {
 
   // 経路モード（クリックで経路に追加）
   const [routeMode, setRouteMode] = useState(false)
+  // 経路パネル折りたたみ (地図が見えにくい時用)
+  const [routePanelCollapsed, setRoutePanelCollapsed] = useState(false)
 
   // 現在の工区が属するプロジェクトの座標系
   const projectZone = currentFarm
@@ -2764,44 +2766,63 @@ export function CoordinatesPage() {
 
             {/* 経路パネル（地図右上にオーバーレイ） */}
             {(routeMode || route.length > 0) && (
-              <div className="absolute top-2 right-2 z-[1000] w-64 max-h-[60vh] flex flex-col bg-white border border-slate-300 rounded shadow-lg">
-                <div className="px-2 py-1.5 border-b flex items-center justify-between bg-slate-50 rounded-t">
-                  <span className="text-xs font-medium text-slate-700 flex items-center gap-1">
+              <div
+                className={`absolute top-2 right-2 z-[1000] flex flex-col bg-white border border-slate-300 rounded shadow-lg ${
+                  routePanelCollapsed ? 'w-auto' : 'w-64 max-h-[60vh]'
+                }`}
+              >
+                <div className="px-2 py-1.5 border-b flex items-center justify-between bg-slate-50 rounded-t gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setRoutePanelCollapsed((v) => !v)}
+                    className="text-xs font-medium text-slate-700 flex items-center gap-1 hover:text-slate-900"
+                    title={routePanelCollapsed ? '展開' : '折りたたむ'}
+                  >
+                    <ChevronDown
+                      className={`h-3 w-3 transition-transform ${
+                        routePanelCollapsed ? '-rotate-90' : ''
+                      }`}
+                    />
                     <Route className="h-3 w-3" />
                     経路 ({route.length})
-                  </span>
-                  <div className="flex items-center gap-2">
-                    {route.length > 0 && (
-                      <button
-                        onClick={async () => {
-                          try {
-                            await saveRoute()
-                            alert('スマホ杭打ちで使える順路を保存しました')
-                          } catch (err) {
-                            const msg = err instanceof Error ? err.message : String(err)
-                            alert(`保存に失敗しました: ${msg}`)
-                          }
-                        }}
-                        className="text-[10px] px-1.5 py-0.5 bg-emerald-600 text-white rounded hover:bg-emerald-700 flex items-center gap-0.5"
-                        title="スマホ杭打ちモードでこの順路が使えるようになる (export_point_routes に保存)"
-                      >
-                        <Save className="h-2.5 w-2.5" />
-                        スマホに保存
-                      </button>
-                    )}
-                    {route.length > 0 && (
-                      <button
-                        onClick={() => {
-                          if (confirm('経路を全てクリアしますか？')) clearRoute()
-                        }}
-                        className="text-[10px] text-red-600 hover:text-red-800"
-                        title="経路を全てクリア"
-                      >
-                        クリア
-                      </button>
-                    )}
-                  </div>
+                  </button>
+                  {!routePanelCollapsed && (
+                    <div className="flex items-center gap-2">
+                      {route.length > 0 && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              await saveRoute()
+                              alert('スマホ杭打ちで使える順路を保存しました')
+                            } catch (err) {
+                              const msg =
+                                err instanceof Error ? err.message : String(err)
+                              alert(`保存に失敗しました: ${msg}`)
+                            }
+                          }}
+                          className="text-[10px] px-1.5 py-0.5 bg-emerald-600 text-white rounded hover:bg-emerald-700 flex items-center gap-0.5"
+                          title="スマホ杭打ちモードでこの順路が使えるようになる (export_point_routes に保存)"
+                        >
+                          <Save className="h-2.5 w-2.5" />
+                          スマホに保存
+                        </button>
+                      )}
+                      {route.length > 0 && (
+                        <button
+                          onClick={() => {
+                            if (confirm('経路を全てクリアしますか？')) clearRoute()
+                          }}
+                          className="text-[10px] text-red-600 hover:text-red-800"
+                          title="経路を全てクリア"
+                        >
+                          クリア
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
+                {!routePanelCollapsed && (
+                <>
                 <div className="flex-1 overflow-auto text-xs">
                   {route.length === 0 ? (
                     <div className="p-3 text-slate-500 text-center">
@@ -2868,6 +2889,8 @@ export function CoordinatesPage() {
                     </table>
                   )}
                 </div>
+                </>
+                )}
               </div>
             )}
 
