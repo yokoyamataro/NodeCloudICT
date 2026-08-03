@@ -271,7 +271,18 @@ export function MobilityHomePage() {
   const ageMsForAssignment = useCallback(
     (assignmentId: string): number | null => {
       const p = latestPositionsByAssignment.get(assignmentId)
-      if (!p) return null
+      // 診断: 位置未受信が続く原因の特定用
+      if (!p) {
+        console.warn(
+          '[MobilityHomePage] ageMsForAssignment: no position for',
+          assignmentId,
+          'store map size:',
+          latestPositionsByAssignment.size,
+          'keys:',
+          Array.from(latestPositionsByAssignment.keys()),
+        )
+        return null
+      }
       return staleTick - new Date(p.recorded_at).getTime()
     },
     [latestPositionsByAssignment, staleTick],
