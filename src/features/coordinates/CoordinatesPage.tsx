@@ -1443,13 +1443,12 @@ export function CoordinatesPage() {
       return
     }
     setSelectedPointId(id)
-    // 地図の測点をクリックしたら、スマホと同様に写真パネルを自動で開く。
-    // ただしユーザーが直近で明示的に閉じた場合は開かない (連続作業を邪魔しない)。
-    if (!userClosedPhotoPanelRef.current) {
-      setPhotoPanelOpen(true)
-    }
+    // 経路モード中は写真パネルを開かない (連続で経路を組めるようにする)。
+    // ユーザーが直近で明示的に閉じた場合も開かない。
     if (routeMode) {
       appendRoutePoint(id, 'down')
+    } else if (!userClosedPhotoPanelRef.current) {
+      setPhotoPanelOpen(true)
     }
   }
 
