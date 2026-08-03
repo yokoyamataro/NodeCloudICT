@@ -595,7 +595,14 @@ export const useMobilityStore = create<State>((set, get) => ({
           heading_deg: input.heading_deg ?? null,
           altitude_m: input.altitude_m ?? null,
         } as never)
-      if (error) throw error
+      if (error) {
+        console.warn('[sendPosition] insert failed', {
+          assignmentId,
+          error,
+        })
+        throw error
+      }
+      console.info('[sendPosition] insert OK', { assignmentId })
       return { ok: true }
     } catch (err) {
       return { ok: false, error: extractErr(err) }
