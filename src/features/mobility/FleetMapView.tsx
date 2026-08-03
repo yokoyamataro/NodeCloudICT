@@ -421,12 +421,10 @@ export function FleetMapView({
         (payload) => {
           const row = payload.new as MobilityPosition | undefined
           if (!row) return
-          const active = useMobilityStore.getState().activeAssignments
-          const isOurs = Array.from(active.values()).some(
-            (a) => a.id === row.assignment_id,
-          )
-          if (!isOurs) return
-          // store の共有 map も更新 (サイドバーの通信断バッジ計算で使う)
+          // 以前ここで activeAssignments に含まれる assignment_id かでフィルタ
+          // していたが、activeAssignments の fetch が遅れると legit なイベントを
+          // drop してしまうため撤廃。Realtime は RLS で自組織分に絞られている
+          // ので、そのまま store にマージして問題ない。
           useMobilityStore.getState().applyLatestPosition(row)
           setLatestPositions((prev) => {
             const next = new Map(prev)

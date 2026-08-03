@@ -250,6 +250,24 @@ export function MobilityHomePage() {
     return () => clearInterval(id)
   }, [])
   const STALE_THRESHOLD_MS = 60_000
+
+  // 稼働中 assignment の最新 position をポーリング取得。
+  // FleetMapView も同じことをしているが、こちらは MobilityHomePage 側の
+  // ドライバー/車両カードの通信断バッジ計算に使うため、独立して回して
+  // FleetMapView がアンマウントされた場合や Realtime が届かない場合の保険に。
+  const fetchLatestPositionsStore = useMobilityStore((s) => s.fetchLatestPositions)
+  useEffect(() => {
+    if (activeAssignments.size === 0) return
+    const ids = Array.from(activeAssignments.values()).map((a) => a.id)
+    void fetchLatestPositionsStore(ids)
+    const id = setInterval(() => {
+      const curIds = Array.from(
+        useMobilityStore.getState().activeAssignments.values(),
+      ).map((a) => a.id)
+      if (curIds.length > 0) void fetchLatestPositionsStore(curIds)
+    }, 15_000)
+    return () => clearInterval(id)
+  }, [activeAssignments, fetchLatestPositionsStore])
   const ageMsForAssignment = useCallback(
     (assignmentId: string): number | null => {
       const p = latestPositionsByAssignment.get(assignmentId)
