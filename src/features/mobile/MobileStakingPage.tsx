@@ -2023,11 +2023,20 @@ export function MobileStakingPage() {
   // ルート未保存（または空）なら ordered=targets / routeIds=空集合。
   const { orderedTargets, routeTargetIds } = useMemo(() => {
     if (!route || route.length === 0) {
+      console.info('[MobileStakingPage] route empty or missing', {
+        routeLoaded: route !== null,
+        routeLength: route?.length ?? 0,
+        targetsCount: targets.length,
+      })
       return { orderedTargets: targets, routeTargetIds: new Set<string>() }
     }
     const TOL = 0.1 // 10cm
     const used = new Set<string>()
     const ordered: StakingTarget[] = []
+    const missReasons: {
+      rp: { name: string; x: number; y: number }
+      nearestDist: number | null
+    }[] = []
     for (const rp of route as RoutePoint[]) {
       const hit = targets.find(
         (t) =>
@@ -2038,11 +2047,32 @@ export function MobileStakingPage() {
       if (hit) {
         ordered.push({ ...hit, name: rp.name })
         used.add(hit.id)
+      } else {
+        // 一番近い target との距離を出して原因を追う
+        let nearest: number | null = null
+        for (const t of targets) {
+          const d = Math.hypot(t.x - rp.x, t.y - rp.y)
+          if (nearest == null || d < nearest) nearest = d
+        }
+        missReasons.push({
+          rp: { name: rp.name, x: rp.x, y: rp.y },
+          nearestDist: nearest,
+        })
       }
     }
     for (const t of targets) {
       if (!used.has(t.id)) ordered.push(t)
     }
+    console.info('[MobileStakingPage] route matching result', {
+      routeCount: route.length,
+      matchedCount: used.size,
+      unmatchedCount: missReasons.length,
+      unmatchedSample: missReasons.slice(0, 3),
+      targetsCount: targets.length,
+      firstTargetSample: targets[0]
+        ? { id: targets[0].id, x: targets[0].x, y: targets[0].y }
+        : null,
+    })
     return { orderedTargets: ordered, routeTargetIds: used }
   }, [targets, route])
 

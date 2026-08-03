@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Upload, Download, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Camera, Image as ImageIcon, Loader2, Calculator, Layers, Check, Pencil, X } from 'lucide-react'
+import { Upload, Download, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Camera, Image as ImageIcon, Loader2, Calculator, Layers, Check, Pencil, X, Save } from 'lucide-react'
 import { PointTypeFilterButton } from './PointTypeFilterButton'
 import { StakeStatusFilterButton } from './StakeStatusFilterButton'
 import {
@@ -2770,17 +2770,37 @@ export function CoordinatesPage() {
                     <Route className="h-3 w-3" />
                     経路 ({route.length})
                   </span>
-                  {route.length > 0 && (
-                    <button
-                      onClick={() => {
-                        if (confirm('経路を全てクリアしますか？')) clearRoute()
-                      }}
-                      className="text-[10px] text-red-600 hover:text-red-800"
-                      title="経路を全てクリア"
-                    >
-                      クリア
-                    </button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {route.length > 0 && (
+                      <button
+                        onClick={async () => {
+                          try {
+                            await saveRoute()
+                            alert('スマホ杭打ちで使える順路を保存しました')
+                          } catch (err) {
+                            const msg = err instanceof Error ? err.message : String(err)
+                            alert(`保存に失敗しました: ${msg}`)
+                          }
+                        }}
+                        className="text-[10px] px-1.5 py-0.5 bg-emerald-600 text-white rounded hover:bg-emerald-700 flex items-center gap-0.5"
+                        title="スマホ杭打ちモードでこの順路が使えるようになる (export_point_routes に保存)"
+                      >
+                        <Save className="h-2.5 w-2.5" />
+                        スマホに保存
+                      </button>
+                    )}
+                    {route.length > 0 && (
+                      <button
+                        onClick={() => {
+                          if (confirm('経路を全てクリアしますか？')) clearRoute()
+                        }}
+                        className="text-[10px] text-red-600 hover:text-red-800"
+                        title="経路を全てクリア"
+                      >
+                        クリア
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="flex-1 overflow-auto text-xs">
                   {route.length === 0 ? (
