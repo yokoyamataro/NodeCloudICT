@@ -174,6 +174,27 @@ function MapViewManager({ pipeLines }: { pipeLines: PipeLineData[] }) {
   return null
 }
 
+// DXF 取込プレビューが空→非空に変わったタイミングで、その範囲に地図をフィットさせる
+function FitImportPreview({
+  positions,
+}: {
+  positions: [number, number][]
+}) {
+  const map = useMap()
+  const prevCountRef = useRef(0)
+
+  useEffect(() => {
+    const count = positions.length
+    if (count > 0 && prevCountRef.current === 0) {
+      const bounds = L.latLngBounds(positions)
+      map.fitBounds(bounds, { padding: [50, 50], maxZoom: 20 })
+    }
+    prevCountRef.current = count
+  }, [positions, map])
+
+  return null
+}
+
 // 特定の管路にフォーカスする
 function FocusPipe({ pipeLines, focusedPipeId }: { pipeLines: PipeLineData[], focusedPipeId: string | null }) {
   const map = useMap()
@@ -215,6 +236,13 @@ export interface PipeChangePoint {
   label: string  // 表示ラベル（例: "S4A S3C"）
 }
 
+// DXF 取込前の候補プレビュー
+export interface ImportPreviewLine {
+  tempId: string
+  vertices: PipeVertex[]
+  selected: boolean
+}
+
 interface PipeMapProps {
   selectedPipeId?: string | null
   selectedPipeIds?: Set<string>
@@ -240,6 +268,7 @@ interface PipeMapProps {
   showSelectedRoute?: boolean  // 選択ルートを表示するか
   baseLayer?: BaseLayerType     // 背景地図の種類
   pipeChangePoints?: PipeChangePoint[]  // 管切り替え点（〇マーカー表示用）
+  importPreviewLines?: ImportPreviewLine[]  // DXF 取込前の候補プレビュー
 }
 
 // 測点ラベルアイコンを生成（緑の丸マーカー + ラベル、選択時はオレンジ・拡大・パルス）
@@ -400,6 +429,7 @@ export function PipeMap({
   showSelectedRoute = true,
   baseLayer = 'osm',
   pipeChangePoints = [],
+  importPreviewLines = [],
 }: PipeMapProps) {
   const { pipes } = useUnderdrainStore()
   const { zone, coordinates } = useCoordinateStore()
@@ -438,6 +468,19 @@ export function PipeMap({
       }
     })
     .filter((p): p is PipeLineData => p !== null)
+
+  // 取込プレビュー: ポリライン化
+  const previewLineData = importPreviewLines
+    .map((line) => {
+      const positions = line.vertices
+        .map((v) => vertexToLatLng(v, converter))
+        .filter((p): p is [number, number] => p !== null)
+      if (positions.length < 2) return null
+      return { tempId: line.tempId, positions, selected: line.selected }
+    })
+    .filter((p): p is { tempId: string; positions: [number, number][]; selected: boolean } => p !== null)
+
+  const importPreviewPositions = previewLineData.flatMap((l) => l.positions)
 
   // 初期中心（管路がない場合は東京）
   const defaultCenter: [number, number] = [35.6762, 139.6503]
@@ -484,6 +527,22 @@ export function PipeMap({
       ) : (
         <MapViewManager pipeLines={pipeLines} />
       )}
+
+      <FitImportPreview positions={importPreviewPositions} />
+
+      {/* DXF 取込前の候補プレビュー（インポート確定前の仮表示） */}
+      {previewLineData.map((line) => (
+        <Polyline
+          key={`import-preview-${line.tempId}`}
+          positions={line.positions}
+          pathOptions={{
+            color: line.selected ? '#2563eb' : '#94a3b8',
+            weight: line.selected ? 3 : 2,
+            opacity: line.selected ? 0.9 : 0.5,
+            dashArray: '6, 4',
+          }}
+        />
+      ))}
 
       {/* 管路ポリライン */}
       {pipeLines.map((pipe) => {
@@ -551,28 +610,32 @@ export function PipeMap({
               },
             }}
           >
-            <Popup>
-              <div className="text-xs space-y-0.5">
-                <div className="font-bold text-sm" style={{ color: pipe.color }}>
-                  {pipe.number}
+            {/* 一括訂正モード中はクリックのたびに詳細ポップアップを開かない
+                （毎回開くと訂正操作の邪魔になるため） */}
+            {!isBulkEditMode && (
+              <Popup>
+                <div className="text-xs space-y-0.5">
+                  <div className="font-bold text-sm" style={{ color: pipe.color }}>
+                    {pipe.number}
+                  </div>
+                  <div>
+                    <span className="text-slate-500">管種: </span>
+                    <span className="font-medium">{pipeTypeLabel(pipe.pipeType)}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">延長: </span>
+                    <span className="font-mono">{displayLength.value.toFixed(2)} m</span>
+                    <span className="text-slate-400 ml-1">({displayLength.source})</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">管径: </span>
+                    <span className="font-mono">
+                      {pipe.diameter != null ? `${pipe.diameter} mm` : '未設定'}
+                    </span>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-slate-500">管種: </span>
-                  <span className="font-medium">{pipeTypeLabel(pipe.pipeType)}</span>
-                </div>
-                <div>
-                  <span className="text-slate-500">延長: </span>
-                  <span className="font-mono">{displayLength.value.toFixed(2)} m</span>
-                  <span className="text-slate-400 ml-1">({displayLength.source})</span>
-                </div>
-                <div>
-                  <span className="text-slate-500">管径: </span>
-                  <span className="font-mono">
-                    {pipe.diameter != null ? `${pipe.diameter} mm` : '未設定'}
-                  </span>
-                </div>
-              </div>
-            </Popup>
+              </Popup>
+            )}
           </Polyline>
         )
       })}

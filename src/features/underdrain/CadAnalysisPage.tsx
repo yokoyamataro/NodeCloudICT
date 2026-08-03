@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { Upload, Trash2, FileSearch, Download, ArrowUpDown, Edit3, X, Navigation, Link2, Merge, Split, Tag, MapPin, ChevronUp, ChevronDown, Target, Square, Map, Maximize2, Minimize2, Printer, Sparkles } from 'lucide-react'
-import { CadAiImportModal } from './CadAiImportModal'
+import { Upload, Trash2, FileSearch, Download, ArrowUpDown, Edit3, X, Navigation, Link2, Merge, Split, Tag, MapPin, ChevronUp, ChevronDown, Target, Square, Map, Maximize2, Minimize2, Printer } from 'lucide-react'
 import { parseDxf, calculateLineLength } from '@/lib/dxf-parser'
 import { autoConnectFromOutlet } from '@/lib/pipe-connection'
 import {
@@ -58,9 +57,6 @@ export function CadAnalysisPage() {
   } | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('import')
 
-  // AI 解析モーダル (別フロー)
-  const [showAiImport, setShowAiImport] = useState(false)
-
   // 一括訂正モード（連番機能を統合）
   const [isBulkEditMode, setIsBulkEditMode] = useState(false)
   const [bulkEditSettings, setBulkEditSettings] = useState<BulkEditSettings>({
@@ -92,6 +88,19 @@ export function CadAnalysisPage() {
 
   // 結合・分割モード
   const [editMode, setEditMode] = useState<'normal' | 'merge' | 'split'>('normal')
+
+  // 結合実行時の属性引き継ぎ選択モーダル
+  // key = 属性名, value = 引き継ぎ元 pipe id（または 'sum' = 設計延長の合算）
+  const [showMergeAttrModal, setShowMergeAttrModal] = useState(false)
+  const [mergeAttrSource, setMergeAttrSource] = useState<{
+    number: string
+    layerName: string
+    pipeType: string
+    diameter: string
+    designLength: string  // pipe id または 'sum'
+    connectionTo: string
+    notes: string
+  } | null>(null)
 
   // ソート設定
   // デフォルトは配管番号昇順（頭文字を除いた数字で比較）
@@ -375,6 +384,17 @@ export function CadAnalysisPage() {
     return result
   }, [pipes])
 
+  // 取込前の候補プレビュー（地図の仮表示に使う）
+  const importPreviewLines = useMemo(
+    () =>
+      parsedEntities.map((e) => ({
+        tempId: e.tempId,
+        vertices: e.vertices,
+        selected: e.selected,
+      })),
+    [parsedEntities]
+  )
+
   // カーソルキーでセル間を移動
   const handleCellKeyDown = useCallback((
     e: React.KeyboardEvent,
@@ -467,6 +487,17 @@ export function CadAnalysisPage() {
   const toggleAllSelection = () => {
     const allSelected = parsedEntities.every((e) => e.selected)
     setParsedEntities((prev) => prev.map((e) => ({ ...e, selected: !allSelected })))
+  }
+
+  // 2.000m の線を除外（記号など配線でないもの）
+  // Why: 2m ぴったりの LINE は方位記号・凡例・シンボル図形として使われることが多く、配管ではない
+  const excludeTwoMeterLines = () => {
+    const TOLERANCE = 0.005 // 5mm 以内なら 2.000m とみなす
+    setParsedEntities((prev) =>
+      prev.map((e) =>
+        Math.abs(e.length - 2.0) < TOLERANCE ? { ...e, selected: false } : e
+      )
+    )
   }
 
   // 選択したエンティティをインポート（実測延長に登録）
@@ -800,14 +831,6 @@ export function CadAnalysisPage() {
                 <Upload className="h-4 w-4" />
                 DXF
               </button>
-              <button
-                onClick={() => setShowAiImport(true)}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 whitespace-nowrap"
-                title="DXF を AI (Claude Sonnet) で解析し、管径・延長を自動抽出して取込"
-              >
-                <Sparkles className="h-4 w-4" />
-                AI 解析
-              </button>
               {pipes.length > 0 && !isBulkEditMode && editMode === 'normal' && autoConnectMode === 'idle' && (
                 <>
                   <div className="w-px h-6 bg-slate-300 mx-0.5" />
@@ -904,6 +927,11 @@ export function CadAnalysisPage() {
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-medium text-purple-800">
                   結合モード: 結合する管路をクリックで選択（{selectedPipeIds.size}件選択中）
+                  {isBulkEditMode && (
+                    <span className="ml-2 text-amber-700 text-xs">
+                      （完了後、一括訂正モードに戻ります）
+                    </span>
+                  )}
                 </span>
                 <div className="flex gap-2">
                   <button
@@ -912,13 +940,17 @@ export function CadAnalysisPage() {
                         alert('2本以上の管路を選択してください')
                         return
                       }
-                      const result = mergePipes(Array.from(selectedPipeIds))
-                      if (result) {
-                        alert('管路を結合しました')
-                        setEditMode('normal')
-                      } else {
-                        alert('選択した管路は隣接していないため結合できません')
-                      }
+                      const firstId = Array.from(selectedPipeIds)[0]
+                      setMergeAttrSource({
+                        number: firstId,
+                        layerName: firstId,
+                        pipeType: firstId,
+                        diameter: firstId,
+                        designLength: firstId,
+                        connectionTo: firstId,
+                        notes: firstId,
+                      })
+                      setShowMergeAttrModal(true)
                     }}
                     disabled={selectedPipeIds.size < 2}
                     className={`px-3 py-1 text-sm rounded ${
@@ -954,6 +986,11 @@ export function CadAnalysisPage() {
                   分割モード: {selectedPipeId
                     ? `「${pipes.find(p => p.id === selectedPipeId)?.number}」の分割点をクリック、または下で距離指定`
                     : '分割する管路を選択してください'}
+                  {isBulkEditMode && (
+                    <span className="ml-2 text-amber-700 text-xs">
+                      （完了後、一括訂正モードに戻ります）
+                    </span>
+                  )}
                 </span>
                 <button
                   onClick={() => { setEditMode('normal'); setSelectedPipeId(null) }}
@@ -1008,12 +1045,31 @@ export function CadAnalysisPage() {
                     </span>
                   )}
                 </span>
-                <button
-                  onClick={endBulkEdit}
-                  className="p-1 text-amber-600 hover:bg-amber-100 rounded"
-                >
-                  <X className="h-4 w-4" />
-                </button>
+                <div className="flex items-center gap-1">
+                  {/* 一括訂正の途中でも管の結合・分割を割り込みで実行できる */}
+                  <button
+                    onClick={() => { setEditMode('merge'); clearPipeSelection() }}
+                    className="flex items-center gap-1 px-2 py-1 text-xs border border-purple-300 bg-white text-purple-700 rounded hover:bg-purple-50"
+                    title="結合を割り込みで実行（完了後、一括訂正に戻る）"
+                  >
+                    <Merge className="h-3.5 w-3.5" />
+                    結合
+                  </button>
+                  <button
+                    onClick={() => { setEditMode('split'); setSelectedPipeId(null) }}
+                    className="flex items-center gap-1 px-2 py-1 text-xs border border-orange-300 bg-white text-orange-700 rounded hover:bg-orange-50"
+                    title="分割を割り込みで実行（完了後、一括訂正に戻る）"
+                  >
+                    <Split className="h-3.5 w-3.5" />
+                    分割
+                  </button>
+                  <button
+                    onClick={endBulkEdit}
+                    className="p-1 text-amber-600 hover:bg-amber-100 rounded"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
               <div className="flex items-center gap-4 flex-wrap">
                 <div className="flex items-center gap-2">
@@ -1131,6 +1187,13 @@ export function CadAnalysisPage() {
                     className="px-2 py-1 text-xs border rounded hover:bg-white"
                   >
                     {parsedEntities.every((e) => e.selected) ? '全解除' : '全選択'}
+                  </button>
+                  <button
+                    onClick={excludeTwoMeterLines}
+                    className="px-2 py-1 text-xs border rounded hover:bg-white"
+                    title="2.000m の線（方位記号・凡例など、配線でない図形）を選択から外す"
+                  >
+                    2m線を除外
                   </button>
                   <button
                     onClick={handleImport}
@@ -1524,6 +1587,7 @@ export function CadAnalysisPage() {
               }
               showZones={showZones}
               showCoordinates={showCoordinates}
+              importPreviewLines={importPreviewLines}
             />
           </div>
         </div>
@@ -1677,6 +1741,184 @@ export function CadAnalysisPage() {
         </div>
       )}
 
+      {/* 結合時の属性引き継ぎ選択モーダル */}
+      {showMergeAttrModal && mergeAttrSource && (() => {
+        const selectedPipes = Array.from(selectedPipeIds)
+          .map(id => pipes.find(p => p.id === id))
+          .filter((p): p is PipeRow => p !== undefined)
+        if (selectedPipes.length < 2) return null
+
+        const attrRows: Array<{
+          key: keyof typeof mergeAttrSource
+          label: string
+          format: (p: PipeRow) => string
+          extraOption?: { value: string; label: string; compute: () => string }
+        }> = [
+          { key: 'number', label: '番号', format: (p) => p.number || '（空）' },
+          {
+            key: 'pipeType',
+            label: '管種',
+            format: (p) => EXTENDED_PIPE_TYPES.find(t => t.value === p.pipeType)?.label ?? '未設定',
+          },
+          { key: 'diameter', label: '管径 (mm)', format: (p) => p.diameter != null ? String(p.diameter) : '未設定' },
+          {
+            key: 'designLength',
+            label: '設計延長 (m)',
+            format: (p) => p.designLength != null ? p.designLength.toFixed(3) : '未設定',
+            extraOption: {
+              value: 'sum',
+              label: '合算',
+              compute: () => selectedPipes
+                .reduce((acc, p) => acc + (p.designLength ?? 0), 0)
+                .toFixed(3),
+            },
+          },
+          { key: 'layerName', label: 'レイヤ名', format: (p) => p.layerName || '（空）' },
+          {
+            key: 'connectionTo',
+            label: '接続先',
+            format: (p) => {
+              if (!p.connectionTo) return 'なし'
+              const target = pipes.find(x => x.id === p.connectionTo)
+              return target?.number ?? 'なし'
+            },
+          },
+          { key: 'notes', label: '備考', format: (p) => p.notes || '（空）' },
+        ]
+
+        const executeMerge = () => {
+          if (!mergeAttrSource) return
+          const findPipe = (id: string) => selectedPipes.find(p => p.id === id)
+          const overrides: Partial<Pick<PipeRow, 'number' | 'layerName' | 'pipeType' | 'diameter' | 'designLength' | 'connectionTo' | 'notes'>> = {}
+          const numberSrc = findPipe(mergeAttrSource.number)
+          if (numberSrc) overrides.number = numberSrc.number
+          const layerSrc = findPipe(mergeAttrSource.layerName)
+          if (layerSrc) overrides.layerName = layerSrc.layerName
+          const pipeTypeSrc = findPipe(mergeAttrSource.pipeType)
+          if (pipeTypeSrc) overrides.pipeType = pipeTypeSrc.pipeType
+          const diameterSrc = findPipe(mergeAttrSource.diameter)
+          if (diameterSrc) overrides.diameter = diameterSrc.diameter
+          if (mergeAttrSource.designLength === 'sum') {
+            overrides.designLength = selectedPipes.reduce((acc, p) => acc + (p.designLength ?? 0), 0)
+          } else {
+            const lengthSrc = findPipe(mergeAttrSource.designLength)
+            if (lengthSrc) overrides.designLength = lengthSrc.designLength
+          }
+          const connSrc = findPipe(mergeAttrSource.connectionTo)
+          if (connSrc) overrides.connectionTo = connSrc.connectionTo
+          const notesSrc = findPipe(mergeAttrSource.notes)
+          if (notesSrc) overrides.notes = notesSrc.notes
+
+          const result = mergePipes(Array.from(selectedPipeIds), overrides)
+          setShowMergeAttrModal(false)
+          setMergeAttrSource(null)
+          if (result) {
+            setEditMode('normal')
+          } else {
+            alert('選択した管路は隣接していないため結合できません')
+          }
+        }
+
+        return (
+          <div className="fixed inset-0 z-[3000] bg-black/40 flex items-center justify-center p-4">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[92vh] flex flex-col">
+              <div className="px-4 py-3 border-b flex items-center justify-between">
+                <span className="text-sm font-semibold">
+                  管路結合: 引き継ぐ属性の選択
+                </span>
+                <button
+                  onClick={() => { setShowMergeAttrModal(false); setMergeAttrSource(null) }}
+                  className="p-1 rounded hover:bg-slate-100"
+                >
+                  <X className="h-4 w-4 text-slate-500" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-auto p-4">
+                <p className="text-xs text-slate-500 mb-3">
+                  各属性ごとに、どの管路の値を引き継ぐかを選択してください。実測延長は結合後の頂点座標から自動計算されます。
+                </p>
+                <div className="overflow-auto border rounded">
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-50 sticky top-0">
+                      <tr>
+                        <th className="text-left py-2 px-2 border-b font-medium text-slate-600">属性</th>
+                        {selectedPipes.map(p => (
+                          <th key={p.id} className="text-left py-2 px-2 border-b font-mono text-slate-700">
+                            {p.number}
+                          </th>
+                        ))}
+                        {/* extraOption 列: 設計延長のみ「合算」を表示 */}
+                        <th className="text-left py-2 px-2 border-b font-medium text-slate-500 w-24">
+                          その他
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {attrRows.map(row => (
+                        <tr key={row.key} className="border-b">
+                          <td className="py-2 px-2 font-medium text-slate-600">{row.label}</td>
+                          {selectedPipes.map(p => (
+                            <td key={p.id} className="py-2 px-2">
+                              <label className="flex items-center gap-1.5 cursor-pointer">
+                                <input
+                                  type="radio"
+                                  name={`merge-attr-${row.key}`}
+                                  checked={mergeAttrSource[row.key] === p.id}
+                                  onChange={() =>
+                                    setMergeAttrSource(prev =>
+                                      prev ? { ...prev, [row.key]: p.id } : prev
+                                    )
+                                  }
+                                />
+                                <span className="font-mono">{row.format(p)}</span>
+                              </label>
+                            </td>
+                          ))}
+                          <td className="py-2 px-2">
+                            {row.extraOption && (
+                              <label className="flex items-center gap-1.5 cursor-pointer">
+                                <input
+                                  type="radio"
+                                  name={`merge-attr-${row.key}`}
+                                  checked={mergeAttrSource[row.key] === row.extraOption.value}
+                                  onChange={() =>
+                                    setMergeAttrSource(prev =>
+                                      prev ? { ...prev, [row.key]: row.extraOption!.value } : prev
+                                    )
+                                  }
+                                />
+                                <span className="font-mono">
+                                  {row.extraOption.label} = {row.extraOption.compute()}
+                                </span>
+                              </label>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div className="px-4 py-2 border-t flex items-center justify-end gap-2">
+                <button
+                  onClick={() => { setShowMergeAttrModal(false); setMergeAttrSource(null) }}
+                  className="px-3 py-1 text-xs border rounded hover:bg-slate-50"
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={executeMerge}
+                  className="flex items-center gap-1 px-3 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-700"
+                >
+                  <Merge className="h-3 w-3" />
+                  結合実行
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
       {/* 全画面表示モード */}
       {isFullscreen && (
         <div className="fixed inset-0 z-[9999] bg-white flex flex-col print:static print:h-auto">
@@ -1763,17 +2005,10 @@ export function CadAnalysisPage() {
               previewPoints={[]}
               showZones={showZones}
               showCoordinates={showCoordinates}
+              importPreviewLines={importPreviewLines}
             />
           </div>
         </div>
-      )}
-      {showAiImport && currentFarm?.project_id && (
-        <CadAiImportModal
-          projectId={currentFarm.project_id}
-          farmId={currentFarm.id}
-          onClose={() => setShowAiImport(false)}
-          onDone={() => setShowAiImport(false)}
-        />
       )}
     </div>
   )

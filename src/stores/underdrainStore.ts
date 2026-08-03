@@ -64,7 +64,10 @@ interface UnderdrainState {
   clearPipes: () => Promise<void>
   getPipeById: (id: string) => PipeRow | undefined
   reversePipeDirection: (id: string) => void // 上流/下流反転
-  mergePipes: (ids: string[]) => string | null // 管路の結合（返り値は新しい管路ID）
+  mergePipes: (
+    ids: string[],
+    overrides?: Partial<Pick<PipeRow, 'number' | 'layerName' | 'pipeType' | 'diameter' | 'designLength' | 'connectionTo' | 'notes'>>
+  ) => string | null // 管路の結合（overrides で属性の引き継ぎ元を明示指定できる）
   splitPipe: (id: string, vertexIndex: number) => [string, string] | null // 管路の分割
   splitPipeAtPoint: (id: string, point: { x: number; y: number }) => [string, string] | null // 任意の座標で管路を分割
   autoInsertMidpoints: (maxSegmentLength: number, pipeTypes: PipeType[]) => number // 自動中間点設置（返り値は追加された中間点数）
@@ -290,7 +293,7 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
     get().updatePipe(id, { vertices: reversedVertices })
   },
 
-  mergePipes: (ids) => {
+  mergePipes: (ids, overrides) => {
     const state = get()
     if (ids.length < 2) return null
 
@@ -368,17 +371,22 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
 
     const firstPipe = orderedPipes[0]
     const newId = crypto.randomUUID()
+    // overrides が指定されていればそちらを優先。なければ従来通り先頭管路の属性を引き継ぐ。
+    const pick = <K extends keyof PipeRow>(key: K): PipeRow[K] =>
+      overrides && key in overrides && (overrides as Partial<PipeRow>)[key] !== undefined
+        ? (overrides as Partial<PipeRow>)[key] as PipeRow[K]
+        : firstPipe[key]
     const newPipe: PipeRow = {
       id: newId,
-      number: firstPipe.number,
-      layerName: firstPipe.layerName,
-      pipeType: firstPipe.pipeType,
-      diameter: firstPipe.diameter,
-      designLength: firstPipe.designLength,
+      number: pick('number'),
+      layerName: pick('layerName'),
+      pipeType: pick('pipeType'),
+      diameter: pick('diameter'),
+      designLength: pick('designLength'),
       measuredLength: totalLength,
       vertices: mergedVertices,
-      connectionTo: firstPipe.connectionTo,
-      notes: firstPipe.notes,
+      connectionTo: pick('connectionTo'),
+      notes: pick('notes'),
     }
 
     // 古い管路を削除し、新しい管路を追加
