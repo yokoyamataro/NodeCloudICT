@@ -402,11 +402,59 @@ export function MobilityHomePage() {
         </div>
       )}
 
-      {/* PC は 左: [運行現場 | ユーザー | 車両] の 3 列 | 右: 地図。狭い画面は縦積み */}
+      {/* PC は 左: [ユーザー+車両縦積み | 運行現場] の 2 列 | 右: 地図。狭い画面は縦積み */}
       <div className="flex-1 flex flex-col lg:flex-row min-h-0">
-        {/* 左サイドパネル: 3 列 (現場 / ユーザー / 車両) */}
-        <div className="lg:w-[42rem] xl:w-[45rem] overflow-y-auto border-b lg:border-b-0 lg:border-r">
-          <div className="grid grid-cols-1 lg:grid-cols-3 divide-x divide-slate-200 min-h-full">
+        {/* 左サイドパネル: 2 列 (左=ユーザー→車両 縦積み / 右=運行現場) */}
+        <div className="lg:w-[36rem] xl:w-[40rem] overflow-y-auto border-b lg:border-b-0 lg:border-r">
+          <div className="grid grid-cols-1 lg:grid-cols-2 divide-x divide-slate-200 min-h-full">
+            {/* 左列: ユーザー (上) + 車両 (下) */}
+            <div className="p-3 space-y-5">
+              <UsersColumn
+                activeAssignments={activeAssignments}
+                vehicles={vehicles}
+                orgMembers={orgMembers}
+                loading={orgMembersLoading}
+                expandedUserId={expandedUserId}
+                expandedVehicleId={expandedVehicleId}
+                selectedSectionAssignmentIds={selectedSectionAssignmentIds}
+                ageMsForAssignment={ageMsForAssignment}
+                staleThresholdMs={STALE_THRESHOLD_MS}
+                forceLeaveBusyId={forceLeaveBusyId}
+                sectionHistoryTick={sectionHistoryTick}
+                onToggleExpandUser={toggleExpandUser}
+                onToggleExpandVehicle={toggleExpandVehicle}
+                onSelectSection={selectSection}
+                onSelectSectionsByDay={selectSectionsByDay}
+                onDeleteSection={handleDeleteSection}
+                onForceLeave={handleForceLeave}
+                onEditVehicle={setEditingVehicle}
+                onNewVehicle={() => setShowNewDialog(true)}
+                onInviteByPhone={() => setShowPhoneInvite(true)}
+              />
+              <VehiclesColumn
+                activeAssignments={activeAssignments}
+                vehicles={vehicles}
+                orgMembers={orgMembers}
+                loading={orgMembersLoading}
+                expandedUserId={expandedUserId}
+                expandedVehicleId={expandedVehicleId}
+                selectedSectionAssignmentIds={selectedSectionAssignmentIds}
+                ageMsForAssignment={ageMsForAssignment}
+                staleThresholdMs={STALE_THRESHOLD_MS}
+                forceLeaveBusyId={forceLeaveBusyId}
+                sectionHistoryTick={sectionHistoryTick}
+                onToggleExpandUser={toggleExpandUser}
+                onToggleExpandVehicle={toggleExpandVehicle}
+                onSelectSection={selectSection}
+                onSelectSectionsByDay={selectSectionsByDay}
+                onDeleteSection={handleDeleteSection}
+                onForceLeave={handleForceLeave}
+                onEditVehicle={setEditingVehicle}
+                onNewVehicle={() => setShowNewDialog(true)}
+                onInviteByPhone={() => setShowPhoneInvite(true)}
+              />
+            </div>
+            {/* 右列: 運行現場 (ポイント) */}
             <div className="p-3 bg-slate-50">
               <ProjectsLeftPanel
                 projects={projects}
@@ -437,54 +485,6 @@ export function MobilityHomePage() {
                     prev.filter((p) => p.id !== pointId),
                   )
                 }}
-              />
-            </div>
-            <div className="p-3">
-              <UsersColumn
-                activeAssignments={activeAssignments}
-                vehicles={vehicles}
-                orgMembers={orgMembers}
-                loading={orgMembersLoading}
-                expandedUserId={expandedUserId}
-                expandedVehicleId={expandedVehicleId}
-                selectedSectionAssignmentIds={selectedSectionAssignmentIds}
-                ageMsForAssignment={ageMsForAssignment}
-                staleThresholdMs={STALE_THRESHOLD_MS}
-                forceLeaveBusyId={forceLeaveBusyId}
-                sectionHistoryTick={sectionHistoryTick}
-                onToggleExpandUser={toggleExpandUser}
-                onToggleExpandVehicle={toggleExpandVehicle}
-                onSelectSection={selectSection}
-                onSelectSectionsByDay={selectSectionsByDay}
-                onDeleteSection={handleDeleteSection}
-                onForceLeave={handleForceLeave}
-                onEditVehicle={setEditingVehicle}
-                onNewVehicle={() => setShowNewDialog(true)}
-                onInviteByPhone={() => setShowPhoneInvite(true)}
-              />
-            </div>
-            <div className="p-3">
-              <VehiclesColumn
-                activeAssignments={activeAssignments}
-                vehicles={vehicles}
-                orgMembers={orgMembers}
-                loading={orgMembersLoading}
-                expandedUserId={expandedUserId}
-                expandedVehicleId={expandedVehicleId}
-                selectedSectionAssignmentIds={selectedSectionAssignmentIds}
-                ageMsForAssignment={ageMsForAssignment}
-                staleThresholdMs={STALE_THRESHOLD_MS}
-                forceLeaveBusyId={forceLeaveBusyId}
-                sectionHistoryTick={sectionHistoryTick}
-                onToggleExpandUser={toggleExpandUser}
-                onToggleExpandVehicle={toggleExpandVehicle}
-                onSelectSection={selectSection}
-                onSelectSectionsByDay={selectSectionsByDay}
-                onDeleteSection={handleDeleteSection}
-                onForceLeave={handleForceLeave}
-                onEditVehicle={setEditingVehicle}
-                onNewVehicle={() => setShowNewDialog(true)}
-                onInviteByPhone={() => setShowPhoneInvite(true)}
               />
             </div>
           </div>
