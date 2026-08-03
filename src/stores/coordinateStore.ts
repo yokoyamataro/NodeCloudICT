@@ -48,6 +48,7 @@ function normalizeStakeStatus(raw: string | null | undefined): StakeStatus {
 import { CoordinateConverter } from '@/lib/coordinates'
 import { useFarmStore } from './farmStore'
 import { useSettingsStore } from './settingsStore'
+import { useExportRouteStore, type RoutePoint as ExportRoutePoint } from './exportRouteStore'
 
 // ローカル状態用の座標型
 export interface CoordinateRow {
@@ -842,6 +843,27 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         if (insErr) throw insErr
       }
       set({ routeHasChanges: false })
+
+      // スマホ杭打ち (MobileStakingPage) が読む export_point_routes にも同期。
+      // MobileStakingPage は useExportRouteStore に fetchRoute し、RoutePoint[] の
+      // x,y と現地座標を突き合わせて杭打ちターゲットを並び替える。
+      // 暗渠の PipeCoordinateCalcPage と同じ書式で保存すればスマホ側は
+      // 追加実装なしでそのまま扱える。
+      const { coordinates } = get()
+      const coordById = new Map(coordinates.map((c) => [c.id, c]))
+      const points: ExportRoutePoint[] = route
+        .map((r) => coordById.get(r.coordinateId))
+        .filter((c): c is CoordinateRow => c != null)
+        .map((c) => ({
+          id: c.id,
+          name: c.pointNumber,
+          x: c.x,
+          y: c.y,
+          z: c.z,
+          source: 'coordinate',
+          type: c.type,
+        }))
+      await useExportRouteStore.getState().saveRoute(farmId, points)
     } catch (err) {
       console.error('経路の保存に失敗:', err)
       throw err
