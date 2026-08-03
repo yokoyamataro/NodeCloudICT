@@ -478,26 +478,34 @@ export const useMobilityStore = create<State>((set, get) => ({
             destination_set_at: new Date().toISOString(),
           }
         : { destination_point_id: null, destination_set_at: null }
-      const { data, error } = await supabase
+      // UPDATE と post-UPDATE RETURNING を分離する。RETURNING を .select() で
+      // 取ろうとすると SELECT の RLS が絡み PGRST116 (0 rows) が発生しうる
+      // (電話招待のみで organization_members に未登録のドライバーで発生した)。
+      const { error: updErr } = await supabase
         .from('vehicle_assignments')
         .update(patch as never)
         .eq('id', assignmentId)
-        .select()
-        .single()
-      if (error) throw error
-      const updated = data as VehicleAssignment
-      // enrich (destination_point を埋め直す) してから activeAssignments を差し替え
-      const [enriched] = await enrichAssignments([updated])
-      set((s) => {
-        const map = new Map(s.activeAssignments)
-        // 既存の driver_name などが失われないように必要ならマージ
-        const existing = map.get(updated.vehicle_id)
-        map.set(updated.vehicle_id, {
-          ...(existing ?? enriched),
-          ...enriched,
+      if (updErr) throw updErr
+      // 再取得。SELECT ポリシーに 'user_id = auth.uid()' が入ったので通常は取れるが、
+      // 万一空でもエラー扱いにせず既存 store をそのままにする。
+      const { data: fresh } = await supabase
+        .from('vehicle_assignments')
+        .select('*')
+        .eq('id', assignmentId)
+        .maybeSingle()
+      if (fresh) {
+        const updated = fresh as VehicleAssignment
+        const [enriched] = await enrichAssignments([updated])
+        set((s) => {
+          const map = new Map(s.activeAssignments)
+          const existing = map.get(updated.vehicle_id)
+          map.set(updated.vehicle_id, {
+            ...(existing ?? enriched),
+            ...enriched,
+          })
+          return { activeAssignments: map }
         })
-        return { activeAssignments: map }
-      })
+      }
       return { ok: true }
     } catch (err) {
       return { ok: false, error: extractErr(err) }
