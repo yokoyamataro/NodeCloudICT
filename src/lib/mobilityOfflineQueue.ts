@@ -94,13 +94,42 @@ const inflightFlush = new Map<
   Promise<{ sent: number; remaining: number }>
 >()
 
+// このキューが古すぎたら再送を諦める閾値。降車済み assignment 宛の ping は
+// RLS で永久に弾かれるので、この閾値で保険をかけて破棄する (下記 isTerminalError
+// で拾いきれない場合の最終セーフティネット)。
+const MAX_PING_AGE_MS = 24 * 60 * 60 * 1000 // 24h
+
 /**
- * キューを古い順に flush する。1 件でも失敗したらそこで打ち切り、
- * 残りをキューに戻して { sent, remaining } を返す。
- * (offline なら 0 件送って全件残る)
+ * この失敗は "永久にリトライしても送れない" 系のエラーか?
  *
- * 並列に呼ばれた場合は同じ Promise を返す (dedupe)。呼び出し側は
- * 「今回の flush で何件残ったか」を毎回もらえるので await で問題ない。
+ * 具体例:
+ *   - RLS INSERT が assignment.ended_at IS NULL を要求 → 降車後は 42501 で拒否
+ *   - assignment が削除された/自分の物でない → 参照エラー
+ *
+ * これらは何度リトライしても通らないので、当該 ping はキューから破棄する。
+ * (逆に、ネットワーク切断や 5xx はリトライで通るので破棄しない)
+ */
+function isTerminalError(err: string | undefined): boolean {
+  if (!err) return false
+  const lower = err.toLowerCase()
+  return (
+    lower.includes('row-level security') ||
+    lower.includes('row level security') ||
+    lower.includes('code=42501') ||
+    lower.includes('policy') ||
+    lower.includes('violates') ||
+    lower.includes('foreign key') ||
+    lower.includes('not authorized')
+  )
+}
+
+/**
+ * キューを古い順に flush する。
+ *   - success: そのまま次へ
+ *   - terminal error: 破棄して次へ (assignment 終了後の ping 等)
+ *   - transient error: そこで打ち切り、残りをキューに戻す
+ *
+ * 並列に呼ばれた場合は同じ Promise を返す (dedupe)。
  */
 export function flushQueue(
   userId: string,
@@ -110,11 +139,31 @@ export function flushQueue(
   if (existing) return existing
   const p = (async () => {
     try {
-      const queue = readQueue(userId)
+      let queue = readQueue(userId)
       if (queue.length === 0) return { sent: 0, remaining: 0 }
+
+      // 24h 超の古い ping は最初にドロップ (念のためのセーフティネット)
+      const nowMs = Date.now()
+      const beforeAge = queue.length
+      queue = queue.filter((q) => {
+        const t = Date.parse(q.recorded_at)
+        return Number.isFinite(t) && nowMs - t < MAX_PING_AGE_MS
+      })
+      if (queue.length !== beforeAge) {
+        console.warn(
+          `[mobilityOfflineQueue] discarded ${beforeAge - queue.length} old pings (>24h)`,
+        )
+      }
+
+      // このセッション中に「送れないと判った」assignment_id をキャッシュして
+      // 同じ assignment_id の残り ping はまとめてドロップする
+      const poisoned = new Set<string>()
+
       let sent = 0
+      let stopIdx = -1
       for (let i = 0; i < queue.length; i++) {
         const item = queue[i]
+        if (poisoned.has(item.assignmentId)) continue // ドロップ扱い
         const res = await sender(item.assignmentId, {
           lat: item.lat,
           lon: item.lon,
@@ -124,12 +173,29 @@ export function flushQueue(
           altitude_m: item.altitude_m,
           recorded_at: item.recorded_at,
         })
-        if (!res.ok) {
-          const remaining = queue.slice(i)
-          writeQueue(userId, remaining)
-          return { sent, remaining: remaining.length }
+        if (res.ok) {
+          sent++
+          continue
         }
-        sent++
+        if (isTerminalError(res.error)) {
+          console.warn(
+            `[mobilityOfflineQueue] dropping ping for closed/invalid assignment ${item.assignmentId}: ${res.error}`,
+          )
+          poisoned.add(item.assignmentId)
+          continue
+        }
+        // 一時的エラー → ここで停止、残りをキューに書き戻す
+        stopIdx = i
+        break
+      }
+
+      if (stopIdx >= 0) {
+        // 停止位置以降のうち、poisoned なものは書き戻さない
+        const rest = queue
+          .slice(stopIdx)
+          .filter((q) => !poisoned.has(q.assignmentId))
+        writeQueue(userId, rest)
+        return { sent, remaining: rest.length }
       }
       writeQueue(userId, [])
       return { sent, remaining: 0 }
@@ -139,4 +205,9 @@ export function flushQueue(
   })()
   inflightFlush.set(userId, p)
   return p
+}
+
+/** 現在キューにある ping を全消去する (デバッグ / 手動リセット用) */
+export function clearQueue(userId: string): void {
+  writeQueue(userId, [])
 }
