@@ -1596,7 +1596,7 @@ export function CadAnalysisPage() {
 
       {/* プレビューモードパネル */}
       {isPreviewMode && midpointPreview.length > 0 && (
-        <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 bg-white rounded-lg shadow-xl p-4 z-50 border-2 border-green-500">
+        <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 bg-white rounded-lg shadow-xl p-4 z-[3000] border-2 border-green-500">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
               <div className="w-4 h-4 rounded-full bg-green-500"></div>
@@ -1632,7 +1632,7 @@ export function CadAnalysisPage() {
 
       {/* 自動中間点設置モーダル */}
       {showMidpointModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[3000]">
           <div className="bg-white rounded-lg shadow-xl p-6 w-96">
             <h3 className="text-lg font-bold mb-4">自動中間点設置</h3>
             <p className="text-sm text-muted-foreground mb-4">
