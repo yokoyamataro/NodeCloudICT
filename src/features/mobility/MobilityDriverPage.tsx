@@ -65,6 +65,7 @@ import {
 import { useMobilityStore } from '@/stores/mobilityStore'
 import { useMobilityMessagesStore } from '@/stores/mobilityMessagesStore'
 import { MobilityChatPanel } from '@/features/mobility/MobilityChatPanel'
+import { supabase } from '@/lib/supabase'
 import type {
   MobilityPosition,
   MobilityProject,
@@ -253,6 +254,33 @@ export function MobilityDriverPage() {
     void fetchVehicles(orgId)
     void fetchActiveAssignments(orgId)
   }, [orgId, fetchVehicles, fetchActiveAssignments])
+
+  // vehicle_assignments の変化を Realtime + 30秒 polling で追う。
+  // 管理者による強制降車 / instruction confirm RPC で新 assignment が作られた場合、
+  // 端末側の myActive が古いままだと ping が古い closed assignment に向けて
+  // POST され、RLS 42501 で silent drop される (queue の terminal-error 処理)。
+  // ここで随時 fetchActiveAssignments を叩いておくことで、次の tick から
+  // 正しい assignment_id で送れるようにする。
+  useEffect(() => {
+    if (!orgId) return
+    const channel = supabase
+      .channel(`vehicle-assignments-driver-${orgId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'vehicle_assignments' },
+        () => {
+          void fetchActiveAssignments(orgId)
+        },
+      )
+      .subscribe()
+    const timer = window.setInterval(() => {
+      void fetchActiveAssignments(orgId)
+    }, 30_000)
+    return () => {
+      void supabase.removeChannel(channel)
+      window.clearInterval(timer)
+    }
+  }, [orgId, fetchActiveAssignments])
 
   // 指示 / 報告 / チャット の Realtime 購読
   const messages = useMobilityMessagesStore((s) => s.messages)
@@ -481,6 +509,19 @@ export function MobilityDriverPage() {
     sendPositionRef.current = sendPosition
   }, [sendPosition])
 
+  // flushQueue で terminal-error (RLS violation 等) が起きたら
+  // activeAssignments を強制 refresh するコールバック。
+  // これで「古い closed assignment に向けて post → silent drop → UI 正常」の
+  // ゴースト状態から抜け出せる。
+  const orgIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    orgIdRef.current = orgId
+  }, [orgId])
+  const onQueueTerminalRef = useRef((_assignmentId: string, _err: string) => {
+    const oid = orgIdRef.current
+    if (oid) void fetchActiveAssignments(oid)
+  })
+
   // キュー介在の送信ヘルパー。
   //   1) 常に enqueue (localStorage に貯める)
   //   2) flushQueue で古い順から送信を試みる。1 件でも失敗したら残りは次回持越し
@@ -515,7 +556,9 @@ export function MobilityDriverPage() {
         altitude_m: sample.altitude_m ?? null,
         recorded_at: sample.recorded_at ?? new Date().toISOString(),
       })
-      const { remaining } = await flushQueue(uid, sendPositionRef.current)
+      const { remaining } = await flushQueue(uid, sendPositionRef.current, {
+        onTerminal: onQueueTerminalRef.current,
+      })
       setQueueLen(remaining)
     },
     [],
@@ -525,7 +568,9 @@ export function MobilityDriverPage() {
   useEffect(() => {
     if (!isOnline || !user) return
     void (async () => {
-      const { remaining } = await flushQueue(user.id, sendPositionRef.current)
+      const { remaining } = await flushQueue(user.id, sendPositionRef.current, {
+        onTerminal: onQueueTerminalRef.current,
+      })
       setQueueLen(remaining)
     })()
   }, [isOnline, user])
@@ -537,7 +582,9 @@ export function MobilityDriverPage() {
     const id = setInterval(async () => {
       const before = getQueueLength(user.id)
       if (before === 0) return
-      const { remaining } = await flushQueue(user.id, sendPositionRef.current)
+      const { remaining } = await flushQueue(user.id, sendPositionRef.current, {
+        onTerminal: onQueueTerminalRef.current,
+      })
       setQueueLen(remaining)
     }, 30_000)
     return () => clearInterval(id)
@@ -550,7 +597,9 @@ export function MobilityDriverPage() {
     const tryFlush = async () => {
       const before = getQueueLength(user.id)
       if (before === 0) return
-      const { remaining } = await flushQueue(user.id, sendPositionRef.current)
+      const { remaining } = await flushQueue(user.id, sendPositionRef.current, {
+        onTerminal: onQueueTerminalRef.current,
+      })
       setQueueLen(remaining)
     }
     const onVisible = () => {
@@ -611,7 +660,9 @@ export function MobilityDriverPage() {
             // throttle 対象外: この callback が発火した=画面 OFF でも生きているタイミング。
             // 通信不通後の復帰チャンスなので、キューに残ってる古い ping を先に流す。
             if (uid) {
-              void flushQueue(uid, sendPositionRef.current).then((r) =>
+              void flushQueue(uid, sendPositionRef.current, {
+                onTerminal: onQueueTerminalRef.current,
+              }).then((r) =>
                 setQueueLen(r.remaining),
               )
             }
@@ -687,7 +738,9 @@ export function MobilityDriverPage() {
             const uid = userIdRef.current
             // throttle 対象外: この callback ごとに古い queue を flush 試行
             if (uid) {
-              void flushQueue(uid, sendPositionRef.current).then((r) =>
+              void flushQueue(uid, sendPositionRef.current, {
+                onTerminal: onQueueTerminalRef.current,
+              }).then((r) =>
                 setQueueLen(r.remaining),
               )
             }

@@ -131,6 +131,8 @@ function isTerminalError(err: string | undefined): boolean {
  * キューを古い順に flush する。
  *   - success: そのまま次へ
  *   - terminal error: 破棄して次へ (assignment 終了後の ping 等)
+ *     onTerminal コールバックが渡されていれば assignment_id 付きで通知
+ *     (呼び出し側が activeAssignments を re-fetch できるように)
  *   - transient error: そこで打ち切り、残りをキューに戻す
  *
  * 並列に呼ばれた場合は同じ Promise を返す (dedupe)。
@@ -138,6 +140,9 @@ function isTerminalError(err: string | undefined): boolean {
 export function flushQueue(
   userId: string,
   sender: PingSender,
+  options?: {
+    onTerminal?: (assignmentId: string, error: string) => void
+  },
 ): Promise<{ sent: number; remaining: number }> {
   const existing = inflightFlush.get(userId)
   if (existing) return existing
@@ -186,6 +191,11 @@ export function flushQueue(
             `[mobilityOfflineQueue] dropping ping for closed/invalid assignment ${item.assignmentId}: ${res.error}`,
           )
           poisoned.add(item.assignmentId)
+          try {
+            options?.onTerminal?.(item.assignmentId, res.error ?? '')
+          } catch {
+            /* noop */
+          }
           continue
         }
         // 一時的エラー → ここで停止、残りをキューに書き戻す
