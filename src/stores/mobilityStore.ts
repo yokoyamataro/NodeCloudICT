@@ -663,10 +663,6 @@ export const useMobilityStore = create<State>((set, get) => ({
   },
 
   fetchLatestPositions: async (assignmentIds) => {
-    console.info('[mobilityStore] fetchLatestPositions CALLED', {
-      idsCount: assignmentIds.length,
-      ids: assignmentIds,
-    })
     // 空配列で呼ばれても Store の map を wipe しない。
     if (assignmentIds.length === 0) return new Map()
 
@@ -677,14 +673,10 @@ export const useMobilityStore = create<State>((set, get) => ({
       .order('recorded_at', { ascending: false })
       .limit(assignmentIds.length * 50)
     if (error) {
-      console.warn('[mobilityStore] fetchLatestPositions ERROR', error)
+      console.warn('[mobilityStore] fetchLatestPositions failed', error)
       return new Map()
     }
     const rows = (data ?? []) as MobilityPosition[]
-    console.info('[mobilityStore] fetchLatestPositions RESULT', {
-      rowsReturned: rows.length,
-      firstRow: rows[0] ?? null,
-    })
     const fresh = new Map<string, MobilityPosition>()
     for (const row of rows) {
       if (!fresh.has(row.assignment_id)) fresh.set(row.assignment_id, row)
@@ -701,10 +693,6 @@ export const useMobilityStore = create<State>((set, get) => ({
           next.set(k, v)
         }
       }
-      console.info('[mobilityStore] fetchLatestPositions POST-SET', {
-        mapSize: next.size,
-        mapKeys: Array.from(next.keys()),
-      })
       return { latestPositionsByAssignment: next }
     })
     return fresh

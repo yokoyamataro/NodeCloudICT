@@ -257,10 +257,6 @@ export function MobilityHomePage() {
   // 稼働中 assignment の最新 position をポーリング取得。
   const fetchLatestPositionsStore = useMobilityStore((s) => s.fetchLatestPositions)
   useEffect(() => {
-    console.info('[MobilityHomePage] polling effect', {
-      activeSize: activeAssignments.size,
-      activeIds: Array.from(activeAssignments.values()).map((a) => a.id),
-    })
     if (activeAssignments.size === 0) return
     const ids = Array.from(activeAssignments.values()).map((a) => a.id)
     void fetchLatestPositionsStore(ids)
@@ -272,22 +268,37 @@ export function MobilityHomePage() {
     }, 15_000)
     return () => clearInterval(id)
   }, [activeAssignments, fetchLatestPositionsStore])
+
+  // vehicle_assignments の変化 (乗車/降車/強制降車/自動終了) を Realtime + 20秒 poll。
+  // FleetMapView も 15 秒 refresh するが、autoUpdate OFF や unmount で停止する
+  // 可能性があるため MobilityHomePage 側でも独立して回す。
+  // これがないと closed 済 assignment が activeAssignments に残り続けて
+  // 「稼働中 1 / 位置未受信」がずっと表示される事故につながる。
+  useEffect(() => {
+    if (!orgId) return
+    void fetchActiveAssignments(orgId)
+    const channel = supabase
+      .channel(`vehicle-assignments-home-${orgId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'vehicle_assignments' },
+        () => {
+          void fetchActiveAssignments(orgId)
+        },
+      )
+      .subscribe()
+    const timer = window.setInterval(() => {
+      void fetchActiveAssignments(orgId)
+    }, 20_000)
+    return () => {
+      void supabase.removeChannel(channel)
+      window.clearInterval(timer)
+    }
+  }, [orgId, fetchActiveAssignments])
   const ageMsForAssignment = useCallback(
     (assignmentId: string): number | null => {
       const p = latestPositionsByAssignment.get(assignmentId)
-      if (!p) {
-        // 診断ログ (残す): 位置未受信を診断するとき何が map に居るか特定用
-        console.warn('[MobilityHomePage] no position for', assignmentId, {
-          storeMapSize: latestPositionsByAssignment.size,
-          storeMapKeys: Array.from(latestPositionsByAssignment.keys()),
-          latestFromStoreState: useMobilityStore
-            .getState()
-            .latestPositionsByAssignment.get(assignmentId),
-          storeStateMapSize:
-            useMobilityStore.getState().latestPositionsByAssignment.size,
-        })
-        return null
-      }
+      if (!p) return null
       return staleTick - new Date(p.recorded_at).getTime()
     },
     [latestPositionsByAssignment, staleTick],
