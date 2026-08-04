@@ -220,18 +220,22 @@ interface State {
 // 通常 5000-10000 件程度に収まる想定。安全上限 100_000 でループ打切。
 async function fetchAllPositionsByAssignmentIds(
   assignmentIds: string[],
-  sinceIso: string,
+  _sinceIso: string, // 呼び出し側で assignment を started_at で既に絞っているので不要
 ): Promise<MobilityPosition[]> {
   if (assignmentIds.length === 0) return []
   const PAGE = 1000
   const HARD_CAP = 100_000
   const all: MobilityPosition[] = []
+  // 以前は .gte('recorded_at', sinceIso) を掛けていたが、端末クロックが
+  // サーバに対して数秒でも遅れていると、assignment.started_at (サーバ now())
+  // より前の recorded_at (端末 new Date()) を持つ position が全部弾かれて
+  // セクション距離/本日走行が 0 になる事象があった。
+  // 呼び出し側で assignment_id は絞られているのでこの追加フィルタは不要。
   for (let from = 0; from < HARD_CAP; from += PAGE) {
     const { data, error } = await supabase
       .from('mobility_positions')
       .select('*')
       .in('assignment_id', assignmentIds)
-      .gte('recorded_at', sinceIso)
       .order('recorded_at', { ascending: true })
       .range(from, from + PAGE - 1)
     if (error) {
@@ -595,14 +599,7 @@ export const useMobilityStore = create<State>((set, get) => ({
           heading_deg: input.heading_deg ?? null,
           altitude_m: input.altitude_m ?? null,
         } as never)
-      if (error) {
-        console.warn('[sendPosition] insert failed', {
-          assignmentId,
-          error,
-        })
-        throw error
-      }
-      console.info('[sendPosition] insert OK', { assignmentId })
+      if (error) throw error
       return { ok: true }
     } catch (err) {
       return { ok: false, error: extractErr(err) }

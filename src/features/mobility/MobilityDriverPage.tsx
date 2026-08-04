@@ -494,11 +494,9 @@ export function MobilityDriverPage() {
   const lastSentAtRef = useRef<number>(0)
   useEffect(() => {
     autoSendRef.current = autoSend
-    console.info('[MobilityDriverPage] autoSend →', autoSend)
   }, [autoSend])
   useEffect(() => {
     myActiveRef.current = myActive
-    console.info('[MobilityDriverPage] myActive →', myActive?.id ?? null)
     // 割当が消えたら送信間隔もリセット (次に乗車した時はすぐ 1 発送る)
     if (!myActive) {
       lastSentAtRef.current = 0
