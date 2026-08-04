@@ -574,16 +574,6 @@ export function MobilityHomePage() {
             )}
             {sidebarTab === 'projects' && (
               <ProjectsLeftPanel
-                organizationId={orgId}
-                onOpenInstructionForProject={(projectId, projectName) =>
-                  setInstructionDialog({
-                    channelKind: 'project',
-                    channelUserId: null,
-                    channelProjectId: projectId,
-                    driverLabel: null,
-                    projectLabel: projectName,
-                  })
-                }
                 projects={projects}
                 projectsLoading={projectsLoading}
                 expandedProjectId={expandedProjectId}
@@ -1822,7 +1812,6 @@ function UserInlineDetail({
 // 運行現場 左サイドパネル
 // -----------------------------------------------------------------------------
 function ProjectsLeftPanel({
-  organizationId,
   projects,
   projectsLoading,
   expandedProjectId,
@@ -1839,9 +1828,7 @@ function ProjectsLeftPanel({
   onCancelAddPointMode,
   onEditPoint,
   onDeletePoint,
-  onOpenInstructionForProject,
 }: {
-  organizationId: string
   projects: MobilityProject[]
   projectsLoading: boolean
   expandedProjectId: string | null
@@ -1858,7 +1845,6 @@ function ProjectsLeftPanel({
   onCancelAddPointMode: () => void
   onEditPoint: (p: MobilityProjectPoint) => void
   onDeletePoint: (pointId: string) => Promise<void>
-  onOpenInstructionForProject: (projectId: string, projectName: string) => void
 }) {
   const memberNameMap = useMemo(() => {
     const m = new Map<string, OrgMemberRow>()
@@ -1901,7 +1887,6 @@ function ProjectsLeftPanel({
             {active.map((p) => (
               <ProjectRow
                 key={p.id}
-                organizationId={organizationId}
                 project={p}
                 expanded={expandedProjectId === p.id}
                 members={
@@ -1920,9 +1905,6 @@ function ProjectsLeftPanel({
                 onCancelAddPointMode={onCancelAddPointMode}
                 onEditPoint={onEditPoint}
                 onDeletePoint={onDeletePoint}
-                onOpenInstruction={() =>
-                  onOpenInstructionForProject(p.id, p.name)
-                }
               />
             ))}
           </ul>
@@ -1938,7 +1920,6 @@ function ProjectsLeftPanel({
                 {inactive.map((p) => (
                   <ProjectRow
                     key={p.id}
-                    organizationId={organizationId}
                     project={p}
                     expanded={expandedProjectId === p.id}
                     members={
@@ -1959,9 +1940,6 @@ function ProjectsLeftPanel({
                     onCancelAddPointMode={onCancelAddPointMode}
                     onEditPoint={onEditPoint}
                     onDeletePoint={onDeletePoint}
-                    onOpenInstruction={() =>
-                      onOpenInstructionForProject(p.id, p.name)
-                    }
                   />
                 ))}
               </ul>
@@ -1974,7 +1952,6 @@ function ProjectsLeftPanel({
 }
 
 function ProjectRow({
-  organizationId,
   project,
   expanded,
   members,
@@ -1989,9 +1966,7 @@ function ProjectRow({
   onCancelAddPointMode,
   onEditPoint,
   onDeletePoint,
-  onOpenInstruction,
 }: {
-  organizationId: string
   project: MobilityProject
   expanded: boolean
   members: MobilityProjectMember[]
@@ -2006,7 +1981,6 @@ function ProjectRow({
   onCancelAddPointMode: () => void
   onEditPoint: (p: MobilityProjectPoint) => void
   onDeletePoint: (pointId: string) => Promise<void>
-  onOpenInstruction: () => void
 }) {
   return (
     <li
@@ -2180,35 +2154,8 @@ function ProjectRow({
             )}
           </section>
 
-          {/* 指示送信 (現場メンバー全員宛て) */}
-          <section>
-            <button
-              type="button"
-              onClick={onOpenInstruction}
-              className="w-full flex items-center justify-center gap-1 py-1.5 text-[11px] bg-indigo-600 text-white rounded hover:bg-indigo-700"
-              title="この現場のメンバー全員に指示を送信"
-            >
-              <Send className="h-3 w-3" />
-              メンバー全員に指示を送信
-            </button>
-          </section>
-
-          {/* 現場チャット */}
-          <section>
-            <div className="text-[10px] font-medium text-slate-500 mb-1 flex items-center gap-1">
-              <MessageSquare className="h-3 w-3" />
-              現場チャット
-            </div>
-            <div className="h-64">
-              <MobilityChatPanel
-                organizationId={organizationId}
-                channelKind="project"
-                channelUserId={null}
-                channelProjectId={project.id}
-                senderRole="admin"
-              />
-            </div>
-          </section>
+          {/* メッセージは admin↔driver の direct のみに変更したので
+              現場メンバー全員宛ての指示 / 現場チャットは撤去 */}
         </div>
       )}
     </li>

@@ -134,6 +134,26 @@ function MapUserGestureWatcher({
   return null
 }
 
+// 長押し (mobile では touch 押し続け、PC では右クリック) で発火。
+// Leaflet の contextmenu イベントは両方の入力を統合して発火する。
+function MapLongPressHandler({
+  onLongPress,
+}: {
+  onLongPress: (lat: number, lon: number) => void
+}) {
+  const map = useMap()
+  useEffect(() => {
+    const handler = (e: L.LeafletMouseEvent) => {
+      onLongPress(e.latlng.lat, e.latlng.lng)
+    }
+    map.on('contextmenu', handler)
+    return () => {
+      map.off('contextmenu', handler)
+    }
+  }, [map, onLongPress])
+  return null
+}
+
 // leaflet-rotate の bearing を車両ヘディングに追従させる。
 // enabled=false の時は 0 (北向き) に戻す。
 function MapBearingUpdater({
@@ -314,10 +334,9 @@ export function MobilityDriverPage() {
     }
   }, [orgId, subscribeMessages, unsubscribeMessages])
 
+  // メッセージは admin↔driver の direct のみ (現場チャンネルは廃止)
   const [showChatSheet, setShowChatSheet] = useState<
-    | { kind: 'direct'; label: string }
-    | { kind: 'project'; projectId: string; label: string }
-    | null
+    { kind: 'direct'; label: string } | null
   >(null)
 
   // 割り当てられた運行現場 (プロジェクト) の一覧
@@ -337,18 +356,43 @@ export function MobilityDriverPage() {
     }
   }, [user, fetchMyAssignedProjects])
 
-  // 未読の 自分宛 direct + 参加現場 project にきた指示の件数
+  // 組織内の全プロジェクト (ポイント登録の宛先選択用)。
+  // 未分類も含む。myProjects (自分がメンバーの現場) とは別物。
+  const [orgProjects, setOrgProjects] = useState<MobilityProject[]>([])
+  const reloadOrgProjects = useCallback(async () => {
+    if (!orgId) return
+    try {
+      const { data } = await supabase
+        .from('mobility_projects')
+        .select('*')
+        .eq('organization_id', orgId)
+        .eq('active', true)
+        .order('name')
+      setOrgProjects((data ?? []) as MobilityProject[])
+    } catch {
+      /* noop */
+    }
+  }, [orgId])
+  useEffect(() => {
+    void reloadOrgProjects()
+  }, [reloadOrgProjects])
+
+  // 地図長押しで開くポイント登録ダイアログ
+  const [pointRegisterDialog, setPointRegisterDialog] = useState<{
+    lat: number
+    lon: number
+  } | null>(null)
+
+  // 未読の 自分宛 direct 指示の件数 (メッセージは admin↔driver の direct のみ)
   const unreadInstructionCount = useMemo(() => {
     if (!user) return 0
-    const projectIds = new Set(myProjects.map((p) => p.id))
     return messages.filter((m) => {
       if (m.message_kind !== 'instruction') return false
       if (m.read_at) return false
       if (m.sender_user_id === user.id) return false
-      if (m.channel_kind === 'direct') return m.channel_user_id === user.id
-      return m.channel_project_id != null && projectIds.has(m.channel_project_id)
+      return m.channel_kind === 'direct' && m.channel_user_id === user.id
     }).length
-  }, [messages, myProjects, user])
+  }, [messages, user])
 
   // 自分の稼働中割当を探す
   const myActive = useMemo(() => {
@@ -1263,6 +1307,11 @@ export function MobilityDriverPage() {
               setFollowMe(false)
             }}
           />
+          <MapLongPressHandler
+            onLongPress={(lat, lon) => {
+              setPointRegisterDialog({ lat, lon })
+            }}
+          />
           <MapBearingUpdater enabled={headingUp} heading={currentHeadingDeg} />
           {/* 走行軌跡: 各 ping を点で表示 (MapControlStack のトグルで ON/OFF)。
               polyline は描かず点のみ。GPS ping 到達ごとに client-side で
@@ -1549,20 +1598,30 @@ export function MobilityDriverPage() {
         <ChatSheet
           organizationId={orgId}
           myUserId={user.id}
-          myProjects={myProjects}
           selected={showChatSheet}
-          onSelectTab={(next) => setShowChatSheet(next)}
           activeAssignmentId={myActive?.id ?? null}
           currentLat={currentPos?.[0] ?? null}
           currentLon={currentPos?.[1] ?? null}
           onConfirmed={async () => {
-            // 確認で assignment が RPC 側で作られたので active を再取得
             if (orgId) await fetchActiveAssignments(orgId)
           }}
           onArrived={async () => {
             if (orgId) await fetchActiveAssignments(orgId)
           }}
           onClose={() => setShowChatSheet(null)}
+        />
+      )}
+
+      {pointRegisterDialog && (
+        <PointRegisterDialog
+          lat={pointRegisterDialog.lat}
+          lon={pointRegisterDialog.lon}
+          projects={orgProjects}
+          onClose={() => setPointRegisterDialog(null)}
+          onCreated={() => {
+            setPointRegisterDialog(null)
+            // 現場のポイントを再取得したい場合はここで store から呼ぶ (現状表示側は不要)
+          }}
         />
       )}
     </div>
@@ -1575,9 +1634,6 @@ export function MobilityDriverPage() {
 function ChatSheet({
   organizationId,
   myUserId,
-  myProjects,
-  selected,
-  onSelectTab,
   activeAssignmentId,
   currentLat,
   currentLon,
@@ -1587,15 +1643,7 @@ function ChatSheet({
 }: {
   organizationId: string
   myUserId: string
-  myProjects: MobilityProject[]
-  selected:
-    | { kind: 'direct'; label: string }
-    | { kind: 'project'; projectId: string; label: string }
-  onSelectTab: (
-    next:
-      | { kind: 'direct'; label: string }
-      | { kind: 'project'; projectId: string; label: string },
-  ) => void
+  selected: { kind: 'direct'; label: string }
   activeAssignmentId: string | null
   currentLat: number | null
   currentLon: number | null
@@ -1614,7 +1662,7 @@ function ChatSheet({
       >
         <div className="flex items-center gap-2 px-3 py-2 border-b">
           <MessageSquare className="h-5 w-5 text-emerald-600" />
-          <h3 className="text-base font-semibold flex-1">メッセージ</h3>
+          <h3 className="text-base font-semibold flex-1">管理者とやり取り</h3>
           <button
             type="button"
             onClick={onClose}
@@ -1623,46 +1671,12 @@ function ChatSheet({
             <X className="h-5 w-5" />
           </button>
         </div>
-
-        {/* タブ: 管理者 direct + 参加中プロジェクト */}
-        <div className="flex overflow-x-auto border-b bg-slate-50 shrink-0">
-          <button
-            type="button"
-            onClick={() => onSelectTab({ kind: 'direct', label: '管理者' })}
-            className={`px-3 py-2 text-xs font-medium border-b-2 whitespace-nowrap ${
-              selected.kind === 'direct'
-                ? 'border-emerald-500 text-emerald-700 bg-white'
-                : 'border-transparent text-slate-500'
-            }`}
-          >
-            管理者
-          </button>
-          {myProjects.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() =>
-                onSelectTab({ kind: 'project', projectId: p.id, label: p.name })
-              }
-              className={`px-3 py-2 text-xs font-medium border-b-2 whitespace-nowrap ${
-                selected.kind === 'project' && selected.projectId === p.id
-                  ? 'border-emerald-500 text-emerald-700 bg-white'
-                  : 'border-transparent text-slate-500'
-              }`}
-            >
-              {p.name}
-            </button>
-          ))}
-        </div>
-
         <div className="flex-1 min-h-0 p-2">
           <MobilityChatPanel
             organizationId={organizationId}
-            channelKind={selected.kind}
-            channelUserId={selected.kind === 'direct' ? myUserId : null}
-            channelProjectId={
-              selected.kind === 'project' ? selected.projectId : null
-            }
+            channelKind="direct"
+            channelUserId={myUserId}
+            channelProjectId={null}
             senderRole="driver"
             showDriverConfirm
             activeAssignmentId={activeAssignmentId}
@@ -1671,6 +1685,154 @@ function ChatSheet({
             onConfirmed={() => void onConfirmed()}
             onArrived={() => void onArrived()}
           />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// -----------------------------------------------------------------------------
+// ドライバー用ポイント登録ダイアログ (地図長押しから起動)
+// - 現場を選択 (未分類がデフォルト)
+// - 名前 + メモを入力して INSERT
+// - RLS: mobility_project_points_insert 緩和で org member なら誰でも作成可能
+// -----------------------------------------------------------------------------
+function PointRegisterDialog({
+  lat,
+  lon,
+  projects,
+  onClose,
+  onCreated,
+}: {
+  lat: number
+  lon: number
+  projects: MobilityProject[]
+  onClose: () => void
+  onCreated: () => void
+}) {
+  // 「未分類」があればそれを既定に、無ければ先頭
+  const defaultProjectId =
+    projects.find((p) => p.name === '未分類')?.id ?? projects[0]?.id ?? ''
+  const [projectId, setProjectId] = useState(defaultProjectId)
+  const [name, setName] = useState('')
+  const [memo, setMemo] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const createPoint = useMobilityStore((s) => s.createPoint)
+  const canSubmit = !busy && projectId && name.trim().length > 0
+
+  return (
+    <div
+      className="fixed inset-0 z-[3500] bg-black/60 flex items-end sm:items-center justify-center p-2"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl shadow-xl p-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 mb-3">
+          <MapPin className="h-5 w-5 text-amber-600" />
+          <h3 className="text-base font-semibold flex-1">ポイントを登録</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-slate-400 hover:text-slate-700"
+            title="閉じる"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="text-[11px] text-slate-500 mb-3 font-mono">
+          {lat.toFixed(6)}, {lon.toFixed(6)}
+        </div>
+
+        <div className="space-y-3">
+          <label className="block">
+            <div className="text-xs font-medium text-slate-600 mb-1">
+              現場
+            </div>
+            <select
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+              className="w-full px-2 py-1.5 text-sm border rounded"
+            >
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <div className="text-xs font-medium text-slate-600 mb-1">
+              ポイント名 <span className="text-red-500">*</span>
+            </div>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="例: 土取場入口"
+              className="w-full px-2 py-1.5 text-sm border rounded"
+            />
+          </label>
+
+          <label className="block">
+            <div className="text-xs font-medium text-slate-600 mb-1">
+              メモ (任意)
+            </div>
+            <textarea
+              value={memo}
+              onChange={(e) => setMemo(e.target.value)}
+              rows={2}
+              className="w-full px-2 py-1.5 text-sm border rounded resize-none"
+            />
+          </label>
+
+          {error && (
+            <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
+              {error}
+            </div>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 px-3 py-2 text-sm border rounded hover:bg-slate-50"
+            >
+              キャンセル
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!canSubmit) return
+                setBusy(true)
+                setError(null)
+                try {
+                  const created = await createPoint({
+                    project_id: projectId,
+                    name: name.trim(),
+                    lat,
+                    lon,
+                    memo: memo.trim() || null,
+                  })
+                  if (!created) throw new Error('作成に失敗しました')
+                  onCreated()
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : String(err))
+                } finally {
+                  setBusy(false)
+                }
+              }}
+              disabled={!canSubmit}
+              className="flex-1 px-3 py-2 text-sm bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-50 flex items-center justify-center gap-1"
+            >
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              登録
+            </button>
+          </div>
         </div>
       </div>
     </div>
