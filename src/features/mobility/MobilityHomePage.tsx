@@ -607,8 +607,8 @@ export function MobilityHomePage() {
           </div>
         </div>
 
-        {/* 右: 地図 */}
-        <div className="h-64 lg:h-auto lg:flex-1 relative">
+        {/* 中央: 地図 */}
+        <div className="h-64 lg:h-auto lg:flex-1 relative min-w-0">
           <FleetMapView
             organizationId={orgId}
             extraTrackAssignmentIds={selectedSectionAssignmentIds}
@@ -628,6 +628,50 @@ export function MobilityHomePage() {
             }}
           />
         </div>
+
+        {/* 右: チャット (ドライバーが展開されている時のみ) */}
+        {expandedUserId && (
+          <div className="lg:w-[22rem] xl:w-[26rem] flex flex-col border-t lg:border-t-0 lg:border-l bg-white shrink-0">
+            <div className="flex items-center gap-2 px-3 py-2 border-b bg-slate-50 shrink-0">
+              <MessageSquare className="h-4 w-4 text-indigo-600" />
+              <div className="text-sm font-semibold flex-1 truncate">
+                {(() => {
+                  const om = orgMembers.find((m) => m.user_id === expandedUserId)
+                  const active = Array.from(activeAssignments.values()).find(
+                    (a) => a.user_id === expandedUserId,
+                  )
+                  return (
+                    active?.driver_name ||
+                    om?.full_name ||
+                    om?.email ||
+                    'ドライバー'
+                  )
+                })()}
+                <span className="text-xs font-normal text-slate-500 ml-1">
+                  とチャット
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setExpandedUserId(null)}
+                className="text-slate-400 hover:text-slate-700"
+                title="閉じる"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex-1 min-h-0 p-2">
+              <MobilityChatPanel
+                key={expandedUserId}
+                organizationId={orgId}
+                channelKind="direct"
+                channelUserId={expandedUserId}
+                channelProjectId={null}
+                senderRole="admin"
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {instructionDialog && (
@@ -2626,7 +2670,6 @@ interface FleetSidebarProps {
 // ユーザー列: 稼働中ペア (上) + 未乗車ユーザー (下)
 function UsersColumn(props: FleetSidebarProps) {
   const {
-    organizationId,
     activeAssignments,
     vehicles,
     orgMembers,
@@ -2715,7 +2758,6 @@ function UsersColumn(props: FleetSidebarProps) {
             {activePairs.map(({ assignment, vehicle, userInfo }) => (
               <ActivePairCard
                 key={assignment.id}
-                organizationId={organizationId}
                 assignment={assignment}
                 vehicle={vehicle}
                 userInfo={userInfo}
@@ -2770,7 +2812,6 @@ function UsersColumn(props: FleetSidebarProps) {
             {inactiveUsers.map((m) => (
               <InactiveUserCard
                 key={m.user_id}
-                organizationId={organizationId}
                 member={m}
                 expanded={expandedUserId === m.user_id}
                 onToggleExpand={() => onToggleExpandUser(m.user_id)}
@@ -2949,7 +2990,6 @@ function VehiclesColumn(props: FleetSidebarProps) {
 
 // 稼働中ペアカード: ユーザー行 + 車両行を 1 枚のカードにまとめる
 function ActivePairCard({
-  organizationId,
   assignment,
   vehicle,
   userInfo,
@@ -2966,7 +3006,6 @@ function ActivePairCard({
   historyReloadKey,
   onOpenInstruction,
 }: {
-  organizationId: string
   assignment: AssignmentWithNames
   vehicle: Vehicle | null
   userInfo: OrgMemberRow | null
@@ -3126,21 +3165,7 @@ function ActivePairCard({
             onDeleteSection={onDeleteSection}
             historyReloadKey={historyReloadKey}
           />
-          <div className="border-t bg-white p-2">
-            <div className="text-[10px] font-medium text-slate-500 mb-1 flex items-center gap-1">
-              <MessageSquare className="h-3 w-3" />
-              チャット
-            </div>
-            <div className="h-64">
-              <MobilityChatPanel
-                organizationId={organizationId}
-                channelKind="direct"
-                channelUserId={assignment.user_id}
-                channelProjectId={null}
-                senderRole="admin"
-              />
-            </div>
-          </div>
+          {/* チャットは地図の右パネルに移動 */}
         </>
       )}
     </li>
@@ -3149,7 +3174,6 @@ function ActivePairCard({
 
 // 未乗車ユーザーカード
 function InactiveUserCard({
-  organizationId,
   member,
   expanded,
   onToggleExpand,
@@ -3160,7 +3184,6 @@ function InactiveUserCard({
   historyReloadKey,
   onOpenInstruction,
 }: {
-  organizationId: string
   member: OrgMemberRow
   expanded: boolean
   onToggleExpand: () => void
@@ -3233,21 +3256,7 @@ function InactiveUserCard({
             onDeleteSection={onDeleteSection}
             historyReloadKey={historyReloadKey}
           />
-          <div className="border-t bg-white p-2">
-            <div className="text-[10px] font-medium text-slate-500 mb-1 flex items-center gap-1">
-              <MessageSquare className="h-3 w-3" />
-              チャット
-            </div>
-            <div className="h-64">
-              <MobilityChatPanel
-                organizationId={organizationId}
-                channelKind="direct"
-                channelUserId={member.user_id}
-                channelProjectId={null}
-                senderRole="admin"
-              />
-            </div>
-          </div>
+          {/* チャットは地図の右パネルに移動 */}
         </>
       )}
     </li>
