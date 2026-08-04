@@ -24,6 +24,7 @@ import {
   LogOut,
   MapPin,
   MessageSquare,
+  CircleDot,
   Minus,
   Navigation,
   Play,
@@ -33,6 +34,7 @@ import {
 } from 'lucide-react'
 import L from 'leaflet'
 import {
+  CircleMarker,
   MapContainer,
   Marker,
   Polyline,
@@ -160,13 +162,17 @@ function MapBearingUpdater({
 function MapControlStack({
   followMe,
   headingUp,
+  showTrackPoints,
   onToggleFollow,
   onToggleHeading,
+  onToggleTrackPoints,
 }: {
   followMe: boolean
   headingUp: boolean
+  showTrackPoints: boolean
   onToggleFollow: () => void
   onToggleHeading: () => void
+  onToggleTrackPoints: () => void
 }) {
   const map = useMap()
   // 「基本」と「アクティブ」の bg/text/border を一切重複させない
@@ -177,6 +183,7 @@ function MapControlStack({
   const btnInactive = 'bg-white text-slate-700 border-slate-300'
   const btnFollowActive = 'bg-emerald-500 text-white border-emerald-600'
   const btnHeadingActive = 'bg-indigo-500 text-white border-indigo-600'
+  const btnPointsActive = 'bg-purple-500 text-white border-purple-600'
   return (
     <div className="absolute top-3 left-3 z-[500] flex flex-col rounded overflow-hidden">
       <button
@@ -218,10 +225,23 @@ function MapControlStack({
           e.stopPropagation()
           map.zoomOut()
         }}
-        className={`${btnBase} -mt-px rounded-b ${btnInactive}`}
+        className={`${btnBase} -mt-px ${btnInactive}`}
         title="縮小"
       >
         <Minus className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          onToggleTrackPoints()
+        }}
+        className={`${btnBase} -mt-px rounded-b ${
+          showTrackPoints ? btnPointsActive : btnInactive
+        }`}
+        title={showTrackPoints ? '軌跡の点を非表示' : '軌跡の点を表示'}
+      >
+        <CircleDot className="h-4 w-4" />
       </button>
     </div>
   )
@@ -486,6 +506,8 @@ export function MobilityDriverPage() {
   const [followMe, setFollowMe] = useState(true)
   // ヘディングアップ (地図を進行方向に回転)。初期値 false = 北向き。
   const [headingUp, setHeadingUp] = useState(false)
+  // 走行軌跡の点表示 (現在走行中の trackPositions を CircleMarker で描画)
+  const [showTrackPoints, setShowTrackPoints] = useState(false)
   // 直前に自分で setView した直後は dragstart ハンドラを 1 tick 抑制するフラグ
   const ignoreNextGestureRef = useRef(false)
 
@@ -1129,6 +1151,21 @@ export function MobilityDriverPage() {
           {trackLine.length > 1 && (
             <Polyline positions={trackLine} pathOptions={{ color: '#6366f1', weight: 4 }} />
           )}
+          {/* 走行軌跡の各ping を点で表示 (MapControlStack のトグルで ON/OFF) */}
+          {showTrackPoints &&
+            trackPositions.map((p) => (
+              <CircleMarker
+                key={`tp-${p.id}`}
+                center={[p.lat, p.lon]}
+                radius={3}
+                pathOptions={{
+                  color: '#4338ca',
+                  fillColor: '#a5b4fc',
+                  fillOpacity: 0.9,
+                  weight: 1,
+                }}
+              />
+            ))}
           {/* 履歴シートで選んだセクションを スピード色 で重ね描画 */}
           {selectedLogPositions.length > 1 &&
             speedSegments(selectedLogPositions).map((seg, idx) => (
@@ -1172,11 +1209,13 @@ export function MobilityDriverPage() {
           <MapControlStack
             followMe={followMe}
             headingUp={headingUp}
+            showTrackPoints={showTrackPoints}
             onToggleFollow={() => {
               // OFF → ON にする時は即センタリング
               setFollowMe((prev) => !prev)
             }}
             onToggleHeading={() => setHeadingUp((prev) => !prev)}
+            onToggleTrackPoints={() => setShowTrackPoints((prev) => !prev)}
           />
         </MapContainer>
       </div>
