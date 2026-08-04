@@ -175,10 +175,10 @@ function accuracyColor(acc: number | null): string {
 // これを超える（FIX解が外れて数m〜十数m飛ぶ）位置では地図を動かさず、画面を保持する。
 const FOLLOW_FIX_THRESHOLD_M = 1.0
 
-// RTK-FIX とみなす精度の既定値 (3cm)。ユーザーは設定で 0.02〜0.05m の範囲で変更可
+// RTK-FIX とみなす精度の既定値 (3cm)。ユーザーは設定で 0.02〜0.20m の範囲で変更可
 const DEFAULT_FIX_ACCURACY_M = 0.03
 const FIX_ACCURACY_MIN_M = 0.02
-const FIX_ACCURACY_MAX_M = 0.05
+const FIX_ACCURACY_MAX_M = 0.20
 
 // 一度 FIX に達した後、この精度(m)より悪い読みは短期間の "はずれ値" として棄却する。
 // Android FLP が数十秒に一度ネットワーク測位を混ぜてくるケースへの緩和策。
