@@ -468,6 +468,19 @@ export function MobilityDriverPage() {
   // 本日走行距離 (今日 00:00 以降の全乗車の合計)
   const [todayDistanceM, setTodayDistanceM] = useState(0)
 
+  // サーバ fetch の間 (20〜30秒) に GPS で受信した ping をクライアント側で
+  // 逐次集計しておくためのデルタ。fetch が完了したら delta を 0 に戻して
+  // 次サイクル分を再累積。表示は server 値 + client delta で常に即時反映。
+  const [clientUnitDeltaM, setClientUnitDeltaM] = useState(0)
+  const [clientTodayDeltaM, setClientTodayDeltaM] = useState(0)
+  // ping 間セグメント計算用の前回位置。距離集計専用 (bearing 用とは別)
+  const prevPosForDistanceRef = useRef<{ lat: number; lon: number } | null>(null)
+
+  // 表示に使う距離: server 値 + client 側の未反映デルタ。fetch 反映後は
+  // delta が 0 になり server 値に一致する。
+  const displayUnitDistanceM = unitDistanceM + clientUnitDeltaM
+  const displayTodayDistanceM = todayDistanceM + clientTodayDeltaM
+
   // 走行時間表示を「単位」/「本日」で切替 (パネルタップで反転)
   const [distanceMode, setDistanceMode] = useState<'unit' | 'today'>('unit')
 
@@ -757,6 +770,27 @@ export function MobilityDriverPage() {
             // 乗車中 + 自動送信 ON なら throttle して送る
             const active = myActiveRef.current
             if (!autoSendRef.current || !active) return
+
+            // クライアント側の距離即時累算 (server fetch 20〜30秒待たない)。
+            // 停車ジッタを避けて 1m〜2000m の segment だけ加算 (通常の走行相当)。
+            // 精度が悪い読み (accuracy > 50m) は除外。
+            {
+              const prev = prevPosForDistanceRef.current
+              const cur = { lat: sample.lat, lon: sample.lon }
+              const accOk =
+                sample.accuracy_m == null || sample.accuracy_m <= 50
+              if (prev && accOk) {
+                const seg = haversineMeters(prev, cur)
+                if (seg >= 1 && seg <= 2000) {
+                  setClientUnitDeltaM((v) => v + seg)
+                  setClientTodayDeltaM((v) => v + seg)
+                  prevPosForDistanceRef.current = cur
+                }
+              } else if (accOk) {
+                prevPosForDistanceRef.current = cur
+              }
+            }
+
             const uid = userIdRef.current
             // throttle 対象外: この callback ごとに古い queue を flush 試行
             if (uid) {
@@ -801,14 +835,23 @@ export function MobilityDriverPage() {
   useEffect(() => {
     if (!user || !myActive) {
       setUnitDistanceM(0)
+      setClientUnitDeltaM(0)
+      prevPosForDistanceRef.current = null
       return
     }
+    // 新しい乗車開始時にリセット (次回乗車で 0 から始まる)
+    setClientUnitDeltaM(0)
+    prevPosForDistanceRef.current = null
     let cancelled = false
     const compute = async () => {
       const rows = await fetchPositionsForUserSince(user.id, myActive.started_at)
       if (cancelled) return
       const m = computeTotalDistanceMeters(rows)
       setUnitDistanceM(m)
+      // server 値が更新されたので client 側で貯めていた delta はリセット
+      // (次の fetch までに新しく届いた ping ぶんを再度加算していく)
+      setClientUnitDeltaM(0)
+      setClientTodayDeltaM(0)
     }
     void compute()
     const timer = setInterval(compute, 20_000)
@@ -1031,7 +1074,9 @@ export function MobilityDriverPage() {
             </div>
             <div className="text-2xl font-bold leading-tight">
               {(
-                (distanceMode === 'unit' ? unitDistanceM : todayDistanceM) / 1000
+                (distanceMode === 'unit'
+                  ? displayUnitDistanceM
+                  : displayTodayDistanceM) / 1000
               ).toFixed(1)}
               <span className="text-xs font-normal text-slate-300 ml-1">km</span>
             </div>
