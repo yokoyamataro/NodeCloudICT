@@ -545,6 +545,43 @@ export function MobilityDriverPage() {
     sendPositionRef.current = sendPosition
   }, [sendPosition])
 
+  // 走行軌跡 (自分の active assignment の位置ログ)。
+  // - 初回 or myActive 変化時に fetchRecentPositions で 200 点 fetch
+  // - その後は GPS ping 受信ごとに client 側で追加 (real-time)
+  const [trackPositions, setTrackPositions] = useState<MobilityPosition[]>([])
+
+  // ping 送信時に client 側 trackPositions にも即時追加するヘルパ。
+  // 5000点上限 (~1.4h @ 1Hz) で古い側を捨てる。
+  // 負値の id を使ってサーバ ID (bigserial) と衝突を回避。
+  const appendLocalTrack = useCallback(
+    (assignmentId: string, sample: {
+      lat: number
+      lon: number
+      accuracy_m: number | null
+      speed_kmh: number | null
+      heading_deg: number | null
+      altitude_m: number | null
+    }) => {
+      const nowMs = Date.now()
+      const row: MobilityPosition = {
+        id: -nowMs,
+        assignment_id: assignmentId,
+        recorded_at: new Date(nowMs).toISOString(),
+        lat: sample.lat,
+        lon: sample.lon,
+        accuracy_m: sample.accuracy_m,
+        speed_kmh: sample.speed_kmh,
+        heading_deg: sample.heading_deg,
+        altitude_m: sample.altitude_m,
+      }
+      setTrackPositions((prev) => {
+        const next = [...prev, row]
+        return next.length > 5000 ? next.slice(-5000) : next
+      })
+    },
+    [],
+  )
+
   // flushQueue で terminal-error (RLS violation 等) が起きたら
   // activeAssignments を強制 refresh するコールバック。
   // これで「古い closed assignment に向けて post → silent drop → UI 正常」の
@@ -706,14 +743,17 @@ export function MobilityDriverPage() {
             if (now - lastSentAtRef.current < PING_INTERVAL_MS) return
             lastSentAtRef.current = now
             setLastAutoSentAt(new Date(now))
-            void sendWithQueue(active.id, {
+            const payload = {
               lat: sample.lat,
               lon: sample.lon,
               accuracy_m: sample.accuracy_m,
               speed_kmh: sample.speed_kmh,
               heading_deg: sample.heading_deg,
               altitude_m: sample.altitude_m,
-            })
+            }
+            // 送信と同時に client 側 trackPositions にも追加 (real-time 表示)
+            appendLocalTrack(active.id, payload)
+            void sendWithQueue(active.id, payload)
           },
           {
             notificationTitle: 'NodeCloudモビリティ',
@@ -828,14 +868,17 @@ export function MobilityDriverPage() {
             if (now - lastSentAtRef.current < PING_INTERVAL_MS) return
             lastSentAtRef.current = now
             setLastAutoSentAt(new Date(now))
-            void sendWithQueue(active.id, {
+            const payload = {
               lat: sample.lat,
               lon: sample.lon,
               accuracy_m: sample.accuracy_m,
               speed_kmh: sample.speed_kmh,
               heading_deg: sample.heading_deg,
               altitude_m: sample.altitude_m,
-            })
+            }
+            // 送信と同時に client 側 trackPositions にも追加 (real-time 表示)
+            appendLocalTrack(active.id, payload)
+            void sendWithQueue(active.id, payload)
           },
           { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 },
         )
@@ -931,8 +974,8 @@ export function MobilityDriverPage() {
     ? Math.max(0, nowTick - new Date(myActive.started_at).getTime())
     : 0
 
-  // 走行軌跡 (自分の active assignment のもの)
-  const [trackPositions, setTrackPositions] = useState<MobilityPosition[]>([])
+  // 走行軌跡の初期化: 乗車開始 or アプリ再開時に server から fetch。
+  // その後は appendLocalTrack が GPS ping ごとに client-side で追加していく。
   useEffect(() => {
     if (!myActive) {
       setTrackPositions([])
@@ -940,7 +983,7 @@ export function MobilityDriverPage() {
     }
     let cancelled = false
     void (async () => {
-      const rows = await fetchRecentPositions(myActive.id, 200)
+      const rows = await fetchRecentPositions(myActive.id, 500)
       if (!cancelled) setTrackPositions(rows)
     })()
     return () => {
@@ -991,15 +1034,6 @@ export function MobilityDriverPage() {
   }
 
   if (!canUse) return <Navigate to="/" replace />
-
-  const trackLine = useMemo(
-    () =>
-      trackPositions
-        .slice()
-        .reverse()
-        .map((p) => [p.lat, p.lon] as [number, number]),
-    [trackPositions],
-  )
 
   // 目的地までの方位 / 距離
   const destInfo = useMemo(() => {
@@ -1230,10 +1264,9 @@ export function MobilityDriverPage() {
             }}
           />
           <MapBearingUpdater enabled={headingUp} heading={currentHeadingDeg} />
-          {trackLine.length > 1 && (
-            <Polyline positions={trackLine} pathOptions={{ color: '#6366f1', weight: 4 }} />
-          )}
-          {/* 走行軌跡の各ping を点で表示 (MapControlStack のトグルで ON/OFF) */}
+          {/* 走行軌跡: 各 ping を点で表示 (MapControlStack のトグルで ON/OFF)。
+              polyline は描かず点のみ。GPS ping 到達ごとに client-side で
+              リアルタイム追加される。 */}
           {showTrackPoints &&
             trackPositions.map((p) => (
               <CircleMarker
