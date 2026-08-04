@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Upload, Download, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Camera, Image as ImageIcon, Loader2, Calculator, Layers, Check, Pencil, X, Save } from 'lucide-react'
+import { Upload, Download, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Camera, Image as ImageIcon, Loader2, Calculator, Layers, Check, Pencil, X, Save, Waves } from 'lucide-react'
+import { Polyline as LeafletPolyline, CircleMarker, Tooltip } from 'react-leaflet'
+import { CoordinateConverter } from '@/lib/coordinates'
+import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
 import { PointTypeFilterButton } from './PointTypeFilterButton'
 import { StakeStatusFilterButton } from './StakeStatusFilterButton'
 import {
@@ -744,6 +747,11 @@ export function CoordinatesPage() {
     [farmMemos],
   )
 
+  // 暗渠 (pipes) を読み込む。座標管理では読み取り専用でオーバーレイ表示するのみ。
+  const fetchPipes = useUnderdrainStore((s) => s.fetchPipes)
+  const pipes = useUnderdrainStore((s) => s.pipes)
+  const [showPipes, setShowPipes] = useState(true)
+
   // 工区選択時にデータを読み込む
   useEffect(() => {
     if (currentFarm && projectZone !== null) {
@@ -759,8 +767,52 @@ export function CoordinatesPage() {
       void fetchFarmMemos(currentFarm.id)
       // 工区写真（スマホで撮影した位置・方向付き写真をマーカー表示するため）
       void fetchAttachments('farm_photo', [currentFarm.id])
+      // 暗渠 (見えるだけ、編集は暗渠モジュールから)
+      void fetchPipes(currentFarm.id)
     }
-  }, [currentFarm, projectZone, setZone, fetchCoordinates, fetchRoute, fetchStakingRecords, fetchFarmMemos, fetchAttachments])
+  }, [currentFarm, projectZone, setZone, fetchCoordinates, fetchRoute, fetchStakingRecords, fetchFarmMemos, fetchAttachments, fetchPipes])
+
+  // 暗渠 pipes を lat/lng に変換したオーバーレイデータ
+  const pipeOverlay = useMemo(() => {
+    if (projectZone == null) return { lines: [], vertices: [] as Array<{
+      key: string
+      lat: number
+      lng: number
+      label: string
+    }> }
+    const conv = new CoordinateConverter(projectZone)
+    const lines: Array<{ id: string; positions: [number, number][] }> = []
+    const vertices: Array<{ key: string; lat: number; lng: number; label: string }> = []
+    for (const pipe of pipes as PipeRow[]) {
+      if (pipe.vertices.length === 0) continue
+      const positions: [number, number][] = []
+      const total = pipe.vertices.length
+      for (let i = 0; i < total; i++) {
+        const v = pipe.vertices[i]
+        try {
+          const { lat, lng } = conv.toLatLng(v.x, v.y)
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
+          positions.push([lat, lng])
+          let suffix: string
+          if (i === 0) suffix = 'C'
+          else if (i === total - 1) suffix = 'A'
+          else suffix = `B${total - 1 - i}`
+          vertices.push({
+            key: `pv-${pipe.id}-${i}`,
+            lat,
+            lng,
+            label: `${pipe.number}${suffix}`,
+          })
+        } catch {
+          /* skip malformed */
+        }
+      }
+      if (positions.length >= 2) {
+        lines.push({ id: pipe.id, positions })
+      }
+    }
+    return { lines, vertices }
+  }, [pipes, projectZone])
 
   // 工区写真（マーカー描画 + Popup サムネ用）
   const farmPhotosForMap = useMemo(() => {
@@ -2745,9 +2797,41 @@ export function CoordinatesPage() {
                   }
                 />
               )}
+              {/* 暗渠 (読み取り専用オーバーレイ)。編集は暗渠モジュールで。 */}
+              {showPipes &&
+                pipeOverlay.lines.map((line) => (
+                  <LeafletPolyline
+                    key={`pipe-${line.id}`}
+                    positions={line.positions}
+                    pathOptions={{
+                      color: '#0891b2',
+                      weight: 2,
+                      opacity: 0.7,
+                      dashArray: '4 4',
+                    }}
+                  />
+                ))}
+              {showPipes &&
+                pipeOverlay.vertices.map((v) => (
+                  <CircleMarker
+                    key={v.key}
+                    center={[v.lat, v.lng]}
+                    radius={3}
+                    pathOptions={{
+                      color: '#0e7490',
+                      fillColor: '#67e8f9',
+                      fillOpacity: 0.9,
+                      weight: 1,
+                    }}
+                  >
+                    <Tooltip direction="top" offset={[0, -4]} opacity={0.9}>
+                      <span className="text-[10px] font-mono">{v.label}</span>
+                    </Tooltip>
+                  </CircleMarker>
+                ))}
             </CoordinateMap>
-            {hasActiveParcelDataset && (
-              <div className="absolute bottom-6 left-2 z-[1000]">
+            <div className="absolute bottom-6 left-2 z-[1000] flex gap-2">
+              {hasActiveParcelDataset && (
                 <button
                   onClick={() => setShowParcelLayer(!showParcelLayer)}
                   className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border shadow ${
@@ -2760,8 +2844,22 @@ export function CoordinatesPage() {
                   <MapIcon className="h-4 w-4" />
                   法務省地図
                 </button>
-              </div>
-            )}
+              )}
+              {pipes.length > 0 && (
+                <button
+                  onClick={() => setShowPipes(!showPipes)}
+                  className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border shadow ${
+                    showPipes
+                      ? 'bg-cyan-600 text-white border-cyan-600 hover:bg-cyan-700'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                  }`}
+                  title={`暗渠 ${pipes.length} 本を地図上に表示 (読み取り専用)`}
+                >
+                  <Waves className="h-4 w-4" />
+                  暗渠
+                </button>
+              )}
+            </div>
 
             {/* 経路パネル（地図右上にオーバーレイ） */}
             {(routeMode || route.length > 0) && (
