@@ -461,25 +461,26 @@ export function MobilityDriverPage() {
   const [lastAutoSentAt, setLastAutoSentAt] = useState<Date | null>(null)
   const [autoSend, setAutoSend] = useState(false)
 
-  // 単位 (現在の乗車) 走行距離。myActive.started_at 以降を累積する。
-  // 降車で新しい単位に切り替わり、次回乗車時は自動的に 0 から始まる。
+  // 走行距離はクライアント側で完全に累積 + localStorage 永続化。
+  // ・オフラインでも即時反映
+  // ・アプリを閉じても永続化 (次回起動時に復元)
+  // ・サーバ fetch は「localStorage が空 (初回 or 別端末)」のときだけフォールバック
   const [unitDistanceM, setUnitDistanceM] = useState(0)
-
-  // 本日走行距離 (今日 00:00 以降の全乗車の合計)
   const [todayDistanceM, setTodayDistanceM] = useState(0)
-
-  // サーバ fetch の間 (20〜30秒) に GPS で受信した ping をクライアント側で
-  // 逐次集計しておくためのデルタ。fetch が完了したら delta を 0 に戻して
-  // 次サイクル分を再累積。表示は server 値 + client delta で常に即時反映。
-  const [clientUnitDeltaM, setClientUnitDeltaM] = useState(0)
-  const [clientTodayDeltaM, setClientTodayDeltaM] = useState(0)
   // ping 間セグメント計算用の前回位置。距離集計専用 (bearing 用とは別)
   const prevPosForDistanceRef = useRef<{ lat: number; lon: number } | null>(null)
-
-  // 表示に使う距離: server 値 + client 側の未反映デルタ。fetch 反映後は
-  // delta が 0 になり server 値に一致する。
-  const displayUnitDistanceM = unitDistanceM + clientUnitDeltaM
-  const displayTodayDistanceM = todayDistanceM + clientTodayDeltaM
+  // localStorage key ヘルパ
+  const unitDistKey = (assignmentId: string) =>
+    `mobility:unitDist:${assignmentId}`
+  const todayDistKey = (uid: string, ymd: string) =>
+    `mobility:todayDist:${uid}:${ymd}`
+  const todayYmd = () => {
+    const d = new Date()
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+  }
 
   // 走行時間表示を「単位」/「本日」で切替 (パネルタップで反転)
   const [distanceMode, setDistanceMode] = useState<'unit' | 'today'>('unit')
@@ -771,8 +772,9 @@ export function MobilityDriverPage() {
             const active = myActiveRef.current
             if (!autoSendRef.current || !active) return
 
-            // クライアント側の距離即時累算 (server fetch 20〜30秒待たない)。
-            // 停車ジッタを避けて 1m〜2000m の segment だけ加算 (通常の走行相当)。
+            // 距離をクライアント側で累算 + localStorage 永続化。
+            // オフラインでも進み、アプリ再起動しても復元される。
+            // 停車ジッタを避けて 1m〜2000m の segment だけ加算。
             // 精度が悪い読み (accuracy > 50m) は除外。
             {
               const prev = prevPosForDistanceRef.current
@@ -782,8 +784,30 @@ export function MobilityDriverPage() {
               if (prev && accOk) {
                 const seg = haversineMeters(prev, cur)
                 if (seg >= 1 && seg <= 2000) {
-                  setClientUnitDeltaM((v) => v + seg)
-                  setClientTodayDeltaM((v) => v + seg)
+                  setUnitDistanceM((v) => {
+                    const next = v + seg
+                    try {
+                      localStorage.setItem(unitDistKey(active.id), String(next))
+                    } catch {
+                      /* noop */
+                    }
+                    return next
+                  })
+                  const uid = userIdRef.current
+                  setTodayDistanceM((v) => {
+                    const next = v + seg
+                    if (uid) {
+                      try {
+                        localStorage.setItem(
+                          todayDistKey(uid, todayYmd()),
+                          String(next),
+                        )
+                      } catch {
+                        /* noop */
+                      }
+                    }
+                    return next
+                  })
                   prevPosForDistanceRef.current = cur
                 }
               } else if (accOk) {
@@ -832,43 +856,55 @@ export function MobilityDriverPage() {
   // - 送信 (lastAutoSentAt) or 乗車状態 (myActive) の変化で再計算
   // - myActive がある間は 20 秒ごとに軽く refresh
   // 降車すると myActive=null → 0 にリセット、次回乗車で新しい単位から再カウント。
+  // セクション距離: localStorage から復元。無ければサーバから 1 度だけ fetch。
   useEffect(() => {
     if (!user || !myActive) {
       setUnitDistanceM(0)
-      setClientUnitDeltaM(0)
       prevPosForDistanceRef.current = null
       return
     }
-    // 新しい乗車開始時にリセット (次回乗車で 0 から始まる)
-    setClientUnitDeltaM(0)
     prevPosForDistanceRef.current = null
+    const key = unitDistKey(myActive.id)
+    const saved = localStorage.getItem(key)
+    if (saved != null) {
+      const parsed = parseFloat(saved)
+      setUnitDistanceM(Number.isFinite(parsed) ? parsed : 0)
+      return
+    }
+    // localStorage が空 (別端末で乗車開始した場合など) → サーバ fetch フォールバック
     let cancelled = false
-    const compute = async () => {
+    void (async () => {
       const rows = await fetchPositionsForUserSince(user.id, myActive.started_at)
       if (cancelled) return
       const m = computeTotalDistanceMeters(rows)
       setUnitDistanceM(m)
-      // server 値が更新されたので client 側で貯めていた delta はリセット
-      // (次の fetch までに新しく届いた ping ぶんを再度加算していく)
-      setClientUnitDeltaM(0)
-      setClientTodayDeltaM(0)
-    }
-    void compute()
-    const timer = setInterval(compute, 20_000)
+      try {
+        localStorage.setItem(key, String(m))
+      } catch {
+        /* quota 等は無視 */
+      }
+    })()
     return () => {
       cancelled = true
-      clearInterval(timer)
     }
-  }, [user, myActive, lastAutoSentAt, fetchPositionsForUserSince])
+  }, [user, myActive, fetchPositionsForUserSince])
 
-  // 本日走行距離: 今日 00:00 以降の自分の位置ログ全体から累積 (全 assignment 横断)
+  // 本日走行距離: localStorage (日付キー) から復元。無ければサーバから 1 度だけ fetch。
   useEffect(() => {
     if (!user) {
       setTodayDistanceM(0)
       return
     }
+    const ymd = todayYmd()
+    const key = todayDistKey(user.id, ymd)
+    const saved = localStorage.getItem(key)
+    if (saved != null) {
+      const parsed = parseFloat(saved)
+      setTodayDistanceM(Number.isFinite(parsed) ? parsed : 0)
+      return
+    }
     let cancelled = false
-    const compute = async () => {
+    void (async () => {
       const startOfToday = new Date()
       startOfToday.setHours(0, 0, 0, 0)
       const rows = await fetchPositionsForUserSince(
@@ -876,15 +912,18 @@ export function MobilityDriverPage() {
         startOfToday.toISOString(),
       )
       if (cancelled) return
-      setTodayDistanceM(computeTotalDistanceMeters(rows))
-    }
-    void compute()
-    const timer = myActive ? setInterval(compute, 30_000) : null
+      const m = computeTotalDistanceMeters(rows)
+      setTodayDistanceM(m)
+      try {
+        localStorage.setItem(key, String(m))
+      } catch {
+        /* noop */
+      }
+    })()
     return () => {
       cancelled = true
-      if (timer) clearInterval(timer)
     }
-  }, [user, myActive, lastAutoSentAt, fetchPositionsForUserSince])
+  }, [user, fetchPositionsForUserSince])
 
   // セクション走行時間 (myActive.started_at から現在まで)。
   // 本日走行の合計時間は現行 UI では表示していないため計算しない。
@@ -1074,9 +1113,7 @@ export function MobilityDriverPage() {
             </div>
             <div className="text-2xl font-bold leading-tight">
               {(
-                (distanceMode === 'unit'
-                  ? displayUnitDistanceM
-                  : displayTodayDistanceM) / 1000
+                (distanceMode === 'unit' ? unitDistanceM : todayDistanceM) / 1000
               ).toFixed(1)}
               <span className="text-xs font-normal text-slate-300 ml-1">km</span>
             </div>
