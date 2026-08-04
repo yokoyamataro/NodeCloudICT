@@ -196,6 +196,9 @@ export function MobilityHomePage() {
   // インライン展開する行 (同時に 1 台/1 人のみ)
   const [expandedVehicleId, setExpandedVehicleId] = useState<string | null>(null)
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null)
+  // 左サイドバー / 右パネル (チャット等) の折りたたみ状態
+  const [leftCollapsed, setLeftCollapsed] = useState(false)
+  const [rightCollapsed, setRightCollapsed] = useState(false)
   // 運行履歴で選択中の「セクション」(1 回の乗車 = 1 assignment)。単選択。
   // 選択されている間、その assignment の軌跡だけが地図に表示される。
   // 運行履歴で選択中のセクション id 群 (0 or 1 or 複数)。
@@ -478,9 +481,24 @@ export function MobilityHomePage() {
       {/* PC は 左: サイドバー(タブ切替) | 右: 地図。狭い画面は縦積み */}
       <div className="flex-1 flex flex-col lg:flex-row min-h-0">
         {/* 左サイドバー: タブ切替 (ドライバー / 車両 / 運行現場) */}
-        <div className="lg:w-[22rem] xl:w-[25rem] flex flex-col border-b lg:border-b-0 lg:border-r bg-white">
-          {/* タブヘッダ */}
-          <div className="flex border-b bg-slate-50 shrink-0">
+        <div
+          className={`flex flex-col border-b lg:border-b-0 lg:border-r bg-white shrink-0 ${
+            leftCollapsed ? 'lg:w-8' : 'lg:w-[22rem] xl:w-[25rem]'
+          }`}
+        >
+          {/* 折りたたみ時: トグルボタンのみ縦帯 */}
+          {leftCollapsed && (
+            <button
+              type="button"
+              onClick={() => setLeftCollapsed(false)}
+              className="hidden lg:flex flex-1 items-center justify-center text-slate-500 hover:bg-slate-100"
+              title="サイドバーを展開"
+            >
+              <ChevronDown className="h-4 w-4 -rotate-90" />
+            </button>
+          )}
+          {/* タブヘッダ (展開時) */}
+          <div className={`${leftCollapsed ? 'hidden' : 'flex'} border-b bg-slate-50 shrink-0`}>
             {(
               [
                 { key: 'drivers', label: 'ドライバー' },
@@ -501,9 +519,17 @@ export function MobilityHomePage() {
                 {t.label}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={() => setLeftCollapsed(true)}
+              className="hidden lg:block px-2 border-b-2 border-transparent text-slate-400 hover:text-slate-700"
+              title="サイドバーを折りたたむ"
+            >
+              <ChevronDown className="h-4 w-4 rotate-90" />
+            </button>
           </div>
           {/* タブ本体 (選択されたパネルのみ表示) */}
-          <div className="flex-1 overflow-y-auto p-3">
+          <div className={`${leftCollapsed ? 'hidden' : 'flex-1 overflow-y-auto p-3'}`}>
             {sidebarTab === 'drivers' && (
               <UsersColumn
                 organizationId={orgId}
@@ -629,47 +655,122 @@ export function MobilityHomePage() {
           />
         </div>
 
-        {/* 右: チャット (ドライバーが展開されている時のみ) */}
+        {/* 右: ドライバー展開時のみ表示 (チャット → 指示送信 → 詳細)。折りたたみ可 */}
         {expandedUserId && (
-          <div className="lg:w-[22rem] xl:w-[26rem] flex flex-col border-t lg:border-t-0 lg:border-l bg-white shrink-0">
-            <div className="flex items-center gap-2 px-3 py-2 border-b bg-slate-50 shrink-0">
-              <MessageSquare className="h-4 w-4 text-indigo-600" />
-              <div className="text-sm font-semibold flex-1 truncate">
-                {(() => {
-                  const om = orgMembers.find((m) => m.user_id === expandedUserId)
-                  const active = Array.from(activeAssignments.values()).find(
-                    (a) => a.user_id === expandedUserId,
-                  )
-                  return (
-                    active?.driver_name ||
-                    om?.full_name ||
-                    om?.email ||
-                    'ドライバー'
-                  )
-                })()}
-                <span className="text-xs font-normal text-slate-500 ml-1">
-                  とチャット
-                </span>
-              </div>
+          <div
+            className={`flex flex-col border-t lg:border-t-0 lg:border-l bg-white shrink-0 ${
+              rightCollapsed ? 'lg:w-8' : 'lg:w-[24rem] xl:w-[28rem]'
+            }`}
+          >
+            {rightCollapsed ? (
               <button
                 type="button"
-                onClick={() => setExpandedUserId(null)}
-                className="text-slate-400 hover:text-slate-700"
-                title="閉じる"
+                onClick={() => setRightCollapsed(false)}
+                className="hidden lg:flex flex-1 items-center justify-center text-slate-500 hover:bg-slate-100"
+                title="右パネルを展開"
               >
-                <X className="h-4 w-4" />
+                <ChevronDown className="h-4 w-4 rotate-90" />
               </button>
-            </div>
-            <div className="flex-1 min-h-0 p-2">
-              <MobilityChatPanel
-                key={expandedUserId}
-                organizationId={orgId}
-                channelKind="direct"
-                channelUserId={expandedUserId}
-                channelProjectId={null}
-                senderRole="admin"
-              />
-            </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 px-3 py-2 border-b bg-slate-50 shrink-0">
+                  <MessageSquare className="h-4 w-4 text-indigo-600" />
+                  <div className="text-sm font-semibold flex-1 truncate">
+                    {(() => {
+                      const om = orgMembers.find(
+                        (m) => m.user_id === expandedUserId,
+                      )
+                      const active = Array.from(activeAssignments.values()).find(
+                        (a) => a.user_id === expandedUserId,
+                      )
+                      return (
+                        active?.driver_name ||
+                        om?.full_name ||
+                        om?.email ||
+                        'ドライバー'
+                      )
+                    })()}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setRightCollapsed(true)}
+                    className="hidden lg:block text-slate-400 hover:text-slate-700"
+                    title="折りたたむ"
+                  >
+                    <ChevronDown className="h-4 w-4 -rotate-90" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setExpandedUserId(null)}
+                    className="text-slate-400 hover:text-slate-700"
+                    title="閉じる"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="flex-1 min-h-0 overflow-y-auto flex flex-col">
+                  {/* 1. チャット (可変高さ、最低 12rem) */}
+                  <div className="min-h-[16rem] flex-1 p-2">
+                    <MobilityChatPanel
+                      key={expandedUserId}
+                      organizationId={orgId}
+                      channelKind="direct"
+                      channelUserId={expandedUserId}
+                      channelProjectId={null}
+                      senderRole="admin"
+                    />
+                  </div>
+                  {/* 2. 指示送信ボタン (チャットの下) */}
+                  <div className="px-3 pb-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const om = orgMembers.find(
+                          (m) => m.user_id === expandedUserId,
+                        )
+                        const active = Array.from(
+                          activeAssignments.values(),
+                        ).find((a) => a.user_id === expandedUserId)
+                        const name =
+                          active?.driver_name ||
+                          om?.full_name ||
+                          om?.email ||
+                          null
+                        setInstructionDialog({
+                          channelKind: 'direct',
+                          channelUserId: expandedUserId,
+                          channelProjectId: null,
+                          driverLabel: name,
+                          projectLabel: null,
+                        })
+                      }}
+                      className="w-full flex items-center justify-center gap-1 px-3 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                      title="このドライバーに指示を送信"
+                    >
+                      <Send className="h-4 w-4" />
+                      指示送信
+                    </button>
+                  </div>
+                  {/* 3. ドライバー詳細 (運行履歴) — 指示送信の下 */}
+                  <div className="border-t bg-slate-50/50">
+                    <UserInlineDetail
+                      key={expandedUserId}
+                      userId={expandedUserId}
+                      activeAssignment={
+                        Array.from(activeAssignments.values()).find(
+                          (a) => a.user_id === expandedUserId,
+                        ) ?? null
+                      }
+                      selectedIds={selectedSectionAssignmentIds}
+                      onSelectSectionsByDay={selectSectionsByDay}
+                      onSelect={selectSection}
+                      onDeleteSection={handleDeleteSection}
+                      historyReloadKey={sectionHistoryTick}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -2675,18 +2776,12 @@ function UsersColumn(props: FleetSidebarProps) {
     orgMembers,
     loading,
     expandedUserId,
-    selectedSectionAssignmentIds,
     ageMsForAssignment,
     staleThresholdMs,
     forceLeaveBusyId,
-    sectionHistoryTick,
     onToggleExpandUser,
-    onSelectSection,
-    onSelectSectionsByDay,
-    onDeleteSection,
     onForceLeave,
     onInviteByPhone,
-    onOpenInstructionForDriver,
   } = props
 
   const memberByUserId = useMemo(() => {
@@ -2773,17 +2868,6 @@ function UsersColumn(props: FleetSidebarProps) {
                     vehicle?.name ?? '(不明車両)',
                   )
                 }
-                selectedIds={selectedSectionAssignmentIds}
-                onSelectSectionsByDay={onSelectSectionsByDay}
-                onSelect={onSelectSection}
-                onDeleteSection={onDeleteSection}
-                historyReloadKey={sectionHistoryTick}
-                onOpenInstruction={() =>
-                  onOpenInstructionForDriver(
-                    assignment.user_id,
-                    assignment.driver_name,
-                  )
-                }
               />
             ))}
           </ul>
@@ -2815,14 +2899,6 @@ function UsersColumn(props: FleetSidebarProps) {
                 member={m}
                 expanded={expandedUserId === m.user_id}
                 onToggleExpand={() => onToggleExpandUser(m.user_id)}
-                selectedIds={selectedSectionAssignmentIds}
-                onSelectSectionsByDay={onSelectSectionsByDay}
-                onSelect={onSelectSection}
-                onDeleteSection={onDeleteSection}
-                historyReloadKey={sectionHistoryTick}
-                onOpenInstruction={() =>
-                  onOpenInstructionForDriver(m.user_id, m.full_name || m.email)
-                }
               />
             ))}
           </ul>
@@ -2999,12 +3075,6 @@ function ActivePairCard({
   forceLeaveBusyId,
   onToggleExpand,
   onForceLeave,
-  selectedIds,
-  onSelect,
-  onSelectSectionsByDay,
-  onDeleteSection,
-  historyReloadKey,
-  onOpenInstruction,
 }: {
   assignment: AssignmentWithNames
   vehicle: Vehicle | null
@@ -3015,12 +3085,6 @@ function ActivePairCard({
   forceLeaveBusyId: string | null
   onToggleExpand: () => void
   onForceLeave: () => void
-  selectedIds: string[]
-  onSelect: (assignmentId: string) => void
-  onSelectSectionsByDay: (assignmentIds: string[]) => void
-  onDeleteSection: (assignmentId: string, label: string) => void
-  historyReloadKey: number
-  onOpenInstruction: () => void
 }) {
   const noPositionsYet = ageMs == null
   const stale = ageMs != null && ageMs > staleThresholdMs
@@ -3122,20 +3186,8 @@ function ActivePairCard({
           )}
         </div>
       </button>
-      {/* 指示送信 + 強制降車 ボタン */}
+      {/* 強制降車 (指示送信 と 運行履歴 は地図右パネルに移動済) */}
       <div className="px-3 pb-2 flex justify-end gap-1.5">
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            onOpenInstruction()
-          }}
-          className="flex items-center gap-1 px-2 py-0.5 text-[10px] border border-indigo-300 text-indigo-700 rounded hover:bg-indigo-50"
-          title="このドライバーに指示を送信"
-        >
-          <Send className="h-3 w-3" />
-          指示送信
-        </button>
         <button
           type="button"
           onClick={(e) => {
@@ -3154,20 +3206,6 @@ function ActivePairCard({
           強制降車
         </button>
       </div>
-      {expanded && (
-        <>
-          <UserInlineDetail
-            userId={assignment.user_id}
-            activeAssignment={assignment}
-            selectedIds={selectedIds}
-            onSelectSectionsByDay={onSelectSectionsByDay}
-            onSelect={onSelect}
-            onDeleteSection={onDeleteSection}
-            historyReloadKey={historyReloadKey}
-          />
-          {/* チャットは地図の右パネルに移動 */}
-        </>
-      )}
     </li>
   )
 }
@@ -3177,22 +3215,10 @@ function InactiveUserCard({
   member,
   expanded,
   onToggleExpand,
-  selectedIds,
-  onSelect,
-  onSelectSectionsByDay,
-  onDeleteSection,
-  historyReloadKey,
-  onOpenInstruction,
 }: {
   member: OrgMemberRow
   expanded: boolean
   onToggleExpand: () => void
-  selectedIds: string[]
-  onSelect: (assignmentId: string) => void
-  onSelectSectionsByDay: (assignmentIds: string[]) => void
-  onDeleteSection: (assignmentId: string, label: string) => void
-  historyReloadKey: number
-  onOpenInstruction: () => void
 }) {
   return (
     <li
@@ -3231,34 +3257,7 @@ function InactiveUserCard({
           }`}
         />
       </button>
-      {expanded && (
-        <>
-          <div className="px-3 pb-2 flex justify-end">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                onOpenInstruction()
-              }}
-              className="flex items-center gap-1 px-2 py-0.5 text-[10px] border border-indigo-300 text-indigo-700 rounded hover:bg-indigo-50"
-              title="このドライバーに指示を送信"
-            >
-              <Send className="h-3 w-3" />
-              指示送信
-            </button>
-          </div>
-          <UserInlineDetail
-            userId={member.user_id}
-            activeAssignment={null}
-            selectedIds={selectedIds}
-            onSelectSectionsByDay={onSelectSectionsByDay}
-            onSelect={onSelect}
-            onDeleteSection={onDeleteSection}
-            historyReloadKey={historyReloadKey}
-          />
-          {/* チャットは地図の右パネルに移動 */}
-        </>
-      )}
+      {/* 展開時の詳細 (指示送信 / 運行履歴 / チャット) は地図の右パネルに移動済 */}
     </li>
   )
 }
