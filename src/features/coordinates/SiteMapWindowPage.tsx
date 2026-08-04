@@ -35,7 +35,7 @@ export function SiteMapWindowPage() {
     coordinatePoints: true,
     pipes: true,
     pipeNumbers: true,
-    pipeMeasurementPoints: false,
+    pipeMeasurementPoints: true, // 暗渠の測点 (C/B/A) を既定 ON に
     surveyPoints: true,
     workAreas: true,
     route: true,
