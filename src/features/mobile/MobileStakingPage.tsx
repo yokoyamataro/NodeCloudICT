@@ -2069,6 +2069,7 @@ export function MobileStakingPage() {
     })
   }, [orderedTargets, routeTargetIds, targetFilter, hiddenSubTypes, visibleStakeStatuses])
 
+
   // 現在表示候補（major filter 適用後）における点種ごとの件数を集計
   const subTypeStats = useMemo(() => {
     let base = orderedTargets
@@ -2311,6 +2312,16 @@ export function MobileStakingPage() {
     }
     return set
   }, [targets, records])
+
+  // ルート進捗 (現フィルタに依存しない、ルート全点に対する測設済み数)。
+  // filteredTargets 経由だと stakeStatus / hiddenSubTypes で対象が減って
+  // 「1 / 3」→「0 / 2」のように誤って減ることがあるためルート点だけで独立集計。
+  const routeProgress = useMemo(() => {
+    if (routeTargetIds.size === 0) return { measured: 0, total: 0 }
+    const routeTargets = orderedTargets.filter((t) => routeTargetIds.has(t.id))
+    const measured = routeTargets.filter((t) => stakedTargetIds.has(t.id)).length
+    return { measured, total: routeTargets.length }
+  }, [orderedTargets, routeTargetIds, stakedTargetIds])
 
   // 記録開始
   const startRecording = (opts: { forceFreePoint?: boolean } = {}) => {
@@ -5418,15 +5429,11 @@ export function MobileStakingPage() {
                         <div className="font-bold text-base truncate">
                           {selectedTarget.name}
                         </div>
-                        {targetFilter === 'route' && routeTargetIds.size > 0 && (
+                        {targetFilter === 'route' && routeProgress.total > 0 && (
                           <div className="text-[11px] text-orange-700 whitespace-nowrap shrink-0">
-                            {
-                              filteredTargets.filter((t) =>
-                                stakedTargetIds.has(t.id),
-                              ).length
-                            }
+                            {routeProgress.measured}
                             <span className="text-slate-400"> / </span>
-                            {filteredTargets.length} 点
+                            {routeProgress.total} 点
                           </div>
                         )}
                       </div>
