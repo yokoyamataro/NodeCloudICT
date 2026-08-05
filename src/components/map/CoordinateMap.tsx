@@ -614,6 +614,13 @@ export function CoordinateMap({
     return true
   })
 
+  // 重なり選択ポップアップ (地図上の近接点複数から 1 つ選ぶ)
+  const [overlapPicker, setOverlapPicker] = useState<{
+    lat: number
+    lng: number
+    candidates: typeof displayCoordinates
+  } | null>(null)
+
   // 初期中心（座標がない場合は東京）
   const defaultCenter: [number, number] = [35.6762, 139.6503]
   const initialCenter =
@@ -944,12 +951,37 @@ export function CoordinateMap({
             interactive={coordinatesInteractive}
             eventHandlers={coordinatesInteractive ? {
               // Ctrl/⌘ + クリック で複数選択をトグル（ハンドラ指定時のみ）。
-              // 通常クリックは従来通り単一選択。
+              // 通常クリックは重なり検出付き: 画面上 15px 以内に他の点があれば
+              // 選択ポップアップを開き、単独ならそのまま onPointSelect を呼ぶ。
               click: (e) => {
                 const orig = (e.originalEvent ?? null) as MouseEvent | null
                 if (onPointToggleCheck && orig && (orig.ctrlKey || orig.metaKey)) {
                   onPointToggleCheck(coord.id)
                   return
+                }
+                const marker = e.target as L.Marker & { _map?: L.Map }
+                const map = marker._map
+                const OVERLAP_PX = 15
+                if (map) {
+                  const clickedLL = marker.getLatLng()
+                  const clickedPx = map.latLngToLayerPoint(clickedLL)
+                  const nearby = displayCoordinates.filter((c) => {
+                    const p = map.latLngToLayerPoint(
+                      L.latLng(c.lat as number, c.lng as number),
+                    )
+                    return (
+                      Math.hypot(p.x - clickedPx.x, p.y - clickedPx.y) <=
+                      OVERLAP_PX
+                    )
+                  })
+                  if (nearby.length > 1) {
+                    setOverlapPicker({
+                      lat: clickedLL.lat,
+                      lng: clickedLL.lng,
+                      candidates: nearby,
+                    })
+                    return
+                  }
                 }
                 onPointSelect?.(coord.id)
               },
@@ -1003,6 +1035,48 @@ export function CoordinateMap({
       <ZoomTracker onChange={setCurrentZoom} />
       {/* ホイールズームを 1 段ずつに制限 */}
       <OneStepWheelZoom />
+
+      {/* 重なり選択ポップアップ: 15px 以内に複数点があった場合に開く */}
+      {overlapPicker && (
+        <Popup
+          position={[overlapPicker.lat, overlapPicker.lng]}
+          eventHandlers={{ remove: () => setOverlapPicker(null) }}
+        >
+          <div className="text-xs">
+            <div className="font-semibold text-slate-700 mb-1">
+              重なりから選択 ({overlapPicker.candidates.length})
+            </div>
+            <ul className="space-y-0.5 max-h-56 overflow-y-auto">
+              {overlapPicker.candidates.map((c) => {
+                const dotColor = MARKER_COLORS[c.type] || '#666'
+                return (
+                  <li key={c.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOverlapPicker(null)
+                        onPointSelect?.(c.id)
+                      }}
+                      className="w-full text-left flex items-center gap-2 px-1.5 py-1 rounded hover:bg-slate-100"
+                    >
+                      <span
+                        className="inline-block w-2 h-2 rounded-full shrink-0"
+                        style={{ backgroundColor: dotColor }}
+                      />
+                      <span className="font-mono text-slate-800">
+                        {c.pointNumber}
+                      </span>
+                      <span className="text-[10px] text-slate-500 ml-auto">
+                        {c.type}
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        </Popup>
+      )}
     </MapContainer>
     </div>
   )
