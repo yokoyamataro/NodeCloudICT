@@ -37,6 +37,7 @@ export function SiteMapWindowPage() {
     pipeNumbers: true,
     pipeMeasurementPoints: true, // 暗渠の測点 (C/B/A) を既定 ON に
     surveyPoints: true,
+    stakingRecords: true, // 実測記録 (起工/出来形) を既定 ON に
     workAreas: true,
     route: true,
     currentLocation: false,
@@ -246,6 +247,12 @@ export function SiteMapWindowPage() {
                 checked={layers.surveyPoints}
                 onChange={() => toggleLayer('surveyPoints')}
                 color="#0ea5e9"
+              />
+              <LayerCheckbox
+                label="実測記録 (起工/出来形)"
+                checked={layers.stakingRecords}
+                onChange={() => toggleLayer('stakingRecords')}
+                color="#60a5fa"
               />
               <LayerCheckbox
                 label="経路"

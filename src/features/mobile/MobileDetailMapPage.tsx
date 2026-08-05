@@ -55,6 +55,7 @@ export function MobileDetailMapPage() {
     pipeNumbers: true,
     pipeMeasurementPoints: true,
     surveyPoints: true,
+    stakingRecords: true,
     workAreas: true,
     route: true,
     currentLocation: true,

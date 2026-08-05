@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Upload, Download, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Camera, Image as ImageIcon, Loader2, Calculator, Layers, Check, Pencil, X, Save, Waves } from 'lucide-react'
+import { Upload, Download, Trash2, FileText, Eye, EyeOff, Clipboard, Route, ArrowUp, ArrowDown, ChevronDown, Camera, Image as ImageIcon, Loader2, Calculator, Layers, Check, Pencil, X, Save, Waves, Target } from 'lucide-react'
 import { Polyline as LeafletPolyline, CircleMarker, Tooltip } from 'react-leaflet'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
@@ -771,6 +771,48 @@ export function CoordinatesPage() {
       void fetchPipes(currentFarm.id)
     }
   }, [currentFarm, projectZone, setZone, fetchCoordinates, fetchRoute, fetchStakingRecords, fetchFarmMemos, fetchAttachments, fetchPipes])
+
+  // 実測記録 (staking_records) を地図表示。座標記録と同様にマーカー + ラベル。
+  const [showStakingRecords, setShowStakingRecords] = useState(true)
+  const stakingOverlay = useMemo(() => {
+    if (projectZone == null) return [] as Array<{
+      key: string
+      lat: number
+      lng: number
+      label: string
+      color: string
+      fillColor: string
+    }>
+    const conv = new CoordinateConverter(projectZone)
+    const out: Array<{
+      key: string
+      lat: number
+      lng: number
+      label: string
+      color: string
+      fillColor: string
+    }> = []
+    for (const r of stakingRecords) {
+      if (r.measuredX == null || r.measuredY == null) continue
+      try {
+        const { lat, lng } = conv.toLatLng(r.measuredX, r.measuredY)
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
+        // 起工 (initial) は青系、出来形 (asbuilt) は緑系で色分け
+        const isAsbuilt = r.surveyCategory === 'asbuilt'
+        out.push({
+          key: `sr-${r.id}`,
+          lat,
+          lng,
+          label: r.targetName ?? '(名無し)',
+          color: isAsbuilt ? '#065f46' : '#1e3a8a',
+          fillColor: isAsbuilt ? '#34d399' : '#60a5fa',
+        })
+      } catch {
+        /* skip */
+      }
+    }
+    return out
+  }, [stakingRecords, projectZone])
 
   // 暗渠 pipes を lat/lng に変換したオーバーレイデータ
   const pipeOverlay = useMemo(() => {
@@ -2797,6 +2839,25 @@ export function CoordinatesPage() {
                   }
                 />
               )}
+              {/* 実測記録 (staking_records) を地図に表示 */}
+              {showStakingRecords &&
+                stakingOverlay.map((s) => (
+                  <CircleMarker
+                    key={s.key}
+                    center={[s.lat, s.lng]}
+                    radius={4}
+                    pathOptions={{
+                      color: s.color,
+                      fillColor: s.fillColor,
+                      fillOpacity: 0.9,
+                      weight: 1.5,
+                    }}
+                  >
+                    <Tooltip direction="top" offset={[0, -6]} opacity={0.9}>
+                      <span className="text-[10px] font-mono">{s.label}</span>
+                    </Tooltip>
+                  </CircleMarker>
+                ))}
               {/* 暗渠 (読み取り専用オーバーレイ)。編集は暗渠モジュールで。 */}
               {showPipes &&
                 pipeOverlay.lines.map((line) => (
@@ -2857,6 +2918,20 @@ export function CoordinatesPage() {
                 >
                   <Waves className="h-4 w-4" />
                   暗渠
+                </button>
+              )}
+              {stakingRecords.length > 0 && (
+                <button
+                  onClick={() => setShowStakingRecords(!showStakingRecords)}
+                  className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border shadow ${
+                    showStakingRecords
+                      ? 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                  }`}
+                  title={`実測記録 ${stakingRecords.length} 件を地図上に表示`}
+                >
+                  <Target className="h-4 w-4" />
+                  実測
                 </button>
               )}
             </div>

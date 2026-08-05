@@ -13,6 +13,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useCoordinateStore, type RoutePoint } from '@/stores/coordinateStore'
 import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
+import { useStakingStore } from '@/stores/stakingStore'
 import { useWorkAreaStore, type WorkAreaPoint, type WorkAreaRow } from '@/stores/workAreaStore'
 import { useSurveyStore } from '@/stores/surveyStore'
 import { useMapViewStore } from '@/stores/mapViewStore'
@@ -30,6 +31,7 @@ export interface LayerVisibility {
   pipeNumbers: boolean
   pipeMeasurementPoints: boolean
   surveyPoints: boolean
+  stakingRecords: boolean // 実測記録 (staking_records)
   workAreas: boolean
   route: boolean
   currentLocation: boolean
@@ -252,6 +254,11 @@ export function UnifiedFieldMap({ baseLayer = 'osm', layers, farmId, children }:
   const { pipes } = useUnderdrainStore()
   const workAreasByType = useWorkAreaStore((state) => state.workAreas)
   const { surveyData } = useSurveyStore()
+  const stakingRecords = useStakingStore((s) => s.records)
+  const fetchStakingRecords = useStakingStore((s) => s.fetchRecords)
+  useEffect(() => {
+    if (farmId) void fetchStakingRecords(farmId)
+  }, [farmId, fetchStakingRecords])
   const planGroups = useConstructionPlanStore((s) => s.planGroups)
   const {
     byFarm: orthoByFarm,
@@ -383,6 +390,33 @@ export function UnifiedFieldMap({ baseLayer = 'osm', layers, farmId, children }:
       .map((s) => ({ ...s, ll: vertexToLatLng(s, converter) }))
       .filter((s): s is typeof s & { ll: [number, number] } => s.ll !== null)
   }, [surveyData, converter])
+
+  // 実測記録 (staking_records) を lat/lng に変換
+  const stakingMarkers = useMemo(() => {
+    type SM = {
+      id: string
+      name: string
+      ll: [number, number]
+      isAsbuilt: boolean
+    }
+    const out: SM[] = []
+    for (const r of stakingRecords) {
+      if (r.measuredX == null || r.measuredY == null) continue
+      try {
+        const { lat, lng } = converter.toLatLng(r.measuredX, r.measuredY)
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
+        out.push({
+          id: r.id,
+          name: r.targetName ?? '(名無し)',
+          ll: [lat, lng],
+          isAsbuilt: r.surveyCategory === 'asbuilt',
+        })
+      } catch {
+        /* skip */
+      }
+    }
+    return out
+  }, [stakingRecords, converter])
 
   // 工事区域（全工種）
   const workAreas = useMemo(() => {
@@ -562,6 +596,27 @@ export function UnifiedFieldMap({ baseLayer = 'osm', layers, farmId, children }:
             pathOptions={{ color: '#0ea5e9', fillColor: '#38bdf8', fillOpacity: 0.9, weight: 1 }}
           >
             <Tooltip>{s.pointNumber}</Tooltip>
+          </CircleMarker>
+        ))}
+
+      {/* 実測記録 (staking_records) — 起工=青, 出来形=緑 */}
+      {layers.stakingRecords &&
+        stakingMarkers.map((s) => (
+          <CircleMarker
+            key={`staking-${s.id}`}
+            center={s.ll}
+            radius={4}
+            pathOptions={{
+              color: s.isAsbuilt ? '#065f46' : '#1e3a8a',
+              fillColor: s.isAsbuilt ? '#34d399' : '#60a5fa',
+              fillOpacity: 0.9,
+              weight: 1.5,
+            }}
+          >
+            <Tooltip direction="top" offset={[0, -6]}>
+              {s.name}
+              {s.isAsbuilt ? ' [出来形]' : ' [起工]'}
+            </Tooltip>
           </CircleMarker>
         ))}
 
