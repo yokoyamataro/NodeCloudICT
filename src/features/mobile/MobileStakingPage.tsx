@@ -2019,11 +2019,24 @@ export function MobileStakingPage() {
   }, [coordinates, pipes, converter, projectId, pointTypesByProject])
 
   // 出力点選択（順路）に従ってターゲットを並べ替える。
-  // 順路にある点（x,y で一致判定）を先に並べ、無い点は元の順序で末尾へ。
-  // 順路が未保存の工区では何もせずそのまま返す。
-  const route = useExportRouteStore((s) =>
-    farmId ? s.routesByFarmId.get(farmId) ?? null : null,
+  // 現在アクティブなルートの points を使う。routesByFarmId には複数のルートが
+  // 入っている可能性があるので、activeRouteIdByFarmId で選ばれているものを取得。
+  const allRoutesForFarm = useExportRouteStore((s) =>
+    farmId ? s.routesByFarmId.get(farmId) ?? [] : [],
   )
+  const activeRouteId = useExportRouteStore((s) =>
+    farmId ? s.activeRouteIdByFarmId[farmId] ?? null : null,
+  )
+  const setActiveRoute = useExportRouteStore((s) => s.setActiveRoute)
+  const activeRoute = useMemo(() => {
+    if (allRoutesForFarm.length === 0) return null
+    if (activeRouteId) {
+      const hit = allRoutesForFarm.find((r) => r.id === activeRouteId)
+      if (hit) return hit
+    }
+    return allRoutesForFarm[0]
+  }, [allRoutesForFarm, activeRouteId])
+  const route = activeRoute?.points ?? null
   // ルート順に並べた targets と、ルートに含まれる ID 集合を返す。
   // ルート点はルート点名（座標計算で集約された名前）で name を上書きする。
   // ルート未保存（または空）なら ordered=targets / routeIds=空集合。
@@ -4923,7 +4936,7 @@ export function MobileStakingPage() {
                 測設済 {filteredTargets.filter((t) => stakedTargetIds.has(t.id)).length}
                 <span className="text-slate-400"> / {filteredTargets.length}</span>
               </span>
-              <div className="ml-2 flex gap-1 text-xs">
+              <div className="ml-2 flex gap-1 text-xs items-center">
                 {routeTargetIds.size > 0 && (
                   <button
                     onClick={() =>
@@ -4939,6 +4952,21 @@ export function MobileStakingPage() {
                     ルート
                     <span className="ml-1 text-[10px] opacity-80">({routeTargetIds.size})</span>
                   </button>
+                )}
+                {/* 複数ルート切替 (2 本以上ある時だけ表示) */}
+                {allRoutesForFarm.length > 1 && farmId && (
+                  <select
+                    value={activeRoute?.id ?? ''}
+                    onChange={(e) => setActiveRoute(farmId, e.target.value || null)}
+                    className="px-1 py-0.5 text-[11px] border rounded bg-white"
+                    title="アクティブなルートを切替"
+                  >
+                    {allRoutesForFarm.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </select>
                 )}
                 {targetFilter === 'route' && (
                   <button

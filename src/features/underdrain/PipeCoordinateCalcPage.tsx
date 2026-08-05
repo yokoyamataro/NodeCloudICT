@@ -72,7 +72,7 @@ export function PipeCoordinateCalcPage() {
   const { projects } = useProjectListStore()
 
   const fetchRoute = useExportRouteStore((s) => s.fetchRoute)
-  const saveRoute = useExportRouteStore((s) => s.saveRoute)
+  const saveDefaultRoute = useExportRouteStore((s) => s.saveDefaultRoute)
   const savingRoute = useExportRouteStore((s) => s.saving)
 
   // プロジェクト選択時にデータを読み込む
@@ -721,7 +721,7 @@ export function PipeCoordinateCalcPage() {
                           alert('工区が選択されていません')
                           return
                         }
-                        const ok = await saveRoute(currentFarm.id, exportPoints)
+                        const ok = await saveDefaultRoute(currentFarm.id, exportPoints)
                         if (ok) alert('順路をサーバに保存しました（スマホ起工測量で利用されます）')
                       }}
                       disabled={savingRoute || !currentFarm}

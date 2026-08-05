@@ -158,7 +158,11 @@ interface CoordinateState {
   setRouteDirection: (index: number, direction: RouteDirection) => void
   moveRoutePoint: (index: number, offset: number) => void
   clearRoute: () => void
-  saveRoute: () => Promise<void>
+  /**
+   * 経路を保存。routeName を渡すと export_point_routes 側の対応 name に upsert。
+   * 未指定なら '既定' 名で保存 (後方互換)。
+   */
+  saveRoute: (routeName?: string) => Promise<void>
 }
 
 // 工区IDを取得するヘルパー
@@ -818,10 +822,11 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
     set({ route: [], routeHasChanges: true })
   },
 
-  saveRoute: async () => {
+  saveRoute: async (routeName?: string) => {
     const farmId = getCurrentFarmId()
     if (!farmId) return
     const { route } = get()
+    const name = (routeName ?? '既定').trim() || '既定'
     try {
       // 既存の経路を削除
       const { error: delErr } = await supabase
@@ -863,7 +868,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
           source: 'coordinate',
           type: c.type,
         }))
-      await useExportRouteStore.getState().saveRoute(farmId, points)
+      await useExportRouteStore.getState().saveRoute(farmId, name, points)
     } catch (err) {
       console.error('経路の保存に失敗:', err)
       throw err

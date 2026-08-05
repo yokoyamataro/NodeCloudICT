@@ -3,6 +3,7 @@ import { Upload, Download, Trash2, FileText, Eye, EyeOff, Clipboard, Route, Arro
 import { Polyline as LeafletPolyline, CircleMarker, Tooltip } from 'react-leaflet'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
+import { useExportRouteStore } from '@/stores/exportRouteStore'
 import { PointTypeFilterButton } from './PointTypeFilterButton'
 import { StakeStatusFilterButton } from './StakeStatusFilterButton'
 import {
@@ -572,6 +573,8 @@ export function CoordinatesPage() {
 
   // 経路モード（クリックで経路に追加）
   const [routeMode, setRouteMode] = useState(false)
+  // 現在編集中の route の name (保存時のキー、既定は '既定')
+  const [routeName, setRouteName] = useState('既定')
   // 経路パネル折りたたみ (地図が見えにくい時用)
   const [routePanelCollapsed, setRoutePanelCollapsed] = useState(false)
 
@@ -2963,9 +2966,12 @@ export function CoordinatesPage() {
                       {route.length > 0 && (
                         <button
                           onClick={async () => {
+                            const name = (routeName || '').trim() || '既定'
                             try {
-                              await saveRoute()
-                              alert('スマホ杭打ちで使える順路を保存しました')
+                              await saveRoute(name)
+                              alert(
+                                `ルート「${name}」を保存しました\nスマホ杭打ちで選択できます`,
+                              )
                             } catch (err) {
                               const msg =
                                 err instanceof Error ? err.message : String(err)
@@ -2973,7 +2979,7 @@ export function CoordinatesPage() {
                             }
                           }}
                           className="text-[10px] px-1.5 py-0.5 bg-emerald-600 text-white rounded hover:bg-emerald-700 flex items-center gap-0.5"
-                          title="スマホ杭打ちモードでこの順路が使えるようになる (export_point_routes に保存)"
+                          title="この名前でスマホ杭打ち用ルートを保存"
                         >
                           <Save className="h-2.5 w-2.5" />
                           スマホに保存
@@ -2982,10 +2988,10 @@ export function CoordinatesPage() {
                       {route.length > 0 && (
                         <button
                           onClick={() => {
-                            if (confirm('経路を全てクリアしますか？')) clearRoute()
+                            if (confirm('編集中の経路を全てクリアしますか？')) clearRoute()
                           }}
                           className="text-[10px] text-red-600 hover:text-red-800"
-                          title="経路を全てクリア"
+                          title="編集中の経路を全てクリア"
                         >
                           クリア
                         </button>
@@ -2995,6 +3001,26 @@ export function CoordinatesPage() {
                 </div>
                 {!routePanelCollapsed && (
                 <>
+                {/* ルート名入力 + 保存済みルート一覧 */}
+                <div className="px-2 py-1.5 border-b bg-slate-50/60 space-y-1.5">
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-slate-500 shrink-0">名前</span>
+                    <input
+                      type="text"
+                      value={routeName}
+                      onChange={(e) => setRouteName(e.target.value)}
+                      placeholder="既定"
+                      className="flex-1 min-w-0 px-1.5 py-0.5 text-[11px] border rounded"
+                    />
+                  </div>
+                  {currentFarm && (
+                    <SavedRoutesList
+                      farmId={currentFarm.id}
+                      currentName={routeName}
+                      onSelect={(name) => setRouteName(name)}
+                    />
+                  )}
+                </div>
                 <div className="flex-1 overflow-auto text-xs">
                   {route.length === 0 ? (
                     <div className="p-3 text-slate-500 text-center">
@@ -3446,6 +3472,62 @@ function PointTypeManagerModal({
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+// 保存済みルート一覧: 名前タップで routeName に反映、× で削除
+function SavedRoutesList({
+  farmId,
+  currentName,
+  onSelect,
+}: {
+  farmId: string
+  currentName: string
+  onSelect: (name: string) => void
+}) {
+  const fetchRoutes = useExportRouteStore((s) => s.fetchRoutes)
+  const deleteRoute = useExportRouteStore((s) => s.deleteRoute)
+  const routes = useExportRouteStore((s) => s.routesByFarmId.get(farmId) ?? [])
+  useEffect(() => {
+    void fetchRoutes(farmId)
+  }, [farmId, fetchRoutes])
+  if (routes.length === 0) return null
+  return (
+    <div className="flex items-center gap-1 flex-wrap">
+      <span className="text-[10px] text-slate-500">保存済</span>
+      {routes.map((r) => (
+        <span
+          key={r.id}
+          className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] border ${
+            r.name === currentName.trim()
+              ? 'bg-emerald-100 border-emerald-400 text-emerald-800'
+              : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
+          }`}
+        >
+          <button
+            type="button"
+            onClick={() => onSelect(r.name)}
+            title={`「${r.name}」の名前を編集フィールドに読み込む`}
+          >
+            {r.name}
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              if (
+                !confirm(`保存済みルート「${r.name}」を削除しますか?`)
+              )
+                return
+              await deleteRoute(farmId, r.id)
+            }}
+            className="text-red-500 hover:text-red-700"
+            title="削除"
+          >
+            ×
+          </button>
+        </span>
+      ))}
     </div>
   )
 }
