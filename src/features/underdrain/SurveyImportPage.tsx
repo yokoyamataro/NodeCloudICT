@@ -11,7 +11,9 @@ import {
   X,
   FileText,
   Loader2,
+  Target,
 } from 'lucide-react'
+import { supabase } from '@/lib/supabase'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
@@ -371,6 +373,98 @@ export function SurveyImportPage() {
     updateCalibration({ dzOffset: avg })
   }, [matchResults, updateCalibration])
 
+  // 実測記録 (起工測量) を暗渠の測量データとしてインポート。
+  // staking_records から survey_category='initial' を取得し、
+  // 既存の surveyData に追加した状態で importSurveyData を呼ぶ
+  // (importSurveyData は「削除→全件挿入」なので、既存を保持したまま追加するには
+  //  ここで統合してから渡す)。
+  const [stakingImportBusy, setStakingImportBusy] = useState(false)
+  const handleImportFromStaking = async () => {
+    if (!currentFarm) {
+      alert('工区が選択されていません')
+      return
+    }
+    setStakingImportBusy(true)
+    try {
+      const { data, error } = await supabase
+        .from('staking_records')
+        .select('*')
+        .eq('farm_id', currentFarm.id)
+        .eq('survey_category', 'initial')
+      if (error) throw error
+      const records = (data ?? []) as Array<{
+        id: string
+        target_type: 'coordinate' | 'pipe_vertex' | 'free'
+        target_name: string | null
+        measured_x: number | string
+        measured_y: number | string
+        measured_z: number | string | null
+        recorded_at: string
+      }>
+      if (records.length === 0) {
+        alert('起工測量の実測記録がありません (スマホで測点を実測してください)')
+        return
+      }
+      // targetType から SurveyCategory へマッピング (design point としての種別)
+      const mapCategory = (t: string): SurveyCategory => {
+        if (t === 'pipe_vertex') return 'underdrain'
+        if (t === 'coordinate') return 'control'
+        return 'other'
+      }
+      const newRows: Omit<SurveyDataRow, 'id'>[] = records.map((r) => ({
+        pointNumber: r.target_name ?? `S-${r.id.slice(0, 8)}`,
+        x: Number(r.measured_x),
+        y: Number(r.measured_y),
+        z: r.measured_z != null ? Number(r.measured_z) : null,
+        matchedPointId: null,
+        matchedPointType: null,
+        matchDistance: null,
+        category: mapCategory(r.target_type),
+        dzRaw: null,
+        dzCalibrated: null,
+        notes: `実測記録(起工) ${new Date(r.recorded_at).toLocaleString('ja-JP', {
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        })}`,
+      }))
+      // 既存 surveyData を保持しつつ追加。重複 (pointNumber) は既存側を優先。
+      const existingRows: Omit<SurveyDataRow, 'id'>[] = surveyData.map((r) => ({
+        pointNumber: r.pointNumber,
+        x: r.x,
+        y: r.y,
+        z: r.z,
+        matchedPointId: r.matchedPointId,
+        matchedPointType: r.matchedPointType,
+        matchDistance: r.matchDistance,
+        category: r.category,
+        dzRaw: r.dzRaw,
+        dzCalibrated: r.dzCalibrated,
+        notes: r.notes,
+      }))
+      const existingNames = new Set(existingRows.map((r) => r.pointNumber))
+      const filteredNew = newRows.filter((r) => !existingNames.has(r.pointNumber))
+      const skipped = newRows.length - filteredNew.length
+      const combined = [...existingRows, ...filteredNew]
+      const proceed = confirm(
+        `起工実測 ${records.length} 件のうち ${filteredNew.length} 件を測量データに追加します。` +
+          (skipped > 0 ? `\n(${skipped} 件は既存 pointNumber と重複するためスキップ)` : '') +
+          '\n\n実行しますか?',
+      )
+      if (!proceed) return
+      await importSurveyData(combined)
+      alert(`${filteredNew.length} 件をインポートしました`)
+    } catch (err) {
+      console.error('実測記録の取込に失敗:', err)
+      alert(
+        `取込失敗: ${err instanceof Error ? err.message : '不明なエラー'}`,
+      )
+    } finally {
+      setStakingImportBusy(false)
+    }
+  }
+
   // SIMファイルをインポート
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -729,6 +823,19 @@ export function SurveyImportPage() {
           >
             <Upload className="h-4 w-4" />
             SIMインポート
+          </button>
+          <button
+            onClick={handleImportFromStaking}
+            disabled={stakingImportBusy || !currentFarm}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="スマホで測点実測した記録 (起工) を直接取込む"
+          >
+            {stakingImportBusy ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Target className="h-4 w-4" />
+            )}
+            実測記録取込 (起工)
           </button>
           <button
             onClick={() => setIsLandXmlDialogOpen(true)}
