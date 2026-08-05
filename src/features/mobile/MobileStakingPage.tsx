@@ -8,6 +8,8 @@ import 'leaflet-rotate'
 import {
   ArrowLeft,
   ArrowUp,
+  ChevronLeft,
+  ChevronRight,
   Loader2,
   Circle as CircleIcon,
   Radio,
@@ -5382,31 +5384,65 @@ export function MobileStakingPage() {
           />
         ) : showMap && (selectedTarget ? (
           <div className="flex flex-col gap-1">
-            {/* 1 行目: 点名 (伸縮) + 解除 X + 矢印/距離。
-                点名を最大限に表示するため、測定/詳細ボタンは 2 行目に配置。
+            {/* 1 行目: 前/次 矢印 + 点名 (伸縮) + 解除 X + 矢印/距離。
+                前/次矢印は filteredTargets の並びで 1 つ隣のターゲットに切替。
                 ルートフィルタ時は「n点中m点計測」を右上に小さく表示。 */}
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowTargetList(true)}
-                className="flex-1 min-w-0 text-left"
-                title="ターゲット切替"
-              >
-                <div className="flex items-baseline gap-2">
-                  <div className="font-bold text-base truncate">
-                    {selectedTarget.name}
-                  </div>
-                  {targetFilter === 'route' && routeTargetIds.size > 0 && (
-                    <div className="text-[11px] text-orange-700 whitespace-nowrap shrink-0">
-                      {
-                        filteredTargets.filter((t) => stakedTargetIds.has(t.id))
-                          .length
-                      }
-                      <span className="text-slate-400"> / </span>
-                      {filteredTargets.length} 点
-                    </div>
-                  )}
-                </div>
-              </button>
+            <div className="flex items-center gap-1">
+              {(() => {
+                const idx = filteredTargets.findIndex(
+                  (t) => t.id === selectedTarget.id,
+                )
+                const prevId =
+                  idx > 0 ? filteredTargets[idx - 1].id : null
+                const nextId =
+                  idx >= 0 && idx < filteredTargets.length - 1
+                    ? filteredTargets[idx + 1].id
+                    : null
+                return (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => prevId && setSelectedTargetId(prevId)}
+                      disabled={!prevId}
+                      className="p-1.5 rounded border border-slate-300 text-slate-500 hover:bg-slate-100 shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"
+                      title="前のターゲット"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => setShowTargetList(true)}
+                      className="flex-1 min-w-0 text-left"
+                      title="ターゲット切替 (一覧を開く)"
+                    >
+                      <div className="flex items-baseline gap-2">
+                        <div className="font-bold text-base truncate">
+                          {selectedTarget.name}
+                        </div>
+                        {targetFilter === 'route' && routeTargetIds.size > 0 && (
+                          <div className="text-[11px] text-orange-700 whitespace-nowrap shrink-0">
+                            {
+                              filteredTargets.filter((t) =>
+                                stakedTargetIds.has(t.id),
+                              ).length
+                            }
+                            <span className="text-slate-400"> / </span>
+                            {filteredTargets.length} 点
+                          </div>
+                        )}
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => nextId && setSelectedTargetId(nextId)}
+                      disabled={!nextId}
+                      className="p-1.5 rounded border border-slate-300 text-slate-500 hover:bg-slate-100 shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"
+                      title="次のターゲット"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </>
+                )
+              })()}
               <button
                 onClick={() => setSelectedTargetId(null)}
                 className="p-1.5 rounded border border-slate-300 text-slate-500 hover:bg-slate-100 shrink-0"
