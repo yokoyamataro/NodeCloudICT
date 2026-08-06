@@ -1152,6 +1152,13 @@ export function MobileStakingPage() {
 
   // 選択中ターゲット
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null)
+  // ルート作成モード: 有効化中はマーカー/一覧タップで draftRouteIds に順番に追加していく
+  const [routeCreationMode, setRouteCreationMode] = useState(false)
+  const [draftRouteIds, setDraftRouteIds] = useState<string[]>([])
+  // 保存ダイアログ (名前入力)
+  const [routeSaveOpen, setRouteSaveOpen] = useState(false)
+  const [routeSaveName, setRouteSaveName] = useState('')
+  const [routeSaveBusy, setRouteSaveBusy] = useState(false)
   // 近接モードを手動で閉じたフラグ（範囲外に出ると解除して再表示できるようにする）
   const [proximityCancelled, setProximityCancelled] = useState(false)
   // 1m 以内に重なっているターゲットをタップした際の選択シート。
@@ -2038,6 +2045,7 @@ export function MobileStakingPage() {
     farmId ? s.activeRouteIdByFarmId[farmId] ?? null : null,
   )
   const setActiveRoute = useExportRouteStore((s) => s.setActiveRoute)
+  const saveRouteToDb = useExportRouteStore((s) => s.saveRoute)
   const activeRoute = useMemo(() => {
     if (allRoutesForFarm.length === 0) return null
     if (activeRouteId) {
@@ -3513,6 +3521,75 @@ export function MobileStakingPage() {
           onPickRequest={(fn) => setCalcAssign(() => fn)}
         />
       )}
+      {/* ルート保存 (名前入力) ダイアログ */}
+      {routeSaveOpen && (
+        <div
+          className="fixed inset-0 z-[3600] bg-black/40 flex items-center justify-center"
+          onClick={() => !routeSaveBusy && setRouteSaveOpen(false)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl w-[85%] max-w-sm p-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-sm font-semibold mb-2">ルートを保存</div>
+            <div className="text-[11px] text-slate-500 mb-2">
+              {draftRouteIds.length} 点。同じ名前で既に保存済みなら上書きします。
+            </div>
+            <input
+              type="text"
+              value={routeSaveName}
+              onChange={(e) => setRouteSaveName(e.target.value)}
+              placeholder="ルート名 (例: 北側配線 / A ライン)"
+              className="w-full px-2 py-1.5 border rounded text-sm mb-3"
+              autoFocus
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => setRouteSaveOpen(false)}
+                disabled={routeSaveBusy}
+                className="flex-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={async () => {
+                  if (!farmId) return
+                  const name = routeSaveName.trim() || '既定'
+                  setRouteSaveBusy(true)
+                  const points: RoutePoint[] = draftRouteIds
+                    .map((id) => targets.find((t) => t.id === id))
+                    .filter((t): t is StakingTarget => t != null)
+                    .map((t) => ({
+                      id: t.refId,
+                      name: t.name,
+                      x: t.x,
+                      y: t.y,
+                      z: t.z,
+                      source: t.kind === 'pipe_vertex' ? 'pipe' : 'coordinate',
+                      type: t.subType,
+                    }))
+                  const saved = await saveRouteToDb(farmId, name, points)
+                  setRouteSaveBusy(false)
+                  if (!saved) {
+                    alert('ルートの保存に失敗しました')
+                    return
+                  }
+                  // 保存したルートをアクティブに
+                  setActiveRoute(farmId, saved.id)
+                  setRouteSaveOpen(false)
+                  setRouteCreationMode(false)
+                  setDraftRouteIds([])
+                  setTargetFilter('route')
+                }}
+                disabled={routeSaveBusy || draftRouteIds.length === 0}
+                className="flex-1 px-3 py-1.5 text-sm bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-40"
+              >
+                {routeSaveBusy ? '保存中...' : '保存'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* 重なりターゲット選択シート（1m 以内に複数あるときに開く） */}
       {overlapPicker && (
         <OverlapTargetPicker
@@ -4359,6 +4436,9 @@ export function MobileStakingPage() {
             return filteredTargets.map((t) => {
             const isSelected = t.id === selectedTargetId
             const isStaked = stakedTargetIds.has(t.id)
+            const draftIdx = routeCreationMode
+              ? draftRouteIds.indexOf(t.id)
+              : -1
             const showLabel =
               labelsActive &&
               (labelBounds == null || labelBounds.contains([t.lat, t.lng]))
@@ -4421,6 +4501,21 @@ export function MobileStakingPage() {
                 ${isSelected ? 'box-shadow:0 0 0 3px rgba(249,115,22,0.4),0 1px 3px rgba(0,0,0,0.4);' : ''}
               "></div>
             </div>`
+            // ルート作成 draft に含まれている場合: 順序番号バッジをオーバーレイ
+            const draftBadge = draftIdx >= 0
+              ? `<div style="
+                  position:absolute; top:-2px; right:-2px;
+                  background:#059669; color:#fff;
+                  min-width:18px; height:18px; padding:0 4px;
+                  border-radius:9999px; border:2px solid #fff;
+                  font-size:10px; font-weight:700; line-height:14px;
+                  display:flex; align-items:center; justify-content:center;
+                  box-shadow:0 1px 3px rgba(0,0,0,0.35);
+                ">${draftIdx + 1}</div>`
+              : ''
+            const combinedHtml = draftIdx >= 0
+              ? `<div style="position:relative; width:${HIT}px; height:${HIT}px;">${isStaked ? stakedHtml : normalHtml}${draftBadge}</div>`
+              : (isStaked ? stakedHtml : normalHtml)
             const iconSize = HIT
             return (
               <Marker
@@ -4428,12 +4523,21 @@ export function MobileStakingPage() {
                 position={[t.lat, t.lng]}
                 icon={L.divIcon({
                   className: 'staking-target',
-                  html: isStaked ? stakedHtml : normalHtml,
+                  html: combinedHtml,
                   iconSize: [iconSize, iconSize],
                   iconAnchor: [iconSize / 2, iconSize / 2],
                 })}
                 eventHandlers={{
                   click: () => {
+                    // ルート作成モード: タップで draft へ追加/解除
+                    if (routeCreationMode) {
+                      setDraftRouteIds((prev) =>
+                        prev.includes(t.id)
+                          ? prev.filter((id) => id !== t.id)
+                          : [...prev, t.id],
+                      )
+                      return
+                    }
                     // 1m 以内の重なりターゲットを集める（自分も含む）。
                     // 2 件以上ならどれを選ぶか聞くシートを出す。
                     const nearby = filteredTargets.filter(
@@ -4937,6 +5041,96 @@ export function MobileStakingPage() {
           )
         })()}
 
+        {/* ルート作成 draft パネル (作成モード中は常時表示、地図左上) */}
+        {routeCreationMode && (() => {
+          const draftTargets = draftRouteIds
+            .map((id) => targets.find((t) => t.id === id))
+            .filter((t): t is StakingTarget => t != null)
+          return (
+            <div className="absolute top-2 left-2 z-[1300] bg-white/95 border border-emerald-500 rounded-lg shadow-lg p-2 text-xs w-56 max-w-[70%]">
+              <div className="flex items-center gap-1 mb-1">
+                <span className="font-bold text-emerald-700">ルート作成中</span>
+                <span className="text-slate-500">({draftTargets.length}点)</span>
+                <div className="ml-auto flex gap-1">
+                  <button
+                    onClick={() =>
+                      setDraftRouteIds((prev) => prev.slice(0, -1))
+                    }
+                    disabled={draftTargets.length === 0}
+                    className="px-1.5 py-0.5 border rounded text-slate-600 disabled:opacity-30"
+                    title="最後の点を戻す"
+                  >
+                    ↶
+                  </button>
+                  <button
+                    onClick={() => setDraftRouteIds([])}
+                    disabled={draftTargets.length === 0}
+                    className="px-1.5 py-0.5 border rounded text-slate-600 disabled:opacity-30"
+                    title="全てクリア"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+              <div className="text-[10px] text-slate-500 mb-1">
+                地図の点、または一覧から順にタップ
+              </div>
+              {draftTargets.length === 0 ? (
+                <div className="text-[10px] text-slate-400 text-center py-1">
+                  まだ点が選ばれていません
+                </div>
+              ) : (
+                <ol className="max-h-32 overflow-auto space-y-0.5 mb-1.5">
+                  {draftTargets.map((t, idx) => (
+                    <li
+                      key={t.id}
+                      className="flex items-center gap-1 px-1 py-0.5 rounded bg-emerald-50"
+                    >
+                      <span className="inline-flex w-5 h-5 items-center justify-center rounded-full bg-emerald-600 text-white text-[10px] font-bold flex-shrink-0">
+                        {idx + 1}
+                      </span>
+                      <span className="flex-1 truncate">{t.name}</span>
+                      <button
+                        onClick={() =>
+                          setDraftRouteIds((prev) =>
+                            prev.filter((id) => id !== t.id),
+                          )
+                        }
+                        className="text-slate-400 hover:text-red-600 px-1"
+                        title="この点を外す"
+                      >
+                        ✕
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+              )}
+              <div className="flex gap-1">
+                <button
+                  onClick={() => {
+                    setRouteCreationMode(false)
+                    setDraftRouteIds([])
+                  }}
+                  className="flex-1 px-2 py-1 border rounded text-slate-600 hover:bg-slate-50"
+                >
+                  中止
+                </button>
+                <button
+                  onClick={() => {
+                    if (draftRouteIds.length === 0) return
+                    setRouteSaveName('')
+                    setRouteSaveOpen(true)
+                  }}
+                  disabled={draftRouteIds.length === 0}
+                  className="flex-1 px-2 py-1 bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-40"
+                >
+                  保存
+                </button>
+              </div>
+            </div>
+          )
+        })()}
+
         {/* ターゲットリスト（下部スライドアップ） */}
         {showTargetList && (
           <div className="absolute inset-x-0 bottom-0 z-[1000] bg-white border-t shadow-xl max-h-[50%] flex flex-col">
@@ -4989,6 +5183,31 @@ export function MobileStakingPage() {
                     title={showRouteLine ? 'ルート線を非表示' : 'ルート線を表示'}
                   >
                     線 {showRouteLine ? 'ON' : 'OFF'}
+                  </button>
+                )}
+                {/* ルート作成モード切替 */}
+                {!routeCreationMode ? (
+                  <button
+                    onClick={() => {
+                      setRouteCreationMode(true)
+                      setDraftRouteIds([])
+                      setTargetFilter('all')
+                    }}
+                    className="px-2 py-0.5 rounded border border-emerald-500 text-emerald-700 bg-emerald-50"
+                    title="点をタップして新しいルートを作成"
+                  >
+                    ＋ ルート作成
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setRouteCreationMode(false)
+                      setDraftRouteIds([])
+                    }}
+                    className="px-2 py-0.5 rounded border border-slate-400 text-slate-600 bg-slate-100"
+                    title="作成モードを終了"
+                  >
+                    作成中止
                   </button>
                 )}
               </div>
@@ -5052,21 +5271,39 @@ export function MobileStakingPage() {
                       : null
                     const isSelected = t.id === selectedTargetId
                     const isStaked = stakedTargetIds.has(t.id)
+                    const draftIdx = routeCreationMode
+                      ? draftRouteIds.indexOf(t.id)
+                      : -1
                     return (
                       <li
                         key={t.id}
                         onClick={() => {
+                          if (routeCreationMode) {
+                            setDraftRouteIds((prev) =>
+                              prev.includes(t.id)
+                                ? prev.filter((id) => id !== t.id)
+                                : [...prev, t.id],
+                            )
+                            return
+                          }
                           setSelectedTargetId(t.id)
                           setShowTargetList(false)
                         }}
                         className={`px-3 py-2 cursor-pointer flex items-center gap-2 ${
-                          isSelected
+                          draftIdx >= 0
+                            ? 'bg-emerald-100'
+                            : isSelected
                             ? 'bg-blue-50'
                             : isStaked
                             ? 'bg-emerald-50/60 hover:bg-emerald-100/60'
                             : 'hover:bg-slate-50'
                         }`}
                       >
+                        {draftIdx >= 0 && (
+                          <span className="inline-flex w-5 h-5 items-center justify-center rounded-full bg-emerald-600 text-white text-[10px] font-bold flex-shrink-0">
+                            {draftIdx + 1}
+                          </span>
+                        )}
                         {isStaked ? (
                           <svg
                             viewBox="0 0 24 24"
