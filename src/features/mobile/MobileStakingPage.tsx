@@ -3,8 +3,6 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker, CircleMarker, Polyline, Polygon, Tooltip, Pane, Popup, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-// leaflet-rotate は Map クラスにパッチ (rotate オプション / setBearing) を当てる副作用付き import
-import 'leaflet-rotate'
 import {
   ArrowLeft,
   ArrowUp,
@@ -361,27 +359,6 @@ function FitOnce({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
   return null
 }
 
-// leaflet-rotate の bearing を方位センサー値に同期させる。
-// enabled=false または heading=null の時は bearing=0 で北向きに戻す。
-function MapBearingUpdater({
-  enabled,
-  heading,
-}: {
-  enabled: boolean
-  heading: number | null
-}) {
-  const map = useMap() as L.Map & {
-    setBearing?: (deg: number) => void
-    getBearing?: () => number
-  }
-  useEffect(() => {
-    if (typeof map.setBearing !== 'function') return
-    const desired = enabled && heading != null ? -heading : 0
-    try { map.setBearing(desired) } catch { /* ignore */ }
-  }, [map, enabled, heading])
-  return null
-}
-
 // 地図ズームを親の state に流すヘルパー
 function ZoomWatcher({ onChange }: { onChange: (z: number) => void }) {
   const map = useMap()
@@ -682,19 +659,6 @@ export function MobileStakingPage() {
   const [heading, setHeading] = useState<number | null>(null)
   const [headingEnabled, setHeadingEnabled] = useState(false)
   const [headingError, setHeadingError] = useState<string | null>(null)
-  // 地図を進行方向に回す（コンパスに応じて .leaflet-container を CSS 回転）
-  const [mapRotationEnabled, setMapRotationEnabled] = useState<boolean>(() => {
-    try {
-      return typeof localStorage !== 'undefined' &&
-        localStorage.getItem('mobile:staking:mapRotation') === '1'
-    } catch { return false }
-  })
-  useEffect(() => {
-    try {
-      localStorage.setItem('mobile:staking:mapRotation', mapRotationEnabled ? '1' : '0')
-    } catch { /* ignore */ }
-  }, [mapRotationEnabled])
-
   // 設定・UI
   const [avgSeconds, setAvgSeconds] = useState(3)
   // 画面モード: 起工測量のみに統一（出来形 / 施工管理 タブは削除）
@@ -1478,18 +1442,6 @@ export function MobileStakingPage() {
       }
     }
     setHeadingEnabled(true)
-  }
-
-  // 地図回転（進行方向を上に）のトグル。ON にすると方位センサーも自動 ON
-  const toggleMapRotation = async () => {
-    if (mapRotationEnabled) {
-      setMapRotationEnabled(false)
-      return
-    }
-    if (!headingEnabled) {
-      await toggleHeading()
-    }
-    setMapRotationEnabled(true)
   }
 
   // 現在位置の監視
@@ -4191,13 +4143,7 @@ export function MobileStakingPage() {
           maxZoom={24}
           className="h-full w-full"
           style={baseLayer === 'none' ? { background: '#ffffff' } : undefined}
-          // leaflet-rotate: 回転機能を有効化。実際の bearing は MapBearingUpdater が制御
-          {...({ rotate: true, bearing: 0, rotateControl: false } as Record<string, unknown>)}
         >
-          <MapBearingUpdater
-            enabled={mapRotationEnabled}
-            heading={heading}
-          />
           {/* 断面ピック中の仮マーカー（座標管理から選択した点を強調） */}
           {sectionPickingMode && sectionPickIds.map((id, i) => {
             const c = coordinates.find((cc) => cc.id === id)
@@ -4900,24 +4846,6 @@ export function MobileStakingPage() {
               </button>
             </div>
             <div className="p-3 overflow-y-auto flex-1">
-
-            {/* 地図回転（進行方向を画面上に） */}
-            <label className="flex items-center gap-2 mb-1">
-              <input
-                type="checkbox"
-                checked={mapRotationEnabled}
-                onChange={() => void toggleMapRotation()}
-              />
-              <span className="text-xs">地図を進行方向に回す</span>
-              <Navigation2
-                className={`h-3.5 w-3.5 ml-auto ${
-                  mapRotationEnabled ? 'text-emerald-600' : 'text-slate-400'
-                }`}
-              />
-            </label>
-            <div className="text-[10px] text-slate-500 mb-2">
-              コンパス（方位センサー）を利用します。iOS では初回に許可を求められます。
-            </div>
 
             {isGps && (
               <div className="mb-2 px-2 py-1.5 text-[11px] bg-amber-50 border border-amber-200 text-amber-800 rounded">
