@@ -3,7 +3,9 @@ import { Upload, Download, Trash2, FileText, Eye, EyeOff, Clipboard, Route, Arro
 import { Polyline as LeafletPolyline, CircleMarker, Tooltip } from 'react-leaflet'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
-import { useExportRouteStore } from '@/stores/exportRouteStore'
+import { useExportRouteStore, type Route as ExportRoute } from '@/stores/exportRouteStore'
+// stable 空配列。selector 内で毎回 [] を返すと無限再レンダー (#185)
+const EMPTY_EXPORT_ROUTES: ExportRoute[] = []
 import { PointTypeFilterButton } from './PointTypeFilterButton'
 import { StakeStatusFilterButton } from './StakeStatusFilterButton'
 import {
@@ -3488,7 +3490,9 @@ function SavedRoutesList({
 }) {
   const fetchRoutes = useExportRouteStore((s) => s.fetchRoutes)
   const deleteRoute = useExportRouteStore((s) => s.deleteRoute)
-  const routes = useExportRouteStore((s) => s.routesByFarmId.get(farmId) ?? [])
+  const routes = useExportRouteStore(
+    (s) => s.routesByFarmId.get(farmId) ?? EMPTY_EXPORT_ROUTES,
+  )
   useEffect(() => {
     void fetchRoutes(farmId)
   }, [farmId, fetchRoutes])

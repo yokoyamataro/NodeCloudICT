@@ -19,6 +19,11 @@ export interface Route {
   points: RoutePoint[]
 }
 
+// selector が「無い」場合に返す stable な空配列。
+// selector 内で `?? []` を使うと毎回新しい配列を作って
+// zustand の Object.is 比較で常に不一致 → React 無限再レンダー (#185) になる。
+const EMPTY_ROUTES: Route[] = []
+
 // 現在アクティブなルートを farm ごとに localStorage で覚える key
 const ACTIVE_ROUTE_STORAGE_KEY = 'nodecloud:mobility:activeRouteByFarm'
 
@@ -97,10 +102,10 @@ export const useExportRouteStore = create<ExportRouteState>((set, get) => ({
   saving: false,
   error: null,
 
-  getRoutes: (farmId) => get().routesByFarmId.get(farmId) ?? [],
+  getRoutes: (farmId) => get().routesByFarmId.get(farmId) ?? EMPTY_ROUTES,
 
   getActiveRoute: (farmId) => {
-    const routes = get().routesByFarmId.get(farmId) ?? []
+    const routes = get().routesByFarmId.get(farmId) ?? EMPTY_ROUTES
     if (routes.length === 0) return null
     const activeId = get().activeRouteIdByFarmId[farmId]
     if (activeId) {

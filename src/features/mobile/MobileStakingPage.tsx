@@ -47,7 +47,13 @@ import { useMapViewStore } from '@/stores/mapViewStore'
 import { useUnderdrainStore, type PipeRow, PIPE_TYPE_NAMES } from '@/stores/underdrainStore'
 import { useStakingStore } from '@/stores/stakingStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
-import { useExportRouteStore, type RoutePoint } from '@/stores/exportRouteStore'
+import {
+  useExportRouteStore,
+  type Route,
+  type RoutePoint,
+} from '@/stores/exportRouteStore'
+// selector が「無い」場合に返す stable な空配列 (毎回新しい [] だと無限再レンダー)
+const EMPTY_ROUTES_FOR_STAKING: Route[] = []
 import { useAuth } from '@/contexts/AuthContext'
 import { loadSimaFile, downloadSimaFile } from '@/lib/sima-parser'
 import { CoordinateConverter } from '@/lib/coordinates'
@@ -2021,8 +2027,12 @@ export function MobileStakingPage() {
   // 出力点選択（順路）に従ってターゲットを並べ替える。
   // 現在アクティブなルートの points を使う。routesByFarmId には複数のルートが
   // 入っている可能性があるので、activeRouteIdByFarmId で選ばれているものを取得。
+  // 「無い farmId」でも stable な同じ空配列を返す。
+  // 毎回新しい [] を返すと zustand が state changed と誤検知して無限再レンダー (React #185)
   const allRoutesForFarm = useExportRouteStore((s) =>
-    farmId ? s.routesByFarmId.get(farmId) ?? [] : [],
+    farmId
+      ? (s.routesByFarmId.get(farmId) ?? EMPTY_ROUTES_FOR_STAKING)
+      : EMPTY_ROUTES_FOR_STAKING,
   )
   const activeRouteId = useExportRouteStore((s) =>
     farmId ? s.activeRouteIdByFarmId[farmId] ?? null : null,
