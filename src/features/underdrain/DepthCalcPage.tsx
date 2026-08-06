@@ -1215,7 +1215,7 @@ export function DepthCalcPage() {
                     onClick={() => reloadGroundHeights()}
                     disabled={saving}
                     className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm bg-sky-600 text-white rounded-lg hover:bg-sky-700 transition-colors disabled:opacity-50 whitespace-nowrap"
-                    title="測量データから地盤高を読み込み"
+                    title="測量データから地盤高を読み込み (補正 ON なら基準点差分の平均を差し引いた補正後の値を使用)"
                   >
                     <Mountain className="h-4 w-4" />
                     地盤高

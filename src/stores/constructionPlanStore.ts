@@ -1162,6 +1162,15 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
     set({ loading: true, error: null })
 
     try {
+      // 補正設定を取得 (基準点の標高差から算出した dz_offset を z に反映するため)
+      const { data: calibRaw } = await supabase
+        .from('design_survey_calibration')
+        .select('is_enabled, dz_offset')
+        .eq('farm_id', farmId)
+        .maybeSingle()
+      const calib = calibRaw as { is_enabled: boolean; dz_offset: number } | null
+      const dzOffset = calib?.is_enabled ? Number(calib.dz_offset) || 0 : 0
+
       // 測量データを取得
       const { data: surveyDataRaw } = await supabase
         .from('design_survey_data')
@@ -1173,7 +1182,8 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
           id: row.id,
           x: row.x,
           y: row.y,
-          z: row.z,
+          // 補正 ON なら基準点差分の平均 (dz_offset) を差し引いた「補正後標高」を採用
+          z: row.z !== null ? row.z - dzOffset : null,
           category: row.category,
           pointNumber: row.point_number,
         }),
