@@ -2065,13 +2065,38 @@ export function MobileStakingPage() {
     const TOL = 0.1 // 10cm
     const used = new Set<string>()
     const ordered: StakingTarget[] = []
-    for (const rp of route as RoutePoint[]) {
-      const hit = targets.find(
-        (t) =>
-          !used.has(t.id) &&
-          Math.abs(t.x - rp.x) <= TOL &&
-          Math.abs(t.y - rp.y) <= TOL,
+    // マッチ候補選定: 実測点 (subType='measured', 点名先頭 'G_') は
+    // ルートの原設計点と同じ位置に重なりがちなので、原点を優先して選ぶ。
+    // rp.source (pipe/coordinate) が指定されていればまずそれで絞り、
+    // 見つからなければ全ターゲットから最も近い候補を選ぶ。
+    const findHit = (rp: RoutePoint): StakingTarget | undefined => {
+      const preferredKind: 'coordinate' | 'pipe_vertex' | null =
+        rp.source === 'pipe' ? 'pipe_vertex' : rp.source === 'coordinate' ? 'coordinate' : null
+      const inTol = (t: StakingTarget) =>
+        !used.has(t.id) &&
+        Math.abs(t.x - rp.x) <= TOL &&
+        Math.abs(t.y - rp.y) <= TOL
+      // 1) source が pipe_vertex なら pipe_vertex のみ、coordinate なら
+      //    coordinate で subType !== 'measured' を優先。
+      if (preferredKind === 'coordinate') {
+        const hit = targets.find(
+          (t) => inTol(t) && t.kind === 'coordinate' && t.subType !== 'measured',
+        )
+        if (hit) return hit
+      } else if (preferredKind === 'pipe_vertex') {
+        const hit = targets.find((t) => inTol(t) && t.kind === 'pipe_vertex')
+        if (hit) return hit
+      }
+      // 2) source 指定なしでも measured 点は極力避ける
+      const nonMeasured = targets.find(
+        (t) => inTol(t) && !(t.kind === 'coordinate' && t.subType === 'measured'),
       )
+      if (nonMeasured) return nonMeasured
+      // 3) 最後の手段: 何でも
+      return targets.find(inTol)
+    }
+    for (const rp of route as RoutePoint[]) {
+      const hit = findHit(rp)
       if (hit) {
         ordered.push({ ...hit, name: rp.name })
         used.add(hit.id)
@@ -5709,6 +5734,9 @@ export function MobileStakingPage() {
                             {routeProgress.measured}
                             <span className="text-slate-400"> / </span>
                             {routeProgress.total} 点
+                            <span className="ml-1 text-[9px] text-slate-400">
+                              [rt:{routeTargetIds.size} st:{stakedTargetIds.size} rec:{records.length}]
+                            </span>
                           </div>
                         )}
                       </div>
