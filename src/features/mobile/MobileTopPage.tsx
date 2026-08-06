@@ -18,6 +18,9 @@ import {
 } from '@/features/projects/NewFarmFromParcelPanel'
 import { importParcelBatch } from '@/features/parcel-maps/importParcelBatch'
 import { useCoordinateStore } from '@/stores/coordinateStore'
+import { FarmChatIconButton } from '@/features/chat/FarmChatIconButton'
+import { FarmChatSheet } from '@/features/chat/FarmChatSheet'
+import { useFarmChatStore } from '@/stores/farmChatStore'
 
 const WORK_TYPE_COLORS: Record<string, string> = {
   boundary_survey: '#0ea5e9',
@@ -151,6 +154,18 @@ export function MobileTopPage() {
   }
   // 一覧右端の 編集ボタンで開く 工区編集モーダル (名前 / 説明 / 完了)
   const [editFarm, setEditFarm] = useState<Farm | null>(null)
+
+  // 工区チャット
+  const subscribeFarmChat = useFarmChatStore((s) => s.subscribe)
+  const unsubscribeFarmChat = useFarmChatStore((s) => s.unsubscribe)
+  useEffect(() => {
+    if (farms.length === 0) return
+    subscribeFarmChat(farms.map((f) => f.id))
+    return () => {
+      unsubscribeFarmChat()
+    }
+  }, [farms, subscribeFarmChat, unsubscribeFarmChat])
+  const [chatFarm, setChatFarm] = useState<Farm | null>(null)
 
   const closeNewFarmDialog = () => {
     setShowNewFarmDialog(false)
@@ -416,7 +431,14 @@ export function MobileTopPage() {
                       </span>
                     )}
                   </button>
-                  {/* 右端: 編集ボタン (名前 / 説明 / 完了 の編集モーダルを開く) */}
+                  {/* 右端: チャットアイコン + 編集ボタン */}
+                  <div className="flex items-center pr-1">
+                    <FarmChatIconButton
+                      farmId={farm.id}
+                      onClick={() => setChatFarm(farm)}
+                      size="md"
+                    />
+                  </div>
                   <button
                     onClick={(e) => {
                       e.stopPropagation()
@@ -562,6 +584,15 @@ export function MobileTopPage() {
           </div>
         )
       })()}
+
+      {/* 工区チャットシート */}
+      {chatFarm && (
+        <FarmChatSheet
+          farmId={chatFarm.id}
+          farmName={chatFarm.name}
+          onClose={() => setChatFarm(null)}
+        />
+      )}
 
       {/* 工区編集モーダル (右端の 編集ボタンで開く: 名前 / 説明 / 着手日 / 完成日 / 完了 / 削除) */}
       {editFarm && (

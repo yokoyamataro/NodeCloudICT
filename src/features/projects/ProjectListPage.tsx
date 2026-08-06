@@ -32,6 +32,9 @@ import {
 } from '@/lib/recentProjects'
 import { FarmEditModal, isoToDateInput, dateInputToIso } from '@/features/farms/FarmEditModal'
 import { ProjectEditModal } from '@/features/projects/ProjectEditModal'
+import { FarmChatIconButton } from '@/features/chat/FarmChatIconButton'
+import { FarmChatSheet } from '@/features/chat/FarmChatSheet'
+import { useFarmChatStore } from '@/stores/farmChatStore'
 import {
   useWorkStatusStore,
   type WorkStatus,
@@ -258,6 +261,20 @@ export function ProjectListPage() {
       fetchStatuses(farms.map((f) => f.id))
     }
   }, [farms, fetchStatuses])
+
+  // 工区チャットの未読カウンター + Realtime 購読 (工区一覧に載る全 farm)
+  const subscribeFarmChat = useFarmChatStore((s) => s.subscribe)
+  const unsubscribeFarmChat = useFarmChatStore((s) => s.unsubscribe)
+  useEffect(() => {
+    if (farms.length === 0) return
+    subscribeFarmChat(farms.map((f) => f.id))
+    return () => {
+      unsubscribeFarmChat()
+    }
+  }, [farms, subscribeFarmChat, unsubscribeFarmChat])
+
+  // チャットシートを開く工区
+  const [chatFarm, setChatFarm] = useState<Farm | null>(null)
 
   // (アクション選択ダイアログは撤去。工区クリックで直接工区編集へ遷移する)
 
@@ -657,6 +674,7 @@ export function ProjectListPage() {
             onSetStatus={setWorkStatus}
             onClose={() => setExpandedList(false)}
             onSelectFarm={(farm) => handleOpenFarm(farm)}
+            onOpenChat={(farm) => setChatFarm(farm)}
             onNewProject={() => setShowNewProjectDialog(true)}
           />
         </div>
@@ -831,7 +849,11 @@ export function ProjectListPage() {
                                   >
                                     {farm.name}
                                   </span>
-                                  {/* 右端: 編集 / 削除ボタン (ホバー時のみ表示) */}
+                                  {/* 右端: チャットアイコン (常時) + 編集 (ホバー時) */}
+                                  <FarmChatIconButton
+                                    farmId={farm.id}
+                                    onClick={() => setChatFarm(farm)}
+                                  />
                                   <div className="hidden group-hover:flex items-center gap-1">
                                     <button
                                       onClick={(e) => {
@@ -1113,6 +1135,15 @@ export function ProjectListPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* 工区チャットシート */}
+      {chatFarm && (
+        <FarmChatSheet
+          farmId={chatFarm.id}
+          farmName={chatFarm.name}
+          onClose={() => setChatFarm(null)}
+        />
       )}
 
       {/* 工区情報編集モーダル (サイドバー右端の 編集ボタンで開く) */}
@@ -1809,6 +1840,7 @@ function ExpandedProjectTable({
   onSetStatus,
   onClose,
   onSelectFarm,
+  onOpenChat,
   onNewProject,
 }: {
   projects: Project[]
@@ -1818,6 +1850,7 @@ function ExpandedProjectTable({
   onSetStatus: (farmId: string, workType: string, status: WorkStatus) => void
   onClose: () => void
   onSelectFarm: (farm: Farm) => void
+  onOpenChat: (farm: Farm) => void
   onNewProject: () => void
 }) {
   const [menu, setMenu] = useState<{
@@ -1904,6 +1937,9 @@ function ExpandedProjectTable({
                     </div>
                   </th>
                 ))}
+                <th className="px-2 py-2 border-b text-center font-semibold text-slate-700 whitespace-nowrap w-10">
+                  💬
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -1918,6 +1954,7 @@ function ExpandedProjectTable({
                     statusByKey={statusByKey}
                     onOpenStatusMenu={openMenu}
                     onSelectFarm={onSelectFarm}
+                    onOpenChat={onOpenChat}
                   />
                 )
               })}
@@ -1949,6 +1986,7 @@ function ProjectTableGroup({
   statusByKey,
   onOpenStatusMenu,
   onSelectFarm,
+  onOpenChat,
 }: {
   project: Project
   farms: Farm[]
@@ -1961,6 +1999,7 @@ function ProjectTableGroup({
     current: WorkStatus,
   ) => void
   onSelectFarm: (farm: Farm) => void
+  onOpenChat: (farm: Farm) => void
 }) {
   const [expanded, setExpanded] = useState(true)
   const progressByWorkType = useMemo(() => {
@@ -2014,6 +2053,7 @@ function ProjectTableGroup({
             </td>
           )
         })}
+        <td className="px-2 py-1.5 border-b" />
       </tr>
       {/* 工区行 */}
       {expanded &&
@@ -2045,6 +2085,12 @@ function ProjectTableGroup({
                   />
                 )
               })}
+              <td className="px-2 py-1.5 border-b text-center">
+                <FarmChatIconButton
+                  farmId={farm.id}
+                  onClick={() => onOpenChat(farm)}
+                />
+              </td>
             </tr>
           )
         })}
