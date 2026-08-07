@@ -33,6 +33,7 @@ import {
   AlertTriangle,
   Crosshair,
   Settings2,
+  MessageSquare,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { playStartChime, playStopChime, unlockAudio } from '@/lib/beep'
@@ -53,6 +54,8 @@ import {
 // selector が「無い」場合に返す stable な空配列 (毎回新しい [] だと無限再レンダー)
 const EMPTY_ROUTES_FOR_STAKING: Route[] = []
 import { useAuth } from '@/contexts/AuthContext'
+import { FarmChatSheet } from '@/features/chat/FarmChatSheet'
+import { useFarmChatStore } from '@/stores/farmChatStore'
 import { loadSimaFile, downloadSimaFile } from '@/lib/sima-parser'
 import { CoordinateConverter } from '@/lib/coordinates'
 import {
@@ -722,6 +725,7 @@ export function MobileStakingPage() {
       .finally(() => setGeoidLoading(false))
   }, [useGeoidCorrection, geoidGrid])
   const [showSettings, setShowSettings] = useState(false)
+  const [showChatSheet, setShowChatSheet] = useState(false)
   const [showTargetList, setShowTargetList] = useState(false)
   const [showRecordList, setShowRecordList] = useState(
     () => params.get('openCoords') === '1',
@@ -1259,6 +1263,20 @@ export function MobileStakingPage() {
       cancelled = true
     }
   }, [farmId, setCurrentFarm, setZone, fetchCoordinates, fetchPipes, fetchRecords, fetchWorkAreas])
+
+  // 工区チャット: この工区の未読数取得 + Realtime 購読
+  const subscribeFarmChat = useFarmChatStore((s) => s.subscribe)
+  const unsubscribeFarmChat = useFarmChatStore((s) => s.unsubscribe)
+  const farmUnreadCount = useFarmChatStore(
+    (s) => (farmId ? s.unreadByFarm.get(farmId) ?? 0 : 0),
+  )
+  useEffect(() => {
+    if (!farmId) return
+    subscribeFarmChat([farmId])
+    return () => {
+      unsubscribeFarmChat()
+    }
+  }, [farmId, subscribeFarmChat, unsubscribeFarmChat])
 
   // 地番リストが変わるたびに parcels（属性は表示のみ）を取得
   useEffect(() => {
@@ -3041,6 +3059,20 @@ export function MobileStakingPage() {
         >
           設定
         </button>
+        {farmId && (
+          <button
+            onClick={() => setShowChatSheet(true)}
+            className="relative shrink-0 px-2 py-1.5 rounded font-medium bg-slate-700 hover:bg-slate-600 inline-flex items-center gap-1"
+            title="工区チャットを開く"
+          >
+            <MessageSquare className="h-4 w-4" />
+            {farmUnreadCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold leading-none">
+                {farmUnreadCount > 99 ? '99+' : farmUnreadCount}
+              </span>
+            )}
+          </button>
+        )}
       </div>
       {/* 共有結果トースト */}
       {shareToast && (
@@ -3058,6 +3090,15 @@ export function MobileStakingPage() {
         onChange={handleSimImported}
         className="hidden"
       />
+      {/* 工区チャットシート */}
+      {showChatSheet && farmId && (
+        <FarmChatSheet
+          farmId={farmId}
+          farmName={farm?.name ?? ''}
+          onClose={() => setShowChatSheet(false)}
+        />
+      )}
+
       {/* メモ作成モーダル */}
       {memoModalState && farmId && (
         <MobileMemoCreateModal
