@@ -3069,42 +3069,17 @@ export function MobileStakingPage() {
             <span className="absolute -top-1 -right-1 bg-amber-400 w-2 h-2 rounded-full" />
           )}
         </button>
-        <div className="shrink-0 relative">
-          <button
-            onClick={() => setShowCalcMenu((v) => !v)}
-            className={`px-2 py-1.5 rounded font-medium ${
-              areaModeActive || showCalcMenu
-                ? 'bg-purple-600'
-                : 'bg-slate-700 hover:bg-slate-600'
-            }`}
-            title="座標計算 / 求積"
-          >
-            計算
-          </button>
-          {showCalcMenu && (
-            <div className="absolute right-0 top-full mt-1 z-[2000] bg-white border rounded-lg shadow-lg text-sm min-w-[10rem]">
-              <button
-                onClick={() => {
-                  setShowCalcMenu(false)
-                  setShowCalcModal(true)
-                }}
-                className="w-full text-left px-3 py-2 text-slate-800 hover:bg-slate-100 border-b"
-              >
-                座標計算 (交点/線上/距離)
-              </button>
-              <button
-                onClick={() => {
-                  setShowCalcMenu(false)
-                  setAreaModeActive(true)
-                  setAreaVertices([])
-                }}
-                className="w-full text-left px-3 py-2 text-slate-800 hover:bg-slate-100"
-              >
-                求積 (座標法)
-              </button>
-            </div>
-          )}
-        </div>
+        <button
+          onClick={() => setShowCalcMenu(true)}
+          className={`shrink-0 px-2 py-1.5 rounded font-medium ${
+            areaModeActive || showCalcMenu
+              ? 'bg-purple-600'
+              : 'bg-slate-700 hover:bg-slate-600'
+          }`}
+          title="座標計算 / 求積"
+        >
+          計算
+        </button>
         <button
           onClick={() => {
             setShowParcelList(false)
@@ -3753,6 +3728,48 @@ export function MobileStakingPage() {
           onCancel={() => setFreePointDialog(null)}
         />
       )}
+      {/* 計算メニュー (ボトムシート) */}
+      {showCalcMenu && (
+        <div
+          className="fixed inset-0 z-[3500] bg-black/40 flex items-end sm:items-center justify-center"
+          onClick={() => setShowCalcMenu(false)}
+        >
+          <div
+            className="bg-white w-full sm:max-w-xs rounded-t-2xl sm:rounded-2xl shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 border-b text-sm font-semibold">
+              計算
+            </div>
+            <button
+              onClick={() => {
+                setShowCalcMenu(false)
+                setShowCalcModal(true)
+              }}
+              className="w-full text-left px-4 py-3 text-slate-800 hover:bg-slate-100 border-b"
+            >
+              座標計算 (交点/線上/距離)
+            </button>
+            <button
+              onClick={() => {
+                setShowCalcMenu(false)
+                setAreaModeActive(true)
+                setAreaVertices([])
+              }}
+              className="w-full text-left px-4 py-3 text-slate-800 hover:bg-slate-100"
+            >
+              求積 (座標法)
+            </button>
+            <button
+              onClick={() => setShowCalcMenu(false)}
+              className="w-full px-4 py-3 text-center text-slate-500 border-t"
+            >
+              キャンセル
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 測設完了モーダル（OK の上に写真撮影ボタン） */}
       {postStakeDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3000]">
