@@ -91,18 +91,25 @@ export async function exportMeasurementResult({
   ws.getCell('F3').value = header.area
   ws.getCell('J3').value = header.beneficiary
 
-  // 配管を数字でソート（頭文字・末尾文字を無視）
-  const sortedPipes = [...pipes].sort((a, b) => comparePipeNumbers(a.number, b.number))
+  // 配管を数字でソート（頭文字・末尾文字を無視）。
+  // 物理的な「落口」pipeType の管路は、後段で施工計画の outlet planRow から
+  // 一括で書き出すためここでは除外する (複数落口がある場合に取りこぼしを防ぐ)。
+  const sortedPipes = [...pipes]
+    .filter((p) => p.pipeType !== 'outlet')
+    .sort((a, b) => comparePipeNumbers(a.number, b.number))
 
   // 各管路を 4 行ブロックに書き込み
   // i1 = 3 から開始（旧マクロの配線表）、j = (i1-2)*4 + 7
   // i1=3 → j=11。以降 i1++ ごとに j が 4 ずつ増える。
+  // 物理落口分を後段で追加するため excelIdx でカウンタを回す。
+  let excelIdx = 0
   for (let idx = 0; idx < sortedPipes.length; idx++) {
     const pipe = sortedPipes[idx]
-    const i1 = idx + 3
+    const i1 = excelIdx + 3
     const j = (i1 - 2) * 4 + 7
+    excelIdx++
 
-    // 落口判定: pipeType が 'outlet'
+    // 落口判定: pipeType が 'outlet' (このループでは除外済みだが型互換のため残す)
     const isOutlet = pipe.pipeType === 'outlet'
     const isAbsorption = pipe.pipeType === 'branch'
 
@@ -210,6 +217,66 @@ export async function exportMeasurementResult({
       if (aData.cutDepth != null) {
         ws.getCell(j + 3, 18).value = round(aData.cutDepth, 3)                  // R{j+3}: 切深
       }
+    }
+  }
+
+  // 落口: 施工計画の outlet planRow を全件書き出す。
+  // 物理管路 (pipeType='outlet') を数えるのではなく、配管系統で「落口として設定」
+  // した planRow を数えることで、複数落口 (2 つ以上の系統がそれぞれ落口を持つ)
+  // 場合でも取りこぼしなく出力できる。
+  const outletPlanRows: {
+    row: PlanRow
+    pipe: PipeRow | null
+    outletPipe: PipeRow | null
+  }[] = []
+  for (const group of planGroups) {
+    for (const row of group.rows) {
+      if (row.systemEndType !== 'outlet') continue
+      const collectorPipe = pipes.find((p) => p.id === row.collectorPipeId) ?? null
+      // 落口点の位置に最も近い pipeType='outlet' の管路を探す (あれば管番号を採用)
+      let outletPipe: PipeRow | null = null
+      const cp = row.collectorPoint
+      if (cp) {
+        let bestDist = 1.0 // 1m 以内
+        for (const p of pipes) {
+          if (p.pipeType !== 'outlet') continue
+          for (const v of p.vertices) {
+            const d = Math.hypot(v.x - cp.x, v.y - cp.y)
+            if (d < bestDist) {
+              bestDist = d
+              outletPipe = p
+            }
+          }
+        }
+      }
+      outletPlanRows.push({ row, pipe: collectorPipe, outletPipe })
+    }
+  }
+
+  for (const { row, pipe: collectorPipe, outletPipe } of outletPlanRows) {
+    const i1 = excelIdx + 3
+    const j = (i1 - 2) * 4 + 7
+    excelIdx++
+    // 表示する管情報は「落口として指定された物理管路」を優先、無ければ集水管
+    const showPipe = outletPipe ?? collectorPipe
+    const cp = row.collectorPoint
+    if (showPipe) {
+      ws.getCell(j, 1).value = showPipe.number                                    // A{j}: 管番号
+      ws.getCell(j + 2, 1).value = showPipe.diameter ?? null                      // A{j+2}: 管径
+      ws.getCell(j, 2).value =
+        showPipe.designLength != null ? Math.round(showPipe.designLength) : null  // B{j}: 設計延長
+    }
+    ws.getCell(j + 3, 1).value = '落口'                                           // A{j+3}: 管種
+    // P{j+3}: 落口の A 点計画高 (フォールバックは地盤高 → 頂点 z)
+    const aValue =
+      cp?.plannedHeight
+      ?? cp?.groundHeight
+      ?? (outletPipe && outletPipe.vertices.length > 0
+        ? outletPipe.vertices[outletPipe.vertices.length - 1]?.z
+        : null)
+      ?? null
+    if (aValue != null) {
+      ws.getCell(j + 3, 16).value = round(aValue, 2)
     }
   }
 
