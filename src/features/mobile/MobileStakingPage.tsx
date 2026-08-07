@@ -3676,9 +3676,18 @@ export function MobileStakingPage() {
         <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3000]">
           <div className="bg-white w-full sm:max-w-sm rounded-t-xl sm:rounded-xl shadow-xl p-4">
             <h3 className="text-base font-bold mb-2">測設完了</h3>
-            <p className="text-sm text-slate-700 whitespace-pre-line mb-3">
+            <p className="text-sm text-slate-700 whitespace-pre-line mb-2">
               {postStakeDialog.message}
             </p>
+            {/* ルート進捗デバッグ (ルート選択中のみ) */}
+            {targetFilter === 'route' && (
+              <div className="text-[10px] text-slate-400 mb-3 border-t border-slate-100 pt-1">
+                ルート {routeProgress.measured} / {routeProgress.total} 点
+                <span className="ml-1">
+                  [rt:{routeTargetIds.size} st:{stakedTargetIds.size} rec:{records.length}]
+                </span>
+              </div>
+            )}
             {/* 設置状態セレクタ（座標点ターゲットのみ）。測定後にここで更新する */}
             {postStakeDialog.target.kind === 'coordinate' && (() => {
               const coord = coordinates.find((c) => c.id === postStakeDialog.target.refId)
@@ -5737,9 +5746,6 @@ export function MobileStakingPage() {
                             {routeProgress.measured}
                             <span className="text-slate-400"> / </span>
                             {routeProgress.total} 点
-                            <span className="ml-1 text-[9px] text-slate-400">
-                              [rt:{routeTargetIds.size} st:{stakedTargetIds.size} rec:{records.length}]
-                            </span>
                           </div>
                         )}
                       </div>
