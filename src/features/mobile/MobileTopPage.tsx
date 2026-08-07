@@ -403,26 +403,9 @@ export function MobileTopPage() {
                       : 'hover:bg-slate-50 active:bg-blue-50'
                   }`}
                 >
-                  {/* 完了チェック (左端)。工区ナビゲーションを阻止 */}
-                  <label
-                    className="flex items-center pl-3 pr-1 cursor-pointer select-none"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={done}
-                      onChange={(e) => {
-                        e.stopPropagation()
-                        void updateFarm(farm.id, {
-                          completed_at: e.target.checked ? new Date().toISOString() : null,
-                        })
-                      }}
-                      className="h-4 w-4"
-                    />
-                  </label>
                   <button
                     onClick={() => handleFarmClick(farm)}
-                    className="flex-1 min-w-0 flex items-center gap-2 pl-2 pr-2 py-3 text-left"
+                    className="flex-1 min-w-0 flex items-center gap-2 pl-3 pr-2 py-3 text-left"
                   >
                     <span className="flex-1 truncate font-medium">{farm.name}</span>
                     {farm.description && (

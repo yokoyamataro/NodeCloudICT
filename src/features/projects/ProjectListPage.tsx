@@ -825,20 +825,6 @@ export function ProjectListPage() {
                                         : 'hover:bg-slate-100'
                                   }`}
                                 >
-                                  {/* 左端: 完了チェックボックス (工区ナビゲーションを阻止) */}
-                                  <input
-                                    type="checkbox"
-                                    checked={done}
-                                    onClick={(e) => e.stopPropagation()}
-                                    onChange={(e) => {
-                                      e.stopPropagation()
-                                      void updateFarm(farm.id, {
-                                        completed_at: e.target.checked ? new Date().toISOString() : null,
-                                      })
-                                    }}
-                                    className="h-4 w-4 flex-shrink-0"
-                                    title={done ? '完了' : '未完了'}
-                                  />
                                   <span
                                     onClick={() => {
                                       handleSelectFarm(farm)
