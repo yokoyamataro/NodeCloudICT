@@ -8,6 +8,7 @@ import {
   ArrowUp,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Loader2,
   Circle as CircleIcon,
   Radio,
@@ -156,6 +157,20 @@ function distanceMeters(
     Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) * Math.sin(dLng / 2)
   const c = 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h))
   return R * c
+}
+
+// 座標法 (shoelace) による多角形面積 m^2。頂点は平面直角座標 (x, y)。
+// 3 点未満なら 0。閉じていない多角形でも自動的に閉じて計算。
+function polygonAreaM2(vertices: { x: number; y: number }[]): number {
+  const n = vertices.length
+  if (n < 3) return 0
+  let sum = 0
+  for (let i = 0; i < n; i++) {
+    const a = vertices[i]
+    const b = vertices[(i + 1) % n]
+    sum += a.x * b.y - b.x * a.y
+  }
+  return Math.abs(sum) / 2
 }
 
 // 真北基準の方位角（deg, 0–360）
@@ -804,6 +819,13 @@ export function MobileStakingPage() {
   const [pointInfoTarget, setPointInfoTarget] = useState<StakingTarget | null>(null)
   // 座標計算（交点・線上）モーダル
   const [showCalcModal, setShowCalcModal] = useState(false)
+  // 計算ボタンのメニュー (座標計算 / 求積)
+  const [showCalcMenu, setShowCalcMenu] = useState(false)
+  // 求積 (面積測定) モード。ON でマーカータップ / 長押しが構成点追加になる
+  const [areaModeActive, setAreaModeActive] = useState(false)
+  const [areaVertices, setAreaVertices] = useState<
+    Array<{ x: number; y: number; label?: string }>
+  >([])
   // 計算モーダルで地図から点選択中の割り当て関数
   const [calcAssign, setCalcAssign] = useState<((id: string) => void) | null>(null)
   // 表示モード（MAP / 3D / 2D の組合せ、最大 2 つまで同時表示）
@@ -886,6 +908,37 @@ export function MobileStakingPage() {
   const [hiddenSubTypes, setHiddenSubTypes] = useState<Set<string>>(new Set())
   // 表示設定パネル（コンパス・点名・点種フィルタ・地番・背景地図）の表示
   const [showDisplaySettings, setShowDisplaySettings] = useState(false)
+  // 表示設定パネル内の各カテゴリの折りたたみ状態 (localStorage 永続化)
+  const [displayExpanded, setDisplayExpanded] = useState<{
+    subType: boolean
+    stakeStatus: boolean
+  }>(() => {
+    try {
+      const raw = localStorage.getItem('mobile:staking:displayExpanded')
+      if (raw) {
+        const parsed = JSON.parse(raw) as { subType?: boolean; stakeStatus?: boolean }
+        return {
+          subType: parsed.subType ?? true,
+          stakeStatus: parsed.stakeStatus ?? false,
+        }
+      }
+    } catch { /* ignore */ }
+    return { subType: true, stakeStatus: false }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('mobile:staking:displayExpanded', JSON.stringify(displayExpanded))
+    } catch { /* ignore */ }
+  }, [displayExpanded])
+  // 暗渠の配線ライン表示 (既定 ON)
+  const [showPipes, setShowPipes] = useState<boolean>(() => {
+    try { return localStorage.getItem('mobile:staking:showPipes') !== '0' } catch { return true }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('mobile:staking:showPipes', showPipes ? '1' : '0')
+    } catch { /* ignore */ }
+  }, [showPipes])
   // 写真モーダル: 選択中ターゲット（座標）の写真を閲覧／撮影できる
   const [photoModalTarget, setPhotoModalTarget] = useState<StakingTarget | null>(null)
   // メモ作成モーダル。lat/lng の上書きを伴う場合もある（地図長押し）
@@ -3016,13 +3069,42 @@ export function MobileStakingPage() {
             <span className="absolute -top-1 -right-1 bg-amber-400 w-2 h-2 rounded-full" />
           )}
         </button>
-        <button
-          onClick={() => setShowCalcModal(true)}
-          className="shrink-0 px-2 py-1.5 rounded font-medium bg-slate-700 hover:bg-slate-600"
-          title="座標計算（交点・線上・2 点距離）"
-        >
-          計算
-        </button>
+        <div className="shrink-0 relative">
+          <button
+            onClick={() => setShowCalcMenu((v) => !v)}
+            className={`px-2 py-1.5 rounded font-medium ${
+              areaModeActive || showCalcMenu
+                ? 'bg-purple-600'
+                : 'bg-slate-700 hover:bg-slate-600'
+            }`}
+            title="座標計算 / 求積"
+          >
+            計算
+          </button>
+          {showCalcMenu && (
+            <div className="absolute right-0 top-full mt-1 z-[2000] bg-white border rounded-lg shadow-lg text-sm min-w-[10rem]">
+              <button
+                onClick={() => {
+                  setShowCalcMenu(false)
+                  setShowCalcModal(true)
+                }}
+                className="w-full text-left px-3 py-2 text-slate-800 hover:bg-slate-100 border-b"
+              >
+                座標計算 (交点/線上/距離)
+              </button>
+              <button
+                onClick={() => {
+                  setShowCalcMenu(false)
+                  setAreaModeActive(true)
+                  setAreaVertices([])
+                }}
+                className="w-full text-left px-3 py-2 text-slate-800 hover:bg-slate-100"
+              >
+                求積 (座標法)
+              </button>
+            </div>
+          )}
+        </div>
         <button
           onClick={() => {
             setShowParcelList(false)
@@ -3837,35 +3919,68 @@ export function MobileStakingPage() {
               ({filteredTargets.length})
             </span>
           </label>
-          {showTargets && subTypeStats.length > 0 && (
+          {showTargets && (subTypeStats.length > 0 || routeTargetIds.size > 0) && (
             <div className="pl-7 space-y-1 text-xs">
-              {subTypeStats.map((s) => {
-                const visible = !hiddenSubTypes.has(s.code)
-                return (
-                  <label
-                    key={s.code}
-                    className="flex items-center gap-2 cursor-pointer"
+              {/* 点種 (折りたたみ) */}
+              {subTypeStats.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setDisplayExpanded((s) => ({ ...s, subType: !s.subType }))
+                    }
+                    className="flex items-center gap-1 text-[11px] text-slate-600 hover:text-slate-900"
                   >
-                    <input
-                      type="checkbox"
-                      checked={visible}
-                      onChange={() =>
-                        setHiddenSubTypes((prev) => {
-                          const next = new Set(prev)
-                          if (next.has(s.code)) next.delete(s.code)
-                          else next.add(s.code)
-                          return next
-                        })
-                      }
-                      className="h-3.5 w-3.5"
-                    />
-                    <span>{s.label}</span>
-                    <span className="text-[10px] text-slate-500">
-                      ({s.count})
+                    {displayExpanded.subType ? (
+                      <ChevronDown className="h-3 w-3" />
+                    ) : (
+                      <ChevronRight className="h-3 w-3" />
+                    )}
+                    <span>
+                      点種 ({subTypeStats.length - hiddenSubTypes.size}/
+                      {subTypeStats.length})
                     </span>
-                  </label>
-                )
-              })}
+                  </button>
+                  {displayExpanded.subType &&
+                    subTypeStats.map((s) => {
+                      const visible = !hiddenSubTypes.has(s.code)
+                      return (
+                        <label
+                          key={s.code}
+                          className="flex items-center gap-2 cursor-pointer pl-4"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={visible}
+                            onChange={() =>
+                              setHiddenSubTypes((prev) => {
+                                const next = new Set(prev)
+                                if (next.has(s.code)) next.delete(s.code)
+                                else next.add(s.code)
+                                return next
+                              })
+                            }
+                            className="h-3.5 w-3.5"
+                          />
+                          <span>{s.label}</span>
+                          <span className="text-[10px] text-slate-500">
+                            ({s.count})
+                          </span>
+                        </label>
+                      )
+                    })}
+                  {displayExpanded.subType && hiddenSubTypes.size > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setHiddenSubTypes(new Set())}
+                      className="text-[11px] text-blue-600 hover:underline pl-4"
+                    >
+                      全ての点種を表示
+                    </button>
+                  )}
+                </>
+              )}
+
               {/* ルート絞り込み（順路が登録済みの工区でのみ） */}
               {routeTargetIds.size > 0 && (
                 <label className="flex items-center gap-2 cursor-pointer">
@@ -3883,27 +3998,35 @@ export function MobileStakingPage() {
                   </span>
                 </label>
               )}
-              {hiddenSubTypes.size > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setHiddenSubTypes(new Set())}
-                  className="text-[11px] text-blue-600 hover:underline"
-                >
-                  全ての点種を表示
-                </button>
-              )}
 
-              {/* 設置状態フィルタ。PC と mapViewStore で共有 */}
-              <div className="border-t pt-1 mt-1">
-                <div className="text-[10px] text-slate-500 mb-1">
-                  設置状態 ({visibleStakeStatuses.size}/{STAKE_STATUS_OPTIONS.length})
-                </div>
-                {STAKE_STATUS_OPTIONS.map((s) => {
+              {/* 設置状態フィルタ (折りたたみ)。PC と mapViewStore で共有 */}
+              <button
+                type="button"
+                onClick={() =>
+                  setDisplayExpanded((s) => ({
+                    ...s,
+                    stakeStatus: !s.stakeStatus,
+                  }))
+                }
+                className="flex items-center gap-1 text-[11px] text-slate-600 hover:text-slate-900 border-t pt-1 mt-1 w-full"
+              >
+                {displayExpanded.stakeStatus ? (
+                  <ChevronDown className="h-3 w-3" />
+                ) : (
+                  <ChevronRight className="h-3 w-3" />
+                )}
+                <span>
+                  設置状態 ({visibleStakeStatuses.size}/
+                  {STAKE_STATUS_OPTIONS.length})
+                </span>
+              </button>
+              {displayExpanded.stakeStatus &&
+                STAKE_STATUS_OPTIONS.map((s) => {
                   const on = visibleStakeStatuses.has(s)
                   return (
                     <label
                       key={s}
-                      className="flex items-center gap-2 cursor-pointer"
+                      className="flex items-center gap-2 cursor-pointer pl-4"
                     >
                       <input
                         type="checkbox"
@@ -3919,19 +4042,35 @@ export function MobileStakingPage() {
                     </label>
                   )
                 })}
-                {visibleStakeStatuses.size < STAKE_STATUS_OPTIONS.length && (
+              {displayExpanded.stakeStatus &&
+                visibleStakeStatuses.size < STAKE_STATUS_OPTIONS.length && (
                   <button
                     type="button"
                     onClick={() =>
                       setVisibleStakeStatuses(new Set(STAKE_STATUS_OPTIONS))
                     }
-                    className="text-[11px] text-blue-600 hover:underline"
+                    className="text-[11px] text-blue-600 hover:underline pl-4"
                   >
                     全ての設置状態を表示
                   </button>
                 )}
-              </div>
             </div>
+          )}
+
+          {/* 暗渠の配線ライン (吸水/集水) */}
+          {pipePolylines.length > 0 && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showPipes}
+                onChange={() => setShowPipes((v) => !v)}
+                className="h-4 w-4"
+              />
+              <span>暗渠配線</span>
+              <span className="text-[11px] text-slate-500">
+                ({pipePolylines.length})
+              </span>
+            </label>
           )}
 
           {/* 点名 */}
@@ -4430,13 +4569,28 @@ export function MobileStakingPage() {
               描画メモ使用中は選択モードの頂点削除 (contextmenu) と衝突するので無効化 */}
           {!showDrawing && (
             <MapLongPressHandler
-              onLongPress={(lat, lng) => setLongPressChoice({ lat, lng })}
+              onLongPress={(lat, lng) => {
+                if (areaModeActive) {
+                  // 求積モード: 長押し位置を自由点として構成点に追加
+                  try {
+                    const xy = converter.toXY(lat, lng)
+                    setAreaVertices((prev) => [
+                      ...prev,
+                      { x: xy.x, y: xy.y },
+                    ])
+                  } catch {
+                    /* ignore */
+                  }
+                  return
+                }
+                setLongPressChoice({ lat, lng })
+              }}
             />
           )}
 
           {/* 配線ライン（吸水=青・集水=緑、選択中はオレンジ）
               タップ判定を確実にするため、透明な太い「ヒットレイヤ」を上に重ねる */}
-          {pipePolylines.flatMap((p) => {
+          {showPipes && pipePolylines.flatMap((p) => {
             const isSelected = p.id === selectedPipeId
             const baseColor = p.pipeType === 'branch' ? '#2563eb' : '#10b981'
             return [
@@ -4466,6 +4620,62 @@ export function MobileStakingPage() {
               />,
             ]
           })}
+
+          {/* 求積: 構成点のマーカーとポリゴン */}
+          {areaModeActive && areaVertices.length > 0 && (
+            <>
+              {areaVertices.length >= 3 && (
+                <Polygon
+                  positions={areaVertices.map((v) => {
+                    const ll = converter.toLatLng(v.x, v.y)
+                    return [ll.lat, ll.lng] as [number, number]
+                  })}
+                  pathOptions={{
+                    color: '#a855f7',
+                    fillColor: '#c084fc',
+                    fillOpacity: 0.25,
+                    weight: 2,
+                    dashArray: '6 4',
+                  }}
+                />
+              )}
+              {areaVertices.length === 2 && (
+                <Polyline
+                  positions={areaVertices.map((v) => {
+                    const ll = converter.toLatLng(v.x, v.y)
+                    return [ll.lat, ll.lng] as [number, number]
+                  })}
+                  pathOptions={{
+                    color: '#a855f7',
+                    weight: 2,
+                    dashArray: '6 4',
+                  }}
+                />
+              )}
+              {areaVertices.map((v, i) => {
+                const ll = converter.toLatLng(v.x, v.y)
+                return (
+                  <CircleMarker
+                    key={`area-v-${i}`}
+                    center={[ll.lat, ll.lng]}
+                    radius={6}
+                    pathOptions={{
+                      color: '#7e22ce',
+                      fillColor: '#a855f7',
+                      fillOpacity: 1,
+                      weight: 2,
+                    }}
+                  >
+                    <Tooltip permanent direction="top" offset={[0, -6]} opacity={0.95}>
+                      <span className="text-[10px] font-bold text-purple-700">
+                        {i + 1}
+                      </span>
+                    </Tooltip>
+                  </CircleMarker>
+                )
+              })}
+            </>
+          )}
 
           {/* ルートのポリライン（ルートフィルタ選択時かつ表示ON時のみ） */}
           {targetFilter === 'route' && showRouteLine && filteredTargets.length >= 2 && (
@@ -4584,6 +4794,14 @@ export function MobileStakingPage() {
                 })}
                 eventHandlers={{
                   click: () => {
+                    // 求積モード: タップで面積の構成点として追加
+                    if (areaModeActive) {
+                      setAreaVertices((prev) => [
+                        ...prev,
+                        { x: t.x, y: t.y, label: t.name },
+                      ])
+                      return
+                    }
                     // ルート作成モード: タップで draft へ追加/解除
                     if (routeCreationMode) {
                       setDraftRouteIds((prev) =>
@@ -5075,6 +5293,99 @@ export function MobileStakingPage() {
               </button>
             </div>
           </div>
+          )
+        })()}
+
+        {/* 求積 (面積測定) パネル。作成中は常時表示、地図左上 */}
+        {areaModeActive && (() => {
+          const areaM2 = polygonAreaM2(areaVertices)
+          return (
+            <div className="absolute top-2 left-2 z-[1300] bg-white/95 border border-purple-500 rounded-lg shadow-lg p-2 text-xs w-60 max-w-[75%]">
+              <div className="flex items-center gap-1 mb-1">
+                <span className="font-bold text-purple-700">求積 (座標法)</span>
+                <span className="text-slate-500">({areaVertices.length}点)</span>
+                <div className="ml-auto flex gap-1">
+                  <button
+                    onClick={() =>
+                      setAreaVertices((prev) => prev.slice(0, -1))
+                    }
+                    disabled={areaVertices.length === 0}
+                    className="px-1.5 py-0.5 border rounded text-slate-600 disabled:opacity-30"
+                    title="最後の点を戻す"
+                  >
+                    ↶
+                  </button>
+                  <button
+                    onClick={() => setAreaVertices([])}
+                    disabled={areaVertices.length === 0}
+                    className="px-1.5 py-0.5 border rounded text-slate-600 disabled:opacity-30"
+                    title="全てクリア"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+              <div className="text-[10px] text-slate-500 mb-1">
+                測点はタップ / 空地は長押しで構成点を追加
+              </div>
+              {/* 面積結果 */}
+              <div className="bg-purple-50 border border-purple-200 rounded px-2 py-1 mb-1.5">
+                <div className="text-[10px] text-purple-700">面積</div>
+                <div className="font-bold text-purple-800 tabular-nums">
+                  {areaVertices.length < 3
+                    ? '— (3点以上必要)'
+                    : (
+                      <>
+                        {areaM2.toFixed(2)} m²
+                        <span className="text-[10px] text-slate-500 ml-1">
+                          ({(areaM2 / 10000).toFixed(4)} ha)
+                        </span>
+                      </>
+                    )}
+                </div>
+              </div>
+              {areaVertices.length > 0 && (
+                <ol className="max-h-32 overflow-auto space-y-0.5 mb-1.5 text-[11px]">
+                  {areaVertices.map((v, idx) => (
+                    <li
+                      key={idx}
+                      className="flex items-center gap-1 px-1 py-0.5 rounded bg-purple-50"
+                    >
+                      <span className="inline-flex w-5 h-5 items-center justify-center rounded-full bg-purple-600 text-white text-[10px] font-bold flex-shrink-0">
+                        {idx + 1}
+                      </span>
+                      <span className="flex-1 truncate">
+                        {v.label ?? (
+                          <span className="text-slate-500">
+                            X={v.x.toFixed(2)} Y={v.y.toFixed(2)}
+                          </span>
+                        )}
+                      </span>
+                      <button
+                        onClick={() =>
+                          setAreaVertices((prev) =>
+                            prev.filter((_, i) => i !== idx),
+                          )
+                        }
+                        className="text-slate-400 hover:text-red-600 px-1"
+                        title="この点を外す"
+                      >
+                        ✕
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+              )}
+              <button
+                onClick={() => {
+                  setAreaModeActive(false)
+                  setAreaVertices([])
+                }}
+                className="w-full px-2 py-1 border rounded text-slate-600 hover:bg-slate-50"
+              >
+                終了
+              </button>
+            </div>
           )
         })()}
 
