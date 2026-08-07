@@ -16,10 +16,14 @@ interface Props {
 
 export function FarmChatSheet({ farmId, farmName, onClose }: Props) {
   const fetchMessages = useFarmChatStore((s) => s.fetchMessages)
+  const fetchReads = useFarmChatStore((s) => s.fetchReads)
   const sendMessage = useFarmChatStore((s) => s.sendMessage)
   const markRead = useFarmChatStore((s) => s.markRead)
   const messages = useFarmChatStore(
     (s) => s.messagesByFarm.get(farmId) ?? EMPTY,
+  )
+  const reads = useFarmChatStore(
+    (s) => s.readsByFarm.get(farmId) ?? EMPTY_READS,
   )
 
   const [text, setText] = useState('')
@@ -32,10 +36,11 @@ export function FarmChatSheet({ farmId, farmName, onClose }: Props) {
     void fetchMessages(farmId).then(() => {
       void markRead(farmId)
     })
+    void fetchReads(farmId)
     void supabase.auth
       .getUser()
       .then(({ data }) => setMyUserId(data.user?.id ?? null))
-  }, [farmId, fetchMessages, markRead])
+  }, [farmId, fetchMessages, fetchReads, markRead])
 
   // 新着で最下部にスクロール
   useEffect(() => {
@@ -44,11 +49,12 @@ export function FarmChatSheet({ farmId, farmName, onClose }: Props) {
     }
   }, [messages])
 
-  // 送信者名索引 (簡易)
+  // 送信者 + 既読ユーザーの名前索引
   const [senderNames, setSenderNames] = useState<Record<string, string>>({})
   useEffect(() => {
     const need = new Set<string>()
     for (const m of messages) need.add(m.sender_user_id)
+    for (const r of reads) need.add(r.user_id)
     const missing = Array.from(need).filter((id) => !(id in senderNames))
     if (missing.length === 0) return
     void (async () => {
@@ -69,7 +75,7 @@ export function FarmChatSheet({ farmId, farmName, onClose }: Props) {
         /* noop */
       }
     })()
-  }, [messages, senderNames])
+  }, [messages, reads, senderNames])
 
   const handleSend = async () => {
     const t = text.trim()
@@ -121,6 +127,13 @@ export function FarmChatSheet({ farmId, farmName, onClose }: Props) {
             sorted.map((m) => {
               const mine = m.sender_user_id === myUserId
               const senderName = senderNames[m.sender_user_id] ?? ''
+              // このメッセージを既読にしているユーザー (送信者本人を除く)
+              const readersForMsg = reads.filter(
+                (r) =>
+                  r.user_id !== m.sender_user_id &&
+                  new Date(r.last_read_at).getTime() >=
+                    new Date(m.created_at).getTime(),
+              )
               return (
                 <div
                   key={m.id}
@@ -150,6 +163,25 @@ export function FarmChatSheet({ farmId, farmName, onClose }: Props) {
                     <div className="whitespace-pre-wrap break-words">
                       {m.body}
                     </div>
+                    {mine && readersForMsg.length > 0 && (
+                      <div
+                        className="text-[9px] text-slate-400 mt-1 text-right"
+                        title={readersForMsg
+                          .map(
+                            (r) =>
+                              `${senderNames[r.user_id] || r.user_id.slice(0, 6)} (${new Date(r.last_read_at).toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })})`,
+                          )
+                          .join('\n')}
+                      >
+                        既読{' '}
+                        {readersForMsg
+                          .map(
+                            (r) =>
+                              senderNames[r.user_id] || r.user_id.slice(0, 6),
+                          )
+                          .join(', ')}
+                      </div>
+                    )}
                   </div>
                 </div>
               )
@@ -197,3 +229,4 @@ export function FarmChatSheet({ farmId, farmName, onClose }: Props) {
 
 // stable reference for zustand selector (毎回 [] を返すと無限再レンダー)
 const EMPTY: import('@/stores/farmChatStore').FarmMessage[] = []
+const EMPTY_READS: import('@/stores/farmChatStore').FarmReadEntry[] = []

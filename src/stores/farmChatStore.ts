@@ -17,6 +17,12 @@ export interface FarmMessage {
   created_at: string
 }
 
+/** 工区あたりのユーザー既読時刻 (自分・他人含む全員) */
+export interface FarmReadEntry {
+  user_id: string
+  last_read_at: string
+}
+
 interface State {
   /** farmId → messages (古い順) */
   messagesByFarm: Map<string, FarmMessage[]>
@@ -24,6 +30,8 @@ interface State {
   unreadByFarm: Map<string, number>
   /** farmId → 自分の最終既読時刻 (ISO) */
   lastReadByFarm: Map<string, string>
+  /** farmId → 全ユーザーの既読情報 (誰がいつ既読になったか) */
+  readsByFarm: Map<string, FarmReadEntry[]>
   /** 現在のログイン user_id (subscribe 開始時に固定) */
   _currentUserId: string | null
   /** Realtime + polling のクリーンアップ */
@@ -37,6 +45,9 @@ interface State {
 
   /** 工区一覧に対して未読数と最終既読時刻を一括取得 */
   fetchUnreadCounts: (farmIds: string[]) => Promise<void>
+
+  /** この工区の全ユーザーの既読エントリを取得 */
+  fetchReads: (farmId: string) => Promise<void>
 
   /** 現在時刻で既読フラグを更新。unread も 0 にする */
   markRead: (farmId: string) => Promise<void>
@@ -63,6 +74,7 @@ export const useFarmChatStore = create<State>((set, get) => ({
   messagesByFarm: new Map(),
   unreadByFarm: new Map(),
   lastReadByFarm: new Map(),
+  readsByFarm: new Map(),
   _currentUserId: null,
   _cleanup: null,
 
@@ -161,6 +173,22 @@ export const useFarmChatStore = create<State>((set, get) => ({
     }
   },
 
+  async fetchReads(farmId) {
+    try {
+      const { data, error } = await supabase
+        .from('farm_chat_reads')
+        .select('user_id, last_read_at')
+        .eq('farm_id', farmId)
+      if (error) throw error
+      const rows = (data ?? []) as FarmReadEntry[]
+      const next = new Map(get().readsByFarm)
+      next.set(farmId, rows)
+      set({ readsByFarm: next })
+    } catch (err) {
+      console.warn('[farmChatStore] fetchReads failed', err)
+    }
+  },
+
   async markRead(farmId) {
     try {
       const { data: userData } = await supabase.auth.getUser()
@@ -177,7 +205,18 @@ export const useFarmChatStore = create<State>((set, get) => ({
       nextUnread.set(farmId, 0)
       const nextLast = new Map(get().lastReadByFarm)
       nextLast.set(farmId, nowIso)
-      set({ unreadByFarm: nextUnread, lastReadByFarm: nextLast })
+      // 全体 reads マップにも自分の分を反映 (Realtime で他ユーザーに配信されるが、
+      // 自分の view は即座に更新したい)
+      const nextReads = new Map(get().readsByFarm)
+      const cur = nextReads.get(farmId) ?? []
+      const filtered = cur.filter((r) => r.user_id !== uid)
+      filtered.push({ user_id: uid, last_read_at: nowIso })
+      nextReads.set(farmId, filtered)
+      set({
+        unreadByFarm: nextUnread,
+        lastReadByFarm: nextLast,
+        readsByFarm: nextReads,
+      })
     } catch (err) {
       console.warn('[farmChatStore] markRead failed', err)
     }
@@ -186,6 +225,8 @@ export const useFarmChatStore = create<State>((set, get) => ({
   subscribe(farmIds) {
     get().unsubscribe()
     void get().fetchUnreadCounts(farmIds)
+    // 各 farm の全ユーザー既読も一括取得 (誰が既読か表示に使う)
+    for (const fid of farmIds) void get().fetchReads(fid)
 
     let uid: string | null = null
     void (async () => {
@@ -230,14 +271,39 @@ export const useFarmChatStore = create<State>((set, get) => ({
             set({ messagesByFarm: nextMsgs, unreadByFarm: nextUnread })
           },
         )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'farm_chat_reads' },
+          (payload) => {
+            const row = (payload.new ?? payload.old) as {
+              farm_id?: string
+              user_id?: string
+              last_read_at?: string
+            } | null
+            if (!row?.farm_id || !row.user_id || !row.last_read_at) return
+            if (!farmIds.includes(row.farm_id)) return
+            const nextReads = new Map(get().readsByFarm)
+            const cur = nextReads.get(row.farm_id) ?? []
+            const filtered = cur.filter((r) => r.user_id !== row.user_id)
+            if (payload.eventType !== 'DELETE') {
+              filtered.push({
+                user_id: row.user_id,
+                last_read_at: row.last_read_at,
+              })
+            }
+            nextReads.set(row.farm_id, filtered)
+            set({ readsByFarm: nextReads })
+          },
+        )
         .subscribe()
     } catch {
       /* WS 使えない環境 → poll 頼み */
     }
 
-    // 30秒ごとに未読数の一括再計算 (Realtime 逃した保険)
+    // 30秒ごとに未読数と既読情報を一括再計算 (Realtime 逃した保険)
     const timer = window.setInterval(() => {
       void get().fetchUnreadCounts(farmIds)
+      for (const fid of farmIds) void get().fetchReads(fid)
     }, 30_000)
 
     set({
