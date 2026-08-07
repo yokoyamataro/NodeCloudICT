@@ -371,7 +371,10 @@ export const useSurveyStore = create<SurveyState>()((set, get) => ({
     // ローカル状態を更新
     set({ calibration: newCalibration })
 
-    // Supabaseに保存（upsert）
+    // Supabaseに保存 (upsert on farm_id)。
+    // かつては onConflict:'project_id' 指定だったが、列は farm_id に
+    // 変わっており全く保存されていなかった。onConflict は列名指定なので
+    // farm_id に修正すれば OK (unique 制約は自動リネームで残っている)。
     const { error } = await supabase
       .from('design_survey_calibration')
       .upsert({
@@ -380,11 +383,12 @@ export const useSurveyStore = create<SurveyState>()((set, get) => ({
         dz_offset: newCalibration.dzOffset,
         matching_threshold: newCalibration.matchingThreshold,
       } as never, {
-        onConflict: 'project_id',
+        onConflict: 'farm_id',
       })
 
     if (error) {
-      set({ error: error.message })
+      console.error('[surveyStore] updateCalibration failed:', error)
+      set({ error: `補正設定の保存に失敗: ${error.message}` })
     }
 
     // 補正値が変更された場合、すべてのdzCalibratedを再計算
