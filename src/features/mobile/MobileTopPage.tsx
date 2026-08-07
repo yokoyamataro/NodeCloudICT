@@ -3,11 +3,10 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Loader2, Monitor, LogOut, ArrowLeft, Plus, Edit3 } from 'lucide-react'
+import { Loader2, Monitor, LogOut, ArrowLeft, Plus } from 'lucide-react'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useAuth } from '@/contexts/AuthContext'
-import { FarmEditModal } from '@/features/farms/FarmEditModal'
 import { CurrentLocationLayer } from '@/components/map/CurrentLocationLayer'
 import { setDisplayModeOverride } from '@/lib/displayMode'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
@@ -70,8 +69,6 @@ export function MobileTopPage() {
     loading: farmsLoading,
     fetchFarms,
     createFarm,
-    updateFarm,
-    deleteFarm,
     farmLocations,
     workAreaPolygons,
     fetchWorkAreaPolygons,
@@ -152,9 +149,6 @@ export function MobileTopPage() {
   const handleFarmClick = (farm: Farm) => {
     navigate(`/mobile/staking?farmId=${farm.id}`)
   }
-  // 一覧右端の 編集ボタンで開く 工区編集モーダル (名前 / 説明 / 完了)
-  const [editFarm, setEditFarm] = useState<Farm | null>(null)
-
   // 工区チャット
   const subscribeFarmChat = useFarmChatStore((s) => s.subscribe)
   const unsubscribeFarmChat = useFarmChatStore((s) => s.unsubscribe)
@@ -415,23 +409,13 @@ export function MobileTopPage() {
                     )}
                   </button>
                   {/* 右端: チャットアイコン + 編集ボタン */}
-                  <div className="flex items-center pr-1">
+                  <div className="flex items-center pr-3">
                     <FarmChatIconButton
                       farmId={farm.id}
                       onClick={() => setChatFarm(farm)}
                       size="md"
                     />
                   </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setEditFarm(farm)
-                    }}
-                    className="px-3 flex items-center text-slate-400 hover:text-blue-600 hover:bg-slate-100"
-                    title="工区の編集"
-                  >
-                    <Edit3 className="h-4 w-4" />
-                  </button>
                 </li>
               )
             })}
@@ -577,26 +561,6 @@ export function MobileTopPage() {
         />
       )}
 
-      {/* 工区編集モーダル (右端の 編集ボタンで開く: 名前 / 説明 / 着手日 / 完成日 / 完了 / 削除) */}
-      {editFarm && (
-        <FarmEditModal
-          farm={
-            // farms 側 (allFarms) から最新の状態を再検索して常に最新を表示する
-            allFarms.find((f) => f.id === editFarm.id) ?? editFarm
-          }
-          onUpdateFarm={(patch) => void updateFarm(editFarm.id, patch)}
-          onClose={() => setEditFarm(null)}
-          onDelete={async () => {
-            const id = editFarm.id
-            setEditFarm(null)
-            try {
-              await deleteFarm(id)
-            } catch (err) {
-              alert(err instanceof Error ? err.message : '工区の削除に失敗しました')
-            }
-          }}
-        />
-      )}
     </div>
   )
 }

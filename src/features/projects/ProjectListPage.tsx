@@ -835,23 +835,11 @@ export function ProjectListPage() {
                                   >
                                     {farm.name}
                                   </span>
-                                  {/* 右端: チャットアイコン (常時) + 編集 (ホバー時) */}
+                                  {/* 右端: チャットアイコン */}
                                   <FarmChatIconButton
                                     farmId={farm.id}
                                     onClick={() => setChatFarm(farm)}
                                   />
-                                  <div className="hidden group-hover:flex items-center gap-1">
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation()
-                                        setEditFarmForModal(farm)
-                                      }}
-                                      className="p-1 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded"
-                                      title="工区情報を編集 (削除もここから)"
-                                    >
-                                      <Edit3 className="h-3 w-3" />
-                                    </button>
-                                  </div>
                                 </div>
                               )
                             })

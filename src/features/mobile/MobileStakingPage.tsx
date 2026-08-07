@@ -34,6 +34,7 @@ import {
   Crosshair,
   Settings2,
   MessageSquare,
+  Edit3,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { playStartChime, playStopChime, unlockAudio } from '@/lib/beep'
@@ -56,6 +57,7 @@ const EMPTY_ROUTES_FOR_STAKING: Route[] = []
 import { useAuth } from '@/contexts/AuthContext'
 import { FarmChatSheet } from '@/features/chat/FarmChatSheet'
 import { useFarmChatStore } from '@/stores/farmChatStore'
+import { FarmEditModal } from '@/features/farms/FarmEditModal'
 import { loadSimaFile, downloadSimaFile } from '@/lib/sima-parser'
 import { CoordinateConverter } from '@/lib/coordinates'
 import {
@@ -598,6 +600,9 @@ export function MobileStakingPage() {
     setCurrentFarm,
     workAreaPolygons,
     fetchWorkAreaPolygons,
+    updateFarm,
+    deleteFarm,
+    farms: allFarmsForEdit,
   } = useFarmStore()
   const {
     byProject: pointTypesByProject,
@@ -726,6 +731,7 @@ export function MobileStakingPage() {
   }, [useGeoidCorrection, geoidGrid])
   const [showSettings, setShowSettings] = useState(false)
   const [showChatSheet, setShowChatSheet] = useState(false)
+  const [showFarmEditModal, setShowFarmEditModal] = useState(false)
   const [showTargetList, setShowTargetList] = useState(false)
   const [showRecordList, setShowRecordList] = useState(
     () => params.get('openCoords') === '1',
@@ -2967,6 +2973,15 @@ export function MobileStakingPage() {
             {farm?.name ?? '工事測量'}
           </span>
         </div>
+        {farm && (
+          <button
+            onClick={() => setShowFarmEditModal(true)}
+            className="shrink-0 p-1.5 rounded text-slate-300 hover:bg-slate-700 hover:text-white"
+            title="工区を編集"
+          >
+            <Edit3 className="h-4 w-4" />
+          </button>
+        )}
         {userLabel && (
           <span className="text-[11px] text-slate-300 truncate max-w-[6rem]" title={user?.email ?? ''}>
             {userLabel}
@@ -3096,6 +3111,25 @@ export function MobileStakingPage() {
           farmId={farmId}
           farmName={farm?.name ?? ''}
           onClose={() => setShowChatSheet(false)}
+        />
+      )}
+
+      {/* 工区編集モーダル (上バーの編集ボタンで開く) */}
+      {showFarmEditModal && farm && (
+        <FarmEditModal
+          farm={allFarmsForEdit.find((f) => f.id === farm.id) ?? farm}
+          onUpdateFarm={(patch) => void updateFarm(farm.id, patch)}
+          onClose={() => setShowFarmEditModal(false)}
+          onDelete={async () => {
+            const id = farm.id
+            setShowFarmEditModal(false)
+            try {
+              await deleteFarm(id)
+              navigate('/mobile')
+            } catch (err) {
+              alert(err instanceof Error ? err.message : '工区の削除に失敗しました')
+            }
+          }}
         />
       )}
 
