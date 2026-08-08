@@ -205,10 +205,10 @@ function MobileAutoRedirect() {
   return null
 }
 
-// ルート(/)のゲート: 未ログインは紹介ページ、ログイン済みはアプリ本体。
+// ルート(/)のゲート: 未ログインならログインへ (自動ログイン=セッション残存)、
+// ログイン済みはアプリ本体。
 function HomeGate() {
   const { user, loading } = useAuth()
-  const location = useLocation()
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -217,8 +217,9 @@ function HomeGate() {
     )
   }
   if (!user) {
-    // ルートは紹介ページ、それ以外の保護パスはログインへ
-    if (location.pathname === '/') return <LandingPage />
+    // ルート含む全ての保護パスはログインへ (自動ログイン: セッションが残っていれば
+    // useAuth() が user を返し、ここには到達せずアプリ本体が表示される)。
+    // 製品紹介 (LandingPage) は /lp で引き続きアクセス可能。
     return <Navigate to="/login" replace />
   }
   return <AppLayout />
