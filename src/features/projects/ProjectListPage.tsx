@@ -1116,6 +1116,7 @@ export function ProjectListPage() {
         <FarmChatSheet
           farmId={chatFarm.id}
           farmName={chatFarm.name}
+          projectId={chatFarm.project_id}
           onClose={() => setChatFarm(null)}
         />
       )}

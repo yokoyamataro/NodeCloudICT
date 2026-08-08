@@ -3167,6 +3167,7 @@ export function MobileStakingPage() {
         <FarmChatSheet
           farmId={farmId}
           farmName={farm?.name ?? ''}
+          projectId={farm?.project_id ?? null}
           onClose={() => setShowChatSheet(false)}
         />
       )}

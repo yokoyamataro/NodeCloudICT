@@ -557,6 +557,7 @@ export function MobileTopPage() {
         <FarmChatSheet
           farmId={chatFarm.id}
           farmName={chatFarm.name}
+          projectId={chatFarm.project_id}
           onClose={() => setChatFarm(null)}
         />
       )}
