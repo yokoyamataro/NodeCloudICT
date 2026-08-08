@@ -25,6 +25,7 @@ import { useNavigate } from 'react-router-dom'
 import { useMapViewStore } from '@/stores/mapViewStore'
 import { useStakingStore } from '@/stores/stakingStore'
 import { useProjectListStore } from '@/stores/projectListStore'
+import { useProjectPermission } from '@/lib/useProjectPermission'
 import { useAttachmentStore } from '@/stores/attachmentStore'
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import { useParcelStore } from '@/stores/parcelStore'
@@ -555,23 +556,102 @@ export function CoordinatesPage() {
     coordinates,
     fetchCoordinates,
     loadingProgress: coordLoadingProgress,
-    updateCoordinate,
-    deleteCoordinate,
-    deleteCoordinates,
-    importCoordinates,
+    updateCoordinate: _updateCoordinate,
+    deleteCoordinate: _deleteCoordinate,
+    deleteCoordinates: _deleteCoordinates,
+    importCoordinates: _importCoordinates,
     selectedType,
     setSelectedType,
     route,
     routeHasChanges,
     fetchRoute,
-    appendRoutePoint,
-    removeRoutePoint,
-    setRouteDirection,
-    moveRoutePoint,
-    clearRoute,
-    saveRoute,
-    setStakeStatus,
+    appendRoutePoint: _appendRoutePoint,
+    removeRoutePoint: _removeRoutePoint,
+    setRouteDirection: _setRouteDirection,
+    moveRoutePoint: _moveRoutePoint,
+    clearRoute: _clearRoute,
+    saveRoute: _saveRoute,
+    setStakeStatus: _setStakeStatus,
   } = useCoordinateStore()
+
+  // 権限 (project の役割ベース)。viewer は編集操作を全て no-op にする。
+  // DB 側は RLS で守られているが、UI で「編集できた風」に見える誤解を防ぐため
+  // client 側でもストア関数を noop 化する。
+  const currentProject = useMemo(
+    () =>
+      currentFarm
+        ? projects.find((p) => p.id === currentFarm.project_id) ?? null
+        : null,
+    [currentFarm, projects],
+  )
+  const permission = useProjectPermission(currentProject)
+  const readOnly = !permission.canEdit
+  const [readOnlyToastShown, setReadOnlyToastShown] = useState(false)
+  const warnReadOnly = useCallback(() => {
+    if (!readOnlyToastShown) {
+      alert('この現場での編集権限がありません (閲覧のみ)')
+      setReadOnlyToastShown(true)
+    }
+  }, [readOnlyToastShown])
+
+  // ストアの mutation を readOnly なら no-op に置き換え。
+  // 呼び出し側は変更不要 (シグネチャは維持)。
+  const updateCoordinate = readOnly
+    ? ((..._args: Parameters<typeof _updateCoordinate>) => {
+        warnReadOnly()
+      }) as typeof _updateCoordinate
+    : _updateCoordinate
+  const deleteCoordinate = readOnly
+    ? ((async (..._args: Parameters<typeof _deleteCoordinate>) => {
+        warnReadOnly()
+      }) as typeof _deleteCoordinate)
+    : _deleteCoordinate
+  const deleteCoordinates = readOnly
+    ? ((async (..._args: Parameters<typeof _deleteCoordinates>) => {
+        warnReadOnly()
+      }) as typeof _deleteCoordinates)
+    : _deleteCoordinates
+  const importCoordinates = readOnly
+    ? ((async (..._args: Parameters<typeof _importCoordinates>) => {
+        warnReadOnly()
+        return [] as Awaited<ReturnType<typeof _importCoordinates>>
+      }) as typeof _importCoordinates)
+    : _importCoordinates
+  const appendRoutePoint = readOnly
+    ? ((..._args: Parameters<typeof _appendRoutePoint>) => {
+        warnReadOnly()
+      }) as typeof _appendRoutePoint
+    : _appendRoutePoint
+  const removeRoutePoint = readOnly
+    ? ((..._args: Parameters<typeof _removeRoutePoint>) => {
+        warnReadOnly()
+      }) as typeof _removeRoutePoint
+    : _removeRoutePoint
+  const setRouteDirection = readOnly
+    ? ((..._args: Parameters<typeof _setRouteDirection>) => {
+        warnReadOnly()
+      }) as typeof _setRouteDirection
+    : _setRouteDirection
+  const moveRoutePoint = readOnly
+    ? ((..._args: Parameters<typeof _moveRoutePoint>) => {
+        warnReadOnly()
+      }) as typeof _moveRoutePoint
+    : _moveRoutePoint
+  const clearRoute = readOnly
+    ? ((..._args: Parameters<typeof _clearRoute>) => {
+        warnReadOnly()
+      }) as typeof _clearRoute
+    : _clearRoute
+  const saveRoute = readOnly
+    ? ((async (..._args: Parameters<typeof _saveRoute>) => {
+        warnReadOnly()
+      }) as typeof _saveRoute)
+    : _saveRoute
+  const setStakeStatus = readOnly
+    ? ((async (..._args: Parameters<typeof _setStakeStatus>) => {
+        warnReadOnly()
+      }) as typeof _setStakeStatus)
+    : _setStakeStatus
 
   // 経路モード（クリックで経路に追加）
   const [routeMode, setRouteMode] = useState(false)
@@ -2408,6 +2488,12 @@ export function CoordinatesPage() {
   // 通常表示（左右分割）
   return (
     <div className="h-full flex flex-col">
+      {readOnly && (
+        <div className="bg-amber-50 border-b border-amber-300 text-amber-900 text-xs px-3 py-1.5 flex items-center gap-2">
+          <span className="font-semibold">閲覧のみ</span>
+          <span>この現場での編集権限がありません。追加・削除・編集はできません。</span>
+        </div>
+      )}
       {/* 杭種ドロップダウンの共有候補リスト */}
       <datalist id="stake-type-options">
         {STAKE_TYPE_OPTIONS.map((o) => (
@@ -3020,6 +3106,7 @@ export function CoordinatesPage() {
                       farmId={currentFarm.id}
                       currentName={routeName}
                       onSelect={(name) => setRouteName(name)}
+                      readOnly={readOnly}
                     />
                   )}
                 </div>
@@ -3483,10 +3570,12 @@ function SavedRoutesList({
   farmId,
   currentName,
   onSelect,
+  readOnly = false,
 }: {
   farmId: string
   currentName: string
   onSelect: (name: string) => void
+  readOnly?: boolean
 }) {
   const fetchRoutes = useExportRouteStore((s) => s.fetchRoutes)
   const deleteRoute = useExportRouteStore((s) => s.deleteRoute)
@@ -3516,20 +3605,22 @@ function SavedRoutesList({
           >
             {r.name}
           </button>
-          <button
-            type="button"
-            onClick={async () => {
-              if (
-                !confirm(`保存済みルート「${r.name}」を削除しますか?`)
-              )
-                return
-              await deleteRoute(farmId, r.id)
-            }}
-            className="text-red-500 hover:text-red-700"
-            title="削除"
-          >
-            ×
-          </button>
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={async () => {
+                if (
+                  !confirm(`保存済みルート「${r.name}」を削除しますか?`)
+                )
+                  return
+                await deleteRoute(farmId, r.id)
+              }}
+              className="text-red-500 hover:text-red-700"
+              title="削除"
+            >
+              ×
+            </button>
+          )}
         </span>
       ))}
     </div>

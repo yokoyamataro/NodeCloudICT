@@ -197,9 +197,11 @@ interface GenericWorkAreaPageProps {
   /** 「区域登録」ヘッダの CadastralColumnPicker / 登記PDF取込 の右側に差し込む
    *  追加アクション (例: 地番入力 / 地番出力 ドロップダウン) */
   areaListActions?: React.ReactNode
+  /** 閲覧のみモード: 全ての編集/追加/削除操作を無効化する */
+  readOnly?: boolean
 }
 
-export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', headerActions, mapChildren, mapBottomLeftOverlay, suppressDefaultParcelMapLayer, checkedPolygonIds, onPolygonToggleCheck, areaListActions }: GenericWorkAreaPageProps) {
+export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', headerActions, mapChildren, mapBottomLeftOverlay, suppressDefaultParcelMapLayer, checkedPolygonIds, onPolygonToggleCheck, areaListActions, readOnly = false }: GenericWorkAreaPageProps) {
   const { user } = useAuth()
   const isSiteOwner = isAdmin(user?.email)
   // 「登記取得」モーダルを開く対象 work_area id。1 度に 1 件だけ。
@@ -266,15 +268,55 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   const {
     loading,
     fetchWorkAreas,
-    addWorkArea,
-    updateWorkArea,
-    deleteWorkArea,
-    addPoint,
-    removePoint,
-    reorderPoints,
+    addWorkArea: _addWorkArea,
+    updateWorkArea: _updateWorkArea,
+    deleteWorkArea: _deleteWorkArea,
+    addPoint: _addPoint,
+    removePoint: _removePoint,
+    reorderPoints: _reorderPoints,
     calculateArea,
     getWorkAreasByType,
   } = useWorkAreaStore()
+
+  // readOnly なら書込みを no-op に置換 (呼出側は変更不要)
+  const [readOnlyToastShown, setReadOnlyToastShown] = useState(false)
+  const warnReadOnly = () => {
+    if (readOnly && !readOnlyToastShown) {
+      alert('この現場での編集権限がありません (閲覧のみ)')
+      setReadOnlyToastShown(true)
+    }
+  }
+  const addWorkArea = readOnly
+    ? ((async (..._args: Parameters<typeof _addWorkArea>) => {
+        warnReadOnly()
+        return null
+      }) as typeof _addWorkArea)
+    : _addWorkArea
+  const updateWorkArea = readOnly
+    ? ((async (..._args: Parameters<typeof _updateWorkArea>) => {
+        warnReadOnly()
+      }) as typeof _updateWorkArea)
+    : _updateWorkArea
+  const deleteWorkArea = readOnly
+    ? ((async (..._args: Parameters<typeof _deleteWorkArea>) => {
+        warnReadOnly()
+      }) as typeof _deleteWorkArea)
+    : _deleteWorkArea
+  const addPoint = readOnly
+    ? ((async (..._args: Parameters<typeof _addPoint>) => {
+        warnReadOnly()
+      }) as typeof _addPoint)
+    : _addPoint
+  const removePoint = readOnly
+    ? ((async (..._args: Parameters<typeof _removePoint>) => {
+        warnReadOnly()
+      }) as typeof _removePoint)
+    : _removePoint
+  const reorderPoints = readOnly
+    ? ((async (..._args: Parameters<typeof _reorderPoints>) => {
+        warnReadOnly()
+      }) as typeof _reorderPoints)
+    : _reorderPoints
 
   // 工区が変更されたらデータを取得
   const farmId = currentFarm?.id
@@ -917,7 +959,11 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                       )}
                       {isBoundarySurvey ? (
                         // 地籍: 地番属性も含めて 1 行に横並びで inline 編集（表示列はピッカーで絞れる）
-                        <CadastralRowFields area={area} visibleColumns={visibleColumns} />
+                        <CadastralRowFields
+                          area={area}
+                          visibleColumns={visibleColumns}
+                          readOnly={readOnly}
+                        />
                       ) : (
                         <div className="flex-1 grid grid-cols-3 gap-2 text-sm">
                           <input

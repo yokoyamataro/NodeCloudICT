@@ -18,6 +18,7 @@ import { GenericWorkAreaPage } from '@/components/work-area/GenericWorkAreaPage'
 import { CadastralCsvExportModal } from './CadastralCsvExportModal'
 import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
+import { useProjectPermission } from '@/lib/useProjectPermission'
 import { useParcelAttributeTypesStore } from '@/stores/parcelAttributeTypesStore'
 import { ParcelAttributeTypesModal } from './ParcelAttributeTypesModal'
 import { MAX_COORDS_PER_FARM, MAX_PARCELS_PER_FARM } from '@/lib/farmLimits'
@@ -57,12 +58,30 @@ export function BoundarySurveyWorkAreaPage() {
 
   const { currentFarm } = useFarmStore()
   const { projects } = useProjectListStore()
+  const currentProjectForPerm = currentFarm
+    ? projects.find((p) => p.id === currentFarm.project_id) ?? null
+    : null
+  const permission = useProjectPermission(currentProjectForPerm)
+  const readOnly = !permission.canEdit
+  const [readOnlyToastShown, setReadOnlyToastShown] = useState(false)
+  const warnReadOnly = () => {
+    if (!readOnlyToastShown) {
+      alert('この現場での編集権限がありません (閲覧のみ)')
+      setReadOnlyToastShown(true)
+    }
+  }
   const {
     coordinates,
-    importCoordinates,
+    importCoordinates: _importCoordinates,
     fetchCoordinates,
     invalidateCache: invalidateCoordCache,
   } = useCoordinateStore()
+  const importCoordinates = readOnly
+    ? ((async (..._args: Parameters<typeof _importCoordinates>) => {
+        warnReadOnly()
+        return [] as Awaited<ReturnType<typeof _importCoordinates>>
+      }) as typeof _importCoordinates)
+    : _importCoordinates
   const {
     workAreas,
     fetchWorkAreas,
@@ -610,9 +629,16 @@ export function BoundarySurveyWorkAreaPage() {
 
   return (
     <>
+      {readOnly && (
+        <div className="bg-amber-50 border-b border-amber-300 text-amber-900 text-xs px-3 py-1.5 flex items-center gap-2">
+          <span className="font-semibold">閲覧のみ</span>
+          <span>この現場での編集権限がありません。地番の追加・削除・編集はできません。</span>
+        </div>
+      )}
       <GenericWorkAreaPage
         workType="boundary_survey"
         areaLabel="地番管理"
+        readOnly={readOnly}
         headerActions={
           <div className="flex items-center gap-2">
             {/* 座標数 / 地番数 の使用量表示は設定画面 (FarmSettingsPage) に集約。
@@ -655,16 +681,18 @@ export function BoundarySurveyWorkAreaPage() {
         areaListActions={
           <>
             {/* 属性管理 (地番属性の色/ラベル/追加削除) */}
-            <button
-              type="button"
-              onClick={() => setShowAttributeMgmt(true)}
-              disabled={!currentFarm}
-              title="地番属性の管理 (対象地/隣接地/道路/河川/その他 の色・ラベル + 任意属性追加)"
-              className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50 disabled:opacity-50"
-            >
-              <Palette className="h-3.5 w-3.5" />
-              属性管理
-            </button>
+            {!readOnly && (
+              <button
+                type="button"
+                onClick={() => setShowAttributeMgmt(true)}
+                disabled={!currentFarm}
+                title="地番属性の管理 (対象地/隣接地/道路/河川/その他 の色・ラベル + 任意属性追加)"
+                className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50 disabled:opacity-50"
+              >
+                <Palette className="h-3.5 w-3.5" />
+                属性管理
+              </button>
+            )}
 
             {/* 地番入力: SIM取り込み / JPGIS.XML取り込み */}
             <div className="relative">
@@ -673,8 +701,8 @@ export function BoundarySurveyWorkAreaPage() {
                 onClick={() =>
                   setOpenMenu(openMenu === 'import' ? null : 'import')
                 }
-                disabled={busy !== null || !currentFarm}
-                title="地番入力 (SIM / JPGIS.XML)"
+                disabled={busy !== null || !currentFarm || readOnly}
+                title={readOnly ? '閲覧のみ (編集権限がありません)' : '地番入力 (SIM / JPGIS.XML)'}
                 className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50 disabled:opacity-50"
               >
                 {busy === 'import' ? (

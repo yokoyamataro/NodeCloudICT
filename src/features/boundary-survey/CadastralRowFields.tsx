@@ -57,6 +57,8 @@ export const DEFAULT_VISIBLE_COLUMNS: ReadonlySet<CadastralColumnKey> = new Set(
 interface Props {
   area: WorkAreaRow
   visibleColumns: ReadonlySet<CadastralColumnKey>
+  /** 閲覧のみモード: input を disabled/readOnly にし、変更を保存しない */
+  readOnly?: boolean
 }
 
 // timestamptz → datetime-local 文字列
@@ -134,9 +136,13 @@ function truncate2(n: number): string {
   return (Math.floor(n * 100) / 100).toFixed(2)
 }
 
-export function CadastralRowFields({ area, visibleColumns }: Props) {
+export function CadastralRowFields({ area, visibleColumns, readOnly = false }: Props) {
   const parcel = useParcelStore((s) => s.byWorkAreaId.get(area.id))
-  const upsertParcel = useParcelStore((s) => s.upsertParcel)
+  const _upsertParcel = useParcelStore((s) => s.upsertParcel)
+  // readOnly なら upsert を no-op に (呼出側は変更不要)
+  const upsertParcel: typeof _upsertParcel = readOnly
+    ? (async () => null)
+    : _upsertParcel
 
   // 地番名のフォールバック: parcels.parcel_number が空のときは
   // design_work_areas.zoneNumber → name の順に拾う
@@ -375,7 +381,13 @@ export function CadastralRowFields({ area, visibleColumns }: Props) {
 
   return (
     <>
-      <div className="flex items-center gap-1 text-xs whitespace-nowrap" onClick={stop}>
+      <fieldset
+        disabled={readOnly}
+        className={`flex items-center gap-1 text-xs whitespace-nowrap ${
+          readOnly ? 'opacity-70' : ''
+        }`}
+        onClick={stop}
+      >
         {CADASTRAL_COLUMN_KEYS.filter((k) => visibleColumns.has(k)).map((key) => {
           const isSticky = CADASTRAL_STICKY_COLUMNS.has(key)
           return (
@@ -394,7 +406,7 @@ export function CadastralRowFields({ area, visibleColumns }: Props) {
             </div>
           )
         })}
-      </div>
+      </fieldset>
       {assignOpen && parcelId && (
         <LandownerAssignModal
           parcelLabel={parcel?.parcel_number || area.zoneNumber || area.name || '(無題)'}
