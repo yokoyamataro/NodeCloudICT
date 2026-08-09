@@ -86,6 +86,31 @@ function calculateAngle(from: [number, number], to: [number, number]): number {
   return angle
 }
 
+// 下流端 (end) から上流側 (prev) に少し引っ込めた位置を返す。
+// 合流部で複数管の矢印が下流端に重なって潰れるのを避けるための表示補正。
+// 最終セグメント長の 15% ぶん、または最大 4m 相当だけ後退させる。
+function offsetTowardsPrev(
+  end: [number, number],
+  prev: [number, number],
+): [number, number] {
+  // 緯度経度距離ではなく単純な線形補間で十分 (表示用)
+  const RATIO = 0.15
+  // 短すぎるセグメントで補間しても離れないので下限を持たせる (概ね 4m 相当)
+  const APPROX_METER_PER_DEG_LAT = 111000
+  const dLat = end[0] - prev[0]
+  const dLng = end[1] - prev[1]
+  const segLatMeters = dLat * APPROX_METER_PER_DEG_LAT
+  const segLngMeters = dLng * APPROX_METER_PER_DEG_LAT * Math.cos((end[0] * Math.PI) / 180)
+  const segLen = Math.hypot(segLatMeters, segLngMeters)
+  const target = 4 // meters
+  const ratio =
+    segLen > 0 ? Math.min(RATIO, target / segLen) : RATIO
+  return [
+    end[0] * (1 - ratio) + prev[0] * ratio,
+    end[1] * (1 - ratio) + prev[1] * ratio,
+  ]
+}
+
 // 管種ごとの色
 const PIPE_COLORS: Record<string, string> = {
   main: '#ef4444',       // 集水: 赤
@@ -727,24 +752,17 @@ export function PipeMap({
             const isSplitMode = editMode === 'split'
             const canSplit = isSplitMode && !isStart && !isEnd // 中間点のみ分割可能
 
-            // 終点は矢印マーカー
+            // 終点は矢印マーカー (合流部で複数管の矢印が重ならないよう少し上流側へ)
             if (isEnd && pipe.positions.length >= 2) {
               const prevPos = pipe.positions[pipe.positions.length - 2]
               const angle = calculateAngle(prevPos, pos)
+              const arrowPos = offsetTowardsPrev(pos, prevPos)
               return (
                 <Marker
                   key={`${pipe.id}-${idx}`}
-                  position={pos}
+                  position={arrowPos}
                   icon={createArrowIcon(angle, SELECTED_COLOR, true)}
-                >
-                  <Popup>
-                    <div className="text-xs font-mono">
-                      <div>下流（終点）</div>
-                      <div>緯度: {pos[0].toFixed(6)}</div>
-                      <div>経度: {pos[1].toFixed(6)}</div>
-                    </div>
-                  </Popup>
-                </Marker>
+                />
               )
             }
 
@@ -773,18 +791,7 @@ export function PipeMap({
                     e.target.setStyle({ radius: 8, fillColor: '#f97316' })
                   },
                 } : {}}
-              >
-                <Popup>
-                  <div className="text-xs font-mono">
-                    <div>{isStart ? '上流（起点）' : `点 ${idx + 1}`}</div>
-                    <div>緯度: {pos[0].toFixed(6)}</div>
-                    <div>経度: {pos[1].toFixed(6)}</div>
-                    {canSplit && (
-                      <div className="mt-1 text-orange-600 font-bold">クリックで分割</div>
-                    )}
-                  </div>
-                </Popup>
-              </CircleMarker>
+              />
             )
           })
         )}
@@ -916,7 +923,7 @@ export function PipeMap({
         })
       })()}
 
-      {/* 方向表示モード: 全管路の矢印 */}
+      {/* 方向表示モード: 全管路の矢印 (下流端よりやや上流側に描画) */}
       {showDirection && pipeLines.map(pipe => {
         if (pipe.positions.length < 2) return null
         const isSelected = pipe.id === selectedPipeId
@@ -926,20 +933,14 @@ export function PipeMap({
         const lastPos = pipe.positions[pipe.positions.length - 1]
         const prevPos = pipe.positions[pipe.positions.length - 2]
         const angle = calculateAngle(prevPos, lastPos)
+        const arrowPos = offsetTowardsPrev(lastPos, prevPos)
 
         return (
           <Marker
             key={`direction-${pipe.id}`}
-            position={lastPos}
+            position={arrowPos}
             icon={createArrowIcon(angle, pipe.color, false)}
-          >
-            <Popup>
-              <div className="text-xs">
-                <div className="font-bold">{pipe.number}</div>
-                <div>下流（終点）</div>
-              </div>
-            </Popup>
-          </Marker>
+          />
         )
       })}
 
