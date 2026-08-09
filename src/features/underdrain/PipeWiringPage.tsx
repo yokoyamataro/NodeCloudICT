@@ -34,7 +34,9 @@ import { HydraulicSettingsModal } from './HydraulicSettingsModal'
 type TabType = 'collector' | 'direct'
 
 // 選択モード
-type SelectionMode = 'none' | 'absorption' | 'collector' | 'bulk-start'
+// - 'direct-auto': 直落暗渠モード。1 本の管を選ぶと 吸水(連絡渠) → 落口 を
+//   自動生成して 1 系統として登録する。
+type SelectionMode = 'none' | 'absorption' | 'collector' | 'bulk-start' | 'direct-auto'
 
 export function PipeWiringPage() {
   const { pipes, fetchPipes } = useUnderdrainStore()
@@ -723,6 +725,35 @@ export function PipeWiringPage() {
 
   // 地図上の管路がクリックされた時
   const handlePipeSelect = useCallback((pipeId: string, ctrlKey?: boolean) => {
+    // 直落暗渠モード: 1 本の管を選ぶと 吸水 → 落口 を自動生成
+    // 合流部がないので、選択した管そのものを 吸水管 + 落口の対象管として登録する。
+    if (selectionMode === 'direct-auto') {
+      const selectedPipe = pipes.find((p) => p.id === pipeId)
+      if (!selectedPipe) return
+      const absorptionRow: WiringRow = {
+        id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+        rowType: 'absorption_end',
+        absorptionPipes: [pipeId],
+        collectorPipe: pipeId,
+        isMergePipe: false,
+        mergeSystemIndex: null,
+      }
+      const outletRow: WiringRow = {
+        id: `row-${Date.now() + 1}-${Math.random().toString(36).substring(2, 11)}`,
+        rowType: 'outlet',
+        absorptionPipes: [],
+        collectorPipe: pipeId,
+        isMergePipe: false,
+        mergeSystemIndex: null,
+      }
+      // 直落暗渠タブに 2 行を追加 (別タブにいたら direct タブへ切替)
+      setActiveTabType('direct')
+      setDirectRows([...directRows, absorptionRow, outletRow])
+      setSelectionMode('none')
+      setSelectedRowId(null)
+      return
+    }
+
     // 一括設定モード: 末端吸水を選択
     if (selectionMode === 'bulk-start') {
       const selectedPipe = pipes.find(p => p.id === pipeId)
@@ -1624,7 +1655,9 @@ export function PipeWiringPage() {
                 ? 'bg-blue-100 text-blue-700 border border-blue-300'
                 : selectionMode === 'bulk-start'
                   ? 'bg-purple-100 text-purple-700 border border-purple-300'
-                  : 'bg-green-100 text-green-700 border border-green-300'
+                  : selectionMode === 'direct-auto'
+                    ? 'bg-orange-100 text-orange-700 border border-orange-300'
+                    : 'bg-green-100 text-green-700 border border-green-300'
             }`}>
               <MousePointer className="h-4 w-4" />
               <span className="font-medium">
@@ -1632,7 +1665,9 @@ export function PipeWiringPage() {
                   ? '吸水を選択中（Ctrl+クリックで複数追加）'
                   : selectionMode === 'bulk-start'
                     ? '末端の吸水管を選択してください'
-                    : '集水/落口を選択中'}
+                    : selectionMode === 'direct-auto'
+                      ? '直落暗渠にする管路を 1 本タップ (吸水→落口が自動登録)'
+                      : '集水/落口を選択中'}
               </span>
               <button
                 onClick={() => {
@@ -1725,6 +1760,35 @@ export function PipeWiringPage() {
               直落暗渠
             </button>
           </div>
+
+          {/* 直落暗渠タブ専用ツールバー: 配管選択で 吸水→落口 を自動追加 */}
+          {activeTabType === 'direct' && (
+            <div className="border-b bg-orange-50 px-3 py-2 flex items-center gap-2">
+              <button
+                onClick={() => {
+                  if (selectionMode === 'direct-auto') {
+                    setSelectionMode('none')
+                    setSelectedRowId(null)
+                  } else {
+                    setSelectionMode('direct-auto')
+                    setSelectedRowId(null)
+                  }
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium border ${
+                  selectionMode === 'direct-auto'
+                    ? 'bg-orange-600 text-white border-orange-600'
+                    : 'bg-white text-orange-700 border-orange-300 hover:bg-orange-100'
+                }`}
+                title="1 本の配管をタップすると 吸水(連絡渠) → 落口 が 1 系統として自動登録されます"
+              >
+                <MousePointer className="h-3.5 w-3.5" />
+                {selectionMode === 'direct-auto' ? 'キャンセル' : '配管を選択して直落暗渠を追加'}
+              </button>
+              <span className="text-[11px] text-orange-700">
+                直落暗渠は合流部が無いので、1 本ずつ地図上でタップして登録します
+              </span>
+            </div>
+          )}
 
           {/* テーブル（系統ごとにブロック分け） */}
           <div className="flex-1 overflow-auto p-2 space-y-4">
