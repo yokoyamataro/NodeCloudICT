@@ -2161,20 +2161,52 @@ export function PipeWiringPage() {
                             <div className="flex items-center gap-1">
                               {row.collectorPipe ? (
                                 <>
-                                  {/* 集水合流点の場合は下流測点を表示 */}
+                                  {/* 集水合流点の場合は下流測点を表示 (クリックで地図上ハイライト) */}
                                   {row.rowType === 'collector_junction' ? (
-                                    <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs bg-purple-100 text-purple-800`}>
-                                      {getMergePointName(row.collectorPipe)}
-                                      <button
-                                        onClick={() => clearCollectorPipe(
-                                          row.id,
-                                          activeTabType === 'collector' ? activeCollectorIndex : undefined
-                                        )}
-                                        className="hover:text-red-600"
-                                      >
-                                        <X className="h-3 w-3" />
-                                      </button>
-                                    </span>
+                                    (() => {
+                                      const collPipe = pipes.find((p) => p.id === row.collectorPipe)
+                                      const vIdx = collPipe && collPipe.vertices.length > 0
+                                        ? collPipe.vertices.length - 1
+                                        : null
+                                      const isHl =
+                                        vIdx != null &&
+                                        collPipe &&
+                                        highlightedVertex?.pipeId === collPipe.id &&
+                                        highlightedVertex?.vertexIdx === vIdx
+                                      return (
+                                        <span className="inline-flex items-center gap-0.5">
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation()
+                                              if (vIdx == null || !collPipe) return
+                                              setHighlightedVertex(
+                                                isHl
+                                                  ? null
+                                                  : { pipeId: collPipe.id, vertexIdx: vIdx },
+                                              )
+                                            }}
+                                            disabled={vIdx == null}
+                                            className={`px-1.5 py-0.5 rounded text-xs ${
+                                              isHl
+                                                ? 'bg-red-500 text-white'
+                                                : 'bg-purple-100 text-purple-800 hover:bg-purple-200'
+                                            }`}
+                                            title="地図上で位置を強調"
+                                          >
+                                            {getMergePointName(row.collectorPipe)}
+                                          </button>
+                                          <button
+                                            onClick={() => clearCollectorPipe(
+                                              row.id,
+                                              activeTabType === 'collector' ? activeCollectorIndex : undefined
+                                            )}
+                                            className="hover:text-red-600 text-purple-700"
+                                          >
+                                            <X className="h-3 w-3" />
+                                          </button>
+                                        </span>
+                                      )
+                                    })()
                                   ) : isDirectDrop ? (
                                     // 直落暗渠: 落口管の番号 (背景なし) + 各測点をチップで
                                     <>
@@ -2264,6 +2296,16 @@ export function PipeWiringPage() {
                                                 displayRow.absorptionMergeVertexIdx != null
                                               ) {
                                                 vIdx = displayRow.absorptionMergeVertexIdx
+                                              } else if (row.rowType === 'collector_merge') {
+                                                // 前の集水管の下流端と一致する頂点 (「PrevA CurrC」の CurrC 側)
+                                                const prevId = displayRow.prevCollectorPipeId
+                                                const prevPipe = prevId && prevId !== row.collectorPipe
+                                                  ? pipes.find((p) => p.id === prevId)
+                                                  : null
+                                                if (prevPipe && prevPipe.vertices.length > 0) {
+                                                  const endV = prevPipe.vertices[prevPipe.vertices.length - 1]
+                                                  vIdx = findMatchingVertexIndex(collPipe, endV)
+                                                }
                                               }
                                             }
                                             // absorption_merge で collectorPointName が無ければ「(合流点)」
