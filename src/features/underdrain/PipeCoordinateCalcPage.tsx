@@ -72,7 +72,8 @@ export function PipeCoordinateCalcPage() {
   const { projects } = useProjectListStore()
 
   const fetchRoute = useExportRouteStore((s) => s.fetchRoute)
-  const saveDefaultRoute = useExportRouteStore((s) => s.saveDefaultRoute)
+  const fetchRoutes = useExportRouteStore((s) => s.fetchRoutes)
+  const saveRouteToDb = useExportRouteStore((s) => s.saveRoute)
   const savingRoute = useExportRouteStore((s) => s.saving)
 
   // プロジェクト選択時にデータを読み込む
@@ -768,8 +769,37 @@ export function PipeCoordinateCalcPage() {
                           alert('工区が選択されていません')
                           return
                         }
-                        const ok = await saveDefaultRoute(currentFarm.id, exportPoints)
-                        if (ok) alert('順路をサーバに保存しました（スマホ起工測量で利用されます）')
+                        // 既存ルートを取得して重複チェックに使う
+                        const existing = await fetchRoutes(currentFarm.id)
+                        // 名前入力 (前回名を初期値。無ければ空文字)
+                        const rawName = window.prompt(
+                          '保存するルート名を入力してください',
+                          existing[0]?.name ?? '',
+                        )
+                        if (rawName == null) return // キャンセル
+                        const name = rawName.trim()
+                        if (!name) {
+                          alert('ルート名を入力してください')
+                          return
+                        }
+                        const dup = existing.find((r) => r.name === name)
+                        if (dup) {
+                          const ok = window.confirm(
+                            `ルート「${name}」は既に存在します。上書き保存しますか?`,
+                          )
+                          if (!ok) return
+                        }
+                        const saved = await saveRouteToDb(
+                          currentFarm.id,
+                          name,
+                          exportPoints,
+                          dup?.id,
+                        )
+                        if (saved) {
+                          alert(
+                            `順路「${name}」をサーバに保存しました（スマホ起工測量で利用されます）`,
+                          )
+                        }
                       }}
                       disabled={savingRoute || !currentFarm}
                       className="flex items-center gap-1 px-2 py-1 text-sm border border-emerald-400 bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50"
