@@ -28,7 +28,9 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
+import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
+import { Polyline as LeafletPolyline, CircleMarker, Tooltip } from 'react-leaflet'
 import { useOrthophotoStore, tileBoundsLatLng } from '@/stores/orthophotoStore'
 import { useFarmMemoStore, EMPTY_FARM_MEMOS, type FarmMemo } from '@/stores/farmMemoStore'
 import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
@@ -304,6 +306,7 @@ export function OrthophotoPage() {
   const [showCamerasLayer, setShowCamerasLayer] = useState<boolean>(() => readVis('cameras', true))
   const [showMemosLayer, setShowMemosLayer] = useState<boolean>(() => readVis('memos', true))
   const [showAnnotationsLayer, setShowAnnotationsLayer] = useState<boolean>(() => readVis('annotations', true))
+  const [showPipesLayer, setShowPipesLayer] = useState<boolean>(() => readVis('pipes', true))
 
   // ペイント描画: 起動 / モード / 色 / 太さ
   const [showDrawing, setShowDrawing] = useState(false)
@@ -326,6 +329,54 @@ export function OrthophotoPage() {
   useEffect(() => writeVis('cameras', showCamerasLayer), [showCamerasLayer])
   useEffect(() => writeVis('memos', showMemosLayer), [showMemosLayer])
   useEffect(() => writeVis('annotations', showAnnotationsLayer), [showAnnotationsLayer])
+  useEffect(() => writeVis('pipes', showPipesLayer), [showPipesLayer])
+
+  // 暗渠 (pipes) を読み取り専用オーバーレイとして表示
+  const fetchPipes = useUnderdrainStore((s) => s.fetchPipes)
+  const pipes = useUnderdrainStore((s) => s.pipes)
+  useEffect(() => {
+    if (currentFarm) void fetchPipes(currentFarm.id)
+  }, [currentFarm, fetchPipes])
+  const pipeOverlay = useMemo(() => {
+    if (projectZone == null) {
+      return {
+        lines: [] as Array<{ id: string; positions: [number, number][] }>,
+        vertices: [] as Array<{ key: string; lat: number; lng: number; label: string }>,
+      }
+    }
+    const conv = new CoordinateConverter(projectZone)
+    const lines: Array<{ id: string; positions: [number, number][] }> = []
+    const vertices: Array<{ key: string; lat: number; lng: number; label: string }> = []
+    for (const pipe of pipes as PipeRow[]) {
+      if (pipe.vertices.length === 0) continue
+      const positions: [number, number][] = []
+      const total = pipe.vertices.length
+      for (let i = 0; i < total; i++) {
+        const v = pipe.vertices[i]
+        try {
+          const { lat, lng } = conv.toLatLng(v.x, v.y)
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
+          positions.push([lat, lng])
+          let suffix: string
+          if (i === 0) suffix = 'C'
+          else if (i === total - 1) suffix = 'A'
+          else suffix = `B${total - 1 - i}`
+          vertices.push({
+            key: `pv-${pipe.id}-${i}`,
+            lat,
+            lng,
+            label: `${pipe.number}${suffix}`,
+          })
+        } catch {
+          /* skip */
+        }
+      }
+      if (positions.length >= 2) {
+        lines.push({ id: pipe.id, positions })
+      }
+    }
+    return { lines, vertices }
+  }, [pipes, projectZone])
 
   // 表示設定パネルの開閉 (ヘッダの「表示」ボタンから)
   const [showVisMenu, setShowVisMenu] = useState(false)
@@ -822,6 +873,7 @@ export function OrthophotoPage() {
               [
                 { key: 'points', label: '点種 (座標マーカー)', on: showPointsLayer, set: setShowPointsLayer },
                 { key: 'parcels', label: '地番 (区域ポリゴン)', on: showParcelsLayer, set: setShowParcelsLayer },
+                { key: 'pipes', label: '暗渠配線', on: showPipesLayer, set: setShowPipesLayer },
                 { key: 'cameras', label: 'カメラ (工区写真)', on: showCamerasLayer, set: setShowCamerasLayer },
                 { key: 'memos', label: 'メモ', on: showMemosLayer, set: setShowMemosLayer },
                 { key: 'annotations', label: '作図要素', on: showAnnotationsLayer, set: setShowAnnotationsLayer },
@@ -1119,6 +1171,38 @@ export function OrthophotoPage() {
             widthPx={drawingWidth}
             lineStyle={drawingLineStyle}
           />
+          {/* 暗渠 (読み取り専用オーバーレイ)。編集は暗渠モジュールで。 */}
+          {showPipesLayer &&
+            pipeOverlay.lines.map((line) => (
+              <LeafletPolyline
+                key={`pipe-${line.id}`}
+                positions={line.positions}
+                pathOptions={{
+                  color: '#0891b2',
+                  weight: 2,
+                  opacity: 0.7,
+                  dashArray: '4 4',
+                }}
+              />
+            ))}
+          {showPipesLayer &&
+            pipeOverlay.vertices.map((v) => (
+              <CircleMarker
+                key={v.key}
+                center={[v.lat, v.lng]}
+                radius={3}
+                pathOptions={{
+                  color: '#0e7490',
+                  fillColor: '#67e8f9',
+                  fillOpacity: 0.9,
+                  weight: 1,
+                }}
+              >
+                <Tooltip direction="top" offset={[0, -4]} opacity={0.9}>
+                  <span className="text-[10px] font-mono">{v.label}</span>
+                </Tooltip>
+              </CircleMarker>
+            ))}
         </CoordinateMap>
 
         {/* 法務省地図トグル + 一括取込ボタン (左下、Leaflet attribution の対角) */}
