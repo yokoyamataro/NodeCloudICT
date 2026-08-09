@@ -525,8 +525,39 @@ export function PipeCoordinateCalcPage() {
     titleCell.font = { bold: true, size: 12 }
     titleCell.alignment = { vertical: 'middle', horizontal: 'left' }
 
-    // 2 行目: 列ヘッダー
-    const headerRow = ws.getRow(2)
+    // 2 行目: 点種ごとの点数サマリ (基準点X点 / 管路測点Y点 / 境界点Z点 ...)
+    const typeCounts: Record<string, number> = {}
+    pointsToExport.forEach((point) => {
+      const key =
+        point.source === 'pipe'
+          ? TYPE_NAMES.pipe
+          : TYPE_NAMES[point.type || ''] || point.type || 'その他'
+      typeCounts[key] = (typeCounts[key] ?? 0) + 1
+    })
+    // 表示順: 基準点 / 管路測点 / 境界点 / 暗渠構成点 / 客土構成点 / 測点 / その他
+    const summaryOrder = [
+      TYPE_NAMES.control,
+      TYPE_NAMES.pipe,
+      TYPE_NAMES.boundary,
+      TYPE_NAMES.underdrain,
+      TYPE_NAMES.soil_import,
+      TYPE_NAMES.stake,
+    ]
+    const summaryParts = summaryOrder.map(
+      (label) => `${label}${typeCounts[label] ?? 0}点`,
+    )
+    // 上記に含まれない型 (customType 等) は後尾に付与
+    for (const [k, v] of Object.entries(typeCounts)) {
+      if (!summaryOrder.includes(k)) summaryParts.push(`${k}${v}点`)
+    }
+    ws.mergeCells('A2:F2')
+    const summaryCell = ws.getCell('A2')
+    summaryCell.value = summaryParts.join(' / ')
+    summaryCell.font = { size: 10 }
+    summaryCell.alignment = { vertical: 'middle', horizontal: 'left' }
+
+    // 3 行目: 列ヘッダー
+    const headerRow = ws.getRow(3)
     headerRow.values = ['番号', '点名', 'X (m)', 'Y (m)', 'Z (m)', '点種']
     headerRow.font = { bold: true }
     headerRow.alignment = { vertical: 'middle', horizontal: 'center' }
@@ -539,14 +570,14 @@ export function PipeCoordinateCalcPage() {
       }
     })
 
-    // 3 行目以降: データ
+    // 4 行目以降: データ
     let pipeSeq = 0 // 管路測点だけをカウントして 10 ごとに罫線
     pointsToExport.forEach((point, index) => {
       const typeLabel =
         point.source === 'pipe'
           ? TYPE_NAMES.pipe
           : TYPE_NAMES[point.type || ''] || point.type || ''
-      const row = ws.getRow(index + 3)
+      const row = ws.getRow(index + 4)
       row.values = [
         index + 1,
         point.name,
