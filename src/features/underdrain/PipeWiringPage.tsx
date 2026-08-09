@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef, type ReactNode } from 'react'
 import {
   Cable,
   Plus,
@@ -98,6 +98,11 @@ export function PipeWiringPage() {
   // 選択モード
   const [selectionMode, setSelectionMode] = useState<SelectionMode>('none')
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null)
+  // 表内の測点タップで地図上を強調表示するための頂点参照
+  const [highlightedVertex, setHighlightedVertex] = useState<{
+    pipeId: string
+    vertexIdx: number
+  } | null>(null)
 
   // 一括設定モード用の状態
   const [pendingCollectorPipeId, setPendingCollectorPipeId] = useState<string | null>(null) // 次に処理する集水管
@@ -1041,15 +1046,6 @@ export function PipeWiringPage() {
       absorptionPipe.number,
       absorptionPipe.vertices.length - 1,
       absorptionPipe.vertices.length
-    )
-  }, [pipes, generatePointName])
-
-  // 吸水管の全構成点名を返す（C, B{n}..., A）
-  const getAbsorptionVertexNames = useCallback((pipeId: string): string[] => {
-    const pipe = pipes.find((p) => p.id === pipeId)
-    if (!pipe || pipe.vertices.length === 0) return []
-    return pipe.vertices.map((_, idx) =>
-      generatePointName(pipe.number, idx, pipe.vertices.length),
     )
   }, [pipes, generatePointName])
 
@@ -2069,7 +2065,7 @@ export function PipeWiringPage() {
                                 {row.absorptionPipes.map(pipeId => (
                                   <span
                                     key={pipeId}
-                                    className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded text-xs"
+                                    className="inline-flex items-center gap-0.5 text-xs font-medium text-blue-700"
                                   >
                                     {getPipeNumber(pipeId)}
                                     <button
@@ -2094,16 +2090,49 @@ export function PipeWiringPage() {
                                 >
                                   {isAbsorptionSelecting ? '選択中' : '+'}
                                 </button>
-                                {/* 接続点名を吸水列の右端に表示
-                                    - 吸水端部 / 吸水合流: 吸水管の全構成点名（C, B1, ..., A）を列挙
-                                    - それ以外: 接続点（A）のみ */}
+                                {/* 各測点をチップで表示 (クリックで地図強調)。
+                                    - 吸水端部 / 吸水合流: 吸水管の全構成点 (C, B{n}, A)
+                                    - それ以外: 接続点 (A) のみ */}
                                 {row.collectorPipe && row.absorptionPipes.length > 0 && (
-                                  <span className="text-xs text-slate-500 ml-1">
-                                    {(row.rowType === 'absorption_end' || row.rowType === 'absorption_merge')
-                                      ? row.absorptionPipes
-                                          .flatMap((id) => getAbsorptionVertexNames(id))
-                                          .join(' ') || '-'
-                                      : getConnectionPointName(row.absorptionPipes, row.collectorPipe) || '-'}
+                                  <span className="inline-flex flex-wrap gap-0.5 items-center ml-1">
+                                    {(row.rowType === 'absorption_end' || row.rowType === 'absorption_merge') ? (
+                                      row.absorptionPipes.flatMap((id) => {
+                                        const p = pipes.find((pp) => pp.id === id)
+                                        if (!p) return [] as ReactNode[]
+                                        const n = p.vertices.length
+                                        return p.vertices.map((_, vIdx) => {
+                                          const name = generatePointName(p.number, vIdx, n)
+                                          const isHl =
+                                            highlightedVertex?.pipeId === p.id &&
+                                            highlightedVertex?.vertexIdx === vIdx
+                                          return (
+                                            <button
+                                              key={`${p.id}-${vIdx}`}
+                                              onClick={(e) => {
+                                                e.stopPropagation()
+                                                setHighlightedVertex(
+                                                  isHl
+                                                    ? null
+                                                    : { pipeId: p.id, vertexIdx: vIdx },
+                                                )
+                                              }}
+                                              className={`px-1 py-0.5 rounded text-[11px] ${
+                                                isHl
+                                                  ? 'bg-red-500 text-white'
+                                                  : 'bg-blue-100 text-blue-800 hover:bg-blue-200'
+                                              }`}
+                                              title="地図上で位置を強調"
+                                            >
+                                              {name}
+                                            </button>
+                                          )
+                                        })
+                                      })
+                                    ) : (
+                                      <span className="text-xs text-slate-500">
+                                        {getConnectionPointName(row.absorptionPipes, row.collectorPipe) || '-'}
+                                      </span>
+                                    )}
                                   </span>
                                 )}
                                 {/* 支配延長 */}
@@ -2141,27 +2170,127 @@ export function PipeWiringPage() {
                                         <X className="h-3 w-3" />
                                       </button>
                                     </span>
+                                  ) : isDirectDrop ? (
+                                    // 直落暗渠: 落口管の番号 (背景なし) + 各測点をチップで
+                                    <>
+                                      {(() => {
+                                        const outletPipe = pipes.find((p) => p.id === row.collectorPipe)
+                                        if (!outletPipe) return null
+                                        const n = outletPipe.vertices.length
+                                        return (
+                                          <>
+                                            <span className="inline-flex items-center gap-0.5 text-xs font-medium text-orange-700">
+                                              {outletPipe.number}
+                                              <button
+                                                onClick={() => clearCollectorPipe(row.id, undefined)}
+                                                className="hover:text-red-600"
+                                              >
+                                                <X className="h-3 w-3" />
+                                              </button>
+                                            </span>
+                                            <span className="inline-flex flex-wrap gap-0.5 items-center ml-1">
+                                              {outletPipe.vertices.map((_, vIdx) => {
+                                                const name = generatePointName(outletPipe.number, vIdx, n)
+                                                const isHl =
+                                                  highlightedVertex?.pipeId === outletPipe.id &&
+                                                  highlightedVertex?.vertexIdx === vIdx
+                                                return (
+                                                  <button
+                                                    key={`${outletPipe.id}-${vIdx}`}
+                                                    onClick={(e) => {
+                                                      e.stopPropagation()
+                                                      setHighlightedVertex(
+                                                        isHl
+                                                          ? null
+                                                          : { pipeId: outletPipe.id, vertexIdx: vIdx },
+                                                      )
+                                                    }}
+                                                    className={`px-1 py-0.5 rounded text-[11px] ${
+                                                      isHl
+                                                        ? 'bg-red-500 text-white'
+                                                        : 'bg-orange-100 text-orange-800 hover:bg-orange-200'
+                                                    }`}
+                                                    title="地図上で位置を強調"
+                                                  >
+                                                    {name}
+                                                  </button>
+                                                )
+                                              })}
+                                            </span>
+                                          </>
+                                        )
+                                      })()}
+                                    </>
                                   ) : (
-                                    // 通常の行: 測点名を表示（ある場合）
-                                    <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs ${
-                                      activeTabType === 'collector'
-                                        ? 'bg-green-100 text-green-800'
-                                        : 'bg-orange-100 text-orange-800'
-                                    }`}>
-                                      {collectorPointName || '-'}
-                                      <button
-                                        onClick={() => clearCollectorPipe(
-                                          row.id,
-                                          activeTabType === 'collector' ? activeCollectorIndex : undefined
-                                        )}
-                                        className="hover:text-red-600"
-                                      >
-                                        <X className="h-3 w-3" />
-                                      </button>
-                                    </span>
+                                    // 通常の行: 集水管番号 (背景なし) + 該当測点 (背景あり)
+                                    (() => {
+                                      const collPipe = pipes.find((p) => p.id === row.collectorPipe)
+                                      const pipeNumber = collPipe?.number ?? row.collectorPipe
+                                      return (
+                                        <>
+                                          <span className={`inline-flex items-center gap-0.5 text-xs font-medium ${
+                                            activeTabType === 'collector' ? 'text-green-700' : 'text-orange-700'
+                                          }`}>
+                                            {pipeNumber}
+                                            <button
+                                              onClick={() => clearCollectorPipe(
+                                                row.id,
+                                                activeTabType === 'collector' ? activeCollectorIndex : undefined
+                                              )}
+                                              className="hover:text-red-600"
+                                            >
+                                              <X className="h-3 w-3" />
+                                            </button>
+                                          </span>
+                                          {collectorPointName && (() => {
+                                            // 該当測点を計算 (該当 vertex idx を推定してクリック可能に)
+                                            let vIdx: number | null = null
+                                            if (collPipe) {
+                                              if (row.rowType === 'absorption_end') vIdx = 0
+                                              else if (row.rowType === 'outlet') {
+                                                vIdx = collPipe.vertices.length - 1
+                                              } else if (
+                                                row.rowType === 'collector_change' &&
+                                                displayRow.collectorChangeIndex != null
+                                              ) {
+                                                vIdx = displayRow.collectorChangeIndex
+                                              }
+                                            }
+                                            const isHl =
+                                              vIdx != null &&
+                                              collPipe &&
+                                              highlightedVertex?.pipeId === collPipe.id &&
+                                              highlightedVertex?.vertexIdx === vIdx
+                                            const chipBase =
+                                              activeTabType === 'collector'
+                                                ? 'bg-green-100 text-green-800 hover:bg-green-200'
+                                                : 'bg-orange-100 text-orange-800 hover:bg-orange-200'
+                                            return (
+                                              <button
+                                                onClick={(e) => {
+                                                  e.stopPropagation()
+                                                  if (vIdx == null || !collPipe) return
+                                                  setHighlightedVertex(
+                                                    isHl
+                                                      ? null
+                                                      : { pipeId: collPipe.id, vertexIdx: vIdx },
+                                                  )
+                                                }}
+                                                className={`px-1 py-0.5 rounded text-[11px] ml-1 ${
+                                                  isHl ? 'bg-red-500 text-white' : chipBase
+                                                }`}
+                                                title="地図上で位置を強調"
+                                              >
+                                                {collectorPointName}
+                                              </button>
+                                            )
+                                          })()}
+                                        </>
+                                      )
+                                    })()
                                   )}
-                                  {/* 落口タイプの場合のみ落口情報を表示 */}
-                                  {row.rowType === 'outlet' && (
+                                  {/* 落口タイプの場合のみ落口情報を表示 (直落暗渠は 1 行表示なので不要) */}
+                                  {row.rowType === 'outlet' && !isDirectDrop && (
                                     <span className="text-xs text-orange-500">
                                       → {getMergePointName(row.collectorPipe)} (落口)
                                     </span>
@@ -2374,6 +2503,7 @@ export function PipeWiringPage() {
               isBulkEditMode={selectionMode !== 'none'}
               pipeChangePoints={pipeChangePoints}
               focusedPipeId={showContinueDialog ? pendingCollectorPipeId : null}
+              highlightedVertex={highlightedVertex}
             />
           </div>
         </div>

@@ -269,6 +269,8 @@ interface PipeMapProps {
   baseLayer?: BaseLayerType     // 背景地図の種類
   pipeChangePoints?: PipeChangePoint[]  // 管切り替え点（〇マーカー表示用）
   importPreviewLines?: ImportPreviewLine[]  // DXF 取込前の候補プレビュー
+  /** 表内の測点タップで強調表示する頂点 */
+  highlightedVertex?: { pipeId: string; vertexIdx: number } | null
 }
 
 // 測点ラベルアイコンを生成（緑の丸マーカー + ラベル、選択時はオレンジ・拡大・パルス）
@@ -430,6 +432,7 @@ export function PipeMap({
   baseLayer = 'osm',
   pipeChangePoints = [],
   importPreviewLines = [],
+  highlightedVertex = null,
 }: PipeMapProps) {
   const { pipes } = useUnderdrainStore()
   const { zone, coordinates } = useCoordinateStore()
@@ -672,16 +675,20 @@ export function PipeMap({
             }
 
             // 始点と中間点は円マーカー
+            const isHighlighted =
+              highlightedVertex != null &&
+              highlightedVertex.pipeId === pipe.id &&
+              highlightedVertex.vertexIdx === idx
             return (
               <CircleMarker
                 key={`${pipe.id}-${idx}`}
                 center={pos}
-                radius={isSplitMode && canSplit ? 8 : (isStart ? 7 : 5)}
+                radius={isHighlighted ? 11 : (isSplitMode && canSplit ? 8 : (isStart ? 7 : 5))}
                 pathOptions={{
-                  color: canSplit ? '#f97316' : SELECTED_COLOR, // 分割可能点はオレンジ
-                  fillColor: canSplit ? '#f97316' : (isStart ? SELECTED_COLOR : '#fff'),
+                  color: isHighlighted ? '#dc2626' : (canSplit ? '#f97316' : SELECTED_COLOR),
+                  fillColor: isHighlighted ? '#fbbf24' : (canSplit ? '#f97316' : (isStart ? SELECTED_COLOR : '#fff')),
                   fillOpacity: 1,
-                  weight: 2,
+                  weight: isHighlighted ? 3 : 2,
                 }}
                 eventHandlers={canSplit ? {
                   click: () => onVertexClick?.(pipe.id, idx),
@@ -707,6 +714,28 @@ export function PipeMap({
             )
           })
         )}
+
+      {/* 表内タップで指定された頂点を強調表示 (常時、選択管路と独立) */}
+      {highlightedVertex && (() => {
+        const pipe = pipeLines.find((p) => p.id === highlightedVertex.pipeId)
+        if (!pipe) return null
+        const pos = pipe.positions[highlightedVertex.vertexIdx]
+        if (!pos) return null
+        return (
+          <CircleMarker
+            key={`hl-${highlightedVertex.pipeId}-${highlightedVertex.vertexIdx}`}
+            center={pos}
+            radius={13}
+            pathOptions={{
+              color: '#dc2626',
+              fillColor: '#fde047',
+              fillOpacity: 0.9,
+              weight: 4,
+            }}
+            interactive={false}
+          />
+        )
+      })()}
 
       {/* 分割モードでの合流点マーカー（選択中管路上にある他の管路の端点） */}
       {editMode === 'split' && selectedPipeId && (() => {
