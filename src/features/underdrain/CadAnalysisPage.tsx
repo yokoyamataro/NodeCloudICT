@@ -29,12 +29,14 @@ interface ParsedEntity {
 // 表示モード
 type ViewMode = 'import' | 'list'
 
-// 一括訂正モードの設定（連番機能を統合）
+// 管種設定モード (旧: 一括訂正)。連番機能は独立モードに分離。
 interface BulkEditSettings {
   pipeType: PipeType | null
   diameter: number | null
-  // 連番設定
-  enableSequential: boolean  // 連番を有効にするか
+}
+
+// 配線番号 (連番) モードの設定
+interface NumberingSettings {
   prefix: string             // 頭文字
   currentNumber: number      // 現在の番号
   suffix: string             // 末尾文字
@@ -57,12 +59,16 @@ export function CadAnalysisPage() {
   } | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('import')
 
-  // 一括訂正モード（連番機能を統合）
+  // 管種設定モード (旧: 一括訂正)
   const [isBulkEditMode, setIsBulkEditMode] = useState(false)
   const [bulkEditSettings, setBulkEditSettings] = useState<BulkEditSettings>({
     pipeType: null,
     diameter: null,
-    enableSequential: false,
+  })
+
+  // 配線番号 (連番) モード。管路をタップするたびに現番号を割り当てて +1 する
+  const [isNumberingMode, setIsNumberingMode] = useState(false)
+  const [numberingSettings, setNumberingSettings] = useState<NumberingSettings>({
     prefix: '',
     currentNumber: 1,
     suffix: '',
@@ -567,7 +573,7 @@ export function CadAnalysisPage() {
       return
     }
 
-    // 一括訂正モード（連番機能を含む）
+    // 管種設定モード (旧 一括訂正)
     if (isBulkEditMode) {
       const updates: Partial<PipeRow> = {}
       if (bulkEditSettings.pipeType !== null) {
@@ -576,15 +582,18 @@ export function CadAnalysisPage() {
       if (bulkEditSettings.diameter !== null) {
         updates.diameter = bulkEditSettings.diameter
       }
-      // 連番が有効な場合
-      if (bulkEditSettings.enableSequential) {
-        const newNumber = `${bulkEditSettings.prefix}${bulkEditSettings.currentNumber}${bulkEditSettings.suffix}`
-        updates.number = newNumber
-        setBulkEditSettings(prev => ({ ...prev, currentNumber: prev.currentNumber + 1 }))
-      }
       if (Object.keys(updates).length > 0) {
         updatePipe(id, updates)
       }
+      setSelectedPipeId(id)
+      return
+    }
+
+    // 配線番号 (連番) モード
+    if (isNumberingMode) {
+      const newNumber = `${numberingSettings.prefix}${numberingSettings.currentNumber}${numberingSettings.suffix}`
+      updatePipe(id, { number: newNumber })
+      setNumberingSettings((prev) => ({ ...prev, currentNumber: prev.currentNumber + 1 }))
       setSelectedPipeId(id)
       return
     }
@@ -682,25 +691,30 @@ export function CadAnalysisPage() {
     }
   }
 
-  // 一括訂正モードでのクリック（テーブル用）
+  // 管種設定 / 配線番号モードでのクリック (テーブル用)
   const handleBulkEditClick = (id: string) => {
-    if (!isBulkEditMode) {
-      setSelectedPipeId(id)
+    // 管種設定
+    if (isBulkEditMode) {
+      const updates: Partial<PipeRow> = {}
+      if (bulkEditSettings.pipeType !== null) {
+        updates.pipeType = bulkEditSettings.pipeType
+      }
+      if (bulkEditSettings.diameter !== null) {
+        updates.diameter = bulkEditSettings.diameter
+      }
+      if (Object.keys(updates).length > 0) {
+        updatePipe(id, updates)
+      }
       return
     }
-
-    // 一括訂正を適用
-    const updates: Partial<PipeRow> = {}
-    if (bulkEditSettings.pipeType !== null) {
-      updates.pipeType = bulkEditSettings.pipeType
+    // 配線番号 (連番)
+    if (isNumberingMode) {
+      const newNumber = `${numberingSettings.prefix}${numberingSettings.currentNumber}${numberingSettings.suffix}`
+      updatePipe(id, { number: newNumber })
+      setNumberingSettings((prev) => ({ ...prev, currentNumber: prev.currentNumber + 1 }))
+      return
     }
-    if (bulkEditSettings.diameter !== null) {
-      updates.diameter = bulkEditSettings.diameter
-    }
-
-    if (Object.keys(updates).length > 0) {
-      updatePipe(id, updates)
-    }
+    setSelectedPipeId(id)
   }
 
   // CSVエクスポート
@@ -730,30 +744,30 @@ export function CadAnalysisPage() {
     URL.revokeObjectURL(url)
   }
 
-  // 一括訂正モード開始
+  // 管種設定モード開始
   const startBulkEdit = () => {
     setIsBulkEditMode(true)
-    setBulkEditSettings({
-      pipeType: null,
-      diameter: null,
-      enableSequential: false,
-      prefix: '',
-      currentNumber: 1,
-      suffix: '',
-    })
+    setIsNumberingMode(false)
+    setBulkEditSettings({ pipeType: null, diameter: null })
   }
 
-  // 一括訂正モード終了
+  // 管種設定モード終了
   const endBulkEdit = () => {
     setIsBulkEditMode(false)
-    setBulkEditSettings({
-      pipeType: null,
-      diameter: null,
-      enableSequential: false,
-      prefix: '',
-      currentNumber: 1,
-      suffix: '',
-    })
+    setBulkEditSettings({ pipeType: null, diameter: null })
+  }
+
+  // 配線番号モード開始
+  const startNumbering = () => {
+    setIsNumberingMode(true)
+    setIsBulkEditMode(false)
+    setNumberingSettings({ prefix: '', currentNumber: 1, suffix: '' })
+  }
+
+  // 配線番号モード終了
+  const endNumbering = () => {
+    setIsNumberingMode(false)
+    setNumberingSettings({ prefix: '', currentNumber: 1, suffix: '' })
   }
 
   // 自動接続モード開始
@@ -843,30 +857,41 @@ export function CadAnalysisPage() {
                 <Upload className="h-4 w-4" />
                 DXF
               </button>
-              {pipes.length > 0 && !isBulkEditMode && editMode === 'normal' && autoConnectMode === 'idle' && (
+              {pipes.length > 0 && !isBulkEditMode && !isNumberingMode && editMode === 'normal' && autoConnectMode === 'idle' && (
                 <>
                   <div className="w-px h-6 bg-slate-300 mx-0.5" />
                   {/* 編集モード */}
                   <button
                     onClick={startBulkEdit}
-                    className="p-2 text-slate-600 border border-transparent rounded hover:bg-white hover:border-slate-300"
-                    title="一括訂正（管種・管径・連番をまとめて設定）"
+                    className="flex items-center gap-1 px-2 py-1.5 text-sm border border-transparent rounded text-slate-600 hover:bg-white hover:border-slate-300"
+                    title="管種設定（管種・管径をまとめて割り当て）"
                   >
                     <Edit3 className="h-4 w-4" />
+                    管種設定
                   </button>
                   <button
                     onClick={() => { setEditMode('merge'); clearPipeSelection() }}
-                    className="p-2 text-slate-600 border border-transparent rounded hover:bg-white hover:border-slate-300"
+                    className="flex items-center gap-1 px-2 py-1.5 text-sm border border-transparent rounded text-slate-600 hover:bg-white hover:border-slate-300"
                     title="結合（隣接管路を 1 本にまとめる）"
                   >
                     <Merge className="h-4 w-4" />
+                    結合
                   </button>
                   <button
                     onClick={() => { setEditMode('split'); setSelectedPipeId(null) }}
-                    className="p-2 text-slate-600 border border-transparent rounded hover:bg-white hover:border-slate-300"
+                    className="flex items-center gap-1 px-2 py-1.5 text-sm border border-transparent rounded text-slate-600 hover:bg-white hover:border-slate-300"
                     title="分割（管路を頂点・距離・合流点で分ける）"
                   >
                     <Split className="h-4 w-4" />
+                    分割
+                  </button>
+                  <button
+                    onClick={startNumbering}
+                    className="flex items-center gap-1 px-2 py-1.5 text-sm border border-transparent rounded text-slate-600 hover:bg-white hover:border-slate-300"
+                    title="配線番号（連番: 管路をクリックするたびに番号を割り当て）"
+                  >
+                    <Tag className="h-4 w-4" />
+                    配線番号
                   </button>
 
                   <div className="w-px h-6 bg-slate-300 mx-0.5" />
@@ -905,7 +930,7 @@ export function CadAnalysisPage() {
                   </button>
                 </>
               )}
-              {lastImportFile && !isBulkEditMode && (
+              {lastImportFile && !isBulkEditMode && !isNumberingMode && (
                 <span className="ml-auto text-xs text-muted-foreground truncate max-w-[200px]" title={lastImportFile}>
                   最終: {lastImportFile}
                 </span>
@@ -941,7 +966,12 @@ export function CadAnalysisPage() {
                   結合モード: 結合する管路をクリックで選択（{selectedPipeIds.size}件選択中）
                   {isBulkEditMode && (
                     <span className="ml-2 text-amber-700 text-xs">
-                      （完了後、一括訂正モードに戻ります）
+                      （完了後、管種設定モードに戻ります）
+                    </span>
+                  )}
+                  {isNumberingMode && (
+                    <span className="ml-2 text-cyan-700 text-xs">
+                      （完了後、配線番号モードに戻ります）
                     </span>
                   )}
                 </span>
@@ -1000,7 +1030,12 @@ export function CadAnalysisPage() {
                     : '分割する管路を選択してください'}
                   {isBulkEditMode && (
                     <span className="ml-2 text-amber-700 text-xs">
-                      （完了後、一括訂正モードに戻ります）
+                      （完了後、管種設定モードに戻ります）
+                    </span>
+                  )}
+                  {isNumberingMode && (
+                    <span className="ml-2 text-cyan-700 text-xs">
+                      （完了後、配線番号モードに戻ります）
                     </span>
                   )}
                 </span>
@@ -1045,24 +1080,19 @@ export function CadAnalysisPage() {
             </div>
           )}
 
-          {/* 一括訂正モードパネル（連番機能を含む） */}
+          {/* 管種設定モードパネル (旧 一括訂正) */}
           {isBulkEditMode && editMode === 'normal' && (
             <div className="p-3 bg-amber-50 border-b flex-shrink-0">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-medium text-amber-800">
-                  一括訂正モード: 地図上の管路をクリックして変更
-                  {bulkEditSettings.enableSequential && (
-                    <span className="ml-2 text-cyan-700">
-                      （次の番号: {bulkEditSettings.prefix}{bulkEditSettings.currentNumber}{bulkEditSettings.suffix}）
-                    </span>
-                  )}
+                  管種設定モード: 地図上の管路をクリックして変更
                 </span>
                 <div className="flex items-center gap-1">
-                  {/* 一括訂正の途中でも管の結合・分割を割り込みで実行できる */}
+                  {/* 途中でも管の結合・分割を割り込みで実行できる */}
                   <button
                     onClick={() => { setEditMode('merge'); clearPipeSelection() }}
                     className="flex items-center gap-1 px-2 py-1 text-xs border border-purple-300 bg-white text-purple-700 rounded hover:bg-purple-50"
-                    title="結合を割り込みで実行（完了後、一括訂正に戻る）"
+                    title="結合を割り込みで実行（完了後、管種設定に戻る）"
                   >
                     <Merge className="h-3.5 w-3.5" />
                     結合
@@ -1070,7 +1100,7 @@ export function CadAnalysisPage() {
                   <button
                     onClick={() => { setEditMode('split'); setSelectedPipeId(null) }}
                     className="flex items-center gap-1 px-2 py-1 text-xs border border-orange-300 bg-white text-orange-700 rounded hover:bg-orange-50"
-                    title="分割を割り込みで実行（完了後、一括訂正に戻る）"
+                    title="分割を割り込みで実行（完了後、管種設定に戻る）"
                   >
                     <Split className="h-3.5 w-3.5" />
                     分割
@@ -1124,63 +1154,65 @@ export function CadAnalysisPage() {
                     ))}
                   </select>
                 </div>
-                <div className="border-l pl-4 flex items-center gap-2">
-                  <label className="flex items-center gap-1 text-xs text-amber-700 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={bulkEditSettings.enableSequential}
-                      onChange={(e) =>
-                        setBulkEditSettings((prev) => ({
-                          ...prev,
-                          enableSequential: e.target.checked,
-                        }))
-                      }
-                      className="h-3 w-3"
-                    />
-                    連番
-                  </label>
+              </div>
+            </div>
+          )}
+
+          {/* 配線番号モードパネル */}
+          {isNumberingMode && editMode === 'normal' && (
+            <div className="p-3 bg-cyan-50 border-b flex-shrink-0">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium text-cyan-800">
+                  配線番号モード: 管路をクリックすると次の番号を割り当て
+                  <span className="ml-2 text-cyan-700">
+                    （次の番号: {numberingSettings.prefix}{numberingSettings.currentNumber}{numberingSettings.suffix}）
+                  </span>
+                </span>
+                <button
+                  onClick={endNumbering}
+                  className="p-1 text-cyan-600 hover:bg-cyan-100 rounded"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-cyan-700">頭文字:</label>
+                  <input
+                    type="text"
+                    value={numberingSettings.prefix}
+                    onChange={(e) =>
+                      setNumberingSettings((prev) => ({ ...prev, prefix: e.target.value }))
+                    }
+                    className="w-16 px-2 py-1 border rounded text-xs"
+                  />
                 </div>
-                {bulkEditSettings.enableSequential && (
-                  <>
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs text-cyan-700">頭文字:</label>
-                      <input
-                        type="text"
-                        value={bulkEditSettings.prefix}
-                        onChange={(e) =>
-                          setBulkEditSettings((prev) => ({ ...prev, prefix: e.target.value }))
-                        }
-                        className="w-16 px-2 py-1 border rounded text-xs"
-                      />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs text-cyan-700">番号:</label>
-                      <input
-                        type="number"
-                        value={bulkEditSettings.currentNumber}
-                        onChange={(e) =>
-                          setBulkEditSettings((prev) => ({
-                            ...prev,
-                            currentNumber: parseInt(e.target.value) || 1,
-                          }))
-                        }
-                        className="w-16 px-2 py-1 border rounded text-xs text-right"
-                        min={1}
-                      />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs text-cyan-700">末尾:</label>
-                      <input
-                        type="text"
-                        value={bulkEditSettings.suffix}
-                        onChange={(e) =>
-                          setBulkEditSettings((prev) => ({ ...prev, suffix: e.target.value }))
-                        }
-                        className="w-16 px-2 py-1 border rounded text-xs"
-                      />
-                    </div>
-                  </>
-                )}
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-cyan-700">番号:</label>
+                  <input
+                    type="number"
+                    value={numberingSettings.currentNumber}
+                    onChange={(e) =>
+                      setNumberingSettings((prev) => ({
+                        ...prev,
+                        currentNumber: parseInt(e.target.value) || 1,
+                      }))
+                    }
+                    className="w-16 px-2 py-1 border rounded text-xs text-right"
+                    min={1}
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-cyan-700">末尾:</label>
+                  <input
+                    type="text"
+                    value={numberingSettings.suffix}
+                    onChange={(e) =>
+                      setNumberingSettings((prev) => ({ ...prev, suffix: e.target.value }))
+                    }
+                    className="w-16 px-2 py-1 border rounded text-xs"
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -1586,7 +1618,7 @@ export function CadAnalysisPage() {
               onPipeSelect={handlePipeClick}
               onVertexClick={handleVertexClick}
               onJunctionSplitClick={handleJunctionSplitClick}
-              isBulkEditMode={isBulkEditMode || autoConnectMode === 'selecting-outlet'}
+              isBulkEditMode={isBulkEditMode || isNumberingMode || autoConnectMode === 'selecting-outlet'}
               showDirection={showDirection}
               showLabels={showLabels}
               showSurveyPoints={showSurveyPoints}
