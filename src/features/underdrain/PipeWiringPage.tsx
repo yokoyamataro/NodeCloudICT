@@ -2305,13 +2305,40 @@ export function PipeWiringPage() {
                                                 if (prevPipe && prevPipe.vertices.length > 0) {
                                                   const endV = prevPipe.vertices[prevPipe.vertices.length - 1]
                                                   vIdx = findMatchingVertexIndex(collPipe, endV)
+                                                } else if (row.absorptionPipes.length > 0) {
+                                                  // 管切り替え無し: 参照系統 (absorptionPipes[0] は系統 index の文字列)
+                                                  // の終端集水管の下流端 → 現行 collectorPipe 上で最も近い頂点
+                                                  const sysIdx = parseInt(row.absorptionPipes[0])
+                                                  if (!isNaN(sysIdx)) {
+                                                    const sys = systemGroups.find((g) => g.systemIndex === sysIdx)
+                                                    const lastRow = sys?.rows[sys.rows.length - 1]
+                                                    const sysCollId = lastRow?.collectorPipe
+                                                    const sysCollPipe = sysCollId
+                                                      ? pipes.find((p) => p.id === sysCollId)
+                                                      : null
+                                                    if (sysCollPipe && sysCollPipe.vertices.length > 0) {
+                                                      const sysEnd = sysCollPipe.vertices[sysCollPipe.vertices.length - 1]
+                                                      // 最も近い頂点を探す
+                                                      let bestIdx = 0
+                                                      let bestDist = Infinity
+                                                      for (let i = 0; i < collPipe.vertices.length; i++) {
+                                                        const v = collPipe.vertices[i]
+                                                        const d = Math.hypot(v.x - sysEnd.x, v.y - sysEnd.y)
+                                                        if (d < bestDist) { bestDist = d; bestIdx = i }
+                                                      }
+                                                      vIdx = bestIdx
+                                                    }
+                                                  }
                                                 }
                                               }
                                             }
-                                            // absorption_merge で collectorPointName が無ければ「(合流点)」
+                                            // absorption_merge / collector_merge で collectorPointName が
+                                            // 無ければ「(合流点)」
                                             const displayLabel =
                                               collectorPointName ??
-                                              (row.rowType === 'absorption_merge' && vIdx != null
+                                              ((row.rowType === 'absorption_merge' ||
+                                                row.rowType === 'collector_merge') &&
+                                                vIdx != null
                                                 ? '(合流点)'
                                                 : null)
                                             if (!displayLabel) return null
