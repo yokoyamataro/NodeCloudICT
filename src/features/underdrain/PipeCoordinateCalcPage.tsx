@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react'
 import { MapPin, Settings, Hash, Navigation, Target, Square, Map, FileText, MousePointer, X, ArrowUp, ArrowDown, Route, Plus, Table, Save, FolderOpen } from 'lucide-react'
-import * as XLSX from 'xlsx'
+import ExcelJS from 'exceljs'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { CoordinateConverter } from '@/lib/coordinates'
@@ -474,8 +474,12 @@ export function PipeCoordinateCalcPage() {
   }
 
   // Excelエクスポート
-  const handleExportExcel = () => {
-    const projectName = currentFarm?.name || 'NoName'
+  const handleExportExcel = async () => {
+    const farmName = currentFarm?.name || 'NoName'
+    const projectObj = currentFarm
+      ? projects.find((p) => p.id === currentFarm.project_id)
+      : null
+    const projectName = projectObj?.name || ''
 
     // 出力データを準備
     const pointsToExport = exportPoints.length > 0 ? exportPoints : [
@@ -497,35 +501,88 @@ export function PipeCoordinateCalcPage() {
       })),
     ]
 
-    // Excel用データを作成
-    const data = pointsToExport.map((point, index) => ({
-      '番号': index + 1,
-      '点名': point.name,
-      '点種': point.source === 'pipe' ? TYPE_NAMES.pipe : (TYPE_NAMES[point.type || ''] || point.type || ''),
-      'X (m)': point.x,
-      'Y (m)': point.y,
-      'Z (m)': point.z ?? '',
-    }))
+    // ワークブックを作成
+    const wb = new ExcelJS.Workbook()
+    const ws = wb.addWorksheet('座標一覧')
 
-    // ワークシートを作成
-    const ws = XLSX.utils.json_to_sheet(data)
-
-    // 列幅を設定
-    ws['!cols'] = [
-      { wch: 6 },   // 番号
-      { wch: 20 },  // 点名
-      { wch: 12 },  // 点種
-      { wch: 14 },  // X
-      { wch: 14 },  // Y
-      { wch: 10 },  // Z
+    // 列幅を設定 (点種を Z の右へ)
+    ws.columns = [
+      { key: 'no', width: 6 },     // 番号
+      { key: 'name', width: 20 },  // 点名
+      { key: 'x', width: 14 },     // X
+      { key: 'y', width: 14 },     // Y
+      { key: 'z', width: 10 },     // Z
+      { key: 'type', width: 14 },  // 点種 (Z の右)
     ]
 
-    // ワークブックを作成
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, '座標一覧')
+    // 1 行目: タイトル (現場名 › 工区名) を全列にマージ
+    const titleText = projectName
+      ? `${projectName} › ${farmName}`
+      : farmName
+    ws.mergeCells('A1:F1')
+    const titleCell = ws.getCell('A1')
+    titleCell.value = titleText
+    titleCell.font = { bold: true, size: 12 }
+    titleCell.alignment = { vertical: 'middle', horizontal: 'left' }
 
-    // ファイルを出力
-    XLSX.writeFile(wb, `${projectName}_座標一覧.xlsx`)
+    // 2 行目: 列ヘッダー
+    const headerRow = ws.getRow(2)
+    headerRow.values = ['番号', '点名', 'X (m)', 'Y (m)', 'Z (m)', '点種']
+    headerRow.font = { bold: true }
+    headerRow.alignment = { vertical: 'middle', horizontal: 'center' }
+    headerRow.eachCell((cell) => {
+      cell.border = {
+        top: { style: 'thin' },
+        bottom: { style: 'thin' },
+        left: { style: 'thin' },
+        right: { style: 'thin' },
+      }
+    })
+
+    // 3 行目以降: データ
+    let pipeSeq = 0 // 管路測点だけをカウントして 10 ごとに罫線
+    pointsToExport.forEach((point, index) => {
+      const typeLabel =
+        point.source === 'pipe'
+          ? TYPE_NAMES.pipe
+          : TYPE_NAMES[point.type || ''] || point.type || ''
+      const row = ws.getRow(index + 3)
+      row.values = [
+        index + 1,
+        point.name,
+        Number(point.x.toFixed(3)),
+        Number(point.y.toFixed(3)),
+        point.z != null ? Number(point.z.toFixed(3)) : null,
+        typeLabel,
+      ]
+      // 数値の書式 (小数 3 桁)
+      row.getCell(3).numFmt = '0.000'
+      row.getCell(4).numFmt = '0.000'
+      row.getCell(5).numFmt = '0.000'
+      // 管路測点 10 点ごとに下罫線
+      if (point.source === 'pipe') {
+        pipeSeq++
+        if (pipeSeq % 10 === 0) {
+          row.eachCell({ includeEmpty: true }, (cell) => {
+            cell.border = { ...(cell.border || {}), bottom: { style: 'thin' } }
+          })
+        }
+      }
+    })
+
+    // ダウンロード
+    const buffer = await wb.xlsx.writeBuffer()
+    const blob = new Blob([buffer as unknown as BlobPart], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${farmName}_座標一覧.xlsx`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
   }
 
   // 工区が選択されていない場合のエラー表示
