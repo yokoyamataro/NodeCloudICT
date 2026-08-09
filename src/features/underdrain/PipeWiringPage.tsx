@@ -1285,7 +1285,11 @@ export function PipeWiringPage() {
      * 1 番目以降は集水管の内部頂点（順番に C, B{n}, A...）に対応。
      */
     collectorChangeIndex?: number
-    /** absorption_merge 行で、集水管上の合流頂点 idx (地図ハイライト用) */
+    /** absorption_merge 行で、合流点として地図ハイライトする頂点 (地図ハイライト用)。
+     *  吸水管の下流端 (K30A など) を指すため、対象は吸水管の pipeId + 最終 vertex idx。
+     *  集水管上の頂点だと 2 本の吸水が同じ集水頂点に丸められて別の合流点まで
+     *  同じ位置扱いされる問題があるため、吸水管側を採用。 */
+    absorptionMergePipeId?: string
     absorptionMergeVertexIdx?: number
     pipeNumber?: string  // セパレータ行の場合の管番号
     pipeId?: string  // セパレータ行の場合の管ID
@@ -1366,6 +1370,7 @@ export function PipeWiringPage() {
       // この行の集水管における vertex index を決定する
       let collectorChangeIndex: number | undefined = undefined
       let absorptionMergeVertexIdx: number | undefined = undefined
+      let absorptionMergePipeId: string | undefined = undefined
       if (row.collectorPipe) {
         const collectorPipe = pipes.find((p) => p.id === row.collectorPipe)
         if (collectorPipe) {
@@ -1392,9 +1397,15 @@ export function PipeWiringPage() {
             const absPipe = pipes.find((p) => p.id === row.absorptionPipes[0])
             if (absPipe && absPipe.vertices.length > 0) {
               const downstream = absPipe.vertices[absPipe.vertices.length - 1]
-              const idx = findClosestVertexIdx(collectorPipe, downstream)
-              collectorVertexCursor.set(row.collectorPipe, idx)
-              absorptionMergeVertexIdx = idx
+              // cursor は集水管上での「進行位置」用に近似で保持 (影響: 直後の
+              // collector_change の順番決め)。ハイライト表示は吸水管 A 点を使う。
+              collectorVertexCursor.set(
+                row.collectorPipe,
+                findClosestVertexIdx(collectorPipe, downstream),
+              )
+              // ハイライトは吸水管そのものの最下流頂点 (K30A 等) を指す
+              absorptionMergePipeId = absPipe.id
+              absorptionMergeVertexIdx = absPipe.vertices.length - 1
             }
           } else if (row.rowType === 'collector_change') {
             // 行に明示的な vertex index が保存されていればそれを優先
@@ -1419,6 +1430,7 @@ export function PipeWiringPage() {
         prevCollectorPipeId,
         collectorChangeIndex,
         absorptionMergeVertexIdx,
+        absorptionMergePipeId,
       })
 
       // 各データ行の後にセパレータ行を挿入（集水管がある場合、ただし最終行は除く）
@@ -2281,7 +2293,12 @@ export function PipeWiringPage() {
                                           </span>
                                           {(() => {
                                             // 該当測点を計算 (該当 vertex idx を推定してクリック可能に)
+                                            // absorption_merge のときはハイライト対象を吸水管 A 点にする
+                                            // (集水管上の最寄頂点だと 2 本の吸水が同じ頂点に丸められ、
+                                            //  別の合流点が同じ位置に見えてしまう問題を回避)
                                             let vIdx: number | null = null
+                                            let hlPipeId: string | null =
+                                              collPipe?.id ?? null
                                             if (collPipe) {
                                               if (row.rowType === 'absorption_end') vIdx = 0
                                               else if (row.rowType === 'outlet') {
@@ -2296,6 +2313,9 @@ export function PipeWiringPage() {
                                                 displayRow.absorptionMergeVertexIdx != null
                                               ) {
                                                 vIdx = displayRow.absorptionMergeVertexIdx
+                                                if (displayRow.absorptionMergePipeId) {
+                                                  hlPipeId = displayRow.absorptionMergePipeId
+                                                }
                                               } else if (row.rowType === 'collector_merge') {
                                                 // 前の集水管の下流端と一致する頂点 (「PrevA CurrC」の CurrC 側)
                                                 const prevId = displayRow.prevCollectorPipeId
@@ -2344,8 +2364,8 @@ export function PipeWiringPage() {
                                             if (!displayLabel) return null
                                             const isHl =
                                               vIdx != null &&
-                                              collPipe &&
-                                              highlightedVertex?.pipeId === collPipe.id &&
+                                              hlPipeId != null &&
+                                              highlightedVertex?.pipeId === hlPipeId &&
                                               highlightedVertex?.vertexIdx === vIdx
                                             const chipBase =
                                               activeTabType === 'collector'
@@ -2355,11 +2375,11 @@ export function PipeWiringPage() {
                                               <button
                                                 onClick={(e) => {
                                                   e.stopPropagation()
-                                                  if (vIdx == null || !collPipe) return
+                                                  if (vIdx == null || !hlPipeId) return
                                                   setHighlightedVertex(
                                                     isHl
                                                       ? null
-                                                      : { pipeId: collPipe.id, vertexIdx: vIdx },
+                                                      : { pipeId: hlPipeId, vertexIdx: vIdx },
                                                   )
                                                 }}
                                                 disabled={vIdx == null}
