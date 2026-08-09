@@ -1285,6 +1285,8 @@ export function PipeWiringPage() {
      * 1 番目以降は集水管の内部頂点（順番に C, B{n}, A...）に対応。
      */
     collectorChangeIndex?: number
+    /** absorption_merge 行で、集水管上の合流頂点 idx (地図ハイライト用) */
+    absorptionMergeVertexIdx?: number
     pipeNumber?: string  // セパレータ行の場合の管番号
     pipeId?: string  // セパレータ行の場合の管ID
     currentPipeEndPointName?: string | null  // セパレータ行: 現在の管の下流端名（S4A）
@@ -1363,6 +1365,7 @@ export function PipeWiringPage() {
 
       // この行の集水管における vertex index を決定する
       let collectorChangeIndex: number | undefined = undefined
+      let absorptionMergeVertexIdx: number | undefined = undefined
       if (row.collectorPipe) {
         const collectorPipe = pipes.find((p) => p.id === row.collectorPipe)
         if (collectorPipe) {
@@ -1391,6 +1394,7 @@ export function PipeWiringPage() {
               const downstream = absPipe.vertices[absPipe.vertices.length - 1]
               const idx = findClosestVertexIdx(collectorPipe, downstream)
               collectorVertexCursor.set(row.collectorPipe, idx)
+              absorptionMergeVertexIdx = idx
             }
           } else if (row.rowType === 'collector_change') {
             // 行に明示的な vertex index が保存されていればそれを優先
@@ -1414,6 +1418,7 @@ export function PipeWiringPage() {
         rowIndex: i,
         prevCollectorPipeId,
         collectorChangeIndex,
+        absorptionMergeVertexIdx,
       })
 
       // 各データ行の後にセパレータ行を挿入（集水管がある場合、ただし最終行は除く）
@@ -2242,7 +2247,7 @@ export function PipeWiringPage() {
                                               <X className="h-3 w-3" />
                                             </button>
                                           </span>
-                                          {collectorPointName && (() => {
+                                          {(() => {
                                             // 該当測点を計算 (該当 vertex idx を推定してクリック可能に)
                                             let vIdx: number | null = null
                                             if (collPipe) {
@@ -2254,8 +2259,20 @@ export function PipeWiringPage() {
                                                 displayRow.collectorChangeIndex != null
                                               ) {
                                                 vIdx = displayRow.collectorChangeIndex
+                                              } else if (
+                                                row.rowType === 'absorption_merge' &&
+                                                displayRow.absorptionMergeVertexIdx != null
+                                              ) {
+                                                vIdx = displayRow.absorptionMergeVertexIdx
                                               }
                                             }
+                                            // absorption_merge で collectorPointName が無ければ「(合流点)」
+                                            const displayLabel =
+                                              collectorPointName ??
+                                              (row.rowType === 'absorption_merge' && vIdx != null
+                                                ? '(合流点)'
+                                                : null)
+                                            if (!displayLabel) return null
                                             const isHl =
                                               vIdx != null &&
                                               collPipe &&
@@ -2276,12 +2293,13 @@ export function PipeWiringPage() {
                                                       : { pipeId: collPipe.id, vertexIdx: vIdx },
                                                   )
                                                 }}
+                                                disabled={vIdx == null}
                                                 className={`px-1 py-0.5 rounded text-[11px] ml-1 ${
                                                   isHl ? 'bg-red-500 text-white' : chipBase
                                                 }`}
                                                 title="地図上で位置を強調"
                                               >
-                                                {collectorPointName}
+                                                {displayLabel}
                                               </button>
                                             )
                                           })()}
@@ -2510,9 +2528,9 @@ export function PipeWiringPage() {
         }
       />
 
-      {/* 続けるか確認ダイアログ / 落口確認ダイアログ */}
+      {/* 続けるか確認ダイアログ / 落口確認ダイアログ (leaflet より前面) */}
       {showContinueDialog && pendingCollectorPipeId && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[3000]">
           <div className="bg-white rounded-lg shadow-xl p-6 w-[420px]">
             {isOutletDialog ? (
               <>
