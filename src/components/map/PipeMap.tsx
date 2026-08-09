@@ -241,6 +241,8 @@ export interface ImportPreviewLine {
   tempId: string
   vertices: PipeVertex[]
   selected: boolean
+  /** 地図上に表示する仮の番号 (例: 1, 2, 3 or P001) */
+  label?: string | null
 }
 
 interface PipeMapProps {
@@ -269,6 +271,8 @@ interface PipeMapProps {
   baseLayer?: BaseLayerType     // 背景地図の種類
   pipeChangePoints?: PipeChangePoint[]  // 管切り替え点（〇マーカー表示用）
   importPreviewLines?: ImportPreviewLine[]  // DXF 取込前の候補プレビュー
+  /** 取込プレビュー線がクリックされた時のコールバック (選択切替に使う) */
+  onPreviewClick?: (tempId: string) => void
   /** 表内の測点タップで強調表示する頂点 */
   highlightedVertex?: { pipeId: string; vertexIdx: number } | null
 }
@@ -432,6 +436,7 @@ export function PipeMap({
   baseLayer = 'osm',
   pipeChangePoints = [],
   importPreviewLines = [],
+  onPreviewClick,
   highlightedVertex = null,
 }: PipeMapProps) {
   const { pipes } = useUnderdrainStore()
@@ -479,9 +484,21 @@ export function PipeMap({
         .map((v) => vertexToLatLng(v, converter))
         .filter((p): p is [number, number] => p !== null)
       if (positions.length < 2) return null
-      return { tempId: line.tempId, positions, selected: line.selected }
+      return {
+        tempId: line.tempId,
+        positions,
+        selected: line.selected,
+        label: line.label ?? null,
+      }
     })
-    .filter((p): p is { tempId: string; positions: [number, number][]; selected: boolean } => p !== null)
+    .filter(
+      (p): p is {
+        tempId: string
+        positions: [number, number][]
+        selected: boolean
+        label: string | null
+      } => p !== null,
+    )
 
   const importPreviewPositions = previewLineData.flatMap((l) => l.positions)
 
@@ -534,18 +551,66 @@ export function PipeMap({
       <FitImportPreview positions={importPreviewPositions} />
 
       {/* DXF 取込前の候補プレビュー（インポート確定前の仮表示） */}
-      {previewLineData.map((line) => (
-        <Polyline
-          key={`import-preview-${line.tempId}`}
-          positions={line.positions}
-          pathOptions={{
-            color: line.selected ? '#2563eb' : '#94a3b8',
-            weight: line.selected ? 3 : 2,
-            opacity: line.selected ? 0.9 : 0.5,
-            dashArray: '6, 4',
-          }}
-        />
-      ))}
+      {previewLineData.flatMap((line) => {
+        // 線の中点 (or 頂点の中央) にラベルを置く
+        const midIdx = Math.floor(line.positions.length / 2)
+        const midPos = line.positions[midIdx]
+        const nodes = [
+          <Polyline
+            key={`import-preview-${line.tempId}`}
+            positions={line.positions}
+            pathOptions={{
+              color: line.selected ? '#2563eb' : '#94a3b8',
+              weight: line.selected ? 3 : 2,
+              opacity: line.selected ? 0.9 : 0.5,
+              dashArray: '6, 4',
+              interactive: false,
+            }}
+          />,
+        ]
+        if (onPreviewClick) {
+          nodes.push(
+            <Polyline
+              key={`import-preview-hit-${line.tempId}`}
+              positions={line.positions}
+              pathOptions={{
+                color: '#000',
+                weight: 20,
+                opacity: 0,
+              }}
+              eventHandlers={{
+                click: () => onPreviewClick(line.tempId),
+              }}
+            />,
+          )
+        }
+        if (line.label && midPos) {
+          nodes.push(
+            <Marker
+              key={`import-preview-label-${line.tempId}`}
+              position={midPos}
+              icon={L.divIcon({
+                className: 'import-preview-label',
+                html: `<div style="
+                  background: ${line.selected ? 'rgba(37, 99, 235, 0.95)' : 'rgba(148, 163, 184, 0.9)'};
+                  color: white;
+                  font-size: 11px;
+                  font-weight: 600;
+                  padding: 1px 6px;
+                  border-radius: 3px;
+                  white-space: nowrap;
+                  border: 1px solid ${line.selected ? '#1e40af' : '#64748b'};
+                  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+                ">${line.label}</div>`,
+                iconSize: [40, 18],
+                iconAnchor: [20, 9],
+              })}
+              interactive={false}
+            />,
+          )
+        }
+        return nodes
+      })}
 
       {/* 管路ポリライン */}
       {pipeLines.map((pipe) => {

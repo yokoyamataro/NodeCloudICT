@@ -384,16 +384,28 @@ export function CadAnalysisPage() {
     return result
   }, [pipes])
 
-  // 取込前の候補プレビュー（地図の仮表示に使う）
-  const importPreviewLines = useMemo(
-    () =>
-      parsedEntities.map((e) => ({
+  // 取込前の候補プレビュー（地図の仮表示に使う）。
+  // label は「選択中の並び順」に基づくインポート予定番号 (P{n}) を採用。
+  // 未選択の線は "-" だけ表示して区別。
+  const importPreviewLines = useMemo(() => {
+    let seqSelected = 0
+    return parsedEntities.map((e, idx) => {
+      let label: string | null = null
+      if (e.selected) {
+        seqSelected++
+        const numberIdx = pipes.length + seqSelected
+        label = `P${String(numberIdx).padStart(3, '0')}`
+      } else {
+        label = `-${idx + 1}` // 未選択も一応識別できるように
+      }
+      return {
         tempId: e.tempId,
         vertices: e.vertices,
         selected: e.selected,
-      })),
-    [parsedEntities]
-  )
+        label,
+      }
+    })
+  }, [parsedEntities, pipes.length])
 
   // カーソルキーでセル間を移動
   const handleCellKeyDown = useCallback((
@@ -1588,6 +1600,7 @@ export function CadAnalysisPage() {
               showZones={showZones}
               showCoordinates={showCoordinates}
               importPreviewLines={importPreviewLines}
+              onPreviewClick={toggleEntitySelection}
             />
           </div>
         </div>
@@ -2006,6 +2019,7 @@ export function CadAnalysisPage() {
               showZones={showZones}
               showCoordinates={showCoordinates}
               importPreviewLines={importPreviewLines}
+              onPreviewClick={toggleEntitySelection}
             />
           </div>
         </div>
