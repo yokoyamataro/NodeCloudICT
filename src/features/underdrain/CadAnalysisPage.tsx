@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { Upload, Trash2, FileSearch, ArrowUpDown, Edit3, X, Navigation, Link2, Merge, Split, Tag, MapPin, ChevronUp, ChevronDown, Target, Square, Map, Maximize2, Minimize2, Printer } from 'lucide-react'
+import { Upload, Trash2, FileSearch, ArrowUpDown, Edit3, X, Navigation, Link2, Merge, Split, Tag, Hash, MapPin, ChevronUp, ChevronDown, Target, Square, Map, Maximize2, Minimize2, Printer } from 'lucide-react'
 import { parseDxf, calculateLineLength } from '@/lib/dxf-parser'
 import { autoConnectFromOutlet } from '@/lib/pipe-connection'
 import {
@@ -79,6 +79,9 @@ export function CadAnalysisPage() {
 
   // 番号表示モード
   const [showLabels, setShowLabels] = useState(false)
+
+  // 管径・延長表示モード (配線番号の下に φXX L=YY を出す)
+  const [showPipeSpecs, setShowPipeSpecs] = useState(false)
 
   // 測点表示モード
   const [showSurveyPoints, setShowSurveyPoints] = useState(false)
@@ -1511,6 +1514,16 @@ export function CadAnalysisPage() {
               配線番号
             </button>
             <button
+              onClick={() => setShowPipeSpecs(!showPipeSpecs)}
+              className={`flex items-center gap-1 px-2 py-1.5 text-sm border rounded hover:bg-slate-50 ${
+                showPipeSpecs ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-transparent text-slate-600'
+              }`}
+              title="管径・延長 (φXX L=YY) を配線番号の下に表示"
+            >
+              <Hash className="h-4 w-4" />
+              管径等
+            </button>
+            <button
               onClick={() => setShowDirection(!showDirection)}
               className={`flex items-center gap-1 px-2 py-1.5 text-sm border rounded hover:bg-slate-50 ${
                 showDirection ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-transparent text-slate-600'
@@ -1578,6 +1591,7 @@ export function CadAnalysisPage() {
               isBulkEditMode={isBulkEditMode || isNumberingMode || autoConnectMode === 'selecting-outlet'}
               showDirection={showDirection}
               showLabels={showLabels}
+              showPipeSpecs={showPipeSpecs}
               showSurveyPoints={showSurveyPoints}
               surveyPoints={surveyPointsData}
               editMode={editMode}
@@ -1936,6 +1950,15 @@ export function CadAnalysisPage() {
               配線番号
             </button>
             <button
+              onClick={() => setShowPipeSpecs(!showPipeSpecs)}
+              className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 ${
+                showPipeSpecs ? 'bg-blue-100 border-blue-400 text-blue-700' : ''
+              }`}
+            >
+              <Hash className="h-3.5 w-3.5" />
+              管径等
+            </button>
+            <button
               onClick={() => setShowDirection(!showDirection)}
               className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 ${
                 showDirection ? 'bg-blue-100 border-blue-400 text-blue-700' : ''
@@ -2001,6 +2024,7 @@ export function CadAnalysisPage() {
               isBulkEditMode={false}
               showDirection={showDirection}
               showLabels={showLabels}
+              showPipeSpecs={showPipeSpecs}
               showSurveyPoints={showSurveyPoints}
               surveyPoints={surveyPointsData}
               editMode="normal"

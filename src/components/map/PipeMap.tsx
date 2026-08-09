@@ -12,32 +12,50 @@ import type { PipeVertex } from '@/types/database'
 // 空配列の安定参照（selector で || [] すると新しい参照が毎回返り無限ループする）
 const EMPTY_WORK_AREAS: WorkAreaRow[] = []
 
-// ラベルアイコンを生成
-function createLabelIcon(label: string, color: string): L.DivIcon {
+// ラベルアイコンを生成 (subLabel 指定時は下段に小さめで表示)
+function createLabelIcon(
+  label: string,
+  color: string,
+  subLabel?: string | null,
+): L.DivIcon {
+  const shadow = `
+    -2px -2px 0 white,
+    2px -2px 0 white,
+    -2px 2px 0 white,
+    2px 2px 0 white,
+    0 -2px 0 white,
+    0 2px 0 white,
+    -2px 0 0 white,
+    2px 0 0 white,
+    -1px -2px 0 white,
+    1px -2px 0 white,
+    -1px 2px 0 white,
+    1px 2px 0 white,
+    -2px -1px 0 white,
+    2px -1px 0 white,
+    -2px 1px 0 white,
+    2px 1px 0 white
+  `
+  const mainHtml = label
+    ? `<div style="
+        font-size: 18px;
+        font-weight: bold;
+        color: ${color};
+        white-space: nowrap;
+        text-shadow: ${shadow};
+      ">${label}</div>`
+    : ''
+  const subHtml = subLabel
+    ? `<div style="
+        font-size: 12px;
+        font-weight: 600;
+        color: ${color};
+        white-space: nowrap;
+        text-shadow: ${shadow};
+      ">${subLabel}</div>`
+    : ''
   return L.divIcon({
-    html: `<div style="
-      font-size: 18px;
-      font-weight: bold;
-      color: ${color};
-      white-space: nowrap;
-      text-shadow:
-        -2px -2px 0 white,
-        2px -2px 0 white,
-        -2px 2px 0 white,
-        2px 2px 0 white,
-        0 -2px 0 white,
-        0 2px 0 white,
-        -2px 0 0 white,
-        2px 0 0 white,
-        -1px -2px 0 white,
-        1px -2px 0 white,
-        -1px 2px 0 white,
-        1px 2px 0 white,
-        -2px -1px 0 white,
-        2px -1px 0 white,
-        -2px 1px 0 white,
-        2px 1px 0 white;
-    ">${label}</div>`,
+    html: `<div style="display:flex; flex-direction:column; align-items:center; line-height:1.05;">${mainHtml}${subHtml}</div>`,
     className: 'pipe-label-marker',
     iconSize: [0, 0],
     iconAnchor: [0, 0],
@@ -275,6 +293,8 @@ interface PipeMapProps {
   onPreviewClick?: (tempId: string) => void
   /** 表内の測点タップで強調表示する頂点 */
   highlightedVertex?: { pipeId: string; vertexIdx: number } | null
+  /** 配線番号の下に管径・延長 (φXX L=YY) を表記する */
+  showPipeSpecs?: boolean
 }
 
 // 測点ラベルアイコンを生成（緑の丸マーカー + ラベル、選択時はオレンジ・拡大・パルス）
@@ -438,6 +458,7 @@ export function PipeMap({
   importPreviewLines = [],
   onPreviewClick,
   highlightedVertex = null,
+  showPipeSpecs = false,
 }: PipeMapProps) {
   const { pipes } = useUnderdrainStore()
   const { zone, coordinates } = useCoordinateStore()
@@ -948,8 +969,8 @@ export function PipeMap({
         )
       })}
 
-      {/* 番号ラベル表示モード */}
-      {showLabels && pipeLines.map(pipe => {
+      {/* 番号 / 管径等 ラベル表示モード */}
+      {(showLabels || showPipeSpecs) && pipeLines.map(pipe => {
         if (pipe.positions.length < 2) return null
 
         // 管路の中央位置を計算
@@ -961,11 +982,25 @@ export function PipeMap({
             ] as [number, number]
           : pipe.positions[midIndex]
 
+        // 管径 / 延長のサブラベル (φXX L=YY)。値がある部分だけ組み立て
+        let subLabel: string | null = null
+        if (showPipeSpecs) {
+          const parts: string[] = []
+          if (pipe.diameter != null) parts.push(`φ${pipe.diameter}`)
+          const len = pipe.designLength ?? pipe.measuredLength ?? pipe.vertexLength
+          if (len != null && Number.isFinite(len)) {
+            parts.push(`L=${Math.round(len)}`)
+          }
+          if (parts.length > 0) subLabel = parts.join(' ')
+        }
+        const mainLabel = showLabels ? pipe.number : ''
+        if (!mainLabel && !subLabel) return null
+
         return (
           <Marker
             key={`label-${pipe.id}`}
             position={midPos}
-            icon={createLabelIcon(pipe.number, pipe.color)}
+            icon={createLabelIcon(mainLabel, pipe.color, subLabel)}
             eventHandlers={{
               click: (e) => onPipeSelect?.(pipe.id, e.originalEvent.ctrlKey || e.originalEvent.metaKey),
             }}
