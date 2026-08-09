@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
-import { MapPin, Settings, Download, Merge, Hash, Navigation, Target, Square, Map, FileText, MousePointer, X, ArrowUp, ArrowDown, Route, Plus, Table, Save, FolderOpen } from 'lucide-react'
+import { MapPin, Settings, Hash, Navigation, Target, Square, Map, FileText, MousePointer, X, ArrowUp, ArrowDown, Route, Plus, Table, Save, FolderOpen } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
@@ -416,29 +416,6 @@ export function PipeCoordinateCalcPage() {
     input.click()
   }
 
-  // CSVエクスポート
-  const handleExportCSV = () => {
-    const pointsToExport = exportPoints.length > 0 ? exportPoints : mergedPoints.map(p => ({
-      name: p.mergedName,
-      x: p.x,
-      y: p.y,
-      z: p.z,
-    }))
-
-    const header = '点名,X,Y,Z\n'
-    const rows = pointsToExport
-      .map(p => `${p.name},${p.x.toFixed(3)},${p.y.toFixed(3)},${p.z?.toFixed(3) ?? ''}`)
-      .join('\n')
-
-    const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'pipe_coordinates.csv'
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-
   // SIMAエクスポート
   const handleExportSIMA = () => {
     const pointsToExport = exportPoints.length > 0 ? exportPoints : mergedPoints.map(p => ({
@@ -586,18 +563,8 @@ export function PipeCoordinateCalcPage() {
         className="flex-1"
         left={
         <div className="flex-1 flex flex-col overflow-hidden border-r">
-          {/* 統計情報と出力ボタン */}
-          <div className="p-3 bg-slate-50 border-b text-sm flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <span>管路数: {pipes.length}</span>
-              <span>測点数: {surveyPoints.length}</span>
-              {enableMerge && (
-                <span className="text-blue-600">
-                  <Merge className="h-3.5 w-3.5 inline mr-1" />
-                  集約後: {mergedPoints.length}点
-                </span>
-              )}
-            </div>
+          {/* 出力ボタン */}
+          <div className="p-3 bg-slate-50 border-b text-sm flex items-center justify-end">
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setShowSettings(!showSettings)}
@@ -607,14 +574,6 @@ export function PipeCoordinateCalcPage() {
               >
                 <Settings className="h-4 w-4" />
                 命名設定
-              </button>
-              <button
-                onClick={handleExportCSV}
-                disabled={mergedPoints.length === 0 && exportPoints.length === 0}
-                className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Download className="h-4 w-4" />
-                CSV出力
               </button>
               <button
                 onClick={handleExportSIMA}
