@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { Upload, Trash2, FileSearch, Download, ArrowUpDown, Edit3, X, Navigation, Link2, Merge, Split, Tag, MapPin, ChevronUp, ChevronDown, Target, Square, Map, Maximize2, Minimize2, Printer } from 'lucide-react'
+import { Upload, Trash2, FileSearch, ArrowUpDown, Edit3, X, Navigation, Link2, Merge, Split, Tag, MapPin, ChevronUp, ChevronDown, Target, Square, Map, Maximize2, Minimize2, Printer } from 'lucide-react'
 import { parseDxf, calculateLineLength } from '@/lib/dxf-parser'
 import { autoConnectFromOutlet } from '@/lib/pipe-connection'
 import {
@@ -717,33 +717,6 @@ export function CadAnalysisPage() {
     setSelectedPipeId(id)
   }
 
-  // CSVエクスポート
-  const handleExportCSV = () => {
-    const header = '管路番号,管種,管径(mm),設計延長(m),実測延長(m),接続先,備考\n'
-    const rows = pipes
-      .map((p) => {
-        const pipeTypeLabel = EXTENDED_PIPE_TYPES.find(t => t.value === p.pipeType)?.label || ''
-        return [
-          p.number,
-          pipeTypeLabel,
-          p.diameter ?? '',
-          p.designLength?.toFixed(3) ?? '',
-          p.measuredLength?.toFixed(3) ?? '',
-          p.connectionTo ?? '',
-          p.notes ?? '',
-        ].join(',')
-      })
-      .join('\n')
-
-    const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'pipes.csv'
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-
   // 管種設定モード開始
   const startBulkEdit = () => {
     setIsBulkEditMode(true)
@@ -860,30 +833,14 @@ export function CadAnalysisPage() {
               {pipes.length > 0 && !isBulkEditMode && !isNumberingMode && editMode === 'normal' && autoConnectMode === 'idle' && (
                 <>
                   <div className="w-px h-6 bg-slate-300 mx-0.5" />
-                  {/* 編集モード */}
+                  {/* 編集モード (結合/分割は 管設定 モード内から実行) */}
                   <button
                     onClick={startBulkEdit}
                     className="flex items-center gap-1 px-2 py-1.5 text-sm border border-transparent rounded text-slate-600 hover:bg-white hover:border-slate-300"
-                    title="管種設定（管種・管径をまとめて割り当て）"
+                    title="管設定（管種・管径・結合・分割）"
                   >
                     <Edit3 className="h-4 w-4" />
-                    管種設定
-                  </button>
-                  <button
-                    onClick={() => { setEditMode('merge'); clearPipeSelection() }}
-                    className="flex items-center gap-1 px-2 py-1.5 text-sm border border-transparent rounded text-slate-600 hover:bg-white hover:border-slate-300"
-                    title="結合（隣接管路を 1 本にまとめる）"
-                  >
-                    <Merge className="h-4 w-4" />
-                    結合
-                  </button>
-                  <button
-                    onClick={() => { setEditMode('split'); setSelectedPipeId(null) }}
-                    className="flex items-center gap-1 px-2 py-1.5 text-sm border border-transparent rounded text-slate-600 hover:bg-white hover:border-slate-300"
-                    title="分割（管路を頂点・距離・合流点で分ける）"
-                  >
-                    <Split className="h-4 w-4" />
-                    分割
+                    管設定
                   </button>
                   <button
                     onClick={startNumbering}
@@ -913,14 +870,7 @@ export function CadAnalysisPage() {
                   </button>
 
                   <div className="w-px h-6 bg-slate-300 mx-0.5" />
-                  {/* 出力 / 危険 */}
-                  <button
-                    onClick={handleExportCSV}
-                    className="p-2 text-slate-600 border border-transparent rounded hover:bg-white hover:border-slate-300"
-                    title="CSV 出力"
-                  >
-                    <Download className="h-4 w-4" />
-                  </button>
+                  {/* 危険 */}
                   <button
                     onClick={clearPipes}
                     className="p-2 text-red-600 border border-transparent rounded hover:bg-red-50 hover:border-red-300"
@@ -966,7 +916,7 @@ export function CadAnalysisPage() {
                   結合モード: 結合する管路をクリックで選択（{selectedPipeIds.size}件選択中）
                   {isBulkEditMode && (
                     <span className="ml-2 text-amber-700 text-xs">
-                      （完了後、管種設定モードに戻ります）
+                      （完了後、管設定モードに戻ります）
                     </span>
                   )}
                   {isNumberingMode && (
@@ -1030,7 +980,7 @@ export function CadAnalysisPage() {
                     : '分割する管路を選択してください'}
                   {isBulkEditMode && (
                     <span className="ml-2 text-amber-700 text-xs">
-                      （完了後、管種設定モードに戻ります）
+                      （完了後、管設定モードに戻ります）
                     </span>
                   )}
                   {isNumberingMode && (
@@ -1080,38 +1030,19 @@ export function CadAnalysisPage() {
             </div>
           )}
 
-          {/* 管種設定モードパネル (旧 一括訂正) */}
+          {/* 管設定モードパネル (旧 一括訂正 / 管種設定) */}
           {isBulkEditMode && editMode === 'normal' && (
             <div className="p-3 bg-amber-50 border-b flex-shrink-0">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-medium text-amber-800">
-                  管種設定モード: 地図上の管路をクリックして変更
+                  管設定モード: 地図上の管路をクリックして変更
                 </span>
-                <div className="flex items-center gap-1">
-                  {/* 途中でも管の結合・分割を割り込みで実行できる */}
-                  <button
-                    onClick={() => { setEditMode('merge'); clearPipeSelection() }}
-                    className="flex items-center gap-1 px-2 py-1 text-xs border border-purple-300 bg-white text-purple-700 rounded hover:bg-purple-50"
-                    title="結合を割り込みで実行（完了後、管種設定に戻る）"
-                  >
-                    <Merge className="h-3.5 w-3.5" />
-                    結合
-                  </button>
-                  <button
-                    onClick={() => { setEditMode('split'); setSelectedPipeId(null) }}
-                    className="flex items-center gap-1 px-2 py-1 text-xs border border-orange-300 bg-white text-orange-700 rounded hover:bg-orange-50"
-                    title="分割を割り込みで実行（完了後、管種設定に戻る）"
-                  >
-                    <Split className="h-3.5 w-3.5" />
-                    分割
-                  </button>
-                  <button
-                    onClick={endBulkEdit}
-                    className="p-1 text-amber-600 hover:bg-amber-100 rounded"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
+                <button
+                  onClick={endBulkEdit}
+                  className="p-1 text-amber-600 hover:bg-amber-100 rounded"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               </div>
               <div className="flex items-center gap-4 flex-wrap">
                 <div className="flex items-center gap-2">
@@ -1153,6 +1084,25 @@ export function CadAnalysisPage() {
                       </option>
                     ))}
                   </select>
+                </div>
+                {/* 結合・分割は管種/管径の右に配置 (管設定中でも割り込みで実行可能) */}
+                <div className="border-l pl-4 flex items-center gap-1">
+                  <button
+                    onClick={() => { setEditMode('merge'); clearPipeSelection() }}
+                    className="flex items-center gap-1 px-2 py-1 text-xs border border-purple-300 bg-white text-purple-700 rounded hover:bg-purple-50"
+                    title="結合を割り込みで実行（完了後、管設定に戻る）"
+                  >
+                    <Merge className="h-3.5 w-3.5" />
+                    結合
+                  </button>
+                  <button
+                    onClick={() => { setEditMode('split'); setSelectedPipeId(null) }}
+                    className="flex items-center gap-1 px-2 py-1 text-xs border border-orange-300 bg-white text-orange-700 rounded hover:bg-orange-50"
+                    title="分割を割り込みで実行（完了後、管設定に戻る）"
+                  >
+                    <Split className="h-3.5 w-3.5" />
+                    分割
+                  </button>
                 </div>
               </div>
             </div>
