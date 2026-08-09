@@ -1343,8 +1343,24 @@ export function PipeWiringPage() {
       return bestIdx
     }
 
+    // 直落暗渠: absorption_end の直後に outlet (同一 collectorPipe) が並ぶ
+    // ペアは 1 行として表示するため outlet 行は display から除外する。
+    const isDirectDropOutlet = (idx: number): boolean => {
+      if (idx <= 0) return false
+      const row = rows[idx]
+      const prev = rows[idx - 1]
+      return (
+        row.rowType === 'outlet' &&
+        prev.rowType === 'absorption_end' &&
+        row.collectorPipe != null &&
+        prev.collectorPipe === row.collectorPipe &&
+        prev.absorptionPipes.length > 0
+      )
+    }
+
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i]
+      if (isDirectDropOutlet(i)) continue // 直落の outlet 行はスキップ (前行に統合表示)
       const isLastRow = i === rows.length - 1
       const prevRow = i > 0 ? rows[i - 1] : null
       const prevCollectorPipeId = prevRow?.collectorPipe || null
@@ -1868,16 +1884,18 @@ export function PipeWiringPage() {
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50">
                     <tr>
-                      <th className="px-2 py-1 text-center font-medium text-slate-600 border-r w-24 text-xs">
-                        タイプ
-                      </th>
+                      {activeTabType !== 'direct' && (
+                        <th className="px-2 py-1 text-center font-medium text-slate-600 border-r w-24 text-xs">
+                          タイプ
+                        </th>
+                      )}
                       <th className="px-2 py-1 text-center font-medium text-blue-700 border-r text-xs">
                         吸水
                       </th>
                       <th className={`px-2 py-1 text-center font-medium text-xs ${
                         activeTabType === 'collector' ? 'text-green-700' : 'text-orange-700'
                       }`}>
-                        {rightColumnLabel}
+                        {activeTabType === 'direct' ? '落口' : rightColumnLabel}
                       </th>
                       <th className="px-1 py-1 w-8"></th>
                     </tr>
@@ -1888,7 +1906,9 @@ export function PipeWiringPage() {
                       if (displayRow.type === 'pipe-separator') {
                         return (
                           <tr key={`sep-${displayRow.pipeId}-${displayIndex}`} className="bg-green-50 h-6">
-                            <td className="px-1 py-0.5 border-r"></td>
+                            {activeTabType !== 'direct' && (
+                              <td className="px-1 py-0.5 border-r"></td>
+                            )}
                             <td className="px-1 py-0.5 border-r"></td>
                             <td className="px-1 py-0.5">
                               <span className={`text-xs font-medium ${
@@ -1912,38 +1932,59 @@ export function PipeWiringPage() {
                       const isCollectorMerge = row.rowType === 'collector_merge'
                       // 選択可能な系統リスト（集水合流タイプ用）
                       const availableSystems = isCollectorMerge ? getAvailableSystemsForMerge(group.systemIndex) : []
+                      // 直落暗渠か: direct タブで absorption_end + 直後の outlet が同一
+                      // collectorPipe (buildDisplayRows で outlet 行はスキップ済み)
+                      const isDirectDrop =
+                        activeTabType === 'direct' &&
+                        row.rowType === 'absorption_end' &&
+                        row.absorptionPipes.length > 0 &&
+                        row.collectorPipe != null
 
                       // 集水管の測点名を取得（行タイプと前後の管路関係に基づく）
-                      const collectorPointName = row.collectorPipe
-                        ? getCollectorPointName(
+                      // 直落の場合は落口管の C～A を「O5 O5C~O5A」形式で表示
+                      let collectorPointName: string | null = null
+                      if (row.collectorPipe) {
+                        if (isDirectDrop) {
+                          const outletPipe = pipes.find((p) => p.id === row.collectorPipe)
+                          if (outletPipe && outletPipe.vertices.length > 0) {
+                            const nV = outletPipe.vertices.length
+                            const cName = generatePointName(outletPipe.number, 0, nV)
+                            const aName = generatePointName(outletPipe.number, nV - 1, nV)
+                            collectorPointName = `${outletPipe.number} ${cName}~${aName}`
+                          }
+                        } else {
+                          collectorPointName = getCollectorPointName(
                             row.rowType,
                             row.collectorPipe,
                             displayRow.prevCollectorPipeId || null,
                             displayRow.collectorChangeIndex,
                           )
-                        : null
+                        }
+                      }
 
                       return (
                         <tr key={row.id} className={`hover:bg-slate-50 h-9 ${
                           selectedRowId === row.id ? 'bg-yellow-50' : ''
                         }`}>
-                          {/* タイプ列 */}
-                          <td className="px-1 py-1 border-r">
-                            <select
-                              value={row.rowType || ''}
-                              onChange={(e) => updateRowType(
-                                row.id,
-                                e.target.value as RowType || null,
-                                activeTabType === 'collector' ? activeCollectorIndex : undefined
-                              )}
-                              className="w-full text-xs py-0.5 px-1 border rounded bg-white"
-                            >
-                              <option value="">-</option>
-                              {rowTypeOptions.map(opt => (
-                                <option key={opt.value} value={opt.value}>{opt.label}</option>
-                              ))}
-                            </select>
-                          </td>
+                          {/* タイプ列 (直落タブでは常に非表示) */}
+                          {activeTabType !== 'direct' && (
+                            <td className="px-1 py-1 border-r">
+                              <select
+                                value={row.rowType || ''}
+                                onChange={(e) => updateRowType(
+                                  row.id,
+                                  e.target.value as RowType || null,
+                                  activeTabType === 'collector' ? activeCollectorIndex : undefined
+                                )}
+                                className="w-full text-xs py-0.5 px-1 border rounded bg-white"
+                              >
+                                <option value="">-</option>
+                                {rowTypeOptions.map(opt => (
+                                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                ))}
+                              </select>
+                            </td>
+                          )}
                           {/* 吸水列 */}
                           <td className="px-1 py-1 border-r">
                             {shouldHideAbsorption ? (
