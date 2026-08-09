@@ -725,16 +725,48 @@ export function PipeWiringPage() {
 
   // 地図上の管路がクリックされた時
   const handlePipeSelect = useCallback((pipeId: string, ctrlKey?: boolean) => {
-    // 直落暗渠モード: 1 本の管を選ぶと 吸水 → 落口 を自動生成
-    // 合流部がないので、選択した管そのものを 吸水管 + 落口の対象管として登録する。
+    // 直落暗渠モード: 1 本の管を選ぶと 吸水 → 落口 を自動生成。
+    // 直落暗渠は「上流の吸水管 → 下流の落口管」の 2 本ペア。
+    // - 選択管が connectionTo を持てば → 選択管を吸水、connectionTo 先を落口
+    // - 選択管が pipeType='outlet' なら → その管を落口として、上流に接続する
+    //   管 (他管の connectionTo === selectedId) を吸水として登録
     if (selectionMode === 'direct-auto') {
       const selectedPipe = pipes.find((p) => p.id === pipeId)
       if (!selectedPipe) return
+
+      let absorptionId: string | null = null
+      let outletId: string | null = null
+
+      if (selectedPipe.connectionTo) {
+        // 吸水側をクリックしたパターン
+        absorptionId = selectedPipe.id
+        outletId = selectedPipe.connectionTo
+      } else {
+        // 落口側をクリックしたパターン (or connectionTo 未設定)
+        // 「この管を落口として指している」他管を上流の吸水として拾う
+        const upstream = pipes.filter((p) => p.connectionTo === selectedPipe.id)
+        if (upstream.length === 1) {
+          absorptionId = upstream[0].id
+          outletId = selectedPipe.id
+        } else if (upstream.length === 0) {
+          alert(
+            '選択した管路に接続関係がありません。CAD解析で接続を設定してから再度お試しください。',
+          )
+          return
+        } else {
+          alert(
+            `この管路には ${upstream.length} 本の上流管が接続しています。直落暗渠 (1 本) には向きません。吸水側の管を選択してください。`,
+          )
+          return
+        }
+      }
+      if (!absorptionId || !outletId) return
+
       const absorptionRow: WiringRow = {
         id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
         rowType: 'absorption_end',
-        absorptionPipes: [pipeId],
-        collectorPipe: pipeId,
+        absorptionPipes: [absorptionId],
+        collectorPipe: outletId,
         isMergePipe: false,
         mergeSystemIndex: null,
       }
@@ -742,7 +774,7 @@ export function PipeWiringPage() {
         id: `row-${Date.now() + 1}-${Math.random().toString(36).substring(2, 11)}`,
         rowType: 'outlet',
         absorptionPipes: [],
-        collectorPipe: pipeId,
+        collectorPipe: outletId,
         isMergePipe: false,
         mergeSystemIndex: null,
       }
