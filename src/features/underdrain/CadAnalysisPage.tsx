@@ -863,20 +863,22 @@ export function CadAnalysisPage() {
                   </button>
                   <button
                     onClick={() => setShowMidpointModal(true)}
-                    className="p-2 text-slate-600 border border-transparent rounded hover:bg-white hover:border-slate-300"
+                    className="flex items-center gap-1 px-2 py-1.5 text-sm border border-transparent rounded text-slate-600 hover:bg-white hover:border-slate-300"
                     title="中間点（長い区間に自動で中間点を設置）"
                   >
                     <MapPin className="h-4 w-4" />
+                    中間点
                   </button>
 
                   <div className="w-px h-6 bg-slate-300 mx-0.5" />
                   {/* 危険 */}
                   <button
                     onClick={clearPipes}
-                    className="p-2 text-red-600 border border-transparent rounded hover:bg-red-50 hover:border-red-300"
+                    className="flex items-center gap-1 px-2 py-1.5 text-sm text-red-600 border border-transparent rounded hover:bg-red-50 hover:border-red-300"
                     title="全削除（取込済みの管路をすべて削除）"
                   >
                     <Trash2 className="h-4 w-4" />
+                    全削除
                   </button>
                 </>
               )}
@@ -1496,53 +1498,58 @@ export function CadAnalysisPage() {
         }
         right={
         <div className="flex-1 h-full overflow-hidden flex flex-col">
-          {/* 地図上部のツールバー（アイコン中心の表示トグル） */}
+          {/* 地図上部のツールバー（表示トグル） */}
           <div className="p-2 bg-white border-b flex items-center gap-1 flex-shrink-0">
             <button
               onClick={() => setShowLabels(!showLabels)}
-              className={`p-2 border rounded hover:bg-slate-50 ${
+              className={`flex items-center gap-1 px-2 py-1.5 text-sm border rounded hover:bg-slate-50 ${
                 showLabels ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-transparent text-slate-600'
               }`}
-              title="番号表示"
+              title="配線番号 (管路番号) の表示切替"
             >
               <Tag className="h-4 w-4" />
+              配線番号
             </button>
             <button
               onClick={() => setShowDirection(!showDirection)}
-              className={`p-2 border rounded hover:bg-slate-50 ${
+              className={`flex items-center gap-1 px-2 py-1.5 text-sm border rounded hover:bg-slate-50 ${
                 showDirection ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-transparent text-slate-600'
               }`}
-              title="方向表示"
+              title="流下方向 (上下流の矢印) の表示切替"
             >
               <Navigation className="h-4 w-4" />
+              流下方向
             </button>
             <button
               onClick={() => setShowSurveyPoints(!showSurveyPoints)}
-              className={`p-2 border rounded hover:bg-slate-50 ${
+              className={`flex items-center gap-1 px-2 py-1.5 text-sm border rounded hover:bg-slate-50 ${
                 showSurveyPoints ? 'bg-green-100 border-green-400 text-green-700' : 'border-transparent text-slate-600'
               }`}
-              title="測点表示"
+              title="測点の表示切替"
             >
               <Target className="h-4 w-4" />
+              測点
             </button>
             <div className="w-px h-6 bg-slate-300 mx-0.5" />
             <button
               onClick={() => setShowZones(!showZones)}
-              className={`p-2 border rounded hover:bg-slate-50 ${
+              className={`flex items-center gap-1 px-2 py-1.5 text-sm border rounded hover:bg-slate-50 ${
                 showZones ? 'bg-purple-100 border-purple-400 text-purple-700' : 'border-transparent text-slate-600'
               }`}
-              title="区域表示"
+              title="区域の表示切替"
             >
               <Square className="h-4 w-4" />
+              区域
             </button>
             <button
               onClick={() => setShowCoordinates(!showCoordinates)}
-              className={`p-2 border rounded hover:bg-slate-50 ${
+              className={`flex items-center gap-1 px-2 py-1.5 text-sm border rounded hover:bg-slate-50 ${
                 showCoordinates ? 'bg-orange-100 border-orange-400 text-orange-700' : 'border-transparent text-slate-600'
               }`}
-              title="座標管理点表示"
+              title="座標管理点の表示切替"
             >
               <Map className="h-4 w-4" />
+              座標管理
             </button>
             <div className="w-px h-6 bg-slate-300 mx-0.5" />
             <button
@@ -1926,7 +1933,7 @@ export function CadAnalysisPage() {
               }`}
             >
               <Tag className="h-3.5 w-3.5" />
-              番号表示
+              配線番号
             </button>
             <button
               onClick={() => setShowDirection(!showDirection)}
@@ -1935,7 +1942,7 @@ export function CadAnalysisPage() {
               }`}
             >
               <Navigation className="h-3.5 w-3.5" />
-              方向表示
+              流下方向
             </button>
             <button
               onClick={() => setShowSurveyPoints(!showSurveyPoints)}
@@ -1944,7 +1951,7 @@ export function CadAnalysisPage() {
               }`}
             >
               <Target className="h-3.5 w-3.5" />
-              測点表示
+              測点
             </button>
             <div className="border-l h-6 mx-1" />
             <button
@@ -1963,7 +1970,7 @@ export function CadAnalysisPage() {
               }`}
             >
               <Map className="h-3.5 w-3.5" />
-              座標
+              座標管理
             </button>
             <div className="flex-1" />
             <button
