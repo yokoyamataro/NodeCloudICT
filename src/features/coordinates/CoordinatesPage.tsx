@@ -2434,10 +2434,10 @@ export function CoordinatesPage() {
                     />
                   </td>
                   <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono">
-                    {coord.lat?.toFixed(6) ?? '-'}
+                    {coord.lat?.toFixed(8) ?? '-'}
                   </td>
                   <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono">
-                    {coord.lng?.toFixed(6) ?? '-'}
+                    {coord.lng?.toFixed(8) ?? '-'}
                   </td>
                   <td
                     className="px-0.5 py-0.5 text-xs text-muted-foreground whitespace-nowrap max-w-[8rem] truncate"
@@ -2793,10 +2793,10 @@ export function CoordinatesPage() {
                           />
                         </td>
                         <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono">
-                          {coord.lat?.toFixed(6) ?? '-'}
+                          {coord.lat?.toFixed(8) ?? '-'}
                         </td>
                         <td className="px-0.5 py-0.5 text-right text-xs text-muted-foreground font-mono">
-                          {coord.lng?.toFixed(6) ?? '-'}
+                          {coord.lng?.toFixed(8) ?? '-'}
                         </td>
                         <td
                           className="px-0.5 py-0.5 text-xs text-muted-foreground whitespace-nowrap max-w-[7rem] truncate"
