@@ -589,22 +589,10 @@ export function PipeMap({
             <Marker
               key={`import-preview-label-${line.tempId}`}
               position={midPos}
-              icon={L.divIcon({
-                className: 'import-preview-label',
-                html: `<div style="
-                  background: ${line.selected ? 'rgba(37, 99, 235, 0.95)' : 'rgba(148, 163, 184, 0.9)'};
-                  color: white;
-                  font-size: 11px;
-                  font-weight: 600;
-                  padding: 1px 6px;
-                  border-radius: 3px;
-                  white-space: nowrap;
-                  border: 1px solid ${line.selected ? '#1e40af' : '#64748b'};
-                  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-                ">${line.label}</div>`,
-                iconSize: [40, 18],
-                iconAnchor: [20, 9],
-              })}
+              icon={createLabelIcon(
+                line.label,
+                line.selected ? '#2563eb' : '#94a3b8',
+              )}
               interactive={false}
             />,
           )
