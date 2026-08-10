@@ -23,6 +23,33 @@ export function StakingRecordsPage() {
     }
   }, [currentFarm, fetchRecords])
 
+  // Z 補正値 (実測値に加算)。工区ごとに localStorage に永続化。
+  const zOffsetKey = currentFarm ? `staking:zOffset:${currentFarm.id}` : null
+  const [zOffset, setZOffset] = useState<number>(0)
+  const [zOffsetInput, setZOffsetInput] = useState<string>('0')
+  useEffect(() => {
+    if (!zOffsetKey) return
+    try {
+      const raw = localStorage.getItem(zOffsetKey)
+      const v = raw != null ? parseFloat(raw) : 0
+      const n = Number.isFinite(v) ? v : 0
+      setZOffset(n)
+      setZOffsetInput(String(n))
+    } catch {
+      setZOffset(0)
+      setZOffsetInput('0')
+    }
+  }, [zOffsetKey])
+  const commitZOffset = (s: string) => {
+    const n = parseFloat(s)
+    const next = Number.isFinite(n) ? n : 0
+    setZOffset(next)
+    setZOffsetInput(String(next))
+    if (zOffsetKey) {
+      try { localStorage.setItem(zOffsetKey, String(next)) } catch { /* ignore */ }
+    }
+  }
+
   const filtered = useMemo(() => {
     if (filter === 'all') return records
     return records.filter((r) => r.surveyCategory === filter)
@@ -57,7 +84,7 @@ export function StakingRecordsPage() {
   const handleExportCSV = () => {
     if (filtered.length === 0) return
     const header =
-      '点名,測量種別,X(実測),Y(実測),Z(実測),X(計画),Y(計画),Z(計画),精度(m),サンプル数,記録日時\n'
+      '点名,測量種別,X(実測),Y(実測),Z(実測),Z(補正),X(計画),Y(計画),Z(計画),精度(m),サンプル数,記録日時\n'
     const rows = filtered
       .map((r) =>
         [
@@ -66,6 +93,7 @@ export function StakingRecordsPage() {
           r.measuredX.toFixed(3),
           r.measuredY.toFixed(3),
           r.measuredZ != null ? r.measuredZ.toFixed(3) : '',
+          r.measuredZ != null ? (r.measuredZ + zOffset).toFixed(3) : '',
           r.targetX != null ? r.targetX.toFixed(3) : '',
           r.targetY != null ? r.targetY.toFixed(3) : '',
           r.targetZ != null ? r.targetZ.toFixed(3) : '',
@@ -149,6 +177,25 @@ export function StakingRecordsPage() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          {/* Z 補正: 実測値に加算する定数オフセット */}
+          <label
+            className="flex items-center gap-1 text-xs"
+            title="実測値 Z にこの値 (m) を加算した「補正 Z」を表示。GPS 系統差を素早く吸収するための簡易補正"
+          >
+            <span className="text-slate-500">Z補正</span>
+            <input
+              type="number"
+              step={0.001}
+              value={zOffsetInput}
+              onChange={(e) => setZOffsetInput(e.target.value)}
+              onBlur={(e) => commitZOffset(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur()
+              }}
+              className="w-20 px-1.5 py-0.5 border rounded text-right font-mono"
+            />
+            <span className="text-slate-500">m</span>
+          </label>
           <button
             onClick={() => fetchRecords(currentFarm.id)}
             className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50"
@@ -216,6 +263,13 @@ export function StakingRecordsPage() {
                 >
                   実測
                 </th>
+                <th
+                  className="px-2 py-1 border-b border-r text-center bg-amber-50"
+                  colSpan={1}
+                  title={`実測値に Z=${zOffset.toFixed(3)} m を加算した補正後の Z`}
+                >
+                  補正
+                </th>
                 <th className="px-2 py-2 border-b border-r text-right" rowSpan={2}>ΔX</th>
                 <th className="px-2 py-2 border-b border-r text-right" rowSpan={2}>ΔY</th>
                 <th className="px-2 py-2 border-b border-r text-right" rowSpan={2}>水平誤差</th>
@@ -233,6 +287,7 @@ export function StakingRecordsPage() {
                 <th className="px-2 py-1 border-b border-r text-right">X</th>
                 <th className="px-2 py-1 border-b border-r text-right">Y</th>
                 <th className="px-2 py-1 border-b border-r text-right">Z</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-amber-50">Z</th>
               </tr>
             </thead>
             <tbody>
@@ -287,6 +342,10 @@ export function StakingRecordsPage() {
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right">{r.measuredY.toFixed(3)}</td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right">
                       {r.measuredZ != null ? r.measuredZ.toFixed(3) : '—'}
+                    </td>
+                    {/* 補正 Z (measuredZ + zOffset) */}
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-amber-50 text-amber-900">
+                      {r.measuredZ != null ? (r.measuredZ + zOffset).toFixed(3) : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right">
                       {dx != null ? dx.toFixed(3) : '—'}
