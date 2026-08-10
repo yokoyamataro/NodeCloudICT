@@ -217,6 +217,7 @@ const COORD_COLUMN_KEYS = [
   'name',
   'xy',
   'z',
+  'latlng',
   'type',
   'stakeType',
   'stakeStatus',
@@ -230,6 +231,7 @@ const COORD_COLUMNS: ReadonlyArray<ColumnDef<CoordColumnKey>> = [
   { key: 'name', label: '点名' },
   { key: 'xy', label: 'XY' },
   { key: 'z', label: 'Z' },
+  { key: 'latlng', label: '緯度/経度' },
   { key: 'type', label: '点種' },
   { key: 'stakeType', label: '杭種' },
   { key: 'stakeStatus', label: '設置' },
@@ -5782,6 +5784,12 @@ export function MobileStakingPage() {
                       {coordColumns.has('z') && (
                         <th className="px-2 py-1 text-right">Z</th>
                       )}
+                      {coordColumns.has('latlng') && (
+                        <>
+                          <th className="px-2 py-1 text-right">緯度</th>
+                          <th className="px-2 py-1 text-right">経度</th>
+                        </>
+                      )}
                       {coordColumns.has('type') && (
                         <th className="px-2 py-1 text-left">点種</th>
                       )}
@@ -5857,6 +5865,16 @@ export function MobileStakingPage() {
                             <td className="px-2 py-1 text-right font-mono">
                               {t.z != null ? t.z.toFixed(3) : '-'}
                             </td>
+                          )}
+                          {coordColumns.has('latlng') && (
+                            <>
+                              <td className="px-2 py-1 text-right font-mono">
+                                {t.lat != null ? t.lat.toFixed(8) : '-'}
+                              </td>
+                              <td className="px-2 py-1 text-right font-mono">
+                                {t.lng != null ? t.lng.toFixed(8) : '-'}
+                              </td>
+                            </>
                           )}
                           {coordColumns.has('type') && (
                             <td className="px-2 py-1 text-slate-600 whitespace-nowrap max-w-[5rem] truncate">

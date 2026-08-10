@@ -443,7 +443,7 @@ export function CoordinatesPage() {
   //   ② フォーマット選択（CSV / SIMA / TSV / 写真帳 / Excel）
   // exportSource はモード選択後にセットされ、フォーマット選択時に消費する
   type ExportSource = 'all' | 'checked' | 'visible' | 'visible-ordered'
-  type ExportFormat = 'csv' | 'tsv' | 'sima' | 'photobook' | 'photos' | 'excel'
+  type ExportFormat = 'csv' | 'tsv' | 'sima' | 'gpx' | 'photobook' | 'photos' | 'excel'
   const [exportSource, setExportSource] = useState<ExportSource | null>(null)
   // フォーマット選択を先にする 2 段階フローに変更。
   // ① 座標出力ボタン → ② 出力フォーマット → ③ 出力対象（全/表示/順指定）
@@ -1182,6 +1182,67 @@ export function CoordinatesPage() {
     )
   }
 
+  // GPX 出力 (緯度経度をもつ点だけを wpt として書き出す)。
+  // GPS ロガー / スマホの地図アプリ (Google Earth 等) で読める汎用形式。
+  const handleExportGPX = (source?: ExportSource) => {
+    const targets = getExportTargets(source)
+    const withLL = targets.filter(
+      (c): c is typeof c & { lat: number; lng: number } =>
+        c.lat != null && c.lng != null,
+    )
+    if (withLL.length === 0) {
+      alert('緯度経度が登録された座標がありません')
+      return
+    }
+    const projectName = currentFarm?.name || 'NoName'
+    const escapeXml = (s: string): string =>
+      s.replace(/[<>&"']/g, (ch) =>
+        ch === '<'
+          ? '&lt;'
+          : ch === '>'
+            ? '&gt;'
+            : ch === '&'
+              ? '&amp;'
+              : ch === '"'
+                ? '&quot;'
+                : '&apos;',
+      )
+    const nowIso = new Date().toISOString()
+    const waypoints = withLL
+      .map((c) => {
+        const typeName =
+          typeOptions.find((o) => o.code === c.type)?.label ?? c.type ?? ''
+        const eleLine =
+          c.z != null && Number.isFinite(c.z)
+            ? `    <ele>${c.z.toFixed(3)}</ele>\n`
+            : ''
+        return (
+          `  <wpt lat="${c.lat.toFixed(8)}" lon="${c.lng.toFixed(8)}">\n` +
+          eleLine +
+          `    <name>${escapeXml(c.pointNumber)}</name>\n` +
+          (typeName ? `    <type>${escapeXml(typeName)}</type>\n` : '') +
+          `  </wpt>`
+        )
+      })
+      .join('\n')
+    const xml =
+      '<?xml version="1.0" encoding="UTF-8"?>\n' +
+      `<gpx version="1.1" creator="NodeCloud" xmlns="http://www.topografix.com/GPX/1/1">\n` +
+      `  <metadata>\n` +
+      `    <name>${escapeXml(projectName)}</name>\n` +
+      `    <time>${nowIso}</time>\n` +
+      `  </metadata>\n` +
+      waypoints +
+      '\n</gpx>\n'
+    const blob = new Blob([xml], { type: 'application/gpx+xml;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${projectName}_coordinates.gpx`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const handleExportExcel = () => {
     alert('Excel 出力は実装予定です')
   }
@@ -1437,6 +1498,7 @@ export function CoordinatesPage() {
     if (format === 'csv') handleExportCSV(source)
     else if (format === 'tsv') void handleCopyTSV(source)
     else if (format === 'sima') handleExportSIMA(source)
+    else if (format === 'gpx') handleExportGPX(source)
     else if (format === 'photos') void handleExportPhotos(source)
     else if (format === 'excel') handleExportExcel()
     setOpenMenu(null)
@@ -1914,6 +1976,15 @@ export function CoordinatesPage() {
                   </button>
                   <button
                     type="button"
+                    onClick={() => setPendingFormat('gpx')}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
+                    title="緯度経度を持つ座標を GPX で出力 (Google Earth / GPS ロガーで読める)"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    GPX出力
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setPendingFormat('photobook')}
                     className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-slate-100"
                   >
@@ -1945,6 +2016,7 @@ export function CoordinatesPage() {
                       {pendingFormat === 'csv' && 'CSV出力'}
                       {pendingFormat === 'tsv' && 'TSVコピー'}
                       {pendingFormat === 'sima' && 'SIMA出力'}
+                      {pendingFormat === 'gpx' && 'GPX出力'}
                       {pendingFormat === 'photobook' && '写真帳出力'}
                       {pendingFormat === 'photos' && '写真ダウンロード'}
                       {pendingFormat === 'excel' && 'EXCEL出力'}
