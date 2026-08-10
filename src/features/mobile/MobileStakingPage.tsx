@@ -3012,9 +3012,17 @@ export function MobileStakingPage() {
           onOpenCoords={() => setShowRecordList(true)}
         />
         <button
-          onClick={() => navigate('/mobile')}
+          onClick={() => {
+            // 工区を開いた状態からは 工区一覧 (同一現場) に戻る。
+            // 現場情報が未取得なら現場一覧へフォールバック。
+            if (farm?.project_id) {
+              navigate(`/mobile/farms/${farm.project_id}`)
+            } else {
+              navigate('/mobile')
+            }
+          }}
           className="flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-700"
-          title="戻る"
+          title="工区一覧に戻る"
         >
           <ArrowLeft className="h-4 w-4" />
         </button>
@@ -3182,10 +3190,13 @@ export function MobileStakingPage() {
           onClose={() => setShowFarmEditModal(false)}
           onDelete={async () => {
             const id = farm.id
+            const projectId = farm.project_id
             setShowFarmEditModal(false)
             try {
               await deleteFarm(id)
-              navigate('/mobile')
+              // 同一現場の工区一覧に戻る (無ければ現場一覧)
+              if (projectId) navigate(`/mobile/farms/${projectId}`)
+              else navigate('/mobile')
             } catch (err) {
               alert(err instanceof Error ? err.message : '工区の削除に失敗しました')
             }
