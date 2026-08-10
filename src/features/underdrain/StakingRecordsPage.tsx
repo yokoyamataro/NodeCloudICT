@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Loader2, Trash2, Download, FileSearch, RefreshCw } from 'lucide-react'
 import { useFarmStore } from '@/stores/farmStore'
 import { useStakingStore, type SurveyCategory } from '@/stores/stakingStore'
+import { supabase } from '@/lib/supabase'
 
 // 起工測量・出来形測量の実測記録を一覧表示し、SIMA/CSV で出力するページ。
 // /underdrain/field-data に紐付け（旧プレースホルダ「現場データ」を置き換え）。
@@ -23,30 +24,98 @@ export function StakingRecordsPage() {
     }
   }, [currentFarm, fetchRecords])
 
-  // Z 補正値 (実測値に加算)。工区ごとに localStorage に永続化。
+  // Z 補正値 (実測値に加算)。工区ごとに DB (design_survey_calibration.dz_offset)
+  // に永続化することで PC/スマホ間で共有可能に。localStorage は旧値のフォール
+  // バックとしてだけ参照 (初回だけ DB に移行)。
   const zOffsetKey = currentFarm ? `staking:zOffset:${currentFarm.id}` : null
   const [zOffset, setZOffset] = useState<number>(0)
   const [zOffsetInput, setZOffsetInput] = useState<string>('0')
   useEffect(() => {
-    if (!zOffsetKey) return
-    try {
-      const raw = localStorage.getItem(zOffsetKey)
-      const v = raw != null ? parseFloat(raw) : 0
-      const n = Number.isFinite(v) ? v : 0
-      setZOffset(n)
-      setZOffsetInput(String(n))
-    } catch {
+    if (!currentFarm) {
       setZOffset(0)
       setZOffsetInput('0')
+      return
     }
-  }, [zOffsetKey])
-  const commitZOffset = (s: string) => {
+    let cancelled = false
+    void (async () => {
+      // まず DB から取得
+      let dbValue: number | null = null
+      try {
+        const { data } = await supabase
+          .from('design_survey_calibration')
+          .select('dz_offset')
+          .eq('farm_id', currentFarm.id)
+          .maybeSingle()
+        const row = data as { dz_offset: number | string } | null
+        if (row?.dz_offset != null) {
+          const v = Number(row.dz_offset)
+          if (Number.isFinite(v)) dbValue = v
+        }
+      } catch { /* noop: 未マイグレーション環境等 */ }
+      if (cancelled) return
+      if (dbValue != null) {
+        setZOffset(dbValue)
+        setZOffsetInput(String(dbValue))
+        // ついでに localStorage も更新して他画面 (施工計画) と揃える
+        if (zOffsetKey) {
+          try { localStorage.setItem(zOffsetKey, String(dbValue)) } catch { /* ignore */ }
+        }
+        return
+      }
+      // DB に無い場合 → localStorage フォールバック
+      let lsValue = 0
+      try {
+        const raw = zOffsetKey ? localStorage.getItem(zOffsetKey) : null
+        const v = raw != null ? parseFloat(raw) : 0
+        lsValue = Number.isFinite(v) ? v : 0
+      } catch { lsValue = 0 }
+      setZOffset(lsValue)
+      setZOffsetInput(String(lsValue))
+      // localStorage に値があれば DB にも書いておく (端末→共有への一回きり移行)
+      if (lsValue !== 0) {
+        try {
+          await supabase
+            .from('design_survey_calibration')
+            .upsert(
+              {
+                farm_id: currentFarm.id,
+                is_enabled: true,
+                dz_offset: lsValue,
+              } as never,
+              { onConflict: 'farm_id' },
+            )
+        } catch { /* ignore */ }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [currentFarm, zOffsetKey])
+  const commitZOffset = async (s: string) => {
     const n = parseFloat(s)
     const next = Number.isFinite(n) ? n : 0
     setZOffset(next)
     setZOffsetInput(String(next))
+    // localStorage (施工計画がフォールバック参照する) と DB 両方に反映
     if (zOffsetKey) {
       try { localStorage.setItem(zOffsetKey, String(next)) } catch { /* ignore */ }
+    }
+    if (currentFarm) {
+      try {
+        const { error } = await supabase
+          .from('design_survey_calibration')
+          .upsert(
+            {
+              farm_id: currentFarm.id,
+              is_enabled: true,
+              dz_offset: next,
+            } as never,
+            { onConflict: 'farm_id' },
+          )
+        if (error) {
+          console.warn('[staking] Z補正の保存に失敗', error)
+        }
+      } catch (err) {
+        console.warn('[staking] Z補正の保存に失敗', err)
+      }
     }
   }
 
@@ -188,7 +257,7 @@ export function StakingRecordsPage() {
               step={0.001}
               value={zOffsetInput}
               onChange={(e) => setZOffsetInput(e.target.value)}
-              onBlur={(e) => commitZOffset(e.target.value)}
+              onBlur={(e) => void commitZOffset(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur()
               }}

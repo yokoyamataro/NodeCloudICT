@@ -1162,17 +1162,38 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
     set({ loading: true, error: null })
 
     try {
-      // Z 補正 (StakingRecordsPage で設定した値。localStorage per farm)。
-      // 実測 Z にこの値を加算して「補正後標高」として使う。
+      // Z 補正: DB (design_survey_calibration.dz_offset) を優先し、
+      // 未マイグレーション環境等で取得できなければ localStorage をフォールバック。
+      // StakingRecordsPage 側で編集された値が PC/スマホ間で共有される。
       let zOffset = 0
+      let gotFromDb = false
       try {
-        const raw = typeof localStorage !== 'undefined'
-          ? localStorage.getItem(`staking:zOffset:${farmId}`)
-          : null
-        const v = raw != null ? parseFloat(raw) : 0
-        zOffset = Number.isFinite(v) ? v : 0
+        const { data } = await supabase
+          .from('design_survey_calibration')
+          .select('dz_offset')
+          .eq('farm_id', farmId)
+          .maybeSingle()
+        const row = data as { dz_offset: number | string } | null
+        if (row?.dz_offset != null) {
+          const v = Number(row.dz_offset)
+          if (Number.isFinite(v)) {
+            zOffset = v
+            gotFromDb = true
+          }
+        }
       } catch {
-        zOffset = 0
+        /* noop */
+      }
+      if (!gotFromDb) {
+        try {
+          const raw = typeof localStorage !== 'undefined'
+            ? localStorage.getItem(`staking:zOffset:${farmId}`)
+            : null
+          const v = raw != null ? parseFloat(raw) : 0
+          zOffset = Number.isFinite(v) ? v : 0
+        } catch {
+          zOffset = 0
+        }
       }
 
       // 起工測量の実測記録 (staking_records) を取得。
