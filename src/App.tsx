@@ -30,7 +30,6 @@ import { MobileUnderdrainConstructionPage } from '@/features/mobile/MobileUnderd
 import { UnderdrainWorkAreaPage } from '@/features/underdrain/UnderdrainWorkAreaPage'
 import { CadAnalysisPage } from '@/features/underdrain/CadAnalysisPage'
 import { PipeCoordinateCalcPage } from '@/features/underdrain/PipeCoordinateCalcPage'
-import { SurveyImportPage } from '@/features/underdrain/SurveyImportPage'
 import { PipeWiringPage } from '@/features/underdrain/PipeWiringPage'
 import { DepthCalcPage } from '@/features/underdrain/DepthCalcPage'
 import { LandXMLPage } from '@/features/underdrain/LandXMLPage'
@@ -367,7 +366,6 @@ function AppRoutes() {
           <Route path="cad-analysis" element={<CadAnalysisPage />} />
           <Route path="coordinate-calc" element={<PipeCoordinateCalcPage />} />
           <Route path="pipe-wiring" element={<PipeWiringPage />} />
-          <Route path="survey-import" element={<SurveyImportPage />} />
           <Route path="depth-calc" element={<DepthCalcPage />} />
           <Route path="cad-export" element={<CadExportPage />} />
           <Route path="landxml" element={<LandXMLPage />} />

@@ -1162,40 +1162,54 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
     set({ loading: true, error: null })
 
     try {
-      // 補正設定を取得 (基準点の標高差から算出した dz_offset を z に反映するため)
-      const { data: calibRaw } = await supabase
-        .from('design_survey_calibration')
-        .select('is_enabled, dz_offset')
-        .eq('farm_id', farmId)
-        .maybeSingle()
-      const calib = calibRaw as { is_enabled: boolean; dz_offset: number } | null
-      const dzOffset = calib?.is_enabled ? Number(calib.dz_offset) || 0 : 0
+      // Z 補正 (StakingRecordsPage で設定した値。localStorage per farm)。
+      // 実測 Z にこの値を加算して「補正後標高」として使う。
+      let zOffset = 0
+      try {
+        const raw = typeof localStorage !== 'undefined'
+          ? localStorage.getItem(`staking:zOffset:${farmId}`)
+          : null
+        const v = raw != null ? parseFloat(raw) : 0
+        zOffset = Number.isFinite(v) ? v : 0
+      } catch {
+        zOffset = 0
+      }
 
-      // 測量データを取得
-      const { data: surveyDataRaw } = await supabase
-        .from('design_survey_data')
-        .select('*')
+      // 起工測量の実測記録 (staking_records) を取得。
+      // 出来形 (asbuilt) は含めず、起工 (initial) のみを地盤高の元とする。
+      const { data: recordsRaw } = await supabase
+        .from('staking_records')
+        .select(
+          'id, measured_x, measured_y, measured_z, target_name, survey_category',
+        )
         .eq('farm_id', farmId)
+        .eq('survey_category', 'initial')
 
-      const surveyData = (surveyDataRaw || []).map(
-        (row: { id: string; x: number; y: number; z: number | null; category: string; point_number: string }) => ({
-          id: row.id,
-          x: row.x,
-          y: row.y,
-          // 補正 ON なら基準点差分の平均 (dz_offset) を差し引いた「補正後標高」を採用
-          z: row.z !== null ? row.z - dzOffset : null,
-          category: row.category,
-          pointNumber: row.point_number,
-        }),
-      )
-      const validSurvey = surveyData.filter((s) => s.z !== null) as Array<{
+      const validSurvey = ((recordsRaw || []) as Array<{
         id: string
-        x: number
-        y: number
-        z: number
-        category: string
-        pointNumber: string
-      }>
+        measured_x: number | string
+        measured_y: number | string
+        measured_z: number | string | null
+        target_name: string | null
+      }>)
+        .map((row) => {
+          const z = row.measured_z != null ? Number(row.measured_z) : null
+          if (z == null || !Number.isFinite(z)) return null
+          const x = Number(row.measured_x)
+          const y = Number(row.measured_y)
+          if (!Number.isFinite(x) || !Number.isFinite(y)) return null
+          return {
+            id: row.id,
+            x,
+            y,
+            z: z + zOffset, // 補正 Z
+            pointNumber: row.target_name ?? '',
+          }
+        })
+        .filter(
+          (r): r is { id: string; x: number; y: number; z: number; pointNumber: string } =>
+            r !== null,
+        )
 
       const findGroundHeight = (x: number, y: number, threshold = 0.5): number | null => {
         let nearest: (typeof validSurvey)[number] | null = null
