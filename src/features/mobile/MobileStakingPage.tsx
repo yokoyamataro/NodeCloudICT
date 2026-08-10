@@ -2923,10 +2923,24 @@ export function MobileStakingPage() {
     )
   }
 
-  // 公開ビュー URL を取得して共有 or クリップボードコピー
+  // 公開ビュー URL を取得して共有 or クリップボードコピー。
+  // 共有 URL は「親プロジェクトの visibility = public」でしか開けないため、
+  // 事前に visibility を確認し、public でなければ現場情報側で切替を促すダイアログを出す。
   const handleShare = async () => {
     if (!farmId) return
     const url = `${window.location.origin}/share/farm/${farmId}`
+    const projectVisibility = project?.visibility ?? null
+    if (projectVisibility !== 'public') {
+      const ok = window.confirm(
+        `この共有リンクは現場の公開設定が「public」のときだけ開けます。\n` +
+          `現在の公開設定: 「${projectVisibility ?? '不明'}」\n\n` +
+          `URL はコピーされますが、開いても「工区のデータが見つかりませんでした」\n` +
+          `と表示される可能性が高いです。\n\n` +
+          `現場情報の編集で公開設定を「public」に変更してから再度お試しください。\n\n` +
+          `そのままリンクをコピーしますか？`,
+      )
+      if (!ok) return
+    }
     const shareTitle = farm?.name ? `工区「${farm.name}」` : '工区の起工測量データ'
     const navAny = navigator as Navigator & {
       share?: (data: { title?: string; text?: string; url?: string }) => Promise<void>
@@ -4397,6 +4411,9 @@ export function MobileStakingPage() {
           maxZoom={24}
           className="h-full w-full"
           style={baseLayer === 'none' ? { background: '#ffffff' } : undefined}
+          // leaflet-rotate (MobilityDriverPage 等が副作用 import) が有効な
+          // セッションでは既定で rotateControl が付いてしまうため明示 OFF。
+          {...({ rotateControl: false } as Record<string, unknown>)}
         >
           {/* 断面ピック中の仮マーカー（座標管理から選択した点を強調） */}
           {sectionPickingMode && sectionPickIds.map((id, i) => {
