@@ -203,18 +203,35 @@ export function StakingRecordsPage() {
           <table className="w-full text-xs border-collapse">
             <thead className="bg-slate-100 sticky top-0 z-10">
               <tr className="text-slate-700">
-                <th className="px-2 py-2 border-b border-r text-left">点名</th>
-                <th className="px-2 py-2 border-b border-r text-left">種別</th>
-                <th className="px-2 py-2 border-b border-r text-right">X 実測</th>
-                <th className="px-2 py-2 border-b border-r text-right">Y 実測</th>
-                <th className="px-2 py-2 border-b border-r text-right">Z 実測</th>
-                <th className="px-2 py-2 border-b border-r text-right">ΔX</th>
-                <th className="px-2 py-2 border-b border-r text-right">ΔY</th>
-                <th className="px-2 py-2 border-b border-r text-right">水平誤差</th>
-                <th className="px-2 py-2 border-b border-r text-right">精度(m)</th>
-                <th className="px-2 py-2 border-b border-r text-right">N</th>
-                <th className="px-2 py-2 border-b border-r text-left">記録日時</th>
-                <th className="px-2 py-2 border-b text-center w-10"></th>
+                <th className="px-2 py-2 border-b border-r text-left" rowSpan={2}>点名</th>
+                <th className="px-2 py-2 border-b border-r text-left" rowSpan={2}>種別</th>
+                <th
+                  className="px-2 py-1 border-b border-r text-center bg-slate-50"
+                  colSpan={3}
+                >
+                  設計
+                </th>
+                <th
+                  className="px-2 py-1 border-b border-r text-center bg-slate-50"
+                  colSpan={3}
+                >
+                  実測
+                </th>
+                <th className="px-2 py-2 border-b border-r text-right" rowSpan={2}>ΔX</th>
+                <th className="px-2 py-2 border-b border-r text-right" rowSpan={2}>ΔY</th>
+                <th className="px-2 py-2 border-b border-r text-right" rowSpan={2}>水平誤差</th>
+                <th className="px-2 py-2 border-b border-r text-right" rowSpan={2}>精度(m)</th>
+                <th className="px-2 py-2 border-b border-r text-right" rowSpan={2}>N</th>
+                <th className="px-2 py-2 border-b border-r text-left" rowSpan={2}>記録日時</th>
+                <th className="px-2 py-2 border-b text-center w-10" rowSpan={2}></th>
+              </tr>
+              <tr className="text-slate-700">
+                <th className="px-2 py-1 border-b border-r text-right">X</th>
+                <th className="px-2 py-1 border-b border-r text-right">Y</th>
+                <th className="px-2 py-1 border-b border-r text-right">Z</th>
+                <th className="px-2 py-1 border-b border-r text-right">X</th>
+                <th className="px-2 py-1 border-b border-r text-right">Y</th>
+                <th className="px-2 py-1 border-b border-r text-right">Z</th>
               </tr>
             </thead>
             <tbody>
@@ -247,6 +264,17 @@ export function StakingRecordsPage() {
                         {CATEGORY_LABEL[r.surveyCategory]}
                       </span>
                     </td>
+                    {/* 設計値 (targetX/Y/Z) */}
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right text-slate-600">
+                      {r.targetX != null ? r.targetX.toFixed(3) : '—'}
+                    </td>
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right text-slate-600">
+                      {r.targetY != null ? r.targetY.toFixed(3) : '—'}
+                    </td>
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right text-slate-600">
+                      {r.targetZ != null ? r.targetZ.toFixed(3) : '—'}
+                    </td>
+                    {/* 実測値 (measuredX/Y/Z) */}
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right">{r.measuredX.toFixed(3)}</td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right">{r.measuredY.toFixed(3)}</td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right">
