@@ -6,6 +6,7 @@ import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useConstructionPlanStore, type PlanGroup, type PlanPoint, type PlanRow } from '@/stores/constructionPlanStore'
 import type { PipeRow } from '@/stores/underdrainStore'
 import { exportAllCrossSectionsDxf } from '@/lib/crossSectionDxfExport'
+import { generateSfcPipesContent } from '@/lib/sfcPipeExport'
 
 // 図面レベル（座標変換用パラメータ）
 interface DrawingLevel {
@@ -571,6 +572,26 @@ export function CadExportPage() {
     URL.revokeObjectURL(url)
   }
 
+  const handleSfcDownload = () => {
+    if (pipes.length === 0) {
+      alert('配管データがありません。CAD解析ページで登録してください。')
+      return
+    }
+    const fileBase = currentFarm?.name || 'plan'
+    const sfcText = generateSfcPipesContent(pipes, { fileBaseName: fileBase, scale: 1000 })
+    const sjis = toShiftJIS(sfcText)
+    const buf = sjis.slice().buffer
+    const blob = new Blob([buf], { type: 'application/octet-stream' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${fileBase}_pipes.sfc`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
   // 縦断図用の補助マップ
   const pipeNumberById = useMemo(() => {
     const m = new Map<string, string>()
@@ -769,6 +790,16 @@ export function CadExportPage() {
             >
               <Download className="h-4 w-4" />
               TrendOne アスキー出力（Shift-JIS）
+            </button>
+            <button
+              type="button"
+              onClick={handleSfcDownload}
+              disabled={pipes.length === 0}
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+              title="配線 (吸水/集水 …) の形状のみを SFC 形式で出力。管種切替点に 1mm 円を打つ。縮尺 1/1000。"
+            >
+              <Download className="h-4 w-4" />
+              SFC 出力（配線のみ・Shift-JIS）
             </button>
           </div>
         </section>
