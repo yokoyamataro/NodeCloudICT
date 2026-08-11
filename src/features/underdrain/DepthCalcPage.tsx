@@ -15,11 +15,14 @@ import {
   Mountain,
   Droplets,
   FileSpreadsheet,
+  PenTool,
 } from 'lucide-react'
 import { useHydraulicSettingsStore, DEFAULT_HYDRAULIC_SETTINGS, PIPE_MATERIAL_LABEL, MANNING_ROUGHNESS, type PipeMaterial } from '@/stores/hydraulicSettingsStore'
 import { useHydraulicExclusionStore } from '@/stores/hydraulicExclusionStore'
 import { HydraulicCalcModal } from './HydraulicCalcModal'
 import { MeasurementResultModal } from './MeasurementResultModal'
+import { SfcPlanDrawingModal } from './SfcPlanDrawingModal'
+import { ProfileDxfModal } from './ProfileDxfModal'
 
 // 区間勾配の任意設定ダイアログ用ターゲット
 interface SlopeEditTarget {
@@ -123,6 +126,9 @@ export function DepthCalcPage() {
   // 水理計算書・測定結果一覧表 出力モーダル
   const [showHydraulicModal, setShowHydraulicModal] = useState(false)
   const [showMeasurementModal, setShowMeasurementModal] = useState(false)
+  // CAD 出力モーダル (平面図 SFC / 縦断図 DXF)
+  const [showSfcPlanModal, setShowSfcPlanModal] = useState(false)
+  const [showProfileDxfModal, setShowProfileDxfModal] = useState(false)
 
   // 管径セル: ダブルクリックで編集モードに切替 (select 表示)。
   // 吸水は区間 (PlanPoint) 単位、集水は行 (collector pipe) 単位で編集する。
@@ -1913,6 +1919,25 @@ export function DepthCalcPage() {
                     <FileSpreadsheet className="h-4 w-4" />
                     測定結果
                   </button>
+                  <div className="w-px h-6 bg-slate-300" />
+                  <button
+                    onClick={() => setShowSfcPlanModal(true)}
+                    disabled={saving || pipes.length === 0}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 whitespace-nowrap"
+                    title="平面図 SFC（TrendOne アスキー、Shift-JIS）を出力"
+                  >
+                    <MapIcon className="h-4 w-4" />
+                    平面図
+                  </button>
+                  <button
+                    onClick={() => setShowProfileDxfModal(true)}
+                    disabled={saving || pipes.length === 0}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm bg-sky-600 text-white rounded-lg hover:bg-sky-700 transition-colors disabled:opacity-50 whitespace-nowrap"
+                    title="縦断図 DXF を全系統一括出力"
+                  >
+                    <PenTool className="h-4 w-4" />
+                    縦断図
+                  </button>
                 </>
               ) : (
                 <button
@@ -2843,6 +2868,20 @@ export function DepthCalcPage() {
         planGroups={planGroups}
         pipes={pipes}
         farm={currentFarm}
+      />
+      <SfcPlanDrawingModal
+        open={showSfcPlanModal}
+        onClose={() => setShowSfcPlanModal(false)}
+        pipes={pipes}
+        planGroups={planGroups}
+        farmName={currentFarm?.name ?? null}
+      />
+      <ProfileDxfModal
+        open={showProfileDxfModal}
+        onClose={() => setShowProfileDxfModal(false)}
+        pipes={pipes}
+        planGroups={planGroups}
+        farmName={currentFarm?.name ?? null}
       />
 
     </div>

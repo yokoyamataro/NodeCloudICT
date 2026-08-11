@@ -33,7 +33,6 @@ import { PipeCoordinateCalcPage } from '@/features/underdrain/PipeCoordinateCalc
 import { PipeWiringPage } from '@/features/underdrain/PipeWiringPage'
 import { DepthCalcPage } from '@/features/underdrain/DepthCalcPage'
 import { LandXMLPage } from '@/features/underdrain/LandXMLPage'
-import { CadExportPage } from '@/features/underdrain/CadExportPage'
 import { StakingRecordsPage } from '@/features/underdrain/StakingRecordsPage'
 import { FarmMemosPage } from '@/features/memo/FarmMemosPage'
 // 境界測量
@@ -366,7 +365,6 @@ function AppRoutes() {
           <Route path="coordinate-calc" element={<PipeCoordinateCalcPage />} />
           <Route path="pipe-wiring" element={<PipeWiringPage />} />
           <Route path="depth-calc" element={<DepthCalcPage />} />
-          <Route path="cad-export" element={<CadExportPage />} />
           <Route path="landxml" element={<LandXMLPage />} />
           <Route path="field-data" element={<StakingRecordsPage />} />
         </Route>
