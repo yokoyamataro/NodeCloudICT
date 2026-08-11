@@ -902,6 +902,51 @@ export function generateSfcPipesContent(
       }
     }
 
+    // ===== 集水 合流点の 計画高 補完 (施工計画から直接生成) =====
+    // pipe.vertices と Plan の座標が一致しない 合流点 (K14→S4 等の入力位置)
+    // では pipe ループで plan.collectorPoint を拾えず、計画高が全く出力
+    // されない。ここで補完する。要素は 計画高 のみ (点名・地盤高は不要)。
+    if (emitPlanned && textLayerIndex.colPlanned && hasPlan) {
+      // どの Plan collectorPoint が pipe ループで既に描画済みか判定するため、
+      // 集水 pipe の全頂点座標を Set 化
+      const collectorVertexPositions = new Set<string>()
+      for (const pipe of pipes) {
+        if (pipe.pipeType === 'branch') continue
+        for (const v of pipe.vertices) {
+          collectorVertexPositions.add(realPosKey(v.x, v.y))
+        }
+      }
+      for (const group of planGroups) {
+        if (group.groupType !== 'collector' && group.groupType !== 'direct') continue
+        for (const row of group.rows) {
+          const cp = row.collectorPoint
+          if (!cp) continue
+          if (cp.plannedHeight === null || cp.plannedHeight === undefined) continue
+          // 既に pipe vertex ループで描画済みならスキップ
+          if (collectorVertexPositions.has(realPosKey(cp.x, cp.y))) continue
+
+          const { px, py } = realToPaperMm(cp.x, cp.y)
+          // 吸水と重なるので右にずらす (吸水と同じ shift ロジック)
+          const posKey = groupPosKey(px, py)
+          const occurrence = groupCount.get(posKey) ?? 0
+          groupCount.set(posKey, occurrence + 1)
+          const shiftX = occurrence * groupShiftPerOccurrence
+          // 集水スタック位置 (initialYOffset は 1.5*moji、その下 2 段目 = 計画高)
+          const cy = py + moji * 1.5 + stepDy * 2 // 点名(1) + 地盤高(2) 分だけ下げる
+          emitText(
+            textLayerIndex.colPlanned,
+            COLOR_CODE.magenta,
+            formatHeight(cp.plannedHeight),
+            px + shiftX,
+            cy,
+            moji,
+            0,
+            1,
+          )
+        }
+      }
+    }
+
     // ===== 集水勾配 + 集水距離 (施工計画から直接生成) =====
     // 施工計画表の 集水 区間勾配 列 (右端列) と同じロジック:
     //   - segmentDistance は row.collectorPoint.segmentDistance (Plan の値)
