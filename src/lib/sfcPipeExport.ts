@@ -676,6 +676,48 @@ export function generateSfcPipesContent(
     const groupCount = new Map<string, number>()
     const groupShiftPerOccurrence = moji * 6
 
+    // 集水頂点の重複除去 + planLookup 不一致時のフォールバック用に
+    // 座標ベース (10mm 単位) のマップを作る:
+    //   ・collectorPlanByPos: (x,y) → 最初の PlanPoint (S4A S3C 等の統合名を含む)
+    //   ・collectorSkip: (pipeId|idx) の集合。同じ位置に既に頂点があれば skip
+    const POS_KEY_M = 100 // 10mm 精度
+    const realPosKey = (x: number, y: number) =>
+      `${Math.round(x * POS_KEY_M)}_${Math.round(y * POS_KEY_M)}`
+    const collectorPlanByPos = new Map<string, PlanPoint>()
+    for (const group of planGroups) {
+      if (group.groupType !== 'collector' && group.groupType !== 'direct') continue
+      for (const row of group.rows) {
+        if (!row.collectorPoint) continue
+        const k = realPosKey(row.collectorPoint.x, row.collectorPoint.y)
+        if (!collectorPlanByPos.has(k)) {
+          collectorPlanByPos.set(k, row.collectorPoint)
+        }
+      }
+    }
+    const collectorVertexList = new Map<string, string[]>()
+    for (const pipe of pipes) {
+      if (pipe.pipeType === 'branch') continue
+      for (let i = 0; i < pipe.vertices.length; i++) {
+        const v = pipe.vertices[i]
+        const k = realPosKey(v.x, v.y)
+        const list = collectorVertexList.get(k) ?? []
+        list.push(`${pipe.id}|${i}`)
+        collectorVertexList.set(k, list)
+      }
+    }
+    const collectorSkip = new Set<string>()
+    for (const [, list] of collectorVertexList) {
+      for (let j = 1; j < list.length; j++) collectorSkip.add(list[j])
+    }
+    // Plan の集水 pointName に含まれる部分名 (S4A, S3C 等) の集合を作る。
+    // 別位置に落ちた同名の pipe vertex (auto-generate されたもの) は
+    // 「Plan の統合名にすでに含まれるので不要」として skip する。
+    const collectorNameTokens = new Set<string>()
+    for (const [, cp] of collectorPlanByPos) {
+      const tokens = (cp.pointName || '').split(/[.\s]+/).filter((t) => t.length > 0)
+      for (const t of tokens) collectorNameTokens.add(t)
+    }
+
     // 吸水を先に処理する (集水が同位置なら shift される)
     const orderedPipes = [
       ...pipes.filter((p) => p.pipeType === 'branch'),
@@ -712,7 +754,22 @@ export function generateSfcPipesContent(
 
       for (let i = 0; i < total; i++) {
         const v = pipe.vertices[i]
-        const pp = planForPipe?.get(i) ?? null
+        // 集水は同座標に複数配線がある (S4A と S3C が同じ点) 場合、
+        // 最初の 1 本だけを描画。2 本目以降は collectorSkip でスキップ。
+        if (!isAbsorption && collectorSkip.has(`${pipe.id}|${i}`)) continue
+
+        // 座標一致で plan を検索 (planForPipe が座標微差で拾えないケース対応)
+        const pp =
+          planForPipe?.get(i) ??
+          (!isAbsorption ? collectorPlanByPos.get(realPosKey(v.x, v.y)) ?? null : null)
+
+        // 集水で plan マッチが無く 自動生成名 (例: S4A) が
+        // すでに別の Plan 統合名 (S4A S3C 等) に含まれる場合、
+        // 重複ラベルなので描画をスキップ
+        if (!isAbsorption && !pp) {
+          const autoName = generatePointName(pipe.number, i, pipe.vertices.length)
+          if (collectorNameTokens.has(autoName)) continue
+        }
         const { px: x1, py: y1 } = realToPaperMm(v.x, v.y)
 
         // 前頂点方向 (勾配・距離ラベル用)
