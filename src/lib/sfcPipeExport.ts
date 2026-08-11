@@ -10,6 +10,13 @@
 //         内部 250,000 として出力し、locate 適用後は 250 mm (紙上)。
 //  - Shift-JIS で出力（既存 TrendOne 出力と同様）
 //
+// SXF の feature 引数順は (layer, color, font, width, …)。
+// color/font/width は SXF 標準の絶対インデックスを参照する
+// (pre_defined_*_feature 宣言はそれらを "使う" ことの明示のみ):
+//   色:   1=black 2=red 3=green 4=blue 5=yellow 6=magenta 7=cyan …
+//   線種: 1=continuous 2=dashed 3=dashed_spaced …
+//   線幅: 1=0.13 2=0.18 3=0.25 4=0.35 5=0.50 6=0.70 …
+//
 // 現時点のスコープ: 配線の形状 (polyline) と 管種切替点 (円) のみ。
 // 文字ラベル・ハッチング・図枠等はスコープ外。
 
@@ -24,18 +31,36 @@ export interface SfcExportOptions {
   scale?: number
 }
 
-// 管種 → 色 index (colours 配列に対応)
-const COLOR_NAMES = ['black', 'red', 'green', 'blue', 'magenta', 'brown', 'darkgreen'] as const
-type ColorName = typeof COLOR_NAMES[number]
+// SXF 標準の色コード (使う分だけ列挙)
+const COLOR_CODE = {
+  black: 1,
+  red: 2,
+  green: 3,
+  blue: 4,
+  yellow: 5,
+  magenta: 6,
+  cyan: 7,
+} as const
+type ColorName = keyof typeof COLOR_CODE
+// pre_defined_colour_feature で宣言する順序 (宣言自体に順番の意味はないが並べる)
+const DECLARED_COLORS: ColorName[] = ['black', 'red', 'green', 'blue', 'yellow', 'magenta', 'cyan']
 
+// SXF 標準の線種コード
+const FONT_CONTINUOUS = 1 // continuous
+
+// SXF 標準の線幅コード
+const WIDTH_025 = 3 // 0.25mm
+const WIDTH_035 = 4 // 0.35mm
+
+// 管種 → 色
 const PIPE_TYPE_COLOR: Record<string, ColorName> = {
-  main: 'red',         // 集水
-  branch: 'black',     // 吸水
-  outlet: 'green',     // 落口
+  main: 'red',           // 集水
+  branch: 'black',       // 吸水
+  outlet: 'green',       // 落口
   connection: 'magenta', // 連絡渠
-  spring: 'blue',      // 湧水処理
-  auxiliary: 'brown',  // 補助暗渠
-  self_funded: 'darkgreen', // 自費施工
+  spring: 'blue',        // 湧水処理
+  auxiliary: 'cyan',     // 補助暗渠
+  self_funded: 'yellow', // 自費施工
 }
 
 /**
@@ -85,18 +110,11 @@ export function generateSfcPipesContent(
   out.push('DATA;')
   out.push('')
 
-  // ===== 色 / フォント / 線幅 =====
-  const colorIdx: Record<ColorName, number> = {} as Record<ColorName, number>
-  COLOR_NAMES.forEach((c, i) => {
+  // ===== 色 / フォント / 線幅 (SXF 標準を "使う" 宣言) =====
+  for (const c of DECLARED_COLORS) {
     emit(`#${nextId()} = pre_defined_colour_feature(\\'${c}\\')`)
-    colorIdx[c] = i + 1
-  })
-
-  const fontContinuousIdx = 1
+  }
   emit(`#${nextId()} = pre_defined_font_feature(\\'continuous\\')`)
-
-  const widthThinIdx = 1
-  const widthMediumIdx = 2
   emit(`#${nextId()} = width_feature('0.250000')`)
   emit(`#${nextId()} = width_feature('0.350000')`)
 
@@ -134,27 +152,28 @@ export function generateSfcPipesContent(
     const sfigName = `-Pipe-${pt}-`
     sfigNames.push(sfigName)
     const colorName = PIPE_TYPE_COLOR[pt as string] ?? 'black'
-    const colorNumber = colorIdx[colorName]
-    const widthNumber = pt === 'main' ? widthMediumIdx : widthThinIdx
+    const colorCode = COLOR_CODE[colorName]
+    const widthCode = pt === 'main' ? WIDTH_035 : WIDTH_025
 
     emit(`#${nextId()} = sfig_org_feature(\\'${sfigName}\\','1')`)
 
     for (const pipe of group) {
       const vs = pipe.vertices
       if (vs.length < 2) continue
+      // 引数順: (layer, color, font, width, …)
       if (vs.length === 2) {
         const x1 = (vs[0].x * internalMul).toFixed(6)
         const y1 = (vs[0].y * internalMul).toFixed(6)
         const x2 = (vs[1].x * internalMul).toFixed(6)
         const y2 = (vs[1].y * internalMul).toFixed(6)
         emit(
-          `#${nextId()} = line_feature('${colorNumber}','${fontContinuousIdx}','${widthNumber}','${layerIdx}','${x1}','${y1}','${x2}','${y2}')`,
+          `#${nextId()} = line_feature('${layerIdx}','${colorCode}','${FONT_CONTINUOUS}','${widthCode}','${x1}','${y1}','${x2}','${y2}')`,
         )
       } else {
         const xs = vs.map((v) => (v.x * internalMul).toFixed(6)).join(',')
         const ys = vs.map((v) => (v.y * internalMul).toFixed(6)).join(',')
         emit(
-          `#${nextId()} = polyline_feature('${colorNumber}','${fontContinuousIdx}','${widthNumber}','${layerIdx}','${vs.length}','(${xs})','(${ys})')`,
+          `#${nextId()} = polyline_feature('${layerIdx}','${colorCode}','${FONT_CONTINUOUS}','${widthCode}','${vs.length}','(${xs})','(${ys})')`,
         )
       }
     }
@@ -173,7 +192,7 @@ export function generateSfcPipesContent(
       const cy = (t.y * internalMul).toFixed(6)
       const r = symbolRadiusInternal.toFixed(6)
       emit(
-        `#${nextId()} = circle_feature('${colorIdx.magenta}','${fontContinuousIdx}','${widthThinIdx}','${layerIdx}','${cx}','${cy}','${r}')`,
+        `#${nextId()} = circle_feature('${layerIdx}','${COLOR_CODE.magenta}','${FONT_CONTINUOUS}','${WIDTH_025}','${cx}','${cy}','${r}')`,
       )
     }
   }
