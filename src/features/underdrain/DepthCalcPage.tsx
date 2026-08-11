@@ -1220,9 +1220,9 @@ export function DepthCalcPage() {
                     return (
                       <td
                         key={p.id}
-                        onDoubleClick={() => setEditingDiameterKey(key)}
+                        onClick={() => setEditingDiameterKey(key)}
                         className="px-1.5 py-1 text-center border font-mono text-slate-600 cursor-pointer"
-                        title="ダブルクリックで区間の管径を変更"
+                        title="クリックで区間の管径を変更"
                       >
                         {editing ? (
                           <select
@@ -1259,9 +1259,9 @@ export function DepthCalcPage() {
                       const editing = editingDiameterKey === key
                       return (
                         <td
-                          onDoubleClick={() => setEditingDiameterKey(key)}
+                          onClick={() => setEditingDiameterKey(key)}
                           className="px-1.5 py-1 text-center border font-mono bg-green-50 text-slate-600 cursor-pointer"
-                          title="ダブルクリックで管径を変更"
+                          title="クリックで管径を変更"
                         >
                           {editing ? (
                             <select
