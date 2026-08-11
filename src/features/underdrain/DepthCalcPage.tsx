@@ -8,7 +8,6 @@ import {
   ChevronDown,
   ChevronRight,
   Map as MapIcon,
-  Settings,
   Calculator,
   Maximize2,
   X,
@@ -102,9 +101,6 @@ export function DepthCalcPage() {
     imin: 600, // 最低勾配
     istd: 550, // 推奨勾配
   })
-
-  // 設定パネルの表示状態
-  const [showCalcSettings, setShowCalcSettings] = useState(false)
 
   // 自動計算の対象スコープ: 'system' = 現在の系統のみ / 'all' = 全系統
   const [autoCalcScope, setAutoCalcScope] = useState<'system' | 'all'>('system')
@@ -1237,18 +1233,6 @@ export function DepthCalcPage() {
                     <Mountain className="h-4 w-4" />
                     地盤高
                   </button>
-                  {/* 自動計算設定 */}
-                  <button
-                    onClick={() => setShowCalcSettings(!showCalcSettings)}
-                    className={`flex items-center gap-1.5 px-2 py-1.5 border rounded-lg transition-colors ${
-                      showCalcSettings
-                        ? 'bg-amber-100 border-amber-300 text-amber-700'
-                        : 'text-slate-600 hover:bg-slate-50'
-                    }`}
-                    title="自動切深計画設定"
-                  >
-                    <Settings className="h-4 w-4" />
-                  </button>
                   {/* 自動切深計画 + 対象スコープ */}
                   <div className="flex items-stretch border border-amber-500 rounded-lg overflow-hidden">
                     <button
@@ -1304,41 +1288,6 @@ export function DepthCalcPage() {
                     <Trash2 className="h-4 w-4" />
                   </button>
                   <div className="w-px h-6 bg-slate-300" />
-                  {/* 配線間隔 / 計画流量: 工区ごとに永続化 (hydraulicSettingsStore) */}
-                  <label className="flex items-center gap-1 text-xs text-slate-600 whitespace-nowrap" title="配線間隔（標準 12m）">
-                    <span>配線</span>
-                    <select
-                      value={hydraulicSettings.pipeInterval}
-                      onChange={(e) =>
-                        currentFarm &&
-                        setHydraulicSettings(currentFarm.id, {
-                          pipeInterval: parseInt(e.target.value, 10) as 10 | 12,
-                        })
-                      }
-                      disabled={!currentFarm}
-                      className="px-1.5 py-1 border rounded text-xs bg-white"
-                    >
-                      <option value={10}>10m</option>
-                      <option value={12}>12m</option>
-                    </select>
-                  </label>
-                  <label className="flex items-center gap-1 text-xs text-slate-600 whitespace-nowrap" title="計画流量 mm/day（標準 30mm）">
-                    <span>流量</span>
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={hydraulicSettings.plannedFlow}
-                      onChange={(e) =>
-                        currentFarm &&
-                        setHydraulicSettings(currentFarm.id, {
-                          plannedFlow: parseFloat(e.target.value) || 0,
-                        })
-                      }
-                      disabled={!currentFarm}
-                      className="w-14 px-1.5 py-1 border rounded text-xs text-right font-mono"
-                    />
-                    <span>mm</span>
-                  </label>
                   <button
                     onClick={() => setShowHydraulicModal(true)}
                     disabled={saving}
@@ -1372,10 +1321,10 @@ export function DepthCalcPage() {
         </div>
       </div>
 
-      {/* 自動計算設定パネル */}
-      {showCalcSettings && hasData && (
-        <div className="px-4 py-3 border-b bg-amber-50 flex items-center gap-6 text-sm">
-          <span className="font-medium text-amber-800">自動計算パラメータ:</span>
+      {/* 自動計算パラメータ + 水理設定 (常時表示) */}
+      {hasData && (
+        <div className="px-4 py-2 border-b bg-amber-50 flex items-center gap-x-6 gap-y-2 text-sm flex-wrap">
+          <span className="font-medium text-amber-800">パラメータ:</span>
           <div className="flex items-center gap-2">
             <label className="text-slate-600">吸水切深 kh:</label>
             <input
@@ -1419,6 +1368,42 @@ export function DepthCalcPage() {
               onChange={e => setCalcParams(prev => ({ ...prev, istd: parseInt(e.target.value) || 1 }))}
               className="w-16 px-2 py-1 border rounded text-center font-mono"
             />
+          </div>
+          <div className="w-px h-5 bg-amber-300" />
+          <div className="flex items-center gap-2" title="配線間隔（標準 12m）">
+            <label className="text-slate-600">配線間隔:</label>
+            <select
+              value={hydraulicSettings.pipeInterval}
+              onChange={(e) =>
+                currentFarm &&
+                setHydraulicSettings(currentFarm.id, {
+                  pipeInterval: parseInt(e.target.value, 10) as 10 | 12,
+                })
+              }
+              disabled={!currentFarm}
+              className="px-2 py-1 border rounded text-sm bg-white"
+            >
+              <option value={10}>10</option>
+              <option value={12}>12</option>
+            </select>
+            <span className="text-slate-500">m</span>
+          </div>
+          <div className="flex items-center gap-2" title="計画流量 mm/day（標準 30mm）">
+            <label className="text-slate-600">計画流量:</label>
+            <input
+              type="number"
+              step="0.1"
+              value={hydraulicSettings.plannedFlow}
+              onChange={(e) =>
+                currentFarm &&
+                setHydraulicSettings(currentFarm.id, {
+                  plannedFlow: parseFloat(e.target.value) || 0,
+                })
+              }
+              disabled={!currentFarm}
+              className="w-16 px-2 py-1 border rounded text-center font-mono"
+            />
+            <span className="text-slate-500">mm/日</span>
           </div>
         </div>
       )}
