@@ -38,7 +38,7 @@ interface ContinuousSlopeRow {
   cumulativeDistance: number // 始点からの累積距離（m）
 }
 import { useFarmStore } from '@/stores/farmStore'
-import { useUnderdrainStore } from '@/stores/underdrainStore'
+import { useUnderdrainStore, PIPE_DIAMETERS } from '@/stores/underdrainStore'
 import { useSurveyStore } from '@/stores/surveyStore'
 import { usePipeWiringStore } from '@/stores/pipeWiringStore'
 // generatePlanFromWiring は配管系統ストアの in-memory state を参照する。
@@ -55,7 +55,7 @@ import { parseLandXml, type ParsedSurface } from '@/lib/landxml/parser'
 
 export function DepthCalcPage() {
   const { currentFarm } = useFarmStore()
-  const { fetchPipes, pipes } = useUnderdrainStore()
+  const { fetchPipes, pipes, updatePipe } = useUnderdrainStore()
   const { fetchSurveyData } = useSurveyStore()
   const { fetchWiring, saveWiring, hasChanges: hasWiringChanges } = usePipeWiringStore()
   // 配管系統の生データ（wiringRowId → rowType / isMergePipe / mergeSystemIndex の最新状態）
@@ -1184,6 +1184,67 @@ export function DepthCalcPage() {
                   </td>
                   <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
                     区間勾配
+                  </td>
+                </tr>
+
+                {/* 管径 (CAD 解析で指定した値。ここでも変更可) */}
+                <tr className="depth-row-diameter">
+                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap text-slate-600">
+                    管径
+                  </td>
+                  <td className="border-0 bg-transparent"></td>
+                  {row.absorptionPoints.length > 0 && (
+                    <td
+                      colSpan={row.absorptionPoints.length}
+                      className="px-1.5 py-0.5 text-center border bg-slate-50"
+                    >
+                      {row.absorptionPipeId ? (
+                        <select
+                          value={pipeDiameterById.get(row.absorptionPipeId) ?? ''}
+                          onChange={(e) => {
+                            const v = e.target.value
+                            updatePipe(row.absorptionPipeId!, {
+                              diameter: v === '' ? null : parseInt(v, 10),
+                            })
+                          }}
+                          className="px-1 py-0.5 border rounded text-xs font-mono bg-white"
+                          title="吸水管径 (mm)"
+                        >
+                          <option value="">-</option>
+                          {PIPE_DIAMETERS.map((d) => (
+                            <option key={d} value={d}>{d}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="text-slate-400 font-mono text-xs">-</span>
+                      )}
+                    </td>
+                  )}
+                  <td className="border-0 bg-transparent"></td>
+                  <td className="px-1.5 py-0.5 text-center border bg-green-50">
+                    {row.collectorPipeId ? (
+                      <select
+                        value={pipeDiameterById.get(row.collectorPipeId) ?? ''}
+                        onChange={(e) => {
+                          const v = e.target.value
+                          updatePipe(row.collectorPipeId!, {
+                            diameter: v === '' ? null : parseInt(v, 10),
+                          })
+                        }}
+                        className="px-1 py-0.5 border rounded text-xs font-mono bg-white"
+                        title="集水管径 (mm)"
+                      >
+                        <option value="">-</option>
+                        {PIPE_DIAMETERS.map((d) => (
+                          <option key={d} value={d}>{d}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="text-slate-400 font-mono text-xs">-</span>
+                    )}
+                  </td>
+                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap text-slate-600">
+                    管径
                   </td>
                 </tr>
 
