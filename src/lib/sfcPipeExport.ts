@@ -9,6 +9,7 @@
 //    → 例: 1/1000 のとき scale=1000、locate scale=0.001。実座標 250m は
 //         内部 250,000 として出力し、locate 適用後は 250 mm (紙上)。
 //  - Shift-JIS で出力（既存 TrendOne 出力と同様）
+//  - 施工計画 (planGroups) を渡すと 測点名/地盤高/計画高/切深/勾配 の text_string_feature も出力
 //
 // SXF の feature 引数順は (layer, color, font, width, …)。
 // color/font/width は SXF 標準の絶対インデックスを参照する
@@ -17,12 +18,14 @@
 //   線種: 1=continuous 2=dashed 3=dashed_spaced …
 //   線幅: 1=0.13 2=0.18 3=0.25 4=0.35 5=0.50 6=0.70 …
 //
-// 現時点のスコープ: 配線の形状 (polyline) と 管種切替点 (円) のみ。
-// 文字ラベル・ハッチング・図枠等はスコープ外。
+// 文字は text_string_feature で top-level に配置 (sfig_org 外)。
+// 現地座標保持モードでも 文字は "用紙 mm" で 直接出力する
+// (見た目を保つため、locate 変換の外に置く)。
 
 import type { PipeRow } from '@/stores/underdrainStore'
 import { PIPE_TYPE_NAMES } from '@/stores/underdrainStore'
 import type { PipeType } from '@/types/database'
+import type { PlanGroup, PlanPoint } from '@/stores/constructionPlanStore'
 
 export interface SfcExportOptions {
   /** ファイル名 (拡張子除く) */
@@ -49,6 +52,27 @@ export interface SfcExportOptions {
    */
   originX?: number
   originY?: number
+  /** 施工計画 (テキスト要素の元データ)。未指定なら テキストは出力しない。 */
+  planGroups?: PlanGroup[]
+  /** どの要素を出すかの ON/OFF フラグ */
+  include?: {
+    pipeShapes?: boolean       // 配線 (polyline/line) — default true
+    transitions?: boolean      // 管種切替の 1mm 円 — default true
+    pipeNumbers?: boolean      // 配線番号 — default true (planGroups があるとき有効)
+    pointNames?: boolean       // 測点名 — default true
+    groundHeight?: boolean     // 地盤高 — default true
+    plannedHeight?: boolean    // 計画高 — default true
+    cutDepth?: boolean         // 切深 — default true
+    segmentSlope?: boolean     // 区間勾配 — default true
+    segmentDistance?: boolean  // 区間距離 — default true
+  }
+  /** テキスト系の細かい設定 */
+  textOptions?: {
+    moji?: number              // 文字サイズ mm (default 2)
+    pipeNumberSize?: number    // 配線番号サイズ (default 2.5)
+    absorptionStdDepth?: number  // 吸水標準切深 (default 0.8)
+    collectorStdDepth?: number   // 集水標準切深 (default 0.9)
+  }
 }
 
 // SXF 標準の色コード (使う分だけ列挙)。TREND-ONE が出力した参照 SFC の
@@ -65,7 +89,7 @@ const COLOR_CODE = {
 } as const
 type ColorName = keyof typeof COLOR_CODE
 // pre_defined_colour_feature 宣言 (使う色だけ)
-const DECLARED_COLORS: ColorName[] = ['green', 'yellow', 'magenta', 'lightblue']
+const DECLARED_COLORS: ColorName[] = ['black', 'red', 'green', 'yellow', 'magenta', 'lightblue']
 
 // SXF 標準の線種コード
 const FONT_CONTINUOUS = 1
@@ -140,6 +164,112 @@ export function generateMinimalSfcContent(): string {
   return out.join('\r\n') + '\r\n'
 }
 
+// -------------------- テキスト用ヘルパー (CadExportPage と共通) --------------------
+
+/** 頂点数字から測点名 (C / B{n} / A) を生成 */
+function generatePointName(pipeNumber: string, idx: number, total: number): string {
+  if (total <= 0) return pipeNumber
+  if (idx === 0) return `${pipeNumber}C`
+  if (idx === total - 1) return `${pipeNumber}A`
+  const middleIndex = total - 1 - idx
+  return `${pipeNumber}B${middleIndex}`
+}
+
+/** 管ID × 頂点インデックス → PlanPoint のルックアップ */
+function buildPlanLookup(
+  planGroups: PlanGroup[],
+  pipes: PipeRow[],
+): Map<string, Map<number, PlanPoint>> {
+  const map = new Map<string, Map<number, PlanPoint>>()
+  const EPS = 1e-4
+  for (const group of planGroups) {
+    for (const row of group.rows) {
+      if (row.absorptionPipeId) {
+        const pipe = pipes.find((p) => p.id === row.absorptionPipeId)
+        if (pipe) {
+          const inner = map.get(row.absorptionPipeId) ?? new Map<number, PlanPoint>()
+          const limit = Math.min(row.absorptionPoints.length, pipe.vertices.length)
+          for (let i = 0; i < limit; i++) {
+            inner.set(i, row.absorptionPoints[i])
+          }
+          map.set(row.absorptionPipeId, inner)
+        }
+      }
+      if (row.collectorPipeId && row.collectorPoint) {
+        const pipe = pipes.find((p) => p.id === row.collectorPipeId)
+        if (pipe) {
+          const inner = map.get(row.collectorPipeId) ?? new Map<number, PlanPoint>()
+          for (let i = 0; i < pipe.vertices.length; i++) {
+            const v = pipe.vertices[i]
+            if (
+              Math.abs(v.x - row.collectorPoint.x) < EPS &&
+              Math.abs(v.y - row.collectorPoint.y) < EPS
+            ) {
+              inner.set(i, row.collectorPoint)
+              break
+            }
+          }
+          map.set(row.collectorPipeId, inner)
+        }
+      }
+    }
+  }
+  return map
+}
+
+/** 配線 (pipe) の中央 (路長の半分) 座標 */
+function pipeMidpoint(pipe: PipeRow): { x: number; y: number } | null {
+  const v = pipe.vertices
+  if (v.length === 0) return null
+  if (v.length === 1) return { x: v[0].x, y: v[0].y }
+  let total = 0
+  const segLen: number[] = []
+  for (let i = 1; i < v.length; i++) {
+    const dx = v[i].x - v[i - 1].x
+    const dy = v[i].y - v[i - 1].y
+    const d = Math.sqrt(dx * dx + dy * dy)
+    segLen.push(d)
+    total += d
+  }
+  if (total === 0) return { x: v[0].x, y: v[0].y }
+  const target = total / 2
+  let acc = 0
+  for (let i = 0; i < segLen.length; i++) {
+    if (acc + segLen[i] >= target) {
+      const t = (target - acc) / segLen[i]
+      return {
+        x: v[i].x + t * (v[i + 1].x - v[i].x),
+        y: v[i].y + t * (v[i + 1].y - v[i].y),
+      }
+    }
+    acc += segLen[i]
+  }
+  return { x: v[v.length - 1].x, y: v[v.length - 1].y }
+}
+
+/** 逆方向 (dx<0) の場合は反転し、文字が左→右に読めるようにする */
+function calcTextAngle(dx: number, dy: number): number {
+  let _dx = dx
+  let _dy = dy
+  if (_dx < 0) {
+    _dx = -_dx
+    _dy = -_dy
+  }
+  if (_dx === 0) {
+    if (_dy > 0) return Math.PI
+    if (_dy < 0) return -Math.PI
+    return 0
+  }
+  let a = Math.atan(_dy / _dx)
+  if (_dy < 0) a = a + Math.PI
+  return a
+}
+
+function formatHeight(v: number | null | undefined): string {
+  if (v === null || v === undefined) return ''
+  return v.toFixed(2)
+}
+
 /**
  * 生成した SFC の文字列を返す。呼び出し側で Shift-JIS 変換してファイルに書く。
  *
@@ -165,6 +295,43 @@ export function generateSfcPipesContent(
   const now = new Date()
   const iso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
 
+  // include フラグの解決 (default true)
+  const inc = options.include ?? {}
+  const incPipeShapes = inc.pipeShapes ?? true
+  const incTransitions = inc.transitions ?? true
+  const incPipeNumbers = inc.pipeNumbers ?? true
+  const incPointNames = inc.pointNames ?? true
+  const incGround = inc.groundHeight ?? true
+  const incPlanned = inc.plannedHeight ?? true
+  const incCutDepth = inc.cutDepth ?? true
+  const incSlope = inc.segmentSlope ?? true
+  const incDistance = inc.segmentDistance ?? true
+
+  const planGroups = options.planGroups ?? []
+  const hasPlan = planGroups.length > 0
+  // planGroups が無ければ全てのテキストは出力しない
+  const emitPipeNumbers = incPipeNumbers && hasPlan
+  const emitPointNames = incPointNames && hasPlan
+  const emitGround = incGround && hasPlan
+  const emitPlanned = incPlanned && hasPlan
+  const emitCutDepth = incCutDepth && hasPlan
+  const emitSlope = incSlope && hasPlan
+  const emitDistance = incDistance && hasPlan
+  const anyText =
+    emitPipeNumbers ||
+    emitPointNames ||
+    emitGround ||
+    emitPlanned ||
+    emitCutDepth ||
+    emitSlope ||
+    emitDistance
+
+  const txt = options.textOptions ?? {}
+  const moji = txt.moji ?? 2
+  const pipeNumberSize = txt.pipeNumberSize ?? 2.5
+  const absorptionStdDepth = txt.absorptionStdDepth ?? 0.8
+  const collectorStdDepth = txt.collectorStdDepth ?? 0.9
+
   // 全 vertex から bbox を求める (real m)
   let minX = Infinity
   let minY = Infinity
@@ -183,26 +350,20 @@ export function generateSfcPipesContent(
   }
 
   // 用紙シート寸法 (mm) と、座標変換関数 toContent (survey-mode) / toPaper (paper-mode)
-  //   survey-mode:
-  //     content 座標 = real m × 1000 (mm at real scale)
-  //     sfig_locate scale=1/scale=0.001、angle=rotationDeg で用紙位置決め
-  //     offset は 回転後の bbox min が 用紙原点+margin に来るよう計算
-  //   paper-mode:
-  //     content 座標 = そのまま paper mm (top-level 出力)
   let sheet: { width: number; height: number }
   let toContent: (x: number, y: number) => { cx: number; cy: number }
   let sfigTransform: { offsetX: number; offsetY: number } | null = null
+  let sfMinXShared = 0
+  let sfMinYShared = 0
+  let paperMinXShared = 0 // paper-mode 用: swap 後の bbox 最小 (SFC 座標系)
+  let paperMinYShared = 0
 
   // survey-mode: SXF の sfig_locate 角度は (360 - user_deg) mod 360 に変換する
-  //   例: ユーザ 337°12'37" (=337.21°) → SFC 22.79° = 360 - 337.21
-  //       (test-2 の 22°45' → 337.25° と 58-4(当初) の 337°12'37" → 22.79°
-  //        の両方で成立)
   const sxfAngleDeg = ((360 - rotationDeg) % 360 + 360) % 360
+  const sxfAngleRad = (sxfAngleDeg * Math.PI) / 180
 
   if (preserveSurvey) {
     // PipeVertex は JGD2011 (x=北, y=東) だが SFC は (X=東, Y=北) の CAD 慣例。
-    // 出力時に x/y を swap する。以下の bbox/回転/原点計算は 全て SFC 座標系
-    // (sfx=v.y=東, sfy=v.x=北) で行う。
     let sfMinX = Infinity, sfMinY = Infinity, sfMaxX = -Infinity, sfMaxY = -Infinity
     for (const p of pipes) {
       for (const v of p.vertices) {
@@ -215,21 +376,15 @@ export function generateSfcPipesContent(
       }
     }
     if (!Number.isFinite(sfMinX)) { sfMinX = 0; sfMinY = 0; sfMaxX = 0; sfMaxY = 0 }
+    sfMinXShared = sfMinX
+    sfMinYShared = sfMinY
 
-    // ユーザ入力の原点も PipeVertex 系 (x=北, y=東) と揃える。SFC へは swap。
-    //   options.originX = 北座標、options.originY = 東座標
-    const sfOriginX = options.originY ?? sfMinX // SFC X = 東 = pipe.y
-    const sfOriginY = options.originX ?? sfMinY // SFC Y = 北 = pipe.x
+    const sfOriginX = options.originY ?? sfMinX
+    const sfOriginY = options.originX ?? sfMinY
 
-    // SXF 適用時の回転式:
-    //   paper_x = offset_x + cos(sxf_θ) * sfx - sin(sxf_θ) * sfy
-    //   paper_y = offset_y + sin(sxf_θ) * sfx + cos(sxf_θ) * sfy
-    // (content = sf × 1000、sfig scale = 0.001 → 数値上は sf 相当)
-    const rad = (sxfAngleDeg * Math.PI) / 180
-    const cs = Math.cos(rad)
-    const sn = Math.sin(rad)
+    const cs = Math.cos(sxfAngleRad)
+    const sn = Math.sin(sxfAngleRad)
 
-    // 原点基準の相対座標を回転して bbox を求める
     const corners: Array<[number, number]> = [
       [sfMinX - sfOriginX, sfMinY - sfOriginY],
       [sfMaxX - sfOriginX, sfMinY - sfOriginY],
@@ -249,24 +404,62 @@ export function generateSfcPipesContent(
     const contentH = (rMaxY - rMinY) * mToPaperMm + marginMm * 2
     sheet = pickSheet(contentW, contentH)
 
-    // 原点が paper (marginMm - rMinX*, marginMm - rMinY*) に来るよう offset を決定
     const rotOriginX = cs * sfOriginX - sn * sfOriginY
     const rotOriginY = sn * sfOriginX + cs * sfOriginY
     sfigTransform = {
       offsetX: (marginMm - rMinX * mToPaperMm) - rotOriginX * mToPaperMm,
       offsetY: (marginMm - rMinY * mToPaperMm) - rotOriginY * mToPaperMm,
     }
-    // content 座標: PipeVertex (x=北, y=東) → SFC (X=東=y, Y=北=x) の swap を適用
     toContent = (x, y) => ({ cx: y * 1000, cy: x * 1000 })
   } else {
-    const contentW = (maxX - minX) * mToPaperMm + marginMm * 2
-    const contentH = (maxY - minY) * mToPaperMm + marginMm * 2
+    // paper-mode: SFC 座標系 (X=東=v.y, Y=北=v.x) に swap した上で bbox を取り直す
+    let sfMinX = Infinity, sfMinY = Infinity, sfMaxX = -Infinity, sfMaxY = -Infinity
+    for (const p of pipes) {
+      for (const v of p.vertices) {
+        const sfx = v.y
+        const sfy = v.x
+        if (sfx < sfMinX) sfMinX = sfx
+        if (sfy < sfMinY) sfMinY = sfy
+        if (sfx > sfMaxX) sfMaxX = sfx
+        if (sfy > sfMaxY) sfMaxY = sfy
+      }
+    }
+    if (!Number.isFinite(sfMinX)) { sfMinX = 0; sfMinY = 0; sfMaxX = 0; sfMaxY = 0 }
+    paperMinXShared = sfMinX
+    paperMinYShared = sfMinY
+    const contentW = (sfMaxX - sfMinX) * mToPaperMm + marginMm * 2
+    const contentH = (sfMaxY - sfMinY) * mToPaperMm + marginMm * 2
     sheet = pickSheet(contentW, contentH)
     toContent = (x, y) => ({
-      cx: (x - minX) * mToPaperMm + marginMm,
-      cy: (y - minY) * mToPaperMm + marginMm,
+      cx: (y - sfMinX) * mToPaperMm + marginMm,
+      cy: (x - sfMinY) * mToPaperMm + marginMm,
     })
+    // 使用しない (survey-only 変数) の警告避け
+    void minX; void minY; void maxX; void maxY
   }
+
+  /**
+   * 実座標 (x=北, y=東) → 用紙 mm (SFC 座標系: X=東, Y=北 に swap 済み)
+   * テキスト出力用。sfig の外に置くため、survey-mode でも paper-mode でも
+   * 最終的な用紙 mm を返す。
+   */
+  const realToPaperMm = (x: number, y: number): { px: number; py: number } => {
+    const sfx = y
+    const sfy = x
+    if (preserveSurvey && sfigTransform) {
+      const cs = Math.cos(sxfAngleRad)
+      const sn = Math.sin(sxfAngleRad)
+      const px = sfigTransform.offsetX + (cs * sfx - sn * sfy) * mToPaperMm
+      const py = sfigTransform.offsetY + (sn * sfx + cs * sfy) * mToPaperMm
+      return { px, py }
+    }
+    return {
+      px: (sfx - paperMinXShared) * mToPaperMm + marginMm,
+      py: (sfy - paperMinYShared) * mToPaperMm + marginMm,
+    }
+  }
+  // survey-only 内部変数の unused 警告防止
+  void sfMinXShared; void sfMinYShared
 
   const out: string[] = []
   let nextIdCounter = 10
@@ -308,15 +501,13 @@ export function generateSfcPipesContent(
   emit(`#${nextId()} = width_feature('0.250000')`)
   emit(`#${nextId()} = width_feature('0.350000')`)
 
-  // ===== survey-mode: TREND-ONE 参照ファイル (test-2) の骨組みを敷く
-  //   ・背景色 sfig を開く。実 feature (polyline/line/circle) はこの中に入る
-  //   ・末尾で 名称未定 sfig (空、level-2 マーカー) と 2 つの sfig_locate、
-  //     drawing_attribute (SXF3)、sheet、layers を並べる
-  //
-  //   test-2 には他に composite_curve_org / externally_defined_hatch の
-  //   "定義" が並んでいたが、これらは 参照する feature (composite_curve や
-  //   hatch) が無いのに宣言すると TREND-ONE が「複合曲線に誤りがあります」
-  //   等のエラーを出すので、ここでは出力しない。
+  // テキストフォント (使う場合のみ宣言)
+  const TEXT_FONT_IDX = 1 // 最初の text_font_feature が 1
+  if (anyText) {
+    emit(`#${nextId()} = text_font_feature(\\'ＭＳ ゴシック\\')`)
+  }
+
+  // ===== survey-mode: 背景色 sfig を開く =====
   const bgFigName = '$$ATRU$$1$$背景色$$色$$0_0_0'
   const level2FigName = '名称未定'
   if (preserveSurvey) {
@@ -345,57 +536,55 @@ export function generateSfcPipesContent(
     'unknown',
   ]
 
-  for (const pt of pipeTypeOrder) {
-    const group = byType.get(pt)
-    if (!group || group.length === 0) continue
-    layerIdx += 1
-    const label = pt === 'unknown' ? '未分類' : PIPE_TYPE_NAMES[pt as PipeType] ?? String(pt)
-    layerNames.push(label)
-    const colorName = PIPE_TYPE_COLOR[pt as string] ?? 'green'
-    const colorCode = COLOR_CODE[colorName]
-    const widthCode = pt === 'main' ? WIDTH_035 : WIDTH_025
-    const fontCode = fontForPipeType(pt as string)
+  if (incPipeShapes) {
+    for (const pt of pipeTypeOrder) {
+      const group = byType.get(pt)
+      if (!group || group.length === 0) continue
+      layerIdx += 1
+      const label = pt === 'unknown' ? '未分類' : PIPE_TYPE_NAMES[pt as PipeType] ?? String(pt)
+      layerNames.push(label)
+      const colorName = PIPE_TYPE_COLOR[pt as string] ?? 'green'
+      const colorCode = COLOR_CODE[colorName]
+      const widthCode = pt === 'main' ? WIDTH_035 : WIDTH_025
+      const fontCode = fontForPipeType(pt as string)
 
-    for (const pipe of group) {
-      const vs = pipe.vertices
-      if (vs.length < 2) continue
-      const points = vs.map((v) => toContent(v.x, v.y))
-      if (points.length === 2) {
-        const [a, b] = points
-        emit(
-          `#${nextId()} = line_feature('${layerIdx}','${colorCode}','${fontCode}','${widthCode}','${a.cx.toFixed(6)}','${a.cy.toFixed(6)}','${b.cx.toFixed(6)}','${b.cy.toFixed(6)}')`,
-        )
-      } else {
-        const xs = points.map((p) => p.cx.toFixed(6)).join(',')
-        const ys = points.map((p) => p.cy.toFixed(6)).join(',')
-        emit(
-          `#${nextId()} = polyline_feature('${layerIdx}','${colorCode}','${fontCode}','${widthCode}','${points.length}','(${xs})','(${ys})')`,
-        )
+      for (const pipe of group) {
+        const vs = pipe.vertices
+        if (vs.length < 2) continue
+        const points = vs.map((v) => toContent(v.x, v.y))
+        if (points.length === 2) {
+          const [a, b] = points
+          emit(
+            `#${nextId()} = line_feature('${layerIdx}','${colorCode}','${fontCode}','${widthCode}','${a.cx.toFixed(6)}','${a.cy.toFixed(6)}','${b.cx.toFixed(6)}','${b.cy.toFixed(6)}')`,
+          )
+        } else {
+          const xs = points.map((p) => p.cx.toFixed(6)).join(',')
+          const ys = points.map((p) => p.cy.toFixed(6)).join(',')
+          emit(
+            `#${nextId()} = polyline_feature('${layerIdx}','${colorCode}','${fontCode}','${widthCode}','${points.length}','(${xs})','(${ys})')`,
+          )
+        }
       }
     }
   }
 
   // ===== 管種切替点の 1mm 円 =====
-  //   survey-mode: content 座標は real m × 1000 なので、sfig_locate scale=0.001
-  //     を通すと content 半径 = scale で用紙 1mm になる (scale=1000 → 1000)
-  //   paper-mode: content 座標がそのまま paper mm なので 半径 = 1
-  const transitions = findTransitionPoints(pipes)
-  if (transitions.length > 0) {
-    layerIdx += 1
-    layerNames.push('記号')
-    const radiusStr = (preserveSurvey ? scale : 1).toFixed(6)
-    for (const t of transitions) {
-      const { cx, cy } = toContent(t.x, t.y)
-      emit(
-        `#${nextId()} = circle_feature('${layerIdx}','${COLOR_CODE.yellow}','${FONT_CONTINUOUS}','${WIDTH_025}','${cx.toFixed(6)}','${cy.toFixed(6)}','${radiusStr}')`,
-      )
+  if (incTransitions) {
+    const transitions = findTransitionPoints(pipes)
+    if (transitions.length > 0) {
+      layerIdx += 1
+      layerNames.push('記号')
+      const radiusStr = (preserveSurvey ? scale : 1).toFixed(6)
+      for (const t of transitions) {
+        const { cx, cy } = toContent(t.x, t.y)
+        emit(
+          `#${nextId()} = circle_feature('${layerIdx}','${COLOR_CODE.yellow}','${FONT_CONTINUOUS}','${WIDTH_025}','${cx.toFixed(6)}','${cy.toFixed(6)}','${radiusStr}')`,
+        )
+      }
     }
   }
 
   // ===== survey-mode: level-2 マーカー sfig + 2 つの sfig_locate =====
-  //   空の 名称未定 を開いて閉じ、locate で level-2 の変換を宣言。
-  //   TREND-ONE はこの transform を使って背景 sfig 内の feature を "現地座標" として解釈する。
-  //   背景 sfig は等倍で置く。
   if (preserveSurvey && sfigTransform) {
     emit(`#${nextId()} = sfig_org_feature(\\'${level2FigName}\\','2')`)
     const s = (1 / scale).toFixed(14)
@@ -405,12 +594,221 @@ export function generateSfcPipesContent(
     emit(
       `#${nextId()} = sfig_locate_feature('0',\\'${bgFigName}\\','0.000000','0.000000','0.00000000000000','1.00000000000000','1.00000000000000')`,
     )
-    // drawing_attribute_feature は SXF3 ブロックで囲む
     const daId = nextId()
     out.push('/*SXF3')
     out.push(`#${daId} = drawing_attribute_feature(\\' \\',\\' \\',\\' \\',\\' \\',\\' \\',\\' \\',\\' \\','0','1','1',\\' \\',\\' \\')`)
     out.push('SXF3*/')
     out.push('')
+  }
+
+  // ===== テキスト要素 (常に 用紙 mm、top-level) =====
+  //
+  // レイヤ順序 (実装容易性優先で、使われるものだけを登録):
+  //   1) 配線番号
+  //   2) 吸水: 測点/地盤高/計画高/切深/勾配/延長
+  //   3) 集水: 測点/地盤高/計画高/切深/勾配/延長
+  // レイヤ番号は 配線・記号レイヤの続きから連番。
+  const textLayerIndex: Partial<{
+    pipeNumber: number
+    absPoint: number
+    absGround: number
+    absPlanned: number
+    absCut: number
+    absSlope: number
+    absDist: number
+    colPoint: number
+    colGround: number
+    colPlanned: number
+    colCut: number
+    colSlope: number
+    colDist: number
+  }> = {}
+  const registerTextLayer = (name: string): number => {
+    layerIdx += 1
+    layerNames.push(name)
+    return layerIdx
+  }
+
+  if (anyText) {
+    if (emitPipeNumbers) textLayerIndex.pipeNumber = registerTextLayer('配線番号')
+    if (emitPointNames) textLayerIndex.absPoint = registerTextLayer('吸水測点')
+    if (emitGround) textLayerIndex.absGround = registerTextLayer('吸水地盤高')
+    if (emitPlanned) textLayerIndex.absPlanned = registerTextLayer('吸水計画高')
+    if (emitCutDepth) textLayerIndex.absCut = registerTextLayer('吸水切深')
+    if (emitSlope) textLayerIndex.absSlope = registerTextLayer('吸水勾配')
+    if (emitDistance) textLayerIndex.absDist = registerTextLayer('吸水延長')
+    if (emitPointNames) textLayerIndex.colPoint = registerTextLayer('集水測点')
+    if (emitGround) textLayerIndex.colGround = registerTextLayer('集水地盤高')
+    if (emitPlanned) textLayerIndex.colPlanned = registerTextLayer('集水計画高')
+    if (emitCutDepth) textLayerIndex.colCut = registerTextLayer('集水切深')
+    if (emitSlope) textLayerIndex.colSlope = registerTextLayer('集水勾配')
+    if (emitDistance) textLayerIndex.colDist = registerTextLayer('集水延長')
+  }
+
+  /** text_string_feature を出力 */
+  const emitText = (
+    layer: number,
+    color: number,
+    text: string,
+    px: number,
+    py: number,
+    height: number,
+    angleRad: number,
+    basePoint = 1,
+  ) => {
+    if (!text) return
+    const angleDeg = (angleRad * 180) / Math.PI
+    const width = height // char width factor: 正方比
+    const escaped = escapeSfcString(text)
+    emit(
+      `#${nextId()} = text_string_feature('${layer}','${color}','${TEXT_FONT_IDX}',\\'${escaped}\\','${px.toFixed(6)}','${py.toFixed(6)}','${height.toFixed(6)}','${width.toFixed(6)}','0.000000','${angleDeg.toFixed(12)}','0.00000000000000','${basePoint}','1')`,
+    )
+  }
+
+  if (anyText) {
+    const HALF_PI = Math.PI / 2
+    const planLookup = buildPlanLookup(planGroups, pipes)
+    // テキスト step: 上→下に積むため、paper Y は下方向マイナスとみなさず
+    // "y を減らす" 方向で積む (TrendOne の buildTextLines は +cos で積んでいたが
+    // それは TrendOne 独自座標系。SFC は +Y=上なので、下に並べる = -Y。)
+    const stepDx = 0
+    const stepDy = -moji * 1.05
+
+    for (const pipe of pipes) {
+      if (pipe.vertices.length === 0) continue
+      const isAbsorption = pipe.pipeType === 'branch'
+      const layers = isAbsorption
+        ? {
+            point: textLayerIndex.absPoint,
+            ground: textLayerIndex.absGround,
+            plan: textLayerIndex.absPlanned,
+            depth: textLayerIndex.absCut,
+            slope: textLayerIndex.absSlope,
+            dist: textLayerIndex.absDist,
+            planColor: COLOR_CODE.red,
+          }
+        : {
+            point: textLayerIndex.colPoint,
+            ground: textLayerIndex.colGround,
+            plan: textLayerIndex.colPlanned,
+            depth: textLayerIndex.colCut,
+            slope: textLayerIndex.colSlope,
+            dist: textLayerIndex.colDist,
+            planColor: COLOR_CODE.red,
+          }
+      const stdDepth = isAbsorption ? absorptionStdDepth : collectorStdDepth
+      const initialYOffset = isAbsorption ? moji * 0.5 : moji * 1.5
+
+      const planForPipe = planLookup.get(pipe.id) ?? null
+      const total = pipe.vertices.length
+
+      for (let i = 0; i < total; i++) {
+        const v = pipe.vertices[i]
+        const pp = planForPipe?.get(i) ?? null
+        const { px: x1, py: y1 } = realToPaperMm(v.x, v.y)
+
+        // 前頂点方向 (勾配・距離ラベル用)
+        let segAngle = 0
+        let midX = x1
+        let midY = y1
+        if (i > 0) {
+          const prev = pipe.vertices[i - 1]
+          const prevP = realToPaperMm(prev.x, prev.y)
+          const dx = prevP.px - x1
+          const dy = prevP.py - y1
+          segAngle = calcTextAngle(dx, dy)
+          midX = (x1 + prevP.px) / 2
+          midY = (y1 + prevP.py) / 2
+        }
+
+        const pointName =
+          pp !== null ? pp.pointName : generatePointName(pipe.number, i, total)
+        const gh = pp?.groundHeight ?? v.z ?? null
+        const ph = pp?.plannedHeight ?? null
+        const cd = pp?.cutDepth ?? (gh !== null && ph !== null ? gh - ph : null)
+        const ghStr = formatHeight(gh)
+        const fhStr = formatHeight(ph)
+        const chStr = formatHeight(cd)
+
+        // 距離・勾配
+        let slopeLabel: string | null = null
+        let distLabel: string | null = null
+        if (i > 0) {
+          const prev = pipe.vertices[i - 1]
+          const prevPP = planForPipe?.get(i - 1) ?? null
+          const prevPh = prevPP?.plannedHeight ?? null
+          const dist = Math.sqrt(
+            (v.x - prev.x) * (v.x - prev.x) + (v.y - prev.y) * (v.y - prev.y),
+          )
+          if (dist > 0) {
+            distLabel = dist.toFixed(2)
+          }
+          if (ph !== null && prevPh !== null && dist > 0 && prevPh !== ph) {
+            slopeLabel = `1/${Math.round(dist / Math.abs(prevPh - ph))}`
+          }
+        }
+
+        // 頂点周りに縦積み
+        let cx = x1
+        let cy = y1 + initialYOffset
+        if (emitPointNames && layers.point) {
+          emitText(layers.point, COLOR_CODE.black, pointName, cx, cy, moji, HALF_PI, 1)
+        }
+        cx += stepDx; cy += stepDy
+        if (emitGround && layers.ground && ghStr) {
+          emitText(layers.ground, COLOR_CODE.black, ghStr, cx, cy, moji, HALF_PI, 1)
+        }
+        cx += stepDx; cy += stepDy
+        if (emitPlanned && layers.plan && fhStr) {
+          emitText(layers.plan, layers.planColor, fhStr, cx, cy, moji, HALF_PI, 1)
+        }
+        cx += stepDx; cy += stepDy
+        if (
+          emitCutDepth &&
+          layers.depth &&
+          cd !== null &&
+          Math.abs(cd - stdDepth) > 0.005
+        ) {
+          emitText(layers.depth, COLOR_CODE.magenta, ` ${chStr}`, cx, cy, moji, HALF_PI, 1)
+        }
+
+        // セグメント中点: 勾配 + 距離
+        if (emitSlope && layers.slope && slopeLabel) {
+          emitText(layers.slope, COLOR_CODE.red, slopeLabel, midX, midY, moji, segAngle, 5)
+        }
+        if (emitDistance && layers.dist && distLabel) {
+          // 距離は 勾配の少し下 (paper -Y 方向) にずらす
+          emitText(
+            layers.dist,
+            COLOR_CODE.black,
+            distLabel,
+            midX,
+            midY - moji * 1.1,
+            moji,
+            segAngle,
+            5,
+          )
+        }
+      }
+
+      // 配線番号 (中央)
+      if (emitPipeNumbers && textLayerIndex.pipeNumber && pipe.number) {
+        const mid = pipeMidpoint(pipe)
+        if (mid) {
+          const { px, py } = realToPaperMm(mid.x, mid.y)
+          emitText(
+            textLayerIndex.pipeNumber,
+            COLOR_CODE.black,
+            pipe.number,
+            px,
+            py,
+            pipeNumberSize,
+            0,
+            5,
+          )
+        }
+      }
+    }
   }
 
   // ===== 図面シート + レイヤ =====
@@ -424,6 +822,13 @@ export function generateSfcPipesContent(
   out.push('ENDSEC;')
   out.push('END-ISO-10303-21;')
   return out.join('\r\n') + '\r\n'
+}
+
+/** SFC 文字列内のバックスラッシュ・引用符を無害化 */
+function escapeSfcString(s: string): string {
+  // SFC のリテラルは \' で囲まれる。内部の \\' や制御文字は避ける。
+  // 実運用上、単純に \\ と \' を全角に落とすか除去する。
+  return s.replace(/\\/g, '/').replace(/'/g, '`')
 }
 
 // 内容が収まる標準 A サイズシートを選ぶ (横長固定)

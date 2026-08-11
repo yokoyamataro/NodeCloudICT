@@ -527,6 +527,16 @@ export function CadExportPage() {
   const [sfcRotDeg, setSfcRotDeg] = useState<number>(0) // 度
   const [sfcRotMin, setSfcRotMin] = useState<number>(0) // 分
   const [sfcRotSec, setSfcRotSec] = useState<number>(0) // 秒
+  // SFC: 出力要素の ON/OFF
+  const [sfcIncPipeShapes, setSfcIncPipeShapes] = useState<boolean>(true)
+  const [sfcIncTransitions, setSfcIncTransitions] = useState<boolean>(true)
+  const [sfcIncPipeNumbers, setSfcIncPipeNumbers] = useState<boolean>(true)
+  const [sfcIncPointNames, setSfcIncPointNames] = useState<boolean>(true)
+  const [sfcIncGround, setSfcIncGround] = useState<boolean>(true)
+  const [sfcIncPlanned, setSfcIncPlanned] = useState<boolean>(true)
+  const [sfcIncCutDepth, setSfcIncCutDepth] = useState<boolean>(true)
+  const [sfcIncSlope, setSfcIncSlope] = useState<boolean>(true)
+  const [sfcIncDistance, setSfcIncDistance] = useState<boolean>(true)
 
   useEffect(() => {
     if (!currentFarm) return
@@ -596,6 +606,24 @@ export function CadExportPage() {
       rotationDeg: rotDecimal,
       originX: Number.isFinite(origX) ? origX : undefined,
       originY: Number.isFinite(origY) ? origY : undefined,
+      planGroups,
+      include: {
+        pipeShapes: sfcIncPipeShapes,
+        transitions: sfcIncTransitions,
+        pipeNumbers: sfcIncPipeNumbers,
+        pointNames: sfcIncPointNames,
+        groundHeight: sfcIncGround,
+        plannedHeight: sfcIncPlanned,
+        cutDepth: sfcIncCutDepth,
+        segmentSlope: sfcIncSlope,
+        segmentDistance: sfcIncDistance,
+      },
+      textOptions: {
+        moji,
+        pipeNumberSize,
+        absorptionStdDepth: absStdDepth,
+        collectorStdDepth: colStdDepth,
+      },
     })
     const sjis = toShiftJIS(sfcText)
     const buf = sjis.slice().buffer
@@ -894,15 +922,96 @@ export function CadExportPage() {
                 <span className="text-slate-500">"</span>
               </label>
             </div>
+            <div className="flex flex-col gap-1 border rounded px-2 py-1 text-xs bg-slate-50">
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-slate-600 font-semibold">SFC 出力要素:</span>
+                <span className="text-slate-600">形状</span>
+                <label className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={sfcIncPipeShapes}
+                    onChange={(e) => setSfcIncPipeShapes(e.target.checked)}
+                  />
+                  <span>配線</span>
+                </label>
+                <label className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={sfcIncTransitions}
+                    onChange={(e) => setSfcIncTransitions(e.target.checked)}
+                  />
+                  <span>記号(管種切替)</span>
+                </label>
+                <label className="flex items-center gap-1 ml-2">
+                  <input
+                    type="checkbox"
+                    checked={sfcIncPipeNumbers}
+                    onChange={(e) => setSfcIncPipeNumbers(e.target.checked)}
+                  />
+                  <span>配線番号</span>
+                </label>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-slate-600 font-semibold">測点属性:</span>
+                <label className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={sfcIncPointNames}
+                    onChange={(e) => setSfcIncPointNames(e.target.checked)}
+                  />
+                  <span>点名</span>
+                </label>
+                <label className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={sfcIncGround}
+                    onChange={(e) => setSfcIncGround(e.target.checked)}
+                  />
+                  <span>地盤高</span>
+                </label>
+                <label className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={sfcIncPlanned}
+                    onChange={(e) => setSfcIncPlanned(e.target.checked)}
+                  />
+                  <span>計画高</span>
+                </label>
+                <label className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={sfcIncCutDepth}
+                    onChange={(e) => setSfcIncCutDepth(e.target.checked)}
+                  />
+                  <span>切深</span>
+                </label>
+                <label className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={sfcIncSlope}
+                    onChange={(e) => setSfcIncSlope(e.target.checked)}
+                  />
+                  <span>勾配</span>
+                </label>
+                <label className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={sfcIncDistance}
+                    onChange={(e) => setSfcIncDistance(e.target.checked)}
+                  />
+                  <span>距離</span>
+                </label>
+              </div>
+            </div>
             <button
               type="button"
               onClick={handleSfcDownload}
               disabled={pipes.length === 0}
               className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-              title="配線 (吸水/集水 …) の形状のみを SFC 形式で出力。管種切替点に 1mm 円を打つ。縮尺 1/1000。"
+              title="配線 (吸水/集水 …) の形状 + 施工計画データ (測点/地盤高/計画高/切深/勾配) を SFC 形式で出力。縮尺 1/1000。"
             >
               <Download className="h-4 w-4" />
-              SFC 出力（配線のみ・Shift-JIS）
+              SFC 出力（Shift-JIS）
             </button>
             <button
               type="button"
