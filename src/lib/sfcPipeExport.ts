@@ -114,19 +114,54 @@ export function generateMinimalSfcContent(): string {
 
 /**
  * 生成した SFC の文字列を返す。呼び出し側で Shift-JIS 変換してファイルに書く。
+ *
+ * 座標変換:
+ *  - 全 vertex の bbox を計算し、原点を (minX, minY) にシフト
+ *  - 実 m → paper mm: real_meters * (1000 / scale)  (例: scale=1000 なら等値)
+ *  - シート左下から margin (mm) 内側に配置
+ *  - sfig_org / sfig_locate は使わず、全 feature を top-level に直接置く
+ *    (ミニマル SFC が通ったので、余分な入れ子は避けて確実な構成にする)
  */
 export function generateSfcPipesContent(
   pipes: PipeRow[],
   options: SfcExportOptions = {},
 ): string {
   const scale = options.scale ?? 1000
-  const paperScale = 1 / scale // 0.001 for 1/1000
-  const internalMul = scale // real_meters * internalMul = internal 座標 (mm)
-  const symbolRadiusInternal = 1 / paperScale // 1mm 紙上 = internal 1/paperScale
+  // real_m → paper mm 変換係数
+  const mToPaperMm = 1000 / scale // 1/1000 のときは 1
+  const marginMm = 20
   const fileBase = options.fileBaseName ?? 'plan'
   const filename = `${fileBase}.sfc`
   const now = new Date()
   const iso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
+
+  // 全 vertex から bbox を求める
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const p of pipes) {
+    for (const v of p.vertices) {
+      if (v.x < minX) minX = v.x
+      if (v.y < minY) minY = v.y
+      if (v.x > maxX) maxX = v.x
+      if (v.y > maxY) maxY = v.y
+    }
+  }
+  if (!Number.isFinite(minX)) {
+    minX = 0; minY = 0; maxX = 0; maxY = 0
+  }
+  // 用紙シート寸法 (mm)。シートは 内容の bbox + margin×2 だけあれば十分だが、
+  // 標準 A サイズに切り上げる (よく使う A3=420×297 / A2=594×420 / A1=841×594)
+  const contentW = (maxX - minX) * mToPaperMm + marginMm * 2
+  const contentH = (maxY - minY) * mToPaperMm + marginMm * 2
+  const sheet = pickSheet(contentW, contentH)
+
+  // real(x, y) → paper (px, py) 変換
+  const toPaper = (x: number, y: number) => ({
+    px: (x - minX) * mToPaperMm + marginMm,
+    py: (y - minY) * mToPaperMm + marginMm,
+  })
 
   const out: string[] = []
   let nextIdCounter = 10
@@ -176,11 +211,8 @@ export function generateSfcPipesContent(
     byType.set(key, arr)
   }
 
-  // sfig_org (管種ごと) → 中に polyline/line 群 → 末尾で sfig_locate
-  const sfigNames: string[] = []
   const layerNames: string[] = []
   let layerIdx = 0
-
   const pipeTypeOrder: Array<PipeType | 'unknown'> = [
     'main',
     'branch',
@@ -198,65 +230,45 @@ export function generateSfcPipesContent(
     layerIdx += 1
     const label = pt === 'unknown' ? '未分類' : PIPE_TYPE_NAMES[pt as PipeType] ?? String(pt)
     layerNames.push(label)
-    const sfigName = `-Pipe-${pt}-`
-    sfigNames.push(sfigName)
     const colorName = PIPE_TYPE_COLOR[pt as string] ?? 'black'
     const colorCode = COLOR_CODE[colorName]
     const widthCode = pt === 'main' ? WIDTH_035 : WIDTH_025
 
-    emit(`#${nextId()} = sfig_org_feature(\\'${sfigName}\\','1')`)
-
     for (const pipe of group) {
       const vs = pipe.vertices
       if (vs.length < 2) continue
-      // 引数順: (layer, color, font, width, …)
-      if (vs.length === 2) {
-        const x1 = (vs[0].x * internalMul).toFixed(6)
-        const y1 = (vs[0].y * internalMul).toFixed(6)
-        const x2 = (vs[1].x * internalMul).toFixed(6)
-        const y2 = (vs[1].y * internalMul).toFixed(6)
+      const paperPoints = vs.map((v) => toPaper(v.x, v.y))
+      if (paperPoints.length === 2) {
+        const [a, b] = paperPoints
         emit(
-          `#${nextId()} = line_feature('${layerIdx}','${colorCode}','${FONT_CONTINUOUS}','${widthCode}','${x1}','${y1}','${x2}','${y2}')`,
+          `#${nextId()} = line_feature('${layerIdx}','${colorCode}','${FONT_CONTINUOUS}','${widthCode}','${a.px.toFixed(6)}','${a.py.toFixed(6)}','${b.px.toFixed(6)}','${b.py.toFixed(6)}')`,
         )
       } else {
-        const xs = vs.map((v) => (v.x * internalMul).toFixed(6)).join(',')
-        const ys = vs.map((v) => (v.y * internalMul).toFixed(6)).join(',')
+        const xs = paperPoints.map((p) => p.px.toFixed(6)).join(',')
+        const ys = paperPoints.map((p) => p.py.toFixed(6)).join(',')
         emit(
-          `#${nextId()} = polyline_feature('${layerIdx}','${colorCode}','${FONT_CONTINUOUS}','${widthCode}','${vs.length}','(${xs})','(${ys})')`,
+          `#${nextId()} = polyline_feature('${layerIdx}','${colorCode}','${FONT_CONTINUOUS}','${widthCode}','${paperPoints.length}','(${xs})','(${ys})')`,
         )
       }
     }
   }
 
-  // ===== 管種切替点の 1mm 円 =====
+  // ===== 管種切替点の 1mm 円 (半径 1mm) =====
   const transitions = findTransitionPoints(pipes)
   if (transitions.length > 0) {
     layerIdx += 1
     layerNames.push('記号')
-    const symFigName = '-Sym-Transition-'
-    sfigNames.push(symFigName)
-    emit(`#${nextId()} = sfig_org_feature(\\'${symFigName}\\','1')`)
     for (const t of transitions) {
-      const cx = (t.x * internalMul).toFixed(6)
-      const cy = (t.y * internalMul).toFixed(6)
-      const r = symbolRadiusInternal.toFixed(6)
+      const { px, py } = toPaper(t.x, t.y)
       emit(
-        `#${nextId()} = circle_feature('${layerIdx}','${COLOR_CODE.magenta}','${FONT_CONTINUOUS}','${WIDTH_025}','${cx}','${cy}','${r}')`,
+        `#${nextId()} = circle_feature('${layerIdx}','${COLOR_CODE.magenta}','${FONT_CONTINUOUS}','${WIDTH_025}','${px.toFixed(6)}','${py.toFixed(6)}','1.000000')`,
       )
     }
   }
 
-  // ===== sfig_locate (各 sfig_org を 1/scale で配置) =====
-  const paperScaleStr = paperScale.toFixed(14)
-  for (const name of sfigNames) {
-    emit(
-      `#${nextId()} = sfig_locate_feature('0',\\'${name}\\','0.000000','0.000000','0.00000000000000','${paperScaleStr}','${paperScaleStr}')`,
-    )
-  }
-
   // ===== 図面シート + レイヤ =====
   emit(
-    `#${nextId()} = drawing_sheet_feature(\\'${fileBase}\\','1','1','841','594')`,
+    `#${nextId()} = drawing_sheet_feature(\\'${fileBase}\\','1','1','${sheet.width}','${sheet.height}')`,
   )
   for (const ln of layerNames) {
     emit(`#${nextId()} = layer_feature(\\'${ln}\\','1')`)
@@ -265,6 +277,21 @@ export function generateSfcPipesContent(
   out.push('ENDSEC;')
   out.push('END-ISO-10303-21;')
   return out.join('\r\n') + '\r\n'
+}
+
+// 内容が収まる標準 A サイズシートを選ぶ (横長固定)
+function pickSheet(neededW: number, neededH: number): { width: number; height: number } {
+  const sizes: Array<{ width: number; height: number }> = [
+    { width: 420, height: 297 }, // A3 横
+    { width: 594, height: 420 }, // A2 横
+    { width: 841, height: 594 }, // A1 横
+    { width: 1189, height: 841 }, // A0 横
+  ]
+  for (const s of sizes) {
+    if (neededW <= s.width && neededH <= s.height) return s
+  }
+  // それでも収まらない場合は必要サイズを直接返す (整数化)
+  return { width: Math.ceil(neededW), height: Math.ceil(neededH) }
 }
 
 /**
