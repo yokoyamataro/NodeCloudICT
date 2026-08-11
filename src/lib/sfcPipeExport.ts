@@ -747,7 +747,7 @@ export function generateSfcPipesContent(
             (v.x - prev.x) * (v.x - prev.x) + (v.y - prev.y) * (v.y - prev.y),
           )
           if (dist > 0) {
-            distLabel = dist.toFixed(1)
+            distLabel = `(${dist.toFixed(1)})`
           }
           if (ph !== null && prevPh !== null && dist > 0 && prevPh !== ph) {
             slopeLabel = `1/${Math.round(dist / Math.abs(prevPh - ph))}`
@@ -826,51 +826,58 @@ export function generateSfcPipesContent(
       }
     }
 
-    // ===== 集水勾配 + 集水距離 (planGroups から直接生成) =====
-    // 集水は 1 本の管が複数行を跨ぐことが多く、pipe.vertices の
-    // planLookup が座標一致しない場合に vertex ループで拾えないため、
-    // ここで plan の集水行を隣同士でペア化して 勾配・距離ラベルを出す。
+    // ===== 集水勾配 + 集水距離 (施工計画から直接生成) =====
+    // 施工計画表の 集水 区間勾配 列 (右端列) と同じロジック:
+    //   - segmentDistance は row.collectorPoint.segmentDistance (Plan の値)
+    //   - manualSlope があればそれを、無ければ (dist / |ph差|) を採用
     if (emitSlope || emitDistance) {
       for (const group of planGroups) {
-        if (group.groupType !== 'collector') continue
+        if (group.groupType !== 'collector' && group.groupType !== 'direct') continue
         for (let r = 0; r < group.rows.length - 1; r++) {
           const row = group.rows[r]
           const nextRow = group.rows[r + 1]
           const cp = row.collectorPoint
           const nextCp = nextRow.collectorPoint
           if (!cp || !nextCp) continue
-          const dx = cp.x - nextCp.x
-          const dy = cp.y - nextCp.y
-          const dist = Math.sqrt(dx * dx + dy * dy)
-          if (dist === 0) continue
+          const dist = cp.segmentDistance
+          if (!dist || dist <= 0) continue
+
+          // 勾配: manualSlope 優先、無ければ計画高差から計算
+          let slopeLabel: string | null = null
+          if (cp.manualSlope) {
+            slopeLabel = cp.manualSlope
+          } else {
+            const ph1 = cp.plannedHeight
+            const ph2 = nextCp.plannedHeight
+            if (ph1 !== null && ph2 !== null && ph1 !== ph2) {
+              slopeLabel = `1/${Math.round(Math.abs(dist / (ph1 - ph2)))}`
+            }
+          }
+
+          // 中点 (paper) と方向は 幾何座標から
           const p1 = realToPaperMm(cp.x, cp.y)
           const p2 = realToPaperMm(nextCp.x, nextCp.y)
           const midX = (p1.px + p2.px) / 2
           const midY = (p1.py + p2.py) / 2
           const segAngle = calcTextAngle(p2.px - p1.px, p2.py - p1.py)
 
-          if (emitSlope && textLayerIndex.colSlope) {
-            const ph1 = cp.plannedHeight
-            const ph2 = nextCp.plannedHeight
-            if (ph1 !== null && ph2 !== null && ph1 !== ph2) {
-              const slopeLabel = `1/${Math.round(dist / Math.abs(ph1 - ph2))}`
-              emitText(
-                textLayerIndex.colSlope,
-                COLOR_CODE.green,
-                slopeLabel,
-                midX,
-                midY,
-                moji,
-                segAngle,
-                5,
-              )
-            }
+          if (emitSlope && slopeLabel && textLayerIndex.colSlope) {
+            emitText(
+              textLayerIndex.colSlope,
+              COLOR_CODE.green,
+              slopeLabel,
+              midX,
+              midY,
+              moji,
+              segAngle,
+              5,
+            )
           }
           if (emitDistance && textLayerIndex.colDist) {
             emitText(
               textLayerIndex.colDist,
               COLOR_CODE.black,
-              dist.toFixed(1),
+              `(${dist.toFixed(1)})`,
               midX,
               midY - moji * 1.1,
               moji,
