@@ -36,6 +36,7 @@ interface SfcSettings {
   sfcIncSlope: boolean
   sfcIncDistance: boolean
   sfcIncDiameter: boolean
+  sfcCutDepthOnlyIfDiff: boolean
 }
 
 const DEFAULT_SFC_SETTINGS: SfcSettings = {
@@ -57,6 +58,7 @@ const DEFAULT_SFC_SETTINGS: SfcSettings = {
   sfcIncSlope: true,
   sfcIncDistance: true,
   sfcIncDiameter: true,
+  sfcCutDepthOnlyIfDiff: true,
 }
 
 function loadSfcSettings(): SfcSettings {
@@ -104,6 +106,7 @@ export function SfcPlanDrawingModal({
   const [sfcIncSlope, setSfcIncSlope] = useState<boolean>(DEFAULT_SFC_SETTINGS.sfcIncSlope)
   const [sfcIncDistance, setSfcIncDistance] = useState<boolean>(DEFAULT_SFC_SETTINGS.sfcIncDistance)
   const [sfcIncDiameter, setSfcIncDiameter] = useState<boolean>(DEFAULT_SFC_SETTINGS.sfcIncDiameter)
+  const [sfcCutDepthOnlyIfDiff, setSfcCutDepthOnlyIfDiff] = useState<boolean>(DEFAULT_SFC_SETTINGS.sfcCutDepthOnlyIfDiff)
 
   // モーダルを開いたとき (open が false→true) に localStorage から読み込む
   useEffect(() => {
@@ -127,6 +130,7 @@ export function SfcPlanDrawingModal({
     setSfcIncSlope(s.sfcIncSlope)
     setSfcIncDistance(s.sfcIncDistance)
     setSfcIncDiameter(s.sfcIncDiameter)
+    setSfcCutDepthOnlyIfDiff(s.sfcCutDepthOnlyIfDiff)
   }, [open])
 
   // 変更のたびに localStorage に保存 (モーダルが開いているとき限定)
@@ -152,6 +156,7 @@ export function SfcPlanDrawingModal({
       sfcIncSlope,
       sfcIncDistance,
       sfcIncDiameter,
+      sfcCutDepthOnlyIfDiff,
     }
     try {
       window.localStorage.setItem(SFC_SETTINGS_STORAGE_KEY, JSON.stringify(settings))
@@ -178,6 +183,7 @@ export function SfcPlanDrawingModal({
     sfcIncSlope,
     sfcIncDistance,
     sfcIncDiameter,
+    sfcCutDepthOnlyIfDiff,
   ])
 
   if (!open) return null
@@ -215,6 +221,7 @@ export function SfcPlanDrawingModal({
       textOptions: {
         moji,
         pipeNumberSize,
+        cutDepthOnlyIfDiffFromStd: sfcCutDepthOnlyIfDiff,
       },
     })
     const sjis = toShiftJIS(sfcText)
@@ -404,13 +411,25 @@ export function SfcPlanDrawingModal({
                 />
                 <span>計画高</span>
               </label>
-              <label className="flex items-center gap-1.5">
+              <label
+                className="flex items-center gap-1.5"
+                title="ON: 標準切深 (吸水 0.8m / 集水 0.9m) と異なる測点のみ切深を出力 (旧マクロと同仕様)。OFF: 全ての測点で切深を出す"
+              >
                 <input
                   type="checkbox"
                   checked={sfcIncCutDepth}
                   onChange={(e) => setSfcIncCutDepth(e.target.checked)}
                 />
                 <span>切深</span>
+                <label className="flex items-center gap-1 ml-1 text-slate-500">
+                  <input
+                    type="checkbox"
+                    checked={sfcCutDepthOnlyIfDiff}
+                    onChange={(e) => setSfcCutDepthOnlyIfDiff(e.target.checked)}
+                    disabled={!sfcIncCutDepth}
+                  />
+                  <span className="text-xs">標準と差のみ</span>
+                </label>
               </label>
               <label className="flex items-center gap-1.5">
                 <input

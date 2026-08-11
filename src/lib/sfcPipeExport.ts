@@ -73,6 +73,9 @@ export interface SfcExportOptions {
     pipeNumberSize?: number    // 配線番号サイズ (default 2.5)
     absorptionStdDepth?: number  // 吸水標準切深 (default 0.8)
     collectorStdDepth?: number   // 集水標準切深 (default 0.9)
+    /** 切深を 標準切深と異なる場合のみ 出力する (default true)。
+     *  false にすると 標準と一致する切深も 全部出力する */
+    cutDepthOnlyIfDiffFromStd?: boolean
   }
 }
 
@@ -90,7 +93,7 @@ const COLOR_CODE = {
 } as const
 type ColorName = keyof typeof COLOR_CODE
 // pre_defined_colour_feature 宣言 (使う色だけ)
-const DECLARED_COLORS: ColorName[] = ['black', 'red', 'green', 'yellow', 'magenta', 'lightblue']
+const DECLARED_COLORS: ColorName[] = ['black', 'red', 'green', 'blue', 'yellow', 'magenta', 'cyan', 'lightblue']
 
 // SXF 標準の線種コード
 const FONT_CONTINUOUS = 1
@@ -330,6 +333,7 @@ export function generateSfcPipesContent(
   const pipeNumberSize = txt.pipeNumberSize ?? 2.5
   const absorptionStdDepth = txt.absorptionStdDepth ?? 0.8
   const collectorStdDepth = txt.collectorStdDepth ?? 0.9
+  const cutDepthOnlyIfDiffFromStd = txt.cutDepthOnlyIfDiffFromStd ?? true
 
   // 全 vertex から bbox を求める (real m)
   let minX = Infinity
@@ -882,10 +886,14 @@ export function generateSfcPipesContent(
           emitText(layers.plan, layers.planColor, fhStr, cx, cy, moji, 0, 1)
         }
         cx += stepDx; cy += stepDy
-        if (emitCutDepth && layers.depth && cd !== null) {
+        if (
+          emitCutDepth &&
+          layers.depth &&
+          cd !== null &&
+          (!cutDepthOnlyIfDiffFromStd || Math.abs(cd - stdDepth) > 0.005)
+        ) {
           emitText(layers.depth, layers.depthColor, chStr, cx, cy, moji, 0, 1)
         }
-        void stdDepth
 
         // セグメント中点: 勾配 (上側) / 距離 (下側) / 管径 (下 2 段目) を
         // 配線方向に平行に配置。paper Y ではなく "配線方向の垂直" に
