@@ -17,7 +17,7 @@ export interface HydraulicSettings {
 
 export const DEFAULT_HYDRAULIC_SETTINGS: HydraulicSettings = {
   plannedFlow: 30,
-  pipeInterval: 10,
+  pipeInterval: 12,
   absorptionPipeType: 2,
   collectorPipeType: 2,
   lengthDecimals: 1,

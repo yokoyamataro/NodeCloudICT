@@ -13,7 +13,12 @@ import {
   Maximize2,
   X,
   Mountain,
+  Droplets,
+  FileSpreadsheet,
 } from 'lucide-react'
+import { useHydraulicSettingsStore, DEFAULT_HYDRAULIC_SETTINGS } from '@/stores/hydraulicSettingsStore'
+import { HydraulicCalcModal } from './HydraulicCalcModal'
+import { MeasurementResultModal } from './MeasurementResultModal'
 
 // 区間勾配の任意設定ダイアログ用ターゲット
 interface SlopeEditTarget {
@@ -115,6 +120,18 @@ export function DepthCalcPage() {
 
   // 連続勾配ダイアログ（現在アクティブな系統内で複数区間に適用）
   const [continuousOpen, setContinuousOpen] = useState(false)
+
+  // 水理計算書・測定結果一覧表 出力モーダル
+  const [showHydraulicModal, setShowHydraulicModal] = useState(false)
+  const [showMeasurementModal, setShowMeasurementModal] = useState(false)
+
+  // 水理計算パラメータ（配線間隔・計画流量）は工区ごとに Store で永続化
+  const hydraulicByFarm = useHydraulicSettingsStore((s) => s.byFarm)
+  const setHydraulicSettings = useHydraulicSettingsStore((s) => s.setSettings)
+  const hydraulicSettings = useMemo(() => {
+    if (!currentFarm) return DEFAULT_HYDRAULIC_SETTINGS
+    return hydraulicByFarm[currentFarm.id] ?? DEFAULT_HYDRAULIC_SETTINGS
+  }, [hydraulicByFarm, currentFarm])
 
   const toggleRowCollapsed = (rowId: string) => {
     setCollapsedRows((prev) => {
@@ -1286,6 +1303,60 @@ export function DepthCalcPage() {
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
+                  <div className="w-px h-6 bg-slate-300" />
+                  {/* 配線間隔 / 計画流量: 工区ごとに永続化 (hydraulicSettingsStore) */}
+                  <label className="flex items-center gap-1 text-xs text-slate-600 whitespace-nowrap" title="配線間隔（標準 12m）">
+                    <span>配線</span>
+                    <select
+                      value={hydraulicSettings.pipeInterval}
+                      onChange={(e) =>
+                        currentFarm &&
+                        setHydraulicSettings(currentFarm.id, {
+                          pipeInterval: parseInt(e.target.value, 10) as 10 | 12,
+                        })
+                      }
+                      disabled={!currentFarm}
+                      className="px-1.5 py-1 border rounded text-xs bg-white"
+                    >
+                      <option value={10}>10m</option>
+                      <option value={12}>12m</option>
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-1 text-xs text-slate-600 whitespace-nowrap" title="計画流量 mm/day（標準 30mm）">
+                    <span>流量</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={hydraulicSettings.plannedFlow}
+                      onChange={(e) =>
+                        currentFarm &&
+                        setHydraulicSettings(currentFarm.id, {
+                          plannedFlow: parseFloat(e.target.value) || 0,
+                        })
+                      }
+                      disabled={!currentFarm}
+                      className="w-14 px-1.5 py-1 border rounded text-xs text-right font-mono"
+                    />
+                    <span>mm</span>
+                  </label>
+                  <button
+                    onClick={() => setShowHydraulicModal(true)}
+                    disabled={saving}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50 whitespace-nowrap"
+                    title="水理計算書（Excel）を出力"
+                  >
+                    <Droplets className="h-4 w-4" />
+                    水理計算書
+                  </button>
+                  <button
+                    onClick={() => setShowMeasurementModal(true)}
+                    disabled={saving || pipes.length === 0}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 whitespace-nowrap"
+                    title="測定結果一覧表（Excel）を出力"
+                  >
+                    <FileSpreadsheet className="h-4 w-4" />
+                    測定結果
+                  </button>
                 </>
               ) : (
                 <button
@@ -2033,6 +2104,22 @@ export function DepthCalcPage() {
           </div>
         </div>
       )}
+
+      {/* 水理計算書 / 測定結果一覧表 出力モーダル */}
+      <HydraulicCalcModal
+        open={showHydraulicModal}
+        onClose={() => setShowHydraulicModal(false)}
+        planGroups={planGroups}
+        pipes={pipes}
+        farm={currentFarm}
+      />
+      <MeasurementResultModal
+        open={showMeasurementModal}
+        onClose={() => setShowMeasurementModal(false)}
+        planGroups={planGroups}
+        pipes={pipes}
+        farm={currentFarm}
+      />
 
     </div>
   )

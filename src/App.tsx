@@ -34,7 +34,6 @@ import { PipeWiringPage } from '@/features/underdrain/PipeWiringPage'
 import { DepthCalcPage } from '@/features/underdrain/DepthCalcPage'
 import { LandXMLPage } from '@/features/underdrain/LandXMLPage'
 import { CadExportPage } from '@/features/underdrain/CadExportPage'
-import { ReportsPage } from '@/features/underdrain/ReportsPage'
 import { StakingRecordsPage } from '@/features/underdrain/StakingRecordsPage'
 import { FarmMemosPage } from '@/features/memo/FarmMemosPage'
 // 境界測量
@@ -370,7 +369,6 @@ function AppRoutes() {
           <Route path="cad-export" element={<CadExportPage />} />
           <Route path="landxml" element={<LandXMLPage />} />
           <Route path="field-data" element={<StakingRecordsPage />} />
-          <Route path="reports" element={<ReportsPage />} />
         </Route>
         {/* 客土工事 */}
         <Route path="soil-import">
