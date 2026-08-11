@@ -138,6 +138,7 @@ export function DepthCalcPage() {
     showCut: true,
     showSlope: true,
     showDistance: true,
+    showDiameter: true,
   })
 
   // 水理計算パラメータ（配線間隔・計画流量）は工区ごとに Store で永続化
@@ -1192,91 +1193,6 @@ export function DepthCalcPage() {
                   </td>
                 </tr>
 
-                {/* 区間勾配 */}
-                <tr className="depth-row-slope">
-                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
-                    区間勾配
-                  </td>
-                  <td className="border-0 bg-transparent"></td>
-                  {row.absorptionPoints.map((p, idx) => {
-                    const prevP = idx > 0 ? row.absorptionPoints[idx - 1] : null
-                    const canEdit = prevP != null && p.segmentDistance != null && p.segmentDistance > 0
-                    return (
-                      <td
-                        key={p.id}
-                        className="px-1.5 py-1 text-center border font-mono text-slate-600"
-                      >
-                        {canEdit && prevP ? (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setSlopeEdit({
-                                segmentLabel: `${prevP.pointName} → ${p.pointName}`,
-                                distance: p.segmentDistance!,
-                                currentSlope: p.segmentSlope ?? null,
-                                upstream: {
-                                  rowId: row.id,
-                                  pointId: prevP.id,
-                                  ph: prevP.plannedHeight,
-                                  label: prevP.pointName,
-                                },
-                                downstream: {
-                                  rowId: row.id,
-                                  pointId: p.id,
-                                  ph: p.plannedHeight,
-                                  label: p.pointName,
-                                },
-                              })
-                            }
-                            className="w-full hover:bg-blue-50 rounded px-1 py-0.5 text-blue-700 hover:underline"
-                            title="勾配を任意設定"
-                          >
-                            {p.manualSlope ?? p.segmentSlope ?? "-"}
-                          </button>
-                        ) : (
-                          <span>{p.manualSlope ?? p.segmentSlope ?? "-"}</span>
-                        )}
-                      </td>
-                    )
-                  })}
-                  <td className="border-0 bg-transparent"></td>
-                  <td className="px-1.5 py-1 text-center border font-mono text-slate-600 bg-green-50">
-                    {collector && nextRow?.collectorPoint && collector.segmentDistance && collector.segmentDistance > 0 ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setSlopeEdit({
-                            segmentLabel: `${collector.pointName || '集水'} → ${nextRow.collectorPoint?.pointName || '集水'}`,
-                            distance: collector.segmentDistance!,
-                            currentSlope: collectorSlope ?? null,
-                            upstream: {
-                              rowId: row.id,
-                              pointId: collector.id,
-                              ph: collector.plannedHeight,
-                              label: collector.pointName || '集水',
-                            },
-                            downstream: {
-                              rowId: nextRow.id,
-                              pointId: nextRow.collectorPoint!.id,
-                              ph: nextRow.collectorPoint!.plannedHeight,
-                              label: nextRow.collectorPoint!.pointName || '集水',
-                            },
-                          })
-                        }
-                        className="w-full hover:bg-blue-50 rounded px-1 py-0.5 text-blue-700 hover:underline"
-                        title="勾配を任意設定"
-                      >
-                        {collectorSlope ?? '-'}
-                      </button>
-                    ) : (
-                      <span>{collectorSlope ?? '-'}</span>
-                    )}
-                  </td>
-                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
-                    区間勾配
-                  </td>
-                </tr>
-
                 {/* 管径: 吸水は区間毎に PlanPoint.segmentDiameter を持つ (フォールバックはパイプ既定値)。
                     集水は行の集水管に対して 1 値 (design_pipes.diameter を直接編集)。
                     ダブルクリックで select 表示 → 変更 or blur で確定。 */}
@@ -1407,6 +1323,92 @@ export function DepthCalcPage() {
                     水理延長
                   </td>
                 </tr>
+
+                {/* 区間勾配 (水理延長と限界勾配の間に配置) */}
+                <tr className="depth-row-slope">
+                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
+                    区間勾配
+                  </td>
+                  <td className="border-0 bg-transparent"></td>
+                  {row.absorptionPoints.map((p, idx) => {
+                    const prevP = idx > 0 ? row.absorptionPoints[idx - 1] : null
+                    const canEdit = prevP != null && p.segmentDistance != null && p.segmentDistance > 0
+                    return (
+                      <td
+                        key={p.id}
+                        className="px-1.5 py-1 text-center border font-mono text-slate-600"
+                      >
+                        {canEdit && prevP ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSlopeEdit({
+                                segmentLabel: `${prevP.pointName} → ${p.pointName}`,
+                                distance: p.segmentDistance!,
+                                currentSlope: p.segmentSlope ?? null,
+                                upstream: {
+                                  rowId: row.id,
+                                  pointId: prevP.id,
+                                  ph: prevP.plannedHeight,
+                                  label: prevP.pointName,
+                                },
+                                downstream: {
+                                  rowId: row.id,
+                                  pointId: p.id,
+                                  ph: p.plannedHeight,
+                                  label: p.pointName,
+                                },
+                              })
+                            }
+                            className="w-full hover:bg-blue-50 rounded px-1 py-0.5 text-blue-700 hover:underline"
+                            title="勾配を任意設定"
+                          >
+                            {p.manualSlope ?? p.segmentSlope ?? "-"}
+                          </button>
+                        ) : (
+                          <span>{p.manualSlope ?? p.segmentSlope ?? "-"}</span>
+                        )}
+                      </td>
+                    )
+                  })}
+                  <td className="border-0 bg-transparent"></td>
+                  <td className="px-1.5 py-1 text-center border font-mono text-slate-600 bg-green-50">
+                    {collector && nextRow?.collectorPoint && collector.segmentDistance && collector.segmentDistance > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSlopeEdit({
+                            segmentLabel: `${collector.pointName || '集水'} → ${nextRow.collectorPoint?.pointName || '集水'}`,
+                            distance: collector.segmentDistance!,
+                            currentSlope: collectorSlope ?? null,
+                            upstream: {
+                              rowId: row.id,
+                              pointId: collector.id,
+                              ph: collector.plannedHeight,
+                              label: collector.pointName || '集水',
+                            },
+                            downstream: {
+                              rowId: nextRow.id,
+                              pointId: nextRow.collectorPoint!.id,
+                              ph: nextRow.collectorPoint!.plannedHeight,
+                              label: nextRow.collectorPoint!.pointName || '集水',
+                            },
+                          })
+                        }
+                        className="w-full hover:bg-blue-50 rounded px-1 py-0.5 text-blue-700 hover:underline"
+                        title="勾配を任意設定"
+                      >
+                        {collectorSlope ?? '-'}
+                      </button>
+                    ) : (
+                      <span>{collectorSlope ?? '-'}</span>
+                    )}
+                  </td>
+                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
+                    区間勾配
+                  </td>
+                </tr>
+
                 {/* 限界勾配 (Manning 逆算)。
                     最低勾配パラメータ (1/imin) より緩いなら 1/imin にキャップ。
                     実勾配が 限界勾配 より緩い (K_actual > K_limit) or 逆勾配 (drop <= 0)
@@ -1757,25 +1759,32 @@ export function DepthCalcPage() {
     // 区間ラベル (点 i-1 → 点 i の中点)。勾配は 計画高差 / 距離、距離は
     // 吸水: 各点の segmentDistance を使う (点 i の segmentDistance が 点 i-1 → 点 i の距離)
     // 集水: 各点の segmentDistance は 現在→次 (点 i-1 の segmentDistance が 点 i-1 → 点 i の距離)
-    const segments: Array<{ x1: number; y1: number; x2: number; y2: number; slope: string | null; distance: number | null }> = []
+    const segments: Array<{ x1: number; y1: number; x2: number; y2: number; slope: string | null; distance: number | null; diameter: number | null }> = []
     for (let i = 1; i < pts.length; i++) {
       const prev = pts[i - 1]
       const cur = pts[i]
       let dist: number | null = null
+      let dia: number | null = null
       if (typeof chartScope === 'number') {
         const src = activeTab.rows[chartScope]?.absorptionPoints[i]
         dist = src?.segmentDistance ?? null
+        const row = activeTab.rows[chartScope]
+        const pipeDefault = row?.absorptionPipeId ? pipeDiameterById.get(row.absorptionPipeId) ?? null : null
+        dia = src?.segmentDiameter ?? pipeDefault
       } else {
         const collectors = activeTab.rows.map((r) => r.collectorPoint).filter((cp): cp is NonNullable<typeof cp> => cp != null)
         // collectors[i-1] の segmentDistance = collectors[i-1] → collectors[i]
         dist = collectors[i - 1]?.segmentDistance ?? null
+        // 集水は 行 i-1 の集水管の径 (segmentDistance の起点側)
+        const collectorRow = activeTab.rows.find((r) => r.collectorPoint?.id === prev.id)
+        dia = collectorRow?.collectorPipeId ? pipeDiameterById.get(collectorRow.collectorPipeId) ?? null : null
       }
       let slope: string | null = null
       if (prev.plannedHeight != null && cur.plannedHeight != null && dist != null && dist > 0) {
         const drop = prev.plannedHeight - cur.plannedHeight
         if (drop !== 0) slope = `1/${Math.round(Math.abs(dist / drop))}`
       }
-      segments.push({ x1: prev.x, y1: prev.y, x2: cur.x, y2: cur.y, slope, distance: dist })
+      segments.push({ x1: prev.x, y1: prev.y, x2: cur.x, y2: cur.y, slope, distance: dist, diameter: dia })
     }
     return { points: pts, segments, flags: overlayFlags }
   }, [activeTab, chartScope, overlayFlags])
@@ -2231,14 +2240,14 @@ export function DepthCalcPage() {
                 : 'flex-1 relative min-w-0'
             }
           >
-            <div className="absolute top-2 left-2 z-10 bg-white/90 px-2 py-1 rounded shadow text-sm font-medium flex items-center gap-1">
+            <div className="absolute top-2 left-2 z-[1000] bg-white/90 px-2 py-1 rounded shadow text-sm font-medium flex items-center gap-1">
               <MapIcon className="h-4 w-4" />
               管路マップ
             </div>
             <button
               type="button"
               onClick={() => setFullscreenPanel(fullscreenPanel === 'map' ? null : 'map')}
-              className="absolute top-2 right-2 z-20 p-1.5 rounded border bg-white shadow-sm hover:bg-slate-50"
+              className="absolute top-2 right-2 z-[1001] p-1.5 rounded border bg-white shadow-sm hover:bg-slate-50"
               title={fullscreenPanel === 'map' ? '全画面を閉じる' : '全画面表示'}
             >
               {fullscreenPanel === 'map' ? (
@@ -2259,7 +2268,7 @@ export function DepthCalcPage() {
               onPipeSelect={(id) => handleMapPipeSelect(id)}
             />
             {/* オーバーレイ表示切替チェックボックス (地図の右上に重ねる) */}
-            <div className="absolute top-11 right-2 z-20 bg-white/95 border border-slate-300 rounded shadow px-2 py-1.5 text-[11px] font-mono">
+            <div className="absolute top-11 right-2 z-[1001] bg-white/95 border border-slate-300 rounded shadow px-2 py-1.5 text-[11px] font-mono">
               <div className="text-slate-600 font-sans text-[10px] mb-1">表示項目</div>
               <label className="flex items-center gap-1 text-slate-800">
                 <input
@@ -2289,6 +2298,15 @@ export function DepthCalcPage() {
                 <span className="text-blue-600">切深</span>
               </label>
               <div className="border-t my-1" />
+              <label className="flex items-center gap-1 text-slate-800">
+                <input
+                  type="checkbox"
+                  checked={overlayFlags.showDiameter}
+                  onChange={(e) => setOverlayFlags((s) => ({ ...s, showDiameter: e.target.checked }))}
+                  className="h-3 w-3"
+                />
+                <span className="text-purple-700">管径</span>
+              </label>
               <label className="flex items-center gap-1 text-slate-800">
                 <input
                   type="checkbox"

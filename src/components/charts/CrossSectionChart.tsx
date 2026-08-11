@@ -65,8 +65,11 @@ export function CrossSectionChart({
   // 横（距離）スケールのズーム倍率
   const [widthScale, setWidthScale] = useState(1.0)
 
-  // 勾配表示の切り替え
+  // 断面図の表示項目トグル (凡例チェックボックスと連動)
   const [showSlope, setShowSlope] = useState(true)
+  const [showGround, setShowGround] = useState(true)
+  const [showPlanned, setShowPlanned] = useState(true)
+  const [showAbsorption, setShowAbsorption] = useState(true)
 
   // DXF 出力用の縦縮尺
   const [dxfVScale, setDxfVScale] = useState<100 | 200 | 500 | 1000>(200)
@@ -742,17 +745,6 @@ export function CrossSectionChart({
           ← 上流　｜　下流 →
         </span>
         <span className="ml-auto text-xs text-slate-500 flex items-center gap-2">
-          <button
-            onClick={() => setShowSlope(!showSlope)}
-            className={`px-2 py-0.5 text-[18px] rounded transition-colors ${
-              showSlope
-                ? 'bg-blue-100 text-blue-700 hover:bg-blue-200'
-                : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
-            }`}
-          >
-            勾配{showSlope ? '表示' : '非表示'}
-          </button>
-          <span className="text-slate-400">|</span>
           <span className="flex items-center gap-1">
             縦:
             <input
@@ -852,39 +844,56 @@ export function CrossSectionChart({
             </button>
           </div>
           {!legendCollapsed && (
-          <div className="p-2 space-y-1 pointer-events-none">
-          <div className="flex items-center gap-2">
-            <svg width="24" height="10" className="flex-shrink-0">
-              <line x1="2" y1="5" x2="22" y2="5" stroke="#92400e" strokeWidth="2" />
-              <circle cx="12" cy="5" r="3" fill="#92400e" />
-            </svg>
-            <span className="text-slate-700">現況高</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <svg width="24" height="10" className="flex-shrink-0">
-              <line x1="2" y1="5" x2="22" y2="5" stroke="#2563eb" strokeWidth="2" />
-              <circle cx="12" cy="5" r="3" fill="#2563eb" />
-            </svg>
-            <span className="text-slate-700">計画高（集水）</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <svg width="24" height="10" className="flex-shrink-0">
-              <circle cx="12" cy="5" r="3" fill="#16a34a" />
-            </svg>
-            <span className="text-slate-700">吸水下流部</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <svg width="24" height="10" className="flex-shrink-0">
-              <polygon points="6,1 18,1 12,9" fill="#16a34a" stroke="white" strokeWidth="1" />
-            </svg>
-            <span className="text-slate-700">吸水上流部</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <svg width="24" height="10" className="flex-shrink-0">
-              <line x1="2" y1="5" x2="22" y2="5" stroke="#16a34a" strokeWidth="1.5" strokeDasharray="4,3" />
-            </svg>
-            <span className="text-slate-700">吸水接続</span>
-          </div>
+          <div className="p-2 space-y-1">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showGround}
+                onChange={(e) => setShowGround(e.target.checked)}
+                className="h-3 w-3"
+              />
+              <svg width="24" height="10" className="flex-shrink-0">
+                <line x1="2" y1="5" x2="22" y2="5" stroke="#92400e" strokeWidth="2" />
+                <circle cx="12" cy="5" r="3" fill="#92400e" />
+              </svg>
+              <span className="text-slate-700">現況高</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showPlanned}
+                onChange={(e) => setShowPlanned(e.target.checked)}
+                className="h-3 w-3"
+              />
+              <svg width="24" height="10" className="flex-shrink-0">
+                <line x1="2" y1="5" x2="22" y2="5" stroke="#2563eb" strokeWidth="2" />
+                <circle cx="12" cy="5" r="3" fill="#2563eb" />
+              </svg>
+              <span className="text-slate-700">計画高（集水）</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showAbsorption}
+                onChange={(e) => setShowAbsorption(e.target.checked)}
+                className="h-3 w-3"
+              />
+              <svg width="24" height="10" className="flex-shrink-0">
+                <circle cx="7" cy="5" r="3" fill="#16a34a" />
+                <polygon points="15,1 21,1 18,9" fill="#16a34a" stroke="white" strokeWidth="1" />
+              </svg>
+              <span className="text-slate-700">吸水接続</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showSlope}
+                onChange={(e) => setShowSlope(e.target.checked)}
+                className="h-3 w-3"
+              />
+              <span className="w-6 text-center text-blue-700 font-mono text-[11px]">1/N</span>
+              <span className="text-slate-700">勾配ラベル</span>
+            </label>
           </div>
           )}
         </div>
@@ -982,7 +991,7 @@ export function CrossSectionChart({
           </g>
 
           {/* 現況線（茶色） */}
-          {groundPath && (
+          {showGround && groundPath && (
             <path
               d={groundPath}
               fill="none"
@@ -994,7 +1003,7 @@ export function CrossSectionChart({
           )}
 
           {/* 計画線（青） */}
-          {plannedPath && (
+          {showPlanned && plannedPath && (
             <path
               d={plannedPath}
               fill="none"
@@ -1285,7 +1294,7 @@ export function CrossSectionChart({
                 })()}
 
                 {/* 吸水接続マーク（丸） */}
-                {point.absorptionPlannedHeight !== null && (
+                {showAbsorption && point.absorptionPlannedHeight !== null && (
                   <g pointerEvents="none">
                     <circle
                       cx={x}
@@ -1369,7 +1378,7 @@ export function CrossSectionChart({
                 })()}
 
                 {/* 吸水上流部マーク（▼ 三角形） */}
-                {point.absorptionUpstreamPlannedHeight !== null && (
+                {showAbsorption && point.absorptionUpstreamPlannedHeight !== null && (
                   <g pointerEvents="none">
                     {(() => {
                       const cx = x

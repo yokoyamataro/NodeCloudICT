@@ -380,6 +380,7 @@ interface PipeMapProps {
       y2: number
       slope: string | null   // "1/77" 形式
       distance: number | null
+      diameter: number | null // mm
     }>
     flags: {
       showGround: boolean
@@ -387,6 +388,7 @@ interface PipeMapProps {
       showCut: boolean
       showSlope: boolean
       showDistance: boolean
+      showDiameter: boolean
     }
   }
 }
@@ -703,6 +705,9 @@ export function PipeMap({
           })}
           {planOverlay.segments.map((s, i) => {
             const parts: string[] = []
+            if (planOverlay.flags.showDiameter && s.diameter != null) {
+              parts.push(`<span style="color:#7c3aed">φ${s.diameter}</span>`)
+            }
             if (planOverlay.flags.showSlope && s.slope) {
               parts.push(`<span style="color:#166534">${s.slope}</span>`)
             }
