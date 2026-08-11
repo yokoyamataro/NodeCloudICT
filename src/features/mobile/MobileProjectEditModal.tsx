@@ -16,7 +16,6 @@ import type {
 } from '@/types/database'
 import {
   PROJECT_CATEGORY_LABEL,
-  PROJECT_VISIBILITY_LABEL,
 } from '@/types/database'
 import { JGD2011_ZONES } from '@/lib/coordinates'
 import { useProjectListStore } from '@/stores/projectListStore'
@@ -122,12 +121,12 @@ export function MobileProjectEditModal({ project, onClose, onDone }: Props) {
     }
   }, [])
 
-  // visibility=shared に切り替えた瞬間 / モーダル起動時に一覧を引く
+  // モーダル起動時に共有メンバー / 招待候補を一覧取得。
+  // (以前は visibility='shared' 時のみ取得していたが、区分をやめて常時表示)
   useEffect(() => {
-    if (visibility !== 'shared') return
     void refetchMembers()
     void refetchCandidates()
-  }, [visibility, refetchMembers, refetchCandidates])
+  }, [refetchMembers, refetchCandidates])
 
   // 追加ドロップダウンには、まだメンバーになっていない組織内候補だけを出す
   const availableInternal = useMemo(
@@ -348,38 +347,44 @@ export function MobileProjectEditModal({ project, onClose, onDone }: Props) {
             </select>
           </div>
 
-          {/* 共有設定: 占有 / 共有 / 公開 */}
+          {/* 公開設定: 「公開を許可する」チェックのみ。ホストのみ変更可能。 */}
           <div className="pt-3 mt-3 border-t border-slate-200">
-            <label className="block text-xs text-slate-600 mb-1.5">共有設定</label>
-            <div className="grid grid-cols-3 gap-1">
-              {(['private', 'shared', 'public'] as ProjectVisibility[]).map((v) => {
-                const on = visibility === v
-                return (
-                  <button
-                    key={v}
-                    type="button"
-                    onClick={() => setVisibility(v)}
-                    disabled={!!busy}
-                    className={`px-2 py-1.5 text-sm rounded border ${
-                      on
-                        ? 'bg-blue-600 border-blue-600 text-white'
-                        : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
-                    } disabled:opacity-50`}
-                  >
-                    {PROJECT_VISIBILITY_LABEL[v]}
-                  </button>
-                )
-              })}
-            </div>
+            <label className="block text-xs text-slate-600 mb-1.5">公開設定</label>
+            <label
+              className={`flex items-center gap-2 px-2 py-2 rounded border ${
+                isOwner
+                  ? 'bg-white border-slate-300'
+                  : 'bg-slate-50 border-slate-200 opacity-70'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={visibility === 'public'}
+                disabled={!isOwner || !!busy}
+                onChange={(e) =>
+                  setVisibility(e.target.checked ? 'public' : 'private')
+                }
+                className="h-4 w-4"
+              />
+              <span className="text-sm">公開を許可する</span>
+              {visibility === 'public' && (
+                <span className="ml-auto text-[10px] text-amber-700 font-medium">
+                  URL 公開中
+                </span>
+              )}
+            </label>
             <p className="mt-1.5 text-[11px] text-slate-500 leading-relaxed">
-              {visibility === 'private' && '自分のみ閲覧・編集できます。'}
-              {visibility === 'shared' && '下の共有ユーザだけが閲覧・編集できます。'}
-              {visibility === 'public' && '認証なしでも閲覧できます (編集は所有者・エディタのみ)。'}
+              {visibility === 'public'
+                ? '共有 URL を知る誰でも (未ログインを含む) 閲覧できます。編集は所有者のみ。'
+                : 'メンバー一覧に追加された人だけがアクセスできます。'}
+              {!isOwner && (
+                <span className="ml-1 text-slate-400">(変更はホストのみ)</span>
+              )}
             </p>
           </div>
 
-          {/* 共有メンバー: visibility=shared のときだけ表示 */}
-          {visibility === 'shared' && (
+          {/* 共有メンバー: 常時表示 (以前は visibility='shared' 時のみ) */}
+          {true && (
             <div className="pt-2">
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-xs font-medium text-slate-700">

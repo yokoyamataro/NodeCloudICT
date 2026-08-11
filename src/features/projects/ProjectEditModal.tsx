@@ -20,14 +20,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   X,
   Trash2,
-  Lock,
-  Users,
   Globe,
   Plus,
   UserMinus,
   Save,
   RotateCcw,
-  AlertTriangle,
   Loader2,
   Mail,
 } from 'lucide-react'
@@ -37,11 +34,12 @@ import type {
   ProjectMemberRole,
   ProjectVisibility,
 } from '@/types/database'
-import { PROJECT_CATEGORY_LABEL, PROJECT_VISIBILITY_LABEL } from '@/types/database'
+import { PROJECT_CATEGORY_LABEL } from '@/types/database'
 import { JGD2011_ZONES } from '@/lib/coordinates'
 import { isoToDateInput, dateInputToIso } from '@/features/farms/FarmEditModal'
 import { supabase } from '@/lib/supabase'
 import { useProjectListStore } from '@/stores/projectListStore'
+import { useAuth } from '@/contexts/AuthContext'
 
 /** list_share_candidates RPC の 1 行 */
 interface ShareCandidate {
@@ -62,24 +60,6 @@ interface PendingAdd {
 }
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-
-// 共有ポリシー変更時の注意文
-function visibilityWarningText(
-  from: ProjectVisibility,
-  to: ProjectVisibility,
-): string {
-  if (to === 'public') {
-    return '公開に変更すると、認証していない人も含めて誰でもこの現場を閲覧できるようになります。編集は所有者と編集メンバーに限られますが、地図や工区情報が第三者に見られる点にご注意ください。'
-  }
-  if (to === 'private') {
-    return '占有に変更すると、あなた以外の全ユーザー (共有メンバー・公開閲覧者) はこの現場にアクセスできなくなります。共有メンバーは残りますが、実質的に閲覧・編集ができない状態になります。'
-  }
-  // to === 'shared'
-  if (from === 'public') {
-    return '共有に変更すると、認証していない人はこの現場を閲覧できなくなります。メンバー一覧に登録した人だけがアクセスできる状態に切り替わります。'
-  }
-  return '共有に変更すると、メンバー一覧に登録した人が閲覧・編集できるようになります。'
-}
 
 export function ProjectEditModal({
   project,
@@ -109,6 +89,10 @@ export function ProjectEditModal({
   /** 渡された場合のみ「現場を削除する」ボタンを表示 */
   onDelete?: () => void
 }) {
+  // ホスト (現場作成者) のみが公開設定を変更できる
+  const { user } = useAuth()
+  const isOwner = user?.id != null && project.user_id === user.id
+
   // ---------------- フィールド draft ----------------
   const [name, setName] = useState(project.name)
   const [description, setDescription] = useState(project.description ?? '')
@@ -120,11 +104,6 @@ export function ProjectEditModal({
   const [completedAt, setCompletedAt] = useState<string>(isoToDateInput(project.completed_at))
   const [isCompleted, setIsCompleted] = useState<boolean>(project.completed_at != null)
   const [visibility, setVisibility] = useState<ProjectVisibility>(project.visibility)
-
-  // ---------------- 共有ポリシー変更の承諾ダイアログ ----------------
-  const [pendingVisibility, setPendingVisibility] = useState<ProjectVisibility | null>(
-    null,
-  )
 
   // ---------------- 保存 UI ----------------
   const [saving, setSaving] = useState(false)
@@ -150,7 +129,6 @@ export function ProjectEditModal({
     setInviteEmailRole('editor')
     setInviteEmailError(null)
     setSaveError(null)
-    setPendingVisibility(null)
   }, [
     project.id,
     project.name,
@@ -474,52 +452,53 @@ export function ProjectEditModal({
             </div>
           </div>
 
-          {/* 共有ポリシー (占有 / 共有 / 公開) */}
+          {/* 公開設定: 「公開を許可する」チェック 1 つに集約。
+              ホスト (プロジェクトオーナー) のみ変更可能。 */}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500 shrink-0 w-16">共有</span>
-            <div className="flex-1 flex gap-1">
-              {(
-                [
-                  { v: 'private', icon: Lock, hint: '自分だけが閲覧・編集できます' },
-                  { v: 'shared', icon: Users, hint: '選択したメンバーが閲覧・編集できます' },
-                  { v: 'public', icon: Globe, hint: '誰でも閲覧できます (編集は所有者のみ)' },
-                ] as const
-              ).map(({ v, icon: Icon, hint }) => {
-                const on = visibility === v
-                return (
-                  <button
-                    key={v}
-                    type="button"
-                    onClick={() => {
-                      if (visibility !== v) setPendingVisibility(v)
-                    }}
-                    title={hint}
-                    className={`flex-1 inline-flex items-center justify-center gap-1 px-2 py-1 rounded border text-xs font-medium ${
-                      on
-                        ? v === 'private'
-                          ? 'bg-slate-700 text-white border-slate-700'
-                          : v === 'shared'
-                            ? 'bg-blue-600 text-white border-blue-600'
-                            : 'bg-amber-500 text-white border-amber-500'
-                        : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
-                    }`}
-                  >
-                    <Icon className="h-3 w-3" />
-                    {PROJECT_VISIBILITY_LABEL[v]}
-                  </button>
-                )
-              })}
-            </div>
+            <span className="text-xs text-slate-500 shrink-0 w-16">公開</span>
+            <label
+              className={`flex-1 flex items-center gap-2 px-2 py-1.5 rounded border ${
+                isOwner
+                  ? 'bg-white border-slate-300 cursor-pointer hover:bg-slate-50'
+                  : 'bg-slate-50 border-slate-200 cursor-not-allowed opacity-70'
+              }`}
+              title={
+                isOwner
+                  ? '公開 URL を経由すれば認証なしでも閲覧できます (編集は所有者のみ)'
+                  : '公開設定の変更はホスト (現場作成者) のみが可能です'
+              }
+            >
+              <input
+                type="checkbox"
+                checked={visibility === 'public'}
+                disabled={!isOwner}
+                onChange={(e) => {
+                  setVisibility(e.target.checked ? 'public' : 'private')
+                }}
+                className="h-4 w-4"
+              />
+              <Globe className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+              <span className="text-xs">公開を許可する</span>
+              {visibility === 'public' && (
+                <span className="ml-auto text-[10px] text-amber-700 font-medium">
+                  URL 公開中
+                </span>
+              )}
+            </label>
           </div>
           <div className="text-[10px] text-slate-500 pl-[4.5rem]">
-            {visibility === 'private' && '自分のみ閲覧・編集できます。'}
-            {visibility === 'shared' &&
-              'メンバー一覧に登録された人が閲覧・編集できます。'}
-            {visibility === 'public' && '認証なしでも閲覧できます。編集は所有者のみ。'}
+            {visibility === 'public'
+              ? '共有 URL を知る誰でも (未ログインを含む) 閲覧できます。編集は所有者のみ。'
+              : 'メンバー一覧に追加された人だけがアクセスできます。'}
+            {!isOwner && (
+              <span className="ml-1 text-slate-400">
+                (変更はホストのみ)
+              </span>
+            )}
           </div>
 
-          {/* 共有メンバー管理 (visibility='shared' のときのみ) */}
-          {visibility === 'shared' && (
+          {/* メンバー管理は常時表示 (以前は visibility='shared' 時のみ表示していた) */}
+          {true && (
             <div className="mt-1 rounded border bg-slate-50">
               {/* 組織内メンバー追加行 */}
               <div className="flex items-center gap-2 px-2 py-1.5 border-b bg-white">
@@ -868,73 +847,8 @@ export function ProjectEditModal({
           </button>
         </div>
 
-        {/* 共有ポリシー変更の承諾ダイアログ */}
-        {pendingVisibility && (
-          <div
-            className="absolute inset-0 bg-black/40 flex items-center justify-center z-[10] rounded-t-xl sm:rounded-xl"
-            onClick={() => setPendingVisibility(null)}
-          >
-            <div
-              className="bg-white max-w-sm w-full mx-4 rounded-xl shadow-xl p-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center gap-2 mb-2">
-                <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0" />
-                <h4 className="text-base font-semibold">
-                  共有ポリシーを「{PROJECT_VISIBILITY_LABEL[pendingVisibility]}」に変更します
-                </h4>
-              </div>
-              <p className="text-sm text-slate-600 mb-3 leading-relaxed">
-                {visibilityWarningText(visibility, pendingVisibility)}
-              </p>
-              {/* 具体的な影響 (現在のメンバー数) を表示 */}
-              {(() => {
-                const activeMemberCount =
-                  members.filter((m) => !pendingRemoves.has(m.id)).length +
-                  pendingAdds.length
-                if (activeMemberCount === 0) return null
-                if (pendingVisibility === 'private') {
-                  return (
-                    <div className="mb-3 text-xs bg-amber-50 border border-amber-200 rounded p-2 leading-relaxed">
-                      現在 <b>{activeMemberCount} 名</b> の共有メンバーがいます。
-                      占有に変更するとこの全員がアクセス不可になります。
-                      (メンバー行自体は削除されず残るため、後で共有に戻せば復帰できます。)
-                    </div>
-                  )
-                }
-                if (pendingVisibility === 'public') {
-                  return (
-                    <div className="mb-3 text-xs bg-amber-50 border border-amber-200 rounded p-2 leading-relaxed">
-                      現在 <b>{activeMemberCount} 名</b> の共有メンバーは引き続き編集可能です。
-                      加えて、URL を知る誰でも (未ログインを含む) が閲覧できるようになります。
-                    </div>
-                  )
-                }
-                return null
-              })()}
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setPendingVisibility(null)}
-                  className="flex-1 px-3 py-2 text-sm border rounded-lg hover:bg-slate-50"
-                >
-                  キャンセル
-                </button>
-                <button
-                  onClick={() => {
-                    setVisibility(pendingVisibility)
-                    setPendingVisibility(null)
-                  }}
-                  className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                >
-                  承諾しました
-                </button>
-              </div>
-              <div className="text-[10px] text-slate-400 mt-2 text-center">
-                この変更は「保存」ボタンを押すまで確定しません。
-              </div>
-            </div>
-          </div>
-        )}
+        {/* 旧: 共有ポリシー (占有/共有/公開) 変更ダイアログは撤去済み。
+            公開のオン/オフだけになったのでインラインチェックで十分。 */}
       </div>
     </div>
   )
