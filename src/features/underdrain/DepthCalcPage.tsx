@@ -1824,33 +1824,33 @@ export function DepthCalcPage() {
         </div>
       </div>
 
-      {/* 自動計算パラメータ + 水理設定 (常時表示) */}
+      {/* 自動計算パラメータ + 水理設定 (常時表示・1 行固定) */}
       {hasData && (
-        <div className="px-4 py-2 border-b bg-amber-50 flex items-center gap-x-6 gap-y-2 text-sm flex-wrap">
-          <span className="font-medium text-amber-800">パラメータ:</span>
-          <div className="flex items-center gap-2">
-            <label className="text-slate-600">吸水切深 kh:</label>
+        <div className="px-3 py-1.5 border-b bg-amber-50 flex items-center gap-x-3 text-xs whitespace-nowrap overflow-x-auto">
+          <span className="font-medium text-amber-800 shrink-0">パラメータ:</span>
+          <div className="flex items-center gap-1 shrink-0">
+            <label className="text-slate-600">吸水切深:</label>
             <input
               type="number"
               step="0.01"
               value={calcParams.kh}
               onChange={e => setCalcParams(prev => ({ ...prev, kh: parseFloat(e.target.value) || 0 }))}
-              className="w-16 px-2 py-1 border rounded text-center font-mono"
+              className="w-12 px-1 py-0.5 border rounded text-center font-mono"
             />
             <span className="text-slate-500">m</span>
           </div>
-          <div className="flex items-center gap-2">
-            <label className="text-slate-600">集水切深 sh:</label>
+          <div className="flex items-center gap-1 shrink-0">
+            <label className="text-slate-600">集水切深:</label>
             <input
               type="number"
               step="0.01"
               value={calcParams.sh}
               onChange={e => setCalcParams(prev => ({ ...prev, sh: parseFloat(e.target.value) || 0 }))}
-              className="w-16 px-2 py-1 border rounded text-center font-mono"
+              className="w-12 px-1 py-0.5 border rounded text-center font-mono"
             />
             <span className="text-slate-500">m</span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 shrink-0">
             <label className="text-slate-600">最低勾配:</label>
             <span className="text-slate-500">1/</span>
             <input
@@ -1858,10 +1858,10 @@ export function DepthCalcPage() {
               step="1"
               value={calcParams.imin}
               onChange={e => setCalcParams(prev => ({ ...prev, imin: parseInt(e.target.value) || 1 }))}
-              className="w-16 px-2 py-1 border rounded text-center font-mono"
+              className="w-14 px-1 py-0.5 border rounded text-center font-mono"
             />
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 shrink-0">
             <label className="text-slate-600">推奨勾配:</label>
             <span className="text-slate-500">1/</span>
             <input
@@ -1869,11 +1869,11 @@ export function DepthCalcPage() {
               step="1"
               value={calcParams.istd}
               onChange={e => setCalcParams(prev => ({ ...prev, istd: parseInt(e.target.value) || 1 }))}
-              className="w-16 px-2 py-1 border rounded text-center font-mono"
+              className="w-14 px-1 py-0.5 border rounded text-center font-mono"
             />
           </div>
-          <div className="w-px h-5 bg-amber-300" />
-          <div className="flex items-center gap-2" title="配線間隔（標準 12m）">
+          <div className="w-px h-5 bg-amber-300 shrink-0" />
+          <div className="flex items-center gap-1 shrink-0" title="配線間隔（標準 12m）">
             <label className="text-slate-600">配線間隔:</label>
             <select
               value={hydraulicSettings.pipeInterval}
@@ -1884,14 +1884,14 @@ export function DepthCalcPage() {
                 })
               }
               disabled={!currentFarm}
-              className="px-2 py-1 border rounded text-sm bg-white"
+              className="px-1 py-0.5 border rounded text-xs bg-white"
             >
               <option value={10}>10</option>
               <option value={12}>12</option>
             </select>
             <span className="text-slate-500">m</span>
           </div>
-          <div className="flex items-center gap-2" title="計画流量 mm/day（標準 30mm）">
+          <div className="flex items-center gap-1 shrink-0" title="計画流量 mm/day（標準 30mm）">
             <label className="text-slate-600">計画流量:</label>
             <input
               type="number"
@@ -1904,11 +1904,11 @@ export function DepthCalcPage() {
                 })
               }
               disabled={!currentFarm}
-              className="w-16 px-2 py-1 border rounded text-center font-mono"
+              className="w-12 px-1 py-0.5 border rounded text-center font-mono"
             />
             <span className="text-slate-500">mm/日</span>
           </div>
-          <div className="flex items-center gap-2" title="吸水管素材（標準 合成樹脂管）">
+          <div className="flex items-center gap-1 shrink-0" title="吸水管素材（標準 合成樹脂管）">
             <label className="text-slate-600">吸水材:</label>
             <select
               value={hydraulicSettings.absorptionPipeType}
@@ -1919,14 +1919,14 @@ export function DepthCalcPage() {
                 })
               }
               disabled={!currentFarm}
-              className="px-2 py-1 border rounded text-sm bg-white"
+              className="px-1 py-0.5 border rounded text-xs bg-white"
             >
               <option value={1}>{PIPE_MATERIAL_LABEL[1]}</option>
               <option value={2}>{PIPE_MATERIAL_LABEL[2]}</option>
               <option value={3}>{PIPE_MATERIAL_LABEL[3]}</option>
             </select>
           </div>
-          <div className="flex items-center gap-2" title="集水管素材（標準 合成樹脂管）">
+          <div className="flex items-center gap-1 shrink-0" title="集水管素材（標準 合成樹脂管）">
             <label className="text-slate-600">集水材:</label>
             <select
               value={hydraulicSettings.collectorPipeType}
@@ -1937,7 +1937,7 @@ export function DepthCalcPage() {
                 })
               }
               disabled={!currentFarm}
-              className="px-2 py-1 border rounded text-sm bg-white"
+              className="px-1 py-0.5 border rounded text-xs bg-white"
             >
               <option value={1}>{PIPE_MATERIAL_LABEL[1]}</option>
               <option value={2}>{PIPE_MATERIAL_LABEL[2]}</option>

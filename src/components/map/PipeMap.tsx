@@ -217,6 +217,24 @@ function MapViewManager({ pipeLines }: { pipeLines: PipeLineData[] }) {
   return null
 }
 
+// 親コンテナのリサイズを検知して Leaflet に invalidateSize() を伝える。
+// 施工計画ページのようにパラメータバーの高さが動的に変わると、Leaflet の
+// 内部サイズが古いままになり地図上端が親コンテナの外側にはみ出す (見た目
+// 上「隠れる」) 現象が起きるため、ResizeObserver で確実に再計算させる。
+function InvalidateOnResize() {
+  const map = useMap()
+  useEffect(() => {
+    const container = map.getContainer()
+    if (!container || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(() => {
+      map.invalidateSize()
+    })
+    ro.observe(container)
+    return () => ro.disconnect()
+  }, [map])
+  return null
+}
+
 // DXF 取込プレビューが空→非空に変わったタイミングで、その範囲に地図をフィットさせる
 function FitImportPreview({
   positions,
@@ -614,6 +632,7 @@ export function PipeMap({
         <MapViewManager pipeLines={pipeLines} />
       )}
 
+      <InvalidateOnResize />
       <FocusPoint point={focusedPoint} converter={converter} />
 
 
