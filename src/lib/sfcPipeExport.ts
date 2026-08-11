@@ -193,9 +193,11 @@ export function generateSfcPipesContent(
   let toContent: (x: number, y: number) => { cx: number; cy: number }
   let sfigTransform: { offsetX: number; offsetY: number } | null = null
 
-  // survey-mode: SXF の角度は sfig_locate に直接書く (test-2 で見た 360-X の
-  // 変換は不要。参照 58-4(当初) は 22.7897° を直接使用して正しく描画される)
-  const sxfAngleDeg = ((rotationDeg % 360) + 360) % 360
+  // survey-mode: SXF の sfig_locate 角度は (360 - user_deg) mod 360 に変換する
+  //   例: ユーザ 337°12'37" (=337.21°) → SFC 22.79° = 360 - 337.21
+  //       (test-2 の 22°45' → 337.25° と 58-4(当初) の 337°12'37" → 22.79°
+  //        の両方で成立)
+  const sxfAngleDeg = ((360 - rotationDeg) % 360 + 360) % 360
 
   if (preserveSurvey) {
     // PipeVertex は JGD2011 (x=北, y=東) だが SFC は (X=東, Y=北) の CAD 慣例。
