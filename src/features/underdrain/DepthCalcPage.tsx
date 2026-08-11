@@ -702,6 +702,29 @@ export function DepthCalcPage() {
                 </td>
                 <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">区間勾配</td>
               </tr>
+              {/* 水理延長 / 限界勾配（表示のみ・値は未実装） */}
+              <tr className="depth-row-hydraulic">
+                <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap text-slate-500">
+                  水理延長 / 限界勾配
+                </td>
+                <td className="border-0 bg-transparent"></td>
+                {refCount > 0 ? (
+                  mergedLast3Points.map((p) => (
+                    <td key={p.id} className="px-1.5 py-1 text-center border font-mono bg-slate-50 text-slate-400">
+                      -&nbsp;/&nbsp;-
+                    </td>
+                  ))
+                ) : (
+                  <td className="px-1.5 py-1 text-center border bg-slate-50 text-slate-400">-&nbsp;/&nbsp;-</td>
+                )}
+                <td className="border-0 bg-transparent"></td>
+                <td className="px-1.5 py-1 text-center border font-mono bg-green-50 text-slate-400">
+                  -&nbsp;/&nbsp;-
+                </td>
+                <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap text-slate-500">
+                  水理延長 / 限界勾配
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -1013,6 +1036,29 @@ export function DepthCalcPage() {
                   </td>
                   <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
                     区間勾配
+                  </td>
+                </tr>
+
+                {/* 水理延長 / 限界勾配（表示のみ・値は未実装） */}
+                <tr className="depth-row-hydraulic">
+                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap text-slate-500">
+                    水理延長 / 限界勾配
+                  </td>
+                  <td className="border-0 bg-transparent"></td>
+                  {row.absorptionPoints.map((p) => (
+                    <td
+                      key={p.id}
+                      className="px-1.5 py-1 text-center border font-mono bg-slate-50 text-slate-400"
+                    >
+                      -&nbsp;/&nbsp;-
+                    </td>
+                  ))}
+                  <td className="border-0 bg-transparent"></td>
+                  <td className="px-1.5 py-1 text-center border font-mono bg-green-50 text-slate-400">
+                    -&nbsp;/&nbsp;-
+                  </td>
+                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap text-slate-500">
+                    水理延長 / 限界勾配
                   </td>
                 </tr>
               </>
