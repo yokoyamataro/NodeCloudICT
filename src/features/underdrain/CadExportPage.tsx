@@ -520,6 +520,9 @@ export function CadExportPage() {
   const [preview, setPreview] = useState<string>('')
   // 縦断図 DXF 一括出力
   const [dxfVScale, setDxfVScale] = useState<100 | 200 | 500 | 1000>(200)
+  // SFC: 現地座標保持 (sfig_org + sfig_locate 経由) と用紙回転
+  const [sfcPreserveSurvey, setSfcPreserveSurvey] = useState<boolean>(false)
+  const [sfcRotationDeg, setSfcRotationDeg] = useState<number>(0)
 
   useEffect(() => {
     if (!currentFarm) return
@@ -578,7 +581,12 @@ export function CadExportPage() {
       return
     }
     const fileBase = currentFarm?.name || 'plan'
-    const sfcText = generateSfcPipesContent(pipes, { fileBaseName: fileBase, scale: 1000 })
+    const sfcText = generateSfcPipesContent(pipes, {
+      fileBaseName: fileBase,
+      scale: 1000,
+      preserveSurveyCoords: sfcPreserveSurvey,
+      rotationDeg: sfcRotationDeg,
+    })
     const sjis = toShiftJIS(sfcText)
     const buf = sjis.slice().buffer
     const blob = new Blob([buf], { type: 'application/octet-stream' })
@@ -806,6 +814,30 @@ export function CadExportPage() {
               <Download className="h-4 w-4" />
               TrendOne アスキー出力（Shift-JIS）
             </button>
+            <div className="flex items-center gap-2 border rounded px-2 py-1 text-xs bg-slate-50">
+              <label className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={sfcPreserveSurvey}
+                  onChange={(e) => setSfcPreserveSurvey(e.target.checked)}
+                />
+                <span title="ON: feature 内の座標を実測 m×1000 で保存し、sfig_locate で 縮尺・原点・回転 を適用する (TREND-ONE の '現地座標' 系)。">
+                  現地座標保持
+                </span>
+              </label>
+              <label className="flex items-center gap-1 ml-2">
+                <span className="text-slate-600">回転</span>
+                <input
+                  type="number"
+                  value={sfcRotationDeg}
+                  onChange={(e) => setSfcRotationDeg(parseFloat(e.target.value) || 0)}
+                  disabled={!sfcPreserveSurvey}
+                  step="0.1"
+                  className="w-16 px-1 py-0.5 border rounded text-right font-mono disabled:bg-slate-100 disabled:text-slate-400"
+                />
+                <span className="text-slate-500">°</span>
+              </label>
+            </div>
             <button
               type="button"
               onClick={handleSfcDownload}

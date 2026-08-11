@@ -29,6 +29,14 @@ export interface SfcExportOptions {
   fileBaseName?: string
   /** 図面縮尺 (例: 1000 → 1/1000) */
   scale?: number
+  /**
+   * true のとき、feature 内の座標を 現地座標 (mm 単位 = 実 m × 1000) に
+   * 保存し、sfig_org + sfig_locate_feature で 縮尺・原点・回転を適用する。
+   * TREND-ONE の "現地座標" 系ファイルと同じ扱いになる。
+   */
+  preserveSurveyCoords?: boolean
+  /** 用紙上の回転角 (度、CCW を正)。preserveSurveyCoords 時のみ意味を持つ */
+  rotationDeg?: number
 }
 
 // SXF 標準の色コード (使う分だけ列挙)。TREND-ONE が出力した参照 SFC の
@@ -135,7 +143,9 @@ export function generateSfcPipesContent(
   options: SfcExportOptions = {},
 ): string {
   const scale = options.scale ?? 1000
-  // real_m → paper mm 変換係数
+  const preserveSurvey = options.preserveSurveyCoords ?? false
+  const rotationDeg = options.rotationDeg ?? 0
+  // real_m → paper mm 変換係数 (paper-mode)
   const mToPaperMm = 1000 / scale // 1/1000 のときは 1
   const marginMm = 20
   const fileBase = options.fileBaseName ?? 'plan'
@@ -143,7 +153,7 @@ export function generateSfcPipesContent(
   const now = new Date()
   const iso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
 
-  // 全 vertex から bbox を求める
+  // 全 vertex から bbox を求める (real m)
   let minX = Infinity
   let minY = Infinity
   let maxX = -Infinity
@@ -159,17 +169,55 @@ export function generateSfcPipesContent(
   if (!Number.isFinite(minX)) {
     minX = 0; minY = 0; maxX = 0; maxY = 0
   }
-  // 用紙シート寸法 (mm)。シートは 内容の bbox + margin×2 だけあれば十分だが、
-  // 標準 A サイズに切り上げる (よく使う A3=420×297 / A2=594×420 / A1=841×594)
-  const contentW = (maxX - minX) * mToPaperMm + marginMm * 2
-  const contentH = (maxY - minY) * mToPaperMm + marginMm * 2
-  const sheet = pickSheet(contentW, contentH)
 
-  // real(x, y) → paper (px, py) 変換
-  const toPaper = (x: number, y: number) => ({
-    px: (x - minX) * mToPaperMm + marginMm,
-    py: (y - minY) * mToPaperMm + marginMm,
-  })
+  // 用紙シート寸法 (mm) と、座標変換関数 toContent (survey-mode) / toPaper (paper-mode)
+  //   survey-mode:
+  //     content 座標 = real m × 1000 (mm at real scale)
+  //     sfig_locate scale=1/scale=0.001、angle=rotationDeg で用紙位置決め
+  //     offset は 回転後の bbox min が 用紙原点+margin に来るよう計算
+  //   paper-mode:
+  //     content 座標 = そのまま paper mm (top-level 出力)
+  let sheet: { width: number; height: number }
+  let toContent: (x: number, y: number) => { cx: number; cy: number }
+  let sfigTransform: { offsetX: number; offsetY: number } | null = null
+
+  if (preserveSurvey) {
+    // 回転 bbox
+    const rad = (rotationDeg * Math.PI) / 180
+    const cs = Math.cos(rad)
+    const sn = Math.sin(rad)
+    const corners: Array<[number, number]> = [
+      [minX, minY], [maxX, minY], [maxX, maxY], [minX, maxY],
+    ]
+    let rMinX = Infinity, rMinY = Infinity, rMaxX = -Infinity, rMaxY = -Infinity
+    for (const [x, y] of corners) {
+      // real m を回転 → 回転後 m (これがそのまま paper mm 相当、1/1000 のとき)
+      const rx = cs * x - sn * y
+      const ry = sn * x + cs * y
+      if (rx < rMinX) rMinX = rx
+      if (ry < rMinY) rMinY = ry
+      if (rx > rMaxX) rMaxX = rx
+      if (ry > rMaxY) rMaxY = ry
+    }
+    const contentW = (rMaxX - rMinX) * mToPaperMm + marginMm * 2
+    const contentH = (rMaxY - rMinY) * mToPaperMm + marginMm * 2
+    sheet = pickSheet(contentW, contentH)
+    // sfig_locate の offset (mm): 回転後 bbox 最小点が margin に来る
+    sfigTransform = {
+      offsetX: marginMm - rMinX * mToPaperMm,
+      offsetY: marginMm - rMinY * mToPaperMm,
+    }
+    // content 座標 = real m × 1000 (sfig_locate の scale=0.001 で mm に戻る)
+    toContent = (x, y) => ({ cx: x * 1000, cy: y * 1000 })
+  } else {
+    const contentW = (maxX - minX) * mToPaperMm + marginMm * 2
+    const contentH = (maxY - minY) * mToPaperMm + marginMm * 2
+    sheet = pickSheet(contentW, contentH)
+    toContent = (x, y) => ({
+      cx: (x - minX) * mToPaperMm + marginMm,
+      cy: (y - minY) * mToPaperMm + marginMm,
+    })
+  }
 
   const out: string[] = []
   let nextIdCounter = 10
@@ -211,6 +259,12 @@ export function generateSfcPipesContent(
   emit(`#${nextId()} = width_feature('0.250000')`)
   emit(`#${nextId()} = width_feature('0.350000')`)
 
+  // ===== survey-mode: 現地座標保持用の sfig_org を開く =====
+  const surveyFigName = '-Pipes-Survey-'
+  if (preserveSurvey) {
+    emit(`#${nextId()} = sfig_org_feature(\\'${surveyFigName}\\','1')`)
+  }
+
   // ===== 配線を管種ごとにグループ化 =====
   const byType = new Map<PipeType | 'unknown', PipeRow[]>()
   for (const p of pipes) {
@@ -247,33 +301,45 @@ export function generateSfcPipesContent(
     for (const pipe of group) {
       const vs = pipe.vertices
       if (vs.length < 2) continue
-      const paperPoints = vs.map((v) => toPaper(v.x, v.y))
-      if (paperPoints.length === 2) {
-        const [a, b] = paperPoints
+      const points = vs.map((v) => toContent(v.x, v.y))
+      if (points.length === 2) {
+        const [a, b] = points
         emit(
-          `#${nextId()} = line_feature('${layerIdx}','${colorCode}','${fontCode}','${widthCode}','${a.px.toFixed(6)}','${a.py.toFixed(6)}','${b.px.toFixed(6)}','${b.py.toFixed(6)}')`,
+          `#${nextId()} = line_feature('${layerIdx}','${colorCode}','${fontCode}','${widthCode}','${a.cx.toFixed(6)}','${a.cy.toFixed(6)}','${b.cx.toFixed(6)}','${b.cy.toFixed(6)}')`,
         )
       } else {
-        const xs = paperPoints.map((p) => p.px.toFixed(6)).join(',')
-        const ys = paperPoints.map((p) => p.py.toFixed(6)).join(',')
+        const xs = points.map((p) => p.cx.toFixed(6)).join(',')
+        const ys = points.map((p) => p.cy.toFixed(6)).join(',')
         emit(
-          `#${nextId()} = polyline_feature('${layerIdx}','${colorCode}','${fontCode}','${widthCode}','${paperPoints.length}','(${xs})','(${ys})')`,
+          `#${nextId()} = polyline_feature('${layerIdx}','${colorCode}','${fontCode}','${widthCode}','${points.length}','(${xs})','(${ys})')`,
         )
       }
     }
   }
 
-  // ===== 管種切替点の 1mm 円 (半径 1mm) =====
+  // ===== 管種切替点の 1mm 円 =====
+  //   survey-mode: content 座標は real m × 1000 なので、sfig_locate scale=0.001
+  //     を通すと content 半径 = scale で用紙 1mm になる (scale=1000 → 1000)
+  //   paper-mode: content 座標がそのまま paper mm なので 半径 = 1
   const transitions = findTransitionPoints(pipes)
   if (transitions.length > 0) {
     layerIdx += 1
     layerNames.push('記号')
+    const radiusStr = (preserveSurvey ? scale : 1).toFixed(6)
     for (const t of transitions) {
-      const { px, py } = toPaper(t.x, t.y)
+      const { cx, cy } = toContent(t.x, t.y)
       emit(
-        `#${nextId()} = circle_feature('${layerIdx}','${COLOR_CODE.yellow}','${FONT_CONTINUOUS}','${WIDTH_025}','${px.toFixed(6)}','${py.toFixed(6)}','1.000000')`,
+        `#${nextId()} = circle_feature('${layerIdx}','${COLOR_CODE.yellow}','${FONT_CONTINUOUS}','${WIDTH_025}','${cx.toFixed(6)}','${cy.toFixed(6)}','${radiusStr}')`,
       )
     }
+  }
+
+  // ===== survey-mode: sfig_locate で 縮尺 / 原点 / 回転 を適用 =====
+  if (preserveSurvey && sfigTransform) {
+    const s = (1 / scale).toFixed(14)
+    emit(
+      `#${nextId()} = sfig_locate_feature('0',\\'${surveyFigName}\\','${sfigTransform.offsetX.toFixed(6)}','${sfigTransform.offsetY.toFixed(6)}','${rotationDeg.toFixed(14)}','${s}','${s}')`,
+    )
   }
 
   // ===== 図面シート + レイヤ =====
