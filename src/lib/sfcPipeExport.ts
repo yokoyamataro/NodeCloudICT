@@ -773,6 +773,7 @@ export function generateSfcPipesContent(
             dist: textLayerIndex.absDist,
             diameter: textLayerIndex.absDiameter,
             planColor: COLOR_CODE.red,
+            depthColor: COLOR_CODE.blue,
           }
         : {
             point: textLayerIndex.colPoint,
@@ -783,6 +784,7 @@ export function generateSfcPipesContent(
             dist: textLayerIndex.colDist,
             diameter: textLayerIndex.colDiameter,
             planColor: COLOR_CODE.magenta,
+            depthColor: COLOR_CODE.cyan,
           }
       const stdDepth = isAbsorption ? absorptionStdDepth : collectorStdDepth
       const initialYOffset = isAbsorption ? moji * 0.5 : moji * 1.5
@@ -886,7 +888,7 @@ export function generateSfcPipesContent(
           cd !== null &&
           Math.abs(cd - stdDepth) > 0.005
         ) {
-          emitText(layers.depth, COLOR_CODE.magenta, ` ${chStr}`, cx, cy, moji, 0, 1)
+          emitText(layers.depth, layers.depthColor, ` ${chStr}`, cx, cy, moji, 0, 1)
         }
 
         // セグメント中点: 勾配 (上側) / 距離 (下側) / 管径 (下 2 段目) を
@@ -947,9 +949,10 @@ export function generateSfcPipesContent(
         }
       }
 
-      // 配線番号: 中点を含む区間方向 (配線方向) に平行に、
-      //  基準位置 (中点) の 左上 (base_point=3 = 右下、anchor 右下 → text 左上)
-      //  にずらして描画。囲み円は基準位置に描く。
+      // 配線番号: 中点を含む区間方向 (配線方向) に平行、
+      //  基準位置 (中点) から 配線方向 逆向き (=左) + 垂直方向 (=上)
+      //  へずらして描画。base_point=5 (中中) で中心アンカー、
+      //  囲み円 (φ4mm) も同じ位置に描く。
       if (emitPipeNumbers && textLayerIndex.pipeNumber && pipe.number) {
         const mid = pipeMidpoint(pipe)
         if (mid) {
@@ -965,19 +968,26 @@ export function generateSfcPipesContent(
             )
             pipeAngle = calcTextAngle(b.px - a.px, b.py - a.py)
           }
+          // 配線方向 (正=前方) の単位ベクトル / 垂直 (上向き)
+          const cs = Math.cos(pipeAngle)
+          const sn = Math.sin(pipeAngle)
+          const shiftAlong = pipeNumberSize * 3.5 // 中点から 左 (配線逆方向) へ
+          const shiftPerp = pipeNumberSize * 1.5 // 上 (垂直方向) へ
+          const tx = px - cs * shiftAlong + -sn * shiftPerp
+          const ty = py - sn * shiftAlong + cs * shiftPerp
           emitText(
             textLayerIndex.pipeNumber,
             COLOR_CODE.black,
             pipe.number,
-            px,
-            py,
+            tx,
+            ty,
             pipeNumberSize,
             pipeAngle,
-            3, // base_point 3 = 右下 → 基準位置に対して text が左上に展開
+            5, // base_point 5 = 中中 → text 中心が (tx, ty)
           )
-          // 直径 4mm = 半径 2mm の円で囲む (基準位置に配置)
+          // 直径 4mm = 半径 2mm の円で 配線番号 と同位置に配置
           emit(
-            `#${nextId()} = circle_feature('${textLayerIndex.pipeNumber}','${COLOR_CODE.black}','${FONT_CONTINUOUS}','${WIDTH_025}','${px.toFixed(6)}','${py.toFixed(6)}','2.000000')`,
+            `#${nextId()} = circle_feature('${textLayerIndex.pipeNumber}','${COLOR_CODE.black}','${FONT_CONTINUOUS}','${WIDTH_025}','${tx.toFixed(6)}','${ty.toFixed(6)}','2.000000')`,
           )
         }
       }
