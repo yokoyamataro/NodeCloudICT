@@ -460,10 +460,12 @@ export function DepthCalcPage() {
 
     // 水理延長 (吸水): 各点における値。
     //  - 最上流点 (index=0): 配線間隔/4 (端部補正)
-    //  - それ以下の点 (index>=1): 最上流点からの区間距離の累加距離
-    //  - 下流端点 (index=last): 上記から 配線間隔/2 を減算 (接続補正)
+    //  - それ以下の点 (index>=1): 端部補正 + 最上流点からの累加区間距離
+    //  - 下流端点 (index=last): さらに 配線間隔/2 を減算 (接続補正)
     //    ただし、この行が系統内で最初の吸水行 (端部) の場合は接続補正なし
     const interval = hydraulicSettings.pipeInterval
+    const endCorrection = interval / 4
+    const connectionCorrection = interval / 2
     const isFirstAbsorptionInSystem =
       row.absorptionPipeId != null &&
       systemRows
@@ -471,14 +473,14 @@ export function DepthCalcPage() {
         .every((r) => r.absorptionPipeId == null)
     const absorptionHydraulicLengths: (number | null)[] = row.absorptionPoints.map(
       (_p, idx) => {
-        if (idx === 0) return interval / 4
+        if (idx === 0) return endCorrection
         let cum = 0
         for (let j = 1; j <= idx; j++) {
           const seg = row.absorptionPoints[j].segmentDistance
           if (seg == null) return null
           cum += seg
         }
-        return cum
+        return endCorrection + cum
       },
     )
     if (
@@ -487,7 +489,7 @@ export function DepthCalcPage() {
     ) {
       const last = row.absorptionPoints.length - 1
       const v = absorptionHydraulicLengths[last]
-      if (v != null) absorptionHydraulicLengths[last] = v - interval / 2
+      if (v != null) absorptionHydraulicLengths[last] = v - connectionCorrection
     }
 
     // 集水合流行の場合、合流先系統の最下流 3 点と末尾集水管の番号を取得。
