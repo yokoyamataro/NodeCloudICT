@@ -9,6 +9,17 @@ export const PIPE_MATERIAL_LABEL: Record<PipeMaterial, string> = {
   3: '無孔管',
 }
 
+/**
+ * Manning 粗度係数 n（水理計算/限界勾配算定用）。
+ * 農水系の標準値を暫定採用。工区ごとに override したい要望があれば
+ * 個別 override 手段を追加する。
+ */
+export const MANNING_ROUGHNESS: Record<PipeMaterial, number> = {
+  1: 0.014, // 素焼土管
+  2: 0.012, // 合成樹脂管
+  3: 0.014, // 無孔管 (コンクリート系相当)
+}
+
 /** 水理計算（許容勾配 / 水理計算書）に共通で使うパラメータ。工区ごとに保持する。 */
 export interface HydraulicSettings {
   /** 計画流量 (mm/day) */

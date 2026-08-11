@@ -15,7 +15,7 @@ import {
   Droplets,
   FileSpreadsheet,
 } from 'lucide-react'
-import { useHydraulicSettingsStore, DEFAULT_HYDRAULIC_SETTINGS, PIPE_MATERIAL_LABEL, type PipeMaterial } from '@/stores/hydraulicSettingsStore'
+import { useHydraulicSettingsStore, DEFAULT_HYDRAULIC_SETTINGS, PIPE_MATERIAL_LABEL, MANNING_ROUGHNESS, type PipeMaterial } from '@/stores/hydraulicSettingsStore'
 import { useHydraulicExclusionStore } from '@/stores/hydraulicExclusionStore'
 import { HydraulicCalcModal } from './HydraulicCalcModal'
 import { MeasurementResultModal } from './MeasurementResultModal'
@@ -461,6 +461,37 @@ export function DepthCalcPage() {
     collector_change: '集水変化点',
     collector_junction: '集水合流点',
     outlet: '落口',
+  }
+
+  // 限界勾配 (K) を計算。K は勾配の分母 (slope = 1/K) で返す。
+  // 導出: Manning 式 (Excel の既存式に合わせて 1.65696 定数を採用)
+  //   Q [L/s] = 100 * (1/n) * (D_cm/200)^(8/3) * (100/K)^(1/2) * 1.65696
+  // 支配延長 L から必要な最小流量:
+  //   Q_min = L * U * spacing / 86400   [L/s]  (U: mm/day)
+  // 逆算:
+  //   C = 100 * (1/n) * r^(8/3) * 1.65696
+  //   K_max = 100 * C^2 / Q_min^2
+  // 実勾配 1/K が 1/K_max 以上に急 (K <= K_max) なら OK。
+  function computeCriticalSlopeDenominator(args: {
+    diameterMm: number | null
+    roughness: number
+    hydraulicLengthM: number | null
+    plannedFlowMmDay: number
+    spacingM: number
+  }): number | null {
+    const { diameterMm, roughness, hydraulicLengthM, plannedFlowMmDay, spacingM } = args
+    if (!diameterMm || diameterMm <= 0) return null
+    if (!hydraulicLengthM || hydraulicLengthM <= 0) return null
+    if (!roughness || roughness <= 0) return null
+    if (!plannedFlowMmDay || plannedFlowMmDay <= 0) return null
+    if (!spacingM || spacingM <= 0) return null
+    const rM = diameterMm / 10 / 200 // (D_cm) / 200 = D_m / 2 = radius [m]
+    const C = 100 * (1 / roughness) * Math.pow(rM, 8 / 3) * 1.65696
+    const QminLps = (hydraulicLengthM * plannedFlowMmDay * spacingM) / 86400
+    if (QminLps <= 0) return null
+    const K = (100 * C * C) / (QminLps * QminLps)
+    if (!Number.isFinite(K) || K <= 0) return null
+    return Math.round(K)
   }
 
   // 吸水 水理延長を1行分計算する共通関数（集水側の累積計算からも呼ぶ）
@@ -1366,25 +1397,62 @@ export function DepthCalcPage() {
                     水理延長
                   </td>
                 </tr>
-                {/* 限界勾配（表示のみ・値は未実装） */}
+                {/* 限界勾配 (Manning 逆算)。実勾配 1/K が 1/K_max 以上に急なら OK。 */}
                 <tr className="depth-row-critical-slope">
-                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap text-slate-500">
+                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap text-slate-600">
                     限界勾配
                   </td>
                   <td className="border-0 bg-transparent"></td>
-                  {row.absorptionPoints.map((p) => (
-                    <td
-                      key={p.id}
-                      className="px-1.5 py-1 text-center border font-mono bg-slate-50 text-slate-400"
-                    >
-                      -
-                    </td>
-                  ))}
+                  {row.absorptionPoints.map((p, idx) => {
+                    if (idx === 0) {
+                      return (
+                        <td
+                          key={p.id}
+                          className="px-1.5 py-1 text-center border font-mono bg-slate-50 text-slate-400"
+                        >
+                          -
+                        </td>
+                      )
+                    }
+                    const dia = p.segmentDiameter ?? (row.absorptionPipeId ? pipeDiameterById.get(row.absorptionPipeId) ?? null : null)
+                    const L = absorptionHydraulicLengths[idx]
+                    const K = computeCriticalSlopeDenominator({
+                      diameterMm: dia,
+                      roughness: MANNING_ROUGHNESS[hydraulicSettings.absorptionPipeType],
+                      hydraulicLengthM: L,
+                      plannedFlowMmDay: hydraulicSettings.plannedFlow,
+                      spacingM: hydraulicSettings.pipeInterval,
+                    })
+                    return (
+                      <td
+                        key={p.id}
+                        className="px-1.5 py-1 text-center border font-mono bg-slate-50 text-slate-700"
+                        title="限界勾配 (これ以上緩いと流下能力不足)"
+                      >
+                        {K == null ? '-' : `1/${K}`}
+                      </td>
+                    )
+                  })}
                   <td className="border-0 bg-transparent"></td>
-                  <td className="px-1.5 py-1 text-center border font-mono bg-green-50 text-slate-400">
-                    -
-                  </td>
-                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap text-slate-500">
+                  {(() => {
+                    const dia = row.collectorPipeId ? pipeDiameterById.get(row.collectorPipeId) ?? null : null
+                    const K = computeCriticalSlopeDenominator({
+                      diameterMm: dia,
+                      roughness: MANNING_ROUGHNESS[hydraulicSettings.collectorPipeType],
+                      hydraulicLengthM: collectorHydraulicLength,
+                      plannedFlowMmDay: hydraulicSettings.plannedFlow,
+                      spacingM: hydraulicSettings.pipeInterval,
+                    })
+                    return (
+                      <td
+                        className="px-1.5 py-1 text-center border font-mono bg-green-50 text-slate-700"
+                        title="限界勾配 (これ以上緩いと流下能力不足)"
+                      >
+                        {K == null ? '-' : `1/${K}`}
+                      </td>
+                    )
+                  })()}
+                  <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap text-slate-600">
                     限界勾配
                   </td>
                 </tr>
