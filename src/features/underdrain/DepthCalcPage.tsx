@@ -92,6 +92,7 @@ export function DepthCalcPage() {
     updatePlannedHeight,
     applyManualSlope,
     updateGroundHeight,
+    updateSegmentDiameter,
     autoCalculatePlannedHeights,
   } = useConstructionPlanStore()
 
@@ -122,8 +123,9 @@ export function DepthCalcPage() {
   const [showHydraulicModal, setShowHydraulicModal] = useState(false)
   const [showMeasurementModal, setShowMeasurementModal] = useState(false)
 
-  // 管径セル: ダブルクリックで編集モードに切替 (select 表示)
-  const [editingDiameterPipeId, setEditingDiameterPipeId] = useState<string | null>(null)
+  // 管径セル: ダブルクリックで編集モードに切替 (select 表示)。
+  // 吸水は区間 (PlanPoint) 単位、集水は行 (collector pipe) 単位で編集する。
+  const [editingDiameterKey, setEditingDiameterKey] = useState<string | null>(null)
 
   // 水理計算パラメータ（配線間隔・計画流量）は工区ごとに Store で永続化
   const hydraulicByFarm = useHydraulicSettingsStore((s) => s.byFarm)
@@ -1190,7 +1192,9 @@ export function DepthCalcPage() {
                   </td>
                 </tr>
 
-                {/* 管径 (CAD 解析で指定した値。ダブルクリックで編集) */}
+                {/* 管径: 吸水は区間毎に PlanPoint.segmentDiameter を持つ (フォールバックはパイプ既定値)。
+                    集水は行の集水管に対して 1 値 (design_pipes.diameter を直接編集)。
+                    ダブルクリックで select 表示 → 変更 or blur で確定。 */}
                 <tr className="depth-row-diameter">
                   <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap text-slate-600">
                     管径
@@ -1208,14 +1212,16 @@ export function DepthCalcPage() {
                         </td>
                       )
                     }
-                    const dia = pipeDiameterById.get(row.absorptionPipeId) ?? null
-                    const editing = editingDiameterPipeId === row.absorptionPipeId
+                    const pipeDefault = pipeDiameterById.get(row.absorptionPipeId) ?? null
+                    const dia = p.segmentDiameter ?? pipeDefault
+                    const key = `abs:${p.id}`
+                    const editing = editingDiameterKey === key
                     return (
                       <td
                         key={p.id}
-                        onDoubleClick={() => setEditingDiameterPipeId(row.absorptionPipeId!)}
+                        onDoubleClick={() => setEditingDiameterKey(key)}
                         className="px-1.5 py-1 text-center border font-mono text-slate-600 cursor-pointer"
-                        title="ダブルクリックで管径を変更"
+                        title="ダブルクリックで区間の管径を変更"
                       >
                         {editing ? (
                           <select
@@ -1223,12 +1229,14 @@ export function DepthCalcPage() {
                             value={dia ?? ''}
                             onChange={(e) => {
                               const v = e.target.value
-                              updatePipe(row.absorptionPipeId!, {
-                                diameter: v === '' ? null : parseInt(v, 10),
-                              })
-                              setEditingDiameterPipeId(null)
+                              updateSegmentDiameter(
+                                row.id,
+                                p.id,
+                                v === '' ? null : parseInt(v, 10),
+                              )
+                              setEditingDiameterKey(null)
                             }}
-                            onBlur={() => setEditingDiameterPipeId(null)}
+                            onBlur={() => setEditingDiameterKey(null)}
                             className="px-0 py-0 border rounded text-xs font-mono bg-white"
                           >
                             <option value="">-</option>
@@ -1243,42 +1251,46 @@ export function DepthCalcPage() {
                     )
                   })}
                   <td className="border-0 bg-transparent"></td>
-                  <td
-                    onDoubleClick={() =>
-                      row.collectorPipeId && setEditingDiameterPipeId(row.collectorPipeId)
-                    }
-                    className={`px-1.5 py-1 text-center border font-mono bg-green-50 ${
-                      row.collectorPipeId ? 'text-slate-600 cursor-pointer' : 'text-slate-400'
-                    }`}
-                    title={row.collectorPipeId ? 'ダブルクリックで管径を変更' : undefined}
-                  >
-                    {row.collectorPipeId ? (
-                      editingDiameterPipeId === row.collectorPipeId ? (
-                        <select
-                          autoFocus
-                          value={pipeDiameterById.get(row.collectorPipeId) ?? ''}
-                          onChange={(e) => {
-                            const v = e.target.value
-                            updatePipe(row.collectorPipeId!, {
-                              diameter: v === '' ? null : parseInt(v, 10),
-                            })
-                            setEditingDiameterPipeId(null)
-                          }}
-                          onBlur={() => setEditingDiameterPipeId(null)}
-                          className="px-0 py-0 border rounded text-xs font-mono bg-white"
-                        >
-                          <option value="">-</option>
-                          {PIPE_DIAMETERS.map((d) => (
-                            <option key={d} value={d}>{d}</option>
-                          ))}
-                        </select>
-                      ) : (
-                        <span>{pipeDiameterById.get(row.collectorPipeId) ?? '-'}</span>
-                      )
-                    ) : (
-                      '-'
-                    )}
-                  </td>
+                  {(() => {
+                    const key = row.collectorPipeId ? `col:${row.collectorPipeId}` : null
+                    const editing = key != null && editingDiameterKey === key
+                    return (
+                      <td
+                        onDoubleClick={() => key && setEditingDiameterKey(key)}
+                        className={`px-1.5 py-1 text-center border font-mono bg-green-50 ${
+                          row.collectorPipeId ? 'text-slate-600 cursor-pointer' : 'text-slate-400'
+                        }`}
+                        title={row.collectorPipeId ? 'ダブルクリックで管径を変更' : undefined}
+                      >
+                        {row.collectorPipeId ? (
+                          editing ? (
+                            <select
+                              autoFocus
+                              value={pipeDiameterById.get(row.collectorPipeId) ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value
+                                updatePipe(row.collectorPipeId!, {
+                                  diameter: v === '' ? null : parseInt(v, 10),
+                                })
+                                setEditingDiameterKey(null)
+                              }}
+                              onBlur={() => setEditingDiameterKey(null)}
+                              className="px-0 py-0 border rounded text-xs font-mono bg-white"
+                            >
+                              <option value="">-</option>
+                              {PIPE_DIAMETERS.map((d) => (
+                                <option key={d} value={d}>{d}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span>{pipeDiameterById.get(row.collectorPipeId) ?? '-'}</span>
+                          )
+                        ) : (
+                          '-'
+                        )}
+                      </td>
+                    )
+                  })()}
                   <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap text-slate-600">
                     管径
                   </td>

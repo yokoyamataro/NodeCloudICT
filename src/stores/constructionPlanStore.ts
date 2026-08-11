@@ -24,6 +24,12 @@ export interface PlanPoint {
    * フロントエンドのみ（DB には保存しない）。
    */
   manualSlope?: string | null
+  /**
+   * 区間ごとの管径 (mm) オーバーライド。
+   * null の場合は所属パイプの design_pipes.diameter を使用する。
+   * 施工計画表の管径セル (ダブルクリック) で編集可。
+   */
+  segmentDiameter: number | null
 }
 
 // 施工計画の行データ（吸水1本分）
@@ -99,6 +105,7 @@ interface ConstructionPlanState {
 
   // 地盤高の更新
   updateGroundHeight: (rowId: string, pointId: string, groundHeight: number | null) => void
+  updateSegmentDiameter: (rowId: string, pointId: string, diameter: number | null) => void
 
   // 自動計算
   recalculateCutDepthAndSlope: () => void
@@ -244,6 +251,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
             cutDepth: p.cut_depth,
             segmentDistance: p.segment_distance,
             segmentSlope: p.segment_slope,
+            segmentDiameter: p.segment_diameter ?? null,
           }))
 
         const collectorPointData = rowPoints.find(p => p.point_type === 'collector')
@@ -259,6 +267,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
           cutDepth: collectorPointData.cut_depth,
           segmentDistance: collectorPointData.segment_distance,
           segmentSlope: collectorPointData.segment_slope,
+          segmentDiameter: collectorPointData.segment_diameter ?? null,
         } : null
 
         const planRow: PlanRow = {
@@ -557,6 +566,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                 cutDepth: null,
                 segmentDistance: null,
                 segmentSlope: null,
+                segmentDiameter: null,
               }
             }
             const planRow: PlanRow = {
@@ -607,6 +617,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                   cutDepth: null,
                   segmentDistance: null,
                   segmentSlope: null,
+                  segmentDiameter: null,
                 }
               })
 
@@ -640,6 +651,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                     cutDepth: null,
                     segmentDistance: null,
                     segmentSlope: null,
+                    segmentDiameter: null,
                   }
                 } else if (absorptionPipe.vertices.length > 0) {
                   // 吸水合流（同一集水管）などで名前なしの集水測点を作成。
@@ -657,6 +669,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                     cutDepth: null,
                     segmentDistance: null,
                     segmentSlope: null,
+                    segmentDiameter: null,
                   }
                 }
               }
@@ -789,6 +802,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                 cutDepth: null,
                 segmentDistance: null,
                 segmentSlope: null,
+                segmentDiameter: null,
               }
 
               // 系統情報を取得
@@ -865,6 +879,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                 cutDepth: null,
                 segmentDistance: null,
                 segmentSlope: null,
+                segmentDiameter: null,
               }
             })
 
@@ -918,6 +933,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                   cutDepth: null,
                   segmentDistance: null,
                   segmentSlope: null,
+                  segmentDiameter: null,
                 }
               }
             }
@@ -971,6 +987,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
               cutDepth: null,
               segmentDistance: null,
               segmentSlope: null,
+              segmentDiameter: null,
             }
 
             const planRow: PlanRow = {
@@ -1096,6 +1113,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
               cut_depth: p.cutDepth,
               segment_distance: p.segmentDistance,
               segment_slope: p.segmentSlope,
+              segment_diameter: p.segmentDiameter,
             })),
             ...(row.collectorPoint ? [{
               row_id: rowId,
@@ -1109,6 +1127,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
               cut_depth: row.collectorPoint.cutDepth,
               segment_distance: row.collectorPoint.segmentDistance,
               segment_slope: row.collectorPoint.segmentSlope,
+              segment_diameter: row.collectorPoint.segmentDiameter,
             }] : []),
           ]
 
@@ -1355,6 +1374,28 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
     })
     // recalc は segmentSlope のみ更新する（manualSlope は保持される）
     get().recalculateCutDepthAndSlope()
+  },
+
+  updateSegmentDiameter: (rowId: string, pointId: string, diameter: number | null) => {
+    set(state => {
+      const newGroups = state.planGroups.map(group => ({
+        ...group,
+        rows: group.rows.map(row => {
+          if (row.id !== rowId) return row
+          return {
+            ...row,
+            absorptionPoints: row.absorptionPoints.map(p =>
+              p.id === pointId ? { ...p, segmentDiameter: diameter } : p,
+            ),
+            collectorPoint:
+              row.collectorPoint?.id === pointId
+                ? { ...row.collectorPoint, segmentDiameter: diameter }
+                : row.collectorPoint,
+          }
+        }),
+      }))
+      return { planGroups: newGroups, hasChanges: true }
+    })
   },
 
   updateGroundHeight: (rowId: string, pointId: string, groundHeight: number | null) => {

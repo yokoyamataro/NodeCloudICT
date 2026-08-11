@@ -779,6 +779,8 @@ export interface ConstructionPlanPoint {
   cut_depth: number | null
   segment_distance: number | null
   segment_slope: string | null
+  /** 区間ごとの管径 (mm)。null の場合は所属 design_pipes.diameter を使用。 */
+  segment_diameter: number | null
   created_at: string
   updated_at: string
 }
