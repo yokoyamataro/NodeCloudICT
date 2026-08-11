@@ -127,6 +127,9 @@ export function DepthCalcPage() {
   // 吸水は区間 (PlanPoint) 単位、集水は行 (collector pipe) 単位で編集する。
   const [editingDiameterKey, setEditingDiameterKey] = useState<string | null>(null)
 
+  // 編集中セルに対応する地図フォーカス点 (x, y)
+  const [focusedEditPoint, setFocusedEditPoint] = useState<{ x: number; y: number } | null>(null)
+
   // 水理計算パラメータ（配線間隔・計画流量）は工区ごとに Store で永続化
   const hydraulicByFarm = useHydraulicSettingsStore((s) => s.byFarm)
   const setHydraulicSettings = useHydraulicSettingsStore((s) => s.setSettings)
@@ -414,6 +417,22 @@ export function DepthCalcPage() {
     isCollectorHigherThanPrev,
   ])
 
+  // 地盤高セルの Tab 遷移用: pointId → 次に focus する pointId のマップ。
+  // 順序: 各行の吸水点 (上流→下流) → 集水点 → 次の行の吸水点 → ...
+  // 系統/グループを跨いでも順に繋げる。
+  const nextGroundPointId = useMemo(() => {
+    const seq: string[] = []
+    for (const group of planGroups) {
+      for (const row of group.rows) {
+        for (const p of row.absorptionPoints) seq.push(p.id)
+        if (row.collectorPoint) seq.push(row.collectorPoint.id)
+      }
+    }
+    const m = new Map<string, string>()
+    for (let i = 0; i < seq.length - 1; i++) m.set(seq[i], seq[i + 1])
+    return m
+  }, [planGroups])
+
   // 集水の区間勾配を計算（現在の行と次の行の集水計画高の差）
   // 手動指定（manualSlope）があればそれを優先する。
   const calcCollectorSlope = (
@@ -654,12 +673,20 @@ export function DepthCalcPage() {
                 <td className="border-0 bg-transparent"></td>
                 <td className="px-0.5 py-0.5 border bg-green-50">
                   {collector ? (
-                    <HeightInput
-                      value={collector.groundHeight}
-                      onCommit={(v) => updateGroundHeight(row.id, collector.id, v)}
-                      className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded bg-amber-50"
-                      placeholder="-"
-                    />
+                    (() => {
+                      const nextId = nextGroundPointId.get(collector.id) ?? null
+                      return (
+                        <HeightInput
+                          value={collector.groundHeight}
+                          onCommit={(v) => updateGroundHeight(row.id, collector.id, v)}
+                          className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded bg-amber-50"
+                          placeholder="-"
+                          navKey={`ground:${collector.id}`}
+                          nextNavKey={nextId ? `ground:${nextId}` : null}
+                          onFocusPoint={() => setFocusedEditPoint({ x: collector.x, y: collector.y })}
+                        />
+                      )
+                    })()
                   ) : (
                     <div className="px-0.5 py-0.5 text-center font-mono text-xs text-slate-400">-</div>
                   )}
@@ -694,6 +721,7 @@ export function DepthCalcPage() {
                         collectorHasError ? 'text-red-700 border-red-400' : ''
                       }`}
                       placeholder="-"
+                      onFocusPoint={() => setFocusedEditPoint({ x: collector.x, y: collector.y })}
                     />
                   ) : (
                     <div className="px-0.5 py-0.5 text-center font-mono text-xs text-slate-400">-</div>
@@ -928,25 +956,39 @@ export function DepthCalcPage() {
                     地盤高
                   </td>
                   <td className="border-0 bg-transparent"></td>
-                  {row.absorptionPoints.map(p => (
-                    <td key={p.id} className="px-0.5 py-0.5 border">
-                      <HeightInput
-                        value={p.groundHeight}
-                        onCommit={(v) => updateGroundHeight(row.id, p.id, v)}
-                        className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded bg-amber-50"
-                        placeholder="-"
-                      />
-                    </td>
-                  ))}
+                  {row.absorptionPoints.map(p => {
+                    const nextId = nextGroundPointId.get(p.id) ?? null
+                    return (
+                      <td key={p.id} className="px-0.5 py-0.5 border">
+                        <HeightInput
+                          value={p.groundHeight}
+                          onCommit={(v) => updateGroundHeight(row.id, p.id, v)}
+                          className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded bg-amber-50"
+                          placeholder="-"
+                          navKey={`ground:${p.id}`}
+                          nextNavKey={nextId ? `ground:${nextId}` : null}
+                          onFocusPoint={() => setFocusedEditPoint({ x: p.x, y: p.y })}
+                        />
+                      </td>
+                    )
+                  })}
                   <td className="border-0 bg-transparent"></td>
                   <td className="px-0.5 py-0.5 border bg-green-50">
                     {collector ? (
-                      <HeightInput
-                        value={collector.groundHeight}
-                        onCommit={(v) => updateGroundHeight(row.id, collector.id, v)}
-                        className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded bg-amber-50"
-                        placeholder="-"
-                      />
+                      (() => {
+                        const nextId = nextGroundPointId.get(collector.id) ?? null
+                        return (
+                          <HeightInput
+                            value={collector.groundHeight}
+                            onCommit={(v) => updateGroundHeight(row.id, collector.id, v)}
+                            className="w-full px-0.5 py-0.5 text-center font-mono text-xs border rounded bg-amber-50"
+                            placeholder="-"
+                            navKey={`ground:${collector.id}`}
+                            nextNavKey={nextId ? `ground:${nextId}` : null}
+                            onFocusPoint={() => setFocusedEditPoint({ x: collector.x, y: collector.y })}
+                          />
+                        )
+                      })()
                     ) : (
                       <div className="px-0.5 py-0.5 text-center font-mono text-xs text-slate-400">-</div>
                     )}
@@ -977,6 +1019,7 @@ export function DepthCalcPage() {
                             hasError ? 'text-red-700 border-red-400' : ''
                           }`}
                           placeholder="-"
+                          onFocusPoint={() => setFocusedEditPoint({ x: p.x, y: p.y })}
                         />
                       </td>
                     )
@@ -1000,6 +1043,7 @@ export function DepthCalcPage() {
                           collectorHasError ? 'text-red-700 border-red-400' : ''
                         }`}
                         placeholder="-"
+                        onFocusPoint={() => setFocusedEditPoint({ x: collector.x, y: collector.y })}
                       />
                     ) : (
                       <div className="px-0.5 py-0.5 text-center font-mono text-xs text-slate-400">-</div>
@@ -1948,6 +1992,7 @@ export function DepthCalcPage() {
               selectedPipeId={focusedPipeId}
               highlightPipeIds={mapHighlightPipeIds}
               focusedPipeId={null}
+              focusedPoint={focusedEditPoint}
               showLabels={true}
               showDirection={true}
               onPipeSelect={(id) => handleMapPipeSelect(id)}
@@ -2483,12 +2528,21 @@ function HeightInput({
   className = '',
   title,
   placeholder,
+  navKey,
+  nextNavKey,
+  onFocusPoint,
 }: {
   value: number | null
   onCommit: (v: number | null) => void
   className?: string
   title?: string
   placeholder?: string
+  /** data-nav-key 属性。Tab 遷移でこのキーを持つ input を探して focus する */
+  navKey?: string
+  /** Tab 押下時に focus する次要素の nav-key */
+  nextNavKey?: string | null
+  /** フォーカス時に呼ばれる (地図の中心追従用) */
+  onFocusPoint?: () => void
 }) {
   const [local, setLocal] = useState<string>(value === null || value === undefined ? '' : value.toFixed(3))
   const [focused, setFocused] = useState(false)
@@ -2521,6 +2575,7 @@ function HeightInput({
       type="number"
       step="any"
       value={local}
+      data-nav-key={navKey}
       onChange={(e) => setLocal(e.target.value)}
       onFocus={(e) => {
         setFocused(true)
@@ -2529,11 +2584,23 @@ function HeightInput({
           setLocal(String(value))
         }
         e.target.select()
+        onFocusPoint?.()
       }}
       onBlur={commit}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
           ;(e.target as HTMLInputElement).blur()
+          return
+        }
+        if (e.key === 'Tab' && !e.shiftKey && nextNavKey) {
+          const el = document.querySelector<HTMLInputElement>(
+            `input[data-nav-key="${nextNavKey}"]`,
+          )
+          if (el) {
+            e.preventDefault()
+            commit()
+            el.focus()
+          }
         }
       }}
       className={className}

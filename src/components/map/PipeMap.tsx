@@ -257,6 +257,23 @@ function FocusPipe({ pipeLines, focusedPipeId }: { pipeLines: PipeLineData[], fo
   return null
 }
 
+// 施工計画表で編集中の点にパンする (ズームは変えない)
+function FocusPoint({
+  point,
+  converter,
+}: {
+  point: { x: number; y: number } | null
+  converter: CoordinateConverter
+}) {
+  const map = useMap()
+  useEffect(() => {
+    if (!point) return
+    const { lat, lng } = converter.toLatLng(point.x, point.y)
+    map.panTo([lat, lng], { animate: true, duration: 0.3 })
+  }, [point, converter, map])
+  return null
+}
+
 // 測点データの型
 export interface SurveyPointData {
   id: string
@@ -294,6 +311,8 @@ interface PipeMapProps {
   assignedPipeIds?: Set<string>  // 設定済み管路（黄色表示用）
   highlightPipeIds?: Set<string> // コンテキスト強調表示（例: 選択中の系統全体）
   focusedPipeId?: string | null  // フォーカス対象の管路（中央拡大表示）
+  /** 施工計画表で編集中のセルに対応する点。指定するとズームを変えずに地図中心を移動 */
+  focusedPoint?: { x: number; y: number } | null
   onPipeSelect?: (id: string, ctrlKey?: boolean) => void
   onVertexClick?: (pipeId: string, vertexIndex: number) => void
   onJunctionSplitClick?: (pipeId: string, point: { x: number; y: number }) => void  // 合流点での分割
@@ -461,6 +480,7 @@ export function PipeMap({
   assignedPipeIds = new Set(),
   highlightPipeIds = new Set(),
   focusedPipeId = null,
+  focusedPoint = null,
   onPipeSelect,
   onVertexClick,
   onJunctionSplitClick,
@@ -593,6 +613,9 @@ export function PipeMap({
       ) : (
         <MapViewManager pipeLines={pipeLines} />
       )}
+
+      <FocusPoint point={focusedPoint} converter={converter} />
+
 
       <FitImportPreview positions={importPreviewPositions} />
 
