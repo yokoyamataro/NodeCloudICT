@@ -666,7 +666,6 @@ export function generateSfcPipesContent(
   }
 
   if (anyText) {
-    const HALF_PI = Math.PI / 2
     const planLookup = buildPlanLookup(planGroups, pipes)
     // テキスト step: 上→下に積むため、paper Y は下方向マイナスとみなさず
     // "y を減らす" 方向で積む (TrendOne の buildTextLines は +cos で積んでいたが
@@ -741,7 +740,7 @@ export function generateSfcPipesContent(
             (v.x - prev.x) * (v.x - prev.x) + (v.y - prev.y) * (v.y - prev.y),
           )
           if (dist > 0) {
-            distLabel = dist.toFixed(2)
+            distLabel = dist.toFixed(1)
           }
           if (ph !== null && prevPh !== null && dist > 0 && prevPh !== ph) {
             slopeLabel = `1/${Math.round(dist / Math.abs(prevPh - ph))}`
@@ -752,15 +751,15 @@ export function generateSfcPipesContent(
         let cx = x1
         let cy = y1 + initialYOffset
         if (emitPointNames && layers.point) {
-          emitText(layers.point, COLOR_CODE.black, pointName, cx, cy, moji, HALF_PI, 1)
+          emitText(layers.point, COLOR_CODE.black, pointName, cx, cy, moji, 0, 1)
         }
         cx += stepDx; cy += stepDy
         if (emitGround && layers.ground && ghStr) {
-          emitText(layers.ground, COLOR_CODE.black, ghStr, cx, cy, moji, HALF_PI, 1)
+          emitText(layers.ground, COLOR_CODE.black, ghStr, cx, cy, moji, 0, 1)
         }
         cx += stepDx; cy += stepDy
         if (emitPlanned && layers.plan && fhStr) {
-          emitText(layers.plan, layers.planColor, fhStr, cx, cy, moji, HALF_PI, 1)
+          emitText(layers.plan, layers.planColor, fhStr, cx, cy, moji, 0, 1)
         }
         cx += stepDx; cy += stepDy
         if (
@@ -769,7 +768,7 @@ export function generateSfcPipesContent(
           cd !== null &&
           Math.abs(cd - stdDepth) > 0.005
         ) {
-          emitText(layers.depth, COLOR_CODE.magenta, ` ${chStr}`, cx, cy, moji, HALF_PI, 1)
+          emitText(layers.depth, COLOR_CODE.magenta, ` ${chStr}`, cx, cy, moji, 0, 1)
         }
 
         // セグメント中点: 勾配 + 距離
