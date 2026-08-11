@@ -645,7 +645,9 @@ export function generateSfcPipesContent(
     if (emitDistance) textLayerIndex.colDist = registerTextLayer('集水延長')
   }
 
-  /** text_string_feature を出力 */
+  /** text_string_feature を出力。
+   *  SXF の text width は文字列の 全幅 (mm) を渡す仕様。
+   *  半角 = 文字高/2、全角 = 文字高 で 1 文字ずつ加算する。 */
   const emitText = (
     layer: number,
     color: number,
@@ -658,7 +660,7 @@ export function generateSfcPipesContent(
   ) => {
     if (!text) return
     const angleDeg = (angleRad * 180) / Math.PI
-    const width = height // char width factor: 正方比
+    const width = height * textWidthUnits(text)
     const escaped = escapeSfcString(text)
     emit(
       `#${nextId()} = text_string_feature('${layer}','${color}','${TEXT_FONT_IDX}',\\'${escaped}\\','${px.toFixed(6)}','${py.toFixed(6)}','${height.toFixed(6)}','${width.toFixed(6)}','0.000000','${angleDeg.toFixed(12)}','0.00000000000000','${basePoint}','1')`,
@@ -821,6 +823,20 @@ export function generateSfcPipesContent(
   out.push('ENDSEC;')
   out.push('END-ISO-10303-21;')
   return out.join('\r\n') + '\r\n'
+}
+
+/** 文字列の "文字高何倍分の幅を占めるか" を返す。
+ *  半角 (ASCII / 半角カナ) は 0.5、全角は 1 として集計する。
+ *  例: "K7A" (半角 3) → 1.5、"29.50" (半角 5) → 2.5、"測点" (全角 2) → 2.0 */
+function textWidthUnits(s: string): number {
+  let units = 0
+  for (const ch of s) {
+    const code = ch.codePointAt(0) ?? 0
+    if (code < 128) units += 0.5 // ASCII
+    else if (code >= 0xff61 && code <= 0xff9f) units += 0.5 // 半角カタカナ
+    else units += 1 // 全角
+  }
+  return units
 }
 
 /** SFC 文字列内のバックスラッシュ・引用符を無害化 */
