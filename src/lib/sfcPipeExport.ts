@@ -247,21 +247,12 @@ function pipeMidpoint(pipe: PipeRow): { x: number; y: number } | null {
   return { x: v[v.length - 1].x, y: v[v.length - 1].y }
 }
 
-/** 逆方向 (dx<0) の場合は反転し、文字が左→右に読めるようにする */
+/** セグメントの角度を返す (rad)。文字が上下反転しないよう、
+ *  常に (-π/2, π/2] の範囲に収める (180° を超えたら反対向きに補正)。 */
 function calcTextAngle(dx: number, dy: number): number {
-  let _dx = dx
-  let _dy = dy
-  if (_dx < 0) {
-    _dx = -_dx
-    _dy = -_dy
-  }
-  if (_dx === 0) {
-    if (_dy > 0) return Math.PI
-    if (_dy < 0) return -Math.PI
-    return 0
-  }
-  let a = Math.atan(_dy / _dx)
-  if (_dy < 0) a = a + Math.PI
+  let a = Math.atan2(dy, dx)
+  if (a > Math.PI / 2) a -= Math.PI
+  else if (a <= -Math.PI / 2) a += Math.PI
   return a
 }
 
@@ -775,7 +766,7 @@ export function generateSfcPipesContent(
 
         // セグメント中点: 勾配 + 距離
         if (emitSlope && layers.slope && slopeLabel) {
-          emitText(layers.slope, COLOR_CODE.red, slopeLabel, midX, midY, moji, segAngle, 5)
+          emitText(layers.slope, COLOR_CODE.green, slopeLabel, midX, midY, moji, segAngle, 5)
         }
         if (emitDistance && layers.dist && distLabel) {
           // 距離は 勾配の少し下 (paper -Y 方向) にずらす
