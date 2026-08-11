@@ -407,16 +407,22 @@ export function generateSfcPipesContent(
     }
     toContent = (x, y) => ({ cx: y * 1000, cy: x * 1000 })
   } else {
-    // paper-mode: SFC 座標系 (X=東=v.y, Y=北=v.x) に swap した上で bbox を取り直す
+    // paper-mode: SFC 座標系 (X=東=v.y, Y=北=v.x) に swap した上で、
+    // 必要なら回転をかけて bbox を取り直す。
+    // 回転は survey-mode と同じ sxfAngleDeg (= 360 - user_deg) を CCW で適用。
+    const cs = Math.cos(sxfAngleRad)
+    const sn = Math.sin(sxfAngleRad)
     let sfMinX = Infinity, sfMinY = Infinity, sfMaxX = -Infinity, sfMaxY = -Infinity
     for (const p of pipes) {
       for (const v of p.vertices) {
         const sfx = v.y
         const sfy = v.x
-        if (sfx < sfMinX) sfMinX = sfx
-        if (sfy < sfMinY) sfMinY = sfy
-        if (sfx > sfMaxX) sfMaxX = sfx
-        if (sfy > sfMaxY) sfMaxY = sfy
+        const rx = cs * sfx - sn * sfy
+        const ry = sn * sfx + cs * sfy
+        if (rx < sfMinX) sfMinX = rx
+        if (ry < sfMinY) sfMinY = ry
+        if (rx > sfMaxX) sfMaxX = rx
+        if (ry > sfMaxY) sfMaxY = ry
       }
     }
     if (!Number.isFinite(sfMinX)) { sfMinX = 0; sfMinY = 0; sfMaxX = 0; sfMaxY = 0 }
@@ -425,10 +431,16 @@ export function generateSfcPipesContent(
     const contentW = (sfMaxX - sfMinX) * mToPaperMm + marginMm * 2
     const contentH = (sfMaxY - sfMinY) * mToPaperMm + marginMm * 2
     sheet = pickSheet(contentW, contentH)
-    toContent = (x, y) => ({
-      cx: (y - sfMinX) * mToPaperMm + marginMm,
-      cy: (x - sfMinY) * mToPaperMm + marginMm,
-    })
+    toContent = (x, y) => {
+      const sfx = y
+      const sfy = x
+      const rx = cs * sfx - sn * sfy
+      const ry = sn * sfx + cs * sfy
+      return {
+        cx: (rx - sfMinX) * mToPaperMm + marginMm,
+        cy: (ry - sfMinY) * mToPaperMm + marginMm,
+      }
+    }
     // 使用しない (survey-only 変数) の警告避け
     void minX; void minY; void maxX; void maxY
   }
@@ -441,16 +453,19 @@ export function generateSfcPipesContent(
   const realToPaperMm = (x: number, y: number): { px: number; py: number } => {
     const sfx = y
     const sfy = x
+    const cs = Math.cos(sxfAngleRad)
+    const sn = Math.sin(sxfAngleRad)
     if (preserveSurvey && sfigTransform) {
-      const cs = Math.cos(sxfAngleRad)
-      const sn = Math.sin(sxfAngleRad)
       const px = sfigTransform.offsetX + (cs * sfx - sn * sfy) * mToPaperMm
       const py = sfigTransform.offsetY + (sn * sfx + cs * sfy) * mToPaperMm
       return { px, py }
     }
+    // paper-mode: swap → 回転 → bbox シフト
+    const rx = cs * sfx - sn * sfy
+    const ry = sn * sfx + cs * sfy
     return {
-      px: (sfx - paperMinXShared) * mToPaperMm + marginMm,
-      py: (sfy - paperMinYShared) * mToPaperMm + marginMm,
+      px: (rx - paperMinXShared) * mToPaperMm + marginMm,
+      py: (ry - paperMinYShared) * mToPaperMm + marginMm,
     }
   }
   // survey-only 内部変数の unused 警告防止

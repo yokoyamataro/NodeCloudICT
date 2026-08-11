@@ -889,37 +889,34 @@ export function CadExportPage() {
                 />
                 <span className="text-slate-500">m</span>
               </label>
-              <label className="flex items-center gap-1 ml-2" title="回転角 (度分秒)">
+              <label className="flex items-center gap-1 ml-2" title="回転角 (度分秒)。現地座標保持 ON でも OFF でも回転できる。">
                 <span className="text-slate-600">回転</span>
                 <input
                   type="number"
                   value={sfcRotDeg}
                   onChange={(e) => setSfcRotDeg(parseFloat(e.target.value) || 0)}
-                  disabled={!sfcPreserveSurvey}
                   step="1"
-                  className="w-14 px-1 py-0.5 border rounded text-right font-mono disabled:bg-slate-100 disabled:text-slate-400"
+                  className="w-14 px-1 py-0.5 border rounded text-right font-mono"
                 />
                 <span className="text-slate-500">°</span>
                 <input
                   type="number"
                   value={sfcRotMin}
                   onChange={(e) => setSfcRotMin(parseFloat(e.target.value) || 0)}
-                  disabled={!sfcPreserveSurvey}
                   min="0"
                   max="59"
                   step="1"
-                  className="w-12 px-1 py-0.5 border rounded text-right font-mono disabled:bg-slate-100 disabled:text-slate-400"
+                  className="w-12 px-1 py-0.5 border rounded text-right font-mono"
                 />
                 <span className="text-slate-500">'</span>
                 <input
                   type="number"
                   value={sfcRotSec}
                   onChange={(e) => setSfcRotSec(parseFloat(e.target.value) || 0)}
-                  disabled={!sfcPreserveSurvey}
                   min="0"
                   max="59.99"
                   step="0.1"
-                  className="w-14 px-1 py-0.5 border rounded text-right font-mono disabled:bg-slate-100 disabled:text-slate-400"
+                  className="w-14 px-1 py-0.5 border rounded text-right font-mono"
                 />
                 <span className="text-slate-500">"</span>
               </label>
