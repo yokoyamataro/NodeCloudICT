@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Folder, Loader2, Users, MapPin, AlertCircle, Trash2, Edit3, Check, Lock, Globe, Car, ChevronRight } from 'lucide-react'
+import { Plus, Folder, Loader2, Users, MapPin, AlertCircle, Trash2, Edit3, Check, Globe, Car, ChevronRight } from 'lucide-react'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { getAllProjectRecency, sortByRecency } from '@/lib/recentProjects'
 import { useFarmStore } from '@/stores/farmStore'
@@ -527,26 +527,19 @@ function ProjectCard({
   )
 }
 
-// 共有ポリシー バッジ (占有 / 共有 / 公開)。工事カードや一覧に表示する用の共通コンポーネント
+// 公開バッジ (visibility='public' のときだけ表示)。
+// 占有/共有 の区別は廃止 (メンバー追加=共有、追加なし=占有) のため
+// バッジは 公開 の 1 種類のみ。それ以外の visibility ('private' /
+// 'shared' 旧値) では null を返して非表示にする。
 function VisibilityBadge({ visibility }: { visibility: ProjectVisibility }) {
-  const conf = (() => {
-    switch (visibility) {
-      case 'private':
-        return { label: '占有', icon: Lock, cls: 'bg-slate-100 text-slate-700 border-slate-300' }
-      case 'shared':
-        return { label: '共有', icon: Users, cls: 'bg-blue-50 text-blue-700 border-blue-200' }
-      case 'public':
-        return { label: '公開', icon: Globe, cls: 'bg-amber-50 text-amber-700 border-amber-200' }
-    }
-  })()
-  const Icon = conf.icon
+  if (visibility !== 'public') return null
   return (
     <span
-      className={`inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded border font-medium ${conf.cls}`}
-      title={`共有ポリシー: ${conf.label}`}
+      className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded border font-medium bg-amber-50 text-amber-700 border-amber-200"
+      title="公開: URL を知る誰でも閲覧できます"
     >
-      <Icon className="h-2.5 w-2.5" />
-      {conf.label}
+      <Globe className="h-2.5 w-2.5" />
+      公開
     </span>
   )
 }
