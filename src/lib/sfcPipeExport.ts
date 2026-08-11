@@ -701,7 +701,7 @@ export function generateSfcPipesContent(
     const groupPosKey = (px: number, py: number) =>
       `${Math.round(px * 2)}_${Math.round(py * 2)}`
     const groupCount = new Map<string, number>()
-    const groupShiftPerOccurrence = moji * 6
+    const groupShiftPerOccurrence = moji * 3
 
     // 集水頂点の重複除去 + planLookup 不一致時のフォールバック用に
     // 座標ベース (100mm 単位=位置一致に寛容) のマップを作る:
@@ -882,14 +882,10 @@ export function generateSfcPipesContent(
           emitText(layers.plan, layers.planColor, fhStr, cx, cy, moji, 0, 1)
         }
         cx += stepDx; cy += stepDy
-        if (
-          emitCutDepth &&
-          layers.depth &&
-          cd !== null &&
-          Math.abs(cd - stdDepth) > 0.005
-        ) {
-          emitText(layers.depth, layers.depthColor, ` ${chStr}`, cx, cy, moji, 0, 1)
+        if (emitCutDepth && layers.depth && cd !== null) {
+          emitText(layers.depth, layers.depthColor, chStr, cx, cy, moji, 0, 1)
         }
+        void stdDepth
 
         // セグメント中点: 勾配 (上側) / 距離 (下側) / 管径 (下 2 段目) を
         // 配線方向に平行に配置。paper Y ではなく "配線方向の垂直" に
