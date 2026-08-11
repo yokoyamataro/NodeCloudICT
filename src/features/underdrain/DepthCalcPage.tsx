@@ -430,6 +430,37 @@ export function DepthCalcPage() {
     outlet: '落口',
   }
 
+  // 吸水 水理延長を1行分計算する共通関数（集水側の累積計算からも呼ぶ）
+  // 最上流点: 配線間隔/4、それ以下: 端部補正 + 累加距離、下流端: 端部行以外は −配線間隔/2
+  function computeAbsorptionHydraulicLengths(
+    r: PlanRow,
+    sysRows: PlanRow[],
+    idxInSys: number,
+    intervalM: number,
+  ): (number | null)[] {
+    const endC = intervalM / 4
+    const conC = intervalM / 2
+    const isFirst =
+      r.absorptionPipeId != null &&
+      sysRows.slice(0, idxInSys).every((rr) => rr.absorptionPipeId == null)
+    const values: (number | null)[] = r.absorptionPoints.map((_p, idx) => {
+      if (idx === 0) return endC
+      let cum = 0
+      for (let j = 1; j <= idx; j++) {
+        const seg = r.absorptionPoints[j].segmentDistance
+        if (seg == null) return null
+        cum += seg
+      }
+      return endC + cum
+    })
+    if (r.absorptionPoints.length > 1 && !isFirst) {
+      const last = r.absorptionPoints.length - 1
+      const v = values[last]
+      if (v != null) values[last] = v - conC
+    }
+    return values
+  }
+
   // 行のレンダリング（系統内の行リストと現在のインデックスを受け取る）
   const renderRow = (row: PlanRow, systemRows: PlanRow[], rowIndexInSystem: number) => {
     const nextRow = rowIndexInSystem < systemRows.length - 1 ? systemRows[rowIndexInSystem + 1] : null
@@ -464,32 +495,36 @@ export function DepthCalcPage() {
     //  - 下流端点 (index=last): さらに 配線間隔/2 を減算 (接続補正)
     //    ただし、この行が系統内で最初の吸水行 (端部) の場合は接続補正なし
     const interval = hydraulicSettings.pipeInterval
-    const endCorrection = interval / 4
-    const connectionCorrection = interval / 2
-    const isFirstAbsorptionInSystem =
-      row.absorptionPipeId != null &&
-      systemRows
-        .slice(0, rowIndexInSystem)
-        .every((r) => r.absorptionPipeId == null)
-    const absorptionHydraulicLengths: (number | null)[] = row.absorptionPoints.map(
-      (_p, idx) => {
-        if (idx === 0) return endCorrection
-        let cum = 0
-        for (let j = 1; j <= idx; j++) {
-          const seg = row.absorptionPoints[j].segmentDistance
-          if (seg == null) return null
-          cum += seg
-        }
-        return endCorrection + cum
-      },
+    const absorptionHydraulicLengths = computeAbsorptionHydraulicLengths(
+      row,
+      systemRows,
+      rowIndexInSystem,
+      interval,
     )
-    if (
-      row.absorptionPoints.length > 1 &&
-      !isFirstAbsorptionInSystem
-    ) {
-      const last = row.absorptionPoints.length - 1
-      const v = absorptionHydraulicLengths[last]
-      if (v != null) absorptionHydraulicLengths[last] = v - connectionCorrection
+
+    // 水理延長 (集水): この行までの累積。
+    //  = 吸水水理延長 (この行の下流端) + 集水水理延長 (前の行) + 自身の集水延長
+    // 系統の先頭から累加する。合流行はここでは単純加算のみ扱う。
+    let collectorHydraulicLength: number | null = null
+    if (row.collectorPoint) {
+      let running = 0
+      let valid = true
+      for (let i = 0; i <= rowIndexInSystem; i++) {
+        const r = systemRows[i]
+        if (!r.collectorPoint) continue
+        const absLens = computeAbsorptionHydraulicLengths(
+          r,
+          systemRows,
+          i,
+          interval,
+        )
+        const absDownstream = absLens.length > 0 ? absLens[absLens.length - 1] : null
+        const own = r.collectorPoint.segmentDistance ?? 0
+        const absAdd = absDownstream ?? 0
+        if (absDownstream == null && absLens.length > 0) valid = false
+        running = running + absAdd + own
+      }
+      collectorHydraulicLength = valid ? running : null
     }
 
     // 集水合流行の場合、合流先系統の最下流 3 点と末尾集水管の番号を取得。
@@ -1114,8 +1149,8 @@ export function DepthCalcPage() {
                     )
                   })}
                   <td className="border-0 bg-transparent"></td>
-                  <td className="px-1.5 py-1 text-center border font-mono bg-green-50 text-slate-400">
-                    -
+                  <td className="px-1.5 py-1 text-center border font-mono bg-green-50 text-slate-700">
+                    {collectorHydraulicLength == null ? '-' : collectorHydraulicLength.toFixed(1)}
                   </td>
                   <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap text-slate-600">
                     水理延長
