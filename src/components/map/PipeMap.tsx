@@ -359,6 +359,36 @@ interface PipeMapProps {
   showPipeSpecs?: boolean
   /** 管路クリック時のポップアップ (配線番号/管種/延長/管径) を無効化する */
   hidePipePopup?: boolean
+  /**
+   * 施工計画: 選択配線の各測点に地盤高/計画高/切深を表示するオーバーレイ。
+   * points は上流→下流の順で渡す。 segments はその中間点にラベルを置くのに使う。
+   */
+  planOverlay?: {
+    points: Array<{
+      id: string
+      x: number
+      y: number
+      pointName?: string
+      groundHeight: number | null
+      plannedHeight: number | null
+      cutDepth: number | null
+    }>
+    segments: Array<{
+      x1: number
+      y1: number
+      x2: number
+      y2: number
+      slope: string | null   // "1/77" 形式
+      distance: number | null
+    }>
+    flags: {
+      showGround: boolean
+      showPlanned: boolean
+      showCut: boolean
+      showSlope: boolean
+      showDistance: boolean
+    }
+  }
 }
 
 // 測点ラベルアイコンを生成（緑の丸マーカー + ラベル、選択時はオレンジ・拡大・パルス）
@@ -525,6 +555,7 @@ export function PipeMap({
   highlightedVertex = null,
   showPipeSpecs = false,
   hidePipePopup = false,
+  planOverlay,
 }: PipeMapProps) {
   const { pipes } = useUnderdrainStore()
   const { zone, coordinates } = useCoordinateStore()
@@ -638,6 +669,68 @@ export function PipeMap({
       <InvalidateOnResize />
       <FocusPoint point={focusedPoint} converter={converter} />
 
+      {/* 施工計画: 選択配線の測点・区間ラベル */}
+      {planOverlay && (
+        <>
+          {planOverlay.points.map((p) => {
+            const { lat, lng } = converter.toLatLng(p.x, p.y)
+            const lines: string[] = []
+            if (planOverlay.flags.showGround && p.groundHeight != null) {
+              lines.push(`<div style="color:#111827">${p.groundHeight.toFixed(3)}</div>`)
+            }
+            if (planOverlay.flags.showPlanned && p.plannedHeight != null) {
+              lines.push(`<div style="color:#dc2626">${p.plannedHeight.toFixed(3)}</div>`)
+            }
+            if (planOverlay.flags.showCut && p.cutDepth != null) {
+              lines.push(`<div style="color:#2563eb">${p.cutDepth.toFixed(3)}</div>`)
+            }
+            if (lines.length === 0) return null
+            const html = `<div style="background:rgba(255,255,255,0.9);border:1px solid #cbd5e1;border-radius:4px;padding:2px 4px;font-family:ui-monospace,monospace;font-size:10px;line-height:1.15;white-space:nowrap;text-align:right;box-shadow:0 1px 2px rgba(0,0,0,0.1);">${lines.join('')}</div>`
+            const icon = L.divIcon({
+              className: 'plan-overlay-point',
+              html,
+              iconSize: undefined as unknown as [number, number],
+              iconAnchor: [-6, 10],
+            })
+            return (
+              <Marker
+                key={`plan-pt-${p.id}`}
+                position={[lat, lng]}
+                icon={icon}
+                interactive={false}
+              />
+            )
+          })}
+          {planOverlay.segments.map((s, i) => {
+            const parts: string[] = []
+            if (planOverlay.flags.showSlope && s.slope) {
+              parts.push(`<span style="color:#166534">${s.slope}</span>`)
+            }
+            if (planOverlay.flags.showDistance && s.distance != null) {
+              parts.push(`<span style="color:#334155">${s.distance.toFixed(1)}m</span>`)
+            }
+            if (parts.length === 0) return null
+            const mx = (s.x1 + s.x2) / 2
+            const my = (s.y1 + s.y2) / 2
+            const { lat, lng } = converter.toLatLng(mx, my)
+            const html = `<div style="background:rgba(255,255,255,0.85);border:1px solid #cbd5e1;border-radius:4px;padding:1px 4px;font-family:ui-monospace,monospace;font-size:10px;line-height:1.1;white-space:nowrap;">${parts.join(' / ')}</div>`
+            const icon = L.divIcon({
+              className: 'plan-overlay-segment',
+              html,
+              iconSize: undefined as unknown as [number, number],
+              iconAnchor: [0, 0],
+            })
+            return (
+              <Marker
+                key={`plan-seg-${i}`}
+                position={[lat, lng]}
+                icon={icon}
+                interactive={false}
+              />
+            )
+          })}
+        </>
+      )}
 
       <FitImportPreview positions={importPreviewPositions} />
 

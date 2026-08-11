@@ -131,6 +131,15 @@ export function DepthCalcPage() {
   // 編集中セルに対応する地図フォーカス点 (x, y)
   const [focusedEditPoint, setFocusedEditPoint] = useState<{ x: number; y: number } | null>(null)
 
+  // 地図オーバーレイの表示切替 (地盤高/計画高/切深/勾配/区間距離)
+  const [overlayFlags, setOverlayFlags] = useState({
+    showGround: true,
+    showPlanned: true,
+    showCut: true,
+    showSlope: true,
+    showDistance: true,
+  })
+
   // 水理計算パラメータ（配線間隔・計画流量）は工区ごとに Store で永続化
   const hydraulicByFarm = useHydraulicSettingsStore((s) => s.byFarm)
   const setHydraulicSettings = useHydraulicSettingsStore((s) => s.setSettings)
@@ -1723,6 +1732,54 @@ export function DepthCalcPage() {
     return activeTab.rows.map((row, indexInSystem) => ({ row, indexInSystem }))
   }, [activeTab, chartScope])
 
+  // 地図に描画する測点・区間ラベル用のデータ。
+  // 吸水スコープなら選択行の吸水点、集水スコープなら系統内の全集水点。
+  const planOverlayData = useMemo(() => {
+    if (!activeTab) return null
+    type OP = { id: string; x: number; y: number; pointName?: string; groundHeight: number | null; plannedHeight: number | null; cutDepth: number | null }
+    let pts: OP[] = []
+    if (typeof chartScope === 'number') {
+      const r = activeTab.rows[chartScope]
+      if (r) pts = r.absorptionPoints.map((p) => ({
+        id: p.id, x: p.x, y: p.y, pointName: p.pointName,
+        groundHeight: p.groundHeight, plannedHeight: p.plannedHeight, cutDepth: p.cutDepth,
+      }))
+    } else {
+      pts = activeTab.rows
+        .map((r) => r.collectorPoint)
+        .filter((cp): cp is NonNullable<typeof cp> => cp != null)
+        .map((cp) => ({
+          id: cp.id, x: cp.x, y: cp.y, pointName: cp.pointName,
+          groundHeight: cp.groundHeight, plannedHeight: cp.plannedHeight, cutDepth: cp.cutDepth,
+        }))
+    }
+    if (pts.length === 0) return null
+    // 区間ラベル (点 i-1 → 点 i の中点)。勾配は 計画高差 / 距離、距離は
+    // 吸水: 各点の segmentDistance を使う (点 i の segmentDistance が 点 i-1 → 点 i の距離)
+    // 集水: 各点の segmentDistance は 現在→次 (点 i-1 の segmentDistance が 点 i-1 → 点 i の距離)
+    const segments: Array<{ x1: number; y1: number; x2: number; y2: number; slope: string | null; distance: number | null }> = []
+    for (let i = 1; i < pts.length; i++) {
+      const prev = pts[i - 1]
+      const cur = pts[i]
+      let dist: number | null = null
+      if (typeof chartScope === 'number') {
+        const src = activeTab.rows[chartScope]?.absorptionPoints[i]
+        dist = src?.segmentDistance ?? null
+      } else {
+        const collectors = activeTab.rows.map((r) => r.collectorPoint).filter((cp): cp is NonNullable<typeof cp> => cp != null)
+        // collectors[i-1] の segmentDistance = collectors[i-1] → collectors[i]
+        dist = collectors[i - 1]?.segmentDistance ?? null
+      }
+      let slope: string | null = null
+      if (prev.plannedHeight != null && cur.plannedHeight != null && dist != null && dist > 0) {
+        const drop = prev.plannedHeight - cur.plannedHeight
+        if (drop !== 0) slope = `1/${Math.round(Math.abs(dist / drop))}`
+      }
+      segments.push({ x1: prev.x, y1: prev.y, x2: cur.x, y2: cur.y, slope, distance: dist })
+    }
+    return { points: pts, segments, flags: overlayFlags }
+  }, [activeTab, chartScope, overlayFlags])
+
 
   return (
     <div className="h-full flex flex-col">
@@ -2198,8 +2255,59 @@ export function DepthCalcPage() {
               showLabels={true}
               showDirection={true}
               hidePipePopup
+              planOverlay={planOverlayData ?? undefined}
               onPipeSelect={(id) => handleMapPipeSelect(id)}
             />
+            {/* オーバーレイ表示切替チェックボックス (地図の右上に重ねる) */}
+            <div className="absolute top-11 right-2 z-20 bg-white/95 border border-slate-300 rounded shadow px-2 py-1.5 text-[11px] font-mono">
+              <div className="text-slate-600 font-sans text-[10px] mb-1">表示項目</div>
+              <label className="flex items-center gap-1 text-slate-800">
+                <input
+                  type="checkbox"
+                  checked={overlayFlags.showGround}
+                  onChange={(e) => setOverlayFlags((s) => ({ ...s, showGround: e.target.checked }))}
+                  className="h-3 w-3"
+                />
+                <span className="text-slate-900">地盤高</span>
+              </label>
+              <label className="flex items-center gap-1 text-slate-800">
+                <input
+                  type="checkbox"
+                  checked={overlayFlags.showPlanned}
+                  onChange={(e) => setOverlayFlags((s) => ({ ...s, showPlanned: e.target.checked }))}
+                  className="h-3 w-3"
+                />
+                <span className="text-red-600">計画高</span>
+              </label>
+              <label className="flex items-center gap-1 text-slate-800">
+                <input
+                  type="checkbox"
+                  checked={overlayFlags.showCut}
+                  onChange={(e) => setOverlayFlags((s) => ({ ...s, showCut: e.target.checked }))}
+                  className="h-3 w-3"
+                />
+                <span className="text-blue-600">切深</span>
+              </label>
+              <div className="border-t my-1" />
+              <label className="flex items-center gap-1 text-slate-800">
+                <input
+                  type="checkbox"
+                  checked={overlayFlags.showSlope}
+                  onChange={(e) => setOverlayFlags((s) => ({ ...s, showSlope: e.target.checked }))}
+                  className="h-3 w-3"
+                />
+                <span className="text-green-700">勾配</span>
+              </label>
+              <label className="flex items-center gap-1 text-slate-800">
+                <input
+                  type="checkbox"
+                  checked={overlayFlags.showDistance}
+                  onChange={(e) => setOverlayFlags((s) => ({ ...s, showDistance: e.target.checked }))}
+                  className="h-3 w-3"
+                />
+                <span>区間距離</span>
+              </label>
+            </div>
           </div>
         </div>
 
