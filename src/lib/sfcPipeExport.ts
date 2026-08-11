@@ -666,7 +666,21 @@ export function generateSfcPipesContent(
     const stepDx = 0
     const stepDy = -moji * 1.05
 
-    for (const pipe of pipes) {
+    // 同一 vertex 位置に複数配線 (吸水+集水) が来た場合の重複回避。
+    // paper 座標 (0.5mm 単位でキー化) ごとに 何回目の text 群かをカウントし、
+    // 2 回目以降は 右方向にずらして描画する。
+    const groupPosKey = (px: number, py: number) =>
+      `${Math.round(px * 2)}_${Math.round(py * 2)}`
+    const groupCount = new Map<string, number>()
+    const groupShiftPerOccurrence = moji * 6
+
+    // 吸水を先に処理する (集水が同位置なら shift される)
+    const orderedPipes = [
+      ...pipes.filter((p) => p.pipeType === 'branch'),
+      ...pipes.filter((p) => p.pipeType !== 'branch'),
+    ]
+
+    for (const pipe of orderedPipes) {
       if (pipe.vertices.length === 0) continue
       const isAbsorption = pipe.pipeType === 'branch'
       const layers = isAbsorption
@@ -740,8 +754,14 @@ export function generateSfcPipesContent(
           }
         }
 
+        // 同位置に既に text 群が置かれていれば右方向へずらす
+        const posKey = groupPosKey(x1, y1)
+        const occurrence = groupCount.get(posKey) ?? 0
+        groupCount.set(posKey, occurrence + 1)
+        const shiftX = occurrence * groupShiftPerOccurrence
+
         // 頂点周りに縦積み
-        let cx = x1
+        let cx = x1 + shiftX
         let cy = y1 + initialYOffset
         if (emitPointNames && layers.point) {
           emitText(layers.point, COLOR_CODE.black, pointName, cx, cy, moji, 0, 1)
@@ -764,22 +784,26 @@ export function generateSfcPipesContent(
           emitText(layers.depth, COLOR_CODE.magenta, ` ${chStr}`, cx, cy, moji, 0, 1)
         }
 
-        // セグメント中点: 勾配 + 距離
-        if (emitSlope && layers.slope && slopeLabel) {
-          emitText(layers.slope, COLOR_CODE.green, slopeLabel, midX, midY, moji, segAngle, 5)
-        }
-        if (emitDistance && layers.dist && distLabel) {
-          // 距離は 勾配の少し下 (paper -Y 方向) にずらす
-          emitText(
-            layers.dist,
-            COLOR_CODE.black,
-            distLabel,
-            midX,
-            midY - moji * 1.1,
-            moji,
-            segAngle,
-            5,
-          )
+        // セグメント中点: 勾配 + 距離 (吸水のみここで出す。集水は後段で
+        // planGroups から直接生成する — 頂点座標と planLookup の整合が
+        // 取れないケースに対応するため)
+        if (isAbsorption) {
+          if (emitSlope && layers.slope && slopeLabel) {
+            emitText(layers.slope, COLOR_CODE.green, slopeLabel, midX, midY, moji, segAngle, 5)
+          }
+          if (emitDistance && layers.dist && distLabel) {
+            // 距離は 勾配の少し下 (paper -Y 方向) にずらす
+            emitText(
+              layers.dist,
+              COLOR_CODE.black,
+              distLabel,
+              midX,
+              midY - moji * 1.1,
+              moji,
+              segAngle,
+              5,
+            )
+          }
         }
       }
 
@@ -798,6 +822,62 @@ export function generateSfcPipesContent(
             0,
             5,
           )
+        }
+      }
+    }
+
+    // ===== 集水勾配 + 集水距離 (planGroups から直接生成) =====
+    // 集水は 1 本の管が複数行を跨ぐことが多く、pipe.vertices の
+    // planLookup が座標一致しない場合に vertex ループで拾えないため、
+    // ここで plan の集水行を隣同士でペア化して 勾配・距離ラベルを出す。
+    if (emitSlope || emitDistance) {
+      for (const group of planGroups) {
+        if (group.groupType !== 'collector') continue
+        for (let r = 0; r < group.rows.length - 1; r++) {
+          const row = group.rows[r]
+          const nextRow = group.rows[r + 1]
+          const cp = row.collectorPoint
+          const nextCp = nextRow.collectorPoint
+          if (!cp || !nextCp) continue
+          const dx = cp.x - nextCp.x
+          const dy = cp.y - nextCp.y
+          const dist = Math.sqrt(dx * dx + dy * dy)
+          if (dist === 0) continue
+          const p1 = realToPaperMm(cp.x, cp.y)
+          const p2 = realToPaperMm(nextCp.x, nextCp.y)
+          const midX = (p1.px + p2.px) / 2
+          const midY = (p1.py + p2.py) / 2
+          const segAngle = calcTextAngle(p2.px - p1.px, p2.py - p1.py)
+
+          if (emitSlope && textLayerIndex.colSlope) {
+            const ph1 = cp.plannedHeight
+            const ph2 = nextCp.plannedHeight
+            if (ph1 !== null && ph2 !== null && ph1 !== ph2) {
+              const slopeLabel = `1/${Math.round(dist / Math.abs(ph1 - ph2))}`
+              emitText(
+                textLayerIndex.colSlope,
+                COLOR_CODE.green,
+                slopeLabel,
+                midX,
+                midY,
+                moji,
+                segAngle,
+                5,
+              )
+            }
+          }
+          if (emitDistance && textLayerIndex.colDist) {
+            emitText(
+              textLayerIndex.colDist,
+              COLOR_CODE.black,
+              dist.toFixed(1),
+              midX,
+              midY - moji * 1.1,
+              moji,
+              segAngle,
+              5,
+            )
+          }
         }
       }
     }
