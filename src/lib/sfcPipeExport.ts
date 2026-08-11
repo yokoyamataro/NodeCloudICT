@@ -193,33 +193,46 @@ export function generateSfcPipesContent(
   let toContent: (x: number, y: number) => { cx: number; cy: number }
   let sfigTransform: { offsetX: number; offsetY: number } | null = null
 
-  // survey-mode 用: SXF の角度は 反時計回り正 で、ユーザ入力 (CCW 想定) から
-  // sxf_angle = (360 - user_angle) mod 360 で変換する
-  //   参考: test-1 (用紙座標) と test-2 (現地座標) を比較し、TREND-ONE が
-  //   ユーザ dialog に 22°45' (=22.75°) を入力したときの sfig_locate 角度は
-  //   337.25° = 360 - 22.75 であることを確認済み
-  const sxfAngleDeg = ((360 - rotationDeg) % 360 + 360) % 360
+  // survey-mode: SXF の角度は sfig_locate に直接書く (test-2 で見た 360-X の
+  // 変換は不要。参照 58-4(当初) は 22.7897° を直接使用して正しく描画される)
+  const sxfAngleDeg = ((rotationDeg % 360) + 360) % 360
 
   if (preserveSurvey) {
-    // データ原点 (未指定なら bbox 最小点)。回転はこの原点まわりで適用される。
-    const originX = options.originX ?? minX
-    const originY = options.originY ?? minY
+    // PipeVertex は JGD2011 (x=北, y=東) だが SFC は (X=東, Y=北) の CAD 慣例。
+    // 出力時に x/y を swap する。以下の bbox/回転/原点計算は 全て SFC 座標系
+    // (sfx=v.y=東, sfy=v.x=北) で行う。
+    let sfMinX = Infinity, sfMinY = Infinity, sfMaxX = -Infinity, sfMaxY = -Infinity
+    for (const p of pipes) {
+      for (const v of p.vertices) {
+        const sfx = v.y // 東
+        const sfy = v.x // 北
+        if (sfx < sfMinX) sfMinX = sfx
+        if (sfy < sfMinY) sfMinY = sfy
+        if (sfx > sfMaxX) sfMaxX = sfx
+        if (sfy > sfMaxY) sfMaxY = sfy
+      }
+    }
+    if (!Number.isFinite(sfMinX)) { sfMinX = 0; sfMinY = 0; sfMaxX = 0; sfMaxY = 0 }
+
+    // ユーザ入力の原点も PipeVertex 系 (x=北, y=東) と揃える。SFC へは swap。
+    //   options.originX = 北座標、options.originY = 東座標
+    const sfOriginX = options.originY ?? sfMinX // SFC X = 東 = pipe.y
+    const sfOriginY = options.originX ?? sfMinY // SFC Y = 北 = pipe.x
 
     // SXF 適用時の回転式:
-    //   paper_x = offset_x + cos(sxf_θ) * real_x - sin(sxf_θ) * real_y
-    //   paper_y = offset_y + sin(sxf_θ) * real_x + cos(sxf_θ) * real_y
-    // (content = real m × 1000、sfig scale = 0.001 → 数値上は real m 相当)
+    //   paper_x = offset_x + cos(sxf_θ) * sfx - sin(sxf_θ) * sfy
+    //   paper_y = offset_y + sin(sxf_θ) * sfx + cos(sxf_θ) * sfy
+    // (content = sf × 1000、sfig scale = 0.001 → 数値上は sf 相当)
     const rad = (sxfAngleDeg * Math.PI) / 180
     const cs = Math.cos(rad)
     const sn = Math.sin(rad)
 
-    // 原点を基準に相対座標へ変換 → 回転 → bbox 計算
-    // これによって 原点自身が paper (margin, margin) に来るよう offset を決める
+    // 原点基準の相対座標を回転して bbox を求める
     const corners: Array<[number, number]> = [
-      [minX - originX, minY - originY],
-      [maxX - originX, minY - originY],
-      [maxX - originX, maxY - originY],
-      [minX - originX, maxY - originY],
+      [sfMinX - sfOriginX, sfMinY - sfOriginY],
+      [sfMaxX - sfOriginX, sfMinY - sfOriginY],
+      [sfMaxX - sfOriginX, sfMaxY - sfOriginY],
+      [sfMinX - sfOriginX, sfMaxY - sfOriginY],
     ]
     let rMinX = Infinity, rMinY = Infinity, rMaxX = -Infinity, rMaxY = -Infinity
     for (const [x, y] of corners) {
@@ -234,17 +247,15 @@ export function generateSfcPipesContent(
     const contentH = (rMaxY - rMinY) * mToPaperMm + marginMm * 2
     sheet = pickSheet(contentW, contentH)
 
-    // sfig_locate offset を計算。paper = offset + rotate(real, sxf_angle) が
-    // real = origin のとき paper = (margin - rMinX, margin - rMinY) となるように。
-    // rotate(origin, sxf_angle) は cs*originX - sn*originY, sn*originX + cs*originY
-    const rotOriginX = cs * originX - sn * originY
-    const rotOriginY = sn * originX + cs * originY
+    // 原点が paper (marginMm - rMinX*, marginMm - rMinY*) に来るよう offset を決定
+    const rotOriginX = cs * sfOriginX - sn * sfOriginY
+    const rotOriginY = sn * sfOriginX + cs * sfOriginY
     sfigTransform = {
       offsetX: (marginMm - rMinX * mToPaperMm) - rotOriginX * mToPaperMm,
       offsetY: (marginMm - rMinY * mToPaperMm) - rotOriginY * mToPaperMm,
     }
-    // content 座標 = real m × 1000 (mm-scale of real 絶対値)
-    toContent = (x, y) => ({ cx: x * 1000, cy: y * 1000 })
+    // content 座標: PipeVertex (x=北, y=東) → SFC (X=東=y, Y=北=x) の swap を適用
+    toContent = (x, y) => ({ cx: y * 1000, cy: x * 1000 })
   } else {
     const contentW = (maxX - minX) * mToPaperMm + marginMm * 2
     const contentH = (maxY - minY) * mToPaperMm + marginMm * 2
