@@ -15,9 +15,9 @@ export const PIPE_MATERIAL_LABEL: Record<PipeMaterial, string> = {
  * 個別 override 手段を追加する。
  */
 export const MANNING_ROUGHNESS: Record<PipeMaterial, number> = {
-  1: 0.014, // 素焼土管
+  1: 0.013, // 素焼土管
   2: 0.012, // 合成樹脂管
-  3: 0.014, // 無孔管 (コンクリート系相当)
+  3: 0.012, // 無孔管
 }
 
 /** 水理計算（許容勾配 / 水理計算書）に共通で使うパラメータ。工区ごとに保持する。 */
