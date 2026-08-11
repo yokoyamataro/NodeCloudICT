@@ -1251,25 +1251,24 @@ export function DepthCalcPage() {
                     )
                   })}
                   <td className="border-0 bg-transparent"></td>
-                  {(() => {
-                    const key = row.collectorPipeId ? `col:${row.collectorPipeId}` : null
-                    const editing = key != null && editingDiameterKey === key
-                    return (
-                      <td
-                        onDoubleClick={() => key && setEditingDiameterKey(key)}
-                        className={`px-1.5 py-1 text-center border font-mono bg-green-50 ${
-                          row.collectorPipeId ? 'text-slate-600 cursor-pointer' : 'text-slate-400'
-                        }`}
-                        title={row.collectorPipeId ? 'ダブルクリックで管径を変更' : undefined}
-                      >
-                        {row.collectorPipeId ? (
-                          editing ? (
+                  {row.collectorPipeId ? (
+                    (() => {
+                      const collectorPipeId = row.collectorPipeId
+                      const key = `col:${collectorPipeId}`
+                      const editing = editingDiameterKey === key
+                      return (
+                        <td
+                          onDoubleClick={() => setEditingDiameterKey(key)}
+                          className="px-1.5 py-1 text-center border font-mono bg-green-50 text-slate-600 cursor-pointer"
+                          title="ダブルクリックで管径を変更"
+                        >
+                          {editing ? (
                             <select
                               autoFocus
-                              value={pipeDiameterById.get(row.collectorPipeId) ?? ''}
+                              value={pipeDiameterById.get(collectorPipeId) ?? ''}
                               onChange={(e) => {
                                 const v = e.target.value
-                                updatePipe(row.collectorPipeId!, {
+                                updatePipe(collectorPipeId, {
                                   diameter: v === '' ? null : parseInt(v, 10),
                                 })
                                 setEditingDiameterKey(null)
@@ -1283,14 +1282,16 @@ export function DepthCalcPage() {
                               ))}
                             </select>
                           ) : (
-                            <span>{pipeDiameterById.get(row.collectorPipeId) ?? '-'}</span>
-                          )
-                        ) : (
-                          '-'
-                        )}
-                      </td>
-                    )
-                  })()}
+                            <span>{pipeDiameterById.get(collectorPipeId) ?? '-'}</span>
+                          )}
+                        </td>
+                      )
+                    })()
+                  ) : (
+                    <td className="px-1.5 py-1 text-center border font-mono bg-green-50 text-slate-400">
+                      -
+                    </td>
+                  )}
                   <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap text-slate-600">
                     管径
                   </td>
