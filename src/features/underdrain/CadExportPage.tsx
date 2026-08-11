@@ -6,7 +6,7 @@ import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useConstructionPlanStore, type PlanGroup, type PlanPoint, type PlanRow } from '@/stores/constructionPlanStore'
 import type { PipeRow } from '@/stores/underdrainStore'
 import { exportAllCrossSectionsDxf } from '@/lib/crossSectionDxfExport'
-import { generateSfcPipesContent } from '@/lib/sfcPipeExport'
+import { generateSfcPipesContent, generateMinimalSfcContent } from '@/lib/sfcPipeExport'
 
 // 図面レベル（座標変換用パラメータ）
 interface DrawingLevel {
@@ -592,6 +592,21 @@ export function CadExportPage() {
     URL.revokeObjectURL(url)
   }
 
+  const handleMinimalSfcDownload = () => {
+    const sfcText = generateMinimalSfcContent()
+    const sjis = toShiftJIS(sfcText)
+    const buf = sjis.slice().buffer
+    const blob = new Blob([buf], { type: 'application/octet-stream' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'sfc_minimal_test.sfc'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
   // 縦断図用の補助マップ
   const pipeNumberById = useMemo(() => {
     const m = new Map<string, string>()
@@ -800,6 +815,15 @@ export function CadExportPage() {
             >
               <Download className="h-4 w-4" />
               SFC 出力（配線のみ・Shift-JIS）
+            </button>
+            <button
+              type="button"
+              onClick={handleMinimalSfcDownload}
+              className="flex items-center gap-2 px-3 py-2 bg-slate-500 text-white rounded hover:bg-slate-600 text-xs"
+              title="TrendOne の SFC 受入テスト用: A3 内 (100,100)-(300,200) に 1 本線だけの極小 SFC を出力"
+            >
+              <Download className="h-3 w-3" />
+              SFC 動作確認
             </button>
           </div>
         </section>

@@ -64,6 +64,55 @@ const PIPE_TYPE_COLOR: Record<string, ColorName> = {
 }
 
 /**
+ * 動作確認用: 極小の SFC 文字列を返す。sfig を使わず、線 1 本だけを
+ * A3 縦 (420×594) のシート内 (100,100)-(300,200) 座標に描画する。
+ * TrendOne が受理する最小構成の確認に使う。
+ */
+export function generateMinimalSfcContent(): string {
+  const now = new Date()
+  const iso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
+  const out: string[] = []
+  const emit = (body: string) => {
+    out.push('/*SXF')
+    out.push(body)
+    out.push('SXF*/')
+    out.push('')
+  }
+  out.push('ISO-10303-21;')
+  out.push('HEADER;')
+  out.push("FILE_DESCRIPTION(('SCADEC level2 feature_mode'),")
+  out.push("        '2;1');")
+  out.push("FILE_NAME('test.sfc',")
+  out.push(`        '${iso}',`)
+  out.push("        (''),")
+  out.push("        (''),")
+  out.push("        'SCADEC_API_Ver3.30$$3.1',")
+  out.push("        'NodeCloud',")
+  out.push("        '');")
+  out.push("FILE_SCHEMA(('ASSOCIATIVE_DRAUGHTING'));")
+  out.push('ENDSEC;')
+  out.push('DATA;')
+  out.push('')
+
+  // 最小限の宣言
+  emit(`#10 = pre_defined_colour_feature(\\'black\\')`)
+  emit(`#20 = pre_defined_font_feature(\\'continuous\\')`)
+  emit(`#30 = width_feature('0.250000')`)
+
+  // 1 本線: 座標はシート mm 直値 (sfig を通さないので scale=1)
+  // (100,100) → (300,200) は A3 内に確実に収まる
+  emit(`#40 = line_feature('1','1','1','3','100.000000','100.000000','300.000000','200.000000')`)
+
+  // シート・レイヤ
+  emit(`#50 = drawing_sheet_feature(\\'test\\','1','1','841','594')`)
+  emit(`#60 = layer_feature(\\'test\\','1')`)
+
+  out.push('ENDSEC;')
+  out.push('END-ISO-10303-21;')
+  return out.join('\r\n') + '\r\n'
+}
+
+/**
  * 生成した SFC の文字列を返す。呼び出し側で Shift-JIS 変換してファイルに書く。
  */
 export function generateSfcPipesContent(
