@@ -537,6 +537,7 @@ export function CadExportPage() {
   const [sfcIncCutDepth, setSfcIncCutDepth] = useState<boolean>(true)
   const [sfcIncSlope, setSfcIncSlope] = useState<boolean>(true)
   const [sfcIncDistance, setSfcIncDistance] = useState<boolean>(true)
+  const [sfcIncDiameter, setSfcIncDiameter] = useState<boolean>(true)
 
   useEffect(() => {
     if (!currentFarm) return
@@ -617,6 +618,7 @@ export function CadExportPage() {
         cutDepth: sfcIncCutDepth,
         segmentSlope: sfcIncSlope,
         segmentDistance: sfcIncDistance,
+        pipeDiameter: sfcIncDiameter,
       },
       textOptions: {
         moji,
@@ -1000,6 +1002,14 @@ export function CadExportPage() {
                     onChange={(e) => setSfcIncDistance(e.target.checked)}
                   />
                   <span>距離</span>
+                </label>
+                <label className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={sfcIncDiameter}
+                    onChange={(e) => setSfcIncDiameter(e.target.checked)}
+                  />
+                  <span>管径</span>
                 </label>
               </div>
             </div>

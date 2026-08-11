@@ -65,6 +65,7 @@ export interface SfcExportOptions {
     cutDepth?: boolean         // 切深 — default true
     segmentSlope?: boolean     // 区間勾配 — default true
     segmentDistance?: boolean  // 区間距離 — default true
+    pipeDiameter?: boolean     // 管径 — default true
   }
   /** テキスト系の細かい設定 */
   textOptions?: {
@@ -297,6 +298,7 @@ export function generateSfcPipesContent(
   const incCutDepth = inc.cutDepth ?? true
   const incSlope = inc.segmentSlope ?? true
   const incDistance = inc.segmentDistance ?? true
+  const incDiameter = inc.pipeDiameter ?? true
 
   const planGroups = options.planGroups ?? []
   const hasPlan = planGroups.length > 0
@@ -308,6 +310,7 @@ export function generateSfcPipesContent(
   const emitCutDepth = incCutDepth && hasPlan
   const emitSlope = incSlope && hasPlan
   const emitDistance = incDistance && hasPlan
+  const emitDiameter = incDiameter // 管径は pipe.diameter だけあれば出せるので Plan 不要
   const anyText =
     emitPipeNumbers ||
     emitPointNames ||
@@ -315,7 +318,8 @@ export function generateSfcPipesContent(
     emitPlanned ||
     emitCutDepth ||
     emitSlope ||
-    emitDistance
+    emitDistance ||
+    emitDiameter
 
   const txt = options.textOptions ?? {}
   const moji = txt.moji ?? 2
@@ -607,12 +611,14 @@ export function generateSfcPipesContent(
     absCut: number
     absSlope: number
     absDist: number
+    absDiameter: number
     colPoint: number
     colGround: number
     colPlanned: number
     colCut: number
     colSlope: number
     colDist: number
+    colDiameter: number
   }> = {}
   const registerTextLayer = (name: string): number => {
     layerIdx += 1
@@ -628,12 +634,14 @@ export function generateSfcPipesContent(
     if (emitCutDepth) textLayerIndex.absCut = registerTextLayer('吸水切深')
     if (emitSlope) textLayerIndex.absSlope = registerTextLayer('吸水勾配')
     if (emitDistance) textLayerIndex.absDist = registerTextLayer('吸水延長')
+    if (emitDiameter) textLayerIndex.absDiameter = registerTextLayer('吸水管径')
     if (emitPointNames) textLayerIndex.colPoint = registerTextLayer('集水測点')
     if (emitGround) textLayerIndex.colGround = registerTextLayer('集水地盤高')
     if (emitPlanned) textLayerIndex.colPlanned = registerTextLayer('集水計画高')
     if (emitCutDepth) textLayerIndex.colCut = registerTextLayer('集水切深')
     if (emitSlope) textLayerIndex.colSlope = registerTextLayer('集水勾配')
     if (emitDistance) textLayerIndex.colDist = registerTextLayer('集水延長')
+    if (emitDiameter) textLayerIndex.colDiameter = registerTextLayer('集水管径')
   }
 
   /** text_string_feature を出力。
@@ -744,6 +752,7 @@ export function generateSfcPipesContent(
             depth: textLayerIndex.absCut,
             slope: textLayerIndex.absSlope,
             dist: textLayerIndex.absDist,
+            diameter: textLayerIndex.absDiameter,
             planColor: COLOR_CODE.red,
           }
         : {
@@ -753,6 +762,7 @@ export function generateSfcPipesContent(
             depth: textLayerIndex.colCut,
             slope: textLayerIndex.colSlope,
             dist: textLayerIndex.colDist,
+            diameter: textLayerIndex.colDiameter,
             planColor: COLOR_CODE.magenta,
           }
       const stdDepth = isAbsorption ? absorptionStdDepth : collectorStdDepth
@@ -881,9 +891,31 @@ export function generateSfcPipesContent(
             )
           }
         }
+        // 管径 (吸水は pipe.diameter を各区間の中点に表示)
+        //   区間距離の下 (2 段目) に配置
+        if (
+          isAbsorption &&
+          emitDiameter &&
+          layers.diameter &&
+          i > 0 &&
+          pipe.diameter != null
+        ) {
+          // 区間ごとの管径オーバーライドがあれば優先
+          const segDia = pp?.segmentDiameter ?? pipe.diameter
+          emitText(
+            layers.diameter,
+            COLOR_CODE.black,
+            `φ${segDia}`,
+            midX,
+            midY - moji * 2.2,
+            moji,
+            segAngle,
+            5,
+          )
+        }
       }
 
-      // 配線番号 (中央)
+      // 配線番号 (中央) + 直径 4mm の囲み円
       if (emitPipeNumbers && textLayerIndex.pipeNumber && pipe.number) {
         const mid = pipeMidpoint(pipe)
         if (mid) {
@@ -897,6 +929,10 @@ export function generateSfcPipesContent(
             pipeNumberSize,
             0,
             5,
+          )
+          // 直径 4mm = 半径 2mm の円で囲む (paper mm 直値、線幅 0.25)
+          emit(
+            `#${nextId()} = circle_feature('${textLayerIndex.pipeNumber}','${COLOR_CODE.black}','${FONT_CONTINUOUS}','${WIDTH_025}','${px.toFixed(6)}','${py.toFixed(6)}','2.000000')`,
           )
         }
       }
@@ -1005,6 +1041,25 @@ export function generateSfcPipesContent(
               segAngle,
               5,
             )
+          }
+          // 集水 管径 (row.collectorPoint.segmentDiameter を優先、無ければ pipe.diameter)
+          if (emitDiameter && textLayerIndex.colDiameter) {
+            const collectorPipe = row.collectorPipeId
+              ? pipes.find((p) => p.id === row.collectorPipeId)
+              : null
+            const segDia = cp.segmentDiameter ?? collectorPipe?.diameter ?? null
+            if (segDia != null) {
+              emitText(
+                textLayerIndex.colDiameter,
+                COLOR_CODE.black,
+                `φ${segDia}`,
+                midX,
+                midY - moji * 2.2,
+                moji,
+                segAngle,
+                5,
+              )
+            }
           }
         }
       }
