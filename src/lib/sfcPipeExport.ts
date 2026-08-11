@@ -31,7 +31,8 @@ export interface SfcExportOptions {
   scale?: number
 }
 
-// SXF 標準の色コード (使う分だけ列挙)
+// SXF 標準の色コード (使う分だけ列挙)。TREND-ONE が出力した参照 SFC の
+// polyline_feature('4','13','3','4',…) から lightblue=13 を確認済み。
 const COLOR_CODE = {
   black: 1,
   red: 2,
@@ -40,27 +41,34 @@ const COLOR_CODE = {
   yellow: 5,
   magenta: 6,
   cyan: 7,
+  lightblue: 13,
 } as const
 type ColorName = keyof typeof COLOR_CODE
-// pre_defined_colour_feature で宣言する順序 (宣言自体に順番の意味はないが並べる)
-const DECLARED_COLORS: ColorName[] = ['black', 'red', 'green', 'blue', 'yellow', 'magenta', 'cyan']
+// pre_defined_colour_feature 宣言 (使う色だけ)
+const DECLARED_COLORS: ColorName[] = ['green', 'yellow', 'magenta', 'lightblue']
 
 // SXF 標準の線種コード
-const FONT_CONTINUOUS = 1 // continuous
+const FONT_CONTINUOUS = 1
+const FONT_DASHED = 2
 
 // SXF 標準の線幅コード
 const WIDTH_025 = 3 // 0.25mm
 const WIDTH_035 = 4 // 0.35mm
 
-// 管種 → 色
+// 管種 → 色 (TREND-ONE 参照ファイルに合わせる)
 const PIPE_TYPE_COLOR: Record<string, ColorName> = {
-  main: 'red',           // 集水
-  branch: 'black',       // 吸水
+  main: 'magenta',       // 集水
+  branch: 'lightblue',   // 吸水
   outlet: 'green',       // 落口
-  connection: 'magenta', // 連絡渠
-  spring: 'blue',        // 湧水処理
-  auxiliary: 'cyan',     // 補助暗渠
-  self_funded: 'yellow', // 自費施工
+  connection: 'green',   // 連絡渠
+  spring: 'green',       // 湧水処理
+  auxiliary: 'green',    // 補助暗渠
+  self_funded: 'green',  // 自費施工
+}
+
+// 管種 → 線種 (吸水は dashed)
+function fontForPipeType(pt: string): number {
+  return pt === 'branch' ? FONT_DASHED : FONT_CONTINUOUS
 }
 
 /**
@@ -199,6 +207,7 @@ export function generateSfcPipesContent(
     emit(`#${nextId()} = pre_defined_colour_feature(\\'${c}\\')`)
   }
   emit(`#${nextId()} = pre_defined_font_feature(\\'continuous\\')`)
+  emit(`#${nextId()} = pre_defined_font_feature(\\'dashed\\')`)
   emit(`#${nextId()} = width_feature('0.250000')`)
   emit(`#${nextId()} = width_feature('0.350000')`)
 
@@ -230,9 +239,10 @@ export function generateSfcPipesContent(
     layerIdx += 1
     const label = pt === 'unknown' ? '未分類' : PIPE_TYPE_NAMES[pt as PipeType] ?? String(pt)
     layerNames.push(label)
-    const colorName = PIPE_TYPE_COLOR[pt as string] ?? 'black'
+    const colorName = PIPE_TYPE_COLOR[pt as string] ?? 'green'
     const colorCode = COLOR_CODE[colorName]
     const widthCode = pt === 'main' ? WIDTH_035 : WIDTH_025
+    const fontCode = fontForPipeType(pt as string)
 
     for (const pipe of group) {
       const vs = pipe.vertices
@@ -241,13 +251,13 @@ export function generateSfcPipesContent(
       if (paperPoints.length === 2) {
         const [a, b] = paperPoints
         emit(
-          `#${nextId()} = line_feature('${layerIdx}','${colorCode}','${FONT_CONTINUOUS}','${widthCode}','${a.px.toFixed(6)}','${a.py.toFixed(6)}','${b.px.toFixed(6)}','${b.py.toFixed(6)}')`,
+          `#${nextId()} = line_feature('${layerIdx}','${colorCode}','${fontCode}','${widthCode}','${a.px.toFixed(6)}','${a.py.toFixed(6)}','${b.px.toFixed(6)}','${b.py.toFixed(6)}')`,
         )
       } else {
         const xs = paperPoints.map((p) => p.px.toFixed(6)).join(',')
         const ys = paperPoints.map((p) => p.py.toFixed(6)).join(',')
         emit(
-          `#${nextId()} = polyline_feature('${layerIdx}','${colorCode}','${FONT_CONTINUOUS}','${widthCode}','${paperPoints.length}','(${xs})','(${ys})')`,
+          `#${nextId()} = polyline_feature('${layerIdx}','${colorCode}','${fontCode}','${widthCode}','${paperPoints.length}','(${xs})','(${ys})')`,
         )
       }
     }
@@ -261,7 +271,7 @@ export function generateSfcPipesContent(
     for (const t of transitions) {
       const { px, py } = toPaper(t.x, t.y)
       emit(
-        `#${nextId()} = circle_feature('${layerIdx}','${COLOR_CODE.magenta}','${FONT_CONTINUOUS}','${WIDTH_025}','${px.toFixed(6)}','${py.toFixed(6)}','1.000000')`,
+        `#${nextId()} = circle_feature('${layerIdx}','${COLOR_CODE.yellow}','${FONT_CONTINUOUS}','${WIDTH_025}','${px.toFixed(6)}','${py.toFixed(6)}','1.000000')`,
       )
     }
   }
