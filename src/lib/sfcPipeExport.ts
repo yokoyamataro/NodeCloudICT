@@ -218,11 +218,14 @@ function buildPlanLookup(
   return map
 }
 
-/** 配線 (pipe) の中央 (路長の半分) 座標 */
-function pipeMidpoint(pipe: PipeRow): { x: number; y: number } | null {
+/** 配線 (pipe) の中央 (路長の半分) 座標 + その位置での区間方向インデックス
+ *  segIndex: 中点を含む区間 (v[segIndex] → v[segIndex+1]) の起点インデックス */
+function pipeMidpoint(
+  pipe: PipeRow,
+): { x: number; y: number; segIndex: number } | null {
   const v = pipe.vertices
   if (v.length === 0) return null
-  if (v.length === 1) return { x: v[0].x, y: v[0].y }
+  if (v.length === 1) return { x: v[0].x, y: v[0].y, segIndex: 0 }
   let total = 0
   const segLen: number[] = []
   for (let i = 1; i < v.length; i++) {
@@ -232,7 +235,7 @@ function pipeMidpoint(pipe: PipeRow): { x: number; y: number } | null {
     segLen.push(d)
     total += d
   }
-  if (total === 0) return { x: v[0].x, y: v[0].y }
+  if (total === 0) return { x: v[0].x, y: v[0].y, segIndex: 0 }
   const target = total / 2
   let acc = 0
   for (let i = 0; i < segLen.length; i++) {
@@ -241,11 +244,12 @@ function pipeMidpoint(pipe: PipeRow): { x: number; y: number } | null {
       return {
         x: v[i].x + t * (v[i + 1].x - v[i].x),
         y: v[i].y + t * (v[i + 1].y - v[i].y),
+        segIndex: i,
       }
     }
     acc += segLen[i]
   }
-  return { x: v[v.length - 1].x, y: v[v.length - 1].y }
+  return { x: v[v.length - 1].x, y: v[v.length - 1].y, segIndex: segLen.length - 1 }
 }
 
 /** セグメントの角度を返す (rad)。文字が上下反転しないよう、
@@ -885,29 +889,41 @@ export function generateSfcPipesContent(
           emitText(layers.depth, COLOR_CODE.magenta, ` ${chStr}`, cx, cy, moji, 0, 1)
         }
 
-        // セグメント中点: 勾配 + 距離 (吸水のみここで出す。集水は後段で
-        // planGroups から直接生成する — 頂点座標と planLookup の整合が
-        // 取れないケースに対応するため)
+        // セグメント中点: 勾配 (上側) / 距離 (下側) / 管径 (下 2 段目) を
+        // 配線方向に平行に配置。paper Y ではなく "配線方向の垂直" に
+        // ずらすことで、配線が回転していても文字が重ならない。
+        //   perp = (-sin(θ), cos(θ)): 配線方向 θ に対して 90° 反時計 (上向き)
         if (isAbsorption) {
+          const perpX = -Math.sin(segAngle)
+          const perpY = Math.cos(segAngle)
           if (emitSlope && layers.slope && slopeLabel) {
-            emitText(layers.slope, COLOR_CODE.green, slopeLabel, midX, midY, moji, segAngle, 5)
+            // 配線より少し上 (perp +0.1 の位置に anchor)、base_point=2 (中下) で上方向へ描画
+            emitText(
+              layers.slope,
+              COLOR_CODE.green,
+              slopeLabel,
+              midX + perpX * moji * 0.1,
+              midY + perpY * moji * 0.1,
+              moji,
+              segAngle,
+              2,
+            )
           }
           if (emitDistance && layers.dist && distLabel) {
-            // 距離は 勾配の少し下 (paper -Y 方向) にずらす
+            // 配線より少し下 (perp -0.1)、base_point=8 (中上) で下方向へ描画
             emitText(
               layers.dist,
               COLOR_CODE.black,
               distLabel,
-              midX,
-              midY - moji * 1.1,
+              midX + perpX * -moji * 0.1,
+              midY + perpY * -moji * 0.1,
               moji,
               segAngle,
-              5,
+              8,
             )
           }
         }
-        // 管径 (吸水は pipe.diameter を各区間の中点に表示)
-        //   区間距離の下 (2 段目) に配置
+        // 管径 (吸水): 区間距離のさらに下段
         if (
           isAbsorption &&
           emitDiameter &&
@@ -915,26 +931,40 @@ export function generateSfcPipesContent(
           i > 0 &&
           pipe.diameter != null
         ) {
-          // 区間ごとの管径オーバーライドがあれば優先
+          const perpX = -Math.sin(segAngle)
+          const perpY = Math.cos(segAngle)
           const segDia = pp?.segmentDiameter ?? pipe.diameter
           emitText(
             layers.diameter,
             COLOR_CODE.black,
             `φ${segDia}`,
-            midX,
-            midY - moji * 2.2,
+            midX + perpX * -moji * 1.2,
+            midY + perpY * -moji * 1.2,
             moji,
             segAngle,
-            5,
+            8,
           )
         }
       }
 
-      // 配線番号 (中央) + 直径 4mm の囲み円
+      // 配線番号: 中点を含む区間方向 (配線方向) に平行に、
+      //  基準位置 (中点) の 左上 (base_point=3 = 右下、anchor 右下 → text 左上)
+      //  にずらして描画。囲み円は基準位置に描く。
       if (emitPipeNumbers && textLayerIndex.pipeNumber && pipe.number) {
         const mid = pipeMidpoint(pipe)
         if (mid) {
           const { px, py } = realToPaperMm(mid.x, mid.y)
+          // 配線方向 (中点を含む区間) を計算
+          let pipeAngle = 0
+          const vs = pipe.vertices
+          if (vs.length >= 2 && mid.segIndex < vs.length - 1) {
+            const a = realToPaperMm(vs[mid.segIndex].x, vs[mid.segIndex].y)
+            const b = realToPaperMm(
+              vs[mid.segIndex + 1].x,
+              vs[mid.segIndex + 1].y,
+            )
+            pipeAngle = calcTextAngle(b.px - a.px, b.py - a.py)
+          }
           emitText(
             textLayerIndex.pipeNumber,
             COLOR_CODE.black,
@@ -942,10 +972,10 @@ export function generateSfcPipesContent(
             px,
             py,
             pipeNumberSize,
-            0,
-            5,
+            pipeAngle,
+            3, // base_point 3 = 右下 → 基準位置に対して text が左上に展開
           )
-          // 直径 4mm = 半径 2mm の円で囲む (paper mm 直値、線幅 0.25)
+          // 直径 4mm = 半径 2mm の円で囲む (基準位置に配置)
           emit(
             `#${nextId()} = circle_feature('${textLayerIndex.pipeNumber}','${COLOR_CODE.black}','${FONT_CONTINUOUS}','${WIDTH_025}','${px.toFixed(6)}','${py.toFixed(6)}','2.000000')`,
           )
@@ -1032,17 +1062,19 @@ export function generateSfcPipesContent(
           const midX = (p1.px + p2.px) / 2
           const midY = (p1.py + p2.py) / 2
           const segAngle = calcTextAngle(p2.px - p1.px, p2.py - p1.py)
+          const perpX = -Math.sin(segAngle)
+          const perpY = Math.cos(segAngle)
 
           if (emitSlope && slopeLabel && textLayerIndex.colSlope) {
             emitText(
               textLayerIndex.colSlope,
               COLOR_CODE.green,
               slopeLabel,
-              midX,
-              midY,
+              midX + perpX * moji * 0.1,
+              midY + perpY * moji * 0.1,
               moji,
               segAngle,
-              5,
+              2,
             )
           }
           if (emitDistance && textLayerIndex.colDist) {
@@ -1050,11 +1082,11 @@ export function generateSfcPipesContent(
               textLayerIndex.colDist,
               COLOR_CODE.black,
               `(${dist.toFixed(1)})`,
-              midX,
-              midY - moji * 1.1,
+              midX + perpX * -moji * 0.1,
+              midY + perpY * -moji * 0.1,
               moji,
               segAngle,
-              5,
+              8,
             )
           }
           // 集水 管径 (row.collectorPoint.segmentDiameter を優先、無ければ pipe.diameter)
@@ -1068,11 +1100,11 @@ export function generateSfcPipesContent(
                 textLayerIndex.colDiameter,
                 COLOR_CODE.black,
                 `φ${segDia}`,
-                midX,
-                midY - moji * 2.2,
+                midX + perpX * -moji * 1.2,
+                midY + perpY * -moji * 1.2,
                 moji,
                 segAngle,
-                5,
+                8,
               )
             }
           }
