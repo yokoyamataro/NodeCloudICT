@@ -273,18 +273,18 @@ export function generateSfcPipesContent(
   emit(`#${nextId()} = width_feature('0.250000')`)
   emit(`#${nextId()} = width_feature('0.350000')`)
 
-  // ===== survey-mode: TREND-ONE 参照ファイル (test-2) と同じ骨組みを敷く
-  //   ・ダミー polyline (レイヤ/色/種/幅 = 0) を 1 個
-  //   ・composite_curve_org_feature と externally_defined_hatch_feature を 1 個ずつ
-  //   ・背景色 sfig を開く。実 feature はこの中に入る
+  // ===== survey-mode: TREND-ONE 参照ファイル (test-2) の骨組みを敷く
+  //   ・背景色 sfig を開く。実 feature (polyline/line/circle) はこの中に入る
   //   ・末尾で 名称未定 sfig (空、level-2 マーカー) と 2 つの sfig_locate、
   //     drawing_attribute (SXF3)、sheet、layers を並べる
+  //
+  //   test-2 には他に composite_curve_org / externally_defined_hatch の
+  //   "定義" が並んでいたが、これらは 参照する feature (composite_curve や
+  //   hatch) が無いのに宣言すると TREND-ONE が「複合曲線に誤りがあります」
+  //   等のエラーを出すので、ここでは出力しない。
   const bgFigName = '$$ATRU$$1$$背景色$$色$$0_0_0'
   const level2FigName = '名称未定'
   if (preserveSurvey) {
-    emit(`#${nextId()} = polyline_feature('0','0','0','0','5','(10.000000,30.000000,30.000000,10.000000,10.000000)','(-30.000000,-30.000000,-10.000000,-10.000000,-30.000000)')`)
-    emit(`#${nextId()} = composite_curve_org_feature('1','1','4','0')`)
-    emit(`#${nextId()} = externally_defined_hatch_feature('1',\\'Area_control\\','1','0','()')`)
     emit(`#${nextId()} = sfig_org_feature(\\'${bgFigName}\\','3')`)
   }
 
