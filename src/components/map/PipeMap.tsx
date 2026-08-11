@@ -357,6 +357,8 @@ interface PipeMapProps {
   highlightedVertex?: { pipeId: string; vertexIdx: number } | null
   /** 配線番号の下に管径・延長 (φXX L=YY) を表記する */
   showPipeSpecs?: boolean
+  /** 管路クリック時のポップアップ (配線番号/管種/延長/管径) を無効化する */
+  hidePipePopup?: boolean
 }
 
 // 測点ラベルアイコンを生成（緑の丸マーカー + ラベル、選択時はオレンジ・拡大・パルス）
@@ -522,6 +524,7 @@ export function PipeMap({
   onPreviewClick,
   highlightedVertex = null,
   showPipeSpecs = false,
+  hidePipePopup = false,
 }: PipeMapProps) {
   const { pipes } = useUnderdrainStore()
   const { zone, coordinates } = useCoordinateStore()
@@ -755,8 +758,9 @@ export function PipeMap({
             }}
           >
             {/* 一括訂正モード中はクリックのたびに詳細ポップアップを開かない
-                （毎回開くと訂正操作の邪魔になるため） */}
-            {!isBulkEditMode && (
+                （毎回開くと訂正操作の邪魔になるため）。
+                hidePipePopup が true の呼び出し元 (例: 施工計画) では常に非表示。 */}
+            {!isBulkEditMode && !hidePipePopup && (
               <Popup>
                 <div className="text-xs space-y-0.5">
                   <div className="font-bold text-sm" style={{ color: pipe.color }}>

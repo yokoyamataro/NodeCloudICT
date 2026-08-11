@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   Trash2,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Map as MapIcon,
   Calculator,
@@ -1685,6 +1686,43 @@ export function DepthCalcPage() {
         t.systemIndex === selectedSystem.systemIndex,
     ) ?? null
 
+  // 現在の (系統 × chartScope) が globalScopes 上のどこにあるか。
+  // 前へ / 次へ ボタンで系統・スコープを 1 つずつ進める。
+  const currentGlobalIdx = useMemo(() => {
+    if (!selectedSystem) return -1
+    return globalScopes.findIndex(
+      (g) =>
+        g.groupIndex === selectedSystem.groupIndex &&
+        g.systemIndex === selectedSystem.systemIndex &&
+        g.scope === chartScope,
+    )
+  }, [globalScopes, selectedSystem, chartScope])
+
+  const goPrevScope = useCallback(() => {
+    if (currentGlobalIdx <= 0) return
+    const g = globalScopes[currentGlobalIdx - 1]
+    setSelectedSystem({ groupIndex: g.groupIndex, systemIndex: g.systemIndex })
+    setChartScope(g.scope)
+  }, [currentGlobalIdx, globalScopes])
+
+  const goNextScope = useCallback(() => {
+    if (currentGlobalIdx < 0 || currentGlobalIdx >= globalScopes.length - 1) return
+    const g = globalScopes[currentGlobalIdx + 1]
+    setSelectedSystem({ groupIndex: g.groupIndex, systemIndex: g.systemIndex })
+    setChartScope(g.scope)
+  }, [currentGlobalIdx, globalScopes])
+
+  // 表に表示する行: chartScope が number (吸水スコープ) の場合はその行だけ、
+  //  'collector' (集水スコープ) の場合は系統内の全行。
+  const visibleRows = useMemo(() => {
+    if (!activeTab) return []
+    if (typeof chartScope === 'number') {
+      const r = activeTab.rows[chartScope]
+      return r ? [{ row: r, indexInSystem: chartScope }] : []
+    }
+    return activeTab.rows.map((row, indexInSystem) => ({ row, indexInSystem }))
+  }, [activeTab, chartScope])
+
 
   return (
     <div className="h-full flex flex-col">
@@ -2052,8 +2090,42 @@ export function DepthCalcPage() {
                     ref={tableContentRef}
                     className="border border-t-0 rounded-b-lg bg-white shadow-sm p-2"
                   >
-                    {activeTab.rows.map((row, idx) =>
-                      renderRow(row, activeTab.rows, idx),
+                    {/* 配線ナビゲーション (前 / 現在 / 次) */}
+                    <div className="flex items-center justify-between mb-2 px-1">
+                      <button
+                        type="button"
+                        onClick={goPrevScope}
+                        disabled={currentGlobalIdx <= 0}
+                        className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                        title="前の配線 (Shift 系統跨ぎ含む)"
+                      >
+                        <ChevronLeft className="h-3 w-3" /> 前
+                      </button>
+                      <div className="text-xs text-slate-600 font-mono">
+                        {(() => {
+                          const cur = currentGlobalIdx >= 0 ? globalScopes[currentGlobalIdx] : null
+                          const label = cur?.label ?? '-'
+                          return `${label}  (${currentGlobalIdx + 1} / ${globalScopes.length})`
+                        })()}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={goNextScope}
+                        disabled={currentGlobalIdx < 0 || currentGlobalIdx >= globalScopes.length - 1}
+                        className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                        title="次の配線"
+                      >
+                        次 <ChevronRight className="h-3 w-3" />
+                      </button>
+                    </div>
+                    {visibleRows.length === 0 ? (
+                      <div className="p-4 text-center text-slate-400 text-sm">
+                        表示する配線がありません
+                      </div>
+                    ) : (
+                      visibleRows.map(({ row, indexInSystem }) =>
+                        renderRow(row, activeTab.rows, indexInSystem),
+                      )
                     )}
                   </div>
                 ) : (
@@ -2125,6 +2197,7 @@ export function DepthCalcPage() {
               focusedPoint={focusedEditPoint}
               showLabels={true}
               showDirection={true}
+              hidePipePopup
               onPipeSelect={(id) => handleMapPipeSelect(id)}
             />
           </div>
