@@ -650,7 +650,9 @@ export function generateSfcPipesContent(
     basePoint = 1,
   ) => {
     if (!text) return
-    const angleDeg = (angleRad * 180) / Math.PI
+    // SFC は角度を [0, 360) の正値で受ける実装が多いので正規化
+    const rawDeg = (angleRad * 180) / Math.PI
+    const angleDeg = ((rawDeg % 360) + 360) % 360
     const width = height * textWidthUnits(text)
     const escaped = escapeSfcString(text)
     emit(
