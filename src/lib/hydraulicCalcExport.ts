@@ -6,8 +6,8 @@ import type { Farm } from '@/stores/farmStore'
 export interface HydraulicCalcSettings {
   plannedFlow: number
   pipeInterval: 10 | 12
-  absorptionPipeType: 1 | 2
-  collectorPipeType: 1 | 2
+  absorptionPipeType: 1 | 2 | 3
+  collectorPipeType: 1 | 2 | 3
   lengthDecimals: 0 | 1 | 2
 }
 

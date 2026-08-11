@@ -74,13 +74,14 @@ export function HydraulicSettingsModal({
               <select
                 value={settings.absorptionPipeType}
                 onChange={(e) =>
-                  update({ absorptionPipeType: parseInt(e.target.value) as 1 | 2 })
+                  update({ absorptionPipeType: parseInt(e.target.value) as 1 | 2 | 3 })
                 }
                 disabled={!farmId}
                 className="w-full px-3 py-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100"
               >
                 <option value={1}>1: 素焼土管</option>
                 <option value={2}>2: 合成樹脂管</option>
+                <option value={3}>3: 無孔管</option>
               </select>
             </div>
             <div>
@@ -88,13 +89,14 @@ export function HydraulicSettingsModal({
               <select
                 value={settings.collectorPipeType}
                 onChange={(e) =>
-                  update({ collectorPipeType: parseInt(e.target.value) as 1 | 2 })
+                  update({ collectorPipeType: parseInt(e.target.value) as 1 | 2 | 3 })
                 }
                 disabled={!farmId}
                 className="w-full px-3 py-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100"
               >
                 <option value={1}>1: 素焼土管</option>
                 <option value={2}>2: 合成樹脂管</option>
+                <option value={3}>3: 無孔管</option>
               </select>
             </div>
           </div>

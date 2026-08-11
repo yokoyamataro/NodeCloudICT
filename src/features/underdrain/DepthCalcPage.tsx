@@ -15,7 +15,8 @@ import {
   Droplets,
   FileSpreadsheet,
 } from 'lucide-react'
-import { useHydraulicSettingsStore, DEFAULT_HYDRAULIC_SETTINGS } from '@/stores/hydraulicSettingsStore'
+import { useHydraulicSettingsStore, DEFAULT_HYDRAULIC_SETTINGS, PIPE_MATERIAL_LABEL, type PipeMaterial } from '@/stores/hydraulicSettingsStore'
+import { useHydraulicExclusionStore } from '@/stores/hydraulicExclusionStore'
 import { HydraulicCalcModal } from './HydraulicCalcModal'
 import { MeasurementResultModal } from './MeasurementResultModal'
 
@@ -128,6 +129,14 @@ export function DepthCalcPage() {
     if (!currentFarm) return DEFAULT_HYDRAULIC_SETTINGS
     return hydraulicByFarm[currentFarm.id] ?? DEFAULT_HYDRAULIC_SETTINGS
   }, [hydraulicByFarm, currentFarm])
+
+  // 水理延長の計算除外 (× でトグル)。工区ごとに永続化。
+  const exclusionByFarm = useHydraulicExclusionStore((s) => s.byFarm)
+  const toggleExclusion = useHydraulicExclusionStore((s) => s.toggle)
+  const excludedPointIds = useMemo<Set<string>>(() => {
+    if (!currentFarm) return new Set()
+    return new Set(exclusionByFarm[currentFarm.id] ?? [])
+  }, [exclusionByFarm, currentFarm])
 
   const toggleRowCollapsed = (rowId: string) => {
     setCollapsedRows((prev) => {
@@ -432,11 +441,13 @@ export function DepthCalcPage() {
 
   // 吸水 水理延長を1行分計算する共通関数（集水側の累積計算からも呼ぶ）
   // 最上流点: 配線間隔/4、それ以下: 端部補正 + 累加距離、下流端: 端部行以外は −配線間隔/2
+  // 除外セル (× でチェック) の segmentDistance は 0 として扱う。
   function computeAbsorptionHydraulicLengths(
     r: PlanRow,
     sysRows: PlanRow[],
     idxInSys: number,
     intervalM: number,
+    excluded: Set<string>,
   ): (number | null)[] {
     const endC = intervalM / 4
     const conC = intervalM / 2
@@ -447,7 +458,9 @@ export function DepthCalcPage() {
       if (idx === 0) return endC
       let cum = 0
       for (let j = 1; j <= idx; j++) {
-        const seg = r.absorptionPoints[j].segmentDistance
+        const pj = r.absorptionPoints[j]
+        if (excluded.has(pj.id)) continue // × で除外された区間は加算しない
+        const seg = pj.segmentDistance
         if (seg == null) return null
         cum += seg
       }
@@ -500,11 +513,12 @@ export function DepthCalcPage() {
       systemRows,
       rowIndexInSystem,
       interval,
+      excludedPointIds,
     )
 
     // 水理延長 (集水): この行までの累積。
     //  = 吸水水理延長 (この行の下流端) + 集水水理延長 (前の行) + 自身の集水延長
-    // 系統の先頭から累加する。合流行はここでは単純加算のみ扱う。
+    // 系統の先頭から累加する。× で除外された集水セルの segmentDistance は 0 として扱う。
     let collectorHydraulicLength: number | null = null
     if (row.collectorPoint) {
       let running = 0
@@ -517,9 +531,12 @@ export function DepthCalcPage() {
           systemRows,
           i,
           interval,
+          excludedPointIds,
         )
         const absDownstream = absLens.length > 0 ? absLens[absLens.length - 1] : null
-        const own = r.collectorPoint.segmentDistance ?? 0
+        const own = excludedPointIds.has(r.collectorPoint.id)
+          ? 0
+          : r.collectorPoint.segmentDistance ?? 0
         const absAdd = absDownstream ?? 0
         if (absDownstream == null && absLens.length > 0) valid = false
         running = running + absAdd + own
@@ -1029,16 +1046,55 @@ export function DepthCalcPage() {
                     区間距離
                   </td>
                   <td className="border-0 bg-transparent"></td>
-                  {row.absorptionPoints.map(p => (
-                    <td
-                      key={p.id}
-                      className="px-1.5 py-1 text-center border font-mono text-slate-600"
-                    >
-                      {p.segmentDistance?.toFixed(1) ?? '-'}
-                    </td>
-                  ))}
+                  {row.absorptionPoints.map((p, idx) => {
+                    const excluded = excludedPointIds.has(p.id)
+                    // idx=0 は区間なし、また segmentDistance が null のセルにも × は出さない
+                    const canToggle = idx > 0 && p.segmentDistance != null && currentFarm != null
+                    return (
+                      <td
+                        key={p.id}
+                        className={`px-1.5 py-1 text-center border font-mono relative ${
+                          excluded ? 'text-slate-400 line-through' : 'text-slate-600'
+                        }`}
+                      >
+                        {canToggle && (
+                          <button
+                            type="button"
+                            onClick={() => toggleExclusion(currentFarm.id, p.id)}
+                            className={`absolute left-0.5 top-1/2 -translate-y-1/2 text-[10px] leading-none w-3.5 h-3.5 flex items-center justify-center rounded border transition-colors ${
+                              excluded
+                                ? 'bg-red-100 border-red-400 text-red-700'
+                                : 'bg-white border-slate-300 text-slate-400 hover:border-red-400 hover:text-red-500'
+                            }`}
+                            title={excluded ? '水理延長計算に含める' : '水理延長計算から除外'}
+                          >
+                            ×
+                          </button>
+                        )}
+                        {p.segmentDistance?.toFixed(1) ?? '-'}
+                      </td>
+                    )
+                  })}
                   <td className="border-0 bg-transparent"></td>
-                  <td className="px-1.5 py-1 text-center border font-mono text-slate-600 bg-green-50">
+                  <td
+                    className={`px-1.5 py-1 text-center border font-mono bg-green-50 relative ${
+                      collector && excludedPointIds.has(collector.id) ? 'text-slate-400 line-through' : 'text-slate-600'
+                    }`}
+                  >
+                    {collector && collector.segmentDistance != null && currentFarm && (
+                      <button
+                        type="button"
+                        onClick={() => toggleExclusion(currentFarm.id, collector.id)}
+                        className={`absolute left-0.5 top-1/2 -translate-y-1/2 text-[10px] leading-none w-3.5 h-3.5 flex items-center justify-center rounded border transition-colors ${
+                          excludedPointIds.has(collector.id)
+                            ? 'bg-red-100 border-red-400 text-red-700'
+                            : 'bg-white border-slate-300 text-slate-400 hover:border-red-400 hover:text-red-500'
+                        }`}
+                        title={excludedPointIds.has(collector.id) ? '水理延長計算に含める' : '水理延長計算から除外'}
+                      >
+                        ×
+                      </button>
+                    )}
                     {collector?.segmentDistance?.toFixed(1) ?? '-'}
                   </td>
                   <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
@@ -1567,6 +1623,42 @@ export function DepthCalcPage() {
               className="w-16 px-2 py-1 border rounded text-center font-mono"
             />
             <span className="text-slate-500">mm/日</span>
+          </div>
+          <div className="flex items-center gap-2" title="吸水管素材（標準 合成樹脂管）">
+            <label className="text-slate-600">吸水材:</label>
+            <select
+              value={hydraulicSettings.absorptionPipeType}
+              onChange={(e) =>
+                currentFarm &&
+                setHydraulicSettings(currentFarm.id, {
+                  absorptionPipeType: parseInt(e.target.value, 10) as PipeMaterial,
+                })
+              }
+              disabled={!currentFarm}
+              className="px-2 py-1 border rounded text-sm bg-white"
+            >
+              <option value={1}>{PIPE_MATERIAL_LABEL[1]}</option>
+              <option value={2}>{PIPE_MATERIAL_LABEL[2]}</option>
+              <option value={3}>{PIPE_MATERIAL_LABEL[3]}</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-2" title="集水管素材（標準 合成樹脂管）">
+            <label className="text-slate-600">集水材:</label>
+            <select
+              value={hydraulicSettings.collectorPipeType}
+              onChange={(e) =>
+                currentFarm &&
+                setHydraulicSettings(currentFarm.id, {
+                  collectorPipeType: parseInt(e.target.value, 10) as PipeMaterial,
+                })
+              }
+              disabled={!currentFarm}
+              className="px-2 py-1 border rounded text-sm bg-white"
+            >
+              <option value={1}>{PIPE_MATERIAL_LABEL[1]}</option>
+              <option value={2}>{PIPE_MATERIAL_LABEL[2]}</option>
+              <option value={3}>{PIPE_MATERIAL_LABEL[3]}</option>
+            </select>
           </div>
         </div>
       )}
