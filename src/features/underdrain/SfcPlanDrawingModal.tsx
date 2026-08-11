@@ -4,6 +4,10 @@ import Encoding from 'encoding-japanese'
 import type { PlanGroup } from '@/stores/constructionPlanStore'
 import type { PipeRow } from '@/stores/underdrainStore'
 import { generateSfcPipesContent } from '@/lib/sfcPipeExport'
+import {
+  fetchSfcDrawingSettings,
+  upsertSfcDrawingSettings,
+} from '@/lib/sfcDrawingSettings'
 
 // 文字列を Shift-JIS の Uint8Array に変換
 function toShiftJIS(text: string): Uint8Array {
@@ -78,6 +82,7 @@ interface SfcPlanDrawingModalProps {
   onClose: () => void
   pipes: PipeRow[]
   planGroups: PlanGroup[]
+  farmId: string | null
   farmName: string | null
 }
 
@@ -86,6 +91,7 @@ export function SfcPlanDrawingModal({
   onClose,
   pipes,
   planGroups,
+  farmId,
   farmName,
 }: SfcPlanDrawingModalProps) {
   const [sfcPreserveSurvey, setSfcPreserveSurvey] = useState<boolean>(DEFAULT_SFC_SETTINGS.sfcPreserveSurvey)
@@ -132,6 +138,29 @@ export function SfcPlanDrawingModal({
     setSfcIncDiameter(s.sfcIncDiameter)
     setSfcCutDepthOnlyIfDiff(s.sfcCutDepthOnlyIfDiff)
   }, [open])
+
+  // 図面レベル (原点/回転/現地座標保持) は工区ごとにサーバ (Supabase) 保存
+  // モーダルを開いたときにその工区の行を読み込み、あれば localStorage の値を
+  // 上書きして反映する。行が無い工区は そのまま (localStorage 由来の値) を使う。
+  useEffect(() => {
+    if (!open || !farmId) return
+    let cancelled = false
+    ;(async () => {
+      const s = await fetchSfcDrawingSettings(farmId)
+      if (cancelled || !s) return
+      if (s.originX != null) setSfcOriginX(String(s.originX))
+      else setSfcOriginX('')
+      if (s.originY != null) setSfcOriginY(String(s.originY))
+      else setSfcOriginY('')
+      setSfcRotDeg(s.rotationDeg)
+      setSfcRotMin(s.rotationMin)
+      setSfcRotSec(s.rotationSec)
+      setSfcPreserveSurvey(s.preserveSurveyCoords)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [open, farmId])
 
   // 変更のたびに localStorage に保存 (モーダルが開いているとき限定)
   useEffect(() => {
@@ -188,7 +217,7 @@ export function SfcPlanDrawingModal({
 
   if (!open) return null
 
-  const handleSfcDownload = () => {
+  const handleSfcDownload = async () => {
     if (pipes.length === 0) {
       alert('配管データがありません。CAD解析ページで登録してください。')
       return
@@ -198,6 +227,23 @@ export function SfcPlanDrawingModal({
     const rotDecimal = sfcRotDeg + sfcRotMin / 60 + sfcRotSec / 3600
     const origX = sfcOriginX.trim() === '' ? undefined : parseFloat(sfcOriginX)
     const origY = sfcOriginY.trim() === '' ? undefined : parseFloat(sfcOriginY)
+
+    // 図面レベル (原点/回転/現地座標保持) を工区ごとにサーバ保存
+    if (farmId) {
+      try {
+        await upsertSfcDrawingSettings(farmId, {
+          originX: Number.isFinite(origX) ? (origX as number) : null,
+          originY: Number.isFinite(origY) ? (origY as number) : null,
+          rotationDeg: sfcRotDeg,
+          rotationMin: sfcRotMin,
+          rotationSec: sfcRotSec,
+          preserveSurveyCoords: sfcPreserveSurvey,
+        })
+      } catch (e) {
+        // 保存失敗しても出力自体は続行 (ネット障害時にダウンロードだけはできる)
+        console.warn('図面レベル保存に失敗しましたが SFC 出力は続行します:', e)
+      }
+    }
     const sfcText = generateSfcPipesContent(pipes, {
       fileBaseName: fileBase,
       scale: 1000,

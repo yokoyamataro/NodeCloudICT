@@ -2874,6 +2874,7 @@ export function DepthCalcPage() {
         onClose={() => setShowSfcPlanModal(false)}
         pipes={pipes}
         planGroups={planGroups}
+        farmId={currentFarm?.id ?? null}
         farmName={currentFarm?.name ?? null}
       />
       <ProfileDxfModal
