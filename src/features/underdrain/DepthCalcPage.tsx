@@ -1397,7 +1397,10 @@ export function DepthCalcPage() {
                     水理延長
                   </td>
                 </tr>
-                {/* 限界勾配 (Manning 逆算)。実勾配 1/K が 1/K_max 以上に急なら OK。 */}
+                {/* 限界勾配 (Manning 逆算)。
+                    最低勾配パラメータ (1/imin) より緩いなら 1/imin にキャップ。
+                    実勾配が 限界勾配 より緩い (K_actual > K_limit) or 逆勾配 (drop <= 0)
+                    なら 赤で ! 表示。 */}
                 <tr className="depth-row-critical-slope">
                   <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap text-slate-600">
                     限界勾配
@@ -1416,39 +1419,98 @@ export function DepthCalcPage() {
                     }
                     const dia = p.segmentDiameter ?? (row.absorptionPipeId ? pipeDiameterById.get(row.absorptionPipeId) ?? null : null)
                     const L = absorptionHydraulicLengths[idx]
-                    const K = computeCriticalSlopeDenominator({
+                    const K_raw = computeCriticalSlopeDenominator({
                       diameterMm: dia,
                       roughness: MANNING_ROUGHNESS[hydraulicSettings.absorptionPipeType],
                       hydraulicLengthM: L,
                       plannedFlowMmDay: hydraulicSettings.plannedFlow,
                       spacingM: hydraulicSettings.pipeInterval,
                     })
+                    // 最低勾配パラメータでキャップ
+                    const K_limit =
+                      K_raw != null ? Math.min(K_raw, calcParams.imin) : null
+
+                    // 実勾配 vs 限界勾配 の比較
+                    const prev = row.absorptionPoints[idx - 1]
+                    let warn = false
+                    if (
+                      prev &&
+                      prev.plannedHeight != null &&
+                      p.plannedHeight != null &&
+                      p.segmentDistance != null &&
+                      p.segmentDistance > 0
+                    ) {
+                      const drop = prev.plannedHeight - p.plannedHeight
+                      if (drop <= 0) {
+                        warn = true // 逆勾配 or 水平
+                      } else if (K_limit != null) {
+                        const K_actual = p.segmentDistance / drop
+                        if (K_actual > K_limit) warn = true // 実勾配が緩すぎ
+                      }
+                    }
+
                     return (
                       <td
                         key={p.id}
-                        className="px-1.5 py-1 text-center border font-mono bg-slate-50 text-slate-700"
-                        title="限界勾配 (これ以上緩いと流下能力不足)"
+                        className={`px-1.5 py-1 text-center border font-mono ${
+                          warn ? 'bg-red-100 text-red-700 font-bold' : 'bg-slate-50 text-slate-700'
+                        }`}
+                        title={
+                          warn
+                            ? '実勾配が限界勾配より緩い、または逆勾配です'
+                            : '限界勾配 (これ以上緩いと流下能力不足)'
+                        }
                       >
-                        {K == null ? '-' : `1/${K}`}
+                        {warn && '! '}
+                        {K_limit == null ? '-' : `1/${K_limit}`}
                       </td>
                     )
                   })}
                   <td className="border-0 bg-transparent"></td>
                   {(() => {
                     const dia = row.collectorPipeId ? pipeDiameterById.get(row.collectorPipeId) ?? null : null
-                    const K = computeCriticalSlopeDenominator({
+                    const K_raw = computeCriticalSlopeDenominator({
                       diameterMm: dia,
                       roughness: MANNING_ROUGHNESS[hydraulicSettings.collectorPipeType],
                       hydraulicLengthM: collectorHydraulicLength,
                       plannedFlowMmDay: hydraulicSettings.plannedFlow,
                       spacingM: hydraulicSettings.pipeInterval,
                     })
+                    const K_limit =
+                      K_raw != null ? Math.min(K_raw, calcParams.imin) : null
+
+                    // 実勾配は 現行→次行 の集水差分から計算
+                    let warn = false
+                    if (
+                      row.collectorPoint &&
+                      nextRow?.collectorPoint &&
+                      row.collectorPoint.plannedHeight != null &&
+                      nextRow.collectorPoint.plannedHeight != null &&
+                      row.collectorPoint.segmentDistance != null &&
+                      row.collectorPoint.segmentDistance > 0
+                    ) {
+                      const drop = row.collectorPoint.plannedHeight - nextRow.collectorPoint.plannedHeight
+                      if (drop <= 0) {
+                        warn = true
+                      } else if (K_limit != null) {
+                        const K_actual = row.collectorPoint.segmentDistance / drop
+                        if (K_actual > K_limit) warn = true
+                      }
+                    }
+
                     return (
                       <td
-                        className="px-1.5 py-1 text-center border font-mono bg-green-50 text-slate-700"
-                        title="限界勾配 (これ以上緩いと流下能力不足)"
+                        className={`px-1.5 py-1 text-center border font-mono ${
+                          warn ? 'bg-red-100 text-red-700 font-bold' : 'bg-green-50 text-slate-700'
+                        }`}
+                        title={
+                          warn
+                            ? '実勾配が限界勾配より緩い、または逆勾配です'
+                            : '限界勾配 (これ以上緩いと流下能力不足)'
+                        }
                       >
-                        {K == null ? '-' : `1/${K}`}
+                        {warn && '! '}
+                        {K_limit == null ? '-' : `1/${K_limit}`}
                       </td>
                     )
                   })()}
