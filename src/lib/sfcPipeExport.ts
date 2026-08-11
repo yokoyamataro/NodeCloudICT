@@ -705,12 +705,18 @@ export function generateSfcPipesContent(
         if (!collectorPlanByName.has(t)) collectorPlanByName.set(t, cp)
       }
     }
+    // 集水 dedup 用のキーは 10mm 精度 (Plan 検索の 100mm より厳格)。
+    // 100mm だと近い頂点まで巻き込んで消してしまう副作用があるため、
+    // "ほぼ同一位置" と言える 10mm 以内の場合のみ 2 本目を skip する。
+    const DEDUP_KEY_M = 100
+    const dedupPosKey = (x: number, y: number) =>
+      `${Math.round(x * DEDUP_KEY_M)}_${Math.round(y * DEDUP_KEY_M)}`
     const collectorVertexList = new Map<string, string[]>()
     for (const pipe of pipes) {
       if (pipe.pipeType === 'branch') continue
       for (let i = 0; i < pipe.vertices.length; i++) {
         const v = pipe.vertices[i]
-        const k = realPosKey(v.x, v.y)
+        const k = dedupPosKey(v.x, v.y)
         const list = collectorVertexList.get(k) ?? []
         list.push(`${pipe.id}|${i}`)
         collectorVertexList.set(k, list)
@@ -747,7 +753,7 @@ export function generateSfcPipesContent(
             depth: textLayerIndex.colCut,
             slope: textLayerIndex.colSlope,
             dist: textLayerIndex.colDist,
-            planColor: COLOR_CODE.red,
+            planColor: COLOR_CODE.magenta,
           }
       const stdDepth = isAbsorption ? absorptionStdDepth : collectorStdDepth
       const initialYOffset = isAbsorption ? moji * 0.5 : moji * 1.5
