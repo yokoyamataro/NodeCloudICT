@@ -520,9 +520,13 @@ export function CadExportPage() {
   const [preview, setPreview] = useState<string>('')
   // 縦断図 DXF 一括出力
   const [dxfVScale, setDxfVScale] = useState<100 | 200 | 500 | 1000>(200)
-  // SFC: 現地座標保持 (sfig_org + sfig_locate 経由) と用紙回転
+  // SFC: 現地座標保持 (sfig_org + sfig_locate 経由) と 原点・回転
   const [sfcPreserveSurvey, setSfcPreserveSurvey] = useState<boolean>(false)
-  const [sfcRotationDeg, setSfcRotationDeg] = useState<number>(0)
+  const [sfcOriginX, setSfcOriginX] = useState<string>('') // 実 m (空 → auto = bbox 最小 X)
+  const [sfcOriginY, setSfcOriginY] = useState<string>('')
+  const [sfcRotDeg, setSfcRotDeg] = useState<number>(0) // 度
+  const [sfcRotMin, setSfcRotMin] = useState<number>(0) // 分
+  const [sfcRotSec, setSfcRotSec] = useState<number>(0) // 秒
 
   useEffect(() => {
     if (!currentFarm) return
@@ -581,11 +585,17 @@ export function CadExportPage() {
       return
     }
     const fileBase = currentFarm?.name || 'plan'
+    // 度分秒 → decimal deg
+    const rotDecimal = sfcRotDeg + sfcRotMin / 60 + sfcRotSec / 3600
+    const origX = sfcOriginX.trim() === '' ? undefined : parseFloat(sfcOriginX)
+    const origY = sfcOriginY.trim() === '' ? undefined : parseFloat(sfcOriginY)
     const sfcText = generateSfcPipesContent(pipes, {
       fileBaseName: fileBase,
       scale: 1000,
       preserveSurveyCoords: sfcPreserveSurvey,
-      rotationDeg: sfcRotationDeg,
+      rotationDeg: rotDecimal,
+      originX: Number.isFinite(origX) ? origX : undefined,
+      originY: Number.isFinite(origY) ? origY : undefined,
     })
     const sjis = toShiftJIS(sfcText)
     const buf = sjis.slice().buffer
@@ -814,7 +824,7 @@ export function CadExportPage() {
               <Download className="h-4 w-4" />
               TrendOne アスキー出力（Shift-JIS）
             </button>
-            <div className="flex items-center gap-2 border rounded px-2 py-1 text-xs bg-slate-50">
+            <div className="flex items-center gap-2 border rounded px-2 py-1 text-xs bg-slate-50 flex-wrap">
               <label className="flex items-center gap-1">
                 <input
                   type="checkbox"
@@ -825,17 +835,63 @@ export function CadExportPage() {
                   現地座標保持
                 </span>
               </label>
-              <label className="flex items-center gap-1 ml-2">
+              <label className="flex items-center gap-1 ml-2" title="データの原点 (実 m)。空欄なら bbox 最小 X を使用。">
+                <span className="text-slate-600">原点X</span>
+                <input
+                  type="text"
+                  value={sfcOriginX}
+                  onChange={(e) => setSfcOriginX(e.target.value)}
+                  disabled={!sfcPreserveSurvey}
+                  placeholder="auto"
+                  className="w-24 px-1 py-0.5 border rounded text-right font-mono disabled:bg-slate-100 disabled:text-slate-400"
+                />
+                <span className="text-slate-500">m</span>
+              </label>
+              <label className="flex items-center gap-1" title="データの原点 (実 m)。空欄なら bbox 最小 Y を使用。">
+                <span className="text-slate-600">Y</span>
+                <input
+                  type="text"
+                  value={sfcOriginY}
+                  onChange={(e) => setSfcOriginY(e.target.value)}
+                  disabled={!sfcPreserveSurvey}
+                  placeholder="auto"
+                  className="w-24 px-1 py-0.5 border rounded text-right font-mono disabled:bg-slate-100 disabled:text-slate-400"
+                />
+                <span className="text-slate-500">m</span>
+              </label>
+              <label className="flex items-center gap-1 ml-2" title="回転角 (度分秒)">
                 <span className="text-slate-600">回転</span>
                 <input
                   type="number"
-                  value={sfcRotationDeg}
-                  onChange={(e) => setSfcRotationDeg(parseFloat(e.target.value) || 0)}
+                  value={sfcRotDeg}
+                  onChange={(e) => setSfcRotDeg(parseFloat(e.target.value) || 0)}
                   disabled={!sfcPreserveSurvey}
-                  step="0.1"
-                  className="w-16 px-1 py-0.5 border rounded text-right font-mono disabled:bg-slate-100 disabled:text-slate-400"
+                  step="1"
+                  className="w-14 px-1 py-0.5 border rounded text-right font-mono disabled:bg-slate-100 disabled:text-slate-400"
                 />
                 <span className="text-slate-500">°</span>
+                <input
+                  type="number"
+                  value={sfcRotMin}
+                  onChange={(e) => setSfcRotMin(parseFloat(e.target.value) || 0)}
+                  disabled={!sfcPreserveSurvey}
+                  min="0"
+                  max="59"
+                  step="1"
+                  className="w-12 px-1 py-0.5 border rounded text-right font-mono disabled:bg-slate-100 disabled:text-slate-400"
+                />
+                <span className="text-slate-500">'</span>
+                <input
+                  type="number"
+                  value={sfcRotSec}
+                  onChange={(e) => setSfcRotSec(parseFloat(e.target.value) || 0)}
+                  disabled={!sfcPreserveSurvey}
+                  min="0"
+                  max="59.99"
+                  step="0.1"
+                  className="w-14 px-1 py-0.5 border rounded text-right font-mono disabled:bg-slate-100 disabled:text-slate-400"
+                />
+                <span className="text-slate-500">"</span>
               </label>
             </div>
             <button

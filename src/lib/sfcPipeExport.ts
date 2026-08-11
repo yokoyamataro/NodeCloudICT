@@ -42,6 +42,13 @@ export interface SfcExportOptions {
    * (test-2 の 22.75° 入力 → 337.25° 出力の関係を踏襲)
    */
   rotationDeg?: number
+  /**
+   * データの原点 X, Y (実 m)。指定時は この座標を用紙上の左下 margin 位置
+   * に来るよう配置。回転もこの原点まわりで適用される。
+   * 未指定時は 全 vertex の bbox 最小点を原点にする。
+   */
+  originX?: number
+  originY?: number
 }
 
 // SXF 標準の色コード (使う分だけ列挙)。TREND-ONE が出力した参照 SFC の
@@ -194,6 +201,10 @@ export function generateSfcPipesContent(
   const sxfAngleDeg = ((360 - rotationDeg) % 360 + 360) % 360
 
   if (preserveSurvey) {
+    // データ原点 (未指定なら bbox 最小点)。回転はこの原点まわりで適用される。
+    const originX = options.originX ?? minX
+    const originY = options.originY ?? minY
+
     // SXF 適用時の回転式:
     //   paper_x = offset_x + cos(sxf_θ) * real_x - sin(sxf_θ) * real_y
     //   paper_y = offset_y + sin(sxf_θ) * real_x + cos(sxf_θ) * real_y
@@ -201,8 +212,14 @@ export function generateSfcPipesContent(
     const rad = (sxfAngleDeg * Math.PI) / 180
     const cs = Math.cos(rad)
     const sn = Math.sin(rad)
+
+    // 原点を基準に相対座標へ変換 → 回転 → bbox 計算
+    // これによって 原点自身が paper (margin, margin) に来るよう offset を決める
     const corners: Array<[number, number]> = [
-      [minX, minY], [maxX, minY], [maxX, maxY], [minX, maxY],
+      [minX - originX, minY - originY],
+      [maxX - originX, minY - originY],
+      [maxX - originX, maxY - originY],
+      [minX - originX, maxY - originY],
     ]
     let rMinX = Infinity, rMinY = Infinity, rMaxX = -Infinity, rMaxY = -Infinity
     for (const [x, y] of corners) {
@@ -216,12 +233,17 @@ export function generateSfcPipesContent(
     const contentW = (rMaxX - rMinX) * mToPaperMm + marginMm * 2
     const contentH = (rMaxY - rMinY) * mToPaperMm + marginMm * 2
     sheet = pickSheet(contentW, contentH)
-    // sfig_locate offset (mm): 回転後 bbox の最小点が margin に来る
+
+    // sfig_locate offset を計算。paper = offset + rotate(real, sxf_angle) が
+    // real = origin のとき paper = (margin - rMinX, margin - rMinY) となるように。
+    // rotate(origin, sxf_angle) は cs*originX - sn*originY, sn*originX + cs*originY
+    const rotOriginX = cs * originX - sn * originY
+    const rotOriginY = sn * originX + cs * originY
     sfigTransform = {
-      offsetX: marginMm - rMinX * mToPaperMm,
-      offsetY: marginMm - rMinY * mToPaperMm,
+      offsetX: (marginMm - rMinX * mToPaperMm) - rotOriginX * mToPaperMm,
+      offsetY: (marginMm - rMinY * mToPaperMm) - rotOriginY * mToPaperMm,
     }
-    // content 座標 = real m × 1000 (mm-scale of real)
+    // content 座標 = real m × 1000 (mm-scale of real 絶対値)
     toContent = (x, y) => ({ cx: x * 1000, cy: y * 1000 })
   } else {
     const contentW = (maxX - minX) * mToPaperMm + marginMm * 2
