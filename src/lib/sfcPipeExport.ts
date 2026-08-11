@@ -31,11 +31,16 @@ export interface SfcExportOptions {
   scale?: number
   /**
    * true のとき、feature 内の座標を 現地座標 (mm 単位 = 実 m × 1000) に
-   * 保存し、sfig_org + sfig_locate_feature で 縮尺・原点・回転を適用する。
-   * TREND-ONE の "現地座標" 系ファイルと同じ扱いになる。
+   * 保存し、TREND-ONE の "現地座標" 系ファイルと同じ骨組み
+   * (背景色 sfig の中に実 feature、level-2 マーカー sfig と sfig_locate で
+   * 変換宣言) で出力する。
    */
   preserveSurveyCoords?: boolean
-  /** 用紙上の回転角 (度、CCW を正)。preserveSurveyCoords 時のみ意味を持つ */
+  /**
+   * 用紙上の回転角 (度、CCW を正)。preserveSurveyCoords 時のみ意味を持つ。
+   * SXF 側には (360 - rotationDeg) mod 360 として書き込む
+   * (test-2 の 22.75° 入力 → 337.25° 出力の関係を踏襲)
+   */
   rotationDeg?: number
 }
 
@@ -181,9 +186,19 @@ export function generateSfcPipesContent(
   let toContent: (x: number, y: number) => { cx: number; cy: number }
   let sfigTransform: { offsetX: number; offsetY: number } | null = null
 
+  // survey-mode 用: SXF の角度は 反時計回り正 で、ユーザ入力 (CCW 想定) から
+  // sxf_angle = (360 - user_angle) mod 360 で変換する
+  //   参考: test-1 (用紙座標) と test-2 (現地座標) を比較し、TREND-ONE が
+  //   ユーザ dialog に 22°45' (=22.75°) を入力したときの sfig_locate 角度は
+  //   337.25° = 360 - 22.75 であることを確認済み
+  const sxfAngleDeg = ((360 - rotationDeg) % 360 + 360) % 360
+
   if (preserveSurvey) {
-    // 回転 bbox
-    const rad = (rotationDeg * Math.PI) / 180
+    // SXF 適用時の回転式:
+    //   paper_x = offset_x + cos(sxf_θ) * real_x - sin(sxf_θ) * real_y
+    //   paper_y = offset_y + sin(sxf_θ) * real_x + cos(sxf_θ) * real_y
+    // (content = real m × 1000、sfig scale = 0.001 → 数値上は real m 相当)
+    const rad = (sxfAngleDeg * Math.PI) / 180
     const cs = Math.cos(rad)
     const sn = Math.sin(rad)
     const corners: Array<[number, number]> = [
@@ -191,7 +206,6 @@ export function generateSfcPipesContent(
     ]
     let rMinX = Infinity, rMinY = Infinity, rMaxX = -Infinity, rMaxY = -Infinity
     for (const [x, y] of corners) {
-      // real m を回転 → 回転後 m (これがそのまま paper mm 相当、1/1000 のとき)
       const rx = cs * x - sn * y
       const ry = sn * x + cs * y
       if (rx < rMinX) rMinX = rx
@@ -202,12 +216,12 @@ export function generateSfcPipesContent(
     const contentW = (rMaxX - rMinX) * mToPaperMm + marginMm * 2
     const contentH = (rMaxY - rMinY) * mToPaperMm + marginMm * 2
     sheet = pickSheet(contentW, contentH)
-    // sfig_locate の offset (mm): 回転後 bbox 最小点が margin に来る
+    // sfig_locate offset (mm): 回転後 bbox の最小点が margin に来る
     sfigTransform = {
       offsetX: marginMm - rMinX * mToPaperMm,
       offsetY: marginMm - rMinY * mToPaperMm,
     }
-    // content 座標 = real m × 1000 (sfig_locate の scale=0.001 で mm に戻る)
+    // content 座標 = real m × 1000 (mm-scale of real)
     toContent = (x, y) => ({ cx: x * 1000, cy: y * 1000 })
   } else {
     const contentW = (maxX - minX) * mToPaperMm + marginMm * 2
@@ -259,10 +273,19 @@ export function generateSfcPipesContent(
   emit(`#${nextId()} = width_feature('0.250000')`)
   emit(`#${nextId()} = width_feature('0.350000')`)
 
-  // ===== survey-mode: 現地座標保持用の sfig_org を開く =====
-  const surveyFigName = '-Pipes-Survey-'
+  // ===== survey-mode: TREND-ONE 参照ファイル (test-2) と同じ骨組みを敷く
+  //   ・ダミー polyline (レイヤ/色/種/幅 = 0) を 1 個
+  //   ・composite_curve_org_feature と externally_defined_hatch_feature を 1 個ずつ
+  //   ・背景色 sfig を開く。実 feature はこの中に入る
+  //   ・末尾で 名称未定 sfig (空、level-2 マーカー) と 2 つの sfig_locate、
+  //     drawing_attribute (SXF3)、sheet、layers を並べる
+  const bgFigName = '$$ATRU$$1$$背景色$$色$$0_0_0'
+  const level2FigName = '名称未定'
   if (preserveSurvey) {
-    emit(`#${nextId()} = sfig_org_feature(\\'${surveyFigName}\\','1')`)
+    emit(`#${nextId()} = polyline_feature('0','0','0','0','5','(10.000000,30.000000,30.000000,10.000000,10.000000)','(-30.000000,-30.000000,-10.000000,-10.000000,-30.000000)')`)
+    emit(`#${nextId()} = composite_curve_org_feature('1','1','4','0')`)
+    emit(`#${nextId()} = externally_defined_hatch_feature('1',\\'Area_control\\','1','0','()')`)
+    emit(`#${nextId()} = sfig_org_feature(\\'${bgFigName}\\','3')`)
   }
 
   // ===== 配線を管種ごとにグループ化 =====
@@ -334,12 +357,25 @@ export function generateSfcPipesContent(
     }
   }
 
-  // ===== survey-mode: sfig_locate で 縮尺 / 原点 / 回転 を適用 =====
+  // ===== survey-mode: level-2 マーカー sfig + 2 つの sfig_locate =====
+  //   空の 名称未定 を開いて閉じ、locate で level-2 の変換を宣言。
+  //   TREND-ONE はこの transform を使って背景 sfig 内の feature を "現地座標" として解釈する。
+  //   背景 sfig は等倍で置く。
   if (preserveSurvey && sfigTransform) {
+    emit(`#${nextId()} = sfig_org_feature(\\'${level2FigName}\\','2')`)
     const s = (1 / scale).toFixed(14)
     emit(
-      `#${nextId()} = sfig_locate_feature('0',\\'${surveyFigName}\\','${sfigTransform.offsetX.toFixed(6)}','${sfigTransform.offsetY.toFixed(6)}','${rotationDeg.toFixed(14)}','${s}','${s}')`,
+      `#${nextId()} = sfig_locate_feature('0',\\'${level2FigName}\\','${sfigTransform.offsetX.toFixed(6)}','${sfigTransform.offsetY.toFixed(6)}','${sxfAngleDeg.toFixed(12)}','${s}','${s}')`,
     )
+    emit(
+      `#${nextId()} = sfig_locate_feature('0',\\'${bgFigName}\\','0.000000','0.000000','0.00000000000000','1.00000000000000','1.00000000000000')`,
+    )
+    // drawing_attribute_feature は SXF3 ブロックで囲む
+    const daId = nextId()
+    out.push('/*SXF3')
+    out.push(`#${daId} = drawing_attribute_feature(\\' \\',\\' \\',\\' \\',\\' \\',\\' \\',\\' \\',\\' \\','0','1','1',\\' \\',\\' \\')`)
+    out.push('SXF3*/')
+    out.push('')
   }
 
   // ===== 図面シート + レイヤ =====
