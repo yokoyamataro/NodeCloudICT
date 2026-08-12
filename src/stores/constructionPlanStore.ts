@@ -904,11 +904,16 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
             continue
           }
 
-          const buildPoints = (pipe: typeof outletPipe): PlanPoint[] =>
+          const buildPoints = (
+            pipe: typeof outletPipe,
+            offset: number,
+          ): PlanPoint[] =>
             pipe.vertices.map((vertex, idx) => ({
               id: `point-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
               pointType: 'absorption' as const,
-              pointIndex: idx,
+              // pointIndex は 行内で一意 (0..len-1)。DB 保存後の順序復元に使うため、
+              // 各管の 0..N-1 ではなく 行全体を通した連番を渡す。
+              pointIndex: offset + idx,
               pointName: generatePointName(pipe.number, idx, pipe.vertices.length),
               x: vertex.x,
               y: vertex.y,
@@ -922,8 +927,12 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
 
           // 吸水管 (直列で複数) + 落口管 の頂点を続けて並べる
           const combinedPoints: PlanPoint[] = []
-          for (const p of absorptionPipesInOrder) combinedPoints.push(...buildPoints(p))
-          combinedPoints.push(...buildPoints(outletPipe))
+          let offset = 0
+          for (const p of absorptionPipesInOrder) {
+            combinedPoints.push(...buildPoints(p, offset))
+            offset += p.vertices.length
+          }
+          combinedPoints.push(...buildPoints(outletPipe, offset))
           // 区間距離を再計算 (最上流を除く各点)
           for (let i = 1; i < combinedPoints.length; i++) {
             combinedPoints[i].segmentDistance = calcDistance(
