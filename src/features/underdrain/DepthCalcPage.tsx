@@ -261,7 +261,16 @@ export function DepthCalcPage() {
 
     if (foundGroupIndex >= 0 && foundSystemIndex !== null) {
       setSelectedSystem({ groupIndex: foundGroupIndex, systemIndex: foundSystemIndex })
-      setChartScope(foundAsAbsorption ? foundRowIdxInSystem : 'collector')
+      // 直落 group は 集水スコープが無いので、集水クリックで拾われた場合も
+      // 吸水スコープ (0) にフォールバック。
+      const isDirect = planGroups[foundGroupIndex]?.groupType === 'direct'
+      setChartScope(
+        foundAsAbsorption
+          ? foundRowIdxInSystem
+          : isDirect
+            ? 0
+            : 'collector',
+      )
       // 行へスクロール（タブ切替後の DOM 反映を待つ）
       if (foundRowId) {
         const rid = foundRowId
@@ -280,12 +289,14 @@ export function DepthCalcPage() {
   }, [planGroups])
 
   // 系統タブを切り替える共通処理。新系統では既定で集水スコープを表示する。
+  // ただし 直落 group は 集水が無いので、先頭の吸水スコープ (index 0) を既定にする。
   const switchToSystem = useCallback(
     (groupIndex: number, systemIndex: number) => {
       setSelectedSystem({ groupIndex, systemIndex })
-      setChartScope('collector')
+      const isDirect = planGroups[groupIndex]?.groupType === 'direct'
+      setChartScope(isDirect ? 0 : 'collector')
     },
-    [],
+    [planGroups],
   )
 
   // 地図でハイライト表示する管路 ID
@@ -1668,14 +1679,17 @@ export function DepthCalcPage() {
       const absorptionRows = tab.rows
         .map((r, i) => ({ row: r, idx: i }))
         .filter(({ row }) => row.absorptionPoints.length >= 2)
-      // 集水 → 吸水 の順
-      list.push({
-        groupIndex: tab.groupIndex,
-        systemIndex: tab.systemIndex,
-        scope: 'collector',
-        label: `集水（系統${tab.systemIndex}）`,
-        tabKey: tab.key,
-      })
+      // 直落 group は 集水 が無いので 集水断面を出さない
+      if (tab.groupType !== 'direct') {
+        // 集水 → 吸水 の順
+        list.push({
+          groupIndex: tab.groupIndex,
+          systemIndex: tab.systemIndex,
+          scope: 'collector',
+          label: `集水（系統${tab.systemIndex}）`,
+          tabKey: tab.key,
+        })
+      }
       for (const { row, idx } of absorptionRows) {
         list.push({
           groupIndex: tab.groupIndex,
@@ -1702,6 +1716,17 @@ export function DepthCalcPage() {
       switchToSystem(flatTabs[0].groupIndex, flatTabs[0].systemIndex)
     }
   }, [flatTabs, selectedSystem, switchToSystem])
+
+  // 直落 group が選択中で chartScope='collector' の場合、吸水スコープ (0) に補正。
+  // 系統読込 直後 や 過去の state 復元時に 集水スコープが残っていても
+  // 表示できないため。
+  useEffect(() => {
+    if (!selectedSystem) return
+    const isDirect = planGroups[selectedSystem.groupIndex]?.groupType === 'direct'
+    if (isDirect && chartScope === 'collector') {
+      setChartScope(0)
+    }
+  }, [selectedSystem, planGroups, chartScope])
 
   // 現在アクティブなタブ
   const activeTab =
@@ -2561,14 +2586,20 @@ export function DepthCalcPage() {
                 }
 
                 // 系統内ドロップダウン用（集水→吸水 の順）
+                // 直落 group は 集水が無いので 集水選択肢は出さない。
+                const isDirectGroup = groupData?.groupType === 'direct'
                 const scopeOptions: Array<{
                   value: 'collector' | number
                   label: string
                 }> = [
-                  {
-                    value: 'collector',
-                    label: `集水（系統 ${systemData.systemIndex}）`,
-                  },
+                  ...(isDirectGroup
+                    ? []
+                    : [
+                        {
+                          value: 'collector' as const,
+                          label: `集水（系統 ${systemData.systemIndex}）`,
+                        },
+                      ]),
                   ...absorptionRows.map(({ row, idx }) => ({
                     value: idx as number,
                     label: `吸水: ${row.pipeNumber ?? '?'}`,
