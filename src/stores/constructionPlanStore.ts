@@ -1677,3 +1677,62 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
     set({ hasChanges: false })
   },
 }))
+
+// ============================================================
+// 別ウィンドウ間の状態同期 (BroadcastChannel)
+//
+// 施工計画ページから 全画面ボタン で 別ウィンドウを開くと、
+// 各ウィンドウは 独立した Zustand ストアを持つため
+// 一方の 計画高 編集が もう一方に 反映されない。
+//
+// 対策: BroadcastChannel('nc-plan-sync') で planGroups と hasChanges を
+// ブロードキャストし、受け側は 再ブロードキャストを抑止しつつ setState する。
+// これで 表 <-> 断面図 <-> 平面 が 同一 farm を開いている限り 双方向に連動する。
+//
+// SSR (typeof window === 'undefined') / 非対応ブラウザは 何もしない。
+// ============================================================
+if (typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined') {
+  try {
+    const channel = new BroadcastChannel('nc-plan-sync')
+    let suppressBroadcast = false
+
+    // ローカル → 他ウィンドウ
+    useConstructionPlanStore.subscribe((state, prev) => {
+      if (suppressBroadcast) return
+      // planGroups が参照的に変わっていない場合はブロードキャスト不要
+      if (state.planGroups === prev.planGroups && state.hasChanges === prev.hasChanges) {
+        return
+      }
+      try {
+        channel.postMessage({
+          type: 'planGroups',
+          planGroups: state.planGroups,
+          hasChanges: state.hasChanges,
+          hasData: state.hasData,
+        })
+      } catch {
+        /* postMessage が失敗しても致命的でない (次の変更で復帰) */
+      }
+    })
+
+    // 他ウィンドウ → ローカル (再ブロードキャストは抑止)
+    channel.onmessage = (e) => {
+      const msg = e.data as
+        | { type: 'planGroups'; planGroups: PlanGroup[]; hasChanges: boolean; hasData: boolean }
+        | null
+      if (!msg || msg.type !== 'planGroups') return
+      suppressBroadcast = true
+      try {
+        useConstructionPlanStore.setState({
+          planGroups: msg.planGroups,
+          hasChanges: msg.hasChanges,
+          hasData: msg.hasData,
+        })
+      } finally {
+        suppressBroadcast = false
+      }
+    }
+  } catch {
+    // BroadcastChannel が使えない環境は 同期なし (単独ウィンドウとして動く)
+  }
+}
