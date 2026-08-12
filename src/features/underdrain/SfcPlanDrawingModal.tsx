@@ -25,6 +25,7 @@ function toShiftJIS(text: string): Uint8Array {
 const SFC_SETTINGS_STORAGE_KEY = 'nodecloud:sfc-export-settings'
 
 type PaperSizeSetting = 'auto' | 'A0' | 'A1' | 'A2' | 'A3'
+type CoordSystemSetting = '2024' | '2011' | 'custom'
 
 interface SfcSettings {
   sfcPreserveSurvey: boolean
@@ -51,6 +52,8 @@ interface SfcSettings {
   sfcShowNorthArrow: boolean
   sfcIncWorkArea: boolean
   sfcSelectedRefPointIds: string[]
+  sfcShowRefTable: boolean
+  sfcCoordSystem: CoordSystemSetting
 }
 
 const DEFAULT_SFC_SETTINGS: SfcSettings = {
@@ -78,6 +81,8 @@ const DEFAULT_SFC_SETTINGS: SfcSettings = {
   sfcShowNorthArrow: true,
   sfcIncWorkArea: true,
   sfcSelectedRefPointIds: [],
+  sfcShowRefTable: true,
+  sfcCoordSystem: '2024',
 }
 
 function loadSfcSettings(): SfcSettings {
@@ -133,6 +138,8 @@ export function SfcPlanDrawingModal({
   const [sfcShowNorthArrow, setSfcShowNorthArrow] = useState<boolean>(DEFAULT_SFC_SETTINGS.sfcShowNorthArrow)
   const [sfcIncWorkArea, setSfcIncWorkArea] = useState<boolean>(DEFAULT_SFC_SETTINGS.sfcIncWorkArea)
   const [sfcSelectedRefPointIds, setSfcSelectedRefPointIds] = useState<string[]>(DEFAULT_SFC_SETTINGS.sfcSelectedRefPointIds)
+  const [sfcShowRefTable, setSfcShowRefTable] = useState<boolean>(DEFAULT_SFC_SETTINGS.sfcShowRefTable)
+  const [sfcCoordSystem, setSfcCoordSystem] = useState<CoordSystemSetting>(DEFAULT_SFC_SETTINGS.sfcCoordSystem)
 
   // 座標 / 工事区域 / プロジェクトを stores から取得
   const coordinates = useCoordinateStore((s) => s.coordinates)
@@ -169,6 +176,8 @@ export function SfcPlanDrawingModal({
     setSfcShowNorthArrow(s.sfcShowNorthArrow)
     setSfcIncWorkArea(s.sfcIncWorkArea)
     setSfcSelectedRefPointIds(s.sfcSelectedRefPointIds)
+    setSfcShowRefTable(s.sfcShowRefTable)
+    setSfcCoordSystem(s.sfcCoordSystem)
   }, [open])
 
   // モーダルを開いたら座標 / 工事区域 が空ならフェッチ (両ストアともキャッシュ機構あり)
@@ -239,6 +248,8 @@ export function SfcPlanDrawingModal({
       sfcShowNorthArrow,
       sfcIncWorkArea,
       sfcSelectedRefPointIds,
+      sfcShowRefTable,
+      sfcCoordSystem,
     }
     try {
       window.localStorage.setItem(SFC_SETTINGS_STORAGE_KEY, JSON.stringify(settings))
@@ -271,6 +282,8 @@ export function SfcPlanDrawingModal({
     sfcShowNorthArrow,
     sfcIncWorkArea,
     sfcSelectedRefPointIds,
+    sfcShowRefTable,
+    sfcCoordSystem,
   ])
 
   const sortedCoordinates = useMemo(() => {
@@ -309,10 +322,17 @@ export function SfcPlanDrawingModal({
       }
     }
     // 基準点: 選択された ID のみ (存在しない ID は silently 無視)
+    // 表出力用に z (標高) と remarks (備考=杭種 or notes) も渡す
     const selectedSet = new Set(sfcSelectedRefPointIds)
     const referencePoints = coordinates
       .filter((c) => selectedSet.has(c.id))
-      .map((c) => ({ x: c.x, y: c.y, label: c.pointNumber }))
+      .map((c) => ({
+        x: c.x,
+        y: c.y,
+        z: c.z,
+        label: c.pointNumber,
+        remarks: c.stakeType ?? c.notes ?? '',
+      }))
 
     // 工事区域: underdrain 種別のみ
     const workAreas = sfcIncWorkArea
@@ -358,6 +378,8 @@ export function SfcPlanDrawingModal({
       showNorthArrow: sfcShowNorthArrow,
       referencePoints,
       workAreas,
+      showReferenceTable: sfcShowRefTable,
+      coordinateSystem: sfcCoordSystem,
     })
     const sjis = toShiftJIS(sfcText)
     const buf = sjis.slice().buffer
@@ -679,6 +701,30 @@ export function SfcPlanDrawingModal({
                       </label>
                     )
                   })}
+                </div>
+                <div className="mt-3 space-y-2">
+                  <label className="flex items-center gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={sfcShowRefTable}
+                      onChange={(e) => setSfcShowRefTable(e.target.checked)}
+                    />
+                    <span>基準杭座標一覧表 を図面右下に出力</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-xs">
+                    <span className="w-16">座標系:</span>
+                    <select
+                      value={sfcCoordSystem}
+                      onChange={(e) =>
+                        setSfcCoordSystem(e.target.value as CoordSystemSetting)
+                      }
+                      className="border rounded px-2 py-1"
+                    >
+                      <option value="2024">測地成果2024</option>
+                      <option value="2011">測地成果2011</option>
+                      <option value="custom">任意標高</option>
+                    </select>
+                  </label>
                 </div>
               </>
             )}

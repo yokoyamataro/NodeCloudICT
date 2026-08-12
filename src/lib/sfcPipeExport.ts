@@ -87,13 +87,23 @@ export interface SfcExportOptions {
   subtitle?: string | null
   /** 上端右に方位マーク (N) を描く */
   showNorthArrow?: boolean
-  /** 参照点 (基準点)。x=北, y=東 (PipeVertex 系) */
-  referencePoints?: Array<{ x: number; y: number; label: string }>
+  /** 参照点 (基準点)。x=北, y=東 (PipeVertex 系)。z (標高), remarks (備考) は表出力用 */
+  referencePoints?: Array<{
+    x: number
+    y: number
+    z?: number | null
+    label: string
+    remarks?: string | null
+  }>
   /** 工事区域ポリゴン。各 points は x=北, y=東 */
   workAreas?: Array<{
     name?: string
     points: Array<{ x: number; y: number; label: string }>
   }>
+  /** 基準杭座標一覧表 を右下に描画する (default false) */
+  showReferenceTable?: boolean
+  /** 座標系ラベル (表フッタ)。'2024' | '2011' | 'custom' */
+  coordinateSystem?: '2024' | '2011' | 'custom'
 }
 
 // SXF 標準の色コード (使う分だけ列挙)。TREND-ONE が出力した参照 SFC の
@@ -352,6 +362,8 @@ export function generateSfcPipesContent(
   const showNorthArrow = options.showNorthArrow ?? false
   const refPoints = options.referencePoints ?? []
   const workAreasIn = options.workAreas ?? []
+  const showReferenceTable = (options.showReferenceTable ?? false) && refPoints.length > 0
+  const coordinateSystem = options.coordinateSystem ?? '2024'
   const emitTitle = !!title
   const emitHeaderInfo = !!projectName || !!subtitle
   const emitRefPoints = refPoints.length > 0
@@ -1259,48 +1271,30 @@ export function generateSfcPipesContent(
     )
   }
 
-  if (emitTitle) {
-    const titleLayer = registerTextLayer('タイトル')
-    const titleHeight = 10
-    const w = title.length > 0 ? titleHeight * textWidthUnits(title) : 0
-    emitText(
-      titleLayer,
-      COLOR_CODE.black,
-      title,
-      sheet.width / 2 - w / 2,
-      sheet.height - 15,
-      titleHeight,
-      0,
-      1,
-    )
-  }
-  if (emitHeaderInfo) {
-    const infoLayer = registerTextLayer('図面情報')
-    const infoHeight = 4
-    if (projectName) {
-      emitText(
-        infoLayer,
-        COLOR_CODE.black,
-        projectName,
-        20,
-        sheet.height - 30,
-        infoHeight,
-        0,
-        1,
-      )
+  // 図面ヘッダ (タイトル・現場名・工区名) は 全て 7mm・左寄せ で上から積む。
+  // 左端 = 図枠左辺 + 5mm、上端 = 図枠上辺 - 10mm (最初のテキストのベースライン)
+  {
+    const paperMax = Math.max(sheet.width, sheet.height)
+    const frameInset = paperMax >= 800 ? 20 : 10
+    const headerHeight = 7
+    const lineGap = headerHeight * 1.4 // 行間 (テキスト高 × 1.4)
+    const headerX = frameInset + 5
+    let headerY = sheet.height - frameInset - headerHeight - 3
+    const headerLayer =
+      emitTitle || emitHeaderInfo ? registerTextLayer('図面ヘッダ') : -1
+    if (emitTitle && headerLayer > 0) {
+      emitText(headerLayer, COLOR_CODE.black, title, headerX, headerY, headerHeight, 0, 1)
+      headerY -= lineGap
     }
-    if (subtitle) {
-      const w = infoHeight * textWidthUnits(subtitle)
-      emitText(
-        infoLayer,
-        COLOR_CODE.black,
-        subtitle,
-        sheet.width - 20 - w,
-        sheet.height - 30,
-        infoHeight,
-        0,
-        1,
-      )
+    if (emitHeaderInfo && headerLayer > 0) {
+      if (projectName) {
+        emitText(headerLayer, COLOR_CODE.black, projectName, headerX, headerY, headerHeight, 0, 1)
+        headerY -= lineGap
+      }
+      if (subtitle) {
+        emitText(headerLayer, COLOR_CODE.black, subtitle, headerX, headerY, headerHeight, 0, 1)
+        headerY -= lineGap
+      }
     }
   }
   if (showNorthArrow) {
@@ -1326,28 +1320,25 @@ export function generateSfcPipesContent(
     const barbV = 4 // 斜め棒の下端の高さ
     const crossW = 4 // 横棒の半幅
     const crossV = -6 // 横棒の高さ (下寄り)
-    const linePairs: Array<[[number, number], [number, number]]> = [
+    const linePairs: Array<{
+      p1: [number, number]
+      p2: [number, number]
+      color: number
+    }> = [
       // 1) 縦棒: 下端 → 上端 (先端)
-      [
-        [0, -H],
-        [0, H],
-      ],
+      { p1: [0, -H], p2: [0, H], color: COLOR_CODE.black },
       // 2) 斜め棒: 左下 → 先端
-      [
-        [-barbW, barbV],
-        [0, H],
-      ],
+      { p1: [-barbW, barbV], p2: [0, H], color: COLOR_CODE.black },
       // 3) 横棒: 左 → 右 (下寄り)
-      [
-        [-crossW, crossV],
-        [crossW, crossV],
-      ],
+      { p1: [-crossW, crossV], p2: [crossW, crossV], color: COLOR_CODE.black },
+      // 4) 先端の閉じる線 (赤): 斜め棒の下端 → 縦棒 (先端三角を閉じる)
+      { p1: [-barbW, barbV], p2: [0, barbV], color: COLOR_CODE.red },
     ]
-    for (const [[u1, v1], [u2, v2]] of linePairs) {
-      const [x1, y1] = toPaper(u1, v1)
-      const [x2, y2] = toPaper(u2, v2)
+    for (const { p1, p2, color } of linePairs) {
+      const [x1, y1] = toPaper(p1[0], p1[1])
+      const [x2, y2] = toPaper(p2[0], p2[1])
       emit(
-        `#${nextId()} = line_feature('${northLayer}','${COLOR_CODE.black}','${FONT_CONTINUOUS}','${WIDTH_035}','${x1.toFixed(6)}','${y1.toFixed(6)}','${x2.toFixed(6)}','${y2.toFixed(6)}')`,
+        `#${nextId()} = line_feature('${northLayer}','${color}','${FONT_CONTINUOUS}','${WIDTH_035}','${x1.toFixed(6)}','${y1.toFixed(6)}','${x2.toFixed(6)}','${y2.toFixed(6)}')`,
       )
     }
     // N ラベル (先端の外側)
@@ -1366,9 +1357,162 @@ export function generateSfcPipesContent(
     )
   }
 
+  // ===== 追加要素: 基準杭座標一覧表 (右下・図枠内) =====
+  // 表は 座標系フッタ を含み、その下 (更に右下) に 縮尺テキスト を置く。
+  {
+    const paperMax = Math.max(sheet.width, sheet.height)
+    const frameInset = paperMax >= 800 ? 20 : 10
+    const rightEdge = sheet.width - frameInset - 5 // 表の右端 (用紙 mm)
+    let bottomY = frameInset + 5 // 表 (と縮尺) の 現在の下端 y
+
+    // 縮尺テキスト (図面右下)。右端右揃え、bottomY に配置。
+    {
+      const scaleLayer = registerTextLayer('縮尺')
+      const scaleHeight = 5
+      const scaleText = `S = 1 : ${scale}`
+      const w = scaleHeight * textWidthUnits(scaleText)
+      emitText(
+        scaleLayer,
+        COLOR_CODE.black,
+        scaleText,
+        rightEdge - w,
+        bottomY,
+        scaleHeight,
+        0,
+        1,
+      )
+      bottomY += scaleHeight * 1.6 // 縮尺の上に表を積む
+    }
+
+    if (showReferenceTable) {
+      const tableLayer = registerTextLayer('基準杭座標一覧表')
+      // 列幅 (mm)
+      const colWidths = [15, 24, 24, 16, 15] // 点名 / X / Y / H / 備考
+      const tableWidth = colWidths.reduce((a, b) => a + b, 0)
+      const rowHeight = 6
+      const cellTextHeight = 3
+      const headerTextHeight = 3
+      const titleTextHeight = 5
+      const titlePad = 3 // タイトル下の余白
+      const footerTextHeight = 3
+      const footerPad = 2
+
+      const nRows = 1 + refPoints.length // ヘッダ 1 行 + データ
+
+      // 座標系ラベル (フッタ)
+      const csLabel = coordinateSystem === '2011'
+        ? '（座標世界測地系（JGD2011）,公共標高）'
+        : coordinateSystem === 'custom'
+          ? '（任意座標系,任意標高）'
+          : '（座標世界測地系,公共標高）'
+      const footerW = footerTextHeight * textWidthUnits(csLabel)
+
+      // 表右下座標
+      const tableRight = rightEdge
+      const tableLeft = tableRight - tableWidth
+      const tableBottom = bottomY + footerTextHeight + footerPad
+      const tableTop = tableBottom + rowHeight * nRows
+      const titleY = tableTop + titlePad
+
+      // フッタ (表の下、右寄せ)
+      emitText(
+        tableLayer,
+        COLOR_CODE.black,
+        csLabel,
+        tableRight - footerW,
+        bottomY,
+        footerTextHeight,
+        0,
+        1,
+      )
+
+      // タイトル (表の上、中央)
+      const titleText = '基準杭座標一覧表'
+      const titleW = titleTextHeight * textWidthUnits(titleText)
+      const titleX = (tableLeft + tableRight) / 2 - titleW / 2
+      emitText(
+        tableLayer,
+        COLOR_CODE.black,
+        titleText,
+        titleX,
+        titleY,
+        titleTextHeight,
+        0,
+        1,
+      )
+      // タイトル下の下線 (全表幅)
+      emit(
+        `#${nextId()} = line_feature('${tableLayer}','${COLOR_CODE.black}','${FONT_CONTINUOUS}','${WIDTH_035}','${tableLeft.toFixed(6)}','${(titleY - 0.5).toFixed(6)}','${tableRight.toFixed(6)}','${(titleY - 0.5).toFixed(6)}')`,
+      )
+
+      // 表の水平線 (nRows+1 本)
+      for (let i = 0; i <= nRows; i++) {
+        const y = tableBottom + rowHeight * i
+        emit(
+          `#${nextId()} = line_feature('${tableLayer}','${COLOR_CODE.black}','${FONT_CONTINUOUS}','${WIDTH_025}','${tableLeft.toFixed(6)}','${y.toFixed(6)}','${tableRight.toFixed(6)}','${y.toFixed(6)}')`,
+        )
+      }
+      // 表の垂直線 (colWidths.length+1 本)
+      let vx = tableLeft
+      for (let i = 0; i <= colWidths.length; i++) {
+        emit(
+          `#${nextId()} = line_feature('${tableLayer}','${COLOR_CODE.black}','${FONT_CONTINUOUS}','${WIDTH_025}','${vx.toFixed(6)}','${tableBottom.toFixed(6)}','${vx.toFixed(6)}','${tableTop.toFixed(6)}')`,
+        )
+        if (i < colWidths.length) vx += colWidths[i]
+      }
+
+      // セル中央にテキストを配置するヘルパ
+      const cellCenterX = (colIdx: number): number => {
+        let x = tableLeft
+        for (let i = 0; i < colIdx; i++) x += colWidths[i]
+        return x + colWidths[colIdx] / 2
+      }
+      const cellText = (
+        colIdx: number,
+        rowIdx: number, // 0 = ヘッダ, 1..N = データ
+        text: string,
+        h: number,
+      ) => {
+        if (!text) return
+        const cx = cellCenterX(colIdx)
+        // rowIdx=0 は表の一番上の行。tableTop から下に。
+        const cyTop = tableTop - rowHeight * rowIdx
+        const cyMid = cyTop - rowHeight / 2
+        const w = h * textWidthUnits(text)
+        emitText(
+          tableLayer,
+          COLOR_CODE.black,
+          text,
+          cx - w / 2,
+          cyMid - h / 2,
+          h,
+          0,
+          1,
+        )
+      }
+      // ヘッダ行
+      const headers = ['点  名', '   X', '   Y', '  H', '備  考']
+      for (let c = 0; c < headers.length; c++) {
+        cellText(c, 0, headers[c], headerTextHeight)
+      }
+      // データ行
+      for (let r = 0; r < refPoints.length; r++) {
+        const rp = refPoints[r]
+        const rowIdx = r + 1
+        cellText(0, rowIdx, rp.label, cellTextHeight)
+        cellText(1, rowIdx, rp.x.toFixed(3), cellTextHeight)
+        cellText(2, rowIdx, rp.y.toFixed(3), cellTextHeight)
+        cellText(3, rowIdx, rp.z != null ? rp.z.toFixed(2) : '', cellTextHeight)
+        cellText(4, rowIdx, rp.remarks ?? '', cellTextHeight)
+      }
+    }
+  }
+
   // ===== 図面シート + レイヤ =====
+  // 用紙サイズコード: A0=0, A1=1, A2=2, A3=3 (SFC 標準)。横長は 2 番目のフィールド '1'。
+  const paperCode = paperSizeCode(sheet.width, sheet.height)
   emit(
-    `#${nextId()} = drawing_sheet_feature(\\'${fileBase}\\','1','1','${sheet.width}','${sheet.height}')`,
+    `#${nextId()} = drawing_sheet_feature(\\'${fileBase}\\','${paperCode}','1','${sheet.width}','${sheet.height}')`,
   )
   for (const ln of layerNames) {
     emit(`#${nextId()} = layer_feature(\\'${ln}\\','1')`)
@@ -1406,6 +1550,16 @@ const PAPER_SIZE_MM: Record<'A0' | 'A1' | 'A2' | 'A3', { width: number; height: 
   A1: { width: 841, height: 594 },
   A2: { width: 594, height: 420 },
   A3: { width: 420, height: 297 },
+}
+
+/** SFC drawing_sheet_feature 用の 用紙サイズコード。
+ *  A0=0, A1=1, A2=2, A3=3。長辺の長さで判別する。 */
+function paperSizeCode(width: number, height: number): number {
+  const longer = Math.max(width, height)
+  if (longer >= 1189) return 0 // A0
+  if (longer >= 841) return 1 // A1
+  if (longer >= 594) return 2 // A2
+  return 3 // A3
 }
 
 // 内容が収まる標準 A サイズシートを選ぶ (横長固定)
