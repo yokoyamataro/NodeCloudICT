@@ -34,6 +34,8 @@ import {
 import type { WorkType, AreaCalculationSheet as AreaCalculationSheetType } from '@/types/database'
 import { WORK_TYPE_NAMES } from '@/types/database'
 import { exportAreaCalculationToCSV } from '@/lib/area-calculation'
+import { generateCoordinateAreaBookExcel } from '@/lib/coordinateAreaBookExport'
+import { useProjectListStore } from '@/stores/projectListStore'
 import { compareByLocationAndParcel } from '@/lib/parcelSort'
 import { useMapViewStore } from '@/stores/mapViewStore'
 import {
@@ -50,6 +52,8 @@ function AreaCalculationSheet({
   sheet: AreaCalculationSheetType
   onClose: () => void
 }) {
+  const currentProject = useProjectListStore((s) => s.currentProject)
+
   const handleExportCSV = () => {
     const csv = exportAreaCalculationToCSV(sheet)
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
@@ -61,6 +65,24 @@ function AreaCalculationSheet({
     URL.revokeObjectURL(url)
   }
 
+  const handleExportExcel = async () => {
+    try {
+      const blob = await generateCoordinateAreaBookExcel(sheet, {
+        zoneNumber: currentProject?.coordinate_zone ?? null,
+        areaLabel: sheet.zone_name || sheet.zone_number,
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `座標面積計算書_${sheet.zone_number}.xlsx`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      console.error('Excel 出力に失敗しました:', e)
+      alert('Excel 出力に失敗しました')
+    }
+  }
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center" style={{ zIndex: 9999 }}>
       <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] flex flex-col">
@@ -70,6 +92,14 @@ function AreaCalculationSheet({
             <p className="text-sm text-muted-foreground">直角座標法による面積計算</p>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={handleExportExcel}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm border rounded-lg hover:bg-slate-50"
+              title="A4 横 の 座標面積計算書 を Excel で出力"
+            >
+              <Download className="h-4 w-4" />
+              Excel出力 (座標面積計算書)
+            </button>
             <button
               onClick={handleExportCSV}
               className="flex items-center gap-2 px-3 py-1.5 text-sm border rounded-lg hover:bg-slate-50"
