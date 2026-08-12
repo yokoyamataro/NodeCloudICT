@@ -16,7 +16,8 @@ import {
 } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Loader2, AlertTriangle, Layers as LayersIcon, ChevronDown, ChevronUp } from 'lucide-react'
+import { Loader2, AlertTriangle, Layers as LayersIcon, ChevronDown, ChevronUp, Crosshair } from 'lucide-react'
+import { useMap, CircleMarker, Circle } from 'react-leaflet'
 import { supabase } from '@/lib/supabase'
 import {
   CoordinateConverter,
@@ -88,6 +89,7 @@ interface ShareFarmView {
     id: string
     name: string
     project_id: string
+    project_name?: string | null
     coordinate_zone: number
   } | null
   coordinates: ShareCoordinate[]
@@ -95,6 +97,22 @@ interface ShareFarmView {
   point_types?: SharePointType[]
   route: { points: ShareRoutePoint[] } | null
   map_drawings?: ShareDrawing[]
+}
+
+/** enabled のときだけ position 変化で地図を再センターする */
+function FollowSelf({
+  position,
+  enabled,
+}: {
+  position: [number, number] | null
+  enabled: boolean
+}) {
+  const map = useMap()
+  useEffect(() => {
+    if (!enabled || !position) return
+    map.setView(position, Math.max(map.getZoom(), 18), { animate: true })
+  }, [map, position, enabled])
+  return null
 }
 
 export function ShareFarmViewPage() {
@@ -136,6 +154,34 @@ export function ShareFarmViewPage() {
   useEffect(() => { try { localStorage.setItem('share:showRoute', showRoute ? '1' : '0') } catch { /* quota */ } }, [showRoute])
   useEffect(() => { try { localStorage.setItem('share:showDrawings', showDrawings ? '1' : '0') } catch { /* quota */ } }, [showDrawings])
   const [layerPanelOpen, setLayerPanelOpen] = useState(false)
+
+  // 自己位置追尾: 'self' なら現在地に地図を寄せる。'off' で解除。
+  const [followSelf, setFollowSelf] = useState(false)
+  const [selfPos, setSelfPos] = useState<{ lat: number; lng: number; accuracy: number } | null>(null)
+  useEffect(() => {
+    if (!followSelf) return
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      alert('この端末は位置情報に対応していません')
+      setFollowSelf(false)
+      return
+    }
+    const id = navigator.geolocation.watchPosition(
+      (pos) => {
+        setSelfPos({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+        })
+      },
+      (err) => {
+        console.warn('geolocation error:', err)
+        alert(`現在地取得に失敗しました: ${err.message}`)
+        setFollowSelf(false)
+      },
+      { enableHighAccuracy: true, maximumAge: 3000, timeout: 15000 },
+    )
+    return () => navigator.geolocation.clearWatch(id)
+  }, [followSelf])
 
   // 法務省地図データセット (公開マスター) を anon SELECT で取得
   const parcelDatasets = useParcelMapDatasetStore((s) => s.datasets)
@@ -309,15 +355,22 @@ export function ShareFarmViewPage() {
 
   return (
     <div className="h-[100dvh] flex flex-col bg-slate-50 overflow-hidden">
-      {/* ヘッダ (アプリ本体と同じ slate-900 / NodeCloud タイトル) */}
+      {/* ヘッダ (アプリ本体と同じ slate-900 / NodeCloud タイトル + 現場名／工区名) */}
       <header className="bg-slate-900 text-white border-b border-slate-700 px-4 py-3 flex items-center gap-3">
         <div className="flex flex-col leading-none">
           <h1 className="text-xl font-bold">NodeCloud</h1>
           <span className="text-[10px] text-slate-500 mt-0.5">公開ビュー（読み取り専用）</span>
         </div>
-        <span className="text-sm truncate">{farm.name}</span>
-        <span className="ml-auto text-[11px] px-2 py-0.5 rounded bg-slate-800 text-slate-300">
-          座標 {points.length} ／ 配管 {data.pipes.length}
+        <span className="text-sm flex items-center min-w-0">
+          {farm.project_name && (
+            <span className="text-slate-200 font-medium truncate">{farm.project_name}</span>
+          )}
+          {farm.project_name && farm.name && (
+            <span className="text-slate-500 mx-1">／</span>
+          )}
+          {farm.name && (
+            <span className="text-slate-200 font-medium truncate">{farm.name}</span>
+          )}
         </span>
       </header>
 
@@ -561,17 +614,58 @@ export function ShareFarmViewPage() {
           {hasActiveParcelDataset && showParcelMap && (
             <ParcelMapLayer visible={true} bbox={null} disableClicks />
           )}
+
+          {/* 自己位置 マーカー + 精度円 */}
+          {selfPos && (
+            <>
+              <Circle
+                center={[selfPos.lat, selfPos.lng]}
+                radius={selfPos.accuracy}
+                pathOptions={{ color: '#2563eb', weight: 1, fillColor: '#3b82f6', fillOpacity: 0.15 }}
+                interactive={false}
+              />
+              <CircleMarker
+                center={[selfPos.lat, selfPos.lng]}
+                radius={7}
+                pathOptions={{ color: '#ffffff', weight: 2, fillColor: '#2563eb', fillOpacity: 1 }}
+                interactive={false}
+              />
+            </>
+          )}
+
+          {/* 自己位置追尾 (map.setView を effect で発動) */}
+          <FollowSelf
+            position={selfPos ? [selfPos.lat, selfPos.lng] : null}
+            enabled={followSelf}
+          />
         </MapContainer>
 
-        {/* レイヤー パネル (右上): 背景地図 + 表示要素 + 法務省地図 */}
+        {/* 現在地 (自己位置) ボタン (左上、ズームコントロール直下 = 方位マークの下) */}
+        <div className="absolute top-[88px] left-2 z-[1200]">
+          <button
+            type="button"
+            onClick={() => setFollowSelf((v) => !v)}
+            className={`w-9 h-9 flex items-center justify-center rounded shadow-md border ${
+              followSelf
+                ? 'bg-blue-600 border-blue-600 text-white'
+                : 'bg-white border-slate-400 text-slate-700 hover:bg-slate-50'
+            }`}
+            title={followSelf ? '現在地追尾中 (クリックで解除)' : '現在地を表示'}
+            aria-label="現在地"
+          >
+            <Crosshair className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* 表示要素 パネル (右上): 座標 / 配管 / 順路 / 描画メモ の on/off */}
         <div className="absolute top-2 right-2 z-[1000] w-56">
           <button
             onClick={() => setLayerPanelOpen((v) => !v)}
             className="w-full flex items-center gap-2 px-3 py-2 text-sm bg-white/95 border rounded shadow hover:bg-slate-50"
-            title="レイヤー設定"
+            title="表示要素"
           >
             <LayersIcon className="h-4 w-4" />
-            <span className="flex-1 text-left">レイヤー</span>
+            <span className="flex-1 text-left">表示要素</span>
             {layerPanelOpen ? (
               <ChevronUp className="h-4 w-4 text-slate-500" />
             ) : (
@@ -579,70 +673,59 @@ export function ShareFarmViewPage() {
             )}
           </button>
           {layerPanelOpen && (
-            <div className="mt-1 bg-white border rounded shadow p-3 text-xs space-y-3 max-h-[70vh] overflow-y-auto">
-              <div>
-                <div className="font-semibold text-slate-700 mb-1">背景地図</div>
-                <div className="space-y-1">
-                  {(
-                    [
-                      { v: 'photo', label: '空中写真' },
-                      { v: 'std', label: '標準地図' },
-                      { v: 'pale', label: '淡色地図' },
-                      { v: 'blank', label: '白地図' },
-                    ] as Array<{ v: BackgroundKind; label: string }>
-                  ).map((o) => (
-                    <label key={o.v} className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="share-bg"
-                        checked={background === o.v}
-                        onChange={() => setBackground(o.v)}
-                      />
-                      <span>{o.label}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <div className="font-semibold text-slate-700 mb-1">表示要素</div>
-                <div className="space-y-1">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={showCoords} onChange={(e) => setShowCoords(e.target.checked)} />
-                    <span>座標点 ({points.length})</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={showPipes} onChange={(e) => setShowPipes(e.target.checked)} />
-                    <span>配管ライン ({pipeLines.length})</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={showPipeVertices} onChange={(e) => setShowPipeVertices(e.target.checked)} />
-                    <span>暗渠頂点 ({pipeVertices.length})</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={showRoute} onChange={(e) => setShowRoute(e.target.checked)} />
-                    <span>順路 ({routePoints.length})</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={showDrawings} onChange={(e) => setShowDrawings(e.target.checked)} />
-                    <span>描画メモ ({drawings.length})</span>
-                  </label>
-                </div>
-              </div>
-              {hasActiveParcelDataset && (
-                <div>
-                  <div className="font-semibold text-slate-700 mb-1">背景オーバーレイ</div>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={showParcelMap}
-                      onChange={(e) => setShowParcelMap(e.target.checked)}
-                    />
-                    <span>法務省地図 (読み取り)</span>
-                  </label>
-                </div>
-              )}
+            <div className="mt-1 bg-white border rounded shadow p-3 text-xs space-y-1 max-h-[70vh] overflow-y-auto">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={showCoords} onChange={(e) => setShowCoords(e.target.checked)} />
+                <span>座標点 ({points.length})</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={showPipes} onChange={(e) => setShowPipes(e.target.checked)} />
+                <span>配管ライン ({pipeLines.length})</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={showPipeVertices} onChange={(e) => setShowPipeVertices(e.target.checked)} />
+                <span>暗渠頂点 ({pipeVertices.length})</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={showRoute} onChange={(e) => setShowRoute(e.target.checked)} />
+                <span>順路 ({routePoints.length})</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={showDrawings} onChange={(e) => setShowDrawings(e.target.checked)} />
+                <span>描画メモ ({drawings.length})</span>
+              </label>
             </div>
           )}
+        </div>
+
+        {/* 右下: 法務省地図 (上) + 背景地図セレクタ (下) — スマホ編集ユーザーと同じ配置 */}
+        <div className="absolute bottom-5 right-1 z-[1000] flex flex-col items-end gap-1">
+          {hasActiveParcelDataset && (
+            <button
+              onClick={() => setShowParcelMap((v) => !v)}
+              className={`px-2 py-1 text-[11px] rounded border shadow ${
+                showParcelMap
+                  ? 'bg-orange-500 text-white border-orange-500 hover:bg-orange-600'
+                  : 'bg-white/95 text-slate-700 border-slate-300 hover:bg-slate-50'
+              }`}
+              title="法務省地図データを背景に表示する (読み取り専用)"
+            >
+              法務省地図
+            </button>
+          )}
+          <div className="flex items-center gap-1 px-1.5 py-0.5 rounded shadow border border-slate-300 bg-white/95 text-[11px]">
+            <span className="text-slate-500">背景</span>
+            <select
+              value={background}
+              onChange={(e) => setBackground(e.target.value as BackgroundKind)}
+              className="px-1 py-0.5 border border-slate-300 rounded bg-white text-[11px]"
+            >
+              <option value="photo">空中写真</option>
+              <option value="std">標準地図</option>
+              <option value="pale">淡色地図</option>
+              <option value="blank">白地図</option>
+            </select>
+          </div>
         </div>
       </div>
 
