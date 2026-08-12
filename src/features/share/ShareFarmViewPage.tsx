@@ -2,12 +2,20 @@
 // 認証不要で、起工測量の座標プロット＋点一覧を読み取り専用で表示する。
 // 受益者名等の個人情報は返さない（get_shared_farm_view 関数の責務）。
 
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { MapContainer, TileLayer, Marker, Polyline, Tooltip } from 'react-leaflet'
+import {
+  Circle as LeafletCircle,
+  MapContainer,
+  Marker,
+  Polygon as LeafletPolygon,
+  Polyline,
+  TileLayer,
+  Tooltip,
+} from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Loader2, MapPin, AlertTriangle, ExternalLink } from 'lucide-react'
+import { Loader2, MapPin, AlertTriangle, ExternalLink, Map as MapIcon } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import {
   CoordinateConverter,
@@ -15,6 +23,15 @@ import {
   type CoordinateType,
 } from '@/lib/coordinates'
 import type { PipeType } from '@/types/database'
+import {
+  arcThroughPoints,
+  circleRadiusMeters,
+  dashArrayFor,
+  makeTextIcon,
+} from '@/components/map/MapDrawingLayer'
+import type { LineStyle } from '@/stores/mapDrawingStore'
+import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
+import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 
 interface ShareCoordinate {
   id: string
@@ -55,6 +72,16 @@ interface SharePointType {
   label: string
 }
 
+interface ShareDrawing {
+  id: string
+  kind: 'stroke' | 'text' | 'circle' | 'arc' | 'polygon'
+  color: string
+  width_px: number
+  line_style: LineStyle | null
+  points: Array<{ lat: number; lng: number }>
+  text: string | null
+}
+
 interface ShareFarmView {
   farm: {
     id: string
@@ -66,6 +93,7 @@ interface ShareFarmView {
   pipes: SharePipe[]
   point_types?: SharePointType[]
   route: { points: ShareRoutePoint[] } | null
+  map_drawings?: ShareDrawing[]
 }
 
 export function ShareFarmViewPage() {
@@ -73,6 +101,15 @@ export function ShareFarmViewPage() {
   const [data, setData] = useState<ShareFarmView | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [showParcelMap, setShowParcelMap] = useState(false)
+
+  // 法務省地図データセット (公開マスター) を anon SELECT で取得
+  const parcelDatasets = useParcelMapDatasetStore((s) => s.datasets)
+  const fetchParcelDatasets = useParcelMapDatasetStore((s) => s.fetchAll)
+  useEffect(() => {
+    void fetchParcelDatasets()
+  }, [fetchParcelDatasets])
+  const hasActiveParcelDataset = parcelDatasets.some((d) => d.active)
 
   useEffect(() => {
     if (!farmId) return
@@ -198,6 +235,8 @@ export function ShareFarmViewPage() {
       })
       .filter((p): p is ShareRoutePoint & { lat: number; lng: number } => p != null)
   }, [data, converter])
+
+  const drawings = useMemo<ShareDrawing[]>(() => data?.map_drawings ?? [], [data])
 
   const bounds = useMemo(() => {
     const all: [number, number][] = []
@@ -360,7 +399,127 @@ export function ShareFarmViewPage() {
               </Marker>
             )
           })}
+
+          {/* 描画メモ (読み取り専用) */}
+          {drawings.map((d) => {
+            const dash = dashArrayFor((d.line_style ?? 'solid') as LineStyle, d.width_px)
+            if (d.kind === 'circle') {
+              const [center, edge] = d.points
+              if (!center || !edge) return null
+              const radius = circleRadiusMeters(center, edge)
+              return (
+                <LeafletCircle
+                  key={d.id}
+                  center={[center.lat, center.lng]}
+                  radius={radius}
+                  pathOptions={{
+                    color: d.color,
+                    weight: d.width_px,
+                    opacity: 0.9,
+                    fill: false,
+                    dashArray: dash,
+                  }}
+                  interactive={false}
+                />
+              )
+            }
+            if (d.kind === 'arc') {
+              if (d.points.length < 3) return null
+              const [a, b, c] = d.points
+              const arcPts = arcThroughPoints(a, b, c)
+              return (
+                <Polyline
+                  key={d.id}
+                  positions={arcPts}
+                  pathOptions={{
+                    color: d.color,
+                    weight: d.width_px,
+                    opacity: 0.9,
+                    lineCap: 'round',
+                    lineJoin: 'round',
+                    dashArray: dash,
+                  }}
+                  interactive={false}
+                />
+              )
+            }
+            if (d.kind === 'polygon') {
+              const positions = d.points.map(
+                (p) => [p.lat, p.lng] as [number, number],
+              )
+              return (
+                <LeafletPolygon
+                  key={d.id}
+                  positions={positions}
+                  pathOptions={{
+                    color: d.color,
+                    weight: d.width_px,
+                    opacity: 0.9,
+                    fillColor: d.color,
+                    fillOpacity: 0.2,
+                    dashArray: dash,
+                  }}
+                  interactive={false}
+                />
+              )
+            }
+            if (d.kind === 'text') {
+              const p = d.points[0]
+              if (!p) return null
+              return (
+                <Marker
+                  key={d.id}
+                  position={[p.lat, p.lng]}
+                  icon={makeTextIcon(d.text ?? '', d.color, d.width_px, false)}
+                  interactive={false}
+                />
+              )
+            }
+            // stroke (フリーハンド or 直線)
+            const positions = d.points.map(
+              (p) => [p.lat, p.lng] as [number, number],
+            )
+            return (
+              <Fragment key={d.id}>
+                <Polyline
+                  positions={positions}
+                  pathOptions={{
+                    color: d.color,
+                    weight: d.width_px,
+                    opacity: 0.9,
+                    lineCap: 'round',
+                    lineJoin: 'round',
+                    dashArray: dash,
+                  }}
+                  interactive={false}
+                />
+              </Fragment>
+            )
+          })}
+
+          {/* 法務省地図 (読み取り専用、地番取込ボタン無し) */}
+          {hasActiveParcelDataset && showParcelMap && (
+            <ParcelMapLayer visible={true} bbox={null} disableClicks />
+          )}
         </MapContainer>
+
+        {/* 法務省地図 トグル (アクティブ dataset があるときだけ表示) */}
+        {hasActiveParcelDataset && (
+          <div className="absolute bottom-6 left-2 z-[1000]">
+            <button
+              onClick={() => setShowParcelMap((v) => !v)}
+              className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border shadow ${
+                showParcelMap
+                  ? 'bg-orange-500 text-white border-orange-500 hover:bg-orange-600'
+                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+              }`}
+              title="法務省地図データを背景に表示する (読み取り専用)"
+            >
+              <MapIcon className="h-4 w-4" />
+              法務省地図
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 点一覧 */}

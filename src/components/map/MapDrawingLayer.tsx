@@ -89,7 +89,7 @@ const FIRST_VERTEX_ICON = L.divIcon({
 })
 
 /** LineStyle → Leaflet Polyline の dashArray に変換 (太さに合わせて自動調整) */
-function dashArrayFor(style: LineStyle, widthPx: number): string | undefined {
+export function dashArrayFor(style: LineStyle, widthPx: number): string | undefined {
   if (style === 'solid') return undefined
   if (style === 'dashed') return `${widthPx * 3},${widthPx * 2}`
   return `0.1,${widthPx * 1.8}`
@@ -101,7 +101,7 @@ function textFontSizePx(widthPx: number): number {
 }
 
 /** テキスト注釈用の divIcon (背景なし、測点ラベルと同じ「白フチ + 色本体」スタイル) */
-function makeTextIcon(text: string, color: string, widthPx: number, interactive: boolean): L.DivIcon {
+export function makeTextIcon(text: string, color: string, widthPx: number, interactive: boolean): L.DivIcon {
   const size = textFontSizePx(widthPx)
   const shadow =
     '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff'
@@ -134,7 +134,7 @@ function midpointOfLatLngs(
  * 局所平面近似 (原点 = 始点) で外接円中心 + 半径を求め、角度をスイープしながら
  * segments 個に分割する。1km 程度までなら投影歪みは無視できる。
  */
-function arcThroughPoints(
+export function arcThroughPoints(
   start: { lat: number; lng: number },
   mid: { lat: number; lng: number },
   end: { lat: number; lng: number },
@@ -212,7 +212,7 @@ function arcThroughPoints(
 }
 
 /** 円の半径 (メートル) を center/edge の 2 点から求める */
-function circleRadiusMeters(
+export function circleRadiusMeters(
   center: { lat: number; lng: number },
   edge: { lat: number; lng: number },
 ): number {
