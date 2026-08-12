@@ -1907,16 +1907,6 @@ export function DepthCalcPage() {
                       <option value="all">全系統</option>
                     </select>
                   </div>
-                  {/* 連続勾配 */}
-                  <button
-                    onClick={() => setContinuousOpen(true)}
-                    disabled={saving || !selectedSystem}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors disabled:opacity-50 whitespace-nowrap"
-                    title="複数区間にわたって一定の勾配を設定"
-                  >
-                    <Ruler className="h-4 w-4" />
-                    連続勾配
-                  </button>
                   <div className="w-px h-6 bg-slate-300" />
                   <button
                     onClick={() => currentFarm && fetchPlan(currentFarm.id)}

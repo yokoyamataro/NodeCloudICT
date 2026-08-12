@@ -1,6 +1,5 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from 'react'
 import type { PlanRow, PlanGroup } from '@/stores/constructionPlanStore'
-import { exportCrossSectionDxf } from '@/lib/crossSectionDxfExport'
 import type { ParsedSurface } from '@/lib/landxml/parser'
 import { indexTin, queryZ } from '@/lib/landxml/tinInterpolation'
 
@@ -52,9 +51,7 @@ export function CrossSectionChart({
   endType,
   chartHeight: chartHeightProp,
   pipeNumberById,
-  pipeDiameterById,
   allPlanGroups,
-  farmName,
   tinSurface,
   endCollectorPlannedHeight,
   onPlannedHeightChange,
@@ -71,24 +68,8 @@ export function CrossSectionChart({
   const [showPlanned, setShowPlanned] = useState(true)
   const [showAbsorption, setShowAbsorption] = useState(true)
 
-  // DXF 出力用の縦縮尺
-  const [dxfVScale, setDxfVScale] = useState<100 | 200 | 500 | 1000>(200)
-
   // ホバー中の測点インデックス（緑の縦線にカーソルを合わせたとき）
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
-
-  const handleDxfExport = useCallback(() => {
-    exportCrossSectionDxf({
-      systemRows,
-      systemIndex,
-      endType,
-      verticalScale: dxfVScale,
-      pipeNumberById,
-      pipeDiameterById,
-      allPlanGroups,
-      farmName,
-    })
-  }, [systemRows, systemIndex, endType, dxfVScale, pipeNumberById, pipeDiameterById, allPlanGroups, farmName])
 
   // マウスホイールでスケールを変更（Shift 押下で横、それ以外は縦）
   const handleWheel = useCallback((e: React.WheelEvent) => {
@@ -780,27 +761,6 @@ export function CrossSectionChart({
             </button>
           )}
           <span className="text-slate-400">（ホイール:縦 / Shift+ホイール:横）</span>
-          <span className="text-slate-400">|</span>
-          <span className="flex items-center gap-1">
-            DXF 縦尺:
-            <select
-              value={dxfVScale}
-              onChange={(e) => setDxfVScale(parseInt(e.target.value, 10) as 100 | 200 | 500 | 1000)}
-              className="px-1 py-0.5 text-[14px] border rounded bg-white"
-            >
-              <option value={100}>1/100</option>
-              <option value={200}>1/200</option>
-              <option value={500}>1/500</option>
-              <option value={1000}>1/1000</option>
-            </select>
-            <button
-              onClick={handleDxfExport}
-              className="px-2 py-0.5 text-[14px] bg-emerald-600 text-white rounded hover:bg-emerald-700"
-              title="縦断図を DXF 形式で出力（横 1/1000 固定）"
-            >
-              DXF 出力
-            </button>
-          </span>
         </span>
       </div>
 
