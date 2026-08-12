@@ -10,12 +10,13 @@ import {
   Marker,
   Polygon as LeafletPolygon,
   Polyline,
+  Popup,
   TileLayer,
   Tooltip,
 } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Loader2, MapPin, AlertTriangle, ExternalLink, Map as MapIcon } from 'lucide-react'
+import { Loader2, AlertTriangle, Map as MapIcon } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import {
   CoordinateConverter,
@@ -275,14 +276,14 @@ export function ShareFarmViewPage() {
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
-      {/* ヘッダ */}
-      <header className="bg-white border-b px-4 py-3 flex items-center gap-2">
-        <MapPin className="h-5 w-5 text-blue-600" />
-        <div className="flex-1 min-w-0">
-          <h1 className="text-base font-bold truncate">{farm.name}</h1>
-          <p className="text-xs text-slate-500">公開ビュー（読み取り専用）</p>
+      {/* ヘッダ (アプリ本体と同じ slate-900 / NodeCloud タイトル) */}
+      <header className="bg-slate-900 text-white border-b border-slate-700 px-4 py-3 flex items-center gap-3">
+        <div className="flex flex-col leading-none">
+          <h1 className="text-xl font-bold">NodeCloud</h1>
+          <span className="text-[10px] text-slate-500 mt-0.5">公開ビュー（読み取り専用）</span>
         </div>
-        <span className="text-[11px] px-2 py-0.5 rounded bg-slate-100 text-slate-600">
+        <span className="text-sm truncate">{farm.name}</span>
+        <span className="ml-auto text-[11px] px-2 py-0.5 rounded bg-slate-800 text-slate-300">
           座標 {points.length} ／ 配管 {data.pipes.length}
         </span>
       </header>
@@ -329,10 +330,14 @@ export function ShareFarmViewPage() {
             />
           )}
 
-          {/* 座標マーカー */}
+          {/* 座標マーカー (タップで X/Y/Z popup) */}
           {points.map((p) => {
             const color = coordinateColor(p.coordinate_type)
             const label = p.point_number
+            const typeName =
+              (COORDINATE_TYPE_NAMES as Record<string, string>)[p.coordinate_type] ??
+              data?.point_types?.find((t) => t.code === p.coordinate_type)?.label ??
+              p.coordinate_type
             return (
               <Marker
                 key={p.id}
@@ -361,6 +366,19 @@ export function ShareFarmViewPage() {
                     {label}
                   </span>
                 </Tooltip>
+                <Popup>
+                  <div className="text-xs space-y-0.5">
+                    <div className="font-bold text-sm" style={{ color }}>
+                      {label}
+                    </div>
+                    <div className="text-slate-600">{typeName}</div>
+                    <div className="pt-1 font-mono">
+                      <div>X: {p.x.toFixed(3)}</div>
+                      <div>Y: {p.y.toFixed(3)}</div>
+                      <div>Z: {p.z != null ? p.z.toFixed(3) : '-'}</div>
+                    </div>
+                  </div>
+                </Popup>
               </Marker>
             )
           })}
@@ -522,50 +540,6 @@ export function ShareFarmViewPage() {
         )}
       </div>
 
-      {/* 点一覧 */}
-      <details className="bg-white border-t" open>
-        <summary className="px-4 py-2 text-sm font-semibold cursor-pointer flex items-center gap-2">
-          <ExternalLink className="h-4 w-4 text-slate-500" />
-          点一覧（{points.length} 点）
-        </summary>
-        <div className="max-h-[40vh] overflow-auto">
-          <table className="w-full text-xs">
-            <thead className="bg-slate-100 sticky top-0">
-              <tr>
-                <th className="text-left px-3 py-1.5">点番</th>
-                <th className="text-left px-3 py-1.5">点種</th>
-                <th className="text-right px-3 py-1.5">X</th>
-                <th className="text-right px-3 py-1.5">Y</th>
-                <th className="text-right px-3 py-1.5">Z</th>
-              </tr>
-            </thead>
-            <tbody>
-              {points.map((p) => (
-                <tr key={p.id} className="border-b last:border-0">
-                  <td className="px-3 py-1 font-medium">{p.point_number}</td>
-                  <td className="px-3 py-1 text-slate-600">
-                    {(COORDINATE_TYPE_NAMES as Record<string, string>)[p.coordinate_type] ??
-                      data?.point_types?.find((t) => t.code === p.coordinate_type)?.label ??
-                      p.coordinate_type}
-                  </td>
-                  <td className="px-3 py-1 text-right font-mono">{p.x.toFixed(3)}</td>
-                  <td className="px-3 py-1 text-right font-mono">{p.y.toFixed(3)}</td>
-                  <td className="px-3 py-1 text-right font-mono">
-                    {p.z != null ? p.z.toFixed(3) : '-'}
-                  </td>
-                </tr>
-              ))}
-              {points.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="text-center text-slate-400 py-3">
-                    座標データなし
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </details>
     </div>
   )
 }
