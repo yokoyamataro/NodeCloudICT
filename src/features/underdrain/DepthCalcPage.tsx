@@ -2488,6 +2488,10 @@ export function DepthCalcPage() {
                     chartRows = r.absorptionPoints.map((p, i) => {
                       const nextPoint = r.absorptionPoints[i + 1]
                       const segDistToNext = nextPoint?.segmentDistance ?? null
+                      // 直落 group では 各点 (K6C / K6A O5C / O5A) が異なる pipe / 測点なので、
+                      // 旗揚を pipe 番号 (K6 一律) ではなく 測点名 で表示する。
+                      const flagLabel =
+                        r.groupType === 'direct' ? p.pointName : r.pipeNumber
                       return {
                         id: `abs-${r.id}-${i}`,
                         wiringRowId: '',
@@ -2499,7 +2503,7 @@ export function DepthCalcPage() {
                         systemEndType: null,
                         absorptionPipeId: null,
                         collectorPipeId: r.absorptionPipeId,
-                        pipeNumber: r.pipeNumber,
+                        pipeNumber: flagLabel,
                         diameter: r.diameter,
                         designLength: r.designLength,
                         absorptionPoints: [],

@@ -67,6 +67,10 @@ export function CrossSectionChart({
   const [showGround, setShowGround] = useState(true)
   const [showPlanned, setShowPlanned] = useState(true)
   const [showAbsorption, setShowAbsorption] = useState(true)
+  // 数値ラベルの表示トグル (線・マーカーは出したまま 数字だけ非表示にできる)
+  const [showGroundValue, setShowGroundValue] = useState(true)
+  const [showPlannedValue, setShowPlannedValue] = useState(true)
+  const [showCutValue, setShowCutValue] = useState(true)
 
   // ホバー中の測点インデックス（緑の縦線にカーソルを合わせたとき）
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
@@ -851,9 +855,43 @@ export function CrossSectionChart({
                 onChange={(e) => setShowSlope(e.target.checked)}
                 className="h-3 w-3"
               />
-              <span className="w-6 text-center text-blue-700 font-mono text-[11px]">1/N</span>
+              <span className="w-6 text-center text-green-700 font-mono text-[11px]">1/N</span>
               <span className="text-slate-700">勾配ラベル</span>
             </label>
+            {/* 数値ラベル (現況高/計画高/切深) の表示切替 */}
+            <div className="border-t pt-1 mt-1 space-y-1">
+              <div className="text-slate-500 text-[10px]">数値ラベル</div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showGroundValue}
+                  onChange={(e) => setShowGroundValue(e.target.checked)}
+                  className="h-3 w-3"
+                />
+                <span className="w-6 text-center font-mono text-[11px]" style={{ color: '#000' }}>45.9</span>
+                <span className="text-slate-700">現況高値</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showPlannedValue}
+                  onChange={(e) => setShowPlannedValue(e.target.checked)}
+                  className="h-3 w-3"
+                />
+                <span className="w-6 text-center font-mono text-[11px]" style={{ color: '#dc2626' }}>45.1</span>
+                <span className="text-slate-700">計画高値</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showCutValue}
+                  onChange={(e) => setShowCutValue(e.target.checked)}
+                  className="h-3 w-3"
+                />
+                <span className="w-6 text-center font-mono text-[11px]" style={{ color: '#2563eb' }}>0.80</span>
+                <span className="text-slate-700">切深値</span>
+              </label>
+            </div>
           </div>
           )}
         </div>
@@ -1016,13 +1054,14 @@ export function CrossSectionChart({
                   fillOpacity={0.85}
                   rx={2}
                 />
-                {/* 勾配ラベルテキスト */}
+                {/* 勾配ラベルテキスト (区間勾配 = 緑) */}
                 <text
                   x={midX}
                   y={midY}
                   textAnchor="middle"
                   dominantBaseline="middle"
-                  className="fill-blue-700 text-[16px] font-medium"
+                  className="text-[16px] font-medium"
+                  fill="#15803d"
                 >
                   {slope.slope}
                 </text>
@@ -1133,25 +1172,28 @@ export function CrossSectionChart({
                       stroke="white"
                       strokeWidth="1.5"
                     />
-                    <text
-                      x={x + 7}
-                      y={yScale(point.groundHeight) - 6}
-                      className="fill-amber-800 text-[11px] font-medium"
-                      style={{
-                        paintOrder: 'stroke',
-                        stroke: 'white',
-                        strokeWidth: 3,
-                        strokeLinejoin: 'round',
-                      }}
-                    >
-                      {point.groundHeight.toFixed(3)}
-                    </text>
+                    {showGroundValue && (
+                      <text
+                        x={x + 7}
+                        y={yScale(point.groundHeight) - 6}
+                        className="text-[11px] font-medium"
+                        fill="#000"
+                        style={{
+                          paintOrder: 'stroke',
+                          stroke: 'white',
+                          strokeWidth: 3,
+                          strokeLinejoin: 'round',
+                        }}
+                      >
+                        {point.groundHeight.toFixed(3)}
+                      </text>
+                    )}
                   </>
                 )}
 
                 {/* 切深ラベル（地盤高 - 計画高）。地盤と計画の中間に 90° 回転して表示
                    （-90° 回転で「左が数字の上」になる） */}
-                {point.groundHeight !== null && point.plannedHeight !== null && cutDepthVisibleSet.has(idx) && (() => {
+                {showCutValue && point.groundHeight !== null && point.plannedHeight !== null && cutDepthVisibleSet.has(idx) && (() => {
                   const gy = yScale(point.groundHeight)
                   const py = yScale(point.plannedHeight)
                   const cutDepth = point.groundHeight - point.plannedHeight
@@ -1165,7 +1207,8 @@ export function CrossSectionChart({
                       textAnchor="middle"
                       dominantBaseline="middle"
                       transform={`rotate(-90, ${cx}, ${midY})`}
-                      className="fill-cyan-700 text-[11px] font-semibold"
+                      className="text-[11px] font-semibold"
+                      fill="#2563eb"
                       style={{
                         paintOrder: 'stroke',
                         stroke: 'white',
@@ -1235,20 +1278,23 @@ export function CrossSectionChart({
                           <title>上下ドラッグで計画高変更 / クリックで数値入力</title>
                         )}
                       </circle>
-                      <text
-                        x={x + 7}
-                        y={cy + 14}
-                        className="fill-blue-700 text-[11px] font-medium"
-                        style={{
-                          paintOrder: 'stroke',
-                          stroke: 'white',
-                          strokeWidth: 3,
-                          strokeLinejoin: 'round',
-                          pointerEvents: 'none',
-                        }}
-                      >
-                        {point.plannedHeight.toFixed(3)}
-                      </text>
+                      {showPlannedValue && (
+                        <text
+                          x={x + 7}
+                          y={cy + 14}
+                          className="text-[11px] font-medium"
+                          fill="#dc2626"
+                          style={{
+                            paintOrder: 'stroke',
+                            stroke: 'white',
+                            strokeWidth: 3,
+                            strokeLinejoin: 'round',
+                            pointerEvents: 'none',
+                          }}
+                        >
+                          {point.plannedHeight.toFixed(3)}
+                        </text>
+                      )}
                     </>
                   )
                 })()}
@@ -1276,20 +1322,23 @@ export function CrossSectionChart({
                         strokeDasharray="4,3"
                       />
                     )}
-                    <text
-                      x={x - 7}
-                      y={yScale(point.absorptionPlannedHeight) + 4}
-                      textAnchor="end"
-                      className="fill-green-700 text-[11px] font-medium"
-                      style={{
-                        paintOrder: 'stroke',
-                        stroke: 'white',
-                        strokeWidth: 3,
-                        strokeLinejoin: 'round',
-                      }}
-                    >
-                      {point.absorptionPlannedHeight.toFixed(3)}
-                    </text>
+                    {showPlannedValue && (
+                      <text
+                        x={x - 7}
+                        y={yScale(point.absorptionPlannedHeight) + 4}
+                        textAnchor="end"
+                        className="text-[11px] font-medium"
+                        fill="#000"
+                        style={{
+                          paintOrder: 'stroke',
+                          stroke: 'white',
+                          strokeWidth: 3,
+                          strokeLinejoin: 'round',
+                        }}
+                      >
+                        {point.absorptionPlannedHeight.toFixed(3)}
+                      </text>
+                    )}
                   </g>
                 )}
 
