@@ -77,6 +77,23 @@ export interface SfcExportOptions {
      *  false にすると 標準と一致する切深も 全部出力する */
     cutDepthOnlyIfDiffFromStd?: boolean
   }
+  /** 用紙サイズ 明示指定 (mm)。未指定なら bbox から自動選択。 */
+  paperSize?: 'A0' | 'A1' | 'A2' | 'A3'
+  /** 図面最上部に大きく描くタイトル (例: '暗渠施工図')。空/未指定なら描画しない */
+  title?: string
+  /** 現場名 (図面上部左寄せ)。空/未指定なら描画しない */
+  projectName?: string | null
+  /** 工区名 (図面上部右寄せ)。空/未指定なら描画しない */
+  subtitle?: string | null
+  /** 上端右に方位マーク (N) を描く */
+  showNorthArrow?: boolean
+  /** 参照点 (基準点)。x=北, y=東 (PipeVertex 系) */
+  referencePoints?: Array<{ x: number; y: number; label: string }>
+  /** 工事区域ポリゴン。各 points は x=北, y=東 */
+  workAreas?: Array<{
+    name?: string
+    points: Array<{ x: number; y: number; label: string }>
+  }>
 }
 
 // SXF 標準の色コード (使う分だけ列挙)。TREND-ONE が出力した参照 SFC の
@@ -328,6 +345,25 @@ export function generateSfcPipesContent(
     emitDistance ||
     emitDiameter
 
+  // 新規: ヘッダ / 追加要素 (方位マーク・基準点・工事区域) にも文字を使う
+  const title = options.title ?? ''
+  const projectName = options.projectName ?? ''
+  const subtitle = options.subtitle ?? ''
+  const showNorthArrow = options.showNorthArrow ?? false
+  const refPoints = options.referencePoints ?? []
+  const workAreasIn = options.workAreas ?? []
+  const emitTitle = !!title
+  const emitHeaderInfo = !!projectName || !!subtitle
+  const emitRefPoints = refPoints.length > 0
+  const emitWorkAreas = workAreasIn.length > 0
+  const needsTextFont =
+    anyText ||
+    emitTitle ||
+    emitHeaderInfo ||
+    showNorthArrow ||
+    emitRefPoints ||
+    emitWorkAreas
+
   const txt = options.textOptions ?? {}
   const moji = txt.moji ?? 2
   const pipeNumberSize = txt.pipeNumberSize ?? 2.5
@@ -405,7 +441,7 @@ export function generateSfcPipesContent(
     }
     const contentW = (rMaxX - rMinX) * mToPaperMm + marginMm * 2
     const contentH = (rMaxY - rMinY) * mToPaperMm + marginMm * 2
-    sheet = pickSheet(contentW, contentH)
+    sheet = options.paperSize ? PAPER_SIZE_MM[options.paperSize] : pickSheet(contentW, contentH)
 
     const rotOriginX = cs * sfOriginX - sn * sfOriginY
     const rotOriginY = sn * sfOriginX + cs * sfOriginY
@@ -438,7 +474,7 @@ export function generateSfcPipesContent(
     paperMinYShared = sfMinY
     const contentW = (sfMaxX - sfMinX) * mToPaperMm + marginMm * 2
     const contentH = (sfMaxY - sfMinY) * mToPaperMm + marginMm * 2
-    sheet = pickSheet(contentW, contentH)
+    sheet = options.paperSize ? PAPER_SIZE_MM[options.paperSize] : pickSheet(contentW, contentH)
     toContent = (x, y) => {
       const sfx = y
       const sfy = x
@@ -521,7 +557,7 @@ export function generateSfcPipesContent(
 
   // テキストフォント (使う場合のみ宣言)
   const TEXT_FONT_IDX = 1 // 最初の text_font_feature が 1
-  if (anyText) {
+  if (needsTextFont) {
     emit(`#${nextId()} = text_font_feature(\\'ＭＳ ゴシック\\')`)
   }
 
@@ -1127,6 +1163,155 @@ export function generateSfcPipesContent(
     }
   }
 
+  // ===== 追加要素: 基準点 / 工事区域 (実座標系 = realToPaperMm で配置) =====
+  if (emitRefPoints) {
+    const refLayer = registerTextLayer('基準点')
+    // radius/text は用紙 mm。survey-mode の circle は sfig 縮尺の影響を受けるが、
+    // 追加要素は sfig の外 (top-level) に置くため 用紙 mm 直値でよい。
+    const refRadiusMm = 0.5
+    for (const rp of refPoints) {
+      const { px, py } = realToPaperMm(rp.x, rp.y)
+      emit(
+        `#${nextId()} = circle_feature('${refLayer}','${COLOR_CODE.black}','${FONT_CONTINUOUS}','${WIDTH_025}','${px.toFixed(6)}','${py.toFixed(6)}','${refRadiusMm.toFixed(6)}')`,
+      )
+      // ラベル: 右上に少しオフセット
+      emitText(
+        refLayer,
+        COLOR_CODE.black,
+        rp.label,
+        px + 1.0,
+        py + 1.0,
+        2,
+        0,
+        1,
+      )
+    }
+  }
+
+  if (emitWorkAreas) {
+    const areaLayer = registerTextLayer('工事区域')
+    const areaLabelLayer = registerTextLayer('工事区域点名')
+    for (const wa of workAreasIn) {
+      if (wa.points.length < 2) continue
+      // 閉じたポリライン (最初の頂点を末尾に追加)
+      const closed = [...wa.points, wa.points[0]]
+      const paperPts = closed.map((p) => realToPaperMm(p.x, p.y))
+      const xs = paperPts.map((p) => p.px.toFixed(6)).join(',')
+      const ys = paperPts.map((p) => p.py.toFixed(6)).join(',')
+      emit(
+        `#${nextId()} = polyline_feature('${areaLayer}','${COLOR_CODE.green}','${FONT_CONTINUOUS}','${WIDTH_025}','${paperPts.length}','(${xs})','(${ys})')`,
+      )
+      // 頂点ラベル (点名) — 右上オフセット
+      for (const p of wa.points) {
+        const { px, py } = realToPaperMm(p.x, p.y)
+        emitText(
+          areaLabelLayer,
+          COLOR_CODE.black,
+          p.label,
+          px + 1.0,
+          py + 1.0,
+          2,
+          0,
+          1,
+        )
+      }
+    }
+  }
+
+  // ===== 追加要素: 図面ヘッダ (タイトル・現場名・工区名) / 方位マーク =====
+  // これらは "用紙上の絶対位置" (実座標に無関係) で配置する。sheet 全体基準。
+  if (emitTitle) {
+    const titleLayer = registerTextLayer('タイトル')
+    const titleHeight = 10
+    const w = title.length > 0 ? titleHeight * textWidthUnits(title) : 0
+    emitText(
+      titleLayer,
+      COLOR_CODE.black,
+      title,
+      sheet.width / 2 - w / 2,
+      sheet.height - 15,
+      titleHeight,
+      0,
+      1,
+    )
+  }
+  if (emitHeaderInfo) {
+    const infoLayer = registerTextLayer('図面情報')
+    const infoHeight = 4
+    if (projectName) {
+      emitText(
+        infoLayer,
+        COLOR_CODE.black,
+        projectName,
+        20,
+        sheet.height - 30,
+        infoHeight,
+        0,
+        1,
+      )
+    }
+    if (subtitle) {
+      const w = infoHeight * textWidthUnits(subtitle)
+      emitText(
+        infoLayer,
+        COLOR_CODE.black,
+        subtitle,
+        sheet.width - 20 - w,
+        sheet.height - 30,
+        infoHeight,
+        0,
+        1,
+      )
+    }
+  }
+  if (showNorthArrow) {
+    const northLayer = registerTextLayer('方位マーク')
+    // 中心: 上端右 (sheet.width - 30, sheet.height - 30)
+    const cx = sheet.width - 30
+    const cy = sheet.height - 30
+    const R = 10 // 半径 mm
+    // 「real の北」= 実座標 x=+方向。SFC 座標系では swap 後 (X=東=y, Y=北=x) の Y+ 方向。
+    // その方向が用紙上でどこを向くか: 回転 sxfAngleRad を適用。
+    // real (x=1, y=0) → sf (X=0, Y=1) → 回転後 (rx=-sin, ry=cos)
+    const arrowX = -Math.sin(sxfAngleRad)
+    const arrowY = Math.cos(sxfAngleRad)
+    // 矢印先端
+    const tipX = cx + arrowX * R
+    const tipY = cy + arrowY * R
+    // 尾 (逆方向) の左右
+    const backX = cx - arrowX * R * 0.4
+    const backY = cy - arrowY * R * 0.4
+    // 尾の左右 (矢印方向に垂直 ±perp)
+    const perpX = -arrowY
+    const perpY = arrowX
+    const wing = R * 0.35
+    const leftX = backX + perpX * wing
+    const leftY = backY + perpY * wing
+    const rightX = backX - perpX * wing
+    const rightY = backY - perpY * wing
+    // 三角形 (tip → left → right → tip) を polyline で
+    const xs = [tipX, leftX, rightX, tipX].map((v) => v.toFixed(6)).join(',')
+    const ys = [tipY, leftY, rightY, tipY].map((v) => v.toFixed(6)).join(',')
+    emit(
+      `#${nextId()} = polyline_feature('${northLayer}','${COLOR_CODE.black}','${FONT_CONTINUOUS}','${WIDTH_035}','4','(${xs})','(${ys})')`,
+    )
+    // N ラベル (先端の外側)
+    const labelSize = 4
+    const labelDist = R + labelSize * 0.5
+    const nlx = cx + arrowX * labelDist - (labelSize * textWidthUnits('N')) / 2
+    const nly = cy + arrowY * labelDist
+    emitText(
+      northLayer,
+      COLOR_CODE.black,
+      'N',
+      nlx,
+      nly,
+      labelSize,
+      0,
+      1,
+    )
+  }
+
   // ===== 図面シート + レイヤ =====
   emit(
     `#${nextId()} = drawing_sheet_feature(\\'${fileBase}\\','1','1','${sheet.width}','${sheet.height}')`,
@@ -1159,6 +1344,14 @@ function escapeSfcString(s: string): string {
   // SFC のリテラルは \' で囲まれる。内部の \\' や制御文字は避ける。
   // 実運用上、単純に \\ と \' を全角に落とすか除去する。
   return s.replace(/\\/g, '/').replace(/'/g, '`')
+}
+
+// 用紙サイズ mm (横長固定)
+const PAPER_SIZE_MM: Record<'A0' | 'A1' | 'A2' | 'A3', { width: number; height: number }> = {
+  A0: { width: 1189, height: 841 },
+  A1: { width: 841, height: 594 },
+  A2: { width: 594, height: 420 },
+  A3: { width: 420, height: 297 },
 }
 
 // 内容が収まる標準 A サイズシートを選ぶ (横長固定)

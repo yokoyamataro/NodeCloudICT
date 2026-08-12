@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { X, Download, Map as MapIcon } from 'lucide-react'
 import Encoding from 'encoding-japanese'
 import type { PlanGroup } from '@/stores/constructionPlanStore'
@@ -8,6 +8,9 @@ import {
   fetchSfcDrawingSettings,
   upsertSfcDrawingSettings,
 } from '@/lib/sfcDrawingSettings'
+import { useCoordinateStore } from '@/stores/coordinateStore'
+import { useWorkAreaStore } from '@/stores/workAreaStore'
+import { useProjectListStore } from '@/stores/projectListStore'
 
 // 文字列を Shift-JIS の Uint8Array に変換
 function toShiftJIS(text: string): Uint8Array {
@@ -20,6 +23,8 @@ function toShiftJIS(text: string): Uint8Array {
 }
 
 const SFC_SETTINGS_STORAGE_KEY = 'nodecloud:sfc-export-settings'
+
+type PaperSizeSetting = 'auto' | 'A0' | 'A1' | 'A2' | 'A3'
 
 interface SfcSettings {
   sfcPreserveSurvey: boolean
@@ -41,6 +46,11 @@ interface SfcSettings {
   sfcIncDistance: boolean
   sfcIncDiameter: boolean
   sfcCutDepthOnlyIfDiff: boolean
+  sfcPaperSize: PaperSizeSetting
+  sfcTitle: string
+  sfcShowNorthArrow: boolean
+  sfcIncWorkArea: boolean
+  sfcSelectedRefPointIds: string[]
 }
 
 const DEFAULT_SFC_SETTINGS: SfcSettings = {
@@ -63,6 +73,11 @@ const DEFAULT_SFC_SETTINGS: SfcSettings = {
   sfcIncDistance: true,
   sfcIncDiameter: true,
   sfcCutDepthOnlyIfDiff: true,
+  sfcPaperSize: 'A1',
+  sfcTitle: '暗渠施工図',
+  sfcShowNorthArrow: true,
+  sfcIncWorkArea: true,
+  sfcSelectedRefPointIds: [],
 }
 
 function loadSfcSettings(): SfcSettings {
@@ -113,6 +128,18 @@ export function SfcPlanDrawingModal({
   const [sfcIncDistance, setSfcIncDistance] = useState<boolean>(DEFAULT_SFC_SETTINGS.sfcIncDistance)
   const [sfcIncDiameter, setSfcIncDiameter] = useState<boolean>(DEFAULT_SFC_SETTINGS.sfcIncDiameter)
   const [sfcCutDepthOnlyIfDiff, setSfcCutDepthOnlyIfDiff] = useState<boolean>(DEFAULT_SFC_SETTINGS.sfcCutDepthOnlyIfDiff)
+  const [sfcPaperSize, setSfcPaperSize] = useState<PaperSizeSetting>(DEFAULT_SFC_SETTINGS.sfcPaperSize)
+  const [sfcTitle, setSfcTitle] = useState<string>(DEFAULT_SFC_SETTINGS.sfcTitle)
+  const [sfcShowNorthArrow, setSfcShowNorthArrow] = useState<boolean>(DEFAULT_SFC_SETTINGS.sfcShowNorthArrow)
+  const [sfcIncWorkArea, setSfcIncWorkArea] = useState<boolean>(DEFAULT_SFC_SETTINGS.sfcIncWorkArea)
+  const [sfcSelectedRefPointIds, setSfcSelectedRefPointIds] = useState<string[]>(DEFAULT_SFC_SETTINGS.sfcSelectedRefPointIds)
+
+  // 座標 / 工事区域 / プロジェクトを stores から取得
+  const coordinates = useCoordinateStore((s) => s.coordinates)
+  const fetchCoordinates = useCoordinateStore((s) => s.fetchCoordinates)
+  const workAreasByType = useWorkAreaStore((s) => s.workAreas)
+  const fetchWorkAreas = useWorkAreaStore((s) => s.fetchWorkAreas)
+  const currentProject = useProjectListStore((s) => s.currentProject)
 
   // モーダルを開いたとき (open が false→true) に localStorage から読み込む
   useEffect(() => {
@@ -137,7 +164,28 @@ export function SfcPlanDrawingModal({
     setSfcIncDistance(s.sfcIncDistance)
     setSfcIncDiameter(s.sfcIncDiameter)
     setSfcCutDepthOnlyIfDiff(s.sfcCutDepthOnlyIfDiff)
+    setSfcPaperSize(s.sfcPaperSize)
+    setSfcTitle(s.sfcTitle)
+    setSfcShowNorthArrow(s.sfcShowNorthArrow)
+    setSfcIncWorkArea(s.sfcIncWorkArea)
+    setSfcSelectedRefPointIds(s.sfcSelectedRefPointIds)
   }, [open])
+
+  // モーダルを開いたら座標 / 工事区域 が空ならフェッチ (両ストアともキャッシュ機構あり)
+  useEffect(() => {
+    if (!open || !farmId) return
+    if (coordinates.length === 0) {
+      void fetchCoordinates(farmId)
+    }
+    const hasWorkAreas = Object.values(workAreasByType).some(
+      (arr) => arr && arr.length > 0,
+    )
+    if (!hasWorkAreas) {
+      void fetchWorkAreas(farmId)
+    }
+    // coordinates/workAreasByType を依存にすると 都度発火してしまうため意図的に除外
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, farmId])
 
   // 図面レベル (原点/回転/現地座標保持) は工区ごとにサーバ (Supabase) 保存
   // モーダルを開いたときにその工区の行を読み込み、あれば localStorage の値を
@@ -186,6 +234,11 @@ export function SfcPlanDrawingModal({
       sfcIncDistance,
       sfcIncDiameter,
       sfcCutDepthOnlyIfDiff,
+      sfcPaperSize,
+      sfcTitle,
+      sfcShowNorthArrow,
+      sfcIncWorkArea,
+      sfcSelectedRefPointIds,
     }
     try {
       window.localStorage.setItem(SFC_SETTINGS_STORAGE_KEY, JSON.stringify(settings))
@@ -213,7 +266,18 @@ export function SfcPlanDrawingModal({
     sfcIncDistance,
     sfcIncDiameter,
     sfcCutDepthOnlyIfDiff,
+    sfcPaperSize,
+    sfcTitle,
+    sfcShowNorthArrow,
+    sfcIncWorkArea,
+    sfcSelectedRefPointIds,
   ])
+
+  const sortedCoordinates = useMemo(() => {
+    return [...coordinates].sort((a, b) =>
+      a.pointNumber.localeCompare(b.pointNumber, 'ja', { numeric: true }),
+    )
+  }, [coordinates])
 
   if (!open) return null
 
@@ -244,6 +308,24 @@ export function SfcPlanDrawingModal({
         console.warn('図面レベル保存に失敗しましたが SFC 出力は続行します:', e)
       }
     }
+    // 基準点: 選択された ID のみ (存在しない ID は silently 無視)
+    const selectedSet = new Set(sfcSelectedRefPointIds)
+    const referencePoints = coordinates
+      .filter((c) => selectedSet.has(c.id))
+      .map((c) => ({ x: c.x, y: c.y, label: c.pointNumber }))
+
+    // 工事区域: underdrain 種別のみ
+    const workAreas = sfcIncWorkArea
+      ? (workAreasByType['underdrain'] ?? []).map((wa) => ({
+          name: wa.name,
+          points: wa.points.map((p) => ({
+            x: p.x,
+            y: p.y,
+            label: p.pointNumber,
+          })),
+        }))
+      : []
+
     const sfcText = generateSfcPipesContent(pipes, {
       fileBaseName: fileBase,
       scale: 1000,
@@ -269,6 +351,13 @@ export function SfcPlanDrawingModal({
         pipeNumberSize,
         cutDepthOnlyIfDiffFromStd: sfcCutDepthOnlyIfDiff,
       },
+      paperSize: sfcPaperSize === 'auto' ? undefined : sfcPaperSize,
+      title: sfcTitle,
+      projectName: currentProject?.name ?? null,
+      subtitle: farmName,
+      showNorthArrow: sfcShowNorthArrow,
+      referencePoints,
+      workAreas,
     })
     const sjis = toShiftJIS(sfcText)
     const buf = sjis.slice().buffer
@@ -502,6 +591,112 @@ export function SfcPlanDrawingModal({
                 <span>管径</span>
               </label>
             </div>
+          </section>
+
+          {/* 図面ヘッダ */}
+          <section className="border rounded p-3 bg-slate-50">
+            <h3 className="text-xs font-bold text-slate-700 mb-2">図面ヘッダ</h3>
+            <div className="space-y-2 text-xs">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-slate-600 w-20">用紙サイズ</span>
+                <select
+                  value={sfcPaperSize}
+                  onChange={(e) => setSfcPaperSize(e.target.value as PaperSizeSetting)}
+                  className="px-1.5 py-1 border rounded"
+                >
+                  <option value="auto">自動</option>
+                  <option value="A0">A0</option>
+                  <option value="A1">A1</option>
+                  <option value="A2">A2</option>
+                  <option value="A3">A3</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-slate-600 w-20">タイトル</span>
+                <input
+                  type="text"
+                  value={sfcTitle}
+                  onChange={(e) => setSfcTitle(e.target.value)}
+                  className="flex-1 min-w-[8rem] px-1.5 py-1 border rounded"
+                />
+              </div>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={sfcShowNorthArrow}
+                  onChange={(e) => setSfcShowNorthArrow(e.target.checked)}
+                />
+                <span>方位マーク (N) を描画</span>
+              </label>
+            </div>
+          </section>
+
+          {/* 基準点 */}
+          <section className="border rounded p-3 bg-slate-50">
+            <h3 className="text-xs font-bold text-slate-700 mb-2">
+              基準点 ({sfcSelectedRefPointIds.length}/{sortedCoordinates.length} 選択)
+            </h3>
+            {sortedCoordinates.length === 0 ? (
+              <div className="text-xs text-slate-500">座標データがありません。</div>
+            ) : (
+              <>
+                <div className="flex gap-2 mb-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSfcSelectedRefPointIds(sortedCoordinates.map((c) => c.id))
+                    }
+                    className="px-2 py-1 border rounded hover:bg-white"
+                  >
+                    全選択
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSfcSelectedRefPointIds([])}
+                    className="px-2 py-1 border rounded hover:bg-white"
+                  >
+                    全解除
+                  </button>
+                </div>
+                <div className="max-h-40 overflow-y-auto border bg-white rounded p-1.5 grid grid-cols-3 gap-1 text-xs">
+                  {sortedCoordinates.map((c) => {
+                    const checked = sfcSelectedRefPointIds.includes(c.id)
+                    return (
+                      <label key={c.id} className="flex items-center gap-1 truncate">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            setSfcSelectedRefPointIds((prev) => {
+                              if (e.target.checked) {
+                                return prev.includes(c.id) ? prev : [...prev, c.id]
+                              }
+                              return prev.filter((x) => x !== c.id)
+                            })
+                          }}
+                        />
+                        <span className="truncate">{c.pointNumber}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+              </>
+            )}
+          </section>
+
+          {/* 工事区域 */}
+          <section className="border rounded p-3 bg-slate-50">
+            <h3 className="text-xs font-bold text-slate-700 mb-2">工事区域</h3>
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={sfcIncWorkArea}
+                onChange={(e) => setSfcIncWorkArea(e.target.checked)}
+              />
+              <span>
+                暗渠施工区域を含める ({(workAreasByType['underdrain'] ?? []).length} 区域)
+              </span>
+            </label>
           </section>
 
           <div className="text-xs text-slate-500">
