@@ -396,6 +396,9 @@ export function generateSfcPipesContent(
   let sfMinYShared = 0
   let paperMinXShared = 0 // paper-mode 用: swap 後の bbox 最小 (SFC 座標系)
   let paperMinYShared = 0
+  // paper-mode 中央寄せ用: rx * mToPaperMm + paperOffsetX が最終用紙 px
+  let paperOffsetX = 0
+  let paperOffsetY = 0
 
   // survey-mode: SXF の sfig_locate 角度は (360 - user_deg) mod 360 に変換する
   const sxfAngleDeg = ((360 - rotationDeg) % 360 + 360) % 360
@@ -445,9 +448,12 @@ export function generateSfcPipesContent(
 
     const rotOriginX = cs * sfOriginX - sn * sfOriginY
     const rotOriginY = sn * sfOriginX + cs * sfOriginY
+    // 中心寄せ: 図面の bbox 中央を 用紙 (図枠) の中央に合わせる
+    const centeredOffsetX = sheet.width / 2 - ((rMinX + rMaxX) / 2) * mToPaperMm
+    const centeredOffsetY = sheet.height / 2 - ((rMinY + rMaxY) / 2) * mToPaperMm
     sfigTransform = {
-      offsetX: (marginMm - rMinX * mToPaperMm) - rotOriginX * mToPaperMm,
-      offsetY: (marginMm - rMinY * mToPaperMm) - rotOriginY * mToPaperMm,
+      offsetX: centeredOffsetX - rotOriginX * mToPaperMm,
+      offsetY: centeredOffsetY - rotOriginY * mToPaperMm,
     }
     toContent = (x, y) => ({ cx: y * 1000, cy: x * 1000 })
   } else {
@@ -475,14 +481,17 @@ export function generateSfcPipesContent(
     const contentW = (sfMaxX - sfMinX) * mToPaperMm + marginMm * 2
     const contentH = (sfMaxY - sfMinY) * mToPaperMm + marginMm * 2
     sheet = options.paperSize ? PAPER_SIZE_MM[options.paperSize] : pickSheet(contentW, contentH)
+    // 中心寄せ: 図面の bbox 中央を 用紙 (図枠) の中央に合わせる
+    paperOffsetX = sheet.width / 2 - ((sfMinX + sfMaxX) / 2) * mToPaperMm
+    paperOffsetY = sheet.height / 2 - ((sfMinY + sfMaxY) / 2) * mToPaperMm
     toContent = (x, y) => {
       const sfx = y
       const sfy = x
       const rx = cs * sfx - sn * sfy
       const ry = sn * sfx + cs * sfy
       return {
-        cx: (rx - sfMinX) * mToPaperMm + marginMm,
-        cy: (ry - sfMinY) * mToPaperMm + marginMm,
+        cx: rx * mToPaperMm + paperOffsetX,
+        cy: ry * mToPaperMm + paperOffsetY,
       }
     }
     // 使用しない (survey-only 変数) の警告避け
@@ -504,16 +513,16 @@ export function generateSfcPipesContent(
       const py = sfigTransform.offsetY + (sn * sfx + cs * sfy) * mToPaperMm
       return { px, py }
     }
-    // paper-mode: swap → 回転 → bbox シフト
+    // paper-mode: swap → 回転 → 中央寄せオフセット
     const rx = cs * sfx - sn * sfy
     const ry = sn * sfx + cs * sfy
     return {
-      px: (rx - paperMinXShared) * mToPaperMm + marginMm,
-      py: (ry - paperMinYShared) * mToPaperMm + marginMm,
+      px: rx * mToPaperMm + paperOffsetX,
+      py: ry * mToPaperMm + paperOffsetY,
     }
   }
   // survey-only 内部変数の unused 警告防止
-  void sfMinXShared; void sfMinYShared
+  void sfMinXShared; void sfMinYShared; void paperMinXShared; void paperMinYShared
 
   const out: string[] = []
   let nextIdCounter = 10
@@ -1220,6 +1229,36 @@ export function generateSfcPipesContent(
 
   // ===== 追加要素: 図面ヘッダ (タイトル・現場名・工区名) / 方位マーク =====
   // これらは "用紙上の絶対位置" (実座標に無関係) で配置する。sheet 全体基準。
+
+  // 図枠: 用紙の外周から一定距離オフセットした矩形。
+  // A0/A1 は 20mm、A2/A3 は 10mm オフセット。
+  {
+    const paperMax = Math.max(sheet.width, sheet.height)
+    const frameInset = paperMax >= 800 ? 20 : 10 // A0(1189)/A1(841) → 20, A2(594)/A3(420) → 10
+    const frameLayer = registerTextLayer('図枠')
+    const fx = [
+      frameInset,
+      sheet.width - frameInset,
+      sheet.width - frameInset,
+      frameInset,
+      frameInset,
+    ]
+      .map((v) => v.toFixed(6))
+      .join(',')
+    const fy = [
+      frameInset,
+      frameInset,
+      sheet.height - frameInset,
+      sheet.height - frameInset,
+      frameInset,
+    ]
+      .map((v) => v.toFixed(6))
+      .join(',')
+    emit(
+      `#${nextId()} = polyline_feature('${frameLayer}','${COLOR_CODE.black}','${FONT_CONTINUOUS}','${WIDTH_035}','5','(${fx})','(${fy})')`,
+    )
+  }
+
   if (emitTitle) {
     const titleLayer = registerTextLayer('タイトル')
     const titleHeight = 10
@@ -1269,37 +1308,52 @@ export function generateSfcPipesContent(
     // 中心: 上端右 (sheet.width - 30, sheet.height - 30)
     const cx = sheet.width - 30
     const cy = sheet.height - 30
-    const R = 10 // 半径 mm
     // 「real の北」= 実座標 x=+方向。SFC 座標系では swap 後 (X=東=y, Y=北=x) の Y+ 方向。
-    // その方向が用紙上でどこを向くか: 回転 sxfAngleRad を適用。
-    // real (x=1, y=0) → sf (X=0, Y=1) → 回転後 (rx=-sin, ry=cos)
-    const arrowX = -Math.sin(sxfAngleRad)
-    const arrowY = Math.cos(sxfAngleRad)
-    // 矢印先端
-    const tipX = cx + arrowX * R
-    const tipY = cy + arrowY * R
-    // 尾 (逆方向) の左右
-    const backX = cx - arrowX * R * 0.4
-    const backY = cy - arrowY * R * 0.4
-    // 尾の左右 (矢印方向に垂直 ±perp)
-    const perpX = -arrowY
-    const perpY = arrowX
-    const wing = R * 0.35
-    const leftX = backX + perpX * wing
-    const leftY = backY + perpY * wing
-    const rightX = backX - perpX * wing
-    const rightY = backY - perpY * wing
-    // 三角形 (tip → left → right → tip) を polyline で
-    const xs = [tipX, leftX, rightX, tipX].map((v) => v.toFixed(6)).join(',')
-    const ys = [tipY, leftY, rightY, tipY].map((v) => v.toFixed(6)).join(',')
-    emit(
-      `#${nextId()} = polyline_feature('${northLayer}','${COLOR_CODE.black}','${FONT_CONTINUOUS}','${WIDTH_035}','4','(${xs})','(${ys})')`,
-    )
+    // 回転後の "up (北)" 方向: (upX, upY) = (-sin θ, cos θ)
+    const upX = -Math.sin(sxfAngleRad)
+    const upY = Math.cos(sxfAngleRad)
+    // "right" は up を CW 90° 回転: (rightX, rightY) = (cos θ, sin θ)
+    const rightX = Math.cos(sxfAngleRad)
+    const rightY = Math.sin(sxfAngleRad)
+    // 局所座標 (u=右+, v=上+, mm) → 用紙 (px, py)
+    const toPaper = (u: number, v: number): [number, number] => [
+      cx + u * rightX + v * upX,
+      cy + u * rightY + v * upY,
+    ]
+    // 方位マーク寸法 (mm)
+    const H = 10 // 半高さ (総高さ = 20)
+    const barbW = 3 // 斜め棒の水平ずれ
+    const barbV = 4 // 斜め棒の下端の高さ
+    const crossW = 4 // 横棒の半幅
+    const crossV = -6 // 横棒の高さ (下寄り)
+    const linePairs: Array<[[number, number], [number, number]]> = [
+      // 1) 縦棒: 下端 → 上端 (先端)
+      [
+        [0, -H],
+        [0, H],
+      ],
+      // 2) 斜め棒: 左下 → 先端
+      [
+        [-barbW, barbV],
+        [0, H],
+      ],
+      // 3) 横棒: 左 → 右 (下寄り)
+      [
+        [-crossW, crossV],
+        [crossW, crossV],
+      ],
+    ]
+    for (const [[u1, v1], [u2, v2]] of linePairs) {
+      const [x1, y1] = toPaper(u1, v1)
+      const [x2, y2] = toPaper(u2, v2)
+      emit(
+        `#${nextId()} = line_feature('${northLayer}','${COLOR_CODE.black}','${FONT_CONTINUOUS}','${WIDTH_035}','${x1.toFixed(6)}','${y1.toFixed(6)}','${x2.toFixed(6)}','${y2.toFixed(6)}')`,
+      )
+    }
     // N ラベル (先端の外側)
     const labelSize = 4
-    const labelDist = R + labelSize * 0.5
-    const nlx = cx + arrowX * labelDist - (labelSize * textWidthUnits('N')) / 2
-    const nly = cy + arrowY * labelDist
+    const labelDist = H + labelSize * 0.5
+    const [nlx, nly] = toPaper(-(labelSize * textWidthUnits('N')) / 2, labelDist)
     emitText(
       northLayer,
       COLOR_CODE.black,
