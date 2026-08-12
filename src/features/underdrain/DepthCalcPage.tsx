@@ -2707,7 +2707,7 @@ export function DepthCalcPage() {
 
       {/* 生成確認ダイアログ */}
       {showGenerateConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]">
           <div className="bg-white rounded-lg shadow-xl p-6 w-[420px]">
             <div className="flex items-center gap-3 mb-4">
               <AlertTriangle className="h-6 w-6 text-yellow-500" />
@@ -2827,7 +2827,7 @@ export function DepthCalcPage() {
 
       {/* 削除確認ダイアログ */}
       {showDeleteConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]">
           <div className="bg-white rounded-lg shadow-xl p-6 w-[420px]">
             <div className="flex items-center gap-3 mb-4">
               <AlertTriangle className="h-6 w-6 text-red-500" />

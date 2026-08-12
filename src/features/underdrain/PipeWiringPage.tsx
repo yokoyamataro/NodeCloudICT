@@ -785,9 +785,10 @@ export function PipeWiringPage() {
       }
       // 直落暗渠タブに 2 行を追加 (別タブにいたら direct タブへ切替)
       setActiveTabType('direct')
-      setDirectRows([...directRows, absorptionRow, outletRow])
-      setSelectionMode('none')
-      setSelectedRowId(null)
+      // 連続追加時の stale closure を避けるため 関数形の setState を使う
+      setDirectRows((prev) => [...prev, absorptionRow, outletRow])
+      // 直落暗渠は連続して選択可能: モードを解除せず、次の配管クリック待ち。
+      // 明示的に終わらせるときはツールバーの「キャンセル」ボタンでモード OFF。
       return
     }
 
@@ -1846,7 +1847,8 @@ export function PipeWiringPage() {
                 {selectionMode === 'direct-auto' ? 'キャンセル' : '配管を選択して直落暗渠を追加'}
               </button>
               <span className="text-[11px] text-orange-700">
-                直落暗渠は合流部が無いので、1 本ずつ地図上でタップして登録します
+                直落暗渠は合流部が無いので、地図上で 1 本ずつタップして続けて登録できます
+                (終了は「キャンセル」)
               </span>
             </div>
           )}
