@@ -25,7 +25,7 @@ function toShiftJIS(text: string): Uint8Array {
 const SFC_SETTINGS_STORAGE_KEY = 'nodecloud:sfc-export-settings'
 
 type PaperSizeSetting = 'auto' | 'A0' | 'A1' | 'A2' | 'A3'
-type CoordSystemSetting = '2024' | '2011' | 'custom'
+type ElevationSystemSetting = '2024' | '2011' | 'custom'
 
 interface SfcSettings {
   sfcPreserveSurvey: boolean
@@ -53,7 +53,9 @@ interface SfcSettings {
   sfcIncWorkArea: boolean
   sfcSelectedRefPointIds: string[]
   sfcShowRefTable: boolean
-  sfcCoordSystem: CoordSystemSetting
+  sfcElevationSystem: ElevationSystemSetting
+  /** ジオイド2024 との差分 (m)。文字列で保持し、送信時に parseFloat */
+  sfcElevationDelta: string
 }
 
 const DEFAULT_SFC_SETTINGS: SfcSettings = {
@@ -82,7 +84,8 @@ const DEFAULT_SFC_SETTINGS: SfcSettings = {
   sfcIncWorkArea: true,
   sfcSelectedRefPointIds: [],
   sfcShowRefTable: true,
-  sfcCoordSystem: '2024',
+  sfcElevationSystem: '2024',
+  sfcElevationDelta: '0',
 }
 
 function loadSfcSettings(): SfcSettings {
@@ -139,7 +142,8 @@ export function SfcPlanDrawingModal({
   const [sfcIncWorkArea, setSfcIncWorkArea] = useState<boolean>(DEFAULT_SFC_SETTINGS.sfcIncWorkArea)
   const [sfcSelectedRefPointIds, setSfcSelectedRefPointIds] = useState<string[]>(DEFAULT_SFC_SETTINGS.sfcSelectedRefPointIds)
   const [sfcShowRefTable, setSfcShowRefTable] = useState<boolean>(DEFAULT_SFC_SETTINGS.sfcShowRefTable)
-  const [sfcCoordSystem, setSfcCoordSystem] = useState<CoordSystemSetting>(DEFAULT_SFC_SETTINGS.sfcCoordSystem)
+  const [sfcElevationSystem, setSfcElevationSystem] = useState<ElevationSystemSetting>(DEFAULT_SFC_SETTINGS.sfcElevationSystem)
+  const [sfcElevationDelta, setSfcElevationDelta] = useState<string>(DEFAULT_SFC_SETTINGS.sfcElevationDelta)
 
   // 座標 / 工事区域 / プロジェクトを stores から取得
   const coordinates = useCoordinateStore((s) => s.coordinates)
@@ -177,7 +181,8 @@ export function SfcPlanDrawingModal({
     setSfcIncWorkArea(s.sfcIncWorkArea)
     setSfcSelectedRefPointIds(s.sfcSelectedRefPointIds)
     setSfcShowRefTable(s.sfcShowRefTable)
-    setSfcCoordSystem(s.sfcCoordSystem)
+    setSfcElevationSystem(s.sfcElevationSystem)
+    setSfcElevationDelta(s.sfcElevationDelta)
   }, [open])
 
   // モーダルを開いたら座標 / 工事区域 が空ならフェッチ (両ストアともキャッシュ機構あり)
@@ -213,6 +218,8 @@ export function SfcPlanDrawingModal({
       setSfcRotMin(s.rotationMin)
       setSfcRotSec(s.rotationSec)
       setSfcPreserveSurvey(s.preserveSurveyCoords)
+      setSfcElevationSystem(s.elevationSystem)
+      setSfcElevationDelta(String(s.elevationDelta))
     })()
     return () => {
       cancelled = true
@@ -249,7 +256,8 @@ export function SfcPlanDrawingModal({
       sfcIncWorkArea,
       sfcSelectedRefPointIds,
       sfcShowRefTable,
-      sfcCoordSystem,
+      sfcElevationSystem,
+      sfcElevationDelta,
     }
     try {
       window.localStorage.setItem(SFC_SETTINGS_STORAGE_KEY, JSON.stringify(settings))
@@ -283,7 +291,8 @@ export function SfcPlanDrawingModal({
     sfcIncWorkArea,
     sfcSelectedRefPointIds,
     sfcShowRefTable,
-    sfcCoordSystem,
+    sfcElevationSystem,
+    sfcElevationDelta,
   ])
 
   const sortedCoordinates = useMemo(() => {
@@ -304,8 +313,12 @@ export function SfcPlanDrawingModal({
     const rotDecimal = sfcRotDeg + sfcRotMin / 60 + sfcRotSec / 3600
     const origX = sfcOriginX.trim() === '' ? undefined : parseFloat(sfcOriginX)
     const origY = sfcOriginY.trim() === '' ? undefined : parseFloat(sfcOriginY)
+    const elevDelta = (() => {
+      const n = parseFloat(sfcElevationDelta)
+      return Number.isFinite(n) ? n : 0
+    })()
 
-    // 図面レベル (原点/回転/現地座標保持) を工区ごとにサーバ保存
+    // 図面レベル (原点/回転/現地座標保持/標高系/差分) を工区ごとにサーバ保存
     if (farmId) {
       try {
         await upsertSfcDrawingSettings(farmId, {
@@ -315,6 +328,8 @@ export function SfcPlanDrawingModal({
           rotationMin: sfcRotMin,
           rotationSec: sfcRotSec,
           preserveSurveyCoords: sfcPreserveSurvey,
+          elevationSystem: sfcElevationSystem,
+          elevationDelta: elevDelta,
         })
       } catch (e) {
         // 保存失敗しても出力自体は続行 (ネット障害時にダウンロードだけはできる)
@@ -379,7 +394,9 @@ export function SfcPlanDrawingModal({
       referencePoints,
       workAreas,
       showReferenceTable: sfcShowRefTable,
-      coordinateSystem: sfcCoordSystem,
+      zoneNumber: currentProject?.coordinate_zone ?? undefined,
+      elevationSystem: sfcElevationSystem,
+      elevationDelta: elevDelta,
     })
     const sjis = toShiftJIS(sfcText)
     const buf = sjis.slice().buffer
@@ -711,20 +728,39 @@ export function SfcPlanDrawingModal({
                     />
                     <span>基準杭座標一覧表 を図面右下に出力</span>
                   </label>
-                  <label className="flex items-center gap-2 text-xs">
-                    <span className="w-16">座標系:</span>
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="w-16">標高:</span>
                     <select
-                      value={sfcCoordSystem}
+                      value={sfcElevationSystem}
                       onChange={(e) =>
-                        setSfcCoordSystem(e.target.value as CoordSystemSetting)
+                        setSfcElevationSystem(e.target.value as ElevationSystemSetting)
                       }
                       className="border rounded px-2 py-1"
                     >
-                      <option value="2024">測地成果2024</option>
-                      <option value="2011">測地成果2011</option>
+                      <option value="2024">ジオイド2024</option>
+                      <option value="2011">ジオイド2011</option>
                       <option value="custom">任意標高</option>
                     </select>
-                  </label>
+                    {sfcElevationSystem !== '2024' && (
+                      <>
+                        <span className="ml-2">
+                          ジオイド2024 との差分 (m):
+                        </span>
+                        <input
+                          type="number"
+                          step="0.001"
+                          value={sfcElevationDelta}
+                          onChange={(e) => setSfcElevationDelta(e.target.value)}
+                          className="border rounded px-2 py-1 w-24"
+                        />
+                      </>
+                    )}
+                  </div>
+                  {currentProject?.coordinate_zone != null && (
+                    <div className="text-xs text-slate-500">
+                      系番号 (現場設定より): 第{currentProject.coordinate_zone}系
+                    </div>
+                  )}
                 </div>
               </>
             )}

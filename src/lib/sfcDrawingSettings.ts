@@ -3,6 +3,8 @@
 
 import { supabase } from '@/lib/supabase'
 
+export type ElevationSystem = '2024' | '2011' | 'custom'
+
 export interface SfcDrawingLevelSettings {
   originX: number | null
   originY: number | null
@@ -10,6 +12,10 @@ export interface SfcDrawingLevelSettings {
   rotationMin: number
   rotationSec: number
   preserveSurveyCoords: boolean
+  /** 基準杭表フッタの標高系 */
+  elevationSystem: ElevationSystem
+  /** ジオイド2024 との差分 (m)。2024 のとき無視 */
+  elevationDelta: number
 }
 
 export const DEFAULT_SFC_DRAWING_LEVEL: SfcDrawingLevelSettings = {
@@ -19,6 +25,8 @@ export const DEFAULT_SFC_DRAWING_LEVEL: SfcDrawingLevelSettings = {
   rotationMin: 0,
   rotationSec: 0,
   preserveSurveyCoords: false,
+  elevationSystem: '2024',
+  elevationDelta: 0,
 }
 
 interface Row {
@@ -29,6 +37,8 @@ interface Row {
   rotation_min: number
   rotation_sec: number
   preserve_survey_coords: boolean
+  elevation_system: string | null
+  elevation_delta: number | null
 }
 
 /** サーバから読み込む。行が無い工区は null を返す */
@@ -47,6 +57,9 @@ export async function fetchSfcDrawingSettings(
   }
   if (!data) return null
   const row = data as Row
+  const es = row.elevation_system
+  const elevationSystem: ElevationSystem =
+    es === '2011' || es === 'custom' ? es : '2024'
   return {
     originX: row.origin_x,
     originY: row.origin_y,
@@ -54,6 +67,8 @@ export async function fetchSfcDrawingSettings(
     rotationMin: row.rotation_min,
     rotationSec: row.rotation_sec,
     preserveSurveyCoords: row.preserve_survey_coords,
+    elevationSystem,
+    elevationDelta: row.elevation_delta ?? 0,
   }
 }
 
@@ -70,6 +85,8 @@ export async function upsertSfcDrawingSettings(
     rotation_min: s.rotationMin,
     rotation_sec: s.rotationSec,
     preserve_survey_coords: s.preserveSurveyCoords,
+    elevation_system: s.elevationSystem,
+    elevation_delta: s.elevationDelta,
     updated_at: new Date().toISOString(),
   }
   const { error } = await supabase

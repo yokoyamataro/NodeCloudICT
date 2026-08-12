@@ -102,8 +102,12 @@ export interface SfcExportOptions {
   }>
   /** 基準杭座標一覧表 を右下に描画する (default false) */
   showReferenceTable?: boolean
-  /** 座標系ラベル (表フッタ)。'2024' | '2011' | 'custom' */
-  coordinateSystem?: '2024' | '2011' | 'custom'
+  /** 平面直角座標系の系番号 (プロジェクトから)。フッタ 「世界測地系N系」 に使う */
+  zoneNumber?: number
+  /** 標高系 (表フッタ)。'2024' | '2011' | 'custom' */
+  elevationSystem?: '2024' | '2011' | 'custom'
+  /** ジオイド2024 との差分 (m)。2011 / custom のとき括弧書きで表示 */
+  elevationDelta?: number
 }
 
 // SXF 標準の色コード (使う分だけ列挙)。TREND-ONE が出力した参照 SFC の
@@ -363,7 +367,9 @@ export function generateSfcPipesContent(
   const refPoints = options.referencePoints ?? []
   const workAreasIn = options.workAreas ?? []
   const showReferenceTable = (options.showReferenceTable ?? false) && refPoints.length > 0
-  const coordinateSystem = options.coordinateSystem ?? '2024'
+  const zoneNumber = options.zoneNumber ?? null
+  const elevationSystem = options.elevationSystem ?? '2024'
+  const elevationDelta = options.elevationDelta ?? 0
   const emitTitle = !!title
   const emitHeaderInfo = !!projectName || !!subtitle
   const emitRefPoints = refPoints.length > 0
@@ -1331,8 +1337,8 @@ export function generateSfcPipesContent(
       { p1: [-barbW, barbV], p2: [0, H], color: COLOR_CODE.black },
       // 3) 横棒: 左 → 右 (下寄り)
       { p1: [-crossW, crossV], p2: [crossW, crossV], color: COLOR_CODE.black },
-      // 4) 先端の閉じる線 (赤): 斜め棒の下端 → 縦棒 (先端三角を閉じる)
-      { p1: [-barbW, barbV], p2: [0, barbV], color: COLOR_CODE.red },
+      // 4) 先端の閉じる線: 斜め棒の下端 → 縦棒 (先端三角を閉じる)
+      { p1: [-barbW, barbV], p2: [0, barbV], color: COLOR_CODE.black },
     ]
     for (const { p1, p2, color } of linePairs) {
       const [x1, y1] = toPaper(p1[0], p1[1])
@@ -1399,12 +1405,23 @@ export function generateSfcPipesContent(
 
       const nRows = 1 + refPoints.length // ヘッダ 1 行 + データ
 
-      // 座標系ラベル (フッタ)
-      const csLabel = coordinateSystem === '2011'
-        ? '（座標世界測地系（JGD2011）,公共標高）'
-        : coordinateSystem === 'custom'
-          ? '（任意座標系,任意標高）'
-          : '（座標世界測地系,公共標高）'
+      // フッタ形式: "世界測地系[N]系 <ジオイド区分>[(ジオイド2024標高 ±Δ)]"
+      //   ジオイド2024 → "世界測地系N系 ジオイド2024"
+      //   ジオイド2011 → "世界測地系N系 ジオイド2011(ジオイド2024標高 -0.215)"
+      //   任意標高    → "世界測地系N系 任意標高(ジオイド2024標高 +10.535)"
+      const zoneLabel =
+        zoneNumber != null ? `世界測地系${toFullWidthDigits(zoneNumber)}系　` : ''
+      const geoidLabel =
+        elevationSystem === '2011'
+          ? 'ジオイド2011'
+          : elevationSystem === 'custom'
+            ? '任意標高'
+            : 'ジオイド2024'
+      const deltaLabel =
+        elevationSystem === '2024'
+          ? ''
+          : `(ジオイド2024標高 ${elevationDelta >= 0 ? '+' : ''}${elevationDelta.toFixed(3)})`
+      const csLabel = `${zoneLabel}${geoidLabel}${deltaLabel}`
       const footerW = footerTextHeight * textWidthUnits(csLabel)
 
       // 表右下座標
@@ -1535,6 +1552,21 @@ function textWidthUnits(s: string): number {
     else units += 1 // 全角
   }
   return units
+}
+
+/** 半角数字を 全角数字 に変換する。例: 13 → "１３"。 */
+function toFullWidthDigits(n: number): string {
+  const s = String(n)
+  let out = ''
+  for (const ch of s) {
+    const code = ch.charCodeAt(0)
+    if (code >= 0x30 && code <= 0x39) {
+      out += String.fromCharCode(0xff10 + (code - 0x30))
+    } else {
+      out += ch
+    }
+  }
+  return out
 }
 
 /** SFC 文字列内のバックスラッシュ・引用符を無害化 */
