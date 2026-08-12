@@ -883,25 +883,28 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
         const wiringRow = directRows[rowIndex]
         const nextRow = directRows[rowIndex + 1]
 
-        // absorption_end + 直後の outlet (同じ落口管) をペア扱いで統合
+        // absorption_end + 直後の outlet (同じ落口管) をペア扱いで統合。
+        // 吸水管は 1 本以上 の直列連鎖 (例: [K3, O3, O4, ..., K7-1]) を許す。
         const isPairStart =
           wiringRow.rowType === 'absorption_end' &&
-          wiringRow.absorptionPipes.length === 1 &&
+          wiringRow.absorptionPipes.length >= 1 &&
           !!wiringRow.collectorPipe &&
           nextRow?.rowType === 'outlet' &&
           nextRow.absorptionPipes.length === 0 &&
           nextRow.collectorPipe === wiringRow.collectorPipe
 
         if (isPairStart) {
-          const absorptionPipeId = wiringRow.absorptionPipes[0]
-          const absorptionPipe = pipes.find((p) => p.id === absorptionPipeId)
+          const absorptionPipeIds = wiringRow.absorptionPipes
+          const absorptionPipesInOrder = absorptionPipeIds
+            .map((id) => pipes.find((p) => p.id === id))
+            .filter((p): p is NonNullable<typeof p> => !!p)
           const outletPipe = pipes.find((p) => p.id === wiringRow.collectorPipe)
-          if (!absorptionPipe || !outletPipe) {
+          if (absorptionPipesInOrder.length === 0 || !outletPipe) {
             rowIndex++ // ペア outlet 行をスキップ
             continue
           }
 
-          const buildPoints = (pipe: typeof absorptionPipe): PlanPoint[] =>
+          const buildPoints = (pipe: typeof outletPipe): PlanPoint[] =>
             pipe.vertices.map((vertex, idx) => ({
               id: `point-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
               pointType: 'absorption' as const,
@@ -917,8 +920,10 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
               segmentDiameter: null,
             }))
 
-          // 吸水管 + 落口管 の頂点を続けて並べる
-          const combinedPoints = [...buildPoints(absorptionPipe), ...buildPoints(outletPipe)]
+          // 吸水管 (直列で複数) + 落口管 の頂点を続けて並べる
+          const combinedPoints: PlanPoint[] = []
+          for (const p of absorptionPipesInOrder) combinedPoints.push(...buildPoints(p))
+          combinedPoints.push(...buildPoints(outletPipe))
           // 区間距離を再計算 (最上流を除く各点)
           for (let i = 1; i < combinedPoints.length; i++) {
             combinedPoints[i].segmentDistance = calcDistance(
@@ -927,6 +932,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
             )
           }
 
+          const headAbsorption = absorptionPipesInOrder[0]
           const planRow: PlanRow = {
             id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
             wiringRowId: wiringRow.id,
@@ -936,11 +942,11 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
             systemIndex: directSystemIndex,
             isSystemEnd: true,
             systemEndType: 'outlet',
-            absorptionPipeId,
+            absorptionPipeId: headAbsorption.id,
             collectorPipeId: wiringRow.collectorPipe,
-            pipeNumber: absorptionPipe.number,
-            diameter: absorptionPipe.diameter,
-            designLength: absorptionPipe.designLength,
+            pipeNumber: headAbsorption.number,
+            diameter: headAbsorption.diameter,
+            designLength: headAbsorption.designLength,
             absorptionPoints: combinedPoints,
             collectorPoint: null, // 直落暗渠は集水欄なし
             wiringRowType: wiringRow.rowType ?? null,

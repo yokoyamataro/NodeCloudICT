@@ -938,13 +938,17 @@ export function DepthCalcPage() {
       )
     }
 
+    // 直落暗渠は 集水欄を持たないので 表の末尾 3 セル (gap + 集水値 + 右ラベル) を非表示。
+    const isDirect = row.groupType === 'direct'
     return (
       <div
         key={row.id}
         data-row-id={row.id}
         data-absorption-pipe-id={row.absorptionPipeId ?? undefined}
         data-collector-pipe-id={row.collectorPipeId ?? undefined}
-        className="border rounded-lg mb-2 bg-white overflow-x-auto"
+        className={`border rounded-lg mb-2 bg-white overflow-x-auto${
+          isDirect ? ' depth-row-hide-collector' : ''
+        }`}
       >
         <table className="w-full text-xs border-collapse">
           <colgroup>

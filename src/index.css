@@ -31,6 +31,17 @@ body {
 
 /* 施工計画テーブルの指標別カラー（見出し・数値ともに） */
 /*   地盤高: 黒（デフォルト）/ 計画高: 赤 / 切深: 青 / 区間勾配: 緑 */
+
+/* 直落暗渠 行は 集水列 (末尾 3 セル: 空白/集水値/右ラベル) を表示しない。
+   colgroup の col は visibility: collapse で幅を潰し、
+   thead/tbody の 対応する th/td は display: none で消す。 */
+.depth-row-hide-collector colgroup col:nth-last-child(-n+3) {
+  visibility: collapse;
+}
+.depth-row-hide-collector thead tr > *:nth-last-child(-n+3),
+.depth-row-hide-collector tbody tr > *:nth-last-child(-n+3) {
+  display: none;
+}
 tr.depth-row-ground td,
 tr.depth-row-ground input { color: #0f172a; }
 tr.depth-row-planned td,

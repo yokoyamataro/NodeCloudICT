@@ -730,53 +730,85 @@ export function PipeWiringPage() {
 
   // 地図上の管路がクリックされた時
   const handlePipeSelect = useCallback((pipeId: string, ctrlKey?: boolean) => {
-    // 直落暗渠モード: 1 本の管を選ぶと 吸水 → 落口 を自動生成。
-    // 直落暗渠は「上流の吸水管 → 下流の落口管」の 2 本ペア。
-    // - 選択管が connectionTo を持てば → 選択管を吸水、connectionTo 先を落口
-    // - 選択管が pipeType='outlet' なら → その管を落口として、上流に接続する
-    //   管 (他管の connectionTo === selectedId) を吸水として登録
+    // 直落暗渠モード: 1 本の管をタップすると connectionTo 連鎖を辿り、
+    // 途中の管を全て 吸水管、末尾 (connectionTo が null の管) を 落口として登録する。
+    //
+    //   例: K3 → O3 → O4 → O5 → O6 → K7-1 → O7 (最後が落口)
+    //       → 吸水管: [K3, O3, O4, O5, O6, K7-1]
+    //         落口管: O7
+    //
+    // 選択管に connectionTo が無い (=末端 or 落口側をタップ) 場合は、
+    // その管を落口として、上流を1本ずつ辿って 吸水管配列を組み立てる。
     if (selectionMode === 'direct-auto') {
       const selectedPipe = pipes.find((p) => p.id === pipeId)
       if (!selectedPipe) return
 
-      let absorptionId: string | null = null
+      const absorptionIds: string[] = []
       let outletId: string | null = null
 
+      const MAX_CHAIN = 50 // 循環対策の安全弁
+
       if (selectedPipe.connectionTo) {
-        // 吸水側をクリックしたパターン
-        absorptionId = selectedPipe.id
-        outletId = selectedPipe.connectionTo
+        // 選択管を含めて 下流方向 (connectionTo) に辿る
+        // 末尾 (connectionTo が null) の管が 落口。
+        const chain: string[] = [selectedPipe.id]
+        const visited = new Set<string>([selectedPipe.id])
+        let currentId: string | null = selectedPipe.connectionTo
+        while (currentId && !visited.has(currentId) && chain.length < MAX_CHAIN) {
+          visited.add(currentId)
+          chain.push(currentId)
+          const cur = pipes.find((p) => p.id === currentId)
+          currentId = cur?.connectionTo ?? null
+        }
+        // chain の末尾を落口、それ以外を吸水として扱う
+        outletId = chain[chain.length - 1]
+        absorptionIds.push(...chain.slice(0, -1))
       } else {
-        // 落口側をクリックしたパターン (or connectionTo 未設定)
-        // 「この管を落口として指している」他管を上流の吸水として拾う
-        const upstream = pipes.filter((p) => p.connectionTo === selectedPipe.id)
-        if (upstream.length === 1) {
-          absorptionId = upstream[0].id
-          outletId = selectedPipe.id
-        } else if (upstream.length === 0) {
+        // 選択管に connectionTo が無い = 末端 (落口候補) をタップしたパターン
+        // その管を落口とし、上流方向 (この管を connectionTo に持つ管) を辿る。
+        outletId = selectedPipe.id
+        const visited = new Set<string>([selectedPipe.id])
+        let currentTargetId: string | null = selectedPipe.id
+        // 分岐が起きたら止める (直落暗渠は 1 直線のみ)
+        while (currentTargetId && absorptionIds.length < MAX_CHAIN) {
+          const upstream = pipes.filter((p) => p.connectionTo === currentTargetId)
+          if (upstream.length === 0) break
+          if (upstream.length > 1) {
+            if (absorptionIds.length === 0) {
+              alert(
+                `この管路には ${upstream.length} 本の上流管が接続しています。直落暗渠 (1 直線) には向きません。吸水側の管を選択してください。`,
+              )
+              return
+            }
+            break // 途中の分岐で停止 (上流側の直線分だけを吸水化)
+          }
+          const up = upstream[0]
+          if (visited.has(up.id)) break
+          visited.add(up.id)
+          absorptionIds.unshift(up.id)
+          currentTargetId = up.id
+        }
+        if (absorptionIds.length === 0) {
           alert(
             '選択した管路に接続関係がありません。CAD解析で接続を設定してから再度お試しください。',
           )
           return
-        } else {
-          alert(
-            `この管路には ${upstream.length} 本の上流管が接続しています。直落暗渠 (1 本) には向きません。吸水側の管を選択してください。`,
-          )
-          return
         }
       }
-      if (!absorptionId || !outletId) return
+      if (absorptionIds.length === 0 || !outletId) return
 
+      const now = Date.now()
+      const rand = () => Math.random().toString(36).substring(2, 11)
       const absorptionRow: WiringRow = {
-        id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+        id: `row-${now}-${rand()}`,
         rowType: 'absorption_end',
-        absorptionPipes: [absorptionId],
+        absorptionPipes: absorptionIds,
         collectorPipe: outletId,
         isMergePipe: false,
         mergeSystemIndex: null,
       }
       const outletRow: WiringRow = {
-        id: `row-${Date.now() + 1}-${Math.random().toString(36).substring(2, 11)}`,
+        id: `row-${now + 1}-${rand()}`,
         rowType: 'outlet',
         absorptionPipes: [],
         collectorPipe: outletId,
