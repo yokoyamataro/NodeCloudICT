@@ -61,12 +61,56 @@ function resolveMergeTargetPipeNumber(
   return null
 }
 
+/** 直落暗渠 (K3+O3 を 1 planRow に統合済み) の縦断データを組む。
+ *  集水点は無いので、absorptionPoints の C~A をそのまま並べる。 */
+function buildDirectSectionData(
+  systemRows: PlanRow[],
+  pipeNumberById: Map<string, string> | undefined,
+  pipeDiameterById: Map<string, number> | undefined,
+): SectionPoint[] {
+  const out: SectionPoint[] = []
+  let cumulative = 0
+  for (const row of systemRows) {
+    for (let i = 0; i < row.absorptionPoints.length; i++) {
+      const p = row.absorptionPoints[i]
+      if (p.segmentDistance != null) cumulative += p.segmentDistance
+      const pipeNumber = row.pipeNumber ?? null
+      const diameter =
+        row.absorptionPipeId != null
+          ? pipeDiameterById?.get(row.absorptionPipeId) ?? row.diameter ?? null
+          : row.diameter ?? null
+      out.push({
+        distance: cumulative,
+        groundHeight: p.groundHeight,
+        plannedHeight: p.plannedHeight,
+        cutDepth: p.cutDepth,
+        pointName: p.pointName,
+        absorptionPipeNumber: pipeNumber,
+        absorptionPlannedHeight: p.plannedHeight,
+        collectorPipeId: null,
+        collectorPipeNumber: null,
+        collectorPipeDiameter: diameter,
+        isCollectorMidpoint: false,
+      })
+    }
+  }
+  // 使わない引数の unused 警告避け
+  void pipeNumberById
+  return out
+}
+
 function buildSectionData(
   systemRows: PlanRow[],
   pipeNumberById: Map<string, string> | undefined,
   pipeDiameterById: Map<string, number> | undefined,
   allPlanGroups: PlanGroup[] | undefined,
 ): SectionPoint[] {
+  // 直落暗渠は 1 planRow に absorptionPoints で全区間 (K3C~O3A) が入っている。
+  // 集水点は無いので、absorptionPoints をそのまま縦断の X 軸に並べる。
+  if (systemRows.length > 0 && systemRows[0].groupType === 'direct') {
+    return buildDirectSectionData(systemRows, pipeNumberById, pipeDiameterById)
+  }
+
   const points: SectionPoint[] = []
   let cumulativeDistance = 0
 

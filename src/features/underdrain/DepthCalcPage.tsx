@@ -349,6 +349,20 @@ export function DepthCalcPage() {
 
   // 施工計画を生成
   // 配管系統側に未保存変更がある場合は先に保存して DB と in-memory を一致させる。
+  // 系統読込 モーダルで 対象系統を選択するためのチェック状態。
+  // キー形式: 'collector:<tabIndex>' | 'direct'。初期値は「全チェック済」。
+  const [generateSelectedKeys, setGenerateSelectedKeys] = useState<Set<string>>(
+    () => new Set(),
+  )
+  // 系統読込 モーダルを開くタイミングで 選択候補を初期化する
+  useEffect(() => {
+    if (!showGenerateConfirm) return
+    const keys = new Set<string>()
+    wiringCollectorTabs.forEach((_, idx) => keys.add(`collector:${idx}`))
+    if (wiringDirectRows.length > 0) keys.add('direct')
+    setGenerateSelectedKeys(keys)
+  }, [showGenerateConfirm, wiringCollectorTabs, wiringDirectRows])
+
   // generatePlanFromWiring は usePipeWiringStore の in-memory state を読むため、
   // 手動で調整した最新の系統内容が確実に反映される。
   const handleGenerate = async () => {
@@ -356,7 +370,10 @@ export function DepthCalcPage() {
     if (hasWiringChanges) {
       await saveWiring()
     }
-    await generatePlanFromWiring()
+    // 全チェック済 (=候補と一致) なら 従来通り 全再生成 (includedKeys=undefined)
+    const totalCandidates = wiringCollectorTabs.length + (wiringDirectRows.length > 0 ? 1 : 0)
+    const allChecked = generateSelectedKeys.size === totalCandidates
+    await generatePlanFromWiring(allChecked ? undefined : generateSelectedKeys)
   }
 
   // 施工計画を削除
@@ -1261,36 +1278,24 @@ export function DepthCalcPage() {
                   {row.collectorPipeId ? (
                     (() => {
                       const collectorPipeId = row.collectorPipeId
-                      const key = `col:${collectorPipeId}`
-                      const editing = editingDiameterKey === key
                       return (
-                        <td
-                          onClick={() => setEditingDiameterKey(key)}
-                          className="px-1.5 py-1 text-center border font-mono bg-green-50 text-slate-600 cursor-pointer"
-                          title="クリックで管径を変更"
-                        >
-                          {editing ? (
-                            <select
-                              autoFocus
-                              value={pipeDiameterById.get(collectorPipeId) ?? ''}
-                              onChange={(e) => {
-                                const v = e.target.value
-                                updatePipe(collectorPipeId, {
-                                  diameter: v === '' ? null : parseInt(v, 10),
-                                })
-                                setEditingDiameterKey(null)
-                              }}
-                              onBlur={() => setEditingDiameterKey(null)}
-                              className="px-0 py-0 border rounded text-xs font-mono bg-white"
-                            >
-                              <option value="">-</option>
-                              {PIPE_DIAMETERS.map((d) => (
-                                <option key={d} value={d}>{d}</option>
-                              ))}
-                            </select>
-                          ) : (
-                            <span>{pipeDiameterById.get(collectorPipeId) ?? '-'}</span>
-                          )}
+                        <td className="px-1 py-1 text-center border font-mono bg-green-50 text-slate-600">
+                          <select
+                            value={pipeDiameterById.get(collectorPipeId) ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value
+                              updatePipe(collectorPipeId, {
+                                diameter: v === '' ? null : parseInt(v, 10),
+                              })
+                            }}
+                            className="px-0 py-0 border rounded text-xs font-mono bg-white"
+                            title="集水管の管径"
+                          >
+                            <option value="">-</option>
+                            {PIPE_DIAMETERS.map((d) => (
+                              <option key={d} value={d}>{d}</option>
+                            ))}
+                          </select>
                         </td>
                       )
                     })()
@@ -2705,20 +2710,96 @@ export function DepthCalcPage() {
         </div>
       </div>
 
-      {/* 生成確認ダイアログ */}
+      {/* 生成確認ダイアログ — 読み込む系統を選択できる */}
       {showGenerateConfirm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]">
-          <div className="bg-white rounded-lg shadow-xl p-6 w-[420px]">
-            <div className="flex items-center gap-3 mb-4">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-[480px] max-h-[80vh] flex flex-col">
+            <div className="flex items-center gap-3 mb-3">
               <AlertTriangle className="h-6 w-6 text-yellow-500" />
-              <h3 className="text-lg font-bold">施工計画を生成</h3>
+              <h3 className="text-lg font-bold">系統読込</h3>
             </div>
-            <p className="text-sm text-slate-600 mb-4">
-              配管系統で設定したデータから施工計画を生成します。
+            <p className="text-sm text-slate-600 mb-3">
+              読み込む系統を選択してください。チェックした系統だけが 再生成されます
+              (チェックを外した系統は 既存の施工計画データが維持されます)。
             </p>
+            <div className="flex-1 overflow-y-auto border rounded p-2 mb-3 text-sm">
+              {wiringCollectorTabs.length === 0 && wiringDirectRows.length === 0 ? (
+                <div className="text-slate-500 text-center py-4">
+                  配管系統に系統がありません
+                </div>
+              ) : (
+                <>
+                  <div className="flex gap-2 mb-2 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const all = new Set<string>()
+                        wiringCollectorTabs.forEach((_, i) => all.add(`collector:${i}`))
+                        if (wiringDirectRows.length > 0) all.add('direct')
+                        setGenerateSelectedKeys(all)
+                      }}
+                      className="px-2 py-1 border rounded hover:bg-slate-50"
+                    >
+                      全選択
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setGenerateSelectedKeys(new Set())}
+                      className="px-2 py-1 border rounded hover:bg-slate-50"
+                    >
+                      全解除
+                    </button>
+                  </div>
+                  <div className="space-y-1">
+                    {wiringCollectorTabs.map((tab, idx) => {
+                      const k = `collector:${idx}`
+                      const checked = generateSelectedKeys.has(k)
+                      return (
+                        <label key={k} className="flex items-center gap-2 cursor-pointer py-0.5">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              setGenerateSelectedKeys((prev) => {
+                                const next = new Set(prev)
+                                if (e.target.checked) next.add(k)
+                                else next.delete(k)
+                                return next
+                              })
+                            }}
+                          />
+                          <span>{tab.name || `集水暗渠${idx + 1}`}</span>
+                        </label>
+                      )
+                    })}
+                    {wiringDirectRows.length > 0 && (() => {
+                      const k = 'direct'
+                      const checked = generateSelectedKeys.has(k)
+                      return (
+                        <label className="flex items-center gap-2 cursor-pointer py-0.5">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              setGenerateSelectedKeys((prev) => {
+                                const next = new Set(prev)
+                                if (e.target.checked) next.add(k)
+                                else next.delete(k)
+                                return next
+                              })
+                            }}
+                          />
+                          <span>直落暗渠</span>
+                        </label>
+                      )
+                    })()}
+                  </div>
+                </>
+              )}
+            </div>
             {hasData && (
-              <p className="text-sm text-red-600 mb-4">
-                ※ 既存の施工計画データは削除されます
+              <p className="text-xs text-red-600 mb-3">
+                ※ チェックした系統は 既存データを削除して再生成します
               </p>
             )}
             <div className="flex justify-end gap-2">
@@ -2730,9 +2811,10 @@ export function DepthCalcPage() {
               </button>
               <button
                 onClick={handleGenerate}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                disabled={generateSelectedKeys.size === 0}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
               >
-                生成する
+                読込
               </button>
             </div>
           </div>
