@@ -16,7 +16,7 @@ import {
 } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Loader2, AlertTriangle, Map as MapIcon } from 'lucide-react'
+import { Loader2, AlertTriangle, Layers as LayersIcon, ChevronDown, ChevronUp } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import {
   CoordinateConverter,
@@ -103,6 +103,39 @@ export function ShareFarmViewPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showParcelMap, setShowParcelMap] = useState(false)
+
+  // レイヤーパネル: 背景地図の選択 + 各要素の表示切替 (localStorage で永続化)
+  type BackgroundKind = 'photo' | 'std' | 'pale' | 'blank'
+  const [background, setBackground] = useState<BackgroundKind>(() => {
+    try {
+      const v = localStorage.getItem('share:bg') as BackgroundKind | null
+      return v === 'std' || v === 'pale' || v === 'blank' ? v : 'photo'
+    } catch {
+      return 'photo'
+    }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('share:bg', background) } catch { /* quota */ }
+  }, [background])
+  const loadBool = (k: string, def: boolean) => {
+    try {
+      const v = localStorage.getItem(k)
+      return v == null ? def : v === '1'
+    } catch {
+      return def
+    }
+  }
+  const [showCoords, setShowCoords] = useState<boolean>(() => loadBool('share:showCoords', true))
+  const [showPipes, setShowPipes] = useState<boolean>(() => loadBool('share:showPipes', true))
+  const [showPipeVertices, setShowPipeVertices] = useState<boolean>(() => loadBool('share:showPipeVertices', true))
+  const [showRoute, setShowRoute] = useState<boolean>(() => loadBool('share:showRoute', true))
+  const [showDrawings, setShowDrawings] = useState<boolean>(() => loadBool('share:showDrawings', true))
+  useEffect(() => { try { localStorage.setItem('share:showCoords', showCoords ? '1' : '0') } catch { /* quota */ } }, [showCoords])
+  useEffect(() => { try { localStorage.setItem('share:showPipes', showPipes ? '1' : '0') } catch { /* quota */ } }, [showPipes])
+  useEffect(() => { try { localStorage.setItem('share:showPipeVertices', showPipeVertices ? '1' : '0') } catch { /* quota */ } }, [showPipeVertices])
+  useEffect(() => { try { localStorage.setItem('share:showRoute', showRoute ? '1' : '0') } catch { /* quota */ } }, [showRoute])
+  useEffect(() => { try { localStorage.setItem('share:showDrawings', showDrawings ? '1' : '0') } catch { /* quota */ } }, [showDrawings])
+  const [layerPanelOpen, setLayerPanelOpen] = useState(false)
 
   // 法務省地図データセット (公開マスター) を anon SELECT で取得
   const parcelDatasets = useParcelMapDatasetStore((s) => s.datasets)
@@ -249,7 +282,7 @@ export function ShareFarmViewPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+      <div className="h-[100dvh] flex items-center justify-center bg-slate-50">
         <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
       </div>
     )
@@ -257,7 +290,7 @@ export function ShareFarmViewPage() {
 
   if (error || !data?.farm) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+      <div className="h-[100dvh] flex items-center justify-center bg-slate-50 p-4">
         <div className="max-w-md w-full bg-white border rounded-lg p-6 text-center">
           <AlertTriangle className="h-10 w-10 text-amber-500 mx-auto mb-3" />
           <h1 className="text-lg font-semibold mb-2">表示できません</h1>
@@ -275,7 +308,7 @@ export function ShareFarmViewPage() {
     : [36, 138]
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50">
+    <div className="h-[100dvh] flex flex-col bg-slate-50 overflow-hidden">
       {/* ヘッダ (アプリ本体と同じ slate-900 / NodeCloud タイトル) */}
       <header className="bg-slate-900 text-white border-b border-slate-700 px-4 py-3 flex items-center gap-3">
         <div className="flex flex-col leading-none">
@@ -298,15 +331,24 @@ export function ShareFarmViewPage() {
           className="h-full w-full"
           style={{ minHeight: 320 }}
         >
-          <TileLayer
-            attribution='&copy; 国土地理院'
-            url="https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg"
-            maxZoom={24}
-            maxNativeZoom={18}
-          />
+          {background !== 'blank' && (
+            <TileLayer
+              key={background}
+              attribution='&copy; 国土地理院'
+              url={
+                background === 'std'
+                  ? 'https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png'
+                  : background === 'pale'
+                    ? 'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png'
+                    : 'https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg'
+              }
+              maxZoom={24}
+              maxNativeZoom={18}
+            />
+          )}
 
           {/* 配管ライン */}
-          {pipeLines.map(({ pipe, positions }) => {
+          {showPipes && pipeLines.map(({ pipe, positions }) => {
             const color = pipeLineColor(pipe.pipe_type)
             return (
               <Polyline
@@ -318,7 +360,7 @@ export function ShareFarmViewPage() {
           })}
 
           {/* 順路ライン（点線） */}
-          {routePoints.length >= 2 && (
+          {showRoute && routePoints.length >= 2 && (
             <Polyline
               positions={routePoints.map((p) => [p.lat, p.lng] as [number, number])}
               pathOptions={{
@@ -331,7 +373,7 @@ export function ShareFarmViewPage() {
           )}
 
           {/* 座標マーカー (タップで X/Y/Z popup) */}
-          {points.map((p) => {
+          {showCoords && points.map((p) => {
             const color = coordinateColor(p.coordinate_type)
             const label = p.point_number
             const typeName =
@@ -384,7 +426,7 @@ export function ShareFarmViewPage() {
           })}
 
           {/* 暗渠頂点マーカー */}
-          {pipeVertices.map((v) => {
+          {showPipeVertices && pipeVertices.map((v) => {
             const color = pipeLineColor(v.pipeType)
             return (
               <Marker
@@ -419,7 +461,7 @@ export function ShareFarmViewPage() {
           })}
 
           {/* 描画メモ (読み取り専用) */}
-          {drawings.map((d) => {
+          {showDrawings && drawings.map((d) => {
             const dash = dashArrayFor((d.line_style ?? 'solid') as LineStyle, d.width_px)
             if (d.kind === 'circle') {
               const [center, edge] = d.points
@@ -521,23 +563,87 @@ export function ShareFarmViewPage() {
           )}
         </MapContainer>
 
-        {/* 法務省地図 トグル (アクティブ dataset があるときだけ表示) */}
-        {hasActiveParcelDataset && (
-          <div className="absolute bottom-6 left-2 z-[1000]">
-            <button
-              onClick={() => setShowParcelMap((v) => !v)}
-              className={`flex items-center gap-1 px-3 py-1.5 text-sm rounded border shadow ${
-                showParcelMap
-                  ? 'bg-orange-500 text-white border-orange-500 hover:bg-orange-600'
-                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-              }`}
-              title="法務省地図データを背景に表示する (読み取り専用)"
-            >
-              <MapIcon className="h-4 w-4" />
-              法務省地図
-            </button>
-          </div>
-        )}
+        {/* レイヤー パネル (右上): 背景地図 + 表示要素 + 法務省地図 */}
+        <div className="absolute top-2 right-2 z-[1000] w-56">
+          <button
+            onClick={() => setLayerPanelOpen((v) => !v)}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm bg-white/95 border rounded shadow hover:bg-slate-50"
+            title="レイヤー設定"
+          >
+            <LayersIcon className="h-4 w-4" />
+            <span className="flex-1 text-left">レイヤー</span>
+            {layerPanelOpen ? (
+              <ChevronUp className="h-4 w-4 text-slate-500" />
+            ) : (
+              <ChevronDown className="h-4 w-4 text-slate-500" />
+            )}
+          </button>
+          {layerPanelOpen && (
+            <div className="mt-1 bg-white border rounded shadow p-3 text-xs space-y-3 max-h-[70vh] overflow-y-auto">
+              <div>
+                <div className="font-semibold text-slate-700 mb-1">背景地図</div>
+                <div className="space-y-1">
+                  {(
+                    [
+                      { v: 'photo', label: '空中写真' },
+                      { v: 'std', label: '標準地図' },
+                      { v: 'pale', label: '淡色地図' },
+                      { v: 'blank', label: '白地図' },
+                    ] as Array<{ v: BackgroundKind; label: string }>
+                  ).map((o) => (
+                    <label key={o.v} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="share-bg"
+                        checked={background === o.v}
+                        onChange={() => setBackground(o.v)}
+                      />
+                      <span>{o.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="font-semibold text-slate-700 mb-1">表示要素</div>
+                <div className="space-y-1">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={showCoords} onChange={(e) => setShowCoords(e.target.checked)} />
+                    <span>座標点 ({points.length})</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={showPipes} onChange={(e) => setShowPipes(e.target.checked)} />
+                    <span>配管ライン ({pipeLines.length})</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={showPipeVertices} onChange={(e) => setShowPipeVertices(e.target.checked)} />
+                    <span>暗渠頂点 ({pipeVertices.length})</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={showRoute} onChange={(e) => setShowRoute(e.target.checked)} />
+                    <span>順路 ({routePoints.length})</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={showDrawings} onChange={(e) => setShowDrawings(e.target.checked)} />
+                    <span>描画メモ ({drawings.length})</span>
+                  </label>
+                </div>
+              </div>
+              {hasActiveParcelDataset && (
+                <div>
+                  <div className="font-semibold text-slate-700 mb-1">背景オーバーレイ</div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={showParcelMap}
+                      onChange={(e) => setShowParcelMap(e.target.checked)}
+                    />
+                    <span>法務省地図 (読み取り)</span>
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
     </div>
