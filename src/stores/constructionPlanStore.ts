@@ -926,13 +926,36 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
             }))
 
           // 吸水管 (直列で複数) + 落口管 の頂点を続けて並べる
-          const combinedPoints: PlanPoint[] = []
+          const rawCombinedPoints: PlanPoint[] = []
           let offset = 0
           for (const p of absorptionPipesInOrder) {
-            combinedPoints.push(...buildPoints(p, offset))
+            rawCombinedPoints.push(...buildPoints(p, offset))
             offset += p.vertices.length
           }
-          combinedPoints.push(...buildPoints(outletPipe, offset))
+          rawCombinedPoints.push(...buildPoints(outletPipe, offset))
+          // 連続する 同一位置 の点 (管の接続部: K6A と O5C 等) を 1 点に統合。
+          // pointName は "K6A O5C" のように 連結して両方の測点名を残す。
+          // これで 表 (施工計画) は 1 カラム 1 入力、
+          // 平面図 (SFC) は 各管の pipe ループから "K6A" と "O5C" が
+          // それぞれ 座標一致で lookup されて 併記される (同位置は shift)。
+          const combinedPoints: PlanPoint[] = []
+          const EPS_POS = 1e-4
+          for (const p of rawCombinedPoints) {
+            const prev = combinedPoints[combinedPoints.length - 1]
+            if (
+              prev &&
+              Math.abs(prev.x - p.x) < EPS_POS &&
+              Math.abs(prev.y - p.y) < EPS_POS
+            ) {
+              prev.pointName = prev.pointName ? `${prev.pointName} ${p.pointName}` : p.pointName
+            } else {
+              combinedPoints.push(p)
+            }
+          }
+          // pointIndex を dedup 後の連番に振り直す
+          for (let i = 0; i < combinedPoints.length; i++) {
+            combinedPoints[i].pointIndex = i
+          }
           // 区間距離を再計算 (最上流を除く各点)
           for (let i = 1; i < combinedPoints.length; i++) {
             combinedPoints[i].segmentDistance = calcDistance(

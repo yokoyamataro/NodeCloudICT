@@ -219,6 +219,29 @@ function buildPlanLookup(
   const EPS = 1e-4
   for (const group of planGroups) {
     for (const row of group.rows) {
+      // 直落 group は 1 plan row に 吸水管 + 落口管 の全頂点が
+      // absorptionPoints として並んでいる。座標一致で 両方の管に割り当てる。
+      if (row.groupType === 'direct' && row.absorptionPoints.length > 0) {
+        const pipeIds = [row.absorptionPipeId, row.collectorPipeId].filter(
+          (id): id is string => !!id,
+        )
+        for (const pid of pipeIds) {
+          const pipe = pipes.find((p) => p.id === pid)
+          if (!pipe) continue
+          const inner = map.get(pid) ?? new Map<number, PlanPoint>()
+          for (let vi = 0; vi < pipe.vertices.length; vi++) {
+            const v = pipe.vertices[vi]
+            for (const pp of row.absorptionPoints) {
+              if (Math.abs(v.x - pp.x) < EPS && Math.abs(v.y - pp.y) < EPS) {
+                inner.set(vi, pp)
+                break
+              }
+            }
+          }
+          map.set(pid, inner)
+        }
+        continue
+      }
       if (row.absorptionPipeId) {
         const pipe = pipes.find((p) => p.id === row.absorptionPipeId)
         if (pipe) {
@@ -901,8 +924,12 @@ export function generateSfcPipesContent(
           midY = (y1 + prevP.py) / 2
         }
 
-        const pointName =
-          pp !== null ? pp.pointName : generatePointName(pipe.number, i, total)
+        // 測点名は 常に この pipe 自身の 番号 + 頂点位置 で生成する。
+        // 直落や集水合流では 共有 pp.pointName が "K6A O5C" のように連結されるが、
+        // 平面図には それぞれの pipe が 自分の測点名 (K6A / O5C) を出したいので
+        // pp.pointName ではなく generatePointName を優先する。
+        const pointName = generatePointName(pipe.number, i, total)
+        void pp?.pointName // 参照残し用 (unused 警告避け・実際は使わない)
         const gh = pp?.groundHeight ?? v.z ?? null
         const ph = pp?.plannedHeight ?? null
         const cd = pp?.cutDepth ?? (gh !== null && ph !== null ? gh - ph : null)
@@ -933,6 +960,15 @@ export function generateSfcPipesContent(
         const occurrence = groupCount.get(posKey) ?? 0
         groupCount.set(posKey, occurrence + 1)
         const shiftX = occurrence * groupShiftPerOccurrence
+        // 同一点に既に描画済み (occurrence>0) の場合、地盤高/計画高/切深 は
+        // 重複するので出力しない。測点名だけを 少し右にずらして出す。
+        //   例: 直落 の K6A と O5C は物理的に同じ点 → K6A は通常描画、
+        //       O5C は 測点名だけ 右にずらして併記。
+        const isDuplicatePos = occurrence > 0
+
+        // 落口管 (pipeType='outlet') の A 点 (=下流端、放流口) は
+        // 地盤高/切深 を出さず 測点名 + 計画高 だけ描画する。
+        const isOutletExit = pipe.pipeType === 'outlet' && i === total - 1
 
         // 頂点周りに縦積み
         let cx = x1 + shiftX
@@ -941,11 +977,11 @@ export function generateSfcPipesContent(
           emitText(layers.point, COLOR_CODE.black, pointName, cx, cy, moji, 0, 1)
         }
         cx += stepDx; cy += stepDy
-        if (emitGround && layers.ground && ghStr) {
+        if (emitGround && layers.ground && ghStr && !isDuplicatePos && !isOutletExit) {
           emitText(layers.ground, COLOR_CODE.black, ghStr, cx, cy, moji, 0, 1)
         }
         cx += stepDx; cy += stepDy
-        if (emitPlanned && layers.plan && fhStr) {
+        if (emitPlanned && layers.plan && fhStr && !isDuplicatePos) {
           emitText(layers.plan, layers.planColor, fhStr, cx, cy, moji, 0, 1)
         }
         cx += stepDx; cy += stepDy
@@ -953,6 +989,8 @@ export function generateSfcPipesContent(
           emitCutDepth &&
           layers.depth &&
           cd !== null &&
+          !isDuplicatePos &&
+          !isOutletExit &&
           (!cutDepthOnlyIfDiffFromStd || Math.abs(cd - stdDepth) > 0.005)
         ) {
           emitText(layers.depth, layers.depthColor, chStr, cx, cy, moji, 0, 1)
