@@ -1269,7 +1269,9 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       }>)
         .map((row) => {
           const z = row.measured_z != null ? Number(row.measured_z) : null
-          if (z == null || !Number.isFinite(z)) return null
+          // 0 は「未計測」を意味する。北海道の暗渠現場は 20m 以上の標高が
+          // 通常のため、0 を有効値として取り込むと切深に大きな誤差を生む。
+          if (z == null || !Number.isFinite(z) || z === 0) return null
           const x = Number(row.measured_x)
           const y = Number(row.measured_y)
           if (!Number.isFinite(x) || !Number.isFinite(y)) return null

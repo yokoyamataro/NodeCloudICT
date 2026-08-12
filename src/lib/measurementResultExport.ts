@@ -20,34 +20,6 @@ interface PointData {
   cutDepth: number | null
 }
 
-// 吸水管 ID → その吸水管の PlanRow を返す（最初に見つかった行を採用）
-function findAbsorptionRow(planGroups: PlanGroup[], pipeId: string): PlanRow | null {
-  for (const group of planGroups) {
-    for (const row of group.rows) {
-      if (row.absorptionPipeId === pipeId && row.absorptionPoints.length > 0) {
-        return row
-      }
-    }
-  }
-  return null
-}
-
-// 全 PlanRow の collectorPoint を集める（pipeId で絞らない）。
-// 中間集水管の A 点は「次の集水管の C 点」と同じ位置で、次の管側の行に
-// 「{prev}A {curr}C」形式で保存されているため、collectorPipeId で絞ると拾えない。
-// 測点名で C/B/A を判定するため、全体を一括収集する。
-function collectAllCollectorPoints(planGroups: PlanGroup[]): PlanPoint[] {
-  const points: PlanPoint[] = []
-  for (const group of planGroups) {
-    for (const row of group.rows) {
-      if (row.collectorPoint) {
-        points.push(row.collectorPoint)
-      }
-    }
-  }
-  return points
-}
-
 function pointFromPlan(pp: PlanPoint | undefined | null): PointData {
   if (!pp) return { groundHeight: null, cutDepth: null }
   const ground = pp.groundHeight ?? null
@@ -91,12 +63,54 @@ export async function exportMeasurementResult({
   ws.getCell('F3').value = header.area
   ws.getCell('J3').value = header.beneficiary
 
+  // 直落 group で 落口 (pipeType='outlet') として使われている物理管路は、
+  // 「吸水 + 落口」を 1 plan row にまとめているため、
+  // 通常の pipes ループの中で 配管番号ごとに 1 行 書き出す。
+  // (集水 group の落口だけを 後段の outletPlanRows loop に任せる)
+  const directOutletPipeIds = new Set<string>()
+  for (const g of planGroups) {
+    if (g.groupType !== 'direct') continue
+    for (const r of g.rows) {
+      if (r.systemEndType === 'outlet' && r.collectorPipeId) {
+        directOutletPipeIds.add(r.collectorPipeId)
+      }
+    }
+  }
+
   // 配管を数字でソート（頭文字・末尾文字を無視）。
   // 物理的な「落口」pipeType の管路は、後段で施工計画の outlet planRow から
   // 一括で書き出すためここでは除外する (複数落口がある場合に取りこぼしを防ぐ)。
+  // ただし 直落 group で使われている落口管は 上記ループに含めて 出力する。
   const sortedPipes = [...pipes]
-    .filter((p) => p.pipeType !== 'outlet')
+    .filter((p) => p.pipeType !== 'outlet' || directOutletPipeIds.has(p.id))
     .sort((a, b) => comparePipeNumbers(a.number, b.number))
+
+  // 全 planPoint (吸水 + 集水) を集めて 名前で引けるようにしておく。
+  // 直落は 1 plan row に K2C..O1A が混ざって入っているため、
+  // 各管の C/B/A は 配管番号ベースの名前で個別に引き出す。
+  const allPlanPoints: PlanPoint[] = []
+  for (const group of planGroups) {
+    for (const row of group.rows) {
+      allPlanPoints.push(...row.absorptionPoints)
+      if (row.collectorPoint) allPlanPoints.push(row.collectorPoint)
+    }
+  }
+  const findCbaByPipeNumber = (
+    num: string,
+  ): { c: PlanPoint | undefined; b: PlanPoint | undefined; a: PlanPoint | undefined } => {
+    const numEsc = escapeRegExp(num)
+    const c = allPlanPoints.find(
+      (p) => p.pointName === `${num}C` || p.pointName.endsWith(` ${num}C`),
+    )
+    const a = allPlanPoints.find(
+      (p) => p.pointName === `${num}A` || p.pointName.startsWith(`${num}A `),
+    )
+    const bPts = allPlanPoints.filter((p) =>
+      new RegExp(`(^|\\s)${numEsc}B\\d+($|\\s)`).test(p.pointName),
+    )
+    const b = bPts.length > 0 ? bPts[Math.floor(bPts.length / 2)] : undefined
+    return { c, b, a }
+  }
 
   // 各管路を 4 行ブロックに書き込み
   // i1 = 3 から開始（旧マクロの配線表）、j = (i1-2)*4 + 7
@@ -109,9 +123,8 @@ export async function exportMeasurementResult({
     const j = (i1 - 2) * 4 + 7
     excelIdx++
 
-    // 落口判定: pipeType が 'outlet' (このループでは除外済みだが型互換のため残す)
+    // 落口判定: pipeType が 'outlet' (直落 group で使われている落口管はこのループに来る)
     const isOutlet = pipe.pipeType === 'outlet'
-    const isAbsorption = pipe.pipeType === 'branch'
 
     let cData: PointData = { groundHeight: null, cutDepth: null }
     let bData: PointData = { groundHeight: null, cutDepth: null }
@@ -119,48 +132,14 @@ export async function exportMeasurementResult({
     // 落口の P{j+3} に計画高を出すために、A 点の元 PlanPoint も保持する
     let aPointRaw: PlanPoint | null = null
 
-    if (isAbsorption) {
-      // 吸水: 施工計画の絶対点 absorptionPoints をそのまま使用
-      // pts[0] = C（最上流）, pts[N-1] = A（最下流）, 中間は B
-      const row = findAbsorptionRow(planGroups, pipe.id)
-      if (row && row.absorptionPoints.length > 0) {
-        const pts = row.absorptionPoints
-        const N = pts.length
-        cData = pointFromPlan(pts[0])
-        aData = pointFromPlan(pts[N - 1])
-        aPointRaw = pts[N - 1]
-        if (N >= 3) {
-          // テンプレートは B が 1 列のみ。多点管では中央付近の点を採用。
-          bData = pointFromPlan(pts[Math.floor((N - 1) / 2)])
-        }
-      }
-    } else {
-      // 集水・落口: 施工計画の全 collectorPoint から、測点名でマッチ。
-      // 中間管の A 点は次の管の C 点と同じで、次の管側の行に
-      // 「{prev}A {curr}C」形式で保存されているため pipeId で絞らない。
-      // 名前は generatePointName と整合し:
-      // - C: `{number}C` または `... {number}C` の末尾形式
-      // - A: `{number}A` または `{number}A ...` の先頭形式（次管 C 点と共有）
-      // - B: `{number}B{数字}`（中間点）
-      const pts = collectAllCollectorPoints(planGroups)
-      const num = pipe.number
-      const numEsc = escapeRegExp(num)
-      const matchC = pts.find(
-        (p) => p.pointName === `${num}C` || p.pointName.endsWith(` ${num}C`),
-      )
-      const matchA = pts.find(
-        (p) => p.pointName === `${num}A` || p.pointName.startsWith(`${num}A `),
-      )
-      const bPts = pts.filter((p) =>
-        new RegExp(`(^|\\s)${numEsc}B\\d+($|\\s)`).test(p.pointName),
-      )
-      cData = pointFromPlan(matchC)
-      aData = pointFromPlan(matchA)
-      aPointRaw = matchA ?? null
-      if (bPts.length > 0) {
-        bData = pointFromPlan(bPts[Math.floor(bPts.length / 2)])
-      }
-    }
+    // 配管番号ごとに C/B/A を 名前ベースで引く (吸水 / 集水 / 直落の落口 いずれも同じロジック)。
+    // 直落は 1 plan row に 複数管の点が並んでいるが、各点は generatePointName で
+    // 「{pipeNumber}C / B / A」に統一されているため、番号一致で分離できる。
+    const { c: matchC, b: matchB, a: matchA } = findCbaByPipeNumber(pipe.number)
+    cData = pointFromPlan(matchC)
+    bData = pointFromPlan(matchB)
+    aData = pointFromPlan(matchA)
+    aPointRaw = matchA ?? null
 
     // 管種ラベル
     const pipeTypeLabel = isOutlet
@@ -230,6 +209,8 @@ export async function exportMeasurementResult({
     outletPipe: PipeRow | null
   }[] = []
   for (const group of planGroups) {
+    // 直落 group の落口は 上の pipes ループで既に書き出しているためスキップ
+    if (group.groupType === 'direct') continue
     for (const row of group.rows) {
       if (row.systemEndType !== 'outlet') continue
       const collectorPipe = pipes.find((p) => p.id === row.collectorPipeId) ?? null
