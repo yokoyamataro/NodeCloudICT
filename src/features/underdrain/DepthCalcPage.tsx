@@ -115,7 +115,50 @@ export function DepthCalcPage() {
   const [collapsedRows, setCollapsedRows] = useState<Set<string>>(new Set())
 
   // 全画面表示パネル
-  const [fullscreenPanel, setFullscreenPanel] = useState<'table' | 'map' | 'chart' | null>(null)
+  // - 通常タブ: null。ボタンクリックで 別ウィンドウを開く (下記 openPanelInNewWindow)。
+  // - 別ウィンドウ内: URL の ?panel=X を検出して 初期値を設定し、当該パネル 1 枚だけ表示。
+  const fullscreenPanel = useMemo<'table' | 'map' | 'chart' | null>(() => {
+    if (typeof window === 'undefined') return null
+    const q = new URLSearchParams(window.location.search).get('panel')
+    if (q === 'table' || q === 'map' || q === 'chart') return q
+    return null
+  }, [])
+  // 別ウィンドウとして開かれた場合 = URL クエリ ?panel=X を持って開いた場合。
+  // 「閉じる (×)」ボタンで window.close() する用途に使う。
+  const isPopupWindow =
+    typeof window !== 'undefined' &&
+    !!new URLSearchParams(window.location.search).get('panel')
+
+  // パネル別ウィンドウを開く: 同じ URL に ?panel=X を付けて window.open。
+  // 開いた側で fullscreenPanel が自動で該当値に設定され、
+  // 全画面 (1 パネル) 表示になる。閉じるボタンは window.close()。
+  const openPanelInNewWindow = useCallback((panel: 'table' | 'map' | 'chart') => {
+    if (typeof window === 'undefined') return
+    const url = new URL(window.location.href)
+    url.searchParams.set('panel', panel)
+    const w = 1400
+    const h = 900
+    const left = window.screenX + Math.max(0, (window.outerWidth - w) / 2)
+    const top = window.screenY + Math.max(0, (window.outerHeight - h) / 2)
+    window.open(
+      url.toString(),
+      `nc_panel_${panel}`,
+      `popup=yes,width=${w},height=${h},left=${left},top=${top}`,
+    )
+  }, [])
+
+  // 全画面トグル: 別ウィンドウでない場所からのクリックは 新ウィンドウを開く。
+  // 別ウィンドウ内 (isPopupWindow) からのクリックは window.close() で閉じる。
+  const handleToggleFullscreen = useCallback(
+    (panel: 'table' | 'map' | 'chart') => {
+      if (isPopupWindow) {
+        if (typeof window !== 'undefined') window.close()
+        return
+      }
+      openPanelInNewWindow(panel)
+    },
+    [isPopupWindow, openPanelInNewWindow],
+  )
 
   // 区間勾配の任意設定ダイアログ
   const [slopeEdit, setSlopeEdit] = useState<SlopeEditTarget | null>(null)
@@ -2131,7 +2174,7 @@ export function DepthCalcPage() {
             {/* 全画面トグルボタン */}
             <button
               type="button"
-              onClick={() => setFullscreenPanel(fullscreenPanel === 'table' ? null : 'table')}
+              onClick={() => handleToggleFullscreen('table')}
               className="absolute top-2 right-2 z-20 p-1.5 rounded border bg-white shadow-sm hover:bg-slate-50"
               title={fullscreenPanel === 'table' ? '全画面を閉じる' : '全画面表示'}
             >
@@ -2295,7 +2338,7 @@ export function DepthCalcPage() {
             </div>
             <button
               type="button"
-              onClick={() => setFullscreenPanel(fullscreenPanel === 'map' ? null : 'map')}
+              onClick={() => handleToggleFullscreen('map')}
               className="absolute top-2 right-2 z-[1001] p-1.5 rounded border bg-white shadow-sm hover:bg-slate-50"
               title={fullscreenPanel === 'map' ? '全画面を閉じる' : '全画面表示'}
             >
@@ -2418,7 +2461,7 @@ export function DepthCalcPage() {
         >
           <button
             type="button"
-            onClick={() => setFullscreenPanel(fullscreenPanel === 'chart' ? null : 'chart')}
+            onClick={() => handleToggleFullscreen('chart')}
             className="absolute top-2 right-2 z-20 p-1.5 rounded border bg-white shadow-sm hover:bg-slate-50"
             title={fullscreenPanel === 'chart' ? '全画面を閉じる' : '全画面表示'}
           >
