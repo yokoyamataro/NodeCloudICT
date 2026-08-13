@@ -850,6 +850,30 @@ export function generateSfcPipesContent(
       ...pipes.filter((p) => p.pipeType !== 'branch'),
     ]
 
+    // 同一位置に複数の管の頂点が集まる場合、測点名を "K1A.O1C" のように
+    // dot 連結してまとめる。対象:
+    //   ・直落暗渠の接続点 (例: K1A + O1C)
+    //   ・集水変化点 (例: O1A + S2A)
+    //   ・吸水合流で集水管が変わる点 (例: K11A + S13A + S12C)
+    // 1 回目 (orderedPipes 順で最初にヒットした pipe) だけが 連結名を emit し、
+    // 2 回目以降は 名前も emit しない (完全に skip)。
+    const nameCollectMap = new Map<string, string[]>()
+    for (const pipe of orderedPipes) {
+      for (let vi = 0; vi < pipe.vertices.length; vi++) {
+        const v = pipe.vertices[vi]
+        const k = dedupPosKey(v.x, v.y)
+        const nm = generatePointName(pipe.number, vi, pipe.vertices.length)
+        const list = nameCollectMap.get(k) ?? []
+        // 同名重複を避ける (絡み合いで 3 回登録される等の防止)
+        if (!list.includes(nm)) list.push(nm)
+        nameCollectMap.set(k, list)
+      }
+    }
+    const combinedNameByPos = new Map<string, string>()
+    for (const [k, names] of nameCollectMap) {
+      if (names.length >= 2) combinedNameByPos.set(k, names.join('.'))
+    }
+
     for (const pipe of orderedPipes) {
       if (pipe.vertices.length === 0) continue
       const isAbsorption = pipe.pipeType === 'branch'
@@ -924,11 +948,12 @@ export function generateSfcPipesContent(
           midY = (y1 + prevP.py) / 2
         }
 
-        // 測点名は 常に この pipe 自身の 番号 + 頂点位置 で生成する。
-        // 直落や集水合流では 共有 pp.pointName が "K6A O5C" のように連結されるが、
-        // 平面図には それぞれの pipe が 自分の測点名 (K6A / O5C) を出したいので
-        // pp.pointName ではなく generatePointName を優先する。
-        const pointName = generatePointName(pipe.number, i, total)
+        // 測点名: 同一位置に複数管の頂点が集まる (直落 / 集水変化点 / 吸水合流+集水変化)
+        // 場合は "K1A.O1C" のように dot 連結した合成名を使う。
+        // 1 回目 (occurrence=0) のみ 合成名を emit、2 回目以降は名前を出さない。
+        // 単独位置の場合は 従来通り pipe 自身の 番号+頂点位置 で生成した名前を使う。
+        const combinedName = combinedNameByPos.get(dedupPosKey(v.x, v.y))
+        const pointName = combinedName ?? generatePointName(pipe.number, i, total)
         void pp?.pointName // 参照残し用 (unused 警告避け・実際は使わない)
         const gh = pp?.groundHeight ?? v.z ?? null
         const ph = pp?.plannedHeight ?? null
@@ -973,7 +998,11 @@ export function generateSfcPipesContent(
         // 頂点周りに縦積み
         let cx = x1 + shiftX
         let cy = y1 + initialYOffset
-        if (emitPointNames && layers.point) {
+        // 合成名は 1 回だけ出す (isDuplicatePos なら emit しない)。
+        // 単独位置 (combinedName=null) は 2 回目以降も名前だけずらして出していた
+        // 従来動作を維持 (実質 1 pipe 1 頂点なので isDuplicatePos は false のはず)。
+        const skipNameForDup = !!combinedName && isDuplicatePos
+        if (emitPointNames && layers.point && !skipNameForDup) {
           emitText(layers.point, COLOR_CODE.black, pointName, cx, cy, moji, 0, 1)
         }
         cx += stepDx; cy += stepDy
