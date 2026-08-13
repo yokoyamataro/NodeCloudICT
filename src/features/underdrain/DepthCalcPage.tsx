@@ -59,7 +59,7 @@ import { parseLandXml, type ParsedSurface } from '@/lib/landxml/parser'
 
 export function DepthCalcPage() {
   const { currentFarm } = useFarmStore()
-  const { fetchPipes, pipes, updatePipe } = useUnderdrainStore()
+  const { fetchPipes, pipes } = useUnderdrainStore()
   const { fetchSurveyData } = useSurveyStore()
   const { fetchWiring, saveWiring, hasChanges: hasWiringChanges } = usePipeWiringStore()
   // 配管系統の生データ（wiringRowId → rowType / isMergePipe / mergeSystemIndex の最新状態）
@@ -1336,18 +1336,33 @@ export function DepthCalcPage() {
                   {row.collectorPipeId ? (
                     (() => {
                       const collectorPipeId = row.collectorPipeId
+                      // この行の集水点の 区間管径 を優先し、なければ 集水管既定 を使う。
+                      // segmentDiameter を null に戻すと 集水管既定 (pipeDiameterById) が復活。
+                      const segDia = collector?.segmentDiameter ?? null
+                      const pipeDefault = pipeDiameterById.get(collectorPipeId) ?? null
+                      const shown = segDia ?? pipeDefault
                       return (
-                        <td className="px-1 py-1 text-center border font-mono bg-green-50 text-slate-600">
+                        <td className={`px-1 py-1 text-center border font-mono bg-green-50 ${
+                          segDia != null ? 'text-purple-700 font-semibold' : 'text-slate-600'
+                        }`}>
                           <select
-                            value={pipeDiameterById.get(collectorPipeId) ?? ''}
+                            value={shown ?? ''}
                             onChange={(e) => {
+                              if (!collector) return
                               const v = e.target.value
-                              updatePipe(collectorPipeId, {
-                                diameter: v === '' ? null : parseInt(v, 10),
-                              })
+                              const nextDia = v === '' ? null : parseInt(v, 10)
+                              // 集水既定 と一致するなら segmentDiameter を null (継承) にする
+                              // それ以外は この 集水区間 だけ override
+                              const overrideVal =
+                                nextDia !== null && nextDia === pipeDefault ? null : nextDia
+                              updateSegmentDiameter(row.id, collector.id, overrideVal)
                             }}
                             className="px-0 py-0 border rounded text-xs font-mono bg-white"
-                            title="集水管の管径"
+                            title={
+                              segDia != null
+                                ? `この区間だけ ${segDia} mm に上書き中 (集水既定: ${pipeDefault ?? '-'})`
+                                : `集水既定 ${pipeDefault ?? '-'} mm を継承 (この区間だけ変更するとその区間だけ上書き)`
+                            }
                           >
                             <option value="">-</option>
                             {PIPE_DIAMETERS.map((d) => (
@@ -1580,7 +1595,11 @@ export function DepthCalcPage() {
                   })}
                   <td className="border-0 bg-transparent"></td>
                   {(() => {
-                    const dia = row.collectorPipeId ? pipeDiameterById.get(row.collectorPipeId) ?? null : null
+                    // 集水管径: 区間上書き (collectorPoint.segmentDiameter) を優先、
+                    //   なければ 集水管の既定値
+                    const dia =
+                      row.collectorPoint?.segmentDiameter ??
+                      (row.collectorPipeId ? pipeDiameterById.get(row.collectorPipeId) ?? null : null)
                     const K_raw = computeCriticalSlopeDenominator({
                       diameterMm: dia,
                       roughness: MANNING_ROUGHNESS[hydraulicSettings.collectorPipeType],
@@ -1889,9 +1908,14 @@ export function DepthCalcPage() {
         const collectors = activeTab.rows.map((r) => r.collectorPoint).filter((cp): cp is NonNullable<typeof cp> => cp != null)
         // collectors[i-1] の segmentDistance = collectors[i-1] → collectors[i]
         dist = collectors[i - 1]?.segmentDistance ?? null
-        // 集水は 行 i-1 の集水管の径 (segmentDistance の起点側)
+        // 集水は 行 i-1 の集水管の径 (segmentDistance の起点側)。
+        //   集水点の segmentDiameter (区間上書き) があれば優先、なければ 集水管既定
         const collectorRow = activeTab.rows.find((r) => r.collectorPoint?.id === prev.id)
-        dia = collectorRow?.collectorPipeId ? pipeDiameterById.get(collectorRow.collectorPipeId) ?? null : null
+        const collectorSegDia = collectorRow?.collectorPoint?.segmentDiameter ?? null
+        const collectorPipeDefault = collectorRow?.collectorPipeId
+          ? pipeDiameterById.get(collectorRow.collectorPipeId) ?? null
+          : null
+        dia = collectorSegDia ?? collectorPipeDefault
       }
       let slope: string | null = null
       if (prev.plannedHeight != null && cur.plannedHeight != null && dist != null && dist > 0) {
@@ -2811,9 +2835,12 @@ export function DepthCalcPage() {
                         }
                         // 集水点: 系統内の集水累加水理延長 (吸水下流端 + 各行の segmentDistance)
                         if (r.collectorPoint) {
-                          const collDia = r.collectorPipeId
-                            ? pipeDiameterById.get(r.collectorPipeId) ?? null
-                            : null
+                          // 集水点の 区間上書き があれば優先、なければ 集水管既定
+                          const collDia =
+                            r.collectorPoint.segmentDiameter ??
+                            (r.collectorPipeId
+                              ? pipeDiameterById.get(r.collectorPipeId) ?? null
+                              : null)
                           if (collDia != null) diameterByPointId.set(r.collectorPoint.id, collDia)
                           let running = 0
                           for (let j = 0; j <= i; j++) {

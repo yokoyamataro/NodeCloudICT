@@ -144,9 +144,11 @@ function buildSectionData(
     const collectorPipeNumber = row.collectorPipeId
       ? pipeNumberById?.get(row.collectorPipeId) ?? null
       : null
-    const collectorPipeDiameter = row.collectorPipeId
-      ? pipeDiameterById?.get(row.collectorPipeId) ?? null
-      : null
+    // 集水管径: この行の collectorPoint に区間上書き (segmentDiameter) があれば優先、
+    //   なければ 集水管の既定値 (pipeDiameterById) を使う。
+    const collectorPipeDiameter =
+      row.collectorPoint?.segmentDiameter ??
+      (row.collectorPipeId ? pipeDiameterById?.get(row.collectorPipeId) ?? null : null)
 
     // 中間点：吸水合流ではなく集水管の中間頂点（B1, B2 など）
     const isCollectorMidpoint =

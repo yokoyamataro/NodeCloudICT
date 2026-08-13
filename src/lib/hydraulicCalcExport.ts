@@ -185,8 +185,10 @@ export async function exportHydraulicCalcSheet({
           ? 3
           : collectorPipeType
         // W: 管径（cm）— 1 行下に転記
-        if (collectorPipe.diameter != null) {
-          ws.getCell(`W${currentRow + 1}`).value = collectorPipe.diameter / 10
+        //   集水点の segmentDiameter があれば 区間ごとの上書きを優先、なければ 集水管既定。
+        const collDiaMm = row.collectorPoint?.segmentDiameter ?? collectorPipe.diameter
+        if (collDiaMm != null) {
+          ws.getCell(`W${currentRow + 1}`).value = collDiaMm / 10
         }
         // X: 実延長（次の管までの区間延長）
         if (row.collectorPoint?.segmentDistance != null) {
