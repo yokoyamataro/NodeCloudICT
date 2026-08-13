@@ -47,12 +47,15 @@ import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
 // 面積計算簿コンポーネント
 function AreaCalculationSheet({
   sheet,
+  workType,
   onClose,
 }: {
   sheet: AreaCalculationSheetType
+  workType: WorkType
   onClose: () => void
 }) {
   const currentProject = useProjectListStore((s) => s.currentProject)
+  const currentFarm = useFarmStore((s) => s.currentFarm)
 
   const handleExportCSV = () => {
     const csv = exportAreaCalculationToCSV(sheet)
@@ -70,6 +73,9 @@ function AreaCalculationSheet({
       const blob = await generateCoordinateAreaBookExcel(sheet, {
         zoneNumber: currentProject?.coordinate_zone ?? null,
         areaLabel: sheet.zone_name || sheet.zone_number,
+        projectName: currentProject?.name ?? '',
+        farmName: currentFarm?.name ?? '',
+        workTypeLabel: WORK_TYPE_NAMES[workType] ?? '',
       })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -1348,6 +1354,7 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
       {calculationSheet && (
         <AreaCalculationSheet
           sheet={calculationSheet}
+          workType={workType}
           onClose={() => setCalculationSheet(null)}
         />
       )}
