@@ -49,9 +49,11 @@ export interface ReportParcelRow {
   hasSurveyMap: boolean | null
 }
 
-/** 03 所有権登記名義人 (立会人ブロック込) */
+/** 03 所有権登記名義人 (立会人ブロック込)
+ *  1 名義人ごとに 1 行。所有地 (parcels の複数筆) を parcelIndexes で保持する。 */
 export interface ReportOwnerRow {
-  parcelIndex: number                   // parcels 配列のインデックス
+  /** parcels 配列のインデックス (複数筆保有時は複数)。表示・出力時に 左側に並べる */
+  parcelIndexes: number[]
   landownerId: string | null            // landowners (地権者管理) の id
   address: string
   name: string
@@ -221,12 +223,26 @@ interface Row {
   updated_at: string
 }
 
+/** 旧形式 owners (parcelIndex: number) を 新形式 (parcelIndexes: number[]) に寄せる */
+function migrateOwners(body: Partial<LandReportBody>): Partial<LandReportBody> {
+  if (!Array.isArray(body.owners)) return body
+  const migrated = body.owners.map((o) => {
+    const legacy = o as unknown as { parcelIndex?: number } & Partial<ReportOwnerRow>
+    if (Array.isArray(legacy.parcelIndexes)) return o
+    if (typeof legacy.parcelIndex === 'number') {
+      return { ...o, parcelIndexes: [legacy.parcelIndex] } as ReportOwnerRow
+    }
+    return { ...o, parcelIndexes: [] } as ReportOwnerRow
+  })
+  return { ...body, owners: migrated }
+}
+
 const toReport = (r: Row): LandReport => ({
   id: r.id,
   farmId: r.farm_id,
   title: r.title,
   // 既存 body が 部分的でも DEFAULT_LAND_REPORT_BODY で埋めて型を安定させる
-  body: { ...DEFAULT_LAND_REPORT_BODY, ...(r.body as Partial<LandReportBody>) },
+  body: { ...DEFAULT_LAND_REPORT_BODY, ...migrateOwners(r.body as Partial<LandReportBody>) },
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 })

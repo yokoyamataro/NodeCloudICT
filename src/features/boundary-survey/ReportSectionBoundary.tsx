@@ -7,13 +7,16 @@
 //   * 写真 1 / 写真 2
 //   * 基本三角点測量ができない理由 (自由文 + 定型文)
 
-import { Plus, Trash2 } from 'lucide-react'
+import { useState } from 'react'
+import { Plus, Trash2, ListChecks } from 'lucide-react'
+import { useFarmStore } from '@/stores/farmStore'
 import type {
   LandReportBody,
   ReportBasePoint,
   ReportPermanentFeature,
 } from '@/stores/landReportStore'
 import { CheckboxLabel, Field, SnippetPickerButton } from './reportSectionUi'
+import { CoordinatePickerModal, type PickableCoordinate } from './CoordinatePickerModal'
 
 interface Props {
   body: LandReportBody
@@ -34,7 +37,11 @@ const emptyFeature = (): ReportPermanentFeature => ({
   objectName: '',
 })
 
+type BasePointField = 'basePoints' | 'subBasePoints'
+
 export function ReportSectionBoundary({ body, onChange }: Props) {
+  const currentFarm = useFarmStore((s) => s.currentFarm)
+  const [pickerFor, setPickerFor] = useState<BasePointField | null>(null)
   const b = body.boundary
 
   const patch = (p: Partial<LandReportBody['boundary']>) => {
@@ -200,6 +207,7 @@ export function ReportSectionBoundary({ body, onChange }: Props) {
         onPatch={patchBasePoints}
         onAdd={() => patch({ basePoints: [...b.basePoints, emptyBase()] })}
         onRemove={(idx) => patch({ basePoints: b.basePoints.filter((_, i) => i !== idx) })}
+        onPickFromCoords={currentFarm?.id ? () => setPickerFor('basePoints') : undefined}
       />
 
       {/* 補助基準点 */}
@@ -209,6 +217,7 @@ export function ReportSectionBoundary({ body, onChange }: Props) {
         onPatch={patchSubBasePoints}
         onAdd={() => patch({ subBasePoints: [...b.subBasePoints, emptyBase()] })}
         onRemove={(idx) => patch({ subBasePoints: b.subBasePoints.filter((_, i) => i !== idx) })}
+        onPickFromCoords={currentFarm?.id ? () => setPickerFor('subBasePoints') : undefined}
       />
 
       {/* 恒久的地物 */}
@@ -324,6 +333,25 @@ export function ReportSectionBoundary({ body, onChange }: Props) {
         </div>
       </div>
 
+      {pickerFor && currentFarm?.id && (
+        <CoordinatePickerModal
+          farmId={currentFarm.id}
+          alreadyIn={new Set(b[pickerFor].map((r) => r.coordinateId).filter(Boolean) as string[])}
+          title={pickerFor === 'basePoints' ? '基本三角点等を選択' : '補助基準点を選択'}
+          onCancel={() => setPickerFor(null)}
+          onConfirm={(picked: PickableCoordinate[]) => {
+            const additions: ReportBasePoint[] = picked.map((p) => ({
+              coordinateId: p.id,
+              name: p.pointNumber,
+              grade: p.type ?? '',
+              mark: p.stakeType ?? '',
+            }))
+            patch({ [pickerFor]: [...b[pickerFor], ...additions] } as Partial<LandReportBody['boundary']>)
+            setPickerFor(null)
+          }}
+        />
+      )}
+
       {/* 基本三角点測量ができない理由 */}
       <div className="border rounded p-2">
         <div className="flex items-center gap-2 mb-1">
@@ -359,20 +387,32 @@ interface BasePointTableProps {
   onPatch: (idx: number, p: Partial<ReportBasePoint>) => void
   onAdd: () => void
   onRemove: (idx: number) => void
+  onPickFromCoords?: () => void
 }
 
-function BasePointTable({ title, rows, onPatch, onAdd, onRemove }: BasePointTableProps) {
+function BasePointTable({ title, rows, onPatch, onAdd, onRemove, onPickFromCoords }: BasePointTableProps) {
   return (
     <div className="border rounded p-2">
       <div className="flex items-center gap-2 mb-1">
         <div className="text-xs font-semibold text-slate-700">{title}</div>
-        <button
-          type="button"
-          onClick={onAdd}
-          className="ml-auto flex items-center gap-1 px-2 py-0.5 text-xs border rounded hover:bg-slate-50"
-        >
-          <Plus className="h-3 w-3" /> 行を追加
-        </button>
+        <div className="ml-auto flex items-center gap-1">
+          {onPickFromCoords && (
+            <button
+              type="button"
+              onClick={onPickFromCoords}
+              className="flex items-center gap-1 px-2 py-0.5 text-xs border rounded hover:bg-slate-50"
+            >
+              <ListChecks className="h-3 w-3" /> 座標から選択
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onAdd}
+            className="flex items-center gap-1 px-2 py-0.5 text-xs border rounded hover:bg-slate-50"
+          >
+            <Plus className="h-3 w-3" /> 手動追加
+          </button>
+        </div>
       </div>
       {rows.length === 0 ? (
         <div className="text-xs text-slate-400">なし</div>
