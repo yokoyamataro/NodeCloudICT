@@ -95,8 +95,8 @@ export async function exportHydraulicCalcSheet({
   const pipeById = new Map<string, PipeRow>()
   for (const p of pipes) pipeById.set(p.id, p)
 
-  // 集水暗渠のみ処理（direct は別途必要なら追加）
   const collectorGroups = planGroups.filter((g) => g.groupType === 'collector')
+  const directGroups = planGroups.filter((g) => g.groupType === 'direct')
 
   // 系統ごとにグループ化
   interface SystemData {
@@ -218,6 +218,75 @@ export async function exportHydraulicCalcSheet({
     }
 
     // 系統の末尾の skip（isLastInSystem）で既に 1 行分空くため、追加の間隔は不要
+  }
+
+  // ===== 直落暗渠 =====
+  // 1 直落 = 1 Excel 行ペア。吸水欄に吸水管、集水欄に落口管を並べて書き出す。
+  // 各直落の間は「1 行空け」 = 2 Excel 行 (currentRow += 4)。
+  for (const group of directGroups) {
+    for (const row of group.rows) {
+      const absPipe = row.absorptionPipeId ? pipeById.get(row.absorptionPipeId) : null
+      const outletPipe = row.collectorPipeId ? pipeById.get(row.collectorPipeId) : null
+      if (!absPipe && !outletPipe) continue
+
+      // --- 吸水欄 ---
+      if (absPipe) {
+        ws.getCell(`A${currentRow}`).value = absPipe.number
+        ws.getCell(`B${currentRow}`).value = absorptionPipeType
+        if (absPipe.diameter != null) {
+          ws.getCell(`E${currentRow}`).value = absPipe.diameter / 10
+        }
+        const absLen = calculateDesignLength(absPipe)
+        ws.getCell(`F${currentRow}`).value = roundTo(absLen, 0)
+        // 直落は 1 本の吸水 → 端部補正 +H 配線間隔/4 のみ (接続補正 G は無し)
+        ws.getCell(`H${currentRow}`).value = pipeInterval / 4
+        // 勾配 K: 吸水管の C 点 → 吸水管の A 点 の計画高差
+        //   absorptionPoints は [吸水C, 吸水A=落口C, 落口A] のように dedup 済み。
+        //   吸水管の下流端 (=absPipe.vertices[last]) と一致する点を探して落差を出す。
+        const absEnd = absPipe.vertices[absPipe.vertices.length - 1]
+        const absCPt = row.absorptionPoints[0] ?? null
+        const absEndPt = row.absorptionPoints.find(
+          (p) => Math.abs(p.x - absEnd.x) < 1e-4 && Math.abs(p.y - absEnd.y) < 1e-4,
+        )
+        if (absCPt?.plannedHeight != null && absEndPt?.plannedHeight != null) {
+          const drop = absCPt.plannedHeight - absEndPt.plannedHeight
+          if (drop !== 0) {
+            ws.getCell(`K${currentRow}`).value = Math.round(absLen / drop)
+          }
+        }
+      }
+
+      // --- 集水欄 (落口) ---
+      if (outletPipe) {
+        ws.getCell(`S${currentRow}`).value = outletPipe.number
+        // 落口は 管種 3
+        ws.getCell(`T${currentRow + 1}`).value = 3
+        if (outletPipe.diameter != null) {
+          ws.getCell(`W${currentRow + 1}`).value = outletPipe.diameter / 10
+        }
+        // 実延長 X: 落口管の設計延長
+        const outLen = calculateDesignLength(outletPipe)
+        ws.getCell(`X${currentRow}`).value = roundTo(outLen, lengthDecimals)
+        // 集水勾配 AB: 落口 C 点 → 落口 A 点 の計画高差
+        const outC = outletPipe.vertices[0]
+        const outA = outletPipe.vertices[outletPipe.vertices.length - 1]
+        const outCPt = row.absorptionPoints.find(
+          (p) => Math.abs(p.x - outC.x) < 1e-4 && Math.abs(p.y - outC.y) < 1e-4,
+        )
+        const outAPt = row.absorptionPoints.find(
+          (p) => Math.abs(p.x - outA.x) < 1e-4 && Math.abs(p.y - outA.y) < 1e-4,
+        )
+        if (outCPt?.plannedHeight != null && outAPt?.plannedHeight != null) {
+          const drop = outCPt.plannedHeight - outAPt.plannedHeight
+          if (drop !== 0) {
+            ws.getCell(`AB${currentRow}`).value = Math.round(Math.abs(outLen / drop))
+          }
+        }
+      }
+
+      // 直落 1 本分 = 2 Excel 行、直落間の空行 = 2 Excel 行、合計 4 行進む
+      currentRow += 4
+    }
   }
 
   // ダウンロード
