@@ -744,27 +744,29 @@ export function CrossSectionChart({
         <span className="ml-auto text-xs text-slate-500 flex items-center gap-2">
           <span className="flex items-center gap-1">
             縦:
-            <select
-              value={heightScale}
-              onChange={(e) => setHeightScale(parseFloat(e.target.value))}
-              className="px-1 py-0.5 border border-slate-300 rounded bg-white text-xs"
-            >
-              {SCALE_STEPS.map((s) => (
-                <option key={s} value={s}>{(s * 100).toFixed(0)}%</option>
-              ))}
-            </select>
+            <input
+              type="range"
+              min={0}
+              max={SCALE_STEPS.length - 1}
+              step={1}
+              value={SCALE_STEPS.indexOf(heightScale as (typeof SCALE_STEPS)[number])}
+              onChange={(e) => setHeightScale(SCALE_STEPS[parseInt(e.target.value, 10)])}
+              className="w-20"
+            />
+            <span className="w-10 text-right">{(heightScale * 100).toFixed(0)}%</span>
           </span>
           <span className="flex items-center gap-1">
             横:
-            <select
-              value={widthScale}
-              onChange={(e) => setWidthScale(parseFloat(e.target.value))}
-              className="px-1 py-0.5 border border-slate-300 rounded bg-white text-xs"
-            >
-              {SCALE_STEPS.map((s) => (
-                <option key={s} value={s}>{(s * 100).toFixed(0)}%</option>
-              ))}
-            </select>
+            <input
+              type="range"
+              min={0}
+              max={SCALE_STEPS.length - 1}
+              step={1}
+              value={SCALE_STEPS.indexOf(widthScale as (typeof SCALE_STEPS)[number])}
+              onChange={(e) => setWidthScale(SCALE_STEPS[parseInt(e.target.value, 10)])}
+              className="w-20"
+            />
+            <span className="w-10 text-right">{(widthScale * 100).toFixed(0)}%</span>
           </span>
           {(heightScale !== 1.0 || widthScale !== 1.0) && (
             <button
@@ -1103,7 +1105,7 @@ export function CrossSectionChart({
                 : chartHeight - padding.bottom
             return (
               <g key={`flag-${idx}`}>
-                {/* リーダー線（旗 → 点） */}
+                {/* リーダー線（旗 → 点）: 枠は撤去したので測点名の下から引く */}
                 <line
                   x1={x}
                   y1={flagBottom}
@@ -1113,24 +1115,20 @@ export function CrossSectionChart({
                   strokeWidth="1"
                   strokeDasharray="2,2"
                 />
-                {/* 旗の枠 */}
-                <rect
-                  x={x - FLAG_WIDTH / 2}
-                  y={flagTop}
-                  width={FLAG_WIDTH}
-                  height={FLAG_ROW_HEIGHT - 4}
-                  fill="white"
-                  stroke="#16a34a"
-                  strokeWidth="1"
-                  rx={3}
-                />
-                {/* 旗のテキスト */}
+                {/* 旗のテキスト (枠なし・白フチで背景に埋もれないように) */}
                 <text
                   x={x}
                   y={flagTop + (FLAG_ROW_HEIGHT - 4) / 2 + 1}
                   textAnchor="middle"
                   dominantBaseline="middle"
-                  className="fill-green-700 text-[16px] font-semibold"
+                  className="text-[16px] font-semibold"
+                  fill="#000"
+                  style={{
+                    paintOrder: 'stroke',
+                    stroke: 'white',
+                    strokeWidth: 4,
+                    strokeLinejoin: 'round',
+                  }}
                 >
                   {point.absorptionPipeNumber}
                 </text>
