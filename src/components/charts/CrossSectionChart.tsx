@@ -75,16 +75,28 @@ export function CrossSectionChart({
   // ホバー中の測点インデックス（緑の縦線にカーソルを合わせたとき）
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
 
-  // マウスホイールでスケールを変更（Shift 押下で横、それ以外は縦）
+  // 伸縮比率の 6 段階刻み (縦・横 共通)。単位は倍率 (1.0 = 100%)
+  const SCALE_STEPS = useMemo(() => [0.5, 1.0, 2.0, 3.0, 4.0, 5.0] as const, [])
+  const stepUp = useCallback((v: number): number => {
+    for (const s of SCALE_STEPS) if (s > v + 1e-6) return s
+    return SCALE_STEPS[SCALE_STEPS.length - 1]
+  }, [SCALE_STEPS])
+  const stepDown = useCallback((v: number): number => {
+    for (let i = SCALE_STEPS.length - 1; i >= 0; i--) {
+      if (SCALE_STEPS[i] < v - 1e-6) return SCALE_STEPS[i]
+    }
+    return SCALE_STEPS[0]
+  }, [SCALE_STEPS])
+
+  // マウスホイールでスケールを変更（Shift 押下で横、それ以外は縦）。6 段階でスナップ。
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault()
-    const delta = e.deltaY > 0 ? -0.1 : 0.1
     if (e.shiftKey) {
-      setWidthScale((prev) => Math.max(0.2, Math.min(10.0, prev + delta)))
+      setWidthScale((prev) => e.deltaY > 0 ? stepDown(prev) : stepUp(prev))
     } else {
-      setHeightScale((prev) => Math.max(0.2, Math.min(5.0, prev + delta)))
+      setHeightScale((prev) => e.deltaY > 0 ? stepDown(prev) : stepUp(prev))
     }
-  }, [])
+  }, [stepUp, stepDown])
 
   // スケールリセット
   const resetScale = useCallback(() => {
@@ -732,34 +744,32 @@ export function CrossSectionChart({
         <span className="ml-auto text-xs text-slate-500 flex items-center gap-2">
           <span className="flex items-center gap-1">
             縦:
-            <input
-              type="range"
-              min={0.2}
-              max={5.0}
-              step={0.1}
+            <select
               value={heightScale}
               onChange={(e) => setHeightScale(parseFloat(e.target.value))}
-              className="w-20"
-            />
-            <span className="w-10 text-right">{(heightScale * 100).toFixed(0)}%</span>
+              className="px-1 py-0.5 border border-slate-300 rounded bg-white text-xs"
+            >
+              {SCALE_STEPS.map((s) => (
+                <option key={s} value={s}>{(s * 100).toFixed(0)}%</option>
+              ))}
+            </select>
           </span>
           <span className="flex items-center gap-1">
             横:
-            <input
-              type="range"
-              min={0.2}
-              max={10.0}
-              step={0.1}
+            <select
               value={widthScale}
               onChange={(e) => setWidthScale(parseFloat(e.target.value))}
-              className="w-20"
-            />
-            <span className="w-10 text-right">{(widthScale * 100).toFixed(0)}%</span>
+              className="px-1 py-0.5 border border-slate-300 rounded bg-white text-xs"
+            >
+              {SCALE_STEPS.map((s) => (
+                <option key={s} value={s}>{(s * 100).toFixed(0)}%</option>
+              ))}
+            </select>
           </span>
           {(heightScale !== 1.0 || widthScale !== 1.0) && (
             <button
               onClick={resetScale}
-              className="px-1.5 py-0.5 text-[18px] bg-slate-200 hover:bg-slate-300 rounded"
+              className="px-1.5 py-0.5 text-[13px] bg-slate-200 hover:bg-slate-300 rounded"
             >
               リセット
             </button>

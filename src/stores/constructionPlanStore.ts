@@ -340,6 +340,11 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
         return null
       }
 
+      // 頂点 z を地盤高フォールバックに使う際、0 は「未計測」扱いで null にする。
+      // (北海道の暗渠現場は 20m 以上の標高が通常のため、0 が有効値になり得ない)
+      const vertexZOrNull = (z: number | null | undefined): number | null =>
+        z == null || z === 0 ? null : z
+
       // 管路の頂点から測点名を生成するヘルパー
       // vertexIndex=0 → C（最上流）/ 最後 → A（最下流）/ 中間 → B{i}（下流起点、座標計算ページと整合）
       const generatePointName = (pipeNumber: string, vertexIndex: number, totalVertices: number): string => {
@@ -580,7 +585,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                 pointName,
                 x: v.x,
                 y: v.y,
-                groundHeight: getGroundHeightByCoordinate(v.x, v.y) ?? v.z,
+                groundHeight: getGroundHeightByCoordinate(v.x, v.y) ?? vertexZOrNull(v.z),
                 plannedHeight: null,
                 cutDepth: null,
                 segmentDistance: null,
@@ -631,7 +636,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                   pointName,
                   x: vertex.x,
                   y: vertex.y,
-                  groundHeight: getGroundHeightByCoordinate(vertex.x, vertex.y) ?? vertex.z,
+                  groundHeight: getGroundHeightByCoordinate(vertex.x, vertex.y) ?? vertexZOrNull(vertex.z),
                   plannedHeight: null,
                   cutDepth: null,
                   segmentDistance: null,
@@ -665,7 +670,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                     pointName: info.name,
                     x: info.x,
                     y: info.y,
-                    groundHeight: getGroundHeightByCoordinate(info.x, info.y) ?? info.z,
+                    groundHeight: getGroundHeightByCoordinate(info.x, info.y) ?? vertexZOrNull(info.z),
                     plannedHeight: null,
                     cutDepth: null,
                     segmentDistance: null,
@@ -683,7 +688,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                     pointName: '',
                     x: downstream.x,
                     y: downstream.y,
-                    groundHeight: getGroundHeightByCoordinate(downstream.x, downstream.y) ?? downstream.z,
+                    groundHeight: getGroundHeightByCoordinate(downstream.x, downstream.y) ?? vertexZOrNull(downstream.z),
                     plannedHeight: null,
                     cutDepth: null,
                     segmentDistance: null,
@@ -816,7 +821,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                 pointName: collectorPointName,
                 x: targetVertex.x,
                 y: targetVertex.y,
-                groundHeight: getGroundHeightByCoordinate(targetVertex.x, targetVertex.y) ?? targetVertex.z,
+                groundHeight: getGroundHeightByCoordinate(targetVertex.x, targetVertex.y) ?? vertexZOrNull(targetVertex.z),
                 plannedHeight: null,
                 cutDepth: null,
                 segmentDistance: null,
@@ -917,7 +922,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
               pointName: generatePointName(pipe.number, idx, pipe.vertices.length),
               x: vertex.x,
               y: vertex.y,
-              groundHeight: getGroundHeightByCoordinate(vertex.x, vertex.y) ?? vertex.z,
+              groundHeight: getGroundHeightByCoordinate(vertex.x, vertex.y) ?? vertexZOrNull(vertex.z),
               plannedHeight: null,
               cutDepth: null,
               segmentDistance: null,
@@ -1006,7 +1011,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
               pointName: generatePointName(absorptionPipe.number, idx, absorptionPipe.vertices.length),
               x: vertex.x,
               y: vertex.y,
-              groundHeight: getGroundHeightByCoordinate(vertex.x, vertex.y) ?? vertex.z,
+              groundHeight: getGroundHeightByCoordinate(vertex.x, vertex.y) ?? vertexZOrNull(vertex.z),
               plannedHeight: null,
               cutDepth: null,
               segmentDistance: null,
@@ -1048,7 +1053,7 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
             pointName: generatePointName(collectorPipe.number, idx, collectorPipe.vertices.length),
             x: vertex.x,
             y: vertex.y,
-            groundHeight: getGroundHeightByCoordinate(vertex.x, vertex.y) ?? vertex.z,
+            groundHeight: getGroundHeightByCoordinate(vertex.x, vertex.y) ?? vertexZOrNull(vertex.z),
             plannedHeight: null,
             cutDepth: null,
             segmentDistance: null,
