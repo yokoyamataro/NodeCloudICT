@@ -81,8 +81,18 @@ export async function exportMeasurementResult({
   // 物理的な「落口」pipeType の管路は、後段で施工計画の outlet planRow から
   // 一括で書き出すためここでは除外する (複数落口がある場合に取りこぼしを防ぐ)。
   // ただし 直落 group で使われている落口管は 上記ループに含めて 出力する。
+  //
+  // 直落で 複数の吸水が 同じ番号の落口 (例: 2 本の O8 pipe) に流入する場合、
+  // Excel には 1 行だけに集約するため 落口は 番号 (pipe.number) で dedup する。
+  const seenOutletNumbers = new Set<string>()
   const sortedPipes = [...pipes]
     .filter((p) => p.pipeType !== 'outlet' || directOutletPipeIds.has(p.id))
+    .filter((p) => {
+      if (p.pipeType !== 'outlet') return true
+      if (seenOutletNumbers.has(p.number)) return false
+      seenOutletNumbers.add(p.number)
+      return true
+    })
     .sort((a, b) => comparePipeNumbers(a.number, b.number))
 
   // 全 planPoint (吸水 + 集水) を集めて 名前で引けるようにしておく。
