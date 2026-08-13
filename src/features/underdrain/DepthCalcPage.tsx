@@ -1441,38 +1441,69 @@ export function DepthCalcPage() {
                     )
                   })}
                   <td className="border-0 bg-transparent"></td>
-                  <td className="px-1.5 py-1 text-center border font-mono text-slate-600 bg-green-50">
-                    {collector && nextRow?.collectorPoint && collector.segmentDistance && collector.segmentDistance > 0 ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setSlopeEdit({
-                            segmentLabel: `${collector.pointName || '集水'} → ${nextRow.collectorPoint?.pointName || '集水'}`,
-                            distance: collector.segmentDistance!,
-                            currentSlope: collectorSlope ?? null,
-                            upstream: {
-                              rowId: row.id,
-                              pointId: collector.id,
-                              ph: collector.plannedHeight,
-                              label: collector.pointName || '集水',
-                            },
-                            downstream: {
-                              rowId: nextRow.id,
-                              pointId: nextRow.collectorPoint!.id,
-                              ph: nextRow.collectorPoint!.plannedHeight,
-                              label: nextRow.collectorPoint!.pointName || '集水',
-                            },
-                          })
-                        }
-                        className="w-full hover:bg-blue-50 rounded px-1 py-0.5 text-blue-700 hover:underline"
-                        title="勾配を任意設定"
-                      >
-                        {collectorSlope ?? '-'}
-                      </button>
-                    ) : (
-                      <span>{collectorSlope ?? '-'}</span>
-                    )}
-                  </td>
+                  {(() => {
+                    // 集水 区間勾配 セル: 逆勾配 (現行 計画高 <= 次行 計画高) なら NG (赤+!)。
+                    // 逆勾配は 限界勾配より速く見えてしまうため 区間勾配 セル側で早期に警告する。
+                    let isCollectorReverse = false
+                    if (
+                      collector &&
+                      nextRow?.collectorPoint &&
+                      collector.plannedHeight != null &&
+                      nextRow.collectorPoint.plannedHeight != null &&
+                      collector.segmentDistance != null &&
+                      collector.segmentDistance > 0
+                    ) {
+                      const drop = collector.plannedHeight - nextRow.collectorPoint.plannedHeight
+                      if (drop <= 0) isCollectorReverse = true
+                    }
+                    const cellClass = isCollectorReverse
+                      ? 'px-1.5 py-1 text-center border font-mono bg-red-100 text-red-700 font-bold'
+                      : 'px-1.5 py-1 text-center border font-mono text-slate-600 bg-green-50'
+                    const cellTitle = isCollectorReverse
+                      ? '逆勾配です (集水計画高が下流側より低い)'
+                      : undefined
+                    const displayText = isCollectorReverse
+                      ? `! ${collectorSlope ?? '-'}`
+                      : (collectorSlope ?? '-')
+                    return (
+                      <td className={cellClass} title={cellTitle}>
+                        {collector && nextRow?.collectorPoint && collector.segmentDistance && collector.segmentDistance > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSlopeEdit({
+                                segmentLabel: `${collector.pointName || '集水'} → ${nextRow.collectorPoint?.pointName || '集水'}`,
+                                distance: collector.segmentDistance!,
+                                currentSlope: collectorSlope ?? null,
+                                upstream: {
+                                  rowId: row.id,
+                                  pointId: collector.id,
+                                  ph: collector.plannedHeight,
+                                  label: collector.pointName || '集水',
+                                },
+                                downstream: {
+                                  rowId: nextRow.id,
+                                  pointId: nextRow.collectorPoint!.id,
+                                  ph: nextRow.collectorPoint!.plannedHeight,
+                                  label: nextRow.collectorPoint!.pointName || '集水',
+                                },
+                              })
+                            }
+                            className={`w-full rounded px-1 py-0.5 ${
+                              isCollectorReverse
+                                ? 'text-red-700 hover:bg-red-200'
+                                : 'text-blue-700 hover:bg-blue-50 hover:underline'
+                            }`}
+                            title={cellTitle ?? '勾配を任意設定'}
+                          >
+                            {displayText}
+                          </button>
+                        ) : (
+                          <span>{displayText}</span>
+                        )}
+                      </td>
+                    )
+                  })()}
                   <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">
                     区間勾配
                   </td>
