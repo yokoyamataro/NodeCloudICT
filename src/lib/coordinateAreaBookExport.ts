@@ -23,7 +23,7 @@ export interface CoordinateAreaBookOptions {
   farmName?: string | null
   /** 工種 (例: 暗渠 / 客土 / 整地 / 心破土改 / 徐礫 / 線形物 …) */
   workTypeLabel?: string | null
-  /** ヘッダ右上に載せる 区域名 (例 "23-4"、任意) */
+  /** 区域番号 (例 "S1"、A4 ヘッダの 工種の下 に表示) */
   areaLabel?: string
 }
 
@@ -208,17 +208,14 @@ export async function generateCoordinateAreaBookExcel(
     },
   })
 
-  // 列幅 (chars) — A4 縦 で 表 (6 列) が中央〜左寄り、右余白は少し。
-  // A(境界点) B(X座標) C(Y座標) D(辺長) E(方向角) F(備考) = 表領域
-  // G..H = ラベル/値 用の余白列 (地図はセルまたぎで配置)
-  ws.getColumn(1).width = 8   // 境界点
-  ws.getColumn(2).width = 13  // X座標
-  ws.getColumn(3).width = 13  // Y座標
+  // 列幅 (chars) — A4 縦 (~64 chars 相当) を目一杯使う 6 列。
+  // 情報ブロック (現場名 等) と 座標一覧表 の 両方が A:F を横いっぱいに占める。
+  ws.getColumn(1).width = 12  // 境界点 / ラベル (現場名 等)
+  ws.getColumn(2).width = 12  // X座標
+  ws.getColumn(3).width = 12  // Y座標
   ws.getColumn(4).width = 10  // 辺長
   ws.getColumn(5).width = 12  // 方向角
-  ws.getColumn(6).width = 10  // 備考
-  ws.getColumn(7).width = 4   // 右余白
-  ws.getColumn(8).width = 4
+  ws.getColumn(6).width = 14  // 備考
 
   // border helper
   const box = () => ({
@@ -229,28 +226,28 @@ export async function generateCoordinateAreaBookExcel(
   })
 
   // ===== 1 行目: タイトル =====
-  ws.mergeCells('A1:H1')
+  ws.mergeCells('A1:F1')
   const titleCell = ws.getCell('A1')
   titleCell.value = '面 積 計 算 書'
   titleCell.font = { size: 20, bold: true }
   titleCell.alignment = { horizontal: 'center', vertical: 'middle' }
   ws.getRow(1).height = 32
 
-  // ===== 2-4 行: 現場名 / 工区名 / 工種 =====
+  // ===== 2-5 行: 現場名 / 工区名 / 工種 / 区域番号 =====
+  //   A: ラベル、B..F: 値 (5 セルをマージして A4 幅いっぱい)
   const infoRows: Array<{ label: string; value: string }> = [
     { label: '現場名', value: projectName },
     { label: '工区名', value: farmName },
     { label: '工種', value: workTypeLabel },
+    { label: '区域番号', value: areaLabel },
   ]
   infoRows.forEach((info, i) => {
     const r = 2 + i
-    // A: ラベル
     const lc = ws.getCell(r, 1)
     lc.value = info.label
     lc.font = { bold: true, size: 10 }
     lc.alignment = { horizontal: 'center', vertical: 'middle' }
     lc.border = box()
-    // B..F: 値
     ws.mergeCells(r, 2, r, 6)
     const vc = ws.getCell(r, 2)
     vc.value = info.value
@@ -260,19 +257,13 @@ export async function generateCoordinateAreaBookExcel(
     ws.getRow(r).height = 20
   })
 
-  // 右上 (G-H 上部) に 座標系 + 区域 の小さいラベル
+  // 座標系ラベル (面積算出公式 の直上に 1 行で置くため ここでは変数だけ用意)
   const csLabel = zoneNumber != null
     ? `世界測地系${zoneNumber}系${elevationLabel}`
     : `世界測地系${elevationLabel}`
-  ws.mergeCells('G2:H4')
-  const csCell = ws.getCell('G2')
-  csCell.value = `${csLabel}\n区域: ${areaLabel}`
-  csCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }
-  csCell.font = { size: 9 }
-  csCell.border = box()
 
-  // ===== 表 ヘッダ (row 6) =====
-  const HEADER_ROW = 6
+  // ===== 表 ヘッダ (row 7) — 情報ブロック 4 行 + 空行 1 の直後 =====
+  const HEADER_ROW = 7
   const headers = ['境 界 点', 'X 座 標', 'Y 座 標', '辺 長', '方 向 角', '備  考']
   headers.forEach((h, i) => {
     const c = ws.getCell(HEADER_ROW, i + 1)
@@ -309,8 +300,15 @@ export async function generateCoordinateAreaBookExcel(
     }
   })
 
-  // ===== 面積算出公式 + 面積 / 地積 =====
-  const summaryStart = HEADER_ROW + 1 + rows.length + 1
+  // ===== 座標系ラベル (1 行) → 面積算出公式 → 面積 → 地積 =====
+  const csRow = HEADER_ROW + 1 + rows.length + 1
+  ws.mergeCells(csRow, 1, csRow, 6)
+  const csCell = ws.getCell(csRow, 1)
+  csCell.value = csLabel
+  csCell.font = { size: 10 }
+  csCell.alignment = { horizontal: 'right', vertical: 'middle', indent: 1 }
+
+  const summaryStart = csRow + 1
   ws.mergeCells(summaryStart, 1, summaryStart, 6)
   const formulaCell = ws.getCell(summaryStart, 1)
   formulaCell.value = '面積算出公式:  A = 1/2 |Σ Xn × (Yn+1 − Yn−1)|'
