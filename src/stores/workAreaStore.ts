@@ -378,6 +378,10 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         : [...state.pendingWorkAreaIds, workAreaId]
       return { workAreas: newWorkAreas, hasChanges: true, pendingWorkAreaIds: newPending }
     })
+    // 点が 3 本以上あれば 面積を即時に再計算 (一覧に m² / ha が自動反映される)
+    if ((get().getWorkAreaById(workAreaId)?.points.length ?? 0) >= 3) {
+      get().calculateArea(workAreaId)
+    }
   },
 
   removePoint: (workAreaId, coordinateId) => {
@@ -404,6 +408,28 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         : [...state.pendingWorkAreaIds, workAreaId]
       return { workAreas: newWorkAreas, hasChanges: true, pendingWorkAreaIds: newPending }
     })
+    // 点数変化に追従して 面積を即時に再計算 (3 点未満なら areaSqm=null)
+    const remaining = get().getWorkAreaById(workAreaId)?.points.length ?? 0
+    if (remaining >= 3) {
+      get().calculateArea(workAreaId)
+    } else {
+      // 3 点未満は面積を null に戻す
+      set((state) => {
+        const nw = { ...state.workAreas }
+        for (const wt of Object.keys(nw) as WorkType[]) {
+          const areas = nw[wt]
+          if (!areas) continue
+          const i = areas.findIndex((a) => a.id === workAreaId)
+          if (i !== -1) {
+            const u = [...areas]
+            u[i] = { ...u[i], areaSqm: null, areaHa: null, perimeterM: null }
+            nw[wt] = u
+            break
+          }
+        }
+        return { workAreas: nw }
+      })
+    }
   },
 
   reorderPoints: (workAreaId, coordinateIds) => {
@@ -434,6 +460,10 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         : [...state.pendingWorkAreaIds, workAreaId]
       return { workAreas: newWorkAreas, hasChanges: true, pendingWorkAreaIds: newPending }
     })
+    // 並べ替え直後も 面積を再計算 (向きが変わって面積の符号だけ変わるので値は同じだが 一貫性のため)
+    if ((get().getWorkAreaById(workAreaId)?.points.length ?? 0) >= 3) {
+      get().calculateArea(workAreaId)
+    }
   },
 
   calculateArea: (workAreaId) => {

@@ -681,16 +681,10 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
         actions={headerActions}
       />
 
-      {/* 区域編集中の案内 */}
+      {/* 区域編集中の案内: 終了ボタンは 一覧の 「編集終了」 に集約したので ここは案内文のみ */}
       {editingAreaId && (
-        <div className="px-4 py-2 bg-blue-50 border-b text-sm text-blue-700 flex items-center justify-between">
+        <div className="px-4 py-2 bg-blue-50 border-b text-sm text-blue-700">
           <span>区域編集中: 地図上の点をクリックして追加</span>
-          <button
-            onClick={() => setEditingAreaId(null)}
-            className="px-2 py-1 text-xs bg-blue-100 hover:bg-blue-200 rounded"
-          >
-            編集終了
-          </button>
         </div>
       )}
 
@@ -869,7 +863,7 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                             className="px-2 py-1 border rounded"
                             placeholder="区域番号"
                           />
-                          {/* 構成点数 + 編集ボタン (この行をそのまま編集モードに) */}
+                          {/* 構成点数 + 構成点編集/編集終了 ボタン */}
                           <div className="px-2 py-1 text-muted-foreground flex items-center gap-1.5">
                             <span>{area.points.length} 点</span>
                             <button
@@ -878,10 +872,13 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                                 e.stopPropagation()
                                 setEditingAreaId(isEditing ? null : area.id)
                               }}
-                              className="p-1 border rounded hover:bg-slate-100"
+                              className={`flex items-center gap-1 px-1.5 py-0.5 text-xs border rounded hover:bg-slate-100 ${
+                                isEditing ? 'bg-blue-50 border-blue-400 text-blue-700' : ''
+                              }`}
                               title={isEditing ? '構成点編集を終了' : '構成点を編集'}
                             >
                               <Pencil className="h-3 w-3" />
+                              {isEditing ? '編集終了' : '構成点編集'}
                             </button>
                           </div>
                           {/* 面積 (m² 整数, 小数点以下切り捨て) */}
@@ -907,10 +904,11 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                             handleCalculateArea(area.id)
                           }}
                           disabled={area.points.length < 3}
-                          className="flex items-center gap-1 px-1.5 py-1 text-xs border rounded hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                          title="面積計算"
+                          className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="A4 縦 の 座標面積計算書 を Excel で出力"
                         >
                           <Calculator className="h-3.5 w-3.5" />
+                          面積計算書
                         </button>
                         <button
                           onClick={(e) => {
@@ -918,9 +916,11 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                             deleteWorkArea(area.id)
                             if (isEditing) setEditingAreaId(null)
                           }}
-                          className="p-1 text-red-500 hover:bg-red-50 rounded"
+                          className="flex items-center gap-1 px-2 py-1 text-xs border border-red-300 text-red-600 rounded hover:bg-red-50"
+                          title="区域を削除"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
+                          区域削除
                         </button>
                       </div>
                     </div>
@@ -987,9 +987,6 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                                   {index + 1}.
                                 </span>
                                 <span className="font-medium">{point.pointNumber}</span>
-                                <span className="text-xs text-muted-foreground">
-                                  ({point.x.toFixed(1)}, {point.y.toFixed(1)})
-                                </span>
                                 <button
                                   onClick={() => removePoint(area.id, point.id)}
                                   className="ml-auto p-0.5 text-red-500 hover:bg-red-50 rounded"
