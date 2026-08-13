@@ -40,6 +40,8 @@ import { useAuth } from '@/contexts/AuthContext'
 import { isAdmin } from '@/lib/admin'
 import type { Organization } from '@/types/database'
 import { OrgMembersView } from './OrgMembersView'
+import { OrgSurveyorsView } from './OrgSurveyorsView'
+import { OrgReportSnippetsView } from './OrgReportSnippetsView'
 
 // --- 組織情報フォームのドラフト型 ---
 interface OrgDraft {
@@ -355,12 +357,13 @@ function SiteOwnerUnifiedView() {
                 onDeleted={handleOrgDeleted}
               />
               <div className="flex-1 min-h-0 overflow-hidden border-t bg-white flex flex-col">
-                <OrgMembersView
+                <OrgSubTabs
                   key={selectedOrg.id}
                   organizationId={selectedOrg.id}
                   organizationName={selectedOrg.name}
                   userCountLimit={selectedOrg.user_count_limit}
                   expiresAt={selectedOrg.expires_at}
+                  editable={true}
                 />
               </div>
             </>
@@ -448,18 +451,80 @@ function OrgAdminUnifiedView({ adminOrgs }: { adminOrgs: AdminOrgRow[] }) {
         ) : (
           <>
             <OrgInfoForm org={org} editable={false} />
-            <div className="flex-1 min-h-0 overflow-hidden border-t bg-white">
-              <OrgMembersView
+            <div className="flex-1 min-h-0 overflow-hidden border-t bg-white flex flex-col">
+              <OrgSubTabs
                 organizationId={org.id}
                 organizationName={org.name}
                 userCountLimit={org.user_count_limit}
                 expiresAt={org.expires_at}
+                editable={true}
               />
             </div>
           </>
         )}
       </div>
     </div>
+  )
+}
+
+// ============================================================
+// 組織の下部タブ (メンバー / 調査士セット / 定型文)
+// ============================================================
+type OrgSubTab = 'members' | 'surveyors' | 'snippets'
+
+function OrgSubTabs({
+  organizationId,
+  organizationName,
+  userCountLimit,
+  expiresAt,
+  editable,
+}: {
+  organizationId: string
+  organizationName: string
+  userCountLimit?: number | null
+  expiresAt?: string | null
+  editable: boolean
+}) {
+  const [tab, setTab] = useState<OrgSubTab>('members')
+  return (
+    <>
+      <div className="flex gap-0 border-b bg-slate-50">
+        {(
+          [
+            { key: 'members', label: 'メンバー' },
+            { key: 'surveyors', label: '土地家屋調査士' },
+            { key: 'snippets', label: '定型文' },
+          ] as const
+        ).map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setTab(t.key)}
+            className={`px-4 py-2 text-sm border-b-2 -mb-px ${
+              tab === t.key
+                ? 'border-blue-600 text-blue-700 font-medium bg-white'
+                : 'border-transparent text-slate-600 hover:text-slate-800'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {tab === 'members' && (
+        <OrgMembersView
+          organizationId={organizationId}
+          organizationName={organizationName}
+          userCountLimit={userCountLimit}
+          expiresAt={expiresAt}
+        />
+      )}
+      {tab === 'surveyors' && (
+        <OrgSurveyorsView organizationId={organizationId} editable={editable} />
+      )}
+      {tab === 'snippets' && (
+        <OrgReportSnippetsView organizationId={organizationId} editable={editable} />
+      )}
+    </>
   )
 }
 
