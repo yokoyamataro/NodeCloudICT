@@ -22,6 +22,12 @@ interface CrossSectionChartProps {
   // 受け側集水の各行に対して、流入してくる他系統の最終集水点情報。
   // rowId をキーに、複数の流入を配列で持つ（1 点に複数系統が合流するケース対応）。
   mergeInflowsByRowId?: Map<string, Array<{ height: number; systemLabel: string; isReverseSlope: boolean }>>
+  // 限界勾配 (K) の per-point ルックアップ。K は 1/K で表示する分母値。
+  //   キーは PlanPoint.id (吸水スコープの場合は 疑似 collectorPoint の id と一致するよう
+  //   DepthCalcPage 側で組み立てる)
+  criticalKByPointId?: Map<string, number>
+  // 管径 (mm) の per-point ルックアップ。指定時は SectionPoint.segmentDiameter を上書き。
+  diameterByPointId?: Map<string, number>
 }
 
 // 断面図の点データ（集水管の点のみ）
@@ -43,6 +49,10 @@ interface SectionPoint {
   // 集水帯表示用
   collectorPipeId: string | null
   collectorPipeNumber: string | null
+  // 管径 (mm)。この点から次点までの区間で使う値。単独位置の場合は 集水管既定を採用。
+  segmentDiameter: number | null
+  // 限界勾配 (K)。1/K で表示。DepthCalcPage 側で Manning 逆算した結果を受け取る。
+  segmentCriticalK: number | null
 }
 
 export function CrossSectionChart({
@@ -51,11 +61,14 @@ export function CrossSectionChart({
   endType,
   chartHeight: chartHeightProp,
   pipeNumberById,
+  pipeDiameterById,
   allPlanGroups,
   tinSurface,
   endCollectorPlannedHeight,
   onPlannedHeightChange,
   mergeInflowsByRowId,
+  criticalKByPointId,
+  diameterByPointId,
 }: CrossSectionChartProps) {
   // 標高スケールのズーム倍率（1.0が基準、大きいほど拡大）
   const [heightScale, setHeightScale] = useState(1.0)
@@ -71,6 +84,9 @@ export function CrossSectionChart({
   const [showGroundValue, setShowGroundValue] = useState(true)
   const [showPlannedValue, setShowPlannedValue] = useState(true)
   const [showCutValue, setShowCutValue] = useState(true)
+  // 区間ラベル (勾配の下段に併記): 管径 と 限界勾配 の表示切替
+  const [showDiameter, setShowDiameter] = useState(true)
+  const [showCriticalSlope, setShowCriticalSlope] = useState(true)
 
   // ホバー中の測点インデックス（緑の縦線にカーソルを合わせたとき）
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
@@ -184,6 +200,15 @@ export function CrossSectionChart({
         ? pipeNumberById?.get(row.collectorPipeId) ?? null
         : null
 
+      // 管径: point 単位のオーバーライドを優先し、なければ collectorPipe の既定を使う
+      const cp = row.collectorPoint
+      const segDiameter =
+        diameterByPointId?.get(cp.id) ??
+        cp.segmentDiameter ??
+        (row.collectorPipeId ? pipeDiameterById?.get(row.collectorPipeId) ?? null : null)
+      // 限界勾配 (K) — DepthCalcPage 側で計算した値
+      const criticalK = criticalKByPointId?.get(cp.id) ?? null
+
       points.push({
         distance: cumulativeDistance,
         groundHeight: row.collectorPoint.groundHeight,
@@ -197,11 +222,13 @@ export function CrossSectionChart({
         absorptionUpstreamPlannedHeight: absorptionUpstreamHeight,
         collectorPipeId: row.collectorPipeId,
         collectorPipeNumber,
+        segmentDiameter: segDiameter,
+        segmentCriticalK: criticalK,
       })
     }
 
     return points
-  }, [systemRows, resolveMergeTargetPipeNumber, pipeNumberById])
+  }, [systemRows, resolveMergeTargetPipeNumber, pipeNumberById, pipeDiameterById, diameterByPointId, criticalKByPointId])
 
   // TIN サーフェスから alignment に沿った断面サンプルを生成（約 1m 間隔）
   const tinProfile = useMemo<{ distance: number; z: number | null }[]>(() => {
@@ -903,6 +930,26 @@ export function CrossSectionChart({
                 <span className="w-6 text-center font-mono text-[11px]" style={{ color: '#2563eb' }}>0.80</span>
                 <span className="text-slate-700">切深値</span>
               </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showDiameter}
+                  onChange={(e) => setShowDiameter(e.target.checked)}
+                  className="h-3 w-3"
+                />
+                <span className="w-6 text-center font-mono text-[11px]" style={{ color: '#7c3aed' }}>φ60</span>
+                <span className="text-slate-700">管径</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showCriticalSlope}
+                  onChange={(e) => setShowCriticalSlope(e.target.checked)}
+                  className="h-3 w-3"
+                />
+                <span className="w-6 text-center font-mono text-[11px]" style={{ color: '#334155' }}>1/K</span>
+                <span className="text-slate-700">限界勾配</span>
+              </label>
             </div>
           </div>
           )}
@@ -1087,6 +1134,54 @@ export function CrossSectionChart({
                 >
                   ({slope.distance.toFixed(1)})
                 </text>
+                {/* 管径 (φNN) — 区間距離の下 */}
+                {showDiameter && p1.segmentDiameter != null && (
+                  <text
+                    x={midX}
+                    y={midY + 28}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    className="text-[12px] font-medium"
+                    fill="#7c3aed"
+                    style={{
+                      paintOrder: 'stroke',
+                      stroke: 'white',
+                      strokeWidth: 3,
+                      strokeLinejoin: 'round',
+                    }}
+                  >
+                    φ{p1.segmentDiameter}
+                  </text>
+                )}
+                {/* 限界勾配 (1/K) — さらに下段。実勾配より緩ければ 赤 (! 付き) */}
+                {showCriticalSlope && p1.segmentCriticalK != null && (() => {
+                  // 実勾配 (K_actual = distance / |Δh|) が 限界 K_limit より緩い場合は 赤警告
+                  const dh = p1.plannedHeight != null && p2.plannedHeight != null
+                    ? p1.plannedHeight - p2.plannedHeight
+                    : null
+                  const kActual = dh != null && dh > 0 && slope.distance > 0
+                    ? slope.distance / dh
+                    : null
+                  const warn = kActual != null && kActual > p1.segmentCriticalK
+                  return (
+                    <text
+                      x={midX}
+                      y={midY + 42}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      className="text-[12px] font-medium"
+                      fill={warn ? '#dc2626' : '#334155'}
+                      style={{
+                        paintOrder: 'stroke',
+                        stroke: 'white',
+                        strokeWidth: 3,
+                        strokeLinejoin: 'round',
+                      }}
+                    >
+                      {warn ? '! ' : ''}1/{p1.segmentCriticalK}
+                    </text>
+                  )
+                })()}
               </g>
             )
           })}

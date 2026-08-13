@@ -2740,6 +2740,77 @@ export function DepthCalcPage() {
                       </span>
                       {chartLabel && <span className="text-slate-500 ml-2">{chartLabel}</span>}
                     </div>
+                    {(() => {
+                      // 断面図に載せる 管径 / 限界勾配 のマップを構築。
+                      // 表と同じ Manning 逆算を per-point で行い、point.id で引ける形で
+                      // CrossSectionChart に渡す。両スコープ共通で PlanPoint.id を使う
+                      // (吸水スコープの疑似 collectorPoint も 元の absorption point の
+                      // id を保持しているため OK)。
+                      const criticalKByPointId = new Map<string, number>()
+                      const diameterByPointId = new Map<string, number>()
+                      const intervalM = hydraulicSettings.pipeInterval
+                      for (let i = 0; i < systemData.rows.length; i++) {
+                        const r = systemData.rows[i]
+                        const absDia = r.absorptionPipeId
+                          ? pipeDiameterById.get(r.absorptionPipeId) ?? null
+                          : null
+                        const absLens = computeAbsorptionHydraulicLengths(
+                          r,
+                          systemData.rows,
+                          i,
+                          intervalM,
+                          excludedPointIds,
+                        )
+                        for (let pi = 0; pi < r.absorptionPoints.length; pi++) {
+                          const p = r.absorptionPoints[pi]
+                          const dia = p.segmentDiameter ?? absDia
+                          if (dia != null) diameterByPointId.set(p.id, dia)
+                          if (pi === 0) continue
+                          const L = absLens[pi]
+                          if (L == null) continue
+                          const K_raw = computeCriticalSlopeDenominator({
+                            diameterMm: dia,
+                            roughness: MANNING_ROUGHNESS[hydraulicSettings.absorptionPipeType],
+                            hydraulicLengthM: L,
+                            plannedFlowMmDay: hydraulicSettings.plannedFlow,
+                            spacingM: intervalM,
+                          })
+                          const K_limit = K_raw != null ? Math.min(K_raw, calcParams.imin) : null
+                          if (K_limit != null) criticalKByPointId.set(p.id, K_limit)
+                        }
+                        // 集水点: 系統内の集水累加水理延長 (吸水下流端 + 各行の segmentDistance)
+                        if (r.collectorPoint) {
+                          const collDia = r.collectorPipeId
+                            ? pipeDiameterById.get(r.collectorPipeId) ?? null
+                            : null
+                          if (collDia != null) diameterByPointId.set(r.collectorPoint.id, collDia)
+                          let running = 0
+                          for (let j = 0; j <= i; j++) {
+                            const rj = systemData.rows[j]
+                            if (!rj.collectorPoint) continue
+                            const absLens_j = computeAbsorptionHydraulicLengths(
+                              rj,
+                              systemData.rows,
+                              j,
+                              intervalM,
+                              excludedPointIds,
+                            )
+                            const absDown = absLens_j.length > 0 ? absLens_j[absLens_j.length - 1] : null
+                            const own = rj.collectorPoint.segmentDistance ?? 0
+                            running = running + (absDown ?? 0) + own
+                          }
+                          const K_raw = computeCriticalSlopeDenominator({
+                            diameterMm: collDia,
+                            roughness: MANNING_ROUGHNESS[hydraulicSettings.collectorPipeType],
+                            hydraulicLengthM: running,
+                            plannedFlowMmDay: hydraulicSettings.plannedFlow,
+                            spacingM: intervalM,
+                          })
+                          const K_limit = K_raw != null ? Math.min(K_raw, calcParams.imin) : null
+                          if (K_limit != null) criticalKByPointId.set(r.collectorPoint.id, K_limit)
+                        }
+                      }
+                      return (
                     <div className="flex-1 overflow-hidden">
                       <CrossSectionChart
                         key={typeof chartScope === 'number' ? `abs-${chartScope}` : 'collector'}
@@ -2754,6 +2825,8 @@ export function DepthCalcPage() {
                         tinSurface={tinSurface}
                         endCollectorPlannedHeight={chartEndCollectorHeight}
                         mergeInflowsByRowId={mergeInflowsByRowId}
+                        criticalKByPointId={criticalKByPointId}
+                        diameterByPointId={diameterByPointId}
                         onPlannedHeightChange={(pointId, h) => {
                           // pointId は PlanPoint.id（UUID）。全グループから所有行を逆引きする
                           for (const g of planGroups) {
@@ -2770,6 +2843,8 @@ export function DepthCalcPage() {
                         }}
                       />
                     </div>
+                    )
+                    })()}
                   </>
                 )
               })()
