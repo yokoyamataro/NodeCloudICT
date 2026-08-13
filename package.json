@@ -31,6 +31,7 @@
     "lucide-react": "^0.577.0",
     "pdfjs-dist": "^6.0.227",
     "pizzip": "^3.2.0",
+    "polylabel": "^2.1.0",
     "proj4": "^2.20.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

@@ -17,12 +17,37 @@ import { GeoJSON, useMap } from 'react-leaflet'
 import type { Feature, Polygon } from 'geojson'
 import L from 'leaflet'
 import { Loader2 } from 'lucide-react'
+import polylabelImport from 'polylabel'
 import {
   useParcelMapDatasetStore,
   type ParcelFeatureCollection,
 } from '@/stores/parcelMapDatasetStore'
 import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
 import type { Bbox } from '@/lib/tile-math'
+
+// polylabel は d.ts が同梱されていないので 明示的にキャストする。
+// 入力: 外周 + ホール のリング列 ([lng, lat][][])
+// 出力: 内部の "極小可達点" [lng, lat]
+const polylabel = polylabelImport as unknown as (
+  polygon: number[][][],
+  precision?: number,
+) => [number, number]
+
+/** ポリゴン内部に確実に収まる 1 点 (pole of inaccessibility) を求める。
+ *  1e-6 度 (~10cm 相当) の精度で 求めるので 実運用の地番なら十分。 */
+function computeInsidePoint(
+  feature: Feature<Polygon, ParcelFeatureProperties>,
+): { lat: number; lng: number } | null {
+  const rings = feature.geometry.coordinates as number[][][]
+  if (!rings || rings.length === 0 || rings[0].length < 3) return null
+  try {
+    const p = polylabel(rings, 1e-6)
+    if (!Number.isFinite(p[0]) || !Number.isFinite(p[1])) return null
+    return { lng: p[0], lat: p[1] }
+  } catch {
+    return null
+  }
+}
 
 interface Props {
   visible: boolean
@@ -518,7 +543,11 @@ function GeoJsonInner({
         maxLat: vb.getNorth(),
       }
 
-      const targets: Array<{ layer: L.Layer; text: string }> = []
+      const targets: Array<{
+        layer: L.Layer
+        text: string
+        feature: Feature<Polygon, ParcelFeatureProperties>
+      }> = []
       layerGroup.eachLayer((layer) => {
         const feature = (layer as L.GeoJSON & { feature?: unknown }).feature as
           | Feature<Polygon, ParcelFeatureProperties>
@@ -528,7 +557,7 @@ function GeoJsonInner({
         // ラベルは 地番 のみ ("10-10" 等)。大字名は含めない
         const text =
           feature.properties.parcel_number || feature.properties.parcel_name
-        if (text) targets.push({ layer, text })
+        if (text) targets.push({ layer, text, feature })
       })
 
       if (targets.length === 0) {
@@ -547,7 +576,17 @@ function GeoJsonInner({
         if (cancelled) return
         const end = Math.min(idx + LABEL_BIND_CHUNK, targets.length)
         for (let i = idx; i < end; i++) {
-          targets[i].layer.bindTooltip(targets[i].text, {
+          const layer = targets[i].layer
+          // Leaflet の bindTooltip(direction:'center') は layer.getCenter() を
+          // アンカーに使うが、これは頂点の重心 (=bbox 中心近似) を返すため、
+          // へこみのあるポリゴンでは 外側に出てしまうことがある。
+          // polylabel で内部を保証した点を返すよう getCenter を差し替える。
+          const inside = computeInsidePoint(targets[i].feature)
+          if (inside) {
+            const insideLL = L.latLng(inside.lat, inside.lng)
+            ;(layer as unknown as { getCenter: () => L.LatLng }).getCenter = () => insideLL
+          }
+          layer.bindTooltip(targets[i].text, {
             permanent: true,
             direction: 'center',
             className: 'parcel-map-label',
