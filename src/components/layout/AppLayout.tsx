@@ -35,6 +35,7 @@ import {
   Image as ImageIcon,
   Users,
   KeyRound,
+  FileText,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
@@ -76,6 +77,7 @@ const navigation: NavGroup[] = [
   // 地籍測量: 「地番管理」と「地権者管理」をフラットに並べる
   { name: '地番管理', href: '/boundary-survey/work-area', icon: Compass },
   { name: '地権者管理', href: '/boundary-survey/landowners', icon: Users },
+  { name: '土地調査報告書作成', href: '/boundary-survey/land-report', icon: FileText },
   { name: '全体図', href: '/orthophoto', icon: ImageIcon },
   {
     name: '暗渠工事',
