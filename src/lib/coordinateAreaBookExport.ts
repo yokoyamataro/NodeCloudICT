@@ -342,15 +342,17 @@ export async function generateCoordinateAreaBookExcel(
   jichiValueCell.border = box()
 
   // ===== ダイアグラム (下半分) =====
-  // 表 + サマリの直下、A 列先頭からセル基準で貼り付ける。
-  const mapAnchorRow0 = jichiRow + 1 // 0-based rowsIdx (Excel の 1-based では jichiRow+2 の行に見える)
-  // A4 縦 印刷幅 ~ 190mm ≈ 720px 相当。地図は 720x540 程度で下に配置。
+  // 表 + サマリの直下、A 列先頭から F 列末尾までの幅にきっちり収める。
+  //   A(12) B(12) C(12) D(10) E(12) F(14) = 72 chars
+  //   Excel の 1 char ≈ 7 px + 5 px padding/列 なので 72*7 + 5*6 ≈ 534 px
+  //   これに合わせて image width を 530 px (少しだけ内側) にする。
+  const mapAnchorRow0 = jichiRow + 1 // 0-based
   const png = renderPolygonPngBase64(sheet, { areaLabel })
   if (png) {
     const imgId = wb.addImage({ base64: png, extension: 'png' })
     ws.addImage(imgId, {
       tl: { col: 0, row: mapAnchorRow0 },
-      ext: { width: 720, height: 540 },
+      ext: { width: 530, height: 400 },
       editAs: 'oneCell',
     })
   }
