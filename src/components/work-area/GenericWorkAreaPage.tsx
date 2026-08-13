@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Plus, Trash2, GripVertical, Calculator, Download, X, Image as ImageIcon, Ruler, Pencil, Tag, Hash, FileText, KeyRound } from 'lucide-react'
+import { Plus, Trash2, GripVertical, Calculator, Download, Image as ImageIcon, Ruler, Pencil, Tag, Hash, FileText, KeyRound } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { isAdmin } from '@/lib/admin'
 import { RegistryFetchOneModal } from '@/features/parcel-maps/RegistryFetchOneModal'
@@ -31,9 +31,8 @@ import {
   CadastralColumnPicker,
   useCadastralVisibleColumns,
 } from '@/features/boundary-survey/CadastralColumnPicker'
-import type { WorkType, AreaCalculationSheet as AreaCalculationSheetType } from '@/types/database'
+import type { WorkType } from '@/types/database'
 import { WORK_TYPE_NAMES } from '@/types/database'
-import { exportAreaCalculationToCSV } from '@/lib/area-calculation'
 import { generateCoordinateAreaBookExcel } from '@/lib/coordinateAreaBookExport'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { compareByLocationAndParcel } from '@/lib/parcelSort'
@@ -43,167 +42,6 @@ import {
   REGISTRY_PDF_CATEGORY,
 } from '@/features/boundary-survey/RegistryPdfImportModal'
 import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
-
-// 面積計算簿コンポーネント
-function AreaCalculationSheet({
-  sheet,
-  workType,
-  onClose,
-}: {
-  sheet: AreaCalculationSheetType
-  workType: WorkType
-  onClose: () => void
-}) {
-  const currentProject = useProjectListStore((s) => s.currentProject)
-  const currentFarm = useFarmStore((s) => s.currentFarm)
-
-  const handleExportCSV = () => {
-    const csv = exportAreaCalculationToCSV(sheet)
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `面積計算簿_${sheet.zone_number}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-
-  const handleExportExcel = async () => {
-    try {
-      const blob = await generateCoordinateAreaBookExcel(sheet, {
-        zoneNumber: currentProject?.coordinate_zone ?? null,
-        areaLabel: sheet.zone_number,
-        projectName: currentProject?.name ?? '',
-        farmName: currentFarm?.name ?? '',
-        workTypeLabel: WORK_TYPE_NAMES[workType] ?? '',
-      })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `座標面積計算書_${sheet.zone_number}.xlsx`
-      a.click()
-      URL.revokeObjectURL(url)
-    } catch (e) {
-      console.error('Excel 出力に失敗しました:', e)
-      alert('Excel 出力に失敗しました')
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center" style={{ zIndex: 9999 }}>
-      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between p-4 border-b">
-          <div>
-            <h2 className="text-lg font-bold">面積計算簿</h2>
-            <p className="text-sm text-muted-foreground">直角座標法による面積計算</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleExportExcel}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm border rounded-lg hover:bg-slate-50"
-              title="A4 横 の 座標面積計算書 を Excel で出力"
-            >
-              <Download className="h-4 w-4" />
-              Excel出力 (座標面積計算書)
-            </button>
-            <button
-              onClick={handleExportCSV}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm border rounded-lg hover:bg-slate-50"
-            >
-              <Download className="h-4 w-4" />
-              CSV出力
-            </button>
-            <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-lg">
-              <X className="h-5 w-5" />
-            </button>
-          </div>
-        </div>
-
-        <div className="p-4 bg-slate-50 border-b">
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <span className="text-muted-foreground">区域番号:</span>{' '}
-              <span className="font-medium">{sheet.zone_number}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">計算日時:</span>{' '}
-              <span className="font-medium">{new Date(sheet.calculated_at).toLocaleString('ja-JP')}</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-auto p-4">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-100 sticky top-0">
-              <tr>
-                <th className="px-3 py-2 text-left font-medium border">No.</th>
-                <th className="px-3 py-2 text-left font-medium border">点番号</th>
-                <th className="px-3 py-2 text-right font-medium border">X座標 (m)</th>
-                <th className="px-3 py-2 text-right font-medium border">Y座標 (m)</th>
-                <th className="px-3 py-2 text-right font-medium border">Xi × Yi+1</th>
-                <th className="px-3 py-2 text-right font-medium border">Xi+1 × Yi</th>
-                <th className="px-3 py-2 text-right font-medium border">倍面積</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sheet.rows.map((row, index) => (
-                <tr key={index} className="hover:bg-slate-50">
-                  <td className="px-3 py-2 border text-muted-foreground">{index + 1}</td>
-                  <td className="px-3 py-2 border font-medium">{row.point_number}</td>
-                  <td className="px-3 py-2 border text-right font-mono">{row.x.toFixed(3)}</td>
-                  <td className="px-3 py-2 border text-right font-mono">{row.y.toFixed(3)}</td>
-                  <td className="px-3 py-2 border text-right font-mono">{row.xi_yi1.toFixed(3)}</td>
-                  <td className="px-3 py-2 border text-right font-mono">{row.xi1_yi.toFixed(3)}</td>
-                  <td className="px-3 py-2 border text-right font-mono">{row.double_area.toFixed(3)}</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot className="bg-slate-100 font-medium">
-              <tr>
-                <td colSpan={6} className="px-3 py-2 border text-right">倍面積合計</td>
-                <td className="px-3 py-2 border text-right font-mono">{sheet.total_double_area.toFixed(3)}</td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-
-        <div className="p-4 bg-green-50 border-t">
-          <h3 className="text-sm font-medium mb-3">計算結果</h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="bg-white p-3 rounded-lg border">
-              <div className="text-xs text-muted-foreground mb-1">面積 (m²)</div>
-              <div className="text-lg font-bold font-mono">{sheet.area_sqm.toFixed(3)}</div>
-            </div>
-            <div className="bg-white p-3 rounded-lg border">
-              <div className="text-xs text-muted-foreground mb-1">面積 (ha)</div>
-              <div className="text-lg font-bold font-mono">{sheet.area_ha.toFixed(6)}</div>
-            </div>
-            <div className="bg-white p-3 rounded-lg border">
-              <div className="text-xs text-muted-foreground mb-1">面積 (a)</div>
-              <div className="text-lg font-bold font-mono">{(sheet.area_sqm / 100).toFixed(4)}</div>
-            </div>
-            <div className="bg-white p-3 rounded-lg border">
-              <div className="text-xs text-muted-foreground mb-1">周長 (m)</div>
-              <div className="text-lg font-bold font-mono">{sheet.perimeter_m.toFixed(3)}</div>
-            </div>
-          </div>
-
-          <div className="mt-4 p-3 bg-white rounded-lg border text-sm">
-            <h4 className="font-medium mb-2">直角座標法（座標法）</h4>
-            <div className="text-muted-foreground space-y-1">
-              <p>
-                <span className="font-mono">2S = Σ(Xi × Yi+1 - Xi+1 × Yi)</span>
-              </p>
-              <p>
-                <span className="font-mono">S = |2S| / 2 = |{sheet.total_double_area.toFixed(3)}| / 2 = {sheet.area_sqm.toFixed(3)} m²</span>
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 // メイン工事区域ページコンポーネント
 interface GenericWorkAreaPageProps {
@@ -238,7 +76,6 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   const isSiteOwner = isAdmin(user?.email)
   // 「登記取得」モーダルを開く対象 work_area id。1 度に 1 件だけ。
   const [registryFetchTargetId, setRegistryFetchTargetId] = useState<string | null>(null)
-  const [calculationSheet, setCalculationSheet] = useState<AreaCalculationSheetType | null>(null)
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
   // 編集中ポリゴン: 選択中の構成点 ID（DEL/BACKSPACE で削除する対象）
   const [selectedConstituentPointId, setSelectedConstituentPointId] = useState<string | null>(null)
@@ -296,6 +133,8 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   }, [edgeRounding])
 
   const { currentFarm } = useFarmStore()
+  // 面積計算 → Excel 出力用の 現場情報 (座標面積計算書 に埋める 系番号 / 現場名)
+  const currentProjectForExport = useProjectListStore((s) => s.currentProject)
   const { coordinates, fetchCoordinates } = useCoordinateStore()
   const {
     loading,
@@ -529,10 +368,30 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
     }
   }
 
-  const handleCalculateArea = (areaId: string) => {
+  // 面積計算ボタン: 直接 Excel を出力する (モーダルは廃止)。
+  // 内部で calculateArea を呼んで sheet を作り、座標面積計算書 xlsx をダウンロード。
+  const handleCalculateArea = async (areaId: string) => {
     const sheet = calculateArea(areaId)
-    if (sheet) {
-      setCalculationSheet(sheet)
+    if (!sheet) return
+    try {
+      const blob = await generateCoordinateAreaBookExcel(sheet, {
+        zoneNumber: currentProjectForExport?.coordinate_zone ?? null,
+        areaLabel: sheet.zone_number,
+        projectName: currentProjectForExport?.name ?? '',
+        farmName: currentFarm?.name ?? '',
+        workTypeLabel: WORK_TYPE_NAMES[workType] ?? '',
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `座標面積計算書_${sheet.zone_number}.xlsx`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      console.error('Excel 出力に失敗しました:', e)
+      alert('Excel 出力に失敗しました')
     }
   }
 
@@ -998,7 +857,7 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                           readOnly={readOnly}
                         />
                       ) : (
-                        <div className="flex-1 grid grid-cols-3 gap-2 text-sm">
+                        <div className="flex-1 grid grid-cols-4 gap-2 text-sm items-center">
                           <input
                             type="text"
                             value={area.zoneNumber}
@@ -1010,10 +869,26 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                             className="px-2 py-1 border rounded"
                             placeholder="区域番号"
                           />
-                          <div className="px-2 py-1 text-muted-foreground">
-                            {area.points.length} 点
+                          {/* 構成点数 + 編集ボタン (この行をそのまま編集モードに) */}
+                          <div className="px-2 py-1 text-muted-foreground flex items-center gap-1.5">
+                            <span>{area.points.length} 点</span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setEditingAreaId(isEditing ? null : area.id)
+                              }}
+                              className="p-1 border rounded hover:bg-slate-100"
+                              title={isEditing ? '構成点編集を終了' : '構成点を編集'}
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </button>
                           </div>
-                          <div className="px-2 py-1">
+                          {/* 面積 (m² 整数, 小数点以下切り捨て) */}
+                          <div className="px-2 py-1 text-right font-mono">
+                            {area.areaSqm !== null ? `${Math.floor(area.areaSqm)} m²` : '-'}
+                          </div>
+                          <div className="px-2 py-1 text-right font-mono">
                             {area.areaHa !== null ? `${area.areaHa.toFixed(4)} ha` : '-'}
                           </div>
                         </div>
@@ -1347,14 +1222,6 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
         </div>
       </div>
 
-      {/* 面積計算簿モーダル */}
-      {calculationSheet && (
-        <AreaCalculationSheet
-          sheet={calculationSheet}
-          workType={workType}
-          onClose={() => setCalculationSheet(null)}
-        />
-      )}
 
       {/* 登記情報 PDF 取込モーダル */}
       {showRegistryImport && isBoundarySurvey && (
