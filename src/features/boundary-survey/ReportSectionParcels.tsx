@@ -1,30 +1,19 @@
 // 02 調査した土地
 //   * 地番 1..n (可変行)
-//   * 「地番から取り込み」で 現 farm の parcels を 一括読込 + 手入力修正
+//   * 「地番から選択して取り込み」で 現 farm の parcels から 選択的に追加。
+//   * 手動追加も可。
 //   * 各行: 所在 / 地番 / 地目 / 地積 / 第三者権利有無 / 用途 / 地積測量図有無
 
-import { Plus, Trash2, Download } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { supabase } from '@/lib/supabase'
+import { useMemo, useState } from 'react'
+import { Plus, Trash2, ListChecks } from 'lucide-react'
 import { useFarmStore } from '@/stores/farmStore'
 import type { LandReportBody, ReportParcelRow } from '@/stores/landReportStore'
 import { RadioGroup } from './reportSectionUi'
+import { ParcelPickerModal, type PickableParcel } from './ParcelPickerModal'
 
 interface Props {
   body: LandReportBody
   onChange: (patch: Partial<LandReportBody>) => void
-}
-
-interface ParcelRow {
-  id: string
-  work_area_id: string
-  location: string | null
-  parcel_number: string | null
-  municipality: string | null
-  updated_land_category: string | null
-  registered_land_category: string | null
-  updated_area_sqm: number | null
-  registered_area_sqm: number | null
 }
 
 const emptyRow = (appNo: number): ReportParcelRow => ({
@@ -41,10 +30,14 @@ const emptyRow = (appNo: number): ReportParcelRow => ({
 
 export function ReportSectionParcels({ body, onChange }: Props) {
   const currentFarm = useFarmStore((s) => s.currentFarm)
-  const [importing, setImporting] = useState(false)
-  const [available, setAvailable] = useState<ParcelRow[]>([])
+  const [pickerOpen, setPickerOpen] = useState(false)
 
   const rows = body.parcels
+
+  const alreadyIn = useMemo(
+    () => new Set(rows.map((r) => r.parcelId).filter(Boolean) as string[]),
+    [rows],
+  )
 
   const setRows = (next: ReportParcelRow[]) => {
     onChange({ parcels: next.map((r, i) => ({ ...r, appNo: i + 1 })) })
@@ -54,53 +47,20 @@ export function ReportSectionParcels({ body, onChange }: Props) {
     setRows(rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)))
   }
 
-  // 現 farm の parcels を取得 (最初にモーダルを開いた時)
-  useEffect(() => {
-    if (!currentFarm?.id) return
-    let cancelled = false
-    ;(async () => {
-      const { data: waRows } = await supabase
-        .from('design_work_areas')
-        .select('id')
-        .eq('farm_id', currentFarm.id)
-        .eq('work_type', 'boundary_survey')
-      const waIds = ((waRows ?? []) as { id: string }[]).map((r) => r.id)
-      if (waIds.length === 0) {
-        if (!cancelled) setAvailable([])
-        return
-      }
-      const { data } = await supabase
-        .from('parcels')
-        .select(
-          'id, work_area_id, location, parcel_number, municipality, updated_land_category, registered_land_category, updated_area_sqm, registered_area_sqm',
-        )
-        .in('work_area_id', waIds)
-      if (!cancelled) setAvailable((data ?? []) as ParcelRow[])
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [currentFarm?.id])
-
-  const importAll = () => {
-    setImporting(true)
-    const alreadyById = new Set(rows.map((r) => r.parcelId).filter(Boolean))
-    const additions: ReportParcelRow[] = available
-      .filter((p) => !alreadyById.has(p.id))
-      .map((p, i) => ({
-        appNo: rows.length + i + 1,
-        parcelId: p.id,
-        location: [p.municipality, p.location].filter(Boolean).join(''),
-        parcelNumber: p.parcel_number ?? '',
-        landCategory:
-          p.updated_land_category ?? p.registered_land_category ?? '',
-        areaSqm: p.updated_area_sqm ?? p.registered_area_sqm ?? null,
-        hasThirdPartyRight: null,
-        usage: '',
-        hasSurveyMap: null,
-      }))
+  const handleImport = (picked: PickableParcel[]) => {
+    const additions: ReportParcelRow[] = picked.map((p, i) => ({
+      appNo: rows.length + i + 1,
+      parcelId: p.id,
+      location: p.location,
+      parcelNumber: p.parcelNumber,
+      landCategory: p.landCategory,
+      areaSqm: p.areaSqm,
+      hasThirdPartyRight: null,
+      usage: '',
+      hasSurveyMap: null,
+    }))
     setRows([...rows, ...additions])
-    setImporting(false)
+    setPickerOpen(false)
   }
 
   const addRow = () => setRows([...rows, emptyRow(rows.length + 1)])
@@ -111,17 +71,12 @@ export function ReportSectionParcels({ body, onChange }: Props) {
       <div className="flex items-center gap-2">
         <button
           type="button"
-          onClick={importAll}
-          disabled={importing || available.length === 0}
+          onClick={() => setPickerOpen(true)}
+          disabled={!currentFarm?.id}
           className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50 disabled:opacity-50"
-          title={
-            available.length === 0
-              ? 'この工区には 境界測量の地番データがありません'
-              : `${available.length} 件の地番から未取込を追加`
-          }
         >
-          <Download className="h-3 w-3" />
-          地番から取り込み ({available.length})
+          <ListChecks className="h-3 w-3" />
+          地番から選択して取り込み
         </button>
         <button
           type="button"
@@ -134,7 +89,7 @@ export function ReportSectionParcels({ body, onChange }: Props) {
 
       {rows.length === 0 ? (
         <div className="text-xs text-slate-400">
-          調査対象の地番がありません。「地番から取り込み」または「手動で追加」で行を作成してください。
+          調査対象の地番がありません。「地番から選択して取り込み」または「手動で追加」で行を作成してください。
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -260,6 +215,15 @@ export function ReportSectionParcels({ body, onChange }: Props) {
             </tbody>
           </table>
         </div>
+      )}
+
+      {pickerOpen && currentFarm?.id && (
+        <ParcelPickerModal
+          farmId={currentFarm.id}
+          alreadyIn={alreadyIn}
+          onCancel={() => setPickerOpen(false)}
+          onConfirm={handleImport}
+        />
       )}
     </div>
   )

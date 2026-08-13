@@ -1,30 +1,19 @@
 // 03 所有権登記名義人 (立会人ブロック込)
 //   * body.owners は body.parcels と同数 (parcelIndex で 02 の行に対応)。
 //   * 02 で 地番を追加/削除すると、ここも 同期して 増減させる。
-//   * 「地権者から取り込み」で 現 farm の landowners を候補として表示 (未実装: 手動入力ベース)。
+//   * 「地権者から選択して取り込み」で 現 farm の地権者から 1 名を選んで反映。
+//     対象の parcelId に割当済みの地権者は 一覧上位に表示される。
 
-import { useEffect } from 'react'
-import { Download } from 'lucide-react'
-import { supabase } from '@/lib/supabase'
+import { useEffect, useState } from 'react'
+import { ListChecks } from 'lucide-react'
 import { useFarmStore } from '@/stores/farmStore'
 import type { LandReportBody, ReportOwnerRow } from '@/stores/landReportStore'
 import { RadioGroup, Field } from './reportSectionUi'
-import { useState } from 'react'
+import { LandownerPickerModal, type PickableLandowner } from './LandownerPickerModal'
 
 interface Props {
   body: LandReportBody
   onChange: (patch: Partial<LandReportBody>) => void
-}
-
-interface LandownerLite {
-  id: string
-  full_name: string
-  address: string | null
-  phone: string | null
-  agent_name: string | null
-  agent_address: string | null
-  agent_phone: string | null
-  agent_relation: string | null
 }
 
 const emptyOwner = (parcelIndex: number): ReportOwnerRow => ({
@@ -49,10 +38,20 @@ const emptyOwner = (parcelIndex: number): ReportOwnerRow => ({
   },
 })
 
+/** landowner.agent_relation の 自由文を できるだけ enum に合わせる */
+const guessRelation = (
+  raw: string | null,
+): 'family' | 'manager' | 'representative' | 'other' | null => {
+  if (!raw) return null
+  if (raw.includes('家族') || raw.includes('親族')) return 'family'
+  if (raw.includes('管理')) return 'manager'
+  if (raw.includes('代理')) return 'representative'
+  return 'other'
+}
+
 export function ReportSectionOwners({ body, onChange }: Props) {
   const currentFarm = useFarmStore((s) => s.currentFarm)
-  const [landowners, setLandowners] = useState<LandownerLite[]>([])
-  const [assign, setAssign] = useState<Map<string, string[]>>(new Map())
+  const [pickerFor, setPickerFor] = useState<number | null>(null)
 
   // parcels 数に合わせて owners を伸縮
   useEffect(() => {
@@ -66,44 +65,16 @@ export function ReportSectionOwners({ body, onChange }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [body.parcels.length])
 
-  // farm の landowners と 地番割当を fetch
-  useEffect(() => {
-    if (!currentFarm?.id) return
-    let cancelled = false
-    ;(async () => {
-      const { data: lo } = await supabase
-        .from('landowners')
-        .select(
-          'id, full_name, address, phone, agent_name, agent_address, agent_phone, agent_relation',
-        )
-        .eq('farm_id', currentFarm.id)
-      if (cancelled) return
-      setLandowners((lo ?? []) as LandownerLite[])
-      // parcel_landowners: farm 配下の全 parcel 分
-      const { data: pls } = await supabase
-        .from('parcel_landowners')
-        .select('parcel_id, landowner_id')
-      if (cancelled) return
-      const m = new Map<string, string[]>()
-      for (const row of (pls ?? []) as { parcel_id: string; landowner_id: string }[]) {
-        const arr = m.get(row.parcel_id) ?? []
-        arr.push(row.landowner_id)
-        m.set(row.parcel_id, arr)
-      }
-      setAssign(m)
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [currentFarm?.id])
-
   const patchOwner = (idx: number, patch: Partial<ReportOwnerRow>) => {
     onChange({
       owners: body.owners.map((o, i) => (i === idx ? { ...o, ...patch } : o)),
     })
   }
 
-  const patchAttendee = (idx: number, patch: Partial<ReportOwnerRow['attendee']>) => {
+  const patchAttendee = (
+    idx: number,
+    patch: Partial<ReportOwnerRow['attendee']>,
+  ) => {
     onChange({
       owners: body.owners.map((o, i) =>
         i === idx ? { ...o, attendee: { ...o.attendee, ...patch } } : o,
@@ -111,38 +82,24 @@ export function ReportSectionOwners({ body, onChange }: Props) {
     })
   }
 
-  const importFromParcel = (idx: number) => {
-    const parcel = body.parcels[idx]
-    if (!parcel?.parcelId) {
-      alert('この行は 02 で 地番から取り込んだ 行ではないので 自動取込できません。')
-      return
-    }
-    const loIds = assign.get(parcel.parcelId) ?? []
-    if (loIds.length === 0) {
-      alert('この地番に 割り当てられた地権者がいません。')
-      return
-    }
-    // 先頭の 1 名を採用 (複数対応は 後追いで)
-    const lo = landowners.find((x) => x.id === loIds[0])
-    if (!lo) return
+  const applyLandowner = (idx: number, lo: PickableLandowner) => {
     patchOwner(idx, {
       landownerId: lo.id,
       address: lo.address ?? '',
-      name: lo.full_name,
+      name: lo.fullName,
       contact: lo.phone ?? '',
     })
-    if (lo.agent_name) {
+    // 代理人 (立会人) 情報も一緒に反映 (元の入力を上書き)
+    if (lo.agentName) {
       patchAttendee(idx, {
-        address: lo.agent_address ?? '',
-        name: lo.agent_name,
-        contact: lo.agent_phone ?? '',
-        relation:
-          lo.agent_relation === '家族' ? 'family' :
-          lo.agent_relation === '管理者' ? 'manager' :
-          lo.agent_relation === '代理人' ? 'representative' : 'other',
-        relationDetail: lo.agent_relation ?? '',
+        address: lo.agentAddress ?? '',
+        name: lo.agentName,
+        contact: lo.agentPhone ?? '',
+        relation: guessRelation(lo.agentRelation),
+        relationDetail: lo.agentRelation ?? '',
       })
     }
+    setPickerFor(null)
   }
 
   return (
@@ -162,10 +119,11 @@ export function ReportSectionOwners({ body, onChange }: Props) {
                 </span>
                 <button
                   type="button"
-                  onClick={() => importFromParcel(idx)}
-                  className="ml-auto flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50"
+                  onClick={() => setPickerFor(idx)}
+                  disabled={!currentFarm?.id}
+                  className="ml-auto flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50 disabled:opacity-50"
                 >
-                  <Download className="h-3 w-3" /> 地権者から取り込み
+                  <ListChecks className="h-3 w-3" /> 地権者から選択して取り込み
                 </button>
               </div>
 
@@ -333,6 +291,15 @@ export function ReportSectionOwners({ body, onChange }: Props) {
             </div>
           )
         })
+      )}
+
+      {pickerFor !== null && currentFarm?.id && (
+        <LandownerPickerModal
+          farmId={currentFarm.id}
+          parcelId={body.parcels[pickerFor]?.parcelId ?? null}
+          onCancel={() => setPickerFor(null)}
+          onConfirm={(lo) => applyLandowner(pickerFor, lo)}
+        />
       )}
     </div>
   )
