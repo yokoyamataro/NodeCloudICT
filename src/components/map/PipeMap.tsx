@@ -687,7 +687,7 @@ export function PipeMap({
               lines.push(`<div style="color:#2563eb">${p.cutDepth.toFixed(3)}</div>`)
             }
             if (lines.length === 0) return null
-            const html = `<div style="background:rgba(255,255,255,0.9);border:1px solid #cbd5e1;border-radius:4px;padding:2px 4px;font-family:ui-monospace,monospace;font-size:10px;line-height:1.15;white-space:nowrap;text-align:right;box-shadow:0 1px 2px rgba(0,0,0,0.1);">${lines.join('')}</div>`
+            const html = `<div style="background:rgba(255,255,255,0.9);border:1px solid #cbd5e1;border-radius:4px;padding:2px 5px;font-family:ui-monospace,monospace;font-size:13px;line-height:1.15;white-space:nowrap;text-align:right;box-shadow:0 1px 2px rgba(0,0,0,0.1);">${lines.join('')}</div>`
             const icon = L.divIcon({
               className: 'plan-overlay-point',
               html,
@@ -718,7 +718,7 @@ export function PipeMap({
             const mx = (s.x1 + s.x2) / 2
             const my = (s.y1 + s.y2) / 2
             const { lat, lng } = converter.toLatLng(mx, my)
-            const html = `<div style="background:rgba(255,255,255,0.85);border:1px solid #cbd5e1;border-radius:4px;padding:1px 4px;font-family:ui-monospace,monospace;font-size:10px;line-height:1.1;white-space:nowrap;">${parts.join(' / ')}</div>`
+            const html = `<div style="background:rgba(255,255,255,0.85);border:1px solid #cbd5e1;border-radius:4px;padding:2px 5px;font-family:ui-monospace,monospace;font-size:13px;line-height:1.1;white-space:nowrap;">${parts.join(' / ')}</div>`
             const icon = L.divIcon({
               className: 'plan-overlay-segment',
               html,

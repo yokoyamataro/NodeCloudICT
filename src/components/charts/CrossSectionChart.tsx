@@ -1176,7 +1176,7 @@ export function CrossSectionChart({
                       <text
                         x={x + 7}
                         y={yScale(point.groundHeight) - 6}
-                        className="text-[11px] font-medium"
+                        className="text-[14px] font-medium"
                         fill="#000"
                         style={{
                           paintOrder: 'stroke',
@@ -1207,7 +1207,7 @@ export function CrossSectionChart({
                       textAnchor="middle"
                       dominantBaseline="middle"
                       transform={`rotate(-90, ${cx}, ${midY})`}
-                      className="text-[11px] font-semibold"
+                      className="text-[14px] font-semibold"
                       fill="#2563eb"
                       style={{
                         paintOrder: 'stroke',
@@ -1282,7 +1282,7 @@ export function CrossSectionChart({
                         <text
                           x={x + 7}
                           y={cy + 14}
-                          className="text-[11px] font-medium"
+                          className="text-[14px] font-medium"
                           fill="#dc2626"
                           style={{
                             paintOrder: 'stroke',
@@ -1327,7 +1327,7 @@ export function CrossSectionChart({
                         x={x - 7}
                         y={yScale(point.absorptionPlannedHeight) + 4}
                         textAnchor="end"
-                        className="text-[11px] font-medium"
+                        className="text-[14px] font-medium"
                         fill="#000"
                         style={{
                           paintOrder: 'stroke',
@@ -1369,7 +1369,7 @@ export function CrossSectionChart({
                             x={x - 9}
                             y={cy - 8 - yOffset}
                             textAnchor="end"
-                            className={`${labelColor} text-[11px] font-semibold`}
+                            className={`${labelColor} text-[14px] font-semibold`}
                             style={{
                               paintOrder: 'stroke',
                               stroke: 'white',
@@ -1409,7 +1409,7 @@ export function CrossSectionChart({
                       x={x - 10}
                       y={yScale(point.absorptionUpstreamPlannedHeight) - 8}
                       textAnchor="end"
-                      className="fill-green-700 text-[11px] font-medium"
+                      className="fill-green-700 text-[14px] font-medium"
                       style={{
                         paintOrder: 'stroke',
                         stroke: 'white',
