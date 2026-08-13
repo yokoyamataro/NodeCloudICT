@@ -228,7 +228,10 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
     const state = get()
     const existingAreas = state.workAreas[workType] || []
     const zoneNumber = `${workType.charAt(0).toUpperCase()}${existingAreas.length + 1}`
-    const name = `区域${existingAreas.length + 1}`
+    // name は zoneNumber と同じ値にする。以前は "区域N" を別途持っていたが、
+    // 表示・出力共に zoneNumber 一本で足りるため、DB スキーマは維持しつつ
+    // 新規作成分は 番号 と 名前 を同一値にして 重複表示を撤去する。
+    const name = zoneNumber
 
     try {
       const { data, error } = await supabase

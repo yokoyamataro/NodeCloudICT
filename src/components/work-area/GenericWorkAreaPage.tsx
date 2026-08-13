@@ -72,7 +72,7 @@ function AreaCalculationSheet({
     try {
       const blob = await generateCoordinateAreaBookExcel(sheet, {
         zoneNumber: currentProject?.coordinate_zone ?? null,
-        areaLabel: sheet.zone_name || sheet.zone_number,
+        areaLabel: sheet.zone_number,
         projectName: currentProject?.name ?? '',
         farmName: currentFarm?.name ?? '',
         workTypeLabel: WORK_TYPE_NAMES[workType] ?? '',
@@ -120,14 +120,10 @@ function AreaCalculationSheet({
         </div>
 
         <div className="p-4 bg-slate-50 border-b">
-          <div className="grid grid-cols-3 gap-4 text-sm">
+          <div className="grid grid-cols-2 gap-4 text-sm">
             <div>
               <span className="text-muted-foreground">区域番号:</span>{' '}
               <span className="font-medium">{sheet.zone_number}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">区域名:</span>{' '}
-              <span className="font-medium">{sheet.zone_name}</span>
             </div>
             <div>
               <span className="text-muted-foreground">計算日時:</span>{' '}
@@ -790,10 +786,11 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
       }
       // 地番ラベルは parcels.parcel_number を優先。SIMA 由来の area.zoneNumber/name を
       // 編集前のフォールバックに使う。
+      // 土木モードは zoneNumber (S1 等) を採用 (旧仕様の name "区域1" は撤去)。
       const parcelRow = isBoundarySurvey ? parcelByWorkAreaId.get(area.id) : null
       const labelName = isBoundarySurvey
         ? parcelRow?.parcel_number || area.zoneNumber || area.name
-        : area.name
+        : area.zoneNumber || area.name
       // 属性色: 地籍モードで attribute_code があれば code → 色に解決
       const attributeColor =
         isBoundarySurvey && parcelRow?.attribute_code
