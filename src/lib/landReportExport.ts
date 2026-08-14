@@ -263,21 +263,47 @@ function extractCellText(cell: ExcelJS.Cell): string | null {
   return null
 }
 
-const ANCHOR_RE = /\{\{ANCHOR:([A-Z_]+)\}\}/
-const ANCHOR_RE_G = /\{\{ANCHOR:[A-Z_]+\}\}/g
+// アンカー記法:
+//   {{ANCHOR:NAME}}                — 1 行アンカー (行を N 回複製)
+//   {{ANCHOR:NAME:START}}          — 複数行ブロックの先頭行 (印刷範囲外セルに配置)
+//   {{ANCHOR:NAME:END}}            — 複数行ブロックの最終行 (印刷範囲外セルに配置)
+const ANCHOR_RE = /\{\{ANCHOR:([A-Z_]+)(?::(START|END))?\}\}/
+const ANCHOR_RE_G = /\{\{ANCHOR:[A-Z_]+(?::(?:START|END))?\}\}/g
 const TOKEN_RE_G = /\{\{([A-Z0-9_.]+)\}\}/g
 
-function findAnchors(ws: ExcelJS.Worksheet): Map<string, number> {
-  const anchors = new Map<string, number>()
+interface AnchorInfo {
+  startRow: number
+  endRow: number  // 単一行なら startRow と同じ
+}
+
+function findAnchors(ws: ExcelJS.Worksheet): Map<string, AnchorInfo> {
+  const single = new Map<string, number>()
+  const starts = new Map<string, number>()
+  const ends = new Map<string, number>()
+
   ws.eachRow({ includeEmpty: false }, (row, rowNum) => {
     row.eachCell({ includeEmpty: false }, (cell) => {
       const text = extractCellText(cell)
       if (!text) return
       const m = text.match(ANCHOR_RE)
-      if (m) anchors.set(m[1], rowNum)
+      if (!m) return
+      const name = m[1]
+      const kind = m[2]
+      if (kind === 'START') starts.set(name, rowNum)
+      else if (kind === 'END') ends.set(name, rowNum)
+      else single.set(name, rowNum)
     })
   })
-  return anchors
+
+  const result = new Map<string, AnchorInfo>()
+  for (const [name, row] of single) {
+    result.set(name, { startRow: row, endRow: row })
+  }
+  for (const [name, startRow] of starts) {
+    const endRow = ends.get(name) ?? startRow
+    result.set(name, { startRow, endRow })
+  }
+  return result
 }
 
 /** 置換したセル数を返す (診断用) */
@@ -354,23 +380,115 @@ function clearAllMerges(ws: ExcelJS.Worksheet): void {
 
 interface SectionJob {
   spec: SectionSpec<unknown>
-  templateRow: number  // 元テンプレでの anchor 行番号
-  count: number        // 挿入する行数 (items.length; 0 なら削除, 1 なら現状維持, 2+ なら count-1 行を挿入)
+  /** 元テンプレでの ブロック先頭行 */
+  startRow: number
+  /** 元テンプレでの ブロック最終行 (1 行アンカーなら startRow と同じ) */
+  endRow: number
+  /** items.length。0 なら削除, 1 なら現状維持, 2+ なら (count-1) ブロック分 追加 */
+  count: number
 }
 
-/** origRow が 全ジョブ適用後に どの行番号にシフトするかを 計算 */
+function blockHeight(job: SectionJob): number {
+  return job.endRow - job.startRow + 1
+}
+
+/** origRow が 全ジョブ適用後に どの行番号にシフトするかを 計算。
+ *  削除ブロックの内部を指す origRow は -1 を返す (呼び出し側で無視すること)。 */
 function computeShift(origRow: number, jobs: SectionJob[]): number {
   let shifted = origRow
   for (const job of jobs) {
+    const h = blockHeight(job)
     if (job.count === 0) {
-      // templateRow を 削除 → templateRow より下の 全行が 1 つ上へ
-      if (origRow > job.templateRow) shifted -= 1
+      // ブロックを 削除 → ブロックより下の 全行が h つ上へ
+      if (origRow > job.endRow) shifted -= h
+      else if (origRow >= job.startRow) return -1
     } else if (job.count > 1) {
-      // templateRow の後ろに count-1 行 挿入 → 挿入位置より下の 全行がずれる
-      if (origRow > job.templateRow) shifted += job.count - 1
+      // ブロックの後ろに (count-1)*h 行 挿入 → 挿入位置より下の 全行がずれる
+      if (origRow > job.endRow) shifted += (job.count - 1) * h
     }
   }
   return shifted
+}
+
+interface CellSnapshot {
+  rowOffset: number
+  col: number
+  value: ExcelJS.CellValue
+  style: Partial<ExcelJS.Style>
+}
+
+interface BlockSnapshot {
+  cells: CellSnapshot[]
+  /** ブロック内 merges (top/bottom はブロック内相対 offset) */
+  merges: MergeRange[]
+  heights: (number | undefined)[]
+}
+
+function snapshotBlock(
+  ws: ExcelJS.Worksheet,
+  startRow: number,
+  endRow: number,
+  originalMerges: MergeRange[],
+): BlockSnapshot {
+  const cells: CellSnapshot[] = []
+  const heights: (number | undefined)[] = []
+  for (let r = startRow; r <= endRow; r++) {
+    heights.push(ws.getRow(r).height)
+    ws.getRow(r).eachCell({ includeEmpty: false }, (cell, col) => {
+      // マスターセルのみ取得 (非マスターは merge の裏に隠れる)
+      if (cell.isMerged && cell.master && cell.master.address !== cell.address) return
+      cells.push({
+        rowOffset: r - startRow,
+        col,
+        value: cell.value,
+        style: {
+          alignment: cell.alignment,
+          border: cell.border,
+          fill: cell.fill as ExcelJS.Fill,
+          font: cell.font,
+          numFmt: cell.numFmt,
+        },
+      })
+    })
+  }
+  const merges = originalMerges
+    .filter((m) => m.top >= startRow && m.bottom <= endRow)
+    .map((m) => ({
+      top: m.top - startRow,
+      bottom: m.bottom - startRow,
+      left: m.left,
+      right: m.right,
+    }))
+  return { cells, merges, heights }
+}
+
+function applyBlockSnapshot(
+  ws: ExcelJS.Worksheet,
+  snap: BlockSnapshot,
+  copyStartRow: number,
+): void {
+  for (let i = 0; i < snap.heights.length; i++) {
+    const h = snap.heights[i]
+    if (h != null) ws.getRow(copyStartRow + i).height = h
+  }
+  for (const cd of snap.cells) {
+    const cell = ws.getRow(copyStartRow + cd.rowOffset).getCell(cd.col)
+    cell.value = cd.value
+    if (cd.style.alignment) cell.alignment = cd.style.alignment
+    if (cd.style.border) cell.border = cd.style.border
+    if (cd.style.fill) cell.fill = cd.style.fill
+    if (cd.style.font) cell.font = cd.style.font
+    if (cd.style.numFmt) cell.numFmt = cd.style.numFmt
+  }
+  for (const bm of snap.merges) {
+    const newTop = copyStartRow + bm.top
+    const newBottom = copyStartRow + bm.bottom
+    try {
+      ws.mergeCells(newTop, bm.left, newBottom, bm.right)
+    } catch {
+      // 無視
+    }
+  }
 }
 
 function processAllSections(
@@ -382,32 +500,36 @@ function processAllSections(
   // 0) 全 merge をスナップショット
   const originalMerges = getAllMerges(ws)
 
-  // 1) 各ジョブの テンプレ行の 水平 merge を キャッシュ (複製行に適用するため)
-  const perTemplateRowMerges = new Map<number, MergeRange[]>()
+  // 1) 各ジョブのブロックを スナップショット (values + styles + 内部 merges)
+  const blockSnapshots = new Map<SectionJob, BlockSnapshot>()
   for (const job of jobs) {
-    perTemplateRowMerges.set(
-      job.templateRow,
-      originalMerges.filter((m) => m.top === job.templateRow && m.bottom === job.templateRow),
-    )
+    blockSnapshots.set(job, snapshotBlock(ws, job.startRow, job.endRow, originalMerges))
   }
 
-  // 2) 行操作: 下から順に。値散らばりは 後でクリーンアップするので気にしない
-  const bottomUp = [...jobs].sort((a, b) => b.templateRow - a.templateRow)
+  // 2) 行操作: 下から順に (元 startRow ベースで) 空行を挿入 / 削除
+  const bottomUp = [...jobs].sort((a, b) => b.startRow - a.startRow)
   for (const job of bottomUp) {
+    const h = blockHeight(job)
     if (job.count === 0) {
-      ws.spliceRows(job.templateRow, 1)
+      ws.spliceRows(job.startRow, h)
     } else if (job.count > 1) {
-      ws.duplicateRow(job.templateRow, job.count - 1, true)
+      const extraRows = (job.count - 1) * h
+      const emptyRows = Array.from({ length: extraRows }, () => [] as unknown[])
+      ws.spliceRows(job.endRow + 1, 0, ...emptyRows)
     }
   }
 
   // 3) 全 merge を消す
   clearAllMerges(ws)
 
-  // 4) 元 merge を シフトして再適用
+  // 4) 元 merge を シフトして再適用 (ブロック内 merge は 除外 — 5) で ブロックごとに扱う)
+  const insideBlock = (m: MergeRange): boolean =>
+    jobs.some((j) => m.top >= j.startRow && m.bottom <= j.endRow)
   for (const m of originalMerges) {
+    if (insideBlock(m)) continue
     const nt = computeShift(m.top, jobs)
     const nb = computeShift(m.bottom, jobs)
+    if (nt < 0 || nb < 0) continue
     try {
       ws.mergeCells(nt, m.left, nb, m.right)
     } catch {
@@ -415,36 +537,27 @@ function processAllSections(
     }
   }
 
-  // 5) 複製された各行に テンプレ行の merge を コピー
-  for (const job of jobs) {
-    if (job.count <= 1) continue
-    const templateNewRow = computeShift(job.templateRow, jobs)
-    const rowMerges = perTemplateRowMerges.get(job.templateRow) ?? []
-    for (let i = 1; i < job.count; i++) {
-      for (const m of rowMerges) {
-        try {
-          ws.mergeCells(templateNewRow + i, m.left, templateNewRow + i, m.right)
-        } catch {
-          // 無視
-        }
-      }
-    }
-  }
-
-  // 6) トークン置換 — 非マスターセルは replaceRowTokens 内で スキップされる。
-  //    (以前は "念のため" 非マスターに null を書いていたが、ExcelJS の _master 参照が
-  //     残っている状態で 非マスターに null を書くと マスターの値まで消えることがあるので廃止。
-  //     非マスターの scattered な値は 結合の裏に隠れるので 表示上は無害。)
+  // 5) 各ブロックについて、count 個のコピーを配置 (values + styles + 内部 merges)
+  //    最初のコピー (copyIdx=0) は 元 startRow のシフト後位置 (values は既にあるが 上書きしても等価)
   let replaced = 0
   for (const job of jobs) {
     if (job.count === 0) continue
-    const templateNewRow = computeShift(job.templateRow, jobs)
-    for (let i = 0; i < job.count; i++) {
-      const rowNum = templateNewRow + i
-      replaced += replaceRowTokens(ws, rowNum, {
-        ...globalValues,
-        ...buildRowValues(job, i),
-      })
+    const snap = blockSnapshots.get(job)
+    if (!snap) continue
+    const h = blockHeight(job)
+    const blockNewStart = computeShift(job.startRow, jobs)
+    if (blockNewStart < 0) continue
+
+    for (let copyIdx = 0; copyIdx < job.count; copyIdx++) {
+      const copyStart = blockNewStart + copyIdx * h
+      applyBlockSnapshot(ws, snap, copyStart)
+      // トークン置換 (item ごとの値で)
+      for (let i = 0; i < h; i++) {
+        replaced += replaceRowTokens(ws, copyStart + i, {
+          ...globalValues,
+          ...buildRowValues(job, copyIdx),
+        })
+      }
     }
   }
 
@@ -487,9 +600,14 @@ export async function exportLandReportToExcel(report: LandReport): Promise<Blob>
   // アンカーが見つかったジョブだけ抽出
   const jobs: SectionJob[] = []
   for (const spec of specs) {
-    const row = anchors.get(spec.anchor)
-    if (typeof row === 'number') {
-      jobs.push({ spec, templateRow: row, count: spec.items.length })
+    const info = anchors.get(spec.anchor)
+    if (info) {
+      jobs.push({
+        spec,
+        startRow: info.startRow,
+        endRow: info.endRow,
+        count: spec.items.length,
+      })
     }
   }
 
