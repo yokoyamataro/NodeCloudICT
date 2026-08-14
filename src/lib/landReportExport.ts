@@ -280,29 +280,33 @@ function findAnchors(ws: ExcelJS.Worksheet): Map<string, number> {
   return anchors
 }
 
-function replaceCellTokens(cell: ExcelJS.Cell, values: Record<string, string>): void {
+/** 置換したセル数を返す (診断用) */
+function replaceCellTokens(cell: ExcelJS.Cell, values: Record<string, string>): number {
   const text = extractCellText(cell)
-  if (!text || !text.includes('{{')) return
+  if (!text || !text.includes('{{')) return 0
   const next = text
     .replace(ANCHOR_RE_G, '') // アンカーマーカー除去
     .replace(TOKEN_RE_G, (_, key: string) => values[key] ?? '')
-  if (next === text) return
+  if (next === text) return 0
   cell.value = next
   // 改行を含むときは wrapText を有効化 (テンプレ側が未設定でも表示崩れしないように)
   if (next.includes('\n')) {
     cell.alignment = { ...(cell.alignment ?? {}), wrapText: true }
   }
+  return 1
 }
 
 function replaceRowTokens(
   ws: ExcelJS.Worksheet,
   rowNum: number,
   values: Record<string, string>,
-): void {
+): number {
   const row = ws.getRow(rowNum)
+  let count = 0
   row.eachCell({ includeEmpty: false }, (cell) => {
-    replaceCellTokens(cell, values)
+    count += replaceCellTokens(cell, values)
   })
+  return count
 }
 
 interface SectionSpec<T> {
@@ -316,21 +320,23 @@ function processSection<T>(
   spec: SectionSpec<T>,
   anchorRow: number,
   globalValues: Record<string, string>,
-): void {
+): number {
   const n = spec.items.length
   if (n === 0) {
     ws.spliceRows(anchorRow, 1)
-    return
+    return 0
   }
   if (n > 1) {
     ws.duplicateRow(anchorRow, n - 1, true)
   }
+  let count = 0
   for (let i = 0; i < n; i++) {
-    replaceRowTokens(ws, anchorRow + i, {
+    count += replaceRowTokens(ws, anchorRow + i, {
       ...globalValues,
       ...spec.rowValues(spec.items[i]),
     })
   }
+  return count
 }
 
 // ---------------------------- main entry ----------------------------
@@ -339,7 +345,8 @@ export async function exportLandReportToExcel(report: LandReport): Promise<Blob>
   const surveyor = await loadSurveyor(report.body.meta.surveyorId)
   const body = report.body
 
-  const res = await fetch(TEMPLATE_URL)
+  // ブラウザキャッシュを避けて 常に最新テンプレートを取る
+  const res = await fetch(`${TEMPLATE_URL}?t=${Date.now()}`, { cache: 'no-store' })
   if (!res.ok) {
     throw new Error(`テンプレートを取得できませんでした (${res.status})`)
   }
@@ -372,16 +379,27 @@ export async function exportLandReportToExcel(report: LandReport): Promise<Blob>
     .filter((x): x is { spec: SectionSpec<unknown>; row: number } => typeof x.row === 'number')
     .sort((a, b) => b.row - a.row)
 
+  let totalReplaced = 0
   for (const { spec, row } of ordered) {
-    processSection(ws, spec, row, globalValues)
+    totalReplaced += processSection(ws, spec, row, globalValues)
   }
 
   // 残りの 固定セル 全体に対して 一括置換
   ws.eachRow({ includeEmpty: false }, (row) => {
     row.eachCell({ includeEmpty: false }, (cell) => {
-      replaceCellTokens(cell, globalValues)
+      totalReplaced += replaceCellTokens(cell, globalValues)
     })
   })
+
+  // アンカーもトークンも 一つも見つからない = テンプレが古い or トークン未配置
+  if (anchors.size === 0 && totalReplaced === 0) {
+    throw new Error(
+      'テンプレートに {{...}} トークンが 1 つも見つかりませんでした。' +
+        'public/調査報告書様式.xlsx が トークン埋め込み済みのファイルに置換されているか、' +
+        'ブラウザキャッシュを強制リロード (Ctrl+Shift+R) して 再試行してください。',
+    )
+  }
+  console.log('[landReportExport] anchors:', anchors.size, 'replacements:', totalReplaced)
 
   const outBuffer = await wb.xlsx.writeBuffer()
   return new Blob([outBuffer], {
