@@ -317,82 +317,143 @@ interface SectionSpec<T> {
   rowValues: (item: T) => Record<string, string>
 }
 
-/** テンプレ行内 (top==bottom==rowNum) の水平結合レンジを抽出 */
-function getRowMerges(
-  ws: ExcelJS.Worksheet,
-  rowNum: number,
-): Array<{ left: number; right: number }> {
+// ---------------------------- merge snapshot / rebuild ----------------------------
+//
+// ExcelJS の duplicateRow / spliceRows は 結合セル (特に 水平結合) を
+// 適切に扱えず、隣接する行や 上下の結合まで 破壊することがある。
+// 対策として:
+//   1) 何もする前に 全ての merge を スナップショット
+//   2) 行操作 (duplicateRow / spliceRows) を 実行
+//   3) 全ての merge を消去
+//   4) スナップショットから シフト量を計算して merge を 再適用
+//   5) 複製された各行にも 元テンプレ行の水平 merge を 追加適用
+//
+// この方式で、行操作による merge 破壊を 完全に無視できる。
+
+interface MergeRange {
+  top: number
+  left: number
+  bottom: number
+  right: number
+}
+
+function getAllMerges(ws: ExcelJS.Worksheet): MergeRange[] {
   const wsAny = ws as unknown as {
-    _merges?: Record<string, { model: { top: number; left: number; bottom: number; right: number } }>
+    _merges?: Record<string, { model: MergeRange }>
   }
   if (!wsAny._merges) return []
-  const results: Array<{ left: number; right: number }> = []
-  for (const key of Object.keys(wsAny._merges)) {
-    const m = wsAny._merges[key].model
-    if (m.top === rowNum && m.bottom === rowNum) {
-      results.push({ left: m.left, right: m.right })
-    }
-  }
-  return results
+  return Object.values(wsAny._merges).map((m) => ({ ...m.model }))
 }
 
-/** ExcelJS の duplicateRow は 水平結合セルの マスター値を 全セルにコピーしてしまう。
- *  対策: duplicateRow で行を複製した後、
- *   1) 元行の結合レンジを 各新行で 一度アンマージ (もし残ってればクリーン化)
- *   2) 非マスターセルの value を null に (duplicateRow が入れたゴミを消す)
- *   3) 結合を再適用 */
-function replicateRow(ws: ExcelJS.Worksheet, templateRow: number, count: number): void {
-  if (count <= 0) return
-
-  const rowMerges = getRowMerges(ws, templateRow)
-
-  ws.duplicateRow(templateRow, count, true)
-
-  for (let i = 1; i <= count; i++) {
-    const newRowNum = templateRow + i
-    for (const m of rowMerges) {
-      // 1) この範囲を含む結合があれば アンマージ
-      try {
-        ws.unMergeCells(newRowNum, m.left, newRowNum, m.right)
-      } catch {
-        // 未結合なら例外 — 無視
-      }
-      // 2) 非マスターセルの値を null に
-      for (let c = m.left + 1; c <= m.right; c++) {
-        ws.getCell(newRowNum, c).value = null
-      }
-      // 3) 結合を再適用
-      try {
-        ws.mergeCells(newRowNum, m.left, newRowNum, m.right)
-      } catch {
-        // 稀に他 merge と衝突するときは スキップ
-      }
-    }
-  }
+/** 内部の merge 索引を丸ごと消す。cell 側の _master 参照は残るが、
+ *  出力 XML には反映されないので 実害はない (再 merge で上書きされる)。 */
+function clearAllMerges(ws: ExcelJS.Worksheet): void {
+  const wsAny = ws as unknown as { _merges?: Record<string, unknown> }
+  wsAny._merges = {}
 }
 
-function processSection<T>(
+interface SectionJob {
+  spec: SectionSpec<unknown>
+  templateRow: number  // 元テンプレでの anchor 行番号
+  count: number        // 挿入する行数 (items.length; 0 なら削除, 1 なら現状維持, 2+ なら count-1 行を挿入)
+}
+
+/** origRow が 全ジョブ適用後に どの行番号にシフトするかを 計算 */
+function computeShift(origRow: number, jobs: SectionJob[]): number {
+  let shifted = origRow
+  for (const job of jobs) {
+    if (job.count === 0) {
+      // templateRow を 削除 → templateRow より下の 全行が 1 つ上へ
+      if (origRow > job.templateRow) shifted -= 1
+    } else if (job.count > 1) {
+      // templateRow の後ろに count-1 行 挿入 → 挿入位置より下の 全行がずれる
+      if (origRow > job.templateRow) shifted += job.count - 1
+    }
+  }
+  return shifted
+}
+
+function processAllSections(
   ws: ExcelJS.Worksheet,
-  spec: SectionSpec<T>,
-  anchorRow: number,
+  jobs: SectionJob[],
   globalValues: Record<string, string>,
+  buildRowValues: (job: SectionJob, itemIndex: number) => Record<string, string>,
 ): number {
-  const n = spec.items.length
-  if (n === 0) {
-    ws.spliceRows(anchorRow, 1)
-    return 0
+  // 0) 全 merge をスナップショット
+  const originalMerges = getAllMerges(ws)
+
+  // 1) 各ジョブの テンプレ行の 水平 merge を キャッシュ (複製行に適用するため)
+  const perTemplateRowMerges = new Map<number, MergeRange[]>()
+  for (const job of jobs) {
+    perTemplateRowMerges.set(
+      job.templateRow,
+      originalMerges.filter((m) => m.top === job.templateRow && m.bottom === job.templateRow),
+    )
   }
-  if (n > 1) {
-    replicateRow(ws, anchorRow, n - 1)
+
+  // 2) 行操作: 下から順に。値散らばりは 後でクリーンアップするので気にしない
+  const bottomUp = [...jobs].sort((a, b) => b.templateRow - a.templateRow)
+  for (const job of bottomUp) {
+    if (job.count === 0) {
+      ws.spliceRows(job.templateRow, 1)
+    } else if (job.count > 1) {
+      ws.duplicateRow(job.templateRow, job.count - 1, true)
+    }
   }
-  let count = 0
-  for (let i = 0; i < n; i++) {
-    count += replaceRowTokens(ws, anchorRow + i, {
-      ...globalValues,
-      ...spec.rowValues(spec.items[i]),
-    })
+
+  // 3) 全 merge を消す
+  clearAllMerges(ws)
+
+  // 4) 元 merge を シフトして再適用
+  for (const m of originalMerges) {
+    const nt = computeShift(m.top, jobs)
+    const nb = computeShift(m.bottom, jobs)
+    try {
+      ws.mergeCells(nt, m.left, nb, m.right)
+    } catch {
+      // 稀に衝突 — 無視
+    }
   }
-  return count
+
+  // 5) 複製された各行に テンプレ行の merge を コピー
+  for (const job of jobs) {
+    if (job.count <= 1) continue
+    const templateNewRow = computeShift(job.templateRow, jobs)
+    const rowMerges = perTemplateRowMerges.get(job.templateRow) ?? []
+    for (let i = 1; i < job.count; i++) {
+      for (const m of rowMerges) {
+        try {
+          ws.mergeCells(templateNewRow + i, m.left, templateNewRow + i, m.right)
+        } catch {
+          // 無視
+        }
+      }
+    }
+  }
+
+  // 6) 複製行の 非マスターセルの値を null にして、トークンを置換
+  let replaced = 0
+  for (const job of jobs) {
+    if (job.count === 0) continue
+    const templateNewRow = computeShift(job.templateRow, jobs)
+    const rowMerges = perTemplateRowMerges.get(job.templateRow) ?? []
+    for (let i = 0; i < job.count; i++) {
+      const rowNum = templateNewRow + i
+      // 非マスターセルを空に (duplicateRow が入れた scattered な値を消す)
+      for (const m of rowMerges) {
+        for (let c = m.left + 1; c <= m.right; c++) {
+          ws.getCell(rowNum, c).value = null
+        }
+      }
+      // トークン置換
+      replaced += replaceRowTokens(ws, rowNum, {
+        ...globalValues,
+        ...buildRowValues(job, i),
+      })
+    }
+  }
+
+  return replaced
 }
 
 // ---------------------------- main entry ----------------------------
@@ -426,19 +487,21 @@ export async function exportLandReportToExcel(report: LandReport): Promise<Blob>
   ]
 
   // 先に アンカーを全て検出。
-  // 行番号が変わらないうちに 位置を把握しておく。
   const anchors = findAnchors(ws)
 
-  // 下から順に処理すれば、上のアンカーの行番号は変わらない。
-  const ordered = specs
-    .map((spec) => ({ spec, row: anchors.get(spec.anchor) }))
-    .filter((x): x is { spec: SectionSpec<unknown>; row: number } => typeof x.row === 'number')
-    .sort((a, b) => b.row - a.row)
-
-  let totalReplaced = 0
-  for (const { spec, row } of ordered) {
-    totalReplaced += processSection(ws, spec, row, globalValues)
+  // アンカーが見つかったジョブだけ抽出
+  const jobs: SectionJob[] = []
+  for (const spec of specs) {
+    const row = anchors.get(spec.anchor)
+    if (typeof row === 'number') {
+      jobs.push({ spec, templateRow: row, count: spec.items.length })
+    }
   }
+
+  // 可変行セクションを 一括処理 (merge スナップショット → 行操作 → merge 再構築)
+  let totalReplaced = processAllSections(ws, jobs, globalValues, (job, i) =>
+    job.spec.rowValues(job.spec.items[i]),
+  )
 
   // 残りの 固定セル 全体に対して 一括置換
   ws.eachRow({ includeEmpty: false }, (row) => {
