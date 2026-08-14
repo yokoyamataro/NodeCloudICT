@@ -336,73 +336,36 @@ function getRowMerges(
   return results
 }
 
-/** ExcelJS の duplicateRow は 水平結合セルの マスター値を 全セルにコピーしてしまう
- *  (結合が消えて 値だけ残る) ので、自前で 結合を保持したまま複製する。 */
+/** ExcelJS の duplicateRow は 水平結合セルの マスター値を 全セルにコピーしてしまう。
+ *  対策: duplicateRow で行を複製した後、
+ *   1) 元行の結合レンジを 各新行で 一度アンマージ (もし残ってればクリーン化)
+ *   2) 非マスターセルの value を null に (duplicateRow が入れたゴミを消す)
+ *   3) 結合を再適用 */
 function replicateRow(ws: ExcelJS.Worksheet, templateRow: number, count: number): void {
   if (count <= 0) return
 
-  const srcRow = ws.getRow(templateRow)
-  const srcHeight = srcRow.height
-
-  // マスターセルだけ 値 + スタイルを控える
-  const cellsData: Array<{
-    col: number
-    value: ExcelJS.CellValue
-    style: Partial<ExcelJS.Style>
-  }> = []
-  srcRow.eachCell({ includeEmpty: false }, (cell, colNum) => {
-    if (cell.isMerged && cell.master && cell.master.address !== cell.address) return
-    cellsData.push({
-      col: colNum,
-      value: cell.value,
-      style: {
-        alignment: cell.alignment,
-        border: cell.border,
-        fill: cell.fill as ExcelJS.Fill,
-        font: cell.font,
-        numFmt: cell.numFmt,
-      },
-    })
-  })
-
   const rowMerges = getRowMerges(ws, templateRow)
 
-  // spliceRows で 空行を count 個 挿入
-  const emptyRows: unknown[][] = Array.from({ length: count }, () => [])
-  ws.spliceRows(templateRow + 1, 0, ...emptyRows)
+  ws.duplicateRow(templateRow, count, true)
 
-  // 挿入した各行に 値 + スタイル + 結合 を反映
   for (let i = 1; i <= count; i++) {
     const newRowNum = templateRow + i
-    const newRow = ws.getRow(newRowNum)
-    if (srcHeight) newRow.height = srcHeight
-
-    for (const cd of cellsData) {
-      const cell = newRow.getCell(cd.col)
-      cell.value = cd.value
-      if (cd.style.alignment) cell.alignment = cd.style.alignment
-      if (cd.style.border) cell.border = cd.style.border
-      if (cd.style.fill) cell.fill = cd.style.fill
-      if (cd.style.font) cell.font = cd.style.font
-      if (cd.style.numFmt) cell.numFmt = cd.style.numFmt
-    }
-
     for (const m of rowMerges) {
-      // 挿入行のセルが 既に (どこかの) 結合の一部になっていたらスキップ。
-      // spliceRows が 元行の結合を 新行に 伝播することがあり、
-      // その場合 二重 mergeCells で "Cannot merge already merged cells" になる。
-      let alreadyMerged = false
-      for (let c = m.left; c <= m.right; c++) {
-        if (ws.getCell(newRowNum, c).isMerged) {
-          alreadyMerged = true
-          break
-        }
+      // 1) この範囲を含む結合があれば アンマージ
+      try {
+        ws.unMergeCells(newRowNum, m.left, newRowNum, m.right)
+      } catch {
+        // 未結合なら例外 — 無視
       }
-      if (alreadyMerged) continue
+      // 2) 非マスターセルの値を null に
+      for (let c = m.left + 1; c <= m.right; c++) {
+        ws.getCell(newRowNum, c).value = null
+      }
+      // 3) 結合を再適用
       try {
         ws.mergeCells(newRowNum, m.left, newRowNum, m.right)
       } catch {
-        // 想定外の重複ケースでも 出力自体は続行
+        // 稀に他 merge と衝突するときは スキップ
       }
     }
   }
