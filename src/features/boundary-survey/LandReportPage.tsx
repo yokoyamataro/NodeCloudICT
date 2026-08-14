@@ -12,6 +12,7 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
 import { useLandReportStore } from '@/stores/landReportStore'
 import { LandReportEditModal } from './LandReportEditModal'
+import { exportLandReportToExcel, downloadBlob } from '@/lib/landReportExport'
 
 export function LandReportPage() {
   const currentFarm = useFarmStore((s) => s.currentFarm)
@@ -45,9 +46,17 @@ export function LandReportPage() {
     await deleteReport(id)
   }
 
-  const handleExport = (_id: string) => {
-    // TODO: 次フェーズで Excel 出力を実装
-    alert('Excel 出力は 次フェーズで実装予定です。')
+  const handleExport = async (id: string) => {
+    if (!farmId) return
+    const report = (byFarm.get(farmId) ?? []).find((r) => r.id === id)
+    if (!report) return
+    try {
+      const blob = await exportLandReportToExcel(report)
+      const safeTitle = report.title.replace(/[\\/:*?"<>|]/g, '_')
+      downloadBlob(blob, `${safeTitle}.xlsx`)
+    } catch (e) {
+      alert(`Excel 出力に失敗しました: ${e instanceof Error ? e.message : String(e)}`)
+    }
   }
 
   return (
@@ -115,7 +124,7 @@ export function LandReportPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleExport(r.id)}
+                        onClick={() => void handleExport(r.id)}
                         className="p-1.5 text-emerald-700 hover:bg-emerald-50 rounded"
                         title="Excel 出力"
                       >
