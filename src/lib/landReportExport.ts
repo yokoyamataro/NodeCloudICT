@@ -388,7 +388,22 @@ function replicateRow(ws: ExcelJS.Worksheet, templateRow: number, count: number)
     }
 
     for (const m of rowMerges) {
-      ws.mergeCells(newRowNum, m.left, newRowNum, m.right)
+      // 挿入行のセルが 既に (どこかの) 結合の一部になっていたらスキップ。
+      // spliceRows が 元行の結合を 新行に 伝播することがあり、
+      // その場合 二重 mergeCells で "Cannot merge already merged cells" になる。
+      let alreadyMerged = false
+      for (let c = m.left; c <= m.right; c++) {
+        if (ws.getCell(newRowNum, c).isMerged) {
+          alreadyMerged = true
+          break
+        }
+      }
+      if (alreadyMerged) continue
+      try {
+        ws.mergeCells(newRowNum, m.left, newRowNum, m.right)
+      } catch {
+        // 想定外の重複ケースでも 出力自体は続行
+      }
     }
   }
 }
