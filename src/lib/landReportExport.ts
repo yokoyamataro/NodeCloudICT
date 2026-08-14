@@ -431,21 +431,16 @@ function processAllSections(
     }
   }
 
-  // 6) 複製行の 非マスターセルの値を null にして、トークンを置換
+  // 6) トークン置換 — 非マスターセルは replaceRowTokens 内で スキップされる。
+  //    (以前は "念のため" 非マスターに null を書いていたが、ExcelJS の _master 参照が
+  //     残っている状態で 非マスターに null を書くと マスターの値まで消えることがあるので廃止。
+  //     非マスターの scattered な値は 結合の裏に隠れるので 表示上は無害。)
   let replaced = 0
   for (const job of jobs) {
     if (job.count === 0) continue
     const templateNewRow = computeShift(job.templateRow, jobs)
-    const rowMerges = perTemplateRowMerges.get(job.templateRow) ?? []
     for (let i = 0; i < job.count; i++) {
       const rowNum = templateNewRow + i
-      // 非マスターセルを空に (duplicateRow が入れた scattered な値を消す)
-      for (const m of rowMerges) {
-        for (let c = m.left + 1; c <= m.right; c++) {
-          ws.getCell(rowNum, c).value = null
-        }
-      }
-      // トークン置換
       replaced += replaceRowTokens(ws, rowNum, {
         ...globalValues,
         ...buildRowValues(job, i),
