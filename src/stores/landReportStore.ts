@@ -102,6 +102,15 @@ export interface ReportPermanentFeature {
   objectName: string     // 地物の名称
 }
 
+/** 09 甲差検証 の 1 行 (02 の parcels とは独立に 都度選択する) */
+export interface ReportKoosaRow {
+  parcelId: string | null   // parcels のid (取込時にセット)
+  location: string
+  parcelNumber: string
+  registeredAreaSqm: number | null
+  measuredAreaSqm: number | null
+}
+
 /** 報告書 body の全体構造 */
 export interface LandReportBody {
   meta: {
@@ -169,6 +178,7 @@ export interface LandReportBody {
     observationStart: string
     observationEnd: string
   }
+  koosaRows: ReportKoosaRow[]              // 09 甲差検証 (可変)
   remark: string                           // 10
 }
 
@@ -205,6 +215,7 @@ export const DEFAULT_LAND_REPORT_BODY: LandReportBody = {
     observationStart: '',
     observationEnd: '',
   },
+  koosaRows: [],
   remark: '',
 }
 

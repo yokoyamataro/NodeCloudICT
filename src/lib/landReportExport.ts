@@ -19,6 +19,7 @@ import type {
   ReportCauseRow,
   ReportBasePoint,
   ReportPermanentFeature,
+  ReportKoosaRow,
 } from '@/stores/landReportStore'
 import {
   MATERIAL_GROUPS,
@@ -254,16 +255,21 @@ function permFeatureRowValues(r: ReportPermanentFeature): Record<string, string>
 }
 
 function koosaRowValues(
-  r: ReportParcelRow,
+  r: ReportKoosaRow,
+  idx: number,
   accuracy: AccuracyClass | null,
 ): Record<string, string> {
-  const { diff, tolerance, verdict } = evaluateKoosa(accuracy, r.registeredAreaSqm, r.areaSqm)
+  const { diff, tolerance, verdict } = evaluateKoosa(
+    accuracy,
+    r.registeredAreaSqm,
+    r.measuredAreaSqm,
+  )
   return {
-    'K.NO': String(r.appNo),
+    'K.NO': String(idx + 1),
     'K.LOCATION': r.location,
     'K.NUMBER': r.parcelNumber,
     'K.REGISTERED': r.registeredAreaSqm != null ? r.registeredAreaSqm.toFixed(2) : '',
-    'K.MEASURED': r.areaSqm != null ? r.areaSqm.toFixed(2) : '',
+    'K.MEASURED': r.measuredAreaSqm != null ? r.measuredAreaSqm.toFixed(2) : '',
     'K.DIFF': diff != null ? diff.toFixed(2) : '',
     'K.TOLERANCE': tolerance != null ? tolerance.toFixed(2) : '',
     'K.RESULT': verdict === 'ok' ? '適' : verdict === 'ng' ? '不適' : '',
@@ -365,7 +371,7 @@ function replaceRowTokens(
 interface SectionSpec<T> {
   anchor: string
   items: T[]
-  rowValues: (item: T) => Record<string, string>
+  rowValues: (item: T, index: number) => Record<string, string>
 }
 
 // ---------------------------- merge snapshot / rebuild ----------------------------
@@ -618,7 +624,7 @@ export async function exportLandReportToExcel(report: LandReport): Promise<Blob>
     { anchor: 'BASE_POINTS', items: body.boundary.basePoints, rowValues: (r) => basePointRowValues('BP', r as ReportBasePoint) },
     { anchor: 'SUB_BASE_POINTS', items: body.boundary.subBasePoints, rowValues: (r) => basePointRowValues('SBP', r as ReportBasePoint) },
     { anchor: 'PERM_FEATURES', items: body.boundary.permanentFeatures, rowValues: (r) => permFeatureRowValues(r as ReportPermanentFeature) },
-    { anchor: 'KOOSA', items: body.parcels, rowValues: (r) => koosaRowValues(r as ReportParcelRow, accuracy) },
+    { anchor: 'KOOSA', items: body.koosaRows, rowValues: (r, i) => koosaRowValues(r as ReportKoosaRow, i, accuracy) },
   ]
 
   // 先に アンカーを全て検出。
@@ -640,7 +646,7 @@ export async function exportLandReportToExcel(report: LandReport): Promise<Blob>
 
   // 可変行セクションを 一括処理 (merge スナップショット → 行操作 → merge 再構築)
   let totalReplaced = processAllSections(ws, jobs, globalValues, (job, i) =>
-    job.spec.rowValues(job.spec.items[i]),
+    job.spec.rowValues(job.spec.items[i], i),
   )
 
   // 残りの 固定セル 全体に対して 一括置換
