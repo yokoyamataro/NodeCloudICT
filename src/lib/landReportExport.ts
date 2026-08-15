@@ -394,10 +394,24 @@ function replaceCellTokens(cell: ExcelJS.Cell, values: Record<string, string>): 
     .replace(ANCHOR_RE_G, '') // アンカーマーカー除去
     .replace(TOKEN_RE_G, (_, key: string) => values[key] ?? '')
   if (next === text) return 0
-  cell.value = next
-  // 改行を含むときは wrapText を有効化 (テンプレ側が未設定でも表示崩れしないように)
-  if (next.includes('\n')) {
-    cell.alignment = { ...(cell.alignment ?? {}), wrapText: true }
+
+  // 置換後の内容が 純粋な数値だけなら Number として set する。
+  //   * Excel が 数値として認識 (右寄せ / 表示形式が効く)
+  //   * セルの numFmt が未設定なら '0.00' を既定として付与
+  //     (テンプレ側で 特定の書式を設定していれば それが優先される)
+  const trimmed = next.trim()
+  if (trimmed !== '' && /^-?\d+(\.\d+)?$/.test(trimmed)) {
+    cell.value = parseFloat(trimmed)
+    const currentFmt = cell.numFmt
+    if (!currentFmt || currentFmt === 'General' || currentFmt === '@') {
+      cell.numFmt = '0.00'
+    }
+  } else {
+    cell.value = next
+    // 改行を含むときは wrapText を有効化
+    if (next.includes('\n')) {
+      cell.alignment = { ...(cell.alignment ?? {}), wrapText: true }
+    }
   }
   return 1
 }
