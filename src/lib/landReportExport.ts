@@ -406,16 +406,15 @@ function replaceCellTokens(cell: ExcelJS.Cell, values: Record<string, string>): 
     .replace(TOKEN_RE_G, (_, key: string) => values[key] ?? '')
   if (next === text) return 0
 
-  // 置換後の内容が 純粋な数値だけなら Number として set する。
-  //   * Excel が 数値として認識 (右寄せ / 表示形式が効く)
+  // 置換後の内容が 小数点付きの数値 のときだけ Number として set する。
+  //   * "336.00" のような 面積値 → 数値化して Excel の書式が効くように
+  //   * "343" (整数のみ) や "440-2" などは 地番 / 番号 として テキスト維持
+  //   * "0153882626" (先頭 0) は 電話番号 なので テキスト維持
   //   * セルの numFmt が未設定なら '0.00' を既定として付与
   //     (テンプレ側で 特定の書式を設定していれば それが優先される)
-  //   * 先頭 0 + 数字 続きのパターン (電話番号 / 郵便番号 / 登録番号 等) は
-  //     数値化すると 先頭 0 が失われるので 除外
   const trimmed = next.trim()
-  const isNumeric = /^-?\d+(\.\d+)?$/.test(trimmed)
-  const hasLeadingZero = /^0\d/.test(trimmed)
-  if (trimmed !== '' && isNumeric && !hasLeadingZero) {
+  const isDecimalNumber = /^-?\d+\.\d+$/.test(trimmed)
+  if (trimmed !== '' && isDecimalNumber) {
     cell.value = parseFloat(trimmed)
     const currentFmt = cell.numFmt
     if (!currentFmt || currentFmt === 'General' || currentFmt === '@') {
