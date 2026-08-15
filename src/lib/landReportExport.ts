@@ -281,17 +281,21 @@ function koosaRowValues(
 
 function extractCellText(cell: ExcelJS.Cell): string | null {
   const raw = cell.value
-  if (raw == null) return null
-  if (typeof raw === 'string') return raw
-  if (typeof raw === 'object') {
-    if ('richText' in raw && Array.isArray((raw as { richText: unknown }).richText)) {
-      return (raw as { richText: Array<{ text: string }> }).richText
-        .map((rt) => rt.text)
-        .join('')
+  if (raw != null) {
+    if (typeof raw === 'string') return raw
+    if (typeof raw === 'object') {
+      if ('richText' in raw && Array.isArray((raw as { richText: unknown }).richText)) {
+        return (raw as { richText: Array<{ text: string }> }).richText
+          .map((rt) => rt.text)
+          .join('')
+      }
+      // formula 型の 参照結果 (hyperlink / dateNamed / etc) や
+      // sharedStrings に <phoneticPr> が混ざったケースは cell.text で拾えることが多い
     }
-    // formula / hyperlink / date / etc — skip
-    return null
   }
+  // 最後の手段: ExcelJS の 正規化テキスト取得
+  const t = cell.text
+  if (typeof t === 'string' && t.length > 0) return t
   return null
 }
 
