@@ -5,12 +5,20 @@
 import { useEffect, useMemo, useState } from 'react'
 import { X, Check, Loader2 } from 'lucide-react'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
+import {
+  useCoordinatePointTypeStore,
+  getCoordinateTypeLabel,
+} from '@/stores/coordinatePointTypeStore'
+import { useProjectListStore } from '@/stores/projectListStore'
 
 export interface PickableCoordinate {
   id: string
   pointNumber: string
   stakeType: string | null
+  /** 内部コード (control / boundary / ... / custom) */
   type: string
+  /** 日本語ラベル (例 「基準点」「4級基準点」等)。UI 表示 & 取込時の grade に使う */
+  typeLabel: string
   x: number
   y: number
   z: number | null
@@ -26,11 +34,16 @@ interface Props {
   onConfirm: (selected: PickableCoordinate[]) => void
 }
 
-const toPickable = (c: CoordinateRow): PickableCoordinate => ({
+const toPickable = (
+  c: CoordinateRow,
+  projectId: string | null,
+  byProject: Parameters<typeof getCoordinateTypeLabel>[2],
+): PickableCoordinate => ({
   id: c.id,
   pointNumber: c.pointNumber,
   stakeType: c.stakeType,
   type: c.type,
+  typeLabel: getCoordinateTypeLabel(c.type, projectId, byProject),
   x: c.x,
   y: c.y,
   z: c.z,
@@ -48,6 +61,10 @@ export function CoordinatePickerModal({
   const loading = useCoordinateStore((s) => s.loading)
   const loadedFarmId = useCoordinateStore((s) => s.loadedFarmId)
   const fetchCoordinates = useCoordinateStore((s) => s.fetchCoordinates as ((farmId: string) => Promise<void>) | undefined)
+  const currentProject = useProjectListStore((s) => s.currentProject)
+  const projectId = currentProject?.id ?? null
+  const pointTypeByProject = useCoordinatePointTypeStore((s) => s.byProject)
+  const fetchPointTypes = useCoordinatePointTypeStore((s) => s.fetchForProject)
 
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [filter, setFilter] = useState('')
@@ -60,12 +77,26 @@ export function CoordinatePickerModal({
     }
   }, [farmId, loadedFarmId, fetchCoordinates])
 
-  const pickables = useMemo(() => coordinates.map(toPickable), [coordinates])
+  useEffect(() => {
+    if (projectId) void fetchPointTypes(projectId)
+  }, [projectId, fetchPointTypes])
+
+  const pickables = useMemo(
+    () => coordinates.map((c) => toPickable(c, projectId, pointTypeByProject)),
+    [coordinates, projectId, pointTypeByProject],
+  )
 
   const typeOptions = useMemo(() => {
-    const set = new Set<string>()
-    pickables.forEach((p) => p.type && set.add(p.type))
-    return Array.from(set).sort()
+    const seen = new Set<string>()
+    const out: { code: string; label: string }[] = []
+    pickables.forEach((p) => {
+      if (p.type && !seen.has(p.type)) {
+        seen.add(p.type)
+        out.push({ code: p.type, label: p.typeLabel })
+      }
+    })
+    out.sort((a, b) => a.label.localeCompare(b.label, 'ja'))
+    return out
   }, [pickables])
 
   const filtered = useMemo(() => {
@@ -76,6 +107,7 @@ export function CoordinatePickerModal({
       return (
         p.pointNumber.toLowerCase().includes(q) ||
         (p.stakeType ?? '').toLowerCase().includes(q) ||
+        p.typeLabel.toLowerCase().includes(q) ||
         (p.notes ?? '').toLowerCase().includes(q)
       )
     })
@@ -136,7 +168,7 @@ export function CoordinatePickerModal({
             >
               <option value="">全種別</option>
               {typeOptions.map((t) => (
-                <option key={t} value={t}>{t}</option>
+                <option key={t.code} value={t.code}>{t.label}</option>
               ))}
             </select>
           )}
@@ -198,7 +230,7 @@ export function CoordinatePickerModal({
                         />
                       </td>
                       <td className="px-2 py-1 border">{p.pointNumber}</td>
-                      <td className="px-2 py-1 border">{p.type}</td>
+                      <td className="px-2 py-1 border">{p.typeLabel}</td>
                       <td className="px-2 py-1 border">{p.stakeType || '—'}</td>
                       <td className="px-2 py-1 border text-right">{p.x.toFixed(3)}</td>
                       <td className="px-2 py-1 border text-right">{p.y.toFixed(3)}</td>

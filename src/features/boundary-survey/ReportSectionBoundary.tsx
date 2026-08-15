@@ -3,8 +3,7 @@
 //   * 使用機器 (TS / GNSS / その他)
 //   * 観測方法 (放射 / 結合 / 閉合 / 交会 / … + GNSS 観測方法)
 //   * 観測期間
-//   * 基本三角点等 / 補助基準点 / 恒久的地物 (可変行)
-//   * 写真 1 / 写真 2
+//   * 基本三角点等 / 補助基準点 / 恒久的地物 (可変行, 座標に紐づく写真をサムネイル表示)
 //   * 基本三角点測量ができない理由 (自由文 + 定型文)
 
 import { useState } from 'react'
@@ -17,6 +16,7 @@ import type {
 } from '@/stores/landReportStore'
 import { Field, RadioGroup, SnippetPickerButton } from './reportSectionUi'
 import { CoordinatePickerModal, type PickableCoordinate } from './CoordinatePickerModal'
+import { BasePointPhotos } from './BasePointPhotos'
 
 interface Props {
   body: LandReportBody
@@ -303,6 +303,7 @@ export function ReportSectionBoundary({ body, onChange }: Props) {
                 <th className="px-1 py-1 border text-left w-24">点名</th>
                 <th className="px-1 py-1 border text-left">名称・種別</th>
                 <th className="px-1 py-1 border text-left">地物の名称</th>
+                <th className="px-1 py-1 border text-left w-56">写真</th>
                 <th className="w-8 border"></th>
               </tr>
             </thead>
@@ -333,6 +334,9 @@ export function ReportSectionBoundary({ body, onChange }: Props) {
                       className="w-full px-1 py-0.5 border rounded"
                     />
                   </td>
+                  <td className="px-1 py-0.5 border">
+                    <BasePointPhotos coordinateId={r.coordinateId} />
+                  </td>
                   <td className="px-1 py-0.5 border text-center">
                     <button
                       type="button"
@@ -349,52 +353,6 @@ export function ReportSectionBoundary({ body, onChange }: Props) {
         )}
       </div>
 
-      {/* 写真 */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="border rounded p-2">
-          <div className="text-xs font-semibold text-slate-700 mb-1">写真 1</div>
-          <div className="grid grid-cols-1 gap-2">
-            <Field label="撮影日">
-              <input
-                type="date"
-                value={b.photo1.date}
-                onChange={(e) => patch({ photo1: { ...b.photo1, date: e.target.value } })}
-                className="w-full px-2 py-1 text-xs border rounded"
-              />
-            </Field>
-            <Field label="備考">
-              <input
-                type="text"
-                value={b.photo1.remark}
-                onChange={(e) => patch({ photo1: { ...b.photo1, remark: e.target.value } })}
-                className="w-full px-2 py-1 text-xs border rounded"
-              />
-            </Field>
-          </div>
-        </div>
-        <div className="border rounded p-2">
-          <div className="text-xs font-semibold text-slate-700 mb-1">写真 2</div>
-          <div className="grid grid-cols-1 gap-2">
-            <Field label="撮影日">
-              <input
-                type="date"
-                value={b.photo2.date}
-                onChange={(e) => patch({ photo2: { ...b.photo2, date: e.target.value } })}
-                className="w-full px-2 py-1 text-xs border rounded"
-              />
-            </Field>
-            <Field label="備考">
-              <input
-                type="text"
-                value={b.photo2.remark}
-                onChange={(e) => patch({ photo2: { ...b.photo2, remark: e.target.value } })}
-                className="w-full px-2 py-1 text-xs border rounded"
-              />
-            </Field>
-          </div>
-        </div>
-      </div>
-
       {pickerFor && currentFarm?.id && (
         <CoordinatePickerModal
           farmId={currentFarm.id}
@@ -405,7 +363,7 @@ export function ReportSectionBoundary({ body, onChange }: Props) {
             const additions: ReportBasePoint[] = picked.map((p) => ({
               coordinateId: p.id,
               name: p.pointNumber,
-              grade: p.type ?? '',
+              grade: p.typeLabel ?? '',
               mark: p.stakeType ?? '',
             }))
             patch({ [pickerFor]: [...b[pickerFor], ...additions] } as Partial<LandReportBody['boundary']>)
@@ -485,6 +443,7 @@ function BasePointTable({ title, rows, onPatch, onAdd, onRemove, onPickFromCoord
               <th className="px-1 py-1 border text-left w-32">点名</th>
               <th className="px-1 py-1 border text-left w-32">等級・種別</th>
               <th className="px-1 py-1 border text-left">標識 (杭種)</th>
+              <th className="px-1 py-1 border text-left w-56">写真</th>
               <th className="w-8 border"></th>
             </tr>
           </thead>
@@ -514,6 +473,9 @@ function BasePointTable({ title, rows, onPatch, onAdd, onRemove, onPickFromCoord
                     onChange={(e) => onPatch(idx, { mark: e.target.value })}
                     className="w-full px-1 py-0.5 border rounded"
                   />
+                </td>
+                <td className="px-1 py-0.5 border">
+                  <BasePointPhotos coordinateId={r.coordinateId} />
                 </td>
                 <td className="px-1 py-0.5 border text-center">
                   <button
