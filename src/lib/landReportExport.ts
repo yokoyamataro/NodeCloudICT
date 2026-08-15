@@ -27,6 +27,7 @@ import {
   MATERIALS_NOTES_TOKEN,
 } from '@/features/boundary-survey/reportMaterials'
 import { evaluateKoosa, type AccuracyClass } from './landReportKoosa'
+import { embedLinkedPhotos } from './landReportPhotos'
 
 const TEMPLATE_URL = '/調査報告書様式.xlsx'
 
@@ -305,6 +306,27 @@ const TOKEN_RE_G = /\{\{([A-Z0-9_.]+)\}\}/g
 interface AnchorInfo {
   startRow: number
   endRow: number  // 単一行なら startRow と同じ
+}
+
+/** 指定名の アンカーが現在どのセル (行/列) にあるかを 探す。
+ *  行操作後の 実位置を取りたいときに使う。見つからなければ null。 */
+function findAnchorCell(
+  ws: ExcelJS.Worksheet,
+  name: string,
+): { row: number; col: number } | null {
+  const target = `{{ANCHOR:${name}}}`
+  let found: { row: number; col: number } | null = null
+  ws.eachRow({ includeEmpty: false }, (row, rowNum) => {
+    if (found) return
+    row.eachCell({ includeEmpty: false }, (cell, colNum) => {
+      if (found) return
+      const text = extractCellText(cell)
+      if (text && text.includes(target)) {
+        found = { row: rowNum, col: colNum }
+      }
+    })
+  })
+  return found
 }
 
 function findAnchors(ws: ExcelJS.Worksheet): Map<string, AnchorInfo> {
@@ -648,6 +670,17 @@ export async function exportLandReportToExcel(report: LandReport): Promise<Blob>
   let totalReplaced = processAllSections(ws, jobs, globalValues, (job, i) =>
     job.spec.rowValues(job.spec.items[i], i),
   )
+
+  // {{ANCHOR:PHOTOS}} が配置されていれば、座標にリンクされた写真をグリッド埋込
+  // (トークン置換より前に位置を取っておく — 置換で消えるため)
+  const photoAnchor = findAnchorCell(ws, 'PHOTOS')
+  if (photoAnchor) {
+    try {
+      await embedLinkedPhotos(wb, ws, body, photoAnchor.row, photoAnchor.col)
+    } catch (e) {
+      console.warn('[landReportExport] embed photos failed', e)
+    }
+  }
 
   // 残りの 固定セル 全体に対して 一括置換
   ws.eachRow({ includeEmpty: false }, (row) => {
