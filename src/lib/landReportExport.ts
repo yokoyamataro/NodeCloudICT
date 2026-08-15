@@ -613,6 +613,62 @@ function applyBlockSnapshot(
   }
 }
 
+/** 事前スキャン: 各カラムの 「外周罫線」 (left / right / top / bottom) パターンを
+ *  検出。テンプレ全体を走査して 各カラム位置に定義された罫線を記録する。
+ *  行操作後に この情報を使って 複製された行にも 同じ罫線を stamp できる。 */
+type BorderSide = { style?: string; color?: unknown }
+interface ColBorderPattern {
+  left?: BorderSide
+  right?: BorderSide
+  top?: BorderSide
+  bottom?: BorderSide
+}
+function captureOuterBorderPattern(ws: ExcelJS.Worksheet): Map<number, ColBorderPattern> {
+  const map = new Map<number, ColBorderPattern>()
+  const maxRow = Math.max(200, ws.rowCount || 0, ws.actualRowCount || 0)
+  const maxCol = Math.max(80, ws.columnCount || 0, ws.actualColumnCount || 0)
+  for (let r = 1; r <= maxRow; r++) {
+    const row = ws.getRow(r)
+    for (let c = 1; c <= maxCol; c++) {
+      const cell = row.getCell(c)
+      const b = cell.border
+      if (!b) continue
+      const cur = map.get(c) ?? {}
+      // 各サイド: 先に見つかったもの優先 (テンプレの上部から取る)
+      if (b.left?.style && !cur.left) cur.left = b.left as BorderSide
+      if (b.right?.style && !cur.right) cur.right = b.right as BorderSide
+      if (b.top?.style && !cur.top) cur.top = b.top as BorderSide
+      if (b.bottom?.style && !cur.bottom) cur.bottom = b.bottom as BorderSide
+      if (cur.left || cur.right || cur.top || cur.bottom) map.set(c, cur)
+    }
+  }
+  return map
+}
+
+/** 対象範囲の行に対して、外周罫線を stamp する
+ *  (既に border が設定されているセルは 未設定サイドだけ補う) */
+function stampOuterBorders(
+  ws: ExcelJS.Worksheet,
+  pattern: Map<number, ColBorderPattern>,
+  fromRow: number,
+  toRow: number,
+): void {
+  for (let r = fromRow; r <= toRow; r++) {
+    const row = ws.getRow(r)
+    for (const [col, p] of pattern) {
+      const cell = row.getCell(col)
+      // 非マスターセルには 触らない (merge を壊す)
+      if (cell.isMerged && cell.master && cell.master.address !== cell.address) continue
+      const cur = (cell.border ?? {}) as Record<string, BorderSide | undefined>
+      const merged: Record<string, BorderSide | undefined> = { ...cur }
+      if (p.left && !merged.left?.style) merged.left = p.left
+      if (p.right && !merged.right?.style) merged.right = p.right
+      // top/bottom は 隣接行との重なりが不明瞭なので、既定では触らない
+      cell.border = merged as unknown as ExcelJS.Borders
+    }
+  }
+}
+
 function processAllSections(
   ws: ExcelJS.Worksheet,
   jobs: SectionJob[],
@@ -621,6 +677,9 @@ function processAllSections(
 ): number {
   // 0) 全 merge をスナップショット
   const originalMerges = getAllMerges(ws)
+
+  // 0.5) 外周罫線パターンを 事前スキャン (行操作の前に取る)
+  const outerBorderPattern = captureOuterBorderPattern(ws)
 
   // 1) 各ジョブのブロックを スナップショット (values + styles + 内部 merges)
   const blockSnapshots = new Map<SectionJob, BlockSnapshot>()
@@ -698,6 +757,17 @@ function processAllSections(
         })
       }
     }
+  }
+
+  // 6) 外周罫線を stamp — 各ブロックの複製範囲に対して 事前記録した
+  //    left/right 罫線パターンを 未設定サイドだけ補って再適用する
+  for (const job of jobs) {
+    if (job.count <= 1) continue
+    const h = blockHeight(job)
+    const blockNewStart = computeShift(job.startRow, jobs)
+    if (blockNewStart < 0) continue
+    const blockNewEnd = blockNewStart + job.count * h - 1
+    stampOuterBorders(ws, outerBorderPattern, blockNewStart, blockNewEnd)
   }
 
   return replaced
