@@ -21,8 +21,8 @@ import type {
 //   D94 (Slot1 写真) → X94 (Slot2 写真) = 20 列間隔 (COL_STEP)
 //   写真セル と 撮影日 セル の 相対位置: (行 +1, 列 +6)
 //   1 スロット全体の高さ: 3 行 (写真行 + 撮影日行 + 備考行) → 折返し ROW_STEP
-const PHOTO_WIDTH_PX = 220
-const PHOTO_HEIGHT_PX = 165
+const PHOTO_WIDTH_PX = 320
+const PHOTO_HEIGHT_PX = 240
 const PHOTOS_PER_ROW = 2
 const COL_STEP = 20
 /** 折り返し時の行間隔 (写真 ~11 行 + 撮影日/備考 2 行) */

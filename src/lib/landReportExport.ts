@@ -189,10 +189,22 @@ function parcelRowValues(r: ReportParcelRow): Record<string, string> {
 }
 
 function ownerRowValues(r: ReportOwnerRow, parcels: ReportParcelRow[]): Record<string, string> {
-  const parcelsText = r.parcelIndexes
-    .map((i) => parcels[i])
-    .filter((p): p is ReportParcelRow => Boolean(p))
-    .map((p) => `${p.location} ${p.parcelNumber}`.trim())
+  // 所在ごとにグルーピング: 「所在 番号1,番号2,番号3」 を 改行区切りで並べる
+  const byLocation = new Map<string, string[]>()
+  const locOrder: string[] = []
+  for (const i of r.parcelIndexes) {
+    const p = parcels[i]
+    if (!p) continue
+    const loc = p.location.trim()
+    const num = p.parcelNumber.trim()
+    if (!byLocation.has(loc)) {
+      byLocation.set(loc, [])
+      locOrder.push(loc)
+    }
+    byLocation.get(loc)!.push(num)
+  }
+  const parcelsText = locOrder
+    .map((loc) => `${loc}${byLocation.get(loc)!.join(',')}`)
     .join('\n')
   // 立会人情報が 何か入力されていれば ■ (氏名 or 住所 or 連絡先 のいずれか)
   const hasAttendee = Boolean(
@@ -591,13 +603,25 @@ function processAllSections(
   clearAllMerges(ws)
 
   // 4) 元 merge を シフトして再適用 (ブロック内 merge は 除外 — 5) で ブロックごとに扱う)
+  //    Wrapper merge (m.top < j.startRow AND m.bottom >= j.endRow) は
+  //    ブロックが count 回複製された場合、bottom を (count-1)*h 分 拡張する。
+  //    (例: セクションのタイトルセルが 「見出し行 + データ行」 に縦結合されている場合、
+  //     データ行が 2 行に増えたら タイトルセルも 3 行 縦マージにする)
   const insideBlock = (m: MergeRange): boolean =>
     jobs.some((j) => m.top >= j.startRow && m.bottom <= j.endRow)
   for (const m of originalMerges) {
     if (insideBlock(m)) continue
-    const nt = computeShift(m.top, jobs)
-    const nb = computeShift(m.bottom, jobs)
+    let nt = computeShift(m.top, jobs)
+    let nb = computeShift(m.bottom, jobs)
     if (nt < 0 || nb < 0) continue
+    // Wrapper merge の bottom 拡張
+    for (const job of jobs) {
+      if (job.count <= 1) continue
+      const extraRows = (job.count - 1) * blockHeight(job)
+      const isWrapper =
+        m.top < job.startRow && m.bottom >= job.startRow && m.bottom <= job.endRow
+      if (isWrapper) nb += extraRows
+    }
     try {
       ws.mergeCells(nt, m.left, nb, m.right)
     } catch {
