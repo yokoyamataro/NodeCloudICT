@@ -759,16 +759,18 @@ function processAllSections(
     }
   }
 
-  // 6) 外周罫線を stamp — 各ブロックの複製範囲に対して 事前記録した
-  //    left/right 罫線パターンを 未設定サイドだけ補って再適用する
-  for (const job of jobs) {
-    if (job.count <= 1) continue
-    const h = blockHeight(job)
-    const blockNewStart = computeShift(job.startRow, jobs)
-    if (blockNewStart < 0) continue
-    const blockNewEnd = blockNewStart + job.count * h - 1
-    stampOuterBorders(ws, outerBorderPattern, blockNewStart, blockNewEnd)
-  }
+  // 6) 外周罫線を stamp — 事前記録した left/right 罫線パターンを
+  //    シート全体の 使用行範囲に stamp して 未設定サイドを補う
+  const finalMaxRow = Math.max(ws.rowCount || 0, ws.actualRowCount || 0, 200)
+  console.log('[processAllSections] outer border pattern:', outerBorderPattern.size, 'cols')
+  const patternCols = Array.from(outerBorderPattern.entries()).map(([c, p]) => ({
+    col: c,
+    left: p.left?.style,
+    right: p.right?.style,
+  }))
+  console.log('[processAllSections] pattern cols:', patternCols)
+  console.log('[processAllSections] stamp range: 1 to', finalMaxRow)
+  stampOuterBorders(ws, outerBorderPattern, 1, finalMaxRow)
 
   return replaced
 }
