@@ -20,6 +20,11 @@ import type {
   ReportBasePoint,
   ReportPermanentFeature,
 } from '@/stores/landReportStore'
+import {
+  MATERIAL_GROUPS,
+  MATERIALS_NOTES_KEY,
+  MATERIALS_NOTES_TOKEN,
+} from '@/features/boundary-survey/reportMaterials'
 
 const TEMPLATE_URL = '/調査報告書様式.xlsx'
 
@@ -63,22 +68,19 @@ function buildGlobalValues(body: LandReportBody, surveyor: Surveyor | null): Rec
   v['SURVEYOR_OFFICE'] = surveyor?.office_name ?? ''
   v['SURVEYOR_PHONE'] = surveyor?.phone_no ?? ''
 
-  // 05
+  // 05 資料調査 (MATERIAL_GROUPS を反復して 全項目のトークンを生成)
   const mat = body.materials
-  const mb = (k: string) => check(mat[k] === true)
-  v['M.DEED'] = mb('registered_deed')
-  v['M.MAP'] = mb('map')
-  v['M.MAP_ALT'] = mb('map_alternative')
-  v['M.SURVEY_MAP'] = mb('survey_map')
-  v['M.LOC_MAP'] = mb('location_map')
-  v['M.BUILDING'] = mb('building_map')
-  v['M.OLD_KOOZU'] = mb('old_koozu')
-  v['M.AZA_MAP'] = mb('aza_map')
-  v['M.BOUNDARY'] = mb('boundary_confirm')
-  v['M.PAST_SURVEY'] = mb('past_survey')
-  v['M.CITY_PLAN'] = mb('city_planning')
-  v['M.AERIAL'] = mb('aerial_photo')
-  v['M.NOTES'] = typeof mat['_notes'] === 'string' ? (mat['_notes'] as string) : ''
+  for (const group of MATERIAL_GROUPS) {
+    for (const item of group.items) {
+      v[`M.${item.token}`] = check(mat[item.key] === true)
+      if (item.hasText && item.textKey && item.textToken) {
+        const raw = mat[item.textKey]
+        v[`M.${item.textToken}`] = typeof raw === 'string' ? raw : ''
+      }
+    }
+  }
+  v[`M.${MATERIALS_NOTES_TOKEN}`] =
+    typeof mat[MATERIALS_NOTES_KEY] === 'string' ? (mat[MATERIALS_NOTES_KEY] as string) : ''
 
   // 06
   v['ORIGINAL_CHECK'] = body.originalCheck
@@ -189,7 +191,12 @@ function ownerRowValues(r: ReportOwnerRow, parcels: ReportParcelRow[]): Record<s
     .filter((p): p is ReportParcelRow => Boolean(p))
     .map((p) => `${p.location} ${p.parcelNumber}`.trim())
     .join('\n')
+  // 立会人情報が 何か入力されていれば ■ (氏名 or 住所 or 連絡先 のいずれか)
+  const hasAttendee = Boolean(
+    r.attendee.name.trim() || r.attendee.address.trim() || r.attendee.contact.trim(),
+  )
   return {
+    'O.HAS_ATTENDEE': check(hasAttendee),
     'O.PARCELS': parcelsText,
     'O.ADDRESS': r.address,
     'O.NAME': r.name,
