@@ -281,21 +281,32 @@ function koosaRowValues(
 
 function extractCellText(cell: ExcelJS.Cell): string | null {
   const raw = cell.value
-  if (raw != null) {
-    if (typeof raw === 'string') return raw
-    if (typeof raw === 'object') {
-      if ('richText' in raw && Array.isArray((raw as { richText: unknown }).richText)) {
-        return (raw as { richText: Array<{ text: string }> }).richText
-          .map((rt) => rt.text)
-          .join('')
-      }
-      // formula 型の 参照結果 (hyperlink / dateNamed / etc) や
-      // sharedStrings に <phoneticPr> が混ざったケースは cell.text で拾えることが多い
+  if (raw == null) return null
+  if (typeof raw === 'string') return raw
+  if (typeof raw === 'object') {
+    if ('richText' in raw && Array.isArray((raw as { richText: unknown }).richText)) {
+      return (raw as { richText: Array<{ text: string }> }).richText
+        .map((rt) => rt.text)
+        .join('')
+    }
+    // hyperlink オブジェクト: { text, hyperlink }
+    if ('text' in raw && typeof (raw as { text: unknown }).text === 'string') {
+      return (raw as { text: string }).text
+    }
+    // formula 型: { formula, result }
+    if ('result' in raw && (raw as { result: unknown }).result != null) {
+      const r = (raw as { result: unknown }).result
+      if (typeof r === 'string') return r
+      if (typeof r === 'number' || typeof r === 'boolean') return String(r)
     }
   }
-  // 最後の手段: ExcelJS の 正規化テキスト取得
-  const t = cell.text
-  if (typeof t === 'string' && t.length > 0) return t
+  // 最後の手段: ExcelJS の 正規化テキスト取得 (稀に内部で toString 失敗するので try/catch)
+  try {
+    const t = cell.text
+    if (typeof t === 'string' && t.length > 0) return t
+  } catch {
+    // ignore
+  }
   return null
 }
 
