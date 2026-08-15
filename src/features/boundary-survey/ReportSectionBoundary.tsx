@@ -15,7 +15,7 @@ import type {
   ReportBasePoint,
   ReportPermanentFeature,
 } from '@/stores/landReportStore'
-import { CheckboxLabel, Field, SnippetPickerButton } from './reportSectionUi'
+import { Field, RadioGroup, SnippetPickerButton } from './reportSectionUi'
 import { CoordinatePickerModal, type PickableCoordinate } from './CoordinatePickerModal'
 
 interface Props {
@@ -75,32 +75,31 @@ export function ReportSectionBoundary({ body, onChange }: Props) {
 
   return (
     <div className="p-3 space-y-3">
-      {/* 座標系 */}
+      {/* 座標系 (単一選択) */}
       <div className="border rounded p-2">
         <div className="text-xs font-semibold text-slate-700 mb-1">座標系</div>
         <div className="flex items-center gap-3 flex-wrap">
-          <CheckboxLabel
-            checked={b.coordSystem.isWorld}
-            onChange={(v) => patchCoord({ isWorld: v })}
-          >
-            世界測地系
-          </CheckboxLabel>
-          <div className="flex items-center gap-1">
-            <span className="text-xs text-slate-500">変換パラメータ:</span>
-            <input
-              type="text"
-              value={b.coordSystem.converterParam}
-              onChange={(e) => patchCoord({ converterParam: e.target.value })}
-              className="px-2 py-1 text-xs border rounded w-40"
-              placeholder="TKY2JGD 等"
-            />
-          </div>
-          <CheckboxLabel
-            checked={b.coordSystem.isCustom}
-            onChange={(v) => patchCoord({ isCustom: v })}
-          >
-            独自座標系
-          </CheckboxLabel>
+          <RadioGroup
+            name="coord-system"
+            value={b.coordSystem.isWorld ? 'world' : b.coordSystem.isCustom ? 'custom' : null}
+            onChange={(v) => patchCoord({ isWorld: v === 'world', isCustom: v === 'custom' })}
+            options={[
+              { value: 'world', label: '世界測地系' },
+              { value: 'custom', label: '独自座標系' },
+            ]}
+          />
+          {b.coordSystem.isWorld && (
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-slate-500">変換パラメータ:</span>
+              <input
+                type="text"
+                value={b.coordSystem.converterParam}
+                onChange={(e) => patchCoord({ converterParam: e.target.value })}
+                className="px-2 py-1 text-xs border rounded w-40"
+                placeholder="TKY2JGD 等"
+              />
+            </div>
+          )}
           {b.coordSystem.isCustom && (
             <input
               type="text"
@@ -113,19 +112,36 @@ export function ReportSectionBoundary({ body, onChange }: Props) {
         </div>
       </div>
 
-      {/* 使用機器 */}
+      {/* 使用機器 (単一選択) — 切替時は 観測方法もクリア */}
       <div className="border rounded p-2">
         <div className="text-xs font-semibold text-slate-700 mb-1">使用機器</div>
         <div className="flex items-center gap-3 flex-wrap">
-          <CheckboxLabel checked={b.devices.ts} onChange={(v) => patchDevices({ ts: v })}>
-            トータルステーション (TS)
-          </CheckboxLabel>
-          <CheckboxLabel checked={b.devices.gnss} onChange={(v) => patchDevices({ gnss: v })}>
-            GNSS
-          </CheckboxLabel>
-          <CheckboxLabel checked={b.devices.other} onChange={(v) => patchDevices({ other: v })}>
-            その他
-          </CheckboxLabel>
+          <RadioGroup
+            name="devices"
+            value={b.devices.ts ? 'ts' : b.devices.gnss ? 'gnss' : b.devices.other ? 'other' : null}
+            onChange={(v) => {
+              patch({
+                devices: {
+                  ...b.devices,
+                  ts: v === 'ts',
+                  gnss: v === 'gnss',
+                  other: v === 'other',
+                },
+                methods: {
+                  ...b.methods,
+                  radial: false, closing: false, loop: false, intersection: false,
+                  single: false, opposite: false, average: false, other: false,
+                  static: false, shortStatic: false, rtk: false, networkRtk: false,
+                  gnssOther: false,
+                },
+              })
+            }}
+            options={[
+              { value: 'ts', label: 'トータルステーション (TS)' },
+              { value: 'gnss', label: 'GNSS' },
+              { value: 'other', label: 'その他' },
+            ]}
+          />
           {b.devices.other && (
             <input
               type="text"
@@ -138,47 +154,93 @@ export function ReportSectionBoundary({ body, onChange }: Props) {
         </div>
       </div>
 
-      {/* 観測方法 */}
-      <div className="border rounded p-2">
-        <div className="text-xs font-semibold text-slate-700 mb-1">観測方法 (TS)</div>
-        <div className="grid grid-cols-3 md:grid-cols-4 gap-1">
-          <CheckboxLabel checked={b.methods.radial} onChange={(v) => patchMethods({ radial: v })}>放射法</CheckboxLabel>
-          <CheckboxLabel checked={b.methods.closing} onChange={(v) => patchMethods({ closing: v })}>結合トラバース</CheckboxLabel>
-          <CheckboxLabel checked={b.methods.loop} onChange={(v) => patchMethods({ loop: v })}>閉合トラバース</CheckboxLabel>
-          <CheckboxLabel checked={b.methods.intersection} onChange={(v) => patchMethods({ intersection: v })}>交会法</CheckboxLabel>
-          <CheckboxLabel checked={b.methods.single} onChange={(v) => patchMethods({ single: v })}>単路線</CheckboxLabel>
-          <CheckboxLabel checked={b.methods.opposite} onChange={(v) => patchMethods({ opposite: v })}>対辺観測</CheckboxLabel>
-          <CheckboxLabel checked={b.methods.average} onChange={(v) => patchMethods({ average: v })}>平均計算</CheckboxLabel>
-          <CheckboxLabel checked={b.methods.other} onChange={(v) => patchMethods({ other: v })}>その他</CheckboxLabel>
-        </div>
-        {b.methods.other && (
-          <input
-            type="text"
-            value={b.methods.otherText}
-            onChange={(e) => patchMethods({ otherText: e.target.value })}
-            placeholder="その他の観測方法"
-            className="mt-1 w-full px-2 py-1 text-xs border rounded"
+      {/* 観測方法 — 選択した機器に応じて 表示を切替 (単一選択) */}
+      {b.devices.ts && (
+        <div className="border rounded p-2">
+          <div className="text-xs font-semibold text-slate-700 mb-1">観測方法 (TS)</div>
+          <RadioGroup
+            name="ts-method"
+            value={
+              b.methods.radial ? 'radial' :
+              b.methods.closing ? 'closing' :
+              b.methods.loop ? 'loop' :
+              b.methods.intersection ? 'intersection' :
+              b.methods.single ? 'single' :
+              b.methods.opposite ? 'opposite' :
+              b.methods.average ? 'average' :
+              b.methods.other ? 'other' : null
+            }
+            onChange={(v) => patchMethods({
+              radial: v === 'radial',
+              closing: v === 'closing',
+              loop: v === 'loop',
+              intersection: v === 'intersection',
+              single: v === 'single',
+              opposite: v === 'opposite',
+              average: v === 'average',
+              other: v === 'other',
+            })}
+            options={[
+              { value: 'radial', label: '放射法' },
+              { value: 'closing', label: '結合トラバース' },
+              { value: 'loop', label: '閉合トラバース' },
+              { value: 'intersection', label: '交会法' },
+              { value: 'single', label: '単路線' },
+              { value: 'opposite', label: '対辺観測' },
+              { value: 'average', label: '平均計算' },
+              { value: 'other', label: 'その他' },
+            ]}
           />
-        )}
+          {b.methods.other && (
+            <input
+              type="text"
+              value={b.methods.otherText}
+              onChange={(e) => patchMethods({ otherText: e.target.value })}
+              placeholder="その他の観測方法"
+              className="mt-1 w-full px-2 py-1 text-xs border rounded"
+            />
+          )}
+        </div>
+      )}
 
-        <div className="text-xs font-semibold text-slate-700 mt-3 mb-1">観測方法 (GNSS)</div>
-        <div className="grid grid-cols-3 md:grid-cols-4 gap-1">
-          <CheckboxLabel checked={b.methods.static} onChange={(v) => patchMethods({ static: v })}>スタティック</CheckboxLabel>
-          <CheckboxLabel checked={b.methods.shortStatic} onChange={(v) => patchMethods({ shortStatic: v })}>短縮スタティック</CheckboxLabel>
-          <CheckboxLabel checked={b.methods.rtk} onChange={(v) => patchMethods({ rtk: v })}>RTK-GNSS</CheckboxLabel>
-          <CheckboxLabel checked={b.methods.networkRtk} onChange={(v) => patchMethods({ networkRtk: v })}>ネットワーク型 RTK</CheckboxLabel>
-          <CheckboxLabel checked={b.methods.gnssOther} onChange={(v) => patchMethods({ gnssOther: v })}>その他</CheckboxLabel>
-        </div>
-        {b.methods.gnssOther && (
-          <input
-            type="text"
-            value={b.methods.gnssOtherText}
-            onChange={(e) => patchMethods({ gnssOtherText: e.target.value })}
-            placeholder="その他の GNSS 観測方法"
-            className="mt-1 w-full px-2 py-1 text-xs border rounded"
+      {b.devices.gnss && (
+        <div className="border rounded p-2">
+          <div className="text-xs font-semibold text-slate-700 mb-1">観測方法 (GNSS)</div>
+          <RadioGroup
+            name="gnss-method"
+            value={
+              b.methods.static ? 'static' :
+              b.methods.shortStatic ? 'shortStatic' :
+              b.methods.rtk ? 'rtk' :
+              b.methods.networkRtk ? 'networkRtk' :
+              b.methods.gnssOther ? 'gnssOther' : null
+            }
+            onChange={(v) => patchMethods({
+              static: v === 'static',
+              shortStatic: v === 'shortStatic',
+              rtk: v === 'rtk',
+              networkRtk: v === 'networkRtk',
+              gnssOther: v === 'gnssOther',
+            })}
+            options={[
+              { value: 'static', label: 'スタティック' },
+              { value: 'shortStatic', label: '短縮スタティック' },
+              { value: 'rtk', label: 'RTK-GNSS' },
+              { value: 'networkRtk', label: 'ネットワーク型 RTK' },
+              { value: 'gnssOther', label: 'その他' },
+            ]}
           />
-        )}
-      </div>
+          {b.methods.gnssOther && (
+            <input
+              type="text"
+              value={b.methods.gnssOtherText}
+              onChange={(e) => patchMethods({ gnssOtherText: e.target.value })}
+              placeholder="その他の GNSS 観測方法"
+              className="mt-1 w-full px-2 py-1 text-xs border rounded"
+            />
+          )}
+        </div>
+      )}
 
       {/* 観測期間 */}
       <div className="grid grid-cols-2 gap-3">

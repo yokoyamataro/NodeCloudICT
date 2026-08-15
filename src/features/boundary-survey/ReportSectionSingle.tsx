@@ -2,7 +2,7 @@
 //   * 使用機器 + 観測期間
 
 import type { LandReportBody } from '@/stores/landReportStore'
-import { CheckboxLabel, Field } from './reportSectionUi'
+import { Field, RadioGroup } from './reportSectionUi'
 
 interface Props {
   body: LandReportBody
@@ -24,15 +24,20 @@ export function ReportSectionSingle({ body, onChange }: Props) {
       <div className="border rounded p-2">
         <div className="text-xs font-semibold text-slate-700 mb-1">使用機器</div>
         <div className="flex items-center gap-3 flex-wrap">
-          <CheckboxLabel checked={s.devices.ts} onChange={(v) => patchDevices({ ts: v })}>
-            トータルステーション (TS)
-          </CheckboxLabel>
-          <CheckboxLabel checked={s.devices.gnss} onChange={(v) => patchDevices({ gnss: v })}>
-            GNSS
-          </CheckboxLabel>
-          <CheckboxLabel checked={s.devices.other} onChange={(v) => patchDevices({ other: v })}>
-            その他
-          </CheckboxLabel>
+          <RadioGroup
+            name="single-devices"
+            value={s.devices.ts ? 'ts' : s.devices.gnss ? 'gnss' : s.devices.other ? 'other' : null}
+            onChange={(v) => patchDevices({
+              ts: v === 'ts',
+              gnss: v === 'gnss',
+              other: v === 'other',
+            })}
+            options={[
+              { value: 'ts', label: 'トータルステーション (TS)' },
+              { value: 'gnss', label: 'GNSS' },
+              { value: 'other', label: 'その他' },
+            ]}
+          />
           {s.devices.other && (
             <input
               type="text"
