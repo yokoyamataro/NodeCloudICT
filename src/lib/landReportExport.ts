@@ -461,17 +461,12 @@ function blockHeight(job: SectionJob): number {
 }
 
 /** origRow が 全ジョブ適用後に どの行番号にシフトするかを 計算。
- *  削除ブロックの内部を指す origRow は -1 を返す (呼び出し側で無視すること)。 */
+ *  count=0 のときは 行削除しない仕様に変更したので、シフトは count > 1 のみを考慮。 */
 function computeShift(origRow: number, jobs: SectionJob[]): number {
   let shifted = origRow
   for (const job of jobs) {
     const h = blockHeight(job)
-    if (job.count === 0) {
-      // ブロックを 削除 → ブロックより下の 全行が h つ上へ
-      if (origRow > job.endRow) shifted -= h
-      else if (origRow >= job.startRow) return -1
-    } else if (job.count > 1) {
-      // ブロックの後ろに (count-1)*h 行 挿入 → 挿入位置より下の 全行がずれる
+    if (job.count > 1) {
       if (origRow > job.endRow) shifted += (job.count - 1) * h
     }
   }
@@ -574,12 +569,17 @@ function processAllSections(
     blockSnapshots.set(job, snapshotBlock(ws, job.startRow, job.endRow, originalMerges))
   }
 
-  // 2) 行操作: 下から順に (元 startRow ベースで) 空行を挿入 / 削除
+  // 2) 行操作: 下から順に (元 startRow ベースで) 空行を挿入
+  //    count=0 は 行を削除しない: 削除すると 隣接する行を跨ぐ merge
+  //    (例: セクションのタイトルセルが 見出し行 + データ行 に縦結合) が壊れて
+  //    値が散らばる問題がある。0 件のときは トークンだけ空文字に置換して
+  //    行構造 + merge を保持する (後段の 全体トークン置換で {{...}} は '' に)。
   const bottomUp = [...jobs].sort((a, b) => b.startRow - a.startRow)
   for (const job of bottomUp) {
     const h = blockHeight(job)
     if (job.count === 0) {
-      ws.spliceRows(job.startRow, h)
+      // 削除しない (後段でトークンは空文字化される)
+      continue
     } else if (job.count > 1) {
       const extraRows = (job.count - 1) * h
       const emptyRows = Array.from({ length: extraRows }, () => [] as unknown[])
