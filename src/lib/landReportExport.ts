@@ -286,6 +286,9 @@ function koosaRowValues(
     'K.DIFF': diff != null ? diff.toFixed(2) : '',
     'K.TOLERANCE': tolerance != null ? tolerance.toFixed(2) : '',
     'K.RESULT': verdict === 'ok' ? '適' : verdict === 'ng' ? '不適' : '',
+    // 地積更正の要否 (□要 □否): 不適 → 要, 適 → 否
+    'K.NEEDS_CORR_YES': verdict === 'ng' ? '■' : '□',
+    'K.NEEDS_CORR_NO':  verdict === 'ok' ? '■' : '□',
   }
 }
 
