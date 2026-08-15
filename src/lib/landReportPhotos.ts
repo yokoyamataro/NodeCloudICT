@@ -11,13 +11,18 @@ import type {
   ReportPermanentFeature,
 } from '@/stores/landReportStore'
 
-/** 印刷可能なサイズを 目視で調整しやすいよう 定数化 */
+// レイアウト定数 (テンプレの 写真スロット構造に合わせる):
+//   * 1 スロット = 「左に縦長キャプション列 + 右に大きな写真セル」で構成
+//   * 2 スロットを 1 行に並べ、写真が多ければ 下段に折り返し
+//
+// COL_STEP は 1 スロット全体の幅 (キャプション列 + 写真セル + 余白) を
+// 想定した 列数。既定 6 列 (キャプション 1 + 写真 4-5 + 余白) 相当。
+// ROW_STEP は 1 スロットの高さ (写真 + 撮影日 / 備考 の余白) を想定。
 const PHOTO_WIDTH_PX = 220
 const PHOTO_HEIGHT_PX = 165
-const PHOTOS_PER_ROW = 3
-/** 1 枚あたりが 占めるおおよその 列数 / 行数 (Excel の既定 col/row サイズを想定) */
-const COL_STEP = 4
-const ROW_STEP = 13 // 写真 (約 11 行) + キャプション + 余白
+const PHOTOS_PER_ROW = 2
+const COL_STEP = 7
+const ROW_STEP = 13
 
 interface RawAttachment {
   id: string
@@ -136,7 +141,7 @@ export async function embedLinkedPhotos(
 
   let inserted = 0
   for (let i = 0; i < photos.length; i++) {
-    const { attachment, pointName, section } = photos[i]
+    const { attachment, pointName } = photos[i]
     const buf = await downloadImage(attachment.file_path)
     if (!buf) continue
 
@@ -147,24 +152,27 @@ export async function embedLinkedPhotos(
 
     const gridRow = Math.floor(i / PHOTOS_PER_ROW)
     const gridCol = i % PHOTOS_PER_ROW
-    // addImage の tl は 0-indexed (row=0 → 行 1)
-    const tlCol = anchorCol - 1 + gridCol * COL_STEP
-    const tlRow = anchorRow - 1 + gridRow * ROW_STEP
-
+    // 写真セル (「大きな写真エリア」) の 1-indexed 行/列
+    const photoRow = anchorRow + gridRow * ROW_STEP
+    const photoCol = anchorCol + gridCol * COL_STEP
+    // addImage の tl は 0-indexed
     ws.addImage(imgId, {
-      tl: { col: tlCol, row: tlRow },
+      tl: { col: photoCol - 1, row: photoRow - 1 },
       ext: { width: PHOTO_WIDTH_PX, height: PHOTO_HEIGHT_PX },
     })
 
-    // キャプション (写真の下辺想定の行 + 少し) — 1-indexed で書き込み
-    const capRow = anchorRow + gridRow * ROW_STEP + Math.ceil(PHOTO_HEIGHT_PX / 15) + 1
-    const capCol = anchorCol + gridCol * COL_STEP
-    const captionCell = ws.getCell(capRow, capCol)
+    // キャプション: 写真の 左隣のセル (縦長) に 「点名 分類」を 縦書きで挿入
+    const capCell = ws.getCell(photoRow, photoCol - 1)
     const catLabel = attachment.category ?? ''
-    const captionText = `[${section}] ${pointName}${catLabel ? ` (${catLabel})` : ''}`
-    captionCell.value = captionText
-    captionCell.font = { size: 8 }
-    captionCell.alignment = { ...(captionCell.alignment ?? {}), wrapText: true }
+    capCell.value = `${pointName}${catLabel ? `　${catLabel}` : ''}`
+    capCell.font = { size: 10 }
+    capCell.alignment = {
+      ...(capCell.alignment ?? {}),
+      vertical: 'middle',
+      horizontal: 'center',
+      textRotation: 255, // Excel の縦書き (日本語 上→下)
+      wrapText: true,
+    }
 
     inserted++
   }
