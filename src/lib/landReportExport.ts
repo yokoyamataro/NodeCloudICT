@@ -546,19 +546,22 @@ function snapshotBlock(
 ): BlockSnapshot {
   const cells: CellSnapshot[] = []
   const heights: (number | undefined)[] = []
+  // eachCell が 「使用中」 と判定するセルしか巡回しないため、
+  // 右端の 「罫線のみ」 セルを 見逃すことがある。1〜maxCol を 明示的に iterate する。
+  const maxCol = Math.max(60, ws.columnCount || 0, ws.actualColumnCount || 0)
   for (let r = startRow; r <= endRow; r++) {
     heights.push(ws.getRow(r).height)
-    // includeEmpty: true にすると 値なしでも罫線を持つセルも 巡回対象になり、
-    // 大外の罫線や 塗りつぶしを コピー時に保持できる (値なし & スタイルなしは除外)
-    ws.getRow(r).eachCell({ includeEmpty: true }, (cell, col) => {
+    const row = ws.getRow(r)
+    for (let c = 1; c <= maxCol; c++) {
+      const cell = row.getCell(c)
       // マスターセルのみ取得 (非マスターは merge の裏に隠れる)
-      if (cell.isMerged && cell.master && cell.master.address !== cell.address) return
+      if (cell.isMerged && cell.master && cell.master.address !== cell.address) continue
       const hasValue = cell.value != null
       const hasStyle = hasVisibleStyle(cell)
-      if (!hasValue && !hasStyle) return
+      if (!hasValue && !hasStyle) continue
       cells.push({
         rowOffset: r - startRow,
-        col,
+        col: c,
         value: cell.value,
         style: {
           alignment: cell.alignment,
@@ -568,7 +571,7 @@ function snapshotBlock(
           numFmt: cell.numFmt,
         },
       })
-    })
+    }
   }
   const merges = originalMerges
     .filter((m) => m.top >= startRow && m.bottom <= endRow)
