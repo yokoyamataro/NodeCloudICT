@@ -124,10 +124,16 @@ export async function embedLinkedPhotos(
     body.boundary.subBasePoints,
     body.boundary.permanentFeatures,
   )
-  if (sources.length === 0) return 0
+  console.log('[embedLinkedPhotos] anchor at row', anchorRow, 'col', anchorCol)
+  console.log('[embedLinkedPhotos] coord sources:', sources.length, sources.map((s) => `${s.section}:${s.pointName}=${s.coordinateId}`))
+  if (sources.length === 0) {
+    console.warn('[embedLinkedPhotos] 座標にリンクされた点がありません (座標から選択で取込した点が必要)')
+    return 0
+  }
 
   const coordIds = Array.from(new Set(sources.map((s) => s.coordinateId)))
   const attByCoord = await fetchAttachmentsByCoords(coordIds)
+  console.log('[embedLinkedPhotos] attachments per coord:', Object.fromEntries(Array.from(attByCoord.entries()).map(([k, v]) => [k, v.length])))
 
   // 全写真を平坦化 (座標の 登録順 × その中の sort_order)
   const photos: PhotoItem[] = []
@@ -137,13 +143,22 @@ export async function embedLinkedPhotos(
       photos.push({ attachment: att, pointName: src.pointName, section: src.section })
     }
   }
-  if (photos.length === 0) return 0
+  console.log('[embedLinkedPhotos] total photos to embed:', photos.length)
+  if (photos.length === 0) {
+    console.warn('[embedLinkedPhotos] リンクされた座標に 写真がありません (座標管理で 写真を添付してください)')
+    return 0
+  }
 
   let inserted = 0
+  let downloadFails = 0
   for (let i = 0; i < photos.length; i++) {
     const { attachment, pointName } = photos[i]
     const buf = await downloadImage(attachment.file_path)
-    if (!buf) continue
+    if (!buf) {
+      downloadFails++
+      console.warn('[embedLinkedPhotos] download failed for', attachment.file_path)
+      continue
+    }
 
     const imgId = wb.addImage({
       buffer: buf as unknown as ExcelJS.Buffer,
@@ -176,5 +191,6 @@ export async function embedLinkedPhotos(
 
     inserted++
   }
+  console.log('[embedLinkedPhotos] inserted:', inserted, '/', photos.length, downloadFails > 0 ? `(download failures: ${downloadFails})` : '')
   return inserted
 }

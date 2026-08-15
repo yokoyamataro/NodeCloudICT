@@ -675,11 +675,14 @@ export async function exportLandReportToExcel(report: LandReport): Promise<Blob>
   // (トークン置換より前に位置を取っておく — 置換で消えるため)
   const photoAnchor = findAnchorCell(ws, 'PHOTOS')
   if (photoAnchor) {
+    console.log('[landReportExport] photo anchor found at', photoAnchor)
     try {
       await embedLinkedPhotos(wb, ws, body, photoAnchor.row, photoAnchor.col)
     } catch (e) {
       console.warn('[landReportExport] embed photos failed', e)
     }
+  } else {
+    console.warn('[landReportExport] {{ANCHOR:PHOTOS}} が見つかりません (テンプレに配置されていない or 既に置換済み)')
   }
 
   // 残りの 固定セル 全体に対して 一括置換
