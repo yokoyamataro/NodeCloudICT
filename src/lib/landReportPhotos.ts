@@ -195,6 +195,10 @@ export async function embedPhotosInBlocks(
   blockShiftedStart: number,
   blockHeight: number,
 ): Promise<number> {
+  console.log('[embedPhotosInBlocks] start:', {
+    blockShiftedStart, blockHeight, slotsCount: slots.length, photosCount: photos.length,
+    slots: slots.map((s) => `slot${s.slotIdx}: rowOffset=${s.rowOffset}, col=${s.col}`),
+  })
   if (slots.length === 0 || photos.length === 0) return 0
   const slotsPerBlock = slots.length
   const groupsCount = Math.ceil(photos.length / slotsPerBlock)
@@ -213,6 +217,7 @@ export async function embedPhotosInBlocks(
       })
       const slot = slots[j]
       const targetRow = copyStart + slot.rowOffset
+      console.log(`[embedPhotosInBlocks] photo[${photoIdx}] (${photo.pointName}) → group=${i} slot=${j+1} at (row=${targetRow}, col=${slot.col})`)
       ws.addImage(imgId, {
         tl: { col: slot.col - 1, row: targetRow - 1 },
         ext: { width: PHOTO_WIDTH_PX, height: PHOTO_HEIGHT_PX },
