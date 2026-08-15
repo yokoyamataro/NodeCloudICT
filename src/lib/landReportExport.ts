@@ -527,6 +527,17 @@ interface BlockSnapshot {
   heights: (number | undefined)[]
 }
 
+/** セルが 罫線 or 塗りつぶし を持つか (値なしでも スナップショットに含めるべきか判定) */
+function hasVisibleStyle(cell: ExcelJS.Cell): boolean {
+  const b = cell.border
+  if (b) {
+    if (b.top?.style || b.bottom?.style || b.left?.style || b.right?.style) return true
+  }
+  const f = cell.fill
+  if (f && (f as { type?: string }).type) return true
+  return false
+}
+
 function snapshotBlock(
   ws: ExcelJS.Worksheet,
   startRow: number,
@@ -537,9 +548,14 @@ function snapshotBlock(
   const heights: (number | undefined)[] = []
   for (let r = startRow; r <= endRow; r++) {
     heights.push(ws.getRow(r).height)
-    ws.getRow(r).eachCell({ includeEmpty: false }, (cell, col) => {
+    // includeEmpty: true にすると 値なしでも罫線を持つセルも 巡回対象になり、
+    // 大外の罫線や 塗りつぶしを コピー時に保持できる (値なし & スタイルなしは除外)
+    ws.getRow(r).eachCell({ includeEmpty: true }, (cell, col) => {
       // マスターセルのみ取得 (非マスターは merge の裏に隠れる)
       if (cell.isMerged && cell.master && cell.master.address !== cell.address) return
+      const hasValue = cell.value != null
+      const hasStyle = hasVisibleStyle(cell)
+      if (!hasValue && !hasStyle) return
       cells.push({
         rowOffset: r - startRow,
         col,
