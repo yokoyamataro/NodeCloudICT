@@ -12,17 +12,23 @@ import type {
 } from '@/stores/landReportStore'
 
 // レイアウト定数 (テンプレの 写真スロット構造に合わせる):
-//   * 1 スロット = 「左に縦長キャプション列 + 右に大きな写真セル」で構成
-//   * 2 スロットを 1 行に並べ、写真が多ければ 下段に折り返し
+//   * 1 スロット = 「左に縦長キャプション列 + 大きな写真セル + 下に 撮影日/備考」
+//   * {{ANCHOR:PHOTOS}} は Slot 1 の 写真セル (左上) に置く
+//   * Slot 2 は Slot 1 の (COL_STEP) 列右
+//   * 写真が > 2 枚のときは 下段に折り返し (ROW_STEP 行分)
 //
-// COL_STEP は 1 スロット全体の幅 (キャプション列 + 写真セル + 余白) を
-// 想定した 列数。既定 6 列 (キャプション 1 + 写真 4-5 + 余白) 相当。
-// ROW_STEP は 1 スロットの高さ (写真 + 撮影日 / 備考 の余白) を想定。
+// テンプレ実測に合わせた値:
+//   D94 (Slot1 写真) → X94 (Slot2 写真) = 20 列間隔 (COL_STEP)
+//   写真セル と 撮影日 セル の 相対位置: (行 +1, 列 +6)
+//   1 スロット全体の高さ: 3 行 (写真行 + 撮影日行 + 備考行) → 折返し ROW_STEP
 const PHOTO_WIDTH_PX = 220
 const PHOTO_HEIGHT_PX = 165
 const PHOTOS_PER_ROW = 2
-const COL_STEP = 7
+const COL_STEP = 20
+/** 折り返し時の行間隔 (写真 ~11 行 + 撮影日/備考 2 行) */
 const ROW_STEP = 13
+const DATE_ROW_OFFSET = 1
+const DATE_COL_OFFSET = 6
 
 interface RawAttachment {
   id: string
@@ -31,6 +37,7 @@ interface RawAttachment {
   mime: string | null
   category: string | null
   caption: string | null
+  taken_at: string | null
   sort_order: number
 }
 
@@ -68,7 +75,7 @@ async function fetchAttachmentsByCoords(
   if (coordinateIds.length === 0) return out
   const { data } = await supabase
     .from('attachments')
-    .select('id, entity_id, file_path, mime, category, caption, sort_order')
+    .select('id, entity_id, file_path, mime, category, caption, taken_at, sort_order')
     .eq('entity_type', 'coordinate')
     .in('entity_id', coordinateIds)
     .order('sort_order', { ascending: true })
@@ -187,6 +194,17 @@ export async function embedLinkedPhotos(
       horizontal: 'center',
       textRotation: 255, // Excel の縦書き (日本語 上→下)
       wrapText: true,
+    }
+
+    // 撮影日: 写真の下の 「撮影年月日」ラベル右のセル (テンプレの相対位置)
+    if (attachment.taken_at) {
+      const d = new Date(attachment.taken_at)
+      if (!isNaN(d.getTime())) {
+        const dateCell = ws.getCell(photoRow + DATE_ROW_OFFSET, photoCol + DATE_COL_OFFSET)
+        const dateStr = `${d.getFullYear()}年${String(d.getMonth() + 1).padStart(2, '0')}月${String(d.getDate()).padStart(2, '0')}日`
+        dateCell.value = dateStr
+        if (!dateCell.font) dateCell.font = { size: 10 }
+      }
     }
 
     inserted++
