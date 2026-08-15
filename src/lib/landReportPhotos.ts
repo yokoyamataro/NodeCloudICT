@@ -115,21 +115,25 @@ function extFromMime(mime: string | null): 'jpeg' | 'png' | 'gif' {
 
 const PHOTO_IMG_TOKEN_RE = /\{\{PHOTO_IMG_(\d+)\}\}/
 
-/** ブロック内の {{PHOTO_IMG_N}} スロット位置を抽出 (相対 offset)。 */
+/** ブロック内の {{PHOTO_IMG_N}} スロット位置を抽出 (相対 offset)。
+ *  結合セルの非マスターは (マスターの値が cell.text 経由で見えるため) 除外し、
+ *  同じ slotIdx が重複しないように dedupe する。 */
 export function detectPhotoSlots(
   ws: ExcelJS.Worksheet,
   blockStart: number,
   blockEnd: number,
   extractText: (cell: ExcelJS.Cell) => string | null,
 ): PhotoSlot[] {
-  const slots: PhotoSlot[] = []
+  const raw: PhotoSlot[] = []
   for (let r = blockStart; r <= blockEnd; r++) {
     ws.getRow(r).eachCell({ includeEmpty: false }, (cell, colNum) => {
+      // 結合の非マスターは スキップ (マスターと同じ値が cell.text で見えるため)
+      if (cell.isMerged && cell.master && cell.master.address !== cell.address) return
       const text = extractText(cell)
       if (!text) return
       const m = text.match(PHOTO_IMG_TOKEN_RE)
       if (m) {
-        slots.push({
+        raw.push({
           slotIdx: parseInt(m[1], 10),
           rowOffset: r - blockStart,
           col: colNum,
@@ -137,7 +141,15 @@ export function detectPhotoSlots(
       }
     })
   }
-  slots.sort((a, b) => a.slotIdx - b.slotIdx)
+  raw.sort((a, b) => a.slotIdx - b.slotIdx)
+  // slotIdx で dedupe (先勝ち)
+  const seen = new Set<number>()
+  const slots: PhotoSlot[] = []
+  for (const s of raw) {
+    if (seen.has(s.slotIdx)) continue
+    seen.add(s.slotIdx)
+    slots.push(s)
+  }
   return slots
 }
 
