@@ -27,7 +27,15 @@ import {
   MATERIALS_NOTES_TOKEN,
 } from '@/features/boundary-survey/reportMaterials'
 import { evaluateKoosa, type AccuracyClass } from './landReportKoosa'
-import { embedLinkedPhotos } from './landReportPhotos'
+import {
+  embedLinkedPhotos,
+  detectPhotoSlots,
+  collectPhotoItems,
+  photoBlockRowValues,
+  embedPhotosInBlocks,
+  type PhotoItem,
+  type PhotoSlot,
+} from './landReportPhotos'
 
 const TEMPLATE_URL = '/調査報告書様式.xlsx'
 
@@ -708,6 +716,47 @@ export async function exportLandReportToExcel(report: LandReport): Promise<Blob>
   // 先に アンカーを全て検出。
   const anchors = findAnchors(ws)
 
+  // 写真ブロック の 事前準備:
+  //   PHOTOS が 複数行アンカー (START/END) で、内部に {{PHOTO_IMG_N}} スロットが
+  //   1 個以上あれば ブロックモード。事前に写真を fetch + グループ化して 動的に
+  //   specs に加える (下段の processAllSections で ブロック複製される)。
+  const photosAnchor = anchors.get('PHOTOS')
+  let photoBlockCtx: {
+    slots: PhotoSlot[]
+    photos: PhotoItem[]
+    groupCount: number
+    startRow: number
+    endRow: number
+  } | null = null
+  if (photosAnchor && photosAnchor.startRow !== photosAnchor.endRow) {
+    const slots = detectPhotoSlots(ws, photosAnchor.startRow, photosAnchor.endRow, extractCellText)
+    const photos = await collectPhotoItems(body)
+    if (slots.length > 0 && photos.length > 0) {
+      const slotsPerBlock = slots.length
+      const groupCount = Math.ceil(photos.length / slotsPerBlock)
+      const groups: PhotoItem[][] = []
+      for (let i = 0; i < groupCount; i++) {
+        groups.push(photos.slice(i * slotsPerBlock, (i + 1) * slotsPerBlock))
+      }
+      photoBlockCtx = {
+        slots,
+        photos,
+        groupCount,
+        startRow: photosAnchor.startRow,
+        endRow: photosAnchor.endRow,
+      }
+      // PHOTOS を specs に追加 (rowValues で PHOTO_CAP_i / PHOTO_DATE_i を埋める)
+      specs.push({
+        anchor: 'PHOTOS',
+        items: groups,
+        rowValues: (grp) => photoBlockRowValues(grp as PhotoItem[]),
+      })
+      console.log('[landReportExport] photo block mode:', {
+        slots: slotsPerBlock, photos: photos.length, groups: groupCount,
+      })
+    }
+  }
+
   // アンカーが見つかったジョブだけ抽出
   const jobs: SectionJob[] = []
   for (const spec of specs) {
@@ -727,18 +776,43 @@ export async function exportLandReportToExcel(report: LandReport): Promise<Blob>
     job.spec.rowValues(job.spec.items[i], i),
   )
 
-  // {{ANCHOR:PHOTOS}} が配置されていれば、座標にリンクされた写真をグリッド埋込
-  // (トークン置換より前に位置を取っておく — 置換で消えるため)
-  const photoAnchor = findAnchorCell(ws, 'PHOTOS')
-  if (photoAnchor) {
-    console.log('[landReportExport] photo anchor found at', photoAnchor)
-    try {
-      await embedLinkedPhotos(wb, ws, body, photoAnchor.row, photoAnchor.col)
-    } catch (e) {
-      console.warn('[landReportExport] embed photos failed', e)
+  // 写真 の 画像埋込
+  if (photoBlockCtx) {
+    // ブロックモード: 各ブロックコピーの スロット位置に 画像を埋込
+    const photosJob = jobs.find((j) => j.spec.anchor === 'PHOTOS')
+    if (photosJob) {
+      const blockHeightVal = photosJob.endRow - photosJob.startRow + 1
+      const shiftedStart = (function compute(): number {
+        let s = photosJob.startRow
+        for (const j of jobs) {
+          if (j.count > 1 && photosJob.startRow > j.endRow) {
+            s += (j.count - 1) * (j.endRow - j.startRow + 1)
+          }
+        }
+        return s
+      })()
+      try {
+        const n = await embedPhotosInBlocks(
+          wb, ws, photoBlockCtx.photos, photoBlockCtx.slots, shiftedStart, blockHeightVal,
+        )
+        console.log('[landReportExport] photos embedded (block mode):', n)
+      } catch (e) {
+        console.warn('[landReportExport] block-mode photo embed failed', e)
+      }
     }
   } else {
-    console.warn('[landReportExport] {{ANCHOR:PHOTOS}} が見つかりません (テンプレに配置されていない or 既に置換済み)')
+    // 従来モード: 単一セル {{ANCHOR:PHOTOS}} を左上として グリッド埋込
+    const photoAnchor = findAnchorCell(ws, 'PHOTOS')
+    if (photoAnchor) {
+      console.log('[landReportExport] photo anchor (legacy mode) at', photoAnchor)
+      try {
+        await embedLinkedPhotos(wb, ws, body, photoAnchor.row, photoAnchor.col)
+      } catch (e) {
+        console.warn('[landReportExport] embed photos failed', e)
+      }
+    } else {
+      console.warn('[landReportExport] {{ANCHOR:PHOTOS}} が見つかりません (テンプレに配置されていない or 既に置換済み)')
+    }
   }
 
   // 残りの 固定セル 全体に対して 一括置換

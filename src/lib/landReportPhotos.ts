@@ -11,6 +11,20 @@ import type {
   ReportPermanentFeature,
 } from '@/stores/landReportStore'
 
+/** 写真セット (座標に紐づく) の 1 件 */
+export interface PhotoItem {
+  attachment: RawAttachment
+  pointName: string
+  section: string
+}
+
+/** ブロック内 スロット位置 (テンプレ内の相対 offset) */
+export interface PhotoSlot {
+  slotIdx: number  // 1-indexed
+  rowOffset: number
+  col: number
+}
+
 // レイアウト定数 (テンプレの 写真スロット構造に合わせる):
 //   * 1 スロット = 「左に縦長キャプション列 + 大きな写真セル + 下に 撮影日/備考」
 //   * {{ANCHOR:PHOTOS}} は Slot 1 の 写真セル (左上) に置く
@@ -21,8 +35,8 @@ import type {
 //   D94 (Slot1 写真) → X94 (Slot2 写真) = 20 列間隔 (COL_STEP)
 //   写真セル と 撮影日 セル の 相対位置: (行 +1, 列 +6)
 //   1 スロット全体の高さ: 3 行 (写真行 + 撮影日行 + 備考行) → 折返し ROW_STEP
-const PHOTO_WIDTH_PX = 320
-const PHOTO_HEIGHT_PX = 240
+const PHOTO_WIDTH_PX = 280
+const PHOTO_HEIGHT_PX = 210
 const PHOTOS_PER_ROW = 2
 const COL_STEP = 20
 /** 折り返し時の行間隔 (写真 ~11 行 + 撮影日/備考 2 行) */
@@ -30,7 +44,7 @@ const ROW_STEP = 13
 const DATE_ROW_OFFSET = 1
 const DATE_COL_OFFSET = 6
 
-interface RawAttachment {
+export interface RawAttachment {
   id: string
   entity_id: string
   file_path: string
@@ -39,14 +53,6 @@ interface RawAttachment {
   caption: string | null
   taken_at: string | null
   sort_order: number
-}
-
-interface PhotoItem {
-  attachment: RawAttachment
-  /** 写真の 帰属点 (点名) */
-  pointName: string
-  /** 分類ラベル (「基本三角点等」「補助基準点」「恒久的地物」) */
-  section: string
 }
 
 /** basePoints + subBasePoints + permanentFeatures から coordinateId と対応する pointName / section を集約 */
@@ -105,6 +111,116 @@ function extFromMime(mime: string | null): 'jpeg' | 'png' | 'gif' {
   if (mime === 'image/png') return 'png'
   if (mime === 'image/gif') return 'gif'
   return 'jpeg'
+}
+
+const PHOTO_IMG_TOKEN_RE = /\{\{PHOTO_IMG_(\d+)\}\}/
+
+/** ブロック内の {{PHOTO_IMG_N}} スロット位置を抽出 (相対 offset)。 */
+export function detectPhotoSlots(
+  ws: ExcelJS.Worksheet,
+  blockStart: number,
+  blockEnd: number,
+  extractText: (cell: ExcelJS.Cell) => string | null,
+): PhotoSlot[] {
+  const slots: PhotoSlot[] = []
+  for (let r = blockStart; r <= blockEnd; r++) {
+    ws.getRow(r).eachCell({ includeEmpty: false }, (cell, colNum) => {
+      const text = extractText(cell)
+      if (!text) return
+      const m = text.match(PHOTO_IMG_TOKEN_RE)
+      if (m) {
+        slots.push({
+          slotIdx: parseInt(m[1], 10),
+          rowOffset: r - blockStart,
+          col: colNum,
+        })
+      }
+    })
+  }
+  slots.sort((a, b) => a.slotIdx - b.slotIdx)
+  return slots
+}
+
+/** 全写真 (basePoints + subBasePoints + permanentFeatures にリンクされた添付) を fetch */
+export async function collectPhotoItems(body: {
+  boundary: {
+    basePoints: ReportBasePoint[]
+    subBasePoints: ReportBasePoint[]
+    permanentFeatures: ReportPermanentFeature[]
+  }
+}): Promise<PhotoItem[]> {
+  const sources = collectCoordSources(
+    body.boundary.basePoints,
+    body.boundary.subBasePoints,
+    body.boundary.permanentFeatures,
+  )
+  if (sources.length === 0) return []
+  const coordIds = Array.from(new Set(sources.map((s) => s.coordinateId)))
+  const attByCoord = await fetchAttachmentsByCoords(coordIds)
+  const photos: PhotoItem[] = []
+  for (const src of sources) {
+    const list = attByCoord.get(src.coordinateId) ?? []
+    for (const att of list) {
+      photos.push({ attachment: att, pointName: src.pointName, section: src.section })
+    }
+  }
+  return photos
+}
+
+/** 写真グループ (1 ブロック分) から PHOTO_CAP_i / PHOTO_DATE_i の値を作る */
+export function photoBlockRowValues(group: PhotoItem[]): Record<string, string> {
+  const values: Record<string, string> = {}
+  for (let j = 0; j < group.length; j++) {
+    const p = group[j]
+    const slotNum = j + 1
+    const catLabel = p.attachment.category ?? ''
+    values[`PHOTO_CAP_${slotNum}`] = `${p.pointName}${catLabel ? `　${catLabel}` : ''}`
+    if (p.attachment.taken_at) {
+      const d = new Date(p.attachment.taken_at)
+      if (!isNaN(d.getTime())) {
+        values[`PHOTO_DATE_${slotNum}`] =
+          `${d.getFullYear()}年${String(d.getMonth() + 1).padStart(2, '0')}月${String(d.getDate()).padStart(2, '0')}日`
+      }
+    }
+  }
+  return values
+}
+
+/** ブロック複製後、各ブロックコピーの スロット位置に 画像を埋め込む */
+export async function embedPhotosInBlocks(
+  wb: ExcelJS.Workbook,
+  ws: ExcelJS.Worksheet,
+  photos: PhotoItem[],
+  slots: PhotoSlot[],
+  blockShiftedStart: number,
+  blockHeight: number,
+): Promise<number> {
+  if (slots.length === 0 || photos.length === 0) return 0
+  const slotsPerBlock = slots.length
+  const groupsCount = Math.ceil(photos.length / slotsPerBlock)
+  let inserted = 0
+  for (let i = 0; i < groupsCount; i++) {
+    const copyStart = blockShiftedStart + i * blockHeight
+    for (let j = 0; j < slotsPerBlock; j++) {
+      const photoIdx = i * slotsPerBlock + j
+      if (photoIdx >= photos.length) break
+      const photo = photos[photoIdx]
+      const buf = await downloadImage(photo.attachment.file_path)
+      if (!buf) continue
+      const imgId = wb.addImage({
+        buffer: buf as unknown as ExcelJS.Buffer,
+        extension: extFromMime(photo.attachment.mime),
+      })
+      const slot = slots[j]
+      const targetRow = copyStart + slot.rowOffset
+      ws.addImage(imgId, {
+        tl: { col: slot.col - 1, row: targetRow - 1 },
+        ext: { width: PHOTO_WIDTH_PX, height: PHOTO_HEIGHT_PX },
+      })
+      inserted++
+    }
+  }
+  return inserted
 }
 
 /**
