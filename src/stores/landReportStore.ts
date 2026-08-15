@@ -43,7 +43,10 @@ export interface ReportParcelRow {
   location: string
   parcelNumber: string
   landCategory: string
+  /** 実測面積 (m²) — parcels.updated_area_sqm から取り込み */
   areaSqm: number | null
+  /** 登記面積 (m²) — parcels.registered_area_sqm から取り込み (09 甲差検証で使う) */
+  registeredAreaSqm: number | null
   hasThirdPartyRight: boolean | null   // true=有, false=無, null=未選択
   usage: string
   hasSurveyMap: boolean | null

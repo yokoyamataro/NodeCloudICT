@@ -25,6 +25,7 @@ import {
   MATERIALS_NOTES_KEY,
   MATERIALS_NOTES_TOKEN,
 } from '@/features/boundary-survey/reportMaterials'
+import { evaluateKoosa, type AccuracyClass } from './landReportKoosa'
 
 const TEMPLATE_URL = '/調査報告書様式.xlsx'
 
@@ -249,6 +250,23 @@ function permFeatureRowValues(r: ReportPermanentFeature): Record<string, string>
     'PF.NAME': r.name,
     'PF.FEATURE': r.featureName,
     'PF.OBJECT': r.objectName,
+  }
+}
+
+function koosaRowValues(
+  r: ReportParcelRow,
+  accuracy: AccuracyClass | null,
+): Record<string, string> {
+  const { diff, tolerance, verdict } = evaluateKoosa(accuracy, r.registeredAreaSqm, r.areaSqm)
+  return {
+    'K.NO': String(r.appNo),
+    'K.LOCATION': r.location,
+    'K.NUMBER': r.parcelNumber,
+    'K.REGISTERED': r.registeredAreaSqm != null ? r.registeredAreaSqm.toFixed(2) : '',
+    'K.MEASURED': r.areaSqm != null ? r.areaSqm.toFixed(2) : '',
+    'K.DIFF': diff != null ? diff.toFixed(2) : '',
+    'K.TOLERANCE': tolerance != null ? tolerance.toFixed(2) : '',
+    'K.RESULT': verdict === 'ok' ? '適' : verdict === 'ng' ? '不適' : '',
   }
 }
 
@@ -591,6 +609,7 @@ export async function exportLandReportToExcel(report: LandReport): Promise<Blob>
 
   const globalValues = buildGlobalValues(body, surveyor)
 
+  const accuracy = body.regionAccuracy.accuracy as AccuracyClass | null
   const specs: SectionSpec<unknown>[] = [
     { anchor: 'PURPOSES', items: body.purposes, rowValues: (r) => purposeRowValues(r as ReportPurposeRow) },
     { anchor: 'PARCELS', items: body.parcels, rowValues: (r) => parcelRowValues(r as ReportParcelRow) },
@@ -599,6 +618,7 @@ export async function exportLandReportToExcel(report: LandReport): Promise<Blob>
     { anchor: 'BASE_POINTS', items: body.boundary.basePoints, rowValues: (r) => basePointRowValues('BP', r as ReportBasePoint) },
     { anchor: 'SUB_BASE_POINTS', items: body.boundary.subBasePoints, rowValues: (r) => basePointRowValues('SBP', r as ReportBasePoint) },
     { anchor: 'PERM_FEATURES', items: body.boundary.permanentFeatures, rowValues: (r) => permFeatureRowValues(r as ReportPermanentFeature) },
+    { anchor: 'KOOSA', items: body.parcels, rowValues: (r) => koosaRowValues(r as ReportParcelRow, accuracy) },
   ]
 
   // 先に アンカーを全て検出。

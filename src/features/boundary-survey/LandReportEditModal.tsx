@@ -27,6 +27,7 @@ import { ReportSectionSite } from './ReportSectionSite'
 import { ReportSectionRegion } from './ReportSectionRegion'
 import { ReportSectionBoundary } from './ReportSectionBoundary'
 import { ReportSectionSingle } from './ReportSectionSingle'
+import { ReportSectionKoosa } from './ReportSectionKoosa'
 import { ReportSectionRemark } from './ReportSectionRemark'
 
 interface Props {
@@ -47,6 +48,7 @@ const SECTIONS: { id: string; title: string }[] = [
   { id: 'region',    title: '08 地域区分・精度区分' },
   { id: 'boundary',  title: '09 筆界位置の計測' },
   { id: 'single',    title: '09 一筆地測量' },
+  { id: 'koosa',     title: '09 甲差検証 (自動計算)' },
   { id: 'remark',    title: '10 補足・特記事項' },
 ]
 
@@ -67,6 +69,7 @@ function renderSection(
     case 'region':    return <ReportSectionRegion body={body} onChange={patch} />
     case 'boundary':  return <ReportSectionBoundary body={body} onChange={patch} />
     case 'single':    return <ReportSectionSingle body={body} onChange={patch} />
+    case 'koosa':     return <ReportSectionKoosa body={body} onChange={patch} />
     case 'remark':    return <ReportSectionRemark body={body} onChange={patch} />
     default:          return null
   }

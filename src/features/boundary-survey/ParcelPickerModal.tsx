@@ -11,7 +11,10 @@ export interface PickableParcel {
   location: string
   parcelNumber: string
   landCategory: string
+  /** 実測面積 (updated_area_sqm 優先, なければ registered_area_sqm) */
   areaSqm: number | null
+  /** 登記面積 (registered_area_sqm) — 甲差検証用 */
+  registeredAreaSqm: number | null
 }
 
 interface Props {
@@ -40,6 +43,7 @@ const toParcel = (r: Row): PickableParcel => ({
   parcelNumber: r.parcel_number ?? '',
   landCategory: r.updated_land_category ?? r.registered_land_category ?? '',
   areaSqm: r.updated_area_sqm ?? r.registered_area_sqm ?? null,
+  registeredAreaSqm: r.registered_area_sqm ?? null,
 })
 
 export function ParcelPickerModal({ farmId, alreadyIn, onCancel, onConfirm }: Props) {
