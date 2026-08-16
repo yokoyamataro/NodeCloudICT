@@ -19,7 +19,11 @@ import { supabase } from '@/lib/supabase'
 /** 01 登記の目的 の 1 申請行 */
 export interface ReportPurposeRow {
   appNo: number
-  changeType: 'change' | 'correction' | null   // ■変更 / ■更正
+  /** 変更/更正 (両方選択可) */
+  changeType: {
+    change: boolean       // ■変更
+    correction: boolean   // ■更正
+  }
   events: {
     title: boolean            // 表題
     subdivision: boolean      // 分筆
@@ -251,12 +255,42 @@ function migrateOwners(body: Partial<LandReportBody>): Partial<LandReportBody> {
   return { ...body, owners: migrated }
 }
 
+/** 旧形式 purposes (changeType: 'change'|'correction'|null) を
+ *  新形式 (changeType: { change, correction }) に寄せる */
+function migratePurposes(body: Partial<LandReportBody>): Partial<LandReportBody> {
+  if (!Array.isArray(body.purposes)) return body
+  const migrated = body.purposes.map((p) => {
+    const legacy = p as unknown as {
+      changeType?: 'change' | 'correction' | null | { change?: boolean; correction?: boolean }
+    } & Partial<ReportPurposeRow>
+    const ct = legacy.changeType
+    if (ct && typeof ct === 'object') {
+      // 既に新形式 (欠損サイド は false 埋め)
+      return {
+        ...p,
+        changeType: { change: !!ct.change, correction: !!ct.correction },
+      } as ReportPurposeRow
+    }
+    return {
+      ...p,
+      changeType: {
+        change: ct === 'change',
+        correction: ct === 'correction',
+      },
+    } as ReportPurposeRow
+  })
+  return { ...body, purposes: migrated }
+}
+
 const toReport = (r: Row): LandReport => ({
   id: r.id,
   farmId: r.farm_id,
   title: r.title,
   // 既存 body が 部分的でも DEFAULT_LAND_REPORT_BODY で埋めて型を安定させる
-  body: { ...DEFAULT_LAND_REPORT_BODY, ...migrateOwners(r.body as Partial<LandReportBody>) },
+  body: {
+    ...DEFAULT_LAND_REPORT_BODY,
+    ...migratePurposes(migrateOwners(r.body as Partial<LandReportBody>)),
+  },
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 })
@@ -299,10 +333,45 @@ export const useLandReportStore = create<State>((set, get) => ({
   },
 
   createReport: async (farmId, title = '無題の調査報告書') => {
+    // 報告書番号を自動採番:
+    //   * 同じ farm 内の 既存 land_reports の body.meta.reportNo を全走査
+    //   * 純数値だけ抽出して max+1、既存の桁数を維持
+    //   * 既存がなければ YY00001 (YY = 現在の西暦下 2 桁)
+    let reportNo = ''
+    try {
+      const { data: existing } = await supabase
+        .from('land_reports')
+        .select('body')
+        .eq('farm_id', farmId)
+      const nums: { num: number; digits: number }[] = []
+      for (const row of ((existing ?? []) as { body: unknown }[])) {
+        const b = row.body as { meta?: { reportNo?: unknown } } | null
+        const raw = b?.meta?.reportNo
+        if (typeof raw !== 'string') continue
+        const trimmed = raw.trim()
+        if (!/^\d+$/.test(trimmed)) continue
+        nums.push({ num: parseInt(trimmed, 10), digits: trimmed.length })
+      }
+      if (nums.length === 0) {
+        const yy = String(new Date().getFullYear()).slice(-2)
+        reportNo = `${yy}00001`
+      } else {
+        const maxEntry = nums.reduce((a, b) => (b.num > a.num ? b : a), nums[0])
+        const nextNum = maxEntry.num + 1
+        reportNo = String(nextNum).padStart(maxEntry.digits, '0')
+      }
+    } catch {
+      // 採番失敗しても 作成自体は進める
+    }
+
+    const initialBody: LandReportBody = {
+      ...DEFAULT_LAND_REPORT_BODY,
+      meta: { ...DEFAULT_LAND_REPORT_BODY.meta, reportNo },
+    }
     const payload = {
       farm_id: farmId,
       title,
-      body: DEFAULT_LAND_REPORT_BODY as unknown as Record<string, unknown>,
+      body: initialBody as unknown as Record<string, unknown>,
     }
     const { data, error } = await supabase
       .from('land_reports')

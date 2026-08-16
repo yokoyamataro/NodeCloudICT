@@ -165,8 +165,8 @@ function buildGlobalValues(body: LandReportBody, surveyor: Surveyor | null): Rec
 function purposeRowValues(r: ReportPurposeRow): Record<string, string> {
   return {
     'P.NO': String(r.appNo),
-    'P.CHANGE': check(r.changeType === 'change'),
-    'P.CORR': check(r.changeType === 'correction'),
+    'P.CHANGE': check(!!r.changeType?.change),
+    'P.CORR': check(!!r.changeType?.correction),
     'P.EV_TITLE': check(r.events.title),
     'P.EV_SUB': check(r.events.subdivision),
     'P.EV_MERGE': check(r.events.merger),

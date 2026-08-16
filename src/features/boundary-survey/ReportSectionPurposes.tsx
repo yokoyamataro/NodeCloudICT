@@ -1,10 +1,10 @@
 // 01 登記の目的
 //   * 申請 1..n (可変行)
-//   * 各行: 変更/更正 のラジオ + 事由チェックボックス群 + その他自由文
+//   * 各行: 左に 事由チェックボックス群 (表題/分筆/...) + 右に 変更/更正 (複数可)
 
 import { Plus, Trash2 } from 'lucide-react'
 import type { LandReportBody, ReportPurposeRow } from '@/stores/landReportStore'
-import { CheckboxLabel, RadioGroup } from './reportSectionUi'
+import { CheckboxLabel } from './reportSectionUi'
 
 interface Props {
   body: LandReportBody
@@ -13,7 +13,7 @@ interface Props {
 
 const emptyRow = (appNo: number): ReportPurposeRow => ({
   appNo,
-  changeType: null,
+  changeType: { change: false, correction: false },
   events: {
     title: false,
     subdivision: false,
@@ -36,8 +36,12 @@ export function ReportSectionPurposes({ body, onChange }: Props) {
     onChange({ purposes: next.map((r, i) => ({ ...r, appNo: i + 1 })) })
   }
 
-  const patchRow = (idx: number, patch: Partial<ReportPurposeRow>) => {
-    setRows(rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)))
+  const patchChangeType = (idx: number, patch: Partial<ReportPurposeRow['changeType']>) => {
+    setRows(
+      rows.map((r, i) =>
+        i === idx ? { ...r, changeType: { ...r.changeType, ...patch } } : r,
+      ),
+    )
   }
 
   const patchEvents = (idx: number, patch: Partial<ReportPurposeRow['events']>) => {
@@ -60,103 +64,112 @@ export function ReportSectionPurposes({ body, onChange }: Props) {
       ) : (
         rows.map((r, idx) => (
           <div key={idx} className="border rounded p-2 space-y-2 bg-white">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               <span className="text-xs font-semibold text-slate-700">
                 申請 {idx + 1}
               </span>
-              <RadioGroup
-                name={`purpose-changeType-${idx}`}
-                value={r.changeType}
-                onChange={(v) => patchRow(idx, { changeType: v })}
-                options={[
-                  { value: 'change', label: '変更' },
-                  { value: 'correction', label: '更正' },
-                ]}
-              />
-              <div className="ml-auto">
-                <button
-                  type="button"
-                  onClick={() => removeRow(idx)}
-                  className="p-1 text-red-500 hover:bg-red-50 rounded"
-                  title="この申請を削除"
+              <button
+                type="button"
+                onClick={() => removeRow(idx)}
+                className="ml-auto p-1 text-red-500 hover:bg-red-50 rounded"
+                title="この申請を削除"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            {/* 事件名 (左) + 変更/更正 (右) を 縦線で区切って横並び */}
+            <div className="flex items-start gap-3">
+              {/* 左: 事由チェックボックス */}
+              <div className="flex-1 min-w-0">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-1">
+                  <CheckboxLabel
+                    checked={r.events.title}
+                    onChange={(v) => patchEvents(idx, { title: v })}
+                  >
+                    表題
+                  </CheckboxLabel>
+                  <CheckboxLabel
+                    checked={r.events.subdivision}
+                    onChange={(v) => patchEvents(idx, { subdivision: v })}
+                  >
+                    分筆
+                  </CheckboxLabel>
+                  <CheckboxLabel
+                    checked={r.events.merger}
+                    onChange={(v) => patchEvents(idx, { merger: v })}
+                  >
+                    合筆
+                  </CheckboxLabel>
+                  <CheckboxLabel
+                    checked={r.events.location}
+                    onChange={(v) => patchEvents(idx, { location: v })}
+                  >
+                    所在
+                  </CheckboxLabel>
+                  <CheckboxLabel
+                    checked={r.events.landCategory}
+                    onChange={(v) => patchEvents(idx, { landCategory: v })}
+                  >
+                    地目
+                  </CheckboxLabel>
+                  <CheckboxLabel
+                    checked={r.events.area}
+                    onChange={(v) => patchEvents(idx, { area: v })}
+                  >
+                    地積
+                  </CheckboxLabel>
+                  <CheckboxLabel
+                    checked={r.events.mapCorrection}
+                    onChange={(v) => patchEvents(idx, { mapCorrection: v })}
+                  >
+                    地図訂正
+                  </CheckboxLabel>
+                  <CheckboxLabel
+                    checked={r.events.surveyMapCorrection}
+                    onChange={(v) => patchEvents(idx, { surveyMapCorrection: v })}
+                  >
+                    地積測量図訂正
+                  </CheckboxLabel>
+                  <CheckboxLabel
+                    checked={r.events.locationMapCorrection}
+                    onChange={(v) => patchEvents(idx, { locationMapCorrection: v })}
+                  >
+                    土地所在図訂正
+                  </CheckboxLabel>
+                  <CheckboxLabel
+                    checked={r.events.other}
+                    onChange={(v) => patchEvents(idx, { other: v })}
+                  >
+                    その他
+                  </CheckboxLabel>
+                </div>
+                {r.events.other && (
+                  <input
+                    type="text"
+                    value={r.events.otherText}
+                    onChange={(e) => patchEvents(idx, { otherText: e.target.value })}
+                    placeholder="その他の内容"
+                    className="mt-1 w-full px-2 py-1 text-xs border rounded"
+                  />
+                )}
+              </div>
+              {/* 右: 変更/更正 (複数選択可) — 縦線で区切る */}
+              <div className="border-l pl-3 flex flex-col gap-1 min-w-20">
+                <CheckboxLabel
+                  checked={r.changeType.change}
+                  onChange={(v) => patchChangeType(idx, { change: v })}
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                  変更
+                </CheckboxLabel>
+                <CheckboxLabel
+                  checked={r.changeType.correction}
+                  onChange={(v) => patchChangeType(idx, { correction: v })}
+                >
+                  更正
+                </CheckboxLabel>
               </div>
             </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-1">
-              <CheckboxLabel
-                checked={r.events.title}
-                onChange={(v) => patchEvents(idx, { title: v })}
-              >
-                表題
-              </CheckboxLabel>
-              <CheckboxLabel
-                checked={r.events.subdivision}
-                onChange={(v) => patchEvents(idx, { subdivision: v })}
-              >
-                分筆
-              </CheckboxLabel>
-              <CheckboxLabel
-                checked={r.events.merger}
-                onChange={(v) => patchEvents(idx, { merger: v })}
-              >
-                合筆
-              </CheckboxLabel>
-              <CheckboxLabel
-                checked={r.events.location}
-                onChange={(v) => patchEvents(idx, { location: v })}
-              >
-                所在
-              </CheckboxLabel>
-              <CheckboxLabel
-                checked={r.events.landCategory}
-                onChange={(v) => patchEvents(idx, { landCategory: v })}
-              >
-                地目
-              </CheckboxLabel>
-              <CheckboxLabel
-                checked={r.events.area}
-                onChange={(v) => patchEvents(idx, { area: v })}
-              >
-                地積
-              </CheckboxLabel>
-              <CheckboxLabel
-                checked={r.events.mapCorrection}
-                onChange={(v) => patchEvents(idx, { mapCorrection: v })}
-              >
-                地図訂正
-              </CheckboxLabel>
-              <CheckboxLabel
-                checked={r.events.surveyMapCorrection}
-                onChange={(v) => patchEvents(idx, { surveyMapCorrection: v })}
-              >
-                地積測量図訂正
-              </CheckboxLabel>
-              <CheckboxLabel
-                checked={r.events.locationMapCorrection}
-                onChange={(v) => patchEvents(idx, { locationMapCorrection: v })}
-              >
-                土地所在図訂正
-              </CheckboxLabel>
-              <CheckboxLabel
-                checked={r.events.other}
-                onChange={(v) => patchEvents(idx, { other: v })}
-              >
-                その他
-              </CheckboxLabel>
-            </div>
-
-            {r.events.other && (
-              <input
-                type="text"
-                value={r.events.otherText}
-                onChange={(e) => patchEvents(idx, { otherText: e.target.value })}
-                placeholder="その他の内容"
-                className="w-full px-2 py-1 text-xs border rounded"
-              />
-            )}
           </div>
         ))
       )}
