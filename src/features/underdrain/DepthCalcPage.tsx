@@ -3032,10 +3032,53 @@ export function DepthCalcPage() {
                           }
                         }}
                         onSlopeSelected={(startPointId, endPointId) => {
-                          // 縦断図上で 計画点を 別の計画点まで横ドラッグ →
-                          // 連続勾配設定ダイアログを 始点/終点 preset で開く
-                          setContinuousPresetIds([startPointId, endPointId])
-                          setContinuousOpen(true)
+                          // 縦断図上で 計画点を 別の計画点まで横ドラッグしたら
+                          // 中間の全 集水点 に 線形補間で 連続勾配を適用する。
+                          // 始点/終点 の計画高は変更せず、その 2 点を結ぶ直線に
+                          // 中間点が乗るように再計算する。
+                          const rows = activeTab?.rows
+                          if (!rows) return
+                          // 系統内の collector point を 順序保持で列挙し、累積距離を計算
+                          interface Pt {
+                            rowId: string
+                            pointId: string
+                            ph: number | null
+                            cum: number
+                          }
+                          const points: Pt[] = []
+                          let cum = 0
+                          for (let i = 0; i < rows.length; i++) {
+                            const r = rows[i]
+                            if (!r.collectorPoint) continue
+                            if (i > 0) {
+                              const prev = rows[i - 1]
+                              const seg = prev.collectorPoint?.segmentDistance ?? null
+                              if (seg != null) cum += seg
+                            }
+                            points.push({
+                              rowId: r.id,
+                              pointId: r.collectorPoint.id,
+                              ph: r.collectorPoint.plannedHeight,
+                              cum,
+                            })
+                          }
+                          const iA = points.findIndex((p) => p.pointId === startPointId)
+                          const iB = points.findIndex((p) => p.pointId === endPointId)
+                          if (iA < 0 || iB < 0 || iA === iB) return
+                          const [lo, hi] = iA < iB ? [iA, iB] : [iB, iA]
+                          const a = points[lo]
+                          const b = points[hi]
+                          if (a.ph == null || b.ph == null) return
+                          const span = b.cum - a.cum
+                          if (span <= 0) return
+                          // 中間点のみ更新 (両端は保持)
+                          for (let i = lo + 1; i < hi; i++) {
+                            const p = points[i]
+                            const t = (p.cum - a.cum) / span
+                            const newPh = a.ph + (b.ph - a.ph) * t
+                            const rounded = Math.round(newPh * 1000) / 1000
+                            updatePlannedHeight(p.rowId, p.pointId, rounded)
+                          }
                         }}
                       />
                     </div>
