@@ -613,58 +613,59 @@ function applyBlockSnapshot(
   }
 }
 
-/** 事前スキャン: 各カラムの 「外周罫線」 (left / right / top / bottom) パターンを
- *  検出。テンプレ全体を走査して 各カラム位置に定義された罫線を記録する。
- *  行操作後に この情報を使って 複製された行にも 同じ罫線を stamp できる。 */
+/** 事前スキャン: シートの 「外周フレーム」 (最左と最右の 縦罫線) を検出。
+ *  「right border を持つセル」の 最左カラム と 最右カラム が 外周フレーム。
+ *  内部の 罫線 (テーブル区切りなど) は 触らない。 */
 type BorderSide = { style?: string; color?: unknown }
-interface ColBorderPattern {
-  left?: BorderSide
-  right?: BorderSide
-  top?: BorderSide
-  bottom?: BorderSide
+interface FrameInfo {
+  leftFrameCol: number   // 最左の 縦フレーム線が引かれる カラム (right border を持つ)
+  rightFrameCol: number  // 最右の 縦フレーム線が引かれる カラム
+  border?: BorderSide    // フレームの罫線スタイル (最初に見つかったものをサンプル)
 }
-function captureOuterBorderPattern(ws: ExcelJS.Worksheet): Map<number, ColBorderPattern> {
-  const map = new Map<number, ColBorderPattern>()
+function detectOuterFrame(ws: ExcelJS.Worksheet): FrameInfo {
   const maxRow = Math.max(200, ws.rowCount || 0, ws.actualRowCount || 0)
   const maxCol = Math.max(80, ws.columnCount || 0, ws.actualColumnCount || 0)
+  let minCol = Infinity
+  let maxColFound = -1
+  let sample: BorderSide | undefined
   for (let r = 1; r <= maxRow; r++) {
     const row = ws.getRow(r)
     for (let c = 1; c <= maxCol; c++) {
       const cell = row.getCell(c)
-      const b = cell.border
-      if (!b) continue
-      const cur = map.get(c) ?? {}
-      // 各サイド: 先に見つかったもの優先 (テンプレの上部から取る)
-      if (b.left?.style && !cur.left) cur.left = b.left as BorderSide
-      if (b.right?.style && !cur.right) cur.right = b.right as BorderSide
-      if (b.top?.style && !cur.top) cur.top = b.top as BorderSide
-      if (b.bottom?.style && !cur.bottom) cur.bottom = b.bottom as BorderSide
-      if (cur.left || cur.right || cur.top || cur.bottom) map.set(c, cur)
+      const rb = cell.border?.right
+      if (!rb?.style) continue
+      if (c < minCol) minCol = c
+      if (c > maxColFound) maxColFound = c
+      if (!sample) sample = rb as BorderSide
     }
   }
-  return map
+  return {
+    leftFrameCol: minCol === Infinity ? -1 : minCol,
+    rightFrameCol: maxColFound,
+    border: sample,
+  }
 }
 
-/** 対象範囲の行に対して、外周罫線を stamp する
- *  (既に border が設定されているセルは 未設定サイドだけ補う) */
-function stampOuterBorders(
+/** 指定範囲の 各行の 左右フレーム カラムに right border を stamp する。
+ *  内部の 罫線 (中間カラム) は 触らない。 */
+function stampFrameBorders(
   ws: ExcelJS.Worksheet,
-  pattern: Map<number, ColBorderPattern>,
+  frame: FrameInfo,
   fromRow: number,
   toRow: number,
 ): void {
+  if (!frame.border || frame.leftFrameCol < 0) return
+  const cols = frame.rightFrameCol > frame.leftFrameCol
+    ? [frame.leftFrameCol, frame.rightFrameCol]
+    : [frame.leftFrameCol]
   for (let r = fromRow; r <= toRow; r++) {
     const row = ws.getRow(r)
-    for (const [col, p] of pattern) {
+    for (const col of cols) {
       const cell = row.getCell(col)
-      // 非マスターセルには 触らない (merge を壊す)
       if (cell.isMerged && cell.master && cell.master.address !== cell.address) continue
       const cur = (cell.border ?? {}) as Record<string, BorderSide | undefined>
-      const merged: Record<string, BorderSide | undefined> = { ...cur }
-      if (p.left && !merged.left?.style) merged.left = p.left
-      if (p.right && !merged.right?.style) merged.right = p.right
-      // top/bottom は 隣接行との重なりが不明瞭なので、既定では触らない
-      cell.border = merged as unknown as ExcelJS.Borders
+      if (cur.right?.style) continue // 既にある行はそのまま
+      cell.border = { ...cur, right: frame.border } as unknown as ExcelJS.Borders
     }
   }
 }
@@ -678,8 +679,8 @@ function processAllSections(
   // 0) 全 merge をスナップショット
   const originalMerges = getAllMerges(ws)
 
-  // 0.5) 外周罫線パターンを 事前スキャン (行操作の前に取る)
-  const outerBorderPattern = captureOuterBorderPattern(ws)
+  // 0.5) 外周フレームの 左右カラムを 事前検出 (行操作の前に取る)
+  const outerFrame = detectOuterFrame(ws)
 
   // 1) 各ジョブのブロックを スナップショット (values + styles + 内部 merges)
   const blockSnapshots = new Map<SectionJob, BlockSnapshot>()
@@ -759,18 +760,14 @@ function processAllSections(
     }
   }
 
-  // 6) 外周罫線を stamp — 事前記録した left/right 罫線パターンを
-  //    シート全体の 使用行範囲に stamp して 未設定サイドを補う
+  // 6) 外周フレームの 左右縦罫線だけ stamp — 内部の 罫線は 触らない
   const finalMaxRow = Math.max(ws.rowCount || 0, ws.actualRowCount || 0, 200)
-  console.log('[processAllSections] outer border pattern:', outerBorderPattern.size, 'cols')
-  const patternCols = Array.from(outerBorderPattern.entries()).map(([c, p]) => ({
-    col: c,
-    left: p.left?.style,
-    right: p.right?.style,
-  }))
-  console.log('[processAllSections] pattern cols:', patternCols)
-  console.log('[processAllSections] stamp range: 1 to', finalMaxRow)
-  stampOuterBorders(ws, outerBorderPattern, 1, finalMaxRow)
+  console.log('[processAllSections] outer frame:', {
+    leftCol: outerFrame.leftFrameCol,
+    rightCol: outerFrame.rightFrameCol,
+    borderStyle: outerFrame.border?.style,
+  })
+  stampFrameBorders(ws, outerFrame, 1, finalMaxRow)
 
   return replaced
 }
