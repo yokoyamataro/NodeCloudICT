@@ -659,33 +659,14 @@ export function DepthCalcPage() {
       excludedPointIds,
     )
 
-    // 水理延長 (集水): この行までの累積。
-    //  = 吸水水理延長 (この行の下流端) + 集水水理延長 (前の行) + 自身の集水延長
-    // 系統の先頭から累加する。× で除外された集水セルの segmentDistance は 0 として扱う。
-    let collectorHydraulicLength: number | null = null
-    if (row.collectorPoint) {
-      let running = 0
-      let valid = true
-      for (let i = 0; i <= rowIndexInSystem; i++) {
-        const r = systemRows[i]
-        if (!r.collectorPoint) continue
-        const absLens = computeAbsorptionHydraulicLengths(
-          r,
-          systemRows,
-          i,
-          interval,
-          excludedPointIds,
-        )
-        const absDownstream = absLens.length > 0 ? absLens[absLens.length - 1] : null
-        const own = excludedPointIds.has(r.collectorPoint.id)
-          ? 0
-          : r.collectorPoint.segmentDistance ?? 0
-        const absAdd = absDownstream ?? 0
-        if (absDownstream == null && absLens.length > 0) valid = false
-        running = running + absAdd + own
-      }
-      collectorHydraulicLength = valid ? running : null
-    }
+    // 水理延長 (集水): この行の累積。
+    //  通常行:      前行 + 吸水下流端 + 自身の集水区間
+    //  集水合流行:  前行 (本管) + 枝管系統 (w/2 減算済) + 自身の集水区間
+    //  系統末端が 合流 の場合は 最終行に -w/2 が適用される (枝管側の表示にも反映)。
+    // 計算本体は collectorCumByRowId (useMemo) で系統横断的に一括算出済み。
+    const collectorHydraulicLength: number | null = row.collectorPoint
+      ? collectorCumByRowId.get(row.id) ?? null
+      : null
 
     // 集水合流行の場合、合流先系統の最下流 3 点と末尾集水管の番号を取得。
     // systemIndex はグループ（集水暗渠1, 2, ...）ごとにローカル連番なので、
@@ -940,9 +921,9 @@ export function DepthCalcPage() {
                 </td>
                 <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap">区間勾配</td>
               </tr>
-              {/* 水理延長（表示のみ・値は未実装） */}
+              {/* 水理延長: 集水合流行 (本管側) は 前行 (本管累加) + 枝管系統累加 (-w/2 済) + 本管区間 */}
               <tr className="depth-row-hydraulic-length">
-                <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap text-slate-500">
+                <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap text-slate-600">
                   水理延長
                 </td>
                 <td className="border-0 bg-transparent"></td>
@@ -956,10 +937,10 @@ export function DepthCalcPage() {
                   <td className="px-1.5 py-1 text-center border bg-slate-50 text-slate-400">-</td>
                 )}
                 <td className="border-0 bg-transparent"></td>
-                <td className="px-1.5 py-1 text-center border font-mono bg-green-50 text-slate-400">
-                  -
+                <td className="px-1.5 py-1 text-center border font-mono bg-green-50 text-slate-700">
+                  {collectorHydraulicLength == null ? '-' : collectorHydraulicLength.toFixed(1)}
                 </td>
-                <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap text-slate-500">
+                <td className="px-1.5 py-1 font-medium border bg-slate-50 whitespace-nowrap text-slate-600">
                   水理延長
                 </td>
               </tr>
@@ -1729,6 +1710,124 @@ export function DepthCalcPage() {
       }
     })
   }, [planGroups, wiringRowLookup])
+
+  // 集水 水理延長 (累加) を全行分 一括算出。
+  // 系統ごとの依存関係 (集水合流 → 別系統の最終累加) を反復解決する。
+  //  - 通常行:      cum = prev_cum + 吸水下流端 + 自身の集水区間 (自→次)
+  //  - 集水合流行:  cum = prev_cum + 枝管系統の最終累加 (w/2 減算済) + 本管の集水区間 (自→次)
+  //  - 系統末端が 集水合流 (endType='merge') の場合、その系統の最終行 cum から w/2 を減算。
+  //    → 枝管側の下流端では「接続補正 -w/2」後の値が表示され、
+  //      本管側の合流行はその減算済 cum を取り込むので二重減算にならない。
+  const collectorCumByRowId = useMemo(() => {
+    const intervalM = hydraulicSettings.pipeInterval
+    const endC = intervalM / 4
+    const conC = intervalM / 2
+
+    // 吸水 水理延長 (per-point) を計算 (renderRow 側の同名関数と等価)。
+    // useMemo 内で参照するため、依存が独立した純粋関数として複製。
+    const absHydro = (
+      r: PlanRow,
+      sysRows: PlanRow[],
+      idxInSys: number,
+    ): (number | null)[] => {
+      const isFirst =
+        r.absorptionPipeId != null &&
+        sysRows.slice(0, idxInSys).every((rr) => rr.absorptionPipeId == null)
+      const values: (number | null)[] = r.absorptionPoints.map((_p, idx) => {
+        if (idx === 0) return endC
+        let cum = 0
+        for (let j = 1; j <= idx; j++) {
+          const pj = r.absorptionPoints[j]
+          if (excludedPointIds.has(pj.id)) continue
+          const seg = pj.segmentDistance
+          if (seg == null) return null
+          cum += seg
+        }
+        return endC + cum
+      })
+      if (r.absorptionPoints.length > 1 && !isFirst) {
+        const last = r.absorptionPoints.length - 1
+        const v = values[last]
+        if (v != null) values[last] = v - conC
+      }
+      return values
+    }
+
+    const cache = new Map<string, number | null>()
+    const finalCumByBranchKey = new Map<string, number | null>()
+    const bkey = (gt: string, gi: number, si: number) => `${gt}-${gi}-${si}`
+
+    interface SystemFlat {
+      groupType: 'collector' | 'direct'
+      groupIndex: number
+      systemIndex: number
+      endType: 'outlet' | 'merge' | null
+      rows: PlanRow[]
+    }
+    const systemsFlat: SystemFlat[] = []
+    for (const group of groupedBySystem) {
+      for (const system of group.systems) {
+        systemsFlat.push({
+          groupType: group.groupType,
+          groupIndex: group.groupIndex,
+          systemIndex: system.systemIndex,
+          endType: system.endType,
+          rows: system.rows,
+        })
+      }
+    }
+
+    const maxIter = 6
+    for (let iter = 0; iter < maxIter; iter++) {
+      let changed = false
+      for (const sys of systemsFlat) {
+        let running = 0
+        let valid = true
+        const cums: (number | null)[] = new Array(sys.rows.length).fill(null)
+
+        for (let i = 0; i < sys.rows.length; i++) {
+          const r = sys.rows[i]
+          if (!r.collectorPoint) continue
+
+          const absLens = absHydro(r, sys.rows, i)
+          const absDown = absLens.length > 0 ? absLens[absLens.length - 1] : null
+          const own = excludedPointIds.has(r.collectorPoint.id)
+            ? 0
+            : r.collectorPoint.segmentDistance ?? 0
+
+          if (r.wiringRowType === 'collector_merge' && r.mergeSystemIndex != null) {
+            const key = bkey(sys.groupType, sys.groupIndex, r.mergeSystemIndex)
+            const branchAdjusted = finalCumByBranchKey.get(key) ?? 0
+            running = running + branchAdjusted + own
+          } else {
+            if (absDown == null && absLens.length > 0) valid = false
+            running = running + (absDown ?? 0) + own
+          }
+          cums[i] = valid ? running : null
+        }
+
+        if (sys.endType === 'merge' && cums.length > 0) {
+          const lastIdx = cums.length - 1
+          if (cums[lastIdx] != null) {
+            cums[lastIdx] = cums[lastIdx]! - conC
+          }
+        }
+
+        const finalCum = cums.length > 0 ? cums[cums.length - 1] : null
+        const key = bkey(sys.groupType, sys.groupIndex, sys.systemIndex)
+        if (finalCumByBranchKey.get(key) !== finalCum) {
+          finalCumByBranchKey.set(key, finalCum ?? null)
+          changed = true
+        }
+        for (let i = 0; i < sys.rows.length; i++) {
+          cache.set(sys.rows[i].id, cums[i])
+        }
+      }
+      if (!changed) break
+    }
+
+    return cache
+  }, [groupedBySystem, hydraulicSettings.pipeInterval, excludedPointIds])
 
   // 全グループ × 全系統のフラットなタブリストを計算
   const flatTabs = useMemo(() => {
@@ -2833,7 +2932,7 @@ export function DepthCalcPage() {
                           const K_limit = K_raw != null ? Math.min(K_raw, calcParams.imin) : null
                           if (K_limit != null) criticalKByPointId.set(p.id, K_limit)
                         }
-                        // 集水点: 系統内の集水累加水理延長 (吸水下流端 + 各行の segmentDistance)
+                        // 集水点: 系統横断で算出済みの累加水理延長 (集水合流・末端-w/2 反映済)
                         if (r.collectorPoint) {
                           // 集水点の 区間上書き があれば優先、なければ 集水管既定
                           const collDia =
@@ -2842,22 +2941,8 @@ export function DepthCalcPage() {
                               ? pipeDiameterById.get(r.collectorPipeId) ?? null
                               : null)
                           if (collDia != null) diameterByPointId.set(r.collectorPoint.id, collDia)
-                          let running = 0
-                          for (let j = 0; j <= i; j++) {
-                            const rj = systemData.rows[j]
-                            if (!rj.collectorPoint) continue
-                            const absLens_j = computeAbsorptionHydraulicLengths(
-                              rj,
-                              systemData.rows,
-                              j,
-                              intervalM,
-                              excludedPointIds,
-                            )
-                            const absDown = absLens_j.length > 0 ? absLens_j[absLens_j.length - 1] : null
-                            const own = rj.collectorPoint.segmentDistance ?? 0
-                            running = running + (absDown ?? 0) + own
-                          }
-                          const K_raw = computeCriticalSlopeDenominator({
+                          const running = collectorCumByRowId.get(r.id) ?? null
+                          const K_raw = running == null ? null : computeCriticalSlopeDenominator({
                             diameterMm: collDia,
                             roughness: MANNING_ROUGHNESS[hydraulicSettings.collectorPipeType],
                             hydraulicLengthM: running,
