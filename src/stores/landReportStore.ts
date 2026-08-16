@@ -56,11 +56,21 @@ export interface ReportParcelRow {
   hasSurveyMap: boolean | null
 }
 
+/** 名義人が所有する 1 筆 (地権者管理からインポートした snapshot) */
+export interface ReportOwnedParcel {
+  parcelId: string | null           // parcels のid (地権者管理経由でリンクされた場合セット)
+  location: string                  // 所在
+  parcelNumber: string              // 地番
+  landCategory: string              // 地目
+  registeredAreaSqm: number | null  // 登記面積
+  included: boolean                 // 報告書出力に含めるか
+}
+
 /** 03 所有権登記名義人 (立会人ブロック込)
- *  1 名義人ごとに 1 行。所有地 (parcels の複数筆) を parcelIndexes で保持する。 */
+ *  1 名義人ごとに 1 行。所有地は 地権者管理 (parcel_landowners) からインポート。 */
 export interface ReportOwnerRow {
-  /** parcels 配列のインデックス (複数筆保有時は複数)。表示・出力時に 左側に並べる */
-  parcelIndexes: number[]
+  /** 名義人が所有する 筆 (snapshot)。地権者選択時に 自動 populate される */
+  ownedParcels: ReportOwnedParcel[]
   landownerId: string | null            // landowners (地権者管理) の id
   address: string
   name: string
@@ -241,16 +251,40 @@ interface Row {
   updated_at: string
 }
 
-/** 旧形式 owners (parcelIndex: number) を 新形式 (parcelIndexes: number[]) に寄せる */
+/** 旧形式 owners を新形式に寄せる:
+ *   v1: parcelIndex (number)       — 単数インデックス
+ *   v2: parcelIndexes (number[])   — 複数インデックス
+ *   v3: ownedParcels (snapshot[])  — 地権者管理経由でリンクした筆 (現行)
+ *  v1/v2 → v3 は body.parcels を lookup して snapshot に変換。 */
 function migrateOwners(body: Partial<LandReportBody>): Partial<LandReportBody> {
   if (!Array.isArray(body.owners)) return body
-  const migrated = body.owners.map((o) => {
-    const legacy = o as unknown as { parcelIndex?: number } & Partial<ReportOwnerRow>
-    if (Array.isArray(legacy.parcelIndexes)) return o
-    if (typeof legacy.parcelIndex === 'number') {
-      return { ...o, parcelIndexes: [legacy.parcelIndex] } as ReportOwnerRow
+  const parcels = Array.isArray(body.parcels) ? body.parcels : []
+  const toSnapshot = (idx: number): ReportOwnedParcel | null => {
+    const p = parcels[idx] as ReportParcelRow | undefined
+    if (!p) return null
+    return {
+      parcelId: p.parcelId,
+      location: p.location,
+      parcelNumber: p.parcelNumber,
+      landCategory: p.landCategory,
+      registeredAreaSqm: p.registeredAreaSqm,
+      included: true,
     }
-    return { ...o, parcelIndexes: [] } as ReportOwnerRow
+  }
+  const migrated = body.owners.map((o) => {
+    const legacy = o as unknown as {
+      parcelIndex?: number
+      parcelIndexes?: number[]
+      ownedParcels?: ReportOwnedParcel[]
+    } & Partial<ReportOwnerRow>
+    if (Array.isArray(legacy.ownedParcels)) return o // already v3
+    let indexes: number[] = []
+    if (Array.isArray(legacy.parcelIndexes)) indexes = legacy.parcelIndexes
+    else if (typeof legacy.parcelIndex === 'number') indexes = [legacy.parcelIndex]
+    const owned = indexes
+      .map((i) => toSnapshot(i))
+      .filter((x): x is ReportOwnedParcel => x !== null)
+    return { ...o, ownedParcels: owned } as ReportOwnerRow
   })
   return { ...body, owners: migrated }
 }

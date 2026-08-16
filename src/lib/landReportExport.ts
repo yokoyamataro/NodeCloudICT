@@ -196,13 +196,13 @@ function parcelRowValues(r: ReportParcelRow): Record<string, string> {
   }
 }
 
-function ownerRowValues(r: ReportOwnerRow, parcels: ReportParcelRow[]): Record<string, string> {
+function ownerRowValues(r: ReportOwnerRow): Record<string, string> {
   // 所在ごとにグルーピング: 「所在 番号1,番号2,番号3」 を 改行区切りで並べる
+  // 出力対象は ownedParcels.included=true のみ
   const byLocation = new Map<string, string[]>()
   const locOrder: string[] = []
-  for (const i of r.parcelIndexes) {
-    const p = parcels[i]
-    if (!p) continue
+  for (const p of r.ownedParcels) {
+    if (!p.included) continue
     const loc = p.location.trim()
     const num = p.parcelNumber.trim()
     if (!byLocation.has(loc)) {
@@ -834,7 +834,7 @@ export async function exportLandReportToExcel(report: LandReport): Promise<Blob>
   const specs: SectionSpec<unknown>[] = [
     { anchor: 'PURPOSES', items: body.purposes, rowValues: (r) => purposeRowValues(r as ReportPurposeRow) },
     { anchor: 'PARCELS', items: body.parcels, rowValues: (r) => parcelRowValues(r as ReportParcelRow) },
-    { anchor: 'OWNERS', items: body.owners, rowValues: (r) => ownerRowValues(r as ReportOwnerRow, body.parcels) },
+    { anchor: 'OWNERS', items: body.owners, rowValues: (r) => ownerRowValues(r as ReportOwnerRow) },
     { anchor: 'CAUSES', items: body.causes, rowValues: (r) => causeRowValues(r as ReportCauseRow) },
     { anchor: 'BASE_POINTS', items: body.boundary.basePoints, rowValues: (r) => basePointRowValues('BP', r as ReportBasePoint) },
     { anchor: 'SUB_BASE_POINTS', items: body.boundary.subBasePoints, rowValues: (r) => basePointRowValues('SBP', r as ReportBasePoint) },

@@ -1,15 +1,20 @@
 // 03 所有権登記名義人 (立会人ブロック込)
-//   * 1 行 = 1 名義人。所有地 (parcels の複数筆) を 左に並べる。
-//   * 「地権者から選択して取り込み」で 地権者を選ぶと、
-//     その地権者に割当済みの parcels のうち、02 で登録済みのものを 自動で parcelIndexes に反映。
-//   * 立会人 (代理人) 情報も 地権者データから 反映。
+//   * 1 行 = 1 名義人。所有地は 地権者管理 (landowners + parcel_landowners)
+//     から自動インポート。02 の parcels には依存しない。
+//   * 「地権者から選択して取り込み」で 名義人を選ぶと、その地権者に
+//     割り当てられた 全 parcels を snapshot として ownedParcels に populate。
+//   * 各所有地は チェックボックスで 出力対象を切替可能。
 
 import { useState } from 'react'
 import { Trash2, ListChecks, Plus } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore } from '@/stores/farmStore'
-import type { LandReportBody, ReportOwnerRow } from '@/stores/landReportStore'
-import { RadioGroup, Field } from './reportSectionUi'
+import type {
+  LandReportBody,
+  ReportOwnerRow,
+  ReportOwnedParcel,
+} from '@/stores/landReportStore'
+import { RadioGroup, Field, CheckboxLabel } from './reportSectionUi'
 import { LandownerPickerModal, type PickableLandowner } from './LandownerPickerModal'
 
 interface Props {
@@ -18,7 +23,7 @@ interface Props {
 }
 
 const emptyOwner = (): ReportOwnerRow => ({
-  parcelIndexes: [],
+  ownedParcels: [],
   landownerId: null,
   address: '',
   name: '',
@@ -50,13 +55,47 @@ const guessRelation = (
   return 'other'
 }
 
+interface ParcelRow {
+  id: string
+  location: string | null
+  parcel_number: string | null
+  municipality: string | null
+  registered_land_category: string | null
+  updated_land_category: string | null
+  registered_area_sqm: number | null
+}
+
+/** 指定 landowner の 所有地を parcel_landowners 経由で fetch → OwnedParcel snapshot に変換 */
+async function fetchOwnedParcels(landownerId: string): Promise<ReportOwnedParcel[]> {
+  const { data: links } = await supabase
+    .from('parcel_landowners')
+    .select('parcel_id')
+    .eq('landowner_id', landownerId)
+  const parcelIds = ((links ?? []) as { parcel_id: string }[]).map((r) => r.parcel_id)
+  if (parcelIds.length === 0) return []
+  const { data: parcels } = await supabase
+    .from('parcels')
+    .select(
+      'id, location, parcel_number, municipality, registered_land_category, updated_land_category, registered_area_sqm',
+    )
+    .in('id', parcelIds)
+  return ((parcels ?? []) as ParcelRow[]).map((p) => ({
+    parcelId: p.id,
+    location: [p.municipality, p.location].filter(Boolean).join(''),
+    parcelNumber: p.parcel_number ?? '',
+    landCategory: p.updated_land_category ?? p.registered_land_category ?? '',
+    registeredAreaSqm: p.registered_area_sqm,
+    included: true,
+  }))
+}
+
 export function ReportSectionOwners({ body, onChange }: Props) {
   const currentFarm = useFarmStore((s) => s.currentFarm)
   const [pickerOpen, setPickerOpen] = useState(false)
-  const [pickerFor, setPickerFor] = useState<number | null>(null) // 既存行の差替用
+  const [pickerFor, setPickerFor] = useState<number | null>(null)
+  const [loadingFor, setLoadingFor] = useState<number | 'new' | null>(null)
 
   const owners = body.owners
-  const parcels = body.parcels
 
   const setOwners = (next: ReportOwnerRow[]) => {
     onChange({ owners: next })
@@ -77,38 +116,54 @@ export function ReportSectionOwners({ body, onChange }: Props) {
     )
   }
 
-  const toggleParcelIndex = (idx: number, parcelIdx: number) => {
-    const cur = owners[idx].parcelIndexes
-    const next = cur.includes(parcelIdx)
-      ? cur.filter((i) => i !== parcelIdx)
-      : [...cur, parcelIdx].sort((a, b) => a - b)
-    patchOwner(idx, { parcelIndexes: next })
+  const patchOwnedParcel = (
+    ownerIdx: number,
+    parcelIdx: number,
+    patch: Partial<ReportOwnedParcel>,
+  ) => {
+    setOwners(
+      owners.map((o, i) => {
+        if (i !== ownerIdx) return o
+        return {
+          ...o,
+          ownedParcels: o.ownedParcels.map((p, j) =>
+            j === parcelIdx ? { ...p, ...patch } : p,
+          ),
+        }
+      }),
+    )
+  }
+
+  const removeOwnedParcel = (ownerIdx: number, parcelIdx: number) => {
+    setOwners(
+      owners.map((o, i) => {
+        if (i !== ownerIdx) return o
+        return {
+          ...o,
+          ownedParcels: o.ownedParcels.filter((_, j) => j !== parcelIdx),
+        }
+      }),
+    )
   }
 
   const removeOwner = (idx: number) => {
     setOwners(owners.filter((_, i) => i !== idx))
   }
 
-  /** 地権者を選択 → その地権者が所有する parcels (02 に登録済み) を parcelIndexes に反映 */
+  /** 地権者を選択 → 所有地を parcel_landowners から fetch して populate */
   const applyLandowner = async (idx: number | null, lo: PickableLandowner) => {
-    // 該当地権者が どの parcels を所有しているか parcel_landowners から引く
-    const { data: pls } = await supabase
-      .from('parcel_landowners')
-      .select('parcel_id')
-      .eq('landowner_id', lo.id)
-    const ownedParcelIds = new Set(
-      ((pls ?? []) as { parcel_id: string }[]).map((r) => r.parcel_id),
-    )
-
-    // 02 に登録済み parcels の どのインデックスが 該当するか
-    const idxs: number[] = []
-    parcels.forEach((p, i) => {
-      if (p.parcelId && ownedParcelIds.has(p.parcelId)) idxs.push(i)
-    })
+    setLoadingFor(idx === null ? 'new' : idx)
+    let owned: ReportOwnedParcel[] = []
+    try {
+      owned = await fetchOwnedParcels(lo.id)
+    } catch {
+      owned = []
+    }
+    setLoadingFor(null)
 
     const draft: ReportOwnerRow = {
       ...(idx !== null ? owners[idx] : emptyOwner()),
-      parcelIndexes: idxs,
+      ownedParcels: owned,
       landownerId: lo.id,
       address: lo.address ?? '',
       name: lo.fullName,
@@ -187,42 +242,51 @@ export function ReportSectionOwners({ body, onChange }: Props) {
             </div>
 
             <div className="grid grid-cols-12 gap-3">
-              {/* 左: 所有地一覧 */}
+              {/* 左: 所有地 (地権者管理からインポート) */}
               <div className="col-span-4">
-                <div className="text-[11px] text-slate-500 mb-1">所有地</div>
-                {parcels.length === 0 ? (
+                <div className="text-[11px] text-slate-500 mb-1">
+                  所有地 (地権者管理より)
+                </div>
+                {loadingFor === idx ? (
+                  <div className="text-xs text-slate-400">読込中…</div>
+                ) : o.ownedParcels.length === 0 ? (
                   <div className="text-xs text-slate-400">
-                    02 で 地番を登録してください
+                    未取込。「地権者から差し替え」で 選択してください。
                   </div>
                 ) : (
                   <div className="border rounded divide-y">
-                    {parcels.map((p, pi) => {
-                      const checked = o.parcelIndexes.includes(pi)
-                      return (
-                        <label
-                          key={pi}
-                          className={`flex items-start gap-1.5 px-1.5 py-1 text-xs cursor-pointer ${
-                            checked ? 'bg-blue-50' : 'hover:bg-slate-50'
-                          }`}
+                    {o.ownedParcels.map((p, pi) => (
+                      <div
+                        key={pi}
+                        className={`flex items-start gap-1.5 px-1.5 py-1 text-xs ${
+                          p.included ? 'bg-blue-50' : 'bg-white'
+                        }`}
+                      >
+                        <CheckboxLabel
+                          checked={p.included}
+                          onChange={(v) => patchOwnedParcel(idx, pi, { included: v })}
                         >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => toggleParcelIndex(idx, pi)}
-                            className="mt-0.5 h-3.5 w-3.5"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <div className="truncate">
+                          <span className="flex-1 min-w-0">
+                            <span className="block truncate">
                               {p.location || '所在未入力'} {p.parcelNumber}
-                            </div>
-                            <div className="text-[10px] text-slate-500 truncate">
+                            </span>
+                            <span className="block text-[10px] text-slate-500 truncate">
                               {p.landCategory || '—'}
-                              {p.areaSqm != null && ` / ${p.areaSqm.toFixed(2)} ㎡`}
-                            </div>
-                          </div>
-                        </label>
-                      )
-                    })}
+                              {p.registeredAreaSqm != null &&
+                                ` / ${p.registeredAreaSqm.toFixed(2)} ㎡`}
+                            </span>
+                          </span>
+                        </CheckboxLabel>
+                        <button
+                          type="button"
+                          onClick={() => removeOwnedParcel(idx, pi)}
+                          className="p-0.5 text-red-500 hover:bg-red-50 rounded"
+                          title="削除"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
