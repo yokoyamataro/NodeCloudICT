@@ -629,54 +629,34 @@ interface FrameInfo {
 function detectOuterFrame(ws: ExcelJS.Worksheet): FrameInfo {
   const maxRow = Math.max(200, ws.rowCount || 0, ws.actualRowCount || 0)
   const maxCol = Math.max(80, ws.columnCount || 0, ws.actualColumnCount || 0)
-  // 各カラムの 「そのカラムで right/left border を持つ行」 の Set を作成
+  // 各カラムの 「そのカラムで right border を持つ行」 の Set を作成
   const rowsByCol = new Map<number, Set<number>>()
   let sample: BorderSide | undefined
   for (let r = 1; r <= maxRow; r++) {
     const row = ws.getRow(r)
     for (let c = 1; c <= maxCol; c++) {
       const cell = row.getCell(c)
-      const b = cell.border
-      if (!b) continue
-      const hasVerticalBorder = b.left?.style || b.right?.style
-      if (!hasVerticalBorder) continue
+      const rb = cell.border?.right
+      if (!rb?.style) continue
       let s = rowsByCol.get(c)
       if (!s) {
         s = new Set()
         rowsByCol.set(c, s)
       }
       s.add(r)
-      if (!sample) {
-        if (b.right?.style) sample = b.right as BorderSide
-        else if (b.left?.style) sample = b.left as BorderSide
-      }
+      if (!sample) sample = rb as BorderSide
     }
   }
-  // 縦フレーム候補は 「そのカラムに 縦罫線がある行数」が最も多いカラム。
-  // header の 単発罫線 (1〜数行) は 除外される。
-  const cols = Array.from(rowsByCol.entries())
-  let leftCol = -1
-  let rightCol = -1
-  let leftRows = new Set<number>()
-  let rightRows = new Set<number>()
-  if (cols.length > 0) {
-    // 行数が多い順にソート → 上位から カラム位置で 最左/最右 を選ぶ
-    const threshold = Math.max(5, Math.floor(Math.max(...cols.map(([, s]) => s.size)) * 0.5))
-    const structural = cols.filter(([, s]) => s.size >= threshold)
-    if (structural.length > 0) {
-      const sortedByCol = [...structural].sort((a, b) => a[0] - b[0])
-      leftCol = sortedByCol[0][0]
-      leftRows = sortedByCol[0][1]
-      rightCol = sortedByCol[sortedByCol.length - 1][0]
-      rightRows = sortedByCol[sortedByCol.length - 1][1]
-    }
-  }
+  // right border を持つカラムのうち 最左 (=左枠) と 最右 (=右枠) だけを採用
+  const cols = Array.from(rowsByCol.keys()).sort((a, b) => a - b)
+  const leftCol = cols[0] ?? -1
+  const rightCol = cols[cols.length - 1] ?? -1
   return {
     leftFrameCol: leftCol,
     rightFrameCol: rightCol,
     border: sample,
-    leftFrameRows: leftRows,
-    rightFrameRows: rightRows,
+    leftFrameRows: leftCol > 0 ? rowsByCol.get(leftCol)! : new Set(),
+    rightFrameRows: rightCol > 0 ? rowsByCol.get(rightCol)! : new Set(),
   }
 }
 
