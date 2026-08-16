@@ -621,6 +621,8 @@ interface FrameInfo {
   leftFrameCol: number   // 最左の 縦フレーム線が引かれる カラム (right border を持つ)
   rightFrameCol: number  // 最右の 縦フレーム線が引かれる カラム
   border?: BorderSide    // フレームの罫線スタイル (最初に見つかったものをサンプル)
+  topRow: number         // フレームが存在する 最上行 (元テンプレでの位置)
+  bottomRow: number      // フレームが存在する 最下行 (元テンプレでの位置)
 }
 function detectOuterFrame(ws: ExcelJS.Worksheet): FrameInfo {
   const maxRow = Math.max(200, ws.rowCount || 0, ws.actualRowCount || 0)
@@ -628,6 +630,8 @@ function detectOuterFrame(ws: ExcelJS.Worksheet): FrameInfo {
   let minCol = Infinity
   let maxColFound = -1
   let sample: BorderSide | undefined
+  let topRow = Infinity
+  let bottomRow = -1
   for (let r = 1; r <= maxRow; r++) {
     const row = ws.getRow(r)
     for (let c = 1; c <= maxCol; c++) {
@@ -640,6 +644,8 @@ function detectOuterFrame(ws: ExcelJS.Worksheet): FrameInfo {
       if (!hasAny) continue
       if (c < minCol) minCol = c
       if (c > maxColFound) maxColFound = c
+      if (r < topRow) topRow = r
+      if (r > bottomRow) bottomRow = r
       if (!sample) {
         if (b.right?.style) sample = b.right as BorderSide
         else if (b.left?.style) sample = b.left as BorderSide
@@ -650,6 +656,8 @@ function detectOuterFrame(ws: ExcelJS.Worksheet): FrameInfo {
     leftFrameCol: minCol === Infinity ? -1 : minCol,
     rightFrameCol: maxColFound,
     border: sample,
+    topRow: topRow === Infinity ? -1 : topRow,
+    bottomRow,
   }
 }
 
@@ -767,21 +775,22 @@ function processAllSections(
     }
   }
 
-  // 6) 外周フレームの 左右縦罫線だけ stamp — 複製ブロックの範囲だけに限定
-  //    (行 1〜10 のヘッダ や 末尾の空行に stamp すると 元々罫線がなかった
-  //     場所に 縦線が出てしまうため)
+  // 6) 外周フレームの 左右縦罫線を stamp:
+  //    元テンプレで フレームが存在していた行範囲 [topRow, bottomRow] を
+  //    シフト後の位置に変換して、その範囲だけ stamp する。
+  //    (これで 元々罫線がある領域全域を一貫させ、かつ ヘッダ/末尾の
+  //     空行には触らない)
   console.log('[processAllSections] outer frame:', {
     leftCol: outerFrame.leftFrameCol,
     rightCol: outerFrame.rightFrameCol,
     borderStyle: outerFrame.border?.style,
+    origRowRange: `${outerFrame.topRow}-${outerFrame.bottomRow}`,
   })
-  for (const job of jobs) {
-    if (job.count <= 1) continue
-    const h = blockHeight(job)
-    const blockNewStart = computeShift(job.startRow, jobs)
-    if (blockNewStart < 0) continue
-    const blockNewEnd = blockNewStart + job.count * h - 1
-    stampFrameBorders(ws, outerFrame, blockNewStart, blockNewEnd)
+  if (outerFrame.topRow > 0 && outerFrame.bottomRow > 0) {
+    const shiftedTop = computeShift(outerFrame.topRow, jobs)
+    const shiftedBottom = computeShift(outerFrame.bottomRow, jobs)
+    console.log('[processAllSections] stamp range:', `${shiftedTop}-${shiftedBottom}`)
+    stampFrameBorders(ws, outerFrame, shiftedTop, shiftedBottom)
   }
 
   return replaced
