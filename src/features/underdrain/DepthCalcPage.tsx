@@ -168,6 +168,12 @@ export function DepthCalcPage() {
 
   // 連続勾配ダイアログ（現在アクティブな系統内で複数区間に適用）
   const [continuousOpen, setContinuousOpen] = useState(false)
+  // 連続勾配設定: 縦断図上での「点を 2 つクリックして選択」モード。
+  // 有効時、青いマーカーをクリックすると 編集ポップアップではなく 始点/終点として選択される。
+  // 2 点選択された時点で ContinuousSlopeDialog を preset 状態で開く。
+  const [continuousSelectMode, setContinuousSelectMode] = useState(false)
+  const [continuousSelectedIds, setContinuousSelectedIds] = useState<string[]>([])
+  const [continuousPresetIds, setContinuousPresetIds] = useState<[string, string] | null>(null)
 
   // 水理計算書・測定結果一覧表 出力モーダル
   const [showHydraulicModal, setShowHydraulicModal] = useState(false)
@@ -2204,25 +2210,6 @@ export function DepthCalcPage() {
                     <MapIcon className="h-4 w-4" />
                     平面図
                   </button>
-                  <button
-                    onClick={() => setShowProfileDxfModal(true)}
-                    disabled={saving || pipes.length === 0}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm bg-sky-600 text-white rounded-lg hover:bg-sky-700 transition-colors disabled:opacity-50 whitespace-nowrap"
-                    title="縦断図 DXF を全系統一括出力"
-                  >
-                    <PenTool className="h-4 w-4" />
-                    縦断DXF
-                  </button>
-                  <div className="w-px h-6 bg-slate-300" />
-                  <button
-                    onClick={() => openPanelInNewWindow('chart')}
-                    disabled={saving}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 whitespace-nowrap"
-                    title="縦断図を別ウィンドウで表示"
-                  >
-                    <Maximize2 className="h-4 w-4" />
-                    縦断図
-                  </button>
                 </>
               ) : (
                 <button
@@ -2389,19 +2376,31 @@ export function DepthCalcPage() {
                 : { width: `${tableWidthPct}%`, flexShrink: 0 }
             }
           >
-            {/* 全画面トグルボタン */}
-            <button
-              type="button"
-              onClick={() => handleToggleFullscreen('table')}
-              className="absolute top-2 right-2 z-20 p-1.5 rounded border bg-white shadow-sm hover:bg-slate-50"
-              title={fullscreenPanel === 'table' ? '全画面を閉じる' : '全画面表示'}
-            >
-              {fullscreenPanel === 'table' ? (
-                <X className="h-4 w-4" />
-              ) : (
-                <Maximize2 className="h-4 w-4" />
-              )}
-            </button>
+            {/* 右上ボタン群: 縦断図表示 (別ウィンドウ) + 全画面トグル */}
+            <div className="absolute top-2 right-2 z-20 flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => openPanelInNewWindow('chart')}
+                disabled={saving}
+                className="flex items-center gap-1 px-2 py-1 rounded border bg-purple-600 text-white shadow-sm hover:bg-purple-700 text-xs disabled:opacity-50"
+                title="縦断図を別ウィンドウで表示"
+              >
+                <PenTool className="h-3.5 w-3.5" />
+                縦断図
+              </button>
+              <button
+                type="button"
+                onClick={() => handleToggleFullscreen('table')}
+                className="p-1.5 rounded border bg-white shadow-sm hover:bg-slate-50"
+                title={fullscreenPanel === 'table' ? '全画面を閉じる' : '全画面表示'}
+              >
+                {fullscreenPanel === 'table' ? (
+                  <X className="h-4 w-4" />
+                ) : (
+                  <Maximize2 className="h-4 w-4" />
+                )}
+              </button>
+            </div>
             {!hasData ? (
               <div className="flex flex-col items-center justify-center h-full text-slate-500">
                 <Ruler className="h-16 w-16 mb-4 text-slate-300" />
@@ -2937,6 +2936,33 @@ export function DepthCalcPage() {
                       <span className="text-[10px] text-slate-400 ml-1">
                         {globalIdx >= 0 ? `${globalIdx + 1} / ${globalScopes.length}` : ''}
                       </span>
+                      {/* 連続勾配設定: 断面上の 2 点 (青いマーカー) を選択 → 一定勾配で線形補間 */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (continuousSelectMode) {
+                            setContinuousSelectMode(false)
+                            setContinuousSelectedIds([])
+                          } else {
+                            setContinuousSelectMode(true)
+                            setContinuousSelectedIds([])
+                          }
+                        }}
+                        className={`ml-2 px-2 py-0.5 border rounded text-xs whitespace-nowrap ${
+                          continuousSelectMode
+                            ? 'bg-amber-500 text-white border-amber-600 hover:bg-amber-600'
+                            : 'border-amber-500 text-amber-700 hover:bg-amber-50'
+                        }`}
+                        title={
+                          continuousSelectMode
+                            ? `選択中… 青いマーカーを${continuousSelectedIds.length}/2 個選択済`
+                            : '連続勾配設定: 断面上の 2 点 (青いマーカー) を選択して 一定勾配を適用'
+                        }
+                      >
+                        {continuousSelectMode
+                          ? `選択中 (${continuousSelectedIds.length}/2)`
+                          : '連続勾配設定'}
+                      </button>
                       {chartLabel && <span className="text-slate-500 ml-2">{chartLabel}</span>}
                     </div>
                     {(() => {
@@ -3028,6 +3054,22 @@ export function DepthCalcPage() {
                               }
                             }
                           }
+                        }}
+                        pointSelectionMode={continuousSelectMode}
+                        selectedPointIdsForSelection={continuousSelectedIds}
+                        onPointSelected={(pointId) => {
+                          setContinuousSelectedIds((prev) => {
+                            if (prev.includes(pointId)) return prev
+                            const next = [...prev, pointId]
+                            if (next.length >= 2) {
+                              // 2 点そろったら 選択モード解除 + ダイアログを preset で開く
+                              setContinuousPresetIds([next[0], next[1]])
+                              setContinuousOpen(true)
+                              setContinuousSelectMode(false)
+                              return []
+                            }
+                            return next
+                          })
                         }}
                       />
                     </div>
@@ -3233,12 +3275,18 @@ export function DepthCalcPage() {
       {continuousOpen && activeTab && (
         <ContinuousSlopeDialog
           systemRows={activeTab.rows}
-          onClose={() => setContinuousOpen(false)}
+          initialStartPointId={continuousPresetIds?.[0] ?? null}
+          initialEndPointId={continuousPresetIds?.[1] ?? null}
+          onClose={() => {
+            setContinuousOpen(false)
+            setContinuousPresetIds(null)
+          }}
           onApply={(updates) => {
             for (const u of updates) {
               updatePlannedHeight(u.rowId, u.pointId, u.newPh)
             }
             setContinuousOpen(false)
+            setContinuousPresetIds(null)
           }}
         />
       )}
@@ -3565,10 +3613,16 @@ function SlopeEditDialog({
 //   適用する。中間の各点の計画高は線形補間で計算される。
 function ContinuousSlopeDialog({
   systemRows,
+  initialStartPointId,
+  initialEndPointId,
   onClose,
   onApply,
 }: {
   systemRows: PlanRow[]
+  /** 縦断図から preset で開く場合の始点 PlanPoint.id (集水点) */
+  initialStartPointId?: string | null
+  /** 同 終点 */
+  initialEndPointId?: string | null
   onClose: () => void
   onApply: (updates: Array<{ rowId: string; pointId: string; newPh: number }>) => void
 }) {
@@ -3597,8 +3651,26 @@ function ContinuousSlopeDialog({
     return out
   }, [systemRows])
 
-  const [startIdx, setStartIdx] = useState(0)
-  const [endIdx, setEndIdx] = useState(Math.min(1, points.length - 1))
+  // preset で開かれた場合は 対応する index を初期値にする。
+  // どちらが上流かは points 順で判定して startIdx を若い側に揃える。
+  const [startIdx, setStartIdx] = useState(() => {
+    if (!initialStartPointId && !initialEndPointId) return 0
+    const a = points.findIndex((p) => p.pointId === initialStartPointId)
+    const b = points.findIndex((p) => p.pointId === initialEndPointId)
+    if (a < 0 && b < 0) return 0
+    if (a < 0) return b
+    if (b < 0) return a
+    return Math.min(a, b)
+  })
+  const [endIdx, setEndIdx] = useState(() => {
+    if (!initialStartPointId && !initialEndPointId) return Math.min(1, points.length - 1)
+    const a = points.findIndex((p) => p.pointId === initialStartPointId)
+    const b = points.findIndex((p) => p.pointId === initialEndPointId)
+    if (a < 0 && b < 0) return Math.min(1, points.length - 1)
+    if (a < 0) return b
+    if (b < 0) return a
+    return Math.max(a, b)
+  })
   const [slopeInput, setSlopeInput] = useState<string>('')
 
   const startPoint = points[startIdx] ?? null

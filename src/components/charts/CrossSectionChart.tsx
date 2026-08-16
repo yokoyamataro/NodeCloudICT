@@ -28,6 +28,12 @@ interface CrossSectionChartProps {
   criticalKByPointId?: Map<string, number>
   // 管径 (mm) の per-point ルックアップ。指定時は SectionPoint.segmentDiameter を上書き。
   diameterByPointId?: Map<string, number>
+  // 連続勾配設定: 断面上で 青いマーカーを「編集」ではなく「選択」する モード
+  pointSelectionMode?: boolean
+  // 現在選択済みの計画点 ID (0〜2 個)。マーカーに強調表示リングを出す
+  selectedPointIdsForSelection?: string[]
+  // 青いマーカーが選択された時のコールバック (pointSelectionMode 時のみ発火)
+  onPointSelected?: (pointId: string) => void
 }
 
 // 断面図の点データ（集水管の点のみ）
@@ -69,6 +75,9 @@ export function CrossSectionChart({
   mergeInflowsByRowId,
   criticalKByPointId,
   diameterByPointId,
+  pointSelectionMode = false,
+  selectedPointIdsForSelection,
+  onPointSelected,
 }: CrossSectionChartProps) {
   // 標高スケールのズーム倍率（1.0が基準、大きいほど拡大）
   const [heightScale, setHeightScale] = useState(1.0)
@@ -1375,20 +1384,43 @@ export function CrossSectionChart({
                   const isDragging =
                     editable && draggingPointId === point.pointId
                   const cy = yScale(point.plannedHeight)
+                  // 連続勾配設定 モード: 選択済みかどうか + 選択リング
+                  const isSelectionActive = pointSelectionMode && !!onPointSelected
+                  const isSelected =
+                    isSelectionActive &&
+                    (selectedPointIdsForSelection ?? []).includes(point.pointId)
                   // 編集可: マーカーを少し大きくして、自身が直接マウスイベントを受ける
                   const r = editable ? (isDragging ? 9 : 7) : 5
                   return (
                     <>
+                      {isSelected && (
+                        <circle
+                          cx={x}
+                          cy={cy}
+                          r={r + 5}
+                          fill="none"
+                          stroke="#f59e0b"
+                          strokeWidth="2.5"
+                          pointerEvents="none"
+                        />
+                      )}
                       <circle
                         cx={x}
                         cy={cy}
                         r={r}
                         fill={isDragging ? '#1d4ed8' : '#2563eb'}
-                        stroke="white"
-                        strokeWidth="1.5"
-                        style={editable ? { cursor: 'ns-resize' } : undefined}
+                        stroke={isSelected ? '#d97706' : 'white'}
+                        strokeWidth={isSelected ? 2 : 1.5}
+                        style={
+                          isSelectionActive
+                            ? { cursor: 'crosshair' }
+                            : editable
+                              ? { cursor: 'ns-resize' }
+                              : undefined
+                        }
                         onMouseDown={
-                          editable
+                          // 選択モード時はドラッグを無効化 (クリック優先)
+                          editable && !isSelectionActive
                             ? (e) => {
                                 e.preventDefault()
                                 e.stopPropagation()
@@ -1405,24 +1437,29 @@ export function CrossSectionChart({
                             : undefined
                         }
                         onClick={
-                          editable
+                          isSelectionActive
                             ? (e) => {
-                                if (suppressNextClickRef.current) {
-                                  suppressNextClickRef.current = false
-                                  return
-                                }
                                 e.stopPropagation()
-                                const rect = svgRef.current?.getBoundingClientRect()
-                                if (!rect) return
-                                setEditPopup({
-                                  pointId: point.pointId,
-                                  x: e.clientX - rect.left,
-                                  y: cy - 8,
-                                  initialHeight: point.plannedHeight!,
-                                })
-                                setEditValue(point.plannedHeight!.toFixed(3))
+                                onPointSelected!(point.pointId)
                               }
-                            : undefined
+                            : editable
+                              ? (e) => {
+                                  if (suppressNextClickRef.current) {
+                                    suppressNextClickRef.current = false
+                                    return
+                                  }
+                                  e.stopPropagation()
+                                  const rect = svgRef.current?.getBoundingClientRect()
+                                  if (!rect) return
+                                  setEditPopup({
+                                    pointId: point.pointId,
+                                    x: e.clientX - rect.left,
+                                    y: cy - 8,
+                                    initialHeight: point.plannedHeight!,
+                                  })
+                                  setEditValue(point.plannedHeight!.toFixed(3))
+                                }
+                              : undefined
                         }
                       >
                         {editable && (
