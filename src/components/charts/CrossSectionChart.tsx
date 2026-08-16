@@ -1457,8 +1457,8 @@ export function CrossSectionChart({
                         )}
                       </circle>
                       {/* 選択モード時: マーカー上に大きい半透明円を重ねる。
-                          - pointer-events: all で確実にクリックを受ける (fill=transparent はブラウザ差異回避)
-                          - onMouseDown で 即座に onPointSelected を呼ぶ (click 発火に依存しない)
+                          - pointerEvents SVG 属性 (style ではなく) で確実にクリックを受ける
+                          - onMouseDown / onPointerDown / onClick 全部登録 (React 19 のイベント委譲差異回避)
                           - 半透明にして 選択モード中であることを視覚化 */}
                       {isSelectionActive && (
                         <circle
@@ -1466,13 +1466,20 @@ export function CrossSectionChart({
                           cy={cy}
                           r={r + 10}
                           fill="#fbbf24"
-                          fillOpacity={0.15}
+                          fillOpacity={0.25}
                           stroke="#f59e0b"
-                          strokeWidth={1}
-                          strokeOpacity={0.5}
-                          style={{ cursor: 'crosshair', pointerEvents: 'all' }}
+                          strokeWidth={1.5}
+                          pointerEvents="all"
+                          style={{ cursor: 'crosshair' }}
+                          onPointerDown={(e) => {
+                            e.stopPropagation()
+                            onPointSelected!(point.pointId)
+                          }}
                           onMouseDown={(e) => {
-                            e.preventDefault()
+                            e.stopPropagation()
+                            onPointSelected!(point.pointId)
+                          }}
+                          onClick={(e) => {
                             e.stopPropagation()
                             onPointSelected!(point.pointId)
                           }}
