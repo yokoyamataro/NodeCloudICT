@@ -1917,16 +1917,19 @@ export function DepthCalcPage() {
   }, [fullscreenPanel, selectedSystem, flatTabs])
 
   // 連続勾配設定: 選択モード中に 2 点そろったら ダイアログを preset で自動 open。
-  // (旧実装は setState updater 内で他の setState を呼んでいたため、
-  //  React StrictMode の updater 二重実行で 期待動作にならなかった)
+  // 注意: 選択の onMouseDown で state 更新 → 同 tick で dialog を open すると、
+  // その後発火する mouseup / click が dialog overlay 上で受けられて
+  // 「外側クリックで閉じる」ハンドラが即発火する。setTimeout で 次 tick に
+  // 遅延させて、選択トリガとなった mouse イベント列が完了してから open する。
   useEffect(() => {
     if (!continuousSelectMode) return
     if (continuousSelectedIds.length < 2) return
     const [a, b] = continuousSelectedIds
     setContinuousPresetIds([a, b])
-    setContinuousOpen(true)
     setContinuousSelectMode(false)
     setContinuousSelectedIds([])
+    const timer = setTimeout(() => setContinuousOpen(true), 0)
+    return () => clearTimeout(timer)
   }, [continuousSelectMode, continuousSelectedIds])
 
   // 系統内の吸水行 → 同系統の集水 を 1 つの「断面」として、
