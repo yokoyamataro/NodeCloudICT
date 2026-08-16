@@ -539,6 +539,24 @@ export const LANDOWNER_ATTENDANCE_LABEL: Record<LandownerAttendanceStatus, strin
   rejected: '不承諾',
 }
 
+// 地権者の属性 (申請人 / 隣接者)
+export type LandownerAttribute = 'applicant' | 'adjacent'
+
+export const LANDOWNER_ATTRIBUTE_LABEL: Record<LandownerAttribute, string> = {
+  applicant: '申請人',
+  adjacent: '隣接者',
+}
+
+// 本人確認方法
+export type LandownerIdMethod = 'license' | 'idcard' | 'meishiki' | 'other'
+
+export const LANDOWNER_ID_METHOD_LABEL: Record<LandownerIdMethod, string> = {
+  license: '運転免許証',
+  idcard: 'マイナンバーカード',
+  meishiki: '面識あり',
+  other: 'その他',
+}
+
 // 地権者（工区単位で管理）。地番との関係は parcel_landowners 多対多関連で表現する。
 export interface Landowner {
   id: string
@@ -556,6 +574,15 @@ export interface Landowner {
   notification_method: LandownerNotificationMethod | null
   attendance_status: LandownerAttendanceStatus
   notes: string | null
+  /** 属性: 申請人 or 隣接者 */
+  attribute: LandownerAttribute | null
+  /** 本人 (地権者) の本人確認方法 */
+  id_method: LandownerIdMethod | null
+  /** 上記 'other' 選択時の 自由文 */
+  id_method_other: string | null
+  /** 立会人 (代理人) の本人確認方法 */
+  agent_id_method: LandownerIdMethod | null
+  agent_id_method_other: string | null
   created_at: string
   updated_at: string
 }

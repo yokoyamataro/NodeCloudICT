@@ -21,6 +21,11 @@ export type LandownerEditableFields = Pick<
   | 'notification_method'
   | 'attendance_status'
   | 'notes'
+  | 'attribute'
+  | 'id_method'
+  | 'id_method_other'
+  | 'agent_id_method'
+  | 'agent_id_method_other'
 >
 
 interface State {

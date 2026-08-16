@@ -5,6 +5,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { X, Check, Loader2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import type { LandownerAttribute, LandownerIdMethod } from '@/types/database'
+import {
+  LANDOWNER_ATTRIBUTE_LABEL,
+  LANDOWNER_ID_METHOD_LABEL,
+} from '@/types/database'
 
 export interface PickableLandowner {
   id: string
@@ -15,6 +20,11 @@ export interface PickableLandowner {
   agentAddress: string | null
   agentPhone: string | null
   agentRelation: string | null
+  attribute: LandownerAttribute | null
+  idMethod: LandownerIdMethod | null
+  idMethodOther: string | null
+  agentIdMethod: LandownerIdMethod | null
+  agentIdMethodOther: string | null
 }
 
 interface Props {
@@ -34,6 +44,11 @@ interface Row {
   agent_address: string | null
   agent_phone: string | null
   agent_relation: string | null
+  attribute: LandownerAttribute | null
+  id_method: LandownerIdMethod | null
+  id_method_other: string | null
+  agent_id_method: LandownerIdMethod | null
+  agent_id_method_other: string | null
 }
 
 const toLandowner = (r: Row): PickableLandowner => ({
@@ -45,6 +60,11 @@ const toLandowner = (r: Row): PickableLandowner => ({
   agentAddress: r.agent_address,
   agentPhone: r.agent_phone,
   agentRelation: r.agent_relation,
+  attribute: r.attribute,
+  idMethod: r.id_method,
+  idMethodOther: r.id_method_other,
+  agentIdMethod: r.agent_id_method,
+  agentIdMethodOther: r.agent_id_method_other,
 })
 
 export function LandownerPickerModal({ farmId, parcelId, onCancel, onConfirm }: Props) {
@@ -63,7 +83,7 @@ export function LandownerPickerModal({ farmId, parcelId, onCancel, onConfirm }: 
       const { data, error: err } = await supabase
         .from('landowners')
         .select(
-          'id, full_name, address, phone, agent_name, agent_address, agent_phone, agent_relation',
+          'id, full_name, address, phone, agent_name, agent_address, agent_phone, agent_relation, attribute, id_method, id_method_other, agent_id_method, agent_id_method_other',
         )
         .eq('farm_id', farmId)
         .order('full_name')
@@ -180,11 +200,27 @@ export function LandownerPickerModal({ farmId, parcelId, onCancel, onConfirm }: 
                       className="mt-0.5 h-3.5 w-3.5"
                     />
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-medium">{l.fullName}</span>
+                        {l.attribute && (
+                          <span
+                            className={`text-[10px] px-1.5 py-0.5 rounded ${
+                              l.attribute === 'applicant'
+                                ? 'bg-blue-100 text-blue-700'
+                                : 'bg-orange-100 text-orange-700'
+                            }`}
+                          >
+                            {LANDOWNER_ATTRIBUTE_LABEL[l.attribute]}
+                          </span>
+                        )}
                         {l.assigned && (
                           <span className="text-[10px] px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded">
                             この地番に割当済み
+                          </span>
+                        )}
+                        {l.idMethod && (
+                          <span className="text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded">
+                            本人確認: {LANDOWNER_ID_METHOD_LABEL[l.idMethod]}
                           </span>
                         )}
                       </div>
@@ -195,6 +231,7 @@ export function LandownerPickerModal({ farmId, parcelId, onCancel, onConfirm }: 
                         <div className="text-[11px] text-slate-500 mt-0.5">
                           代理人: {l.agentName}
                           {l.agentRelation && ` (${l.agentRelation})`}
+                          {l.agentIdMethod && ` / 本人確認: ${LANDOWNER_ID_METHOD_LABEL[l.agentIdMethod]}`}
                         </div>
                       )}
                     </div>

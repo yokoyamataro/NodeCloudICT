@@ -8,24 +8,31 @@ import { useLandownerStore } from '@/stores/landownerStore'
 import type {
   Landowner,
   LandownerAttendanceStatus,
+  LandownerAttribute,
+  LandownerIdMethod,
   LandownerNotificationMethod,
 } from '@/types/database'
 import {
   LANDOWNER_ATTENDANCE_LABEL,
+  LANDOWNER_ATTRIBUTE_LABEL,
+  LANDOWNER_ID_METHOD_LABEL,
   LANDOWNER_NOTIFICATION_LABEL,
 } from '@/types/database'
 
 // 列の正準キー。表示順を兼ねる。
 export const LANDOWNER_COLUMN_KEYS = [
   'full_name',
+  'attribute',
   'owned_parcels',
   'postal_code',
   'address',
   'phone',
+  'id_method',
   'agent_name',
   'agent_relation',
   'agent_address',
   'agent_phone',
+  'agent_id_method',
   'primary_attendance_at',
   'secondary_attendance_at',
   'notification_method',
@@ -37,14 +44,17 @@ export type LandownerColumnKey = (typeof LANDOWNER_COLUMN_KEYS)[number]
 
 export const LANDOWNER_COLUMN_LABELS: Record<LandownerColumnKey, string> = {
   full_name: '氏名',
+  attribute: '属性',
   owned_parcels: '所有地',
   postal_code: '郵便番号',
   address: '住所',
   phone: '電話番号',
+  id_method: '本人確認方法',
   agent_name: '代理人氏名',
   agent_relation: '代理人続柄',
   agent_address: '代理人住所',
   agent_phone: '代理人電話番号',
+  agent_id_method: '代理人本人確認方法',
   primary_attendance_at: '一次立会日時',
   secondary_attendance_at: '二次立会日時',
   notification_method: '通知方法',
@@ -54,14 +64,17 @@ export const LANDOWNER_COLUMN_LABELS: Record<LandownerColumnKey, string> = {
 
 export const LANDOWNER_COLUMN_WIDTH: Record<LandownerColumnKey, string> = {
   full_name: 'w-32',
+  attribute: 'w-20',
   owned_parcels: 'w-40',
   postal_code: 'w-24',
   address: 'w-48',
   phone: 'w-32',
+  id_method: 'w-32',
   agent_name: 'w-28',
   agent_relation: 'w-20',
   agent_address: 'w-40',
   agent_phone: 'w-32',
+  agent_id_method: 'w-32',
   primary_attendance_at: 'w-40',
   secondary_attendance_at: 'w-40',
   notification_method: 'w-24',
@@ -72,17 +85,23 @@ export const LANDOWNER_COLUMN_WIDTH: Record<LandownerColumnKey, string> = {
 // 既定で表示する列。詰めすぎないよう代理人住所 / 電話 / メモは初期非表示。
 export const DEFAULT_VISIBLE_LANDOWNER_COLUMNS: ReadonlySet<LandownerColumnKey> = new Set([
   'full_name',
+  'attribute',
   'owned_parcels',
   'postal_code',
   'address',
   'phone',
+  'id_method',
   'agent_name',
   'agent_relation',
+  'agent_id_method',
   'primary_attendance_at',
   'secondary_attendance_at',
   'notification_method',
   'attendance_status',
 ])
+
+const ATTRIBUTE_OPTIONS: LandownerAttribute[] = ['applicant', 'adjacent']
+const ID_METHOD_OPTIONS: LandownerIdMethod[] = ['license', 'idcard', 'meishiki', 'other']
 
 const ATTENDANCE_OPTIONS: LandownerAttendanceStatus[] = [
   'not_attended',
@@ -377,6 +396,60 @@ export function LandownerRowFields({
             }}
             className={CELL_INPUT_CLASS}
           />
+        )
+      case 'attribute':
+        return (
+          <select
+            value={landowner.attribute ?? ''}
+            onChange={(e) => {
+              const v = (e.target.value as LandownerAttribute) || null
+              save({ attribute: v })
+            }}
+            className={`${CELL_INPUT_CLASS} bg-white`}
+          >
+            <option value="">未設定</option>
+            {ATTRIBUTE_OPTIONS.map((a) => (
+              <option key={a} value={a}>
+                {LANDOWNER_ATTRIBUTE_LABEL[a]}
+              </option>
+            ))}
+          </select>
+        )
+      case 'id_method':
+        return (
+          <select
+            value={landowner.id_method ?? ''}
+            onChange={(e) => {
+              const v = (e.target.value as LandownerIdMethod) || null
+              save({ id_method: v })
+            }}
+            className={`${CELL_INPUT_CLASS} bg-white`}
+          >
+            <option value="">未設定</option>
+            {ID_METHOD_OPTIONS.map((m) => (
+              <option key={m} value={m}>
+                {LANDOWNER_ID_METHOD_LABEL[m]}
+              </option>
+            ))}
+          </select>
+        )
+      case 'agent_id_method':
+        return (
+          <select
+            value={landowner.agent_id_method ?? ''}
+            onChange={(e) => {
+              const v = (e.target.value as LandownerIdMethod) || null
+              save({ agent_id_method: v })
+            }}
+            className={`${CELL_INPUT_CLASS} bg-white`}
+          >
+            <option value="">未設定</option>
+            {ID_METHOD_OPTIONS.map((m) => (
+              <option key={m} value={m}>
+                {LANDOWNER_ID_METHOD_LABEL[m]}
+              </option>
+            ))}
+          </select>
         )
     }
   }

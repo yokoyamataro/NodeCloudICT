@@ -161,6 +161,15 @@ export function ReportSectionOwners({ body, onChange }: Props) {
     }
     setLoadingFor(null)
 
+    // landowner の本人確認方法を report の enum にマップ
+    // (landowner: 'license'|'idcard'|'meishiki'|'other' — 一致)
+    const mapIdMethod = (
+      m: string | null,
+    ): 'license' | 'idcard' | 'meishiki' | 'other' | null => {
+      if (m === 'license' || m === 'idcard' || m === 'meishiki' || m === 'other') return m
+      return null
+    }
+
     const draft: ReportOwnerRow = {
       ...(idx !== null ? owners[idx] : emptyOwner()),
       ownedParcels: owned,
@@ -168,6 +177,8 @@ export function ReportSectionOwners({ body, onChange }: Props) {
       address: lo.address ?? '',
       name: lo.fullName,
       contact: lo.phone ?? '',
+      idMethod: mapIdMethod(lo.idMethod),
+      idMethodOther: lo.idMethodOther ?? '',
       attendee: lo.agentName
         ? {
             ...(idx !== null ? owners[idx].attendee : emptyOwner().attendee),
@@ -176,6 +187,8 @@ export function ReportSectionOwners({ body, onChange }: Props) {
             contact: lo.agentPhone ?? '',
             relation: guessRelation(lo.agentRelation),
             relationDetail: lo.agentRelation ?? '',
+            idMethod: mapIdMethod(lo.agentIdMethod),
+            idMethodOther: lo.agentIdMethodOther ?? '',
           }
         : idx !== null
         ? owners[idx].attendee
