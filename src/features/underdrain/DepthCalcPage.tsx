@@ -168,11 +168,8 @@ export function DepthCalcPage() {
 
   // 連続勾配ダイアログ（現在アクティブな系統内で複数区間に適用）
   const [continuousOpen, setContinuousOpen] = useState(false)
-  // 連続勾配設定: 縦断図上での「点を 2 つクリックして選択」モード。
-  // 有効時、青いマーカーをクリックすると 編集ポップアップではなく 始点/終点として選択される。
-  // 2 点選択された時点で ContinuousSlopeDialog を preset 状態で開く。
-  const [continuousSelectMode, setContinuousSelectMode] = useState(false)
-  const [continuousSelectedIds, setContinuousSelectedIds] = useState<string[]>([])
+  // 連続勾配設定: 縦断図上で 計画点を 横方向にドラッグして 別の点までスナップした時
+  // ContinuousSlopeDialog を preset 状態で開くために保持する 始点/終点 の PlanPoint.id
   const [continuousPresetIds, setContinuousPresetIds] = useState<[string, string] | null>(null)
 
   // 水理計算書・測定結果一覧表 出力モーダル
@@ -1916,22 +1913,6 @@ export function DepthCalcPage() {
     setSelectedSystem({ groupIndex: first.groupIndex, systemIndex: first.systemIndex })
   }, [fullscreenPanel, selectedSystem, flatTabs])
 
-  // 連続勾配設定: 選択モード中に 2 点そろったら ダイアログを preset で自動 open。
-  // 注意: 選択の onMouseDown で state 更新 → 同 tick で dialog を open すると、
-  // その後発火する mouseup / click が dialog overlay 上で受けられて
-  // 「外側クリックで閉じる」ハンドラが即発火する。setTimeout で 次 tick に
-  // 遅延させて、選択トリガとなった mouse イベント列が完了してから open する。
-  useEffect(() => {
-    if (!continuousSelectMode) return
-    if (continuousSelectedIds.length < 2) return
-    const [a, b] = continuousSelectedIds
-    setContinuousPresetIds([a, b])
-    setContinuousSelectMode(false)
-    setContinuousSelectedIds([])
-    const timer = setTimeout(() => setContinuousOpen(true), 0)
-    return () => clearTimeout(timer)
-  }, [continuousSelectMode, continuousSelectedIds])
-
   // 系統内の吸水行 → 同系統の集水 を 1 つの「断面」として、
   // 全タブを順に並べたグローバルなセクション一覧。前/次ボタンと縦断図タブで共有する。
   type GlobalScope = {
@@ -2952,33 +2933,12 @@ export function DepthCalcPage() {
                       <span className="text-[10px] text-slate-400 ml-1">
                         {globalIdx >= 0 ? `${globalIdx + 1} / ${globalScopes.length}` : ''}
                       </span>
-                      {/* 連続勾配設定: 断面上の 2 点 (青いマーカー) を選択 → 一定勾配で線形補間 */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (continuousSelectMode) {
-                            setContinuousSelectMode(false)
-                            setContinuousSelectedIds([])
-                          } else {
-                            setContinuousSelectMode(true)
-                            setContinuousSelectedIds([])
-                          }
-                        }}
-                        className={`ml-2 px-2 py-0.5 border rounded text-xs whitespace-nowrap ${
-                          continuousSelectMode
-                            ? 'bg-amber-500 text-white border-amber-600 hover:bg-amber-600'
-                            : 'border-amber-500 text-amber-700 hover:bg-amber-50'
-                        }`}
-                        title={
-                          continuousSelectMode
-                            ? `選択中… 青いマーカーを${continuousSelectedIds.length}/2 個選択済`
-                            : '連続勾配設定: 断面上の 2 点 (青いマーカー) を選択して 一定勾配を適用'
-                        }
+                      <span
+                        className="text-[10px] text-slate-500 ml-2"
+                        title="計画点を 縦にドラッグ = 計画高調整 / 横に別マーカーへドラッグ = 連続勾配"
                       >
-                        {continuousSelectMode
-                          ? `選択中 (${continuousSelectedIds.length}/2)`
-                          : '連続勾配設定'}
-                      </button>
+                        操作: 縦=高さ / 横=連続勾配
+                      </span>
                       {chartLabel && <span className="text-slate-500 ml-2">{chartLabel}</span>}
                     </div>
                     {(() => {
@@ -3071,15 +3031,11 @@ export function DepthCalcPage() {
                             }
                           }
                         }}
-                        pointSelectionMode={continuousSelectMode}
-                        selectedPointIdsForSelection={continuousSelectedIds}
-                        onPointSelected={(pointId) => {
-                          // 純粋な updater のみ (副作用は useEffect で処理する。
-                          // React StrictMode で updater が 二重実行されても安全にする)
-                          setContinuousSelectedIds((prev) => {
-                            if (prev.includes(pointId)) return prev
-                            return [...prev, pointId]
-                          })
+                        onSlopeSelected={(startPointId, endPointId) => {
+                          // 縦断図上で 計画点を 別の計画点まで横ドラッグ →
+                          // 連続勾配設定ダイアログを 始点/終点 preset で開く
+                          setContinuousPresetIds([startPointId, endPointId])
+                          setContinuousOpen(true)
                         }}
                       />
                     </div>

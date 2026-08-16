@@ -28,12 +28,9 @@ interface CrossSectionChartProps {
   criticalKByPointId?: Map<string, number>
   // 管径 (mm) の per-point ルックアップ。指定時は SectionPoint.segmentDiameter を上書き。
   diameterByPointId?: Map<string, number>
-  // 連続勾配設定: 断面上で 青いマーカーを「編集」ではなく「選択」する モード
-  pointSelectionMode?: boolean
-  // 現在選択済みの計画点 ID (0〜2 個)。マーカーに強調表示リングを出す
-  selectedPointIdsForSelection?: string[]
-  // 青いマーカーが選択された時のコールバック (pointSelectionMode 時のみ発火)
-  onPointSelected?: (pointId: string) => void
+  // 計画点を「横方向にドラッグして 別の計画点まで」引いた時のコールバック。
+  // 連続勾配設定 ダイアログを 始点 → 終点 preset で開く用途。
+  onSlopeSelected?: (startPointId: string, endPointId: string) => void
 }
 
 // 断面図の点データ（集水管の点のみ）
@@ -75,9 +72,7 @@ export function CrossSectionChart({
   mergeInflowsByRowId,
   criticalKByPointId,
   diameterByPointId,
-  pointSelectionMode = false,
-  selectedPointIdsForSelection,
-  onPointSelected,
+  onSlopeSelected,
 }: CrossSectionChartProps) {
   // 標高スケールのズーム倍率（1.0が基準、大きいほど拡大）
   const [heightScale, setHeightScale] = useState(1.0)
@@ -456,26 +451,26 @@ export function CrossSectionChart({
     }
   }, [])
 
-  // ドラッグ中の点（再描画トリガ用に state も持つ）
+  // ドラッグ中の点。mode は 最初の mousemove で確定:
+  //  - 'height' : 縦方向優位 → 計画高 の 上下調整 (既存)
+  //  - 'slope'  : 横方向優位 → 別マーカーまでドラッグ → 連続勾配設定
   const dragRef = useRef<{
     pointId: string
-    /** ドラッグ開始時の マウス Y (clientY, px) */
+    startClientX: number
     startClientY: number
-    /** ドラッグ開始時の 計画高 (m) */
     startHeight: number
+    /** マーカーの SVG 座標 x (連続勾配の始点ライン描画用) */
+    startSvgX: number
+    /** マーカーの SVG 座標 y (計画高の y) */
+    startSvgY: number
+    /** 'pending' = 方向未確定 / 'height' = 高さ変更 / 'slope' = 連続勾配 */
+    mode: 'pending' | 'height' | 'slope'
   } | null>(null)
   const [draggingPointId, setDraggingPointId] = useState<string | null>(null)
-  // ドラッグ後の click を抑制するためのフラグ（mousemove で true になり、次の click で消費）
-  const suppressNextClickRef = useRef(false)
-
-  // クリックで開く計画高の編集ポップアップ
-  const [editPopup, setEditPopup] = useState<{
-    pointId: string
-    x: number
-    y: number
-    initialHeight: number
-  } | null>(null)
-  const [editValue, setEditValue] = useState('')
+  // 横ドラッグ中に カーソルが乗っている 他のマーカー (連続勾配の終点候補)
+  const [slopeDragEndPointId, setSlopeDragEndPointId] = useState<string | null>(null)
+  // 横ドラッグ中のマウス位置 (SVG 座標系)。ライン描画用
+  const [slopeDragCursor, setSlopeDragCursor] = useState<{ x: number; y: number } | null>(null)
 
   // 凡例の最小化状態。localStorage に永続化。
   const LEGEND_COLLAPSED_KEY = 'nodecloud_chart_legend_collapsed'
@@ -573,35 +568,100 @@ export function CrossSectionChart({
     minMaxRef.current = { min: minHeight, max: maxHeight }
   }, [minHeight, maxHeight])
 
+  // 最新の sectionData / xScale を ref に保持 (mousemove ハンドラは 1 度だけ登録)
+  const sectionDataRef = useRef(sectionData)
+  useEffect(() => { sectionDataRef.current = sectionData }, [sectionData])
+  const xScaleRef = useRef(xScale)
+  useEffect(() => { xScaleRef.current = xScale }, [xScale])
+  const yScaleRef = useRef(yScale)
+  useEffect(() => { yScaleRef.current = yScale }, [yScale])
+  const onSlopeSelectedRef = useRef(onSlopeSelected)
+  useEffect(() => { onSlopeSelectedRef.current = onSlopeSelected }, [onSlopeSelected])
+
   // ドラッグ中のグローバル mousemove / mouseup ハンドラ（マウント時に 1 度だけ登録）
   useEffect(() => {
+    const DIRECTION_THRESHOLD = 8 // px: 方向確定までのデッドゾーン
+    const HORIZONTAL_RATIO = 1.2 // |dx| > |dy| * この倍率 → 横方向 (slope) と判定
+    const SNAP_PX = 20 // px: この距離以内に別マーカーがあれば 終点候補としてスナップ
+
+    const findNearestMarker = (svgX: number): { pointId: string; x: number; y: number } | null => {
+      const sd = sectionDataRef.current
+      const xs = xScaleRef.current
+      const ys = yScaleRef.current
+      let best: { pointId: string; x: number; y: number; dist: number } | null = null
+      for (const p of sd) {
+        if (p.plannedHeight == null) continue
+        const px = xs(p.distance)
+        const dist = Math.abs(px - svgX)
+        if (best == null || dist < best.dist) {
+          best = { pointId: p.pointId, x: px, y: ys(p.plannedHeight), dist }
+        }
+      }
+      if (!best || best.dist > SNAP_PX) return null
+      return { pointId: best.pointId, x: best.x, y: best.y }
+    }
+
     const onMove = (e: MouseEvent) => {
       if (!dragRef.current) return
       const cb = onPlannedHeightChangeRef.current
-      if (!cb) return
-      suppressNextClickRef.current = true
-      // 感度スケール: マウスの縦移動 (px) を そのまま高度 (m) に変換すると
-      // 微調整がしづらいため、YScale (px/m) の 30% だけを 反映させる。
-      // 例: yScale が 100 px/m のとき、マウスを 10 px 動かすと 0.03 m 変化。
-      const { startClientY, startHeight, pointId } = dragRef.current
-      const pxPerMeter = yScale(minMaxRef.current.min) - yScale(minMaxRef.current.min + 1)
-      // pxPerMeter は 正 (画面座標は下が大きく、高さは上が大きい ため 逆号)
-      const SENSITIVITY = 0.3
-      const deltaPx = e.clientY - startClientY
-      // 高さ変化 = マウス下方向 (deltaPx > 0) で 高さ減少
-      const deltaHeight = -(deltaPx / pxPerMeter) * SENSITIVITY
-      const { min, max } = minMaxRef.current
-      const raw = Math.max(min, Math.min(max, startHeight + deltaHeight))
-      // センチ単位 (0.01m) でスナップ
-      const h = Math.round(raw * 100) / 100
-      cb(pointId, h)
+
+      // 方向未確定 → 最初の一定量の動きで確定
+      if (dragRef.current.mode === 'pending') {
+        const dx = e.clientX - dragRef.current.startClientX
+        const dy = e.clientY - dragRef.current.startClientY
+        if (Math.abs(dx) < DIRECTION_THRESHOLD && Math.abs(dy) < DIRECTION_THRESHOLD) return
+        if (Math.abs(dx) > Math.abs(dy) * HORIZONTAL_RATIO) {
+          dragRef.current.mode = 'slope'
+          document.body.style.cursor = 'crosshair'
+        } else {
+          dragRef.current.mode = 'height'
+          document.body.style.cursor = 'ns-resize'
+        }
+      }
+
+      if (dragRef.current.mode === 'height') {
+        if (!cb) return
+        // 感度スケール: マウスの縦移動 (px) を そのまま高度 (m) に変換すると
+        // 微調整がしづらいため、YScale (px/m) の 30% だけを 反映させる。
+        const { startClientY, startHeight, pointId } = dragRef.current
+        const pxPerMeter = yScale(minMaxRef.current.min) - yScale(minMaxRef.current.min + 1)
+        const SENSITIVITY = 0.3
+        const deltaPx = e.clientY - startClientY
+        const deltaHeight = -(deltaPx / pxPerMeter) * SENSITIVITY
+        const { min, max } = minMaxRef.current
+        const raw = Math.max(min, Math.min(max, startHeight + deltaHeight))
+        const h = Math.round(raw * 100) / 100
+        cb(pointId, h)
+      } else if (dragRef.current.mode === 'slope') {
+        // カーソルを SVG 座標へ変換
+        const rect = svgRef.current?.getBoundingClientRect()
+        if (!rect) return
+        const svgX = e.clientX - rect.left
+        const svgY = e.clientY - rect.top
+        setSlopeDragCursor({ x: svgX, y: svgY })
+        // 最寄りマーカーが十分近ければ 終点候補として ハイライト
+        const target = findNearestMarker(svgX)
+        const startPid = dragRef.current.pointId
+        const endPid = target && target.pointId !== startPid ? target.pointId : null
+        setSlopeDragEndPointId(endPid)
+      }
     }
     const onUp = () => {
       if (!dragRef.current) return
+      const mode = dragRef.current.mode
+      const startPid = dragRef.current.pointId
       dragRef.current = null
       setDraggingPointId(null)
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
+      if (mode === 'slope') {
+        const endPid = slopeDragEndPointIdRef.current
+        setSlopeDragEndPointId(null)
+        setSlopeDragCursor(null)
+        if (endPid && endPid !== startPid && onSlopeSelectedRef.current) {
+          onSlopeSelectedRef.current(startPid, endPid)
+        }
+      }
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
@@ -609,7 +669,11 @@ export function CrossSectionChart({
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
     }
-  }, [getSvgY])
+  }, [getSvgY, yScale])
+
+  // slopeDragEndPointId を ref にも保持 (mouseup コールバック内で参照するため)
+  const slopeDragEndPointIdRef = useRef<string | null>(null)
+  useEffect(() => { slopeDragEndPointIdRef.current = slopeDragEndPointId }, [slopeDragEndPointId])
 
   // パスデータを生成（現況線）
   const groundPath = useMemo(() => {
@@ -1378,29 +1442,26 @@ export function CrossSectionChart({
                   )
                 })()}
 
-                {/* 計画点マーカー（編集コールバック有効時はドラッグ + 左クリックで編集） */}
+                {/* 計画点マーカー
+                    - 縦ドラッグ: 計画高 上下調整
+                    - 横ドラッグ → 別マーカー: 連続勾配設定 (始点 → 終点)
+                    - ドラッグ方向は 最初の移動で自動判定 */}
                 {point.plannedHeight !== null && (() => {
                   const editable = !!onPlannedHeightChange
-                  const isDragging =
-                    editable && draggingPointId === point.pointId
+                  const isDragging = editable && draggingPointId === point.pointId
+                  const isSlopeTarget = slopeDragEndPointId === point.pointId
                   const cy = yScale(point.plannedHeight)
-                  // 連続勾配設定 モード: 選択済みかどうか + 選択リング
-                  const isSelectionActive = pointSelectionMode && !!onPointSelected
-                  const isSelected =
-                    isSelectionActive &&
-                    (selectedPointIdsForSelection ?? []).includes(point.pointId)
-                  // 編集可: マーカーを少し大きくして、自身が直接マウスイベントを受ける
                   const r = editable ? (isDragging ? 9 : 7) : 5
                   return (
                     <>
-                      {isSelected && (
+                      {isSlopeTarget && (
                         <circle
                           cx={x}
                           cy={cy}
-                          r={r + 5}
+                          r={r + 6}
                           fill="none"
                           stroke="#f59e0b"
-                          strokeWidth="2.5"
+                          strokeWidth={3}
                           pointerEvents="none"
                         />
                       )}
@@ -1409,84 +1470,33 @@ export function CrossSectionChart({
                         cy={cy}
                         r={r}
                         fill={isDragging ? '#1d4ed8' : '#2563eb'}
-                        stroke={isSelected ? '#d97706' : 'white'}
-                        strokeWidth={isSelected ? 2 : 1.5}
-                        style={
-                          editable ? { cursor: 'ns-resize' } : undefined
-                        }
+                        stroke={isSlopeTarget ? '#d97706' : 'white'}
+                        strokeWidth={isSlopeTarget ? 2 : 1.5}
+                        style={editable ? { cursor: 'move' } : undefined}
                         onMouseDown={
                           editable
                             ? (e) => {
                                 e.preventDefault()
                                 e.stopPropagation()
-                                suppressNextClickRef.current = false
                                 dragRef.current = {
                                   pointId: point.pointId,
+                                  startClientX: e.clientX,
                                   startClientY: e.clientY,
                                   startHeight: point.plannedHeight!,
+                                  startSvgX: x,
+                                  startSvgY: cy,
+                                  mode: 'pending',
                                 }
                                 setDraggingPointId(point.pointId)
-                                document.body.style.cursor = 'ns-resize'
                                 document.body.style.userSelect = 'none'
                               }
                             : undefined
                         }
-                        onClick={
-                          editable
-                            ? (e) => {
-                                if (suppressNextClickRef.current) {
-                                  suppressNextClickRef.current = false
-                                  return
-                                }
-                                e.stopPropagation()
-                                const rect = svgRef.current?.getBoundingClientRect()
-                                if (!rect) return
-                                setEditPopup({
-                                  pointId: point.pointId,
-                                  x: e.clientX - rect.left,
-                                  y: cy - 8,
-                                  initialHeight: point.plannedHeight!,
-                                })
-                                setEditValue(point.plannedHeight!.toFixed(3))
-                              }
-                            : undefined
-                        }
                       >
-                        {editable && !isSelectionActive && (
-                          <title>上下ドラッグで計画高変更 / クリックで数値入力</title>
+                        {editable && (
+                          <title>上下ドラッグ: 計画高変更 / 横ドラッグで別マーカーへ: 連続勾配設定</title>
                         )}
                       </circle>
-                      {/* 選択モード時: マーカー上に大きい半透明円を重ねる。
-                          - pointerEvents SVG 属性 (style ではなく) で確実にクリックを受ける
-                          - onMouseDown / onPointerDown / onClick 全部登録 (React 19 のイベント委譲差異回避)
-                          - 半透明にして 選択モード中であることを視覚化 */}
-                      {isSelectionActive && (
-                        <circle
-                          cx={x}
-                          cy={cy}
-                          r={r + 10}
-                          fill="#fbbf24"
-                          fillOpacity={0.25}
-                          stroke="#f59e0b"
-                          strokeWidth={1.5}
-                          pointerEvents="all"
-                          style={{ cursor: 'crosshair' }}
-                          onPointerDown={(e) => {
-                            e.stopPropagation()
-                            onPointSelected!(point.pointId)
-                          }}
-                          onMouseDown={(e) => {
-                            e.stopPropagation()
-                            onPointSelected!(point.pointId)
-                          }}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onPointSelected!(point.pointId)
-                          }}
-                        >
-                          <title>クリックで 連続勾配設定の {selectedPointIdsForSelection?.length === 0 ? '始点' : '終点'} に指定</title>
-                        </circle>
-                      )}
                       {showPlannedValue && (
                         <text
                           x={x + 7}
@@ -1798,55 +1808,39 @@ export function CrossSectionChart({
             })
           })()}
 
+          {/* 連続勾配ドラッグ中: 始点 → カーソル (または スナップ先マーカー) までの案内線 */}
+          {draggingPointId && slopeDragCursor && (() => {
+            const startPt = sectionData.find((p) => p.pointId === draggingPointId)
+            if (!startPt || startPt.plannedHeight == null) return null
+            const x1 = xScale(startPt.distance)
+            const y1 = yScale(startPt.plannedHeight)
+            const endPt = slopeDragEndPointId
+              ? sectionData.find((p) => p.pointId === slopeDragEndPointId)
+              : null
+            const x2 =
+              endPt && endPt.plannedHeight != null ? xScale(endPt.distance) : slopeDragCursor.x
+            const y2 =
+              endPt && endPt.plannedHeight != null
+                ? yScale(endPt.plannedHeight)
+                : slopeDragCursor.y
+            const stroke = endPt ? '#d97706' : '#f59e0b'
+            return (
+              <g pointerEvents="none">
+                <line
+                  x1={x1}
+                  y1={y1}
+                  x2={x2}
+                  y2={y2}
+                  stroke={stroke}
+                  strokeWidth={endPt ? 3 : 2}
+                  strokeDasharray={endPt ? undefined : '5,4'}
+                  opacity={0.85}
+                />
+              </g>
+            )
+          })()}
+
         </svg>
-        {/* 計画高 編集ポップアップ */}
-        {editPopup && onPlannedHeightChange && (() => {
-          const commit = () => {
-            const v = parseFloat(editValue)
-            if (Number.isFinite(v)) {
-              onPlannedHeightChange(editPopup.pointId, v)
-            }
-            setEditPopup(null)
-          }
-          return (
-            <div
-              className="absolute z-20 bg-white border border-blue-400 rounded shadow-lg px-2 py-1 flex items-center gap-1"
-              style={{
-                left: Math.max(4, editPopup.x - 80),
-                top: Math.max(4, editPopup.y - 40),
-              }}
-              onClick={(e) => e.stopPropagation()}
-              onMouseDown={(e) => e.stopPropagation()}
-            >
-              <span className="text-[11px] text-slate-500">計画高</span>
-              <input
-                type="number"
-                step={0.001}
-                value={editValue}
-                onChange={(e) => setEditValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') commit()
-                  if (e.key === 'Escape') setEditPopup(null)
-                }}
-                onWheel={(e) => e.currentTarget.blur()}
-                autoFocus
-                className="w-24 px-1.5 py-0.5 text-sm border rounded text-right font-mono"
-              />
-              <button
-                onClick={commit}
-                className="px-2 py-0.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
-              >
-                OK
-              </button>
-              <button
-                onClick={() => setEditPopup(null)}
-                className="px-1.5 py-0.5 text-xs text-slate-500 hover:bg-slate-100 rounded"
-              >
-                ×
-              </button>
-            </div>
-          )
-        })()}
         </div>
       </div>
     </div>
