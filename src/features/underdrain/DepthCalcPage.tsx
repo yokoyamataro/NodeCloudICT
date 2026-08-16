@@ -1916,6 +1916,19 @@ export function DepthCalcPage() {
     setSelectedSystem({ groupIndex: first.groupIndex, systemIndex: first.systemIndex })
   }, [fullscreenPanel, selectedSystem, flatTabs])
 
+  // 連続勾配設定: 選択モード中に 2 点そろったら ダイアログを preset で自動 open。
+  // (旧実装は setState updater 内で他の setState を呼んでいたため、
+  //  React StrictMode の updater 二重実行で 期待動作にならなかった)
+  useEffect(() => {
+    if (!continuousSelectMode) return
+    if (continuousSelectedIds.length < 2) return
+    const [a, b] = continuousSelectedIds
+    setContinuousPresetIds([a, b])
+    setContinuousOpen(true)
+    setContinuousSelectMode(false)
+    setContinuousSelectedIds([])
+  }, [continuousSelectMode, continuousSelectedIds])
+
   // 系統内の吸水行 → 同系統の集水 を 1 つの「断面」として、
   // 全タブを順に並べたグローバルなセクション一覧。前/次ボタンと縦断図タブで共有する。
   type GlobalScope = {
@@ -3058,17 +3071,11 @@ export function DepthCalcPage() {
                         pointSelectionMode={continuousSelectMode}
                         selectedPointIdsForSelection={continuousSelectedIds}
                         onPointSelected={(pointId) => {
+                          // 純粋な updater のみ (副作用は useEffect で処理する。
+                          // React StrictMode で updater が 二重実行されても安全にする)
                           setContinuousSelectedIds((prev) => {
                             if (prev.includes(pointId)) return prev
-                            const next = [...prev, pointId]
-                            if (next.length >= 2) {
-                              // 2 点そろったら 選択モード解除 + ダイアログを preset で開く
-                              setContinuousPresetIds([next[0], next[1]])
-                              setContinuousOpen(true)
-                              setContinuousSelectMode(false)
-                              return []
-                            }
-                            return next
+                            return [...prev, pointId]
                           })
                         }}
                       />
