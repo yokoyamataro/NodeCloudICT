@@ -660,26 +660,30 @@ function detectOuterFrame(ws: ExcelJS.Worksheet): FrameInfo {
   }
 }
 
-/** 元テンプレで frame 罫線があった行を、行操作後の位置 (シフト & 複製) に stamp する */
+/** 元テンプレで frame 罫線があった行を、行操作後の位置 (シフト & 複製) に stamp する。
+ *  "right of col X" の代わりに "left of col X+1" として書き込む。
+ *  こうすると col X が (左の列と結合された) 非マスターセルであっても、
+ *  col X+1 は 印刷範囲外 で 単独セルであることが多いため 確実に border を write できる。 */
 function stampFrameRowsPrecise(
   ws: ExcelJS.Worksheet,
   frame: FrameInfo,
   jobs: SectionJob[],
 ): void {
   if (!frame.border) return
-  const apply = (targetRow: number, col: number) => {
+  const applyLeftOnNext = (targetRow: number, col: number) => {
     if (col <= 0) return
-    const cell = ws.getRow(targetRow).getCell(col)
+    // col の "right border" は、代わりに col+1 の "left border" として stamp
+    const cell = ws.getRow(targetRow).getCell(col + 1)
     if (cell.isMerged && cell.master && cell.master.address !== cell.address) return
     const cur = (cell.border ?? {}) as Record<string, BorderSide | undefined>
-    if (cur.right?.style) return
-    cell.border = { ...cur, right: frame.border } as unknown as ExcelJS.Borders
+    if (cur.left?.style) return
+    cell.border = { ...cur, left: frame.border } as unknown as ExcelJS.Borders
   }
   const process = (origRows: Set<number>, col: number) => {
     for (const origRow of origRows) {
       // 元位置のシフト後
       const shifted = computeShift(origRow, jobs)
-      apply(shifted, col)
+      applyLeftOnNext(shifted, col)
       // 複製ブロック内なら、各コピーにも stamp
       for (const job of jobs) {
         if (job.count <= 1) continue
@@ -688,7 +692,7 @@ function stampFrameRowsPrecise(
         const blockShifted = computeShift(job.startRow, jobs)
         const rowOffset = origRow - job.startRow
         for (let i = 1; i < job.count; i++) {
-          apply(blockShifted + i * h + rowOffset, col)
+          applyLeftOnNext(blockShifted + i * h + rowOffset, col)
         }
       }
     }
