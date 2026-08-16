@@ -199,9 +199,8 @@ export function LandownerPickerModal({ farmId, parcelId, onCancel, onConfirm }: 
                       onChange={() => setSelectedId(l.id)}
                       className="mt-0.5 h-3.5 w-3.5"
                     />
-                    <div className="flex-1 min-w-0">
-                      {/* 1 行目: 本人情報 */}
-                      <div className="flex items-center gap-2 flex-wrap">
+                    <div className="flex-1 min-w-0 overflow-x-auto">
+                      <div className="flex items-center gap-2 whitespace-nowrap">
                         <span className="text-sm font-medium">{l.fullName}</span>
                         {l.attribute && (
                           <span
@@ -224,28 +223,30 @@ export function LandownerPickerModal({ farmId, parcelId, onCancel, onConfirm }: 
                             {LANDOWNER_ID_METHOD_LABEL[l.idMethod]}
                           </span>
                         )}
-                        <span className="text-xs text-slate-600 truncate">
+                        <span className="text-xs text-slate-600">
                           {l.address || '住所未登録'}
                         </span>
-                      </div>
-                      {/* 2 行目: 立会人情報 (代理人がいる場合のみ) */}
-                      {l.agentName && (
-                        <div className="flex items-center gap-2 flex-wrap mt-0.5 text-[11px] text-slate-600">
-                          <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 text-slate-700 rounded">
-                            立会人
-                          </span>
-                          <span className="font-medium">{l.agentName}</span>
-                          {l.agentRelation && <span>({l.agentRelation})</span>}
-                          {l.agentIdMethod && (
-                            <span className="text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded">
-                              {LANDOWNER_ID_METHOD_LABEL[l.agentIdMethod]}
+                        {l.agentName && (
+                          <>
+                            <span className="text-slate-300">|</span>
+                            <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 text-slate-700 rounded">
+                              立会人
                             </span>
-                          )}
-                          {l.agentAddress && (
-                            <span className="text-slate-500 truncate">{l.agentAddress}</span>
-                          )}
-                        </div>
-                      )}
+                            <span className="text-xs font-medium">{l.agentName}</span>
+                            {l.agentRelation && (
+                              <span className="text-xs text-slate-500">({l.agentRelation})</span>
+                            )}
+                            {l.agentIdMethod && (
+                              <span className="text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded">
+                                {LANDOWNER_ID_METHOD_LABEL[l.agentIdMethod]}
+                              </span>
+                            )}
+                            {l.agentAddress && (
+                              <span className="text-xs text-slate-500">{l.agentAddress}</span>
+                            )}
+                          </>
+                        )}
+                      </div>
                     </div>
                   </label>
                 )
