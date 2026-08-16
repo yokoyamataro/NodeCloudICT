@@ -69,9 +69,48 @@ interface GenericWorkAreaPageProps {
   areaListActions?: React.ReactNode
   /** 閲覧のみモード: 全ての編集/追加/削除操作を無効化する */
   readOnly?: boolean
+  /** true のとき: 地図は同じ画面に並置せず 表を全幅表示。
+   *  地図を見たいときは 別ウィンドウ (?panel=map) を開くボタンを提供する。
+   *  縦断図と同じパターン。 */
+  mapInSeparateWindow?: boolean
 }
 
-export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', headerActions, mapChildren, mapBottomLeftOverlay, suppressDefaultParcelMapLayer, checkedPolygonIds, onPolygonToggleCheck, areaListActions, readOnly = false }: GenericWorkAreaPageProps) {
+export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', headerActions, mapChildren, mapBottomLeftOverlay, suppressDefaultParcelMapLayer, checkedPolygonIds, onPolygonToggleCheck, areaListActions, readOnly = false, mapInSeparateWindow = false }: GenericWorkAreaPageProps) {
+  // URL ?panel=table|map で 「1 パネルのみ全画面」表示に切替
+  const fullscreenPanel = useMemo<'table' | 'map' | null>(() => {
+    if (typeof window === 'undefined') return null
+    const q = new URLSearchParams(window.location.search).get('panel')
+    if (q === 'table' || q === 'map') return q
+    return null
+  }, [])
+  const isPopupWindow =
+    typeof window !== 'undefined' &&
+    !!new URLSearchParams(window.location.search).get('panel')
+
+  // 地図を 別ウィンドウで開く
+  const openMapInNewWindow = () => {
+    if (typeof window === 'undefined') return
+    const url = new URL(window.location.href)
+    url.searchParams.set('panel', 'map')
+    const w = 1200
+    const h = 900
+    const left = window.screenX + Math.max(0, (window.outerWidth - w) / 2)
+    const top = window.screenY + Math.max(0, (window.outerHeight - h) / 2)
+    window.open(
+      url.toString(),
+      'nc_workarea_map',
+      `popup=yes,width=${w},height=${h},left=${left},top=${top}`,
+    )
+  }
+
+  // 表示モード決定:
+  //   showTable / showMap
+  //   ?panel=map      → 地図のみ
+  //   ?panel=table    → 表のみ
+  //   mapInSeparateWindow=true → 表のみ (地図は別ウィンドウ)
+  //   それ以外         → 表 + 地図 (従来)
+  const showTable = fullscreenPanel === 'table' || (fullscreenPanel === null && !mapInSeparateWindow) || (fullscreenPanel === null && mapInSeparateWindow)
+  const showMap = fullscreenPanel === 'map' || (fullscreenPanel === null && !mapInSeparateWindow)
   const { user } = useAuth()
   const isSiteOwner = isAdmin(user?.email)
   // 「登記取得」モーダルを開く対象 work_area id。1 度に 1 件だけ。
@@ -696,11 +735,23 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
       )}
 
       <div className="flex-1 flex overflow-hidden">
-        {/* 左側: 区域一覧 */}
-        <div className="w-1/2 flex flex-col overflow-hidden border-r p-4">
+        {/* 左側: 区域一覧 (fullscreen 'map' なら非表示) */}
+        {showTable && (
+        <div className={`${showMap ? 'w-1/2 border-r' : 'w-full'} flex flex-col overflow-hidden p-4`}>
           <div className="flex items-center justify-between mb-4 gap-2">
             <h3 className="text-lg font-semibold">区域登録</h3>
             <div className="flex items-center gap-2">
+              {mapInSeparateWindow && !isPopupWindow && (
+                <button
+                  type="button"
+                  onClick={openMapInNewWindow}
+                  className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50 bg-white"
+                  title="地図を別ウィンドウで開く"
+                >
+                  <MapIcon className="h-3.5 w-3.5" />
+                  地図を別ウィンドウ
+                </button>
+              )}
               {isBoundarySurvey && (
                 <>
                   {/* 点種フィルター・設置状態フィルターは座標管理ページに集約。
@@ -1066,8 +1117,10 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
           )}
         </div>
 
-        {/* 右側: 地図 */}
-        <div className="w-1/2 bg-slate-100 relative">
+        )}
+        {/* 右側: 地図 (fullscreen 'table' or mapInSeparateWindow なら非表示) */}
+        {showMap && (
+        <div className={`${showTable ? 'w-1/2' : 'w-full'} bg-slate-100 relative`}>
           <div className="absolute top-2 right-2 z-[1000] flex items-center gap-2">
             {/* 地籍時のみ: 点名 / 地番名のラベル表示切替 */}
             {isBoundarySurvey && (
@@ -1216,7 +1269,19 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
               )}
             </div>
           )}
+          {/* 別ウィンドウ (?panel=map) の閉じるボタン */}
+          {isPopupWindow && (
+            <button
+              type="button"
+              onClick={() => window.close()}
+              className="absolute top-2 left-2 z-[1000] flex items-center gap-1 px-2 py-1.5 text-sm rounded border shadow bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
+              title="ウィンドウを閉じる"
+            >
+              閉じる
+            </button>
+          )}
         </div>
+        )}
       </div>
 
 

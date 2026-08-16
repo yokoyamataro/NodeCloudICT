@@ -639,6 +639,7 @@ export function BoundarySurveyWorkAreaPage() {
         workType="boundary_survey"
         areaLabel="地番管理"
         readOnly={readOnly}
+        mapInSeparateWindow={true}
         headerActions={
           <div className="flex items-center gap-2">
             {/* 座標数 / 地番数 の使用量表示は設定画面 (FarmSettingsPage) に集約。
