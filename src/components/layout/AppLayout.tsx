@@ -294,6 +294,19 @@ export function AppLayout() {
   }
   const showSidebar = allowSidebar && !sidebarCollapsed
 
+  // 別ウィンドウ (?panel=...) で開かれた場合は ヘッダ / サイドバー を隠して
+  // Outlet だけ全画面表示する。
+  const isPopupPanel =
+    typeof window !== 'undefined' &&
+    !!new URLSearchParams(window.location.search).get('panel')
+  if (isPopupPanel) {
+    return (
+      <div className="h-screen flex flex-col overflow-hidden">
+        <Outlet />
+      </div>
+    )
+  }
+
   return (
     <div className="h-screen flex flex-col overflow-hidden">
       {/* 上部ヘッダー */}

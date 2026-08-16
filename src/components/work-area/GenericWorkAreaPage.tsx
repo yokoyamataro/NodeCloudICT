@@ -301,6 +301,36 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
     }
   }, [selectedAreaId])
 
+  // 別ウィンドウ (?panel=map) の 地図で 地番選択された場合、opener に
+  // postMessage で 通知して 元ウィンドウの表側で 該当行が選択されるようにする。
+  // 逆方向 (親 → 子) は必要になったら追加。
+  useEffect(() => {
+    if (!isPopupWindow) return
+    if (typeof window === 'undefined' || !window.opener) return
+    try {
+      window.opener.postMessage(
+        { type: 'nc:workarea:select-area', areaId: selectedAreaId },
+        window.location.origin,
+      )
+    } catch {
+      // ignore (opener が閉じている 等)
+    }
+  }, [selectedAreaId, isPopupWindow])
+
+  // 親ウィンドウ側: 子ウィンドウ (?panel=map) からの postMessage を受けて
+  // 表の該当行を選択・スクロール。
+  useEffect(() => {
+    if (isPopupWindow) return
+    const onMessage = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin) return
+      const data = e.data as { type?: string; areaId?: string | null } | null
+      if (!data || data.type !== 'nc:workarea:select-area') return
+      setSelectedAreaId(data.areaId ?? null)
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [isPopupWindow])
+
   useEffect(() => {
     if (!isBoundarySurvey) {
       clearParcels()
