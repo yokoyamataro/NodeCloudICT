@@ -1412,14 +1412,10 @@ export function CrossSectionChart({
                         stroke={isSelected ? '#d97706' : 'white'}
                         strokeWidth={isSelected ? 2 : 1.5}
                         style={
-                          isSelectionActive
-                            ? { cursor: 'crosshair', pointerEvents: 'none' }
-                            : editable
-                              ? { cursor: 'ns-resize' }
-                              : undefined
+                          editable ? { cursor: 'ns-resize' } : undefined
                         }
                         onMouseDown={
-                          !isSelectionActive && editable
+                          editable
                             ? (e) => {
                                 e.preventDefault()
                                 e.stopPropagation()
@@ -1436,7 +1432,7 @@ export function CrossSectionChart({
                             : undefined
                         }
                         onClick={
-                          !isSelectionActive && editable
+                          editable
                             ? (e) => {
                                 if (suppressNextClickRef.current) {
                                   suppressNextClickRef.current = false
@@ -1460,20 +1456,22 @@ export function CrossSectionChart({
                           <title>上下ドラッグで計画高変更 / クリックで数値入力</title>
                         )}
                       </circle>
-                      {/* 選択モード時: マーカーより 大きい 透明円を マーカー上に重ねて
-                          クリック当たり判定を広げる (マーカーは pointer-events: none)。 */}
+                      {/* 選択モード時: マーカー上に大きい半透明円を重ねる。
+                          - pointer-events: all で確実にクリックを受ける (fill=transparent はブラウザ差異回避)
+                          - onMouseDown で 即座に onPointSelected を呼ぶ (click 発火に依存しない)
+                          - 半透明にして 選択モード中であることを視覚化 */}
                       {isSelectionActive && (
                         <circle
                           cx={x}
                           cy={cy}
-                          r={r + 8}
-                          fill="transparent"
-                          style={{ cursor: 'crosshair' }}
+                          r={r + 10}
+                          fill="#fbbf24"
+                          fillOpacity={0.15}
+                          stroke="#f59e0b"
+                          strokeWidth={1}
+                          strokeOpacity={0.5}
+                          style={{ cursor: 'crosshair', pointerEvents: 'all' }}
                           onMouseDown={(e) => {
-                            e.preventDefault()
-                            e.stopPropagation()
-                          }}
-                          onClick={(e) => {
                             e.preventDefault()
                             e.stopPropagation()
                             onPointSelected!(point.pointId)
