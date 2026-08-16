@@ -5,7 +5,7 @@ import { useStakingStore, type SurveyCategory } from '@/stores/stakingStore'
 import { supabase } from '@/lib/supabase'
 
 // 起工測量・出来形測量の実測記録を一覧表示し、SIMA/CSV で出力するページ。
-// /underdrain/field-data に紐付け（旧プレースホルダ「現場データ」を置き換え）。
+// 工区横断のトップレベル経路 /staking-records に紐付け。
 
 const CATEGORY_LABEL: Record<SurveyCategory | 'all', string> = {
   all: '全て',

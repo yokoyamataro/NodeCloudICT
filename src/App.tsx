@@ -368,7 +368,6 @@ function AppRoutes() {
           <Route path="pipe-wiring" element={<PipeWiringPage />} />
           <Route path="depth-calc" element={<DepthCalcPage />} />
           <Route path="landxml" element={<LandXMLPage />} />
-          <Route path="field-data" element={<StakingRecordsPage />} />
         </Route>
         {/* 客土工事 */}
         <Route path="soil-import">

@@ -11,7 +11,6 @@ import {
   Cable,
   Ruler,
   FileOutput,
-  Eye,
   Square,
   LogOut,
   User,
@@ -90,7 +89,6 @@ const navigation: NavGroup[] = [
       { name: '座標計算', href: '/underdrain/coordinate-calc', icon: MapPin },
       { name: '施工計画', href: '/underdrain/depth-calc', icon: Ruler },
       { name: 'LandXML出力', href: '/underdrain/landxml', icon: FileOutput },
-      { name: '現場データ（起工測量記録）', href: '/underdrain/field-data', icon: Eye },
     ],
   },
   {
