@@ -8,8 +8,10 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { MapContainer, TileLayer, CircleMarker, Polyline, Tooltip, useMap } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import {
-  ArrowLeft, FileText, Loader2, Crosshair, Radio, Settings, Database,
+  ArrowLeft, FileText, Loader2, Crosshair, Radio, Settings, Database, X, ChevronDown, ChevronUp,
 } from 'lucide-react'
+import type { PlanRow } from '@/stores/constructionPlanStore'
+import { CrossSectionChart } from '@/components/charts/CrossSectionChart'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
@@ -83,7 +85,24 @@ export function MobileUnderdrainConstructionPage() {
 
   // 取込みデータ
   // 中心線形は lat/lng のポリラインの集合として保持（LandXML の Alignment / 施工計画の Pipe どちらからでも作る）
-  const [alignmentLines, setAlignmentLines] = useState<Array<[number, number][]>>([])
+  // 施工計画から取込んだ場合は pipeId を保持し、タップで 縦断図表示のトリガに使う
+  const [alignmentLines, setAlignmentLines] = useState<Array<{
+    pipeId: string | null
+    positions: [number, number][]
+  }>>([])
+  // タップで選択された系統 (縦断図表示用)。null の間はチャート非表示。
+  const [selectedSystem, setSelectedSystem] = useState<{
+    rows: PlanRow[]
+    systemIndex: number
+    endType: 'outlet' | 'merge' | null
+    label: string
+  } | null>(null)
+  const [profileCollapsed, setProfileCollapsed] = useState(false)
+  // 管路 ID → { groupIndex, systemIndex } (タップ時に系統を逆引きする用)
+  const [pipeSystemLookup, setPipeSystemLookup] = useState<Map<string, {
+    groupIndex: number
+    systemIndex: number
+  }>>(new Map())
   const [trenchSurface, setTrenchSurface] = useState<TinSurfaceLike | null>(null)
   const [groundSurface, setGroundSurface] = useState<ParsedSurface | null>(null)
   const [dataSourceLabel, setDataSourceLabel] = useState<string | null>(null)
@@ -191,16 +210,20 @@ export function MobileUnderdrainConstructionPage() {
   }, [])
 
   // 中心線形：Alignment[] → lat/lng ポリラインに変換
-  const buildAlignmentLines = (als: Alignment[], conv: CoordinateConverter): Array<[number, number][]> => {
-    const lines: Array<[number, number][]> = []
+  // LandXML 経由は pipeId 不明なので null にしておく (縦断図タップ非対応)
+  const buildAlignmentLines = (
+    als: Alignment[],
+    conv: CoordinateConverter,
+  ): Array<{ pipeId: string | null; positions: [number, number][] }> => {
+    const lines: Array<{ pipeId: string | null; positions: [number, number][] }> = []
     for (const al of als) {
       for (const seg of al.segments) {
         const xyPts = segmentToPolyline(seg, 12)
-        const llPts: [number, number][] = xyPts.map(([x, y]) => {
+        const positions: [number, number][] = xyPts.map(([x, y]) => {
           const r = conv.toLatLng(x, y)
           return [r.lat, r.lng]
         })
-        lines.push(llPts)
+        lines.push({ pipeId: null, positions })
       }
     }
     return lines
@@ -237,17 +260,32 @@ export function MobileUnderdrainConstructionPage() {
       // 状態反映後に最新値を取得
       const freshPipes = useUnderdrainStore.getState().pipes
       const freshPlan = useConstructionPlanStore.getState().planGroups
-      // 中心線形：各暗渠の頂点を順に結ぶポリラインへ
-      const lines: Array<[number, number][]> = []
+      // 中心線形：各暗渠の頂点を順に結ぶポリラインへ (pipeId 保持)
+      const lines: Array<{ pipeId: string | null; positions: [number, number][] }> = []
       for (const pipe of freshPipes) {
         if (pipe.vertices.length < 2) continue
-        const ll: [number, number][] = pipe.vertices.map((v) => {
+        const positions: [number, number][] = pipe.vertices.map((v) => {
           const r = converter.toLatLng(v.x, v.y)
           return [r.lat, r.lng]
         })
-        lines.push(ll)
+        lines.push({ pipeId: pipe.id, positions })
       }
       setAlignmentLines(lines)
+      // pipeId → { groupIndex, systemIndex } のルックアップを構築
+      // planGroups の各行の absorptionPipeId / collectorPipeId を辿って登録する
+      const lookup = new Map<string, { groupIndex: number; systemIndex: number }>()
+      freshPlan.forEach((g, gi) => {
+        for (const r of g.rows) {
+          const si = r.systemIndex ?? 1
+          if (r.absorptionPipeId && !lookup.has(r.absorptionPipeId)) {
+            lookup.set(r.absorptionPipeId, { groupIndex: gi, systemIndex: si })
+          }
+          if (r.collectorPipeId && !lookup.has(r.collectorPipeId)) {
+            lookup.set(r.collectorPipeId, { groupIndex: gi, systemIndex: si })
+          }
+        }
+      })
+      setPipeSystemLookup(lookup)
       // 床掘 TIN を施工計画から構築（既定パラメータ）
       const trench = buildTrenchTin({
         planGroups: freshPlan,
@@ -451,14 +489,55 @@ export function MobileUnderdrainConstructionPage() {
             />
           ))}
 
-          {/* 中心線形（青） */}
-          {alignmentLines.map((line, i) => (
-            <Polyline
-              key={`align-${i}`}
-              positions={line}
-              pathOptions={{ color: '#1d4ed8', weight: 3, opacity: 0.9 }}
-            />
-          ))}
+          {/* 中心線形（青）。施工計画から取込んだ (pipeId あり) 線は タップで縦断図を表示 */}
+          {alignmentLines.map((line, i) => {
+            const isTappable = line.pipeId != null
+            const info = line.pipeId ? pipeSystemLookup.get(line.pipeId) : null
+            const isSelected =
+              !!info &&
+              !!selectedSystem &&
+              info.systemIndex === selectedSystem.systemIndex &&
+              // 同一系統の全 pipe を強調 (groupIndex は selectedSystem 側に無いので systemIndex 一致で近似)
+              true
+            return (
+              <Polyline
+                key={`align-${i}`}
+                positions={line.positions}
+                pathOptions={{
+                  color: isSelected ? '#f97316' : '#1d4ed8',
+                  weight: isSelected ? 5 : isTappable ? 4 : 3,
+                  opacity: 0.9,
+                }}
+                eventHandlers={
+                  isTappable && info
+                    ? {
+                        click: () => {
+                          const group = useConstructionPlanStore
+                            .getState()
+                            .planGroups[info.groupIndex]
+                          if (!group) return
+                          const rows = group.rows.filter(
+                            (r) => (r.systemIndex ?? 1) === info.systemIndex,
+                          )
+                          if (rows.length === 0) return
+                          // endType: 最後の行の systemEndType を優先
+                          const last = rows[rows.length - 1]
+                          const endType: 'outlet' | 'merge' | null =
+                            last?.systemEndType ?? null
+                          setSelectedSystem({
+                            rows,
+                            systemIndex: info.systemIndex,
+                            endType,
+                            label: `${group.name} / 系統 ${info.systemIndex}`,
+                          })
+                          setProfileCollapsed(false)
+                        },
+                      }
+                    : undefined
+                }
+              />
+            )
+          })}
 
           {/* 起工測量の暗渠構成点 */}
           {showSurveyPoints && surveyMarkers.map((m) => (
@@ -484,6 +563,46 @@ export function MobileUnderdrainConstructionPage() {
             />
           )}
         </MapContainer>
+
+        {/* 縦断図パネル: 管路タップ で選択された系統の断面を 地図下部にオーバーレイ表示 */}
+        {selectedSystem && (
+          <div
+            className="absolute inset-x-0 bottom-0 z-[1001] bg-white border-t border-slate-300 shadow-2xl flex flex-col"
+            style={{ height: profileCollapsed ? 42 : Math.min(340, window.innerHeight * 0.5) }}
+          >
+            <div className="flex items-center gap-2 px-3 py-1.5 border-b bg-blue-50 flex-shrink-0">
+              <span className="text-xs font-semibold text-blue-800 truncate flex-1">
+                縦断図: {selectedSystem.label}
+              </span>
+              <button
+                type="button"
+                onClick={() => setProfileCollapsed((v) => !v)}
+                className="p-1 rounded hover:bg-white text-slate-600"
+                title={profileCollapsed ? '展開' : '折りたたむ'}
+              >
+                {profileCollapsed ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedSystem(null)}
+                className="p-1 rounded hover:bg-white text-slate-600"
+                title="閉じる"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            {!profileCollapsed && (
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <CrossSectionChart
+                  systemRows={selectedSystem.rows}
+                  systemIndex={selectedSystem.systemIndex}
+                  endType={selectedSystem.endType}
+                  chartHeight={280}
+                />
+              </div>
+            )}
+          </div>
+        )}
 
         {/* 追従トグル */}
         <button
