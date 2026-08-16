@@ -6,6 +6,7 @@ import { useUnderdrainStore, EXTENDED_PIPE_TYPES, type ExtendedPipeType } from '
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useWorkAreaStore, type WorkAreaRow } from '@/stores/workAreaStore'
 import { useMapViewStore } from '@/stores/mapViewStore'
+import { useStakingStore } from '@/stores/stakingStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import type { PipeVertex } from '@/types/database'
 
@@ -359,6 +360,10 @@ interface PipeMapProps {
   showPipeSpecs?: boolean
   /** 管路クリック時のポップアップ (配線番号/管種/延長/管径) を無効化する */
   hidePipePopup?: boolean
+  /** 実測記録 (staking_records) をマーカー表示するか */
+  showStakingRecords?: boolean
+  /** 実測記録の補正後標高 = measuredZ + stakingZOffset で計算するオフセット (m) */
+  stakingZOffset?: number
   /**
    * 施工計画: 選択配線の各測点に地盤高/計画高/切深を表示するオーバーレイ。
    * points は上流→下流の順で渡す。 segments はその中間点にラベルを置くのに使う。
@@ -495,6 +500,57 @@ const ZONE_COLORS = [
   '#06b6d4', // シアン
 ]
 
+// 実測記録用マーカーアイコン (点名 + 下段に補正後標高)
+// isAsbuilt=true (出来形) は緑、false (起工) は青。
+function createStakingIcon(
+  name: string,
+  correctedZ: number | null,
+  isAsbuilt: boolean,
+): L.DivIcon {
+  const dotColor = isAsbuilt ? '#059669' : '#2563eb'
+  const nameColor = isAsbuilt ? '#065f46' : '#1e3a8a'
+  const zText = correctedZ != null && Number.isFinite(correctedZ) ? correctedZ.toFixed(3) : '-'
+  return L.divIcon({
+    html: `<div style="display:flex; flex-direction:column; align-items:center; line-height:1.05;">
+      <div style="
+        font-size: 10px;
+        font-weight: 600;
+        color: ${nameColor};
+        background-color: rgba(255, 255, 255, 0.9);
+        padding: 1px 4px;
+        border-radius: 3px;
+        white-space: nowrap;
+        border: 1px solid ${dotColor};
+        box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+        margin-bottom: 2px;
+      ">${name || '(名無し)'}</div>
+      <div style="
+        width: 10px;
+        height: 10px;
+        background-color: ${dotColor};
+        border-radius: 50%;
+        border: 2px solid white;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+      "></div>
+      <div style="
+        font-size: 10px;
+        font-weight: 600;
+        color: #1e293b;
+        background-color: rgba(255, 255, 255, 0.9);
+        padding: 1px 4px;
+        border-radius: 3px;
+        white-space: nowrap;
+        border: 1px solid #cbd5e1;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+        margin-top: 2px;
+      ">${zText}</div>
+    </div>`,
+    className: 'staking-marker',
+    iconSize: [0, 0],
+    iconAnchor: [0, 0],
+  })
+}
+
 // 管切り替え点用の〇マーカーアイコンを生成
 function createPipeChangeIcon(label: string): L.DivIcon {
   return L.divIcon({
@@ -557,11 +613,14 @@ export function PipeMap({
   highlightedVertex = null,
   showPipeSpecs = false,
   hidePipePopup = false,
+  showStakingRecords = false,
+  stakingZOffset = 0,
   planOverlay,
 }: PipeMapProps) {
   const { pipes } = useUnderdrainStore()
   const { zone, coordinates } = useCoordinateStore()
   const workAreas = useWorkAreaStore((state) => state.workAreas['underdrain'] ?? EMPTY_WORK_AREAS)
+  const stakingRecords = useStakingStore((s) => s.records)
 
   const converter = new CoordinateConverter(zone)
 
@@ -1226,6 +1285,29 @@ export function PipeMap({
             eventHandlers={selectablePoints && onPointClick ? {
               click: () => onPointClick(coord.id),
             } : {}}
+          />
+        )
+      })}
+
+      {/* 実測記録 (staking_records) マーカー — 点名 + 下段に補正後標高 */}
+      {showStakingRecords && stakingRecords.map((r) => {
+        if (r.measuredX == null || r.measuredY == null) return null
+        let ll: { lat: number; lng: number }
+        try {
+          ll = converter.toLatLng(r.measuredX, r.measuredY)
+        } catch {
+          return null
+        }
+        if (!Number.isFinite(ll.lat) || !Number.isFinite(ll.lng)) return null
+        const rawZ = r.measuredZ
+        const correctedZ = rawZ != null ? rawZ + stakingZOffset : null
+        const isAsbuilt = r.surveyCategory === 'asbuilt'
+        return (
+          <Marker
+            key={`staking-${r.id}`}
+            position={[ll.lat, ll.lng]}
+            icon={createStakingIcon(r.targetName ?? '', correctedZ, isAsbuilt)}
+            interactive={false}
           />
         )
       })}

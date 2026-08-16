@@ -45,6 +45,8 @@ import { useFarmStore } from '@/stores/farmStore'
 import { useUnderdrainStore, PIPE_DIAMETERS } from '@/stores/underdrainStore'
 import { useSurveyStore } from '@/stores/surveyStore'
 import { usePipeWiringStore } from '@/stores/pipeWiringStore'
+import { useStakingStore } from '@/stores/stakingStore'
+import { supabase } from '@/lib/supabase'
 // generatePlanFromWiring は配管系統ストアの in-memory state を参照する。
 // 未保存変更がある場合は saveWiring 後に再取得せず、そのまま生成対象にする。
 import {
@@ -62,6 +64,7 @@ export function DepthCalcPage() {
   const { fetchPipes, pipes } = useUnderdrainStore()
   const { fetchSurveyData } = useSurveyStore()
   const { fetchWiring, saveWiring, hasChanges: hasWiringChanges } = usePipeWiringStore()
+  const fetchStakingRecords = useStakingStore((s) => s.fetchRecords)
   // 配管系統の生データ（wiringRowId → rowType / isMergePipe / mergeSystemIndex の最新状態）
   // groupedBySystem 等で planGroups の wiringRowType が古い／未設定でも、
   // 最新の wiring 行から終端種別を決定するために購読する。
@@ -180,7 +183,7 @@ export function DepthCalcPage() {
   // 編集中セルに対応する地図フォーカス点 (x, y)
   const [focusedEditPoint, setFocusedEditPoint] = useState<{ x: number; y: number } | null>(null)
 
-  // 地図オーバーレイの表示切替 (地盤高/計画高/切深/勾配/区間距離)
+  // 地図オーバーレイの表示切替 (地盤高/計画高/切深/勾配/区間距離/実測記録)
   const [overlayFlags, setOverlayFlags] = useState({
     showGround: true,
     showPlanned: true,
@@ -188,7 +191,12 @@ export function DepthCalcPage() {
     showSlope: true,
     showDistance: true,
     showDiameter: true,
+    showStaking: false,
   })
+
+  // 実測記録の Z 補正値 (DB: design_survey_calibration.dz_offset, LS フォールバック)。
+  // 地図の実測マーカーで「補正後 Z = measuredZ + stakingZOffset」を表示するのに使用。
+  const [stakingZOffset, setStakingZOffset] = useState<number>(0)
 
   // 水理計算パラメータ（配線間隔・計画流量）は工区ごとに Store で永続化
   const hydraulicByFarm = useHydraulicSettingsStore((s) => s.byFarm)
@@ -397,8 +405,45 @@ export function DepthCalcPage() {
       fetchSurveyData(currentFarm.id)
       fetchWiring(currentFarm.id)
       fetchPlan(currentFarm.id)
+      fetchStakingRecords(currentFarm.id)
     }
-  }, [currentFarm, fetchPipes, fetchSurveyData, fetchWiring, fetchPlan])
+  }, [currentFarm, fetchPipes, fetchSurveyData, fetchWiring, fetchPlan, fetchStakingRecords])
+
+  // Z 補正値: DB (design_survey_calibration.dz_offset) 優先、fallback localStorage。
+  // StakingRecordsPage / reloadGroundHeights と同じロジック (共有前提)。
+  useEffect(() => {
+    if (!currentFarm) {
+      setStakingZOffset(0)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      let value = 0
+      try {
+        const { data } = await supabase
+          .from('design_survey_calibration')
+          .select('dz_offset')
+          .eq('farm_id', currentFarm.id)
+          .maybeSingle()
+        const row = data as { dz_offset: number | string } | null
+        if (row?.dz_offset != null) {
+          const v = Number(row.dz_offset)
+          if (Number.isFinite(v)) value = v
+        }
+      } catch { /* fallback */ }
+      if (value === 0) {
+        try {
+          const raw = typeof localStorage !== 'undefined'
+            ? localStorage.getItem(`staking:zOffset:${currentFarm.id}`)
+            : null
+          const v = raw != null ? parseFloat(raw) : 0
+          if (Number.isFinite(v)) value = v
+        } catch { /* ignore */ }
+      }
+      if (!cancelled) setStakingZOffset(value)
+    })()
+    return () => { cancelled = true }
+  }, [currentFarm])
 
 
   // 施工計画を生成
@@ -2511,6 +2556,8 @@ export function DepthCalcPage() {
               showDirection={true}
               hidePipePopup
               planOverlay={planOverlayData ?? undefined}
+              showStakingRecords={overlayFlags.showStaking}
+              stakingZOffset={stakingZOffset}
               onPipeSelect={(id) => handleMapPipeSelect(id)}
             />
             {/* オーバーレイ表示切替チェックボックス (地図の右上に重ねる) */}
@@ -2570,6 +2617,19 @@ export function DepthCalcPage() {
                   className="h-3 w-3"
                 />
                 <span>区間距離</span>
+              </label>
+              <div className="border-t my-1" />
+              <label
+                className="flex items-center gap-1 text-slate-800"
+                title={`実測記録 (staking_records) のマーカー表示 (Z 補正値: ${stakingZOffset.toFixed(3)} m)`}
+              >
+                <input
+                  type="checkbox"
+                  checked={overlayFlags.showStaking}
+                  onChange={(e) => setOverlayFlags((s) => ({ ...s, showStaking: e.target.checked }))}
+                  className="h-3 w-3"
+                />
+                <span className="text-blue-700">実測記録</span>
               </label>
             </div>
           </div>
