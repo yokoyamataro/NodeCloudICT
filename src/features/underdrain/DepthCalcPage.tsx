@@ -230,9 +230,8 @@ export function DepthCalcPage() {
   // 選択中の管路ID（地図フォーカス用 + 情報パネル表示）
   const [focusedPipeId, setFocusedPipeId] = useState<string | null>(null)
 
-  // 上下／左右パネルのリサイズ状態（ドラッグで調整）
+  // 左右パネルのリサイズ状態（ドラッグで調整）
   const [tableWidthPct, setTableWidthPct] = useState(50)
-  const [bottomHeightPx, setBottomHeightPx] = useState(280)
   const horizontalContainerRef = useRef<HTMLDivElement>(null)
   const mainContainerRef = useRef<HTMLDivElement>(null)
   // 表本文（行が並ぶスクロール領域）への参照。地図クリックでこの中をスクロール。
@@ -1901,6 +1900,16 @@ export function DepthCalcPage() {
     return tabs
   }, [groupedBySystem])
 
+  // 縦断図 popup (?panel=chart) で開いた時、系統未選択なら 先頭系統を自動選択。
+  // 通常表示 では 縦断図は表示しないため、popup 側で 空表示を避けるための初期化。
+  useEffect(() => {
+    if (fullscreenPanel !== 'chart') return
+    if (selectedSystem) return
+    if (flatTabs.length === 0) return
+    const first = flatTabs[0]
+    setSelectedSystem({ groupIndex: first.groupIndex, systemIndex: first.systemIndex })
+  }, [fullscreenPanel, selectedSystem, flatTabs])
+
   // 系統内の吸水行 → 同系統の集水 を 1 つの「断面」として、
   // 全タブを順に並べたグローバルなセクション一覧。前/次ボタンと縦断図タブで共有する。
   type GlobalScope = {
@@ -2202,6 +2211,16 @@ export function DepthCalcPage() {
                     title="縦断図 DXF を全系統一括出力"
                   >
                     <PenTool className="h-4 w-4" />
+                    縦断DXF
+                  </button>
+                  <div className="w-px h-6 bg-slate-300" />
+                  <button
+                    onClick={() => openPanelInNewWindow('chart')}
+                    disabled={saving}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 whitespace-nowrap"
+                    title="縦断図を別ウィンドウで表示"
+                  >
+                    <Maximize2 className="h-4 w-4" />
                     縦断図
                   </button>
                 </>
@@ -2635,44 +2654,10 @@ export function DepthCalcPage() {
           </div>
         </div>
 
-        {/* 横スプリッタ（上下リサイズ） */}
-        {fullscreenPanel === null && (
-          <div
-            role="separator"
-            aria-orientation="horizontal"
-            onMouseDown={(e) => {
-              e.preventDefault()
-              const onMove = (ev: MouseEvent) => {
-                const rect = mainContainerRef.current?.getBoundingClientRect()
-                if (!rect) return
-                const newH = rect.bottom - ev.clientY
-                setBottomHeightPx(Math.max(120, Math.min(rect.height - 120, newH)))
-              }
-              const onUp = () => {
-                window.removeEventListener('mousemove', onMove)
-                window.removeEventListener('mouseup', onUp)
-                document.body.style.cursor = ''
-                document.body.style.userSelect = ''
-              }
-              document.body.style.cursor = 'row-resize'
-              document.body.style.userSelect = 'none'
-              window.addEventListener('mousemove', onMove)
-              window.addEventListener('mouseup', onUp)
-            }}
-            className="h-1 cursor-row-resize bg-slate-200 hover:bg-blue-400 active:bg-blue-500 flex-shrink-0 transition-colors"
-            title="ドラッグで上下分割を調整"
-          />
-        )}
-
-        {/* 下部: 断面図エリア */}
-        <div
-          className={
-            fullscreenPanel === 'chart'
-              ? 'fixed inset-0 z-[9999] bg-slate-50 flex flex-col'
-              : 'flex-shrink-0 border-t bg-slate-50 flex flex-col relative'
-          }
-          style={fullscreenPanel === 'chart' ? undefined : { height: `${bottomHeightPx}px` }}
-        >
+        {/* 縦断図: 別ウィンドウ (?panel=chart) でのみ表示。通常レイアウトでは非表示。
+            表 + 平面図 の 2 画面構成にし、縦断図はツールバー「縦断図」ボタンで popup 展開する。 */}
+        {fullscreenPanel === 'chart' && (
+        <div className="fixed inset-0 z-[9999] bg-slate-50 flex flex-col">
           <button
             type="button"
             onClick={() => handleToggleFullscreen('chart')}
@@ -3058,6 +3043,7 @@ export function DepthCalcPage() {
             )}
           </div>
         </div>
+        )}
       </div>
 
       {/* 生成確認ダイアログ — 読み込む系統を選択できる */}
