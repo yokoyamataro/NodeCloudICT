@@ -448,7 +448,13 @@ export function CrossSectionChart({
   }, [])
 
   // ドラッグ中の点（再描画トリガ用に state も持つ）
-  const dragRef = useRef<{ pointId: string } | null>(null)
+  const dragRef = useRef<{
+    pointId: string
+    /** ドラッグ開始時の マウス Y (clientY, px) */
+    startClientY: number
+    /** ドラッグ開始時の 計画高 (m) */
+    startHeight: number
+  } | null>(null)
   const [draggingPointId, setDraggingPointId] = useState<string | null>(null)
   // ドラッグ後の click を抑制するためのフラグ（mousemove で true になり、次の click で消費）
   const suppressNextClickRef = useRef(false)
@@ -565,13 +571,21 @@ export function CrossSectionChart({
       const cb = onPlannedHeightChangeRef.current
       if (!cb) return
       suppressNextClickRef.current = true
-      const y = getSvgY(e.clientY)
-      if (y == null) return
+      // 感度スケール: マウスの縦移動 (px) を そのまま高度 (m) に変換すると
+      // 微調整がしづらいため、YScale (px/m) の 30% だけを 反映させる。
+      // 例: yScale が 100 px/m のとき、マウスを 10 px 動かすと 0.03 m 変化。
+      const { startClientY, startHeight, pointId } = dragRef.current
+      const pxPerMeter = yScale(minMaxRef.current.min) - yScale(minMaxRef.current.min + 1)
+      // pxPerMeter は 正 (画面座標は下が大きく、高さは上が大きい ため 逆号)
+      const SENSITIVITY = 0.3
+      const deltaPx = e.clientY - startClientY
+      // 高さ変化 = マウス下方向 (deltaPx > 0) で 高さ減少
+      const deltaHeight = -(deltaPx / pxPerMeter) * SENSITIVITY
       const { min, max } = minMaxRef.current
-      const raw = Math.max(min, Math.min(max, yToHeightRef.current(y)))
-      // ドラッグはセンチ単位 (0.01m) でスナップ
+      const raw = Math.max(min, Math.min(max, startHeight + deltaHeight))
+      // センチ単位 (0.01m) でスナップ
       const h = Math.round(raw * 100) / 100
-      cb(dragRef.current.pointId, h)
+      cb(pointId, h)
     }
     const onUp = () => {
       if (!dragRef.current) return
@@ -649,7 +663,14 @@ export function CrossSectionChart({
 
   // 各スパンの勾配を計算
   const slopeData = useMemo(() => {
-    const slopes: { startIdx: number; endIdx: number; slope: string; distance: number }[] = []
+    const slopes: {
+      startIdx: number
+      endIdx: number
+      slope: string
+      distance: number
+      /** 逆勾配 (下流の方が高い): true / 水平: false / 順勾配: false */
+      isReverse: boolean
+    }[] = []
 
     for (let i = 0; i < sectionData.length - 1; i++) {
       const p1 = sectionData[i]
@@ -666,6 +687,7 @@ export function CrossSectionChart({
             endIdx: i + 1,
             slope: `1/${Math.round(slopeValue)}`,
             distance,
+            isReverse: heightDiff < 0,
           })
         } else if (distance > 0 && heightDiff === 0) {
           slopes.push({
@@ -673,6 +695,7 @@ export function CrossSectionChart({
             endIdx: i + 1,
             slope: '水平',
             distance,
+            isReverse: false,
           })
         }
       }
@@ -1113,17 +1136,37 @@ export function CrossSectionChart({
                   fillOpacity={0.85}
                   rx={2}
                 />
-                {/* 勾配ラベルテキスト (区間勾配 = 緑) */}
-                <text
-                  x={midX}
-                  y={midY}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  className="text-[16px] font-medium"
-                  fill="#15803d"
-                >
-                  {slope.slope}
-                </text>
+                {/* 勾配ラベルテキスト (区間勾配)
+                    * 順勾配: 緑
+                    * 逆勾配 or 限界勾配不足: 赤 */}
+                {(() => {
+                  const dh =
+                    p1.plannedHeight != null && p2.plannedHeight != null
+                      ? p1.plannedHeight - p2.plannedHeight
+                      : null
+                  const kActual =
+                    dh != null && dh > 0 && slope.distance > 0
+                      ? slope.distance / dh
+                      : null
+                  const insufficient =
+                    p1.segmentCriticalK != null &&
+                    kActual != null &&
+                    kActual > p1.segmentCriticalK
+                  const warn = slope.isReverse || insufficient
+                  return (
+                    <text
+                      x={midX}
+                      y={midY}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      className="text-[16px] font-medium"
+                      fill={warn ? '#dc2626' : '#15803d'}
+                    >
+                      {slope.isReverse ? '逆 ' : ''}
+                      {slope.slope}
+                    </text>
+                  )
+                })()}
                 {/* 区間距離（小数1桁、括弧書き） */}
                 <text
                   x={midX}
@@ -1153,16 +1196,17 @@ export function CrossSectionChart({
                     φ{p1.segmentDiameter}
                   </text>
                 )}
-                {/* 限界勾配 (1/K) — さらに下段。実勾配より緩ければ 赤 (! 付き) */}
+                {/* 限界勾配 (1/K) — さらに下段。実勾配より緩ければ 赤 (! 付き)。
+                    逆勾配 も 赤警告 (kActual が計算できない → 明示的にダメ)。 */}
                 {showCriticalSlope && p1.segmentCriticalK != null && (() => {
-                  // 実勾配 (K_actual = distance / |Δh|) が 限界 K_limit より緩い場合は 赤警告
                   const dh = p1.plannedHeight != null && p2.plannedHeight != null
                     ? p1.plannedHeight - p2.plannedHeight
                     : null
                   const kActual = dh != null && dh > 0 && slope.distance > 0
                     ? slope.distance / dh
                     : null
-                  const warn = kActual != null && kActual > p1.segmentCriticalK
+                  const insufficient = kActual != null && kActual > p1.segmentCriticalK
+                  const warn = slope.isReverse || insufficient
                   return (
                     <text
                       x={midX}
@@ -1349,7 +1393,11 @@ export function CrossSectionChart({
                                 e.preventDefault()
                                 e.stopPropagation()
                                 suppressNextClickRef.current = false
-                                dragRef.current = { pointId: point.pointId }
+                                dragRef.current = {
+                                  pointId: point.pointId,
+                                  startClientY: e.clientY,
+                                  startHeight: point.plannedHeight!,
+                                }
                                 setDraggingPointId(point.pointId)
                                 document.body.style.cursor = 'ns-resize'
                                 document.body.style.userSelect = 'none'
