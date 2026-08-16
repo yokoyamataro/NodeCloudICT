@@ -1413,14 +1413,13 @@ export function CrossSectionChart({
                         strokeWidth={isSelected ? 2 : 1.5}
                         style={
                           isSelectionActive
-                            ? { cursor: 'crosshair' }
+                            ? { cursor: 'crosshair', pointerEvents: 'none' }
                             : editable
                               ? { cursor: 'ns-resize' }
                               : undefined
                         }
                         onMouseDown={
-                          // 選択モード時はドラッグを無効化 (クリック優先)
-                          editable && !isSelectionActive
+                          !isSelectionActive && editable
                             ? (e) => {
                                 e.preventDefault()
                                 e.stopPropagation()
@@ -1437,35 +1436,52 @@ export function CrossSectionChart({
                             : undefined
                         }
                         onClick={
-                          isSelectionActive
+                          !isSelectionActive && editable
                             ? (e) => {
-                                e.stopPropagation()
-                                onPointSelected!(point.pointId)
-                              }
-                            : editable
-                              ? (e) => {
-                                  if (suppressNextClickRef.current) {
-                                    suppressNextClickRef.current = false
-                                    return
-                                  }
-                                  e.stopPropagation()
-                                  const rect = svgRef.current?.getBoundingClientRect()
-                                  if (!rect) return
-                                  setEditPopup({
-                                    pointId: point.pointId,
-                                    x: e.clientX - rect.left,
-                                    y: cy - 8,
-                                    initialHeight: point.plannedHeight!,
-                                  })
-                                  setEditValue(point.plannedHeight!.toFixed(3))
+                                if (suppressNextClickRef.current) {
+                                  suppressNextClickRef.current = false
+                                  return
                                 }
-                              : undefined
+                                e.stopPropagation()
+                                const rect = svgRef.current?.getBoundingClientRect()
+                                if (!rect) return
+                                setEditPopup({
+                                  pointId: point.pointId,
+                                  x: e.clientX - rect.left,
+                                  y: cy - 8,
+                                  initialHeight: point.plannedHeight!,
+                                })
+                                setEditValue(point.plannedHeight!.toFixed(3))
+                              }
+                            : undefined
                         }
                       >
-                        {editable && (
+                        {editable && !isSelectionActive && (
                           <title>上下ドラッグで計画高変更 / クリックで数値入力</title>
                         )}
                       </circle>
+                      {/* 選択モード時: マーカーより 大きい 透明円を マーカー上に重ねて
+                          クリック当たり判定を広げる (マーカーは pointer-events: none)。 */}
+                      {isSelectionActive && (
+                        <circle
+                          cx={x}
+                          cy={cy}
+                          r={r + 8}
+                          fill="transparent"
+                          style={{ cursor: 'crosshair' }}
+                          onMouseDown={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                          }}
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            onPointSelected!(point.pointId)
+                          }}
+                        >
+                          <title>クリックで 連続勾配設定の {selectedPointIdsForSelection?.length === 0 ? '始点' : '終点'} に指定</title>
+                        </circle>
+                      )}
                       {showPlannedValue && (
                         <text
                           x={x + 7}
