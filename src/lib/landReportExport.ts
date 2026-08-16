@@ -621,69 +621,102 @@ interface FrameInfo {
   leftFrameCol: number   // 最左の 縦フレーム線が引かれる カラム (right border を持つ)
   rightFrameCol: number  // 最右の 縦フレーム線が引かれる カラム
   border?: BorderSide    // フレームの罫線スタイル (最初に見つかったものをサンプル)
-  topRow: number         // フレームが存在する 最上行 (元テンプレでの位置)
-  bottomRow: number      // フレームが存在する 最下行 (元テンプレでの位置)
+  /** 元テンプレで leftFrameCol に 罫線があった行 (絶対行番号) */
+  leftFrameRows: Set<number>
+  /** 元テンプレで rightFrameCol に 罫線があった行 */
+  rightFrameRows: Set<number>
 }
 function detectOuterFrame(ws: ExcelJS.Worksheet): FrameInfo {
   const maxRow = Math.max(200, ws.rowCount || 0, ws.actualRowCount || 0)
   const maxCol = Math.max(80, ws.columnCount || 0, ws.actualColumnCount || 0)
-  let minCol = Infinity
-  let maxColFound = -1
+  // 各カラムの 「そのカラムで right/left border を持つ行」 の Set を作成
+  const rowsByCol = new Map<number, Set<number>>()
   let sample: BorderSide | undefined
-  let topRow = Infinity
-  let bottomRow = -1
   for (let r = 1; r <= maxRow; r++) {
     const row = ws.getRow(r)
     for (let c = 1; c <= maxCol; c++) {
       const cell = row.getCell(c)
       const b = cell.border
       if (!b) continue
-      // ANY 罫線を持つセルを 「フレーム候補」とみなす
-      // (right だけ見ると 「AO の右罫線が left of AP に設定」 されているとき 検出漏れするため)
-      const hasAny = b.left?.style || b.right?.style || b.top?.style || b.bottom?.style
-      if (!hasAny) continue
-      if (c < minCol) minCol = c
-      if (c > maxColFound) maxColFound = c
-      if (r < topRow) topRow = r
-      if (r > bottomRow) bottomRow = r
+      const hasVerticalBorder = b.left?.style || b.right?.style
+      if (!hasVerticalBorder) continue
+      let s = rowsByCol.get(c)
+      if (!s) {
+        s = new Set()
+        rowsByCol.set(c, s)
+      }
+      s.add(r)
       if (!sample) {
         if (b.right?.style) sample = b.right as BorderSide
         else if (b.left?.style) sample = b.left as BorderSide
       }
     }
   }
+  // 縦フレーム候補は 「そのカラムに 縦罫線がある行数」が最も多いカラム。
+  // header の 単発罫線 (1〜数行) は 除外される。
+  const cols = Array.from(rowsByCol.entries())
+  let leftCol = -1
+  let rightCol = -1
+  let leftRows = new Set<number>()
+  let rightRows = new Set<number>()
+  if (cols.length > 0) {
+    // 行数が多い順にソート → 上位から カラム位置で 最左/最右 を選ぶ
+    const threshold = Math.max(5, Math.floor(Math.max(...cols.map(([, s]) => s.size)) * 0.5))
+    const structural = cols.filter(([, s]) => s.size >= threshold)
+    if (structural.length > 0) {
+      const sortedByCol = [...structural].sort((a, b) => a[0] - b[0])
+      leftCol = sortedByCol[0][0]
+      leftRows = sortedByCol[0][1]
+      rightCol = sortedByCol[sortedByCol.length - 1][0]
+      rightRows = sortedByCol[sortedByCol.length - 1][1]
+    }
+  }
   return {
-    leftFrameCol: minCol === Infinity ? -1 : minCol,
-    rightFrameCol: maxColFound,
+    leftFrameCol: leftCol,
+    rightFrameCol: rightCol,
     border: sample,
-    topRow: topRow === Infinity ? -1 : topRow,
-    bottomRow,
+    leftFrameRows: leftRows,
+    rightFrameRows: rightRows,
   }
 }
 
-/** 指定範囲の 各行の 左右フレーム カラムに right border を stamp する。
- *  内部の 罫線 (中間カラム) は 触らない。 */
-function stampFrameBorders(
+/** 元テンプレで frame 罫線があった行を、行操作後の位置 (シフト & 複製) に stamp する */
+function stampFrameRowsPrecise(
   ws: ExcelJS.Worksheet,
   frame: FrameInfo,
-  fromRow: number,
-  toRow: number,
+  jobs: SectionJob[],
 ): void {
-  if (!frame.border || frame.leftFrameCol < 0) return
-  const cols = frame.rightFrameCol > frame.leftFrameCol
-    ? [frame.leftFrameCol, frame.rightFrameCol]
-    : [frame.leftFrameCol]
-  for (let r = fromRow; r <= toRow; r++) {
-    const row = ws.getRow(r)
-    for (const col of cols) {
-      const cell = row.getCell(col)
-      if (cell.isMerged && cell.master && cell.master.address !== cell.address) continue
-      const cur = (cell.border ?? {}) as Record<string, BorderSide | undefined>
-      if (cur.right?.style) continue // 既にある行はそのまま
-      cell.border = { ...cur, right: frame.border } as unknown as ExcelJS.Borders
+  if (!frame.border) return
+  const apply = (targetRow: number, col: number) => {
+    if (col <= 0) return
+    const cell = ws.getRow(targetRow).getCell(col)
+    if (cell.isMerged && cell.master && cell.master.address !== cell.address) return
+    const cur = (cell.border ?? {}) as Record<string, BorderSide | undefined>
+    if (cur.right?.style) return
+    cell.border = { ...cur, right: frame.border } as unknown as ExcelJS.Borders
+  }
+  const process = (origRows: Set<number>, col: number) => {
+    for (const origRow of origRows) {
+      // 元位置のシフト後
+      const shifted = computeShift(origRow, jobs)
+      apply(shifted, col)
+      // 複製ブロック内なら、各コピーにも stamp
+      for (const job of jobs) {
+        if (job.count <= 1) continue
+        if (origRow < job.startRow || origRow > job.endRow) continue
+        const h = blockHeight(job)
+        const blockShifted = computeShift(job.startRow, jobs)
+        const rowOffset = origRow - job.startRow
+        for (let i = 1; i < job.count; i++) {
+          apply(blockShifted + i * h + rowOffset, col)
+        }
+      }
     }
   }
+  process(frame.leftFrameRows, frame.leftFrameCol)
+  process(frame.rightFrameRows, frame.rightFrameCol)
 }
+
 
 function processAllSections(
   ws: ExcelJS.Worksheet,
@@ -775,23 +808,20 @@ function processAllSections(
     }
   }
 
-  // 6) 外周フレームの 左右縦罫線を stamp:
-  //    元テンプレで フレームが存在していた行範囲 [topRow, bottomRow] を
-  //    シフト後の位置に変換して、その範囲だけ stamp する。
-  //    (これで 元々罫線がある領域全域を一貫させ、かつ ヘッダ/末尾の
-  //     空行には触らない)
+  // 6) 外周フレームを stamp:
+  //    元テンプレで 縦罫線が引かれていた行だけを 対象とする (行ピンポイント方式)。
+  //    行操作後のシフト位置 + 複製コピー位置 に stamp する。
+  //    これで:
+  //    - 元々罫線がない行 (ヘッダ / 末尾空行) には stamp しない
+  //    - 元々罫線がある行は シフト & 複製後も 罫線を維持
   console.log('[processAllSections] outer frame:', {
     leftCol: outerFrame.leftFrameCol,
     rightCol: outerFrame.rightFrameCol,
     borderStyle: outerFrame.border?.style,
-    origRowRange: `${outerFrame.topRow}-${outerFrame.bottomRow}`,
+    leftRows: outerFrame.leftFrameRows.size,
+    rightRows: outerFrame.rightFrameRows.size,
   })
-  if (outerFrame.topRow > 0 && outerFrame.bottomRow > 0) {
-    const shiftedTop = computeShift(outerFrame.topRow, jobs)
-    const shiftedBottom = computeShift(outerFrame.bottomRow, jobs)
-    console.log('[processAllSections] stamp range:', `${shiftedTop}-${shiftedBottom}`)
-    stampFrameBorders(ws, outerFrame, shiftedTop, shiftedBottom)
-  }
+  stampFrameRowsPrecise(ws, outerFrame, jobs)
 
   return replaced
 }
