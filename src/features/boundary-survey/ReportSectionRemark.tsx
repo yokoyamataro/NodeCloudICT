@@ -18,7 +18,13 @@ export function ReportSectionRemark({ body, onChange }: Props) {
   return (
     <div className="p-3 space-y-2">
       <div className="flex items-center justify-end">
-        <SnippetPickerButton category="remark" onInsert={insert} />
+        <SnippetPickerButton
+          category="remark"
+          onInsert={insert}
+          currentText={body.remark}
+          historyField="remark"
+          historyTitle="補足・特記事項"
+        />
       </div>
       <textarea
         value={body.remark}

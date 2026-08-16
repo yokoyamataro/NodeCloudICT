@@ -386,6 +386,9 @@ export function ReportSectionBoundary({ body, onChange }: Props) {
                   ? `${b.noBaseTriangulationReason}\n${t}`
                   : t,
               })}
+              currentText={b.noBaseTriangulationReason}
+              historyField="noTriangulationReason"
+              historyTitle="基本三角点等に基づく測量ができない理由"
             />
           </div>
         </div>

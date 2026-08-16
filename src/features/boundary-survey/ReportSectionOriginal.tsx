@@ -18,7 +18,13 @@ export function ReportSectionOriginal({ body, onChange }: Props) {
   return (
     <div className="p-3 space-y-2">
       <div className="flex items-center justify-end">
-        <SnippetPickerButton category="original_check" onInsert={insert} />
+        <SnippetPickerButton
+          category="original_check"
+          onInsert={insert}
+          currentText={body.originalCheck}
+          historyField="originalCheck"
+          historyTitle="原本確認結果"
+        />
       </div>
       <textarea
         value={body.originalCheck}
