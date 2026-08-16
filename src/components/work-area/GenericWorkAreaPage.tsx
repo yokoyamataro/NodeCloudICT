@@ -942,13 +942,7 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
                         </div>
                       )}
 
-                      <div
-                        className={
-                          isBoundarySurvey
-                            ? 'w-16 flex items-center justify-center gap-0.5'
-                            : 'flex items-center gap-1'
-                        }
-                      >
+                      <div className="flex items-center gap-1 whitespace-nowrap">
                         <button
                           onClick={(e) => {
                             e.stopPropagation()
