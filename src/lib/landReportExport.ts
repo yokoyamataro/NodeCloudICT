@@ -632,11 +632,18 @@ function detectOuterFrame(ws: ExcelJS.Worksheet): FrameInfo {
     const row = ws.getRow(r)
     for (let c = 1; c <= maxCol; c++) {
       const cell = row.getCell(c)
-      const rb = cell.border?.right
-      if (!rb?.style) continue
+      const b = cell.border
+      if (!b) continue
+      // ANY 罫線を持つセルを 「フレーム候補」とみなす
+      // (right だけ見ると 「AO の右罫線が left of AP に設定」 されているとき 検出漏れするため)
+      const hasAny = b.left?.style || b.right?.style || b.top?.style || b.bottom?.style
+      if (!hasAny) continue
       if (c < minCol) minCol = c
       if (c > maxColFound) maxColFound = c
-      if (!sample) sample = rb as BorderSide
+      if (!sample) {
+        if (b.right?.style) sample = b.right as BorderSide
+        else if (b.left?.style) sample = b.left as BorderSide
+      }
     }
   }
   return {
@@ -760,14 +767,22 @@ function processAllSections(
     }
   }
 
-  // 6) 外周フレームの 左右縦罫線だけ stamp — 内部の 罫線は 触らない
-  const finalMaxRow = Math.max(ws.rowCount || 0, ws.actualRowCount || 0, 200)
+  // 6) 外周フレームの 左右縦罫線だけ stamp — 複製ブロックの範囲だけに限定
+  //    (行 1〜10 のヘッダ や 末尾の空行に stamp すると 元々罫線がなかった
+  //     場所に 縦線が出てしまうため)
   console.log('[processAllSections] outer frame:', {
     leftCol: outerFrame.leftFrameCol,
     rightCol: outerFrame.rightFrameCol,
     borderStyle: outerFrame.border?.style,
   })
-  stampFrameBorders(ws, outerFrame, 1, finalMaxRow)
+  for (const job of jobs) {
+    if (job.count <= 1) continue
+    const h = blockHeight(job)
+    const blockNewStart = computeShift(job.startRow, jobs)
+    if (blockNewStart < 0) continue
+    const blockNewEnd = blockNewStart + job.count * h - 1
+    stampFrameBorders(ws, outerFrame, blockNewStart, blockNewEnd)
+  }
 
   return replaced
 }
