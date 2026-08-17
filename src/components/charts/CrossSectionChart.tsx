@@ -85,12 +85,12 @@ export function CrossSectionChart({
 
   // 断面図の表示項目トグル (凡例チェックボックスと連動)
   // compactMode の初期値:
-  //  - 現況高 / 計画線 / 吸水接続 / 勾配 / 管径 は 表示
-  //  - 数値ラベル (地盤高/計画高/切深) / 限界勾配 は 非表示
+  //  - 現況高 / 計画線 / 勾配 / 管径 は 表示
+  //  - 数値ラベル (地盤高/計画高/切深) / 限界勾配 / 吸水接続 は 非表示
   const [showSlope, setShowSlope] = useState(true)
   const [showGround, setShowGround] = useState(true)
   const [showPlanned, setShowPlanned] = useState(true)
-  const [showAbsorption, setShowAbsorption] = useState(true)
+  const [showAbsorption, setShowAbsorption] = useState(!compactMode)
   // 数値ラベルの表示トグル (線・マーカーは出したまま 数字だけ非表示にできる)
   const [showGroundValue, setShowGroundValue] = useState(!compactMode)
   const [showPlannedValue, setShowPlannedValue] = useState(!compactMode)
@@ -1434,7 +1434,9 @@ export function CrossSectionChart({
                   strokeWidth="1"
                   strokeDasharray="2,2"
                 />
-                {/* 旗のテキスト (枠なし・白フチで背景に埋もれないように) */}
+                {/* 旗のテキスト: 集水点の測点名 (K19A 等) を表示。
+                    従来は 吸水管番号 (K19) を表示していたが、集水点上の
+                    どの位置に接続するかを明示するため 測点名に変更。 */}
                 <text
                   x={x}
                   y={flagTop + (FLAG_ROW_HEIGHT - 4) / 2 + 1}
@@ -1449,7 +1451,7 @@ export function CrossSectionChart({
                     strokeLinejoin: 'round',
                   }}
                 >
-                  {point.absorptionPipeNumber}
+                  {point.pointName || point.absorptionPipeNumber}
                 </text>
               </g>
             )
@@ -1515,8 +1517,8 @@ export function CrossSectionChart({
                         {point.groundHeight.toFixed(3)}
                       </text>
                     )}
-                    {/* compactMode: 地盤高マーカー真上に 吸水合流点名 (旗揚げ相当) */}
-                    {compactMode && point.absorptionPipeNumber && (
+                    {/* compactMode: 地盤高マーカー真上に 集水点の測点名 (K19A 等) */}
+                    {compactMode && point.pointName && (
                       <text
                         x={x}
                         y={yScale(point.groundHeight) - 10}
@@ -1531,7 +1533,7 @@ export function CrossSectionChart({
                           pointerEvents: 'none',
                         }}
                       >
-                        {point.absorptionPipeNumber}
+                        {point.pointName}
                       </text>
                     )}
                   </>
