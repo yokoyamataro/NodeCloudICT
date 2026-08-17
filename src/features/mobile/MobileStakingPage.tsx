@@ -5091,49 +5091,104 @@ export function MobileStakingPage() {
               </button>
             </div>
             {/* 本体: 優先順位
-                1. 配管タップで selectedPipeId が立っており、planGroups から系統が見つかれば
-                   その系統の縦断図 (CrossSectionChart) を表示
+                1a. 選択管が 吸水管 → 吸水管自身の 縦断図 (擬似 collector rows で描画)
+                1b. 選択管が 集水管 → 系統の 縦断図
                 2. それ以外は 従来通り 「新規(2点)」で作成した断面を表示 */}
             <div className="flex-1 overflow-hidden flex flex-col">
               {(() => {
-                // 1) 配管由来の系統チャート
+                // 選択管から 対象 row + 系統 を逆引き
                 if (selectedPipeId && planGroups.length > 0) {
                   let foundGi = -1
-                  let foundSi = -1
+                  let foundRow: (typeof planGroups)[number]['rows'][number] | null = null
+                  let matchedAsAbsorption = false
                   outer: for (let gi = 0; gi < planGroups.length; gi++) {
                     const g = planGroups[gi]
                     for (const r of g.rows) {
-                      if (
-                        r.absorptionPipeId === selectedPipeId ||
-                        r.collectorPipeId === selectedPipeId
-                      ) {
+                      if (r.absorptionPipeId === selectedPipeId) {
                         foundGi = gi
-                        foundSi = r.systemIndex ?? 1
+                        foundRow = r
+                        matchedAsAbsorption = true
+                        break outer
+                      }
+                      if (r.collectorPipeId === selectedPipeId) {
+                        foundGi = gi
+                        foundRow = r
+                        matchedAsAbsorption = false
                         break outer
                       }
                     }
                   }
-                  if (foundGi >= 0) {
+                  if (foundGi >= 0 && foundRow) {
                     const group = planGroups[foundGi]
-                    const rows = group.rows.filter((r) => (r.systemIndex ?? 1) === foundSi)
+                    const si = foundRow.systemIndex ?? 1
+                    // 1a) 吸水管: absorptionPoints から 擬似 collector row 群を作って渡す
+                    if (matchedAsAbsorption && foundRow.absorptionPoints.length >= 2) {
+                      const pseudoRows = foundRow.absorptionPoints.map((p, i) => {
+                        const nextP = foundRow!.absorptionPoints[i + 1]
+                        const segDistToNext = nextP?.segmentDistance ?? null
+                        return {
+                          id: `abs-${foundRow!.id}-${i}`,
+                          wiringRowId: '',
+                          groupType: foundRow!.groupType,
+                          groupIndex: foundRow!.groupIndex,
+                          rowIndex: i,
+                          systemIndex: foundRow!.systemIndex,
+                          isSystemEnd: i === foundRow!.absorptionPoints.length - 1,
+                          systemEndType: null,
+                          absorptionPipeId: null,
+                          collectorPipeId: foundRow!.absorptionPipeId,
+                          pipeNumber: foundRow!.pipeNumber,
+                          diameter: foundRow!.diameter,
+                          designLength: foundRow!.designLength,
+                          absorptionPoints: [],
+                          collectorPoint: { ...p, segmentDistance: segDistToNext },
+                          wiringRowType: null,
+                        }
+                      })
+                      return (
+                        <div className="flex flex-col h-full">
+                          <div className="px-2 py-1 text-[11px] text-emerald-800 bg-emerald-50 border-b">
+                            縦断図 (吸水): {foundRow.pipeNumber ?? '?'}
+                            <button
+                              type="button"
+                              onClick={() => setSelectedPipeId(null)}
+                              className="ml-2 underline text-slate-600"
+                            >
+                              選択解除
+                            </button>
+                          </div>
+                          <div className="flex-1 min-h-0 overflow-hidden">
+                            <CrossSectionChart
+                              systemRows={pseudoRows}
+                              systemIndex={si}
+                              endType={null}
+                              chartHeight={280}
+                              compactMode
+                            />
+                          </div>
+                        </div>
+                      )
+                    }
+                    // 1b) 集水管: 系統内の全 行を渡す
+                    const rows = group.rows.filter((r) => (r.systemIndex ?? 1) === si)
                     const last = rows[rows.length - 1]
                     const endType: 'outlet' | 'merge' | null = last?.systemEndType ?? null
                     return (
                       <div className="flex flex-col h-full">
                         <div className="px-2 py-1 text-[11px] text-blue-800 bg-blue-50 border-b">
-                          縦断図: {group.name} / 系統 {foundSi}
+                          縦断図 (集水): {group.name} / 系統 {si}
                           <button
                             type="button"
                             onClick={() => setSelectedPipeId(null)}
                             className="ml-2 underline text-slate-600"
                           >
-                            系統選択を解除
+                            選択解除
                           </button>
                         </div>
                         <div className="flex-1 min-h-0 overflow-hidden">
                           <CrossSectionChart
                             systemRows={rows}
-                            systemIndex={foundSi}
+                            systemIndex={si}
                             endType={endType}
                             chartHeight={280}
                             compactMode
@@ -5155,7 +5210,7 @@ export function MobileStakingPage() {
                 }
                 return (
                   <div className="flex-1 flex items-center justify-center text-xs text-slate-500 px-4 text-center">
-                    地図で管路をタップすると 該当系統の縦断図を表示します。
+                    地図で管路 (吸水 / 集水) をタップすると 縦断図を表示します。
                     <br />
                     「新規（2点）」で任意の断面を作成することもできます。
                   </div>

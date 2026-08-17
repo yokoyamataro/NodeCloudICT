@@ -84,14 +84,16 @@ export function CrossSectionChart({
   const [widthScale, setWidthScale] = useState(1.0)
 
   // 断面図の表示項目トグル (凡例チェックボックスと連動)
-  // compactMode=true は 計画線 のみ表示するため 初期値を false に切替。
+  // compactMode の初期値:
+  //  - 現況高 / 計画線 / 吸水接続 は 表示 (線として見える)
+  //  - 勾配 / 管径 / 限界勾配 / 数値ラベル は 非表示 (混雑回避)
   const [showSlope, setShowSlope] = useState(!compactMode)
-  const [showGround, setShowGround] = useState(!compactMode)
+  const [showGround, setShowGround] = useState(true)
   const [showPlanned, setShowPlanned] = useState(true)
-  const [showAbsorption, setShowAbsorption] = useState(!compactMode)
+  const [showAbsorption, setShowAbsorption] = useState(true)
   // 数値ラベルの表示トグル (線・マーカーは出したまま 数字だけ非表示にできる)
   const [showGroundValue, setShowGroundValue] = useState(!compactMode)
-  const [showPlannedValue, setShowPlannedValue] = useState(true)
+  const [showPlannedValue, setShowPlannedValue] = useState(!compactMode)
   const [showCutValue, setShowCutValue] = useState(!compactMode)
   // 区間ラベル (勾配の下段に併記): 管径 と 限界勾配 の表示切替
   const [showDiameter, setShowDiameter] = useState(!compactMode)
