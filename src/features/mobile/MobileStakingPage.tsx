@@ -48,6 +48,7 @@ import { useMapViewStore } from '@/stores/mapViewStore'
 import { useUnderdrainStore, type PipeRow, PIPE_TYPE_NAMES } from '@/stores/underdrainStore'
 import { useStakingStore } from '@/stores/stakingStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
+import { CrossSectionChart } from '@/components/charts/CrossSectionChart'
 import {
   useExportRouteStore,
   type Route,
@@ -1141,7 +1142,9 @@ export function MobileStakingPage() {
   const [showRouteLine, setShowRouteLine] = useState(true)
 
   // 施工管理モード用：中心線形 / 床掘 TIN / 現況 TIN
+  // planGroups は 管路タップ → 系統の縦断図を 2D パネルに出すために購読
   const { fetchPlan } = useConstructionPlanStore()
+  const planGroups = useConstructionPlanStore((s) => s.planGroups)
   const [alignmentLines, setAlignmentLines] = useState<Array<[number, number][]>>([])
   const [trenchSurface, setTrenchSurface] = useState<TinSurfaceLike | null>(null)
   const [groundSurface, setGroundSurface] = useState<TinSurfaceLike | null>(null)
@@ -1312,6 +1315,7 @@ export function MobileStakingPage() {
           fetchPipes(typedFarm.id),
           fetchRecords(typedFarm.id),
           fetchWorkAreas(typedFarm.id),
+          fetchPlan(typedFarm.id),
           useExportRouteStore.getState().fetchRoute(typedFarm.id),
         ])
       } catch (err) {
@@ -5086,19 +5090,76 @@ export function MobileStakingPage() {
                 閉じる
               </button>
             </div>
-            {/* 本体: アクティブ断面のチャート or プレースホルダ */}
+            {/* 本体: 優先順位
+                1. 配管タップで selectedPipeId が立っており、planGroups から系統が見つかれば
+                   その系統の縦断図 (CrossSectionChart) を表示
+                2. それ以外は 従来通り 「新規(2点)」で作成した断面を表示 */}
             <div className="flex-1 overflow-hidden flex flex-col">
-              {activeSection && sectionProfile ? (
-                <ActiveSectionChart
-                  name={activeSection.name}
-                  direction={activeSection.direction}
-                  profile={sectionProfile}
-                />
-              ) : (
-                <div className="flex-1 flex items-center justify-center text-xs text-slate-500">
-                  「新規（2点）」で断面を作成、または上の一覧からタップして表示
-                </div>
-              )}
+              {(() => {
+                // 1) 配管由来の系統チャート
+                if (selectedPipeId && planGroups.length > 0) {
+                  let foundGi = -1
+                  let foundSi = -1
+                  outer: for (let gi = 0; gi < planGroups.length; gi++) {
+                    const g = planGroups[gi]
+                    for (const r of g.rows) {
+                      if (
+                        r.absorptionPipeId === selectedPipeId ||
+                        r.collectorPipeId === selectedPipeId
+                      ) {
+                        foundGi = gi
+                        foundSi = r.systemIndex ?? 1
+                        break outer
+                      }
+                    }
+                  }
+                  if (foundGi >= 0) {
+                    const group = planGroups[foundGi]
+                    const rows = group.rows.filter((r) => (r.systemIndex ?? 1) === foundSi)
+                    const last = rows[rows.length - 1]
+                    const endType: 'outlet' | 'merge' | null = last?.systemEndType ?? null
+                    return (
+                      <div className="flex flex-col h-full">
+                        <div className="px-2 py-1 text-[11px] text-blue-800 bg-blue-50 border-b">
+                          縦断図: {group.name} / 系統 {foundSi}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedPipeId(null)}
+                            className="ml-2 underline text-slate-600"
+                          >
+                            系統選択を解除
+                          </button>
+                        </div>
+                        <div className="flex-1 min-h-0 overflow-hidden">
+                          <CrossSectionChart
+                            systemRows={rows}
+                            systemIndex={foundSi}
+                            endType={endType}
+                            chartHeight={280}
+                          />
+                        </div>
+                      </div>
+                    )
+                  }
+                }
+                // 2) ユーザ作成の断面 or プレースホルダ
+                if (activeSection && sectionProfile) {
+                  return (
+                    <ActiveSectionChart
+                      name={activeSection.name}
+                      direction={activeSection.direction}
+                      profile={sectionProfile}
+                    />
+                  )
+                }
+                return (
+                  <div className="flex-1 flex items-center justify-center text-xs text-slate-500 px-4 text-center">
+                    地図で管路をタップすると 該当系統の縦断図を表示します。
+                    <br />
+                    「新規（2点）」で任意の断面を作成することもできます。
+                  </div>
+                )
+              })()}
             </div>
           </div>
         )}
