@@ -763,21 +763,44 @@ export function PipeMap({
             )
           })}
           {planOverlay.segments.map((s, i) => {
-            const parts: string[] = []
+            // 各項目を 1 行ずつの div にして 縦積み。
+            const lines: string[] = []
             if (planOverlay.flags.showDiameter && s.diameter != null) {
-              parts.push(`<span style="color:#7c3aed">φ${s.diameter}</span>`)
+              lines.push(`<div style="color:#7c3aed">φ${s.diameter}</div>`)
             }
             if (planOverlay.flags.showSlope && s.slope) {
-              parts.push(`<span style="color:#166534">${s.slope}</span>`)
+              lines.push(`<div style="color:#166534">${s.slope}</div>`)
             }
             if (planOverlay.flags.showDistance && s.distance != null) {
-              parts.push(`<span style="color:#334155">${s.distance.toFixed(1)}m</span>`)
+              lines.push(`<div style="color:#334155">${s.distance.toFixed(1)}m</div>`)
             }
-            if (parts.length === 0) return null
+            if (lines.length === 0) return null
             const mx = (s.x1 + s.x2) / 2
             const my = (s.y1 + s.y2) / 2
             const { lat, lng } = converter.toLatLng(mx, my)
-            const html = `<div style="background:rgba(255,255,255,0.85);border:1px solid #cbd5e1;border-radius:4px;padding:2px 5px;font-family:ui-monospace,monospace;font-size:13px;line-height:1.1;white-space:nowrap;">${parts.join(' / ')}</div>`
+            // 管路に平行に回転:
+            //   平面座標 x=東, y=北 / 画面座標は y が下向き なので dy 反転。
+            //   CSS rotate は 時計回り = 正 のため 画面座標系での atan2 と一致する。
+            //   180°以上傾いたラベルは 逆さ読みになるため ±180° 反転して常に上向きにする。
+            let angleDeg = Math.atan2(s.y1 - s.y2, s.x2 - s.x1) * (180 / Math.PI)
+            if (angleDeg > 90) angleDeg -= 180
+            else if (angleDeg < -90) angleDeg += 180
+            // 外側 div を 位置中心に配置しつつ 回転
+            const html = `<div style="
+              display:inline-flex;
+              flex-direction:column;
+              align-items:center;
+              background:rgba(255,255,255,0.85);
+              border:1px solid #cbd5e1;
+              border-radius:4px;
+              padding:2px 5px;
+              font-family:ui-monospace,monospace;
+              font-size:12px;
+              line-height:1.15;
+              white-space:nowrap;
+              transform:translate(-50%,-50%) rotate(${angleDeg.toFixed(1)}deg);
+              transform-origin:center center;
+            ">${lines.join('')}</div>`
             const icon = L.divIcon({
               className: 'plan-overlay-segment',
               html,
