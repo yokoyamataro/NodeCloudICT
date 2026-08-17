@@ -168,13 +168,19 @@ export function AppLayout() {
 
   // プロジェクト・工区ストア（現在の表示用）
   const { currentProject, projects, fetchProjects } = useProjectListStore()
+  const fetchUserRoles = useProjectListStore((s) => s.fetchUserRoles)
   const { currentFarm, setCurrentFarm, farms, fetchFarms } = useFarmStore()
 
   // リロード時の復帰: currentProject/currentFarm は localStorage から復元されるが、
-  // 一覧（projects/farms）は揮発するため、座標系の解決などのために取り直す。
+  // 一覧（projects/farms/userRoles）は揮発するため、座標系の解決や 権限判定のために取り直す。
+  //
+  // userRolesByProject を再取得しないと useProjectPermission が空 Map を参照し、
+  // 全ページで 編集者権限を持つユーザーが 閲覧のみ扱い (readOnly=true) になる。
+  // ProjectChooser 経由で入った時だけ機能する状態を修正する。
   useEffect(() => {
     if (projects.length === 0) fetchProjects()
     if (farms.length === 0) fetchFarms()
+    void fetchUserRoles()
     // 初回マウント時のみ
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
