@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertCircle, Car, ChevronRight, Folder, Loader2, LogOut, MapPin, Monitor, Pencil, Plus, X } from 'lucide-react'
+import { AlertCircle, Car, Check, ChevronRight, Folder, Loader2, LogOut, MapPin, Monitor, Pencil, Plus, X } from 'lucide-react'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { getAllProjectRecency, sortByRecency } from '@/lib/recentProjects'
 import { useFarmStore } from '@/stores/farmStore'
@@ -103,17 +103,40 @@ export function MobileProjectChooserPage() {
   const farmCountByProject = (id: string) =>
     farms.filter((f) => f.project_id === id).length
 
-  const cadastralProjects = useMemo(
-    () => projects.filter((p) => p.category === 'cadastral'),
+  // 完了現場を非表示にするか (既定: 非表示)。PC (ProjectChooserPage) と
+  // 同じ localStorage キーを共有するため 挙動が同期する。
+  const [hideCompletedProjects, setHideCompletedProjects] = useState<boolean>(() => {
+    try { return localStorage.getItem('projects:hideCompletedProjects') !== '0' } catch { return true }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('projects:hideCompletedProjects', hideCompletedProjects ? '1' : '0')
+    } catch { /* ignore */ }
+  }, [hideCompletedProjects])
+
+  // 完了現場フィルタ (hideCompletedProjects=true の時は completed_at != null を除外)
+  const filteredProjects = useMemo(
+    () => hideCompletedProjects
+      ? projects.filter((p) => p.completed_at == null)
+      : projects,
+    [projects, hideCompletedProjects],
+  )
+  const completedCount = useMemo(
+    () => projects.filter((p) => p.completed_at != null).length,
     [projects],
+  )
+
+  const cadastralProjects = useMemo(
+    () => filteredProjects.filter((p) => p.category === 'cadastral'),
+    [filteredProjects],
   )
   const civilProjects = useMemo(
-    () => projects.filter((p) => p.category === 'civil'),
-    [projects],
+    () => filteredProjects.filter((p) => p.category === 'civil'),
+    [filteredProjects],
   )
   const uncategorizedProjects = useMemo(
-    () => projects.filter((p) => p.category == null),
-    [projects],
+    () => filteredProjects.filter((p) => p.category == null),
+    [filteredProjects],
   )
 
   const handleGoPC = () => {
@@ -187,6 +210,30 @@ export function MobileProjectChooserPage() {
           >
             <Plus className="h-4 w-4" />
             新規土木工事
+          </button>
+        </div>
+
+        {/* 完了現場の表示トグル */}
+        <div className="flex items-center justify-end">
+          <button
+            type="button"
+            onClick={() => setHideCompletedProjects((v) => !v)}
+            className={`flex items-center gap-1 px-2 py-1 text-[11px] rounded border ${
+              !hideCompletedProjects
+                ? 'bg-emerald-100 border-emerald-400 text-emerald-800 font-medium'
+                : 'bg-white border-slate-300 text-slate-600'
+            }`}
+            title={
+              hideCompletedProjects
+                ? '完了した現場も表示する'
+                : '完了した現場を非表示にする'
+            }
+          >
+            <Check className="h-3.5 w-3.5" />
+            完了を表示
+            {completedCount > 0 && (
+              <span className="text-slate-400">({completedCount})</span>
+            )}
           </button>
         </div>
 
@@ -407,17 +454,25 @@ function MobileProjectsSection({
             const count = farmCountByProject(p.id)
             const editable = canEditProject(p)
             const role = getRole(p)
+            const done = p.completed_at != null
             return (
               <li key={p.id} className="relative">
                 <button
                   onClick={() => onSelect(p)}
-                  className={`w-full text-left bg-white border rounded-lg p-3 ${editable ? 'pr-11' : ''} hover:border-blue-400 active:bg-blue-50`}
+                  className={`w-full text-left border rounded-lg p-3 ${editable ? 'pr-11' : ''} active:bg-blue-50 ${
+                    done ? 'bg-emerald-50 hover:border-emerald-400' : 'bg-white hover:border-blue-400'
+                  }`}
                 >
                   <div className="flex items-center gap-2 mb-1">
-                    <Folder className="h-4 w-4 text-blue-600 flex-shrink-0" />
+                    <Folder className={`h-4 w-4 flex-shrink-0 ${done ? 'text-emerald-600' : 'text-blue-600'}`} />
                     <span className="font-semibold flex-1 truncate" title={p.name}>
                       {p.name}
                     </span>
+                    {done && (
+                      <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border font-medium bg-emerald-100 text-emerald-800 border-emerald-300">
+                        完了
+                      </span>
+                    )}
                     {role && (
                       <span
                         className={`inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border font-medium ${ROLE_BADGE_CLASS[role]}`}
