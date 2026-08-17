@@ -298,12 +298,19 @@ export function CrossSectionChart({
     ].filter((h): h is number => h !== null)
 
     const effectiveHeight = chartHeightProp ?? 220
+    // compactMode: 上下左右のマージン最小化 (旗揚げ・軸ラベル無し前提)
+    const cmTop = 24 // 測点名 表示分だけ確保
+    const cmBottom = 12
+    const cmLeft = 12
+    const cmRight = 12
     if (heights.length === 0) {
       return {
         minHeight: 0,
         maxHeight: 10,
         totalDistance: 100,
-        padding: { top: BASE_TOP_PADDING + FLAG_ROW_HEIGHT, right: 60, bottom: BASE_BOTTOM_PADDING, left: 80 },
+        padding: compactMode
+          ? { top: cmTop, right: cmRight, bottom: cmBottom, left: cmLeft }
+          : { top: BASE_TOP_PADDING + FLAG_ROW_HEIGHT, right: 60, bottom: BASE_BOTTOM_PADDING, left: 80 },
         chartWidth: 600,
         chartHeight: effectiveHeight,
         flagRowByIndex: new Map<number, number>(),
@@ -327,10 +334,13 @@ export function CrossSectionChart({
       (center + scaledRange / 2).toFixed(2).length,
       (center - scaledRange / 2).toFixed(2).length
     )
-    const leftPadding = Math.max(80, maxDigits * 12 + 30)
-    const rightPadding = 60
+    const leftPadding = compactMode ? cmLeft : Math.max(80, maxDigits * 12 + 30)
+    const rightPadding = compactMode ? cmRight : 60
     const computedTotalDistance = dist || 100
-    const computedChartWidth = Math.max(600, dist * 5 * widthScale + 160)
+    // compactMode: 横スクロール無しでコンテナ幅に収まるよう 幅ベース倍率は使わない
+    const computedChartWidth = compactMode
+      ? Math.max(320, dist * 5 * widthScale + 40)
+      : Math.max(600, dist * 5 * widthScale + 160)
 
     // 吸水旗上げの行配置（重ならないよう段組み）
     const absorptionIndices = sectionData
@@ -364,20 +374,23 @@ export function CrossSectionChart({
       }
       flagRowByIndex.set(idx, assigned)
     }
-    const numFlagRows = rowRightEdges.length
-    const topPadding = BASE_TOP_PADDING + Math.max(1, numFlagRows) * FLAG_ROW_HEIGHT
+    const numFlagRows = compactMode ? 0 : rowRightEdges.length
+    const topPadding = compactMode
+      ? cmTop
+      : BASE_TOP_PADDING + Math.max(1, numFlagRows) * FLAG_ROW_HEIGHT
+    const bottomPadding = compactMode ? cmBottom : BASE_BOTTOM_PADDING
 
     return {
       minHeight: center - scaledRange / 2 - heightPadding,
       maxHeight: center + scaledRange / 2 + heightPadding,
       totalDistance: computedTotalDistance,
-      padding: { top: topPadding, right: rightPadding, bottom: BASE_BOTTOM_PADDING, left: leftPadding },
+      padding: { top: topPadding, right: rightPadding, bottom: bottomPadding, left: leftPadding },
       chartWidth: computedChartWidth,
       chartHeight: effectiveHeight + Math.max(0, numFlagRows - 1) * FLAG_ROW_HEIGHT,
       flagRowByIndex,
       numFlagRows,
     }
-  }, [sectionData, tinProfile, heightScale, widthScale, chartHeightProp, endCollectorPlannedHeight])
+  }, [sectionData, tinProfile, heightScale, widthScale, chartHeightProp, endCollectorPlannedHeight, compactMode])
 
   // 座標変換関数
   const xScale = (distance: number) => {
@@ -1082,7 +1095,8 @@ export function CrossSectionChart({
             fill="transparent"
             onMouseDown={handlePanStart}
           />
-          {/* 背景グリッド */}
+          {/* 背景グリッド (compactMode では非表示) */}
+          {!compactMode && (
           <g className="grid">
             {yTicks.map(tick => (
               <line
@@ -1096,8 +1110,10 @@ export function CrossSectionChart({
               />
             ))}
           </g>
+          )}
 
-          {/* Y軸 */}
+          {/* Y軸 (compactMode では非表示: 目盛・軸線・標高ラベル 全て消す) */}
+          {!compactMode && (
           <g className="y-axis">
             <line
               x1={padding.left}
@@ -1139,8 +1155,10 @@ export function CrossSectionChart({
               標高 (m)
             </text>
           </g>
+          )}
 
-          {/* X軸 */}
+          {/* X軸 (compactMode では非表示) */}
+          {!compactMode && (
           <g className="x-axis">
             <line
               x1={padding.left}
@@ -1151,6 +1169,7 @@ export function CrossSectionChart({
               strokeWidth="1"
             />
           </g>
+          )}
 
           {/* 現況線（茶色） */}
           {showGround && groundPath && (
@@ -1312,8 +1331,8 @@ export function CrossSectionChart({
             )
           })}
 
-          {/* 吸水旗上げ（上部） */}
-          {sectionData.map((point, idx) => {
+          {/* 吸水旗上げ（上部）— compactMode では非表示 (計画点上の測点名で代替) */}
+          {!compactMode && sectionData.map((point, idx) => {
             if (!point.absorptionPipeNumber) return null
             const x = xScale(point.distance)
             const row = flagRowByIndex.get(idx) ?? 0
@@ -1523,6 +1542,25 @@ export function CrossSectionChart({
                           {point.plannedHeight.toFixed(3)}
                         </text>
                       )}
+                      {/* compactMode: 計画点の上に 測点名 を表示 (旗揚げの代替) */}
+                      {compactMode && point.pointName && (
+                        <text
+                          x={x}
+                          y={cy - r - 6}
+                          textAnchor="middle"
+                          className="text-[11px] font-semibold"
+                          fill="#1e293b"
+                          style={{
+                            paintOrder: 'stroke',
+                            stroke: 'white',
+                            strokeWidth: 3,
+                            strokeLinejoin: 'round',
+                            pointerEvents: 'none',
+                          }}
+                        >
+                          {point.pointName}
+                        </text>
+                      )}
                     </>
                   )
                 })()}
@@ -1650,25 +1688,27 @@ export function CrossSectionChart({
                   </g>
                 )}
 
-                {/* 累加距離 */}
-                <text
-                  x={x}
-                  y={chartHeight - padding.bottom + 22}
-                  textAnchor="middle"
-                  className="fill-slate-500 text-[16px]"
-                >
-                  {point.distance.toFixed(2)}m
-                </text>
-
-                {/* 垂直線（点線） */}
-                <line
-                  x1={x}
-                  y1={chartHeight - padding.bottom}
-                  x2={x}
-                  y2={chartHeight - padding.bottom + 5}
-                  stroke="#94a3b8"
-                  strokeWidth="1"
-                />
+                {/* 累加距離 (compactMode では非表示) */}
+                {!compactMode && (
+                  <>
+                    <text
+                      x={x}
+                      y={chartHeight - padding.bottom + 22}
+                      textAnchor="middle"
+                      className="fill-slate-500 text-[16px]"
+                    >
+                      {point.distance.toFixed(2)}m
+                    </text>
+                    <line
+                      x1={x}
+                      y1={chartHeight - padding.bottom}
+                      x2={x}
+                      y2={chartHeight - padding.bottom + 5}
+                      stroke="#94a3b8"
+                      strokeWidth="1"
+                    />
+                  </>
+                )}
 
               </g>
             )
