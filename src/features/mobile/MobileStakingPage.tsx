@@ -831,12 +831,14 @@ export function MobileStakingPage() {
   >([])
   // 計算モーダルで地図から点選択中の割り当て関数
   const [calcAssign, setCalcAssign] = useState<((id: string) => void) | null>(null)
-  // 表示モード（MAP / 3D / 2D の組合せ、最大 2 つまで同時表示）
-  type ViewMode = 'map' | '3d' | '2d'
+  // 表示モード（MAP / 3D / 2D / 暗渠配管 の組合せ、最大 2 つまで同時表示）
+  // 2d / pipe は下段パネルの排他 (両方 on にすると重なるため 一方に切替)
+  type ViewMode = 'map' | '3d' | '2d' | 'pipe'
   const [viewModes, setViewModes] = useState<Set<ViewMode>>(new Set<ViewMode>(['map']))
   const showMap = viewModes.has('map')
   const show3D = viewModes.has('3d')
   const show2D = viewModes.has('2d')
+  const showPipe = viewModes.has('pipe')
   // 既存コードの参照互換
   const landxmlMode = show3D
   const prevBaseLayerRef = useRef<typeof baseLayer | null>(null)
@@ -844,6 +846,7 @@ export function MobileStakingPage() {
   // モード切替: クリックされたモードをトグル。最大 2 つ、最少 1 つ。
   // 既に 2 つ ON のとき新しいモードを追加する場合は、クリックされたモード以外で
   // 一番古いもの（= 直近に追加されていない方）を外す。
+  // 2d と pipe は同時に有効化できない (同じ下段パネル領域)
   const toggleViewMode = (mode: ViewMode) => {
     setViewModes((prev) => {
       const next = new Set(prev)
@@ -852,6 +855,9 @@ export function MobileStakingPage() {
         next.delete(mode)
         return next
       }
+      // 2d / pipe の排他
+      if (mode === '2d' && next.has('pipe')) next.delete('pipe')
+      if (mode === 'pipe' && next.has('2d')) next.delete('2d')
       if (next.size >= 2) {
         // 1 つ外す: 任意のひとつ（先に入っていた方）を落とす
         const first = next.values().next().value as ViewMode | undefined
@@ -4255,23 +4261,26 @@ export function MobileStakingPage() {
             <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
           </button>
         </div>
-        {/* MAP / 3D / 2D 切替（地図右上に縦並び、ズームコントロールの対側）
+        {/* MAP / 3D / 2D / 暗渠配管 切替（地図右上に縦並び、ズームコントロールの対側）
             z は 2D パネル (z-[1000]) より高く、常に上に出す。 */}
         <div className="absolute top-2 right-2 z-[1200] flex flex-col gap-0.5 rounded overflow-hidden shadow-md border border-slate-400 bg-white">
-          {(['map', '3d', '2d'] as const).map((m) => {
+          {(['map', '3d', '2d', 'pipe'] as const).map((m) => {
             const on = viewModes.has(m)
-            const label = m === 'map' ? 'MAP' : m === '3d' ? '3D' : '2D'
+            const label =
+              m === 'map' ? 'MAP' : m === '3d' ? '3D' : m === '2d' ? '2D' : '暗渠配管'
             const title =
               m === 'map'
                 ? '地図 + ターゲット'
                 : m === '3d'
                   ? '3D（LANDXML）TIN + 比高'
-                  : '2D 断面プロファイル'
+                  : m === '2d'
+                    ? '2D 断面プロファイル (任意 2 点)'
+                    : '暗渠 配管の縦断図 (管路タップで表示)'
             return (
               <button
                 key={m}
                 onClick={() => toggleViewMode(m)}
-                className={`px-2 py-1.5 text-xs font-bold leading-none ${
+                className={`px-2 py-1 text-[11px] font-bold leading-none ${
                   on
                     ? 'bg-cyan-600 text-white'
                     : 'bg-white text-slate-700 hover:bg-slate-100'
@@ -5090,133 +5099,149 @@ export function MobileStakingPage() {
                 閉じる
               </button>
             </div>
-            {/* 本体: 優先順位
-                1a. 選択管が 吸水管 → 吸水管自身の 縦断図 (擬似 collector rows で描画)
-                1b. 選択管が 集水管 → 系統の 縦断図
-                2. それ以外は 従来通り 「新規(2点)」で作成した断面を表示 */}
+            {/* 本体: ユーザ作成の断面 or プレースホルダ (管路の縦断図は
+                「暗渠配管」タブに分離済み) */}
             <div className="flex-1 overflow-hidden flex flex-col">
-              {(() => {
-                // 選択管から 対象 row + 系統 を逆引き
-                if (selectedPipeId && planGroups.length > 0) {
-                  let foundGi = -1
-                  let foundRow: (typeof planGroups)[number]['rows'][number] | null = null
-                  let matchedAsAbsorption = false
-                  outer: for (let gi = 0; gi < planGroups.length; gi++) {
-                    const g = planGroups[gi]
-                    for (const r of g.rows) {
-                      if (r.absorptionPipeId === selectedPipeId) {
-                        foundGi = gi
-                        foundRow = r
-                        matchedAsAbsorption = true
-                        break outer
-                      }
-                      if (r.collectorPipeId === selectedPipeId) {
-                        foundGi = gi
-                        foundRow = r
-                        matchedAsAbsorption = false
-                        break outer
-                      }
-                    }
-                  }
-                  if (foundGi >= 0 && foundRow) {
-                    const group = planGroups[foundGi]
-                    const si = foundRow.systemIndex ?? 1
-                    // 1a) 吸水管: absorptionPoints から 擬似 collector row 群を作って渡す
-                    if (matchedAsAbsorption && foundRow.absorptionPoints.length >= 2) {
-                      const pseudoRows = foundRow.absorptionPoints.map((p, i) => {
-                        const nextP = foundRow!.absorptionPoints[i + 1]
-                        const segDistToNext = nextP?.segmentDistance ?? null
-                        return {
-                          id: `abs-${foundRow!.id}-${i}`,
-                          wiringRowId: '',
-                          groupType: foundRow!.groupType,
-                          groupIndex: foundRow!.groupIndex,
-                          rowIndex: i,
-                          systemIndex: foundRow!.systemIndex,
-                          isSystemEnd: i === foundRow!.absorptionPoints.length - 1,
-                          systemEndType: null,
-                          absorptionPipeId: null,
-                          collectorPipeId: foundRow!.absorptionPipeId,
-                          pipeNumber: foundRow!.pipeNumber,
-                          diameter: foundRow!.diameter,
-                          designLength: foundRow!.designLength,
-                          absorptionPoints: [],
-                          collectorPoint: { ...p, segmentDistance: segDistToNext },
-                          wiringRowType: null,
-                        }
-                      })
-                      return (
-                        <div className="flex flex-col h-full">
-                          <div className="px-2 py-1 text-[11px] text-emerald-800 bg-emerald-50 border-b">
-                            縦断図 (吸水): {foundRow.pipeNumber ?? '?'}
-                            <button
-                              type="button"
-                              onClick={() => setSelectedPipeId(null)}
-                              className="ml-2 underline text-slate-600"
-                            >
-                              選択解除
-                            </button>
-                          </div>
-                          <div className="flex-1 min-h-0 overflow-hidden">
-                            <CrossSectionChart
-                              systemRows={pseudoRows}
-                              systemIndex={si}
-                              endType={null}
-                              chartHeight={280}
-                              compactMode
-                            />
-                          </div>
-                        </div>
-                      )
-                    }
-                    // 1b) 集水管: 系統内の全 行を渡す
-                    const rows = group.rows.filter((r) => (r.systemIndex ?? 1) === si)
-                    const last = rows[rows.length - 1]
-                    const endType: 'outlet' | 'merge' | null = last?.systemEndType ?? null
-                    return (
-                      <div className="flex flex-col h-full">
-                        <div className="px-2 py-1 text-[11px] text-blue-800 bg-blue-50 border-b">
-                          縦断図 (集水): {group.name} / 系統 {si}
-                          <button
-                            type="button"
-                            onClick={() => setSelectedPipeId(null)}
-                            className="ml-2 underline text-slate-600"
-                          >
-                            選択解除
-                          </button>
-                        </div>
-                        <div className="flex-1 min-h-0 overflow-hidden">
-                          <CrossSectionChart
-                            systemRows={rows}
-                            systemIndex={si}
-                            endType={endType}
-                            chartHeight={280}
-                            compactMode
-                          />
-                        </div>
-                      </div>
-                    )
-                  }
-                }
-                // 2) ユーザ作成の断面 or プレースホルダ
-                if (activeSection && sectionProfile) {
-                  return (
-                    <ActiveSectionChart
-                      name={activeSection.name}
-                      direction={activeSection.direction}
-                      profile={sectionProfile}
-                    />
-                  )
-                }
+              {activeSection && sectionProfile ? (
+                <ActiveSectionChart
+                  name={activeSection.name}
+                  direction={activeSection.direction}
+                  profile={sectionProfile}
+                />
+              ) : (
+                <div className="flex-1 flex items-center justify-center text-xs text-slate-500 px-4 text-center">
+                  「新規（2点）」で任意の断面を作成、または上の一覧からタップして表示。
+                  <br />
+                  管路の縦断図は「暗渠配管」タブで表示できます。
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 暗渠配管パネル: MAP/3D と併用なら下半分、単独なら全画面
+            管路タップ (selectedPipeId) で 系統 or 吸水管の縦断図を表示 */}
+        {showPipe && (
+          <div
+            className={`absolute left-0 right-0 z-[1000] bg-white/95 border-t border-blue-300 flex flex-col ${
+              showMap || show3D ? 'h-[50%] bottom-0' : 'top-0 bottom-0'
+            }`}
+          >
+            {(() => {
+              if (!selectedPipeId || planGroups.length === 0) {
                 return (
                   <div className="flex-1 flex items-center justify-center text-xs text-slate-500 px-4 text-center">
-                    地図で管路 (吸水 / 集水) をタップすると 縦断図を表示します。
+                    地図で 暗渠の管路 (吸水 / 集水) をタップすると
                     <br />
-                    「新規（2点）」で任意の断面を作成することもできます。
+                    ここに縦断図が表示されます。
                   </div>
                 )
-              })()}
-            </div>
+              }
+              let foundGi = -1
+              let foundRow: (typeof planGroups)[number]['rows'][number] | null = null
+              let matchedAsAbsorption = false
+              outer: for (let gi = 0; gi < planGroups.length; gi++) {
+                const g = planGroups[gi]
+                for (const r of g.rows) {
+                  if (r.absorptionPipeId === selectedPipeId) {
+                    foundGi = gi
+                    foundRow = r
+                    matchedAsAbsorption = true
+                    break outer
+                  }
+                  if (r.collectorPipeId === selectedPipeId) {
+                    foundGi = gi
+                    foundRow = r
+                    matchedAsAbsorption = false
+                    break outer
+                  }
+                }
+              }
+              if (foundGi < 0 || !foundRow) {
+                return (
+                  <div className="flex-1 flex items-center justify-center text-xs text-slate-500 px-4 text-center">
+                    選択された管路は 施工計画上の系統に含まれていません。
+                  </div>
+                )
+              }
+              const group = planGroups[foundGi]
+              const si = foundRow.systemIndex ?? 1
+              if (matchedAsAbsorption && foundRow.absorptionPoints.length >= 2) {
+                const pseudoRows = foundRow.absorptionPoints.map((p, i) => {
+                  const nextP = foundRow!.absorptionPoints[i + 1]
+                  const segDistToNext = nextP?.segmentDistance ?? null
+                  return {
+                    id: `abs-${foundRow!.id}-${i}`,
+                    wiringRowId: '',
+                    groupType: foundRow!.groupType,
+                    groupIndex: foundRow!.groupIndex,
+                    rowIndex: i,
+                    systemIndex: foundRow!.systemIndex,
+                    isSystemEnd: i === foundRow!.absorptionPoints.length - 1,
+                    systemEndType: null,
+                    absorptionPipeId: null,
+                    collectorPipeId: foundRow!.absorptionPipeId,
+                    pipeNumber: foundRow!.pipeNumber,
+                    diameter: foundRow!.diameter,
+                    designLength: foundRow!.designLength,
+                    absorptionPoints: [],
+                    collectorPoint: { ...p, segmentDistance: segDistToNext },
+                    wiringRowType: null,
+                  }
+                })
+                return (
+                  <div className="flex flex-col h-full">
+                    <div className="px-2 py-1 text-[11px] text-emerald-800 bg-emerald-50 border-b flex items-center gap-2">
+                      <span className="font-semibold">縦断図 (吸水)</span>
+                      <span>{foundRow.pipeNumber ?? '?'}</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPipeId(null)}
+                        className="ml-auto underline text-slate-600"
+                      >
+                        選択解除
+                      </button>
+                    </div>
+                    <div className="flex-1 min-h-0 overflow-hidden">
+                      <CrossSectionChart
+                        systemRows={pseudoRows}
+                        systemIndex={si}
+                        endType={null}
+                        chartHeight={280}
+                        compactMode
+                      />
+                    </div>
+                  </div>
+                )
+              }
+              const rows = group.rows.filter((r) => (r.systemIndex ?? 1) === si)
+              const last = rows[rows.length - 1]
+              const endType: 'outlet' | 'merge' | null = last?.systemEndType ?? null
+              return (
+                <div className="flex flex-col h-full">
+                  <div className="px-2 py-1 text-[11px] text-blue-800 bg-blue-50 border-b flex items-center gap-2">
+                    <span className="font-semibold">縦断図 (集水)</span>
+                    <span>{group.name} / 系統 {si}</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPipeId(null)}
+                      className="ml-auto underline text-slate-600"
+                    >
+                      選択解除
+                    </button>
+                  </div>
+                  <div className="flex-1 min-h-0 overflow-hidden">
+                    <CrossSectionChart
+                      systemRows={rows}
+                      systemIndex={si}
+                      endType={endType}
+                      chartHeight={280}
+                      compactMode
+                    />
+                  </div>
+                </div>
+              )
+            })()}
           </div>
         )}
 
