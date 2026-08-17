@@ -85,9 +85,9 @@ export function CrossSectionChart({
 
   // 断面図の表示項目トグル (凡例チェックボックスと連動)
   // compactMode の初期値:
-  //  - 現況高 / 計画線 / 吸水接続 は 表示 (線として見える)
-  //  - 勾配 / 管径 / 限界勾配 / 数値ラベル は 非表示 (混雑回避)
-  const [showSlope, setShowSlope] = useState(!compactMode)
+  //  - 現況高 / 計画線 / 吸水接続 / 勾配 / 管径 は 表示
+  //  - 数値ラベル (地盤高/計画高/切深) / 限界勾配 は 非表示
+  const [showSlope, setShowSlope] = useState(true)
   const [showGround, setShowGround] = useState(true)
   const [showPlanned, setShowPlanned] = useState(true)
   const [showAbsorption, setShowAbsorption] = useState(true)
@@ -96,7 +96,7 @@ export function CrossSectionChart({
   const [showPlannedValue, setShowPlannedValue] = useState(!compactMode)
   const [showCutValue, setShowCutValue] = useState(!compactMode)
   // 区間ラベル (勾配の下段に併記): 管径 と 限界勾配 の表示切替
-  const [showDiameter, setShowDiameter] = useState(!compactMode)
+  const [showDiameter, setShowDiameter] = useState(true)
   const [showCriticalSlope, setShowCriticalSlope] = useState(!compactMode)
 
   // ホバー中の測点インデックス（緑の縦線にカーソルを合わせたとき）
@@ -1270,21 +1270,23 @@ export function CrossSectionChart({
                     </text>
                   )
                 })()}
-                {/* 区間距離（小数1桁、括弧書き） */}
-                <text
-                  x={midX}
-                  y={midY + 14}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  className="fill-slate-600 text-[12px]"
-                >
-                  ({slope.distance.toFixed(1)})
-                </text>
-                {/* 管径 (φNN) — 区間距離の下 */}
+                {/* 区間距離（小数1桁、括弧書き） compactMode では非表示 */}
+                {!compactMode && (
+                  <text
+                    x={midX}
+                    y={midY + 14}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    className="fill-slate-600 text-[12px]"
+                  >
+                    ({slope.distance.toFixed(1)})
+                  </text>
+                )}
+                {/* 管径 (φNN)。compactMode では 区間距離が無いので 1 段上に詰める */}
                 {showDiameter && p1.segmentDiameter != null && (
                   <text
                     x={midX}
-                    y={midY + 28}
+                    y={compactMode ? midY + 14 : midY + 28}
                     textAnchor="middle"
                     dominantBaseline="middle"
                     className="text-[12px] font-medium"
@@ -1297,6 +1299,25 @@ export function CrossSectionChart({
                     }}
                   >
                     φ{p1.segmentDiameter}
+                  </text>
+                )}
+                {/* 配線番号 (集水管の番号) — compactMode 時、管径の下 */}
+                {compactMode && p1.collectorPipeNumber && (
+                  <text
+                    x={midX}
+                    y={midY + 28}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    className="text-[12px] font-semibold"
+                    fill="#0f766e"
+                    style={{
+                      paintOrder: 'stroke',
+                      stroke: 'white',
+                      strokeWidth: 3,
+                      strokeLinejoin: 'round',
+                    }}
+                  >
+                    {p1.collectorPipeNumber}
                   </text>
                 )}
                 {/* 限界勾配 (1/K) — さらに下段。実勾配より緩ければ 赤 (! 付き)。
@@ -1438,6 +1459,25 @@ export function CrossSectionChart({
                         {point.groundHeight.toFixed(3)}
                       </text>
                     )}
+                    {/* compactMode: 地盤高マーカー真上に 吸水合流点名 (旗揚げ相当) */}
+                    {compactMode && point.absorptionPipeNumber && (
+                      <text
+                        x={x}
+                        y={yScale(point.groundHeight) - 10}
+                        textAnchor="middle"
+                        className="text-[11px] font-semibold"
+                        fill="#1e293b"
+                        style={{
+                          paintOrder: 'stroke',
+                          stroke: 'white',
+                          strokeWidth: 3,
+                          strokeLinejoin: 'round',
+                          pointerEvents: 'none',
+                        }}
+                      >
+                        {point.absorptionPipeNumber}
+                      </text>
+                    )}
                   </>
                 )}
 
@@ -1542,25 +1582,6 @@ export function CrossSectionChart({
                           }}
                         >
                           {point.plannedHeight.toFixed(3)}
-                        </text>
-                      )}
-                      {/* compactMode: 計画点の上に 測点名 を表示 (旗揚げの代替) */}
-                      {compactMode && point.pointName && (
-                        <text
-                          x={x}
-                          y={cy - r - 6}
-                          textAnchor="middle"
-                          className="text-[11px] font-semibold"
-                          fill="#1e293b"
-                          style={{
-                            paintOrder: 'stroke',
-                            stroke: 'white',
-                            strokeWidth: 3,
-                            strokeLinejoin: 'round',
-                            pointerEvents: 'none',
-                          }}
-                        >
-                          {point.pointName}
                         </text>
                       )}
                     </>
