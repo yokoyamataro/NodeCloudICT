@@ -31,6 +31,9 @@ interface CrossSectionChartProps {
   // 計画点を「横方向にドラッグして 別の計画点まで」引いた時のコールバック。
   // 連続勾配設定 ダイアログを 始点 → 終点 preset で開く用途。
   onSlopeSelected?: (startPointId: string, endPointId: string) => void
+  // スマホ 2D パネル向け コンパクト表示。ヘッダ / 縦横ズーム / 凡例 を全て消し、
+  // 計画線 (集水) のみを表示する (計画高マーカー・数値は残す)。
+  compactMode?: boolean
 }
 
 // 断面図の点データ（集水管の点のみ）
@@ -73,6 +76,7 @@ export function CrossSectionChart({
   criticalKByPointId,
   diameterByPointId,
   onSlopeSelected,
+  compactMode = false,
 }: CrossSectionChartProps) {
   // 標高スケールのズーム倍率（1.0が基準、大きいほど拡大）
   const [heightScale, setHeightScale] = useState(1.0)
@@ -80,17 +84,18 @@ export function CrossSectionChart({
   const [widthScale, setWidthScale] = useState(1.0)
 
   // 断面図の表示項目トグル (凡例チェックボックスと連動)
-  const [showSlope, setShowSlope] = useState(true)
-  const [showGround, setShowGround] = useState(true)
+  // compactMode=true は 計画線 のみ表示するため 初期値を false に切替。
+  const [showSlope, setShowSlope] = useState(!compactMode)
+  const [showGround, setShowGround] = useState(!compactMode)
   const [showPlanned, setShowPlanned] = useState(true)
-  const [showAbsorption, setShowAbsorption] = useState(true)
+  const [showAbsorption, setShowAbsorption] = useState(!compactMode)
   // 数値ラベルの表示トグル (線・マーカーは出したまま 数字だけ非表示にできる)
-  const [showGroundValue, setShowGroundValue] = useState(true)
+  const [showGroundValue, setShowGroundValue] = useState(!compactMode)
   const [showPlannedValue, setShowPlannedValue] = useState(true)
-  const [showCutValue, setShowCutValue] = useState(true)
+  const [showCutValue, setShowCutValue] = useState(!compactMode)
   // 区間ラベル (勾配の下段に併記): 管径 と 限界勾配 の表示切替
-  const [showDiameter, setShowDiameter] = useState(true)
-  const [showCriticalSlope, setShowCriticalSlope] = useState(true)
+  const [showDiameter, setShowDiameter] = useState(!compactMode)
+  const [showCriticalSlope, setShowCriticalSlope] = useState(!compactMode)
 
   // ホバー中の測点インデックス（緑の縦線にカーソルを合わせたとき）
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
@@ -845,7 +850,8 @@ export function CrossSectionChart({
 
   return (
     <div className="h-full flex flex-col">
-      {/* 系統タイトル */}
+      {/* 系統タイトル (compactMode では非表示) */}
+      {!compactMode && (
       <div className={`px-3 py-1.5 text-sm font-medium flex items-center gap-2 border-b ${
         endType === 'outlet'
           ? 'bg-orange-50 text-orange-800'
@@ -902,10 +908,12 @@ export function CrossSectionChart({
           <span className="text-slate-400">（ホイール:縦 / Shift+ホイール:横）</span>
         </span>
       </div>
+      )}
 
       {/* SVG断面図（凡例はスクロール外に固定表示） */}
       <div className="flex-1 relative overflow-hidden bg-white">
-        {/* 凡例（ドラッグで移動可能・位置は localStorage に保存） */}
+        {/* 凡例 (compactMode では非表示) */}
+        {!compactMode && (
         <div
           className="absolute z-10 bg-white border border-slate-200 rounded shadow-sm text-[14px] select-none"
           style={{ top: legendOffset.top, right: legendOffset.right }}
@@ -1050,6 +1058,7 @@ export function CrossSectionChart({
           </div>
           )}
         </div>
+        )}
 
         <div
           ref={scrollContainerRef}

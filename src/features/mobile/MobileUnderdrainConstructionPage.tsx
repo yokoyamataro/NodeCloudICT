@@ -598,6 +598,7 @@ export function MobileUnderdrainConstructionPage() {
                   systemIndex={selectedSystem.systemIndex}
                   endType={selectedSystem.endType}
                   chartHeight={280}
+                  compactMode
                 />
               </div>
             )}

@@ -5136,6 +5136,7 @@ export function MobileStakingPage() {
                             systemIndex={foundSi}
                             endType={endType}
                             chartHeight={280}
+                            compactMode
                           />
                         </div>
                       </div>
