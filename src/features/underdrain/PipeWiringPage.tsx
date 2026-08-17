@@ -24,7 +24,7 @@ import { useProjectListStore } from '@/stores/projectListStore'
 import { usePipeWiringStore, type CollectorTab, type WiringRow, type RowType } from '@/stores/pipeWiringStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import { useHydraulicSettingsStore } from '@/stores/hydraulicSettingsStore'
-import { computeAllHydraulicLengths } from '@/lib/hydraulicCalc'
+import { computeAllHydraulicLengths, actualLengthOfPipe } from '@/lib/hydraulicCalc'
 import { PipeMap, type SurveyPointData, type PipeChangePoint } from '@/components/map/PipeMap'
 import { ResizableSplit } from '@/components/layout/ResizableSplit'
 import type { PipeVertex } from '@/types/database'
@@ -2113,12 +2113,23 @@ export function PipeWiringPage() {
                             ) : (
                               // 通常の吸水選択
                               <div className="flex flex-wrap gap-0.5 items-center">
-                                {row.absorptionPipes.map(pipeId => (
+                                {row.absorptionPipes.map(pipeId => {
+                                  const absPipe = pipes.find((p) => p.id === pipeId)
+                                  const absLen = absPipe ? actualLengthOfPipe(absPipe) : null
+                                  return (
                                   <span
                                     key={pipeId}
                                     className="inline-flex items-center gap-0.5 text-xs font-medium text-blue-700"
                                   >
                                     {getPipeNumber(pipeId)}
+                                    {absLen != null && (
+                                      <span
+                                        className="text-[10px] text-blue-600 font-mono"
+                                        title="吸水管の実延長 (設計延長 or 頂点距離合計)"
+                                      >
+                                        {absLen.toFixed(1)}m
+                                      </span>
+                                    )}
                                     <button
                                       onClick={() => removeAbsorptionPipe(
                                         row.id,
@@ -2130,7 +2141,8 @@ export function PipeWiringPage() {
                                       <X className="h-3 w-3" />
                                     </button>
                                   </span>
-                                ))}
+                                  )
+                                })}
                                 <button
                                   onClick={() => startAbsorptionSelection(row.id)}
                                   className={`px-1.5 py-0.5 text-xs rounded border transition-colors ${
@@ -2309,12 +2321,21 @@ export function PipeWiringPage() {
                                     (() => {
                                       const collPipe = pipes.find((p) => p.id === row.collectorPipe)
                                       const pipeNumber = collPipe?.number ?? row.collectorPipe
+                                      const secLen = hydraulicLengths.sectionByWiringId.get(row.id)
                                       return (
                                         <>
                                           <span className={`inline-flex items-center gap-0.5 text-xs font-medium ${
                                             activeTabType === 'collector' ? 'text-green-700' : 'text-orange-700'
                                           }`}>
                                             {pipeNumber}
+                                            {secLen != null && (
+                                              <span
+                                                className="text-[10px] text-emerald-700 font-mono"
+                                                title="前行の集水点 → この行の集水点 の区間延長"
+                                              >
+                                                {secLen.toFixed(1)}m
+                                              </span>
+                                            )}
                                             <button
                                               onClick={() => clearCollectorPipe(
                                                 row.id,
@@ -2453,20 +2474,16 @@ export function PipeWiringPage() {
                                   {isCollectorSelecting ? '選択中' : '選択'}
                                 </button>
                               )}
-                              {/* 区間延長 [Σ 累加延長] */}
+                              {/* 累加延長 (区間延長は 集水管番号の右横に移動済) */}
                               {(() => {
                                 const cum = hydraulicLengths.cumulativeByWiringId.get(row.id)
-                                const sec = hydraulicLengths.sectionByWiringId.get(row.id)
-                                if (cum == null && sec == null) return null
+                                if (cum == null) return null
                                 return (
                                   <span
                                     className="text-xs text-emerald-700 font-mono ml-1"
-                                    title="区間延長 [Σ 累加延長]"
+                                    title="Σ 累加延長"
                                   >
-                                    {sec != null ? sec.toFixed(1) : '-'}
-                                    {cum != null && (
-                                      <> [Σ {cum.toFixed(1)} m]</>
-                                    )}
+                                    [Σ {cum.toFixed(1)} m]
                                   </span>
                                 )
                               })()}
