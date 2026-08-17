@@ -801,14 +801,37 @@ export function generateSfcPipesContent(
     const realPosKey = (x: number, y: number) =>
       `${Math.round(x * POS_KEY_M)}_${Math.round(y * POS_KEY_M)}`
     const collectorPlanByPos = new Map<string, PlanPoint>()
+    // 集水変化点 / 3 本管合流 では 同座標に 複数 PlanRow の collectorPoint が
+    // 集まる (集水管変化用の row と 吸水合流用の row 等)。plannedHeight が入って
+    // いる方を優先して残す。→ 上書き条件: 既存が null 高で 新規に高が入っている
+    // 場合のみ 差し替え。
     for (const group of planGroups) {
       if (group.groupType !== 'collector' && group.groupType !== 'direct') continue
       for (const row of group.rows) {
         if (!row.collectorPoint) continue
         const k = realPosKey(row.collectorPoint.x, row.collectorPoint.y)
-        if (!collectorPlanByPos.has(k)) {
+        const existing = collectorPlanByPos.get(k)
+        if (!existing) {
+          collectorPlanByPos.set(k, row.collectorPoint)
+        } else if (
+          (existing.plannedHeight === null || existing.plannedHeight === undefined) &&
+          row.collectorPoint.plannedHeight !== null &&
+          row.collectorPoint.plannedHeight !== undefined
+        ) {
           collectorPlanByPos.set(k, row.collectorPoint)
         }
+      }
+    }
+    // 全 collectorPoint (plannedHeight 有り) を配列に持ち、
+    // realPosKey / 名前フォールバック で見つからない場合の 距離ベース最終手段に使う
+    const allCollectorPlanPointsWithPh: PlanPoint[] = []
+    for (const group of planGroups) {
+      if (group.groupType !== 'collector' && group.groupType !== 'direct') continue
+      for (const row of group.rows) {
+        const cp = row.collectorPoint
+        if (!cp) continue
+        if (cp.plannedHeight === null || cp.plannedHeight === undefined) continue
+        allCollectorPlanPointsWithPh.push(cp)
       }
     }
     // Plan pointName → PlanPoint の辞書 (座標マッチが失敗した時の名前フォールバック)
@@ -913,10 +936,13 @@ export function generateSfcPipesContent(
         if (!isAbsorption && collectorSkip.has(`${pipe.id}|${i}`)) continue
 
         // 集水の plan を検索: (1) planForPipe (2) 座標フォールバック (3) 名称フォールバック
+        //   (4) 距離ベース最終手段 (集水変化点 / 3 本管合流 で pp が取れないケース対応)
         // (1) は buildPlanLookup の per-pipe 索引 (EPS=1e-4 で座標一致)
         // (2) は 100mm 精度の座標キーで探す (S5C 等が微差で拾えないケース対応)
         // (3) は auto-name (S5C, K7B 等) を Plan の pointName トークンで検索
         //     ("S4A S3C" の "S4A" にヒットする)
+        // (4) allCollectorPlanPointsWithPh を線形探索し 1.0m 以内で最寄りを採用。
+        //     plannedHeight を持つ点のみ対象なので magenta を必ず出せる。
         let pp: PlanPoint | null = planForPipe?.get(i) ?? null
         if (!pp && !isAbsorption) {
           pp = collectorPlanByPos.get(realPosKey(v.x, v.y)) ?? null
@@ -924,6 +950,25 @@ export function generateSfcPipesContent(
             const autoName = generatePointName(pipe.number, i, pipe.vertices.length)
             pp = collectorPlanByName.get(autoName) ?? null
           }
+        }
+        // pp があっても plannedHeight が欠落しているとき / pp が完全に取れなかった
+        // ときは 距離ベース (1.0m 以内) の最終フォールバック。
+        if (
+          !isAbsorption &&
+          (!pp ||
+            pp.plannedHeight === null ||
+            pp.plannedHeight === undefined)
+        ) {
+          let best: PlanPoint | null = null
+          let bestDist = 1.0 // 1m 以内
+          for (const cand of allCollectorPlanPointsWithPh) {
+            const d = Math.hypot(cand.x - v.x, cand.y - v.y)
+            if (d < bestDist) {
+              best = cand
+              bestDist = d
+            }
+          }
+          if (best) pp = best
         }
 
         // 集水で plan マッチが取れず、頂点にも標高データが無い場合は
