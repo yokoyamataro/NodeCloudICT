@@ -471,6 +471,61 @@ export function CrossSectionChart({
     }
   }, [])
 
+  // ピンチズーム (2 本指): 横=widthScale / 縦=heightScale を独立操作
+  // - React の touch event は passive で preventDefault できないため 直接 addEventListener
+  // - 1 本指はブラウザ標準のスクロールを許可 (touch-action: pan-x pan-y)
+  const pinchRef = useRef<{
+    initialDx: number
+    initialDy: number
+    initialWidthScale: number
+    initialHeightScale: number
+  } | null>(null)
+  useEffect(() => {
+    const el = svgRef.current
+    if (!el) return
+    const clamp = (v: number) => Math.max(0.5, Math.min(5.0, v))
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 2) return
+      const t1 = e.touches[0]
+      const t2 = e.touches[1]
+      pinchRef.current = {
+        initialDx: Math.max(1, Math.abs(t1.clientX - t2.clientX)),
+        initialDy: Math.max(1, Math.abs(t1.clientY - t2.clientY)),
+        initialWidthScale: widthScale,
+        initialHeightScale: heightScale,
+      }
+      e.preventDefault()
+    }
+    const onTouchMove = (e: TouchEvent) => {
+      if (!pinchRef.current) return
+      if (e.touches.length !== 2) return
+      const t1 = e.touches[0]
+      const t2 = e.touches[1]
+      const dx = Math.abs(t1.clientX - t2.clientX)
+      const dy = Math.abs(t1.clientY - t2.clientY)
+      const ratioX = dx / pinchRef.current.initialDx
+      const ratioY = dy / pinchRef.current.initialDy
+      const newW = clamp(pinchRef.current.initialWidthScale * ratioX)
+      const newH = clamp(pinchRef.current.initialHeightScale * ratioY)
+      setWidthScale(newW)
+      setHeightScale(newH)
+      e.preventDefault()
+    }
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) pinchRef.current = null
+    }
+    el.addEventListener('touchstart', onTouchStart, { passive: false })
+    el.addEventListener('touchmove', onTouchMove, { passive: false })
+    el.addEventListener('touchend', onTouchEnd)
+    el.addEventListener('touchcancel', onTouchEnd)
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart)
+      el.removeEventListener('touchmove', onTouchMove)
+      el.removeEventListener('touchend', onTouchEnd)
+      el.removeEventListener('touchcancel', onTouchEnd)
+    }
+  }, [widthScale, heightScale])
+
   // ドラッグ中の点。mode は 最初の mousemove で確定:
   //  - 'height' : 縦方向優位 → 計画高 の 上下調整 (既存)
   //  - 'slope'  : 横方向優位 → 別マーカーまでドラッグ → 連続勾配設定
@@ -1084,6 +1139,7 @@ export function CrossSectionChart({
           ref={svgRef}
           width={chartWidth}
           height={chartHeight}
+          style={{ touchAction: 'pan-x pan-y' }}
           className={`min-w-full ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
         >
           {/* パン操作用の透明背景。SVG 要素そのものは visiblePainted のため空白で
