@@ -122,104 +122,20 @@ export async function exportMeasurementResult({
     return { c, b, a }
   }
 
-  // 各管路を 4 行ブロックに書き込み
-  // i1 = 3 から開始（旧マクロの配線表）、j = (i1-2)*4 + 7
-  // i1=3 → j=11。以降 i1++ ごとに j が 4 ずつ増える。
-  // 物理落口分を後段で追加するため excelIdx でカウンタを回す。
-  let excelIdx = 0
-  for (let idx = 0; idx < sortedPipes.length; idx++) {
-    const pipe = sortedPipes[idx]
-    const i1 = excelIdx + 3
-    const j = (i1 - 2) * 4 + 7
-    excelIdx++
+  // ===== 出力行を 1 本に統合してから 配線番号順にソート =====
+  // 旧実装は 吸水/集水 → 落口 の 2 段で書き出していたため、
+  // Excel 上で 落口が末尾に固まっていた。
+  // CAD 解析の連番 (O1, S2, S3, K4, ..., O25, S26, ...) と一致させるため
+  // 全て 1 リストにまとめて comparePipeNumbers でソートする。
 
-    // 落口判定: pipeType が 'outlet' (直落 group で使われている落口管はこのループに来る)
-    const isOutlet = pipe.pipeType === 'outlet'
-
-    let cData: PointData = { groundHeight: null, cutDepth: null }
-    let bData: PointData = { groundHeight: null, cutDepth: null }
-    let aData: PointData = { groundHeight: null, cutDepth: null }
-    // 落口の P{j+3} に計画高を出すために、A 点の元 PlanPoint も保持する
-    let aPointRaw: PlanPoint | null = null
-
-    // 配管番号ごとに C/B/A を 名前ベースで引く (吸水 / 集水 / 直落の落口 いずれも同じロジック)。
-    // 直落は 1 plan row に 複数管の点が並んでいるが、各点は generatePointName で
-    // 「{pipeNumber}C / B / A」に統一されているため、番号一致で分離できる。
-    const { c: matchC, b: matchB, a: matchA } = findCbaByPipeNumber(pipe.number)
-    cData = pointFromPlan(matchC)
-    bData = pointFromPlan(matchB)
-    aData = pointFromPlan(matchA)
-    aPointRaw = matchA ?? null
-
-    // 管種ラベル
-    const pipeTypeLabel = isOutlet
-      ? '落口'
-      : pipe.pipeType
-        ? PIPE_TYPE_NAMES[pipe.pipeType]
-        : ''
-
-    // 書き込み
-    ws.getCell(j, 1).value = pipe.number                                         // A{j}: 渠番号
-    ws.getCell(j + 2, 1).value = pipe.diameter ?? null                           // A{j+2}: 管径
-    ws.getCell(j + 3, 1).value = pipeTypeLabel                                   // A{j+3}: 管種
-    // B{j}: 設計延長（CAD解析の「設計延長」を整数丸めで転記）
-    ws.getCell(j, 2).value =
-      pipe.designLength != null ? Math.round(pipe.designLength) : null
-    // D{j}: 配線間隔（管種が「吸水」の場合のみ出力）
-    if (header.spacing != null && pipe.pipeType === 'branch') {
-      ws.getCell(j, 4).value = header.spacing
-    }
-
-    // 上流 C
-    if (cData.groundHeight != null) {
-      ws.getCell(j, 6).value = round(cData.groundHeight, 2)                     // F{j}: 地盤高
-    }
-    if (cData.cutDepth != null) {
-      ws.getCell(j + 3, 8).value = round(cData.cutDepth, 3)                     // H{j+3}: 切深
-    }
-
-    // 中間 B
-    if (bData.groundHeight != null) {
-      ws.getCell(j, 11).value = round(bData.groundHeight, 2)                    // K{j}: 地盤高
-    }
-    if (bData.cutDepth != null) {
-      ws.getCell(j + 3, 13).value = round(bData.cutDepth, 3)                    // M{j+3}: 切深
-    }
-
-    // 下流 A
-    const vLast = pipe.vertices.length - 1
-    if (isOutlet) {
-      // 落口: 旧マクロ仕様で、A 点の計画高（管底高）を P{j+3} に出力。
-      // 計画高が無ければ地盤高、それも無ければ頂点 z にフォールバック。
-      const aValue =
-        aPointRaw?.plannedHeight ?? aData.groundHeight ?? pipe.vertices[vLast]?.z ?? null
-      if (aValue != null) {
-        ws.getCell(j + 3, 16).value = round(aValue, 2)                          // P{j+3}
-      }
-    } else {
-      // 集水管の A 点: 施工計画に無ければ頂点 z を地盤高として転記
-      const aGround =
-        aData.groundHeight ?? pipe.vertices[vLast]?.z ?? null
-      if (aGround != null) {
-        ws.getCell(j, 16).value = round(aGround, 2)                             // P{j}: 地盤高
-      }
-      if (aData.cutDepth != null) {
-        ws.getCell(j + 3, 18).value = round(aData.cutDepth, 3)                  // R{j+3}: 切深
-      }
-    }
-  }
-
-  // 落口: 施工計画の outlet planRow を全件書き出す。
-  // 物理管路 (pipeType='outlet') を数えるのではなく、配管系統で「落口として設定」
-  // した planRow を数えることで、複数落口 (2 つ以上の系統がそれぞれ落口を持つ)
-  // 場合でも取りこぼしなく出力できる。
+  // 落口: 施工計画の outlet planRow を全件収集。
   const outletPlanRows: {
     row: PlanRow
     pipe: PipeRow | null
     outletPipe: PipeRow | null
   }[] = []
   for (const group of planGroups) {
-    // 直落 group の落口は 上の pipes ループで既に書き出しているためスキップ
+    // 直落 group の落口は sortedPipes 側 (directOutletPipeIds) で書き出すのでスキップ
     if (group.groupType === 'direct') continue
     for (const row of group.rows) {
       if (row.systemEndType !== 'outlet') continue
@@ -244,30 +160,129 @@ export async function exportMeasurementResult({
     }
   }
 
-  for (const { row, pipe: collectorPipe, outletPipe } of outletPlanRows) {
+  // 1 行分の書き込み手順を関数化して 統一する
+  type OutputRow =
+    | { kind: 'pipe'; sortNumber: string; pipe: PipeRow }
+    | {
+        kind: 'outletPlan'
+        sortNumber: string
+        row: PlanRow
+        collectorPipe: PipeRow | null
+        outletPipe: PipeRow | null
+      }
+
+  const outputRows: OutputRow[] = []
+  for (const pipe of sortedPipes) {
+    outputRows.push({ kind: 'pipe', sortNumber: pipe.number, pipe })
+  }
+  for (const opr of outletPlanRows) {
+    // 落口 planRow の並び番号: outlet 管の番号 を優先。無ければ集水管の番号
+    const num = opr.outletPipe?.number ?? opr.pipe?.number ?? ''
+    outputRows.push({
+      kind: 'outletPlan',
+      sortNumber: num,
+      row: opr.row,
+      collectorPipe: opr.pipe,
+      outletPipe: opr.outletPipe,
+    })
+  }
+  // 配線番号 (O1, S2, S3, K4, ..., O25, S26, ...) で並べ替え
+  outputRows.sort((a, b) => comparePipeNumbers(a.sortNumber, b.sortNumber))
+
+  // 各行を 4 行ブロックに書き込み
+  // i1 = 3 から開始 (旧マクロの配線表)、j = (i1-2)*4 + 7
+  // i1=3 → j=11。以降 i1++ ごとに j が 4 ずつ増える。
+  for (let excelIdx = 0; excelIdx < outputRows.length; excelIdx++) {
+    const item = outputRows[excelIdx]
     const i1 = excelIdx + 3
     const j = (i1 - 2) * 4 + 7
-    excelIdx++
-    // 表示する管情報は「落口として指定された物理管路」を優先、無ければ集水管
-    const showPipe = outletPipe ?? collectorPipe
-    const cp = row.collectorPoint
-    if (showPipe) {
-      ws.getCell(j, 1).value = showPipe.number                                    // A{j}: 管番号
-      ws.getCell(j + 2, 1).value = showPipe.diameter ?? null                      // A{j+2}: 管径
+
+    if (item.kind === 'pipe') {
+      const pipe = item.pipe
+      // 落口判定: pipeType が 'outlet' (直落 group で使われている落口管はここに来る)
+      const isOutlet = pipe.pipeType === 'outlet'
+
+      let cData: PointData = { groundHeight: null, cutDepth: null }
+      let bData: PointData = { groundHeight: null, cutDepth: null }
+      let aData: PointData = { groundHeight: null, cutDepth: null }
+      let aPointRaw: PlanPoint | null = null
+
+      // 配管番号ごとに C/B/A を 名前ベースで引く
+      const { c: matchC, b: matchB, a: matchA } = findCbaByPipeNumber(pipe.number)
+      cData = pointFromPlan(matchC)
+      bData = pointFromPlan(matchB)
+      aData = pointFromPlan(matchA)
+      aPointRaw = matchA ?? null
+
+      const pipeTypeLabel = isOutlet
+        ? '落口'
+        : pipe.pipeType
+          ? PIPE_TYPE_NAMES[pipe.pipeType]
+          : ''
+
+      ws.getCell(j, 1).value = pipe.number                                         // A{j}: 渠番号
+      ws.getCell(j + 2, 1).value = pipe.diameter ?? null                           // A{j+2}: 管径
+      ws.getCell(j + 3, 1).value = pipeTypeLabel                                   // A{j+3}: 管種
       ws.getCell(j, 2).value =
-        showPipe.designLength != null ? Math.round(showPipe.designLength) : null  // B{j}: 設計延長
-    }
-    ws.getCell(j + 3, 1).value = '落口'                                           // A{j+3}: 管種
-    // P{j+3}: 落口の A 点計画高 (フォールバックは地盤高 → 頂点 z)
-    const aValue =
-      cp?.plannedHeight
-      ?? cp?.groundHeight
-      ?? (outletPipe && outletPipe.vertices.length > 0
-        ? outletPipe.vertices[outletPipe.vertices.length - 1]?.z
-        : null)
-      ?? null
-    if (aValue != null) {
-      ws.getCell(j + 3, 16).value = round(aValue, 2)
+        pipe.designLength != null ? Math.round(pipe.designLength) : null           // B{j}: 設計延長
+      if (header.spacing != null && pipe.pipeType === 'branch') {
+        ws.getCell(j, 4).value = header.spacing                                    // D{j}: 配線間隔
+      }
+
+      // 上流 C
+      if (cData.groundHeight != null) {
+        ws.getCell(j, 6).value = round(cData.groundHeight, 2)                     // F{j}
+      }
+      if (cData.cutDepth != null) {
+        ws.getCell(j + 3, 8).value = round(cData.cutDepth, 3)                     // H{j+3}
+      }
+
+      // 中間 B
+      if (bData.groundHeight != null) {
+        ws.getCell(j, 11).value = round(bData.groundHeight, 2)                    // K{j}
+      }
+      if (bData.cutDepth != null) {
+        ws.getCell(j + 3, 13).value = round(bData.cutDepth, 3)                    // M{j+3}
+      }
+
+      // 下流 A
+      const vLast = pipe.vertices.length - 1
+      if (isOutlet) {
+        const aValue =
+          aPointRaw?.plannedHeight ?? aData.groundHeight ?? pipe.vertices[vLast]?.z ?? null
+        if (aValue != null) {
+          ws.getCell(j + 3, 16).value = round(aValue, 2)                          // P{j+3}
+        }
+      } else {
+        const aGround = aData.groundHeight ?? pipe.vertices[vLast]?.z ?? null
+        if (aGround != null) {
+          ws.getCell(j, 16).value = round(aGround, 2)                             // P{j}
+        }
+        if (aData.cutDepth != null) {
+          ws.getCell(j + 3, 18).value = round(aData.cutDepth, 3)                  // R{j+3}
+        }
+      }
+    } else {
+      // 落口 planRow
+      const showPipe = item.outletPipe ?? item.collectorPipe
+      const cp = item.row.collectorPoint
+      if (showPipe) {
+        ws.getCell(j, 1).value = showPipe.number
+        ws.getCell(j + 2, 1).value = showPipe.diameter ?? null
+        ws.getCell(j, 2).value =
+          showPipe.designLength != null ? Math.round(showPipe.designLength) : null
+      }
+      ws.getCell(j + 3, 1).value = '落口'
+      const aValue =
+        cp?.plannedHeight
+        ?? cp?.groundHeight
+        ?? (item.outletPipe && item.outletPipe.vertices.length > 0
+          ? item.outletPipe.vertices[item.outletPipe.vertices.length - 1]?.z
+          : null)
+        ?? null
+      if (aValue != null) {
+        ws.getCell(j + 3, 16).value = round(aValue, 2)
+      }
     }
   }
 
