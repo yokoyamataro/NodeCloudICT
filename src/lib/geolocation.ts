@@ -44,15 +44,6 @@ export function getActiveSource(): LocationSource {
   return Capacitor.isNativePlatform() ? 'android_gps' : 'browser'
 }
 
-/** drogger は Step 2 以降で 実装するまで throw。呼出側は 現時点で選ばれない前提 */
-function ensureNotDrogger(source: LocationSource): void {
-  if (source === 'drogger') {
-    throw {
-      code: 'position_unavailable',
-      message: 'Drogger 直接受信は 現在開発中です (?locationSource=android_gps 等で切替可)',
-    } as GeoError
-  }
-}
 
 // バックグラウンド追跡プラグイン。@capacitor-community/background-geolocation は
 // registerPlugin ベースの薄い型を提供している。呼び出し側では
@@ -164,9 +155,12 @@ export async function getCurrentSample(options?: {
   timeout?: number
   maximumAge?: number
 }): Promise<GeoSample> {
-  // Step 1: source は 'browser' or 'android_gps' のみ想定。
-  // drogger が選ばれた場合は 明示エラーで停止 (実装完了後にネイティブ側を差込む)
-  ensureNotDrogger(getActiveSource())
+  const source = getActiveSource()
+  if (source === 'drogger') {
+    // 動的 import で 循環依存を回避 (drogger.ts が geolocation.ts の型を import)
+    const { getDroggerSample } = await import('./drogger')
+    return getDroggerSample(options?.timeout ?? 10000)
+  }
   await ensureGeoPermission()
   try {
     const pos = await Geolocation.getCurrentPosition({
@@ -189,7 +183,12 @@ export async function watchSamples(
     maximumAge?: number
   },
 ): Promise<{ clear: () => void }> {
-  ensureNotDrogger(getActiveSource())
+  const source = getActiveSource()
+  if (source === 'drogger') {
+    const { watchDroggerSamples } = await import('./drogger')
+    const handle = await watchDroggerSamples(callback)
+    return { clear: () => { void handle.clear() } }
+  }
   await ensureGeoPermission()
   const watchId = await Geolocation.watchPosition(
     {
@@ -252,7 +251,15 @@ export async function watchSamplesInBackground(
     distanceFilter?: number
   },
 ): Promise<{ clear: () => Promise<void> }> {
-  ensureNotDrogger(getActiveSource())
+  const source = getActiveSource()
+  // Drogger は BT SPP 接続前提で バックグラウンド継続には ネイティブ側で
+  // Foreground Service を実装する必要がある (Step 2 では未対応)。
+  // 暫定的に フォアグラウンド watch (watchDroggerSamples) にフォールバック。
+  if (source === 'drogger') {
+    const { watchDroggerSamples } = await import('./drogger')
+    const handle = await watchDroggerSamples(callback)
+    return { clear: () => handle.clear() }
+  }
   // Web ではネイティブプラグイン未対応。フォアグラウンド watch にフォールバック
   // することで、モバイルブラウザでのテスト時にも位置送信が継続する。
   if (isWebPlatform()) {
