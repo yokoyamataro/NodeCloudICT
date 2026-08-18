@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
+            android:name=".MainActivity"
+            android:label="@string/title_activity_main"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:launchMode="singleTask"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+        </activity>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"></meta-data>
+        </provider>
+    </application>
+
+    <!-- Permissions -->
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- 位置情報 (モビリティ機能: 4-e Capacitor Geolocation) -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- バックグラウンド追跡 (Android 10+ で別権限、11+ で「常に許可」が必要) -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- Foreground Service (アプリ閉時も位置送信を続けるための常駐サービス) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Android 14+ では location タイプの foreground service 明示が必須 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <!-- 通知は Android 13+ でランタイム権限 (foreground service の常駐通知に必要) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 車両利用時に GPS 精度優先で正確な位置が取れるようにする hint -->
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+
+    <!-- Bluetooth (Drogger RTK 直接受信 = DroggerLocationPlugin 用)
+         Android 12+ (API 31) は BLUETOOTH_CONNECT / BLUETOOTH_SCAN が ランタイム権限。
+         それ未満はレガシー BLUETOOTH / BLUETOOTH_ADMIN で SPP 接続可能。
+         BLUETOOTH_ADVERTISE は今回不使用 (受信のみ)。 -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+</manifest>

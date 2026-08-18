@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">NodeCloud</string>
+    <string name="title_activity_main">NodeCloud</string>
+    <string name="package_name">net.nodecloud.ict</string>
+    <string name="custom_url_scheme">net.nodecloud.ict</string>
+</resources>
