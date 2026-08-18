@@ -89,6 +89,7 @@ import { importParcelBatch } from '@/features/parcel-maps/importParcelBatch'
 import { Map as MapIcon } from 'lucide-react'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
 import { MobileHamburgerMenu } from './MobileHamburgerMenu'
+import { DroggerStatusBadge } from '@/components/gnss/DroggerStatusBadge'
 import {
   MobileParcelListPanel,
   PARCEL_COLUMN_KEYS,
@@ -3074,6 +3075,8 @@ export function MobileStakingPage() {
             {userLabel}
           </span>
         )}
+        {/* Drogger 直接受信の 接続 + Fix 品質 バッジ。source='drogger' 時のみ表示 */}
+        <DroggerStatusBadge />
         <FeedbackButton variant="mobile" />
       </div>
       {/* ヘッダー（2 行目: ツールボタン群）。すべて日本語ラベル。

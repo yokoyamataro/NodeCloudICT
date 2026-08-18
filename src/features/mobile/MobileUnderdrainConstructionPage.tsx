@@ -26,6 +26,7 @@ import { buildTrenchTin } from '@/lib/landxml/surface'
 import type { Alignment, AlignmentSegment } from '@/lib/landxml/types'
 import type { Project } from '@/types/database'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
+import { DroggerStatusBadge } from '@/components/gnss/DroggerStatusBadge'
 
 function FollowCurrent({ position, enabled }: { position: [number, number] | null; enabled: boolean }) {
   const map = useMap()
@@ -448,6 +449,8 @@ export function MobileUnderdrainConstructionPage() {
           >
             <Settings className="h-3.5 w-3.5" />
           </button>
+          {/* Drogger 接続 + Fix 品質バッジ (source='drogger' 時のみ表示) */}
+          <DroggerStatusBadge />
           <FeedbackButton variant="mobile" />
         </div>
       </div>
