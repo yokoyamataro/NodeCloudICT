@@ -9,9 +9,50 @@
 // 参考:
 //   https://capacitorjs.com/docs/apis/geolocation
 //   https://github.com/capacitor-community/background-geolocation
+//
+// 位置情報ソース (LocationSource):
+//   'browser'     — Web ブラウザの navigator.geolocation (Capacitor Web 実装)
+//   'android_gps' — ネイティブ Android LocationManager
+//                   (Mock GPS 経由で 外部 RTK 受信機 = Drogger 等 も接続可)
+//   'drogger'     — ネイティブ側で Drogger を BT SPP 直接接続 (未実装)
+//
+// Step 1: 骨組みだけ。既定は プラットフォーム判定に基づく:
+//   Web → 'browser'  /  ネイティブ → 'android_gps' (現行動作)
+// Drogger ネイティブプラグインの実装完了後、ネイティブ既定を 'drogger' に切替。
+// 開発時は URL クエリ ?locationSource=... で強制上書き可。
 
 import { Geolocation, type Position } from '@capacitor/geolocation'
 import { Capacitor, registerPlugin } from '@capacitor/core'
+
+export type LocationSource = 'browser' | 'android_gps' | 'drogger'
+
+/**
+ * 現在利用すべき位置情報ソースを決定する。
+ *  1) URL クエリ `?locationSource=browser|android_gps|drogger` があれば それを採用
+ *     (開発 / QA でネイティブ APK でも Web と同じ browser 経由をテストしたい 等)
+ *  2) それ以外は プラットフォーム既定 (Web=browser / Native=android_gps)
+ */
+export function getActiveSource(): LocationSource {
+  if (typeof window !== 'undefined') {
+    try {
+      const q = new URLSearchParams(window.location.search).get('locationSource')
+      if (q === 'browser' || q === 'android_gps' || q === 'drogger') return q
+    } catch {
+      /* URL パース失敗は無視 */
+    }
+  }
+  return Capacitor.isNativePlatform() ? 'android_gps' : 'browser'
+}
+
+/** drogger は Step 2 以降で 実装するまで throw。呼出側は 現時点で選ばれない前提 */
+function ensureNotDrogger(source: LocationSource): void {
+  if (source === 'drogger') {
+    throw {
+      code: 'position_unavailable',
+      message: 'Drogger 直接受信は 現在開発中です (?locationSource=android_gps 等で切替可)',
+    } as GeoError
+  }
+}
 
 // バックグラウンド追跡プラグイン。@capacitor-community/background-geolocation は
 // registerPlugin ベースの薄い型を提供している。呼び出し側では
@@ -123,6 +164,9 @@ export async function getCurrentSample(options?: {
   timeout?: number
   maximumAge?: number
 }): Promise<GeoSample> {
+  // Step 1: source は 'browser' or 'android_gps' のみ想定。
+  // drogger が選ばれた場合は 明示エラーで停止 (実装完了後にネイティブ側を差込む)
+  ensureNotDrogger(getActiveSource())
   await ensureGeoPermission()
   try {
     const pos = await Geolocation.getCurrentPosition({
@@ -145,6 +189,7 @@ export async function watchSamples(
     maximumAge?: number
   },
 ): Promise<{ clear: () => void }> {
+  ensureNotDrogger(getActiveSource())
   await ensureGeoPermission()
   const watchId = await Geolocation.watchPosition(
     {
@@ -207,6 +252,7 @@ export async function watchSamplesInBackground(
     distanceFilter?: number
   },
 ): Promise<{ clear: () => Promise<void> }> {
+  ensureNotDrogger(getActiveSource())
   // Web ではネイティブプラグイン未対応。フォアグラウンド watch にフォールバック
   // することで、モバイルブラウザでのテスト時にも位置送信が継続する。
   if (isWebPlatform()) {
