@@ -143,32 +143,15 @@ export function FarmChatSheet({ farmId, farmName, projectId, onClose }: Props) {
   }, [messages])
 
   // 送信者 + 既読ユーザーの名前索引
-  const [senderNames, setSenderNames] = useState<Record<string, string>>({})
-  useEffect(() => {
-    const need = new Set<string>()
-    for (const m of messages) need.add(m.sender_user_id)
-    for (const r of reads) need.add(r.user_id)
-    const missing = Array.from(need).filter((id) => !(id in senderNames))
-    if (missing.length === 0) return
-    void (async () => {
-      try {
-        const { data } = await supabase
-          .from('profiles')
-          .select('user_id, full_name')
-          .in('user_id', missing)
-        const upd: Record<string, string> = { ...senderNames }
-        for (const row of (data ?? []) as {
-          user_id: string
-          full_name: string | null
-        }[]) {
-          upd[row.user_id] = row.full_name ?? ''
-        }
-        setSenderNames(upd)
-      } catch {
-        /* noop */
-      }
-    })()
-  }, [messages, reads, senderNames])
+  // profiles を直引きすると RLS (自分 or site_owner のみ SELECT 可) で他人の行が
+  // 弾かれるため、SECURITY DEFINER の get_project_members RPC (→ members) を
+  // 権威ソースにする。get_project_members は profiles.full_name → auth 側の
+  // full_name/name/display_name → email ローカル部 のフォールバック済み。
+  const senderNames = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const m of members) map[m.user_id] = m.display_name
+    return map
+  }, [members])
 
   const handleSend = async () => {
     const t = text.trim()
