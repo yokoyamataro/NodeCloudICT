@@ -20,9 +20,11 @@ BT SPP 直接受信への段階的移行。
 ```bash
 # プロジェクトルートから
 npm run build
-CAPACITOR_CONFIG=capacitor.config.ict.ts \
-  npx cap sync android --config capacitor.config.ict.ts
+npx cap sync android
 ```
+
+`capacitor.config.ts` の `android.path: 'android-ict'` により
+標準の `npx cap sync android` で android-ict/ を対象に同期される。
 
 `cap sync` は 以下を更新する:
 - `app/src/main/assets/public/` — Web バンドル

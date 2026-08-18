@@ -1,8 +1,17 @@
 import type { CapacitorConfig } from '@capacitor/cli'
 
-// Capacitor 設定
-// デフォルトは Vercel にホストされた本番 URL をそのまま表示する（リモートロード）。
-// 開発中はローカル dev server を指したい場合に server.url を差し替える。
+// Capacitor 設定 (ICT 側 = 測量土木アプリ)
+//
+// Web を Vercel からリモートロードする方式。
+// Android プロジェクトは android-ict/ (Drogger RTK BT SPP 直接受信対応)。
+//   → 標準の `android/` ではなく android-ict/ に向けている
+//
+// ビルド:
+//   npm run build
+//   npx cap sync android          (android-ict/ を対象に同期)
+//   npx cap open android          (Android Studio で android-ict/ を open)
+//
+// 別 APK (モビリティ) は capacitor.config.mobility.ts + android-mobility/ を使う。
 const config: CapacitorConfig = {
   appId: 'net.nodecloud.ict',
   appName: 'NodeCloud',
@@ -14,6 +23,8 @@ const config: CapacitorConfig = {
     // androidScheme: 'https',
   },
   android: {
+    // 標準の android/ ではなく android-ict/ をプロジェクトディレクトリにする
+    path: 'android-ict',
     // 位置情報の権限で必要
     allowMixedContent: false,
   },
