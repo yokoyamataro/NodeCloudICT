@@ -3,12 +3,11 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Loader2, Monitor, LogOut, ArrowLeft, Plus } from 'lucide-react'
+import { Loader2, LogOut, ArrowLeft, Plus } from 'lucide-react'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useAuth } from '@/contexts/AuthContext'
 import { CurrentLocationLayer } from '@/components/map/CurrentLocationLayer'
-import { setDisplayModeOverride } from '@/lib/displayMode'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
 import { MobileHamburgerMenu } from './MobileHamburgerMenu'
 import {
@@ -236,11 +235,6 @@ export function MobileTopPage() {
     }
   }
 
-  const handleGoPC = () => {
-    setDisplayModeOverride('pc')
-    navigate('/')
-  }
-
   const handleSignOut = async () => {
     if (confirm('ログアウトしますか？')) {
       await signOut()
@@ -272,14 +266,6 @@ export function MobileTopPage() {
         <span className="font-medium truncate">
           {currentProject ? currentProject.name : '工区一覧（スマホ）'}
         </span>
-        <button
-          onClick={handleGoPC}
-          className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-500 hover:bg-slate-700"
-          title="PC表示へ切替"
-        >
-          <Monitor className="h-3.5 w-3.5" />
-          PC表示
-        </button>
         <div className="flex-1" />
         <FeedbackButton variant="mobile" />
         <button

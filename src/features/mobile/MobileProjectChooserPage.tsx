@@ -4,13 +4,12 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertCircle, Car, Check, ChevronRight, Folder, Loader2, LogOut, MapPin, Monitor, Pencil, Plus, X } from 'lucide-react'
+import { AlertCircle, Car, Check, ChevronRight, Folder, Loader2, LogOut, MapPin, Pencil, Plus, X } from 'lucide-react'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { getAllProjectRecency, sortByRecency } from '@/lib/recentProjects'
 import { useFarmStore } from '@/stores/farmStore'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCanUseMobility } from '@/lib/useCanUseMobility'
-import { setDisplayModeOverride } from '@/lib/displayMode'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
 import { MobileHamburgerMenu } from './MobileHamburgerMenu'
 import { JGD2011_ZONES } from '@/lib/coordinates'
@@ -138,11 +137,6 @@ export function MobileProjectChooserPage() {
     [filteredProjects],
   )
 
-  const handleGoPC = () => {
-    setDisplayModeOverride('pc')
-    navigate('/')
-  }
-
   const handleSignOut = async () => {
     if (confirm('ログアウトしますか？')) {
       await signOut()
@@ -163,14 +157,6 @@ export function MobileProjectChooserPage() {
       <div className="px-3 py-2 bg-slate-800 text-white flex items-center gap-2 text-sm">
         <MobileHamburgerMenu />
         <span className="font-medium">現場一覧（スマホ）</span>
-        <button
-          onClick={handleGoPC}
-          className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-500 hover:bg-slate-700"
-          title="PC表示へ切替"
-        >
-          <Monitor className="h-3.5 w-3.5" />
-          PC表示
-        </button>
         <div className="flex-1" />
         <FeedbackButton variant="mobile" />
         <button

@@ -8,9 +8,10 @@
 // シンプル表示に留める。touki.or.jp 認証情報等の細かい設定は PC 表示で。
 
 import { useState } from 'react'
-import { Menu, X, LogOut, ListOrdered, Settings2 } from 'lucide-react'
+import { Menu, X, LogOut, ListOrdered, Settings2, Monitor } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
+import { setDisplayModeOverride } from '@/lib/displayMode'
 
 interface Props {
   /** 現在の工区 ID。座標一覧遷移時に farmId=xxx を付与する用。 */
@@ -42,6 +43,12 @@ export function MobileHamburgerMenu({ farmId, onOpenCoords }: Props) {
   const handleSettings = () => {
     setDrawerOpen(false)
     setSettingsOpen(true)
+  }
+
+  const handleSwitchToPc = () => {
+    setDrawerOpen(false)
+    setDisplayModeOverride('pc')
+    navigate('/')
   }
 
   const handleSignOut = async () => {
@@ -108,6 +115,14 @@ export function MobileHamburgerMenu({ farmId, onOpenCoords }: Props) {
             >
               <ListOrdered className="h-4 w-4 text-slate-500" />
               座標一覧
+            </button>
+            <button
+              type="button"
+              onClick={handleSwitchToPc}
+              className="w-full flex items-center gap-2 px-4 py-3 text-left text-sm hover:bg-slate-50 border-b"
+            >
+              <Monitor className="h-4 w-4 text-slate-500" />
+              PC表示へ切替
             </button>
             <button
               type="button"
