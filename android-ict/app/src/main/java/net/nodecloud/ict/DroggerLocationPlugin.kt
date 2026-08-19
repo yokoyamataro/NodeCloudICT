@@ -161,13 +161,17 @@ class DroggerLocationPlugin : Plugin() {
             call.reject("Bluetooth が OFF です")
             return
         }
-        // 対象デバイス選定: 指定されていれば address 一致、無ければ 名前に "Drogger" を含む最初
+        // 対象デバイス選定: 指定されていれば address 一致、無ければ Drogger 系名称を照合。
+        //   Bizstation Drogger シリーズは "Drogger-XXX" / "DG-XXX" / "RZS.XXX" 等の
+        //   複数命名パターンがあるため、下記のいずれかを含む最初のペアリング済みを採用。
         val target: BluetoothDevice? = try {
             if (deviceAddress != null) {
                 adapter.bondedDevices.firstOrNull { it.address == deviceAddress }
             } else {
-                adapter.bondedDevices.firstOrNull {
-                    (it.name ?: "").contains("Drogger", ignoreCase = true)
+                adapter.bondedDevices.firstOrNull { dev ->
+                    val n = (dev.name ?: "").uppercase()
+                    n.contains("DROGGER") || n.startsWith("DG-") ||
+                        n.startsWith("DG_") || n.startsWith("RZS")
                 }
             }
         } catch (e: SecurityException) {
