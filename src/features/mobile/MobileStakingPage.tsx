@@ -6340,15 +6340,21 @@ export function MobileStakingPage() {
                 const rtkNotFix =
                   positioningMode === 'rtk' &&
                   (currentAcc == null || currentAcc > rtkFixAccuracyM)
-                const disabled = saving || !currentPos || rtkNotFix
+                // 精度制限による disable は廃止。ユーザーの判断でいつでも測定可能。
+                // ボタン色を落として 警告を伝えるのみ。
+                const disabled = saving || !currentPos
                 return (
                   <button
                     onClick={() => startRecording()}
                     disabled={disabled}
-                    className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm bg-red-600 hover:bg-red-700"
+                    className={`flex-1 flex items-center justify-center gap-1 px-3 py-2 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm ${
+                      rtkNotFix
+                        ? 'bg-amber-600 hover:bg-amber-700'
+                        : 'bg-red-600 hover:bg-red-700'
+                    }`}
                     title={
                       rtkNotFix
-                        ? `精度 ${(rtkFixAccuracyM * 100).toFixed(1)}cm 以下で測定可能`
+                        ? `精度が RTK Fix しきい値 (${(rtkFixAccuracyM * 100).toFixed(1)}cm) を超えています。押せますが 精度低下に注意`
                         : undefined
                     }
                   >
@@ -6438,19 +6444,25 @@ export function MobileStakingPage() {
                 const rtkNotFix =
                   positioningMode === 'rtk' &&
                   (currentAcc == null || currentAcc > rtkFixAccuracyM)
-                const disabled = saving || !currentPos || rtkNotFix
+                // 精度制限による disable は廃止。ユーザーの判断でいつでも測定可能。
+                // 精度不十分時は 色を琥珀に落として 警告のみ。
+                const disabled = saving || !currentPos
                 return (
                   <button
                     onClick={() => startRecording()}
                     disabled={disabled}
                     className={`flex-1 basis-0 flex items-center justify-center gap-1 px-2 py-3 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed font-bold ${
-                      isGps ? 'bg-orange-500 hover:bg-orange-600' : 'bg-red-600 hover:bg-red-700'
+                      isGps
+                        ? 'bg-orange-500 hover:bg-orange-600'
+                        : rtkNotFix
+                          ? 'bg-amber-600 hover:bg-amber-700'
+                          : 'bg-red-600 hover:bg-red-700'
                     }`}
                     title={
                       isGps
                         ? '1 回だけ位置を取得します（補正なしの簡易測定）'
                         : rtkNotFix
-                          ? `精度 ${(rtkFixAccuracyM * 100).toFixed(1)}cm 以下で測定可能`
+                          ? `精度が RTK Fix しきい値 (${(rtkFixAccuracyM * 100).toFixed(1)}cm) を超えています。押せますが 精度低下に注意`
                           : undefined
                     }
                   >
