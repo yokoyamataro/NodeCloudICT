@@ -422,7 +422,7 @@ class DroggerLocationPlugin : Plugin() {
         val body = line.substringBefore('*').removePrefix("$")
         val parts = body.split(',')
         if (parts.isEmpty()) return
-        val talker = parts[0] // e.g. GNGGA / GPGGA / GNRMC / GPRMC / GPGSV / GNGSA
+        val talker = parts[0] // e.g. GNGGA / GPGGA / GNRMC / GPRMC / GPGSV / GNGSA / PSAT
         try {
             when {
                 talker.endsWith("GGA") -> {
@@ -438,6 +438,8 @@ class DroggerLocationPlugin : Plugin() {
                 }
                 talker.endsWith("GSV") -> parseGsv(talker, parts)
                 talker.endsWith("GSA") -> parseGsa(parts)
+                talker.endsWith("HDT") -> parseHdt(parts)
+                talker == "PSAT" -> parsePsat(parts)
                 else -> return
             }
         } catch (e: Exception) {
@@ -475,7 +477,18 @@ class DroggerLocationPlugin : Plugin() {
         val speedKn = parts[7].toDoubleOrNull()
         val heading = parts[8].toDoubleOrNull()
         if (speedKn != null) nmea.speedKnots = speedKn
-        if (heading != null) nmea.headingDeg = heading
+        if (heading != null) {
+            nmea.headingDeg = heading
+            // 姿勢: HDT / PSAT が来ない受信機向けの フォールバック。
+            // ただし RMC の heading は Course Over Ground (移動中の進行方向) なので
+            // 静止時は 意味なし。 source を "RMC (COG)" として区別。
+            if (attitude.source == null || attitude.source == "RMC (COG)") {
+                attitude.heading = heading
+                attitude.source = "RMC (COG)"
+                attitude.timestamp = System.currentTimeMillis()
+                emitAttitude()
+            }
+        }
     }
 
     // ============================================================================
@@ -633,6 +646,70 @@ class DroggerLocationPlugin : Plugin() {
         val ret = JSObject()
         ret.put("satellites", arr)
         ret.put("timestamp", System.currentTimeMillis())
+        call.resolve(ret)
+    }
+
+    // ============================================================================
+    // 姿勢情報 パーサ (heading / pitch / roll)
+    //
+    // 対応 NMEA:
+    //   $--HDT,heading,T           — heading (true north)
+    //   $PSAT,HPR,time,heading,pitch,roll,mode  — SIRF/Trimble/Furuno 系
+    //   $--RMC の COG は "移動中の 進行方向" なので heading の フォールバックにのみ使用
+    // ============================================================================
+
+    private data class Attitude(
+        var heading: Double? = null,
+        var pitch: Double? = null,
+        var roll: Double? = null,
+        var source: String? = null,
+        var timestamp: Long = 0L,
+    )
+    private val attitude = Attitude()
+
+    private fun parseHdt(parts: List<String>) {
+        // $--HDT,x.x,T*hh
+        if (parts.size < 2) return
+        val h = parts[1].toDoubleOrNull() ?: return
+        attitude.heading = h
+        attitude.source = "HDT"
+        attitude.timestamp = System.currentTimeMillis()
+        emitAttitude()
+    }
+
+    private fun parsePsat(parts: List<String>) {
+        // $PSAT,HPR,time,heading,pitch,roll,mode*hh
+        if (parts.size < 6) return
+        if (parts[1] != "HPR") return
+        val h = parts[3].toDoubleOrNull()
+        val p = parts[4].toDoubleOrNull()
+        val r = parts[5].toDoubleOrNull()
+        if (h != null) attitude.heading = h
+        if (p != null) attitude.pitch = p
+        if (r != null) attitude.roll = r
+        attitude.source = "PSAT/HPR"
+        attitude.timestamp = System.currentTimeMillis()
+        emitAttitude()
+    }
+
+    private fun emitAttitude() {
+        val obj = JSObject()
+        obj.put("heading", attitude.heading)
+        obj.put("pitch", attitude.pitch)
+        obj.put("roll", attitude.roll)
+        obj.put("source", attitude.source)
+        obj.put("timestamp", attitude.timestamp)
+        notifyListeners("attitude", obj)
+    }
+
+    @PluginMethod
+    fun getAttitude(call: PluginCall) {
+        val ret = JSObject()
+        ret.put("heading", attitude.heading)
+        ret.put("pitch", attitude.pitch)
+        ret.put("roll", attitude.roll)
+        ret.put("source", attitude.source)
+        ret.put("timestamp", attitude.timestamp)
         call.resolve(ret)
     }
 

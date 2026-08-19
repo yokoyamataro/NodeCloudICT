@@ -98,6 +98,19 @@ export interface SatellitesSnapshot {
   timestamp: number
 }
 
+/** GNSS 受信機からの 姿勢情報 (heading/pitch/roll) */
+export interface AttitudeInfo {
+  /** 方位 [deg] 0-360, 北=0, 時計回り */
+  heading: number | null
+  /** ピッチ (前傾) [deg] */
+  pitch: number | null
+  /** ロール (横傾) [deg] */
+  roll: number | null
+  /** 情報源: 'PSAT/HPR' | 'HDT' | 'RMC (COG)' | null */
+  source: string | null
+  timestamp: number
+}
+
 /** ネイティブプラグインが 公開する予定の JS 側 API 契約 (完全一致で実装する) */
 interface DroggerLocationPlugin {
   start(options?: { deviceAddress?: string }): Promise<void>
@@ -115,6 +128,7 @@ interface DroggerLocationPlugin {
     pass?: string
   }): Promise<{ mountpoints: NtripMountpoint[]; raw: string }>
   getSatellites(): Promise<SatellitesSnapshot>
+  getAttitude(): Promise<AttitudeInfo>
   addListener(
     eventName: 'location',
     listener: (ev: DroggerLocationEvent) => void,
@@ -135,6 +149,10 @@ interface DroggerLocationPlugin {
     eventName: 'satellites',
     listener: (ev: SatellitesSnapshot) => void,
   ): Promise<PluginListenerHandle>
+  addListener(
+    eventName: 'attitude',
+    listener: (ev: AttitudeInfo) => void,
+  ): Promise<PluginListenerHandle>
 }
 
 // ネイティブ実装が無い環境向けの Web モック。
@@ -152,6 +170,7 @@ interface WebMockState {
     statusChange: Array<(ev: { connected: boolean; deviceName: string | null }) => void>
     ntripStatusChange: Array<(ev: NtripStatus) => void>
     satellites: Array<(ev: SatellitesSnapshot) => void>
+    attitude: Array<(ev: AttitudeInfo) => void>
   }
   connected: boolean
   base: { lat: number; lng: number }
@@ -167,6 +186,7 @@ const webMockState: WebMockState = {
     statusChange: [],
     ntripStatusChange: [],
     satellites: [],
+    attitude: [],
   },
   connected: false,
   base: { ...WEB_MOCK_BASE },
@@ -237,6 +257,15 @@ const webMockPlugin: DroggerLocationPlugin = {
         const snap = makeMockSatellites()
         for (const l of webMockState.listeners.satellites) l(snap)
       }
+      // 姿勢 (heading をゆっくり回転させる ダミー)
+      const att: AttitudeInfo = {
+        heading: (tick * 5) % 360,
+        pitch: Math.sin(tick * 0.3) * 3,
+        roll: Math.cos(tick * 0.2) * 2,
+        source: 'PSAT/HPR',
+        timestamp: Date.now(),
+      }
+      for (const l of webMockState.listeners.attitude) l(att)
     }, 1000)
   },
   async stop() {
@@ -294,6 +323,17 @@ const webMockPlugin: DroggerLocationPlugin = {
   async getSatellites() {
     return makeMockSatellites()
   },
+  async getAttitude() {
+    // Web モックでは 動的に変化する 疑似姿勢 (heading が ゆっくり回転)
+    const t = Date.now() / 1000
+    return {
+      heading: (t * 5) % 360,
+      pitch: Math.sin(t * 0.3) * 3,
+      roll: Math.cos(t * 0.2) * 2,
+      source: 'PSAT/HPR',
+      timestamp: Date.now(),
+    }
+  },
   addListener(eventName, listener) {
     // 型ガード: eventName で listener の型が変わる (overload)
     if (eventName === 'location') {
@@ -308,6 +348,8 @@ const webMockPlugin: DroggerLocationPlugin = {
       webMockState.listeners.ntripStatusChange.push(listener as (ev: NtripStatus) => void)
     } else if (eventName === 'satellites') {
       webMockState.listeners.satellites.push(listener as (ev: SatellitesSnapshot) => void)
+    } else if (eventName === 'attitude') {
+      webMockState.listeners.attitude.push(listener as (ev: AttitudeInfo) => void)
     }
     const handle: PluginListenerHandle = {
       remove: async () => {
@@ -332,6 +374,10 @@ const webMockPlugin: DroggerLocationPlugin = {
         } else if (eventName === 'satellites') {
           const arr = webMockState.listeners.satellites
           const i = arr.indexOf(listener as (ev: SatellitesSnapshot) => void)
+          if (i >= 0) arr.splice(i, 1)
+        } else if (eventName === 'attitude') {
+          const arr = webMockState.listeners.attitude
+          const i = arr.indexOf(listener as (ev: AttitudeInfo) => void)
           if (i >= 0) arr.splice(i, 1)
         }
       },
@@ -497,4 +543,9 @@ export async function fetchNtripSourceTable(options: {
 /** 現在の 衛星スナップショット (スカイマップ用) */
 export async function getSatellites(): Promise<SatellitesSnapshot> {
   return DroggerLocation.getSatellites()
+}
+
+/** 現在の 姿勢情報 (heading/pitch/roll) */
+export async function getAttitude(): Promise<AttitudeInfo> {
+  return DroggerLocation.getAttitude()
 }

@@ -1,13 +1,14 @@
-// Drogger 直接受信の 接続状態 + Fix 品質バッジ。
-// LocationSource='drogger' の時だけ表示され、既存の位置取得パイプラインには影響しない。
+// GPS 設定バッジ。Fix 品質と NTRIP RTCM 受信状態を コンパクトに表示し、
+// タップで GpsSettingsModal を開く。
 //
-// 使い方:
-//   <DroggerStatusBadge />
-// を任意ページの ヘッダ/オーバーレイに配置するだけ。source が 'drogger' でない
+// 以前は Drogger 状態バッジ + NTRIP 歯車 の 2 個並びだったが、
+// 「GPS設定」1 個に集約 (モーダル 4 タブで 詳細設定)。
+//
+// LocationSource='drogger' の時だけ表示。source が 'drogger' でない
 // 時は null を返すため、常時マウントしていても 邪魔にならない。
 
 import { useEffect, useState } from 'react'
-import { Radio, RadioTower, Settings, WifiOff } from 'lucide-react'
+import { Radio, RadioTower, WifiOff, Settings } from 'lucide-react'
 import { getActiveSource } from '@/lib/geolocation'
 import {
   DroggerLocation,
@@ -18,7 +19,7 @@ import {
   type NtripStatus,
 } from '@/lib/drogger'
 import { loadNtripConfig } from '@/lib/ntripPrefs'
-import { NtripConfigModal } from '@/features/ntrip/NtripConfigModal'
+import { GpsSettingsModal } from '@/features/gnss/GpsSettingsModal'
 
 interface DroggerStatus {
   connected: boolean
@@ -62,7 +63,7 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
     bytesReceived: 0,
     lastRtcmAt: 0,
   })
-  const [showConfig, setShowConfig] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
 
   // source は URL クエリ or プラットフォーム判定で決まる。ページ遷移で
   // 変わり得るため一応 poll する (URL 変更検知の代替)。
@@ -99,7 +100,6 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
         deviceName: `${prev.deviceName ?? ''} [${ev.code}]`,
       }))
     }
-
     const onNtripStatus = (ev: NtripStatus) => {
       setNtrip(ev)
     }
@@ -162,7 +162,7 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
       : status.connected
         ? 'bg-slate-100 border-slate-400 text-slate-700'
         : 'bg-red-100 border-red-400 text-red-800'
-  const label = fq != null ? FIX_LABEL[fq] : status.connected ? '受信中…' : '未接続'
+  const fixLabel = fq != null ? FIX_LABEL[fq] : status.connected ? '受信中…' : '未接続'
   const icon = !status.connected ? (
     <WifiOff className="h-3 w-3" />
   ) : fq === 4 ? (
@@ -170,92 +170,57 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
   ) : (
     <Radio className="h-3 w-3" />
   )
-  const staleMs =
-    status.lastUpdateAt != null ? Date.now() - status.lastUpdateAt : null
+  const staleMs = status.lastUpdateAt != null ? Date.now() - status.lastUpdateAt : null
   const isStale = staleMs != null && staleMs > 5000
-
-  // 手動 再接続: バッジをタップした時、未接続 or stale なら stop → start で再試行
-  //   未接続 = そもそも繋がっていない
-  //   stale (受信 5 秒以上停止) = ソケットは開いているが Drogger からデータが止まっている
-  const canReconnect = !status.connected || isStale
-  const handleClick = async () => {
-    if (!canReconnect) return
-    try {
-      await DroggerLocation.stop().catch(() => undefined)
-      await startWithAutoDetect()
-      setStatus((prev) => ({ ...prev, lastUpdateAt: Date.now() }))
-      // 保存済み NTRIP 設定があれば 再接続時にも自動起動
-      const cfg = loadNtripConfig()
-      if (cfg && cfg.host && cfg.port && cfg.mountpoint) {
-        try {
-          await startNtrip(cfg)
-        } catch (e) {
-          console.warn('NTRIP auto-start failed:', e)
-        }
-      }
-    } catch (e) {
-      console.warn('DroggerLocation reconnect failed:', e)
-    }
-  }
-
-  // NTRIP RTCM が最後に来てから 15 秒以上経過なら stale (キャスター切断疑い)
   const ntripStaleMs = ntrip.lastRtcmAt > 0 ? Date.now() - ntrip.lastRtcmAt : null
   const ntripStale = ntrip.connected && ntripStaleMs != null && ntripStaleMs > 15_000
 
   const tooltip = [
-    `Drogger: ${status.deviceName ?? '(未接続)'}`,
+    `GPS: ${status.deviceName ?? '(未接続)'}`,
     fq != null ? `Fix: ${FIX_LABEL[fq]}` : null,
     status.hdop != null ? `HDOP: ${status.hdop.toFixed(2)}` : null,
     status.satellites != null ? `Sats: ${status.satellites}` : null,
-    isStale ? `${Math.round((staleMs ?? 0) / 1000)} 秒前` : null,
-    canReconnect ? '(タップで再接続)' : null,
+    isStale ? `更新: ${Math.round((staleMs ?? 0) / 1000)} 秒前` : null,
     ntrip.connected
-      ? `NTRIP: ${ntrip.host}/${ntrip.mountpoint} (${(ntrip.bytesReceived / 1024).toFixed(1)} KB${ntripStale ? ' / stale' : ''})`
+      ? `NTRIP: ${ntrip.host}/${ntrip.mountpoint} (${(ntrip.bytesReceived / 1024).toFixed(1)} KB${
+          ntripStale ? ' / stale' : ''
+        })`
       : 'NTRIP: 未接続',
+    '(タップで GPS 設定)',
   ]
     .filter(Boolean)
     .join(' / ')
 
-  const ntripBadgeClass = ntrip.connected
-    ? ntripStale
-      ? 'bg-amber-100 border-amber-400 text-amber-800'
-      : 'bg-emerald-100 border-emerald-400 text-emerald-800'
-    : 'bg-slate-100 border-slate-300 text-slate-500'
-
   return (
-    <span className={`inline-flex items-center gap-1 ${className ?? ''}`}>
+    <>
       <button
         type="button"
-        onClick={handleClick}
-        disabled={!canReconnect}
-        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-semibold ${boxClass} ${
+        onClick={() => setShowSettings(true)}
+        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-semibold cursor-pointer hover:brightness-110 ${boxClass} ${
           isStale ? 'opacity-60' : ''
-        } ${canReconnect ? 'cursor-pointer hover:brightness-110' : 'cursor-default'}`}
+        } ${className ?? ''}`}
         title={tooltip}
       >
+        <Settings className="h-3 w-3" />
         {icon}
-        <span>{label}</span>
+        <span>{fixLabel}</span>
         {status.hdop != null && (
           <span className="text-[9px] font-mono opacity-70">H{status.hdop.toFixed(1)}</span>
         )}
         {status.satellites != null && (
           <span className="text-[9px] font-mono opacity-70">S{status.satellites}</span>
         )}
+        {/* NTRIP 受信インジケーター (小さな 点) */}
+        {ntrip.connected && (
+          <span
+            className={`inline-block w-1.5 h-1.5 rounded-full ${
+              ntripStale ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'
+            }`}
+            title="NTRIP RTCM 受信中"
+          />
+        )}
       </button>
-      <button
-        type="button"
-        onClick={() => setShowConfig(true)}
-        className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded border text-[10px] font-semibold cursor-pointer hover:brightness-110 ${ntripBadgeClass}`}
-        title={
-          ntrip.connected
-            ? `NTRIP 受信中 ${(ntrip.bytesReceived / 1024).toFixed(1)} KB (タップで設定)`
-            : 'NTRIP 未設定 (タップで設定)'
-        }
-      >
-        <Settings className="h-3 w-3" />
-        <span>NTRIP</span>
-      </button>
-      <NtripConfigModal open={showConfig} onClose={() => setShowConfig(false)} />
-    </span>
+      <GpsSettingsModal open={showSettings} onClose={() => setShowSettings(false)} />
+    </>
   )
 }
