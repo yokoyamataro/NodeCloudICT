@@ -23,14 +23,21 @@
 
 import { Geolocation, type Position } from '@capacitor/geolocation'
 import { Capacitor, registerPlugin } from '@capacitor/core'
+import { isMobilityApp } from './appVariant'
 
 export type LocationSource = 'browser' | 'android_gps' | 'drogger'
 
 /**
  * 現在利用すべき位置情報ソースを決定する。
  *  1) URL クエリ `?locationSource=browser|android_gps|drogger` があれば それを採用
- *     (開発 / QA でネイティブ APK でも Web と同じ browser 経由をテストしたい 等)
- *  2) それ以外は プラットフォーム既定 (Web=browser / Native=android_gps)
+ *     (開発 / QA で 別ソースをテストしたい 等)
+ *  2) それ以外は プラットフォーム × アプリバリアント の既定:
+ *     - Web ブラウザ:           'browser'  (navigator.geolocation)
+ *     - ネイティブ + ICT APK:   'drogger'  (BT SPP 直接受信 / android-ict/ に
+ *                                          DroggerLocationPlugin を登録済み)
+ *     - ネイティブ + Mobility APK: 'android_gps' (Drogger プラグイン未登録なので
+ *                                          Web モックへフォールバックしないよう
+ *                                          android_gps を明示)
  */
 export function getActiveSource(): LocationSource {
   if (typeof window !== 'undefined') {
@@ -41,7 +48,10 @@ export function getActiveSource(): LocationSource {
       /* URL パース失敗は無視 */
     }
   }
-  return Capacitor.isNativePlatform() ? 'android_gps' : 'browser'
+  if (!Capacitor.isNativePlatform()) return 'browser'
+  // ネイティブ: mobility APK なら Android GPS、ICT APK なら Drogger
+  if (isMobilityApp()) return 'android_gps'
+  return 'drogger'
 }
 
 
