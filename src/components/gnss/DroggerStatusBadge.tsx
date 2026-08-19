@@ -78,19 +78,39 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
     const onStatusChange = (ev: { connected: boolean; deviceName: string | null }) => {
       setStatus((prev) => ({ ...prev, connected: ev.connected, deviceName: ev.deviceName }))
     }
+    const onError = (ev: { code: string; message: string }) => {
+      // 接続失敗時は connected を false に落として badge を「未接続」表示に
+      setStatus((prev) => ({
+        ...prev,
+        connected: false,
+        deviceName: `${prev.deviceName ?? ''} [${ev.code}]`,
+      }))
+    }
 
     void (async () => {
       const locH = await DroggerLocation.addListener('location', onLocation)
       const stH = await DroggerLocation.addListener('statusChange', onStatusChange)
+      const errH = await DroggerLocation.addListener('error', onError)
       if (removed) {
         await locH.remove()
         await stH.remove()
+        await errH.remove()
         return
       }
-      handles.push(locH, stH)
+      handles.push(locH, stH, errH)
       // 初回状態を取得
       const cur = await DroggerLocation.getStatus()
       setStatus((prev) => ({ ...prev, connected: cur.connected, deviceName: cur.deviceName }))
+      // まだ接続していなければ 自動的に接続開始 (BT 権限プロンプトが出る)
+      if (!cur.connected) {
+        try {
+          await DroggerLocation.start()
+        } catch (e) {
+          // start() が reject した場合 (権限拒否/BT off/未ペアリング等) は
+          // onError リスナー経由で badge に反映されるので ここでは何もしない
+          console.warn('DroggerLocation.start failed:', e)
+        }
+      }
     })()
 
     return () => {
