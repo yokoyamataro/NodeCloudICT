@@ -139,21 +139,42 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
   const staleMs =
     status.lastUpdateAt != null ? Date.now() - status.lastUpdateAt : null
   const isStale = staleMs != null && staleMs > 5000
+
+  // 手動 再接続: バッジをタップした時、未接続 or stale なら stop → start で再試行
+  //   未接続 = そもそも繋がっていない
+  //   stale (受信 5 秒以上停止) = ソケットは開いているが Drogger からデータが止まっている
+  const canReconnect = !status.connected || isStale
+  const handleClick = async () => {
+    if (!canReconnect) return
+    try {
+      // 念のため 既存接続を切ってから再試行 (二重接続防止)
+      await DroggerLocation.stop().catch(() => undefined)
+      await DroggerLocation.start()
+      setStatus((prev) => ({ ...prev, lastUpdateAt: Date.now() }))
+    } catch (e) {
+      console.warn('DroggerLocation reconnect failed:', e)
+    }
+  }
+
   const tooltip = [
     `Drogger: ${status.deviceName ?? '(未接続)'}`,
     fq != null ? `Fix: ${FIX_LABEL[fq]}` : null,
     status.hdop != null ? `HDOP: ${status.hdop.toFixed(2)}` : null,
     status.satellites != null ? `Sats: ${status.satellites}` : null,
     isStale ? `${Math.round((staleMs ?? 0) / 1000)} 秒前` : null,
+    canReconnect ? '(タップで再接続)' : null,
   ]
     .filter(Boolean)
     .join(' / ')
 
   return (
-    <span
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={!canReconnect}
       className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-semibold ${boxClass} ${
         isStale ? 'opacity-60' : ''
-      } ${className ?? ''}`}
+      } ${canReconnect ? 'cursor-pointer hover:brightness-110' : 'cursor-default'} ${className ?? ''}`}
       title={tooltip}
     >
       {icon}
@@ -164,6 +185,6 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
       {status.satellites != null && (
         <span className="text-[9px] font-mono opacity-70">S{status.satellites}</span>
       )}
-    </span>
+    </button>
   )
 }
