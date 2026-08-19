@@ -24,7 +24,7 @@ interface Props {
 export function MobileHamburgerMenu({ farmId, onOpenCoords }: Props) {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const { user, signOut } = useAuth()
+  const { user, displayName, signOut } = useAuth()
   const navigate = useNavigate()
 
   const handleCoords = () => {
@@ -89,10 +89,16 @@ export function MobileHamburgerMenu({ farmId, onOpenCoords }: Props) {
             <div className="px-4 py-3 border-b">
               <div className="text-[11px] text-slate-500">ログイン中</div>
               <div
-                className="text-xs font-medium text-slate-800 truncate"
+                className="text-xs font-semibold text-slate-800 truncate"
+                title={displayName || user?.email || ''}
+              >
+                {displayName || '(名前未設定)'}
+              </div>
+              <div
+                className="text-[11px] text-slate-500 truncate"
                 title={user?.email ?? ''}
               >
-                {user?.email ?? '(不明)'}
+                {user?.email ?? '(メール不明)'}
               </div>
             </div>
             <button
@@ -136,6 +142,15 @@ export function MobileHamburgerMenu({ farmId, onOpenCoords }: Props) {
               </button>
             </div>
             <div className="p-4 space-y-3">
+              <div>
+                <div className="text-[11px] text-slate-500">ユーザー名</div>
+                <div
+                  className="text-sm font-semibold text-slate-800 break-all"
+                  title={displayName || user?.email || ''}
+                >
+                  {displayName || '(名前未設定)'}
+                </div>
+              </div>
               <div>
                 <div className="text-[11px] text-slate-500">メールアドレス</div>
                 <div

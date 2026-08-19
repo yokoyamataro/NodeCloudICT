@@ -62,8 +62,7 @@ function FitBounds({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
 export function MobileTopPage() {
   const navigate = useNavigate()
   const { projectId: routeProjectId } = useParams<{ projectId: string }>()
-  const { signOut, user, profile } = useAuth()
-  const userLabel = profile?.full_name?.trim() || (user?.email ? user.email.split('@')[0] : '')
+  const { signOut } = useAuth()
   const {
     farms: allFarms,
     loading: farmsLoading,
@@ -282,11 +281,6 @@ export function MobileTopPage() {
           PC表示
         </button>
         <div className="flex-1" />
-        {userLabel && (
-          <span className="text-[11px] text-slate-300 truncate max-w-[6rem]" title={user?.email ?? ''}>
-            {userLabel}
-          </span>
-        )}
         <FeedbackButton variant="mobile" />
         <button
           onClick={handleSignOut}

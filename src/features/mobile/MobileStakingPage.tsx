@@ -661,8 +661,7 @@ export function MobileStakingPage() {
   } = useOrthophotoStore()
   const { fetchPipes, pipes } = useUnderdrainStore()
   const { records, fetchRecords, addRecord, deleteRecord, saving } = useStakingStore()
-  const { user, profile } = useAuth()
-  const userLabel = profile?.full_name?.trim() || (user?.email ? user.email.split('@')[0] : '')
+  const { user } = useAuth()
 
   const [farm, setFarm] = useState<Farm | null>(null)
   const [project, setProject] = useState<Project | null>(null)
@@ -3098,11 +3097,6 @@ export function MobileStakingPage() {
           >
             <Edit3 className="h-4 w-4" />
           </button>
-        )}
-        {userLabel && (
-          <span className="text-[11px] text-slate-300 truncate max-w-[6rem]" title={user?.email ?? ''}>
-            {userLabel}
-          </span>
         )}
         {/* Drogger 直接受信の 接続 + Fix 品質 バッジ。source='drogger' 時のみ表示 */}
         <DroggerStatusBadge />
