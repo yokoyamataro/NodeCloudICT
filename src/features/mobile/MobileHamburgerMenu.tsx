@@ -73,9 +73,10 @@ export function MobileHamburgerMenu({ farmId, onOpenCoords }: Props) {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="px-4 py-3 border-b bg-slate-50 flex items-center justify-between">
-              <span className="text-sm font-semibold text-slate-700">
-                メニュー
-              </span>
+              <div className="flex flex-col leading-tight">
+                <span className="text-sm font-semibold text-slate-700">NodeCloud</span>
+                <span className="text-[10px] text-slate-500 mt-0.5">{__BUILD_TIME__}</span>
+              </div>
               <button
                 type="button"
                 onClick={() => setDrawerOpen(false)}

@@ -7,14 +7,18 @@
 // 時は null を返すため、常時マウントしていても 邪魔にならない。
 
 import { useEffect, useState } from 'react'
-import { Radio, RadioTower, WifiOff } from 'lucide-react'
+import { Radio, RadioTower, Settings, WifiOff } from 'lucide-react'
 import { getActiveSource } from '@/lib/geolocation'
 import {
   DroggerLocation,
+  startNtrip,
   startWithAutoDetect,
   type DroggerFixQuality,
   type DroggerLocationEvent,
+  type NtripStatus,
 } from '@/lib/drogger'
+import { loadNtripConfig } from '@/lib/ntripPrefs'
+import { NtripConfigModal } from '@/features/ntrip/NtripConfigModal'
 
 interface DroggerStatus {
   connected: boolean
@@ -51,6 +55,14 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
     satellites: null,
     lastUpdateAt: null,
   })
+  const [ntrip, setNtrip] = useState<NtripStatus>({
+    connected: false,
+    host: null,
+    mountpoint: null,
+    bytesReceived: 0,
+    lastRtcmAt: 0,
+  })
+  const [showConfig, setShowConfig] = useState(false)
 
   // source は URL クエリ or プラットフォーム判定で決まる。ページ遷移で
   // 変わり得るため一応 poll する (URL 変更検知の代替)。
@@ -88,25 +100,46 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
       }))
     }
 
+    const onNtripStatus = (ev: NtripStatus) => {
+      setNtrip(ev)
+    }
+
     void (async () => {
       const locH = await DroggerLocation.addListener('location', onLocation)
       const stH = await DroggerLocation.addListener('statusChange', onStatusChange)
       const errH = await DroggerLocation.addListener('error', onError)
+      const ntH = await DroggerLocation.addListener('ntripStatusChange', onNtripStatus)
       if (removed) {
         await locH.remove()
         await stH.remove()
         await errH.remove()
+        await ntH.remove()
         return
       }
-      handles.push(locH, stH, errH)
+      handles.push(locH, stH, errH, ntH)
       // 初回状態を取得
       const cur = await DroggerLocation.getStatus()
       setStatus((prev) => ({ ...prev, connected: cur.connected, deviceName: cur.deviceName }))
+      try {
+        const ns = await DroggerLocation.getNtripStatus()
+        setNtrip(ns)
+      } catch {
+        /* ネイティブ未実装環境等は無視 */
+      }
       // 常に stop → start で 前セッションの残留接続を綺麗に切ってから開始する
       // (BT 権限プロンプトも start 側で自動的に出る)
       try {
         await DroggerLocation.stop().catch(() => undefined)
         await startWithAutoDetect()
+        // BT 接続成功 → 保存済み NTRIP 設定があれば自動接続
+        const cfg = loadNtripConfig()
+        if (cfg && cfg.host && cfg.port && cfg.mountpoint) {
+          try {
+            await startNtrip(cfg)
+          } catch (e) {
+            console.warn('NTRIP auto-start failed:', e)
+          }
+        }
       } catch (e) {
         // start() が reject した場合 (権限拒否/BT off/未ペアリング等) は
         // onError リスナー経由で badge に反映されるので ここでは何もしない
@@ -151,10 +184,23 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
       await DroggerLocation.stop().catch(() => undefined)
       await startWithAutoDetect()
       setStatus((prev) => ({ ...prev, lastUpdateAt: Date.now() }))
+      // 保存済み NTRIP 設定があれば 再接続時にも自動起動
+      const cfg = loadNtripConfig()
+      if (cfg && cfg.host && cfg.port && cfg.mountpoint) {
+        try {
+          await startNtrip(cfg)
+        } catch (e) {
+          console.warn('NTRIP auto-start failed:', e)
+        }
+      }
     } catch (e) {
       console.warn('DroggerLocation reconnect failed:', e)
     }
   }
+
+  // NTRIP RTCM が最後に来てから 15 秒以上経過なら stale (キャスター切断疑い)
+  const ntripStaleMs = ntrip.lastRtcmAt > 0 ? Date.now() - ntrip.lastRtcmAt : null
+  const ntripStale = ntrip.connected && ntripStaleMs != null && ntripStaleMs > 15_000
 
   const tooltip = [
     `Drogger: ${status.deviceName ?? '(未接続)'}`,
@@ -163,28 +209,53 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
     status.satellites != null ? `Sats: ${status.satellites}` : null,
     isStale ? `${Math.round((staleMs ?? 0) / 1000)} 秒前` : null,
     canReconnect ? '(タップで再接続)' : null,
+    ntrip.connected
+      ? `NTRIP: ${ntrip.host}/${ntrip.mountpoint} (${(ntrip.bytesReceived / 1024).toFixed(1)} KB${ntripStale ? ' / stale' : ''})`
+      : 'NTRIP: 未接続',
   ]
     .filter(Boolean)
     .join(' / ')
 
+  const ntripBadgeClass = ntrip.connected
+    ? ntripStale
+      ? 'bg-amber-100 border-amber-400 text-amber-800'
+      : 'bg-emerald-100 border-emerald-400 text-emerald-800'
+    : 'bg-slate-100 border-slate-300 text-slate-500'
+
   return (
-    <button
-      type="button"
-      onClick={handleClick}
-      disabled={!canReconnect}
-      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-semibold ${boxClass} ${
-        isStale ? 'opacity-60' : ''
-      } ${canReconnect ? 'cursor-pointer hover:brightness-110' : 'cursor-default'} ${className ?? ''}`}
-      title={tooltip}
-    >
-      {icon}
-      <span>{label}</span>
-      {status.hdop != null && (
-        <span className="text-[9px] font-mono opacity-70">H{status.hdop.toFixed(1)}</span>
-      )}
-      {status.satellites != null && (
-        <span className="text-[9px] font-mono opacity-70">S{status.satellites}</span>
-      )}
-    </button>
+    <span className={`inline-flex items-center gap-1 ${className ?? ''}`}>
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={!canReconnect}
+        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-semibold ${boxClass} ${
+          isStale ? 'opacity-60' : ''
+        } ${canReconnect ? 'cursor-pointer hover:brightness-110' : 'cursor-default'}`}
+        title={tooltip}
+      >
+        {icon}
+        <span>{label}</span>
+        {status.hdop != null && (
+          <span className="text-[9px] font-mono opacity-70">H{status.hdop.toFixed(1)}</span>
+        )}
+        {status.satellites != null && (
+          <span className="text-[9px] font-mono opacity-70">S{status.satellites}</span>
+        )}
+      </button>
+      <button
+        type="button"
+        onClick={() => setShowConfig(true)}
+        className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded border text-[10px] font-semibold cursor-pointer hover:brightness-110 ${ntripBadgeClass}`}
+        title={
+          ntrip.connected
+            ? `NTRIP 受信中 ${(ntrip.bytesReceived / 1024).toFixed(1)} KB (タップで設定)`
+            : 'NTRIP 未設定 (タップで設定)'
+        }
+      >
+        <Settings className="h-3 w-3" />
+        <span>NTRIP</span>
+      </button>
+      <NtripConfigModal open={showConfig} onClose={() => setShowConfig(false)} />
+    </span>
   )
 }

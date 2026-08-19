@@ -90,6 +90,7 @@ import { Map as MapIcon } from 'lucide-react'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
 import { MobileHamburgerMenu } from './MobileHamburgerMenu'
 import { DroggerStatusBadge } from '@/components/gnss/DroggerStatusBadge'
+import { watchSamples } from '@/lib/geolocation'
 import {
   MobileParcelListPanel,
   PARCEL_COLUMN_KEYS,
@@ -1555,62 +1556,76 @@ export function MobileStakingPage() {
   useEffect(() => { rejectingCountRef.current = rejectingCount }, [rejectingCount])
 
   useEffect(() => {
-    if (!('geolocation' in navigator)) return
-    const id = navigator.geolocation.watchPosition(
-      (pos) => {
-        const acc = pos.coords.accuracy
-        const isRtk = positioningModeRef.current === 'rtk'
-        const fixThreshold = rtkFixAccuracyRef.current
+    // watchSamples は getActiveSource() で ICT ネイティブ → Drogger 直接受信、
+    // Web / Mobility → ブラウザ or Android GPS を自動切替する。ここでは
+    // ソースを気にせず GeoSample を受け取れば良い。
+    let handle: { clear: () => void } | null = null
+    let cancelled = false
+    void (async () => {
+      const h = await watchSamples(
+        (sample, err) => {
+          if (err || !sample) return
+          const acc = sample.accuracy_m
+          const isRtk = positioningModeRef.current === 'rtk'
+          const fixThreshold = rtkFixAccuracyRef.current
 
-        // RTK モード + 既に一度 FIX 済 + 精度が閾値超過 → 棄却フェーズ
-        if (
-          isRtk &&
-          postFixModeRef.current &&
-          acc != null &&
-          acc > POST_FIX_REJECT_ACC_M
-        ) {
-          consecutiveRejectsRef.current += 1
-          if (consecutiveRejectsRef.current > MAX_CONSECUTIVE_REJECTS) {
-            // 連続 5 回を超えた → FIX 喪失として受け入れる。棄却状態を解除して
-            // この読みで currentAcc を更新することで既存の FIX→喪失トリガが警告音を鳴らす。
-            postFixModeRef.current = false
-            consecutiveRejectsRef.current = 0
-            setRejectingCount(0)
-            // fallthrough して下の accept 分岐へ
+          // RTK モード + 既に一度 FIX 済 + 精度が閾値超過 → 棄却フェーズ
+          if (
+            isRtk &&
+            postFixModeRef.current &&
+            acc != null &&
+            acc > POST_FIX_REJECT_ACC_M
+          ) {
+            consecutiveRejectsRef.current += 1
+            if (consecutiveRejectsRef.current > MAX_CONSECUTIVE_REJECTS) {
+              // 連続 5 回を超えた → FIX 喪失として受け入れる。棄却状態を解除して
+              // この読みで currentAcc を更新することで既存の FIX→喪失トリガが警告音を鳴らす。
+              postFixModeRef.current = false
+              consecutiveRejectsRef.current = 0
+              setRejectingCount(0)
+              // fallthrough して下の accept 分岐へ
+            } else {
+              // まだ棄却継続。currentPos / currentAcc を更新しない (画面は最終良好値を保持)
+              setRejectingCount(consecutiveRejectsRef.current)
+              return
+            }
           } else {
-            // まだ棄却継続。currentPos / currentAcc を更新しない (画面は最終良好値を保持)
-            setRejectingCount(consecutiveRejectsRef.current)
-            return
+            // accept 分岐: 棄却カウントをリセット
+            if (consecutiveRejectsRef.current !== 0) {
+              consecutiveRejectsRef.current = 0
+              setRejectingCount(0)
+            }
           }
-        } else {
-          // accept 分岐: 棄却カウントをリセット
-          if (consecutiveRejectsRef.current !== 0) {
-            consecutiveRejectsRef.current = 0
-            setRejectingCount(0)
+
+          // 一度 FIX 精度に達したら postFixMode に入り、以降のフィルタが有効化される
+          if (isRtk && acc != null && acc <= fixThreshold) {
+            postFixModeRef.current = true
           }
-        }
 
-        // 一度 FIX 精度に達したら postFixMode に入り、以降のフィルタが有効化される
-        if (isRtk && acc != null && acc <= fixThreshold) {
-          postFixModeRef.current = true
-        }
-
-        const ll: [number, number] = [pos.coords.latitude, pos.coords.longitude]
-        setCurrentPos(ll)
-        setCurrentAcc(acc)
-        setCurrentAlt(pos.coords.altitude)
-        // 位置更新の鮮度計測: この時刻を beep ループから参照して「更新が
-        // 止まった (RTK 受信機切断等)」ときにビープを停止するために使う。
-        lastPosTimeRef.current = Date.now()
-        // FIX相当の精度のときだけ追従用の安定位置を更新（外れたら据え置き）
-        if (acc != null && acc <= FOLLOW_FIX_THRESHOLD_M) {
-          setStablePos(ll)
-        }
-      },
-      () => {},
-      { enableHighAccuracy: true, maximumAge: 500, timeout: 15000 },
-    )
-    return () => navigator.geolocation.clearWatch(id)
+          const ll: [number, number] = [sample.lat, sample.lon]
+          setCurrentPos(ll)
+          setCurrentAcc(acc)
+          setCurrentAlt(sample.altitude_m)
+          // 位置更新の鮮度計測: この時刻を beep ループから参照して「更新が
+          // 止まった (RTK 受信機切断等)」ときにビープを停止するために使う。
+          lastPosTimeRef.current = Date.now()
+          // FIX相当の精度のときだけ追従用の安定位置を更新（外れたら据え置き）
+          if (acc != null && acc <= FOLLOW_FIX_THRESHOLD_M) {
+            setStablePos(ll)
+          }
+        },
+        { enableHighAccuracy: true, maximumAge: 500, timeout: 15000 },
+      )
+      if (cancelled) {
+        h.clear()
+        return
+      }
+      handle = h
+    })()
+    return () => {
+      cancelled = true
+      if (handle) handle.clear()
+    }
   }, [])
 
   const zone = project?.coordinate_zone ?? 13
@@ -2473,47 +2488,61 @@ export function MobileStakingPage() {
     // ハイエンドで概ね 1 秒に 1 回）。棄却 1 回につきこの時間だけ終了時刻を後ろへ。
     const REJECT_EXTEND_MS = 1000
 
-    const watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        const sample = {
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          alt: pos.coords.altitude,
-          acc: pos.coords.accuracy,
-        }
-        const accepted = recSamplesRef.current
-        // 2 サンプル以上溜まったら、それまでの平均から 3cm 以上ずれた点はノイズ
-        // として棄却する。棄却した分だけ目標終了時刻を後ろへ延長して、
-        // 規定数の有効サンプルが揃うまで観測を継続する。
-        if (accepted.length >= 2) {
-          let sumLat = 0
-          let sumLng = 0
-          for (const p of accepted) {
-            sumLat += p.lat
-            sumLng += p.lng
+    // watchSamples は async。startup 中に cleanup が来るケースを cancelled で守る
+    let recHandle: { clear: () => void } | null = null
+    let recCancelled = false
+    void (async () => {
+      const h = await watchSamples(
+        (s, err) => {
+          if (err || !s) return
+          const sample = {
+            lat: s.lat,
+            lng: s.lon,
+            alt: s.altitude_m,
+            acc: s.accuracy_m,
           }
-          const avgLat = sumLat / accepted.length
-          const avgLng = sumLng / accepted.length
-          const d = distanceMeters({ lat: sample.lat, lng: sample.lng }, { lat: avgLat, lng: avgLng })
-          if (d > 0.03) {
-            // 棄却して時間を延ばす
-            recEndMsRef.current += REJECT_EXTEND_MS
-            setRejectedCount((n) => n + 1)
-            return
+          const accepted = recSamplesRef.current
+          // 2 サンプル以上溜まったら、それまでの平均から 3cm 以上ずれた点はノイズ
+          // として棄却する。棄却した分だけ目標終了時刻を後ろへ延長して、
+          // 規定数の有効サンプルが揃うまで観測を継続する。
+          if (accepted.length >= 2) {
+            let sumLat = 0
+            let sumLng = 0
+            for (const p of accepted) {
+              sumLat += p.lat
+              sumLng += p.lng
+            }
+            const avgLat = sumLat / accepted.length
+            const avgLng = sumLng / accepted.length
+            const d = distanceMeters({ lat: sample.lat, lng: sample.lng }, { lat: avgLat, lng: avgLng })
+            if (d > 0.03) {
+              // 棄却して時間を延ばす
+              recEndMsRef.current += REJECT_EXTEND_MS
+              setRejectedCount((n) => n + 1)
+              return
+            }
           }
-        }
-        accepted.push(sample)
-        setRecordedCount(accepted.length)
-      },
-      () => {},
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 },
-    )
+          accepted.push(sample)
+          setRecordedCount(accepted.length)
+        },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 },
+      )
+      if (recCancelled) {
+        h.clear()
+        return
+      }
+      recHandle = h
+    })()
 
     recCleanupRef.current = () => {
-      try {
-        navigator.geolocation.clearWatch(watchId)
-      } catch {
-        // ignore
+      recCancelled = true
+      if (recHandle) {
+        try {
+          recHandle.clear()
+        } catch {
+          // ignore
+        }
+        recHandle = null
       }
       if (recEndIntervalRef.current != null) {
         window.clearInterval(recEndIntervalRef.current)

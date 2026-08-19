@@ -34,12 +34,87 @@ export interface DroggerLocationEvent extends GeoSample {
   satellites: number | null
 }
 
+/** NTRIP キャスター設定 */
+export interface NtripConfig {
+  host: string
+  port: number
+  mountpoint: string
+  user: string
+  pass: string
+  /** VRS (電子基準点/民間サービス) 系は true 必須 */
+  sendGga: boolean
+}
+
+/** NTRIP 接続状態 */
+export interface NtripStatus {
+  connected: boolean
+  host: string | null
+  mountpoint: string | null
+  bytesReceived: number
+  /** 最後に RTCM を受信した epoch ms (0 なら未受信) */
+  lastRtcmAt: number
+}
+
+/** SourceTable エントリ (STR; 行) */
+export interface NtripMountpoint {
+  mountpoint: string
+  identifier: string
+  format: string
+  navSystem: string
+  country: string
+  nmeaRequired: boolean
+  auth: string
+  fee: string
+}
+
+/** 衛星コンステレーション */
+export type Constellation =
+  | 'GPS'
+  | 'GLONASS'
+  | 'Galileo'
+  | 'BeiDou'
+  | 'QZSS'
+  | 'SBAS'
+  | 'Multi'
+  | 'Other'
+
+/** GSV/GSA から復元した 衛星情報 (スカイマップ表示用) */
+export interface SatelliteInfo {
+  constellation: Constellation
+  /** 衛星番号 (PRN) */
+  prn: number
+  /** 仰角 [deg] 0-90 */
+  elevation: number | null
+  /** 方位角 [deg] 0-360 (北から時計回り) */
+  azimuth: number | null
+  /** 信号強度 [dB-Hz] 0-99 */
+  snr: number | null
+  /** Fix 計算に使用中か (GSA 由来) */
+  usedInFix: boolean
+}
+
+export interface SatellitesSnapshot {
+  satellites: SatelliteInfo[]
+  timestamp: number
+}
+
 /** ネイティブプラグインが 公開する予定の JS 側 API 契約 (完全一致で実装する) */
 interface DroggerLocationPlugin {
   start(options?: { deviceAddress?: string }): Promise<void>
   stop(): Promise<void>
   getStatus(): Promise<{ connected: boolean; deviceName: string | null }>
   listPairedDevices(): Promise<{ devices: { name: string; address: string }[] }>
+  // ---- NTRIP ----
+  startNtrip(config: NtripConfig): Promise<void>
+  stopNtrip(): Promise<void>
+  getNtripStatus(): Promise<NtripStatus>
+  fetchNtripSourceTable(options: {
+    host: string
+    port: number
+    user?: string
+    pass?: string
+  }): Promise<{ mountpoints: NtripMountpoint[]; raw: string }>
+  getSatellites(): Promise<SatellitesSnapshot>
   addListener(
     eventName: 'location',
     listener: (ev: DroggerLocationEvent) => void,
@@ -51,6 +126,14 @@ interface DroggerLocationPlugin {
   addListener(
     eventName: 'statusChange',
     listener: (ev: { connected: boolean; deviceName: string | null }) => void,
+  ): Promise<PluginListenerHandle>
+  addListener(
+    eventName: 'ntripStatusChange',
+    listener: (ev: NtripStatus) => void,
+  ): Promise<PluginListenerHandle>
+  addListener(
+    eventName: 'satellites',
+    listener: (ev: SatellitesSnapshot) => void,
   ): Promise<PluginListenerHandle>
 }
 
@@ -67,16 +150,58 @@ interface WebMockState {
     location: Array<(ev: DroggerLocationEvent) => void>
     error: Array<(ev: GeoError) => void>
     statusChange: Array<(ev: { connected: boolean; deviceName: string | null }) => void>
+    ntripStatusChange: Array<(ev: NtripStatus) => void>
+    satellites: Array<(ev: SatellitesSnapshot) => void>
   }
   connected: boolean
   base: { lat: number; lng: number }
+  /** NTRIP 疑似接続状態 (Web モックでは 実際に TCP 接続はしない) */
+  ntrip: NtripStatus
 }
 
 const webMockState: WebMockState = {
   timer: null,
-  listeners: { location: [], error: [], statusChange: [] },
+  listeners: {
+    location: [],
+    error: [],
+    statusChange: [],
+    ntripStatusChange: [],
+    satellites: [],
+  },
   connected: false,
   base: { ...WEB_MOCK_BASE },
+  ntrip: {
+    connected: false,
+    host: null,
+    mountpoint: null,
+    bytesReceived: 0,
+    lastRtcmAt: 0,
+  },
+}
+
+// Web モック用: ダミー衛星スナップショット (スカイマップ表示テスト用)
+function makeMockSatellites(): SatellitesSnapshot {
+  const sats: SatelliteInfo[] = [
+    // GPS
+    { constellation: 'GPS', prn: 5, elevation: 65, azimuth: 210, snr: 47, usedInFix: true },
+    { constellation: 'GPS', prn: 13, elevation: 42, azimuth: 45, snr: 44, usedInFix: true },
+    { constellation: 'GPS', prn: 15, elevation: 25, azimuth: 315, snr: 38, usedInFix: true },
+    { constellation: 'GPS', prn: 20, elevation: 78, azimuth: 130, snr: 49, usedInFix: true },
+    { constellation: 'GPS', prn: 29, elevation: 12, azimuth: 285, snr: 28, usedInFix: false },
+    // GLONASS
+    { constellation: 'GLONASS', prn: 73, elevation: 55, azimuth: 180, snr: 42, usedInFix: true },
+    { constellation: 'GLONASS', prn: 74, elevation: 30, azimuth: 90, snr: 39, usedInFix: true },
+    { constellation: 'GLONASS', prn: 83, elevation: 68, azimuth: 350, snr: 46, usedInFix: true },
+    // Galileo
+    { constellation: 'Galileo', prn: 311, elevation: 50, azimuth: 60, snr: 45, usedInFix: true },
+    { constellation: 'Galileo', prn: 319, elevation: 22, azimuth: 240, snr: 33, usedInFix: false },
+    // QZSS (みちびき)
+    { constellation: 'QZSS', prn: 194, elevation: 72, azimuth: 165, snr: 48, usedInFix: true },
+    // BeiDou
+    { constellation: 'BeiDou', prn: 208, elevation: 15, azimuth: 120, snr: 31, usedInFix: false },
+    { constellation: 'BeiDou', prn: 220, elevation: 45, azimuth: 200, snr: 40, usedInFix: true },
+  ]
+  return { satellites: sats, timestamp: Date.now() }
 }
 
 const webMockPlugin: DroggerLocationPlugin = {
@@ -107,6 +232,11 @@ const webMockPlugin: DroggerLocationPlugin = {
         satellites: 18,
       }
       for (const l of webMockState.listeners.location) l(sample)
+      // 5 秒毎に 衛星スナップショットも emit (スカイマップ動作確認用)
+      if (tick % 5 === 0) {
+        const snap = makeMockSatellites()
+        for (const l of webMockState.listeners.satellites) l(snap)
+      }
     }, 1000)
   },
   async stop() {
@@ -132,6 +262,38 @@ const webMockPlugin: DroggerLocationPlugin = {
       devices: [{ name: 'Drogger-DG-PRO1 (Web モック)', address: '00:00:00:00:00:00' }],
     }
   },
+  // ---- NTRIP: Web では 実 TCP 接続をせず 疑似接続表示のみ ----
+  async startNtrip(config) {
+    webMockState.ntrip = {
+      connected: true,
+      host: config.host,
+      mountpoint: config.mountpoint,
+      bytesReceived: 0,
+      lastRtcmAt: Date.now(),
+    }
+    for (const l of webMockState.listeners.ntripStatusChange) l(webMockState.ntrip)
+  },
+  async stopNtrip() {
+    webMockState.ntrip = {
+      connected: false,
+      host: null,
+      mountpoint: null,
+      bytesReceived: 0,
+      lastRtcmAt: 0,
+    }
+    for (const l of webMockState.listeners.ntripStatusChange) l(webMockState.ntrip)
+  },
+  async getNtripStatus() {
+    return { ...webMockState.ntrip }
+  },
+  async fetchNtripSourceTable(_options) {
+    // Web モックでは 実 TCP は張れないので空リストを返す
+    void _options
+    return { mountpoints: [], raw: '' }
+  },
+  async getSatellites() {
+    return makeMockSatellites()
+  },
   addListener(eventName, listener) {
     // 型ガード: eventName で listener の型が変わる (overload)
     if (eventName === 'location') {
@@ -142,6 +304,10 @@ const webMockPlugin: DroggerLocationPlugin = {
       webMockState.listeners.statusChange.push(
         listener as (ev: { connected: boolean; deviceName: string | null }) => void,
       )
+    } else if (eventName === 'ntripStatusChange') {
+      webMockState.listeners.ntripStatusChange.push(listener as (ev: NtripStatus) => void)
+    } else if (eventName === 'satellites') {
+      webMockState.listeners.satellites.push(listener as (ev: SatellitesSnapshot) => void)
     }
     const handle: PluginListenerHandle = {
       remove: async () => {
@@ -158,6 +324,14 @@ const webMockPlugin: DroggerLocationPlugin = {
           const i = arr.indexOf(
             listener as (ev: { connected: boolean; deviceName: string | null }) => void,
           )
+          if (i >= 0) arr.splice(i, 1)
+        } else if (eventName === 'ntripStatusChange') {
+          const arr = webMockState.listeners.ntripStatusChange
+          const i = arr.indexOf(listener as (ev: NtripStatus) => void)
+          if (i >= 0) arr.splice(i, 1)
+        } else if (eventName === 'satellites') {
+          const arr = webMockState.listeners.satellites
+          const i = arr.indexOf(listener as (ev: SatellitesSnapshot) => void)
           if (i >= 0) arr.splice(i, 1)
         }
       },
@@ -291,4 +465,36 @@ export async function startWithAutoDetect(): Promise<void> {
     } as GeoError
   }
   await DroggerLocation.start({ deviceAddress: candidate.address })
+}
+
+// ============================================================================
+// NTRIP ラッパ (ネイティブプラグイン経由)
+// ============================================================================
+
+/** NTRIP キャスターに 接続開始。RTCM3 は 自動的に Drogger BT SPP へ流し込まれる */
+export async function startNtrip(config: NtripConfig): Promise<void> {
+  await DroggerLocation.startNtrip(config)
+}
+
+export async function stopNtrip(): Promise<void> {
+  await DroggerLocation.stopNtrip()
+}
+
+export async function getNtripStatus(): Promise<NtripStatus> {
+  return DroggerLocation.getNtripStatus()
+}
+
+/** SourceTable を fetch して 利用可能な mountpoint 一覧を返す */
+export async function fetchNtripSourceTable(options: {
+  host: string
+  port: number
+  user?: string
+  pass?: string
+}): Promise<{ mountpoints: NtripMountpoint[]; raw: string }> {
+  return DroggerLocation.fetchNtripSourceTable(options)
+}
+
+/** 現在の 衛星スナップショット (スカイマップ用) */
+export async function getSatellites(): Promise<SatellitesSnapshot> {
+  return DroggerLocation.getSatellites()
 }
