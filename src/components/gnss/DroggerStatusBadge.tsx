@@ -11,6 +11,7 @@ import { Radio, RadioTower, WifiOff } from 'lucide-react'
 import { getActiveSource } from '@/lib/geolocation'
 import {
   DroggerLocation,
+  startWithAutoDetect,
   type DroggerFixQuality,
   type DroggerLocationEvent,
 } from '@/lib/drogger'
@@ -101,15 +102,15 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
       // 初回状態を取得
       const cur = await DroggerLocation.getStatus()
       setStatus((prev) => ({ ...prev, connected: cur.connected, deviceName: cur.deviceName }))
-      // まだ接続していなければ 自動的に接続開始 (BT 権限プロンプトが出る)
-      if (!cur.connected) {
-        try {
-          await DroggerLocation.start()
-        } catch (e) {
-          // start() が reject した場合 (権限拒否/BT off/未ペアリング等) は
-          // onError リスナー経由で badge に反映されるので ここでは何もしない
-          console.warn('DroggerLocation.start failed:', e)
-        }
+      // 常に stop → start で 前セッションの残留接続を綺麗に切ってから開始する
+      // (BT 権限プロンプトも start 側で自動的に出る)
+      try {
+        await DroggerLocation.stop().catch(() => undefined)
+        await startWithAutoDetect()
+      } catch (e) {
+        // start() が reject した場合 (権限拒否/BT off/未ペアリング等) は
+        // onError リスナー経由で badge に反映されるので ここでは何もしない
+        console.warn('DroggerLocation.start failed:', e)
       }
     })()
 
@@ -147,9 +148,8 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
   const handleClick = async () => {
     if (!canReconnect) return
     try {
-      // 念のため 既存接続を切ってから再試行 (二重接続防止)
       await DroggerLocation.stop().catch(() => undefined)
-      await DroggerLocation.start()
+      await startWithAutoDetect()
       setStatus((prev) => ({ ...prev, lastUpdateAt: Date.now() }))
     } catch (e) {
       console.warn('DroggerLocation reconnect failed:', e)

@@ -253,3 +253,42 @@ export async function listPairedDroggerDevices(): Promise<{ name: string; addres
   const r = await DroggerLocation.listPairedDevices()
   return r.devices
 }
+
+/** Drogger 系デバイスの名前パターン (Kotlin 側と揃える) */
+const DROGGER_NAME_PATTERN =
+  /^(drogger|dg[-_]|rzs)/i
+
+/**
+ * start() を まず 引数無しで試み、失敗した場合はペアリング済みから
+ * Drogger 系デバイス (RZS.D01 / Drogger-XXX / DG-PRO1 等) を探して
+ * deviceAddress 指定で再試行する。
+ *
+ * ネイティブ Kotlin 側の名前照合が古い APK ではまだ「Drogger」しか
+ * 対応していない場合の フォールバック救済。
+ */
+export async function startWithAutoDetect(): Promise<void> {
+  // 1st try: 名前無指定 (ネイティブ側の自動選択に任せる)
+  try {
+    await DroggerLocation.start()
+    return
+  } catch (err) {
+    // continue to fallback
+    console.warn('DroggerLocation.start() without address failed, trying address fallback:', err)
+  }
+  // 2nd try: ペアリング済みから Drogger 系を探して address 指定
+  let devices: { name: string; address: string }[] = []
+  try {
+    const r = await DroggerLocation.listPairedDevices()
+    devices = r.devices
+  } catch (err) {
+    throw err
+  }
+  const candidate = devices.find((d) => DROGGER_NAME_PATTERN.test(d.name || ''))
+  if (!candidate) {
+    throw {
+      code: 'position_unavailable',
+      message: 'Drogger 系のペアリング済みデバイスが 見つかりません',
+    } as GeoError
+  }
+  await DroggerLocation.start({ deviceAddress: candidate.address })
+}
