@@ -128,12 +128,27 @@ class NtripClient(
 
     fun start() {
         if (running.getAndSet(true)) return
+        Log.i(TAG, "NtripClient.start() host=$host:$port mount=$mountpoint sendGga=$sendGga")
         readerThread = thread(start = true, name = "NtripReader") {
             try {
                 connectAndStream()
             } catch (e: Exception) {
                 if (running.get()) {
-                    onError("ntrip_io", e.message ?: "NTRIP 通信エラー")
+                    // 例外クラス名 + message で 原因判別しやすくする
+                    // (例: UnknownHostException: hostname → DNS 失敗 = 通信環境確認)
+                    val cls = e.javaClass.simpleName
+                    val msg = e.message ?: "no message"
+                    val hint = when (e) {
+                        is java.net.UnknownHostException ->
+                            " (DNS 解決失敗 - hostname のスペル 又は Wi-Fi/モバイルデータ接続を確認)"
+                        is java.net.ConnectException ->
+                            " (接続拒否 - port が違うか キャスター停止中)"
+                        is java.net.SocketTimeoutException ->
+                            " (タイムアウト - キャスターの応答なし。VRS で GGA 未送信の可能性)"
+                        else -> ""
+                    }
+                    Log.w(TAG, "NTRIP failed: $cls: $msg$hint", e)
+                    onError("ntrip_io", "$cls: $msg$hint")
                 }
             } finally {
                 cleanup()
@@ -154,10 +169,12 @@ class NtripClient(
 
     @Throws(IOException::class)
     private fun connectAndStream() {
+        Log.d(TAG, "NTRIP TCP connect start: $host:$port")
         val sock = Socket()
         sock.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
         sock.soTimeout = READ_TIMEOUT_MS
         socket = sock
+        Log.d(TAG, "NTRIP TCP connected (localAddr=${sock.localAddress})")
 
         val mp = if (mountpoint.startsWith("/")) mountpoint else "/$mountpoint"
         val cred = Base64.encodeToString(
@@ -173,12 +190,13 @@ class NtripClient(
             append("Ntrip-Version: Ntrip/2.0\r\n")
             append("\r\n")
         }
+        Log.d(TAG, "NTRIP sending request to $mp")
         sock.outputStream.write(req.toByteArray(Charsets.US_ASCII))
         sock.outputStream.flush()
 
         val ins = sock.inputStream
         val first = readAsciiLine(ins) ?: throw IOException("NTRIP 応答なし")
-        Log.d(TAG, "NTRIP first line: $first")
+        Log.i(TAG, "NTRIP first line: $first")
         when {
             first.startsWith("ICY 200 OK") -> { /* NTRIP 1.0: 追加ヘッダなし */ }
             first.startsWith("HTTP/1.") && first.contains(" 200 ") -> {
@@ -212,27 +230,43 @@ class NtripClient(
                                     out.write(line.toByteArray(Charsets.US_ASCII))
                                     out.flush()
                                 }
+                                Log.d(TAG, "GGA uploaded to caster: ${g.take(80)}")
                             } catch (e: IOException) {
                                 Log.w(TAG, "GGA upload failed: ${e.message}")
                                 break
                             }
+                        } else {
+                            Log.d(TAG, "GGA upload skipped: latestGga is null (Drogger 未接続 or GGA未受信)")
                         }
                         Thread.sleep(GGA_INTERVAL_MS)
                     }
                 } catch (_: InterruptedException) { /* stop */ }
             }
+        } else {
+            Log.d(TAG, "GGA upload disabled (sendGga=false)")
         }
+
+        Log.d(TAG, "NTRIP stream started, waiting for RTCM3 bytes...")
 
         // RTCM3 受信ループ
         val buf = ByteArray(4096)
+        var firstBytesLogged = false
         while (running.get()) {
             val n = try {
                 ins.read(buf)
             } catch (e: IOException) {
                 if (running.get()) throw e else -1
             }
-            if (n < 0) break
+            if (n < 0) {
+                Log.w(TAG, "NTRIP socket EOF (caster closed connection after ${bytesReceived} bytes)")
+                break
+            }
             if (n > 0) {
+                if (!firstBytesLogged) {
+                    firstBytesLogged = true
+                    val head = buf.take(minOf(n, 8)).joinToString(" ") { "%02X".format(it) }
+                    Log.i(TAG, "NTRIP first RTCM bytes: $head (n=$n)")
+                }
                 bytesReceived += n
                 lastRtcmAt = System.currentTimeMillis()
                 onRtcm(buf, n)

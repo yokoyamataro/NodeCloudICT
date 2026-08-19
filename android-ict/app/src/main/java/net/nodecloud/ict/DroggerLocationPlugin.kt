@@ -80,6 +80,8 @@ class DroggerLocationPlugin : Plugin() {
     @Volatile private var lastRawGga: String? = null
     @Volatile private var ntripHost: String? = null
     @Volatile private var ntripMountpoint: String? = null
+    /** RTCM 受信ごとの ntripStatusChange emit を 2 秒に 1 回に間引くための throttle */
+    @Volatile private var lastNtripEmitAt: Long = 0L
 
     // ============================================================================
     // Public methods (JS bridge)
@@ -288,9 +290,19 @@ class DroggerLocationPlugin : Plugin() {
                             out.write(buf, 0, len)
                             out.flush()
                         }
+                        Log.v(TAG, "RTCM → BT: $len bytes (total=${ntripClient?.bytesReceived ?: 0})")
                     } catch (e: IOException) {
                         Log.w(TAG, "RTCM write to BT failed: ${e.message}")
                     }
+                } else {
+                    // BT 未接続 = RTCM を捨てるしかないが、bytes カウントは進める (badge 表示用)
+                    Log.v(TAG, "RTCM received but BT socket unavailable: $len bytes")
+                }
+                // バッジの KB カウンタ更新用に 2 秒に 1 回 status を emit
+                val now = System.currentTimeMillis()
+                if (now - lastNtripEmitAt > 2000) {
+                    lastNtripEmitAt = now
+                    notifyNtripStatus(true)
                 }
             },
             onStatusChange = { connected ->
