@@ -23,8 +23,6 @@ import {
   Download,
   Image as ImageIcon,
   X,
-  Volume2,
-  VolumeX,
   Plus,
   Pen,
   StickyNote,
@@ -91,6 +89,7 @@ import { FeedbackButton } from '@/components/layout/FeedbackButton'
 import { MobileHamburgerMenu } from './MobileHamburgerMenu'
 import { DroggerStatusBadge } from '@/components/gnss/DroggerStatusBadge'
 import { watchSamples } from '@/lib/geolocation'
+import { useGnssSettingsStore } from '@/stores/gnssSettingsStore'
 import {
   MobileParcelListPanel,
   PARCEL_COLUMN_KEYS,
@@ -205,9 +204,8 @@ function accuracyColor(acc: number | null): string {
 const FOLLOW_FIX_THRESHOLD_M = 1.0
 
 // RTK-FIX とみなす精度の既定値 (3cm)。ユーザーは設定で 0.02〜0.20m の範囲で変更可
-const DEFAULT_FIX_ACCURACY_M = 0.03
-const FIX_ACCURACY_MIN_M = 0.02
-const FIX_ACCURACY_MAX_M = 0.20
+// FIX_ACCURACY 定数と 5 つの共有設定 (音声 / 平均秒数 / アンテナ高 / ジオイド /
+// 判定精度) は gnssSettingsStore に集約されている。ここでは 何も定義しない。
 
 // 一度 FIX に達した後、この精度(m)より悪い読みは短期間の "はずれ値" として棄却する。
 // Android FLP が数十秒に一度ネットワーク測位を混ぜてくるケースへの緩和策。
@@ -696,7 +694,16 @@ export function MobileStakingPage() {
   const [headingEnabled, setHeadingEnabled] = useState(false)
   const [headingError, setHeadingError] = useState<string | null>(null)
   // 設定・UI
-  const [avgSeconds, setAvgSeconds] = useState(3)
+  // 5 つの共有設定 (音声 / 平均秒数 / アンテナ高 / ジオイド / 判定精度) は
+  // gnssSettingsStore に集約 (GPS設定モーダルからも 触れるため)
+  const avgSeconds = useGnssSettingsStore((s) => s.avgSeconds)
+  const antennaHeight = useGnssSettingsStore((s) => s.antennaHeight)
+  const setAntennaHeight = useGnssSettingsStore((s) => s.setAntennaHeight)
+  const useGeoidCorrection = useGnssSettingsStore((s) => s.useGeoidCorrection)
+  const setUseGeoidCorrection = useGnssSettingsStore((s) => s.setUseGeoidCorrection)
+  const rtkFixAccuracyM = useGnssSettingsStore((s) => s.rtkFixAccuracyM)
+  const soundEnabled = useGnssSettingsStore((s) => s.soundEnabled)
+  const setSoundEnabled = useGnssSettingsStore((s) => s.setSoundEnabled)
   // 画面モード: 起工測量のみに統一（出来形 / 施工管理 タブは削除）
   // 旧 localStorage の値が残っていても無視して 'initial' 固定で扱う。
   // 型は union のままにして既存の `screenMode === 'construction'` 等を
@@ -709,20 +716,7 @@ export function MobileStakingPage() {
   }, [])
   // 保存記録に紐付ける区分（常に 起工測量）
   const surveyCategory: 'initial' | 'asbuilt' = 'initial'
-  // アンテナ高 (m)。RTK ローバーのアンテナ位相中心〜地表（測点）までの高さ
-  const [antennaHeight, setAntennaHeight] = useState<number>(() => {
-    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('rtk:antennaHeight') : null
-    const n = saved ? parseFloat(saved) : NaN
-    return Number.isFinite(n) ? n : 2.0
-  })
-  useEffect(() => {
-    try { localStorage.setItem('rtk:antennaHeight', String(antennaHeight)) } catch { /* ignore */ }
-  }, [antennaHeight])
-  // ジオイド補正の有効化。既定 ON（保存済みの OFF は無視）
-  const [useGeoidCorrection, setUseGeoidCorrection] = useState<boolean>(true)
-  useEffect(() => {
-    try { localStorage.setItem('rtk:useGeoid', useGeoidCorrection ? '1' : '0') } catch { /* ignore */ }
-  }, [useGeoidCorrection])
+  // (antennaHeight / useGeoidCorrection は gnssSettingsStore に移設済み)
   // 三次元誘導（ターゲットとの比高表示）
   const [use3dGuidance, setUse3dGuidance] = useState<boolean>(() => {
     const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('rtk:use3dGuidance') : null
@@ -731,18 +725,7 @@ export function MobileStakingPage() {
   useEffect(() => {
     try { localStorage.setItem('rtk:use3dGuidance', use3dGuidance ? '1' : '0') } catch { /* ignore */ }
   }, [use3dGuidance])
-  // RTK-FIX とみなす精度しきい値 [m]（0.02〜0.05）。精密モードで測定ボタン
-  // の有効化と 1Hz ビープの判定に共通で使う。
-  const [rtkFixAccuracyM, setRtkFixAccuracyM] = useState<number>(() => {
-    const saved =
-      typeof localStorage !== 'undefined' ? localStorage.getItem('rtk:fixAccuracyM') : null
-    const n = saved ? parseFloat(saved) : NaN
-    if (!Number.isFinite(n)) return DEFAULT_FIX_ACCURACY_M
-    return Math.min(FIX_ACCURACY_MAX_M, Math.max(FIX_ACCURACY_MIN_M, n))
-  })
-  useEffect(() => {
-    try { localStorage.setItem('rtk:fixAccuracyM', String(rtkFixAccuracyM)) } catch { /* ignore */ }
-  }, [rtkFixAccuracyM])
+  // (rtkFixAccuracyM は gnssSettingsStore に移設済み)
   // ジオイドグリッド（遅延読込）
   const [geoidGrid, setGeoidGrid] = useState<import('@/lib/geoid').GeoidGrid | null>(null)
   const [geoidLoading, setGeoidLoading] = useState(false)
@@ -2276,7 +2259,7 @@ export function MobileStakingPage() {
   // ========== 音声ガイダンス ==========
   // FIX 時: 1Hz で「ピッ」。ターゲット 1m 以内で「ピピ」、10cm 以内で「ピピピ」。
   // FIX が外れた瞬間だけ「ブーッ」。
-  const [soundEnabled, setSoundEnabled] = useState(false)
+  // (soundEnabled は gnssSettingsStore に移設済み)
   const audioCtxRef = useRef<AudioContext | null>(null)
   const soundAccRef = useRef<number | null>(null)
   const soundDistRef = useRef<number | null>(null)
@@ -5381,96 +5364,13 @@ export function MobileStakingPage() {
               </div>
             )}
 
-            {/* 音声ガイダンス（精密モードのみ有効） */}
-            <label className={`flex items-center gap-2 mb-3 ${isGps ? 'text-slate-400' : ''}`}>
-              <input
-                type="checkbox"
-                checked={soundEnabled}
-                onChange={() => void toggleSound()}
-                disabled={isGps}
-              />
-              <span className="text-xs">音声ガイダンス</span>
-              {soundEnabled ? (
-                <Volume2 className="h-3.5 w-3.5 ml-auto text-emerald-600" />
-              ) : (
-                <VolumeX className="h-3.5 w-3.5 ml-auto text-slate-400" />
-              )}
-            </label>
-            <div className={`text-[10px] mb-2 ${isGps ? 'text-slate-400' : 'text-slate-500'}`}>
-              FIX: ピッ / 1m 以内: ピピ / 10cm 以内: ピピピ / FIX 喪失: ブーッ
+            {/* 音声ガイダンス / 平均秒数 / アンテナ高 / ジオイド補正 /
+                RTK 判定精度 は 「GPS設定」モーダル (画面右上のバッジ)
+                の 「GPS接続」タブ 下部に移設。設定は 端末単位で 共有される。 */}
+            <div className="mb-3 px-2 py-2 text-[11px] bg-emerald-50 border border-emerald-200 text-emerald-800 rounded">
+              音声ガイダンス / 平均秒数 / アンテナ高 / ジオイド補正 /
+              RTK 判定精度 は、右上の「GPS設定」バッジから 変更できます。
             </div>
-
-            <label className="flex flex-col gap-1 mb-3 border-t pt-2">
-              <span className={`text-xs ${isGps ? 'text-slate-400' : 'text-slate-600'}`}>平均秒数</span>
-              <input
-                type="range"
-                min={1}
-                max={10}
-                step={1}
-                value={avgSeconds}
-                onChange={(e) => setAvgSeconds(parseInt(e.target.value, 10))}
-                disabled={recording || isGps}
-              />
-              <span className={`font-mono text-center ${isGps ? 'text-slate-400' : ''}`}>{avgSeconds} 秒</span>
-            </label>
-
-            <label className="flex flex-col gap-1 mb-3">
-              <span className={`text-xs ${isGps ? 'text-slate-400' : 'text-slate-600'}`}>アンテナ高 (m)</span>
-              <input
-                type="number"
-                step={0.01}
-                value={antennaHeight}
-                onChange={(e) => {
-                  const n = parseFloat(e.target.value)
-                  if (Number.isFinite(n)) setAntennaHeight(n)
-                }}
-                disabled={recording || isGps}
-                className="w-full px-2 py-1 border rounded text-right font-mono disabled:bg-slate-50 disabled:text-slate-400"
-              />
-            </label>
-
-            <label className={`flex items-center gap-2 mb-2 ${isGps ? 'text-slate-400' : ''}`}>
-              <input
-                type="checkbox"
-                checked={useGeoidCorrection}
-                onChange={(e) => setUseGeoidCorrection(e.target.checked)}
-                disabled={recording || isGps}
-              />
-              <span className="text-xs">ジオイド補正を有効化</span>
-            </label>
-            {useGeoidCorrection && !isGps && (
-              <div className="text-[11px] text-slate-500 mb-2">
-                {geoidLoading && '読込中…'}
-                {!geoidLoading && geoidGrid && '✓ JPGEO2024 読込済み'}
-                {!geoidLoading && geoidError && <span className="text-red-600">エラー: {geoidError}</span>}
-              </div>
-            )}
-
-            <div className={`text-[11px] mb-2 ${isGps ? 'text-slate-400' : 'text-slate-500'}`}>
-              標高 = 楕円体高 − ジオイド高 − アンテナ高
-            </div>
-
-            {/* RTK 判定精度しきい値 (精密モードのみ効く) */}
-            <label className="flex flex-col gap-1 mb-3 border-t pt-2">
-              <span className={`text-xs ${isGps ? 'text-slate-400' : 'text-slate-600'}`}>
-                RTK 判定精度 (精密モード)
-              </span>
-              <input
-                type="range"
-                min={FIX_ACCURACY_MIN_M}
-                max={FIX_ACCURACY_MAX_M}
-                step={0.005}
-                value={rtkFixAccuracyM}
-                onChange={(e) => setRtkFixAccuracyM(parseFloat(e.target.value))}
-                disabled={isGps}
-              />
-              <span className={`font-mono text-center text-xs ${isGps ? 'text-slate-400' : ''}`}>
-                {(rtkFixAccuracyM * 100).toFixed(1)} cm 以下で FIX
-              </span>
-              <span className={`text-[11px] ${isGps ? 'text-slate-400' : 'text-slate-500'}`}>
-                この精度を下回ると測定ボタンが押せなくなり、RTK 受信音（ピッ）も出ません。
-              </span>
-            </label>
 
             <label className="flex items-center gap-2 mb-2 pt-2 border-t">
               <input

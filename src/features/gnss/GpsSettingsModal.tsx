@@ -21,7 +21,14 @@ import {
   RefreshCw,
   RadioTower,
   WifiOff,
+  Volume2,
+  VolumeX,
 } from 'lucide-react'
+import {
+  useGnssSettingsStore,
+  FIX_ACCURACY_MIN_M,
+  FIX_ACCURACY_MAX_M,
+} from '@/stores/gnssSettingsStore'
 import {
   DroggerLocation,
   fetchNtripSourceTable,
@@ -336,6 +343,113 @@ function GpsConnectionTab() {
         Bluetooth SPP で Drogger 受信機に 直接接続。BT の 権限プロンプトが 出た場合は 許可。
         接続失敗時は 端末の Bluetooth 設定を 確認 or Drogger を 再起動。
       </div>
+
+      {/* ---- 端末側 GNSS 設定 (音声 / 平均秒数 / アンテナ高 / ジオイド / 判定精度) ---- */}
+      <GnssSettingsSection />
+    </div>
+  )
+}
+
+function GnssSettingsSection() {
+  const {
+    avgSeconds,
+    setAvgSeconds,
+    soundEnabled,
+    setSoundEnabled,
+    antennaHeight,
+    setAntennaHeight,
+    useGeoidCorrection,
+    setUseGeoidCorrection,
+    rtkFixAccuracyM,
+    setRtkFixAccuracyM,
+  } = useGnssSettingsStore()
+
+  return (
+    <div className="border-t pt-3 space-y-3">
+      <div className="text-slate-700 font-semibold">計測設定</div>
+
+      {/* 音声ガイダンス */}
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={soundEnabled}
+          onChange={(e) => setSoundEnabled(e.target.checked)}
+        />
+        <span>音声ガイダンス</span>
+        {soundEnabled ? (
+          <Volume2 className="h-3.5 w-3.5 ml-auto text-emerald-600" />
+        ) : (
+          <VolumeX className="h-3.5 w-3.5 ml-auto text-slate-400" />
+        )}
+      </label>
+      <div className="text-[10px] text-slate-500 -mt-2 pl-6">
+        FIX: ピッ / 1m 以内: ピピ / 10cm 以内: ピピピ / FIX 喪失: ブーッ
+      </div>
+
+      {/* 平均秒数 */}
+      <label className="block">
+        <div className="flex items-center justify-between">
+          <span className="text-slate-700">計測数 (平均秒数)</span>
+          <span className="font-mono">{avgSeconds} 秒</span>
+        </div>
+        <input
+          type="range"
+          min={1}
+          max={10}
+          step={1}
+          value={avgSeconds}
+          onChange={(e) => setAvgSeconds(parseInt(e.target.value, 10))}
+          className="w-full mt-1"
+        />
+      </label>
+
+      {/* アンテナ高 */}
+      <label className="block">
+        <span className="text-slate-700">アンテナ高 (m)</span>
+        <input
+          type="number"
+          step={0.01}
+          value={antennaHeight}
+          onChange={(e) => {
+            const n = parseFloat(e.target.value)
+            if (Number.isFinite(n)) setAntennaHeight(n)
+          }}
+          className="mt-1 w-full px-2 py-1 border border-slate-300 rounded text-right font-mono"
+        />
+        <span className="text-[10px] text-slate-500">
+          ロッド/ポール先端 〜 アンテナ位相中心 までの 高さ。標高 = 楕円体高 − ジオイド高 − アンテナ高
+        </span>
+      </label>
+
+      {/* ジオイド補正 */}
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={useGeoidCorrection}
+          onChange={(e) => setUseGeoidCorrection(e.target.checked)}
+        />
+        <span>ジオイド補正 (JPGEO2024)</span>
+      </label>
+
+      {/* RTK 判定精度 */}
+      <label className="block">
+        <div className="flex items-center justify-between">
+          <span className="text-slate-700">RTK 判定精度</span>
+          <span className="font-mono">{(rtkFixAccuracyM * 100).toFixed(1)} cm 以下で FIX</span>
+        </div>
+        <input
+          type="range"
+          min={FIX_ACCURACY_MIN_M}
+          max={FIX_ACCURACY_MAX_M}
+          step={0.005}
+          value={rtkFixAccuracyM}
+          onChange={(e) => setRtkFixAccuracyM(parseFloat(e.target.value))}
+          className="w-full mt-1"
+        />
+        <span className="text-[10px] text-slate-500">
+          この精度を上回るときは 測定ボタンが 琥珀色になり、RTK 受信音 (ピッ) も止まります。
+        </span>
+      </label>
     </div>
   )
 }
