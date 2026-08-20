@@ -401,7 +401,7 @@ class DroggerLocationPlugin : Plugin() {
     // RMC: 時刻 / status / 緯度 / 経度 / 速度 (knots) / heading / 日付
     // ============================================================================
 
-    /** GGA / RMC を組み合わせて 1 サンプルにまとめるための短期状態 */
+    /** GGA / RMC / GST を組み合わせて 1 サンプルにまとめるための短期状態 */
     private data class NmeaBuffer(
         var lat: Double? = null,
         var lon: Double? = null,
@@ -412,6 +412,10 @@ class DroggerLocationPlugin : Plugin() {
         var speedKnots: Double? = null,
         var headingDeg: Double? = null,
         var timeMillis: Long? = null,
+        // GST 由来: RTK 受信機の std dev (メートル)。これがあれば HDOP × 3 より 正確
+        var stdLat: Double? = null,
+        var stdLon: Double? = null,
+        var stdAlt: Double? = null,
     )
     private val nmea = NmeaBuffer()
 
@@ -438,6 +442,7 @@ class DroggerLocationPlugin : Plugin() {
                 }
                 talker.endsWith("GSV") -> parseGsv(talker, parts)
                 talker.endsWith("GSA") -> parseGsa(parts)
+                talker.endsWith("GST") -> parseGst(parts)
                 talker.endsWith("HDT") -> parseHdt(parts)
                 talker == "PSAT" -> parsePsat(parts)
                 else -> return
@@ -469,6 +474,18 @@ class DroggerLocationPlugin : Plugin() {
         if (sats != null) nmea.satellites = sats
         if (hdop != null) nmea.hdop = hdop
         if (time.isNotEmpty()) nmea.timeMillis = parseNmeaTime(time)
+    }
+
+    private fun parseGst(parts: List<String>) {
+        // $--GST,time,rms,semi_major,semi_minor,orientation,std_lat,std_lon,std_alt*cs
+        // RTK 受信機は これで cm オーダーの std dev を くれる
+        if (parts.size < 9) return
+        val sLat = parts[6].toDoubleOrNull()
+        val sLon = parts[7].toDoubleOrNull()
+        val sAlt = parts[8].substringBefore('*').toDoubleOrNull()
+        if (sLat != null) nmea.stdLat = sLat
+        if (sLon != null) nmea.stdLon = sLon
+        if (sAlt != null) nmea.stdAlt = sAlt
     }
 
     private fun parseRmc(parts: List<String>) {
@@ -747,13 +764,25 @@ class DroggerLocationPlugin : Plugin() {
         val lon = nmea.lon ?: return
         val t = nmea.timeMillis ?: System.currentTimeMillis()
         val fq = nmea.fixQuality ?: 0
-        // 精度指標: GGA には Horizontal Accuracy が無いので、HDOP × 3.0m (概算) を使う。
-        // 実運用では 衛星系の Manufacturer 独自メッセージ ($GNGST の std dev 等) を使うと厳密。
-        val accuracy = nmea.hdop?.let { it * 3.0 } ?: -1.0
+        // 水平精度:
+        //   GST があれば sqrt(σ_lat² + σ_lon²) を採用 (RTK Fix 時に cm オーダー)
+        //   無ければ HDOP × 3.0m の 概算にフォールバック
+        val hAcc = if (nmea.stdLat != null && nmea.stdLon != null) {
+            val sLat = nmea.stdLat!!
+            val sLon = nmea.stdLon!!
+            Math.sqrt(sLat * sLat + sLon * sLon)
+        } else {
+            nmea.hdop?.let { it * 3.0 } ?: -1.0
+        }
+        // 垂直精度:
+        //   GST の std_alt があれば それを直接使う
+        //   無ければ HDOP × 5.0m (VDOP は 通常 HDOP の 1.5〜2 倍) の 粗い近似
+        val vAcc = nmea.stdAlt ?: nmea.hdop?.let { it * 5.0 } ?: -1.0
         val obj = JSObject()
         obj.put("lat", lat)
         obj.put("lon", lon)
-        obj.put("accuracy_m", if (accuracy >= 0) accuracy else null)
+        obj.put("accuracy_m", if (hAcc >= 0) hAcc else null)
+        obj.put("altitude_accuracy_m", if (vAcc >= 0) vAcc else null)
         obj.put(
             "speed_kmh",
             nmea.speedKnots?.let { it * 1.852 } // knots → km/h

@@ -677,6 +677,15 @@ export function MobileStakingPage() {
   // 現在位置（geolocation）
   const [currentPos, setCurrentPos] = useState<[number, number] | null>(null)
   const [currentAcc, setCurrentAcc] = useState<number | null>(null)
+  const [currentAltAcc, setCurrentAltAcc] = useState<number | null>(null)
+  // 誤差表示モード: 平面 / 高さ (localStorage 永続化)。数値をタップで切替
+  const [accuracyMode, setAccuracyMode] = useState<'horizontal' | 'vertical'>(() => {
+    if (typeof window === 'undefined') return 'horizontal'
+    return window.localStorage.getItem('mobile:accuracyMode') === 'vertical' ? 'vertical' : 'horizontal'
+  })
+  useEffect(() => {
+    try { window.localStorage.setItem('mobile:accuracyMode', accuracyMode) } catch { /* ignore */ }
+  }, [accuracyMode])
   const [currentAlt, setCurrentAlt] = useState<number | null>(null)
   // 地図追従用の「安定位置」: FIX相当の精度のときだけ更新する。
   // FIX が外れている間は値が変わらないので、地図は最後の良好位置のまま保持される。
@@ -1604,6 +1613,7 @@ export function MobileStakingPage() {
           const ll: [number, number] = [sample.lat, sample.lon]
           setCurrentPos(ll)
           setCurrentAcc(acc)
+          setCurrentAltAcc(sample.altitude_accuracy_m)
           setCurrentAlt(sample.altitude_m)
           // 位置更新の鮮度計測: この時刻を beep ループから参照して「更新が
           // 止まった (RTK 受信機切断等)」ときにビープを停止するために使う。
@@ -6419,10 +6429,29 @@ export function MobileStakingPage() {
                   })()}
                 </span>
               </span>
-              <span className="inline-flex items-center gap-0.5 ml-auto" style={{ color: accuracyColor(currentAcc) }}>
-                <Radio className="h-3 w-3" />
-                {currentAcc != null ? currentAcc.toFixed(3) : '-'}
-              </span>
+              {(() => {
+                const showV = accuracyMode === 'vertical'
+                const val = showV ? currentAltAcc : currentAcc
+                return (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setAccuracyMode((m) => (m === 'horizontal' ? 'vertical' : 'horizontal'))
+                    }
+                    className="inline-flex items-center gap-0.5 ml-auto font-mono cursor-pointer"
+                    style={{ color: accuracyColor(val) }}
+                    title={
+                      showV
+                        ? '高さ誤差 (V): タップで平面誤差に切替'
+                        : '平面誤差 (H): タップで高さ誤差に切替'
+                    }
+                  >
+                    <Radio className="h-3 w-3" />
+                    <span className="text-slate-500">{showV ? 'V' : 'H'}</span>
+                    {val != null ? val.toFixed(3) : '-'}
+                  </button>
+                )
+              })()}
             </>
           ) : (
             <span className="text-slate-400">取得中...</span>

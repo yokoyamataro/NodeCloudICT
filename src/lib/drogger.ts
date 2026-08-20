@@ -242,7 +242,8 @@ const webMockPlugin: DroggerLocationPlugin = {
       const sample: DroggerLocationEvent = {
         lat: webMockState.base.lat + dLat,
         lon: webMockState.base.lng + dLng,
-        accuracy_m: 0.015, // RTK Fix 想定
+        accuracy_m: 0.015, // RTK Fix 想定 (水平)
+        altitude_accuracy_m: 0.025, // RTK Fix 想定 (垂直、水平の 1.5〜2 倍が典型)
         speed_kmh: 0,
         heading_deg: null,
         altitude_m: 20 + Math.sin(tick * 0.05) * 0.02,

@@ -99,7 +99,10 @@ const BackgroundGeolocation = registerPlugin<BackgroundGeolocationPlugin>(
 export interface GeoSample {
   lat: number
   lon: number
+  /** 水平精度 (メートル)。Drogger は GST の std dev から計算、Web は Position.coords.accuracy */
   accuracy_m: number | null
+  /** 垂直精度 (メートル)。Drogger は GST の std_alt、Web は Position.coords.altitudeAccuracy */
+  altitude_accuracy_m: number | null
   speed_kmh: number | null
   heading_deg: number | null
   altitude_m: number | null
@@ -119,6 +122,7 @@ function normalizePosition(p: Position): GeoSample {
     lat: c.latitude,
     lon: c.longitude,
     accuracy_m: c.accuracy ?? null,
+    altitude_accuracy_m: c.altitudeAccuracy ?? null,
     // Capacitor は speed を m/s で返す (Web と同じ)
     speed_kmh: c.speed != null ? c.speed * 3.6 : null,
     heading_deg: c.heading ?? null,
@@ -227,6 +231,7 @@ function normalizeBgLocation(loc: BgLocation): GeoSample {
     lat: loc.latitude,
     lon: loc.longitude,
     accuracy_m: loc.accuracy ?? null,
+    altitude_accuracy_m: loc.altitudeAccuracy ?? null,
     // BG plugin の speed は m/s
     speed_kmh: loc.speed != null ? loc.speed * 3.6 : null,
     heading_deg: loc.bearing ?? null,

@@ -65,6 +65,7 @@ interface DroggerStatusSnapshot {
   lon: number | null
   altitude: number | null
   accuracy: number | null
+  altitudeAccuracy: number | null
   lastUpdateAt: number | null
 }
 
@@ -174,6 +175,7 @@ function GpsConnectionTab() {
     lon: null,
     altitude: null,
     accuracy: null,
+    altitudeAccuracy: null,
     lastUpdateAt: null,
   })
   const [reconnecting, setReconnecting] = useState(false)
@@ -190,6 +192,7 @@ function GpsConnectionTab() {
         lon: ev.lon,
         altitude: ev.altitude_m,
         accuracy: ev.accuracy_m,
+        altitudeAccuracy: ev.altitude_accuracy_m,
         fixQuality: ev.fixQuality,
         hdop: ev.hdop,
         satellites: ev.satellites,
@@ -299,7 +302,8 @@ function GpsConnectionTab() {
           </div>
         </div>
         <div className="text-[10px] text-slate-500">
-          精度: {status.accuracy != null ? `${status.accuracy.toFixed(3)}m` : '-'} /
+          精度 H: {status.accuracy != null ? `${status.accuracy.toFixed(3)}m` : '-'} /
+          V: {status.altitudeAccuracy != null ? `${status.altitudeAccuracy.toFixed(3)}m` : '-'} /
           最終更新:{' '}
           {status.lastUpdateAt
             ? `${Math.round(((staleMs ?? 0) / 1000))} 秒前`
