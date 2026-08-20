@@ -290,7 +290,7 @@ class DroggerLocationPlugin : Plugin() {
                             out.write(buf, 0, len)
                             out.flush()
                         }
-                        Log.v(TAG, "RTCM → BT: $len bytes (total=${ntripClient?.bytesReceived ?: 0})")
+                        // 頻度高: Log.v (デフォルト非表示)
                     } catch (e: IOException) {
                         Log.w(TAG, "RTCM write to BT failed: ${e.message}")
                     }
@@ -420,6 +420,8 @@ class DroggerLocationPlugin : Plugin() {
     private val nmea = NmeaBuffer()
 
     private val seenTalkers = HashSet<String>()
+    private val talkerCounts = HashMap<String, Int>()
+    private var lastTalkerSummaryMs: Long = 0L
 
     private fun handleNmeaLine(rawLine: String) {
         val line = rawLine.trim()
@@ -429,9 +431,16 @@ class DroggerLocationPlugin : Plugin() {
         val parts = body.split(',')
         if (parts.isEmpty()) return
         val talker = parts[0] // e.g. GNGGA / GPGGA / GNRMC / GPRMC / GPGSV / GNGSA / PSAT
-        // 診断: このセッションで 見た NMEA sentence 種類を 初回だけ log
+        // 診断: 見た NMEA sentence 種類 と 出現回数を 5 秒毎に集計 log
         if (seenTalkers.add(talker)) {
-            Log.i(TAG, "NMEA sentence type: \$$talker (first sample: $line)")
+            Log.i(TAG, "NEW NMEA sentence type: \$$talker  first=$line")
+        }
+        talkerCounts[talker] = (talkerCounts[talker] ?: 0) + 1
+        val now = System.currentTimeMillis()
+        if (now - lastTalkerSummaryMs > 5000) {
+            lastTalkerSummaryMs = now
+            Log.i(TAG, "NMEA counts (last 5s+): $talkerCounts")
+            talkerCounts.clear()
         }
         try {
             when {
@@ -533,6 +542,7 @@ class DroggerLocationPlugin : Plugin() {
         var azimuth: Int? = null,
         var snr: Int? = null,
         var usedInFix: Boolean = false,
+        var lastSeenMs: Long = 0L,
     )
 
     /** (constellation, prn) → SatInfo */
@@ -610,6 +620,7 @@ class DroggerLocationPlugin : Plugin() {
                 sat.azimuth = az
                 sat.snr = snr
                 sat.usedInFix = usedThisCycle.contains(key)
+                sat.lastSeenMs = System.currentTimeMillis()
             }
             i += 4
         }
@@ -617,6 +628,10 @@ class DroggerLocationPlugin : Plugin() {
         // 全メッセージ受信完了 → snapshot を emit + グループ状態リセット
         if (group.received.size >= totalMsgs) {
             gsvGroups.remove(talker)
+            // 3 秒以上見なかった 衛星は 古いエントリなので 除去
+            // (multi talker で リセットしない ぶん、ここで 蓄積を防ぐ)
+            val cutoff = System.currentTimeMillis() - 3000
+            satMap.entries.removeAll { it.value.lastSeenMs > 0 && it.value.lastSeenMs < cutoff }
             emitSatellites()
         }
     }
@@ -684,7 +699,7 @@ class DroggerLocationPlugin : Plugin() {
             if (sat.usedInFix) usedCount += 1
             if (sampleKeys.length < 120) sampleKeys.append("${sat.constellation}/${sat.prn}${if (sat.usedInFix) "*" else ""} ")
         }
-        Log.d(TAG, "emitSatellites: total=${satMap.size} used=$usedCount cycle=${usedThisCycle.size} sample=$sampleKeys")
+        Log.v(TAG, "emitSatellites: total=${satMap.size} used=$usedCount cycle=${usedThisCycle.size}")
         val ret = JSObject()
         ret.put("satellites", arr)
         ret.put("timestamp", System.currentTimeMillis())
@@ -832,7 +847,7 @@ class DroggerLocationPlugin : Plugin() {
             fqTypicalAcc != null -> "FQ($fq)"
             else -> "HDOP×3"
         }
-        Log.v(TAG, "emit: fq=$fq src=$accSrc hAcc=$hAcc hdop=${nmea.hdop} stdLat=${nmea.stdLat}")
+        // 頻度が高いので Log.v (デフォルト非表示)。必要なら logcat 側で level 上げる
         // 垂直精度:
         //   1. GST の std_alt を優先
         //   2. fq ベース (水平の 1.5〜2 倍が 一般的): fq=4→0.03m / fq=5→0.5m / fq=2→2m / fq=1→5m

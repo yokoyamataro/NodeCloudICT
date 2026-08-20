@@ -12,13 +12,11 @@ import { Radio, RadioTower, WifiOff, Settings } from 'lucide-react'
 import { getActiveSource } from '@/lib/geolocation'
 import {
   DroggerLocation,
-  startNtrip,
   startWithAutoDetect,
   type DroggerFixQuality,
   type DroggerLocationEvent,
   type NtripStatus,
 } from '@/lib/drogger'
-import { loadNtripConfig } from '@/lib/ntripPrefs'
 import { GpsSettingsModal } from '@/features/gnss/GpsSettingsModal'
 
 interface DroggerStatus {
@@ -128,18 +126,10 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
       }
       // 常に stop → start で 前セッションの残留接続を綺麗に切ってから開始する
       // (BT 権限プロンプトも start 側で自動的に出る)
+      // NTRIP は 自動接続しない (ユーザーが GPS設定モーダルの 接続ボタン で 発動)
       try {
         await DroggerLocation.stop().catch(() => undefined)
         await startWithAutoDetect()
-        // BT 接続成功 → 保存済み NTRIP 設定があれば自動接続
-        const cfg = loadNtripConfig()
-        if (cfg && cfg.host && cfg.port && cfg.mountpoint) {
-          try {
-            await startNtrip(cfg)
-          } catch (e) {
-            console.warn('NTRIP auto-start failed:', e)
-          }
-        }
       } catch (e) {
         // start() が reject した場合 (権限拒否/BT off/未ペアリング等) は
         // onError リスナー経由で badge に反映されるので ここでは何もしない
