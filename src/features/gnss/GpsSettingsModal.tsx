@@ -246,6 +246,18 @@ function GpsConnectionTab() {
     }
   }
 
+  const handleDisconnect = async () => {
+    setReconnectError(null)
+    try {
+      // GPS を 停止 (BT SPP ソケット閉じる)。NTRIP は startInternal 停止時に
+      // stopInternal → ntripClient?.stop() で 一緒に切れる。
+      await DroggerLocation.stop()
+      setStatus((prev) => ({ ...prev, connected: false, deviceName: null }))
+    } catch (e) {
+      setReconnectError((e as Error)?.message ?? String(e))
+    }
+  }
+
   const fq = status.fixQuality
   const fixClass =
     fq != null
@@ -319,20 +331,31 @@ function GpsConnectionTab() {
         </div>
       </div>
 
-      {/* 再接続 */}
-      <button
-        type="button"
-        onClick={handleReconnect}
-        disabled={reconnecting}
-        className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded bg-emerald-600 text-white font-semibold hover:bg-emerald-700 disabled:opacity-50"
-      >
-        {reconnecting ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <RefreshCw className="h-4 w-4" />
-        )}
-        再接続 (stop → start)
-      </button>
+      {/* 再接続 / 切断 */}
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={handleReconnect}
+          disabled={reconnecting}
+          className="flex items-center justify-center gap-2 px-3 py-2 rounded bg-emerald-600 text-white font-semibold hover:bg-emerald-700 disabled:opacity-50"
+        >
+          {reconnecting ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <RefreshCw className="h-4 w-4" />
+          )}
+          {status.connected ? '再接続' : '接続'}
+        </button>
+        <button
+          type="button"
+          onClick={handleDisconnect}
+          disabled={!status.connected}
+          className="flex items-center justify-center gap-2 px-3 py-2 rounded bg-red-600 text-white font-semibold hover:bg-red-700 disabled:opacity-50"
+        >
+          <WifiOff className="h-4 w-4" />
+          切断
+        </button>
+      </div>
       {reconnectError && (
         <div className="bg-red-50 border border-red-300 rounded p-2 text-red-800">
           {reconnectError}

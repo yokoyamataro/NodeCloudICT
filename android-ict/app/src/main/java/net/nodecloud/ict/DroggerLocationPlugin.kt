@@ -419,6 +419,8 @@ class DroggerLocationPlugin : Plugin() {
     )
     private val nmea = NmeaBuffer()
 
+    private val seenTalkers = HashSet<String>()
+
     private fun handleNmeaLine(rawLine: String) {
         val line = rawLine.trim()
         if (!line.startsWith("$")) return
@@ -427,6 +429,10 @@ class DroggerLocationPlugin : Plugin() {
         val parts = body.split(',')
         if (parts.isEmpty()) return
         val talker = parts[0] // e.g. GNGGA / GPGGA / GNRMC / GPRMC / GPGSV / GNGSA / PSAT
+        // 診断: このセッションで 見た NMEA sentence 種類を 初回だけ log
+        if (seenTalkers.add(talker)) {
+            Log.i(TAG, "NMEA sentence type: \$$talker (first sample: $line)")
+        }
         try {
             when {
                 talker.endsWith("GGA") -> {
@@ -479,13 +485,18 @@ class DroggerLocationPlugin : Plugin() {
     private fun parseGst(parts: List<String>) {
         // $--GST,time,rms,semi_major,semi_minor,orientation,std_lat,std_lon,std_alt*cs
         // RTK 受信機は これで cm オーダーの std dev を くれる
-        if (parts.size < 9) return
+        // 一部受信機は std_alt を省略 (8 フィールド) するので lat/lon が読めれば OK
+        if (parts.size < 8) {
+            Log.w(TAG, "GST too short: size=${parts.size} parts=$parts")
+            return
+        }
         val sLat = parts[6].toDoubleOrNull()
         val sLon = parts[7].toDoubleOrNull()
-        val sAlt = parts[8].substringBefore('*').toDoubleOrNull()
+        val sAlt = if (parts.size >= 9) parts[8].substringBefore('*').toDoubleOrNull() else null
         if (sLat != null) nmea.stdLat = sLat
         if (sLon != null) nmea.stdLon = sLon
         if (sAlt != null) nmea.stdAlt = sAlt
+        Log.v(TAG, "GST parsed: stdLat=$sLat stdLon=$sLon stdAlt=$sAlt")
     }
 
     private fun parseRmc(parts: List<String>) {
@@ -559,15 +570,25 @@ class DroggerLocationPlugin : Plugin() {
         val totalMsgs = parts[1].toIntOrNull() ?: return
         val msgNum = parts[2].toIntOrNull() ?: return
         val satsInView = parts[3].toIntOrNull() ?: return
-        val constellation = talkerToConst(talker)
+        val talkerConst = talkerToConst(talker)
+        // $GNGSV (multi-constellation) の場合、衛星ごとに PRN 範囲から
+        // コンステレーションを決定する。これは GSA が PRN 範囲から const 判定
+        // するのと 揃える必要がある (使用中フラグの key マッチのため)。
+        val isMultiTalker = talker.startsWith("GN")
 
-        val group = gsvGroups.getOrPut(constellation) {
+        // グループ追跡は talker 単位 (multi でも 単一 talker として 扱う)
+        val group = gsvGroups.getOrPut(talker) {
             GsvGroup(totalMsgs, satsInView, HashSet())
         }
         if (msgNum == 1 && group.received.isNotEmpty()) {
-            // 新サイクル開始 → 前サイクルの このコンステレーションの sat を除去
-            val prefix = "$constellation/"
-            satMap.entries.removeAll { it.key.startsWith(prefix) }
+            // 新サイクル開始:
+            //   単一 talker (GPGSV 等) は そのコンステレーションの 前サイクル分を除去
+            //   multi talker (GNGSV) は 対象コンステレーションが 特定できないので
+            //   除去しない (上書きに任せる)
+            if (!isMultiTalker) {
+                val prefix = "$talkerConst/"
+                satMap.entries.removeAll { it.key.startsWith(prefix) }
+            }
             group.received.clear()
         }
         group.received.add(msgNum)
@@ -581,6 +602,8 @@ class DroggerLocationPlugin : Plugin() {
                 val elev = parts[i + 1].toIntOrNull()
                 val az = parts[i + 2].toIntOrNull()
                 val snr = parts[i + 3].substringBefore('*').toIntOrNull()
+                // multi の場合は PRN 範囲で 個別に判定 (GSA と key を揃えるため)
+                val constellation = if (isMultiTalker) prnRangeToConst(prn) else talkerConst
                 val key = "$constellation/$prn"
                 val sat = satMap.getOrPut(key) { SatInfo(constellation, prn) }
                 sat.elevation = elev
@@ -593,29 +616,37 @@ class DroggerLocationPlugin : Plugin() {
 
         // 全メッセージ受信完了 → snapshot を emit + グループ状態リセット
         if (group.received.size >= totalMsgs) {
-            gsvGroups.remove(constellation)
+            gsvGroups.remove(talker)
             emitSatellites()
         }
     }
 
     private fun parseGsa(parts: List<String>) {
         // $--GSA,mode,fix_type,prn1..prn12,pdop,hdop,vdop[,system_id]*hh
+        // インデックス: 0=talker, 1=mode, 2=fix_type, 3..14=PRN×12, 15=PDOP,
+        //              16=HDOP, 17=VDOP, [18=system_id]
         if (parts.size < 15) return
-        val systemId = if (parts.size >= 18) parts[17].substringBefore('*') else ""
+        val systemId = if (parts.size >= 19) parts[18].substringBefore('*') else ""
         val constHint = systemIdToConst(systemId)
 
-        // usedThisCycle は 全 GSA を跨いで蓄積 (multi-const)。GSV 側で 1st msg 時に
-        // 該当コンステレーションだけリセットするので ここでは追加のみ。
-        // ただし システム ID が無い/GPS 単独の場合、PRN 範囲で コンステレーションを推定。
-        for (i in 2 until 14) {
+        var changed = false
+        // PRN は index 3..14 (12 個)。以前 2..13 で fix_type を PRN 扱いしていた 不具合を修正
+        for (i in 3 until 15) {
             val prnStr = parts.getOrNull(i) ?: continue
             if (prnStr.isEmpty()) continue
             val prn = prnStr.toIntOrNull() ?: continue
             val c = constHint ?: prnRangeToConst(prn)
             val key = "$c/$prn"
             usedThisCycle.add(key)
-            satMap[key]?.usedInFix = true
+            val sat = satMap[key]
+            if (sat != null && !sat.usedInFix) {
+                sat.usedInFix = true
+                changed = true
+            }
         }
+        // GSV グループ完了に頼らず、GSA で usedInFix が 変わったら 都度 emit。
+        // これが無いと 「使用中 0/N」表示になる (GSA が satMap を更新しても UI に伝わらない)
+        if (changed) emitSatellites()
     }
 
     /** PRN 範囲から コンステレーション推定 (system_id 未対応 受信機向けフォールバック) */
@@ -764,20 +795,43 @@ class DroggerLocationPlugin : Plugin() {
         val lon = nmea.lon ?: return
         val t = nmea.timeMillis ?: System.currentTimeMillis()
         val fq = nmea.fixQuality ?: 0
-        // 水平精度:
-        //   GST があれば sqrt(σ_lat² + σ_lon²) を採用 (RTK Fix 時に cm オーダー)
-        //   無ければ HDOP × 3.0m の 概算にフォールバック
-        val hAcc = if (nmea.stdLat != null && nmea.stdLon != null) {
+        // 水平精度: 優先順位で採用
+        //   1. GST があれば sqrt(σ_lat² + σ_lon²) (RTK Fix 時に cm オーダーの正確値)
+        //   2. Fix Quality ベースの 典型値 (受信機が GST を出さない場合の 妥当な推定)
+        //      fq=4 (RTK Fix): 0.02m / fq=5 (RTK Float): 0.30m
+        //      fq=2 (DGPS): 1.0m / fq=1 (SPS): 3.0m
+        //   3. HDOP × 3.0m の 概算 (fq=0 の 最終フォールバック)
+        val useGst = nmea.stdLat != null && nmea.stdLon != null
+        val fqTypicalAcc: Double? = when (fq) {
+            4 -> 0.02
+            5 -> 0.30
+            2 -> 1.0
+            1 -> 3.0
+            else -> null
+        }
+        val hAcc = if (useGst) {
             val sLat = nmea.stdLat!!
             val sLon = nmea.stdLon!!
             Math.sqrt(sLat * sLat + sLon * sLon)
-        } else {
-            nmea.hdop?.let { it * 3.0 } ?: -1.0
+        } else fqTypicalAcc ?: (nmea.hdop?.let { it * 3.0 } ?: -1.0)
+        val accSrc = when {
+            useGst -> "GST"
+            fqTypicalAcc != null -> "FQ($fq)"
+            else -> "HDOP×3"
         }
+        Log.v(TAG, "emit: fq=$fq src=$accSrc hAcc=$hAcc hdop=${nmea.hdop} stdLat=${nmea.stdLat}")
         // 垂直精度:
-        //   GST の std_alt があれば それを直接使う
-        //   無ければ HDOP × 5.0m (VDOP は 通常 HDOP の 1.5〜2 倍) の 粗い近似
-        val vAcc = nmea.stdAlt ?: nmea.hdop?.let { it * 5.0 } ?: -1.0
+        //   1. GST の std_alt を優先
+        //   2. fq ベース (水平の 1.5〜2 倍が 一般的): fq=4→0.03m / fq=5→0.5m / fq=2→2m / fq=1→5m
+        //   3. HDOP × 5.0m フォールバック
+        val fqTypicalVAcc: Double? = when (fq) {
+            4 -> 0.03
+            5 -> 0.50
+            2 -> 2.0
+            1 -> 5.0
+            else -> null
+        }
+        val vAcc = nmea.stdAlt ?: fqTypicalVAcc ?: nmea.hdop?.let { it * 5.0 } ?: -1.0
         val obj = JSObject()
         obj.put("lat", lat)
         obj.put("lon", lon)
