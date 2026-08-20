@@ -26,7 +26,6 @@ import {
   Plus,
   Pen,
   StickyNote,
-  ExternalLink,
   Info,
   RefreshCw,
   AlertTriangle,
@@ -704,12 +703,9 @@ export function MobileStakingPage() {
   // gnssSettingsStore に集約 (GPS設定モーダルからも 触れるため)
   const avgSeconds = useGnssSettingsStore((s) => s.avgSeconds)
   const antennaHeight = useGnssSettingsStore((s) => s.antennaHeight)
-  const setAntennaHeight = useGnssSettingsStore((s) => s.setAntennaHeight)
   const useGeoidCorrection = useGnssSettingsStore((s) => s.useGeoidCorrection)
-  const setUseGeoidCorrection = useGnssSettingsStore((s) => s.setUseGeoidCorrection)
   const rtkFixAccuracyM = useGnssSettingsStore((s) => s.rtkFixAccuracyM)
   const soundEnabled = useGnssSettingsStore((s) => s.soundEnabled)
-  const setSoundEnabled = useGnssSettingsStore((s) => s.setSoundEnabled)
   // 画面モード: 起工測量のみに統一（出来形 / 施工管理 タブは削除）
   // 旧 localStorage の値が残っていても無視して 'initial' 固定で扱う。
   // 型は union のままにして既存の `screenMode === 'construction'` 等を
@@ -734,17 +730,12 @@ export function MobileStakingPage() {
   // (rtkFixAccuracyM は gnssSettingsStore に移設済み)
   // ジオイドグリッド（遅延読込）
   const [geoidGrid, setGeoidGrid] = useState<import('@/lib/geoid').GeoidGrid | null>(null)
-  const [geoidLoading, setGeoidLoading] = useState(false)
-  const [geoidError, setGeoidError] = useState<string | null>(null)
   useEffect(() => {
     if (!useGeoidCorrection || geoidGrid) return
-    setGeoidLoading(true)
-    setGeoidError(null)
     import('@/lib/geoid')
       .then(({ loadGeoid }) => loadGeoid())
       .then((g) => setGeoidGrid(g))
-      .catch((e) => setGeoidError(e instanceof Error ? e.message : 'ジオイド読込失敗'))
-      .finally(() => setGeoidLoading(false))
+      .catch(() => { /* ignore - 補正できないだけで 動作は 継続 */ })
   }, [useGeoidCorrection, geoidGrid])
   const [showSettings, setShowSettings] = useState(false)
   const [showChatSheet, setShowChatSheet] = useState(false)
@@ -806,17 +797,10 @@ export function MobileStakingPage() {
   }
   // 座標一覧タブ内から手入力で 1 点追加するモーダル
   const [showManualCoordEntry, setShowManualCoordEntry] = useState(false)
-  // 現場を開いたときの開始前チェック（ジオイド補正・目標高(アンテナ高)・既知点精度確認の喚起）
-  // 工区IDごとにセッション中 1 回だけ表示する。
-  const [showStartupCheck, setShowStartupCheck] = useState(false)
-  // 測位モード選択（RTK / スマホ GPS）。工区ごとに sessionStorage で保持。
-  //  - 'rtk': Drogger RTK 接続 (cm 測位)。既存フローどおり測定可、開始前チェックあり。
-  //  - 'gps': スマホ GPS のみ。誤差ありのため測定ボタンは無効化。
-  type PositioningMode = 'rtk' | 'gps'
-  const [positioningMode, setPositioningMode] = useState<PositioningMode | null>(null)
-  const [showModeChooser, setShowModeChooser] = useState(false)
-  // 開始前チェック（RTK）内の「音声ガイダンスを有効化」チェック。既定 ON
-  const [startupSoundOn, setStartupSoundOn] = useState(true)
+  // 測位モードの区分 (精密 / 簡易) は 廃止。 常に 平均化フロー で測定し、
+  // 精度が しきい値内なら 「精密測定」、外れたら 「概略測定」として ラベル/色 だけ変える。
+  // 現場を開いた 時に 出していた 「開始前チェック」「モード選択」モーダルも 廃止。
+  // (GPS 設定 は バッジ 経由で いつでも 変更可能)
   // 地図マーカータップで開く点情報モーダルの対象
   const [pointInfoTarget, setPointInfoTarget] = useState<StakingTarget | null>(null)
   // 座標計算（交点・線上）モーダル
@@ -1356,17 +1340,8 @@ export function MobileStakingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [parcelAreas.map((a) => a.id).join(','), fetchParcels])
 
-  // 工区を開くたびに測位モード（RTK / スマホ GPS）の選択を促す。
-  // 前回の選択は保持しない（毎回聞く運用）。
-  useEffect(() => {
-    if (!farmId) return
-    setPositioningMode(null)
-    setShowModeChooser(true)
-  }, [farmId])
-
-  // 地番編集機能はスマホから撤去（PC の地番管理から編集する運用）。
-  // 「開始前チェック」モーダルは startRecording 内で初回押下時に出す。
-  // （工区を開いた時点では出さず、実際に観測を始めようとしたタイミングで喚起する）
+  // (工区を開くたびに 出していた 測位モード選択モーダルは 廃止)
+  // (「開始前チェック」モーダルも 廃止 — GPS 設定 バッジ から いつでも 変更可能)
 
   // 座標が読み込まれたら、写真の枚数を一括取得（カメラボタンのバッジ表示用）
   useEffect(() => {
@@ -1539,13 +1514,11 @@ export function MobileStakingPage() {
   // ただし連続 5 回まで。それを超えたら FIX 喪失として受け入れ、通常フローに戻す。
   const postFixModeRef = useRef(false)
   const consecutiveRejectsRef = useRef(0)
-  const positioningModeRef = useRef(positioningMode)
   const rtkFixAccuracyRef = useRef(rtkFixAccuracyM)
   // 位置更新の最終受信時刻。RTK 受信機が抜けたりして更新が止まった場合、
   // 以下の閾値を超えたら「FIX 喪失」とみなしてビープと表示を止める。
   const lastPosTimeRef = useRef(0)
   const POSITION_STALE_MS = 3_000
-  useEffect(() => { positioningModeRef.current = positioningMode }, [positioningMode])
   useEffect(() => { rtkFixAccuracyRef.current = rtkFixAccuracyM }, [rtkFixAccuracyM])
   // 棄却中フラグ (>0 の間は FIX 音を鳴らさない)。ref と state の両方を持つ
   const [rejectingCount, setRejectingCount] = useState(0)
@@ -1563,12 +1536,11 @@ export function MobileStakingPage() {
         (sample, err) => {
           if (err || !sample) return
           const acc = sample.accuracy_m
-          const isRtk = positioningModeRef.current === 'rtk'
           const fixThreshold = rtkFixAccuracyRef.current
 
-          // RTK モード + 既に一度 FIX 済 + 精度が閾値超過 → 棄却フェーズ
+          // 一度 FIX 精度に達したあと 精度が 閾値超過 → 棄却フェーズ
+          // (Drogger モード等で FIX した後 一時的に精度が悪化するはずれ値対策)
           if (
-            isRtk &&
             postFixModeRef.current &&
             acc != null &&
             acc > POST_FIX_REJECT_ACC_M
@@ -1595,7 +1567,7 @@ export function MobileStakingPage() {
           }
 
           // 一度 FIX 精度に達したら postFixMode に入り、以降のフィルタが有効化される
-          if (isRtk && acc != null && acc <= fixThreshold) {
+          if (acc != null && acc <= fixThreshold) {
             postFixModeRef.current = true
           }
 
@@ -1897,10 +1869,9 @@ export function MobileStakingPage() {
   const trenchZ = useMemo<number | null>(() => (trenchIdx && selfXY ? queryZ(trenchIdx, selfXY.x, selfXY.y) : null), [trenchIdx, selfXY])
   const groundZ = useMemo<number | null>(() => (groundIdx && selfXY ? queryZ(groundIdx, selfXY.x, selfXY.y) : null), [groundIdx, selfXY])
 
-  // 実効補正値: 簡易測定モードでは補正を無効化（生の楕円体高、アンテナ高 0）
-  // 精密モードではユーザー設定値を使う
-  const effUseGeoid = positioningMode === 'gps' ? false : useGeoidCorrection
-  const effAntennaHeight = positioningMode === 'gps' ? 0 : antennaHeight
+  // 常に ユーザー設定 の 値を そのまま使う (簡易/精密 モード区分は 廃止)
+  const effUseGeoid = useGeoidCorrection
+  const effAntennaHeight = antennaHeight
 
   // 自己標高（補正後）— Drogger GGA は 受信機内蔵ジオイド基準の MSL を返すので、
   //   楕円体高 h = altitude + geoidalSep に 変換してから JPGEO2024 を引く。
@@ -2378,29 +2349,8 @@ export function MobileStakingPage() {
     prevFixRef.current = soundIsFix
   }, [soundIsFix, soundEnabled])
 
-  // 音声 ON/OFF（ON 時はユーザー操作中に AudioContext を生成・再開）
-  const toggleSound = async () => {
-    if (soundEnabled) {
-      setSoundEnabled(false)
-      return
-    }
-    try {
-      const Ctor =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-      if (!Ctor) {
-        alert('この端末は音声ガイダンスに対応していません')
-        return
-      }
-      const ctx = audioCtxRef.current ?? new Ctor()
-      audioCtxRef.current = ctx
-      await ctx.resume()
-      playBeeps(ctx, 1) // 起動確認音
-      setSoundEnabled(true)
-    } catch {
-      alert('音声を開始できませんでした')
-    }
-  }
+  // (音声 ON/OFF ボタンは GPS設定モーダルに集約。 AudioContext は soundEnabled
+  //  変化時に 自動生成する useEffect が上部に あるので、ここでは 何もしない)
 
   // アンマウント時に AudioContext を閉じる
   useEffect(() => {
@@ -2486,12 +2436,6 @@ export function MobileStakingPage() {
       return
     }
     if (!farmId) return
-    // モード未選択なら選択モーダルを出す
-    // （RTK の開始前チェックは選択時に出るのでここでは再表示しない）
-    if (positioningMode == null) {
-      setShowModeChooser(true)
-      return
-    }
     recSamplesRef.current = []
     setRecordedCount(0)
     setRejectedCount(0)
@@ -2500,31 +2444,7 @@ export function MobileStakingPage() {
     // 開始音（ユーザ操作直後なので AudioContext を resume してから鳴らす）
     void unlockAudio().then(() => playStartChime())
 
-    // スマホ GPS モード: 1 発計測。
-    // getCurrentPosition を呼び直すと iPhone が GPS を再測位して数秒〜十数秒待たされるので、
-    // すでに watchPosition が更新している currentPos / currentAcc / currentAlt をそのまま
-    // スナップショットして即 finish する。
-    if (positioningMode === 'gps') {
-      if (!currentPos) {
-        alert('位置情報を取得できませんでした')
-        setRecording(false)
-        return
-      }
-      recSamplesRef.current = [
-        {
-          lat: currentPos[0],
-          lng: currentPos[1],
-          alt: currentAlt,
-          acc: currentAcc,
-          geoidalSep: currentGeoidalSep,
-        },
-      ]
-      setRecordedCount(1)
-      void finishRecording()
-      return
-    }
-
-    // 以降は RTK モード（従来の平均化フロー）
+    // 平均化フロー (旧 RTK モード相当を 常に使用)
     recEndMsRef.current = Date.now() + avgSeconds * 1000
 
     // 1 サンプルあたりのおおよその間隔（GPS の watchPosition は機種で揺れるが
@@ -5406,9 +5326,7 @@ export function MobileStakingPage() {
         })()}
 
         {/* 設定パネル */}
-        {showSettings && (() => {
-          const isGps = positioningMode === 'gps'
-          return (
+        {showSettings && (
           <div className="absolute top-2 right-2 z-[3400] bg-white border rounded-lg shadow-lg w-64 text-sm flex flex-col max-h-[85vh]">
             <div className="px-3 pt-3 pb-2 border-b flex items-center justify-between shrink-0">
               <div className="font-semibold">設定</div>
@@ -5421,12 +5339,6 @@ export function MobileStakingPage() {
               </button>
             </div>
             <div className="p-3 overflow-y-auto flex-1">
-
-            {isGps && (
-              <div className="mb-2 px-2 py-1.5 text-[11px] bg-amber-50 border border-amber-200 text-amber-800 rounded">
-                簡易測定モードでは以下の RTK 用設定は編集できません
-              </div>
-            )}
 
             {/* 音声ガイダンス / 平均秒数 / アンテナ高 / ジオイド補正 /
                 RTK 判定精度 は 「GPS設定」モーダル (画面右上のバッジ)
@@ -5483,8 +5395,7 @@ export function MobileStakingPage() {
               </button>
             </div>
           </div>
-          )
-        })()}
+        )}
 
         {/* 求積 (面積測定) パネル。作成中は常時表示、地図左上 */}
         {areaModeActive && (() => {
@@ -6308,32 +6219,32 @@ export function MobileStakingPage() {
                 </div>
               )}
             </div>
-            {/* 2 行目: 測定 + 詳細ボタン。簡易測定モードでは測定ボタンなし。 */}
+            {/* 2 行目: 測定 + 詳細ボタン */}
             <div className="flex items-center gap-2">
-              {!recording && positioningMode !== 'gps' && (() => {
-                const rtkNotFix =
-                  positioningMode === 'rtk' &&
-                  (currentAcc == null || currentAcc > rtkFixAccuracyM)
-                // 精度制限による disable は廃止。ユーザーの判断でいつでも測定可能。
-                // ボタン色を落として 警告を伝えるのみ。
+              {!recording && (() => {
+                // 精密判定: fixQuality=4 (RTK Fix) or 精度<=しきい値
+                const isPrecise =
+                  currentFixQuality === 4 ||
+                  (currentFixQuality == null && currentAcc != null && currentAcc <= rtkFixAccuracyM)
+                const label = isPrecise ? '精密測定' : '概略測定'
                 const disabled = saving || !currentPos
                 return (
                   <button
                     onClick={() => startRecording()}
                     disabled={disabled}
                     className={`flex-1 flex items-center justify-center gap-1 px-3 py-2 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm ${
-                      rtkNotFix
-                        ? 'bg-amber-600 hover:bg-amber-700'
-                        : 'bg-red-600 hover:bg-red-700'
+                      isPrecise
+                        ? 'bg-red-600 hover:bg-red-700'
+                        : 'bg-amber-600 hover:bg-amber-700'
                     }`}
                     title={
-                      rtkNotFix
-                        ? `精度が RTK Fix しきい値 (${(rtkFixAccuracyM * 100).toFixed(1)}cm) を超えています。押せますが 精度低下に注意`
-                        : undefined
+                      isPrecise
+                        ? '精度しきい値内 (RTK Fix 相当)。cm 精度で 測定'
+                        : `精度がしきい値 (${(rtkFixAccuracyM * 100).toFixed(1)}cm) を 超えています。概略値として 記録`
                     }
                   >
                     <CircleIcon className="h-4 w-4" />
-                    測定
+                    {label}
                   </button>
                 )
               })()}
@@ -6444,37 +6355,30 @@ export function MobileStakingPage() {
         <div className="mt-1 flex gap-2">
           {!recording ? (
             <>
-              {/* 測定（旧 記録）。GPS モードはオレンジ「簡易測定」。
-                  RTK モードでは currentAcc がしきい値を超えているとき半透明化 */}
+              {/* 測定: 精度しきい値内 = 精密測定 (赤)、外 = 概略測定 (琥珀) */}
               {(() => {
-                const isGps = positioningMode === 'gps'
-                const rtkNotFix =
-                  positioningMode === 'rtk' &&
-                  (currentAcc == null || currentAcc > rtkFixAccuracyM)
-                // 精度制限による disable は廃止。ユーザーの判断でいつでも測定可能。
-                // 精度不十分時は 色を琥珀に落として 警告のみ。
+                const isPrecise =
+                  currentFixQuality === 4 ||
+                  (currentFixQuality == null && currentAcc != null && currentAcc <= rtkFixAccuracyM)
+                const label = isPrecise ? '精密測定' : '概略測定'
                 const disabled = saving || !currentPos
                 return (
                   <button
                     onClick={() => startRecording()}
                     disabled={disabled}
                     className={`flex-1 basis-0 flex items-center justify-center gap-1 px-2 py-3 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed font-bold ${
-                      isGps
-                        ? 'bg-orange-500 hover:bg-orange-600'
-                        : rtkNotFix
-                          ? 'bg-amber-600 hover:bg-amber-700'
-                          : 'bg-red-600 hover:bg-red-700'
+                      isPrecise
+                        ? 'bg-red-600 hover:bg-red-700'
+                        : 'bg-amber-600 hover:bg-amber-700'
                     }`}
                     title={
-                      isGps
-                        ? '1 回だけ位置を取得します（補正なしの簡易測定）'
-                        : rtkNotFix
-                          ? `精度が RTK Fix しきい値 (${(rtkFixAccuracyM * 100).toFixed(1)}cm) を超えています。押せますが 精度低下に注意`
-                          : undefined
+                      isPrecise
+                        ? '精度しきい値内 (RTK Fix 相当)。cm 精度で 測定'
+                        : `精度がしきい値 (${(rtkFixAccuracyM * 100).toFixed(1)}cm) を 超えています。概略値として 記録`
                     }
                   >
                     <CircleIcon className="h-5 w-5" />
-                    {isGps ? '簡易測定' : '測定'}
+                    {label}
                   </button>
                 )
               })()}
@@ -6997,162 +6901,9 @@ export function MobileStakingPage() {
         )
       })()}
 
-      {/* 現場開始前チェック（ジオイド補正・目標高 と既知点による精度チェックの喚起） */}
-      {showStartupCheck && (
-        <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center z-[3500]">
-          <div className="bg-white w-full sm:max-w-md rounded-t-xl sm:rounded-xl shadow-xl p-4 max-h-[95vh] overflow-auto">
-            <h3 className="text-base font-bold mb-2 text-slate-800">現場の開始前チェック</h3>
-
-            {/* Drogger アプリへのリンク */}
-            <a
-              href="https://play.google.com/store/search?q=Drogger%20GPS&c=apps"
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center justify-between gap-2 mb-3 px-3 py-2 border border-emerald-300 rounded-lg bg-emerald-50 hover:bg-emerald-100"
-            >
-              <div className="min-w-0">
-                <div className="text-xs font-bold text-emerald-800">Drogger アプリを開く</div>
-                <div className="text-[10px] text-emerald-700">
-                  Google Play で Drogger GPS / RTK を検索・起動
-                </div>
-              </div>
-              <ExternalLink className="h-4 w-4 text-emerald-700 shrink-0" />
-            </a>
-
-            <p className="text-xs text-slate-600 mb-3">
-              観測を始める前に以下の設定をご確認ください。
-            </p>
-
-            {/* ジオイド補正 */}
-            <div className="border rounded-lg p-3 mb-3 bg-slate-50">
-              <div className="text-xs font-bold text-slate-700 mb-1.5">ジオイド補正</div>
-              <label className="flex items-center gap-2 mb-1">
-                <input
-                  type="checkbox"
-                  checked={useGeoidCorrection}
-                  onChange={(e) => setUseGeoidCorrection(e.target.checked)}
-                />
-                <span className="text-sm">ジオイド補正を有効化する</span>
-                <span
-                  className={`ml-auto text-[11px] px-1.5 py-0.5 rounded ${
-                    useGeoidCorrection ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
-                  }`}
-                >
-                  {useGeoidCorrection ? 'ON' : 'OFF'}
-                </span>
-              </label>
-              <div className="text-[11px] text-slate-500">
-                {useGeoidCorrection ? (
-                  <>
-                    {geoidLoading && '読込中…'}
-                    {!geoidLoading && geoidGrid && '✓ JPGEO2024 読込済み'}
-                    {!geoidLoading && !geoidGrid && !geoidError && '未読込'}
-                    {!geoidLoading && geoidError && (
-                      <span className="text-red-600">エラー: {geoidError}</span>
-                    )}
-                  </>
-                ) : (
-                  <span className="text-amber-700">
-                    OFF のとき標高は楕円体高 − アンテナ高のみで計算されます。
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* 目標高(アンテナ高) */}
-            <div className="border rounded-lg p-3 mb-3 bg-slate-50">
-              <div className="text-xs font-bold text-slate-700 mb-1.5">目標高（アンテナ高） (m)</div>
-              <input
-                type="number"
-                step={0.01}
-                value={antennaHeight}
-                onChange={(e) => {
-                  const n = parseFloat(e.target.value)
-                  if (Number.isFinite(n)) setAntennaHeight(n)
-                }}
-                className="w-full px-2 py-1.5 border rounded text-right font-mono text-sm"
-              />
-              <div className="text-[11px] text-slate-500 mt-1">
-                ロッド/ポール先端からアンテナ位相中心までの高さ。
-              </div>
-            </div>
-
-            {/* 音声ガイダンス */}
-            <div className="border rounded-lg p-3 mb-3 bg-slate-50">
-              <div className="text-xs font-bold text-slate-700 mb-1.5">音声ガイダンス</div>
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={startupSoundOn}
-                  onChange={(e) => setStartupSoundOn(e.target.checked)}
-                />
-                <span className="text-sm">音声ガイダンスを有効化する</span>
-                <span
-                  className={`ml-auto text-[11px] px-1.5 py-0.5 rounded ${
-                    startupSoundOn ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
-                  }`}
-                >
-                  {startupSoundOn ? 'ON' : 'OFF'}
-                </span>
-              </label>
-              <div className="text-[11px] text-slate-500 mt-1">
-                FIX 判定 / FIX 喪失 / ターゲット接近を音で通知します（RTK 測位で推奨）。
-              </div>
-            </div>
-
-            <button
-              onClick={() => {
-                // 音声 ON にする（ユーザー操作直後なので AudioContext を resume 可能）
-                if (startupSoundOn && !soundEnabled) {
-                  void toggleSound()
-                } else if (!startupSoundOn && soundEnabled) {
-                  void toggleSound()
-                }
-                setShowStartupCheck(false)
-              }}
-              className="w-full px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold"
-            >
-              確認した
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* 測位モード選択（工区を開くたびに表示） */}
-      {showModeChooser && farmId && (
-        <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center z-[3600]">
-          <div className="bg-white w-full sm:max-w-md rounded-t-xl sm:rounded-xl shadow-xl p-4">
-            <h3 className="text-base font-bold mb-2 text-slate-800">測位方法を選択</h3>
-            <p className="text-xs text-slate-600 mb-3">
-              現場で使用する測位方法を選んでください。
-            </p>
-
-            <button
-              onClick={() => {
-                setPositioningMode('rtk')
-                setShowModeChooser(false)
-                // RTK を選んだら続けて開始前チェック（ジオイド補正 / アンテナ高 / 音声）を出す
-                setShowStartupCheck(true)
-              }}
-              className="w-full border-2 border-blue-600 rounded-lg p-3 mb-3 text-left hover:bg-blue-50"
-            >
-              <div className="text-sm font-bold text-blue-700">精密測定モード</div>
-              <div className="text-xs text-slate-600 mt-0.5">Android + Drogger で cm 精密測位</div>
-            </button>
-
-            <button
-              onClick={() => {
-                setPositioningMode('gps')
-                setShowModeChooser(false)
-              }}
-              className="w-full border-2 border-amber-500 rounded-lg p-3 text-left hover:bg-amber-50"
-            >
-              <div className="text-sm font-bold text-amber-700">簡易測定モード</div>
-              <div className="text-xs text-slate-600 mt-0.5">スマホで手軽に概略調査</div>
-            </button>
-          </div>
-        </div>
-      )}
+      {/* 「現場開始前チェック」「測位モード選択」モーダルは 廃止。
+          設定は GPS 設定 バッジ から いつでも 変更可能。
+          精度が しきい値内なら 「精密測定」、外れたら 「概略測定」と 測定ボタンで案内。 */}
     </div>
   )
 }
