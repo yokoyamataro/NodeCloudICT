@@ -204,12 +204,6 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
         <Settings className="h-3 w-3" />
         {icon}
         <span>{fixLabel}</span>
-        {status.hdop != null && (
-          <span className="text-[9px] font-mono opacity-70">H{status.hdop.toFixed(1)}</span>
-        )}
-        {status.satellites != null && (
-          <span className="text-[9px] font-mono opacity-70">S{status.satellites}</span>
-        )}
         {/* NTRIP 受信インジケーター (小さな 点) */}
         {ntrip.connected && (
           <span

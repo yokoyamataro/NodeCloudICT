@@ -630,6 +630,8 @@ class DroggerLocationPlugin : Plugin() {
         val constHint = systemIdToConst(systemId)
 
         var changed = false
+        var markedPrns = 0
+        var missingInSatMap = 0
         // PRN は index 3..14 (12 個)。以前 2..13 で fix_type を PRN 扱いしていた 不具合を修正
         for (i in 3 until 15) {
             val prnStr = parts.getOrNull(i) ?: continue
@@ -638,12 +640,18 @@ class DroggerLocationPlugin : Plugin() {
             val c = constHint ?: prnRangeToConst(prn)
             val key = "$c/$prn"
             usedThisCycle.add(key)
+            markedPrns += 1
             val sat = satMap[key]
-            if (sat != null && !sat.usedInFix) {
-                sat.usedInFix = true
-                changed = true
+            if (sat != null) {
+                if (!sat.usedInFix) {
+                    sat.usedInFix = true
+                    changed = true
+                }
+            } else {
+                missingInSatMap += 1
             }
         }
+        Log.v(TAG, "GSA parsed: sysId='$systemId' constHint=$constHint markedPrns=$markedPrns missingInSatMap=$missingInSatMap changed=$changed satMapSize=${satMap.size}")
         // GSV グループ完了に頼らず、GSA で usedInFix が 変わったら 都度 emit。
         // これが無いと 「使用中 0/N」表示になる (GSA が satMap を更新しても UI に伝わらない)
         if (changed) emitSatellites()
@@ -662,6 +670,8 @@ class DroggerLocationPlugin : Plugin() {
 
     private fun emitSatellites() {
         val arr = JSArray()
+        var usedCount = 0
+        val sampleKeys = StringBuilder()
         for (sat in satMap.values) {
             val obj = JSObject()
             obj.put("constellation", sat.constellation)
@@ -671,7 +681,10 @@ class DroggerLocationPlugin : Plugin() {
             obj.put("snr", sat.snr)
             obj.put("usedInFix", sat.usedInFix)
             arr.put(obj)
+            if (sat.usedInFix) usedCount += 1
+            if (sampleKeys.length < 120) sampleKeys.append("${sat.constellation}/${sat.prn}${if (sat.usedInFix) "*" else ""} ")
         }
+        Log.d(TAG, "emitSatellites: total=${satMap.size} used=$usedCount cycle=${usedThisCycle.size} sample=$sampleKeys")
         val ret = JSObject()
         ret.put("satellites", arr)
         ret.put("timestamp", System.currentTimeMillis())

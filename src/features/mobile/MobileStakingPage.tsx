@@ -676,6 +676,9 @@ export function MobileStakingPage() {
   const [currentPos, setCurrentPos] = useState<[number, number] | null>(null)
   const [currentAcc, setCurrentAcc] = useState<number | null>(null)
   const [currentAltAcc, setCurrentAltAcc] = useState<number | null>(null)
+  /** Drogger の Fix Quality (0=No Fix, 1=SPS/GPS, 2=DGPS, 4=RTK Fix, 5=RTK Float)。
+   *  RTK Fix/Float 判定音の トリガに 使用。ブラウザ / Android GPS では null */
+  const [currentFixQuality, setCurrentFixQuality] = useState<number | null>(null)
   // 誤差表示モード: 平面 / 高さ (localStorage 永続化)。数値をタップで切替
   const [accuracyMode, setAccuracyMode] = useState<'horizontal' | 'vertical'>(() => {
     if (typeof window === 'undefined') return 'horizontal'
@@ -1597,6 +1600,7 @@ export function MobileStakingPage() {
           setCurrentPos(ll)
           setCurrentAcc(acc)
           setCurrentAltAcc(sample.altitude_accuracy_m)
+          setCurrentFixQuality(sample.fixQuality ?? null)
           setCurrentAlt(sample.altitude_m)
           // 位置更新の鮮度計測: この時刻を beep ループから参照して「更新が
           // 止まった (RTK 受信機切断等)」ときにビープを停止するために使う。
@@ -2260,24 +2264,59 @@ export function MobileStakingPage() {
   // FIX 時: 1Hz で「ピッ」。ターゲット 1m 以内で「ピピ」、10cm 以内で「ピピピ」。
   // FIX が外れた瞬間だけ「ブーッ」。
   // (soundEnabled は gnssSettingsStore に移設済み)
+  //
+  // FIX 判定は Drogger の fixQuality (RTK Fix=4 / Float=5) が 出ていれば
+  // それを優先。無い場合 (ブラウザ / Android GPS) は 精度 <= しきい値 で判定。
   const audioCtxRef = useRef<AudioContext | null>(null)
   const soundAccRef = useRef<number | null>(null)
+  const soundFqRef = useRef<number | null>(null)
   const soundDistRef = useRef<number | null>(null)
   const prevFixRef = useRef<boolean>(false)
-  // 最新の精度・ターゲット距離をタイマーから参照できるよう ref に同期
+  // 最新の精度・Fix品質・ターゲット距離を ref に同期
   useEffect(() => {
     soundAccRef.current = currentAcc
   }, [currentAcc])
   useEffect(() => {
+    soundFqRef.current = currentFixQuality
+  }, [currentFixQuality])
+  useEffect(() => {
     soundDistRef.current = proximityRel?.dist ?? null
   }, [proximityRel])
 
-  // 1Hz ビープのループ。しきい値変更時は setInterval を再セットアップ
+  /** Fix 判定: fixQuality があれば 4 or 5 (RTK Fix / Float)、無ければ 精度で判定 */
+  const isCurrentlyFixed = (): boolean => {
+    const fq = soundFqRef.current
+    if (fq != null) return fq === 4 || fq === 5
+    const acc = soundAccRef.current
+    return acc != null && acc <= rtkFixAccuracyM
+  }
+
+  // AudioContext の 初回セットアップ: soundEnabled が ON になった時に
+  // AudioContext が 未生成なら 作る。GPS設定モーダルから ON にした場合も 動く。
+  useEffect(() => {
+    if (!soundEnabled) return
+    if (audioCtxRef.current) return
+    try {
+      const AC =
+        (window as unknown as { AudioContext?: typeof AudioContext }).AudioContext ??
+        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      if (!AC) {
+        console.warn('AudioContext not supported')
+        return
+      }
+      audioCtxRef.current = new AC()
+      void audioCtxRef.current.resume().catch(() => undefined)
+    } catch (e) {
+      console.warn('AudioContext init failed:', e)
+    }
+  }, [soundEnabled])
+
+  // 1Hz ビープのループ
   useEffect(() => {
     if (!soundEnabled) return
     const ctx = audioCtxRef.current
     if (!ctx) return
-    prevFixRef.current = soundAccRef.current != null && soundAccRef.current <= rtkFixAccuracyM
+    prevFixRef.current = isCurrentlyFixed()
     const id = window.setInterval(() => {
       // 棄却フェーズ (連続 1〜5 回) の間は FIX 音を止める
       if (rejectingCountRef.current > 0) return
@@ -2288,9 +2327,7 @@ export function MobileStakingPage() {
       ) {
         return
       }
-      const acc = soundAccRef.current
-      const fix = acc != null && acc <= rtkFixAccuracyM
-      if (!fix) return
+      if (!isCurrentlyFixed()) return
       const d = soundDistRef.current
       let count = 1
       if (d != null && d <= 0.1) count = 3
@@ -2298,6 +2335,7 @@ export function MobileStakingPage() {
       playBeeps(ctx, count)
     }, 1000)
     return () => window.clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [soundEnabled, rtkFixAccuracyM])
 
   // 位置更新の鮮度を state 化 (React で useEffect が反応するように 1Hz でチェック)。
@@ -2314,8 +2352,12 @@ export function MobileStakingPage() {
   }, [])
 
   // FIX→喪失の瞬間に警告音（ブーッ）を 1 回。「精度悪化」と「更新途絶」の両方を FIX 喪失とみなす。
-  const soundIsFix =
-    !posStale && currentAcc != null && currentAcc <= rtkFixAccuracyM
+  // Fix 判定: fixQuality (4/5) 優先、無ければ 精度で判定
+  const soundIsFix = !posStale && (
+    currentFixQuality != null
+      ? (currentFixQuality === 4 || currentFixQuality === 5)
+      : (currentAcc != null && currentAcc <= rtkFixAccuracyM)
+  )
   useEffect(() => {
     if (!soundEnabled) {
       prevFixRef.current = soundIsFix

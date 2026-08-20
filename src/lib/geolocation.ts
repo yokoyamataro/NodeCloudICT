@@ -107,6 +107,9 @@ export interface GeoSample {
   heading_deg: number | null
   altitude_m: number | null
   recorded_at: string
+  /** NMEA GGA Fix Quality (Drogger のみ)。4=RTK Fix, 5=RTK Float, 2=DGPS, 1=SPS, 0=No Fix.
+   *  ブラウザ / Android GPS の場合は null (受信機側で判定できない) */
+  fixQuality?: number | null
 }
 
 export type GeoErrorCode = 'permission_denied' | 'position_unavailable' | 'timeout' | 'unknown'
@@ -128,6 +131,7 @@ function normalizePosition(p: Position): GeoSample {
     heading_deg: c.heading ?? null,
     altitude_m: c.altitude ?? null,
     recorded_at: new Date(p.timestamp).toISOString(),
+    fixQuality: null,
   }
 }
 
@@ -237,6 +241,7 @@ function normalizeBgLocation(loc: BgLocation): GeoSample {
     heading_deg: loc.bearing ?? null,
     altitude_m: loc.altitude ?? null,
     recorded_at: new Date(loc.time).toISOString(),
+    fixQuality: null,
   }
 }
 
