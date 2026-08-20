@@ -679,6 +679,9 @@ export function MobileStakingPage() {
   /** Drogger の Fix Quality (0=No Fix, 1=SPS/GPS, 2=DGPS, 4=RTK Fix, 5=RTK Float)。
    *  RTK Fix/Float 判定音の トリガに 使用。ブラウザ / Android GPS では null */
   const [currentFixQuality, setCurrentFixQuality] = useState<number | null>(null)
+  /** GGA field 11: 受信機内蔵ジオイド と 楕円体 の差 [m]。 楕円体高 = altitude + geoidalSep。
+   *  JPGEO2024 補正の 前に 楕円体高 に 戻すため 必要。ブラウザ / Android GPS では null */
+  const [currentGeoidalSep, setCurrentGeoidalSep] = useState<number | null>(null)
   // 誤差表示モード: 平面 / 高さ (localStorage 永続化)。数値をタップで切替
   const [accuracyMode, setAccuracyMode] = useState<'horizontal' | 'vertical'>(() => {
     if (typeof window === 'undefined') return 'horizontal'
@@ -1265,7 +1268,7 @@ export function MobileStakingPage() {
   const [recording, setRecording] = useState(false)
   const [recordedCount, setRecordedCount] = useState(0)
   const [rejectedCount, setRejectedCount] = useState(0)
-  const recSamplesRef = useRef<Array<{ lat: number; lng: number; alt: number | null; acc: number | null }>>([])
+  const recSamplesRef = useRef<Array<{ lat: number; lng: number; alt: number | null; acc: number | null; geoidalSep: number | null }>>([])
   const recTimerRef = useRef<number | null>(null)
   const recCleanupRef = useRef<(() => void) | null>(null)
   // 目標終了時刻（ms）。ノイズで棄却したサンプル分だけ後ろにずれる。
@@ -1601,6 +1604,7 @@ export function MobileStakingPage() {
           setCurrentAcc(acc)
           setCurrentAltAcc(sample.altitude_accuracy_m)
           setCurrentFixQuality(sample.fixQuality ?? null)
+          setCurrentGeoidalSep(sample.geoidal_separation_m ?? null)
           setCurrentAlt(sample.altitude_m)
           // 位置更新の鮮度計測: この時刻を beep ループから参照して「更新が
           // 止まった (RTK 受信機切断等)」ときにビープを停止するために使う。
@@ -1898,10 +1902,13 @@ export function MobileStakingPage() {
   const effUseGeoid = positioningMode === 'gps' ? false : useGeoidCorrection
   const effAntennaHeight = positioningMode === 'gps' ? 0 : antennaHeight
 
-  // 自己標高（補正後）— 既存の計算ロジックをここで再利用
+  // 自己標高（補正後）— Drogger GGA は 受信機内蔵ジオイド基準の MSL を返すので、
+  //   楕円体高 h = altitude + geoidalSep に 変換してから JPGEO2024 を引く。
+  //   ブラウザ / Android GPS は geoidalSep が null (altitude が 既に 楕円体高 前提)。
   const selfElevation = useMemo<number | null>(() => {
     if (currentAlt === null || currentPos === null) return null
     if (effUseGeoid && geoidGrid) {
+      const hEllip = currentAlt + (currentGeoidalSep ?? 0)
       const rRow = (geoidGrid.latMax - currentPos[0]) / geoidGrid.dLat
       const rCol = (currentPos[1] - geoidGrid.lonMin) / geoidGrid.dLon
       if (rRow >= 0 && rCol >= 0 && rRow < geoidGrid.nrows && rCol < geoidGrid.ncols) {
@@ -1914,11 +1921,11 @@ export function MobileStakingPage() {
         const v10 = geoidGrid.values[r1 * geoidGrid.ncols + c0]
         const v11 = geoidGrid.values[r1 * geoidGrid.ncols + c1]
         const N = (v00 * (1 - tc) + v01 * tc) * (1 - tr) + (v10 * (1 - tc) + v11 * tc) * tr
-        if (Number.isFinite(N)) return currentAlt - N - effAntennaHeight
+        if (Number.isFinite(N)) return hEllip - N - effAntennaHeight
       }
     }
     return currentAlt - effAntennaHeight
-  }, [currentAlt, currentPos, effUseGeoid, geoidGrid, effAntennaHeight])
+  }, [currentAlt, currentGeoidalSep, currentPos, effUseGeoid, geoidGrid, effAntennaHeight])
 
   const trenchDiff = trenchZ !== null && selfElevation !== null ? selfElevation - trenchZ : null
   const groundDiff = groundZ !== null && selfElevation !== null ? selfElevation - groundZ : null
@@ -2508,6 +2515,7 @@ export function MobileStakingPage() {
           lng: currentPos[1],
           alt: currentAlt,
           acc: currentAcc,
+          geoidalSep: currentGeoidalSep,
         },
       ]
       setRecordedCount(1)
@@ -2534,6 +2542,7 @@ export function MobileStakingPage() {
             lng: s.lon,
             alt: s.altitude_m,
             acc: s.accuracy_m,
+            geoidalSep: s.geoidal_separation_m ?? null,
           }
           const accepted = recSamplesRef.current
           // 2 サンプル以上溜まったら、それまでの平均から 3cm 以上ずれた点はノイズ
@@ -2620,6 +2629,8 @@ export function MobileStakingPage() {
     let sumLng = 0
     let sumAlt = 0
     let altCount = 0
+    let sumGeoidalSep = 0
+    let geoidalSepCount = 0
     let maxAcc = 0
     for (const s of samples) {
       sumLat += s.lat
@@ -2628,23 +2639,33 @@ export function MobileStakingPage() {
         sumAlt += s.alt
         altCount++
       }
+      if (s.geoidalSep != null && Number.isFinite(s.geoidalSep)) {
+        sumGeoidalSep += s.geoidalSep
+        geoidalSepCount++
+      }
       if (s.acc != null && Number.isFinite(s.acc)) {
         maxAcc = Math.max(maxAcc, s.acc)
       }
     }
     const avgLat = sumLat / samples.length
     const avgLng = sumLng / samples.length
-    const rawEllipsoidal = altCount > 0 ? sumAlt / altCount : null
+    // Drogger の altitude は 受信機内蔵ジオイド基準 MSL。 geoidalSep を足して 楕円体高 に。
+    // ブラウザ / Android GPS では geoidalSep が null → altitude を そのまま 楕円体高扱い
+    const avgAltRaw = altCount > 0 ? sumAlt / altCount : null
+    const avgGeoidalSep = geoidalSepCount > 0 ? sumGeoidalSep / geoidalSepCount : 0
+    const avgEllipsoidal = avgAltRaw !== null ? avgAltRaw + avgGeoidalSep : null
 
-    // 標高 = 楕円体高 − ジオイド高 − アンテナ高
-    // 実効補正値（effUseGeoid / effAntennaHeight）は簡易測定モードで自動 OFF/0 になる
+    // 標高 = 楕円体高 − JPGEO2024 のジオイド高 − アンテナ高
     let geoidN: number | null = null
     if (effUseGeoid && geoidGrid) {
       const { lookupGeoid } = await import('@/lib/geoid')
       geoidN = lookupGeoid(geoidGrid, avgLat, avgLng)
     }
-    const avgAlt = rawEllipsoidal !== null
-      ? (geoidN !== null ? rawEllipsoidal - geoidN - effAntennaHeight : rawEllipsoidal - effAntennaHeight)
+    const avgAlt = avgEllipsoidal !== null
+      ? (geoidN !== null
+          ? avgEllipsoidal - geoidN - effAntennaHeight
+          // ジオイド補正 OFF: 受信機の MSL 標高 (avgAltRaw) から アンテナ高だけ
+          : (avgAltRaw !== null ? avgAltRaw - effAntennaHeight : null))
       : null
 
     const { x, y } = converter.toXY(avgLat, avgLng)
@@ -6346,10 +6367,22 @@ export function MobileStakingPage() {
                 <span className="text-slate-800 ml-0.5">
                   {(() => {
                     if (currentAlt == null) return '-'
-                    // 楕円体高 → 標高（ジオイド補正 + アンテナ高）
-                    // 簡易測定モードでは補正なしで楕円体高そのまま
+                    // 標高計算:
+                    //   1) 受信機の altitude_m の意味を推定
+                    //      Drogger 等: GGA field 9 = 受信機内蔵ジオイド基準の MSL
+                    //                 GGA field 11 = 内蔵ジオイド と 楕円体の差 (geoidalSep)
+                    //                 → 楕円体高 h = altitude + geoidalSep
+                    //      ブラウザ/Android GPS: altitude は 楕円体高 (WGS84)
+                    //                             geoidalSep は null
+                    //   2) JPGEO2024 の N を 楕円体高から引いて 正しい MSL に変換
+                    //   3) アンテナ高を引いて 地表標高
+                    //
+                    // 簡易測定モード では 生値のまま
                     let H: number | null = null
                     if (currentPos && effUseGeoid && geoidGrid) {
+                      // 受信機の altitude を 楕円体高 に 戻す
+                      // (Drogger は MSL 送信 → geoidalSep を足す、ブラウザは 既に 楕円体)
+                      const hEllip = currentAlt + (currentGeoidalSep ?? 0)
                       const rRow = (geoidGrid.latMax - currentPos[0]) / geoidGrid.dLat
                       const rCol = (currentPos[1] - geoidGrid.lonMin) / geoidGrid.dLon
                       if (rRow >= 0 && rCol >= 0 && rRow < geoidGrid.nrows && rCol < geoidGrid.ncols) {
@@ -6362,9 +6395,11 @@ export function MobileStakingPage() {
                         const v10 = geoidGrid.values[r1 * geoidGrid.ncols + c0]
                         const v11 = geoidGrid.values[r1 * geoidGrid.ncols + c1]
                         const N = (v00 * (1 - tc) + v01 * tc) * (1 - tr) + (v10 * (1 - tc) + v11 * tc) * tr
-                        if (Number.isFinite(N)) H = currentAlt - N - effAntennaHeight
+                        if (Number.isFinite(N)) H = hEllip - N - effAntennaHeight
                       }
                     } else if (currentPos) {
+                      // ジオイド補正 OFF: 受信機の MSL 標高 から アンテナ高だけ引く
+                      // (Drogger の GGA field 9 は 既に MSL なので JPGEO2024 補正は 不要)
                       H = currentAlt - effAntennaHeight
                     }
                     return (H ?? currentAlt).toFixed(3)

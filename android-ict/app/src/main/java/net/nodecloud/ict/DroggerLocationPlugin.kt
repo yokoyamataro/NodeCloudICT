@@ -213,9 +213,43 @@ class DroggerLocationPlugin : Plugin() {
                 try { adapter.cancelDiscovery() } catch (_: SecurityException) { /* ignore */ }
                 sock.connect()
                 socketOutputStream = sock.outputStream
-                val br = BufferedReader(InputStreamReader(sock.inputStream, Charsets.US_ASCII))
+                // 診断: 最初の 2KB は 生バイトを logcat に出す (ASCII 化 + 非印字は [XX])
+                //   Drogger が どんな データを 実際に送っているか確認するため
+                val rawInput = sock.inputStream
+                var rawDebugRemaining = 2048
+                val rawDebugBuf = StringBuilder()
+                val br = BufferedReader(InputStreamReader(rawInput, Charsets.US_ASCII))
                 reader = br
                 while (running.get()) {
+                    // 診断: 一時的に readLine ではなく readByte で 1 バイトずつ 読んで
+                    // 制御文字を可視化。2KB 読んだら 通常の readLine に 戻る
+                    if (rawDebugRemaining > 0) {
+                        val b = try { rawInput.read() } catch (e: IOException) {
+                            if (running.get()) {
+                                notifyError("io_error", "BT 受信エラー: ${e.message}")
+                            }
+                            -1
+                        }
+                        if (b < 0) break
+                        rawDebugRemaining -= 1
+                        val c = b and 0xFF
+                        when {
+                            c in 0x20..0x7E -> rawDebugBuf.append(c.toChar())
+                            c == 0x0D -> rawDebugBuf.append("[CR]")
+                            c == 0x0A -> rawDebugBuf.append("[LF]\n")
+                            else -> rawDebugBuf.append("[%02X]".format(c))
+                        }
+                        if (rawDebugRemaining == 0) {
+                            // 出力 (256 バイト行分ずつ 分けて Log.i)
+                            val text = rawDebugBuf.toString()
+                            for (line in text.split('\n')) {
+                                if (line.isNotEmpty()) Log.i(TAG, "RAW: $line")
+                            }
+                            Log.i(TAG, "RAW debug done. Switching to readLine loop.")
+                            rawDebugBuf.clear()
+                        }
+                        continue
+                    }
                     val line = try { br.readLine() } catch (e: IOException) {
                         if (running.get()) {
                             notifyError("io_error", "BT 受信エラー: ${e.message}")
@@ -405,7 +439,11 @@ class DroggerLocationPlugin : Plugin() {
     private data class NmeaBuffer(
         var lat: Double? = null,
         var lon: Double? = null,
+        /** GGA field 9: 受信機内蔵ジオイド (通常 EGM96) 基準の MSL 標高 [m] */
         var altitude: Double? = null,
+        /** GGA field 11: geoidal separation = WGS84 楕円体 − 受信機内蔵ジオイド [m]
+         *  楕円体高 h = altitude + geoidalSep で 求まる */
+        var geoidalSep: Double? = null,
         var fixQuality: Int? = null,
         var satellites: Int? = null,
         var hdop: Double? = null,
@@ -470,6 +508,9 @@ class DroggerLocationPlugin : Plugin() {
 
     private fun parseGga(parts: List<String>) {
         // $--GGA,hhmmss.ss,llll.lll,a,yyyyy.yyy,a,x,xx,x.x,x.x,M,x.x,M,x.x,xxxx*hh
+        //   1    2         3        4 5         6 7 8  9   10 11 12 13 14
+        //                                             ↑    ↑  ↑ (10) ↑ (11) geoidal_sep
+        //                                          altitude M   geoidal_sep M ...
         if (parts.size < 15) return
         // NMEA サイクル開始 (通常 GGA が 1 発目) → 使用中フラグを リセット
         // (以降のこのサイクルの GSA でセットされる)
@@ -482,9 +523,11 @@ class DroggerLocationPlugin : Plugin() {
         val sats = parts[7].toIntOrNull()
         val hdop = parts[8].toDoubleOrNull()
         val alt = parts[9].toDoubleOrNull()
+        val geoidSep = parts[11].toDoubleOrNull() // 受信機内蔵ジオイドとの差 (m)
         if (lat != null) nmea.lat = lat
         if (lon != null) nmea.lon = lon
         if (alt != null) nmea.altitude = alt
+        if (geoidSep != null) nmea.geoidalSep = geoidSep
         if (fixQ != null) nmea.fixQuality = fixQ
         if (sats != null) nmea.satellites = sats
         if (hdop != null) nmea.hdop = hdop
@@ -683,10 +726,38 @@ class DroggerLocationPlugin : Plugin() {
         else -> "Other"
     }
 
+    /**
+     * usedInFix を 決定する。
+     *   GSA (usedThisCycle) が 来ていれば それを 信じる (正確)
+     *   来ていなければ SNR 上位 N 個 (N=GGA field 7 の 使用数) を 使用中と推定
+     */
+    private fun computeUsedInFix() {
+        val hasGsa = usedThisCycle.isNotEmpty()
+        if (hasGsa) {
+            // GSA が有る場合: parseGsa の 時点で 既に satMap.usedInFix は 設定済み
+            // ここでは 何もしないで OK (usedThisCycle に無い entry は false のまま)
+            for (sat in satMap.values) {
+                sat.usedInFix = usedThisCycle.contains("${sat.constellation}/${sat.prn}")
+            }
+            return
+        }
+        // GSA 無い場合: SNR 上位 N 個 を 使用中と 推定
+        val n = nmea.satellites ?: 0
+        if (n <= 0) {
+            for (sat in satMap.values) sat.usedInFix = false
+            return
+        }
+        // SNR が null の 衛星は 除外 (-1 で 末尾)。SNR 降順で 並べる。
+        val sorted = satMap.values.sortedByDescending { it.snr ?: -1 }
+        for ((idx, sat) in sorted.withIndex()) {
+            sat.usedInFix = idx < n && (sat.snr ?: -1) > 0
+        }
+    }
+
     private fun emitSatellites() {
+        computeUsedInFix()
         val arr = JSArray()
         var usedCount = 0
-        val sampleKeys = StringBuilder()
         for (sat in satMap.values) {
             val obj = JSObject()
             obj.put("constellation", sat.constellation)
@@ -697,9 +768,8 @@ class DroggerLocationPlugin : Plugin() {
             obj.put("usedInFix", sat.usedInFix)
             arr.put(obj)
             if (sat.usedInFix) usedCount += 1
-            if (sampleKeys.length < 120) sampleKeys.append("${sat.constellation}/${sat.prn}${if (sat.usedInFix) "*" else ""} ")
         }
-        Log.v(TAG, "emitSatellites: total=${satMap.size} used=$usedCount cycle=${usedThisCycle.size}")
+        Log.v(TAG, "emitSatellites: total=${satMap.size} used=$usedCount cycle=${usedThisCycle.size} ggaSats=${nmea.satellites}")
         val ret = JSObject()
         ret.put("satellites", arr)
         ret.put("timestamp", System.currentTimeMillis())
@@ -871,6 +941,10 @@ class DroggerLocationPlugin : Plugin() {
         )
         obj.put("heading_deg", nmea.headingDeg)
         obj.put("altitude_m", nmea.altitude)
+        // GGA field 11: 受信機内蔵ジオイド と WGS84 楕円体 の 差 [m]
+        // TS 側で 楕円体高 = altitude_m + geoidal_separation_m を計算し、
+        // JPGEO2024 を 引いて 正確な MSL 標高 を 求めるために 必要
+        obj.put("geoidal_separation_m", nmea.geoidalSep)
         obj.put(
             "recorded_at",
             java.text.SimpleDateFormat(

@@ -105,11 +105,18 @@ export interface GeoSample {
   altitude_accuracy_m: number | null
   speed_kmh: number | null
   heading_deg: number | null
+  /** NMEA GGA field 9 = 受信機内蔵ジオイド (通常 EGM96) 基準の MSL 標高 [m]
+   *  ブラウザ / Android GPS では 通常 楕円体高 (WGS84) */
   altitude_m: number | null
   recorded_at: string
   /** NMEA GGA Fix Quality (Drogger のみ)。4=RTK Fix, 5=RTK Float, 2=DGPS, 1=SPS, 0=No Fix.
    *  ブラウザ / Android GPS の場合は null (受信機側で判定できない) */
   fixQuality?: number | null
+  /** NMEA GGA field 11 = 受信機内蔵ジオイド と WGS84 楕円体 の差 [m] (Drogger のみ)。
+   *  altitude_m + geoidal_separation_m = 楕円体高。
+   *  JPGEO2024 で 補正する時は 楕円体高 に 変換してから 引く。
+   *  ブラウザ / Android GPS では null (altitude_m が 既に 楕円体高 の 想定) */
+  geoidal_separation_m?: number | null
 }
 
 export type GeoErrorCode = 'permission_denied' | 'position_unavailable' | 'timeout' | 'unknown'
@@ -132,6 +139,7 @@ function normalizePosition(p: Position): GeoSample {
     altitude_m: c.altitude ?? null,
     recorded_at: new Date(p.timestamp).toISOString(),
     fixQuality: null,
+    geoidal_separation_m: null,
   }
 }
 
@@ -242,6 +250,7 @@ function normalizeBgLocation(loc: BgLocation): GeoSample {
     altitude_m: loc.altitude ?? null,
     recorded_at: new Date(loc.time).toISOString(),
     fixQuality: null,
+    geoidal_separation_m: null,
   }
 }
 
