@@ -2290,10 +2290,11 @@ export function MobileStakingPage() {
     soundDistRef.current = proximityRel?.dist ?? null
   }, [proximityRel])
 
-  /** Fix 判定: fixQuality があれば 4 or 5 (RTK Fix / Float)、無ければ 精度で判定 */
+  /** Fix 判定: fixQuality が あれば RTK Fix (4) のみ 音を鳴らす (Float=5 は 除外)、
+   *  無ければ 精度しきい値で 判定 (ブラウザ/Android GPS 用のフォールバック) */
   const isCurrentlyFixed = (): boolean => {
     const fq = soundFqRef.current
-    if (fq != null) return fq === 4 || fq === 5
+    if (fq != null) return fq === 4
     const acc = soundAccRef.current
     return acc != null && acc <= rtkFixAccuracyM
   }
@@ -2359,10 +2360,10 @@ export function MobileStakingPage() {
   }, [])
 
   // FIX→喪失の瞬間に警告音（ブーッ）を 1 回。「精度悪化」と「更新途絶」の両方を FIX 喪失とみなす。
-  // Fix 判定: fixQuality (4/5) 優先、無ければ 精度で判定
+  // Fix 判定: fixQuality=4 (RTK Fix) のみ True、無ければ 精度で判定
   const soundIsFix = !posStale && (
     currentFixQuality != null
-      ? (currentFixQuality === 4 || currentFixQuality === 5)
+      ? currentFixQuality === 4
       : (currentAcc != null && currentAcc <= rtkFixAccuracyM)
   )
   useEffect(() => {

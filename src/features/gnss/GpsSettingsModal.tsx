@@ -73,6 +73,8 @@ interface DroggerStatusSnapshot {
   altitude: number | null
   accuracy: number | null
   altitudeAccuracy: number | null
+  /** GGA field 11: 受信機内蔵ジオイド と 楕円体 の差 [m] (Drogger のみ) */
+  geoidalSep: number | null
   lastUpdateAt: number | null
 }
 
@@ -183,10 +185,21 @@ function GpsConnectionTab() {
     altitude: null,
     accuracy: null,
     altitudeAccuracy: null,
+    geoidalSep: null,
     lastUpdateAt: null,
   })
   const [reconnecting, setReconnecting] = useState(false)
   const [reconnectError, setReconnectError] = useState<string | null>(null)
+  // MobileStakingPage と 同じ 標高補正を 適用するため 設定と geoid grid を読む
+  const antennaHeight = useGnssSettingsStore((s) => s.antennaHeight)
+  const useGeoidCorrection = useGnssSettingsStore((s) => s.useGeoidCorrection)
+  const [geoidGrid, setGeoidGrid] = useState<import('@/lib/geoid').GeoidGrid | null>(null)
+  useEffect(() => {
+    if (!useGeoidCorrection || geoidGrid) return
+    void import('@/lib/geoid').then(({ loadGeoid }) => loadGeoid())
+      .then((g) => setGeoidGrid(g))
+      .catch(() => { /* ignore */ })
+  }, [useGeoidCorrection, geoidGrid])
 
   useEffect(() => {
     let cancelled = false
@@ -200,6 +213,7 @@ function GpsConnectionTab() {
         altitude: ev.altitude_m,
         accuracy: ev.accuracy_m,
         altitudeAccuracy: ev.altitude_accuracy_m,
+        geoidalSep: ev.geoidal_separation_m ?? null,
         fixQuality: ev.fixQuality,
         hdop: ev.hdop,
         satellites: ev.satellites,
@@ -316,8 +330,35 @@ function GpsConnectionTab() {
             <div>{status.lon != null ? status.lon.toFixed(7) : '-'}</div>
           </div>
           <div>
-            <div className="text-[10px] text-slate-500">標高</div>
-            <div>{status.altitude != null ? `${status.altitude.toFixed(3)}m` : '-'}</div>
+            <div className="text-[10px] text-slate-500">標高 (地表)</div>
+            <div>{(() => {
+              if (status.altitude == null || status.lat == null || status.lon == null) return '-'
+              // MobileStakingPage と同じ式:
+              //   楕円体高 h = altitude + geoidalSep
+              //   正 MSL H = h − N_JPGEO2024
+              //   地表 = H − アンテナ高
+              let H: number | null = null
+              if (useGeoidCorrection && geoidGrid) {
+                const hEllip = status.altitude + (status.geoidalSep ?? 0)
+                const rRow = (geoidGrid.latMax - status.lat) / geoidGrid.dLat
+                const rCol = (status.lon - geoidGrid.lonMin) / geoidGrid.dLon
+                if (rRow >= 0 && rCol >= 0 && rRow < geoidGrid.nrows && rCol < geoidGrid.ncols) {
+                  const r0 = Math.floor(rRow), c0 = Math.floor(rCol)
+                  const r1 = Math.min(r0 + 1, geoidGrid.nrows - 1)
+                  const c1 = Math.min(c0 + 1, geoidGrid.ncols - 1)
+                  const tr = rRow - r0, tc = rCol - c0
+                  const v00 = geoidGrid.values[r0 * geoidGrid.ncols + c0]
+                  const v01 = geoidGrid.values[r0 * geoidGrid.ncols + c1]
+                  const v10 = geoidGrid.values[r1 * geoidGrid.ncols + c0]
+                  const v11 = geoidGrid.values[r1 * geoidGrid.ncols + c1]
+                  const N = (v00 * (1 - tc) + v01 * tc) * (1 - tr) + (v10 * (1 - tc) + v11 * tc) * tr
+                  if (Number.isFinite(N)) H = hEllip - N - antennaHeight
+                }
+              } else {
+                H = status.altitude - antennaHeight
+              }
+              return `${(H ?? status.altitude).toFixed(3)}m`
+            })()}</div>
           </div>
         </div>
         <div className="text-[10px] text-slate-500">
@@ -370,6 +411,58 @@ function GpsConnectionTab() {
       {/* ---- 端末側 GNSS 設定 (音声 / 平均秒数 / アンテナ高 / ジオイド / 判定精度) ---- */}
       <GnssSettingsSection />
     </div>
+  )
+}
+
+/**
+ * アンテナ高 入力コンポーネント。
+ * 内部で string state を 持ち、途中の 「.」や 空文字も 受け付ける。
+ * 有効な数値に なった時のみ 親の onChange を呼び、store に 反映。
+ * (以前は value に number を 直接バインドしていたため、backspace で 空にすると
+ *  state が 更新されず 表示が 元に戻り、数字が はじかれる ように 見えていた)
+ */
+function AntennaHeightInput({
+  value,
+  onChange,
+}: {
+  value: number
+  onChange: (n: number) => void
+}) {
+  const [str, setStr] = useState(String(value))
+  // 外部 (store) が 変わった時は 反映 (ただし ユーザー編集中は 上書きしない)
+  useEffect(() => {
+    setStr((prev) => {
+      const prevNum = parseFloat(prev)
+      // 現在の文字列が 有効数値で 親と一致するなら 触らない
+      if (Number.isFinite(prevNum) && prevNum === value) return prev
+      return String(value)
+    })
+  }, [value])
+  return (
+    <label className="block">
+      <span className="text-slate-700">アンテナ高 (m)</span>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={str}
+        onChange={(e) => {
+          const v = e.target.value
+          setStr(v)
+          // 空文字 or 「.」等の途中入力は 親に流さない (フォーカス外れる時 or 有効時のみ)
+          const n = parseFloat(v)
+          if (Number.isFinite(n)) onChange(n)
+        }}
+        onBlur={() => {
+          // フォーカス外れる時に 現在値で 表示を正規化
+          const n = parseFloat(str)
+          setStr(Number.isFinite(n) ? String(n) : String(value))
+        }}
+        className="mt-1 w-full px-2 py-1 border border-slate-300 rounded text-right font-mono"
+      />
+      <span className="text-[10px] text-slate-500">
+        ロッド/ポール先端 〜 アンテナ位相中心 までの 高さ。標高 = 楕円体高 − ジオイド高 − アンテナ高
+      </span>
+    </label>
   )
 }
 
@@ -426,23 +519,8 @@ function GnssSettingsSection() {
         />
       </label>
 
-      {/* アンテナ高 */}
-      <label className="block">
-        <span className="text-slate-700">アンテナ高 (m)</span>
-        <input
-          type="number"
-          step={0.01}
-          value={antennaHeight}
-          onChange={(e) => {
-            const n = parseFloat(e.target.value)
-            if (Number.isFinite(n)) setAntennaHeight(n)
-          }}
-          className="mt-1 w-full px-2 py-1 border border-slate-300 rounded text-right font-mono"
-        />
-        <span className="text-[10px] text-slate-500">
-          ロッド/ポール先端 〜 アンテナ位相中心 までの 高さ。標高 = 楕円体高 − ジオイド高 − アンテナ高
-        </span>
-      </label>
+      {/* アンテナ高 - string state で編集 (数字が はじかれる問題対策) */}
+      <AntennaHeightInput value={antennaHeight} onChange={setAntennaHeight} />
 
       {/* ジオイド補正 */}
       <label className="flex items-center gap-2">
