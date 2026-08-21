@@ -13,11 +13,11 @@ import { useDroggerConnection } from '@/stores/droggerConnectionStore'
 import { GpsSettingsModal } from '@/features/gnss/GpsSettingsModal'
 
 const FIX_LABEL: Record<DroggerFixQuality, string> = {
-  0: 'No Fix',
+  0: '受信中',
   1: 'GPS',
   2: 'DGPS',
-  4: 'RTK Fix',
-  5: 'RTK Float',
+  4: 'RTK-FIX',
+  5: 'RFLOAT',
 }
 
 const FIX_CLASS: Record<DroggerFixQuality, string> = {
@@ -67,7 +67,7 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
       : connected
         ? 'bg-slate-100 border-slate-400 text-slate-700'
         : 'bg-red-100 border-red-400 text-red-800'
-  const fixLabel = fq != null ? FIX_LABEL[fq] : connected ? '受信中…' : '未接続'
+  const fixLabel = !connected ? '切断' : fq != null ? FIX_LABEL[fq] : '受信中'
   const icon = !connected ? (
     <WifiOff className="h-3 w-3" />
   ) : fq === 4 ? (

@@ -76,7 +76,7 @@ export function MobileHamburgerMenu({ farmId, onOpenCoords }: Props) {
           onClick={() => setDrawerOpen(false)}
         >
           <div
-            className="absolute left-0 top-0 bottom-0 w-64 max-w-[80%] bg-white shadow-xl flex flex-col"
+            className="absolute left-0 top-0 bottom-0 w-64 max-w-[80%] bg-white text-slate-800 shadow-xl flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="px-4 py-3 border-b bg-slate-50 flex items-center justify-between">
@@ -142,7 +142,7 @@ export function MobileHamburgerMenu({ farmId, onOpenCoords }: Props) {
           onClick={() => setSettingsOpen(false)}
         >
           <div
-            className="bg-white rounded-lg shadow-xl w-full max-w-sm"
+            className="bg-white text-slate-800 rounded-lg shadow-xl w-full max-w-sm"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="px-4 py-3 border-b flex items-center justify-between">
