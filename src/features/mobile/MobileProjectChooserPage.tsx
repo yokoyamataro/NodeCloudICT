@@ -12,6 +12,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useCanUseMobility } from '@/lib/useCanUseMobility'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
 import { MobileHamburgerMenu } from './MobileHamburgerMenu'
+import { DroggerStatusBadge } from '@/components/gnss/DroggerStatusBadge'
 import { JGD2011_ZONES } from '@/lib/coordinates'
 import type { Project, ProjectCategory } from '@/types/database'
 import { PROJECT_CATEGORY_LABEL } from '@/types/database'
@@ -158,6 +159,8 @@ export function MobileProjectChooserPage() {
         <MobileHamburgerMenu />
         <span className="font-medium">現場一覧（スマホ）</span>
         <div className="flex-1" />
+        {/* Drogger 接続バッジ (現場一覧ページでも 常時表示 = ページ遷移で 接続維持) */}
+        <DroggerStatusBadge />
         <FeedbackButton variant="mobile" />
         <button
           onClick={handleSignOut}

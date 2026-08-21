@@ -29,12 +29,12 @@ import {
   FIX_ACCURACY_MIN_M,
   FIX_ACCURACY_MAX_M,
 } from '@/stores/gnssSettingsStore'
+import { useDroggerConnection } from '@/stores/droggerConnectionStore'
 import {
   DroggerLocation,
   fetchNtripSourceTable,
   getNtripStatus,
   startNtrip,
-  startWithAutoDetect,
   stopNtrip,
   type DroggerFixQuality,
   type DroggerLocationEvent,
@@ -62,12 +62,9 @@ interface Props {
   onClose: () => void
 }
 
-interface DroggerStatusSnapshot {
-  connected: boolean
-  deviceName: string | null
-  fixQuality: DroggerFixQuality | null
-  hdop: number | null
-  satellites: number | null
+/** GPS接続タブ内 の 位置情報 (lat/lon/alt/精度) は 詳細情報 用の 追加取得。
+ *  接続状態 (connected/fixQuality/hdop/satellites) は 全体共有 store から。 */
+interface PositionSnapshot {
   lat: number | null
   lon: number | null
   altitude: number | null
@@ -75,7 +72,6 @@ interface DroggerStatusSnapshot {
   altitudeAccuracy: number | null
   /** GGA field 11: 受信機内蔵ジオイド と 楕円体 の差 [m] (Drogger のみ) */
   geoidalSep: number | null
-  lastUpdateAt: number | null
 }
 
 const FIX_LABEL: Record<DroggerFixQuality, string> = {
@@ -174,19 +170,26 @@ function TabButton({
 // ============================================================================
 
 function GpsConnectionTab() {
-  const [status, setStatus] = useState<DroggerStatusSnapshot>({
-    connected: false,
-    deviceName: null,
-    fixQuality: null,
-    hdop: null,
-    satellites: null,
+  // 接続状態は 全アプリ横断 store から取得 (工区遷移で 切れないため)
+  const {
+    connected,
+    deviceName,
+    fixQuality,
+    hdop,
+    satellites,
+    lastUpdateAt,
+    ensureStarted,
+    reconnect,
+    disconnect,
+  } = useDroggerConnection()
+  // モーダルを開いている 間だけ 位置情報も 詳細取得 (lat/lon/alt/精度)
+  const [pos, setPos] = useState<PositionSnapshot>({
     lat: null,
     lon: null,
     altitude: null,
     accuracy: null,
     altitudeAccuracy: null,
     geoidalSep: null,
-    lastUpdateAt: null,
   })
   const [reconnecting, setReconnecting] = useState(false)
   const [reconnectError, setReconnectError] = useState<string | null>(null)
@@ -201,49 +204,31 @@ function GpsConnectionTab() {
       .catch(() => { /* ignore */ })
   }, [useGeoidCorrection, geoidGrid])
 
+  // ensureStarted は 初回のみ発火 (idempotent)。既に 起動済みなら 何もしない
+  useEffect(() => {
+    void ensureStarted()
+  }, [ensureStarted])
+
+  // 位置情報 (lat/lon/alt 等) は モーダル open 中だけ 直接 listen
   useEffect(() => {
     let cancelled = false
-    const handles: Array<{ remove: () => Promise<void> }> = []
-
-    const onLocation = (ev: DroggerLocationEvent) => {
-      setStatus((prev) => ({
-        ...prev,
+    let handle: { remove: () => Promise<void> } | null = null
+    void DroggerLocation.addListener('location', (ev: DroggerLocationEvent) => {
+      setPos({
         lat: ev.lat,
         lon: ev.lon,
         altitude: ev.altitude_m,
         accuracy: ev.accuracy_m,
         altitudeAccuracy: ev.altitude_accuracy_m,
         geoidalSep: ev.geoidal_separation_m ?? null,
-        fixQuality: ev.fixQuality,
-        hdop: ev.hdop,
-        satellites: ev.satellites,
-        lastUpdateAt: Date.now(),
-      }))
-    }
-    const onStatusChange = (ev: { connected: boolean; deviceName: string | null }) => {
-      setStatus((prev) => ({ ...prev, connected: ev.connected, deviceName: ev.deviceName }))
-    }
-
-    void (async () => {
-      const locH = await DroggerLocation.addListener('location', onLocation)
-      const stH = await DroggerLocation.addListener('statusChange', onStatusChange)
-      if (cancelled) {
-        await locH.remove()
-        await stH.remove()
-        return
-      }
-      handles.push(locH, stH)
-      try {
-        const cur = await DroggerLocation.getStatus()
-        setStatus((prev) => ({ ...prev, connected: cur.connected, deviceName: cur.deviceName }))
-      } catch {
-        /* ignore */
-      }
-    })()
-
+      })
+    }).then((h) => {
+      if (cancelled) void h.remove()
+      else handle = h
+    })
     return () => {
       cancelled = true
-      for (const h of handles) void h.remove()
+      if (handle) void handle.remove()
     }
   }, [])
 
@@ -251,8 +236,7 @@ function GpsConnectionTab() {
     setReconnecting(true)
     setReconnectError(null)
     try {
-      await DroggerLocation.stop().catch(() => undefined)
-      await startWithAutoDetect()
+      await reconnect()
     } catch (e) {
       setReconnectError((e as Error)?.message ?? String(e))
     } finally {
@@ -263,15 +247,27 @@ function GpsConnectionTab() {
   const handleDisconnect = async () => {
     setReconnectError(null)
     try {
-      // GPS を 停止 (BT SPP ソケット閉じる)。NTRIP は startInternal 停止時に
-      // stopInternal → ntripClient?.stop() で 一緒に切れる。
-      await DroggerLocation.stop()
-      setStatus((prev) => ({ ...prev, connected: false, deviceName: null }))
+      await disconnect()
     } catch (e) {
       setReconnectError((e as Error)?.message ?? String(e))
     }
   }
 
+  // ダミー status オブジェクト (下記 render は 元コードのまま 動作)
+  const status = {
+    connected,
+    deviceName,
+    fixQuality,
+    hdop,
+    satellites,
+    lat: pos.lat,
+    lon: pos.lon,
+    altitude: pos.altitude,
+    accuracy: pos.accuracy,
+    altitudeAccuracy: pos.altitudeAccuracy,
+    geoidalSep: pos.geoidalSep,
+    lastUpdateAt,
+  }
   const fq = status.fixQuality
   const fixClass =
     fq != null

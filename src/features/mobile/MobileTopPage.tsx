@@ -10,6 +10,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { CurrentLocationLayer } from '@/components/map/CurrentLocationLayer'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
 import { MobileHamburgerMenu } from './MobileHamburgerMenu'
+import { DroggerStatusBadge } from '@/components/gnss/DroggerStatusBadge'
 import {
   NewFarmFromParcelPanel,
   type NewFarmFromParcelSelection,
@@ -267,6 +268,8 @@ export function MobileTopPage() {
           {currentProject ? currentProject.name : '工区一覧（スマホ）'}
         </span>
         <div className="flex-1" />
+        {/* Drogger 接続バッジ (工区一覧ページでも 常時表示 = ページ遷移で 接続維持) */}
+        <DroggerStatusBadge />
         <FeedbackButton variant="mobile" />
         <button
           onClick={handleSignOut}
