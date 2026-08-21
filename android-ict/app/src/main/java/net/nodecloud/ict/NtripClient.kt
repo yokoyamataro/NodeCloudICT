@@ -39,7 +39,8 @@ class NtripClient(
         private const val TAG = "NtripClient"
         private const val GGA_INTERVAL_MS = 10_000L
         private const val CONNECT_TIMEOUT_MS = 10_000
-        private const val READ_TIMEOUT_MS = 30_000
+        // 90 秒: 通常 RTCM は 1 秒毎に来るが、ネットワーク瞬断や 一時的遅延に 耐性を持たせる
+        private const val READ_TIMEOUT_MS = 90_000
 
         /**
          * SourceTable を取得。生テキスト (STR;/CAS;/NET; 行) を返し、パースは呼出側。
@@ -130,12 +131,16 @@ class NtripClient(
         if (running.getAndSet(true)) return
         Log.i(TAG, "NtripClient.start() host=$host:$port mount=$mountpoint sendGga=$sendGga")
         readerThread = thread(start = true, name = "NtripReader") {
-            try {
-                connectAndStream()
-            } catch (e: Exception) {
-                if (running.get()) {
-                    // 例外クラス名 + message で 原因判別しやすくする
-                    // (例: UnknownHostException: hostname → DNS 失敗 = 通信環境確認)
+            var reconnectAttempts = 0
+            var unrecoverable = false
+            while (running.get() && !unrecoverable) {
+                try {
+                    connectAndStream()
+                    // 正常終了 (running=false) or EOF で 抜けてきた
+                    if (!running.get()) break
+                    // EOF (キャスターが 接続閉じた) → 再接続へ
+                } catch (e: Exception) {
+                    if (!running.get()) break
                     val cls = e.javaClass.simpleName
                     val msg = e.message ?: "no message"
                     val hint = when (e) {
@@ -144,18 +149,38 @@ class NtripClient(
                         is java.net.ConnectException ->
                             " (接続拒否 - port が違うか キャスター停止中)"
                         is java.net.SocketTimeoutException ->
-                            " (タイムアウト - キャスターの応答なし。VRS で GGA 未送信の可能性)"
+                            " (タイムアウト - キャスターの応答なし)"
                         else -> ""
                     }
-                    Log.w(TAG, "NTRIP failed: $cls: $msg$hint", e)
-                    onError("ntrip_io", "$cls: $msg$hint")
+                    // 認証失敗 / mountpoint 不在 は 再接続しても 治らない
+                    val isFatal = msg.contains("認証失敗") || msg.contains("見つかりません")
+                    Log.w(TAG, "NTRIP error (attempt ${reconnectAttempts + 1}): $cls: $msg$hint")
+                    if (reconnectAttempts == 0) {
+                        // 初回のみ ユーザーに 通知
+                        onError("ntrip_io", "$cls: $msg$hint")
+                    }
+                    if (isFatal) {
+                        unrecoverable = true
+                    }
                 }
-            } finally {
                 cleanup()
-                if (running.getAndSet(false)) {
-                    onStatusChange(false)
+                if (!running.get() || unrecoverable) break
+                onStatusChange(false)
+                reconnectAttempts += 1
+                val delayMs = when {
+                    reconnectAttempts <= 1 -> 3000L
+                    reconnectAttempts <= 3 -> 5000L
+                    reconnectAttempts <= 6 -> 10000L
+                    else -> 15000L
                 }
+                Log.i(TAG, "NTRIP reconnect in ${delayMs / 1000}s (attempt ${reconnectAttempts + 1})")
+                try { Thread.sleep(delayMs) } catch (_: InterruptedException) { break }
             }
+            cleanup()
+            if (running.getAndSet(false)) {
+                onStatusChange(false)
+            }
+            Log.i(TAG, "NtripReader thread exit")
         }
     }
 

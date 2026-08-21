@@ -201,73 +201,67 @@ class DroggerLocationPlugin : Plugin() {
         }
         deviceName = try { target.name } catch (_: SecurityException) { null }
         running.set(true)
-        notifyStatusChange(true, deviceName)
         call.resolve()
 
-        // ソケット接続 + read loop は 別スレッド
+        // ソケット接続 + read loop は 別スレッド。IO エラーで 切断されたら
+        // running=false に されない限り 自動再接続 (指数バックオフ)。
         thread(start = true, name = "DroggerReader") {
-            try {
-                val sock = target.createRfcommSocketToServiceRecord(SPP_UUID)
-                socket = sock
-                // 探索停止 (推奨)
-                try { adapter.cancelDiscovery() } catch (_: SecurityException) { /* ignore */ }
-                sock.connect()
-                socketOutputStream = sock.outputStream
-                // 診断: 最初の 2KB は 生バイトを logcat に出す (ASCII 化 + 非印字は [XX])
-                //   Drogger が どんな データを 実際に送っているか確認するため
-                val rawInput = sock.inputStream
-                var rawDebugRemaining = 2048
-                val rawDebugBuf = StringBuilder()
-                val br = BufferedReader(InputStreamReader(rawInput, Charsets.US_ASCII))
-                reader = br
-                while (running.get()) {
-                    // 診断: 一時的に readLine ではなく readByte で 1 バイトずつ 読んで
-                    // 制御文字を可視化。2KB 読んだら 通常の readLine に 戻る
-                    if (rawDebugRemaining > 0) {
-                        val b = try { rawInput.read() } catch (e: IOException) {
+            var reconnectAttempts = 0
+            var unrecoverable = false
+            while (running.get() && !unrecoverable) {
+                try {
+                    val sock = target.createRfcommSocketToServiceRecord(SPP_UUID)
+                    socket = sock
+                    try { adapter.cancelDiscovery() } catch (_: SecurityException) { /* ignore */ }
+                    sock.connect()
+                    socketOutputStream = sock.outputStream
+                    reconnectAttempts = 0
+                    notifyStatusChange(true, deviceName)
+                    Log.i(TAG, "BT SPP connected: ${deviceName ?: target.address}")
+
+                    val br = BufferedReader(InputStreamReader(sock.inputStream, Charsets.US_ASCII))
+                    reader = br
+                    while (running.get()) {
+                        val line = try { br.readLine() } catch (e: IOException) {
                             if (running.get()) {
-                                notifyError("io_error", "BT 受信エラー: ${e.message}")
+                                Log.w(TAG, "BT read IO error: ${e.message} (will auto-reconnect)")
                             }
-                            -1
-                        }
-                        if (b < 0) break
-                        rawDebugRemaining -= 1
-                        val c = b and 0xFF
-                        when {
-                            c in 0x20..0x7E -> rawDebugBuf.append(c.toChar())
-                            c == 0x0D -> rawDebugBuf.append("[CR]")
-                            c == 0x0A -> rawDebugBuf.append("[LF]\n")
-                            else -> rawDebugBuf.append("[%02X]".format(c))
-                        }
-                        if (rawDebugRemaining == 0) {
-                            // 出力 (256 バイト行分ずつ 分けて Log.i)
-                            val text = rawDebugBuf.toString()
-                            for (line in text.split('\n')) {
-                                if (line.isNotEmpty()) Log.i(TAG, "RAW: $line")
-                            }
-                            Log.i(TAG, "RAW debug done. Switching to readLine loop.")
-                            rawDebugBuf.clear()
-                        }
-                        continue
+                            null
+                        } ?: break
+                        handleNmeaLine(line)
                     }
-                    val line = try { br.readLine() } catch (e: IOException) {
-                        if (running.get()) {
-                            notifyError("io_error", "BT 受信エラー: ${e.message}")
-                        }
-                        null
-                    } ?: break
-                    handleNmeaLine(line)
+                } catch (e: SecurityException) {
+                    // 権限系は 再試行しても 治らない
+                    notifyError("permission_denied", "BT 接続権限エラー: ${e.message}")
+                    unrecoverable = true
+                } catch (e: IOException) {
+                    Log.w(TAG, "BT connect/IO error (attempt ${reconnectAttempts + 1}): ${e.message}")
+                    if (reconnectAttempts == 0) {
+                        // 初回失敗のみ ユーザーに 通知 (再試行中は 静かに)
+                        notifyError("connect_failed", "BT 接続に失敗: ${e.message}")
+                    }
                 }
-            } catch (e: SecurityException) {
-                notifyError("permission_denied", "BT 接続権限エラー: ${e.message}")
-            } catch (e: IOException) {
-                notifyError("connect_failed", "BT 接続に失敗: ${e.message}")
-            } finally {
                 cleanupSocket()
-                if (running.getAndSet(false)) {
-                    notifyStatusChange(false, null)
+                if (!running.get()) break
+                // 切断状態 を UI に反映
+                notifyStatusChange(false, deviceName)
+                // 指数バックオフ: 3s → 5s → 10s → 15s cap
+                reconnectAttempts += 1
+                val delayMs = when {
+                    reconnectAttempts <= 1 -> 3000L
+                    reconnectAttempts <= 3 -> 5000L
+                    reconnectAttempts <= 6 -> 10000L
+                    else -> 15000L
                 }
+                Log.i(TAG, "BT reconnect in ${delayMs / 1000}s (attempt ${reconnectAttempts + 1})")
+                try { Thread.sleep(delayMs) } catch (_: InterruptedException) { break }
             }
+            // ループ 抜けた後の 最終片付け
+            cleanupSocket()
+            if (running.getAndSet(false)) {
+                notifyStatusChange(false, null)
+            }
+            Log.i(TAG, "DroggerReader thread exit")
         }
     }
 

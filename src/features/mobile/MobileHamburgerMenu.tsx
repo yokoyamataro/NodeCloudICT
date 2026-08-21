@@ -1,44 +1,29 @@
 // スマホページ共通のハンバーガーメニュー。
 // 左上の Menu アイコン → ドロワー (左スライド) が開き、下記に導線を提供する:
-//   ・座標一覧    → /mobile/staking?openCoords=1 に遷移
-//                   (既に staking ページなら座標一覧パネルを開く)
-//   ・設定       → ログイン情報 (メール / ログアウト) をモーダルで表示
+//   ・PC表示へ切替 → 表示モードを 'pc' に切替
+//   ・設定          → ログイン情報 (メール / ログアウト) をモーダルで表示
 //
 // 現状スマホ用の独立した設定ページは無いので、v1 は「設定」= ログイン情報 の
 // シンプル表示に留める。touki.or.jp 認証情報等の細かい設定は PC 表示で。
 
 import { useState } from 'react'
-import { Menu, X, LogOut, ListOrdered, Settings2, Monitor } from 'lucide-react'
+import { Menu, X, LogOut, Settings2, Monitor } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { setDisplayModeOverride } from '@/lib/displayMode'
 
 interface Props {
-  /** 現在の工区 ID。座標一覧遷移時に farmId=xxx を付与する用。 */
+  /** 従来は 「座標一覧」項目 用の props だったが、メニュー項目が 削除されたので
+   *  現在は 何にも 使わない。呼び出し側の 互換のため 残置 */
   farmId?: string | null
-  /** 「座標一覧」を選んだときの追加処理。既に staking ページに居るなら
-   *  showRecordList を true にするなど、親側で挙動を指定できる。渡されない
-   *  場合は staking ページへ URL 遷移する。 */
   onOpenCoords?: () => void
 }
 
-export function MobileHamburgerMenu({ farmId, onOpenCoords }: Props) {
+export function MobileHamburgerMenu(_props: Props) {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const { user, displayName, signOut } = useAuth()
   const navigate = useNavigate()
-
-  const handleCoords = () => {
-    setDrawerOpen(false)
-    if (onOpenCoords) {
-      onOpenCoords()
-      return
-    }
-    const params = new URLSearchParams()
-    if (farmId) params.set('farmId', farmId)
-    params.set('openCoords', '1')
-    navigate(`/mobile/staking?${params.toString()}`)
-  }
 
   const handleSettings = () => {
     setDrawerOpen(false)
@@ -108,14 +93,6 @@ export function MobileHamburgerMenu({ farmId, onOpenCoords }: Props) {
                 {user?.email ?? '(メール不明)'}
               </div>
             </div>
-            <button
-              type="button"
-              onClick={handleCoords}
-              className="w-full flex items-center gap-2 px-4 py-3 text-left text-sm hover:bg-slate-50 border-b"
-            >
-              <ListOrdered className="h-4 w-4 text-slate-500" />
-              座標一覧
-            </button>
             <button
               type="button"
               onClick={handleSwitchToPc}
