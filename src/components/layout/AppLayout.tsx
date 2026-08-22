@@ -88,7 +88,7 @@ const navigation: NavGroup[] = [
       { name: '配管系統', href: '/underdrain/pipe-wiring', icon: Cable },
       { name: '座標計算', href: '/underdrain/coordinate-calc', icon: MapPin },
       { name: '施工計画', href: '/underdrain/depth-calc', icon: Ruler },
-      { name: 'LandXML出力', href: '/underdrain/landxml', icon: FileOutput },
+      { name: 'ICT施工', href: '/underdrain/landxml', icon: FileOutput },
     ],
   },
   {

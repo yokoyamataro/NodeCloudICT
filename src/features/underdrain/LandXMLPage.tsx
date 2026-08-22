@@ -80,6 +80,8 @@ export function LandXMLPage() {
   // 絞り込み: 吸水/集水を個別 on/off
   const [showAbsorption, setShowAbsorption] = useState(true)
   const [showCollector, setShowCollector] = useState(true)
+  // 中心線形パネルの 折りたたみ (初期: 折る = リストが 邪魔になるため)
+  const [derivedAlignmentsExpanded, setDerivedAlignmentsExpanded] = useState(false)
 
   // TIN 生成・表示設定
   const [showTin, setShowTin] = useState(false)
@@ -501,12 +503,28 @@ export function LandXMLPage() {
         <div className="flex-1 border-r bg-white flex flex-col overflow-hidden">
           {/* 施工計画由来の線形 */}
           <div className="px-3 py-2 border-b bg-emerald-50">
-            <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setDerivedAlignmentsExpanded((v) => !v)}
+              className="w-full flex items-center gap-2 text-left"
+              title={derivedAlignmentsExpanded ? '線形一覧を折りたたむ' : '線形一覧を展開する'}
+            >
+              <span
+                className="inline-block text-slate-500 transition-transform"
+                style={{
+                  transform: derivedAlignmentsExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                }}
+              >
+                ▶
+              </span>
               <div className="text-sm font-semibold">施工計画から算出した中心線形</div>
               <span className="text-xs text-slate-500">
                 {derivedAlignments.length} 件
               </span>
-            </div>
+              <span className="ml-auto text-[10px] text-slate-500">
+                {derivedAlignmentsExpanded ? '折りたたむ' : '展開'}
+              </span>
+            </button>
             <div className="text-xs text-slate-500 mt-0.5">
               各系統の集水・吸水 XYZ から自動生成（保存不要）
             </div>
@@ -532,7 +550,7 @@ export function LandXMLPage() {
                 集水
               </label>
             </div>
-            {derivedAlignments.length > 0 && (
+            {derivedAlignmentsExpanded && derivedAlignments.length > 0 && (
               <div className="mt-2 max-h-56 overflow-auto border rounded bg-white">
                 <table className="w-full text-[11px]">
                   <thead className="bg-slate-50 sticky top-0">
