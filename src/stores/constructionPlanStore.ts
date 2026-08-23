@@ -218,7 +218,15 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       // 型キャスト
       const typedPoints = (points || []) as ConstructionPlanPoint[]
 
-      // 管路情報を取得
+      // 管路情報を取得。
+      // 圃場切替直後は underdrainStore の 圃場ガード により pipes が [] に
+      // クリアされている 可能性が あるため、この farm 用に ロード済み で
+      // なければ 先に await で 取得しておく (でないと pipeNumber lookup が
+      // 全部 undefined になり、施工計画由来の 中心線形名が UUID表示になる)
+      const underdrainState = useUnderdrainStore.getState()
+      if (underdrainState.loadedForFarmId !== farmId) {
+        await underdrainState.fetchPipes(farmId)
+      }
       const pipes = useUnderdrainStore.getState().pipes
 
       // 配管系統データから wiringRowId → {mergeSystemIndex, rowType} のルックアップを作成
