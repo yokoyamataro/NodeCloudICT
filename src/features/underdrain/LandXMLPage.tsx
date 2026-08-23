@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  RefreshCw,
 } from 'lucide-react'
 import { MapContainer, TileLayer, Polygon, Polyline, useMap } from 'react-leaflet'
 import L from 'leaflet'
@@ -512,6 +513,25 @@ export function LandXMLPage() {
             中心線形・面データを準備し、LandXML 1.2 形式で出力します
           </p>
         </div>
+        {currentFarm && (
+          <button
+            type="button"
+            onClick={() => {
+              if (!currentFarm) return
+              // 全データを 再取得 (保存済み中心線形 / 施工計画 / パイプ / 実測)
+              void fetchAlignments(currentFarm.id)
+              void fetchPlan(currentFarm.id)
+              void fetchPipes(currentFarm.id)
+              void fetchSurveyData(currentFarm.id)
+            }}
+            disabled={loading}
+            className="flex items-center gap-1 px-3 py-1.5 text-sm border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-50"
+            title="保存済み中心線形 / 施工計画 / パイプ / 実測データ を DB から 再取得"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            再読込
+          </button>
+        )}
       </div>
 
       <ResizableSplit
