@@ -351,11 +351,32 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       return
     }
 
+    // 部分再生成 の 場合 (既存 planGroups を 残す) は 現状の planGroups が
+    // 現圃場向け で ある必要がある。前圃場のが 残っていたら 中止。
+    const state = get()
+    if (
+      includedKeys !== undefined &&
+      state.loadedForFarmId &&
+      state.loadedForFarmId !== farmId
+    ) {
+      const msg =
+        `部分再生成 を 中止: 既存 施工計画は 別圃場のもの です ` +
+        `(表示 farm=${state.loadedForFarmId.slice(0, 8)}, 現圃場=${farmId.slice(0, 8)})。`
+      console.warn('[constructionPlanStore] generatePlanFromWiring aborted:', msg)
+      set({ error: msg })
+      return
+    }
+
     set({ loading: true, error: null })
 
     try {
       // 配管系統データを取得
       const { collectorTabs, directRows } = usePipeWiringStore.getState()
+      // pipes が 現圃場向けに ロード されて いなければ 先に await で 取得
+      const underdrainState = useUnderdrainStore.getState()
+      if (underdrainState.loadedForFarmId !== farmId) {
+        await underdrainState.fetchPipes(farmId)
+      }
       const pipes = useUnderdrainStore.getState().pipes
 
       // 部分再生成モード時は既存 planGroups から「対象外の系統」を残す。
@@ -1176,6 +1197,18 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
     }
 
     const state = get()
+    // 圃場ガード: store の planGroups が 現在の 圃場向けに ロードされたもの
+    // でなければ 保存を 中止する。これが 無いと、圃場切替時に 前圃場の planGroups
+    // に 新圃場の farm_id を 付けて INSERT され、DB が 汚染 される (既に 実害あり)
+    if (state.loadedForFarmId && state.loadedForFarmId !== farmId) {
+      const msg =
+        `保存を 中止: 表示中の 施工計画は 別圃場のもの です ` +
+        `(表示 farm=${state.loadedForFarmId.slice(0, 8)}, 現圃場=${farmId.slice(0, 8)})。 ` +
+        `施工計画ページ を 開き直して 現圃場の データを 読み込んでから 保存してください。`
+      console.warn('[constructionPlanStore] savePlan aborted:', msg)
+      set({ error: msg, saving: false })
+      return
+    }
     set({ saving: true, error: null })
 
     try {

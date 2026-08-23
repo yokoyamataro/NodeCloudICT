@@ -421,6 +421,18 @@ export const usePipeWiringStore = create<PipeWiringState>()((set, get) => ({
 
     const state = get()
 
+    // 圃場ガード: state.loadedFarmId が 現圃場と 不一致 なら 別圃場の 配管系統が
+    // まだ 状態に 残っている 可能性が 高い → 保存を 中止 (別圃場データ で DB 上書きを 防ぐ)
+    if (state.loadedFarmId && state.loadedFarmId !== farmId) {
+      const msg =
+        `保存を 中止: 表示中の 配管系統は 別圃場のもの です ` +
+        `(表示 farm=${state.loadedFarmId.slice(0, 8)}, 現圃場=${farmId.slice(0, 8)})。 ` +
+        `配管系統ページ を 開き直して 現圃場の データを 読み込んでから 保存してください。`
+      console.warn('[pipeWiringStore] saveWiring aborted:', msg)
+      set({ error: msg })
+      return
+    }
+
     // 読み込み中または既に保存中の場合はスキップ
     if (state.loading) {
       console.log('[pipeWiringStore] Skipping save while loading')

@@ -993,6 +993,17 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
     const farmId = getCurrentFarmId()
     if (!farmId) return
 
+    // 圃場ガード: state.pipes が 現圃場向けで なければ pendingPipeChanges も 別圃場の
+    // 管路を 更新しようとしている 可能性が 高い → 保存中止
+    if (state.loadedForFarmId && state.loadedForFarmId !== farmId) {
+      const msg =
+        `管路の 保存を 中止: 表示中の 管路は 別圃場のもの です ` +
+        `(表示 farm=${state.loadedForFarmId.slice(0, 8)}, 現圃場=${farmId.slice(0, 8)})。`
+      console.warn('[underdrainStore] saveAllPipes aborted:', msg)
+      set({ error: msg })
+      return
+    }
+
     try {
       for (const [id, pipe] of state.pendingPipeChanges) {
         const { error } = await supabase
