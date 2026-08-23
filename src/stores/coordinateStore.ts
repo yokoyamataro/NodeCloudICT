@@ -74,6 +74,10 @@ export interface CoordinateRow {
   createdBy: string | null
   /** 最終更新者 user_id */
   updatedBy: string | null
+  /** ソフト削除 日時 (ISO)。 null なら 通常表示。 non-null は 削除履歴のみ 掲載 */
+  deletedAt?: string | null
+  /** 削除者 user_id */
+  deletedBy?: string | null
 }
 
 /** importCoordinates の入力。点番号/X/Y は必須、それ以外は任意。 */
@@ -121,6 +125,10 @@ interface CoordinateState {
   updateCoordinate: (id: string, field: keyof CoordinateRow, value: string | number | null) => void
   deleteCoordinate: (id: string) => Promise<void>
   deleteCoordinates: (ids: string[]) => Promise<void>
+  /** 削除済み 座標 (直近 30 日) の 一覧を Supabase から 取得 */
+  fetchDeletedCoordinates: (farmId: string) => Promise<CoordinateRow[]>
+  /** 削除された 座標を 復元 (deleted_at を null に 戻す) */
+  restoreCoordinate: (id: string) => Promise<void>
   importCoordinates: (
     coords: ImportCoordinateInput[],
     onProgress?: (done: number, total: number) => void,
@@ -209,6 +217,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
           .from('design_coordinates')
           .select('id', { count: 'exact', head: true })
           .eq('farm_id', farmId)
+          .is('deleted_at', null)
         totalCount = count ?? 0
       }
       if (totalCount > 0) {
@@ -225,6 +234,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
           .from('design_coordinates')
           .select('*')
           .eq('farm_id', farmId)
+          .is('deleted_at', null) // soft-deleted は 除外 (削除履歴からのみ 見える)
           .order('point_number')
           .range(from, from + PAGE - 1)
         if (error) throw error
@@ -378,9 +388,15 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
 
   deleteCoordinate: async (id) => {
     try {
+      // ソフト削除: 30 日 保持後 pg_cron で 物理削除。 期間内なら 復元可能
+      const { data: { user } } = await supabase.auth.getUser()
+      const uid = user?.id ?? null
       const { error } = await supabase
         .from('design_coordinates')
-        .delete()
+        .update({
+          deleted_at: new Date().toISOString(),
+          deleted_by: uid,
+        } as never)
         .eq('id', id)
 
       if (error) throw error
@@ -533,16 +549,19 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
     }
   },
 
-  // 複数 ID を一括削除（in() は URL 長制限があるため 100 件ずつチャンク）
+  // 複数 ID を一括ソフト削除 (in() は URL 長制限があるため 100 件ずつチャンク)
   deleteCoordinates: async (ids) => {
     if (ids.length === 0) return
     try {
+      const { data: { user } } = await supabase.auth.getUser()
+      const uid = user?.id ?? null
+      const now = new Date().toISOString()
       const CHUNK = 100
       for (let i = 0; i < ids.length; i += CHUNK) {
         const slice = ids.slice(i, i + CHUNK)
         const { error } = await supabase
           .from('design_coordinates')
-          .delete()
+          .update({ deleted_at: now, deleted_by: uid } as never)
           .in('id', slice)
         if (error) throw error
       }
@@ -554,6 +573,111 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
       // eslint-disable-next-line no-console
       console.error('[coordinateStore] deleteCoordinates failed', err)
       set({ error: extractSupabaseErrorMessage(err, '座標の一括削除に失敗しました') })
+    }
+  },
+
+  /** 削除済み 座標の 一覧 (直近 30 日以内) を 取得 */
+  fetchDeletedCoordinates: async (farmId: string): Promise<CoordinateRow[]> => {
+    try {
+      const { data, error } = await supabase
+        .from('design_coordinates')
+        .select('*')
+        .eq('farm_id', farmId)
+        .not('deleted_at', 'is', null)
+        .order('deleted_at', { ascending: false })
+      if (error) throw error
+      const zone = get().zone
+      const converter = new CoordinateConverter(zone)
+      return ((data || []) as DesignCoordinate[]).map((row) => {
+        let lat = row.latitude
+        let lng = row.longitude
+        if (lat === null || lng === null) {
+          try {
+            const converted = converter.toLatLng(row.x, row.y)
+            lat = converted.lat
+            lng = converted.lng
+          } catch {
+            lat = null
+            lng = null
+          }
+        }
+        return {
+          id: row.id,
+          pointNumber: row.point_number,
+          x: row.x,
+          y: row.y,
+          z: row.z,
+          lat,
+          lng,
+          type: normalizeCoordinateType(row.coordinate_type) as CoordinateType,
+          stakeType: row.stake_type ?? null,
+          stakeStatus: normalizeStakeStatus(row.stake_status),
+          notes: row.notes ?? null,
+          createdAt: row.created_at ?? null,
+          updatedAt: row.updated_at ?? null,
+          createdBy: row.created_by ?? null,
+          updatedBy: row.updated_by ?? null,
+          deletedAt: row.deleted_at ?? null,
+          deletedBy: row.deleted_by ?? null,
+        } as CoordinateRow
+      })
+    } catch (err) {
+      console.error('[coordinateStore] fetchDeletedCoordinates failed', err)
+      throw err
+    }
+  },
+
+  /** 削除された座標を 復元 (deleted_at=NULL に戻す)。 復元後は 通常の 一覧に 現れる */
+  restoreCoordinate: async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('design_coordinates')
+        .update({ deleted_at: null, deleted_by: null } as never)
+        .eq('id', id)
+      if (error) throw error
+      // 復元後の 座標を 再取得して state に 追加
+      const { data, error: e2 } = await supabase
+        .from('design_coordinates')
+        .select('*')
+        .eq('id', id)
+        .single()
+      if (e2) throw e2
+      if (data) {
+        const zone = get().zone
+        const converter = new CoordinateConverter(zone)
+        const row = data as DesignCoordinate
+        let lat = row.latitude
+        let lng = row.longitude
+        if (lat === null || lng === null) {
+          try {
+            const converted = converter.toLatLng(row.x, row.y)
+            lat = converted.lat
+            lng = converted.lng
+          } catch { /* ignore */ }
+        }
+        const restored: CoordinateRow = {
+          id: row.id,
+          pointNumber: row.point_number,
+          x: row.x,
+          y: row.y,
+          z: row.z,
+          lat,
+          lng,
+          type: normalizeCoordinateType(row.coordinate_type) as CoordinateType,
+          stakeType: row.stake_type ?? null,
+          stakeStatus: normalizeStakeStatus(row.stake_status),
+          notes: row.notes ?? null,
+          createdAt: row.created_at ?? null,
+          updatedAt: row.updated_at ?? null,
+          createdBy: row.created_by ?? null,
+          updatedBy: row.updated_by ?? null,
+        }
+        set((state) => ({ coordinates: [...state.coordinates, restored] }))
+      }
+    } catch (err) {
+      console.error('[coordinateStore] restoreCoordinate failed', err)
+      set({ error: extractSupabaseErrorMessage(err, '座標の復元に失敗しました') })
+      throw err
     }
   },
 
