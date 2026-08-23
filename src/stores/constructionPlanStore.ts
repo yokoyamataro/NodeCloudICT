@@ -77,6 +77,10 @@ export interface AutoCalcParams {
 interface ConstructionPlanState {
   // 施工計画データ
   planGroups: PlanGroup[]
+  /** 現在 planGroups に 入っている データが 属する farm ID。
+   *  ファーム 切替時に fetchPlan が 完了する前でも 前ファームの データを 使わないよう、
+   *  UI 側は loadedForFarmId !== currentFarm.id なら 空扱いに する */
+  loadedForFarmId: string | null
   loading: boolean
   saving: boolean
   error: string | null
@@ -152,6 +156,7 @@ const calcSlope = (distance: number, heightDiff: number): string | null => {
 
 export const useConstructionPlanStore = create<ConstructionPlanState>()((set, get) => ({
   planGroups: [],
+  loadedForFarmId: null,
   loading: false,
   saving: false,
   hasChanges: false,
@@ -159,7 +164,20 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
   hasData: false,
 
   fetchPlan: async (farmId: string) => {
-    set({ loading: true, error: null })
+    // 圃場切替時 は 前圃場の planGroups を 即クリア (残留 表示防止)
+    const prev = get().loadedForFarmId
+    if (prev !== farmId) {
+      set({
+        planGroups: [],
+        hasData: false,
+        hasChanges: false,
+        loadedForFarmId: null,
+        loading: true,
+        error: null,
+      })
+    } else {
+      set({ loading: true, error: null })
+    }
     try {
       // 施工計画行を取得
       const { data: rows, error: rowError } = await supabase
@@ -173,7 +191,13 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       if (rowError) throw rowError
 
       if (!rows || rows.length === 0) {
-        set({ planGroups: [], hasData: false, loading: false, hasChanges: false })
+        set({
+          planGroups: [],
+          hasData: false,
+          loading: false,
+          hasChanges: false,
+          loadedForFarmId: farmId,
+        })
         return
       }
 
@@ -297,7 +321,13 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       }
 
       const planGroups = Array.from(groupMap.values())
-      set({ planGroups, hasData: true, loading: false, hasChanges: false })
+      set({
+        planGroups,
+        hasData: true,
+        loading: false,
+        hasChanges: false,
+        loadedForFarmId: farmId,
+      })
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : '施工計画の取得に失敗しました',

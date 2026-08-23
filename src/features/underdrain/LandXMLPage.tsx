@@ -34,7 +34,8 @@ export function LandXMLPage() {
   const { projects } = useProjectListStore()
   const { zone, setZone } = useCoordinateStore()
   const {
-    alignments,
+    alignments: rawAlignments,
+    loadedForFarmId: alignmentsLoadedForFarmId,
     loading,
     saving,
     error,
@@ -43,7 +44,11 @@ export function LandXMLPage() {
     deleteAlignment,
     clearAlignments,
   } = useAlignmentStore()
-  const { planGroups, fetchPlan } = useConstructionPlanStore()
+  const {
+    planGroups: rawPlanGroups,
+    loadedForFarmId: planLoadedForFarmId,
+    fetchPlan,
+  } = useConstructionPlanStore()
   const { pipes, fetchPipes } = useUnderdrainStore()
   const { surveyData, fetchSurveyData } = useSurveyStore()
 
@@ -70,6 +75,22 @@ export function LandXMLPage() {
   }, [currentFarm, projects, setZone])
 
   const converter = useMemo(() => new CoordinateConverter(zone), [zone])
+
+  // 保存済み中心線形は、store に 前の圃場の データが 残っている 可能性が あるため、
+  // 現在の 圃場 ID と loadedForFarmId が 一致する時のみ 有効な alignments として 扱う。
+  // (fetch が 走った 直後の 一瞬でも 前圃場の 線形が 表示される 事故を 防ぐ)
+  const alignments = useMemo(() => {
+    if (!currentFarm) return []
+    if (alignmentsLoadedForFarmId !== currentFarm.id) return []
+    return rawAlignments
+  }, [currentFarm, alignmentsLoadedForFarmId, rawAlignments])
+
+  // planGroups も 同様に、現在の 圃場と 一致する時のみ 有効扱い
+  const planGroups = useMemo(() => {
+    if (!currentFarm) return []
+    if (planLoadedForFarmId !== currentFarm.id) return []
+    return rawPlanGroups
+  }, [currentFarm, planLoadedForFarmId, rawPlanGroups])
 
   // 施工計画から自動算出した中心線形（吸水・集水）
   const derivedAlignments = useMemo(() => {
