@@ -50,8 +50,16 @@ export function LandXMLPage() {
     loadedForFarmId: planLoadedForFarmId,
     fetchPlan,
   } = useConstructionPlanStore()
-  const { pipes, fetchPipes } = useUnderdrainStore()
-  const { surveyData, fetchSurveyData } = useSurveyStore()
+  const {
+    pipes: rawPipes,
+    loadedForFarmId: pipesLoadedForFarmId,
+    fetchPipes,
+  } = useUnderdrainStore()
+  const {
+    surveyData: rawSurveyData,
+    loadedForFarmId: surveyLoadedForFarmId,
+    fetchSurveyData,
+  } = useSurveyStore()
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [parseError, setParseError] = useState<string | null>(null)
@@ -92,6 +100,20 @@ export function LandXMLPage() {
     if (planLoadedForFarmId !== currentFarm.id) return []
     return rawPlanGroups
   }, [currentFarm, planLoadedForFarmId, rawPlanGroups])
+
+  // pipes と surveyData も 同様の 圃場ガード。
+  // TIN 生成 (buildTinSurface) が これらを 使うため、前圃場のを 使うと
+  // 別現場の TIN が LandXML に 混入する。
+  const pipes = useMemo(() => {
+    if (!currentFarm) return []
+    if (pipesLoadedForFarmId !== currentFarm.id) return []
+    return rawPipes
+  }, [currentFarm, pipesLoadedForFarmId, rawPipes])
+  const surveyData = useMemo(() => {
+    if (!currentFarm) return []
+    if (surveyLoadedForFarmId !== currentFarm.id) return []
+    return rawSurveyData
+  }, [currentFarm, surveyLoadedForFarmId, rawSurveyData])
 
   // 施工計画から自動算出した中心線形（吸水・集水）
   const derivedAlignments = useMemo(() => {
@@ -346,6 +368,23 @@ export function LandXMLPage() {
 
   const handleExportLandXml = () => {
     if (!hasExportTarget) return
+    // 圃場データ の フェッチが 全部 完了して 現在の 圃場と 一致するか 最終チェック。
+    // (前圃場の データが 混ざる 事故 を 確実に 防ぐ)
+    if (currentFarm) {
+      const farmId = currentFarm.id
+      const staleStore =
+        (exportSavedAlignments && alignmentsLoadedForFarmId !== farmId) ||
+        (exportDerivedAlignments && planLoadedForFarmId !== farmId) ||
+        ((exportTinSurface || exportTrenchSurface) &&
+          (pipesLoadedForFarmId !== farmId || surveyLoadedForFarmId !== farmId))
+      if (staleStore) {
+        alert(
+          'データの 読み込み が 完了していません (前圃場の 残留 or ロード中)。\n' +
+            '上部の 「🔄 再読込」ボタンで 最新化してから 再度お試しください。',
+        )
+        return
+      }
+    }
     setExporting(true)
     try {
       const out: Alignment[] = []

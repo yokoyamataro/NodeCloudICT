@@ -54,6 +54,8 @@ const getCurrentFarmId = (): string | null => {
 interface UnderdrainState {
   // 管路データ
   pipes: PipeRow[]
+  /** 現在 pipes に 入っている データが 属する farm ID (圃場切替時の 残留 表示防止用) */
+  loadedForFarmId: string | null
   loading: boolean
   error: string | null
   fetchPipes: (farmId: string) => Promise<void>
@@ -96,11 +98,18 @@ interface UnderdrainState {
 export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
   // 管路データ
   pipes: [],
+  loadedForFarmId: null,
   loading: false,
   error: null,
 
   fetchPipes: async (farmId: string) => {
-    set({ loading: true, error: null })
+    // 圃場切替時 は 前圃場の pipes を 即クリア (残留 表示防止)
+    const prev = get().loadedForFarmId
+    if (prev !== farmId) {
+      set({ pipes: [], loadedForFarmId: null, loading: true, error: null })
+    } else {
+      set({ loading: true, error: null })
+    }
     try {
       const { data, error } = await supabase
         .from('design_pipes')
@@ -123,7 +132,7 @@ export const useUnderdrainStore = create<UnderdrainState>()((set, get) => ({
         notes: row.notes,
       }))
 
-      set({ pipes, loading: false })
+      set({ pipes, loadedForFarmId: farmId, loading: false })
     } catch (err) {
       set({ error: err instanceof Error ? err.message : '管路の取得に失敗しました', loading: false })
     }

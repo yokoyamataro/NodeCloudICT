@@ -29,6 +29,8 @@ export interface CalibrationSettings {
 interface SurveyState {
   // 測量データ
   surveyData: SurveyDataRow[]
+  /** 現在 surveyData に 入っている データが 属する farm ID (圃場切替時 残留 表示防止) */
+  loadedForFarmId: string | null
   loading: boolean
   error: string | null
 
@@ -75,6 +77,7 @@ const getCurrentFarmId = (): string | null => {
 export const useSurveyStore = create<SurveyState>()((set, get) => ({
   // 初期状態
   surveyData: [],
+  loadedForFarmId: null,
   loading: false,
   error: null,
   calibration: {
@@ -85,7 +88,13 @@ export const useSurveyStore = create<SurveyState>()((set, get) => ({
 
   // 測量データ取得
   fetchSurveyData: async (farmId: string) => {
-    set({ loading: true, error: null })
+    // 圃場切替時は 前圃場の 測量データを 即クリア (残留表示 / エクスポート混入 防止)
+    const prev = get().loadedForFarmId
+    if (prev !== farmId) {
+      set({ surveyData: [], loadedForFarmId: null, loading: true, error: null })
+    } else {
+      set({ loading: true, error: null })
+    }
     try {
       const { data, error } = await supabase
         .from('design_survey_data')
@@ -110,7 +119,7 @@ export const useSurveyStore = create<SurveyState>()((set, get) => ({
         notes: row.notes,
       }))
 
-      set({ surveyData, loading: false })
+      set({ surveyData, loadedForFarmId: farmId, loading: false })
     } catch (err) {
       set({ error: err instanceof Error ? err.message : '測量データの取得に失敗しました', loading: false })
     }
