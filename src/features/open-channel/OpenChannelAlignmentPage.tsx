@@ -1200,7 +1200,7 @@ export function OpenChannelAlignmentPage() {
 
       <div className="flex-1 flex overflow-hidden">
         {/* 左: 一覧 + 編集 */}
-        <div className="w-[480px] overflow-auto p-3 bg-slate-50 border-r space-y-3">
+        <div className="w-[624px] overflow-auto p-3 bg-slate-50 border-r space-y-3">
           {/* 線形点 (BP → IP → EP) — 一番上に 配置 */}
           <section className="bg-white rounded-lg border p-3 space-y-2">
             <div className="flex items-center gap-2">
@@ -1449,38 +1449,13 @@ export function OpenChannelAlignmentPage() {
                   </div>
                 ) : (
                   <div className="text-[11px] text-slate-400 text-center py-2 border rounded bg-slate-50">
-                    線形点がありません。下の「線形点の登録」 or 地図上の座標クリックで追加。
+                    線形点がありません。下のフォーム or 地図上の座標クリックで追加。
                   </div>
                 )}
 
-                {/* 線形長 (以前の 独立セクションを ここに 統合) */}
-                <div className="text-[11px] text-slate-500 pt-1 border-t">
-                  線形長:{' '}
-                  <span className="font-mono tabular-nums text-slate-700">
-                    {totalLen.toFixed(2)} m
-                  </span>
-                  <span className="text-[10px] text-slate-400 ml-2">
-                    (直線・単曲線・クロソイド, L = A²/R)
-                  </span>
-                </div>
-              </>
-            )}
-          </section>
-
-          {selected && (
-            <>
-              {/* 線形点の登録 (折りたたみ) */}
-              <CollapsibleSection
-                title="線形点の登録"
-                storageKey="oc:section:add-point"
-                defaultOpen={false}
-              >
-                <div className="text-[11px] text-slate-500">
-                  💡 種別 (BP/IP/EP) は 位置から 自動決定 (先頭=BP、末尾=EP、中間=IP)。
-                  地図上の 座標を クリックしても 末尾に 追加できます
-                  (既登録の 座標は スカイブルー の ハロー で 強調表示)。
-                </div>
-                <div className="grid grid-cols-12 gap-1 items-end">
+                {/* 末尾に 追加する インライン フォーム
+                    (種別 は 位置から 自動決定: 先頭=BP、末尾=EP、中間=IP) */}
+                <div className="grid grid-cols-12 gap-1 items-end pt-1 border-t">
                   <select
                     value={addCoordId}
                     onChange={(e) => setAddCoordId(e.target.value)}
@@ -1511,7 +1486,27 @@ export function OpenChannelAlignmentPage() {
                     追加
                   </button>
                 </div>
-              </CollapsibleSection>
+                <div className="text-[10px] text-slate-400">
+                  💡 地図上の 座標を クリックしても 末尾に 追加できます
+                  (既登録は スカイブルー ハロー で 強調)。
+                </div>
+
+                {/* 線形長 (以前の 独立セクションを ここに 統合) */}
+                <div className="text-[11px] text-slate-500 pt-1 border-t">
+                  線形長:{' '}
+                  <span className="font-mono tabular-nums text-slate-700">
+                    {totalLen.toFixed(2)} m
+                  </span>
+                  <span className="text-[10px] text-slate-400 ml-2">
+                    (直線・単曲線・クロソイド, L = A²/R)
+                  </span>
+                </div>
+              </>
+            )}
+          </section>
+
+          {selected && (
+            <>
 
               {/* 中間点計算 */}
               <CollapsibleSection title="中間点計算" storageKey="oc:section:stations">
