@@ -995,6 +995,24 @@ export function OpenChannelAlignmentPage() {
     return true
   })
 
+  // 地図下 の 縦断図 の 開閉状態 (localStorage 永続化、デフォルト = 開)。
+  const [profileChartExpanded, setProfileChartExpanded] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const v = window.localStorage.getItem('oc:section:profile-chart')
+      if (v === '0') return false
+    }
+    return true
+  })
+  const toggleProfileChart = () => {
+    setProfileChartExpanded((prev) => {
+      const next = !prev
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem('oc:section:profile-chart', next ? '1' : '0')
+      }
+      return next
+    })
+  }
+
   // 線形点の追加: 座標を選択 (種別 BP/IP/EP は 位置から 自動決定)
   const [addCoordId, setAddCoordId] = useState<string>('')
   const [addRadius, setAddRadius] = useState<number>(0)
@@ -1615,7 +1633,7 @@ export function OpenChannelAlignmentPage() {
   if (!currentFarm) {
     return (
       <div className="h-full flex flex-col">
-        <PageHeader title="線形物 線形登録" subtitle="水路・道路など / 線形 + 標準断面" />
+        <PageHeader title="線形物 線形登録" subtitle="水路・道路など / 線形 + 横断計画" />
         <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">工区を選択してください</div>
       </div>
     )
@@ -1623,7 +1641,7 @@ export function OpenChannelAlignmentPage() {
 
   return (
     <div className="h-full flex flex-col">
-      <PageHeader title="線形物 線形登録" subtitle="水路・道路など / 線形 + 標準断面" />
+      <PageHeader title="線形物 線形登録" subtitle="水路・道路など / 線形 + 横断計画" />
 
       <div className="flex-1 flex overflow-hidden">
         {/* 左: 一覧 + 編集 */}
@@ -2086,7 +2104,7 @@ export function OpenChannelAlignmentPage() {
                             <th className="px-2 py-1 text-right">距離 (m)</th>
                             <th className="px-2 py-1 text-right">X</th>
                             <th className="px-2 py-1 text-right">Y</th>
-                            <th className="px-2 py-1 w-12 text-center">断面</th>
+                            <th className="px-2 py-1 w-32 text-center">断面</th>
                             <th className="px-2 py-1 w-8"></th>
                           </tr>
                         </thead>
@@ -2094,7 +2112,6 @@ export function OpenChannelAlignmentPage() {
                           {stations.map((s, i) => {
                             const p = pointAtDistance(segments, s.distance)
                             const isSel = s.id === selectedStationId
-                            const hasOverride = s.crossSection != null
                             return (
                               <tr
                                 key={s.id}
@@ -2110,16 +2127,32 @@ export function OpenChannelAlignmentPage() {
                                 <td className="px-2 py-1 text-right tabular-nums">{s.distance.toFixed(2)}</td>
                                 <td className="px-2 py-1 text-right tabular-nums">{p ? p.x.toFixed(3) : '-'}</td>
                                 <td className="px-2 py-1 text-right tabular-nums">{p ? p.y.toFixed(3) : '-'}</td>
-                                <td className="px-2 py-1 text-center">
-                                  <span
-                                    className={`text-[10px] px-1 py-0.5 rounded ${
-                                      hasOverride
-                                        ? 'bg-amber-100 text-amber-700'
-                                        : 'bg-slate-100 text-slate-500'
-                                    }`}
-                                  >
-                                    {hasOverride ? '個別' : '標準'}
-                                  </span>
+                                <td className="px-1 py-1 text-center">
+                                  {/* 現況 / 計画 / 出来形 — とりあえず ボタンだけ 設置。
+                                      row 選択 と 競合 しない よう stopPropagation。 */}
+                                  <div className="inline-flex gap-0.5">
+                                    <button
+                                      onClick={(e) => e.stopPropagation()}
+                                      title="現況 (未実装)"
+                                      className="px-1 py-0.5 text-[10px] border rounded bg-slate-50 hover:bg-slate-100 text-slate-700"
+                                    >
+                                      現況
+                                    </button>
+                                    <button
+                                      onClick={(e) => e.stopPropagation()}
+                                      title="計画 (未実装)"
+                                      className="px-1 py-0.5 text-[10px] border rounded bg-blue-50 hover:bg-blue-100 text-blue-700"
+                                    >
+                                      計画
+                                    </button>
+                                    <button
+                                      onClick={(e) => e.stopPropagation()}
+                                      title="出来形 (未実装)"
+                                      className="px-1 py-0.5 text-[10px] border rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700"
+                                    >
+                                      出来形
+                                    </button>
+                                  </div>
                                 </td>
                                 <td className="px-1 py-1 text-right">
                                   <button
@@ -2258,7 +2291,7 @@ export function OpenChannelAlignmentPage() {
                         ) : (
                           <>
                             <div className="text-[11px] text-slate-500">
-                              この測点では標準断面がそのまま適用されます。「個別設定」で複製してカスタマイズできます。
+                              この測点では横断計画がそのまま適用されます。「個別設定」で複製してカスタマイズできます。
                             </div>
                             <div className="flex justify-center pt-1">
                               <CrossSectionDiagram cs={selected.standardCrossSection} />
@@ -2567,8 +2600,8 @@ export function OpenChannelAlignmentPage() {
                 </div>
               </CollapsibleSection>
 
-              {/* 標準断面 (末尾に 配置) */}
-              <CollapsibleSection title="標準断面" storageKey="oc:section:cs">
+              {/* 横断計画 (末尾に 配置) */}
+              <CollapsibleSection title="横断計画" storageKey="oc:section:cs">
                 <div className="text-[11px] text-slate-500">
                   中心 (0,0) から右・左へ要素列を順に並べます。各要素は 幅 (m) と 勾配（1:i または %） で定義。
                   外側に向かって上る場合 +、下る場合 -。種別はラベル（色分け等の将来拡張用）。
@@ -2678,7 +2711,7 @@ export function OpenChannelAlignmentPage() {
                 const stakeLL = converter.toLatLng(x, y)
                 const centerLL = converter.toLatLng(center.x, center.y)
                 const sp = stake.distance + spOffset
-                const side = stake.offset >= 0 ? '右' : '左'
+                const side = stake.offset >= 0 ? 'R' : 'L'
                 return (
                   <div key={`ws-${stake.id}`}>
                     <Polyline
@@ -2716,7 +2749,7 @@ export function OpenChannelAlignmentPage() {
                               '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff',
                           }}
                         >
-                          SP{sp.toFixed(2)} {side}{Math.abs(stake.offset).toFixed(2)}m
+                          SP{sp.toFixed(2)} {side}{Math.abs(stake.offset).toFixed(2)}
                           {stake.note ? ` (${stake.note})` : ''}
                         </span>
                       </Tooltip>
@@ -2773,19 +2806,34 @@ export function OpenChannelAlignmentPage() {
             </CoordinateMap>
           </div>
 
-          {/* 縦断図 (地図の 下、プロットのみ)。下の 余白 いっぱい に 拡げる。
+          {/* 縦断図 (地図の 下、プロットのみ)。ヘッダ の 矢印 で 開閉。
               編集 UI は 左サイドバー 「縦断線形」に */}
           {selected && (
-            <div className="shrink-0 border-t bg-white flex flex-col" style={{ height: '260px' }}>
-              <div className="px-2 py-1 flex items-center gap-3 shrink-0">
+            <div
+              className="shrink-0 border-t bg-white flex flex-col"
+              style={{ height: profileChartExpanded ? '260px' : 'auto' }}
+            >
+              <button
+                type="button"
+                onClick={toggleProfileChart}
+                className="px-2 py-1 flex items-center gap-2 shrink-0 hover:bg-slate-50 text-left"
+                title={profileChartExpanded ? '縦断図 を 折りたたむ' : '縦断図 を 展開'}
+              >
+                {profileChartExpanded ? (
+                  <ChevronDown className="h-3.5 w-3.5 text-slate-500" />
+                ) : (
+                  <ChevronRight className="h-3.5 w-3.5 text-slate-500" />
+                )}
                 <span className="font-semibold text-slate-700 text-sm">縦断図</span>
                 <span className="text-[11px] text-slate-500">
                   変化点 の 追加 / 編集 は 左サイドバー 「縦断線形」から
                 </span>
-              </div>
-              <div className="flex-1 min-h-0 px-2 pb-2">
-                <ProfileChart points={selected.profilePoints} totalLen={totalLen} />
-              </div>
+              </button>
+              {profileChartExpanded && (
+                <div className="flex-1 min-h-0 px-2 pb-2">
+                  <ProfileChart points={selected.profilePoints} totalLen={totalLen} />
+                </div>
+              )}
             </div>
           )}
         </div>
