@@ -10,7 +10,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Polyline, CircleMarker, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Plus, Trash2, ArrowUp, ArrowDown, Waves, ChevronRight, ChevronDown } from 'lucide-react'
+import { Plus, Trash2, ArrowUp, ArrowDown, Waves, ChevronRight, ChevronDown, Pencil, Check, X } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { CoordinateMap } from '@/components/map/CoordinateMap'
 import { useFarmStore } from '@/stores/farmStore'
@@ -156,6 +156,29 @@ function computeStationVertices(
 }
 
 /**
+ * 位置から 線形点の 種別 (BP/IP/EP) を 決定。
+ *   先頭 (index=0) → BP
+ *   末尾 (index=total-1) → EP
+ *   その間 → IP
+ * (1 点しか ない 場合 は BP 扱い)
+ */
+function inferKindByIndex(index: number, total: number): AlignmentPointKind {
+  if (total <= 1) return 'bp'
+  if (index === 0) return 'bp'
+  if (index === total - 1) return 'ep'
+  return 'ip'
+}
+
+/**
+ * alignmentPoints 配列の 全要素 の kind を 位置から 再計算 して 返す。
+ * ユーザー が 追加/削除/並べ替え した ときに 必ず 通す。
+ */
+function normalizeKinds(points: AlignmentPoint[]): AlignmentPoint[] {
+  const n = points.length
+  return points.map((p, i) => ({ ...p, kind: inferKindByIndex(i, n) }))
+}
+
+/**
  * 数値入力（途中の "-" や "1." も受け入れる）。
  * 親 state には数値として確定した瞬間に通知し、表示は手元のテキストを優先する。
  */
@@ -265,12 +288,19 @@ function CollapsibleSection({
   )
 }
 
+// マウント時に 1 度だけ フィットする。線形点を 編集する たびに 位置が
+// 動くと 使いづらいため、線形物を 切り替えた ときだけ 再フィット させたい。
+// 呼び出し側で <FitBounds key={selectedId} ... /> と 書けば、選択切替で
+// アンマウント→再マウント され、初回だけ 1 度 フィットする。
 function FitBounds({ positions }: { positions: [number, number][] }) {
   const map = useMap()
+  const done = useRef(false)
   useEffect(() => {
+    if (done.current) return
     if (positions.length < 2) return
     const bounds = L.latLngBounds(positions)
     map.fitBounds(bounds, { padding: [40, 40], maxZoom: 19 })
+    done.current = true
   }, [positions, map])
   return null
 }
@@ -410,7 +440,7 @@ function CrossSectionDiagram({ cs }: { cs: StandardCrossSection }) {
   )
 }
 
-// 縦断図（追加距離 vs 床高）
+// 縦断図（追加距離 vs 計画高）
 function ProfileChart({ points, totalLen }: { points: ProfilePoint[]; totalLen: number }) {
   const widthPx = 280
   const heightPx = 140
@@ -492,7 +522,7 @@ function ProfileChart({ points, totalLen }: { points: ProfilePoint[]; totalLen: 
       })}
 
       {/* 軸単位 */}
-      <text x={5} y={padding.top - 2} fontSize={9} fill="#64748b">床高 (m)</text>
+      <text x={5} y={padding.top - 2} fontSize={9} fill="#64748b">計画高 (m)</text>
       <text x={widthPx - 4} y={heightPx - 4} textAnchor="end" fontSize={9} fill="#64748b">距離 (m)</text>
     </svg>
   )
@@ -667,17 +697,20 @@ export function OpenChannelAlignmentPage() {
 
   const selected = channels.find((c) => c.id === selectedId) ?? null
 
-  // 線形点を解決して XY 列に変換
+  // 線形点を解決して XY 列に変換。
+  // 種別 (BP/IP/EP) は 位置から 自動決定 (先頭=BP、末尾=EP、中間=IP)。
   const alignmentXY = useMemo<AlignmentVertex[]>(() => {
     if (!selected) return []
     const out: AlignmentVertex[] = []
-    for (const p of selected.alignmentPoints) {
+    const total = selected.alignmentPoints.length
+    for (let i = 0; i < total; i++) {
+      const p = selected.alignmentPoints[i]
       const c = coordinates.find((cc) => cc.id === p.coordId)
       if (!c) continue
       out.push({
         x: c.x,
         y: c.y,
-        kind: p.kind,
+        kind: inferKindByIndex(i, total),
         radius: p.radius,
         spiralAIn: p.spiralAIn,
         spiralAOut: p.spiralAOut,
@@ -705,17 +738,16 @@ export function OpenChannelAlignmentPage() {
     return new Set(selected.alignmentPoints.map((p) => p.coordId))
   }, [selected])
 
-  // 線形点の追加: 座標と種別を選択
+  // 線形点の追加: 座標を選択 (種別 BP/IP/EP は 位置から 自動決定)
   const [addCoordId, setAddCoordId] = useState<string>('')
-  const [addKind, setAddKind] = useState<AlignmentPointKind>('ip')
   const [addRadius, setAddRadius] = useState<number>(0)
 
   const handleAddPoint = () => {
     if (!selected || !addCoordId) return
-    const next: AlignmentPoint[] = [
+    const next: AlignmentPoint[] = normalizeKinds([
       ...selected.alignmentPoints,
-      { coordId: addCoordId, kind: addKind, radius: addKind === 'ip' && addRadius > 0 ? addRadius : undefined },
-    ]
+      { coordId: addCoordId, kind: 'ip', radius: addRadius > 0 ? addRadius : undefined },
+    ])
     updateChannel(selected.id, { alignmentPoints: next })
     setAddCoordId('')
   }
@@ -725,10 +757,10 @@ export function OpenChannelAlignmentPage() {
   const handlePickCoordFromMap = (coordId: string) => {
     if (!selected) return
     if (selected.alignmentPoints.some((p) => p.coordId === coordId)) return
-    const next: AlignmentPoint[] = [
+    const next: AlignmentPoint[] = normalizeKinds([
       ...selected.alignmentPoints,
-      { coordId, kind: addKind, radius: addKind === 'ip' && addRadius > 0 ? addRadius : undefined },
-    ]
+      { coordId, kind: 'ip', radius: addRadius > 0 ? addRadius : undefined },
+    ])
     updateChannel(selected.id, { alignmentPoints: next })
   }
 
@@ -740,24 +772,45 @@ export function OpenChannelAlignmentPage() {
     const tmp = arr[idx]
     arr[idx] = arr[target]
     arr[target] = tmp
-    updateChannel(selected.id, { alignmentPoints: arr })
+    updateChannel(selected.id, { alignmentPoints: normalizeKinds(arr) })
   }
 
   const handleRemovePoint = (idx: number) => {
     if (!selected) return
     const arr = selected.alignmentPoints.filter((_, i) => i !== idx)
-    updateChannel(selected.id, { alignmentPoints: arr })
+    updateChannel(selected.id, { alignmentPoints: normalizeKinds(arr) })
   }
 
   const handleChangePoint = (idx: number, patch: Partial<AlignmentPoint>) => {
     if (!selected) return
     const arr = selected.alignmentPoints.map((p, i) => (i === idx ? { ...p, ...patch } : p))
-    updateChannel(selected.id, { alignmentPoints: arr })
+    updateChannel(selected.id, { alignmentPoints: normalizeKinds(arr) })
   }
+
+  // 線形物の 名前 編集 (ヘッダー の 鉛筆ボタン で 切替)
+  const [editingName, setEditingName] = useState(false)
+  const [nameDraft, setNameDraft] = useState('')
+  const handleStartEditName = () => {
+    if (!selected) return
+    setNameDraft(selected.name)
+    setEditingName(true)
+  }
+  const handleSaveName = () => {
+    if (!selected) return
+    const next = nameDraft.trim()
+    if (next && next !== selected.name) updateChannel(selected.id, { name: next })
+    setEditingName(false)
+  }
+  const handleCancelEditName = () => setEditingName(false)
+  // 線形物 を 切り替えたら 編集モード は 解除
+  useEffect(() => {
+    setEditingName(false)
+  }, [selectedId])
 
   // 縦断線形（profile）操作
   const [addProfileDist, setAddProfileDist] = useState<number>(0)
   const [addProfileH, setAddProfileH] = useState<number>(0)
+  const [showAddProfile, setShowAddProfile] = useState(false)
 
   const sortedProfile = useMemo<ProfilePoint[]>(() => {
     if (!selected) return []
@@ -1148,139 +1201,124 @@ export function OpenChannelAlignmentPage() {
       <div className="flex-1 flex overflow-hidden">
         {/* 左: 一覧 + 編集 */}
         <div className="w-[480px] overflow-auto p-3 bg-slate-50 border-r space-y-3">
-          {/* 一覧 + 追加 */}
-          <section className="bg-white rounded-lg border p-3">
-            <div className="flex items-center gap-2 mb-2">
-              <Waves className="h-4 w-4 text-slate-600" />
-              <h2 className="font-semibold text-slate-800 text-sm">線形物一覧</h2>
-              <button
-                onClick={() => farmId && addChannel(farmId)}
-                className="ml-auto flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50"
-              >
-                <Plus className="h-3 w-3" />
-                追加
-              </button>
+          {/* 線形点 (BP → IP → EP) — 一番上に 配置 */}
+          <section className="bg-white rounded-lg border p-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <Waves className="h-4 w-4 text-slate-600 shrink-0" />
+              <h2 className="font-semibold text-slate-800 text-sm">線形点</h2>
+              <span className="text-[11px] text-slate-400 ml-auto">BP → IP → EP</span>
             </div>
-            {channels.length === 0 ? (
-              <div className="text-xs text-slate-500">まだ登録された線形物がありません</div>
-            ) : (
-              <div className="flex flex-col gap-1">
-                {channels.map((c) => {
-                  const totalEls = c.standardCrossSection.right.length + c.standardCrossSection.left.length
-                  return (
-                    <button
-                      key={c.id}
-                      onClick={() => setSelectedId(c.id)}
-                      className={`text-left px-2 py-1 text-xs rounded border ${
-                        c.id === selectedId ? 'bg-blue-50 border-blue-400' : 'bg-white hover:bg-slate-50'
-                      }`}
-                    >
-                      {c.name}
-                      <span className="ml-2 text-slate-400">
-                        {c.alignmentPoints.length} 点 / 断面 {totalEls} 要素
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-          </section>
 
-          {selected && (
-            <>
-              {/* 識別 + 削除 */}
-              <section className="bg-white rounded-lg border p-3 space-y-2">
-                <label className="flex flex-col gap-1 text-xs">
-                  <span className="text-slate-500">名称</span>
+            {/* 線形物 の 選択プルダウン + 名前編集 + 新規追加 + 削除 */}
+            <div className="flex items-center gap-1">
+              {editingName && selected ? (
+                <>
                   <input
                     type="text"
-                    value={selected.name}
-                    onChange={(e) => updateChannel(selected.id, { name: e.target.value })}
-                    className="px-2 py-1 border rounded text-sm"
+                    value={nameDraft}
+                    onChange={(e) => setNameDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleSaveName()
+                      if (e.key === 'Escape') handleCancelEditName()
+                    }}
+                    className="flex-1 min-w-0 px-2 py-1 border rounded text-sm"
+                    autoFocus
                   />
-                </label>
-                <button
-                  onClick={() => {
-                    if (window.confirm(`「${selected.name}」を削除しますか？`)) deleteChannel(selected.id)
-                  }}
-                  className="flex items-center gap-1 px-2 py-1 text-xs border rounded text-red-600 hover:bg-red-50"
-                >
-                  <Trash2 className="h-3 w-3" />
-                  この線形物を削除
-                </button>
+                  <button
+                    onClick={handleSaveName}
+                    title="保存"
+                    className="shrink-0 p-1 border rounded bg-blue-600 text-white hover:bg-blue-700"
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={handleCancelEditName}
+                    title="キャンセル"
+                    className="shrink-0 p-1 border rounded hover:bg-slate-50"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <select
+                    value={selectedId ?? ''}
+                    onChange={(e) => setSelectedId(e.target.value || null)}
+                    className="flex-1 min-w-0 px-2 py-1 border rounded text-sm"
+                  >
+                    {channels.length === 0 && (
+                      <option value="">（線形物なし）</option>
+                    )}
+                    {channels.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={handleStartEditName}
+                    disabled={!selected}
+                    title="名前を編集"
+                    className="shrink-0 p-1 border rounded hover:bg-slate-50 disabled:opacity-30"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={() => farmId && addChannel(farmId)}
+                    title="新規追加"
+                    className="shrink-0 p-1 border rounded hover:bg-slate-50"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!selected) return
+                      if (window.confirm(`「${selected.name}」を削除しますか？`)) deleteChannel(selected.id)
+                    }}
+                    disabled={!selected}
+                    title="この線形物を削除"
+                    className="shrink-0 p-1 border rounded text-red-600 hover:bg-red-50 disabled:opacity-30"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </>
+              )}
+            </div>
 
+            {selected && (
+              <>
                 {/* 左右の基準方向 */}
-                <div className="border-t pt-2">
-                  <div className="text-[11px] text-slate-500 mb-1">左右の基準方向</div>
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => updateChannel(selected.id, { sideOrientation: 'forward' })}
-                      className={`flex-1 px-2 py-1 text-[11px] border rounded ${
-                        selected.sideOrientation === 'forward'
-                          ? 'bg-blue-600 text-white border-blue-600'
-                          : 'bg-white hover:bg-slate-50'
-                      }`}
-                    >
-                      起点→終点を見て（道路）
-                    </button>
-                    <button
-                      onClick={() => updateChannel(selected.id, { sideOrientation: 'reverse' })}
-                      className={`flex-1 px-2 py-1 text-[11px] border rounded ${
-                        selected.sideOrientation === 'reverse'
-                          ? 'bg-blue-600 text-white border-blue-600'
-                          : 'bg-white hover:bg-slate-50'
-                      }`}
-                    >
-                      終点→起点を見て（河川）
-                    </button>
-                  </div>
-                </div>
-              </section>
-
-              {/* 標準断面 */}
-              <CollapsibleSection title="標準断面" storageKey="oc:section:cs">
-                <div className="text-[11px] text-slate-500">
-                  中心 (0,0) から右・左へ要素列を順に並べます。各要素は 幅 (m) と 勾配（1:i または %） で定義。
-                  外側に向かって上る場合 +、下る場合 -。種別はラベル（色分け等の将来拡張用）。
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => updateChannel(selected.id, { sideOrientation: 'forward' })}
+                    className={`flex-1 px-2 py-1 text-[11px] border rounded ${
+                      selected.sideOrientation === 'forward'
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white hover:bg-slate-50'
+                    }`}
+                  >
+                    起点→終点を見て（道路）
+                  </button>
+                  <button
+                    onClick={() => updateChannel(selected.id, { sideOrientation: 'reverse' })}
+                    className={`flex-1 px-2 py-1 text-[11px] border rounded ${
+                      selected.sideOrientation === 'reverse'
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white hover:bg-slate-50'
+                    }`}
+                  >
+                    終点→起点を見て（河川）
+                  </button>
                 </div>
 
-                <CrossSectionSideEditor
-                  side="right"
-                  elements={selected.standardCrossSection.right}
-                  onChange={(els) =>
-                    updateChannel(selected.id, {
-                      standardCrossSection: { ...selected.standardCrossSection, right: els },
-                    })
-                  }
-                />
-
-                <CrossSectionSideEditor
-                  side="left"
-                  elements={selected.standardCrossSection.left}
-                  onChange={(els) =>
-                    updateChannel(selected.id, {
-                      standardCrossSection: { ...selected.standardCrossSection, left: els },
-                    })
-                  }
-                />
-
-                <div className="flex justify-center pt-1">
-                  <CrossSectionDiagram cs={selected.standardCrossSection} />
-                </div>
-              </CollapsibleSection>
-
-              {/* 線形点 */}
-              <CollapsibleSection title="線形点（BP → IP → EP）" storageKey="oc:section:alignment">
-                <div className="text-[11px] text-slate-500">座標管理の点を順序付きで参照します</div>
-
-                {selected.alignmentPoints.length > 0 && (
+                {/* 線形点テーブル (種別 は 位置から 自動決定: 先頭=BP、末尾=EP、中間=IP) */}
+                {selected.alignmentPoints.length > 0 ? (
                   <div className="border rounded overflow-hidden">
                     <table className="w-full text-xs">
                       <thead className="bg-slate-50 text-slate-600">
                         <tr>
-                          <th className="px-1 py-1 w-8 text-center">#</th>
+                          <th className="px-1 py-1 w-10 text-center">種別</th>
                           <th className="px-1 py-1 text-left">点名</th>
-                          <th className="px-1 py-1 w-14">種別</th>
                           <th className="px-1 py-1 w-16 text-right">R (m)</th>
                           <th
                             className="px-1 py-1 w-14 text-right"
@@ -1300,23 +1338,27 @@ export function OpenChannelAlignmentPage() {
                       <tbody>
                         {selected.alignmentPoints.map((p, i) => {
                           const c = coordinates.find((cc) => cc.id === p.coordId)
+                          const kind = inferKindByIndex(i, selected.alignmentPoints.length)
+                          const kindLabel =
+                            kind === 'bp' ? 'BP' : kind === 'ep' ? 'EP' : 'IP'
+                          const kindColor =
+                            kind === 'bp'
+                              ? 'bg-green-100 text-green-700'
+                              : kind === 'ep'
+                                ? 'bg-red-100 text-red-700'
+                                : 'bg-amber-100 text-amber-700'
                           return (
                             <tr key={i} className="border-t">
-                              <td className="px-1 py-1 text-center text-slate-500">{i + 1}</td>
-                              <td className="px-1 py-1">{c?.pointNumber ?? '？'}</td>
-                              <td className="px-1 py-1">
-                                <select
-                                  value={p.kind}
-                                  onChange={(e) => handleChangePoint(i, { kind: e.target.value as AlignmentPointKind })}
-                                  className="px-1 py-0.5 border rounded text-xs"
+                              <td className="px-1 py-1 text-center">
+                                <span
+                                  className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold font-mono ${kindColor}`}
                                 >
-                                  <option value="bp">BP</option>
-                                  <option value="ip">IP</option>
-                                  <option value="ep">EP</option>
-                                </select>
+                                  {kindLabel}
+                                </span>
                               </td>
+                              <td className="px-1 py-1">{c?.pointNumber ?? '？'}</td>
                               <td className="px-1 py-1 text-right">
-                                {p.kind === 'ip' ? (
+                                {kind === 'ip' ? (
                                   <input
                                     type="number"
                                     step={0.5}
@@ -1333,7 +1375,7 @@ export function OpenChannelAlignmentPage() {
                               </td>
                               {/* A_IN */}
                               <td className="px-1 py-1 text-right">
-                                {p.kind === 'ip' && p.radius && p.radius > 0 ? (
+                                {kind === 'ip' && p.radius && p.radius > 0 ? (
                                   <input
                                     type="number"
                                     step={1}
@@ -1355,7 +1397,7 @@ export function OpenChannelAlignmentPage() {
                               </td>
                               {/* A_OUT */}
                               <td className="px-1 py-1 text-right">
-                                {p.kind === 'ip' && p.radius && p.radius > 0 ? (
+                                {kind === 'ip' && p.radius && p.radius > 0 ? (
                                   <input
                                     type="number"
                                     step={1}
@@ -1405,14 +1447,44 @@ export function OpenChannelAlignmentPage() {
                       </tbody>
                     </table>
                   </div>
+                ) : (
+                  <div className="text-[11px] text-slate-400 text-center py-2 border rounded bg-slate-50">
+                    線形点がありません。下の「線形点の登録」 or 地図上の座標クリックで追加。
+                  </div>
                 )}
 
-                {/* 追加フォーム */}
+                {/* 線形長 (以前の 独立セクションを ここに 統合) */}
+                <div className="text-[11px] text-slate-500 pt-1 border-t">
+                  線形長:{' '}
+                  <span className="font-mono tabular-nums text-slate-700">
+                    {totalLen.toFixed(2)} m
+                  </span>
+                  <span className="text-[10px] text-slate-400 ml-2">
+                    (直線・単曲線・クロソイド, L = A²/R)
+                  </span>
+                </div>
+              </>
+            )}
+          </section>
+
+          {selected && (
+            <>
+              {/* 線形点の登録 (折りたたみ) */}
+              <CollapsibleSection
+                title="線形点の登録"
+                storageKey="oc:section:add-point"
+                defaultOpen={false}
+              >
+                <div className="text-[11px] text-slate-500">
+                  💡 種別 (BP/IP/EP) は 位置から 自動決定 (先頭=BP、末尾=EP、中間=IP)。
+                  地図上の 座標を クリックしても 末尾に 追加できます
+                  (既登録の 座標は スカイブルー の ハロー で 強調表示)。
+                </div>
                 <div className="grid grid-cols-12 gap-1 items-end">
                   <select
                     value={addCoordId}
                     onChange={(e) => setAddCoordId(e.target.value)}
-                    className="col-span-6 px-1 py-1 border rounded text-xs"
+                    className="col-span-8 px-1 py-1 border rounded text-xs"
                   >
                     <option value="">座標を選択…</option>
                     {(coordinates as CoordinateRow[]).map((c) => (
@@ -1421,23 +1493,14 @@ export function OpenChannelAlignmentPage() {
                       </option>
                     ))}
                   </select>
-                  <select
-                    value={addKind}
-                    onChange={(e) => setAddKind(e.target.value as AlignmentPointKind)}
-                    className="col-span-2 px-1 py-1 border rounded text-xs"
-                  >
-                    <option value="bp">BP</option>
-                    <option value="ip">IP</option>
-                    <option value="ep">EP</option>
-                  </select>
                   <input
                     type="number"
                     step={0.5}
-                    value={addKind === 'ip' ? addRadius : 0}
+                    value={addRadius}
                     onChange={(e) => setAddRadius(parseFloat(e.target.value) || 0)}
-                    disabled={addKind !== 'ip'}
-                    placeholder="R"
-                    className="col-span-2 px-1 py-1 border rounded text-xs text-right disabled:bg-slate-100"
+                    placeholder="R (IP用)"
+                    title="IP になった 場合の 曲線半径 R (0=角折れ)"
+                    className="col-span-2 px-1 py-1 border rounded text-xs text-right"
                   />
                   <button
                     onClick={handleAddPoint}
@@ -1447,129 +1510,6 @@ export function OpenChannelAlignmentPage() {
                     <Plus className="h-3 w-3" />
                     追加
                   </button>
-                </div>
-
-                <div className="text-[11px] text-slate-500 border-t pt-2 mt-1">
-                  💡 地図上の 座標を クリックしても、上で 選んだ 種別/R で 追加できます
-                  （既登録の 座標は スカイブルー の ハロー で 強調表示）。
-                </div>
-              </CollapsibleSection>
-
-              {/* 縦断線形 */}
-              <CollapsibleSection title="縦断線形" storageKey="oc:section:profile">
-                <div className="text-[11px] text-slate-500">
-                  BP からの追加距離 (m) と床高 (m) を変化点ごとに登録します
-                </div>
-
-                {sortedProfile.length > 0 && (
-                  <div className="border rounded overflow-hidden">
-                    <table className="w-full text-xs">
-                      <thead className="bg-slate-50 text-slate-600">
-                        <tr>
-                          <th className="px-1 py-1 w-8 text-center">#</th>
-                          <th className="px-1 py-1 text-right">追加距離 (m)</th>
-                          <th className="px-1 py-1 text-right">床高 (m)</th>
-                          <th className="px-1 py-1 text-right">勾配</th>
-                          <th className="px-1 py-1 w-8"></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sortedProfile.map((p, i) => {
-                          // 元の配列インデックス（ソート前）
-                          const origIdx = selected.profilePoints.findIndex(
-                            (q) => q === selected.profilePoints[selected.profilePoints.indexOf(p)],
-                          )
-                          const realIdx = selected.profilePoints.indexOf(p)
-                          const prev = i > 0 ? sortedProfile[i - 1] : null
-                          const slope = prev
-                            ? (() => {
-                                const dx = p.distance - prev.distance
-                                const dy = p.floorHeight - prev.floorHeight
-                                if (Math.abs(dx) < 1e-6) return '-'
-                                if (Math.abs(dy) < 1e-9) return '水平'
-                                return `1/${Math.round(Math.abs(dx / dy))}`
-                              })()
-                            : '-'
-                          return (
-                            <tr key={`${realIdx}-${origIdx}`} className="border-t">
-                              <td className="px-1 py-1 text-center text-slate-500">{i + 1}</td>
-                              <td className="px-1 py-1 text-right">
-                                <input
-                                  type="number"
-                                  step={0.1}
-                                  value={p.distance}
-                                  onChange={(e) => {
-                                    const v = parseFloat(e.target.value)
-                                    if (Number.isFinite(v)) handleChangeProfile(realIdx, { distance: v })
-                                  }}
-                                  className="w-20 px-1 py-0.5 border rounded text-right text-xs"
-                                />
-                              </td>
-                              <td className="px-1 py-1 text-right">
-                                <input
-                                  type="number"
-                                  step={0.001}
-                                  value={p.floorHeight}
-                                  onChange={(e) => {
-                                    const v = parseFloat(e.target.value)
-                                    if (Number.isFinite(v)) handleChangeProfile(realIdx, { floorHeight: v })
-                                  }}
-                                  className="w-20 px-1 py-0.5 border rounded text-right text-xs"
-                                />
-                              </td>
-                              <td className="px-1 py-1 text-right text-slate-500 tabular-nums">{slope}</td>
-                              <td className="px-1 py-1 text-right">
-                                <button
-                                  onClick={() => handleRemoveProfile(realIdx)}
-                                  className="p-0.5 border rounded hover:bg-red-50 text-red-600"
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </button>
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-
-                {/* 追加 */}
-                <div className="grid grid-cols-12 gap-1 items-end">
-                  <label className="col-span-5 flex flex-col gap-0.5 text-[11px]">
-                    <span className="text-slate-500">追加距離 (m)</span>
-                    <input
-                      type="number"
-                      step={0.1}
-                      value={addProfileDist}
-                      onChange={(e) => setAddProfileDist(parseFloat(e.target.value) || 0)}
-                      className="px-1 py-1 border rounded text-right text-xs"
-                    />
-                  </label>
-                  <label className="col-span-5 flex flex-col gap-0.5 text-[11px]">
-                    <span className="text-slate-500">床高 (m)</span>
-                    <input
-                      type="number"
-                      step={0.001}
-                      value={addProfileH}
-                      onChange={(e) => setAddProfileH(parseFloat(e.target.value) || 0)}
-                      className="px-1 py-1 border rounded text-right text-xs"
-                    />
-                  </label>
-                  <button
-                    onClick={handleAddProfile}
-                    className="col-span-2 flex items-center justify-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
-                  >
-                    <Plus className="h-3 w-3" />
-                    追加
-                  </button>
-                </div>
-                <div className="text-[11px] text-slate-400">
-                  ※ 平面線形長 ({totalLen.toFixed(2)} m) を超えない範囲で設定。
-                  追加距離 0 を BP、平面線形長相当を EP として登録するのが基本。
-                </div>
-                <div className="flex justify-center pt-1">
-                  <ProfileChart points={selected.profilePoints} totalLen={totalLen} />
                 </div>
               </CollapsibleSection>
 
@@ -1847,29 +1787,53 @@ export function OpenChannelAlignmentPage() {
                 )}
               </CollapsibleSection>
 
-              <section className="bg-white rounded-lg border p-3 text-xs text-slate-600 space-y-1">
-                <div>
-                  <span className="text-slate-500">線形長: </span>
-                  <span className="font-mono tabular-nums">{totalLen.toFixed(2)} m</span>
+              {/* 標準断面 (末尾に 配置) */}
+              <CollapsibleSection title="標準断面" storageKey="oc:section:cs">
+                <div className="text-[11px] text-slate-500">
+                  中心 (0,0) から右・左へ要素列を順に並べます。各要素は 幅 (m) と 勾配（1:i または %） で定義。
+                  外側に向かって上る場合 +、下る場合 -。種別はラベル（色分け等の将来拡張用）。
                 </div>
-                <div className="text-[11px] text-slate-400">
-                  ※ 直線・単曲線・クロソイド（IN/OUT 非対称対応）で算出。L = A² / R。
+
+                <CrossSectionSideEditor
+                  side="right"
+                  elements={selected.standardCrossSection.right}
+                  onChange={(els) =>
+                    updateChannel(selected.id, {
+                      standardCrossSection: { ...selected.standardCrossSection, right: els },
+                    })
+                  }
+                />
+
+                <CrossSectionSideEditor
+                  side="left"
+                  elements={selected.standardCrossSection.left}
+                  onChange={(els) =>
+                    updateChannel(selected.id, {
+                      standardCrossSection: { ...selected.standardCrossSection, left: els },
+                    })
+                  }
+                />
+
+                <div className="flex justify-center pt-1">
+                  <CrossSectionDiagram cs={selected.standardCrossSection} />
                 </div>
-              </section>
+              </CollapsibleSection>
             </>
           )}
         </div>
 
-        {/* 右: 地図 (座標管理 と 同じ CoordinateMap を 使用) */}
-        <div className="flex-1 flex flex-col">
-          <div className="flex-1 relative">
+        {/* 右: 地図 (上) + 縦断図 (下) */}
+        <div className="flex-1 flex flex-col min-w-0">
+          <div className="flex-1 min-h-0 relative">
             <CoordinateMap
               farmId={farmId ?? null}
               showLabels
               checkedCoordIds={registeredCoordIds}
               onPointSelect={handlePickCoordFromMap}
             >
-              {sampledLatLng.length >= 2 && <FitBounds positions={sampledLatLng} />}
+              {sampledLatLng.length >= 2 && (
+                <FitBounds key={selectedId ?? 'none'} positions={sampledLatLng} />
+              )}
 
               {sampledLatLng.length >= 2 && (
                 <Polyline positions={sampledLatLng} pathOptions={{ color: '#0ea5e9', weight: 3 }} />
@@ -1955,6 +1919,152 @@ export function OpenChannelAlignmentPage() {
               })}
             </CoordinateMap>
           </div>
+
+          {/* 縦断図 (地図の 下) */}
+          {selected && (
+            <div className="shrink-0 border-t bg-white p-2 space-y-2 max-h-[320px] overflow-auto">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-slate-700 text-sm">縦断図</span>
+                <span className="text-[11px] text-slate-500">
+                  BP からの 追加距離 (m) と 計画高 (m) の 変化点
+                </span>
+                <button
+                  onClick={() => setShowAddProfile((v) => !v)}
+                  className="ml-auto flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50"
+                >
+                  {showAddProfile ? (
+                    <X className="h-3 w-3" />
+                  ) : (
+                    <Plus className="h-3 w-3" />
+                  )}
+                  {showAddProfile ? '閉じる' : '変化点追加'}
+                </button>
+              </div>
+
+              {showAddProfile && (
+                <div className="grid grid-cols-12 gap-2 items-end border rounded bg-slate-50 p-2">
+                  <label className="col-span-5 flex flex-col gap-0.5 text-[11px]">
+                    <span className="text-slate-500">追加距離 (m)</span>
+                    <input
+                      type="number"
+                      step={0.1}
+                      value={addProfileDist}
+                      onChange={(e) => setAddProfileDist(parseFloat(e.target.value) || 0)}
+                      className="px-1 py-1 border rounded text-right text-xs"
+                    />
+                  </label>
+                  <label className="col-span-5 flex flex-col gap-0.5 text-[11px]">
+                    <span className="text-slate-500">計画高 (m)</span>
+                    <input
+                      type="number"
+                      step={0.001}
+                      value={addProfileH}
+                      onChange={(e) => setAddProfileH(parseFloat(e.target.value) || 0)}
+                      className="px-1 py-1 border rounded text-right text-xs"
+                    />
+                  </label>
+                  <button
+                    onClick={() => {
+                      handleAddProfile()
+                      setShowAddProfile(false)
+                    }}
+                    className="col-span-2 flex items-center justify-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+                  >
+                    <Plus className="h-3 w-3" />
+                    追加
+                  </button>
+                  <div className="col-span-12 text-[10px] text-slate-400">
+                    ※ 平面線形長 ({totalLen.toFixed(2)} m) を 超えない 範囲で 設定。
+                    追加距離 0 を BP、平面線形長相当 を EP として 登録するのが 基本。
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-3 items-start">
+                <div className="flex-1 min-w-0">
+                  {sortedProfile.length > 0 ? (
+                    <div className="border rounded overflow-auto max-h-56">
+                      <table className="w-full text-xs">
+                        <thead className="bg-slate-50 text-slate-600 sticky top-0">
+                          <tr>
+                            <th className="px-1 py-1 w-8 text-center">#</th>
+                            <th className="px-1 py-1 text-right">追加距離 (m)</th>
+                            <th className="px-1 py-1 text-right">計画高 (m)</th>
+                            <th className="px-1 py-1 text-right">勾配</th>
+                            <th className="px-1 py-1 w-8"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sortedProfile.map((p, i) => {
+                            const realIdx = selected.profilePoints.indexOf(p)
+                            const prev = i > 0 ? sortedProfile[i - 1] : null
+                            const slope = prev
+                              ? (() => {
+                                  const dx = p.distance - prev.distance
+                                  const dy = p.floorHeight - prev.floorHeight
+                                  if (Math.abs(dx) < 1e-6) return '-'
+                                  if (Math.abs(dy) < 1e-9) return '水平'
+                                  return `1/${Math.round(Math.abs(dx / dy))}`
+                                })()
+                              : '-'
+                            return (
+                              <tr key={realIdx} className="border-t">
+                                <td className="px-1 py-1 text-center text-slate-500">{i + 1}</td>
+                                <td className="px-1 py-1 text-right">
+                                  <input
+                                    type="number"
+                                    step={0.1}
+                                    value={p.distance}
+                                    onChange={(e) => {
+                                      const v = parseFloat(e.target.value)
+                                      if (Number.isFinite(v))
+                                        handleChangeProfile(realIdx, { distance: v })
+                                    }}
+                                    className="w-20 px-1 py-0.5 border rounded text-right text-xs"
+                                  />
+                                </td>
+                                <td className="px-1 py-1 text-right">
+                                  <input
+                                    type="number"
+                                    step={0.001}
+                                    value={p.floorHeight}
+                                    onChange={(e) => {
+                                      const v = parseFloat(e.target.value)
+                                      if (Number.isFinite(v))
+                                        handleChangeProfile(realIdx, { floorHeight: v })
+                                    }}
+                                    className="w-20 px-1 py-0.5 border rounded text-right text-xs"
+                                  />
+                                </td>
+                                <td className="px-1 py-1 text-right text-slate-500 tabular-nums">
+                                  {slope}
+                                </td>
+                                <td className="px-1 py-1 text-right">
+                                  <button
+                                    onClick={() => handleRemoveProfile(realIdx)}
+                                    className="p-0.5 border rounded hover:bg-red-50 text-red-600"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </button>
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-slate-400 text-center py-6 border rounded bg-slate-50">
+                      変化点がありません。「変化点追加」ボタンから登録してください。
+                    </div>
+                  )}
+                </div>
+                <div className="shrink-0">
+                  <ProfileChart points={selected.profilePoints} totalLen={totalLen} />
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
