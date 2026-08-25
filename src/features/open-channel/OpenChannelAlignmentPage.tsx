@@ -449,12 +449,47 @@ function CrossSectionDiagram({ cs }: { cs: StandardCrossSection }) {
   )
 }
 
-// 縦断図（追加距離 vs 計画高）— ResizeObserver で 親要素の 寸法に 追従する。
+// 「見栄えの良い」目盛間隔を 決定。 rawStep (単位) を 直近 の 1/2/5/10 系列に 丸める。
+// 例: rawStep=0.4 → 0.5、 rawStep=15 → 20、 rawStep=1.33 → 1
+function niceStep(rawStep: number): number {
+  const safe = Math.max(rawStep, 1e-9)
+  const magnitude = Math.pow(10, Math.floor(Math.log10(safe)))
+  const norm = safe / magnitude
+  let step: number
+  if (norm < 1.5) step = 1
+  else if (norm < 3) step = 2
+  else if (norm < 7) step = 5
+  else step = 10
+  return step * magnitude
+}
+
+// 6 段階の 伸縮比率 (縦・横 共通)。単位は 倍率 (1.0 = 100%)。CrossSectionChart と 同系列。
+const PROFILE_SCALE_STEPS = [0.5, 1.0, 2.0, 3.0, 5.0, 8.0] as const
+type ProfileScale = (typeof PROFILE_SCALE_STEPS)[number]
+const nearestScaleIndex = (v: number): number => {
+  let best = 0
+  let bestDiff = Number.POSITIVE_INFINITY
+  for (let i = 0; i < PROFILE_SCALE_STEPS.length; i++) {
+    const d = Math.abs(PROFILE_SCALE_STEPS[i] - v)
+    if (d < bestDiff) {
+      bestDiff = d
+      best = i
+    }
+  }
+  return best
+}
+
+// 縦断図（追加距離 vs 計画高）
+//  - ResizeObserver で 親要素の 寸法に 追従。
+//  - 縦・横 独立の 伸縮スケール (0.5x〜8x、暗渠 縦断と 同じ 段階) + マウスホイール。
+//  - 目盛は niceStep() で ピクセル密度 に 応じて 自動選定 (細かすぎ/粗すぎ 回避)。
 function ProfileChart({ points, totalLen }: { points: ProfilePoint[]; totalLen: number }) {
-  const containerRef = useRef<HTMLDivElement | null>(null)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 280, h: 140 })
+  const [heightScale, setHeightScale] = useState<ProfileScale>(1.0)
+  const [widthScale, setWidthScale] = useState<ProfileScale>(1.0)
   useEffect(() => {
-    const el = containerRef.current
+    const el = scrollRef.current
     if (!el) return
     const ro = new ResizeObserver((entries) => {
       const rect = entries[0].contentRect
@@ -467,19 +502,46 @@ function ProfileChart({ points, totalLen }: { points: ProfilePoint[]; totalLen: 
     return () => ro.disconnect()
   }, [])
 
-  const widthPx = size.w
-  const heightPx = size.h
-  const padding = { top: 10, right: 14, bottom: 24, left: 44 }
-  const innerW = widthPx - padding.left - padding.right
-  const innerH = heightPx - padding.top - padding.bottom
+  const stepUp = (v: number): ProfileScale => {
+    for (const s of PROFILE_SCALE_STEPS) if (s > v + 1e-6) return s
+    return PROFILE_SCALE_STEPS[PROFILE_SCALE_STEPS.length - 1]
+  }
+  const stepDown = (v: number): ProfileScale => {
+    for (let i = PROFILE_SCALE_STEPS.length - 1; i >= 0; i--) {
+      if (PROFILE_SCALE_STEPS[i] < v - 1e-6) return PROFILE_SCALE_STEPS[i]
+    }
+    return PROFILE_SCALE_STEPS[0]
+  }
+  // Ctrl (or Meta) + ホイール: 縦スケール、 Shift + ホイール: 横スケール。
+  // 素の ホイールは スクロール に 任せる (混在すると 使いにくい)。
+  const handleWheel = (e: React.WheelEvent) => {
+    if (e.shiftKey) {
+      e.preventDefault()
+      setWidthScale((prev) => (e.deltaY > 0 ? stepDown(prev) : stepUp(prev)))
+    } else if (e.ctrlKey || e.metaKey) {
+      e.preventDefault()
+      setHeightScale((prev) => (e.deltaY > 0 ? stepDown(prev) : stepUp(prev)))
+    }
+  }
+  const resetScale = () => {
+    setHeightScale(1.0)
+    setWidthScale(1.0)
+  }
+
+  const padding = { top: 12, right: 20, bottom: 26, left: 48 }
 
   if (points.length < 2) {
     return (
-      <div
-        ref={containerRef}
-        className="border rounded bg-slate-50 text-xs text-slate-400 flex items-center justify-center w-full h-full min-h-[80px]"
-      >
-        変化点が 2 点以上で 縦断図を 表示
+      <div className="w-full h-full flex flex-col">
+        <div className="text-[11px] text-slate-400 shrink-0 px-1 py-0.5">
+          変化点が 2 点以上で 縦断図を 表示
+        </div>
+        <div
+          ref={scrollRef}
+          className="flex-1 min-h-0 border rounded bg-slate-50 flex items-center justify-center text-xs text-slate-400"
+        >
+          変化点 を 追加してください
+        </div>
       </div>
     )
   }
@@ -492,68 +554,222 @@ function ProfileChart({ points, totalLen }: { points: ProfilePoint[]; totalLen: 
   const minDist = Math.min(0, sorted[0].distance)
   const distSpan = Math.max(maxDist - minDist, 1)
 
-  const tx = (d: number) => padding.left + ((d - minDist) / distSpan) * innerW
-  const ty = (h: number) => padding.top + (1 - (h - minH) / range) * innerH
+  // scale=1 で コンテナ に ぴったり 収まる base pxPerMeter を 算出。
+  const baseInnerW = Math.max(200, size.w - padding.left - padding.right)
+  const baseInnerH = Math.max(80, size.h - padding.top - padding.bottom)
+  const pxPerMeterX = (baseInnerW / distSpan) * widthScale
+  const pxPerMeterY = (baseInnerH / range) * heightScale
+  const innerW = distSpan * pxPerMeterX
+  const innerH = range * pxPerMeterY
+  const svgWidth = innerW + padding.left + padding.right
+  const svgHeight = innerH + padding.top + padding.bottom
 
-  const path = sorted.map((p, i) => `${i === 0 ? 'M' : 'L'} ${tx(p.distance)} ${ty(p.floorHeight)}`).join(' ')
+  const tx = (d: number) => padding.left + (d - minDist) * pxPerMeterX
+  const ty = (h: number) => padding.top + (maxH - h) * pxPerMeterY
 
-  // Y 軸目盛
-  const yStep = range > 5 ? 1 : range > 2 ? 0.5 : range > 0.5 ? 0.2 : 0.1
-  const yTicks: number[] = []
-  for (let h = Math.ceil(minH / yStep) * yStep; h <= maxH + 1e-9; h += yStep) yTicks.push(h)
+  const path = sorted
+    .map((p, i) => `${i === 0 ? 'M' : 'L'} ${tx(p.distance)} ${ty(p.floorHeight)}`)
+    .join(' ')
 
-  // X 軸目盛
-  const xStep = distSpan > 200 ? 50 : distSpan > 80 ? 20 : distSpan > 30 ? 10 : 5
+  // 目盛間隔: 約 60px (X) / 40px (Y) 毎 に 1 目盛 になる ように niceStep で 丸める。
+  const xStep = niceStep(60 / pxPerMeterX)
+  const yStep = niceStep(40 / pxPerMeterY)
+
   const xTicks: number[] = []
-  for (let d = Math.ceil(minDist / xStep) * xStep; d <= maxDist + 1e-9; d += xStep) xTicks.push(d)
+  for (let d = Math.ceil(minDist / xStep) * xStep; d <= maxDist + 1e-9; d += xStep) {
+    xTicks.push(d)
+  }
+  const yTicks: number[] = []
+  for (let h = Math.ceil(minH / yStep) * yStep; h <= maxH + 1e-9; h += yStep) {
+    yTicks.push(h)
+  }
 
   return (
-    <div ref={containerRef} className="w-full h-full">
-      <svg width={widthPx} height={heightPx} className="border rounded bg-slate-50 block">
-        {/* 枠 */}
-        <line x1={padding.left} y1={padding.top} x2={padding.left} y2={padding.top + innerH} stroke="#94a3b8" strokeWidth={1} />
-        <line x1={padding.left} y1={padding.top + innerH} x2={padding.left + innerW} y2={padding.top + innerH} stroke="#94a3b8" strokeWidth={1} />
+    <div className="w-full h-full flex flex-col">
+      {/* スケール コントロール */}
+      <div className="text-[11px] text-slate-500 flex items-center gap-2 shrink-0 px-1 py-0.5">
+        <span className="flex items-center gap-1">
+          縦:
+          <input
+            type="range"
+            min={0}
+            max={PROFILE_SCALE_STEPS.length - 1}
+            step={1}
+            value={nearestScaleIndex(heightScale)}
+            onChange={(e) => setHeightScale(PROFILE_SCALE_STEPS[parseInt(e.target.value, 10)])}
+            className="w-20"
+          />
+          <span className="w-10 text-right tabular-nums">
+            {(heightScale * 100).toFixed(0)}%
+          </span>
+        </span>
+        <span className="flex items-center gap-1">
+          横:
+          <input
+            type="range"
+            min={0}
+            max={PROFILE_SCALE_STEPS.length - 1}
+            step={1}
+            value={nearestScaleIndex(widthScale)}
+            onChange={(e) => setWidthScale(PROFILE_SCALE_STEPS[parseInt(e.target.value, 10)])}
+            className="w-20"
+          />
+          <span className="w-10 text-right tabular-nums">
+            {(widthScale * 100).toFixed(0)}%
+          </span>
+        </span>
+        {(heightScale !== 1.0 || widthScale !== 1.0) && (
+          <button
+            onClick={resetScale}
+            className="px-1.5 py-0.5 text-[11px] rounded bg-slate-200 hover:bg-slate-300"
+          >
+            リセット
+          </button>
+        )}
+        <span className="text-slate-400">Ctrl+ホイール: 縦 / Shift+ホイール: 横</span>
+      </div>
 
-        {/* Y 軸グリッド + ラベル */}
-        {yTicks.map((h, i) => (
-          <g key={`y-${i}`}>
-            <line x1={padding.left} y1={ty(h)} x2={padding.left + innerW} y2={ty(h)} stroke="#e2e8f0" strokeWidth={1} />
-            <text x={padding.left - 4} y={ty(h) + 3} textAnchor="end" fontSize={10} fill="#64748b">{h.toFixed(2)}</text>
-          </g>
-        ))}
+      {/* スクロール 可能 な SVG 領域 */}
+      <div
+        ref={scrollRef}
+        onWheel={handleWheel}
+        className="flex-1 min-h-0 overflow-auto border rounded bg-slate-50"
+      >
+        <svg width={svgWidth} height={svgHeight} className="block">
+          {/* 枠 */}
+          <line
+            x1={padding.left}
+            y1={padding.top}
+            x2={padding.left}
+            y2={padding.top + innerH}
+            stroke="#94a3b8"
+            strokeWidth={1}
+          />
+          <line
+            x1={padding.left}
+            y1={padding.top + innerH}
+            x2={padding.left + innerW}
+            y2={padding.top + innerH}
+            stroke="#94a3b8"
+            strokeWidth={1}
+          />
 
-        {/* X 軸ラベル */}
-        {xTicks.map((d, i) => (
-          <g key={`x-${i}`}>
-            <line x1={tx(d)} y1={padding.top + innerH} x2={tx(d)} y2={padding.top + innerH + 3} stroke="#94a3b8" strokeWidth={1} />
-            <text x={tx(d)} y={padding.top + innerH + 14} textAnchor="middle" fontSize={10} fill="#64748b">{d}</text>
-          </g>
-        ))}
+          {/* Y 軸グリッド + ラベル */}
+          {yTicks.map((h, i) => (
+            <g key={`y-${i}`}>
+              <line
+                x1={padding.left}
+                y1={ty(h)}
+                x2={padding.left + innerW}
+                y2={ty(h)}
+                stroke="#e2e8f0"
+                strokeWidth={1}
+              />
+              <text
+                x={padding.left - 4}
+                y={ty(h) + 3}
+                textAnchor="end"
+                fontSize={10}
+                fill="#64748b"
+              >
+                {yStep < 1 ? h.toFixed(2) : h.toFixed(1)}
+              </text>
+            </g>
+          ))}
 
-        {/* 計画高ライン */}
-        <path d={path} fill="none" stroke="#0ea5e9" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+          {/* X 軸グリッド + ラベル */}
+          {xTicks.map((d, i) => (
+            <g key={`x-${i}`}>
+              <line
+                x1={tx(d)}
+                y1={padding.top}
+                x2={tx(d)}
+                y2={padding.top + innerH}
+                stroke="#f1f5f9"
+                strokeWidth={1}
+              />
+              <line
+                x1={tx(d)}
+                y1={padding.top + innerH}
+                x2={tx(d)}
+                y2={padding.top + innerH + 3}
+                stroke="#94a3b8"
+                strokeWidth={1}
+              />
+              <text
+                x={tx(d)}
+                y={padding.top + innerH + 14}
+                textAnchor="middle"
+                fontSize={10}
+                fill="#64748b"
+              >
+                {xStep < 1 ? d.toFixed(1) : String(Math.round(d))}
+              </text>
+            </g>
+          ))}
 
-        {/* 点 */}
-        {sorted.map((p, i) => (
-          <circle key={`p-${i}`} cx={tx(p.distance)} cy={ty(p.floorHeight)} r={3.5} fill="#0ea5e9" stroke="#fff" strokeWidth={1.5} />
-        ))}
+          {/* 計画高ライン */}
+          <path
+            d={path}
+            fill="none"
+            stroke="#0ea5e9"
+            strokeWidth={2}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
 
-        {/* 勾配ラベル */}
-        {sorted.slice(1).map((p, i) => {
-          const prev = sorted[i]
-          const dx = p.distance - prev.distance
-          const dy = p.floorHeight - prev.floorHeight
-          if (Math.abs(dx) < 1e-6) return null
-          const slope = Math.abs(dy) < 1e-9 ? '水平' : `1/${Math.round(Math.abs(dx / dy))}`
-          const mx = (tx(prev.distance) + tx(p.distance)) / 2
-          const my = (ty(prev.floorHeight) + ty(p.floorHeight)) / 2 - 6
-          return <text key={`s-${i}`} x={mx} y={my} textAnchor="middle" fontSize={10} fill="#475569">{slope}</text>
-        })}
+          {/* 点 */}
+          {sorted.map((p, i) => (
+            <circle
+              key={`p-${i}`}
+              cx={tx(p.distance)}
+              cy={ty(p.floorHeight)}
+              r={3.5}
+              fill="#0ea5e9"
+              stroke="#fff"
+              strokeWidth={1.5}
+            />
+          ))}
 
-        {/* 軸単位 */}
-        <text x={5} y={padding.top - 2} fontSize={10} fill="#64748b">計画高 (m)</text>
-        <text x={widthPx - 4} y={heightPx - 4} textAnchor="end" fontSize={10} fill="#64748b">距離 (m)</text>
-      </svg>
+          {/* 勾配ラベル */}
+          {sorted.slice(1).map((p, i) => {
+            const prev = sorted[i]
+            const dx = p.distance - prev.distance
+            const dy = p.floorHeight - prev.floorHeight
+            if (Math.abs(dx) < 1e-6) return null
+            const slope =
+              Math.abs(dy) < 1e-9 ? '水平' : `1/${Math.round(Math.abs(dx / dy))}`
+            const mx = (tx(prev.distance) + tx(p.distance)) / 2
+            const my = (ty(prev.floorHeight) + ty(p.floorHeight)) / 2 - 6
+            return (
+              <text
+                key={`s-${i}`}
+                x={mx}
+                y={my}
+                textAnchor="middle"
+                fontSize={10}
+                fill="#475569"
+              >
+                {slope}
+              </text>
+            )
+          })}
+
+          {/* 軸単位 */}
+          <text x={5} y={padding.top - 2} fontSize={10} fill="#64748b">
+            計画高 (m)
+          </text>
+          <text
+            x={svgWidth - 4}
+            y={svgHeight - 4}
+            textAnchor="end"
+            fontSize={10}
+            fill="#64748b"
+          >
+            距離 (m)
+          </text>
+        </svg>
+      </div>
     </div>
   )
 }
