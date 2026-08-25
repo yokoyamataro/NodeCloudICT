@@ -7,11 +7,12 @@
 // - 地図で線形（直線 + 曲線）をプレビュー
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { MapContainer, TileLayer, Polyline, CircleMarker, useMap, Tooltip } from 'react-leaflet'
+import { Polyline, CircleMarker, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { Plus, Trash2, ArrowUp, ArrowDown, Waves, ChevronRight, ChevronDown } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
+import { CoordinateMap } from '@/components/map/CoordinateMap'
 import { useFarmStore } from '@/stores/farmStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useProjectListStore } from '@/stores/projectListStore'
@@ -697,27 +698,17 @@ export function OpenChannelAlignmentPage() {
     })
   }, [sampledXY, converter])
 
-  // 制御点（IP/BP/EP）の lat/lng — DB に lat/lng が入っていない座標でも
-  // 平面直角 XY から常に変換して表示する（旧実装は c.lat==null で 弾かれて 出ない 不具合）
-  const controlMarkers = useMemo(() => {
-    if (!selected) return []
-    return selected.alignmentPoints
-      .map((p, i) => {
-        const c = coordinates.find((cc) => cc.id === p.coordId)
-        if (!c) return null
-        const ll = converter.toLatLng(c.x, c.y)
-        if (!Number.isFinite(ll.lat) || !Number.isFinite(ll.lng)) return null
-        return { idx: i, point: p, lat: ll.lat, lng: ll.lng, name: c.pointNumber }
-      })
-      .filter((x): x is { idx: number; point: AlignmentPoint; lat: number; lng: number; name: string } => x !== null)
-  }, [selected, coordinates, converter])
+  // 線形点として 登録済みの 座標 ID 集合。CoordinateMap の checkedCoordIds に
+  // 渡して スカイブルーの ハローで 強調 (座標管理と 同じ 選択済み表現)。
+  const registeredCoordIds = useMemo(() => {
+    if (!selected) return new Set<string>()
+    return new Set(selected.alignmentPoints.map((p) => p.coordId))
+  }, [selected])
 
   // 線形点の追加: 座標と種別を選択
   const [addCoordId, setAddCoordId] = useState<string>('')
   const [addKind, setAddKind] = useState<AlignmentPointKind>('ip')
   const [addRadius, setAddRadius] = useState<number>(0)
-  // 地図から座標を選んで即追加するモード
-  const [pickFromMap, setPickFromMap] = useState(false)
 
   const handleAddPoint = () => {
     if (!selected || !addCoordId) return
@@ -740,29 +731,6 @@ export function OpenChannelAlignmentPage() {
     ]
     updateChannel(selected.id, { alignmentPoints: next })
   }
-
-  // 地図クリック追加モードの候補: 工区内の 全座標 (削除済み除く) を lat/lng に 変換
-  const pickableCoordMarkers = useMemo(() => {
-    if (!pickFromMap || !selected) return []
-    const usedIds = new Set(selected.alignmentPoints.map((p) => p.coordId))
-    return coordinates
-      .filter((c) => c.deletedAt == null)
-      .map((c) => {
-        const ll = converter.toLatLng(c.x, c.y)
-        if (!Number.isFinite(ll.lat) || !Number.isFinite(ll.lng)) return null
-        return {
-          id: c.id,
-          pointNumber: c.pointNumber,
-          lat: ll.lat,
-          lng: ll.lng,
-          used: usedIds.has(c.id),
-        }
-      })
-      .filter(
-        (x): x is { id: string; pointNumber: string; lat: number; lng: number; used: boolean } =>
-          x !== null,
-      )
-  }, [coordinates, converter, pickFromMap, selected])
 
   const handleMovePoint = (idx: number, dir: -1 | 1) => {
     if (!selected) return
@@ -1481,19 +1449,9 @@ export function OpenChannelAlignmentPage() {
                   </button>
                 </div>
 
-                {/* 地図から選択モード */}
-                <div className="border-t pt-2 mt-1">
-                  <label className="flex items-center gap-2 text-[11px] cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={pickFromMap}
-                      onChange={(e) => setPickFromMap(e.target.checked)}
-                    />
-                    <span className="font-semibold text-slate-700">地図から選択</span>
-                    <span className="text-slate-500">
-                      有効時に 地図上の 座標を クリックすると、上で 選んだ 種別/R で 追加されます
-                    </span>
-                  </label>
+                <div className="text-[11px] text-slate-500 border-t pt-2 mt-1">
+                  💡 地図上の 座標を クリックしても、上で 選んだ 種別/R で 追加できます
+                  （既登録の 座標は スカイブルー の ハロー で 強調表示）。
                 </div>
               </CollapsibleSection>
 
@@ -1902,50 +1860,21 @@ export function OpenChannelAlignmentPage() {
           )}
         </div>
 
-        {/* 右: 地図 */}
+        {/* 右: 地図 (座標管理 と 同じ CoordinateMap を 使用) */}
         <div className="flex-1 flex flex-col">
           <div className="flex-1 relative">
-            <MapContainer center={[43.06, 141.35]} zoom={13} maxZoom={24} className="h-full w-full">
-              <TileLayer
-                attribution='&copy; 国土地理院'
-                url="https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg"
-                maxZoom={24}
-                maxNativeZoom={18}
-              />
-              {sampledLatLng.length >= 2 ? (
-                <FitBounds positions={sampledLatLng} />
-              ) : pickableCoordMarkers.length >= 2 ? (
-                <FitBounds
-                  positions={pickableCoordMarkers.map((m) => [m.lat, m.lng] as [number, number])}
-                />
-              ) : null}
+            <CoordinateMap
+              farmId={farmId ?? null}
+              showLabels
+              checkedCoordIds={registeredCoordIds}
+              onPointSelect={handlePickCoordFromMap}
+            >
+              {sampledLatLng.length >= 2 && <FitBounds positions={sampledLatLng} />}
 
               {sampledLatLng.length >= 2 && (
                 <Polyline positions={sampledLatLng} pathOptions={{ color: '#0ea5e9', weight: 3 }} />
               )}
 
-              {/* 地図から選択モード: 工区内の 全座標を クリック可能な ドットで 表示 */}
-              {pickableCoordMarkers.map((m) => (
-                <CircleMarker
-                  key={`pick-${m.id}`}
-                  center={[m.lat, m.lng]}
-                  radius={m.used ? 4 : 3.5}
-                  eventHandlers={{
-                    click: () => handlePickCoordFromMap(m.id),
-                  }}
-                  pathOptions={{
-                    color: '#fff',
-                    fillColor: m.used ? '#9ca3af' : '#0284c7',
-                    fillOpacity: m.used ? 0.4 : 0.85,
-                    weight: 1,
-                  }}
-                >
-                  <Tooltip direction="top" offset={[0, -6]} className="!text-[10px]">
-                    {m.pointNumber}
-                    {m.used ? ' (登録済)' : ' — クリックで追加'}
-                  </Tooltip>
-                </CircleMarker>
-              ))}
               {/* 中間点ごとの断面オーバーレイ */}
               {visibleStationVertices.map(({ station, vertices }) => {
                 if (vertices.length < 2) return null
@@ -2024,23 +1953,7 @@ export function OpenChannelAlignmentPage() {
                   </CircleMarker>
                 )
               })}
-              {controlMarkers.map((m) => {
-                const color = m.point.kind === 'bp' ? '#16a34a' : m.point.kind === 'ep' ? '#dc2626' : '#f59e0b'
-                return (
-                  <CircleMarker
-                    key={m.idx}
-                    center={[m.lat, m.lng]}
-                    radius={6}
-                    pathOptions={{ color: '#fff', fillColor: color, fillOpacity: 1, weight: 2 }}
-                  >
-                    <Tooltip permanent direction="top" offset={[0, -8]} className="!text-[10px]">
-                      {m.point.kind.toUpperCase()} {m.name}
-                      {m.point.kind === 'ip' && m.point.radius ? ` R=${m.point.radius}` : ''}
-                    </Tooltip>
-                  </CircleMarker>
-                )
-              })}
-            </MapContainer>
+            </CoordinateMap>
           </div>
         </div>
       </div>
