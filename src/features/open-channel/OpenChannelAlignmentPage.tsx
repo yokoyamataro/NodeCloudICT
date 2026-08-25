@@ -449,18 +449,37 @@ function CrossSectionDiagram({ cs }: { cs: StandardCrossSection }) {
   )
 }
 
-// 縦断図（追加距離 vs 計画高）
+// 縦断図（追加距離 vs 計画高）— ResizeObserver で 親要素の 寸法に 追従する。
 function ProfileChart({ points, totalLen }: { points: ProfilePoint[]; totalLen: number }) {
-  const widthPx = 280
-  const heightPx = 140
-  const padding = { top: 10, right: 14, bottom: 24, left: 38 }
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const [size, setSize] = useState<{ w: number; h: number }>({ w: 280, h: 140 })
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const ro = new ResizeObserver((entries) => {
+      const rect = entries[0].contentRect
+      setSize({
+        w: Math.max(200, rect.width),
+        h: Math.max(80, rect.height),
+      })
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const widthPx = size.w
+  const heightPx = size.h
+  const padding = { top: 10, right: 14, bottom: 24, left: 44 }
   const innerW = widthPx - padding.left - padding.right
   const innerH = heightPx - padding.top - padding.bottom
 
   if (points.length < 2) {
     return (
-      <div className="border rounded bg-slate-50 text-xs text-slate-400 px-2 py-3 text-center" style={{ width: widthPx }}>
-        変化点が 2 点以上で縦断図を表示
+      <div
+        ref={containerRef}
+        className="border rounded bg-slate-50 text-xs text-slate-400 flex items-center justify-center w-full h-full min-h-[80px]"
+      >
+        変化点が 2 点以上で 縦断図を 表示
       </div>
     )
   }
@@ -489,51 +508,53 @@ function ProfileChart({ points, totalLen }: { points: ProfilePoint[]; totalLen: 
   for (let d = Math.ceil(minDist / xStep) * xStep; d <= maxDist + 1e-9; d += xStep) xTicks.push(d)
 
   return (
-    <svg width={widthPx} height={heightPx} className="border rounded bg-slate-50">
-      {/* 枠 */}
-      <line x1={padding.left} y1={padding.top} x2={padding.left} y2={padding.top + innerH} stroke="#94a3b8" strokeWidth={1} />
-      <line x1={padding.left} y1={padding.top + innerH} x2={padding.left + innerW} y2={padding.top + innerH} stroke="#94a3b8" strokeWidth={1} />
+    <div ref={containerRef} className="w-full h-full">
+      <svg width={widthPx} height={heightPx} className="border rounded bg-slate-50 block">
+        {/* 枠 */}
+        <line x1={padding.left} y1={padding.top} x2={padding.left} y2={padding.top + innerH} stroke="#94a3b8" strokeWidth={1} />
+        <line x1={padding.left} y1={padding.top + innerH} x2={padding.left + innerW} y2={padding.top + innerH} stroke="#94a3b8" strokeWidth={1} />
 
-      {/* Y 軸グリッド + ラベル */}
-      {yTicks.map((h, i) => (
-        <g key={`y-${i}`}>
-          <line x1={padding.left} y1={ty(h)} x2={padding.left + innerW} y2={ty(h)} stroke="#e2e8f0" strokeWidth={1} />
-          <text x={padding.left - 4} y={ty(h) + 3} textAnchor="end" fontSize={9} fill="#64748b">{h.toFixed(2)}</text>
-        </g>
-      ))}
+        {/* Y 軸グリッド + ラベル */}
+        {yTicks.map((h, i) => (
+          <g key={`y-${i}`}>
+            <line x1={padding.left} y1={ty(h)} x2={padding.left + innerW} y2={ty(h)} stroke="#e2e8f0" strokeWidth={1} />
+            <text x={padding.left - 4} y={ty(h) + 3} textAnchor="end" fontSize={10} fill="#64748b">{h.toFixed(2)}</text>
+          </g>
+        ))}
 
-      {/* X 軸ラベル */}
-      {xTicks.map((d, i) => (
-        <g key={`x-${i}`}>
-          <line x1={tx(d)} y1={padding.top + innerH} x2={tx(d)} y2={padding.top + innerH + 3} stroke="#94a3b8" strokeWidth={1} />
-          <text x={tx(d)} y={padding.top + innerH + 12} textAnchor="middle" fontSize={9} fill="#64748b">{d}</text>
-        </g>
-      ))}
+        {/* X 軸ラベル */}
+        {xTicks.map((d, i) => (
+          <g key={`x-${i}`}>
+            <line x1={tx(d)} y1={padding.top + innerH} x2={tx(d)} y2={padding.top + innerH + 3} stroke="#94a3b8" strokeWidth={1} />
+            <text x={tx(d)} y={padding.top + innerH + 14} textAnchor="middle" fontSize={10} fill="#64748b">{d}</text>
+          </g>
+        ))}
 
-      {/* 床高ライン */}
-      <path d={path} fill="none" stroke="#0ea5e9" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+        {/* 計画高ライン */}
+        <path d={path} fill="none" stroke="#0ea5e9" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
 
-      {/* 点 */}
-      {sorted.map((p, i) => (
-        <circle key={`p-${i}`} cx={tx(p.distance)} cy={ty(p.floorHeight)} r={3} fill="#0ea5e9" stroke="#fff" strokeWidth={1.5} />
-      ))}
+        {/* 点 */}
+        {sorted.map((p, i) => (
+          <circle key={`p-${i}`} cx={tx(p.distance)} cy={ty(p.floorHeight)} r={3.5} fill="#0ea5e9" stroke="#fff" strokeWidth={1.5} />
+        ))}
 
-      {/* 勾配ラベル */}
-      {sorted.slice(1).map((p, i) => {
-        const prev = sorted[i]
-        const dx = p.distance - prev.distance
-        const dy = p.floorHeight - prev.floorHeight
-        if (Math.abs(dx) < 1e-6) return null
-        const slope = Math.abs(dy) < 1e-9 ? '水平' : `1/${Math.round(Math.abs(dx / dy))}`
-        const mx = (tx(prev.distance) + tx(p.distance)) / 2
-        const my = (ty(prev.floorHeight) + ty(p.floorHeight)) / 2 - 6
-        return <text key={`s-${i}`} x={mx} y={my} textAnchor="middle" fontSize={9} fill="#475569">{slope}</text>
-      })}
+        {/* 勾配ラベル */}
+        {sorted.slice(1).map((p, i) => {
+          const prev = sorted[i]
+          const dx = p.distance - prev.distance
+          const dy = p.floorHeight - prev.floorHeight
+          if (Math.abs(dx) < 1e-6) return null
+          const slope = Math.abs(dy) < 1e-9 ? '水平' : `1/${Math.round(Math.abs(dx / dy))}`
+          const mx = (tx(prev.distance) + tx(p.distance)) / 2
+          const my = (ty(prev.floorHeight) + ty(p.floorHeight)) / 2 - 6
+          return <text key={`s-${i}`} x={mx} y={my} textAnchor="middle" fontSize={10} fill="#475569">{slope}</text>
+        })}
 
-      {/* 軸単位 */}
-      <text x={5} y={padding.top - 2} fontSize={9} fill="#64748b">計画高 (m)</text>
-      <text x={widthPx - 4} y={heightPx - 4} textAnchor="end" fontSize={9} fill="#64748b">距離 (m)</text>
-    </svg>
+        {/* 軸単位 */}
+        <text x={5} y={padding.top - 2} fontSize={10} fill="#64748b">計画高 (m)</text>
+        <text x={widthPx - 4} y={heightPx - 4} textAnchor="end" fontSize={10} fill="#64748b">距離 (m)</text>
+      </svg>
+    </div>
   )
 }
 
@@ -828,24 +849,31 @@ export function OpenChannelAlignmentPage() {
     setEditingName(false)
   }, [selectedId])
 
-  // 縦断線形（profile）操作
-  const [addProfileDist, setAddProfileDist] = useState<number>(0)
-  const [addProfileH, setAddProfileH] = useState<number>(0)
-  const [showAddProfile, setShowAddProfile] = useState(false)
+  // 縦断線形（profile）操作 — テーブル 末尾 の 空行 に 直接 入力する 方式。
+  // 数値 未確定 の 状態 も 表現できる よう 文字列 で 保持。
+  const [newProfileDistText, setNewProfileDistText] = useState<string>('')
+  const [newProfileHText, setNewProfileHText] = useState<string>('')
+
+  const commitNewProfile = () => {
+    if (!selected) return
+    const d = parseFloat(newProfileDistText)
+    const h = parseFloat(newProfileHText)
+    if (!Number.isFinite(d) || !Number.isFinite(h)) return
+    const next: ProfilePoint[] = [
+      ...selected.profilePoints,
+      { distance: d, floorHeight: h },
+    ]
+    next.sort((a, b) => a.distance - b.distance)
+    updateChannel(selected.id, { profilePoints: next })
+    setNewProfileDistText('')
+    setNewProfileHText('')
+  }
 
   const sortedProfile = useMemo<ProfilePoint[]>(() => {
     if (!selected) return []
     return [...selected.profilePoints].sort((a, b) => a.distance - b.distance)
   }, [selected])
 
-  const handleAddProfile = () => {
-    if (!selected) return
-    const next: ProfilePoint[] = [...selected.profilePoints, { distance: addProfileDist, floorHeight: addProfileH }]
-    next.sort((a, b) => a.distance - b.distance)
-    updateChannel(selected.id, { profilePoints: next })
-    setAddProfileDist(0)
-    setAddProfileH(0)
-  }
   const handleRemoveProfile = (idx: number) => {
     if (!selected) return
     const arr = selected.profilePoints.filter((_, i) => i !== idx)
@@ -1876,146 +1904,136 @@ export function OpenChannelAlignmentPage() {
 
               {/* 縦断線形 (中間点 と 標準断面 の 間 に 配置)。
                   縦断図 の プロット は 地図の 下に 残す。ここでは 変化点 の
-                  追加 / 編集 / 削除 のみ。 */}
+                  追加 / 編集 / 削除 のみ。追加 は テーブル 末尾 の 空行 に
+                  直接 入力 (Enter or + ボタン で 確定)。 */}
               <CollapsibleSection title="縦断線形" storageKey="oc:section:profile">
                 <div className="text-xs text-slate-500">
-                  BP からの 追加距離 (m) と 計画高 (m) を 変化点 ごと に 登録します。
-                  グラフ は 地図の 下 に 表示。
+                  BP からの 追加距離 (m) と 計画高 (m) を 変化点 ごと に 登録。
+                  末尾 の 空行 に 入力 → Enter or + ボタン で 追加。
+                  平面線形長 {totalLen.toFixed(2)} m を 超えない 範囲で 設定。
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setShowAddProfile((v) => !v)}
-                    className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50"
-                  >
-                    {showAddProfile ? (
-                      <X className="h-3 w-3" />
-                    ) : (
-                      <Plus className="h-3 w-3" />
-                    )}
-                    {showAddProfile ? '閉じる' : '変化点追加'}
-                  </button>
-                  <span className="text-[11px] text-slate-400">
-                    平面線形長 {totalLen.toFixed(2)} m
-                  </span>
+                <div className="border rounded overflow-auto max-h-56">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 text-slate-600 sticky top-0 text-xs">
+                      <tr>
+                        <th className="px-2 py-1 w-10 text-center">#</th>
+                        <th className="px-2 py-1 text-right">追加距離 (m)</th>
+                        <th className="px-2 py-1 text-right">計画高 (m)</th>
+                        <th className="px-2 py-1 text-right">勾配</th>
+                        <th className="px-2 py-1 w-10"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sortedProfile.map((p, i) => {
+                        const realIdx = selected.profilePoints.indexOf(p)
+                        const prev = i > 0 ? sortedProfile[i - 1] : null
+                        const slope = prev
+                          ? (() => {
+                              const dx = p.distance - prev.distance
+                              const dy = p.floorHeight - prev.floorHeight
+                              if (Math.abs(dx) < 1e-6) return '-'
+                              if (Math.abs(dy) < 1e-9) return '水平'
+                              return `1/${Math.round(Math.abs(dx / dy))}`
+                            })()
+                          : '-'
+                        return (
+                          <tr key={realIdx} className="border-t">
+                            <td className="px-2 py-1 text-center text-slate-500 text-xs">
+                              {i + 1}
+                            </td>
+                            <td className="px-2 py-1 text-right">
+                              <input
+                                type="number"
+                                step={0.1}
+                                value={p.distance}
+                                onChange={(e) => {
+                                  const v = parseFloat(e.target.value)
+                                  if (Number.isFinite(v))
+                                    handleChangeProfile(realIdx, { distance: v })
+                                }}
+                                className="w-20 px-1 py-0.5 border rounded text-right text-sm"
+                              />
+                            </td>
+                            <td className="px-2 py-1 text-right">
+                              <input
+                                type="number"
+                                step={0.001}
+                                value={p.floorHeight}
+                                onChange={(e) => {
+                                  const v = parseFloat(e.target.value)
+                                  if (Number.isFinite(v))
+                                    handleChangeProfile(realIdx, { floorHeight: v })
+                                }}
+                                className="w-20 px-1 py-0.5 border rounded text-right text-sm"
+                              />
+                            </td>
+                            <td className="px-2 py-1 text-right text-slate-500 tabular-nums">
+                              {slope}
+                            </td>
+                            <td className="px-2 py-1 text-right">
+                              <button
+                                onClick={() => handleRemoveProfile(realIdx)}
+                                className="p-0.5 border rounded hover:bg-red-50 text-red-600"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                      {/* 末尾 の 空行: 両方 入力 して Enter or + で 追加。 */}
+                      <tr className="border-t bg-blue-50/40">
+                        <td className="px-2 py-1 text-center text-slate-400 text-xs">
+                          {sortedProfile.length + 1}
+                        </td>
+                        <td className="px-2 py-1 text-right">
+                          <input
+                            type="number"
+                            step={0.1}
+                            value={newProfileDistText}
+                            placeholder="距離"
+                            onChange={(e) => setNewProfileDistText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') commitNewProfile()
+                            }}
+                            className="w-20 px-1 py-0.5 border rounded text-right text-sm bg-white"
+                          />
+                        </td>
+                        <td className="px-2 py-1 text-right">
+                          <input
+                            type="number"
+                            step={0.001}
+                            value={newProfileHText}
+                            placeholder="計画高"
+                            onChange={(e) => setNewProfileHText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') commitNewProfile()
+                            }}
+                            className="w-20 px-1 py-0.5 border rounded text-right text-sm bg-white"
+                          />
+                        </td>
+                        <td className="px-2 py-1 text-right text-slate-300 text-xs">
+                          {/* 追加前 なので 勾配 未計算 */}
+                          —
+                        </td>
+                        <td className="px-2 py-1 text-right">
+                          <button
+                            onClick={commitNewProfile}
+                            disabled={
+                              !Number.isFinite(parseFloat(newProfileDistText)) ||
+                              !Number.isFinite(parseFloat(newProfileHText))
+                            }
+                            title="変化点 を 追加"
+                            className="p-0.5 border rounded text-blue-600 hover:bg-blue-50 disabled:opacity-30"
+                          >
+                            <Plus className="h-3 w-3" />
+                          </button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
-
-                {showAddProfile && (
-                  <div className="grid grid-cols-12 gap-2 items-end border rounded bg-slate-50 p-2">
-                    <label className="col-span-5 flex flex-col gap-0.5 text-xs">
-                      <span className="text-slate-500">追加距離 (m)</span>
-                      <input
-                        type="number"
-                        step={0.1}
-                        value={addProfileDist}
-                        onChange={(e) => setAddProfileDist(parseFloat(e.target.value) || 0)}
-                        className="px-2 py-1 border rounded text-right text-sm"
-                      />
-                    </label>
-                    <label className="col-span-5 flex flex-col gap-0.5 text-xs">
-                      <span className="text-slate-500">計画高 (m)</span>
-                      <input
-                        type="number"
-                        step={0.001}
-                        value={addProfileH}
-                        onChange={(e) => setAddProfileH(parseFloat(e.target.value) || 0)}
-                        className="px-2 py-1 border rounded text-right text-sm"
-                      />
-                    </label>
-                    <button
-                      onClick={() => {
-                        handleAddProfile()
-                        setShowAddProfile(false)
-                      }}
-                      className="col-span-2 flex items-center justify-center gap-1 px-2 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      追加
-                    </button>
-                    <div className="col-span-12 text-[10px] text-slate-400">
-                      ※ 平面線形長 を 超えない 範囲で 設定。追加距離 0 を BP、平面線形長 相当 を EP として 登録するのが 基本。
-                    </div>
-                  </div>
-                )}
-
-                {sortedProfile.length > 0 ? (
-                  <div className="border rounded overflow-auto max-h-56">
-                    <table className="w-full text-sm">
-                      <thead className="bg-slate-50 text-slate-600 sticky top-0 text-xs">
-                        <tr>
-                          <th className="px-2 py-1 w-10 text-center">#</th>
-                          <th className="px-2 py-1 text-right">追加距離 (m)</th>
-                          <th className="px-2 py-1 text-right">計画高 (m)</th>
-                          <th className="px-2 py-1 text-right">勾配</th>
-                          <th className="px-2 py-1 w-10"></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sortedProfile.map((p, i) => {
-                          const realIdx = selected.profilePoints.indexOf(p)
-                          const prev = i > 0 ? sortedProfile[i - 1] : null
-                          const slope = prev
-                            ? (() => {
-                                const dx = p.distance - prev.distance
-                                const dy = p.floorHeight - prev.floorHeight
-                                if (Math.abs(dx) < 1e-6) return '-'
-                                if (Math.abs(dy) < 1e-9) return '水平'
-                                return `1/${Math.round(Math.abs(dx / dy))}`
-                              })()
-                            : '-'
-                          return (
-                            <tr key={realIdx} className="border-t">
-                              <td className="px-2 py-1 text-center text-slate-500 text-xs">
-                                {i + 1}
-                              </td>
-                              <td className="px-2 py-1 text-right">
-                                <input
-                                  type="number"
-                                  step={0.1}
-                                  value={p.distance}
-                                  onChange={(e) => {
-                                    const v = parseFloat(e.target.value)
-                                    if (Number.isFinite(v))
-                                      handleChangeProfile(realIdx, { distance: v })
-                                  }}
-                                  className="w-20 px-1 py-0.5 border rounded text-right text-sm"
-                                />
-                              </td>
-                              <td className="px-2 py-1 text-right">
-                                <input
-                                  type="number"
-                                  step={0.001}
-                                  value={p.floorHeight}
-                                  onChange={(e) => {
-                                    const v = parseFloat(e.target.value)
-                                    if (Number.isFinite(v))
-                                      handleChangeProfile(realIdx, { floorHeight: v })
-                                  }}
-                                  className="w-20 px-1 py-0.5 border rounded text-right text-sm"
-                                />
-                              </td>
-                              <td className="px-2 py-1 text-right text-slate-500 tabular-nums">
-                                {slope}
-                              </td>
-                              <td className="px-2 py-1 text-right">
-                                <button
-                                  onClick={() => handleRemoveProfile(realIdx)}
-                                  className="p-0.5 border rounded hover:bg-red-50 text-red-600"
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </button>
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="text-xs text-slate-400 text-center py-2 border rounded bg-slate-50">
-                    変化点がありません。「変化点追加」から登録してください。
-                  </div>
-                )}
               </CollapsibleSection>
 
               {/* 標準断面 (末尾に 配置) */}
@@ -2169,14 +2187,17 @@ export function OpenChannelAlignmentPage() {
             </CoordinateMap>
           </div>
 
-          {/* 縦断図 (地図の 下、プロットのみ)。編集 UI は 左サイドバー 「縦断線形」に */}
+          {/* 縦断図 (地図の 下、プロットのみ)。下の 余白 いっぱい に 拡げる。
+              編集 UI は 左サイドバー 「縦断線形」に */}
           {selected && (
-            <div className="shrink-0 border-t bg-white p-2 flex items-center gap-3">
-              <span className="font-semibold text-slate-700 text-sm">縦断図</span>
-              <span className="text-[11px] text-slate-500">
-                変化点 の 追加 / 編集 は 左サイドバー 「縦断線形」から
-              </span>
-              <div className="ml-auto">
+            <div className="shrink-0 border-t bg-white flex flex-col" style={{ height: '260px' }}>
+              <div className="px-2 py-1 flex items-center gap-3 shrink-0">
+                <span className="font-semibold text-slate-700 text-sm">縦断図</span>
+                <span className="text-[11px] text-slate-500">
+                  変化点 の 追加 / 編集 は 左サイドバー 「縦断線形」から
+                </span>
+              </div>
+              <div className="flex-1 min-h-0 px-2 pb-2">
                 <ProfileChart points={selected.profilePoints} totalLen={totalLen} />
               </div>
             </div>
