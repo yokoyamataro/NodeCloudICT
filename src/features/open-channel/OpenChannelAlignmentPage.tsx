@@ -10,7 +10,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Polyline, CircleMarker, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Plus, Trash2, ArrowUp, ArrowDown, Waves, ChevronRight, ChevronDown, Pencil, Check, X } from 'lucide-react'
+import { Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Pencil, Check, X } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { CoordinateMap } from '@/components/map/CoordinateMap'
 import { useFarmStore } from '@/stores/farmStore'
@@ -241,16 +241,20 @@ function NumberInput({
   )
 }
 
-/** タイトルのみで折りたたみ可能なセクション（開閉状態は localStorage に記憶可）。 */
+/** タイトルのみで折りたたみ可能なセクション（開閉状態は localStorage に記憶可）。
+ *  onOpenChange を 渡すと 親コンポーネントが 現在の 開閉状態を 監視できる
+ *  (例: 折りたたみ中は 地図クリック による 編集を 抑止 する 用途)。 */
 function CollapsibleSection({
   title,
   defaultOpen = true,
   storageKey,
+  onOpenChange,
   children,
 }: {
   title: string
   defaultOpen?: boolean
   storageKey?: string
+  onOpenChange?: (open: boolean) => void
   children: React.ReactNode
 }) {
   const [open, setOpen] = useState<boolean>(() => {
@@ -261,6 +265,10 @@ function CollapsibleSection({
     }
     return defaultOpen
   })
+  // 開閉状態が 変わる たびに 親へ 通知 (初回 マウント 時も 発火 する)
+  useEffect(() => {
+    onOpenChange?.(open)
+  }, [open, onOpenChange])
   const toggle = () => {
     setOpen((prev) => {
       const next = !prev
@@ -739,6 +747,16 @@ export function OpenChannelAlignmentPage() {
     return new Set(selected.alignmentPoints.map((p) => p.coordId))
   }, [selected])
 
+  // 線形点セクション の 開閉状態。折りたたみ 中は 地図クリック 追加を 抑止 する。
+  // 初期値 は CollapsibleSection と 同じく localStorage を 見る (デフォルト = 開)。
+  const [linearPointsExpanded, setLinearPointsExpanded] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const v = window.localStorage.getItem('oc:section:linear-points')
+      if (v === '0') return false
+    }
+    return true
+  })
+
   // 線形点の追加: 座標を選択 (種別 BP/IP/EP は 位置から 自動決定)
   const [addCoordId, setAddCoordId] = useState<string>('')
   const [addRadius, setAddRadius] = useState<number>(0)
@@ -754,9 +772,11 @@ export function OpenChannelAlignmentPage() {
   }
 
   // 地図でクリックした 座標を そのまま 線形点として 追加。
+  // 線形点セクション が 折りたたまれて いる 時は 編集 不可 (誤操作 防止)。
   // 既登録の 座標は 何もしない (トグル 挙動は 誤操作の 元なので しない)。
   const handlePickCoordFromMap = (coordId: string) => {
     if (!selected) return
+    if (!linearPointsExpanded) return
     if (selected.alignmentPoints.some((p) => p.coordId === coordId)) return
     const next: AlignmentPoint[] = normalizeKinds([
       ...selected.alignmentPoints,
@@ -1261,14 +1281,14 @@ export function OpenChannelAlignmentPage() {
       <div className="flex-1 flex overflow-hidden">
         {/* 左: 一覧 + 編集 */}
         <div className="w-[624px] overflow-auto p-3 bg-slate-50 border-r space-y-3">
-          {/* 線形点 (BP → IP → EP) — 一番上に 配置 */}
-          <section className="bg-white rounded-lg border p-3 space-y-2">
-            <div className="flex items-center gap-2">
-              <Waves className="h-4 w-4 text-slate-600 shrink-0" />
-              <h2 className="font-semibold text-slate-800 text-sm">線形点</h2>
-              <span className="text-[11px] text-slate-400 ml-auto">BP → IP → EP</span>
-            </div>
-
+          {/* 線形点 (BP → IP → EP) — 一番上、折りたたみ 可能。
+              折りたたみ 中は 地図クリック による 追加が 抑止 される。 */}
+          <CollapsibleSection
+            title={`線形点 (BP → IP → EP)${selected ? ` · ${selected.name}` : ''}`}
+            storageKey="oc:section:linear-points"
+            defaultOpen
+            onOpenChange={setLinearPointsExpanded}
+          >
             {/* 線形物 の 選択プルダウン + 名前編集 + 新規追加 + 削除 */}
             <div className="flex items-center gap-1">
               {editingName && selected ? (
@@ -1565,7 +1585,7 @@ export function OpenChannelAlignmentPage() {
                 </div>
               </>
             )}
-          </section>
+          </CollapsibleSection>
 
           {selected && (
             <>
@@ -1854,6 +1874,150 @@ export function OpenChannelAlignmentPage() {
                 )}
               </CollapsibleSection>
 
+              {/* 縦断線形 (中間点 と 標準断面 の 間 に 配置)。
+                  縦断図 の プロット は 地図の 下に 残す。ここでは 変化点 の
+                  追加 / 編集 / 削除 のみ。 */}
+              <CollapsibleSection title="縦断線形" storageKey="oc:section:profile">
+                <div className="text-xs text-slate-500">
+                  BP からの 追加距離 (m) と 計画高 (m) を 変化点 ごと に 登録します。
+                  グラフ は 地図の 下 に 表示。
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowAddProfile((v) => !v)}
+                    className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50"
+                  >
+                    {showAddProfile ? (
+                      <X className="h-3 w-3" />
+                    ) : (
+                      <Plus className="h-3 w-3" />
+                    )}
+                    {showAddProfile ? '閉じる' : '変化点追加'}
+                  </button>
+                  <span className="text-[11px] text-slate-400">
+                    平面線形長 {totalLen.toFixed(2)} m
+                  </span>
+                </div>
+
+                {showAddProfile && (
+                  <div className="grid grid-cols-12 gap-2 items-end border rounded bg-slate-50 p-2">
+                    <label className="col-span-5 flex flex-col gap-0.5 text-xs">
+                      <span className="text-slate-500">追加距離 (m)</span>
+                      <input
+                        type="number"
+                        step={0.1}
+                        value={addProfileDist}
+                        onChange={(e) => setAddProfileDist(parseFloat(e.target.value) || 0)}
+                        className="px-2 py-1 border rounded text-right text-sm"
+                      />
+                    </label>
+                    <label className="col-span-5 flex flex-col gap-0.5 text-xs">
+                      <span className="text-slate-500">計画高 (m)</span>
+                      <input
+                        type="number"
+                        step={0.001}
+                        value={addProfileH}
+                        onChange={(e) => setAddProfileH(parseFloat(e.target.value) || 0)}
+                        className="px-2 py-1 border rounded text-right text-sm"
+                      />
+                    </label>
+                    <button
+                      onClick={() => {
+                        handleAddProfile()
+                        setShowAddProfile(false)
+                      }}
+                      className="col-span-2 flex items-center justify-center gap-1 px-2 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      追加
+                    </button>
+                    <div className="col-span-12 text-[10px] text-slate-400">
+                      ※ 平面線形長 を 超えない 範囲で 設定。追加距離 0 を BP、平面線形長 相当 を EP として 登録するのが 基本。
+                    </div>
+                  </div>
+                )}
+
+                {sortedProfile.length > 0 ? (
+                  <div className="border rounded overflow-auto max-h-56">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50 text-slate-600 sticky top-0 text-xs">
+                        <tr>
+                          <th className="px-2 py-1 w-10 text-center">#</th>
+                          <th className="px-2 py-1 text-right">追加距離 (m)</th>
+                          <th className="px-2 py-1 text-right">計画高 (m)</th>
+                          <th className="px-2 py-1 text-right">勾配</th>
+                          <th className="px-2 py-1 w-10"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sortedProfile.map((p, i) => {
+                          const realIdx = selected.profilePoints.indexOf(p)
+                          const prev = i > 0 ? sortedProfile[i - 1] : null
+                          const slope = prev
+                            ? (() => {
+                                const dx = p.distance - prev.distance
+                                const dy = p.floorHeight - prev.floorHeight
+                                if (Math.abs(dx) < 1e-6) return '-'
+                                if (Math.abs(dy) < 1e-9) return '水平'
+                                return `1/${Math.round(Math.abs(dx / dy))}`
+                              })()
+                            : '-'
+                          return (
+                            <tr key={realIdx} className="border-t">
+                              <td className="px-2 py-1 text-center text-slate-500 text-xs">
+                                {i + 1}
+                              </td>
+                              <td className="px-2 py-1 text-right">
+                                <input
+                                  type="number"
+                                  step={0.1}
+                                  value={p.distance}
+                                  onChange={(e) => {
+                                    const v = parseFloat(e.target.value)
+                                    if (Number.isFinite(v))
+                                      handleChangeProfile(realIdx, { distance: v })
+                                  }}
+                                  className="w-20 px-1 py-0.5 border rounded text-right text-sm"
+                                />
+                              </td>
+                              <td className="px-2 py-1 text-right">
+                                <input
+                                  type="number"
+                                  step={0.001}
+                                  value={p.floorHeight}
+                                  onChange={(e) => {
+                                    const v = parseFloat(e.target.value)
+                                    if (Number.isFinite(v))
+                                      handleChangeProfile(realIdx, { floorHeight: v })
+                                  }}
+                                  className="w-20 px-1 py-0.5 border rounded text-right text-sm"
+                                />
+                              </td>
+                              <td className="px-2 py-1 text-right text-slate-500 tabular-nums">
+                                {slope}
+                              </td>
+                              <td className="px-2 py-1 text-right">
+                                <button
+                                  onClick={() => handleRemoveProfile(realIdx)}
+                                  className="p-0.5 border rounded hover:bg-red-50 text-red-600"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="text-xs text-slate-400 text-center py-2 border rounded bg-slate-50">
+                    変化点がありません。「変化点追加」から登録してください。
+                  </div>
+                )}
+              </CollapsibleSection>
+
               {/* 標準断面 (末尾に 配置) */}
               <CollapsibleSection title="標準断面" storageKey="oc:section:cs">
                 <div className="text-[11px] text-slate-500">
@@ -1962,6 +2126,8 @@ export function OpenChannelAlignmentPage() {
                 const ll = converter.toLatLng(p.x, p.y)
                 const isSel = s.id === selectedStationId
                 const hasOverride = s.crossSection != null
+                // 中間点 (SP) は 紫 で 固定。 個別断面 は 琥珀色 で 差別化。
+                const fillColor = hasOverride ? '#f59e0b' : '#a78bfa'
                 return (
                   <CircleMarker
                     key={s.id}
@@ -1972,14 +2138,30 @@ export function OpenChannelAlignmentPage() {
                     }}
                     pathOptions={{
                       color: '#fff',
-                      fillColor: hasOverride ? '#f59e0b' : '#a78bfa',
+                      fillColor,
                       fillOpacity: 0.95,
                       weight: isSel ? 2 : 1.5,
                     }}
                   >
-                    <Tooltip direction="bottom" offset={[0, 4]} className="!text-[10px]">
-                      {s.label}
-                      {hasOverride ? ' (個別)' : ''}
+                    {/* 座標管理と 同じ 「白フチ 付き 色文字」スタイル
+                        (point-label-tooltip class で 背景・枠 を 透明化)。
+                        常時表示 で 測点名 が いつでも 見える。 */}
+                    <Tooltip
+                      permanent
+                      direction="bottom"
+                      offset={[0, 6]}
+                      className="point-label-tooltip"
+                    >
+                      <span
+                        style={{
+                          color: fillColor,
+                          textShadow:
+                            '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff',
+                        }}
+                      >
+                        {s.label}
+                        {hasOverride ? ' (個別)' : ''}
+                      </span>
                     </Tooltip>
                   </CircleMarker>
                 )
@@ -1987,148 +2169,15 @@ export function OpenChannelAlignmentPage() {
             </CoordinateMap>
           </div>
 
-          {/* 縦断図 (地図の 下) */}
+          {/* 縦断図 (地図の 下、プロットのみ)。編集 UI は 左サイドバー 「縦断線形」に */}
           {selected && (
-            <div className="shrink-0 border-t bg-white p-2 space-y-2 max-h-[320px] overflow-auto">
-              <div className="flex items-center gap-2">
-                <span className="font-semibold text-slate-700 text-sm">縦断図</span>
-                <span className="text-[11px] text-slate-500">
-                  BP からの 追加距離 (m) と 計画高 (m) の 変化点
-                </span>
-                <button
-                  onClick={() => setShowAddProfile((v) => !v)}
-                  className="ml-auto flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50"
-                >
-                  {showAddProfile ? (
-                    <X className="h-3 w-3" />
-                  ) : (
-                    <Plus className="h-3 w-3" />
-                  )}
-                  {showAddProfile ? '閉じる' : '変化点追加'}
-                </button>
-              </div>
-
-              {showAddProfile && (
-                <div className="grid grid-cols-12 gap-2 items-end border rounded bg-slate-50 p-2">
-                  <label className="col-span-5 flex flex-col gap-0.5 text-[11px]">
-                    <span className="text-slate-500">追加距離 (m)</span>
-                    <input
-                      type="number"
-                      step={0.1}
-                      value={addProfileDist}
-                      onChange={(e) => setAddProfileDist(parseFloat(e.target.value) || 0)}
-                      className="px-1 py-1 border rounded text-right text-xs"
-                    />
-                  </label>
-                  <label className="col-span-5 flex flex-col gap-0.5 text-[11px]">
-                    <span className="text-slate-500">計画高 (m)</span>
-                    <input
-                      type="number"
-                      step={0.001}
-                      value={addProfileH}
-                      onChange={(e) => setAddProfileH(parseFloat(e.target.value) || 0)}
-                      className="px-1 py-1 border rounded text-right text-xs"
-                    />
-                  </label>
-                  <button
-                    onClick={() => {
-                      handleAddProfile()
-                      setShowAddProfile(false)
-                    }}
-                    className="col-span-2 flex items-center justify-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
-                  >
-                    <Plus className="h-3 w-3" />
-                    追加
-                  </button>
-                  <div className="col-span-12 text-[10px] text-slate-400">
-                    ※ 平面線形長 ({totalLen.toFixed(2)} m) を 超えない 範囲で 設定。
-                    追加距離 0 を BP、平面線形長相当 を EP として 登録するのが 基本。
-                  </div>
-                </div>
-              )}
-
-              <div className="flex gap-3 items-start">
-                <div className="flex-1 min-w-0">
-                  {sortedProfile.length > 0 ? (
-                    <div className="border rounded overflow-auto max-h-56">
-                      <table className="w-full text-xs">
-                        <thead className="bg-slate-50 text-slate-600 sticky top-0">
-                          <tr>
-                            <th className="px-1 py-1 w-8 text-center">#</th>
-                            <th className="px-1 py-1 text-right">追加距離 (m)</th>
-                            <th className="px-1 py-1 text-right">計画高 (m)</th>
-                            <th className="px-1 py-1 text-right">勾配</th>
-                            <th className="px-1 py-1 w-8"></th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {sortedProfile.map((p, i) => {
-                            const realIdx = selected.profilePoints.indexOf(p)
-                            const prev = i > 0 ? sortedProfile[i - 1] : null
-                            const slope = prev
-                              ? (() => {
-                                  const dx = p.distance - prev.distance
-                                  const dy = p.floorHeight - prev.floorHeight
-                                  if (Math.abs(dx) < 1e-6) return '-'
-                                  if (Math.abs(dy) < 1e-9) return '水平'
-                                  return `1/${Math.round(Math.abs(dx / dy))}`
-                                })()
-                              : '-'
-                            return (
-                              <tr key={realIdx} className="border-t">
-                                <td className="px-1 py-1 text-center text-slate-500">{i + 1}</td>
-                                <td className="px-1 py-1 text-right">
-                                  <input
-                                    type="number"
-                                    step={0.1}
-                                    value={p.distance}
-                                    onChange={(e) => {
-                                      const v = parseFloat(e.target.value)
-                                      if (Number.isFinite(v))
-                                        handleChangeProfile(realIdx, { distance: v })
-                                    }}
-                                    className="w-20 px-1 py-0.5 border rounded text-right text-xs"
-                                  />
-                                </td>
-                                <td className="px-1 py-1 text-right">
-                                  <input
-                                    type="number"
-                                    step={0.001}
-                                    value={p.floorHeight}
-                                    onChange={(e) => {
-                                      const v = parseFloat(e.target.value)
-                                      if (Number.isFinite(v))
-                                        handleChangeProfile(realIdx, { floorHeight: v })
-                                    }}
-                                    className="w-20 px-1 py-0.5 border rounded text-right text-xs"
-                                  />
-                                </td>
-                                <td className="px-1 py-1 text-right text-slate-500 tabular-nums">
-                                  {slope}
-                                </td>
-                                <td className="px-1 py-1 text-right">
-                                  <button
-                                    onClick={() => handleRemoveProfile(realIdx)}
-                                    className="p-0.5 border rounded hover:bg-red-50 text-red-600"
-                                  >
-                                    <Trash2 className="h-3 w-3" />
-                                  </button>
-                                </td>
-                              </tr>
-                            )
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <div className="text-xs text-slate-400 text-center py-6 border rounded bg-slate-50">
-                      変化点がありません。「変化点追加」ボタンから登録してください。
-                    </div>
-                  )}
-                </div>
-                <div className="shrink-0">
-                  <ProfileChart points={selected.profilePoints} totalLen={totalLen} />
-                </div>
+            <div className="shrink-0 border-t bg-white p-2 flex items-center gap-3">
+              <span className="font-semibold text-slate-700 text-sm">縦断図</span>
+              <span className="text-[11px] text-slate-500">
+                変化点 の 追加 / 編集 は 左サイドバー 「縦断線形」から
+              </span>
+              <div className="ml-auto">
+                <ProfileChart points={selected.profilePoints} totalLen={totalLen} />
               </div>
             </div>
           )}
