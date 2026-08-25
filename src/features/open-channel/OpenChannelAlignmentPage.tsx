@@ -41,6 +41,7 @@ import {
   getCornerIpStations,
   type AlignmentSegment,
   type AlignmentVertex,
+  type CurveMarker,
 } from '@/lib/openChannel/alignment'
 import { downloadSimaFile, type SimaExportPoint } from '@/lib/sima-parser'
 import { buildLandXml } from '@/lib/landxml/exporter'
@@ -850,7 +851,30 @@ export function OpenChannelAlignmentPage() {
   const formatSp = (d: number) => `SP${d.toFixed(2)}`
   const formatBc = (d: number) => `BC${d.toFixed(2)}`
   const formatEc = (d: number) => `EC${d.toFixed(2)}`
+  const formatBtc = (d: number) => `BTC${d.toFixed(2)}`
+  const formatEtc = (d: number) => `ETC${d.toFixed(2)}`
   const formatIp = (d: number) => `IP${d.toFixed(2)}`
+
+  // getCurveMarkers が 返す 6 種類の マーカー を、ユーザー が 見慣れた
+  // ラベル に 変換する。 単曲線 の 両端は BC/EC、緩和曲線 の 外側端は
+  // BTC/ETC (Beginning/End of Transition Curve)、緩和曲線 内側 (arc と の 接続) は
+  // BC/EC (arc の 起終点 として 扱う)。
+  const formatCurveMarker = (kind: CurveMarker['kind'], distance: number): string => {
+    switch (kind) {
+      case 'bc':
+        return formatBc(distance)
+      case 'ec':
+        return formatEc(distance)
+      case 'ts':
+        return formatBtc(distance)
+      case 'st':
+        return formatEtc(distance)
+      case 'sc':
+        return formatBc(distance)
+      case 'cs':
+        return formatEc(distance)
+    }
+  }
 
   const newStationId = () =>
     `st-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -865,6 +889,42 @@ export function OpenChannelAlignmentPage() {
   const setStations = (next: StationRow[]) => {
     if (!selected) return
     updateChannel(selected.id, { stations: next })
+  }
+
+  // 「特徴点」= IP (折点) / BC / EC / BTC / ETC の 集合。線形形状から 一意に決まる。
+  const isFeatureLabel = (label: string) =>
+    label.startsWith('IP') ||
+    label.startsWith('BTC') ||
+    label.startsWith('ETC') ||
+    label.startsWith('BC') ||
+    label.startsWith('EC')
+
+  const collectFeaturePoints = (): { label: string; distance: number }[] => {
+    const out: { label: string; distance: number }[] = []
+    for (const m of getCurveMarkers(segments)) {
+      out.push({ label: formatCurveMarker(m.kind, m.distance), distance: m.distance })
+    }
+    for (const m of getCornerIpStations(alignmentXY)) {
+      out.push({ label: formatIp(m.distance), distance: m.distance })
+    }
+    return out
+  }
+
+  // 距離でソート + 同距離 (5mm 以内) を 特徴点 優先で 重複排除。
+  const dedupeStations = (arr: StationRow[]): StationRow[] => {
+    const sorted = [...arr].sort((a, b) => a.distance - b.distance)
+    const merged: StationRow[] = []
+    for (const s of sorted) {
+      const prev = merged[merged.length - 1]
+      if (prev && Math.abs(prev.distance - s.distance) < 5e-3) {
+        if (isFeatureLabel(s.label) && !isFeatureLabel(prev.label)) {
+          merged[merged.length - 1] = s
+        }
+        continue
+      }
+      merged.push(s)
+    }
+    return merged
   }
 
   const handleAddStation = () => {
@@ -896,26 +956,10 @@ export function OpenChannelAlignmentPage() {
         const last = out.length > 0 ? out[out.length - 1].distance : -1
         if (Math.abs(last - totalLen) > 1e-3) push(formatSp(totalLen), totalLen)
       }
-      for (const m of getCurveMarkers(segments)) {
-        push(m.kind === 'bc' ? formatBc(m.distance) : formatEc(m.distance), m.distance)
-      }
-      for (const m of getCornerIpStations(alignmentXY)) {
-        push(formatIp(m.distance), m.distance)
-      }
+      // 特徴点 (IP / BC / EC / BTC / ETC)
+      for (const f of collectFeaturePoints()) push(f.label, f.distance)
 
-      // 距離でソート + 同距離の SP は IP/BC/EC を優先して重複排除
-      out.sort((a, b) => a.distance - b.distance)
-      const merged: StationRow[] = []
-      const isMarker = (label: string) =>
-        label.startsWith('BC') || label.startsWith('EC') || label.startsWith('IP')
-      for (const s of out) {
-        const prev = merged[merged.length - 1]
-        if (prev && Math.abs(prev.distance - s.distance) < 5e-3) {
-          if (isMarker(s.label) && !isMarker(prev.label)) merged[merged.length - 1] = s
-          continue
-        }
-        merged.push(s)
-      }
+      const merged = dedupeStations(out)
 
       // 既存の個別断面（crossSection != null）をラベル一致で引き継ぐ
       const existingByLabel = new Map(stations.map((s) => [s.label, s]))
@@ -926,6 +970,22 @@ export function OpenChannelAlignmentPage() {
       })
       setStations(final)
     }
+  }
+
+  // 現状の 中間点 リストに、線形形状 から 一意に決まる 特徴点 (IP / BC / EC /
+  // BTC / ETC) を 追記する。既存 SP は 保持。同じ 追加距離 が 既に あれば
+  // 特徴点ラベル で 置き換える。
+  const handleAddFeaturePoints = () => {
+    if (!selected || segments.length === 0) return
+    const features = collectFeaturePoints()
+    if (features.length === 0) return
+    const featureRows: StationRow[] = features.map((f) => ({
+      id: newStationId(),
+      label: f.label,
+      distance: f.distance,
+      crossSection: null,
+    }))
+    setStations(dedupeStations([...stations, ...featureRows]))
   }
 
   const handleClearStations = () => {
@@ -1314,25 +1374,25 @@ export function OpenChannelAlignmentPage() {
                 {/* 線形点テーブル (種別 は 位置から 自動決定: 先頭=BP、末尾=EP、中間=IP) */}
                 {selected.alignmentPoints.length > 0 ? (
                   <div className="border rounded overflow-hidden">
-                    <table className="w-full text-xs">
-                      <thead className="bg-slate-50 text-slate-600">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50 text-slate-600 text-xs">
                         <tr>
-                          <th className="px-1 py-1 w-10 text-center">種別</th>
-                          <th className="px-1 py-1 text-left">点名</th>
-                          <th className="px-1 py-1 w-16 text-right">R (m)</th>
+                          <th className="px-2 py-1 w-12 text-center">種別</th>
+                          <th className="px-2 py-1 w-20 text-left">点名</th>
+                          <th className="px-2 py-1 w-20 text-right">R (m)</th>
                           <th
-                            className="px-1 py-1 w-14 text-right"
+                            className="px-2 py-1 w-16 text-right"
                             title="クロソイドパラメータ A（IN 側）。L=A²/R で緩和曲線長を決定"
                           >
                             A<sub>IN</sub>
                           </th>
                           <th
-                            className="px-1 py-1 w-14 text-right"
+                            className="px-2 py-1 w-16 text-right"
                             title="クロソイドパラメータ A（OUT 側）"
                           >
                             A<sub>OUT</sub>
                           </th>
-                          <th className="px-1 py-1 w-12"></th>
+                          <th className="px-2 py-1 w-16"></th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1349,15 +1409,17 @@ export function OpenChannelAlignmentPage() {
                                 : 'bg-amber-100 text-amber-700'
                           return (
                             <tr key={i} className="border-t">
-                              <td className="px-1 py-1 text-center">
+                              <td className="px-2 py-1 text-center">
                                 <span
-                                  className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold font-mono ${kindColor}`}
+                                  className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-semibold font-mono ${kindColor}`}
                                 >
                                   {kindLabel}
                                 </span>
                               </td>
-                              <td className="px-1 py-1">{c?.pointNumber ?? '？'}</td>
-                              <td className="px-1 py-1 text-right">
+                              <td className="px-2 py-1 truncate" title={c?.pointNumber ?? '？'}>
+                                {c?.pointNumber ?? '？'}
+                              </td>
+                              <td className="px-2 py-1 text-right">
                                 {kind === 'ip' ? (
                                   <input
                                     type="number"
@@ -1367,14 +1429,14 @@ export function OpenChannelAlignmentPage() {
                                       const v = parseFloat(e.target.value)
                                       handleChangePoint(i, { radius: Number.isFinite(v) && v > 0 ? v : undefined })
                                     }}
-                                    className="w-14 px-1 py-0.5 border rounded text-right text-xs"
+                                    className="w-16 px-1 py-0.5 border rounded text-right text-sm"
                                   />
                                 ) : (
                                   <span className="text-slate-300">—</span>
                                 )}
                               </td>
                               {/* A_IN */}
-                              <td className="px-1 py-1 text-right">
+                              <td className="px-2 py-1 text-right">
                                 {kind === 'ip' && p.radius && p.radius > 0 ? (
                                   <input
                                     type="number"
@@ -1387,7 +1449,7 @@ export function OpenChannelAlignmentPage() {
                                         spiralAIn: Number.isFinite(v) && v > 0 ? v : undefined,
                                       })
                                     }}
-                                    className="w-12 px-1 py-0.5 border rounded text-right text-xs"
+                                    className="w-14 px-1 py-0.5 border rounded text-right text-sm"
                                     placeholder="0"
                                     title="0/空で緩和曲線なし"
                                   />
@@ -1396,7 +1458,7 @@ export function OpenChannelAlignmentPage() {
                                 )}
                               </td>
                               {/* A_OUT */}
-                              <td className="px-1 py-1 text-right">
+                              <td className="px-2 py-1 text-right">
                                 {kind === 'ip' && p.radius && p.radius > 0 ? (
                                   <input
                                     type="number"
@@ -1409,7 +1471,7 @@ export function OpenChannelAlignmentPage() {
                                         spiralAOut: Number.isFinite(v) && v > 0 ? v : undefined,
                                       })
                                     }}
-                                    className="w-12 px-1 py-0.5 border rounded text-right text-xs"
+                                    className="w-14 px-1 py-0.5 border rounded text-right text-sm"
                                     placeholder="0"
                                     title="0/空で緩和曲線なし"
                                   />
@@ -1417,7 +1479,7 @@ export function OpenChannelAlignmentPage() {
                                   <span className="text-slate-300">—</span>
                                 )}
                               </td>
-                              <td className="px-1 py-1 text-right">
+                              <td className="px-2 py-1 text-right">
                                 <div className="flex gap-0.5 justify-end">
                                   <button
                                     onClick={() => handleMovePoint(i, -1)}
@@ -1448,18 +1510,18 @@ export function OpenChannelAlignmentPage() {
                     </table>
                   </div>
                 ) : (
-                  <div className="text-[11px] text-slate-400 text-center py-2 border rounded bg-slate-50">
+                  <div className="text-xs text-slate-400 text-center py-2 border rounded bg-slate-50">
                     線形点がありません。下のフォーム or 地図上の座標クリックで追加。
                   </div>
                 )}
 
                 {/* 末尾に 追加する インライン フォーム
                     (種別 は 位置から 自動決定: 先頭=BP、末尾=EP、中間=IP) */}
-                <div className="grid grid-cols-12 gap-1 items-end pt-1 border-t">
+                <div className="grid grid-cols-12 gap-2 items-end pt-2 border-t">
                   <select
                     value={addCoordId}
                     onChange={(e) => setAddCoordId(e.target.value)}
-                    className="col-span-8 px-1 py-1 border rounded text-xs"
+                    className="col-span-8 px-2 py-1 border rounded text-sm"
                   >
                     <option value="">座標を選択…</option>
                     {(coordinates as CoordinateRow[]).map((c) => (
@@ -1475,29 +1537,29 @@ export function OpenChannelAlignmentPage() {
                     onChange={(e) => setAddRadius(parseFloat(e.target.value) || 0)}
                     placeholder="R (IP用)"
                     title="IP になった 場合の 曲線半径 R (0=角折れ)"
-                    className="col-span-2 px-1 py-1 border rounded text-xs text-right"
+                    className="col-span-2 px-2 py-1 border rounded text-sm text-right"
                   />
                   <button
                     onClick={handleAddPoint}
                     disabled={!addCoordId}
-                    className="col-span-2 flex items-center justify-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                    className="col-span-2 flex items-center justify-center gap-1 px-2 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                   >
-                    <Plus className="h-3 w-3" />
+                    <Plus className="h-3.5 w-3.5" />
                     追加
                   </button>
                 </div>
-                <div className="text-[10px] text-slate-400">
+                <div className="text-xs text-slate-400">
                   💡 地図上の 座標を クリックしても 末尾に 追加できます
                   (既登録は スカイブルー ハロー で 強調)。
                 </div>
 
                 {/* 線形長 (以前の 独立セクションを ここに 統合) */}
-                <div className="text-[11px] text-slate-500 pt-1 border-t">
+                <div className="text-xs text-slate-500 pt-1 border-t">
                   線形長:{' '}
-                  <span className="font-mono tabular-nums text-slate-700">
+                  <span className="font-mono tabular-nums text-slate-700 text-sm">
                     {totalLen.toFixed(2)} m
                   </span>
-                  <span className="text-[10px] text-slate-400 ml-2">
+                  <span className="text-[11px] text-slate-400 ml-2">
                     (直線・単曲線・クロソイド, L = A²/R)
                   </span>
                 </div>
@@ -1510,12 +1572,13 @@ export function OpenChannelAlignmentPage() {
 
               {/* 中間点計算 */}
               <CollapsibleSection title="中間点計算" storageKey="oc:section:stations">
-                <div className="text-[11px] text-slate-500">
-                  線形上の任意位置の座標を算出します。BP からの距離 (m) を SP 値として扱います。
-                  ピッチ割では BP/EP は SP0.00 / SP{`{`}全長{`}`}.00、円弧の起終点は BC{`{`}距離{`}`}.00 / EC{`{`}距離{`}`}.00 として表示。
+                <div className="text-xs text-slate-500">
+                  線形上の 任意位置の 座標を 算出します。BP からの 距離 (m) を SP 値として 扱います。
+                  <br />
+                  「特徴点を追加」で 折点 IP・単曲線 BC/EC・緩和曲線 BTC/ETC の 追加距離を 一括登録できます。
                 </div>
 
-                <div className="flex gap-1">
+                <div className="flex gap-1 items-center flex-wrap">
                   <button
                     onClick={() => setStationMode('sp')}
                     className={`px-2 py-1 text-xs border rounded ${
@@ -1532,42 +1595,51 @@ export function OpenChannelAlignmentPage() {
                   >
                     ピッチ割
                   </button>
+                  <button
+                    onClick={handleAddFeaturePoints}
+                    disabled={segments.length === 0}
+                    className="ml-auto flex items-center gap-1 px-2 py-1 text-xs border rounded bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
+                    title="折点 IP / 単曲線 BC/EC / 緩和曲線 BTC/ETC を 現在の 中間点リスト に 追加"
+                  >
+                    <Plus className="h-3 w-3" />
+                    特徴点を追加
+                  </button>
                 </div>
 
                 {stationMode === 'sp' ? (
-                  <div className="grid grid-cols-12 gap-1 items-end">
-                    <label className="col-span-7 flex flex-col gap-0.5 text-[11px]">
+                  <div className="grid grid-cols-12 gap-2 items-end">
+                    <label className="col-span-8 flex flex-col gap-0.5 text-xs">
                       <span className="text-slate-500">SP (BP からの距離 m)</span>
                       <input
                         type="number"
                         step={0.01}
                         value={stationDist}
                         onChange={(e) => setStationDist(parseFloat(e.target.value) || 0)}
-                        className="px-1 py-1 border rounded text-right text-xs"
+                        className="px-2 py-1 border rounded text-right text-sm"
                       />
                     </label>
                     <button
                       onClick={handleAddStation}
                       disabled={segments.length === 0}
-                      className="col-span-5 flex items-center justify-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                      className="col-span-4 flex items-center justify-center gap-1 px-2 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                     >
-                      <Plus className="h-3 w-3" />
+                      <Plus className="h-3.5 w-3.5" />
                       座標を計算
                     </button>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-12 gap-1 items-end">
-                    <label className="col-span-4 flex flex-col gap-0.5 text-[11px]">
+                  <div className="grid grid-cols-12 gap-2 items-end">
+                    <label className="col-span-4 flex flex-col gap-0.5 text-xs">
                       <span className="text-slate-500">ピッチ (m)</span>
                       <input
                         type="number"
                         step={1}
                         value={stationPitch}
                         onChange={(e) => setStationPitch(parseFloat(e.target.value) || 0)}
-                        className="px-1 py-1 border rounded text-right text-xs"
+                        className="px-2 py-1 border rounded text-right text-sm"
                       />
                     </label>
-                    <label className="col-span-4 flex items-center gap-1 text-[11px] pb-1">
+                    <label className="col-span-4 flex items-center gap-1 text-xs pb-1">
                       <input
                         type="checkbox"
                         checked={includeEp}
@@ -1578,9 +1650,9 @@ export function OpenChannelAlignmentPage() {
                     <button
                       onClick={handleAddStation}
                       disabled={segments.length === 0}
-                      className="col-span-4 flex items-center justify-center gap-1 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                      className="col-span-4 flex items-center justify-center gap-1 px-2 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                     >
-                      <Plus className="h-3 w-3" />
+                      <Plus className="h-3.5 w-3.5" />
                       生成
                     </button>
                   </div>
@@ -1588,17 +1660,17 @@ export function OpenChannelAlignmentPage() {
 
                 {stations.length > 0 && (
                   <>
-                    <div className="border rounded overflow-auto max-h-64">
-                      <table className="w-full text-xs">
-                        <thead className="bg-slate-50 text-slate-600 sticky top-0">
+                    <div className="border rounded overflow-auto max-h-80">
+                      <table className="w-full text-sm">
+                        <thead className="bg-slate-50 text-slate-600 sticky top-0 text-xs">
                           <tr>
-                            <th className="px-1 py-1 w-8 text-center">#</th>
-                            <th className="px-1 py-1 text-left">SP</th>
-                            <th className="px-1 py-1 text-right">距離(m)</th>
-                            <th className="px-1 py-1 text-right">X</th>
-                            <th className="px-1 py-1 text-right">Y</th>
-                            <th className="px-1 py-1 w-8 text-center">断面</th>
-                            <th className="px-1 py-1 w-8"></th>
+                            <th className="px-2 py-1 w-10 text-center">#</th>
+                            <th className="px-2 py-1 text-left">SP</th>
+                            <th className="px-2 py-1 text-right">距離 (m)</th>
+                            <th className="px-2 py-1 text-right">X</th>
+                            <th className="px-2 py-1 text-right">Y</th>
+                            <th className="px-2 py-1 w-12 text-center">断面</th>
+                            <th className="px-2 py-1 w-8"></th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1616,12 +1688,12 @@ export function OpenChannelAlignmentPage() {
                                   isSel ? 'bg-blue-50' : 'hover:bg-slate-50'
                                 }`}
                               >
-                                <td className="px-1 py-1 text-center text-slate-500">{i + 1}</td>
-                                <td className="px-1 py-1 font-mono">{s.label}</td>
-                                <td className="px-1 py-1 text-right tabular-nums">{s.distance.toFixed(2)}</td>
-                                <td className="px-1 py-1 text-right tabular-nums">{p ? p.x.toFixed(3) : '-'}</td>
-                                <td className="px-1 py-1 text-right tabular-nums">{p ? p.y.toFixed(3) : '-'}</td>
-                                <td className="px-1 py-1 text-center">
+                                <td className="px-2 py-1 text-center text-slate-500 text-xs">{i + 1}</td>
+                                <td className="px-2 py-1 font-mono">{s.label}</td>
+                                <td className="px-2 py-1 text-right tabular-nums">{s.distance.toFixed(2)}</td>
+                                <td className="px-2 py-1 text-right tabular-nums">{p ? p.x.toFixed(3) : '-'}</td>
+                                <td className="px-2 py-1 text-right tabular-nums">{p ? p.y.toFixed(3) : '-'}</td>
+                                <td className="px-2 py-1 text-center">
                                   <span
                                     className={`text-[10px] px-1 py-0.5 rounded ${
                                       hasOverride
