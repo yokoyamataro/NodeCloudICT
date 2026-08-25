@@ -88,6 +88,13 @@ export interface OpenChannelRow {
   stations: StationRow[]
   /** 左右の基準方向 */
   sideOrientation: SideOrientation
+  /**
+   * 先頭測点 (BP) の SP オフセット。デフォルト 0。
+   * 路線 の 途中 から IP を 入力する 場合 (例: BP を SP 224.69 に 設定) に、
+   * 中間点計算 の SP ラベル が 元路線 と 揃う ように する。
+   * 内部距離 (BP からの 累積距離) との 関係: SP = 内部距離 + spOffset
+   */
+  spOffset: number
   notes: string | null
 }
 
@@ -100,6 +107,7 @@ interface OpenChannelDb {
   profile_points: ProfilePoint[] | null
   stations: StationRow[] | null
   side_orientation: SideOrientation | null
+  sp_offset: number | null
   notes: string | null
 }
 
@@ -122,6 +130,7 @@ function toRow(d: OpenChannelDb): OpenChannelRow {
     profilePoints: Array.isArray(d.profile_points) ? d.profile_points : [],
     stations: Array.isArray(d.stations) ? d.stations : [],
     sideOrientation: d.side_orientation === 'reverse' ? 'reverse' : 'forward',
+    spOffset: Number.isFinite(Number(d.sp_offset)) ? Number(d.sp_offset) : 0,
     notes: d.notes,
   }
 }
@@ -171,6 +180,7 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
         profile_points: [],
         stations: [],
         side_orientation: 'forward',
+        sp_offset: 0,
         notes: null,
       }
       const { data, error } = await supabase
@@ -198,6 +208,7 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
       if (updates.profilePoints !== undefined) dbUpdates.profile_points = updates.profilePoints
       if (updates.stations !== undefined) dbUpdates.stations = updates.stations
       if (updates.sideOrientation !== undefined) dbUpdates.side_orientation = updates.sideOrientation
+      if (updates.spOffset !== undefined) dbUpdates.sp_offset = updates.spOffset
       if (updates.notes !== undefined) dbUpdates.notes = updates.notes
       // 楽観的更新
       set((s) => ({

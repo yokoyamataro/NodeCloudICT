@@ -1102,22 +1102,39 @@ export function OpenChannelAlignmentPage() {
     updateChannel(selected.id, { profilePoints: arr })
   }
 
-  // 中間点計算（任意 SP / ピッチ割）
+  // BP に 割り当てる SP 値 (= 内部距離 0 の SP)。デフォルト 0。
+  // 内部距離 d に対する SP 表示値 = d + spOffset。
+  const spOffset = selected?.spOffset ?? 0
+
+  // 中間点計算（任意 SP / ピッチ割）— 数値は 全て SP 値 (内部距離 ではなく)
+  // で 保持し、実際 の 計算時 に (SP - spOffset) で 内部距離 に 変換する。
   const [stationMode, setStationMode] = useState<'sp' | 'pitch'>('sp')
-  const [stationDist, setStationDist] = useState<number>(0)
+  const [stationSp, setStationSp] = useState<number>(0)
+  const [stationStartSp, setStationStartSp] = useState<number>(0)
+  const [stationEndSp, setStationEndSp] = useState<number>(0)
   const [stationPitch, setStationPitch] = useState<number>(20)
-  const [includeEp, setIncludeEp] = useState<boolean>(true)
   const [selectedStationId, setSelectedStationId] = useState<string | null>(null)
+
+  // 線形物 切替時 に 中間点計算 の SP 入力 を BP..EP の SP 値 に 初期化。
+  useEffect(() => {
+    if (!selected) return
+    setStationSp(selected.spOffset)
+    setStationStartSp(selected.spOffset)
+    setStationEndSp(selected.spOffset + totalLen)
+    // 線形物 切替時 のみ 実行 (totalLen 変更 で 再 リセット しない)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId])
 
   const stations: StationRow[] = selected?.stations ?? []
   const selectedStation = stations.find((s) => s.id === selectedStationId) ?? null
 
-  const formatSp = (d: number) => `SP${d.toFixed(2)}`
-  const formatBc = (d: number) => `BC${d.toFixed(2)}`
-  const formatEc = (d: number) => `EC${d.toFixed(2)}`
-  const formatBtc = (d: number) => `BTC${d.toFixed(2)}`
-  const formatEtc = (d: number) => `ETC${d.toFixed(2)}`
-  const formatIp = (d: number) => `IP${d.toFixed(2)}`
+  // 内部距離 (BP からの 累積) を 受け取り、SP 表示付き の ラベル を 返す。
+  const formatSp = (d: number) => `SP${(d + spOffset).toFixed(2)}`
+  const formatBc = (d: number) => `BC${(d + spOffset).toFixed(2)}`
+  const formatEc = (d: number) => `EC${(d + spOffset).toFixed(2)}`
+  const formatBtc = (d: number) => `BTC${(d + spOffset).toFixed(2)}`
+  const formatEtc = (d: number) => `ETC${(d + spOffset).toFixed(2)}`
+  const formatIp = (d: number) => `IP${(d + spOffset).toFixed(2)}`
 
   // getCurveMarkers が 返す 6 種類の マーカー を、ユーザー が 見慣れた
   // ラベル に 変換する。 単曲線 の 両端は BC/EC、緩和曲線 の 外側端は
@@ -1193,8 +1210,13 @@ export function OpenChannelAlignmentPage() {
 
   const handleAddStation = () => {
     if (!selected || segments.length === 0) return
+    // 線形物 の 有効 SP 範囲 = [spOffset, spOffset + totalLen]
+    const minSp = spOffset
+    const maxSp = spOffset + totalLen
     if (stationMode === 'sp') {
-      const d = Math.max(0, Math.min(stationDist, totalLen))
+      // 任意 SP: 1 点だけ 追加。範囲外 は クランプ。
+      const sp = Math.max(minSp, Math.min(stationSp, maxSp))
+      const d = sp - spOffset
       const newRow: StationRow = {
         id: newStationId(),
         label: formatSp(d),
@@ -1204,24 +1226,36 @@ export function OpenChannelAlignmentPage() {
       const next = [...stations, newRow].sort((a, b) => a.distance - b.distance)
       setStations(next)
     } else {
+      // ピッチ割: 指定 SP 範囲 [startSp, endSp] を pitch 毎 に 生成。
       const pitch = stationPitch
       if (!Number.isFinite(pitch) || pitch <= 0) return
+      // 範囲を 有効 SP 範囲 に クランプ
+      const startSp = Math.max(minSp, Math.min(stationStartSp, maxSp))
+      const endSp = Math.max(minSp, Math.min(stationEndSp, maxSp))
+      if (endSp < startSp - 1e-6) return
+
       const out: StationRow[] = []
       const push = (label: string, distance: number) =>
         out.push({ id: newStationId(), label, distance, crossSection: null })
 
-      let d = 0
-      while (d <= totalLen + 1e-6) {
-        const dist = Math.min(d, totalLen)
-        push(formatSp(dist), dist)
-        d += pitch
+      let sp = startSp
+      while (sp <= endSp + 1e-6) {
+        const d = Math.min(sp, endSp) - spOffset
+        push(formatSp(d), d)
+        sp += pitch
       }
-      if (includeEp) {
-        const last = out.length > 0 ? out[out.length - 1].distance : -1
-        if (Math.abs(last - totalLen) > 1e-3) push(formatSp(totalLen), totalLen)
+      // 範囲末端 が pitch で 割り切れない 場合は 明示的に 末端 も 追加
+      const lastAdded = out.length > 0 ? out[out.length - 1].distance : -1
+      const endDist = endSp - spOffset
+      if (Math.abs(lastAdded - endDist) > 1e-3) {
+        push(formatSp(endDist), endDist)
       }
-      // 特徴点 (IP / BC / EC / BTC / ETC)
-      for (const f of collectFeaturePoints()) push(f.label, f.distance)
+      // 特徴点 (IP / BC / EC / BTC / ETC) を 範囲内 だけ 追加
+      for (const f of collectFeaturePoints()) {
+        const sp = f.distance + spOffset
+        if (sp < startSp - 1e-6 || sp > endSp + 1e-6) continue
+        push(f.label, f.distance)
+      }
 
       const merged = dedupeStations(out)
 
@@ -1232,7 +1266,12 @@ export function OpenChannelAlignmentPage() {
         if (ex && ex.crossSection) return { ...s, id: ex.id, crossSection: ex.crossSection }
         return s
       })
-      setStations(final)
+      // 既存 の 中間点 は 上書き ではなく、範囲外 の 分 は 保持する。
+      const preserved = stations.filter((s) => {
+        const sp = s.distance + spOffset
+        return sp < startSp - 1e-6 || sp > endSp + 1e-6
+      })
+      setStations(dedupeStations([...preserved, ...final]))
     }
   }
 
@@ -1635,6 +1674,26 @@ export function OpenChannelAlignmentPage() {
                   </button>
                 </div>
 
+                {/* 先頭測点 (BP) の SP オフセット。 路線 の 途中 から 始まる
+                    線形物 (例: BP を SP 224.69 に 設定) で 使う。 デフォルト 0。 */}
+                <div className="flex items-center gap-2 text-xs border rounded bg-blue-50/50 border-blue-200 px-2 py-1.5">
+                  <span className="font-semibold text-slate-700">開始距離 SP</span>
+                  <input
+                    type="number"
+                    step={0.01}
+                    value={selected.spOffset}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value)
+                      if (Number.isFinite(v))
+                        updateChannel(selected.id, { spOffset: v })
+                    }}
+                    className="w-24 px-2 py-1 border rounded text-right text-sm"
+                  />
+                  <span className="text-slate-500 text-[11px]">
+                    (= BP の SP 値。路線途中から IP を 入力する とき に 設定)
+                  </span>
+                </div>
+
                 {/* 線形点テーブル (種別 は 位置から 自動決定: 先頭=BP、末尾=EP、中間=IP) */}
                 {selected.alignmentPoints.length > 0 ? (
                   <div className="border rounded overflow-hidden">
@@ -1837,9 +1896,12 @@ export function OpenChannelAlignmentPage() {
               {/* 中間点計算 */}
               <CollapsibleSection title="中間点計算" storageKey="oc:section:stations">
                 <div className="text-xs text-slate-500">
-                  線形上の 任意位置の 座標を 算出します。BP からの 距離 (m) を SP 値として 扱います。
+                  線形上の 任意位置の 座標を 算出します。SP 値 = BP の SP (
+                  {spOffset.toFixed(2)}) + BP からの 内部距離。
+                  有効 SP 範囲: <span className="font-mono">{spOffset.toFixed(2)}</span> 〜{' '}
+                  <span className="font-mono">{(spOffset + totalLen).toFixed(2)}</span>
                   <br />
-                  「特徴点を追加」で 折点 IP・単曲線 BC/EC・緩和曲線 BTC/ETC の 追加距離を 一括登録できます。
+                  「特徴点を追加」で 折点 IP・単曲線 BC/EC・緩和曲線 BTC/ETC の SP 値を 一括登録できます。
                 </div>
 
                 <div className="flex gap-1 items-center flex-wrap">
@@ -1873,12 +1935,12 @@ export function OpenChannelAlignmentPage() {
                 {stationMode === 'sp' ? (
                   <div className="grid grid-cols-12 gap-2 items-end">
                     <label className="col-span-8 flex flex-col gap-0.5 text-xs">
-                      <span className="text-slate-500">SP (BP からの距離 m)</span>
+                      <span className="text-slate-500">SP 値</span>
                       <input
                         type="number"
                         step={0.01}
-                        value={stationDist}
-                        onChange={(e) => setStationDist(parseFloat(e.target.value) || 0)}
+                        value={stationSp}
+                        onChange={(e) => setStationSp(parseFloat(e.target.value) || 0)}
                         className="px-2 py-1 border rounded text-right text-sm"
                       />
                     </label>
@@ -1892,33 +1954,60 @@ export function OpenChannelAlignmentPage() {
                     </button>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-12 gap-2 items-end">
-                    <label className="col-span-4 flex flex-col gap-0.5 text-xs">
-                      <span className="text-slate-500">ピッチ (m)</span>
-                      <input
-                        type="number"
-                        step={1}
-                        value={stationPitch}
-                        onChange={(e) => setStationPitch(parseFloat(e.target.value) || 0)}
-                        className="px-2 py-1 border rounded text-right text-sm"
-                      />
-                    </label>
-                    <label className="col-span-4 flex items-center gap-1 text-xs pb-1">
-                      <input
-                        type="checkbox"
-                        checked={includeEp}
-                        onChange={(e) => setIncludeEp(e.target.checked)}
-                      />
-                      EP も含める
-                    </label>
-                    <button
-                      onClick={handleAddStation}
-                      disabled={segments.length === 0}
-                      className="col-span-4 flex items-center justify-center gap-1 px-2 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      生成
-                    </button>
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-12 gap-2 items-end">
+                      <label className="col-span-4 flex flex-col gap-0.5 text-xs">
+                        <span className="text-slate-500">始点 SP</span>
+                        <input
+                          type="number"
+                          step={0.01}
+                          value={stationStartSp}
+                          onChange={(e) => setStationStartSp(parseFloat(e.target.value) || 0)}
+                          className="px-2 py-1 border rounded text-right text-sm"
+                        />
+                      </label>
+                      <label className="col-span-4 flex flex-col gap-0.5 text-xs">
+                        <span className="text-slate-500">終点 SP</span>
+                        <input
+                          type="number"
+                          step={0.01}
+                          value={stationEndSp}
+                          onChange={(e) => setStationEndSp(parseFloat(e.target.value) || 0)}
+                          className="px-2 py-1 border rounded text-right text-sm"
+                        />
+                      </label>
+                      <label className="col-span-4 flex flex-col gap-0.5 text-xs">
+                        <span className="text-slate-500">ピッチ (m)</span>
+                        <input
+                          type="number"
+                          step={1}
+                          value={stationPitch}
+                          onChange={(e) => setStationPitch(parseFloat(e.target.value) || 0)}
+                          className="px-2 py-1 border rounded text-right text-sm"
+                        />
+                      </label>
+                    </div>
+                    <div className="flex gap-2 items-center">
+                      <button
+                        onClick={() => {
+                          setStationStartSp(spOffset)
+                          setStationEndSp(spOffset + totalLen)
+                        }}
+                        disabled={segments.length === 0}
+                        className="px-2 py-1 text-xs border rounded bg-white hover:bg-slate-50 disabled:opacity-50"
+                        title="始点 SP を BP、終点 SP を EP に セット"
+                      >
+                        全区間
+                      </button>
+                      <button
+                        onClick={handleAddStation}
+                        disabled={segments.length === 0}
+                        className="ml-auto flex items-center justify-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        生成
+                      </button>
+                    </div>
                   </div>
                 )}
 
