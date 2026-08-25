@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { Settings2, X } from 'lucide-react'
-import { useWorkAreaStore } from '@/stores/workAreaStore'
+import { useWorkAreaStore, type WorkAreaRow } from '@/stores/workAreaStore'
 import { useParcelStore } from '@/stores/parcelStore'
 import { useLandownerStore } from '@/stores/landownerStore'
 import { useFarmStore } from '@/stores/farmStore'
@@ -15,6 +15,11 @@ import {
 import { compareByLocationAndParcel } from '@/lib/parcelSort'
 import { MobileListColumnPicker, type ColumnDef } from './MobileListColumnPicker'
 import { MobileParcelEditModal } from './MobileParcelEditModal'
+
+// zustand セレクタで毎回 `[]` を返すと新しい参照になり、React が無限再レンダーで
+// #185 を投げて AppErrorBoundary に落ちる。境界測量の work_areas が未 fetch /
+// 空の工区でも安全に動くよう、安定参照を使う。
+const EMPTY_WORK_AREAS: ReadonlyArray<WorkAreaRow> = Object.freeze([])
 
 export const PARCEL_COLUMN_KEYS = [
   'parcel_number',
@@ -65,7 +70,7 @@ export function MobileParcelListPanel({
   onClose,
 }: Props) {
   const areas = useWorkAreaStore(
-    (s) => s.workAreas['boundary_survey'] ?? [],
+    (s) => s.workAreas['boundary_survey'] ?? EMPTY_WORK_AREAS,
   )
   const parcelsByWorkAreaId = useParcelStore((s) => s.byWorkAreaId)
   const landowners = useLandownerStore((s) => s.landowners)
