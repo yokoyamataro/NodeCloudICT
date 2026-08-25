@@ -69,6 +69,20 @@ export interface StationRow {
   crossSection: StandardCrossSection | null
 }
 
+/**
+ * 幅杭。追加距離 (BP からの 内部距離) と 中心線 から の 垂直方向 オフセット
+ * (進行方向 右手 が +、左手 が -) を 指定して 平面 XY を 算出する。
+ */
+export interface WidthStake {
+  id: string
+  /** BP からの 内部 累積距離 (m) */
+  distance: number
+  /** 中心線 から の 垂直 オフセット (m)。右 が +、左 が -。 */
+  offset: number
+  /** 任意 メモ (点名 等) */
+  note?: string
+}
+
 /** 断面の右/左を判定する基準方向。
  *  - 'forward': BP→EP を見て右/左（道路工事の慣習、デフォルト）
  *  - 'reverse': EP→BP を見て右/左（河川工事の慣習）
@@ -95,6 +109,8 @@ export interface OpenChannelRow {
    * 内部距離 (BP からの 累積距離) との 関係: SP = 内部距離 + spOffset
    */
   spOffset: number
+  /** 幅杭 (SP + 中心線 から の 垂直方向 オフセット で 定義 する 点) */
+  widthStakes: WidthStake[]
   notes: string | null
 }
 
@@ -108,6 +124,7 @@ interface OpenChannelDb {
   stations: StationRow[] | null
   side_orientation: SideOrientation | null
   sp_offset: number | null
+  width_stakes: WidthStake[] | null
   notes: string | null
 }
 
@@ -131,6 +148,7 @@ function toRow(d: OpenChannelDb): OpenChannelRow {
     stations: Array.isArray(d.stations) ? d.stations : [],
     sideOrientation: d.side_orientation === 'reverse' ? 'reverse' : 'forward',
     spOffset: Number.isFinite(Number(d.sp_offset)) ? Number(d.sp_offset) : 0,
+    widthStakes: Array.isArray(d.width_stakes) ? d.width_stakes : [],
     notes: d.notes,
   }
 }
@@ -181,6 +199,7 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
         stations: [],
         side_orientation: 'forward',
         sp_offset: 0,
+        width_stakes: [],
         notes: null,
       }
       const { data, error } = await supabase
@@ -209,6 +228,7 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
       if (updates.stations !== undefined) dbUpdates.stations = updates.stations
       if (updates.sideOrientation !== undefined) dbUpdates.side_orientation = updates.sideOrientation
       if (updates.spOffset !== undefined) dbUpdates.sp_offset = updates.spOffset
+      if (updates.widthStakes !== undefined) dbUpdates.width_stakes = updates.widthStakes
       if (updates.notes !== undefined) dbUpdates.notes = updates.notes
       // 楽観的更新
       set((s) => ({

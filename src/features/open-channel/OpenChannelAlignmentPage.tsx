@@ -26,6 +26,7 @@ import {
   type StandardCrossSection,
   type StationRow,
   type SideOrientation,
+  type WidthStake,
   buildCrossSectionPath,
   formatSlope,
   elementStep,
@@ -1102,9 +1103,72 @@ export function OpenChannelAlignmentPage() {
     updateChannel(selected.id, { profilePoints: arr })
   }
 
+  // 幅杭 (width stakes) 操作 — 縦断線形 と 同じく テーブル末尾 の 空行 で 追加。
+  const [newStakeSpText, setNewStakeSpText] = useState<string>('')
+  const [newStakeOffsetText, setNewStakeOffsetText] = useState<string>('')
+  const [newStakeNoteText, setNewStakeNoteText] = useState<string>('')
+
+  const newWidthStakeId = () =>
+    `ws-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+
+  const commitNewWidthStake = () => {
+    if (!selected) return
+    const sp = parseFloat(newStakeSpText)
+    const off = parseFloat(newStakeOffsetText)
+    if (!Number.isFinite(sp) || !Number.isFinite(off)) return
+    const d = sp - (selected.spOffset ?? 0)
+    const stake: WidthStake = {
+      id: newWidthStakeId(),
+      distance: d,
+      offset: off,
+      note: newStakeNoteText.trim() || undefined,
+    }
+    const next = [...selected.widthStakes, stake].sort((a, b) => a.distance - b.distance)
+    updateChannel(selected.id, { widthStakes: next })
+    setNewStakeSpText('')
+    setNewStakeOffsetText('')
+    setNewStakeNoteText('')
+  }
+
+  const handleRemoveWidthStake = (id: string) => {
+    if (!selected) return
+    updateChannel(selected.id, {
+      widthStakes: selected.widthStakes.filter((s) => s.id !== id),
+    })
+  }
+  const handleChangeWidthStake = (id: string, patch: Partial<WidthStake>) => {
+    if (!selected) return
+    const arr = selected.widthStakes.map((s) => (s.id === id ? { ...s, ...patch } : s))
+    arr.sort((a, b) => a.distance - b.distance)
+    updateChannel(selected.id, { widthStakes: arr })
+  }
+
   // BP に 割り当てる SP 値 (= 内部距離 0 の SP)。デフォルト 0。
   // 内部距離 d に対する SP 表示値 = d + spOffset。
   const spOffset = selected?.spOffset ?? 0
+
+  // 幅杭 に 対する 平面 座標 XY を まとめて 算出。
+  // 座標は 中心線 の 接線 に 対する 垂直方向 (右 が +) に offset だけ 進めた 点。
+  // sideOrientation='reverse' (河川モード) の 場合 は 符号 を 反転する。
+  const widthStakesWithXY = useMemo(() => {
+    if (!selected || segments.length === 0) return []
+    const sign = selected.sideOrientation === 'forward' ? 1 : -1
+    return selected.widthStakes.map((stake) => {
+      const center = pointAtDistance(segments, stake.distance)
+      const tangent = tangentAtDistance(segments, stake.distance)
+      if (!center || !tangent) {
+        return { stake, x: null as number | null, y: null as number | null }
+      }
+      // (x=北, y=東) 系で 進行方向 (tx, ty) の CCW 90° = (-ty, tx) が 右
+      const perpX = -tangent.y * sign
+      const perpY = tangent.x * sign
+      return {
+        stake,
+        x: center.x + stake.offset * perpX,
+        y: center.y + stake.offset * perpY,
+      }
+    })
+  }, [selected, segments])
 
   // 中間点計算（任意 SP / ピッチ割）— 数値は 全て SP 値 (内部距離 ではなく)
   // で 保持し、実際 の 計算時 に (SP - spOffset) で 内部距離 に 変換する。
@@ -2207,6 +2271,168 @@ export function OpenChannelAlignmentPage() {
                 )}
               </CollapsibleSection>
 
+              {/* 幅杭計算 (中間点 と 縦断線形 の 間 に 配置)。
+                  SP 値 と 中心線 から の 垂直方向 オフセット (右 +/左 -) を
+                  入力する と、平面 座標 XY が 算出される。 追加 は テーブル
+                  末尾 の 空行 に 直接 入力 (Enter or + ボタン で 確定)。 */}
+              <CollapsibleSection title="幅杭計算" storageKey="oc:section:width-stakes">
+                <div className="text-xs text-slate-500">
+                  SP 値 と 中心線 から の 垂直方向 オフセット (m) を 入力。
+                  <br />
+                  右 (
+                  {selected.sideOrientation === 'forward'
+                    ? '起点→終点視点'
+                    : '終点→起点視点'}
+                  ) が +、左が -。 末尾 の 空行 に 入力 → Enter or + ボタン で 追加。
+                </div>
+
+                <div className="border rounded overflow-auto max-h-56">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 text-slate-600 sticky top-0 text-xs">
+                      <tr>
+                        <th className="px-2 py-1 w-10 text-center">#</th>
+                        <th className="px-2 py-1 text-right">SP</th>
+                        <th className="px-2 py-1 text-right">オフセット (m)</th>
+                        <th className="px-2 py-1 text-right">X</th>
+                        <th className="px-2 py-1 text-right">Y</th>
+                        <th className="px-2 py-1 text-left">メモ</th>
+                        <th className="px-2 py-1 w-10"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {widthStakesWithXY.map(({ stake, x, y }, i) => {
+                        const sp = stake.distance + spOffset
+                        return (
+                          <tr key={stake.id} className="border-t">
+                            <td className="px-2 py-1 text-center text-slate-500 text-xs">
+                              {i + 1}
+                            </td>
+                            <td className="px-2 py-1 text-right">
+                              <input
+                                type="number"
+                                step={0.01}
+                                value={sp}
+                                onChange={(e) => {
+                                  const v = parseFloat(e.target.value)
+                                  if (Number.isFinite(v))
+                                    handleChangeWidthStake(stake.id, {
+                                      distance: v - spOffset,
+                                    })
+                                }}
+                                className="w-24 px-1 py-0.5 border rounded text-right text-sm"
+                              />
+                            </td>
+                            <td className="px-2 py-1 text-right">
+                              <input
+                                type="number"
+                                step={0.01}
+                                value={stake.offset}
+                                onChange={(e) => {
+                                  const v = parseFloat(e.target.value)
+                                  if (Number.isFinite(v))
+                                    handleChangeWidthStake(stake.id, { offset: v })
+                                }}
+                                className="w-20 px-1 py-0.5 border rounded text-right text-sm"
+                              />
+                            </td>
+                            <td className="px-2 py-1 text-right tabular-nums font-mono">
+                              {x != null ? x.toFixed(3) : '-'}
+                            </td>
+                            <td className="px-2 py-1 text-right tabular-nums font-mono">
+                              {y != null ? y.toFixed(3) : '-'}
+                            </td>
+                            <td className="px-2 py-1">
+                              <input
+                                type="text"
+                                value={stake.note ?? ''}
+                                placeholder="任意"
+                                onChange={(e) =>
+                                  handleChangeWidthStake(stake.id, {
+                                    note: e.target.value || undefined,
+                                  })
+                                }
+                                className="w-full px-1 py-0.5 border rounded text-sm"
+                              />
+                            </td>
+                            <td className="px-2 py-1 text-right">
+                              <button
+                                onClick={() => handleRemoveWidthStake(stake.id)}
+                                className="p-0.5 border rounded hover:bg-red-50 text-red-600"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                      {/* 末尾 の 空行: SP と オフセット を 入力 して Enter or + で 追加。 */}
+                      <tr className="border-t bg-blue-50/40">
+                        <td className="px-2 py-1 text-center text-slate-400 text-xs">
+                          {widthStakesWithXY.length + 1}
+                        </td>
+                        <td className="px-2 py-1 text-right">
+                          <input
+                            type="number"
+                            step={0.01}
+                            value={newStakeSpText}
+                            placeholder="SP"
+                            onChange={(e) => setNewStakeSpText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') commitNewWidthStake()
+                            }}
+                            className="w-24 px-1 py-0.5 border rounded text-right text-sm bg-white"
+                          />
+                        </td>
+                        <td className="px-2 py-1 text-right">
+                          <input
+                            type="number"
+                            step={0.01}
+                            value={newStakeOffsetText}
+                            placeholder="±m"
+                            onChange={(e) => setNewStakeOffsetText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') commitNewWidthStake()
+                            }}
+                            className="w-20 px-1 py-0.5 border rounded text-right text-sm bg-white"
+                          />
+                        </td>
+                        <td
+                          className="px-2 py-1 text-right text-slate-300 text-xs"
+                          colSpan={2}
+                        >
+                          追加前
+                        </td>
+                        <td className="px-2 py-1">
+                          <input
+                            type="text"
+                            value={newStakeNoteText}
+                            placeholder="任意"
+                            onChange={(e) => setNewStakeNoteText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') commitNewWidthStake()
+                            }}
+                            className="w-full px-1 py-0.5 border rounded text-sm bg-white"
+                          />
+                        </td>
+                        <td className="px-2 py-1 text-right">
+                          <button
+                            onClick={commitNewWidthStake}
+                            disabled={
+                              !Number.isFinite(parseFloat(newStakeSpText)) ||
+                              !Number.isFinite(parseFloat(newStakeOffsetText))
+                            }
+                            title="幅杭 を 追加"
+                            className="p-0.5 border rounded text-blue-600 hover:bg-blue-50 disabled:opacity-30"
+                          >
+                            <Plus className="h-3 w-3" />
+                          </button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </CollapsibleSection>
+
               {/* 縦断線形 (中間点 と 標準断面 の 間 に 配置)。
                   縦断図 の プロット は 地図の 下に 残す。ここでは 変化点 の
                   追加 / 編集 / 削除 のみ。追加 は テーブル 末尾 の 空行 に
@@ -2440,6 +2666,61 @@ export function OpenChannelAlignmentPage() {
                         </CircleMarker>
                       )
                     })}
+                  </div>
+                )
+              })}
+              {/* 幅杭: ピンク (#ec4899) の 小さめ マーカー + 中心線 との
+                  接続線 で 「どの SP から どちら側 か」を 分かりやすく 表示。 */}
+              {widthStakesWithXY.map(({ stake, x, y }) => {
+                if (x == null || y == null) return null
+                const center = pointAtDistance(segments, stake.distance)
+                if (!center) return null
+                const stakeLL = converter.toLatLng(x, y)
+                const centerLL = converter.toLatLng(center.x, center.y)
+                const sp = stake.distance + spOffset
+                const side = stake.offset >= 0 ? '右' : '左'
+                return (
+                  <div key={`ws-${stake.id}`}>
+                    <Polyline
+                      positions={[
+                        [centerLL.lat, centerLL.lng],
+                        [stakeLL.lat, stakeLL.lng],
+                      ]}
+                      pathOptions={{
+                        color: '#ec4899',
+                        weight: 1.5,
+                        opacity: 0.8,
+                        dashArray: '3,3',
+                      }}
+                    />
+                    <CircleMarker
+                      center={[stakeLL.lat, stakeLL.lng]}
+                      radius={4}
+                      pathOptions={{
+                        color: '#fff',
+                        fillColor: '#ec4899',
+                        fillOpacity: 0.95,
+                        weight: 1.5,
+                      }}
+                    >
+                      <Tooltip
+                        permanent
+                        direction="right"
+                        offset={[6, 0]}
+                        className="point-label-tooltip"
+                      >
+                        <span
+                          style={{
+                            color: '#ec4899',
+                            textShadow:
+                              '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff',
+                          }}
+                        >
+                          SP{sp.toFixed(2)} {side}{Math.abs(stake.offset).toFixed(2)}m
+                          {stake.note ? ` (${stake.note})` : ''}
+                        </span>
+                      </Tooltip>
+                    </CircleMarker>
                   </div>
                 )
               })}
