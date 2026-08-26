@@ -638,7 +638,7 @@ export function StakingRecordsPage() {
           ))}
         </div>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-2 flex-wrap">
           {/* 補正: 実測値 に 加算する 定数オフセット (X / Y / Z 独立)。
               GPS 系統差 や 基準点 の ずれ を 素早く 吸収する 簡易補正。 */}
           <span
@@ -716,8 +716,8 @@ export function StakingRecordsPage() {
         </div>
       </div>
 
-      {/* サマリ */}
-      <div className="px-4 py-2 border-b bg-slate-50 flex items-center gap-4 text-xs text-slate-600">
+      {/* サマリ (幅 が 狭い とき は 折り返し) */}
+      <div className="px-4 py-2 border-b bg-slate-50 flex items-center gap-4 text-xs text-slate-600 flex-wrap">
         <span>合計 <span className="font-semibold">{summary.total}</span> 件</span>
         <span>測設 <span className="font-semibold">{summary.stake}</span> / フリー <span className="font-semibold">{summary.free}</span></span>
         {summary.avgDx != null && summary.avgDy != null && (
@@ -940,10 +940,17 @@ export function StakingRecordsPage() {
                 </th>
                 <th
                   className="px-2 py-1 border-b border-r text-center bg-blue-50"
-                  colSpan={3}
-                  title="設計 と 平均 の 差 (平均 - 設計)。 水平 = √(dX²+dY²)"
+                  colSpan={4}
+                  title="設計 と 平均 の 差 (補正後平均 - 設計)。 水平 = √(dX²+dY²)"
                 >
                   平均 - 設計
+                </th>
+                <th
+                  className="px-2 py-1 border-b border-r text-center bg-cyan-50"
+                  colSpan={3}
+                  title="平均 に 補正値 (X/Y/Z オフセット) を 加算 した 値。 出力 に 使用"
+                >
+                  補正後
                 </th>
                 <th className="px-2 py-2 border-b border-r text-right" rowSpan={2}>精度(m)</th>
                 <th className="px-2 py-2 border-b border-r text-left" rowSpan={2}>記録日時</th>
@@ -970,7 +977,11 @@ export function StakingRecordsPage() {
                 <th className="px-2 py-1 border-b border-r text-right bg-emerald-50">Z</th>
                 <th className="px-2 py-1 border-b border-r text-right bg-blue-50">dX</th>
                 <th className="px-2 py-1 border-b border-r text-right bg-blue-50">dY</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-blue-50">dZ</th>
                 <th className="px-2 py-1 border-b border-r text-right bg-blue-50">水平</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-cyan-50">X</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-cyan-50">Y</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-cyan-50">Z</th>
               </tr>
             </thead>
             <tbody>
@@ -1003,7 +1014,13 @@ export function StakingRecordsPage() {
                   avgX != null && g.designX != null ? avgX + xOffset - g.designX : null
                 const dvsY =
                   avgY != null && g.designY != null ? avgY + yOffset - g.designY : null
+                const dvsZ =
+                  avgZ != null && g.designZ != null ? avgZ + zOffset - g.designZ : null
                 const dvsH = dvsX != null && dvsY != null ? Math.hypot(dvsX, dvsY) : null
+                // 補正後 座標 (平均 + オフセット)
+                const corrX = avgX != null ? avgX + xOffset : null
+                const corrY = avgY != null ? avgY + yOffset : null
+                const corrZ = avgZ != null ? avgZ + zOffset : null
                 // 精度: m1 と m2 の 悪い方 (Max) を 表示 (未取得 は 除外)
                 const acc =
                   m1?.accuracy != null && m2?.accuracy != null
@@ -1136,13 +1153,13 @@ export function StakingRecordsPage() {
                       )}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
-                      {m1 ? (m1.measuredX + xOffset).toFixed(3) : '—'}
+                      {m1 ? m1.measuredX.toFixed(3) : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
-                      {m1 ? (m1.measuredY + yOffset).toFixed(3) : '—'}
+                      {m1 ? m1.measuredY.toFixed(3) : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
-                      {m1?.measuredZ != null ? (m1.measuredZ + zOffset).toFixed(3) : '—'}
+                      {m1?.measuredZ != null ? m1.measuredZ.toFixed(3) : '—'}
                     </td>
                     {/* 実測2 (点名 + リンク操作 / X / Y / Z)。 別 の 実測点 を リンク
                         させる こと で 「後追い で 2 回目 の 実測」を 表現できる。 */}
@@ -1221,13 +1238,13 @@ export function StakingRecordsPage() {
                       </div>
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
-                      {m2 ? (m2.measuredX + xOffset).toFixed(3) : '—'}
+                      {m2 ? m2.measuredX.toFixed(3) : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
-                      {m2 ? (m2.measuredY + yOffset).toFixed(3) : '—'}
+                      {m2 ? m2.measuredY.toFixed(3) : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
-                      {m2?.measuredZ != null ? (m2.measuredZ + zOffset).toFixed(3) : '—'}
+                      {m2?.measuredZ != null ? m2.measuredZ.toFixed(3) : '—'}
                     </td>
                     {/* 実測差 (m2 - m1) */}
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-rose-50/50">
@@ -1241,15 +1258,15 @@ export function StakingRecordsPage() {
                     </td>
                     {/* 平均 (X/Y/Z) */}
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-emerald-50/50 font-semibold">
-                      {avgX != null ? (avgX + xOffset).toFixed(3) : '—'}
+                      {avgX != null ? avgX.toFixed(3) : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-emerald-50/50 font-semibold">
-                      {avgY != null ? (avgY + yOffset).toFixed(3) : '—'}
+                      {avgY != null ? avgY.toFixed(3) : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-emerald-50/50 font-semibold">
-                      {avgZ != null ? (avgZ + zOffset).toFixed(3) : '—'}
+                      {avgZ != null ? avgZ.toFixed(3) : '—'}
                     </td>
-                    {/* 平均 - 設計 */}
+                    {/* 平均 - 設計 (dX / dY / dZ / 水平) */}
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-blue-50/50">
                       {dvsX != null ? dvsX.toFixed(3) : '—'}
                     </td>
@@ -1257,7 +1274,20 @@ export function StakingRecordsPage() {
                       {dvsY != null ? dvsY.toFixed(3) : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-blue-50/50">
+                      {dvsZ != null ? dvsZ.toFixed(3) : '—'}
+                    </td>
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-blue-50/50">
                       {dvsH != null ? dvsH.toFixed(3) : '—'}
+                    </td>
+                    {/* 補正後 (平均 + オフセット) — 出力 用 の 最終値 */}
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-cyan-50/50 font-semibold">
+                      {corrX != null ? corrX.toFixed(3) : '—'}
+                    </td>
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-cyan-50/50 font-semibold">
+                      {corrY != null ? corrY.toFixed(3) : '—'}
+                    </td>
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-cyan-50/50 font-semibold">
+                      {corrZ != null ? corrZ.toFixed(3) : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right">
                       {acc != null ? acc.toFixed(3) : '—'}
