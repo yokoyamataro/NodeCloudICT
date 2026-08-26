@@ -287,64 +287,74 @@ export function StakingRecordsPage() {
     setPendingLinkRecordId(null)
   }
 
-  // Z 補正値 (実測値に加算)。工区ごとに DB (design_survey_calibration.dz_offset)
-  // に永続化することで PC/スマホ間で共有可能に。localStorage は旧値のフォール
-  // バックとしてだけ参照 (初回だけ DB に移行)。
+  // X/Y/Z 補正値 (実測値に加算)。工区ごとに DB (design_survey_calibration) に
+  // 永続化して PC / スマホ間 で 共有 する。 Z 補正 は 従来 localStorage の
+  // フォールバック も 参照 (旧環境 互換)。X/Y 補正 は 追加 したての ため
+  // DB 直接。
   const zOffsetKey = currentFarm ? `staking:zOffset:${currentFarm.id}` : null
+  const [xOffset, setXOffset] = useState<number>(0)
+  const [yOffset, setYOffset] = useState<number>(0)
   const [zOffset, setZOffset] = useState<number>(0)
+  const [xOffsetInput, setXOffsetInput] = useState<string>('0')
+  const [yOffsetInput, setYOffsetInput] = useState<string>('0')
   const [zOffsetInput, setZOffsetInput] = useState<string>('0')
   useEffect(() => {
     if (!currentFarm) {
-      setZOffset(0)
-      setZOffsetInput('0')
+      setXOffset(0); setXOffsetInput('0')
+      setYOffset(0); setYOffsetInput('0')
+      setZOffset(0); setZOffsetInput('0')
       return
     }
     let cancelled = false
     void (async () => {
-      // まず DB から取得
-      let dbValue: number | null = null
+      let dbX: number | null = null
+      let dbY: number | null = null
+      let dbZ: number | null = null
       try {
         const { data } = await supabase
           .from('design_survey_calibration')
-          .select('dz_offset')
+          .select('dx_offset, dy_offset, dz_offset')
           .eq('farm_id', currentFarm.id)
           .maybeSingle()
-        const row = data as { dz_offset: number | string } | null
-        if (row?.dz_offset != null) {
-          const v = Number(row.dz_offset)
-          if (Number.isFinite(v)) dbValue = v
+        const row = data as {
+          dx_offset?: number | string | null
+          dy_offset?: number | string | null
+          dz_offset?: number | string | null
+        } | null
+        if (row) {
+          const vx = row.dx_offset != null ? Number(row.dx_offset) : NaN
+          const vy = row.dy_offset != null ? Number(row.dy_offset) : NaN
+          const vz = row.dz_offset != null ? Number(row.dz_offset) : NaN
+          if (Number.isFinite(vx)) dbX = vx
+          if (Number.isFinite(vy)) dbY = vy
+          if (Number.isFinite(vz)) dbZ = vz
         }
-      } catch { /* noop: 未マイグレーション環境等 */ }
+      } catch { /* noop: 未マイグレーション環境 */ }
       if (cancelled) return
-      if (dbValue != null) {
-        setZOffset(dbValue)
-        setZOffsetInput(String(dbValue))
-        // ついでに localStorage も更新して他画面 (施工計画) と揃える
-        if (zOffsetKey) {
-          try { localStorage.setItem(zOffsetKey, String(dbValue)) } catch { /* ignore */ }
-        }
-        return
+      // Z は localStorage フォールバック 有り
+      if (dbZ == null) {
+        try {
+          const raw = zOffsetKey ? localStorage.getItem(zOffsetKey) : null
+          const v = raw != null ? parseFloat(raw) : 0
+          dbZ = Number.isFinite(v) ? v : 0
+        } catch { dbZ = 0 }
       }
-      // DB に無い場合 → localStorage フォールバック
-      let lsValue = 0
-      try {
-        const raw = zOffsetKey ? localStorage.getItem(zOffsetKey) : null
-        const v = raw != null ? parseFloat(raw) : 0
-        lsValue = Number.isFinite(v) ? v : 0
-      } catch { lsValue = 0 }
-      setZOffset(lsValue)
-      setZOffsetInput(String(lsValue))
-      // localStorage に値があれば DB にも書いておく (端末→共有への一回きり移行)
-      if (lsValue !== 0) {
+      const x = dbX ?? 0
+      const y = dbY ?? 0
+      const z = dbZ ?? 0
+      setXOffset(x); setXOffsetInput(String(x))
+      setYOffset(y); setYOffsetInput(String(y))
+      setZOffset(z); setZOffsetInput(String(z))
+      if (zOffsetKey) {
+        try { localStorage.setItem(zOffsetKey, String(z)) } catch { /* ignore */ }
+      }
+      // localStorage 由来 の Z が あれば DB に も 書き戻し (一度きり)
+      if (dbZ != null && dbX == null && dbY == null && z !== 0) {
         try {
           await supabase
             .from('design_survey_calibration')
             .upsert(
-              {
-                farm_id: currentFarm.id,
-                is_enabled: true,
-                dz_offset: lsValue,
-              } as never,
+              { farm_id: currentFarm.id, is_enabled: true, dz_offset: z } as never,
               { onConflict: 'farm_id' },
             )
         } catch { /* ignore */ }
@@ -352,33 +362,37 @@ export function StakingRecordsPage() {
     })()
     return () => { cancelled = true }
   }, [currentFarm, zOffsetKey])
-  const commitZOffset = async (s: string) => {
+
+  // 補正値 の 保存 (X / Y / Z いずれか の 単一 フィールド 更新)。
+  const commitOffset = async (
+    axis: 'x' | 'y' | 'z',
+    s: string,
+  ) => {
     const n = parseFloat(s)
     const next = Number.isFinite(n) ? n : 0
-    setZOffset(next)
-    setZOffsetInput(String(next))
-    // localStorage (施工計画がフォールバック参照する) と DB 両方に反映
-    if (zOffsetKey) {
-      try { localStorage.setItem(zOffsetKey, String(next)) } catch { /* ignore */ }
-    }
-    if (currentFarm) {
-      try {
-        const { error } = await supabase
-          .from('design_survey_calibration')
-          .upsert(
-            {
-              farm_id: currentFarm.id,
-              is_enabled: true,
-              dz_offset: next,
-            } as never,
-            { onConflict: 'farm_id' },
-          )
-        if (error) {
-          console.warn('[staking] Z補正の保存に失敗', error)
-        }
-      } catch (err) {
-        console.warn('[staking] Z補正の保存に失敗', err)
+    if (axis === 'x') { setXOffset(next); setXOffsetInput(String(next)) }
+    if (axis === 'y') { setYOffset(next); setYOffsetInput(String(next)) }
+    if (axis === 'z') {
+      setZOffset(next); setZOffsetInput(String(next))
+      if (zOffsetKey) {
+        try { localStorage.setItem(zOffsetKey, String(next)) } catch { /* ignore */ }
       }
+    }
+    if (!currentFarm) return
+    const patch: Record<string, unknown> = {
+      farm_id: currentFarm.id,
+      is_enabled: true,
+    }
+    if (axis === 'x') patch.dx_offset = next
+    if (axis === 'y') patch.dy_offset = next
+    if (axis === 'z') patch.dz_offset = next
+    try {
+      const { error } = await supabase
+        .from('design_survey_calibration')
+        .upsert(patch as never, { onConflict: 'farm_id' })
+      if (error) console.warn(`[staking] ${axis.toUpperCase()} 補正 の 保存 に 失敗`, error)
+    } catch (err) {
+      console.warn(`[staking] ${axis.toUpperCase()} 補正 の 保存 に 失敗`, err)
     }
   }
 
@@ -482,25 +496,44 @@ export function StakingRecordsPage() {
     return out
   }, [filtered])
 
-  // 平均誤差・件数の簡易サマリ
+  // 平均誤差・件数の簡易サマリ。 平均 dx / dy は 実測 (m1/m2 の 平均) を
+  // 補正後 (+xOffset, +yOffset) にしてから 設計値 と の 差 を 取り、
+  // グループ 全体 で 平均。 RMS も 補正後 の 値 で 計算。
   const summary = useMemo(() => {
     let stakeCount = 0
     let freeCount = 0
-    let sumDx2 = 0
-    let pairs = 0
     for (const r of filtered) {
       if (r.targetType === 'free') freeCount++
       else stakeCount++
-      if (r.targetX != null && r.targetY != null) {
-        const dx = r.measuredX - r.targetX
-        const dy = r.measuredY - r.targetY
-        sumDx2 += dx * dx + dy * dy
-        pairs++
-      }
     }
-    const rms = pairs > 0 ? Math.sqrt(sumDx2 / pairs) : null
-    return { total: filtered.length, stake: stakeCount, free: freeCount, rms }
-  }, [filtered])
+    let sumDvsX = 0
+    let sumDvsY = 0
+    let sumDist2 = 0
+    let pairs = 0
+    for (const g of grouped) {
+      if (g.designX == null || g.designY == null || !g.m1) continue
+      const avgMX = g.m2 ? (g.m1.measuredX + g.m2.measuredX) / 2 : g.m1.measuredX
+      const avgMY = g.m2 ? (g.m1.measuredY + g.m2.measuredY) / 2 : g.m1.measuredY
+      const dvsX = avgMX + xOffset - g.designX
+      const dvsY = avgMY + yOffset - g.designY
+      sumDvsX += dvsX
+      sumDvsY += dvsY
+      sumDist2 += dvsX * dvsX + dvsY * dvsY
+      pairs++
+    }
+    const avgDx = pairs > 0 ? sumDvsX / pairs : null
+    const avgDy = pairs > 0 ? sumDvsY / pairs : null
+    const rms = pairs > 0 ? Math.sqrt(sumDist2 / pairs) : null
+    return {
+      total: filtered.length,
+      stake: stakeCount,
+      free: freeCount,
+      rms,
+      avgDx,
+      avgDy,
+      pairs,
+    }
+  }, [filtered, grouped, xOffset, yOffset])
 
   const handleDelete = async (id: string, name: string | null) => {
     if (!confirm(`記録「${name ?? '(無題)'}」を削除しますか？`)) return
@@ -511,7 +544,7 @@ export function StakingRecordsPage() {
   const handleExportCSV = () => {
     if (filtered.length === 0) return
     const header =
-      '点名,測量種別,X(実測),Y(実測),Z(実測),Z(補正),X(計画),Y(計画),Z(計画),精度(m),サンプル数,記録日時\n'
+      '点名,測量種別,X(実測),Y(実測),Z(実測),X(補正),Y(補正),Z(補正),X(計画),Y(計画),Z(計画),精度(m),サンプル数,記録日時\n'
     const rows = filtered
       .map((r) =>
         [
@@ -520,6 +553,8 @@ export function StakingRecordsPage() {
           r.measuredX.toFixed(3),
           r.measuredY.toFixed(3),
           r.measuredZ != null ? r.measuredZ.toFixed(3) : '',
+          (r.measuredX + xOffset).toFixed(3),
+          (r.measuredY + yOffset).toFixed(3),
           r.measuredZ != null ? (r.measuredZ + zOffset).toFixed(3) : '',
           r.targetX != null ? r.targetX.toFixed(3) : '',
           r.targetY != null ? r.targetY.toFixed(3) : '',
@@ -553,10 +588,10 @@ export function StakingRecordsPage() {
     filtered.forEach((r, index) => {
       const name = r.targetName ?? `pt-${index + 1}`
       const paddedName = name.padEnd(20, ' ')
-      const xStr = r.measuredX.toFixed(3).padStart(10, ' ')
-      const yStr = r.measuredY.toFixed(3).padStart(10, ' ')
+      const xStr = (r.measuredX + xOffset).toFixed(3).padStart(10, ' ')
+      const yStr = (r.measuredY + yOffset).toFixed(3).padStart(10, ' ')
       const zStr =
-        r.measuredZ != null ? r.measuredZ.toFixed(3).padStart(10, ' ') : ''
+        r.measuredZ != null ? (r.measuredZ + zOffset).toFixed(3).padStart(10, ' ') : ''
       const numStr = (index + 1).toString().padStart(5, ' ')
       lines.push(`A01,${numStr},${paddedName},${xStr},${yStr},${zStr},`)
     })
@@ -580,7 +615,7 @@ export function StakingRecordsPage() {
   }
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full w-full flex flex-col overflow-hidden">
       {/* ヘッダー */}
       <div className="px-4 py-3 border-b bg-white flex items-center gap-2 flex-wrap">
         <FileSearch className="h-4 w-4 text-slate-500" />
@@ -604,24 +639,55 @@ export function StakingRecordsPage() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          {/* Z 補正: 実測値に加算する定数オフセット */}
-          <label
-            className="flex items-center gap-1 text-xs"
-            title="実測値 Z にこの値 (m) を加算した「補正 Z」を表示。GPS 系統差を素早く吸収するための簡易補正"
+          {/* 補正: 実測値 に 加算する 定数オフセット (X / Y / Z 独立)。
+              GPS 系統差 や 基準点 の ずれ を 素早く 吸収する 簡易補正。 */}
+          <span
+            className="text-[11px] text-slate-500"
+            title="実測値 に この 値 (m) を 加算した 「補正 XYZ」を 表示。 表 の 平均 と 差 も 補正 後 の 値 で 計算"
           >
-            <span className="text-slate-500">Z補正</span>
+            補正 (m):
+          </span>
+          <label className="flex items-center gap-1 text-xs">
+            <span className="text-slate-500">X</span>
             <input
               type="number"
               step={0.001}
-              value={zOffsetInput}
-              onChange={(e) => setZOffsetInput(e.target.value)}
-              onBlur={(e) => void commitZOffset(e.target.value)}
+              value={xOffsetInput}
+              onChange={(e) => setXOffsetInput(e.target.value)}
+              onBlur={(e) => void commitOffset('x', e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur()
               }}
               className="w-20 px-1.5 py-0.5 border rounded text-right font-mono"
             />
-            <span className="text-slate-500">m</span>
+          </label>
+          <label className="flex items-center gap-1 text-xs">
+            <span className="text-slate-500">Y</span>
+            <input
+              type="number"
+              step={0.001}
+              value={yOffsetInput}
+              onChange={(e) => setYOffsetInput(e.target.value)}
+              onBlur={(e) => void commitOffset('y', e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur()
+              }}
+              className="w-20 px-1.5 py-0.5 border rounded text-right font-mono"
+            />
+          </label>
+          <label className="flex items-center gap-1 text-xs">
+            <span className="text-slate-500">Z</span>
+            <input
+              type="number"
+              step={0.001}
+              value={zOffsetInput}
+              onChange={(e) => setZOffsetInput(e.target.value)}
+              onBlur={(e) => void commitOffset('z', e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur()
+              }}
+              className="w-20 px-1.5 py-0.5 border rounded text-right font-mono"
+            />
           </label>
           <button
             onClick={() => fetchRecords(currentFarm.id)}
@@ -654,9 +720,20 @@ export function StakingRecordsPage() {
       <div className="px-4 py-2 border-b bg-slate-50 flex items-center gap-4 text-xs text-slate-600">
         <span>合計 <span className="font-semibold">{summary.total}</span> 件</span>
         <span>測設 <span className="font-semibold">{summary.stake}</span> / フリー <span className="font-semibold">{summary.free}</span></span>
+        {summary.avgDx != null && summary.avgDy != null && (
+          <>
+            <span>
+              平均 dX: <span className="font-mono font-semibold">{summary.avgDx.toFixed(4)}</span> m
+            </span>
+            <span>
+              平均 dY: <span className="font-mono font-semibold">{summary.avgDy.toFixed(4)}</span> m
+            </span>
+          </>
+        )}
         {summary.rms != null && (
           <span>
-            計画値からの RMS: <span className="font-mono font-semibold">{summary.rms.toFixed(3)}</span> m
+            RMS: <span className="font-mono font-semibold">{summary.rms.toFixed(3)}</span> m
+            <span className="text-slate-400 ml-1">(n={summary.pairs})</span>
           </span>
         )}
         {pendingLinkRecordId && (
@@ -738,7 +815,9 @@ export function StakingRecordsPage() {
           farmId={currentFarm.id}
           showLabels
           visibleTypes={effectiveVisibleTypes}
-          checkedCoordIds={linkedCoordIds}
+          // 実測記録 と リンク 済み の 設計座標 は 実測点マーカー が 主役 に
+          // なる ので dim (小さく + 半透明 + ラベル 非表示 + zIndex 後退) する。
+          dimmedCoordIds={linkedCoordIds}
           onPointSelect={handleCoordSelectOnMap}
         >
           {/* 行 選択時 の 地図 pan/zoom */}
@@ -810,7 +889,7 @@ export function StakingRecordsPage() {
 
       {/* 下半分: テーブル (isolate で テーブル 内 の sticky thead の z-index が
           地図側 と 干渉 しない ように 独立 スタッキング コンテキスト を 作る) */}
-      <div className="flex-1 min-h-0 overflow-auto bg-white isolate">
+      <div className="flex-1 min-h-0 min-w-0 overflow-auto bg-white isolate">
         {loading ? (
           <div className="h-full flex items-center justify-center text-slate-500">
             <Loader2 className="h-5 w-5 animate-spin mr-2" />
@@ -919,9 +998,11 @@ export function StakingRecordsPage() {
                   m1 && m2 && m1.measuredZ != null && m2.measuredZ != null
                     ? (m1.measuredZ + m2.measuredZ) / 2
                     : m1?.measuredZ ?? null
-                // 平均 - 設計
-                const dvsX = avgX != null && g.designX != null ? avgX - g.designX : null
-                const dvsY = avgY != null && g.designY != null ? avgY - g.designY : null
+                // 平均 - 設計 (補正後 の 実測平均 と 設計値 の 差)
+                const dvsX =
+                  avgX != null && g.designX != null ? avgX + xOffset - g.designX : null
+                const dvsY =
+                  avgY != null && g.designY != null ? avgY + yOffset - g.designY : null
                 const dvsH = dvsX != null && dvsY != null ? Math.hypot(dvsX, dvsY) : null
                 // 精度: m1 と m2 の 悪い方 (Max) を 表示 (未取得 は 除外)
                 const acc =
@@ -1055,10 +1136,10 @@ export function StakingRecordsPage() {
                       )}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
-                      {m1 ? m1.measuredX.toFixed(3) : '—'}
+                      {m1 ? (m1.measuredX + xOffset).toFixed(3) : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
-                      {m1 ? m1.measuredY.toFixed(3) : '—'}
+                      {m1 ? (m1.measuredY + yOffset).toFixed(3) : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
                       {m1?.measuredZ != null ? (m1.measuredZ + zOffset).toFixed(3) : '—'}
@@ -1140,10 +1221,10 @@ export function StakingRecordsPage() {
                       </div>
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
-                      {m2 ? m2.measuredX.toFixed(3) : '—'}
+                      {m2 ? (m2.measuredX + xOffset).toFixed(3) : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
-                      {m2 ? m2.measuredY.toFixed(3) : '—'}
+                      {m2 ? (m2.measuredY + yOffset).toFixed(3) : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
                       {m2?.measuredZ != null ? (m2.measuredZ + zOffset).toFixed(3) : '—'}
@@ -1160,10 +1241,10 @@ export function StakingRecordsPage() {
                     </td>
                     {/* 平均 (X/Y/Z) */}
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-emerald-50/50 font-semibold">
-                      {avgX != null ? avgX.toFixed(3) : '—'}
+                      {avgX != null ? (avgX + xOffset).toFixed(3) : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-emerald-50/50 font-semibold">
-                      {avgY != null ? avgY.toFixed(3) : '—'}
+                      {avgY != null ? (avgY + yOffset).toFixed(3) : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-emerald-50/50 font-semibold">
                       {avgZ != null ? (avgZ + zOffset).toFixed(3) : '—'}

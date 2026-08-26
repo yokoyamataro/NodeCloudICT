@@ -47,14 +47,20 @@ function createColoredIcon(
   color: string,
   isSelected: boolean = false,
   isChecked: boolean = false,
+  isDimmed: boolean = false,
 ): L.DivIcon {
-  const size = isSelected ? 16 : 12
-  const borderWidth = isSelected ? 3 : 2
+  // dim モード は 「他 の レイヤー (実測点 等) が この 座標 の 上 に 重なる
+  // 予定」の 目印。 サイズ を 縮小 + 不透明度 を 落として、上に 重なる 要素
+  // が 主役 に なる ように 遠慮 させる。
+  const size = isDimmed ? 8 : isSelected ? 16 : 12
+  const borderWidth = isDimmed ? 1 : isSelected ? 3 : 2
+  const opacity = isDimmed ? 0.35 : 1
   // チェック中はマーカーの外周にスカイブルーのハロー（4px のアウターリング）を出す。
-  // box-shadow を 2 段重ねて、内側の白縁とは別の色で目立たせる。
-  const checkedHalo = isChecked
-    ? `0 0 0 4px #38bdf8, 0 0 0 5px rgba(255,255,255,0.9), 0 2px 4px rgba(0,0,0,0.3)`
-    : `0 2px 4px rgba(0,0,0,0.3)`
+  // box-shadow を 2 段重ねて、内側の白縁とは別の色で目立たせる。dim 時は 出さない。
+  const checkedHalo =
+    isChecked && !isDimmed
+      ? `0 0 0 4px #38bdf8, 0 0 0 5px rgba(255,255,255,0.9), 0 2px 4px rgba(0,0,0,0.3)`
+      : `0 2px 4px rgba(0,0,0,0.3)`
   return L.divIcon({
     className: 'custom-marker',
     html: `<div style="
@@ -64,6 +70,7 @@ function createColoredIcon(
       border-radius: 50%;
       border: ${borderWidth}px solid ${isSelected ? '#1d4ed8' : 'white'};
       box-shadow: ${checkedHalo};
+      opacity: ${opacity};
     "></div>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
@@ -465,6 +472,10 @@ interface CoordinateMapProps {
    *  指定された ID のマーカーはスカイブルーのハロー（外側リング）で強調表示し、
    *  Ctrl/⌘ + クリックで onPointToggleCheck と連動して選択状態を切替できるようにする */
   checkedCoordIds?: Set<string>
+  /** 「別 レイヤー が この 座標 の 上 に 重なる 予定」の 目印。
+   *  マーカー を 小さく + 不透明度 を 落とす。 例: 実測記録 と リンク 済み の
+   *  現況座標 は、実測点 マーカー が 主役 に なる ように これで dim する。 */
+  dimmedCoordIds?: Set<string>
   /** Ctrl/⌘ + マーカークリックで呼ぶ。指定すると複数選択 UI と連動。
    *  未指定なら従来通り通常クリックで onPointSelect だけ呼ばれる */
   onPointToggleCheck?: (id: string) => void
@@ -551,6 +562,7 @@ export function CoordinateMap({
   displayCoordinateIds,
   orangeCoordIds,
   checkedCoordIds,
+  dimmedCoordIds,
   onPointToggleCheck,
   farmMemos,
   onMemoClick,
@@ -937,6 +949,7 @@ export function CoordinateMap({
           const isSelectedRegular = coord.id === selectedPointId
           const isOrange = orangeCoordIds?.has(coord.id) ?? false
           const isChecked = checkedCoordIds?.has(coord.id) ?? false
+          const isDimmed = dimmedCoordIds?.has(coord.id) ?? false
           const isHighlighted = isSelectedConstituent || isSelectedRegular || isOrange
           const baseColor = MARKER_COLORS[coord.type] || '#666'
           const iconColor = isSelectedConstituent || isOrange ? '#f97316' : baseColor
@@ -944,10 +957,10 @@ export function CoordinateMap({
           <Marker
             key={coord.id}
             position={[coord.lat, coord.lng]}
-            icon={createColoredIcon(iconColor, isHighlighted, isChecked)}
+            icon={createColoredIcon(iconColor, isHighlighted, isChecked, isDimmed)}
             // ハイライト中 / チェック中のマーカーを必ず最前面に出して、
-            // 後ろに隠れて見えなくなる現象を防ぐ
-            zIndexOffset={isHighlighted || isChecked ? 1000 : 0}
+            // 後ろに隠れて見えなくなる現象を防ぐ。dim 中 は 逆に 後ろ に 送る。
+            zIndexOffset={isDimmed ? -500 : isHighlighted || isChecked ? 1000 : 0}
             interactive={coordinatesInteractive}
             eventHandlers={coordinatesInteractive ? {
               // Ctrl/⌘ + クリック で複数選択をトグル（ハンドラ指定時のみ）。
@@ -989,9 +1002,10 @@ export function CoordinateMap({
           >
             {/* showLabels && showLabel が true なら常時表示、false ならホバー
                 時のみ点名を出す（Tooltip 自体はマーカー上に常駐させておく）。
-                スマホと同じく、マーカー色 + 白フチで地図上に読みやすく表示 */}
+                スマホと同じく、マーカー色 + 白フチで地図上に読みやすく表示。
+                dim 中 は 上に 別レイヤー が 重なる 前提 なので ラベル は 出さない。 */}
             <Tooltip
-              permanent={showLabels && showLabel}
+              permanent={showLabels && showLabel && !isDimmed}
               direction="top"
               offset={[0, -8]}
               className="point-label-tooltip"
