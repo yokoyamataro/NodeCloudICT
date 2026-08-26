@@ -326,3 +326,148 @@ export function formatSlope(e: CrossSectionElement): string {
   const sign = e.slopeValue < 0 ? '↓' : '↑'
   return `1:${trim(Math.abs(e.slopeValue))}${sign}`
 }
+
+/**
+ * 断面 1 区間 の コンパクト 表記 を パース する。
+ *
+ * 各 区間 は 2 値 を カンマ 区切り で 記述:
+ *   -2%,2.000       → 勾配 -2% と 水平距離 dW=2m
+ *   +1.0,-1.0       → dW=+1m と dH=-1m (両方 距離指定、勾配 は 自動計算)
+ *   1:1.5,H-5.0     → 勾配 1:1.5 と 垂直距離 dH=-5m (H 接頭辞 で dH 指定)
+ *   -1:1.5,2.000    → 勾配 1:1.5 下向き と 水平距離 2m
+ *   0,H1.5          → 直立 上向き 1.5m (dW=0)
+ *
+ * 各 トークン の 判別:
+ *   - `%` で 終わる      → 勾配 (%)
+ *   - `1:...` を 含む   → 勾配 (1:i、符号 は 上下)
+ *   - `H` / `h` 接頭辞 → 垂直距離 dH (符号付き)
+ *   - それ以外         → 水平距離 dW (符号付き)
+ *
+ * 戻り値 は CrossSectionElement の (width, slopeValue, slopeUnit) 部分。
+ */
+export function parseSegmentNotation(
+  text: string,
+): Pick<CrossSectionElement, 'width' | 'slopeValue' | 'slopeUnit'> | null {
+  const parts = text.split(',').map((s) => s.trim()).filter(Boolean)
+  if (parts.length !== 2) return null
+
+  type Token =
+    | { kind: 'percent'; value: number }
+    | { kind: 'ratio'; value: number }
+    | { kind: 'dW'; value: number }
+    | { kind: 'dH'; value: number }
+
+  const parseToken = (s: string): Token | null => {
+    const ratioMatch = s.match(/^([+-]?)1:([+-]?\d+(?:\.\d+)?)$/)
+    if (ratioMatch) {
+      const sign = ratioMatch[1] === '-' ? -1 : 1
+      const v = parseFloat(ratioMatch[2])
+      if (!Number.isFinite(v) || Math.abs(v) < 1e-9) return null
+      return { kind: 'ratio', value: sign * Math.abs(v) }
+    }
+    const pctMatch = s.match(/^([+-]?\d+(?:\.\d+)?)%$/)
+    if (pctMatch) {
+      const v = parseFloat(pctMatch[1])
+      if (!Number.isFinite(v)) return null
+      return { kind: 'percent', value: v }
+    }
+    const dhMatch = s.match(/^[Hh]([+-]?\d+(?:\.\d+)?)$/)
+    if (dhMatch) {
+      const v = parseFloat(dhMatch[1])
+      if (!Number.isFinite(v)) return null
+      return { kind: 'dH', value: v }
+    }
+    const dwMatch = s.match(/^([+-]?\d+(?:\.\d+)?)$/)
+    if (dwMatch) {
+      const v = parseFloat(dwMatch[1])
+      if (!Number.isFinite(v)) return null
+      return { kind: 'dW', value: v }
+    }
+    return null
+  }
+
+  const t1 = parseToken(parts[0])
+  const t2 = parseToken(parts[1])
+  if (!t1 || !t2) return null
+
+  const distTok =
+    t1.kind === 'dW' || t1.kind === 'dH'
+      ? t1
+      : t2.kind === 'dW' || t2.kind === 'dH'
+      ? t2
+      : null
+  const slopeTok =
+    t1.kind === 'percent' || t1.kind === 'ratio'
+      ? t1
+      : t2.kind === 'percent' || t2.kind === 'ratio'
+      ? t2
+      : null
+
+  // (距離 + 勾配) の 組合せ
+  if (distTok && slopeTok) {
+    if (distTok.kind === 'dW') {
+      const width = Math.abs(distTok.value)
+      if (slopeTok.kind === 'percent') {
+        return { width, slopeValue: slopeTok.value, slopeUnit: 'percent' }
+      }
+      return { width, slopeValue: slopeTok.value, slopeUnit: 'ratio' }
+    }
+    // dH + 勾配 → 幅 を 逆算
+    const dh = distTok.value
+    if (Math.abs(dh) < 1e-9) {
+      // dH=0 なら 幅 0 の 水平点 (無意味)
+      return { width: 0, slopeValue: 0, slopeUnit: slopeTok.kind }
+    }
+    if (slopeTok.kind === 'percent') {
+      const factor = slopeTok.value / 100
+      if (Math.abs(factor) < 1e-9) return null
+      const width = Math.abs(dh / factor)
+      // 勾配 の 符号 は dH に 合わせる (下り なら 負)
+      const signedSlope = Math.sign(dh) * Math.abs(slopeTok.value)
+      return { width, slopeValue: signedSlope, slopeUnit: 'percent' }
+    }
+    // ratio: dH = width * sign / |i| → width = |dH * i|
+    const i = Math.abs(slopeTok.value)
+    const width = Math.abs(dh * i)
+    const signedSlope = Math.sign(dh) * i
+    return { width, slopeValue: signedSlope, slopeUnit: 'ratio' }
+  }
+
+  // (dW + dH) の 組合せ → 勾配 % を 算出
+  const dwTok = t1.kind === 'dW' ? t1 : t2.kind === 'dW' ? t2 : null
+  const dhTok = t1.kind === 'dH' ? t1 : t2.kind === 'dH' ? t2 : null
+  if (dwTok && dhTok) {
+    const dw = dwTok.value
+    const dh = dhTok.value
+    const width = Math.abs(dw)
+    if (width < 1e-9) {
+      return { width: 0, slopeValue: dh, slopeUnit: 'vertical' }
+    }
+    const pct = (dh / width) * 100
+    return { width, slopeValue: pct, slopeUnit: 'percent' }
+  }
+
+  // (勾配 + 勾配) は 不定
+  return null
+}
+
+/**
+ * CrossSectionElement を コンパクト 表記 (parseSegmentNotation の 逆) に 整形。
+ */
+export function formatSegmentNotation(e: CrossSectionElement): string {
+  const trim = (n: number, d = 3) => {
+    const s = n.toFixed(d)
+    return s.includes('.') ? s.replace(/\.?0+$/, '') : s
+  }
+  if (e.slopeUnit === 'vertical') {
+    const sign = e.slopeValue >= 0 ? '+' : ''
+    return `0,H${sign}${trim(e.slopeValue)}`
+  }
+  if (e.slopeUnit === 'percent') {
+    const sign = e.slopeValue >= 0 ? '+' : ''
+    return `${sign}${trim(e.slopeValue, 2)}%,${trim(e.width)}`
+  }
+  // ratio
+  const sign = e.slopeValue < 0 ? '-' : ''
+  return `${sign}1:${trim(Math.abs(e.slopeValue), 2)},${trim(e.width)}`
+}

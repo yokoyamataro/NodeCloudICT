@@ -22,7 +22,6 @@ import {
   type AlignmentPointKind,
   type ProfilePoint,
   type CrossSectionElement,
-  type SlopeUnit,
   type StandardCrossSection,
   type StationRow,
   type SideOrientation,
@@ -30,6 +29,8 @@ import {
   buildCrossSectionPath,
   formatSlope,
   elementStep,
+  parseSegmentNotation,
+  formatSegmentNotation,
 } from '@/stores/openChannelStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import {
@@ -271,68 +272,6 @@ function inferKindByIndex(index: number, total: number): AlignmentPointKind {
 function normalizeKinds(points: AlignmentPoint[]): AlignmentPoint[] {
   const n = points.length
   return points.map((p, i) => ({ ...p, kind: inferKindByIndex(i, n) }))
-}
-
-/**
- * 数値入力（途中の "-" や "1." も受け入れる）。
- * 親 state には数値として確定した瞬間に通知し、表示は手元のテキストを優先する。
- */
-function NumberInput({
-  value,
-  onChange,
-  step,
-  className,
-  disabled,
-  placeholder,
-}: {
-  value: number
-  onChange: (v: number) => void
-  step?: number
-  className?: string
-  disabled?: boolean
-  placeholder?: string
-}) {
-  const [text, setText] = useState<string>(() => String(value))
-  const lastEmitted = useRef<number>(value)
-
-  // 外部から value が変わったときは表示を同期（自分が onChange した結果と同値なら無視）
-  useEffect(() => {
-    if (value === lastEmitted.current) return
-    setText(String(value))
-    lastEmitted.current = value
-  }, [value])
-
-  return (
-    <input
-      type="text"
-      inputMode="decimal"
-      step={step}
-      value={text}
-      placeholder={placeholder}
-      disabled={disabled}
-      className={className}
-      onChange={(e) => {
-        const t = e.target.value
-        setText(t)
-        if (t === '' || t === '-' || t === '.' || t === '-.') return
-        const v = parseFloat(t)
-        if (Number.isFinite(v)) {
-          lastEmitted.current = v
-          onChange(v)
-        }
-      }}
-      onBlur={() => {
-        const v = parseFloat(text)
-        if (Number.isFinite(v)) {
-          lastEmitted.current = v
-          onChange(v)
-          setText(String(v))
-        } else {
-          setText(String(value))
-        }
-      }}
-    />
-  )
 }
 
 /** タイトルのみで折りたたみ可能なセクション（開閉状態は localStorage に記憶可）。
@@ -989,6 +928,72 @@ function ProfileChart({ points, totalLen }: { points: ProfilePoint[]; totalLen: 
   )
 }
 
+/**
+ * 断面 1 区間 の 表記 (例 "-2%,2.000" / "1:1.5,H-5.0") を 入力 する テキスト 欄。
+ * - フォーカス 外し (blur) or Enter で 検証 し、有効 なら onCommit で 上位 に 反映。
+ * - 無効 な 場合 は 赤 枠 で 警告 のみ 表示 し、元の 表記 に 戻す。
+ * - 外部 で 個別 フィールド が 変更 されたら、非フォーカス 時 に 自動 同期。
+ */
+function SegmentNotationInput({
+  element,
+  onCommit,
+}: {
+  element: CrossSectionElement
+  onCommit: (patch: Pick<CrossSectionElement, 'width' | 'slopeValue' | 'slopeUnit'>) => void
+}) {
+  const [text, setText] = useState<string>(() => formatSegmentNotation(element))
+  const [invalid, setInvalid] = useState(false)
+  const focusedRef = useRef(false)
+
+  useEffect(() => {
+    if (focusedRef.current) return
+    setText(formatSegmentNotation(element))
+    setInvalid(false)
+  }, [element])
+
+  const commit = () => {
+    const parsed = parseSegmentNotation(text)
+    if (!parsed) {
+      setInvalid(true)
+      setText(formatSegmentNotation(element))
+      setTimeout(() => setInvalid(false), 800)
+      return
+    }
+    onCommit(parsed)
+    setInvalid(false)
+  }
+
+  return (
+    <input
+      type="text"
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onFocus={() => {
+        focusedRef.current = true
+      }}
+      onBlur={() => {
+        focusedRef.current = false
+        commit()
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.currentTarget.blur()
+        } else if (e.key === 'Escape') {
+          setText(formatSegmentNotation(element))
+          e.currentTarget.blur()
+        }
+      }}
+      placeholder="例: -2%,2.000 / 1:1.5,H-5.0"
+      className={`w-full px-1 py-0.5 border rounded text-xs font-mono ${
+        invalid ? 'border-red-500 bg-red-50' : ''
+      }`}
+      spellCheck={false}
+      autoCorrect="off"
+      autoCapitalize="off"
+    />
+  )
+}
+
 // 標準断面の片側（右 or 左）の要素列エディタ
 function CrossSectionSideEditor({
   side,
@@ -1044,16 +1049,17 @@ function CrossSectionSideEditor({
           <thead className="bg-slate-50 text-slate-600">
             <tr>
               <th className="px-1 py-1 w-6 text-center">#</th>
-              <th className="px-1 py-1 text-left">種別</th>
-              <th className="px-1 py-1 text-right w-14">幅(m)</th>
-              <th className="px-1 py-1 text-right w-16">勾配/高さ</th>
-              <th className="px-1 py-1 text-center w-16">単位</th>
+              <th className="px-1 py-1 text-left w-32">種別</th>
+              <th className="px-1 py-1 text-left">
+                表記 <span className="text-[10px] text-slate-400 font-normal">(勾配,距離)</span>
+              </th>
+              <th className="px-1 py-1 text-right w-24 text-[10px] text-slate-500">dW / dH</th>
               <th className="px-1 py-1 w-16"></th>
             </tr>
           </thead>
           <tbody>
             {elements.map((el, i) => {
-              const isVertical = el.slopeUnit === 'vertical'
+              const step = elementStep(el, 1)
               return (
                 <tr key={el.id} className="border-t">
                   <td className="px-1 py-1 text-center text-slate-500">{i + 1}</td>
@@ -1066,35 +1072,14 @@ function CrossSectionSideEditor({
                       className="w-full px-1 py-0.5 border rounded text-xs"
                     />
                   </td>
-                  <td className="px-1 py-1 text-right">
-                    <NumberInput
-                      step={0.05}
-                      value={isVertical ? 0 : el.width}
-                      disabled={isVertical}
-                      onChange={(v) => {
-                        if (v >= 0) updateAt(i, { width: v })
-                      }}
-                      className="w-14 px-1 py-0.5 border rounded text-right text-xs disabled:bg-slate-100 disabled:text-slate-400"
+                  <td className="px-1 py-1">
+                    <SegmentNotationInput
+                      element={el}
+                      onCommit={(patch) => updateAt(i, patch)}
                     />
                   </td>
-                  <td className="px-1 py-1 text-right">
-                    <NumberInput
-                      step={el.slopeUnit === 'percent' ? 0.1 : 0.05}
-                      value={el.slopeValue}
-                      onChange={(v) => updateAt(i, { slopeValue: v })}
-                      className="w-16 px-1 py-0.5 border rounded text-right text-xs"
-                    />
-                  </td>
-                  <td className="px-1 py-1 text-center">
-                    <select
-                      value={el.slopeUnit}
-                      onChange={(e) => updateAt(i, { slopeUnit: e.target.value as SlopeUnit })}
-                      className="px-1 py-0.5 border rounded text-xs"
-                    >
-                      <option value="ratio">1:i</option>
-                      <option value="percent">%</option>
-                      <option value="vertical">直立 m</option>
-                    </select>
+                  <td className="px-1 py-1 text-right tabular-nums text-[10px] text-slate-500">
+                    {step.dx.toFixed(2)} / {step.dy.toFixed(3)}
                   </td>
                 <td className="px-1 py-1 text-right">
                   <div className="flex gap-0.5 justify-end">
@@ -2349,8 +2334,9 @@ export function OpenChannelAlignmentPage() {
                                 <td className="px-2 py-1 text-right tabular-nums">{p ? p.x.toFixed(3) : '-'}</td>
                                 <td className="px-2 py-1 text-right tabular-nums">{p ? p.y.toFixed(3) : '-'}</td>
                                 <td className="px-1 py-1 text-center">
-                                  {/* 現況 / 計画 / 出来形 — とりあえず ボタンだけ 設置。
-                                      row 選択 と 競合 しない よう stopPropagation。 */}
+                                  {/* 現況 / 計画 / 出来形 — 計画 は 押下時 に 測点 を 選択 し、
+                                      横断計画 未取込 なら 標準断面 を 複製 して エディタ を 開く。
+                                      現況 / 出来形 は 現状 未実装 (今後 実測 データ を 参照 予定)。 */}
                                   <div className="inline-flex gap-0.5">
                                     <button
                                       onClick={(e) => e.stopPropagation()}
@@ -2360,9 +2346,22 @@ export function OpenChannelAlignmentPage() {
                                       現況
                                     </button>
                                     <button
-                                      onClick={(e) => e.stopPropagation()}
-                                      title="計画 (未実装)"
-                                      className="px-1 py-0.5 text-[10px] border rounded bg-blue-50 hover:bg-blue-100 text-blue-700"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        setSelectedStationId(s.id)
+                                        if (!s.crossSection && selected) {
+                                          handleUpdateStationCrossSection(
+                                            s.id,
+                                            cloneCrossSection(selected.standardCrossSection),
+                                          )
+                                        }
+                                      }}
+                                      title="この測点の計画断面を編集"
+                                      className={`px-1 py-0.5 text-[10px] border rounded ${
+                                        s.crossSection
+                                          ? 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
+                                          : 'bg-blue-50 hover:bg-blue-100 text-blue-700'
+                                      }`}
                                     >
                                       計画
                                     </button>
@@ -2443,7 +2442,7 @@ export function OpenChannelAlignmentPage() {
 
                     {selectedStation && (
                       <div className="border rounded p-2 space-y-2 bg-slate-50">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-semibold text-slate-700 text-xs font-mono">
                             {selectedStation.label}
                           </span>
@@ -2456,6 +2455,15 @@ export function OpenChannelAlignmentPage() {
                             }`}
                           >
                             {selectedStation.crossSection ? '個別設定' : '標準を継承'}
+                          </span>
+                          {/* 中心線 の 設計高 (縦断図 補間 値) を 表示。 */}
+                          <span className="text-[10px] text-slate-500">中心設計高</span>
+                          <span className="text-xs font-mono font-semibold text-emerald-700 tabular-nums">
+                            {interpolateProfileZ(
+                              selected.profilePoints,
+                              selectedStation.distance,
+                            ).toFixed(3)}
+                            <span className="text-[10px] text-slate-400 ml-0.5">m</span>
                           </span>
                           <div className="ml-auto flex gap-1">
                             {selectedStation.crossSection ? (
