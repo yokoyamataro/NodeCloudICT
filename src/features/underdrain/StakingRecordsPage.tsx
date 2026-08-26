@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Trash2, Download, FileSearch, RefreshCw, Link as LinkIcon, X } from 'lucide-react'
-import { Marker, Polyline, Tooltip, useMap, useMapEvents } from 'react-leaflet'
+import { Marker, Polyline, Tooltip, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import { useFarmStore } from '@/stores/farmStore'
 import { useStakingStore, type SurveyCategory, type StakingRecord, type StakingTargetType } from '@/stores/stakingStore'
@@ -51,23 +51,6 @@ const TYPE_COLORS: Record<string, string> = {
   witness: '#eab308',
   confirmed_boundary: '#16a34a',
   measured: '#ec4899',
-}
-
-// デバッグ 用: 地図 の どこ か が クリック された とき console.log する。
-// マーカー の click ハンドラ が 発火 しない ケース の 原因切り分け に 使う。
-// マーカー が 上に あり クリック 吸収 → これは 発火 しない。
-// マーカー が 下 or 透明 で 素通り → これが 発火 する。
-function MapClickLogger() {
-  useMapEvents({
-    click(e) {
-      console.log('[staking-records] MAP click', {
-        latlng: e.latlng,
-        target: (e.originalEvent?.target as Element | undefined)?.tagName,
-        className: (e.originalEvent?.target as Element | undefined)?.className,
-      })
-    },
-  })
-  return null
 }
 
 // 選択された 記録 の 位置 に 地図 を pan/zoom する 子コンポーネント。
@@ -228,42 +211,64 @@ export function StakingRecordsPage() {
   }
   const handleCancelLinkM2 = () => setPendingLinkM2ForM1Id(null)
 
-  // 地図 の 実測マーカー を クリック された とき: 「実測2 リンク」モード なら
-  // - m1 が 設計座標 リンク済み → クリック 記録 を 同じ targetRefId に 移動
-  // - m1 が free (設計値 なし) → クリック 記録 と ペアリング (paired_with_id)
-  // 通常時 は 行選択 + ズーム。
-  // ref 経由 で pendingLinkM2ForM1Id を 参照 する ことで、react-leaflet の
-  // 古い クロージャ の 影響 を 受けない ように する。
+  // 実測マーカー クリック は 単純 に 行選択 + ズーム のみ。
+  // 実測2 の 割り付け は 「同じ 位置 を 何度 も 測る」 性質上 マーカー が
+  // ほぼ 重なる ため、地図クリック で は 選び分け が 不可能。 代わりに
+  // 🔗 ボタン → モーダル で 5cm 以内 の 候補 リスト から 選ぶ 方式 に する。
   const handleMeasuredMarkerClick = (recordId: string) => {
+    handleRowClick(recordId)
+  }
+
+  // 実測1 の 記録 (XY) に 対して 半径 5cm 以内 の 他 の 実測点 を 候補 として
+  // 列挙 (実測2 リンク 用)。 pendingLinkM2ForM1Id が セット されて いる 間 だけ
+  // 計算。 既 に m1 と 同じ グループ の m2 は 除外 する 必要 は ない
+  // (通常 は m2 未確定 の 状態 で 開かれる ため 候補 に は 現れ ない)。
+  const M2_CANDIDATE_RADIUS = 0.05 // m (5cm)
+  interface M2Candidate {
+    record: StakingRecord
+    distance: number
+  }
+  const m2Candidates = useMemo<M2Candidate[]>(() => {
+    if (!pendingLinkM2ForM1Id) return []
+    const m1 = records.find((r) => r.id === pendingLinkM2ForM1Id)
+    if (!m1) return []
+    const out: M2Candidate[] = []
+    for (const r of records) {
+      if (r.id === m1.id) continue
+      const dx = r.measuredX - m1.measuredX
+      const dy = r.measuredY - m1.measuredY
+      const d = Math.hypot(dx, dy)
+      if (d > M2_CANDIDATE_RADIUS) continue
+      out.push({ record: r, distance: d })
+    }
+    out.sort((a, b) => a.distance - b.distance)
+    return out
+  }, [pendingLinkM2ForM1Id, records])
+
+  // 候補 の 中 から 1 件 を 選んで 実測2 に 割り付ける。
+  const handlePickM2Candidate = (candidateId: string) => {
     const pending = pendingLinkM2ForM1IdRef.current
-    console.log('[staking-records] measured marker clicked', { recordId, pending })
-    if (pending) {
-      if (recordId === pending) {
-        return
-      }
-      const m1 = records.find((r) => r.id === pending)
-      if (!m1) {
-        setPendingLinkM2ForM1Id(null)
-        return
-      }
-      if (m1.targetType === 'coordinate' && m1.targetRefId) {
-        const coord = coordinates.find((c) => c.id === m1.targetRefId)
-        if (coord) {
-          void updateRecordTarget(recordId, {
-            id: coord.id,
-            pointNumber: coord.pointNumber,
-            x: coord.x,
-            y: coord.y,
-            z: coord.z,
-          })
-        }
-      } else {
-        void pairRecords(m1.id, recordId)
-      }
+    if (!pending) return
+    const m1 = records.find((r) => r.id === pending)
+    if (!m1) {
       setPendingLinkM2ForM1Id(null)
       return
     }
-    handleRowClick(recordId)
+    if (m1.targetType === 'coordinate' && m1.targetRefId) {
+      const coord = coordinates.find((c) => c.id === m1.targetRefId)
+      if (coord) {
+        void updateRecordTarget(candidateId, {
+          id: coord.id,
+          pointNumber: coord.pointNumber,
+          x: coord.x,
+          y: coord.y,
+          z: coord.z,
+        })
+      }
+    } else {
+      void pairRecords(m1.id, candidateId)
+    }
+    setPendingLinkM2ForM1Id(null)
   }
 
   // 地図で 座標 が クリック された とき: 設定モード なら 記録に リンク、
@@ -668,7 +673,7 @@ export function StakingRecordsPage() {
         )}
         {pendingLinkM2ForM1Id && (
           <span className="ml-auto flex items-center gap-2 text-purple-700 font-semibold">
-            🎯 地図上 の 実測マーカー を クリック で 実測2 に 割り付け
+            🎯 実測2 の 候補 を 選択 (5cm 以内 の 実測点)
             <button
               onClick={handleCancelLinkM2}
               className="p-0.5 rounded border hover:bg-white"
@@ -736,8 +741,6 @@ export function StakingRecordsPage() {
           checkedCoordIds={linkedCoordIds}
           onPointSelect={handleCoordSelectOnMap}
         >
-          {/* デバッグ: 地図クリック を ログ */}
-          <MapClickLogger />
           {/* 行 選択時 の 地図 pan/zoom */}
           <RecordZoomController target={zoomTarget} />
           {/* 誤差ベクトル (設計座標 と リンク 済み 実測点 を つなぐ 破線)。
@@ -1225,6 +1228,109 @@ export function StakingRecordsPage() {
           </table>
         )}
       </div>
+
+      {/* 実測2 選択 モーダル: 5cm 以内 の 候補 リスト から 選ぶ。
+          地図上 で は 実測1 と ほぼ 重なる ため マーカー クリック では
+          選び分け が 難しい ので、この 方式 に した。 */}
+      {pendingLinkM2ForM1Id && (() => {
+        const m1 = records.find((r) => r.id === pendingLinkM2ForM1Id)
+        if (!m1) return null
+        return (
+          <div
+            className="fixed inset-0 z-[9999] bg-black/40 flex items-center justify-center p-4"
+            onClick={handleCancelLinkM2}
+          >
+            <div
+              className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[80vh] flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="px-4 py-3 border-b flex items-center gap-2">
+                <div className="font-semibold text-sm">実測2 を 選択</div>
+                <div className="text-xs text-slate-500 ml-auto">
+                  基準: <span className="font-mono">{m1.targetName ?? '(無題)'}</span>{' '}
+                  ({m1.measuredX.toFixed(3)}, {m1.measuredY.toFixed(3)})
+                </div>
+                <button
+                  onClick={handleCancelLinkM2}
+                  className="p-1 rounded hover:bg-slate-100"
+                  title="閉じる"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="px-4 py-2 text-[11px] text-slate-500 border-b">
+                実測1 の XY から 5cm 以内 の 実測点 を 一覧。 別 グループ に 属する
+                記録 も 含む (選択 で 移動 する)。
+              </div>
+              <div className="flex-1 overflow-auto">
+                {m2Candidates.length === 0 ? (
+                  <div className="p-6 text-center text-sm text-slate-400">
+                    5cm 以内 に 他 の 実測点 が ありません。
+                  </div>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 text-xs text-slate-600 sticky top-0">
+                      <tr>
+                        <th className="px-2 py-1 text-left">点名</th>
+                        <th className="px-2 py-1 text-right">距離 (mm)</th>
+                        <th className="px-2 py-1 text-right">X</th>
+                        <th className="px-2 py-1 text-right">Y</th>
+                        <th className="px-2 py-1 text-left">現状</th>
+                        <th className="px-2 py-1"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {m2Candidates.map(({ record, distance }) => {
+                        const status =
+                          record.targetType === 'coordinate' && record.targetRefId
+                            ? '別設計座標 に リンク'
+                            : record.pairedWithId
+                              ? '既 ペア あり'
+                              : 'free'
+                        return (
+                          <tr key={record.id} className="border-t hover:bg-slate-50">
+                            <td className="px-2 py-1 font-medium">
+                              {record.targetName ?? '(無題)'}
+                            </td>
+                            <td className="px-2 py-1 text-right tabular-nums font-mono">
+                              {(distance * 1000).toFixed(1)}
+                            </td>
+                            <td className="px-2 py-1 text-right tabular-nums font-mono">
+                              {record.measuredX.toFixed(3)}
+                            </td>
+                            <td className="px-2 py-1 text-right tabular-nums font-mono">
+                              {record.measuredY.toFixed(3)}
+                            </td>
+                            <td className="px-2 py-1 text-xs text-slate-500">
+                              {status}
+                            </td>
+                            <td className="px-2 py-1 text-right">
+                              <button
+                                onClick={() => handlePickM2Candidate(record.id)}
+                                className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+                              >
+                                これを 実測2 に
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+              <div className="px-4 py-2 border-t flex justify-end">
+                <button
+                  onClick={handleCancelLinkM2}
+                  className="px-3 py-1 text-sm border rounded hover:bg-slate-50"
+                >
+                  キャンセル
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
