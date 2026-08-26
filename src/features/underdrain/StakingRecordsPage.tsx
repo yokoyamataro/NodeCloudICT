@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Trash2, Download, FileSearch, RefreshCw, Link as LinkIcon, X } from 'lucide-react'
-import { CircleMarker, Pane, Polyline, Tooltip, useMap } from 'react-leaflet'
+import { Marker, Polyline, Tooltip, useMap } from 'react-leaflet'
+import L from 'leaflet'
 import { useFarmStore } from '@/stores/farmStore'
 import { useStakingStore, type SurveyCategory, type StakingRecord, type StakingTargetType } from '@/stores/stakingStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
@@ -8,6 +9,33 @@ import { useProjectListStore } from '@/stores/projectListStore'
 import { CoordinateMap } from '@/components/map/CoordinateMap'
 import { CoordinateConverter, COORDINATE_TYPE_NAMES, type CoordinateType } from '@/lib/coordinates'
 import { supabase } from '@/lib/supabase'
+
+// 実測点 用 の 円形 divIcon を 生成。 Marker (HTML) として markerPane に
+// 描画 する ので、SVG の CircleMarker と 違って クリック 受け取り が 安定。
+// state (通常 / 選択中 / pending-m1) を 色 と サイズ で 表現。
+function createMeasuredIcon(opts: {
+  fill: string
+  isSelected: boolean
+  isPending: boolean
+}): L.DivIcon {
+  const size = opts.isPending ? 20 : opts.isSelected ? 16 : 12
+  const borderWidth = opts.isPending ? 3 : opts.isSelected ? 3 : 2
+  const borderColor = opts.isPending ? '#a855f7' : opts.isSelected ? '#1d4ed8' : '#fff'
+  return L.divIcon({
+    className: 'staking-measured-marker',
+    html: `<div style="
+      width: ${size}px;
+      height: ${size}px;
+      border-radius: 50%;
+      background: ${opts.fill};
+      border: ${borderWidth}px solid ${borderColor};
+      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      cursor: pointer;
+    "></div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  })
+}
 
 // 座標管理 の 点種 色 (CoordinateMap の MARKER_COLORS と 合わせる)。
 const TYPE_COLORS: Record<string, string> = {
@@ -693,87 +721,68 @@ export function StakingRecordsPage() {
         >
           {/* 行 選択時 の 地図 pan/zoom */}
           <RecordZoomController target={zoomTarget} />
-          {/* 実測マーカー用 の 独立ペーン (zIndex 700 = markerPane より 上)。
-              children として 直接 マーカー を 入れる (react-leaflet の 標準
-              パターン) — pane 属性 で 個別指定 する より 確実。 */}
-          <Pane name="staking-measured" style={{ zIndex: 700 }}>
+          {/* 誤差ベクトル (設計座標 と リンク 済み 実測点 を つなぐ 破線)。
+              単なる 描画 レイヤー なので デフォルト overlayPane で OK。 */}
           {measuredPointsForMap.map((m) => {
-            // リンク 済み: 対応する 設計座標 との 間に 誤差ベクトル 線 を 引く。
             const linkedCoord =
               m.record.targetType === 'coordinate' && m.record.targetRefId
                 ? coordinates.find((c) => c.id === m.record.targetRefId)
                 : null
-            const linkedLL = linkedCoord
-              ? converter.toLatLng(linkedCoord.x, linkedCoord.y)
-              : null
+            if (!linkedCoord) return null
+            const linkedLL = converter.toLatLng(linkedCoord.x, linkedCoord.y)
             return (
-              <div key={`meas-${m.id}`}>
-                {linkedLL && (
-                  <Polyline
-                    positions={[
-                      [linkedLL.lat, linkedLL.lng],
-                      [m.lat, m.lng],
-                    ]}
-                    pathOptions={{
-                      color: '#f97316',
-                      weight: 1.5,
-                      opacity: 0.7,
-                      dashArray: '3,3',
-                    }}
-                  />
-                )}
-                <CircleMarker
-                  center={[m.lat, m.lng]}
-                  radius={
-                    pendingLinkM2ForM1Id === m.id
-                      ? 9
-                      : selectedRecordId === m.id
-                        ? 7
-                        : 5
-                  }
-                  pane="staking-measured"
-                  bubblingMouseEvents={false}
-                  eventHandlers={{
-                    click: () => handleMeasuredMarkerClick(m.id),
-                  }}
-                  pathOptions={{
-                    color:
-                      pendingLinkM2ForM1Id === m.id
-                        ? '#a855f7'
-                        : selectedRecordId === m.id
-                          ? '#1d4ed8'
-                          : '#fff',
-                    fillColor: m.record.surveyCategory === 'asbuilt' ? '#10b981' : '#f97316',
-                    fillOpacity: 0.9,
-                    weight:
-                      pendingLinkM2ForM1Id === m.id
-                        ? 3
-                        : selectedRecordId === m.id
-                          ? 2.5
-                          : 1.5,
-                  }}
-                >
-                  <Tooltip
-                    permanent
-                    direction="right"
-                    offset={[6, 0]}
-                    className="point-label-tooltip"
-                  >
-                    <span
-                      style={{
-                        color: m.record.surveyCategory === 'asbuilt' ? '#10b981' : '#f97316',
-                        textShadow:
-                          '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff',
-                      }}
-                    >
-                      {m.record.targetName ?? '(実測)'}
-                    </span>
-                  </Tooltip>
-                </CircleMarker>
-              </div>
+              <Polyline
+                key={`line-${m.id}`}
+                positions={[
+                  [linkedLL.lat, linkedLL.lng],
+                  [m.lat, m.lng],
+                ]}
+                pathOptions={{
+                  color: '#f97316',
+                  weight: 1.5,
+                  opacity: 0.7,
+                  dashArray: '3,3',
+                }}
+              />
             )
           })}
-          </Pane>
+          {/* 実測点マーカー は Marker (HTML divIcon) で 描画。 CircleMarker (SVG) は
+              custom pane に 入れて も 一部 環境 で クリック が 通らない ケース が
+              あった ため、確実 に クリック を 受け取れる Marker + divIcon に 変更。
+              zIndexOffset=1000 で 設計座標 マーカー (offset 0) より 上に。 */}
+          {measuredPointsForMap.map((m) => {
+            const isSelected = selectedRecordId === m.id
+            const isPending = pendingLinkM2ForM1Id === m.id
+            const fill = m.record.surveyCategory === 'asbuilt' ? '#10b981' : '#f97316'
+            return (
+              <Marker
+                key={`meas-${m.id}`}
+                position={[m.lat, m.lng]}
+                icon={createMeasuredIcon({ fill, isSelected, isPending })}
+                zIndexOffset={isPending ? 2000 : 1000}
+                eventHandlers={{
+                  click: () => handleMeasuredMarkerClick(m.id),
+                }}
+              >
+                <Tooltip
+                  permanent
+                  direction="right"
+                  offset={[10, 0]}
+                  className="point-label-tooltip"
+                >
+                  <span
+                    style={{
+                      color: fill,
+                      textShadow:
+                        '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff',
+                    }}
+                  >
+                    {m.record.targetName ?? '(実測)'}
+                  </span>
+                </Tooltip>
+              </Marker>
+            )
+          })}
         </CoordinateMap>
       </div>
 
