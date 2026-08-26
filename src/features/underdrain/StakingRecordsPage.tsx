@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Trash2, Download, FileSearch, RefreshCw, Link as LinkIcon, X } from 'lucide-react'
-import { CircleMarker, Polyline, Tooltip, useMap } from 'react-leaflet'
+import { CircleMarker, Pane, Polyline, Tooltip, useMap } from 'react-leaflet'
 import { useFarmStore } from '@/stores/farmStore'
 import { useStakingStore, type SurveyCategory, type StakingRecord, type StakingTargetType } from '@/stores/stakingStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
@@ -55,7 +55,17 @@ const CATEGORY_LABEL: Record<SurveyCategory | 'all', string> = {
 
 export function StakingRecordsPage() {
   const { currentFarm } = useFarmStore()
-  const { records, loading, error, fetchRecords, deleteRecord, updateRecordTarget, pairRecords, unpairRecord } = useStakingStore()
+  const {
+    records,
+    loading,
+    error,
+    fetchRecords,
+    deleteRecord,
+    updateRecordTarget,
+    pairRecords,
+    unpairRecord,
+    updateRecordName,
+  } = useStakingStore()
   const { coordinates, fetchCoordinates } = useCoordinateStore()
   const { projects } = useProjectListStore()
   const [filter, setFilter] = useState<'all' | SurveyCategory>('all')
@@ -677,6 +687,10 @@ export function StakingRecordsPage() {
         >
           {/* 行 選択時 の 地図 pan/zoom */}
           <RecordZoomController target={zoomTarget} />
+          {/* 実測マーカー用 の 独立ペーン (zIndex 700)。 markerPane (z600) に
+              いる 設計座標マーカー より 上に 描画 して クリック が 確実に
+              マーカー側 で 受け取れる ように する。 */}
+          <Pane name="staking-measured" style={{ zIndex: 700 }} />
           {measuredPointsForMap.map((m) => {
             // リンク 済み: 対応する 設計座標 との 間に 誤差ベクトル 線 を 引く。
             const linkedCoord =
@@ -711,7 +725,7 @@ export function StakingRecordsPage() {
                         ? 7
                         : 5
                   }
-                  pane="markerPane"
+                  pane="staking-measured"
                   bubblingMouseEvents={false}
                   eventHandlers={{
                     click: () => handleMeasuredMarkerClick(m.id),
@@ -977,9 +991,30 @@ export function StakingRecordsPage() {
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right text-slate-600">
                       {g.designZ != null ? g.designZ.toFixed(3) : '—'}
                     </td>
-                    {/* 実測1 (点名 / X / Y / Z) */}
-                    <td className="px-2 py-1.5 border-b border-r font-medium bg-orange-50/50 truncate max-w-[8rem]">
-                      {m1?.targetName ?? '—'}
+                    {/* 実測1 (点名 / X / Y / Z)。 点名 は 変更可 (blur/Enter で 保存)、
+                        座標 (X/Y/Z) は 読取専用。 */}
+                    <td className="px-1 py-1 border-b border-r bg-orange-50/50 max-w-[8rem]">
+                      {m1 ? (
+                        <input
+                          type="text"
+                          key={`${m1.id}:${m1.targetName ?? ''}`}
+                          defaultValue={m1.targetName ?? ''}
+                          onClick={(e) => e.stopPropagation()}
+                          onBlur={(e) => {
+                            const v = e.target.value.trim()
+                            if (v !== (m1.targetName ?? '')) {
+                              void updateRecordName(m1.id, v || null)
+                            }
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter')
+                              (e.currentTarget as HTMLInputElement).blur()
+                          }}
+                          className="w-full px-1 py-0.5 border rounded text-sm bg-white"
+                        />
+                      ) : (
+                        '—'
+                      )}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
                       {m1 ? m1.measuredX.toFixed(3) : '—'}
@@ -993,16 +1028,36 @@ export function StakingRecordsPage() {
                     {/* 実測2 (点名 + リンク操作 / X / Y / Z)。 別 の 実測点 を リンク
                         させる こと で 「後追い で 2 回目 の 実測」を 表現できる。 */}
                     <td
-                      className={`px-2 py-1.5 border-b border-r font-medium truncate max-w-[8rem] ${
+                      className={`px-1 py-1 border-b border-r max-w-[8rem] ${
                         m1 && pendingLinkM2ForM1Id === m1.id
-                          ? 'bg-purple-100 text-purple-800'
+                          ? 'bg-purple-100'
                           : 'bg-orange-50/50'
                       }`}
                     >
                       <div className="flex items-center gap-1">
-                        <span className="flex-1 min-w-0 truncate">
-                          {m2 ? m2.targetName : <span className="text-slate-400 italic">—</span>}
-                        </span>
+                        {m2 ? (
+                          <input
+                            type="text"
+                            key={`${m2.id}:${m2.targetName ?? ''}`}
+                            defaultValue={m2.targetName ?? ''}
+                            onClick={(e) => e.stopPropagation()}
+                            onBlur={(e) => {
+                              const v = e.target.value.trim()
+                              if (v !== (m2.targetName ?? '')) {
+                                void updateRecordName(m2.id, v || null)
+                              }
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter')
+                                (e.currentTarget as HTMLInputElement).blur()
+                            }}
+                            className="flex-1 min-w-0 px-1 py-0.5 border rounded text-sm bg-white"
+                          />
+                        ) : (
+                          <span className="flex-1 min-w-0 truncate text-slate-400 italic">
+                            —
+                          </span>
+                        )}
                         {m2 ? (
                           <button
                             onClick={(e) => {

@@ -103,6 +103,8 @@ interface StakingState {
   pairRecords: (idA: string, idB: string) => Promise<void>
   /** 指定 レコード の ペア を 解除 (自分側 と 相手側 の paired_with_id を NULL に)。 */
   unpairRecord: (id: string) => Promise<void>
+  /** 実測点名 (target_name) のみ を 更新。 座標 (measured_*) は 変更 しない。 */
+  updateRecordName: (id: string, name: string | null) => Promise<void>
 }
 
 export const useStakingStore = create<StakingState>()((set, get) => ({
@@ -274,12 +276,14 @@ export const useStakingStore = create<StakingState>()((set, get) => ({
   updateRecordTarget: async (id, coord) => {
     set({ saving: true, error: null })
     try {
+      // target_name は 実測時 に つけた 名前 の 保存が 優先 の ため、リンク
+      // 時 に 勝手 に 上書き しない。 座標 (target_x/y/z) は 誤差 算出 用 に
+      // 設計値 で 更新。 リンク解除 (coord=null) では target_name は 触らない。
       const patch = coord
         ? {
             target_type: 'coordinate' as StakingTargetType,
             target_ref_id: coord.id,
             target_vertex_index: null,
-            target_name: coord.pointNumber,
             target_x: coord.x,
             target_y: coord.y,
             target_z: coord.z,
@@ -288,7 +292,6 @@ export const useStakingStore = create<StakingState>()((set, get) => ({
             target_type: 'free' as StakingTargetType,
             target_ref_id: null,
             target_vertex_index: null,
-            target_name: null,
             target_x: null,
             target_y: null,
             target_z: null,
@@ -309,6 +312,31 @@ export const useStakingStore = create<StakingState>()((set, get) => ({
       set({
         saving: false,
         error: err instanceof Error ? err.message : '設計座標 のリンク に 失敗しました',
+      })
+    }
+  },
+
+  updateRecordName: async (id, name) => {
+    set({ saving: true, error: null })
+    try {
+      const normalized = name && name.trim().length > 0 ? name.trim() : null
+      const { data, error } = await supabase
+        .from('staking_records')
+        .update({ target_name: normalized } as never)
+        .eq('id', id)
+        .select()
+        .single()
+      if (error) throw error
+      const saved = rowToRecord(data as StakingRecordRow)
+      set((s) => ({
+        records: s.records.map((r) => (r.id === id ? saved : r)),
+        saving: false,
+      }))
+    } catch (err) {
+      console.error('[stakingStore] updateRecordName failed', err, { id, name })
+      set({
+        saving: false,
+        error: err instanceof Error ? err.message : '実測点名 の 更新 に 失敗',
       })
     }
   },
