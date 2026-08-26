@@ -174,7 +174,8 @@ export function StakingRecordsPage() {
   const handleMeasuredMarkerClick = (recordId: string) => {
     if (pendingLinkM2ForM1Id) {
       if (recordId === pendingLinkM2ForM1Id) {
-        setPendingLinkM2ForM1Id(null)
+        // 実測1 自身 を クリック した ケース。 誤クリック 防止 の ため
+        // モード は 継続 し、何も しない (キャンセル は 明示 ボタン で 行う)。
         return
       }
       const m1 = records.find((r) => r.id === pendingLinkM2ForM1Id)
@@ -703,15 +704,33 @@ export function StakingRecordsPage() {
                 )}
                 <CircleMarker
                   center={[m.lat, m.lng]}
-                  radius={selectedRecordId === m.id ? 7 : 4}
+                  radius={
+                    pendingLinkM2ForM1Id === m.id
+                      ? 9
+                      : selectedRecordId === m.id
+                        ? 7
+                        : 5
+                  }
+                  pane="markerPane"
+                  bubblingMouseEvents={false}
                   eventHandlers={{
                     click: () => handleMeasuredMarkerClick(m.id),
                   }}
                   pathOptions={{
-                    color: selectedRecordId === m.id ? '#1d4ed8' : '#fff',
+                    color:
+                      pendingLinkM2ForM1Id === m.id
+                        ? '#a855f7'
+                        : selectedRecordId === m.id
+                          ? '#1d4ed8'
+                          : '#fff',
                     fillColor: m.record.surveyCategory === 'asbuilt' ? '#10b981' : '#f97316',
                     fillOpacity: 0.9,
-                    weight: selectedRecordId === m.id ? 2.5 : 1.5,
+                    weight:
+                      pendingLinkM2ForM1Id === m.id
+                        ? 3
+                        : selectedRecordId === m.id
+                          ? 2.5
+                          : 1.5,
                   }}
                 >
                   <Tooltip

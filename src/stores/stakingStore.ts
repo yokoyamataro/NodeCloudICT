@@ -105,7 +105,7 @@ interface StakingState {
   unpairRecord: (id: string) => Promise<void>
 }
 
-export const useStakingStore = create<StakingState>()((set) => ({
+export const useStakingStore = create<StakingState>()((set, get) => ({
   records: [],
   loading: false,
   saving: false,
@@ -187,37 +187,45 @@ export const useStakingStore = create<StakingState>()((set) => ({
     set({ saving: true, error: null })
     try {
       // 既存 の ペア を 事前 に 解除 する (両側)
-      const cur = (): StakingRecord[] => useStakingStore.getState().records
-      const a = cur().find((r) => r.id === idA)
-      const b = cur().find((r) => r.id === idB)
+      const cur = get().records
+      const a = cur.find((r) => r.id === idA)
+      const b = cur.find((r) => r.id === idB)
       const preExistingIds = new Set<string>()
       if (a?.pairedWithId && a.pairedWithId !== idB) preExistingIds.add(a.pairedWithId)
       if (b?.pairedWithId && b.pairedWithId !== idA) preExistingIds.add(b.pairedWithId)
       for (const oldId of preExistingIds) {
-        await supabase
+        const { error: eOld } = await supabase
           .from('staking_records')
           .update({ paired_with_id: null } as never)
           .eq('id', oldId)
+        if (eOld) throw eOld
       }
-      // 双方向 セット
+      // 双方向 セット。 update().eq() は 影響行 0 でも エラー に ならない ので、
+      // .select() で 実際に 更新された 行 を 明示 取得 して 0 件 なら 例外化する。
       const [ra, rb] = await Promise.all([
         supabase
           .from('staking_records')
           .update({ paired_with_id: idB } as never)
           .eq('id', idA)
-          .select()
-          .single(),
+          .select(),
         supabase
           .from('staking_records')
           .update({ paired_with_id: idA } as never)
           .eq('id', idB)
-          .select()
-          .single(),
+          .select(),
       ])
       if (ra.error) throw ra.error
       if (rb.error) throw rb.error
-      const savedA = rowToRecord(ra.data as StakingRecordRow)
-      const savedB = rowToRecord(rb.data as StakingRecordRow)
+      const rowsA = (ra.data ?? []) as StakingRecordRow[]
+      const rowsB = (rb.data ?? []) as StakingRecordRow[]
+      if (rowsA.length === 0 || rowsB.length === 0) {
+        throw new Error(
+          `ペア更新 で 影響 0 件 (A:${rowsA.length} / B:${rowsB.length})。 ` +
+            'RLS 権限 or paired_with_id 列 の 存在 を 確認 してください。',
+        )
+      }
+      const savedA = rowToRecord(rowsA[0])
+      const savedB = rowToRecord(rowsB[0])
       set((s) => ({
         records: s.records.map((r) => {
           if (r.id === idA) return savedA
@@ -228,6 +236,7 @@ export const useStakingStore = create<StakingState>()((set) => ({
         saving: false,
       }))
     } catch (err) {
+      console.error('[stakingStore] pairRecords failed', err, { idA, idB })
       set({
         saving: false,
         error: err instanceof Error ? err.message : '実測記録 の ペアリング に 失敗',
@@ -238,7 +247,7 @@ export const useStakingStore = create<StakingState>()((set) => ({
   unpairRecord: async (id) => {
     set({ saving: true, error: null })
     try {
-      const cur = useStakingStore.getState().records
+      const cur = get().records
       const target = cur.find((r) => r.id === id)
       const partnerId = target?.pairedWithId ?? null
       const ids = partnerId ? [id, partnerId] : [id]
@@ -254,6 +263,7 @@ export const useStakingStore = create<StakingState>()((set) => ({
         saving: false,
       }))
     } catch (err) {
+      console.error('[stakingStore] unpairRecord failed', err, { id })
       set({
         saving: false,
         error: err instanceof Error ? err.message : '実測記録 の ペア 解除 に 失敗',
