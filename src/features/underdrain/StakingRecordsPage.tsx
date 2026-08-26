@@ -78,6 +78,12 @@ export function StakingRecordsPage() {
   // 記録 ID。 m1 が 設計座標 リンク済み なら updateRecordTarget で 同じ
   // targetRefId に 移動、free なら pairRecords で 対称ペアリング する。
   const [pendingLinkM2ForM1Id, setPendingLinkM2ForM1Id] = useState<string | null>(null)
+  // React-leaflet の eventHandlers が 古い クロージャ を 掴んで しまう ケース に
+  // 備えて、常に 最新値 を 参照 できる ref も 用意 する。
+  const pendingLinkM2ForM1IdRef = useRef<string | null>(null)
+  useEffect(() => {
+    pendingLinkM2ForM1IdRef.current = pendingLinkM2ForM1Id
+  }, [pendingLinkM2ForM1Id])
 
   // 行 選択 (ハイライト + 地図 ズーム)。 tick は 同じ 行 を 連打 した 時 でも
   // 再ズーム できる ように 単調増加 させる。
@@ -181,20 +187,21 @@ export function StakingRecordsPage() {
   // - m1 が 設計座標 リンク済み → クリック 記録 を 同じ targetRefId に 移動
   // - m1 が free (設計値 なし) → クリック 記録 と ペアリング (paired_with_id)
   // 通常時 は 行選択 + ズーム。
+  // ref 経由 で pendingLinkM2ForM1Id を 参照 する ことで、react-leaflet の
+  // 古い クロージャ の 影響 を 受けない ように する。
   const handleMeasuredMarkerClick = (recordId: string) => {
-    if (pendingLinkM2ForM1Id) {
-      if (recordId === pendingLinkM2ForM1Id) {
-        // 実測1 自身 を クリック した ケース。 誤クリック 防止 の ため
-        // モード は 継続 し、何も しない (キャンセル は 明示 ボタン で 行う)。
+    const pending = pendingLinkM2ForM1IdRef.current
+    console.log('[staking-records] measured marker clicked', { recordId, pending })
+    if (pending) {
+      if (recordId === pending) {
         return
       }
-      const m1 = records.find((r) => r.id === pendingLinkM2ForM1Id)
+      const m1 = records.find((r) => r.id === pending)
       if (!m1) {
         setPendingLinkM2ForM1Id(null)
         return
       }
       if (m1.targetType === 'coordinate' && m1.targetRefId) {
-        // 設計座標 リンク済み: 同じ targetRefId に 移動
         const coord = coordinates.find((c) => c.id === m1.targetRefId)
         if (coord) {
           void updateRecordTarget(recordId, {
@@ -206,7 +213,6 @@ export function StakingRecordsPage() {
           })
         }
       } else {
-        // free: 対称ペアリング
         void pairRecords(m1.id, recordId)
       }
       setPendingLinkM2ForM1Id(null)
@@ -687,10 +693,10 @@ export function StakingRecordsPage() {
         >
           {/* 行 選択時 の 地図 pan/zoom */}
           <RecordZoomController target={zoomTarget} />
-          {/* 実測マーカー用 の 独立ペーン (zIndex 700)。 markerPane (z600) に
-              いる 設計座標マーカー より 上に 描画 して クリック が 確実に
-              マーカー側 で 受け取れる ように する。 */}
-          <Pane name="staking-measured" style={{ zIndex: 700 }} />
+          {/* 実測マーカー用 の 独立ペーン (zIndex 700 = markerPane より 上)。
+              children として 直接 マーカー を 入れる (react-leaflet の 標準
+              パターン) — pane 属性 で 個別指定 する より 確実。 */}
+          <Pane name="staking-measured" style={{ zIndex: 700 }}>
           {measuredPointsForMap.map((m) => {
             // リンク 済み: 対応する 設計座標 との 間に 誤差ベクトル 線 を 引く。
             const linkedCoord =
@@ -767,6 +773,7 @@ export function StakingRecordsPage() {
               </div>
             )
           })}
+          </Pane>
         </CoordinateMap>
       </div>
 
