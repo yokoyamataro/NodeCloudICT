@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Trash2, Download, FileSearch, RefreshCw, Link as LinkIcon, X } from 'lucide-react'
-import { Marker, Polyline, Tooltip, useMap } from 'react-leaflet'
+import { Marker, Polyline, Tooltip, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import { useFarmStore } from '@/stores/farmStore'
 import { useStakingStore, type SurveyCategory, type StakingRecord, type StakingTargetType } from '@/stores/stakingStore'
@@ -51,6 +51,23 @@ const TYPE_COLORS: Record<string, string> = {
   witness: '#eab308',
   confirmed_boundary: '#16a34a',
   measured: '#ec4899',
+}
+
+// デバッグ 用: 地図 の どこ か が クリック された とき console.log する。
+// マーカー の click ハンドラ が 発火 しない ケース の 原因切り分け に 使う。
+// マーカー が 上に あり クリック 吸収 → これは 発火 しない。
+// マーカー が 下 or 透明 で 素通り → これが 発火 する。
+function MapClickLogger() {
+  useMapEvents({
+    click(e) {
+      console.log('[staking-records] MAP click', {
+        latlng: e.latlng,
+        target: (e.originalEvent?.target as Element | undefined)?.tagName,
+        className: (e.originalEvent?.target as Element | undefined)?.className,
+      })
+    },
+  })
+  return null
 }
 
 // 選択された 記録 の 位置 に 地図 を pan/zoom する 子コンポーネント。
@@ -719,6 +736,8 @@ export function StakingRecordsPage() {
           checkedCoordIds={linkedCoordIds}
           onPointSelect={handleCoordSelectOnMap}
         >
+          {/* デバッグ: 地図クリック を ログ */}
+          <MapClickLogger />
           {/* 行 選択時 の 地図 pan/zoom */}
           <RecordZoomController target={zoomTarget} />
           {/* 誤差ベクトル (設計座標 と リンク 済み 実測点 を つなぐ 破線)。
