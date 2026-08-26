@@ -575,8 +575,10 @@ export function StakingRecordsPage() {
       )}
 
       {/* 上半分: 地図 (座標管理 と 同じ CoordinateMap)。設計座標 を クリック
-          で 事後リンク 可能。実測点 は オレンジ 十字マーカー で 表示。 */}
-      <div className="flex-1 min-h-0 border-b relative">
+          で 事後リンク 可能。実測点 は オレンジ 十字マーカー で 表示。
+          overflow-hidden + isolate で 地図 内 の z-[1000] HUD が 下 の テーブル
+          に 被らない ように 独立 スタッキング コンテキスト を 作る。 */}
+      <div className="flex-1 min-h-0 border-b-2 border-slate-300 relative overflow-hidden isolate">
         <CoordinateMap
           farmId={currentFarm.id}
           showLabels
@@ -647,8 +649,9 @@ export function StakingRecordsPage() {
         </CoordinateMap>
       </div>
 
-      {/* 下半分: テーブル */}
-      <div className="flex-1 min-h-0 overflow-auto bg-white">
+      {/* 下半分: テーブル (isolate で テーブル 内 の sticky thead の z-index が
+          地図側 と 干渉 しない ように 独立 スタッキング コンテキスト を 作る) */}
+      <div className="flex-1 min-h-0 overflow-auto bg-white isolate">
         {loading ? (
           <div className="h-full flex items-center justify-center text-slate-500">
             <Loader2 className="h-5 w-5 animate-spin mr-2" />
