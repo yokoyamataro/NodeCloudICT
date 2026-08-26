@@ -55,7 +55,7 @@ const CATEGORY_LABEL: Record<SurveyCategory | 'all', string> = {
 
 export function StakingRecordsPage() {
   const { currentFarm } = useFarmStore()
-  const { records, loading, error, fetchRecords, deleteRecord, updateRecordTarget } = useStakingStore()
+  const { records, loading, error, fetchRecords, deleteRecord, updateRecordTarget, pairRecords, unpairRecord } = useStakingStore()
   const { coordinates, fetchCoordinates } = useCoordinateStore()
   const { projects } = useProjectListStore()
   const [filter, setFilter] = useState<'all' | SurveyCategory>('all')
@@ -64,10 +64,10 @@ export function StakingRecordsPage() {
   // で 選んだ 座標 を その 記録 に 割り付ける。
   const [pendingLinkRecordId, setPendingLinkRecordId] = useState<string | null>(null)
 
-  // 「別の 実測点 を 実測2 として 割り付ける」モード の 対象 グループ の
-  // targetRefId (設計座標 ID)。セット されて いる 間は 地図 で 実測マーカー
-  // を クリック する と その 記録 を 当 グループ の 実測2 として 移動する。
-  const [pendingLinkM2ForRefId, setPendingLinkM2ForRefId] = useState<string | null>(null)
+  // 「別の 実測点 を 実測2 として 割り付ける」モード。 保持する のは m1 の
+  // 記録 ID。 m1 が 設計座標 リンク済み なら updateRecordTarget で 同じ
+  // targetRefId に 移動、free なら pairRecords で 対称ペアリング する。
+  const [pendingLinkM2ForM1Id, setPendingLinkM2ForM1Id] = useState<string | null>(null)
 
   // 行 選択 (ハイライト + 地図 ズーム)。 tick は 同じ 行 を 連打 した 時 でも
   // 再ズーム できる ように 単調増加 させる。
@@ -161,28 +161,44 @@ export function StakingRecordsPage() {
 
   // 「実測2 として 割り付け」モード の 起点 と キャンセル。 排他制御 の ため
   // 他モード は 同時に クリア する。
-  const handleStartLinkM2 = (designRefId: string) => {
-    setPendingLinkM2ForRefId(designRefId)
+  const handleStartLinkM2 = (m1Id: string) => {
+    setPendingLinkM2ForM1Id(m1Id)
     setPendingLinkRecordId(null)
   }
-  const handleCancelLinkM2 = () => setPendingLinkM2ForRefId(null)
+  const handleCancelLinkM2 = () => setPendingLinkM2ForM1Id(null)
 
   // 地図 の 実測マーカー を クリック された とき: 「実測2 リンク」モード なら
-  // その 記録 を グループ に 移す (targetRefId を 上書き)。 通常時 は 行選択
-  // + ズーム。
+  // - m1 が 設計座標 リンク済み → クリック 記録 を 同じ targetRefId に 移動
+  // - m1 が free (設計値 なし) → クリック 記録 と ペアリング (paired_with_id)
+  // 通常時 は 行選択 + ズーム。
   const handleMeasuredMarkerClick = (recordId: string) => {
-    if (pendingLinkM2ForRefId) {
-      const coord = coordinates.find((c) => c.id === pendingLinkM2ForRefId)
-      if (coord) {
-        void updateRecordTarget(recordId, {
-          id: coord.id,
-          pointNumber: coord.pointNumber,
-          x: coord.x,
-          y: coord.y,
-          z: coord.z,
-        })
+    if (pendingLinkM2ForM1Id) {
+      if (recordId === pendingLinkM2ForM1Id) {
+        setPendingLinkM2ForM1Id(null)
+        return
       }
-      setPendingLinkM2ForRefId(null)
+      const m1 = records.find((r) => r.id === pendingLinkM2ForM1Id)
+      if (!m1) {
+        setPendingLinkM2ForM1Id(null)
+        return
+      }
+      if (m1.targetType === 'coordinate' && m1.targetRefId) {
+        // 設計座標 リンク済み: 同じ targetRefId に 移動
+        const coord = coordinates.find((c) => c.id === m1.targetRefId)
+        if (coord) {
+          void updateRecordTarget(recordId, {
+            id: coord.id,
+            pointNumber: coord.pointNumber,
+            x: coord.x,
+            y: coord.y,
+            z: coord.z,
+          })
+        }
+      } else {
+        // free: 対称ペアリング
+        void pairRecords(m1.id, recordId)
+      }
+      setPendingLinkM2ForM1Id(null)
       return
     }
     handleRowClick(recordId)
@@ -319,18 +335,18 @@ export function StakingRecordsPage() {
     m2: StakingRecord | null
   }
   const grouped = useMemo<StakingGroup[]>(() => {
+    // (1) 設計座標 リンク済み: targetRefId で グループ化
     const byRef = new Map<string, StakingRecord[]>()
-    const standalone: StakingRecord[] = []
+    const freeRecords: StakingRecord[] = []
     for (const r of filtered) {
       if (r.targetType === 'coordinate' && r.targetRefId) {
         const arr = byRef.get(r.targetRefId) ?? []
         arr.push(r)
         byRef.set(r.targetRefId, arr)
       } else {
-        standalone.push(r)
+        freeRecords.push(r)
       }
     }
-    // 各 グループ の 記録 は 古い 順 に ソート (m1 = 先に 測った、 m2 = 後に 測った)
     for (const arr of byRef.values()) {
       arr.sort((a, b) => a.recordedAt.localeCompare(b.recordedAt))
     }
@@ -351,18 +367,44 @@ export function StakingRecordsPage() {
         })
       }
     }
-    for (const r of standalone) {
-      out.push({
-        key: r.id,
-        designName: r.targetName ?? '',
-        designX: r.targetX,
-        designY: r.targetY,
-        designZ: r.targetZ,
-        surveyCategory: r.surveyCategory,
-        targetType: r.targetType,
-        m1: r,
-        m2: null,
-      })
+    // (2) free 記録: pairedWithId で 対称ペア を 束ねる (相互 参照 のみ 有効扱い)
+    const freeById = new Map(freeRecords.map((r) => [r.id, r]))
+    const consumed = new Set<string>()
+    for (const r of freeRecords) {
+      if (consumed.has(r.id)) continue
+      const partner = r.pairedWithId ? freeById.get(r.pairedWithId) : null
+      const isSymmetric = partner && partner.pairedWithId === r.id
+      if (partner && isSymmetric && !consumed.has(partner.id)) {
+        const pair = [r, partner].sort((a, b) =>
+          a.recordedAt.localeCompare(b.recordedAt),
+        )
+        out.push({
+          key: `pair-${pair[0].id}`,
+          designName: '',
+          designX: null,
+          designY: null,
+          designZ: null,
+          surveyCategory: pair[0].surveyCategory,
+          targetType: pair[0].targetType,
+          m1: pair[0],
+          m2: pair[1],
+        })
+        consumed.add(pair[0].id)
+        consumed.add(pair[1].id)
+      } else {
+        out.push({
+          key: r.id,
+          designName: '',
+          designX: null,
+          designY: null,
+          designZ: null,
+          surveyCategory: r.surveyCategory,
+          targetType: r.targetType,
+          m1: r,
+          m2: null,
+        })
+        consumed.add(r.id)
+      }
     }
     // 直近 が 先頭 (m1 の 記録日時 降順)
     out.sort((a, b) => {
@@ -562,7 +604,7 @@ export function StakingRecordsPage() {
             </button>
           </span>
         )}
-        {pendingLinkM2ForRefId && (
+        {pendingLinkM2ForM1Id && (
           <span className="ml-auto flex items-center gap-2 text-purple-700 font-semibold">
             🎯 地図上 の 実測マーカー を クリック で 実測2 に 割り付け
             <button
@@ -897,7 +939,7 @@ export function StakingRecordsPage() {
                             onClick={(e) => {
                               e.stopPropagation()
                               setPendingLinkRecordId(m1.id)
-                              setPendingLinkM2ForRefId(null)
+                              setPendingLinkM2ForM1Id(null)
                             }}
                             title="地図 から 設計座標 を 選んで リンク"
                             className="p-0.5 text-blue-500 hover:bg-blue-50 rounded"
@@ -933,7 +975,7 @@ export function StakingRecordsPage() {
                         させる こと で 「後追い で 2 回目 の 実測」を 表現できる。 */}
                     <td
                       className={`px-2 py-1.5 border-b border-r font-medium truncate max-w-[8rem] ${
-                        m1?.targetRefId && pendingLinkM2ForRefId === m1.targetRefId
+                        m1 && pendingLinkM2ForM1Id === m1.id
                           ? 'bg-purple-100 text-purple-800'
                           : 'bg-orange-50/50'
                       }`}
@@ -946,15 +988,21 @@ export function StakingRecordsPage() {
                           <button
                             onClick={(e) => {
                               e.stopPropagation()
-                              // 実測2 の リンク 解除 → その 記録 を free 化
-                              void updateRecordTarget(m2.id, null)
+                              // グループ 種別 に 応じて 解除方法 を 切替:
+                              // 設計座標 リンク済み → updateRecordTarget(null) で free 化
+                              // free ペア → unpairRecord で 双方 の paired_with_id を NULL
+                              if (m1?.targetType === 'coordinate' && m1.targetRefId) {
+                                void updateRecordTarget(m2.id, null)
+                              } else {
+                                void unpairRecord(m2.id)
+                              }
                             }}
-                            title="実測2 を グループ から 外す (free 化)"
+                            title="実測2 を グループ から 外す"
                             className="p-0.5 text-slate-400 hover:text-red-500"
                           >
                             <X className="h-3 w-3" />
                           </button>
-                        ) : m1?.targetRefId && pendingLinkM2ForRefId === m1.targetRefId ? (
+                        ) : m1 && pendingLinkM2ForM1Id === m1.id ? (
                           <button
                             onClick={(e) => {
                               e.stopPropagation()
@@ -965,11 +1013,11 @@ export function StakingRecordsPage() {
                           >
                             <X className="h-3 w-3" />
                           </button>
-                        ) : m1?.targetRefId ? (
+                        ) : m1 ? (
                           <button
                             onClick={(e) => {
                               e.stopPropagation()
-                              handleStartLinkM2(m1.targetRefId!)
+                              handleStartLinkM2(m1.id)
                             }}
                             title="別 の 実測点 を 実測2 として リンク"
                             className="p-0.5 text-purple-500 hover:bg-purple-50 rounded"

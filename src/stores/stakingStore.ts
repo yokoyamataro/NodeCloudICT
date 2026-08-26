@@ -23,6 +23,8 @@ export interface StakingRecord {
   durationSeconds: number | null
   recordedAt: string
   notes: string | null
+  /** 設計座標 に リンク して いない (free) 記録同士 を 束ねる 対称ポインタ。 */
+  pairedWithId: string | null
 }
 
 interface StakingRecordRow {
@@ -44,6 +46,7 @@ interface StakingRecordRow {
   duration_seconds: number | null
   recorded_at: string
   notes: string | null
+  paired_with_id: string | null
 }
 
 function rowToRecord(r: StakingRecordRow): StakingRecord {
@@ -66,6 +69,7 @@ function rowToRecord(r: StakingRecordRow): StakingRecord {
     durationSeconds: r.duration_seconds != null ? Number(r.duration_seconds) : null,
     recordedAt: r.recorded_at,
     notes: r.notes,
+    pairedWithId: r.paired_with_id,
   }
 }
 
@@ -76,7 +80,10 @@ interface StakingState {
   error: string | null
 
   fetchRecords: (farmId: string) => Promise<void>
-  addRecord: (record: Omit<StakingRecord, 'id' | 'recordedAt'>) => Promise<StakingRecord | null>
+  /** 新規 レコード の 作成。 pairedWithId は 初期 null 固定 の ため 引数外。 */
+  addRecord: (
+    record: Omit<StakingRecord, 'id' | 'recordedAt' | 'pairedWithId'>,
+  ) => Promise<StakingRecord | null>
   deleteRecord: (id: string) => Promise<void>
   /**
    * 実測記録 を 座標管理 の 設計座標 に 事後リンクする。
@@ -92,6 +99,10 @@ interface StakingState {
       z: number | null
     } | null,
   ) => Promise<void>
+  /** 2 レコード を 対称 に ペアリング (paired_with_id を 相互 に セット)。 */
+  pairRecords: (idA: string, idB: string) => Promise<void>
+  /** 指定 レコード の ペア を 解除 (自分側 と 相手側 の paired_with_id を NULL に)。 */
+  unpairRecord: (id: string) => Promise<void>
 }
 
 export const useStakingStore = create<StakingState>()((set) => ({
@@ -167,6 +178,85 @@ export const useStakingStore = create<StakingState>()((set) => ({
       set({
         saving: false,
         error: err instanceof Error ? err.message : '実測記録の削除に失敗しました',
+      })
+    }
+  },
+
+  pairRecords: async (idA, idB) => {
+    if (idA === idB) return
+    set({ saving: true, error: null })
+    try {
+      // 既存 の ペア を 事前 に 解除 する (両側)
+      const cur = (): StakingRecord[] => useStakingStore.getState().records
+      const a = cur().find((r) => r.id === idA)
+      const b = cur().find((r) => r.id === idB)
+      const preExistingIds = new Set<string>()
+      if (a?.pairedWithId && a.pairedWithId !== idB) preExistingIds.add(a.pairedWithId)
+      if (b?.pairedWithId && b.pairedWithId !== idA) preExistingIds.add(b.pairedWithId)
+      for (const oldId of preExistingIds) {
+        await supabase
+          .from('staking_records')
+          .update({ paired_with_id: null } as never)
+          .eq('id', oldId)
+      }
+      // 双方向 セット
+      const [ra, rb] = await Promise.all([
+        supabase
+          .from('staking_records')
+          .update({ paired_with_id: idB } as never)
+          .eq('id', idA)
+          .select()
+          .single(),
+        supabase
+          .from('staking_records')
+          .update({ paired_with_id: idA } as never)
+          .eq('id', idB)
+          .select()
+          .single(),
+      ])
+      if (ra.error) throw ra.error
+      if (rb.error) throw rb.error
+      const savedA = rowToRecord(ra.data as StakingRecordRow)
+      const savedB = rowToRecord(rb.data as StakingRecordRow)
+      set((s) => ({
+        records: s.records.map((r) => {
+          if (r.id === idA) return savedA
+          if (r.id === idB) return savedB
+          if (preExistingIds.has(r.id)) return { ...r, pairedWithId: null }
+          return r
+        }),
+        saving: false,
+      }))
+    } catch (err) {
+      set({
+        saving: false,
+        error: err instanceof Error ? err.message : '実測記録 の ペアリング に 失敗',
+      })
+    }
+  },
+
+  unpairRecord: async (id) => {
+    set({ saving: true, error: null })
+    try {
+      const cur = useStakingStore.getState().records
+      const target = cur.find((r) => r.id === id)
+      const partnerId = target?.pairedWithId ?? null
+      const ids = partnerId ? [id, partnerId] : [id]
+      const { error } = await supabase
+        .from('staking_records')
+        .update({ paired_with_id: null } as never)
+        .in('id', ids)
+      if (error) throw error
+      set((s) => ({
+        records: s.records.map((r) =>
+          ids.includes(r.id) ? { ...r, pairedWithId: null } : r,
+        ),
+        saving: false,
+      }))
+    } catch (err) {
+      set({
+        saving: false,
+        error: err instanceof Error ? err.message : '実測記録 の ペア 解除 に 失敗',
       })
     }
   },
