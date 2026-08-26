@@ -1,13 +1,48 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Trash2, Download, FileSearch, RefreshCw, Link as LinkIcon, X } from 'lucide-react'
-import { CircleMarker, Polyline, Tooltip } from 'react-leaflet'
+import { CircleMarker, Polyline, Tooltip, useMap } from 'react-leaflet'
 import { useFarmStore } from '@/stores/farmStore'
-import { useStakingStore, type SurveyCategory } from '@/stores/stakingStore'
+import { useStakingStore, type SurveyCategory, type StakingRecord, type StakingTargetType } from '@/stores/stakingStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { CoordinateMap } from '@/components/map/CoordinateMap'
-import { CoordinateConverter } from '@/lib/coordinates'
+import { CoordinateConverter, COORDINATE_TYPE_NAMES, type CoordinateType } from '@/lib/coordinates'
 import { supabase } from '@/lib/supabase'
+
+// 座標管理 の 点種 色 (CoordinateMap の MARKER_COLORS と 合わせる)。
+const TYPE_COLORS: Record<string, string> = {
+  control: '#ef4444',
+  boundary: '#3b82f6',
+  current: '#14b8a6',
+  underdrain: '#22c55e',
+  soil_import: '#f59e0b',
+  stake: '#22c55e',
+  map_xml: '#a855f7',
+  national_survey: '#d97706',
+  cadastral_diagram: '#0891b2',
+  witness: '#eab308',
+  confirmed_boundary: '#16a34a',
+  measured: '#ec4899',
+}
+
+// 選択された 記録 の 位置 に 地図 を pan/zoom する 子コンポーネント。
+// CoordinateMap の children として 差し込む と useMap で 中の Leaflet Map を 取得できる。
+function RecordZoomController({
+  target,
+}: {
+  target: { lat: number; lng: number; tick: number } | null
+}) {
+  const map = useMap()
+  const lastTickRef = useRef<number>(-1)
+  useEffect(() => {
+    if (!target) return
+    if (target.tick === lastTickRef.current) return
+    lastTickRef.current = target.tick
+    const nextZoom = Math.max(map.getZoom(), 19)
+    map.flyTo([target.lat, target.lng], nextZoom, { duration: 0.6 })
+  }, [target, map])
+  return null
+}
 
 // 起工測量・出来形測量の実測記録を一覧表示し、SIMA/CSV で出力するページ。
 // 工区横断のトップレベル経路 /staking-records に紐付け。
@@ -28,6 +63,15 @@ export function StakingRecordsPage() {
   // 設計座標 の 事後リンク 対象 の 記録 ID。 セット されている 間は 地図クリック
   // で 選んだ 座標 を その 記録 に 割り付ける。
   const [pendingLinkRecordId, setPendingLinkRecordId] = useState<string | null>(null)
+
+  // 行 選択 (ハイライト + 地図 ズーム)。 tick は 同じ 行 を 連打 した 時 でも
+  // 再ズーム できる ように 単調増加 させる。
+  const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null)
+  const [zoomTick, setZoomTick] = useState<number>(0)
+
+  // 地図に 表示する 点種 の フィルタ (座標管理 の visibleTypes と 同じ 概念)。
+  // null = 未初期化 (初回 に availableTypes で 全 ON 初期化)。
+  const [visibleTypesState, setVisibleTypesState] = useState<Set<string> | null>(null)
 
   useEffect(() => {
     if (currentFarm) {
@@ -67,6 +111,48 @@ export function StakingRecordsPage() {
     }
     return s
   }, [records])
+
+  // 工区内 に 存在する 点種 の 一覧 (フィルタ UI 用)。
+  const availableTypes = useMemo(() => {
+    const s = new Set<string>()
+    for (const c of coordinates) s.add(c.type)
+    return Array.from(s).sort()
+  }, [coordinates])
+
+  // 初回 に visibleTypesState を 全 ON で 初期化。 その後 は ユーザー 操作 に 委ねる。
+  useEffect(() => {
+    if (visibleTypesState === null && availableTypes.length > 0) {
+      setVisibleTypesState(new Set(availableTypes))
+    }
+  }, [visibleTypesState, availableTypes])
+
+  const effectiveVisibleTypes = visibleTypesState ?? undefined
+  const toggleTypeVisibility = (type: string) => {
+    setVisibleTypesState((prev) => {
+      const cur = prev ?? new Set(availableTypes)
+      const next = new Set(cur)
+      if (next.has(type)) next.delete(type)
+      else next.add(type)
+      return next
+    })
+  }
+
+  // 選択中 の 行 の 地図ズーム ターゲット (lat/lng + tick)。 tick を 変えて
+  // useEffect を 再発火 させる こと で 同じ 行 を 連打 しても 再ズームできる。
+  const zoomTarget = useMemo(() => {
+    if (!selectedRecordId) return null
+    const rec = records.find((r) => r.id === selectedRecordId)
+    if (!rec) return null
+    const ll = converter.toLatLng(rec.measuredX, rec.measuredY)
+    if (!Number.isFinite(ll.lat) || !Number.isFinite(ll.lng)) return null
+    return { lat: ll.lat, lng: ll.lng, tick: zoomTick }
+  }, [selectedRecordId, records, converter, zoomTick])
+
+  // 行 クリック で 選択 + ズーム 発火 (連打 対応 の tick インクリメント)。
+  const handleRowClick = (recordId: string) => {
+    setSelectedRecordId(recordId)
+    setZoomTick((t) => t + 1)
+  }
 
   // 地図で 座標 が クリック された とき: 設定モード なら 記録に リンク、
   // それ以外 は 何もしない。
@@ -183,6 +269,75 @@ export function StakingRecordsPage() {
     if (filter === 'all') return records
     return records.filter((r) => r.surveyCategory === filter)
   }, [records, filter])
+
+  // 同じ 設計座標 に リンク された 実測記録 を 「実測1 / 実測2」に ペアリング。
+  // 3 件 以上 ある 場合 は 2 件 ごと に 追加行 を 生成。 フリー / 未リンク は
+  // ペアリング せず 単独行 として 扱う。
+  interface StakingGroup {
+    key: string
+    designName: string
+    designX: number | null
+    designY: number | null
+    designZ: number | null
+    surveyCategory: SurveyCategory
+    targetType: StakingTargetType
+    m1: StakingRecord | null
+    m2: StakingRecord | null
+  }
+  const grouped = useMemo<StakingGroup[]>(() => {
+    const byRef = new Map<string, StakingRecord[]>()
+    const standalone: StakingRecord[] = []
+    for (const r of filtered) {
+      if (r.targetType === 'coordinate' && r.targetRefId) {
+        const arr = byRef.get(r.targetRefId) ?? []
+        arr.push(r)
+        byRef.set(r.targetRefId, arr)
+      } else {
+        standalone.push(r)
+      }
+    }
+    // 各 グループ の 記録 は 古い 順 に ソート (m1 = 先に 測った、 m2 = 後に 測った)
+    for (const arr of byRef.values()) {
+      arr.sort((a, b) => a.recordedAt.localeCompare(b.recordedAt))
+    }
+    const out: StakingGroup[] = []
+    for (const [refId, arr] of byRef.entries()) {
+      const design = arr[0]
+      for (let i = 0; i < arr.length; i += 2) {
+        out.push({
+          key: i === 0 ? refId : `${refId}-${i}`,
+          designName: design.targetName ?? '',
+          designX: design.targetX,
+          designY: design.targetY,
+          designZ: design.targetZ,
+          surveyCategory: arr[i].surveyCategory,
+          targetType: design.targetType,
+          m1: arr[i] ?? null,
+          m2: arr[i + 1] ?? null,
+        })
+      }
+    }
+    for (const r of standalone) {
+      out.push({
+        key: r.id,
+        designName: r.targetName ?? '',
+        designX: r.targetX,
+        designY: r.targetY,
+        designZ: r.targetZ,
+        surveyCategory: r.surveyCategory,
+        targetType: r.targetType,
+        m1: r,
+        m2: null,
+      })
+    }
+    // 直近 が 先頭 (m1 の 記録日時 降順)
+    out.sort((a, b) => {
+      const at = a.m1?.recordedAt ?? ''
+      const bt = b.m1?.recordedAt ?? ''
+      return bt.localeCompare(at)
+    })
+    return out
+  }, [filtered])
 
   // 平均誤差・件数の簡易サマリ
   const summary = useMemo(() => {
@@ -376,15 +531,61 @@ export function StakingRecordsPage() {
         {error && <span className="text-red-600">{error}</span>}
       </div>
 
+      {/* 点種 フィルタ (座標管理 の visibleTypes と 同じ 考え方)。 工区内 に
+          存在する 点種 だけ を チップ で 出し、クリック で ON/OFF。 */}
+      {availableTypes.length > 0 && (
+        <div className="px-3 py-1.5 border-b bg-white flex items-center gap-1 flex-wrap">
+          <span className="text-[11px] text-slate-500 mr-1">表示点種:</span>
+          {availableTypes.map((type) => {
+            const on = effectiveVisibleTypes?.has(type) ?? true
+            const color = TYPE_COLORS[type] ?? '#666'
+            const label = COORDINATE_TYPE_NAMES[type as CoordinateType] ?? type
+            return (
+              <button
+                key={type}
+                onClick={() => toggleTypeVisibility(type)}
+                title={on ? '非表示に する' : '表示する'}
+                className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-[11px] border rounded ${
+                  on
+                    ? 'bg-white border-slate-300 text-slate-700'
+                    : 'bg-slate-100 border-slate-200 text-slate-400 line-through'
+                }`}
+              >
+                <span
+                  className="inline-block w-2 h-2 rounded-full shrink-0"
+                  style={{ backgroundColor: color, opacity: on ? 1 : 0.3 }}
+                />
+                {label}
+              </button>
+            )
+          })}
+          <button
+            onClick={() => setVisibleTypesState(new Set(availableTypes))}
+            className="ml-auto text-[11px] text-slate-500 hover:text-blue-600"
+          >
+            全 ON
+          </button>
+          <button
+            onClick={() => setVisibleTypesState(new Set())}
+            className="text-[11px] text-slate-500 hover:text-blue-600"
+          >
+            全 OFF
+          </button>
+        </div>
+      )}
+
       {/* 上半分: 地図 (座標管理 と 同じ CoordinateMap)。設計座標 を クリック
           で 事後リンク 可能。実測点 は オレンジ 十字マーカー で 表示。 */}
       <div className="flex-1 min-h-0 border-b relative">
         <CoordinateMap
           farmId={currentFarm.id}
           showLabels
+          visibleTypes={effectiveVisibleTypes}
           checkedCoordIds={linkedCoordIds}
           onPointSelect={handleCoordSelectOnMap}
         >
+          {/* 行 選択時 の 地図 pan/zoom */}
+          <RecordZoomController target={zoomTarget} />
           {measuredPointsForMap.map((m) => {
             // リンク 済み: 対応する 設計座標 との 間に 誤差ベクトル 線 を 引く。
             const linkedCoord =
@@ -412,12 +613,15 @@ export function StakingRecordsPage() {
                 )}
                 <CircleMarker
                   center={[m.lat, m.lng]}
-                  radius={4}
+                  radius={selectedRecordId === m.id ? 7 : 4}
+                  eventHandlers={{
+                    click: () => handleRowClick(m.id),
+                  }}
                   pathOptions={{
-                    color: '#fff',
+                    color: selectedRecordId === m.id ? '#1d4ed8' : '#fff',
                     fillColor: m.record.surveyCategory === 'asbuilt' ? '#10b981' : '#f97316',
                     fillOpacity: 0.9,
-                    weight: 1.5,
+                    weight: selectedRecordId === m.id ? 2.5 : 1.5,
                   }}
                 >
                   <Tooltip
@@ -466,23 +670,41 @@ export function StakingRecordsPage() {
                   設計
                 </th>
                 <th
-                  className="px-2 py-1 border-b border-r text-center bg-slate-50"
-                  colSpan={4}
+                  className="px-2 py-1 border-b border-r text-center bg-orange-50"
+                  colSpan={3}
+                  title="1 回目 の 実測"
                 >
-                  実測
+                  実測1
                 </th>
                 <th
-                  className="px-2 py-1 border-b border-r text-center bg-amber-50"
-                  colSpan={1}
-                  title={`実測値に Z=${zOffset.toFixed(3)} m を加算した補正後の Z`}
+                  className="px-2 py-1 border-b border-r text-center bg-orange-50"
+                  colSpan={3}
+                  title="2 回目 の 実測 (無い 場合 は — )"
                 >
-                  補正
+                  実測2
                 </th>
-                <th className="px-2 py-2 border-b border-r text-right" rowSpan={2}>ΔX</th>
-                <th className="px-2 py-2 border-b border-r text-right" rowSpan={2}>ΔY</th>
-                <th className="px-2 py-2 border-b border-r text-right" rowSpan={2}>水平誤差</th>
+                <th
+                  className="px-2 py-1 border-b border-r text-center bg-rose-50"
+                  colSpan={3}
+                  title="実測1 と 実測2 の 差 (実測2 - 実測1)"
+                >
+                  実測差
+                </th>
+                <th
+                  className="px-2 py-1 border-b border-r text-center bg-emerald-50"
+                  colSpan={3}
+                  title="実測1 と 実測2 の 平均 (実測2 が 無ければ 実測1)"
+                >
+                  平均
+                </th>
+                <th
+                  className="px-2 py-1 border-b border-r text-center bg-blue-50"
+                  colSpan={3}
+                  title="設計 と 平均 の 差 (平均 - 設計)。 水平 = √(dX²+dY²)"
+                >
+                  平均 - 設計
+                </th>
                 <th className="px-2 py-2 border-b border-r text-right" rowSpan={2}>精度(m)</th>
-                <th className="px-2 py-2 border-b border-r text-right" rowSpan={2}>N</th>
                 <th className="px-2 py-2 border-b border-r text-left" rowSpan={2}>記録日時</th>
                 <th className="px-2 py-2 border-b text-center w-10" rowSpan={2}></th>
               </tr>
@@ -491,139 +713,249 @@ export function StakingRecordsPage() {
                 <th className="px-2 py-1 border-b border-r text-right">X</th>
                 <th className="px-2 py-1 border-b border-r text-right">Y</th>
                 <th className="px-2 py-1 border-b border-r text-right">Z</th>
-                <th className="px-2 py-1 border-b border-r text-left">点名</th>
-                <th className="px-2 py-1 border-b border-r text-right">X</th>
-                <th className="px-2 py-1 border-b border-r text-right">Y</th>
-                <th className="px-2 py-1 border-b border-r text-right">Z</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-amber-50">Z</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-orange-50">X</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-orange-50">Y</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-orange-50">Z</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-orange-50">X</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-orange-50">Y</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-orange-50">Z</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-rose-50">dX</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-rose-50">dY</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-rose-50">dZ</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-emerald-50">X</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-emerald-50">Y</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-emerald-50">Z</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-blue-50">dX</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-blue-50">dY</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-blue-50">水平</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r) => {
-                const dx = r.targetX != null ? r.measuredX - r.targetX : null
-                const dy = r.targetY != null ? r.measuredY - r.targetY : null
-                const horiz = dx != null && dy != null ? Math.hypot(dx, dy) : null
-                // 実測記録の targetName は「G_A1」「G2_A1」形式 (計測順序 prefix)。
-                // 設計側の点名はそれを剥がしたもの、実測側は全体をそのまま表示。
-                const measuredName = r.targetName ?? '(無題)'
-                const designName = measuredName.replace(/^G2?_/, '')
+              {grouped.map((g) => {
+                const { m1, m2 } = g
+                const isSelected = selectedRecordId === g.m1?.id
+                // 点名: 実測1 の targetName → G_ / G2_ プレフィックス を 剥がした 設計名
+                const designName =
+                  g.targetType === 'coordinate' && g.designName
+                    ? g.designName.replace(/^G2?_/, '')
+                    : m1?.targetName ?? '(無題)'
+                // 差 (m2 - m1)
+                const diffX = m1 && m2 ? m2.measuredX - m1.measuredX : null
+                const diffY = m1 && m2 ? m2.measuredY - m1.measuredY : null
+                const diffZ =
+                  m1 && m2 && m1.measuredZ != null && m2.measuredZ != null
+                    ? m2.measuredZ - m1.measuredZ
+                    : null
+                // 平均 (m2 が あれば 平均、無ければ m1)
+                const avgX =
+                  m1 && m2 ? (m1.measuredX + m2.measuredX) / 2 : m1?.measuredX ?? null
+                const avgY =
+                  m1 && m2 ? (m1.measuredY + m2.measuredY) / 2 : m1?.measuredY ?? null
+                const avgZ =
+                  m1 && m2 && m1.measuredZ != null && m2.measuredZ != null
+                    ? (m1.measuredZ + m2.measuredZ) / 2
+                    : m1?.measuredZ ?? null
+                // 平均 - 設計
+                const dvsX = avgX != null && g.designX != null ? avgX - g.designX : null
+                const dvsY = avgY != null && g.designY != null ? avgY - g.designY : null
+                const dvsH = dvsX != null && dvsY != null ? Math.hypot(dvsX, dvsY) : null
+                // 精度: m1 と m2 の 悪い方 (Max) を 表示 (未取得 は 除外)
+                const acc =
+                  m1?.accuracy != null && m2?.accuracy != null
+                    ? Math.max(m1.accuracy, m2.accuracy)
+                    : m1?.accuracy ?? m2?.accuracy ?? null
+                const clickId = m1?.id ?? null
                 return (
-                  <tr key={r.id} className="hover:bg-slate-50">
+                  <tr
+                    key={g.key}
+                    onClick={() => clickId && handleRowClick(clickId)}
+                    className={`cursor-pointer ${
+                      isSelected ? 'bg-blue-100 hover:bg-blue-200' : 'hover:bg-slate-50'
+                    }`}
+                  >
                     <td className="px-2 py-1.5 border-b border-r">
                       <span
                         className={`text-[10px] px-1.5 py-0.5 rounded ${
-                          r.targetType === 'free'
+                          g.targetType === 'free'
                             ? 'bg-amber-100 text-amber-800'
-                            : r.targetType === 'pipe_vertex'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : 'bg-blue-100 text-blue-800'
+                            : g.targetType === 'pipe_vertex'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-blue-100 text-blue-800'
                         }`}
                       >
-                        {r.targetType === 'free'
+                        {g.targetType === 'free'
                           ? 'フリー'
-                          : r.targetType === 'pipe_vertex'
-                          ? '頂点'
-                          : '座標'}
+                          : g.targetType === 'pipe_vertex'
+                            ? '頂点'
+                            : '座標'}
                       </span>
                       <span className="ml-1 text-[10px] text-slate-500">
-                        {CATEGORY_LABEL[r.surveyCategory]}
+                        {CATEGORY_LABEL[g.surveyCategory]}
                       </span>
+                      {m2 && (
+                        <span
+                          className="ml-1 text-[10px] px-1 py-0.5 rounded bg-purple-100 text-purple-700"
+                          title="2 回 測定"
+                        >
+                          ×2
+                        </span>
+                      )}
                     </td>
-                    {/* 設計 (点名 + XYZ + リンク 操作 ボタン) */}
+                    {/* 設計 (点名 + XYZ + リンク 操作 ボタン) — 実測1 の record を 対象 */}
                     <td
                       className={`px-2 py-1.5 border-b border-r font-medium ${
-                        pendingLinkRecordId === r.id
+                        m1 && pendingLinkRecordId === m1.id
                           ? 'bg-blue-100 text-blue-800'
                           : 'text-slate-700'
                       }`}
                     >
                       <div className="flex items-center gap-1">
                         <span className="flex-1 min-w-0 truncate">
-                          {r.targetType === 'coordinate' && r.targetRefId ? designName : (
+                          {g.targetType === 'coordinate' && g.designName ? (
+                            designName
+                          ) : (
                             <span className="text-slate-400 italic">未設定</span>
                           )}
                         </span>
-                        {r.targetType === 'coordinate' && r.targetRefId ? (
+                        {g.targetType === 'coordinate' && m1?.targetRefId ? (
                           <button
-                            onClick={() => void updateRecordTarget(r.id, null)}
-                            title="設計座標 の リンク を 解除"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              // グループ 内 全 record を 一斉 に 解除
+                              const ids = [m1?.id, m2?.id].filter(Boolean) as string[]
+                              for (const id of ids) void updateRecordTarget(id, null)
+                            }}
+                            title="設計座標 の リンク を 解除 (グループ 全体)"
                             className="p-0.5 text-slate-400 hover:text-red-500"
                           >
                             <X className="h-3 w-3" />
                           </button>
-                        ) : pendingLinkRecordId === r.id ? (
+                        ) : m1 && pendingLinkRecordId === m1.id ? (
                           <button
-                            onClick={() => setPendingLinkRecordId(null)}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setPendingLinkRecordId(null)
+                            }}
                             title="設計座標 の 選択 を キャンセル"
                             className="p-0.5 text-blue-600 hover:bg-blue-200 rounded"
                           >
                             <X className="h-3 w-3" />
                           </button>
-                        ) : (
+                        ) : m1 ? (
                           <button
-                            onClick={() => setPendingLinkRecordId(r.id)}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setPendingLinkRecordId(m1.id)
+                            }}
                             title="地図 から 設計座標 を 選んで リンク"
                             className="p-0.5 text-blue-500 hover:bg-blue-50 rounded"
                           >
                             <LinkIcon className="h-3 w-3" />
                           </button>
-                        )}
+                        ) : null}
                       </div>
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right text-slate-600">
-                      {r.targetX != null ? r.targetX.toFixed(3) : '—'}
+                      {g.designX != null ? g.designX.toFixed(3) : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right text-slate-600">
-                      {r.targetY != null ? r.targetY.toFixed(3) : '—'}
+                      {g.designY != null ? g.designY.toFixed(3) : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right text-slate-600">
-                      {r.targetZ != null ? r.targetZ.toFixed(3) : '—'}
+                      {g.designZ != null ? g.designZ.toFixed(3) : '—'}
                     </td>
-                    {/* 実測 (点名 + XYZ) */}
-                    <td className="px-2 py-1.5 border-b border-r font-medium">
-                      {measuredName}
+                    {/* 実測1 (X/Y/Z) */}
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
+                      {m1 ? m1.measuredX.toFixed(3) : '—'}
                     </td>
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right">{r.measuredX.toFixed(3)}</td>
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right">{r.measuredY.toFixed(3)}</td>
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
+                      {m1 ? m1.measuredY.toFixed(3) : '—'}
+                    </td>
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
+                      {m1?.measuredZ != null ? (m1.measuredZ + zOffset).toFixed(3) : '—'}
+                    </td>
+                    {/* 実測2 (X/Y/Z) */}
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
+                      {m2 ? m2.measuredX.toFixed(3) : '—'}
+                    </td>
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
+                      {m2 ? m2.measuredY.toFixed(3) : '—'}
+                    </td>
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
+                      {m2?.measuredZ != null ? (m2.measuredZ + zOffset).toFixed(3) : '—'}
+                    </td>
+                    {/* 実測差 (m2 - m1) */}
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-rose-50/50">
+                      {diffX != null ? diffX.toFixed(3) : '—'}
+                    </td>
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-rose-50/50">
+                      {diffY != null ? diffY.toFixed(3) : '—'}
+                    </td>
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-rose-50/50">
+                      {diffZ != null ? diffZ.toFixed(3) : '—'}
+                    </td>
+                    {/* 平均 (X/Y/Z) */}
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-emerald-50/50 font-semibold">
+                      {avgX != null ? avgX.toFixed(3) : '—'}
+                    </td>
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-emerald-50/50 font-semibold">
+                      {avgY != null ? avgY.toFixed(3) : '—'}
+                    </td>
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-emerald-50/50 font-semibold">
+                      {avgZ != null ? (avgZ + zOffset).toFixed(3) : '—'}
+                    </td>
+                    {/* 平均 - 設計 */}
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-blue-50/50">
+                      {dvsX != null ? dvsX.toFixed(3) : '—'}
+                    </td>
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-blue-50/50">
+                      {dvsY != null ? dvsY.toFixed(3) : '—'}
+                    </td>
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-blue-50/50">
+                      {dvsH != null ? dvsH.toFixed(3) : '—'}
+                    </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right">
-                      {r.measuredZ != null ? r.measuredZ.toFixed(3) : '—'}
-                    </td>
-                    {/* 補正 Z (measuredZ + zOffset) */}
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-amber-50 text-amber-900">
-                      {r.measuredZ != null ? (r.measuredZ + zOffset).toFixed(3) : '—'}
-                    </td>
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right">
-                      {dx != null ? dx.toFixed(3) : '—'}
-                    </td>
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right">
-                      {dy != null ? dy.toFixed(3) : '—'}
-                    </td>
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right">
-                      {horiz != null ? horiz.toFixed(3) : '—'}
-                    </td>
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right">
-                      {r.accuracy != null ? r.accuracy.toFixed(3) : '—'}
-                    </td>
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right">
-                      {r.sampleCount ?? '—'}
+                      {acc != null ? acc.toFixed(3) : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r text-slate-600">
-                      {new Date(r.recordedAt).toLocaleString('ja-JP', {
-                        year: 'numeric',
-                        month: '2-digit',
-                        day: '2-digit',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
+                      {m1
+                        ? new Date(m1.recordedAt).toLocaleString('ja-JP', {
+                            year: 'numeric',
+                            month: '2-digit',
+                            day: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })
+                        : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b text-center">
-                      <button
-                        onClick={() => handleDelete(r.id, r.targetName)}
-                        className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded"
-                        title="削除"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
+                      <div className="flex gap-0.5 justify-center">
+                        {m1 && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              void handleDelete(m1.id, m1.targetName)
+                            }}
+                            className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded"
+                            title="実測1 を 削除"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        )}
+                        {m2 && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              void handleDelete(m2.id, m2.targetName)
+                            }}
+                            className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded text-[9px]"
+                            title="実測2 を 削除"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                            <span className="text-[9px] absolute">2</span>
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 )
