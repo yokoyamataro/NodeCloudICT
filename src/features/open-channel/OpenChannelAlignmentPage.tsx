@@ -71,6 +71,86 @@ type StationVertex = {
   side: 'right' | 'left' | 'center'
 }
 
+/**
+ * 縦断曲線 (対称 2 次放物線)。VCL > 0 の 中間 変化点 (PVI) について、
+ * BVC (=PVI-VCL/2) 〜 EVC (=PVI+VCL/2) の 範囲 に 割り付ける。
+ *
+ * i1, i2 は 前後 の 勾配 (%, 符号付き)。
+ * M = (i1 - i2) / 800 × VCL  (m、凸型で 正 → PVI より 下)
+ * Y = (i1 - i2) / (200 × VCL) × X²  (X は BVC からの 距離)
+ * i (代数的 勾配差) = i2 - i1
+ * VCR = VCL / |i|  (m/%)
+ */
+export interface VerticalCurve {
+  pviIndex: number     // sortedProfile 上 の インデックス
+  pviDistance: number  // PVI の 追加距離 (m)
+  pviHeight: number    // PVI の 計画高 (m)
+  vcl: number
+  i1Percent: number    // 前 勾配 (%, 符号付き)
+  i2Percent: number    // 後ろ 勾配 (%, 符号付き)
+  bvcDistance: number
+  bvcHeight: number
+  evcDistance: number
+  evcHeight: number
+  /** 縦距 M (m)、凸型 で 正 (曲線 が PVI より 下) */
+  m: number
+  /** 代数的 勾配差 A = i2 - i1 (%)、凸型 で 負、凹型 で 正 */
+  aPercent: number
+  /** 縦断曲線半径相当 VCR = VCL / |A| (m/%) */
+  vcr: number
+}
+
+/** ソート済 profilePoints から VCL > 0 の 縦断曲線 列 を 抽出。 */
+function computeVerticalCurves(
+  sortedProfile: ProfilePoint[],
+): VerticalCurve[] {
+  const out: VerticalCurve[] = []
+  for (let i = 1; i < sortedProfile.length - 1; i++) {
+    const prev = sortedProfile[i - 1]
+    const pvi = sortedProfile[i]
+    const next = sortedProfile[i + 1]
+    const vcl = pvi.vcl ?? 0
+    if (!Number.isFinite(vcl) || vcl <= 1e-6) continue
+    const d1 = pvi.distance - prev.distance
+    const d2 = next.distance - pvi.distance
+    if (d1 <= 1e-9 || d2 <= 1e-9) continue
+    // 勾配 (%). 上り +、下り -
+    const i1 = ((pvi.floorHeight - prev.floorHeight) / d1) * 100
+    const i2 = ((next.floorHeight - pvi.floorHeight) / d2) * 100
+    // BVC / EVC が 隣接 変化点 を 越え ない 範囲 に クランプ
+    const halfL = vcl / 2
+    if (halfL > d1 + 1e-9 || halfL > d2 + 1e-9) continue
+    const bvcDistance = pvi.distance - halfL
+    const evcDistance = pvi.distance + halfL
+    const bvcHeight = pvi.floorHeight - (i1 / 100) * halfL
+    const evcHeight = pvi.floorHeight + (i2 / 100) * halfL
+    const m = ((i1 - i2) / 800) * vcl
+    const aPercent = i2 - i1
+    const vcr = Math.abs(aPercent) < 1e-9 ? Infinity : vcl / Math.abs(aPercent)
+    out.push({
+      pviIndex: i,
+      pviDistance: pvi.distance,
+      pviHeight: pvi.floorHeight,
+      vcl,
+      i1Percent: i1,
+      i2Percent: i2,
+      bvcDistance,
+      bvcHeight,
+      evcDistance,
+      evcHeight,
+      m,
+      aPercent,
+      vcr,
+    })
+  }
+  return out
+}
+
+/**
+ * 縦断曲線 (放物線) を 考慮 した 標高 (計画高) を X 位置 で 補間 する。
+ * BVC 〜 EVC の 範囲 では 放物線 (Y = BVC + i1/100 × X + (i2-i1)/(200×L) × X²、
+ * X は BVC からの 距離) を 使用。 それ 以外 は 直線 補間。
+ */
 function interpolateProfileZ(
   profilePoints: ProfilePoint[],
   distance: number,
@@ -80,6 +160,19 @@ function interpolateProfileZ(
   if (distance <= sorted[0].distance) return sorted[0].floorHeight
   const last = sorted[sorted.length - 1]
   if (distance >= last.distance) return last.floorHeight
+
+  // 該当 位置 が いずれか の 縦断曲線 範囲内 なら 放物線 で 計算
+  const curves = computeVerticalCurves(sorted)
+  for (const c of curves) {
+    if (distance >= c.bvcDistance && distance <= c.evcDistance) {
+      const x = distance - c.bvcDistance
+      const linear = c.bvcHeight + (c.i1Percent / 100) * x
+      const offset = ((c.i2Percent - c.i1Percent) / (200 * c.vcl)) * x * x
+      return linear + offset
+    }
+  }
+
+  // それ 以外 は 隣接 2 点 で 直線 補間
   for (let i = 1; i < sorted.length; i++) {
     const a = sorted[i - 1]
     const b = sorted[i]
@@ -547,13 +640,29 @@ function ProfileChart({ points, totalLen }: { points: ProfilePoint[]; totalLen: 
     )
   }
   const sorted = [...points].sort((a, b) => a.distance - b.distance)
-  const minH = Math.min(...sorted.map((p) => p.floorHeight))
-  const maxH = Math.max(...sorted.map((p) => p.floorHeight))
-  const rangeRaw = maxH - minH
-  const range = rangeRaw < 1e-6 ? 1 : rangeRaw
+  const curves = computeVerticalCurves(sorted)
   const maxDist = Math.max(totalLen, sorted[sorted.length - 1].distance)
   const minDist = Math.min(0, sorted[0].distance)
   const distSpan = Math.max(maxDist - minDist, 1)
+  // 高さ範囲: 変化点 + BVC / EVC / 曲線サンプル も 含めて レンジ を 決定。
+  const heightSamples: number[] = sorted.map((p) => p.floorHeight)
+  for (const c of curves) {
+    heightSamples.push(c.bvcHeight, c.evcHeight)
+    // 曲線 の 極値 (勾配 0 位置) を 加味。 X* = -i1 × L / (i2 - i1) (勾配 が 0 に なる 位置)
+    const denom = c.i2Percent - c.i1Percent
+    if (Math.abs(denom) > 1e-9) {
+      const xStar = (-c.i1Percent * c.vcl) / denom
+      if (xStar > 0 && xStar < c.vcl) {
+        const y = c.bvcHeight + (c.i1Percent / 100) * xStar +
+          ((c.i2Percent - c.i1Percent) / (200 * c.vcl)) * xStar * xStar
+        heightSamples.push(y)
+      }
+    }
+  }
+  const minH = Math.min(...heightSamples)
+  const maxH = Math.max(...heightSamples)
+  const rangeRaw = maxH - minH
+  const range = rangeRaw < 1e-6 ? 1 : rangeRaw
 
   // scale=1 で コンテナ に ぴったり 収まる base pxPerMeter を 算出。
   const baseInnerW = Math.max(200, size.w - padding.left - padding.right)
@@ -568,9 +677,37 @@ function ProfileChart({ points, totalLen }: { points: ProfilePoint[]; totalLen: 
   const tx = (d: number) => padding.left + (d - minDist) * pxPerMeterX
   const ty = (h: number) => padding.top + (maxH - h) * pxPerMeterY
 
-  const path = sorted
-    .map((p, i) => `${i === 0 ? 'M' : 'L'} ${tx(p.distance)} ${ty(p.floorHeight)}`)
-    .join(' ')
+  // 縦断曲線 が ある 場合 は 放物線 の サンプル 点 を 挟んで パス を 組み立てる。
+  // BVC / EVC の 間 は 20 分割 で 放物線 を 追従。 曲線 外 は 直線 補間。
+  const pathParts: string[] = []
+  const curveByPvi = new Map<number, VerticalCurve>()
+  for (const c of curves) curveByPvi.set(c.pviIndex, c)
+  let started = false
+  const moveTo = (d: number, h: number) => {
+    pathParts.push(`${started ? 'L' : 'M'} ${tx(d)} ${ty(h)}`)
+    started = true
+  }
+  for (let i = 0; i < sorted.length; i++) {
+    const p = sorted[i]
+    const c = curveByPvi.get(i)
+    if (c) {
+      // BVC → 放物線 サンプル → EVC。 PVI (角) は 通らない。
+      moveTo(c.bvcDistance, c.bvcHeight)
+      const SAMPLES = 20
+      for (let k = 1; k <= SAMPLES; k++) {
+        const x = (c.vcl * k) / SAMPLES
+        const d = c.bvcDistance + x
+        const h =
+          c.bvcHeight + (c.i1Percent / 100) * x +
+          ((c.i2Percent - c.i1Percent) / (200 * c.vcl)) * x * x
+        moveTo(d, h)
+      }
+    } else {
+      // 曲線 なし: 変化点 を そのまま 通る
+      moveTo(p.distance, p.floorHeight)
+    }
+  }
+  const path = pathParts.join(' ')
 
   // 目盛間隔: 約 60px (X) / 40px (Y) 毎 に 1 目盛 になる ように niceStep で 丸める。
   const xStep = niceStep(60 / pxPerMeterX)
@@ -719,17 +856,94 @@ function ProfileChart({ points, totalLen }: { points: ProfilePoint[]; totalLen: 
             strokeLinecap="round"
           />
 
-          {/* 点 */}
-          {sorted.map((p, i) => (
-            <circle
-              key={`p-${i}`}
-              cx={tx(p.distance)}
-              cy={ty(p.floorHeight)}
-              r={3.5}
-              fill="#0ea5e9"
-              stroke="#fff"
-              strokeWidth={1.5}
-            />
+          {/* 点 (縦断曲線 が 適用 されている PVI は 薄色 の 中抜き で 「実際 は
+              通過 しない」ことを 表現) */}
+          {sorted.map((p, i) => {
+            const isCurvedPvi = curveByPvi.has(i)
+            return (
+              <circle
+                key={`p-${i}`}
+                cx={tx(p.distance)}
+                cy={ty(p.floorHeight)}
+                r={3.5}
+                fill={isCurvedPvi ? '#fff' : '#0ea5e9'}
+                stroke={isCurvedPvi ? '#94a3b8' : '#fff'}
+                strokeDasharray={isCurvedPvi ? '2,2' : undefined}
+                strokeWidth={1.5}
+              />
+            )
+          })}
+
+          {/* 縦断曲線 の BVC / EVC マーカー + M / VCR 注記 */}
+          {curves.map((c) => (
+            <g key={`vc-${c.pviIndex}`}>
+              {/* BVC / EVC 縦の 補助線 */}
+              <line
+                x1={tx(c.bvcDistance)}
+                y1={ty(c.bvcHeight)}
+                x2={tx(c.bvcDistance)}
+                y2={padding.top + innerH}
+                stroke="#f97316"
+                strokeWidth={0.75}
+                strokeDasharray="2,2"
+                opacity={0.7}
+              />
+              <line
+                x1={tx(c.evcDistance)}
+                y1={ty(c.evcHeight)}
+                x2={tx(c.evcDistance)}
+                y2={padding.top + innerH}
+                stroke="#f97316"
+                strokeWidth={0.75}
+                strokeDasharray="2,2"
+                opacity={0.7}
+              />
+              {/* BVC / EVC マーカー */}
+              <circle
+                cx={tx(c.bvcDistance)}
+                cy={ty(c.bvcHeight)}
+                r={3}
+                fill="#f97316"
+                stroke="#fff"
+                strokeWidth={1}
+              />
+              <circle
+                cx={tx(c.evcDistance)}
+                cy={ty(c.evcHeight)}
+                r={3}
+                fill="#f97316"
+                stroke="#fff"
+                strokeWidth={1}
+              />
+              <text
+                x={tx(c.bvcDistance)}
+                y={padding.top + innerH + 24}
+                textAnchor="middle"
+                fontSize={9}
+                fill="#c2410c"
+              >
+                BVC
+              </text>
+              <text
+                x={tx(c.evcDistance)}
+                y={padding.top + innerH + 24}
+                textAnchor="middle"
+                fontSize={9}
+                fill="#c2410c"
+              >
+                EVC
+              </text>
+              {/* PVI 位置 に VCL / M / VCR を まとめて 表示 */}
+              <text
+                x={tx(c.pviDistance)}
+                y={ty(c.pviHeight) - 10}
+                textAnchor="middle"
+                fontSize={9}
+                fill="#c2410c"
+              >
+                VCL={c.vcl.toFixed(0)}  M={c.m.toFixed(3)}m
+              </text>
+            </g>
           ))}
 
           {/* 勾配ラベル */}
@@ -1108,6 +1322,13 @@ export function OpenChannelAlignmentPage() {
     if (!selected) return []
     return [...selected.profilePoints].sort((a, b) => a.distance - b.distance)
   }, [selected])
+
+  // 縦断曲線 (VCL > 0 の 中間 変化点) を PVI インデックス で 引ける Map
+  const profileCurvesByPviIndex = useMemo(() => {
+    const map = new Map<number, VerticalCurve>()
+    for (const c of computeVerticalCurves(sortedProfile)) map.set(c.pviIndex, c)
+    return map
+  }, [sortedProfile])
 
   const handleRemoveProfile = (idx: number) => {
     if (!selected) return
@@ -2474,10 +2695,11 @@ export function OpenChannelAlignmentPage() {
                 <div className="text-xs text-slate-500">
                   BP からの 追加距離 (m) と 計画高 (m) を 変化点 ごと に 登録。
                   末尾 の 空行 に 入力 → Enter or + ボタン で 追加。
-                  平面線形長 {totalLen.toFixed(2)} m を 超えない 範囲で 設定。
+                  中間 の 変化点 (PVI) に VCL (縦断曲線長 m) を 指定すると 放物線
+                  縦断曲線 を 割り付ける (M / VCR は 自動計算)。
                 </div>
 
-                <div className="border rounded overflow-auto max-h-56">
+                <div className="border rounded overflow-auto max-h-72">
                   <table className="w-full text-sm">
                     <thead className="bg-slate-50 text-slate-600 sticky top-0 text-xs">
                       <tr>
@@ -2485,6 +2707,13 @@ export function OpenChannelAlignmentPage() {
                         <th className="px-2 py-1 text-right">追加距離 (m)</th>
                         <th className="px-2 py-1 text-right">計画高 (m)</th>
                         <th className="px-2 py-1 text-right">勾配</th>
+                        <th
+                          className="px-2 py-1 text-right"
+                          title="縦断曲線長 (Vertical Curve Length) — 0 or 空 で 曲線 なし"
+                        >
+                          VCL (m)
+                        </th>
+                        <th className="px-2 py-1 text-right text-[10px]">M / VCR</th>
                         <th className="px-2 py-1 w-10"></th>
                       </tr>
                     </thead>
@@ -2501,6 +2730,9 @@ export function OpenChannelAlignmentPage() {
                               return `1/${Math.round(Math.abs(dx / dy))}`
                             })()
                           : '-'
+                        // 両端 (BP/EP) は VCL 適用外。中間点 のみ 入力可。
+                        const isMiddle = i > 0 && i < sortedProfile.length - 1
+                        const curve = profileCurvesByPviIndex.get(i)
                         return (
                           <tr key={realIdx} className="border-t">
                             <td className="px-2 py-1 text-center text-slate-500 text-xs">
@@ -2534,6 +2766,39 @@ export function OpenChannelAlignmentPage() {
                             </td>
                             <td className="px-2 py-1 text-right text-slate-500 tabular-nums">
                               {slope}
+                            </td>
+                            <td className="px-2 py-1 text-right">
+                              {isMiddle ? (
+                                <input
+                                  type="number"
+                                  step={1}
+                                  min={0}
+                                  value={p.vcl ?? 0}
+                                  placeholder="0"
+                                  onChange={(e) => {
+                                    const v = parseFloat(e.target.value)
+                                    handleChangeProfile(realIdx, {
+                                      vcl: Number.isFinite(v) && v > 0 ? v : undefined,
+                                    })
+                                  }}
+                                  className="w-16 px-1 py-0.5 border rounded text-right text-sm"
+                                />
+                              ) : (
+                                <span className="text-slate-300 text-xs">—</span>
+                              )}
+                            </td>
+                            <td className="px-2 py-1 text-right text-[10px] tabular-nums">
+                              {curve ? (
+                                <span className="text-amber-700" title={
+                                  `i1=${curve.i1Percent.toFixed(2)}% / i2=${curve.i2Percent.toFixed(2)}% / A=${curve.aPercent.toFixed(2)}%`
+                                }>
+                                  M={curve.m.toFixed(3)}m
+                                  <br />
+                                  VCR={Number.isFinite(curve.vcr) ? curve.vcr.toFixed(1) : '∞'}
+                                </span>
+                              ) : (
+                                <span className="text-slate-300">—</span>
+                              )}
                             </td>
                             <td className="px-2 py-1 text-right">
                               <button
@@ -2577,9 +2842,11 @@ export function OpenChannelAlignmentPage() {
                             className="w-20 px-1 py-0.5 border rounded text-right text-sm bg-white"
                           />
                         </td>
-                        <td className="px-2 py-1 text-right text-slate-300 text-xs">
-                          {/* 追加前 なので 勾配 未計算 */}
-                          —
+                        <td
+                          className="px-2 py-1 text-right text-slate-300 text-xs"
+                          colSpan={3}
+                        >
+                          追加後 に VCL 設定
                         </td>
                         <td className="px-2 py-1 text-right">
                           <button

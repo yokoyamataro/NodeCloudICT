@@ -21,6 +21,12 @@ export interface ProfilePoint {
   distance: number
   /** 床高 (m, 標高) */
   floorHeight: number
+  /**
+   * 縦断曲線長 VCL (m)。省略 or 0 なら 角折れ (曲線なし)。
+   * この 変化点 を PVI (勾配変化点) として BVC=PVI-VCL/2、EVC=PVI+VCL/2 に
+   * 対称 2 次放物線 を 割り付ける。両端 の 変化点 (BP/EP) では 無視。
+   */
+  vcl?: number
 }
 
 /** 勾配の表記単位
