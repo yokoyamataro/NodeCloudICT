@@ -28,6 +28,7 @@ import {
   type WidthStake,
   buildCrossSectionPath,
   elementStep,
+  formatSegmentNotation,
 } from '@/stores/openChannelStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import {
@@ -823,6 +824,11 @@ function InteractiveCrossSectionEditor({
   const [drawSide, setDrawSide] = useState<DrawSide>(null)
   const [drawMode, setDrawMode] = useState<DrawMode>('freehand')
   const [slopeText, setSlopeText] = useState<string>('2')
+  // dW / dH の 手動 入力。 空 なら カーソル 位置 を 使い、値 が あれば その値 を 優先。
+  //  - percent / ratio モード: dW が 空 で dH が あれば 勾配 から dW を 逆算。
+  //  - vertical モード: dH の みず 使用。
+  const [dWText, setDWText] = useState<string>('')
+  const [dHText, setDHText] = useState<string>('')
   const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null)
 
   useEffect(() => {
@@ -894,88 +900,31 @@ function InteractiveCrossSectionEditor({
 
   /**
    * 現在 の モード + 入力値 + カーソル 位置 から 新 区間 を 算出。
-   * カーソル 位置 が 起点 と 同一 / 内向き の 場合 は null (追加不可)。
+   *  - dWText / dHText が 埋まっている 場合 は カーソル より 優先。
+   *  - percent / ratio モード で dW/dH の 片方 が 埋まっていて 勾配 も
+   *    ある 場合 は もう 片方 を 逆算 する。
+   * カーソル も 入力 も 無い / 内向き の 場合 は null (追加不可)。
    */
-  const computeSegment = (): {
+  const computeSegment = (
+    cursorOverride?: { x: number; y: number } | null,
+  ): {
     element: CrossSectionElement
     endPoint: { x: number; y: number }
   } | null => {
-    if (!drawSide || !cursor) return null
-    const sideSign: 1 | -1 = drawSide === 'right' ? 1 : -1
-    const dxRaw = cursor.x - drawOrigin.x
-    const dyRaw = cursor.y - drawOrigin.y
-    const outwardDx = dxRaw * sideSign
-    const newId = () => `e${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
-
-    if (drawMode === 'vertical') {
-      if (Math.abs(dyRaw) < 1e-4) return null
-      const el: CrossSectionElement = {
-        id: newId(),
-        name: '',
-        width: 0,
-        slopeValue: Math.round(dyRaw * 1000) / 1000,
-        slopeUnit: 'vertical',
-      }
-      return { element: el, endPoint: { x: drawOrigin.x, y: drawOrigin.y + el.slopeValue } }
-    }
-
-    if (outwardDx < 1e-3) return null
-    const width = Math.round(outwardDx * 1000) / 1000
-
-    if (drawMode === 'freehand') {
-      const pct = Math.round((dyRaw / outwardDx) * 100 * 100) / 100
-      const el: CrossSectionElement = {
-        id: newId(),
-        name: '',
-        width,
-        slopeValue: pct,
-        slopeUnit: 'percent',
-      }
-      const step = elementStep(el, sideSign)
-      return {
-        element: el,
-        endPoint: { x: drawOrigin.x + step.dx, y: drawOrigin.y + step.dy },
-      }
-    }
-
-    const rawInput = parseFloat(slopeText)
-    if (!Number.isFinite(rawInput)) return null
-    const hasExplicitSign = /^[+-]/.test(slopeText.trim())
-    const dirSign = dyRaw > 0 ? 1 : dyRaw < 0 ? -1 : 1
-    const signed = hasExplicitSign ? rawInput : dirSign * Math.abs(rawInput)
-    if (drawMode === 'percent') {
-      const el: CrossSectionElement = {
-        id: newId(),
-        name: '',
-        width,
-        slopeValue: signed,
-        slopeUnit: 'percent',
-      }
-      const step = elementStep(el, sideSign)
-      return {
-        element: el,
-        endPoint: { x: drawOrigin.x + step.dx, y: drawOrigin.y + step.dy },
-      }
-    }
-    if (drawMode === 'ratio') {
-      if (Math.abs(signed) < 1e-6) return null
-      const el: CrossSectionElement = {
-        id: newId(),
-        name: '',
-        width,
-        slopeValue: signed,
-        slopeUnit: 'ratio',
-      }
-      const step = elementStep(el, sideSign)
-      return {
-        element: el,
-        endPoint: { x: drawOrigin.x + step.dx, y: drawOrigin.y + step.dy },
-      }
-    }
-    return null
+    if (!drawSide) return null
+    const effCursor = cursorOverride === undefined ? cursor : cursorOverride
+    return computeSegmentCore({
+      drawSide,
+      drawOrigin,
+      cursor: effCursor,
+      drawMode,
+      slopeText,
+      dWText,
+      dHText,
+    })
   }
 
-  const preview = drawSide && cursor ? computeSegment() : null
+  const preview = drawSide ? computeSegment() : null
 
   const onSvgMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
     if (!drawSide) return
@@ -989,10 +938,21 @@ function InteractiveCrossSectionEditor({
     const rect = e.currentTarget.getBoundingClientRect()
     const c = { x: ix(e.clientX - rect.left), y: iy(e.clientY - rect.top) }
     setCursor(c)
-    const seg = computeSegmentAt(drawSide, drawOrigin, c, drawMode, slopeText)
+    const seg = computeSegment(c)
     if (!seg) return
     const nextSide = [...cs[drawSide], seg.element]
     onChange({ ...cs, [drawSide]: nextSide })
+  }
+  const addManually = () => {
+    if (!drawSide) return
+    // dW/dH に 手動 入力 が 必要 (少なくとも 片方) — 空 だと mouse を 使う モード に なる
+    const seg = computeSegment(null)
+    if (!seg) return
+    const nextSide = [...cs[drawSide], seg.element]
+    onChange({ ...cs, [drawSide]: nextSide })
+    // 追加後 は dW/dH をクリア (勾配は次入力の再利用のため保持)
+    setDWText('')
+    setDHText('')
   }
 
   const removeLast = () => {
@@ -1061,7 +1021,51 @@ function InteractiveCrossSectionEditor({
             onChange={(e) => setSlopeText(e.target.value)}
             placeholder={drawMode === 'percent' ? '例: 2 / -2' : '例: 1.5'}
             className="w-16 px-1 py-0.5 border rounded text-xs font-mono text-right"
+            title="勾配 (符号 有 で 上下 決定、無 なら dH/カーソル に 合わせる)"
           />
+        )}
+
+        {/* 幅 / 高 の 手動入力 (percent / ratio / vertical モード)。
+            空 なら カーソル 位置 で 決定、埋めれば その値 で 追加 ボタン から 確定。 */}
+        {drawSide && drawMode !== 'freehand' && (
+          <>
+            {(drawMode === 'percent' || drawMode === 'ratio') && (
+              <label className="flex items-center gap-1 text-slate-500 text-[11px]">
+                dW
+                <input
+                  type="text"
+                  value={dWText}
+                  onChange={(e) => setDWText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') addManually()
+                  }}
+                  placeholder="幅m"
+                  className="w-14 px-1 py-0.5 border rounded text-xs font-mono text-right"
+                />
+              </label>
+            )}
+            <label className="flex items-center gap-1 text-slate-500 text-[11px]">
+              dH
+              <input
+                type="text"
+                value={dHText}
+                onChange={(e) => setDHText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') addManually()
+                }}
+                placeholder="高m"
+                className="w-14 px-1 py-0.5 border rounded text-xs font-mono text-right"
+              />
+            </label>
+            <button
+              onClick={addManually}
+              disabled={dWText.trim() === '' && dHText.trim() === ''}
+              className="px-2 py-0.5 text-[11px] border rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:bg-slate-300"
+              title="入力した dW / dH で 区間 を 追加"
+            >
+              + 追加
+            </button>
+          </>
         )}
 
         <span className="text-slate-400 mx-1">|</span>
@@ -1146,7 +1150,69 @@ function InteractiveCrossSectionEditor({
             />
           ))}
 
-          {/* プレビュー 区間 */}
+          {/* 各 区間 の パラメータ ラベル (中点 に 表記 を 表示)。
+              線 の 上/下 は 進行方向 に 対する 法線 方向 で 決める:
+              (dxSvg, dySvg) の 法線 = (-dySvg, dxSvg)、それを 正規化 して
+              上向き (SVG では -y 方向) に 選ぶ。 */}
+          {(() => {
+            type Seg = {
+              from: { x: number; y: number }
+              to: { x: number; y: number }
+              e: CrossSectionElement
+            }
+            const segs: Seg[] = []
+            let rx = 0
+            let ry = 0
+            for (const e of cs.right) {
+              const from = { x: rx, y: ry }
+              const s = elementStep(e, 1)
+              rx += s.dx
+              ry += s.dy
+              segs.push({ from, to: { x: rx, y: ry }, e })
+            }
+            let lx = 0
+            let ly = 0
+            for (const e of cs.left) {
+              const from = { x: lx, y: ly }
+              const s = elementStep(e, -1)
+              lx += s.dx
+              ly += s.dy
+              segs.push({ from, to: { x: lx, y: ly }, e })
+            }
+            return segs.map((s, i) => {
+              const midX = (tx(s.from.x) + tx(s.to.x)) / 2
+              const midY = (ty(s.from.y) + ty(s.to.y)) / 2
+              const dxSvg = tx(s.to.x) - tx(s.from.x)
+              const dySvg = ty(s.to.y) - ty(s.from.y)
+              const len = Math.hypot(dxSvg, dySvg) || 1
+              // 法線 (SVG 座標系)。 上 (SVG y が 小) 側 に 出したい。
+              let nx = -dySvg / len
+              let ny = dxSvg / len
+              if (ny > 0) {
+                nx = -nx
+                ny = -ny
+              }
+              const offset = 10
+              const labelX = midX + nx * offset
+              const labelY = midY + ny * offset
+              const label = formatSegmentNotation(s.e)
+              return (
+                <text
+                  key={`seglbl-${i}`}
+                  x={labelX}
+                  y={labelY}
+                  fontSize={10}
+                  fill="#334155"
+                  textAnchor="middle"
+                  style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
+                >
+                  {label}
+                </text>
+              )
+            })
+          })()}
+
+          {/* プレビュー 区間 (未確定) — ラベル も 併記 */}
           {preview && (
             <>
               <line
@@ -1166,6 +1232,33 @@ function InteractiveCrossSectionEditor({
                 stroke="#fff"
                 strokeWidth={1.5}
               />
+              {(() => {
+                const midX = (tx(drawOrigin.x) + tx(preview.endPoint.x)) / 2
+                const midY = (ty(drawOrigin.y) + ty(preview.endPoint.y)) / 2
+                const dxSvg = tx(preview.endPoint.x) - tx(drawOrigin.x)
+                const dySvg = ty(preview.endPoint.y) - ty(drawOrigin.y)
+                const len = Math.hypot(dxSvg, dySvg) || 1
+                let nx = -dySvg / len
+                let ny = dxSvg / len
+                if (ny > 0) {
+                  nx = -nx
+                  ny = -ny
+                }
+                const offset = 12
+                return (
+                  <text
+                    x={midX + nx * offset}
+                    y={midY + ny * offset}
+                    fontSize={10}
+                    fill={drawSide === 'right' ? '#059669' : '#d97706'}
+                    textAnchor="middle"
+                    fontWeight={600}
+                    style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
+                  >
+                    {formatSegmentNotation(preview.element)}
+                  </text>
+                )
+              })()}
             </>
           )}
 
@@ -1236,38 +1329,67 @@ function InteractiveCrossSectionEditor({
 }
 
 /**
- * onSvgClick から 直接 呼ぶ 版。 setCursor の 反映 を 待たず
- * その場 で 座標 を 算出 する。 描画 モード の 計算 は
- * InteractiveCrossSectionEditor 内 の computeSegment と 同じ ロジック。
+ * 描画 モード + 入力 + カーソル 位置 から 1 区間 を 算出 する 共通 ロジック。
+ *
+ * 優先順位:
+ *   - dWText / dHText が 埋まっている 場合 は カーソル より 優先。
+ *   - percent / ratio モード で dH のみ 埋めた 場合 は 勾配 から dW を 逆算。
+ *   - vertical モード は dH の みず 使用 (dW=0)。
+ *   - 何も 無い / 内向き の 場合 は null。
+ *
+ * 勾配 の 符号 決定:
+ *   - slopeText に 明示 符号 (+ / -) が あれば その 通り。
+ *   - なければ dH (または カーソル Y 差分) の 符号 に 合わせる。
  */
-function computeSegmentAt(
-  drawSide: 'right' | 'left',
-  origin: { x: number; y: number },
-  cursor: { x: number; y: number },
-  drawMode: DrawMode,
-  slopeText: string,
-): { element: CrossSectionElement; endPoint: { x: number; y: number } } | null {
+function computeSegmentCore(input: {
+  drawSide: 'right' | 'left'
+  drawOrigin: { x: number; y: number }
+  cursor: { x: number; y: number } | null
+  drawMode: DrawMode
+  slopeText: string
+  dWText: string
+  dHText: string
+}): { element: CrossSectionElement; endPoint: { x: number; y: number } } | null {
+  const { drawSide, drawOrigin, cursor, drawMode, slopeText, dWText, dHText } = input
   const sideSign: 1 | -1 = drawSide === 'right' ? 1 : -1
-  const dxRaw = cursor.x - origin.x
-  const dyRaw = cursor.y - origin.y
-  const outwardDx = dxRaw * sideSign
   const newId = () => `e${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
 
+  const parseNum = (s: string): number | null => {
+    const t = s.trim()
+    if (t === '') return null
+    const v = parseFloat(t)
+    return Number.isFinite(v) ? v : null
+  }
+  const dWIn = parseNum(dWText)
+  const dHIn = parseNum(dHText)
+
+  // カーソル 由来 の 生 (dx, dy)。 override が 効く 前 の 値。
+  const cursorDx = cursor ? cursor.x - drawOrigin.x : 0
+  const cursorDy = cursor ? cursor.y - drawOrigin.y : 0
+
+  // ------ 直高 モード ------
   if (drawMode === 'vertical') {
-    if (Math.abs(dyRaw) < 1e-4) return null
+    const dh = dHIn !== null ? dHIn : cursor ? cursorDy : null
+    if (dh === null) return null
+    if (Math.abs(dh) < 1e-4) return null
     const el: CrossSectionElement = {
       id: newId(),
       name: '',
       width: 0,
-      slopeValue: Math.round(dyRaw * 1000) / 1000,
+      slopeValue: Math.round(dh * 1000) / 1000,
       slopeUnit: 'vertical',
     }
-    return { element: el, endPoint: { x: origin.x, y: origin.y + el.slopeValue } }
+    return { element: el, endPoint: { x: drawOrigin.x, y: drawOrigin.y + el.slopeValue } }
   }
-  if (outwardDx < 1e-3) return null
-  const width = Math.round(outwardDx * 1000) / 1000
+
+  // ------ フリーハンド (勾配 % を 位置から 算出) ------
   if (drawMode === 'freehand') {
-    const pct = Math.round((dyRaw / outwardDx) * 100 * 100) / 100
+    // カーソル 必須 (dW/dH 手動 入力 は %/ratio 用)
+    if (!cursor) return null
+    const outwardDx = cursorDx * sideSign
+    if (outwardDx < 1e-3) return null
+    const width = Math.round(outwardDx * 1000) / 1000
+    const pct = Math.round((cursorDy / outwardDx) * 100 * 100) / 100
     const el: CrossSectionElement = {
       id: newId(),
       name: '',
@@ -1276,37 +1398,54 @@ function computeSegmentAt(
       slopeUnit: 'percent',
     }
     const step = elementStep(el, sideSign)
-    return { element: el, endPoint: { x: origin.x + step.dx, y: origin.y + step.dy } }
+    return { element: el, endPoint: { x: drawOrigin.x + step.dx, y: drawOrigin.y + step.dy } }
   }
+
+  // ------ percent / ratio モード ------
   const rawInput = parseFloat(slopeText)
   if (!Number.isFinite(rawInput)) return null
   const hasExplicitSign = /^[+-]/.test(slopeText.trim())
-  const dirSign = dyRaw > 0 ? 1 : dyRaw < 0 ? -1 : 1
-  const signed = hasExplicitSign ? rawInput : dirSign * Math.abs(rawInput)
-  if (drawMode === 'percent') {
-    const el: CrossSectionElement = {
-      id: newId(),
-      name: '',
-      width,
-      slopeValue: signed,
-      slopeUnit: 'percent',
-    }
-    const step = elementStep(el, sideSign)
-    return { element: el, endPoint: { x: origin.x + step.dx, y: origin.y + step.dy } }
+
+  // dW を 決定: 手動 dW 最優先 → dH + 勾配 で 逆算 → カーソル X
+  let width: number | null = null
+  let signedSlope = rawInput
+  const dhSignSource = dHIn !== null ? dHIn : cursorDy
+  const dirSign = dhSignSource > 0 ? 1 : dhSignSource < 0 ? -1 : 1
+  if (!hasExplicitSign) signedSlope = dirSign * Math.abs(rawInput)
+
+  if (dWIn !== null && dWIn > 1e-6) {
+    width = Math.abs(dWIn)
+  } else if (dHIn !== null) {
+    // 勾配 と dH から dW を 逆算 (dH = dW * slopeFactor)
+    const slopeFactor =
+      drawMode === 'percent'
+        ? signedSlope / 100
+        : Math.abs(signedSlope) < 1e-6
+        ? 0
+        : Math.sign(signedSlope) / Math.abs(signedSlope)
+    if (Math.abs(slopeFactor) < 1e-9) return null
+    width = Math.abs(dHIn / slopeFactor)
+  } else if (cursor) {
+    const outwardDx = cursorDx * sideSign
+    if (outwardDx < 1e-3) return null
+    width = outwardDx
+  } else {
+    return null
   }
-  if (drawMode === 'ratio') {
-    if (Math.abs(signed) < 1e-6) return null
-    const el: CrossSectionElement = {
-      id: newId(),
-      name: '',
-      width,
-      slopeValue: signed,
-      slopeUnit: 'ratio',
-    }
-    const step = elementStep(el, sideSign)
-    return { element: el, endPoint: { x: origin.x + step.dx, y: origin.y + step.dy } }
+  const wRounded = Math.round(width * 1000) / 1000
+  if (wRounded < 1e-6) return null
+
+  if (drawMode === 'ratio' && Math.abs(signedSlope) < 1e-6) return null
+
+  const el: CrossSectionElement = {
+    id: newId(),
+    name: '',
+    width: wRounded,
+    slopeValue: signedSlope,
+    slopeUnit: drawMode === 'percent' ? 'percent' : 'ratio',
   }
-  return null
+  const step = elementStep(el, sideSign)
+  return { element: el, endPoint: { x: drawOrigin.x + step.dx, y: drawOrigin.y + step.dy } }
 }
 
 export function OpenChannelAlignmentPage() {
