@@ -27,10 +27,7 @@ import {
   type SideOrientation,
   type WidthStake,
   buildCrossSectionPath,
-  formatSlope,
   elementStep,
-  parseSegmentNotation,
-  formatSegmentNotation,
 } from '@/stores/openChannelStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import {
@@ -345,141 +342,6 @@ function FitBounds({ positions }: { positions: [number, number][] }) {
     done.current = true
   }, [positions, map])
   return null
-}
-
-// 標準断面の図（流れ方向を見た形）— 中心から左右へ並ぶ要素列を折れ線で描画
-function CrossSectionDiagram({ cs }: { cs: StandardCrossSection }) {
-  const points = buildCrossSectionPath(cs)
-  if (points.length < 2) {
-    return (
-      <div
-        className="border rounded bg-slate-50 text-xs text-slate-400 px-2 py-3 text-center"
-        style={{ width: 360 }}
-      >
-        左右いずれかに断面要素を追加してください
-      </div>
-    )
-  }
-
-  const widthPx = 360
-  const heightPx = 200
-  const padding = { top: 18, right: 14, bottom: 30, left: 14 }
-  const innerW = widthPx - padding.left - padding.right
-  const innerH = heightPx - padding.top - padding.bottom
-
-  const xs = points.map((p) => p.x)
-  const ys = points.map((p) => p.y)
-  const minX = Math.min(...xs, -0.5)
-  const maxX = Math.max(...xs, 0.5)
-  const minY = Math.min(...ys, -0.1)
-  const maxY = Math.max(...ys, 0.1)
-  const spanX = Math.max(maxX - minX, 0.01)
-  const spanY = Math.max(maxY - minY, 0.01)
-  // 縦横の比率を保つ等方スケーリング
-  const scale = Math.min(innerW / spanX, innerH / spanY)
-  const drawnW = spanX * scale
-  const drawnH = spanY * scale
-  const offsetX = padding.left + (innerW - drawnW) / 2 - minX * scale
-  const offsetY = padding.top + (innerH - drawnH) / 2 + maxY * scale
-
-  const tx = (x: number) => offsetX + x * scale
-  const ty = (y: number) => offsetY - y * scale
-
-  // 折れ線パス
-  const pathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${tx(p.x)} ${ty(p.y)}`).join(' ')
-
-  // 各セグメントのラベル位置（右/左を別計算）
-  type Seg = { from: { x: number; y: number }; to: { x: number; y: number }; e: CrossSectionElement }
-  const segs: Seg[] = []
-  let cx = 0
-  let cy = 0
-  for (const e of cs.right) {
-    const from = { x: cx, y: cy }
-    const { dx, dy } = elementStep(e, 1)
-    cx += dx
-    cy += dy
-    segs.push({ from, to: { x: cx, y: cy }, e })
-  }
-  cx = 0
-  cy = 0
-  for (const e of cs.left) {
-    const from = { x: cx, y: cy }
-    const { dx, dy } = elementStep(e, -1)
-    cx += dx
-    cy += dy
-    segs.push({ from, to: { x: cx, y: cy }, e })
-  }
-
-  return (
-    <svg width={widthPx} height={heightPx} className="border rounded bg-slate-50">
-      {/* 中心線 */}
-      <line
-        x1={tx(0)}
-        y1={padding.top}
-        x2={tx(0)}
-        y2={heightPx - padding.bottom}
-        stroke="#cbd5e1"
-        strokeDasharray="3,3"
-        strokeWidth={1}
-      />
-      {/* 標高基準（y=0 水平線） */}
-      <line
-        x1={padding.left}
-        y1={ty(0)}
-        x2={widthPx - padding.right}
-        y2={ty(0)}
-        stroke="#e2e8f0"
-        strokeWidth={1}
-      />
-
-      {/* 断面ライン */}
-      <path d={pathD} fill="none" stroke="#0ea5e9" strokeWidth={2} strokeLinejoin="round" />
-
-      {/* セグメントごとのラベル */}
-      {segs.map((s, i) => {
-        const mx = (tx(s.from.x) + tx(s.to.x)) / 2
-        const my = (ty(s.from.y) + ty(s.to.y)) / 2
-        const slopeStr = formatSlope(s.e)
-        const label = s.e.name
-          ? `${s.e.name} ${s.e.width.toFixed(2)}m ${slopeStr}`
-          : `${s.e.width.toFixed(2)}m ${slopeStr}`
-        return (
-          <text
-            key={i}
-            x={mx}
-            y={my - 6}
-            textAnchor="middle"
-            fontSize={9}
-            fill="#475569"
-            style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
-          >
-            {label}
-          </text>
-        )
-      })}
-
-      {/* 各折点 */}
-      {points.map((p, i) => (
-        <circle
-          key={`v-${i}`}
-          cx={tx(p.x)}
-          cy={ty(p.y)}
-          r={2.5}
-          fill={Math.abs(p.x) < 1e-9 && Math.abs(p.y) < 1e-9 ? '#0ea5e9' : '#fff'}
-          stroke="#0ea5e9"
-          strokeWidth={1.5}
-        />
-      ))}
-
-      {/* 左右ラベル */}
-      <text x={padding.left} y={padding.top + 10} fontSize={9} fill="#94a3b8">
-        左
-      </text>
-      <text x={widthPx - padding.right - 10} y={padding.top + 10} fontSize={9} fill="#94a3b8">
-        右
-      </text>
-    </svg>
-  )
 }
 
 // 「見栄えの良い」目盛間隔を 決定。 rawStep (単位) を 直近 の 1/2/5/10 系列に 丸める。
@@ -928,191 +790,523 @@ function ProfileChart({ points, totalLen }: { points: ProfilePoint[]; totalLen: 
   )
 }
 
+
 /**
- * 断面 1 区間 の 表記 (例 "-2%,2.000" / "1:1.5,H-5.0") を 入力 する テキスト 欄。
- * - フォーカス 外し (blur) or Enter で 検証 し、有効 なら onCommit で 上位 に 反映。
- * - 無効 な 場合 は 赤 枠 で 警告 のみ 表示 し、元の 表記 に 戻す。
- * - 外部 で 個別 フィールド が 変更 されたら、非フォーカス 時 に 自動 同期。
+ * 断面 を SVG 上 で 直接 描画 する 対話 型 エディタ。
+ *
+ * ワークフロー:
+ *   1. [左計画線] / [右計画線] ボタン で 描画 モード を 開始 (drawSide 選択)。
+ *   2. 勾配 表記 モード を 切替:
+ *      - フリーハンド : マウス 位置 の (dx, dy) を そのまま 使い、勾配 % を 算出。
+ *      - %           : 入力値 (符号 有 で 上下 決定) を 勾配 % に。 幅 は マウス X。
+ *      - 1:i          : 入力値 を ratio 単位 で 勾配 に。 幅 は マウス X。
+ *      - 直高         : 幅 0、マウス Y 分 だけ 垂直 移動 (dW=0, dH=dy)。
+ *   3. マウス 移動 で プレビュー、クリック で 区間 追加。 描画 中 の 側 の 末尾 に 追加 される。
+ *
+ * 座標系: 中心 (0,0) を 基準 に 右 +x / 左 -x、上 +y (計画高 基準)。
  */
-function SegmentNotationInput({
-  element,
-  onCommit,
+type DrawMode = 'freehand' | 'percent' | 'ratio' | 'vertical'
+type DrawSide = 'right' | 'left' | null
+
+function InteractiveCrossSectionEditor({
+  cs,
+  onChange,
+  centerHeight,
 }: {
-  element: CrossSectionElement
-  onCommit: (patch: Pick<CrossSectionElement, 'width' | 'slopeValue' | 'slopeUnit'>) => void
+  cs: StandardCrossSection
+  onChange: (next: StandardCrossSection) => void
+  centerHeight?: number
 }) {
-  const [text, setText] = useState<string>(() => formatSegmentNotation(element))
-  const [invalid, setInvalid] = useState(false)
-  const focusedRef = useRef(false)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const [size, setSize] = useState<{ w: number; h: number }>({ w: 720, h: 340 })
+
+  const [drawSide, setDrawSide] = useState<DrawSide>(null)
+  const [drawMode, setDrawMode] = useState<DrawMode>('freehand')
+  const [slopeText, setSlopeText] = useState<string>('2')
+  const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null)
 
   useEffect(() => {
-    if (focusedRef.current) return
-    setText(formatSegmentNotation(element))
-    setInvalid(false)
-  }, [element])
+    const el = containerRef.current
+    if (!el) return
+    const ro = new ResizeObserver((entries) => {
+      const rect = entries[0].contentRect
+      setSize({
+        w: Math.max(320, Math.floor(rect.width)),
+        h: Math.max(200, Math.floor(rect.height)),
+      })
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
-  const commit = () => {
-    const parsed = parseSegmentNotation(text)
-    if (!parsed) {
-      setInvalid(true)
-      setText(formatSegmentNotation(element))
-      setTimeout(() => setInvalid(false), 800)
-      return
+  // 描画済 の 折れ線 (左端 → 中心 → 右端)
+  const points = useMemo(() => buildCrossSectionPath(cs), [cs])
+
+  // 各側 の 末尾点 (次 区間 の 起点)
+  const lastRight = useMemo(() => {
+    let x = 0
+    let y = 0
+    for (const e of cs.right) {
+      const s = elementStep(e, 1)
+      x += s.dx
+      y += s.dy
     }
-    onCommit(parsed)
-    setInvalid(false)
+    return { x, y }
+  }, [cs.right])
+  const lastLeft = useMemo(() => {
+    let x = 0
+    let y = 0
+    for (const e of cs.left) {
+      const s = elementStep(e, -1)
+      x += s.dx
+      y += s.dy
+    }
+    return { x, y }
+  }, [cs.left])
+  const drawOrigin =
+    drawSide === 'right' ? lastRight : drawSide === 'left' ? lastLeft : { x: 0, y: 0 }
+
+  // SVG スケール
+  const padding = { top: 30, right: 20, bottom: 40, left: 20 }
+  const innerW = size.w - padding.left - padding.right
+  const innerH = size.h - padding.top - padding.bottom
+  const xsForExt = points.map((p) => p.x)
+  const ysForExt = points.map((p) => p.y)
+  if (cursor) {
+    xsForExt.push(cursor.x)
+    ysForExt.push(cursor.y)
+  }
+  const minX = Math.min(-5, ...xsForExt)
+  const maxX = Math.max(5, ...xsForExt)
+  const minY = Math.min(-2, ...ysForExt)
+  const maxY = Math.max(0.5, ...ysForExt)
+  const spanX = Math.max(maxX - minX, 0.01)
+  const spanY = Math.max(maxY - minY, 0.01)
+  const scale = Math.min(innerW / spanX, innerH / spanY)
+  const drawnW = spanX * scale
+  const drawnH = spanY * scale
+  const offsetX = padding.left + (innerW - drawnW) / 2 - minX * scale
+  const offsetY = padding.top + (innerH - drawnH) / 2 + maxY * scale
+  const tx = (x: number) => offsetX + x * scale
+  const ty = (y: number) => offsetY - y * scale
+  const ix = (px: number) => (px - offsetX) / scale
+  const iy = (py: number) => (offsetY - py) / scale
+
+  /**
+   * 現在 の モード + 入力値 + カーソル 位置 から 新 区間 を 算出。
+   * カーソル 位置 が 起点 と 同一 / 内向き の 場合 は null (追加不可)。
+   */
+  const computeSegment = (): {
+    element: CrossSectionElement
+    endPoint: { x: number; y: number }
+  } | null => {
+    if (!drawSide || !cursor) return null
+    const sideSign: 1 | -1 = drawSide === 'right' ? 1 : -1
+    const dxRaw = cursor.x - drawOrigin.x
+    const dyRaw = cursor.y - drawOrigin.y
+    const outwardDx = dxRaw * sideSign
+    const newId = () => `e${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+
+    if (drawMode === 'vertical') {
+      if (Math.abs(dyRaw) < 1e-4) return null
+      const el: CrossSectionElement = {
+        id: newId(),
+        name: '',
+        width: 0,
+        slopeValue: Math.round(dyRaw * 1000) / 1000,
+        slopeUnit: 'vertical',
+      }
+      return { element: el, endPoint: { x: drawOrigin.x, y: drawOrigin.y + el.slopeValue } }
+    }
+
+    if (outwardDx < 1e-3) return null
+    const width = Math.round(outwardDx * 1000) / 1000
+
+    if (drawMode === 'freehand') {
+      const pct = Math.round((dyRaw / outwardDx) * 100 * 100) / 100
+      const el: CrossSectionElement = {
+        id: newId(),
+        name: '',
+        width,
+        slopeValue: pct,
+        slopeUnit: 'percent',
+      }
+      const step = elementStep(el, sideSign)
+      return {
+        element: el,
+        endPoint: { x: drawOrigin.x + step.dx, y: drawOrigin.y + step.dy },
+      }
+    }
+
+    const rawInput = parseFloat(slopeText)
+    if (!Number.isFinite(rawInput)) return null
+    const hasExplicitSign = /^[+-]/.test(slopeText.trim())
+    const dirSign = dyRaw > 0 ? 1 : dyRaw < 0 ? -1 : 1
+    const signed = hasExplicitSign ? rawInput : dirSign * Math.abs(rawInput)
+    if (drawMode === 'percent') {
+      const el: CrossSectionElement = {
+        id: newId(),
+        name: '',
+        width,
+        slopeValue: signed,
+        slopeUnit: 'percent',
+      }
+      const step = elementStep(el, sideSign)
+      return {
+        element: el,
+        endPoint: { x: drawOrigin.x + step.dx, y: drawOrigin.y + step.dy },
+      }
+    }
+    if (drawMode === 'ratio') {
+      if (Math.abs(signed) < 1e-6) return null
+      const el: CrossSectionElement = {
+        id: newId(),
+        name: '',
+        width,
+        slopeValue: signed,
+        slopeUnit: 'ratio',
+      }
+      const step = elementStep(el, sideSign)
+      return {
+        element: el,
+        endPoint: { x: drawOrigin.x + step.dx, y: drawOrigin.y + step.dy },
+      }
+    }
+    return null
   }
 
-  return (
-    <input
-      type="text"
-      value={text}
-      onChange={(e) => setText(e.target.value)}
-      onFocus={() => {
-        focusedRef.current = true
-      }}
-      onBlur={() => {
-        focusedRef.current = false
-        commit()
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.currentTarget.blur()
-        } else if (e.key === 'Escape') {
-          setText(formatSegmentNotation(element))
-          e.currentTarget.blur()
-        }
-      }}
-      placeholder="例: -2%,2.000 / 1:1.5,H-5.0"
-      className={`w-full px-1 py-0.5 border rounded text-xs font-mono ${
-        invalid ? 'border-red-500 bg-red-50' : ''
+  const preview = drawSide && cursor ? computeSegment() : null
+
+  const onSvgMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!drawSide) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    setCursor({ x: ix(e.clientX - rect.left), y: iy(e.clientY - rect.top) })
+  }
+  const onSvgMouseLeave = () => setCursor(null)
+  const onSvgClick = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!drawSide) return
+    // カーソル 位置 を 最新化 して から 計算
+    const rect = e.currentTarget.getBoundingClientRect()
+    const c = { x: ix(e.clientX - rect.left), y: iy(e.clientY - rect.top) }
+    setCursor(c)
+    const seg = computeSegmentAt(drawSide, drawOrigin, c, drawMode, slopeText)
+    if (!seg) return
+    const nextSide = [...cs[drawSide], seg.element]
+    onChange({ ...cs, [drawSide]: nextSide })
+  }
+
+  const removeLast = () => {
+    if (!drawSide) return
+    if (cs[drawSide].length === 0) return
+    const nextSide = cs[drawSide].slice(0, -1)
+    onChange({ ...cs, [drawSide]: nextSide })
+  }
+  const clearSide = (side: 'right' | 'left') => {
+    if (!window.confirm(`${side === 'right' ? '右' : '左'} 側 の 区間 を すべて 削除 します。`)) return
+    onChange({ ...cs, [side]: [] })
+  }
+
+  const modeButton = (m: DrawMode, label: string) => (
+    <button
+      key={m}
+      onClick={() => setDrawMode(m)}
+      disabled={!drawSide}
+      className={`px-2 py-0.5 text-[11px] border rounded ${
+        drawMode === m
+          ? 'bg-blue-600 text-white border-blue-600'
+          : 'bg-white hover:bg-slate-100 text-slate-700 disabled:opacity-40'
       }`}
-      spellCheck={false}
-      autoCorrect="off"
-      autoCapitalize="off"
-    />
+    >
+      {label}
+    </button>
+  )
+
+  return (
+    <div className="flex flex-col gap-2 h-full">
+      {/* ツールバー */}
+      <div className="flex items-center gap-1.5 flex-wrap text-xs shrink-0">
+        <button
+          onClick={() => setDrawSide(drawSide === 'left' ? null : 'left')}
+          className={`px-2 py-1 text-xs border rounded ${
+            drawSide === 'left'
+              ? 'bg-amber-500 text-white border-amber-500'
+              : 'bg-white hover:bg-slate-100 text-slate-700'
+          }`}
+          title="左側 の 断面 を 描画"
+        >
+          ← 左計画線
+        </button>
+        <button
+          onClick={() => setDrawSide(drawSide === 'right' ? null : 'right')}
+          className={`px-2 py-1 text-xs border rounded ${
+            drawSide === 'right'
+              ? 'bg-emerald-500 text-white border-emerald-500'
+              : 'bg-white hover:bg-slate-100 text-slate-700'
+          }`}
+          title="右側 の 断面 を 描画"
+        >
+          右計画線 →
+        </button>
+
+        <span className="text-slate-400 mx-1">|</span>
+        <span className="text-slate-500 text-[11px]">勾配</span>
+        {modeButton('freehand', 'フリーハンド')}
+        {modeButton('percent', '%')}
+        {modeButton('ratio', '1:i')}
+        {modeButton('vertical', '直高')}
+        {(drawMode === 'percent' || drawMode === 'ratio') && drawSide && (
+          <input
+            type="text"
+            value={slopeText}
+            onChange={(e) => setSlopeText(e.target.value)}
+            placeholder={drawMode === 'percent' ? '例: 2 / -2' : '例: 1.5'}
+            className="w-16 px-1 py-0.5 border rounded text-xs font-mono text-right"
+          />
+        )}
+
+        <span className="text-slate-400 mx-1">|</span>
+        <button
+          onClick={removeLast}
+          disabled={!drawSide || cs[drawSide].length === 0}
+          className="px-2 py-1 text-xs border rounded bg-white hover:bg-slate-100 disabled:opacity-40"
+          title="直近 の 区間 を 取り消し"
+        >
+          <ArrowUp className="h-3 w-3 inline -mt-0.5" /> 戻す
+        </button>
+        <button
+          onClick={() => clearSide('left')}
+          className="px-2 py-1 text-xs border rounded text-red-600 hover:bg-red-50"
+        >
+          左クリア
+        </button>
+        <button
+          onClick={() => clearSide('right')}
+          className="px-2 py-1 text-xs border rounded text-red-600 hover:bg-red-50"
+        >
+          右クリア
+        </button>
+      </div>
+
+      {/* 描画キャンバス */}
+      <div
+        ref={containerRef}
+        className="flex-1 min-h-0 border rounded bg-slate-50 relative overflow-hidden"
+      >
+        <svg
+          width={size.w}
+          height={size.h}
+          onMouseMove={onSvgMouseMove}
+          onMouseLeave={onSvgMouseLeave}
+          onClick={onSvgClick}
+          style={{ cursor: drawSide ? 'crosshair' : 'default' }}
+        >
+          {/* 中心線 (点線) */}
+          <line
+            x1={tx(0)}
+            y1={padding.top}
+            x2={tx(0)}
+            y2={size.h - padding.bottom}
+            stroke="#cbd5e1"
+            strokeDasharray="3,3"
+            strokeWidth={1}
+          />
+          {/* 中心設計高 基準 (実線) */}
+          <line
+            x1={padding.left}
+            y1={ty(0)}
+            x2={size.w - padding.right}
+            y2={ty(0)}
+            stroke="#94a3b8"
+            strokeWidth={1}
+          />
+
+          {/* 現在 の 断面 */}
+          {points.length >= 2 && (
+            <path
+              d={points
+                .map((p, i) => `${i === 0 ? 'M' : 'L'} ${tx(p.x)} ${ty(p.y)}`)
+                .join(' ')}
+              fill="none"
+              stroke="#0ea5e9"
+              strokeWidth={2}
+              strokeLinejoin="round"
+            />
+          )}
+
+          {/* 各 折点 */}
+          {points.map((p, i) => (
+            <circle
+              key={`v-${i}`}
+              cx={tx(p.x)}
+              cy={ty(p.y)}
+              r={3}
+              fill={Math.abs(p.x) < 1e-9 && Math.abs(p.y) < 1e-9 ? '#0ea5e9' : '#fff'}
+              stroke="#0ea5e9"
+              strokeWidth={1.5}
+            />
+          ))}
+
+          {/* プレビュー 区間 */}
+          {preview && (
+            <>
+              <line
+                x1={tx(drawOrigin.x)}
+                y1={ty(drawOrigin.y)}
+                x2={tx(preview.endPoint.x)}
+                y2={ty(preview.endPoint.y)}
+                stroke={drawSide === 'right' ? '#059669' : '#d97706'}
+                strokeWidth={2}
+                strokeDasharray="5,3"
+              />
+              <circle
+                cx={tx(preview.endPoint.x)}
+                cy={ty(preview.endPoint.y)}
+                r={4}
+                fill={drawSide === 'right' ? '#059669' : '#d97706'}
+                stroke="#fff"
+                strokeWidth={1.5}
+              />
+            </>
+          )}
+
+          {/* 描画 起点 マーカー */}
+          {drawSide && (
+            <circle
+              cx={tx(drawOrigin.x)}
+              cy={ty(drawOrigin.y)}
+              r={5}
+              fill="none"
+              stroke={drawSide === 'right' ? '#059669' : '#d97706'}
+              strokeWidth={2}
+              strokeDasharray="2,2"
+            />
+          )}
+
+          {/* 左右 ラベル */}
+          <text x={padding.left} y={16} fontSize={11} fill="#64748b">
+            左
+          </text>
+          <text
+            x={size.w - padding.right}
+            y={16}
+            fontSize={11}
+            fill="#64748b"
+            textAnchor="end"
+          >
+            右
+          </text>
+          {centerHeight !== undefined && (
+            <text x={tx(0) + 6} y={ty(0) - 4} fontSize={10} fill="#334155">
+              中心設計高 {centerHeight.toFixed(3)}m
+            </text>
+          )}
+
+          {/* ステータス表示 */}
+          {drawSide && cursor && (
+            <text
+              x={size.w - padding.right}
+              y={size.h - 8}
+              fontSize={11}
+              fill="#334155"
+              textAnchor="end"
+              style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
+            >
+              {preview
+                ? `dW=${(preview.endPoint.x - drawOrigin.x).toFixed(2)}m, dH=${(
+                    preview.endPoint.y - drawOrigin.y
+                  ).toFixed(3)}m`
+                : 'カーソルを外側へ動かしてください'}
+            </text>
+          )}
+          {drawSide && (
+            <text
+              x={padding.left}
+              y={size.h - 8}
+              fontSize={11}
+              fill="#334155"
+              style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
+            >
+              描画中: {drawSide === 'right' ? '右計画線' : '左計画線'} / {drawMode === 'freehand' ? 'フリーハンド' : drawMode === 'percent' ? '%' : drawMode === 'ratio' ? '1:i' : '直高'}
+            </text>
+          )}
+        </svg>
+      </div>
+    </div>
   )
 }
 
-// 標準断面の片側（右 or 左）の要素列エディタ
-function CrossSectionSideEditor({
-  side,
-  elements,
-  onChange,
-}: {
-  side: 'right' | 'left'
-  elements: CrossSectionElement[]
-  onChange: (els: CrossSectionElement[]) => void
-}) {
-  const sideLabel = side === 'right' ? '右側' : '左側'
+/**
+ * onSvgClick から 直接 呼ぶ 版。 setCursor の 反映 を 待たず
+ * その場 で 座標 を 算出 する。 描画 モード の 計算 は
+ * InteractiveCrossSectionEditor 内 の computeSegment と 同じ ロジック。
+ */
+function computeSegmentAt(
+  drawSide: 'right' | 'left',
+  origin: { x: number; y: number },
+  cursor: { x: number; y: number },
+  drawMode: DrawMode,
+  slopeText: string,
+): { element: CrossSectionElement; endPoint: { x: number; y: number } } | null {
+  const sideSign: 1 | -1 = drawSide === 'right' ? 1 : -1
+  const dxRaw = cursor.x - origin.x
+  const dyRaw = cursor.y - origin.y
+  const outwardDx = dxRaw * sideSign
+  const newId = () => `e${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
 
-  const updateAt = (idx: number, patch: Partial<CrossSectionElement>) => {
-    onChange(elements.map((e, i) => (i === idx ? { ...e, ...patch } : e)))
-  }
-  const removeAt = (idx: number) => onChange(elements.filter((_, i) => i !== idx))
-  const moveAt = (idx: number, dir: -1 | 1) => {
-    const tgt = idx + dir
-    if (tgt < 0 || tgt >= elements.length) return
-    const arr = elements.slice()
-    const tmp = arr[idx]
-    arr[idx] = arr[tgt]
-    arr[tgt] = tmp
-    onChange(arr)
-  }
-  const addOne = () => {
+  if (drawMode === 'vertical') {
+    if (Math.abs(dyRaw) < 1e-4) return null
     const el: CrossSectionElement = {
-      id: `e${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      id: newId(),
       name: '',
-      width: 1.0,
-      slopeValue: 0,
+      width: 0,
+      slopeValue: Math.round(dyRaw * 1000) / 1000,
+      slopeUnit: 'vertical',
+    }
+    return { element: el, endPoint: { x: origin.x, y: origin.y + el.slopeValue } }
+  }
+  if (outwardDx < 1e-3) return null
+  const width = Math.round(outwardDx * 1000) / 1000
+  if (drawMode === 'freehand') {
+    const pct = Math.round((dyRaw / outwardDx) * 100 * 100) / 100
+    const el: CrossSectionElement = {
+      id: newId(),
+      name: '',
+      width,
+      slopeValue: pct,
       slopeUnit: 'percent',
     }
-    onChange([...elements, el])
+    const step = elementStep(el, sideSign)
+    return { element: el, endPoint: { x: origin.x + step.dx, y: origin.y + step.dy } }
   }
-
-  return (
-    <div className="border rounded">
-      <div className="bg-slate-50 px-2 py-1 text-xs flex items-center">
-        <span className="font-semibold text-slate-700">{sideLabel}（中心 → 外側）</span>
-        <button
-          onClick={addOne}
-          className="ml-auto flex items-center gap-1 px-2 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-100"
-        >
-          <Plus className="h-3 w-3" />
-          要素追加
-        </button>
-      </div>
-      {elements.length === 0 ? (
-        <div className="px-2 py-2 text-[11px] text-slate-400">要素がありません</div>
-      ) : (
-        <table className="w-full text-xs">
-          <thead className="bg-slate-50 text-slate-600">
-            <tr>
-              <th className="px-1 py-1 w-6 text-center">#</th>
-              <th className="px-1 py-1 text-left w-32">種別</th>
-              <th className="px-1 py-1 text-left">
-                表記 <span className="text-[10px] text-slate-400 font-normal">(勾配,距離)</span>
-              </th>
-              <th className="px-1 py-1 text-right w-24 text-[10px] text-slate-500">dW / dH</th>
-              <th className="px-1 py-1 w-16"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {elements.map((el, i) => {
-              const step = elementStep(el, 1)
-              return (
-                <tr key={el.id} className="border-t">
-                  <td className="px-1 py-1 text-center text-slate-500">{i + 1}</td>
-                  <td className="px-1 py-1">
-                    <input
-                      type="text"
-                      value={el.name}
-                      onChange={(e) => updateAt(i, { name: e.target.value })}
-                      placeholder="例: 床 / 法面 / 路面"
-                      className="w-full px-1 py-0.5 border rounded text-xs"
-                    />
-                  </td>
-                  <td className="px-1 py-1">
-                    <SegmentNotationInput
-                      element={el}
-                      onCommit={(patch) => updateAt(i, patch)}
-                    />
-                  </td>
-                  <td className="px-1 py-1 text-right tabular-nums text-[10px] text-slate-500">
-                    {step.dx.toFixed(2)} / {step.dy.toFixed(3)}
-                  </td>
-                <td className="px-1 py-1 text-right">
-                  <div className="flex gap-0.5 justify-end">
-                    <button
-                      onClick={() => moveAt(i, -1)}
-                      disabled={i === 0}
-                      className="p-0.5 border rounded hover:bg-slate-50 disabled:opacity-30"
-                    >
-                      <ArrowUp className="h-3 w-3" />
-                    </button>
-                    <button
-                      onClick={() => moveAt(i, 1)}
-                      disabled={i === elements.length - 1}
-                      className="p-0.5 border rounded hover:bg-slate-50 disabled:opacity-30"
-                    >
-                      <ArrowDown className="h-3 w-3" />
-                    </button>
-                    <button
-                      onClick={() => removeAt(i)}
-                      className="p-0.5 border rounded hover:bg-red-50 text-red-600"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      )}
-    </div>
-  )
+  const rawInput = parseFloat(slopeText)
+  if (!Number.isFinite(rawInput)) return null
+  const hasExplicitSign = /^[+-]/.test(slopeText.trim())
+  const dirSign = dyRaw > 0 ? 1 : dyRaw < 0 ? -1 : 1
+  const signed = hasExplicitSign ? rawInput : dirSign * Math.abs(rawInput)
+  if (drawMode === 'percent') {
+    const el: CrossSectionElement = {
+      id: newId(),
+      name: '',
+      width,
+      slopeValue: signed,
+      slopeUnit: 'percent',
+    }
+    const step = elementStep(el, sideSign)
+    return { element: el, endPoint: { x: origin.x + step.dx, y: origin.y + step.dy } }
+  }
+  if (drawMode === 'ratio') {
+    if (Math.abs(signed) < 1e-6) return null
+    const el: CrossSectionElement = {
+      id: newId(),
+      name: '',
+      width,
+      slopeValue: signed,
+      slopeUnit: 'ratio',
+    }
+    const step = elementStep(el, sideSign)
+    return { element: el, endPoint: { x: origin.x + step.dx, y: origin.y + step.dy } }
+  }
+  return null
 }
 
 export function OpenChannelAlignmentPage() {
@@ -2987,7 +3181,7 @@ export function OpenChannelAlignmentPage() {
           {selected && (
             <div
               className="shrink-0 border-t bg-white flex flex-col relative isolate overflow-hidden"
-              style={{ height: profileChartExpanded ? '320px' : 'auto' }}
+              style={{ height: profileChartExpanded ? '420px' : 'auto' }}
             >
               <div className="px-2 py-1 flex items-center gap-2 shrink-0 border-b bg-slate-50">
                 <button
@@ -3046,7 +3240,7 @@ export function OpenChannelAlignmentPage() {
                 </div>
               )}
               {profileChartExpanded && bottomTab === 'crossSection' && (
-                <div className="flex-1 min-h-0 overflow-auto p-2">
+                <div className="flex-1 min-h-0 flex flex-col p-2 gap-2">
                   {(() => {
                     // 編集対象 = 選択測点 の 個別断面 (あれば) / それ以外 は 標準断面
                     const editingStation =
@@ -3061,10 +3255,13 @@ export function OpenChannelAlignmentPage() {
                         updateChannel(selected.id, { standardCrossSection: next })
                       }
                     }
+                    const centerZ = selectedStation
+                      ? interpolateProfileZ(selected.profilePoints, selectedStation.distance)
+                      : undefined
                     return (
-                      <div className="space-y-2">
-                        {/* ヘッダー: どの断面 を 編集中 か + 中心設計高 + 個別/標準 切替 */}
-                        <div className="flex items-center gap-2 flex-wrap text-xs">
+                      <>
+                        {/* ヘッダー: 対象 表示 + 個別/標準 切替 */}
+                        <div className="flex items-center gap-2 flex-wrap text-xs shrink-0">
                           {selectedStation ? (
                             <>
                               <span className="font-mono font-semibold text-slate-700">
@@ -3079,14 +3276,15 @@ export function OpenChannelAlignmentPage() {
                               >
                                 {selectedStation.crossSection ? '個別設定' : '標準を継承'}
                               </span>
-                              <span className="text-[10px] text-slate-500">中心設計高</span>
-                              <span className="font-mono font-semibold text-emerald-700 tabular-nums">
-                                {interpolateProfileZ(
-                                  selected.profilePoints,
-                                  selectedStation.distance,
-                                ).toFixed(3)}
-                                <span className="text-[10px] text-slate-400 ml-0.5">m</span>
-                              </span>
+                              {centerZ !== undefined && (
+                                <>
+                                  <span className="text-[10px] text-slate-500">中心設計高</span>
+                                  <span className="font-mono font-semibold text-emerald-700 tabular-nums">
+                                    {centerZ.toFixed(3)}
+                                    <span className="text-[10px] text-slate-400 ml-0.5">m</span>
+                                  </span>
+                                </>
+                              )}
                               <div className="ml-auto flex gap-1">
                                 {selectedStation.crossSection ? (
                                   <button
@@ -3118,32 +3316,21 @@ export function OpenChannelAlignmentPage() {
                                 横断計画 (標準断面)
                               </span>
                               <span className="text-[11px] text-slate-500">
-                                中心 (0,0) から 右・左 へ 要素列 を 順 に 並べる。
-                                中間点 で 計画 を 押すと 個別断面 を 編集 できます。
+                                左右計画線 の ボタン で 描画 開始。 中間点 の 計画 を 押すと 個別断面 を 編集 できます。
                               </span>
                             </>
                           )}
                         </div>
 
-                        {/* 編集 (左右 の 断面) + 断面図 を 横並び。狭い時 は 折り返す。 */}
-                        <div className="flex gap-3 flex-wrap items-start">
-                          <div className="flex-1 min-w-[320px] space-y-2">
-                            <CrossSectionSideEditor
-                              side="right"
-                              elements={cs.right}
-                              onChange={(els) => applyChange({ ...cs, right: els })}
-                            />
-                            <CrossSectionSideEditor
-                              side="left"
-                              elements={cs.left}
-                              onChange={(els) => applyChange({ ...cs, left: els })}
-                            />
-                          </div>
-                          <div className="shrink-0">
-                            <CrossSectionDiagram cs={cs} />
-                          </div>
+                        {/* 対話 型 断面 エディタ */}
+                        <div className="flex-1 min-h-0">
+                          <InteractiveCrossSectionEditor
+                            cs={cs}
+                            onChange={applyChange}
+                            centerHeight={centerZ}
+                          />
                         </div>
-                      </div>
+                      </>
                     )
                   })()}
                 </div>
