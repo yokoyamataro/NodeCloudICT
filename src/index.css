@@ -29,12 +29,14 @@ body {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
-/* 画面全体 の 横スクロール を 抑止 (実測記録 の 広い 表 等 の 保険)。
-   個別 の 画面 で 意図的 に 横スクロール したい 場合 は そのコンテナ の
-   overflow-x-auto で 制御 する。 */
+/* 画面全体 の X/Y スクロール を 抑止。 AppLayout 全体 は h-screen で
+   viewport に 収まる はず で、個別 画面 内 の スクロール は 各コンテナ
+   の overflow-auto で 制御 する。 body の overflow を 完全に 塞ぐ
+   ことで、意図せぬ 空白 域 に スクロール してしまう 事故 を 防ぐ。 */
 html,
 body {
-  overflow-x: hidden;
+  overflow: hidden;
+  height: 100%;
 }
 
 /* 施工計画テーブルの指標別カラー（見出し・数値ともに） */

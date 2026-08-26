@@ -37,6 +37,127 @@ function createMeasuredIcon(opts: {
   })
 }
 
+// 表 の 列 セクション 定義。 折りたたみ (hidden) / Z 表示 制御 は これ を 参照。
+type SectionKey =
+  | 'design'
+  | 'm1'
+  | 'm2'
+  | 'diff'
+  | 'avg'
+  | 'dvs'
+  | 'slidedD'
+  | 'revSlideM'
+const TABLE_SECTIONS: Array<{
+  key: SectionKey
+  label: string
+  headerTitle: string
+  bgHeader: string
+  bgSub: string
+  cols: Array<{ label: string; align: 'left' | 'right'; isZ?: boolean; hasHorizontal?: boolean }>
+}> = [
+  {
+    key: 'design',
+    label: '設計',
+    headerTitle: '設計座標 (座標管理 と リンク 済み の 場合 の み)',
+    bgHeader: 'bg-slate-50',
+    bgSub: '',
+    cols: [
+      { label: '点名', align: 'left' },
+      { label: 'X', align: 'right' },
+      { label: 'Y', align: 'right' },
+      { label: 'Z', align: 'right', isZ: true },
+    ],
+  },
+  {
+    key: 'm1',
+    label: '実測1',
+    headerTitle: '1 回目 の 実測',
+    bgHeader: 'bg-orange-50',
+    bgSub: 'bg-orange-50',
+    cols: [
+      { label: '点名', align: 'left' },
+      { label: 'X', align: 'right' },
+      { label: 'Y', align: 'right' },
+      { label: 'Z', align: 'right', isZ: true },
+    ],
+  },
+  {
+    key: 'm2',
+    label: '実測2',
+    headerTitle: '2 回目 の 実測。 別 の 実測点 を リンク で 割り付け 可能。',
+    bgHeader: 'bg-orange-50',
+    bgSub: 'bg-orange-50',
+    cols: [
+      { label: '点名', align: 'left' },
+      { label: 'X', align: 'right' },
+      { label: 'Y', align: 'right' },
+      { label: 'Z', align: 'right', isZ: true },
+    ],
+  },
+  {
+    key: 'diff',
+    label: '実測差',
+    headerTitle: '実測1 と 実測2 の 差 (実測2 - 実測1)',
+    bgHeader: 'bg-rose-50',
+    bgSub: 'bg-rose-50',
+    cols: [
+      { label: 'dX', align: 'right' },
+      { label: 'dY', align: 'right' },
+      { label: 'dZ', align: 'right', isZ: true },
+    ],
+  },
+  {
+    key: 'avg',
+    label: '実測平均',
+    headerTitle: '実測1 と 実測2 の 平均 (実測2 が 無ければ 実測1)。 生値。',
+    bgHeader: 'bg-emerald-50',
+    bgSub: 'bg-emerald-50',
+    cols: [
+      { label: 'X', align: 'right' },
+      { label: 'Y', align: 'right' },
+      { label: 'Z', align: 'right', isZ: true },
+    ],
+  },
+  {
+    key: 'dvs',
+    label: '実測平均 - 設計',
+    headerTitle:
+      '生 の 差 (実測平均 - 設計)。 水平 = √(dX²+dY²)。 この 値 を スライド量 に 入れると 中央値 が 揃う。',
+    bgHeader: 'bg-blue-50',
+    bgSub: 'bg-blue-50',
+    cols: [
+      { label: 'dX', align: 'right' },
+      { label: 'dY', align: 'right' },
+      { label: 'dZ', align: 'right', isZ: true },
+      { label: '水平', align: 'right', hasHorizontal: true },
+    ],
+  },
+  {
+    key: 'slidedD',
+    label: 'スライド設計',
+    headerTitle: '設計値 を 実測 に 近づける: 設計 + スライド量',
+    bgHeader: 'bg-fuchsia-50',
+    bgSub: 'bg-fuchsia-50',
+    cols: [
+      { label: 'X', align: 'right' },
+      { label: 'Y', align: 'right' },
+      { label: 'Z', align: 'right', isZ: true },
+    ],
+  },
+  {
+    key: 'revSlideM',
+    label: '逆スライド実測',
+    headerTitle: '実測平均 を 設計 に 近づける: 実測平均 - スライド量。 出力 の 既定。',
+    bgHeader: 'bg-cyan-50',
+    bgSub: 'bg-cyan-50',
+    cols: [
+      { label: 'X', align: 'right' },
+      { label: 'Y', align: 'right' },
+      { label: 'Z', align: 'right', isZ: true },
+    ],
+  },
+]
+
 // 座標管理 の 点種 色 (CoordinateMap の MARKER_COLORS と 合わせる)。
 const TYPE_COLORS: Record<string, string> = {
   control: '#ef4444',
@@ -121,6 +242,23 @@ export function StakingRecordsPage() {
   // 地図に 表示する 点種 の フィルタ (座標管理 の visibleTypes と 同じ 概念)。
   // null = 未初期化 (初回 に availableTypes で 全 ON 初期化)。
   const [visibleTypesState, setVisibleTypesState] = useState<Set<string> | null>(null)
+
+  // 表 の 列 表示 制御。 セクション 単位 で 折りたたみ + Z 列 全体 を まとめて 非表示。
+  const [hiddenSections, setHiddenSections] = useState<Set<string>>(new Set())
+  const [showZ, setShowZ] = useState<boolean>(true)
+
+  // 座標管理 に 登録 する 行 の 選択 (グループ.key 単位)
+  const [selectedGroupKeys, setSelectedGroupKeys] = useState<Set<string>>(new Set())
+  const [registering, setRegistering] = useState<null | 's' | 'rs'>(null)
+  const isHidden = (key: string) => hiddenSections.has(key)
+  const toggleSection = (key: string) => {
+    setHiddenSections((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   useEffect(() => {
     if (currentFarm) {
@@ -541,6 +679,105 @@ export function StakingRecordsPage() {
     await deleteRecord(id)
   }
 
+  // 選択行 の スライド設計値 (mode='s') / 逆スライド実測値 (mode='rs') を
+  // 座標管理 に 新規 座標 として 登録。 点名 は プレフィックス s / rs を
+  // 元 の 実測点名 (G_ / G2_ 剥がし) に 付加。 型 は 現況 (current)。
+  const handleRegisterAsCoordinates = async (mode: 's' | 'rs') => {
+    if (!currentFarm) return
+    if (selectedGroupKeys.size === 0) {
+      alert('登録する 行 を チェック して ください。')
+      return
+    }
+    const prefix = mode
+    const items: Array<{
+      pointNumber: string
+      x: number
+      y: number
+      z: number | null
+    }> = []
+    for (const g of grouped) {
+      if (!selectedGroupKeys.has(g.key)) continue
+      const avgX = g.m2 && g.m1 ? (g.m1.measuredX + g.m2.measuredX) / 2 : g.m1?.measuredX
+      const avgY = g.m2 && g.m1 ? (g.m1.measuredY + g.m2.measuredY) / 2 : g.m1?.measuredY
+      const avgZ =
+        g.m2 && g.m1 && g.m1.measuredZ != null && g.m2.measuredZ != null
+          ? (g.m1.measuredZ + g.m2.measuredZ) / 2
+          : g.m1?.measuredZ ?? null
+      const baseName = (g.m1?.targetName ?? g.designName ?? '').replace(/^G2?_/, '')
+      if (!baseName) continue
+      let x: number | null = null
+      let y: number | null = null
+      let z: number | null = null
+      if (mode === 's') {
+        // スライド設計 = 設計 + スライド量
+        if (g.designX == null || g.designY == null) continue
+        x = g.designX + xOffset
+        y = g.designY + yOffset
+        z = g.designZ != null ? g.designZ + zOffset : null
+      } else {
+        // 逆スライド実測 = 実測平均 - スライド量
+        if (avgX == null || avgY == null) continue
+        x = avgX - xOffset
+        y = avgY - yOffset
+        z = avgZ != null ? avgZ - zOffset : null
+      }
+      items.push({
+        pointNumber: `${prefix}${baseName}`,
+        x,
+        y,
+        z,
+      })
+    }
+    if (items.length === 0) {
+      alert(
+        mode === 's'
+          ? '設計座標 が 無い 行 は 「スライド設計」を 登録 できません。'
+          : '実測 が 無い 行 は 登録 できません。',
+      )
+      return
+    }
+    if (
+      !confirm(
+        `${items.length} 件 の 座標 を 「${prefix}<元点名>」で 座標管理 に 登録します。`,
+      )
+    )
+      return
+    setRegistering(mode)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      const uid = user?.id ?? null
+      const rows = items.map((it) => ({
+        farm_id: currentFarm.id,
+        point_number: it.pointNumber,
+        x: it.x,
+        y: it.y,
+        z: it.z,
+        coordinate_type: 'current' as const,
+        stake_type: null,
+        latitude: null,
+        longitude: null,
+        created_by: uid,
+        updated_by: uid,
+      }))
+      const { error } = await supabase
+        .from('design_coordinates')
+        .insert(rows as never)
+      if (error) throw error
+      await fetchCoordinates(currentFarm.id)
+      setSelectedGroupKeys(new Set())
+      alert(`${items.length} 件 の 座標 を 登録 しました。`)
+    } catch (err) {
+      console.error('[staking-records] 座標登録 に 失敗', err)
+      alert(
+        `座標 の 登録 に 失敗 しました: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      )
+    } finally {
+      setRegistering(null)
+    }
+  }
+
   // CSV 出力（実測値ベース）
   const handleExportCSV = () => {
     if (filtered.length === 0) return
@@ -889,6 +1126,70 @@ export function StakingRecordsPage() {
         </CoordinateMap>
       </div>
 
+      {/* 選択行 の 座標管理 登録 バー */}
+      <div className="px-3 py-1.5 border-b bg-white flex items-center gap-2 text-xs flex-wrap">
+        <span className="text-slate-500">
+          選択 {selectedGroupKeys.size} 件 →
+        </span>
+        <button
+          onClick={() => void handleRegisterAsCoordinates('s')}
+          disabled={selectedGroupKeys.size === 0 || registering !== null}
+          className="px-2 py-1 bg-fuchsia-600 text-white rounded hover:bg-fuchsia-700 disabled:opacity-50"
+          title="スライド設計値 (設計 + スライド量) を 座標管理 に 登録。 点名 = s + 元点名"
+        >
+          {registering === 's' ? '登録中…' : 'スライド設計 を 登録 (s+点名)'}
+        </button>
+        <button
+          onClick={() => void handleRegisterAsCoordinates('rs')}
+          disabled={selectedGroupKeys.size === 0 || registering !== null}
+          className="px-2 py-1 bg-cyan-600 text-white rounded hover:bg-cyan-700 disabled:opacity-50"
+          title="逆スライド実測値 (実測平均 - スライド量) を 座標管理 に 登録。 点名 = rs + 元点名"
+        >
+          {registering === 'rs' ? '登録中…' : '逆スライド実測 を 登録 (rs+点名)'}
+        </button>
+        {selectedGroupKeys.size > 0 && (
+          <button
+            onClick={() => setSelectedGroupKeys(new Set())}
+            className="ml-2 text-slate-500 hover:text-blue-600"
+          >
+            選択解除
+          </button>
+        )}
+        <span className="ml-auto text-[11px] text-slate-400">
+          型 は 「現況」で 登録 されます
+        </span>
+      </div>
+
+      {/* 列 表示 切替 ツールバー: 各セクション の 折りたたみ + Z 列 の 一括 非表示 */}
+      <div className="px-3 py-1.5 border-b bg-slate-50 flex items-center gap-2 text-xs flex-wrap">
+        <span className="text-slate-500">列表示:</span>
+        {TABLE_SECTIONS.map((sec) => {
+          const on = !isHidden(sec.key)
+          return (
+            <button
+              key={sec.key}
+              onClick={() => toggleSection(sec.key)}
+              className={`px-1.5 py-0.5 border rounded ${
+                on
+                  ? 'bg-white border-slate-300 text-slate-700'
+                  : 'bg-slate-100 border-slate-200 text-slate-400 line-through'
+              }`}
+              title={on ? '折りたたむ' : '展開する'}
+            >
+              {sec.label}
+            </button>
+          )
+        })}
+        <label className="flex items-center gap-1 ml-2 border-l pl-2">
+          <input
+            type="checkbox"
+            checked={showZ}
+            onChange={(e) => setShowZ(e.target.checked)}
+          />
+          Z 列 を 表示
+        </label>
+      </div>
+
       {/* 下半分: テーブル (isolate で テーブル 内 の sticky thead の z-index が
           地図側 と 干渉 しない ように 独立 スタッキング コンテキスト を 作る) */}
       <div className="flex-1 min-h-0 min-w-0 overflow-auto bg-white isolate">
@@ -905,95 +1206,77 @@ export function StakingRecordsPage() {
           <table className="min-w-max text-xs border-collapse whitespace-nowrap">
             <thead className="bg-slate-100 sticky top-0 z-10">
               <tr className="text-slate-700">
+                <th
+                  className="px-2 py-2 border-b border-r text-center w-8"
+                  rowSpan={2}
+                  title="座標管理 に 登録 する 行 を 選択"
+                >
+                  <input
+                    type="checkbox"
+                    checked={
+                      grouped.length > 0 &&
+                      selectedGroupKeys.size === grouped.length
+                    }
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedGroupKeys(new Set(grouped.map((g) => g.key)))
+                      } else {
+                        setSelectedGroupKeys(new Set())
+                      }
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </th>
                 <th className="px-2 py-2 border-b border-r text-left" rowSpan={2}>種別</th>
-                <th
-                  className="px-2 py-1 border-b border-r text-center bg-slate-50"
-                  colSpan={4}
-                >
-                  設計
-                </th>
-                <th
-                  className="px-2 py-1 border-b border-r text-center bg-orange-50"
-                  colSpan={4}
-                  title="1 回目 の 実測"
-                >
-                  実測1
-                </th>
-                <th
-                  className="px-2 py-1 border-b border-r text-center bg-orange-50"
-                  colSpan={4}
-                  title="2 回目 の 実測。 別 の 実測点 を リンク で 割り付け 可能。"
-                >
-                  実測2
-                </th>
-                <th
-                  className="px-2 py-1 border-b border-r text-center bg-rose-50"
-                  colSpan={3}
-                  title="実測1 と 実測2 の 差 (実測2 - 実測1)"
-                >
-                  実測差
-                </th>
-                <th
-                  className="px-2 py-1 border-b border-r text-center bg-emerald-50"
-                  colSpan={3}
-                  title="実測1 と 実測2 の 平均 (実測2 が 無ければ 実測1)。 生値。"
-                >
-                  実測平均
-                </th>
-                <th
-                  className="px-2 py-1 border-b border-r text-center bg-blue-50"
-                  colSpan={4}
-                  title="設計 と 実測平均 の 生 の 差 (実測平均 - 設計)。 水平 = √(dX²+dY²)。 この 値 を スライド量 に 入れると 中央値 が 揃う。"
-                >
-                  実測平均 - 設計
-                </th>
-                <th
-                  className="px-2 py-1 border-b border-r text-center bg-fuchsia-50"
-                  colSpan={3}
-                  title="スライド補正: 設計値 を 実測 に 近づける。 設計 + スライド量。"
-                >
-                  スライド設計
-                </th>
-                <th
-                  className="px-2 py-1 border-b border-r text-center bg-cyan-50"
-                  colSpan={3}
-                  title="逆スライド補正: 実測平均 を 設計 に 近づける。 実測平均 - スライド量。 出力 の 既定。"
-                >
-                  逆スライド実測
-                </th>
+                {TABLE_SECTIONS.map((sec) => {
+                  if (isHidden(sec.key)) {
+                    return (
+                      <th
+                        key={sec.key}
+                        rowSpan={2}
+                        onClick={() => toggleSection(sec.key)}
+                        className="border-b border-r bg-slate-200 text-slate-500 hover:bg-slate-300 cursor-pointer w-6 text-center"
+                        title={`${sec.label} を 展開`}
+                      >
+                        <span className="[writing-mode:vertical-rl] text-[10px] tracking-tighter py-1">
+                          + {sec.label}
+                        </span>
+                      </th>
+                    )
+                  }
+                  const cs = sec.cols.filter((c) => showZ || !c.isZ).length
+                  return (
+                    <th
+                      key={sec.key}
+                      className={`px-2 py-1 border-b border-r text-center ${sec.bgHeader} cursor-pointer hover:brightness-95`}
+                      colSpan={cs}
+                      title={`${sec.headerTitle} — クリック で 折りたたみ`}
+                      onClick={() => toggleSection(sec.key)}
+                    >
+                      {sec.label}
+                    </th>
+                  )
+                })}
                 <th className="px-2 py-2 border-b border-r text-right" rowSpan={2}>精度(m)</th>
                 <th className="px-2 py-2 border-b border-r text-left" rowSpan={2}>記録日時</th>
                 <th className="px-2 py-2 border-b text-center w-10" rowSpan={2}></th>
               </tr>
               <tr className="text-slate-700">
-                <th className="px-2 py-1 border-b border-r text-left">点名</th>
-                <th className="px-2 py-1 border-b border-r text-right">X</th>
-                <th className="px-2 py-1 border-b border-r text-right">Y</th>
-                <th className="px-2 py-1 border-b border-r text-right">Z</th>
-                <th className="px-2 py-1 border-b border-r text-left bg-orange-50">点名</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-orange-50">X</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-orange-50">Y</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-orange-50">Z</th>
-                <th className="px-2 py-1 border-b border-r text-left bg-orange-50">点名</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-orange-50">X</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-orange-50">Y</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-orange-50">Z</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-rose-50">dX</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-rose-50">dY</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-rose-50">dZ</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-emerald-50">X</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-emerald-50">Y</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-emerald-50">Z</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-blue-50">dX</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-blue-50">dY</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-blue-50">dZ</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-blue-50">水平</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-fuchsia-50">X</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-fuchsia-50">Y</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-fuchsia-50">Z</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-cyan-50">X</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-cyan-50">Y</th>
-                <th className="px-2 py-1 border-b border-r text-right bg-cyan-50">Z</th>
+                {TABLE_SECTIONS.map((sec) => {
+                  if (isHidden(sec.key)) return null
+                  return sec.cols
+                    .filter((c) => showZ || !c.isZ)
+                    .map((c) => (
+                      <th
+                        key={`${sec.key}-${c.label}`}
+                        className={`px-2 py-1 border-b border-r ${sec.bgSub} ${
+                          c.align === 'left' ? 'text-left' : 'text-right'
+                        }`}
+                      >
+                        {c.label}
+                      </th>
+                    ))
+                })}
               </tr>
             </thead>
             <tbody>
@@ -1053,6 +1336,21 @@ export function StakingRecordsPage() {
                       isSelected ? 'bg-blue-100 hover:bg-blue-200' : 'hover:bg-slate-50'
                     }`}
                   >
+                    <td className="px-2 py-1.5 border-b border-r text-center">
+                      <input
+                        type="checkbox"
+                        checked={selectedGroupKeys.has(g.key)}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => {
+                          setSelectedGroupKeys((prev) => {
+                            const next = new Set(prev)
+                            if (e.target.checked) next.add(g.key)
+                            else next.delete(g.key)
+                            return next
+                          })
+                        }}
+                      />
+                    </td>
                     <td className="px-2 py-1.5 border-b border-r">
                       <span
                         className={`text-[10px] px-1.5 py-0.5 rounded ${
@@ -1082,6 +1380,7 @@ export function StakingRecordsPage() {
                       )}
                     </td>
                     {/* 設計 (点名 + XYZ + リンク 操作 ボタン) — 実測1 の record を 対象 */}
+                    {!isHidden('design') && <>
                     <td
                       className={`px-2 py-1.5 border-b border-r font-medium ${
                         m1 && pendingLinkRecordId === m1.id
@@ -1142,11 +1441,15 @@ export function StakingRecordsPage() {
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right text-slate-600">
                       {g.designY != null ? g.designY.toFixed(3) : '—'}
                     </td>
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right text-slate-600">
-                      {g.designZ != null ? g.designZ.toFixed(3) : '—'}
-                    </td>
+                    {showZ && (
+                      <td className="px-2 py-1.5 border-b border-r font-mono text-right text-slate-600">
+                        {g.designZ != null ? g.designZ.toFixed(3) : '—'}
+                      </td>
+                    )}
+                    </>}
                     {/* 実測1 (点名 / X / Y / Z)。 点名 は 変更可 (blur/Enter で 保存)、
                         座標 (X/Y/Z) は 読取専用。 */}
+                    {!isHidden('m1') && <>
                     <td className="px-1 py-1 border-b border-r bg-orange-50/50 max-w-[8rem]">
                       {m1 ? (
                         <input
@@ -1176,11 +1479,15 @@ export function StakingRecordsPage() {
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
                       {m1 ? m1.measuredY.toFixed(3) : '—'}
                     </td>
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
-                      {m1?.measuredZ != null ? m1.measuredZ.toFixed(3) : '—'}
-                    </td>
+                    {showZ && (
+                      <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
+                        {m1?.measuredZ != null ? m1.measuredZ.toFixed(3) : '—'}
+                      </td>
+                    )}
+                    </>}
                     {/* 実測2 (点名 + リンク操作 / X / Y / Z)。 別 の 実測点 を リンク
                         させる こと で 「後追い で 2 回目 の 実測」を 表現できる。 */}
+                    {!isHidden('m2') && <>
                     <td
                       className={`px-1 py-1 border-b border-r max-w-[8rem] ${
                         m1 && pendingLinkM2ForM1Id === m1.id
@@ -1261,62 +1568,95 @@ export function StakingRecordsPage() {
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
                       {m2 ? m2.measuredY.toFixed(3) : '—'}
                     </td>
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
-                      {m2?.measuredZ != null ? m2.measuredZ.toFixed(3) : '—'}
-                    </td>
+                    {showZ && (
+                      <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
+                        {m2?.measuredZ != null ? m2.measuredZ.toFixed(3) : '—'}
+                      </td>
+                    )}
+                    </>}
                     {/* 実測差 (m2 - m1) */}
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-rose-50/50">
-                      {diffX != null ? diffX.toFixed(3) : '—'}
-                    </td>
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-rose-50/50">
-                      {diffY != null ? diffY.toFixed(3) : '—'}
-                    </td>
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-rose-50/50">
-                      {diffZ != null ? diffZ.toFixed(3) : '—'}
-                    </td>
-                    {/* 平均 (X/Y/Z) */}
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-emerald-50/50 font-semibold">
-                      {avgX != null ? avgX.toFixed(3) : '—'}
-                    </td>
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-emerald-50/50 font-semibold">
-                      {avgY != null ? avgY.toFixed(3) : '—'}
-                    </td>
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-emerald-50/50 font-semibold">
-                      {avgZ != null ? avgZ.toFixed(3) : '—'}
-                    </td>
-                    {/* 平均 - 設計 (dX / dY / dZ / 水平) */}
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-blue-50/50">
-                      {dvsX != null ? dvsX.toFixed(3) : '—'}
-                    </td>
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-blue-50/50">
-                      {dvsY != null ? dvsY.toFixed(3) : '—'}
-                    </td>
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-blue-50/50">
-                      {dvsZ != null ? dvsZ.toFixed(3) : '—'}
-                    </td>
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-blue-50/50">
-                      {dvsH != null ? dvsH.toFixed(3) : '—'}
-                    </td>
+                    {!isHidden('diff') && (
+                      <>
+                        <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-rose-50/50">
+                          {diffX != null ? diffX.toFixed(3) : '—'}
+                        </td>
+                        <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-rose-50/50">
+                          {diffY != null ? diffY.toFixed(3) : '—'}
+                        </td>
+                        {showZ && (
+                          <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-rose-50/50">
+                            {diffZ != null ? diffZ.toFixed(3) : '—'}
+                          </td>
+                        )}
+                      </>
+                    )}
+                    {/* 実測平均 (X/Y/Z) */}
+                    {!isHidden('avg') && (
+                      <>
+                        <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-emerald-50/50 font-semibold">
+                          {avgX != null ? avgX.toFixed(3) : '—'}
+                        </td>
+                        <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-emerald-50/50 font-semibold">
+                          {avgY != null ? avgY.toFixed(3) : '—'}
+                        </td>
+                        {showZ && (
+                          <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-emerald-50/50 font-semibold">
+                            {avgZ != null ? avgZ.toFixed(3) : '—'}
+                          </td>
+                        )}
+                      </>
+                    )}
+                    {/* 実測平均 - 設計 (dX / dY / dZ / 水平) */}
+                    {!isHidden('dvs') && (
+                      <>
+                        <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-blue-50/50">
+                          {dvsX != null ? dvsX.toFixed(3) : '—'}
+                        </td>
+                        <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-blue-50/50">
+                          {dvsY != null ? dvsY.toFixed(3) : '—'}
+                        </td>
+                        {showZ && (
+                          <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-blue-50/50">
+                            {dvsZ != null ? dvsZ.toFixed(3) : '—'}
+                          </td>
+                        )}
+                        <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-blue-50/50">
+                          {dvsH != null ? dvsH.toFixed(3) : '—'}
+                        </td>
+                      </>
+                    )}
                     {/* スライド設計 = 設計 + スライド量 (設計 を 実測 に 近づける) */}
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-fuchsia-50/50">
-                      {slidedDX != null ? slidedDX.toFixed(3) : '—'}
-                    </td>
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-fuchsia-50/50">
-                      {slidedDY != null ? slidedDY.toFixed(3) : '—'}
-                    </td>
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-fuchsia-50/50">
-                      {slidedDZ != null ? slidedDZ.toFixed(3) : '—'}
-                    </td>
+                    {!isHidden('slidedD') && (
+                      <>
+                        <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-fuchsia-50/50">
+                          {slidedDX != null ? slidedDX.toFixed(3) : '—'}
+                        </td>
+                        <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-fuchsia-50/50">
+                          {slidedDY != null ? slidedDY.toFixed(3) : '—'}
+                        </td>
+                        {showZ && (
+                          <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-fuchsia-50/50">
+                            {slidedDZ != null ? slidedDZ.toFixed(3) : '—'}
+                          </td>
+                        )}
+                      </>
+                    )}
                     {/* 逆スライド実測 = 実測平均 - スライド量 (実測 を 設計 に 近づける、出力 の 既定) */}
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-cyan-50/50 font-semibold">
-                      {revSlideMX != null ? revSlideMX.toFixed(3) : '—'}
-                    </td>
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-cyan-50/50 font-semibold">
-                      {revSlideMY != null ? revSlideMY.toFixed(3) : '—'}
-                    </td>
-                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-cyan-50/50 font-semibold">
-                      {revSlideMZ != null ? revSlideMZ.toFixed(3) : '—'}
-                    </td>
+                    {!isHidden('revSlideM') && (
+                      <>
+                        <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-cyan-50/50 font-semibold">
+                          {revSlideMX != null ? revSlideMX.toFixed(3) : '—'}
+                        </td>
+                        <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-cyan-50/50 font-semibold">
+                          {revSlideMY != null ? revSlideMY.toFixed(3) : '—'}
+                        </td>
+                        {showZ && (
+                          <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-cyan-50/50 font-semibold">
+                            {revSlideMZ != null ? revSlideMZ.toFixed(3) : '—'}
+                          </td>
+                        )}
+                      </>
+                    )}
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right">
                       {acc != null ? acc.toFixed(3) : '—'}
                     </td>
