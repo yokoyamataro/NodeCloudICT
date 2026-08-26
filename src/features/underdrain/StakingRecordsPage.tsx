@@ -615,7 +615,7 @@ export function StakingRecordsPage() {
   }
 
   return (
-    <div className="h-full w-full flex flex-col overflow-hidden">
+    <div className="h-full w-full min-w-0 max-w-full flex flex-col overflow-hidden">
       {/* ヘッダー */}
       <div className="px-4 py-3 border-b bg-white flex items-center gap-2 flex-wrap">
         <FileSearch className="h-4 w-4 text-slate-500" />

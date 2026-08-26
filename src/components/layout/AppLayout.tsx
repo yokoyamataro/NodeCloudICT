@@ -623,8 +623,10 @@ export function AppLayout() {
       </aside>
         )}
 
-      {/* メインコンテンツ */}
-      <main className="flex-1 bg-slate-50 overflow-hidden">
+      {/* メインコンテンツ (min-w-0: 中身 の min-content で フレックス 幅 が
+          膨張 しない よう 抑止。 実測記録 の 広い 表 等 が 横スクロール 化
+          される だけ で 済む) */}
+      <main className="flex-1 min-w-0 bg-slate-50 overflow-hidden">
         <Outlet />
       </main>
     </div>

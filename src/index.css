@@ -29,6 +29,14 @@ body {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
+/* 画面全体 の 横スクロール を 抑止 (実測記録 の 広い 表 等 の 保険)。
+   個別 の 画面 で 意図的 に 横スクロール したい 場合 は そのコンテナ の
+   overflow-x-auto で 制御 する。 */
+html,
+body {
+  overflow-x: hidden;
+}
+
 /* 施工計画テーブルの指標別カラー（見出し・数値ともに） */
 /*   地盤高: 黒（デフォルト）/ 計画高: 赤 / 切深: 青 / 区間勾配: 緑 */
 
