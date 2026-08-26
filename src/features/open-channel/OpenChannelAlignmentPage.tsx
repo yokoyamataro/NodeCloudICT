@@ -1194,7 +1194,7 @@ export function OpenChannelAlignmentPage() {
     return true
   })
 
-  // 地図下 の 縦断図 の 開閉状態 (localStorage 永続化、デフォルト = 開)。
+  // 地図下 パネル の 開閉状態 (localStorage 永続化、デフォルト = 開)。
   const [profileChartExpanded, setProfileChartExpanded] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       const v = window.localStorage.getItem('oc:section:profile-chart')
@@ -1211,6 +1211,9 @@ export function OpenChannelAlignmentPage() {
       return next
     })
   }
+  // 地図下 パネル の タブ (縦断図 / 横断図)。 計画 ボタン 押下 で 横断図 に 自動切替。
+  type BottomTab = 'profile' | 'crossSection'
+  const [bottomTab, setBottomTab] = useState<BottomTab>('profile')
 
   // 線形点の追加: 座標を選択 (種別 BP/IP/EP は 位置から 自動決定)
   const [addCoordId, setAddCoordId] = useState<string>('')
@@ -2355,6 +2358,9 @@ export function OpenChannelAlignmentPage() {
                                             cloneCrossSection(selected.standardCrossSection),
                                           )
                                         }
+                                        // 右下パネル を 横断図 タブ に 切替 + 展開
+                                        setBottomTab('crossSection')
+                                        if (!profileChartExpanded) toggleProfileChart()
                                       }}
                                       title="この測点の計画断面を編集"
                                       className={`px-1 py-0.5 text-[10px] border rounded ${
@@ -2441,92 +2447,12 @@ export function OpenChannelAlignmentPage() {
                     </div>
 
                     {selectedStation && (
-                      <div className="border rounded p-2 space-y-2 bg-slate-50">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-semibold text-slate-700 text-xs font-mono">
-                            {selectedStation.label}
-                          </span>
-                          <span className="text-[10px] text-slate-500">の断面</span>
-                          <span
-                            className={`text-[10px] px-1.5 py-0.5 rounded ${
-                              selectedStation.crossSection
-                                ? 'bg-amber-100 text-amber-700'
-                                : 'bg-slate-200 text-slate-600'
-                            }`}
-                          >
-                            {selectedStation.crossSection ? '個別設定' : '標準を継承'}
-                          </span>
-                          {/* 中心線 の 設計高 (縦断図 補間 値) を 表示。 */}
-                          <span className="text-[10px] text-slate-500">中心設計高</span>
-                          <span className="text-xs font-mono font-semibold text-emerald-700 tabular-nums">
-                            {interpolateProfileZ(
-                              selected.profilePoints,
-                              selectedStation.distance,
-                            ).toFixed(3)}
-                            <span className="text-[10px] text-slate-400 ml-0.5">m</span>
-                          </span>
-                          <div className="ml-auto flex gap-1">
-                            {selectedStation.crossSection ? (
-                              <button
-                                onClick={() =>
-                                  handleUpdateStationCrossSection(selectedStation.id, null)
-                                }
-                                className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-600 hover:bg-slate-50"
-                              >
-                                標準に戻す
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() =>
-                                  handleUpdateStationCrossSection(
-                                    selectedStation.id,
-                                    cloneCrossSection(selected.standardCrossSection),
-                                  )
-                                }
-                                className="px-2 py-0.5 text-[11px] border rounded bg-blue-600 text-white hover:bg-blue-700"
-                              >
-                                個別設定（標準を取込）
-                              </button>
-                            )}
-                          </div>
-                        </div>
-
-                        {selectedStation.crossSection ? (
-                          <>
-                            <CrossSectionSideEditor
-                              side="right"
-                              elements={selectedStation.crossSection.right}
-                              onChange={(els) =>
-                                handleUpdateStationCrossSection(selectedStation.id, {
-                                  ...selectedStation.crossSection!,
-                                  right: els,
-                                })
-                              }
-                            />
-                            <CrossSectionSideEditor
-                              side="left"
-                              elements={selectedStation.crossSection.left}
-                              onChange={(els) =>
-                                handleUpdateStationCrossSection(selectedStation.id, {
-                                  ...selectedStation.crossSection!,
-                                  left: els,
-                                })
-                              }
-                            />
-                            <div className="flex justify-center pt-1">
-                              <CrossSectionDiagram cs={selectedStation.crossSection} />
-                            </div>
-                          </>
-                        ) : (
-                          <>
-                            <div className="text-[11px] text-slate-500">
-                              この測点では横断計画がそのまま適用されます。「個別設定」で複製してカスタマイズできます。
-                            </div>
-                            <div className="flex justify-center pt-1">
-                              <CrossSectionDiagram cs={selected.standardCrossSection} />
-                            </div>
-                          </>
-                        )}
+                      <div className="text-[11px] text-slate-500 border rounded p-2 bg-slate-50">
+                        <span className="font-mono font-semibold text-slate-700">
+                          {selectedStation.label}
+                        </span>{' '}
+                        の 断面 編集 は 右下 の <span className="font-semibold">横断図</span>{' '}
+                        タブ で 行い ます (計画 ボタン で 切替)。
                       </div>
                     )}
                   </>
@@ -2875,44 +2801,16 @@ export function OpenChannelAlignmentPage() {
                 </div>
               </CollapsibleSection>
 
-              {/* 横断計画 (末尾に 配置) */}
-              <CollapsibleSection title="横断計画" storageKey="oc:section:cs">
-                <div className="text-[11px] text-slate-500">
-                  中心 (0,0) から右・左へ要素列を順に並べます。各要素は 幅 (m) と 勾配（1:i または %） で定義。
-                  外側に向かって上る場合 +、下る場合 -。種別はラベル（色分け等の将来拡張用）。
-                </div>
-
-                <CrossSectionSideEditor
-                  side="right"
-                  elements={selected.standardCrossSection.right}
-                  onChange={(els) =>
-                    updateChannel(selected.id, {
-                      standardCrossSection: { ...selected.standardCrossSection, right: els },
-                    })
-                  }
-                />
-
-                <CrossSectionSideEditor
-                  side="left"
-                  elements={selected.standardCrossSection.left}
-                  onChange={(els) =>
-                    updateChannel(selected.id, {
-                      standardCrossSection: { ...selected.standardCrossSection, left: els },
-                    })
-                  }
-                />
-
-                <div className="flex justify-center pt-1">
-                  <CrossSectionDiagram cs={selected.standardCrossSection} />
-                </div>
-              </CollapsibleSection>
+              {/* 横断計画 の 編集 は 右下 パネル の 横断図 タブ に 移動。
+                  中間点 の 計画 ボタン 押下 で 該当測点、選択なし の 場合 は
+                  標準断面 を 編集 する。 */}
             </>
           )}
         </div>
 
         {/* 右: 地図 (上) + 縦断図 (下) */}
-        <div className="flex-1 flex flex-col min-w-0">
-          <div className="flex-1 min-h-0 relative">
+        <div className="flex-1 flex flex-col min-w-0 min-h-0">
+          <div className="flex-1 min-h-0 relative overflow-hidden isolate">
             <CoordinateMap
               farmId={farmId ?? null}
               showLabels
@@ -3081,32 +2979,173 @@ export function OpenChannelAlignmentPage() {
             </CoordinateMap>
           </div>
 
-          {/* 縦断図 (地図の 下、プロットのみ)。ヘッダ の 矢印 で 開閉。
-              編集 UI は 左サイドバー 「縦断線形」に */}
+          {/* 地図下 の 二面パネル: 縦断図 / 横断図 を タブ で 切替。
+              - 縦断図: 変化点 の 編集 UI は 左サイドバー 「縦断線形」に。
+              - 横断図: 中間点 選択 時 は その 測点 の 計画断面、
+                       選択なし の 時 は 標準断面 (=横断計画) を 編集。
+              計画 ボタン 押下 で 横断図 タブ に 自動切替。 */}
           {selected && (
             <div
-              className="shrink-0 border-t bg-white flex flex-col"
-              style={{ height: profileChartExpanded ? '260px' : 'auto' }}
+              className="shrink-0 border-t bg-white flex flex-col relative isolate overflow-hidden"
+              style={{ height: profileChartExpanded ? '320px' : 'auto' }}
             >
-              <button
-                type="button"
-                onClick={toggleProfileChart}
-                className="px-2 py-1 flex items-center gap-2 shrink-0 hover:bg-slate-50 text-left"
-                title={profileChartExpanded ? '縦断図 を 折りたたむ' : '縦断図 を 展開'}
-              >
-                {profileChartExpanded ? (
-                  <ChevronDown className="h-3.5 w-3.5 text-slate-500" />
-                ) : (
-                  <ChevronRight className="h-3.5 w-3.5 text-slate-500" />
-                )}
-                <span className="font-semibold text-slate-700 text-sm">縦断図</span>
-                <span className="text-[11px] text-slate-500">
-                  変化点 の 追加 / 編集 は 左サイドバー 「縦断線形」から
+              <div className="px-2 py-1 flex items-center gap-2 shrink-0 border-b bg-slate-50">
+                <button
+                  type="button"
+                  onClick={toggleProfileChart}
+                  className="p-0.5 hover:bg-slate-100 rounded"
+                  title={profileChartExpanded ? '折りたたむ' : '展開'}
+                >
+                  {profileChartExpanded ? (
+                    <ChevronDown className="h-3.5 w-3.5 text-slate-500" />
+                  ) : (
+                    <ChevronRight className="h-3.5 w-3.5 text-slate-500" />
+                  )}
+                </button>
+                <div className="flex gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBottomTab('profile')
+                      if (!profileChartExpanded) toggleProfileChart()
+                    }}
+                    className={`px-2 py-0.5 text-xs rounded ${
+                      bottomTab === 'profile'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-white border hover:bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    縦断図
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBottomTab('crossSection')
+                      if (!profileChartExpanded) toggleProfileChart()
+                    }}
+                    className={`px-2 py-0.5 text-xs rounded ${
+                      bottomTab === 'crossSection'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-white border hover:bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    横断図
+                  </button>
+                </div>
+                <span className="text-[11px] text-slate-500 truncate">
+                  {bottomTab === 'profile'
+                    ? '変化点 の 追加 / 編集 は 左サイドバー 「縦断線形」から'
+                    : selectedStation
+                    ? `${selectedStation.label} の 計画断面`
+                    : '横断計画 (標準断面) — 中間点 で 計画 を 押すと 個別 に 編集 できます'}
                 </span>
-              </button>
-              {profileChartExpanded && (
+              </div>
+              {profileChartExpanded && bottomTab === 'profile' && (
                 <div className="flex-1 min-h-0 px-2 pb-2">
                   <ProfileChart points={selected.profilePoints} totalLen={totalLen} />
+                </div>
+              )}
+              {profileChartExpanded && bottomTab === 'crossSection' && (
+                <div className="flex-1 min-h-0 overflow-auto p-2">
+                  {(() => {
+                    // 編集対象 = 選択測点 の 個別断面 (あれば) / それ以外 は 標準断面
+                    const editingStation =
+                      selectedStation && selectedStation.crossSection ? selectedStation : null
+                    const cs: StandardCrossSection = editingStation
+                      ? editingStation.crossSection!
+                      : selected.standardCrossSection
+                    const applyChange = (next: StandardCrossSection) => {
+                      if (editingStation) {
+                        handleUpdateStationCrossSection(editingStation.id, next)
+                      } else {
+                        updateChannel(selected.id, { standardCrossSection: next })
+                      }
+                    }
+                    return (
+                      <div className="space-y-2">
+                        {/* ヘッダー: どの断面 を 編集中 か + 中心設計高 + 個別/標準 切替 */}
+                        <div className="flex items-center gap-2 flex-wrap text-xs">
+                          {selectedStation ? (
+                            <>
+                              <span className="font-mono font-semibold text-slate-700">
+                                {selectedStation.label}
+                              </span>
+                              <span
+                                className={`text-[10px] px-1.5 py-0.5 rounded ${
+                                  selectedStation.crossSection
+                                    ? 'bg-amber-100 text-amber-700'
+                                    : 'bg-slate-200 text-slate-600'
+                                }`}
+                              >
+                                {selectedStation.crossSection ? '個別設定' : '標準を継承'}
+                              </span>
+                              <span className="text-[10px] text-slate-500">中心設計高</span>
+                              <span className="font-mono font-semibold text-emerald-700 tabular-nums">
+                                {interpolateProfileZ(
+                                  selected.profilePoints,
+                                  selectedStation.distance,
+                                ).toFixed(3)}
+                                <span className="text-[10px] text-slate-400 ml-0.5">m</span>
+                              </span>
+                              <div className="ml-auto flex gap-1">
+                                {selectedStation.crossSection ? (
+                                  <button
+                                    onClick={() =>
+                                      handleUpdateStationCrossSection(selectedStation.id, null)
+                                    }
+                                    className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-600 hover:bg-slate-50"
+                                  >
+                                    標準に戻す
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() =>
+                                      handleUpdateStationCrossSection(
+                                        selectedStation.id,
+                                        cloneCrossSection(selected.standardCrossSection),
+                                      )
+                                    }
+                                    className="px-2 py-0.5 text-[11px] border rounded bg-blue-600 text-white hover:bg-blue-700"
+                                  >
+                                    個別設定（標準を取込）
+                                  </button>
+                                )}
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <span className="font-semibold text-slate-700">
+                                横断計画 (標準断面)
+                              </span>
+                              <span className="text-[11px] text-slate-500">
+                                中心 (0,0) から 右・左 へ 要素列 を 順 に 並べる。
+                                中間点 で 計画 を 押すと 個別断面 を 編集 できます。
+                              </span>
+                            </>
+                          )}
+                        </div>
+
+                        {/* 編集 (左右 の 断面) + 断面図 を 横並び。狭い時 は 折り返す。 */}
+                        <div className="flex gap-3 flex-wrap items-start">
+                          <div className="flex-1 min-w-[320px] space-y-2">
+                            <CrossSectionSideEditor
+                              side="right"
+                              elements={cs.right}
+                              onChange={(els) => applyChange({ ...cs, right: els })}
+                            />
+                            <CrossSectionSideEditor
+                              side="left"
+                              elements={cs.left}
+                              onChange={(els) => applyChange({ ...cs, left: els })}
+                            />
+                          </div>
+                          <div className="shrink-0">
+                            <CrossSectionDiagram cs={cs} />
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })()}
                 </div>
               )}
             </div>
