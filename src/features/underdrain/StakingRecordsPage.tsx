@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Loader2, Trash2, Download, FileSearch, RefreshCw } from 'lucide-react'
+import { Loader2, Trash2, Download, FileSearch, RefreshCw, Link as LinkIcon, X } from 'lucide-react'
+import { CircleMarker, Polyline, Tooltip } from 'react-leaflet'
 import { useFarmStore } from '@/stores/farmStore'
 import { useStakingStore, type SurveyCategory } from '@/stores/stakingStore'
+import { useCoordinateStore } from '@/stores/coordinateStore'
+import { useProjectListStore } from '@/stores/projectListStore'
+import { CoordinateMap } from '@/components/map/CoordinateMap'
+import { CoordinateConverter } from '@/lib/coordinates'
 import { supabase } from '@/lib/supabase'
 
 // 起工測量・出来形測量の実測記録を一覧表示し、SIMA/CSV で出力するページ。
@@ -15,14 +20,69 @@ const CATEGORY_LABEL: Record<SurveyCategory | 'all', string> = {
 
 export function StakingRecordsPage() {
   const { currentFarm } = useFarmStore()
-  const { records, loading, error, fetchRecords, deleteRecord } = useStakingStore()
+  const { records, loading, error, fetchRecords, deleteRecord, updateRecordTarget } = useStakingStore()
+  const { coordinates, fetchCoordinates } = useCoordinateStore()
+  const { projects } = useProjectListStore()
   const [filter, setFilter] = useState<'all' | SurveyCategory>('all')
+
+  // 設計座標 の 事後リンク 対象 の 記録 ID。 セット されている 間は 地図クリック
+  // で 選んだ 座標 を その 記録 に 割り付ける。
+  const [pendingLinkRecordId, setPendingLinkRecordId] = useState<string | null>(null)
 
   useEffect(() => {
     if (currentFarm) {
       fetchRecords(currentFarm.id)
+      fetchCoordinates(currentFarm.id)
     }
-  }, [currentFarm, fetchRecords])
+  }, [currentFarm, fetchRecords, fetchCoordinates])
+
+  // 座標系: プロジェクト の 平面直角 系。 実測 XY → lat/lng 変換 に 使用。
+  const zone = useMemo(() => {
+    if (!currentFarm) return 13
+    return projects.find((p) => p.id === currentFarm.project_id)?.coordinate_zone ?? 13
+  }, [currentFarm, projects])
+  const converter = useMemo(() => new CoordinateConverter(zone), [zone])
+
+  // 実測点 (measuredX/Y) を lat/lng に 変換 して 地図に 表示 する ため の 集合。
+  const measuredPointsForMap = useMemo(() => {
+    return records
+      .map((r) => {
+        const ll = converter.toLatLng(r.measuredX, r.measuredY)
+        if (!Number.isFinite(ll.lat) || !Number.isFinite(ll.lng)) return null
+        return {
+          id: r.id,
+          lat: ll.lat,
+          lng: ll.lng,
+          record: r,
+        }
+      })
+      .filter((x): x is { id: string; lat: number; lng: number; record: typeof records[number] } => x !== null)
+  }, [records, converter])
+
+  // 既に 設計座標 に リンク 済み の 座標 ID 集合 (checkedCoordIds で 強調表示)。
+  const linkedCoordIds = useMemo(() => {
+    const s = new Set<string>()
+    for (const r of records) {
+      if (r.targetType === 'coordinate' && r.targetRefId) s.add(r.targetRefId)
+    }
+    return s
+  }, [records])
+
+  // 地図で 座標 が クリック された とき: 設定モード なら 記録に リンク、
+  // それ以外 は 何もしない。
+  const handleCoordSelectOnMap = (coordId: string) => {
+    if (!pendingLinkRecordId) return
+    const coord = coordinates.find((c) => c.id === coordId)
+    if (!coord) return
+    void updateRecordTarget(pendingLinkRecordId, {
+      id: coord.id,
+      pointNumber: coord.pointNumber,
+      x: coord.x,
+      y: coord.y,
+      z: coord.z,
+    })
+    setPendingLinkRecordId(null)
+  }
 
   // Z 補正値 (実測値に加算)。工区ごとに DB (design_survey_calibration.dz_offset)
   // に永続化することで PC/スマホ間で共有可能に。localStorage は旧値のフォール
@@ -301,11 +361,90 @@ export function StakingRecordsPage() {
             計画値からの RMS: <span className="font-mono font-semibold">{summary.rms.toFixed(3)}</span> m
           </span>
         )}
+        {pendingLinkRecordId && (
+          <span className="ml-auto flex items-center gap-2 text-blue-700 font-semibold">
+            📍 地図上の 設計座標 を クリック で 割り付け
+            <button
+              onClick={() => setPendingLinkRecordId(null)}
+              className="p-0.5 rounded border hover:bg-white"
+              title="キャンセル"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        )}
         {error && <span className="text-red-600">{error}</span>}
       </div>
 
-      {/* テーブル */}
-      <div className="flex-1 overflow-auto bg-white">
+      {/* 上半分: 地図 (座標管理 と 同じ CoordinateMap)。設計座標 を クリック
+          で 事後リンク 可能。実測点 は オレンジ 十字マーカー で 表示。 */}
+      <div className="flex-1 min-h-0 border-b relative">
+        <CoordinateMap
+          farmId={currentFarm.id}
+          showLabels
+          checkedCoordIds={linkedCoordIds}
+          onPointSelect={handleCoordSelectOnMap}
+        >
+          {measuredPointsForMap.map((m) => {
+            // リンク 済み: 対応する 設計座標 との 間に 誤差ベクトル 線 を 引く。
+            const linkedCoord =
+              m.record.targetType === 'coordinate' && m.record.targetRefId
+                ? coordinates.find((c) => c.id === m.record.targetRefId)
+                : null
+            const linkedLL = linkedCoord
+              ? converter.toLatLng(linkedCoord.x, linkedCoord.y)
+              : null
+            return (
+              <div key={`meas-${m.id}`}>
+                {linkedLL && (
+                  <Polyline
+                    positions={[
+                      [linkedLL.lat, linkedLL.lng],
+                      [m.lat, m.lng],
+                    ]}
+                    pathOptions={{
+                      color: '#f97316',
+                      weight: 1.5,
+                      opacity: 0.7,
+                      dashArray: '3,3',
+                    }}
+                  />
+                )}
+                <CircleMarker
+                  center={[m.lat, m.lng]}
+                  radius={4}
+                  pathOptions={{
+                    color: '#fff',
+                    fillColor: m.record.surveyCategory === 'asbuilt' ? '#10b981' : '#f97316',
+                    fillOpacity: 0.9,
+                    weight: 1.5,
+                  }}
+                >
+                  <Tooltip
+                    permanent
+                    direction="right"
+                    offset={[6, 0]}
+                    className="point-label-tooltip"
+                  >
+                    <span
+                      style={{
+                        color: m.record.surveyCategory === 'asbuilt' ? '#10b981' : '#f97316',
+                        textShadow:
+                          '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff',
+                      }}
+                    >
+                      {m.record.targetName ?? '(実測)'}
+                    </span>
+                  </Tooltip>
+                </CircleMarker>
+              </div>
+            )
+          })}
+        </CoordinateMap>
+      </div>
+
+      {/* 下半分: テーブル */}
+      <div className="flex-1 min-h-0 overflow-auto bg-white">
         {loading ? (
           <div className="h-full flex items-center justify-center text-slate-500">
             <Loader2 className="h-5 w-5 animate-spin mr-2" />
@@ -390,9 +529,46 @@ export function StakingRecordsPage() {
                         {CATEGORY_LABEL[r.surveyCategory]}
                       </span>
                     </td>
-                    {/* 設計 (点名 + XYZ) */}
-                    <td className="px-2 py-1.5 border-b border-r font-medium text-slate-700">
-                      {designName}
+                    {/* 設計 (点名 + XYZ + リンク 操作 ボタン) */}
+                    <td
+                      className={`px-2 py-1.5 border-b border-r font-medium ${
+                        pendingLinkRecordId === r.id
+                          ? 'bg-blue-100 text-blue-800'
+                          : 'text-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1">
+                        <span className="flex-1 min-w-0 truncate">
+                          {r.targetType === 'coordinate' && r.targetRefId ? designName : (
+                            <span className="text-slate-400 italic">未設定</span>
+                          )}
+                        </span>
+                        {r.targetType === 'coordinate' && r.targetRefId ? (
+                          <button
+                            onClick={() => void updateRecordTarget(r.id, null)}
+                            title="設計座標 の リンク を 解除"
+                            className="p-0.5 text-slate-400 hover:text-red-500"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        ) : pendingLinkRecordId === r.id ? (
+                          <button
+                            onClick={() => setPendingLinkRecordId(null)}
+                            title="設計座標 の 選択 を キャンセル"
+                            className="p-0.5 text-blue-600 hover:bg-blue-200 rounded"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => setPendingLinkRecordId(r.id)}
+                            title="地図 から 設計座標 を 選んで リンク"
+                            className="p-0.5 text-blue-500 hover:bg-blue-50 rounded"
+                          >
+                            <LinkIcon className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right text-slate-600">
                       {r.targetX != null ? r.targetX.toFixed(3) : '—'}

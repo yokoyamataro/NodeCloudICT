@@ -78,6 +78,20 @@ interface StakingState {
   fetchRecords: (farmId: string) => Promise<void>
   addRecord: (record: Omit<StakingRecord, 'id' | 'recordedAt'>) => Promise<StakingRecord | null>
   deleteRecord: (id: string) => Promise<void>
+  /**
+   * 実測記録 を 座標管理 の 設計座標 に 事後リンクする。
+   * coord=null で リンク 解除 (targetType='free' に 戻す)。
+   */
+  updateRecordTarget: (
+    id: string,
+    coord: {
+      id: string
+      pointNumber: string
+      x: number
+      y: number
+      z: number | null
+    } | null,
+  ) => Promise<void>
 }
 
 export const useStakingStore = create<StakingState>()((set) => ({
@@ -153,6 +167,48 @@ export const useStakingStore = create<StakingState>()((set) => ({
       set({
         saving: false,
         error: err instanceof Error ? err.message : '実測記録の削除に失敗しました',
+      })
+    }
+  },
+
+  updateRecordTarget: async (id, coord) => {
+    set({ saving: true, error: null })
+    try {
+      const patch = coord
+        ? {
+            target_type: 'coordinate' as StakingTargetType,
+            target_ref_id: coord.id,
+            target_vertex_index: null,
+            target_name: coord.pointNumber,
+            target_x: coord.x,
+            target_y: coord.y,
+            target_z: coord.z,
+          }
+        : {
+            target_type: 'free' as StakingTargetType,
+            target_ref_id: null,
+            target_vertex_index: null,
+            target_name: null,
+            target_x: null,
+            target_y: null,
+            target_z: null,
+          }
+      const { data, error } = await supabase
+        .from('staking_records')
+        .update(patch as never)
+        .eq('id', id)
+        .select()
+        .single()
+      if (error) throw error
+      const saved = rowToRecord(data as StakingRecordRow)
+      set((s) => ({
+        records: s.records.map((r) => (r.id === id ? saved : r)),
+        saving: false,
+      }))
+    } catch (err) {
+      set({
+        saving: false,
+        error: err instanceof Error ? err.message : '設計座標 のリンク に 失敗しました',
       })
     }
   },
