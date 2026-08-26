@@ -28,7 +28,6 @@ import {
   type WidthStake,
   buildCrossSectionPath,
   elementStep,
-  formatSegmentNotation,
 } from '@/stores/openChannelStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import {
@@ -809,6 +808,27 @@ function ProfileChart({ points, totalLen }: { points: ProfilePoint[]; totalLen: 
 type DrawMode = 'freehand' | 'percent' | 'ratio' | 'vertical'
 type DrawSide = 'right' | 'left' | null
 
+/** 断面 区間 の 勾配 部分 だけ を 短い 文字列 に。 直高 は 高さ (符号 付) を 返す。 */
+function formatSlopeOnly(e: CrossSectionElement): string {
+  if (e.slopeUnit === 'vertical') {
+    const sign = e.slopeValue >= 0 ? '+' : ''
+    return `H${sign}${e.slopeValue.toFixed(3)}`
+  }
+  if (e.slopeUnit === 'percent') {
+    const sign = e.slopeValue >= 0 ? '+' : ''
+    return `${sign}${e.slopeValue.toFixed(2)}%`
+  }
+  const sign = e.slopeValue < 0 ? '-' : ''
+  return `${sign}1:${Math.abs(e.slopeValue).toFixed(2)}`
+}
+
+/** 断面 区間 の 幅 部分 だけ を 短い 文字列 に。 直高 (幅 0) の 場合 は 空 文字。 */
+function formatWidthOnly(e: CrossSectionElement): string {
+  if (e.slopeUnit === 'vertical') return ''
+  if (e.width < 1e-6) return ''
+  return e.width.toFixed(2)
+}
+
 function InteractiveCrossSectionEditor({
   cs,
   onChange,
@@ -872,16 +892,14 @@ function InteractiveCrossSectionEditor({
   const drawOrigin =
     drawSide === 'right' ? lastRight : drawSide === 'left' ? lastLeft : { x: 0, y: 0 }
 
-  // SVG スケール
+  // SVG スケール。 描画中 (プレビュー) に 拡縮 が 揺れる の を 避ける ため、
+  // カーソル 位置 は 範囲 に 含めない。 区間 を 確定 (onChange) した タイミング で
+  // cs.right / cs.left が 変わり、その とき に 再フィット する。
   const padding = { top: 30, right: 20, bottom: 40, left: 20 }
   const innerW = size.w - padding.left - padding.right
   const innerH = size.h - padding.top - padding.bottom
   const xsForExt = points.map((p) => p.x)
   const ysForExt = points.map((p) => p.y)
-  if (cursor) {
-    xsForExt.push(cursor.x)
-    ysForExt.push(cursor.y)
-  }
   const minX = Math.min(-5, ...xsForExt)
   const maxX = Math.max(5, ...xsForExt)
   const minY = Math.min(-2, ...ysForExt)
@@ -1150,10 +1168,10 @@ function InteractiveCrossSectionEditor({
             />
           ))}
 
-          {/* 各 区間 の パラメータ ラベル (中点 に 表記 を 表示)。
-              線 の 上/下 は 進行方向 に 対する 法線 方向 で 決める:
-              (dxSvg, dySvg) の 法線 = (-dySvg, dxSvg)、それを 正規化 して
-              上向き (SVG では -y 方向) に 選ぶ。 */}
+          {/* 各 区間 の パラメータ ラベル。
+              - 線 の 上 (画面 上 側) : 勾配 (2.00% / 1:1.5↑ / H+1.500 等)
+              - 線 の 下 (画面 下 側) : 幅 (dW を m 無しで 2.00 と 表記)
+              直高 区間 は 幅 0 の ため 下側 は 省略。 */}
           {(() => {
             type Seg = {
               from: { x: number; y: number }
@@ -1185,29 +1203,43 @@ function InteractiveCrossSectionEditor({
               const dxSvg = tx(s.to.x) - tx(s.from.x)
               const dySvg = ty(s.to.y) - ty(s.from.y)
               const len = Math.hypot(dxSvg, dySvg) || 1
-              // 法線 (SVG 座標系)。 上 (SVG y が 小) 側 に 出したい。
-              let nx = -dySvg / len
-              let ny = dxSvg / len
-              if (ny > 0) {
-                nx = -nx
-                ny = -ny
+              // 画面 上 側 (SVG y が 小) を 指す 法線 単位 ベクトル
+              let nUpX = -dySvg / len
+              let nUpY = dxSvg / len
+              if (nUpY > 0) {
+                nUpX = -nUpX
+                nUpY = -nUpY
               }
-              const offset = 10
-              const labelX = midX + nx * offset
-              const labelY = midY + ny * offset
-              const label = formatSegmentNotation(s.e)
+              const offset = 12
+              const slope = formatSlopeOnly(s.e)
+              const width = formatWidthOnly(s.e)
               return (
-                <text
-                  key={`seglbl-${i}`}
-                  x={labelX}
-                  y={labelY}
-                  fontSize={10}
-                  fill="#334155"
-                  textAnchor="middle"
-                  style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
-                >
-                  {label}
-                </text>
+                <g key={`seglbl-${i}`}>
+                  {slope && (
+                    <text
+                      x={midX + nUpX * offset}
+                      y={midY + nUpY * offset}
+                      fontSize={10}
+                      fill="#334155"
+                      textAnchor="middle"
+                      style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
+                    >
+                      {slope}
+                    </text>
+                  )}
+                  {width && (
+                    <text
+                      x={midX - nUpX * offset}
+                      y={midY - nUpY * offset + 4}
+                      fontSize={10}
+                      fill="#334155"
+                      textAnchor="middle"
+                      style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
+                    >
+                      {width}
+                    </text>
+                  )}
+                </g>
               )
             })
           })()}
@@ -1238,25 +1270,45 @@ function InteractiveCrossSectionEditor({
                 const dxSvg = tx(preview.endPoint.x) - tx(drawOrigin.x)
                 const dySvg = ty(preview.endPoint.y) - ty(drawOrigin.y)
                 const len = Math.hypot(dxSvg, dySvg) || 1
-                let nx = -dySvg / len
-                let ny = dxSvg / len
-                if (ny > 0) {
-                  nx = -nx
-                  ny = -ny
+                let nUpX = -dySvg / len
+                let nUpY = dxSvg / len
+                if (nUpY > 0) {
+                  nUpX = -nUpX
+                  nUpY = -nUpY
                 }
                 const offset = 12
+                const color = drawSide === 'right' ? '#059669' : '#d97706'
+                const slope = formatSlopeOnly(preview.element)
+                const width = formatWidthOnly(preview.element)
                 return (
-                  <text
-                    x={midX + nx * offset}
-                    y={midY + ny * offset}
-                    fontSize={10}
-                    fill={drawSide === 'right' ? '#059669' : '#d97706'}
-                    textAnchor="middle"
-                    fontWeight={600}
-                    style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
-                  >
-                    {formatSegmentNotation(preview.element)}
-                  </text>
+                  <>
+                    {slope && (
+                      <text
+                        x={midX + nUpX * offset}
+                        y={midY + nUpY * offset}
+                        fontSize={10}
+                        fill={color}
+                        textAnchor="middle"
+                        fontWeight={600}
+                        style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
+                      >
+                        {slope}
+                      </text>
+                    )}
+                    {width && (
+                      <text
+                        x={midX - nUpX * offset}
+                        y={midY - nUpY * offset + 4}
+                        fontSize={10}
+                        fill={color}
+                        textAnchor="middle"
+                        fontWeight={600}
+                        style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
+                      >
+                        {width}
+                      </text>
+                    )}
+                  </>
                 )
               })()}
             </>
