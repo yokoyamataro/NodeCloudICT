@@ -64,6 +64,11 @@ export function StakingRecordsPage() {
   // で 選んだ 座標 を その 記録 に 割り付ける。
   const [pendingLinkRecordId, setPendingLinkRecordId] = useState<string | null>(null)
 
+  // 「別の 実測点 を 実測2 として 割り付ける」モード の 対象 グループ の
+  // targetRefId (設計座標 ID)。セット されて いる 間は 地図 で 実測マーカー
+  // を クリック する と その 記録 を 当 グループ の 実測2 として 移動する。
+  const [pendingLinkM2ForRefId, setPendingLinkM2ForRefId] = useState<string | null>(null)
+
   // 行 選択 (ハイライト + 地図 ズーム)。 tick は 同じ 行 を 連打 した 時 でも
   // 再ズーム できる ように 単調増加 させる。
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null)
@@ -152,6 +157,35 @@ export function StakingRecordsPage() {
   const handleRowClick = (recordId: string) => {
     setSelectedRecordId(recordId)
     setZoomTick((t) => t + 1)
+  }
+
+  // 「実測2 として 割り付け」モード の 起点 と キャンセル。 排他制御 の ため
+  // 他モード は 同時に クリア する。
+  const handleStartLinkM2 = (designRefId: string) => {
+    setPendingLinkM2ForRefId(designRefId)
+    setPendingLinkRecordId(null)
+  }
+  const handleCancelLinkM2 = () => setPendingLinkM2ForRefId(null)
+
+  // 地図 の 実測マーカー を クリック された とき: 「実測2 リンク」モード なら
+  // その 記録 を グループ に 移す (targetRefId を 上書き)。 通常時 は 行選択
+  // + ズーム。
+  const handleMeasuredMarkerClick = (recordId: string) => {
+    if (pendingLinkM2ForRefId) {
+      const coord = coordinates.find((c) => c.id === pendingLinkM2ForRefId)
+      if (coord) {
+        void updateRecordTarget(recordId, {
+          id: coord.id,
+          pointNumber: coord.pointNumber,
+          x: coord.x,
+          y: coord.y,
+          z: coord.z,
+        })
+      }
+      setPendingLinkM2ForRefId(null)
+      return
+    }
+    handleRowClick(recordId)
   }
 
   // 地図で 座標 が クリック された とき: 設定モード なら 記録に リンク、
@@ -528,6 +562,18 @@ export function StakingRecordsPage() {
             </button>
           </span>
         )}
+        {pendingLinkM2ForRefId && (
+          <span className="ml-auto flex items-center gap-2 text-purple-700 font-semibold">
+            🎯 地図上 の 実測マーカー を クリック で 実測2 に 割り付け
+            <button
+              onClick={handleCancelLinkM2}
+              className="p-0.5 rounded border hover:bg-white"
+              title="キャンセル"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        )}
         {error && <span className="text-red-600">{error}</span>}
       </div>
 
@@ -617,7 +663,7 @@ export function StakingRecordsPage() {
                   center={[m.lat, m.lng]}
                   radius={selectedRecordId === m.id ? 7 : 4}
                   eventHandlers={{
-                    click: () => handleRowClick(m.id),
+                    click: () => handleMeasuredMarkerClick(m.id),
                   }}
                   pathOptions={{
                     color: selectedRecordId === m.id ? '#1d4ed8' : '#fff',
@@ -674,15 +720,15 @@ export function StakingRecordsPage() {
                 </th>
                 <th
                   className="px-2 py-1 border-b border-r text-center bg-orange-50"
-                  colSpan={3}
+                  colSpan={4}
                   title="1 回目 の 実測"
                 >
                   実測1
                 </th>
                 <th
                   className="px-2 py-1 border-b border-r text-center bg-orange-50"
-                  colSpan={3}
-                  title="2 回目 の 実測 (無い 場合 は — )"
+                  colSpan={4}
+                  title="2 回目 の 実測。 別 の 実測点 を リンク で 割り付け 可能。"
                 >
                   実測2
                 </th>
@@ -716,9 +762,11 @@ export function StakingRecordsPage() {
                 <th className="px-2 py-1 border-b border-r text-right">X</th>
                 <th className="px-2 py-1 border-b border-r text-right">Y</th>
                 <th className="px-2 py-1 border-b border-r text-right">Z</th>
+                <th className="px-2 py-1 border-b border-r text-left bg-orange-50">点名</th>
                 <th className="px-2 py-1 border-b border-r text-right bg-orange-50">X</th>
                 <th className="px-2 py-1 border-b border-r text-right bg-orange-50">Y</th>
                 <th className="px-2 py-1 border-b border-r text-right bg-orange-50">Z</th>
+                <th className="px-2 py-1 border-b border-r text-left bg-orange-50">点名</th>
                 <th className="px-2 py-1 border-b border-r text-right bg-orange-50">X</th>
                 <th className="px-2 py-1 border-b border-r text-right bg-orange-50">Y</th>
                 <th className="px-2 py-1 border-b border-r text-right bg-orange-50">Z</th>
@@ -849,6 +897,7 @@ export function StakingRecordsPage() {
                             onClick={(e) => {
                               e.stopPropagation()
                               setPendingLinkRecordId(m1.id)
+                              setPendingLinkM2ForRefId(null)
                             }}
                             title="地図 から 設計座標 を 選んで リンク"
                             className="p-0.5 text-blue-500 hover:bg-blue-50 rounded"
@@ -867,7 +916,10 @@ export function StakingRecordsPage() {
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right text-slate-600">
                       {g.designZ != null ? g.designZ.toFixed(3) : '—'}
                     </td>
-                    {/* 実測1 (X/Y/Z) */}
+                    {/* 実測1 (点名 / X / Y / Z) */}
+                    <td className="px-2 py-1.5 border-b border-r font-medium bg-orange-50/50 truncate max-w-[8rem]">
+                      {m1?.targetName ?? '—'}
+                    </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
                       {m1 ? m1.measuredX.toFixed(3) : '—'}
                     </td>
@@ -877,7 +929,56 @@ export function StakingRecordsPage() {
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
                       {m1?.measuredZ != null ? (m1.measuredZ + zOffset).toFixed(3) : '—'}
                     </td>
-                    {/* 実測2 (X/Y/Z) */}
+                    {/* 実測2 (点名 + リンク操作 / X / Y / Z)。 別 の 実測点 を リンク
+                        させる こと で 「後追い で 2 回目 の 実測」を 表現できる。 */}
+                    <td
+                      className={`px-2 py-1.5 border-b border-r font-medium truncate max-w-[8rem] ${
+                        m1?.targetRefId && pendingLinkM2ForRefId === m1.targetRefId
+                          ? 'bg-purple-100 text-purple-800'
+                          : 'bg-orange-50/50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1">
+                        <span className="flex-1 min-w-0 truncate">
+                          {m2 ? m2.targetName : <span className="text-slate-400 italic">—</span>}
+                        </span>
+                        {m2 ? (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              // 実測2 の リンク 解除 → その 記録 を free 化
+                              void updateRecordTarget(m2.id, null)
+                            }}
+                            title="実測2 を グループ から 外す (free 化)"
+                            className="p-0.5 text-slate-400 hover:text-red-500"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        ) : m1?.targetRefId && pendingLinkM2ForRefId === m1.targetRefId ? (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleCancelLinkM2()
+                            }}
+                            title="キャンセル"
+                            className="p-0.5 text-purple-600 hover:bg-purple-200 rounded"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        ) : m1?.targetRefId ? (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleStartLinkM2(m1.targetRefId!)
+                            }}
+                            title="別 の 実測点 を 実測2 として リンク"
+                            className="p-0.5 text-purple-500 hover:bg-purple-50 rounded"
+                          >
+                            <LinkIcon className="h-3 w-3" />
+                          </button>
+                        ) : null}
+                      </div>
+                    </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-orange-50/50">
                       {m2 ? m2.measuredX.toFixed(3) : '—'}
                     </td>
