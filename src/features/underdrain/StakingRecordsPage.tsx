@@ -496,9 +496,9 @@ export function StakingRecordsPage() {
     return out
   }, [filtered])
 
-  // 平均誤差・件数の簡易サマリ。 平均 dx / dy は 実測 (m1/m2 の 平均) を
-  // 補正後 (+xOffset, +yOffset) にしてから 設計値 と の 差 を 取り、
-  // グループ 全体 で 平均。 RMS も 補正後 の 値 で 計算。
+  // 平均誤差・件数 の 簡易サマリ。 平均 dX / dY は 実測平均 と 設計 の 生 の 差
+  // (実測 - 設計) を グループ 全体 で 平均。 スライド量 を どう 設定 すれば 良い か
+  // の 参考値 に なる (この 値 を そのまま 入力 すれば 中央値 が 揃う)。
   const summary = useMemo(() => {
     let stakeCount = 0
     let freeCount = 0
@@ -514,8 +514,9 @@ export function StakingRecordsPage() {
       if (g.designX == null || g.designY == null || !g.m1) continue
       const avgMX = g.m2 ? (g.m1.measuredX + g.m2.measuredX) / 2 : g.m1.measuredX
       const avgMY = g.m2 ? (g.m1.measuredY + g.m2.measuredY) / 2 : g.m1.measuredY
-      const dvsX = avgMX + xOffset - g.designX
-      const dvsY = avgMY + yOffset - g.designY
+      // 生 の 差 (実測平均 - 設計)。 補正 を 掛ける 前 の バイアス。
+      const dvsX = avgMX - g.designX
+      const dvsY = avgMY - g.designY
       sumDvsX += dvsX
       sumDvsY += dvsY
       sumDist2 += dvsX * dvsX + dvsY * dvsY
@@ -533,7 +534,7 @@ export function StakingRecordsPage() {
       avgDy,
       pairs,
     }
-  }, [filtered, grouped, xOffset, yOffset])
+  }, [filtered, grouped])
 
   const handleDelete = async (id: string, name: string | null) => {
     if (!confirm(`記録「${name ?? '(無題)'}」を削除しますか？`)) return
@@ -544,7 +545,7 @@ export function StakingRecordsPage() {
   const handleExportCSV = () => {
     if (filtered.length === 0) return
     const header =
-      '点名,測量種別,X(実測),Y(実測),Z(実測),X(補正),Y(補正),Z(補正),X(計画),Y(計画),Z(計画),精度(m),サンプル数,記録日時\n'
+      '点名,測量種別,X(実測),Y(実測),Z(実測),X(逆スライド),Y(逆スライド),Z(逆スライド),X(計画),Y(計画),Z(計画),精度(m),サンプル数,記録日時\n'
     const rows = filtered
       .map((r) =>
         [
@@ -553,9 +554,9 @@ export function StakingRecordsPage() {
           r.measuredX.toFixed(3),
           r.measuredY.toFixed(3),
           r.measuredZ != null ? r.measuredZ.toFixed(3) : '',
-          (r.measuredX + xOffset).toFixed(3),
-          (r.measuredY + yOffset).toFixed(3),
-          r.measuredZ != null ? (r.measuredZ + zOffset).toFixed(3) : '',
+          (r.measuredX - xOffset).toFixed(3),
+          (r.measuredY - yOffset).toFixed(3),
+          r.measuredZ != null ? (r.measuredZ - zOffset).toFixed(3) : '',
           r.targetX != null ? r.targetX.toFixed(3) : '',
           r.targetY != null ? r.targetY.toFixed(3) : '',
           r.targetZ != null ? r.targetZ.toFixed(3) : '',
@@ -588,10 +589,11 @@ export function StakingRecordsPage() {
     filtered.forEach((r, index) => {
       const name = r.targetName ?? `pt-${index + 1}`
       const paddedName = name.padEnd(20, ' ')
-      const xStr = (r.measuredX + xOffset).toFixed(3).padStart(10, ' ')
-      const yStr = (r.measuredY + yOffset).toFixed(3).padStart(10, ' ')
+      // 逆スライド実測 (実測平均 - スライド量) を 出力 の 既定 と する。
+      const xStr = (r.measuredX - xOffset).toFixed(3).padStart(10, ' ')
+      const yStr = (r.measuredY - yOffset).toFixed(3).padStart(10, ' ')
       const zStr =
-        r.measuredZ != null ? (r.measuredZ + zOffset).toFixed(3).padStart(10, ' ') : ''
+        r.measuredZ != null ? (r.measuredZ - zOffset).toFixed(3).padStart(10, ' ') : ''
       const numStr = (index + 1).toString().padStart(5, ' ')
       lines.push(`A01,${numStr},${paddedName},${xStr},${yStr},${zStr},`)
     })
@@ -645,7 +647,7 @@ export function StakingRecordsPage() {
             className="text-[11px] text-slate-500"
             title="実測値 に この 値 (m) を 加算した 「補正 XYZ」を 表示。 表 の 平均 と 差 も 補正 後 の 値 で 計算"
           >
-            補正 (m):
+            スライド量 (m):
           </span>
           <label className="flex items-center gap-1 text-xs">
             <span className="text-slate-500">X</span>
@@ -934,23 +936,30 @@ export function StakingRecordsPage() {
                 <th
                   className="px-2 py-1 border-b border-r text-center bg-emerald-50"
                   colSpan={3}
-                  title="実測1 と 実測2 の 平均 (実測2 が 無ければ 実測1)"
+                  title="実測1 と 実測2 の 平均 (実測2 が 無ければ 実測1)。 生値。"
                 >
-                  平均
+                  実測平均
                 </th>
                 <th
                   className="px-2 py-1 border-b border-r text-center bg-blue-50"
                   colSpan={4}
-                  title="設計 と 平均 の 差 (補正後平均 - 設計)。 水平 = √(dX²+dY²)"
+                  title="設計 と 実測平均 の 生 の 差 (実測平均 - 設計)。 水平 = √(dX²+dY²)。 この 値 を スライド量 に 入れると 中央値 が 揃う。"
                 >
-                  平均 - 設計
+                  実測平均 - 設計
+                </th>
+                <th
+                  className="px-2 py-1 border-b border-r text-center bg-fuchsia-50"
+                  colSpan={3}
+                  title="スライド補正: 設計値 を 実測 に 近づける。 設計 + スライド量。"
+                >
+                  スライド設計
                 </th>
                 <th
                   className="px-2 py-1 border-b border-r text-center bg-cyan-50"
                   colSpan={3}
-                  title="平均 に 補正値 (X/Y/Z オフセット) を 加算 した 値。 出力 に 使用"
+                  title="逆スライド補正: 実測平均 を 設計 に 近づける。 実測平均 - スライド量。 出力 の 既定。"
                 >
-                  補正後
+                  逆スライド実測
                 </th>
                 <th className="px-2 py-2 border-b border-r text-right" rowSpan={2}>精度(m)</th>
                 <th className="px-2 py-2 border-b border-r text-left" rowSpan={2}>記録日時</th>
@@ -979,6 +988,9 @@ export function StakingRecordsPage() {
                 <th className="px-2 py-1 border-b border-r text-right bg-blue-50">dY</th>
                 <th className="px-2 py-1 border-b border-r text-right bg-blue-50">dZ</th>
                 <th className="px-2 py-1 border-b border-r text-right bg-blue-50">水平</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-fuchsia-50">X</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-fuchsia-50">Y</th>
+                <th className="px-2 py-1 border-b border-r text-right bg-fuchsia-50">Z</th>
                 <th className="px-2 py-1 border-b border-r text-right bg-cyan-50">X</th>
                 <th className="px-2 py-1 border-b border-r text-right bg-cyan-50">Y</th>
                 <th className="px-2 py-1 border-b border-r text-right bg-cyan-50">Z</th>
@@ -1009,18 +1021,24 @@ export function StakingRecordsPage() {
                   m1 && m2 && m1.measuredZ != null && m2.measuredZ != null
                     ? (m1.measuredZ + m2.measuredZ) / 2
                     : m1?.measuredZ ?? null
-                // 平均 - 設計 (補正後 の 実測平均 と 設計値 の 差)
+                // 実測平均 - 設計 (生 の 差、補正 適用前 の バイアス)
                 const dvsX =
-                  avgX != null && g.designX != null ? avgX + xOffset - g.designX : null
+                  avgX != null && g.designX != null ? avgX - g.designX : null
                 const dvsY =
-                  avgY != null && g.designY != null ? avgY + yOffset - g.designY : null
+                  avgY != null && g.designY != null ? avgY - g.designY : null
                 const dvsZ =
-                  avgZ != null && g.designZ != null ? avgZ + zOffset - g.designZ : null
+                  avgZ != null && g.designZ != null ? avgZ - g.designZ : null
                 const dvsH = dvsX != null && dvsY != null ? Math.hypot(dvsX, dvsY) : null
-                // 補正後 座標 (平均 + オフセット)
-                const corrX = avgX != null ? avgX + xOffset : null
-                const corrY = avgY != null ? avgY + yOffset : null
-                const corrZ = avgZ != null ? avgZ + zOffset : null
+                // スライド設計 (方式 A): 設計値 に スライド量 を 加算 して 実測 に 寄せる
+                //   スライド設計 X = 設計 X + xOffset
+                const slidedDX = g.designX != null ? g.designX + xOffset : null
+                const slidedDY = g.designY != null ? g.designY + yOffset : null
+                const slidedDZ = g.designZ != null ? g.designZ + zOffset : null
+                // 逆スライド実測 (方式 B): 実測平均 から スライド量 を 引いて 設計 に 寄せる
+                //   逆スライド実測 X = 実測平均 X - xOffset (出力 の 既定)
+                const revSlideMX = avgX != null ? avgX - xOffset : null
+                const revSlideMY = avgY != null ? avgY - yOffset : null
+                const revSlideMZ = avgZ != null ? avgZ - zOffset : null
                 // 精度: m1 と m2 の 悪い方 (Max) を 表示 (未取得 は 除外)
                 const acc =
                   m1?.accuracy != null && m2?.accuracy != null
@@ -1279,15 +1297,25 @@ export function StakingRecordsPage() {
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-blue-50/50">
                       {dvsH != null ? dvsH.toFixed(3) : '—'}
                     </td>
-                    {/* 補正後 (平均 + オフセット) — 出力 用 の 最終値 */}
+                    {/* スライド設計 = 設計 + スライド量 (設計 を 実測 に 近づける) */}
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-fuchsia-50/50">
+                      {slidedDX != null ? slidedDX.toFixed(3) : '—'}
+                    </td>
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-fuchsia-50/50">
+                      {slidedDY != null ? slidedDY.toFixed(3) : '—'}
+                    </td>
+                    <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-fuchsia-50/50">
+                      {slidedDZ != null ? slidedDZ.toFixed(3) : '—'}
+                    </td>
+                    {/* 逆スライド実測 = 実測平均 - スライド量 (実測 を 設計 に 近づける、出力 の 既定) */}
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-cyan-50/50 font-semibold">
-                      {corrX != null ? corrX.toFixed(3) : '—'}
+                      {revSlideMX != null ? revSlideMX.toFixed(3) : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-cyan-50/50 font-semibold">
-                      {corrY != null ? corrY.toFixed(3) : '—'}
+                      {revSlideMY != null ? revSlideMY.toFixed(3) : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right bg-cyan-50/50 font-semibold">
-                      {corrZ != null ? corrZ.toFixed(3) : '—'}
+                      {revSlideMZ != null ? revSlideMZ.toFixed(3) : '—'}
                     </td>
                     <td className="px-2 py-1.5 border-b border-r font-mono text-right">
                       {acc != null ? acc.toFixed(3) : '—'}
