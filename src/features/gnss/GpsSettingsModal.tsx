@@ -1,8 +1,7 @@
-// GPS 設定モーダル。バッジ (GPS設定ボタン) から開かれる 4 タブの統合 UI:
+// GPS 設定モーダル。バッジ (GPS設定ボタン) から開かれる 3 タブの統合 UI:
 //   1. GPS接続  — Drogger BT 接続状態 / Fix品質 / 再接続
 //   2. NTRIP接続 — NTRIP キャスター プロファイル管理 + 接続
 //   3. 衛星状況 — スカイマップ + SNR バー
-//   4. 姿勢情報 — heading/pitch/roll (NMEA から)
 //
 // これまで DroggerStatusBadge の 隣にあった NTRIP 歯車ボタンを 廃止し、
 // 全ての GNSS 関連設定を ここに集約する。
@@ -17,18 +16,13 @@ import {
   Plus,
   Pencil,
   Wifi,
-  Compass,
   RefreshCw,
   RadioTower,
   WifiOff,
   Volume2,
   VolumeX,
 } from 'lucide-react'
-import {
-  useGnssSettingsStore,
-  FIX_ACCURACY_MIN_M,
-  FIX_ACCURACY_MAX_M,
-} from '@/stores/gnssSettingsStore'
+import { useGnssSettingsStore } from '@/stores/gnssSettingsStore'
 import { useDroggerConnection } from '@/stores/droggerConnectionStore'
 import {
   DroggerLocation,
@@ -53,9 +47,8 @@ import {
   type NtripProfile,
 } from '@/lib/ntripPrefs'
 import { SkyMap } from '@/features/ntrip/SkyMap'
-import { AttitudeView } from './AttitudeView'
 
-type Tab = 'gps' | 'ntrip' | 'sky' | 'attitude'
+type Tab = 'gps' | 'ntrip' | 'sky'
 
 interface Props {
   open: boolean
@@ -124,14 +117,12 @@ export function GpsSettingsModal({ open, onClose }: Props) {
           <TabButton active={tab === 'gps'} onClick={() => setTab('gps')} icon={<Wifi className="h-3 w-3" />} label="GPS接続" />
           <TabButton active={tab === 'ntrip'} onClick={() => setTab('ntrip')} icon={<Radio className="h-3 w-3" />} label="NTRIP接続" />
           <TabButton active={tab === 'sky'} onClick={() => setTab('sky')} icon={<Satellite className="h-3 w-3" />} label="衛星状況" />
-          <TabButton active={tab === 'attitude'} onClick={() => setTab('attitude')} icon={<Compass className="h-3 w-3" />} label="姿勢情報" />
         </div>
 
         <div className="p-4">
           {tab === 'gps' && <GpsConnectionTab />}
           {tab === 'ntrip' && <NtripTab />}
           {tab === 'sky' && <SkyMap />}
-          {tab === 'attitude' && <AttitudeView />}
         </div>
       </div>
     </div>
@@ -399,12 +390,7 @@ function GpsConnectionTab() {
         </div>
       )}
 
-      <div className="text-[10px] text-slate-500 leading-relaxed">
-        Bluetooth SPP で Drogger 受信機に 直接接続。BT の 権限プロンプトが 出た場合は 許可。
-        接続失敗時は 端末の Bluetooth 設定を 確認 or Drogger を 再起動。
-      </div>
-
-      {/* ---- 端末側 GNSS 設定 (音声 / 平均秒数 / アンテナ高 / ジオイド / 判定精度) ---- */}
+      {/* ---- 端末側 GNSS 設定 (音声 / 平均秒数 / アンテナ高 / ジオイド) ---- */}
       <GnssSettingsSection />
     </div>
   )
@@ -472,8 +458,6 @@ function GnssSettingsSection() {
     setAntennaHeight,
     useGeoidCorrection,
     setUseGeoidCorrection,
-    rtkFixAccuracyM,
-    setRtkFixAccuracyM,
   } = useGnssSettingsStore()
 
   return (
@@ -526,26 +510,6 @@ function GnssSettingsSection() {
           onChange={(e) => setUseGeoidCorrection(e.target.checked)}
         />
         <span>ジオイド補正 (JPGEO2024)</span>
-      </label>
-
-      {/* RTK 判定精度 */}
-      <label className="block">
-        <div className="flex items-center justify-between">
-          <span className="text-slate-700">RTK 判定精度</span>
-          <span className="font-mono">{(rtkFixAccuracyM * 100).toFixed(1)} cm 以下で FIX</span>
-        </div>
-        <input
-          type="range"
-          min={FIX_ACCURACY_MIN_M}
-          max={FIX_ACCURACY_MAX_M}
-          step={0.005}
-          value={rtkFixAccuracyM}
-          onChange={(e) => setRtkFixAccuracyM(parseFloat(e.target.value))}
-          className="w-full mt-1"
-        />
-        <span className="text-[10px] text-slate-500">
-          この精度を上回るときは 測定ボタンが 琥珀色になり、RTK 受信音 (ピッ) も止まります。
-        </span>
       </label>
     </div>
   )
