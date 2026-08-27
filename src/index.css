@@ -23,6 +23,18 @@
   --radius: 0.5rem;
 }
 
+html,
+body {
+  /* 横幅を 超える 要素 (幅広テーブル / 長い点名 など) が ページ全体を
+     押し広げて 左右に ずれるのを 防ぐ。はみ出す 中身は 各自の
+     overflow-x: auto で スクロールさせる。 */
+  overflow-x: hidden;
+  /* iOS の 端での ラバーバンドで レイアウトが ずれるのを 抑える */
+  overscroll-behavior: none;
+  /* 横向き等で iOS が 勝手に 文字を 拡大するのを 止める */
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
   background-color: var(--color-background);
   color: var(--color-foreground);
@@ -188,6 +200,14 @@ input[type="number"] {
 }
 .leaflet-container:not(.parcel-labels-visible) .parcel-map-label {
   display: none !important;
+}
+
+/* iOS (WKWebView) で 地図タイルを 長押しすると 「画像を保存」の ネイティブ
+   コールアウトが 出て、Leaflet の 長押し (tapHold → contextmenu) を 潰す。
+   タイルは img 要素なので タイル側にも 明示的に 効かせる。 */
+.leaflet-container,
+.leaflet-container img {
+  -webkit-touch-callout: none;
 }
 
 /* カスタムマーカー（デフォルトのLeafletマーカースタイルを上書き） */

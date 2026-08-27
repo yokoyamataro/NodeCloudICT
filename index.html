@@ -3,7 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- maximum-scale / user-scalable=no は 必須。
+         iOS は フォントサイズ 16px 未満の 入力欄に フォーカスすると ページ全体を
+         自動拡大し、フォーカスが 外れても 元の倍率に 戻さない。設定モーダル等は
+         text-xs (12px) なので 該当し、使っているうちに 画面が ずれて はみ出す。
+         地図外での 意図しない ピンチ拡大も 同時に 防げる。
+         (Safari は アクセシビリティのため user-scalable=no を 無視するが、
+          アプリ内の WKWebView は 尊重する) -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
     <!-- iOS Safari 等が数字列を電話番号 / 住所 / 日付として自動判定して
          下線付きリンクに変えるのを抑止する。座標値 (X/Y/Z) が誤検出されるのを防ぐ。 -->
     <meta name="format-detection" content="telephone=no,email=no,address=no,date=no" />
