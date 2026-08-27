@@ -121,6 +121,24 @@ interface State {
     },
   ) => Promise<{ ok: true } | { ok: false; error: string }>
 
+  /**
+   * 同一 assignment の ping をまとめて INSERT する。
+   * 圏外から復帰した端末が 数千件を 1 件ずつ送ると リクエスト数も 時間も
+   * 現実的で ないため、キューの flush は こちらを 使う。
+   */
+  sendPositions: (
+    assignmentId: string,
+    rows: Array<{
+      lat: number
+      lon: number
+      accuracy_m?: number | null
+      speed_kmh?: number | null
+      heading_deg?: number | null
+      altitude_m?: number | null
+      recorded_at?: string
+    }>,
+  ) => Promise<{ ok: true } | { ok: false; error: string }>
+
   /** 特定 assignment の最近の位置 (recorded_at DESC, 最大 n 件) */
   fetchRecentPositions: (
     assignmentId: string,
@@ -599,6 +617,28 @@ export const useMobilityStore = create<State>((set, get) => ({
           heading_deg: input.heading_deg ?? null,
           altitude_m: input.altitude_m ?? null,
         } as never)
+      if (error) throw error
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: extractErr(err) }
+    }
+  },
+
+  sendPositions: async (assignmentId, rows) => {
+    if (rows.length === 0) return { ok: true }
+    try {
+      const { error } = await supabase.from('mobility_positions').insert(
+        rows.map((input) => ({
+          assignment_id: assignmentId,
+          recorded_at: input.recorded_at ?? new Date().toISOString(),
+          lat: input.lat,
+          lon: input.lon,
+          accuracy_m: input.accuracy_m ?? null,
+          speed_kmh: input.speed_kmh ?? null,
+          heading_deg: input.heading_deg ?? null,
+          altitude_m: input.altitude_m ?? null,
+        })) as never,
+      )
       if (error) throw error
       return { ok: true }
     } catch (err) {

@@ -1,17 +1,35 @@
-// 位置 ping の送信キュー。ネットワーク不通時に localStorage に貯めて、
-// 復旧時に古い順から Supabase に送る。
+// 位置 ping の送信キュー。ネットワーク不通時に端末へ貯めて、復旧時に古い順から
+// Supabase に送る。
 //
 // 使い方:
-//   const queue = getOfflineQueue(userId)
-//   queue.push({ assignmentId, ...sample })  // 常に enqueue
-//   await queue.flush(sender)                // 送れる分だけ送る (順序保持)
+//   await enqueuePing(userId, { assignmentId, ...sample })  // 常に enqueue
+//   await flushQueue(userId, batchSender)                   // 送れる分だけ送る
 //
-// - localStorage に保存 (キー: `mobility:offlineQueue:${userId}`)
-// - 上限 QUEUE_CAP を超えたら古いものから捨てる (数分ぶんは残る想定)
-// - flush は途中で失敗したら残りをキューに戻して return (次回リトライ)
+// 【localStorage から IndexedDB へ移した理由】
+// 旧実装は localStorage に配列を丸ごと JSON で置き、上限 120 件を超えたら
+// **古い方から破棄** していた。10 秒間隔なので 20 分で溢れる。位置ログは
+// 山岳・海上はもちろん、トンネルや谷間を走る建設機械・ダンプでも「後から
+// 辿れる唯一の記録」であり、捨ててよいものではない。
+// また localStorage は 1 件追加するたびに配列全体を文字列化するため、数万件
+// 規模では 10 秒ごとに O(n) の同期処理が走り UI が固まる。
+//
+// 現在:
+//   * IndexedDB に 1 件ずつ append (O(1))
+//   * 上限 QUEUE_CAP = 50,000 件 (10 秒間隔で 約 5.8 日ぶん)
+//   * 経過時間による破棄はしない (旧実装は 24h で捨てていた。数日圏外になる
+//     漁船では成立しない)
+//   * flush は assignment ごとにまとめて バッチ INSERT
 
-const KEY_PREFIX = 'mobility:offlineQueue:'
-const QUEUE_CAP = 120 // 10 秒間隔で 20 分ぶんまで貯められる
+import { pingAdd, pingClear, pingCount, pingDelete, pingTake } from '@/lib/offlineDb'
+
+/** 上限。超えたら古い方から捨てる (これに達するのは通信が数日死んでいる時) */
+export const QUEUE_CAP = 50_000
+
+/** 1 リクエストで送る最大件数 */
+const BATCH_SIZE = 500
+
+/** 1 回の flush で読み出す最大件数 (メモリを食い過ぎないため) */
+const TAKE_LIMIT = 5_000
 
 export interface QueuedPing {
   assignmentId: string
@@ -24,122 +42,100 @@ export interface QueuedPing {
   recorded_at: string
 }
 
-export type PingSender = (
+/** IndexedDB に入る形 (seq は autoIncrement で採番される) */
+interface StoredPing extends QueuedPing {
+  seq: number
+  userId: string
+}
+
+export type PingInput = {
+  lat: number
+  lon: number
+  accuracy_m: number | null
+  speed_kmh: number | null
+  heading_deg: number | null
+  altitude_m: number | null
+  recorded_at: string
+}
+
+/** 同一 assignment の ping をまとめて送る。1 件ずつ送ると復帰時に終わらない */
+export type PingBatchSender = (
   assignmentId: string,
-  input: {
-    lat: number
-    lon: number
-    accuracy_m: number | null
-    speed_kmh: number | null
-    heading_deg: number | null
-    altitude_m: number | null
-    recorded_at: string
-  },
+  rows: PingInput[],
 ) => Promise<{ ok: true } | { ok: false; error: string }>
 
-function keyFor(userId: string): string {
-  return `${KEY_PREFIX}${userId}`
-}
-
-function readQueue(userId: string): QueuedPing[] {
-  if (typeof window === 'undefined') return []
-  try {
-    const raw = localStorage.getItem(keyFor(userId))
-    if (!raw) return []
-    const arr = JSON.parse(raw)
-    if (!Array.isArray(arr)) return []
-    return arr as QueuedPing[]
-  } catch {
-    return []
-  }
-}
-
-function writeQueue(userId: string, queue: QueuedPing[]): void {
-  if (typeof window === 'undefined') return
-  try {
-    localStorage.setItem(keyFor(userId), JSON.stringify(queue))
-  } catch {
-    // quota exceeded 等。古い方を落として再挑戦
-    try {
-      localStorage.setItem(
-        keyFor(userId),
-        JSON.stringify(queue.slice(-Math.floor(QUEUE_CAP / 2))),
-      )
-    } catch {
-      /* give up */
-    }
-  }
-}
-
 /** 現在のキュー件数を返す (UI 表示用) */
-export function getQueueLength(userId: string): number {
-  return readQueue(userId).length
+export async function getQueueLength(userId: string): Promise<number> {
+  try {
+    return await pingCount(userId)
+  } catch {
+    return 0
+  }
 }
 
-/** 新しい ping をキューの末尾に追加。上限超過分は古い側を落とす。 */
-export function enqueuePing(userId: string, item: QueuedPing): number {
-  const queue = readQueue(userId)
-  queue.push(item)
-  const trimmed = queue.length > QUEUE_CAP ? queue.slice(-QUEUE_CAP) : queue
-  writeQueue(userId, trimmed)
-  return trimmed.length
+/** 新しい ping をキューの末尾に追加。追加後の件数を返す。 */
+export async function enqueuePing(userId: string, item: QueuedPing): Promise<number> {
+  try {
+    await pingAdd({ ...item, userId })
+    const n = await pingCount(userId)
+    if (n > QUEUE_CAP) {
+      // 通常ここには来ない。来たら通信が数日死んでいる状態。
+      const excess = await pingTake<StoredPing>(userId, n - QUEUE_CAP)
+      await pingDelete(excess.map((p) => p.seq))
+      console.warn(`[mobilityOfflineQueue] queue full: dropped ${excess.length} oldest pings`)
+      return QUEUE_CAP
+    }
+    return n
+  } catch (err) {
+    console.warn('[mobilityOfflineQueue] enqueue failed', err)
+    return 0
+  }
 }
 
 // ユーザーごとに「進行中の flush の Promise」を保持し、並列呼び出しを 1 本化する。
 // GPS callback から throttle 外でも flushQueue が呼ばれる + sendWithQueue 内でも
 // flushQueue が呼ばれる、というパスがあるため、これがないと同一キュー項目を
 // 複数の Promise が同時に読んで **重複 INSERT** してしまう (実際に発生した)。
-const inflightFlush = new Map<
-  string,
-  Promise<{ sent: number; remaining: number }>
->()
-
-// このキューが古すぎたら再送を諦める閾値。降車済み assignment 宛の ping は
-// RLS で永久に弾かれるので、この閾値で保険をかけて破棄する (下記 isTerminalError
-// で拾いきれない場合の最終セーフティネット)。
-const MAX_PING_AGE_MS = 24 * 60 * 60 * 1000 // 24h
+const inflightFlush = new Map<string, Promise<{ sent: number; remaining: number }>>()
 
 /**
  * この失敗は "永久にリトライしても送れない" 系のエラーか?
  *
  * 具体例:
- *   - RLS INSERT が assignment.ended_at IS NULL を要求 → 降車後は 42501 で拒否
  *   - assignment が削除された/自分の物でない → 外部キーエラー
+ *   - RLS の WITH CHECK を満たさない (乗車期間外の recorded_at 等) → 42501
  *
- * これらは何度リトライしても通らないので、当該 ping はキューから破棄する。
- * (逆に、ネットワーク切断や 5xx / CORS / "policy" を含む一般エラーは
- *  リトライで通る可能性があるので破棄しない。keyword 過剰マッチによる
- *  誤破棄で「アクティブ assignment のログが admin に届かない」事象を
- *  起こさないよう、DB エラーコード / SQL 特化文言だけを見る。)
+ * 注: 「降車後は送れない」制約は 20260827 のマイグレーションで撤廃済み。
+ * 乗車期間内に測った ping であれば、いつ送っても通る。
+ *
+ * ネットワーク切断や 5xx / CORS は リトライで通る可能性があるので破棄しない。
+ * keyword 過剰マッチによる誤破棄を避けるため、DB エラーコードと SQL 特化文言
+ * だけを見る。
  */
 function isTerminalError(err: string | undefined): boolean {
   if (!err) return false
   const lower = err.toLowerCase()
   return (
-    // PostgREST が返す RLS 違反 (42501) — 最も強いシグナル
     lower.includes('code=42501') ||
-    // Postgres の RLS 違反メッセージ本体
     lower.includes('row-level security') ||
     lower.includes('row level security') ||
-    // 外部キー違反 (assignment が消えた等)
     lower.includes('code=23503') ||
     lower.includes('foreign key constraint')
   )
 }
 
 /**
- * キューを古い順に flush する。
- *   - success: そのまま次へ
- *   - terminal error: 破棄して次へ (assignment 終了後の ping 等)
+ * キューを古い順に flush する。assignment ごとに連続する区間をまとめて送る。
+ *   - success: 送れた分を削除して次へ
+ *   - terminal error: その assignment の分を破棄して次へ
  *     onTerminal コールバックが渡されていれば assignment_id 付きで通知
- *     (呼び出し側が activeAssignments を re-fetch できるように)
- *   - transient error: そこで打ち切り、残りをキューに戻す
+ *   - transient error: そこで打ち切り、残りはキューに残す (次回リトライ)
  *
  * 並列に呼ばれた場合は同じ Promise を返す (dedupe)。
  */
 export function flushQueue(
   userId: string,
-  sender: PingSender,
+  sender: PingBatchSender,
   options?: {
     onTerminal?: (assignmentId: string, error: string) => void
   },
@@ -148,71 +144,66 @@ export function flushQueue(
   if (existing) return existing
   const p = (async () => {
     try {
-      let queue = readQueue(userId)
+      const queue = await pingTake<StoredPing>(userId, TAKE_LIMIT)
       if (queue.length === 0) return { sent: 0, remaining: 0 }
-
-      // 24h 超の古い ping は最初にドロップ (念のためのセーフティネット)
-      const nowMs = Date.now()
-      const beforeAge = queue.length
-      queue = queue.filter((q) => {
-        const t = Date.parse(q.recorded_at)
-        return Number.isFinite(t) && nowMs - t < MAX_PING_AGE_MS
-      })
-      if (queue.length !== beforeAge) {
-        console.warn(
-          `[mobilityOfflineQueue] discarded ${beforeAge - queue.length} old pings (>24h)`,
-        )
-      }
 
       // このセッション中に「送れないと判った」assignment_id をキャッシュして
       // 同じ assignment_id の残り ping はまとめてドロップする
       const poisoned = new Set<string>()
-
       let sent = 0
-      let stopIdx = -1
-      for (let i = 0; i < queue.length; i++) {
-        const item = queue[i]
-        if (poisoned.has(item.assignmentId)) continue // ドロップ扱い
-        const res = await sender(item.assignmentId, {
-          lat: item.lat,
-          lon: item.lon,
-          accuracy_m: item.accuracy_m,
-          speed_kmh: item.speed_kmh,
-          heading_deg: item.heading_deg,
-          altitude_m: item.altitude_m,
-          recorded_at: item.recorded_at,
-        })
+      let stopped = false
+      const doneSeqs: number[] = []
+
+      // 積んだ順を崩さないよう、assignment_id が変わるまでを 1 グループにする
+      let i = 0
+      while (i < queue.length && !stopped) {
+        const assignmentId = queue[i].assignmentId
+        const group: StoredPing[] = []
+        while (i < queue.length && queue[i].assignmentId === assignmentId && group.length < BATCH_SIZE) {
+          group.push(queue[i])
+          i += 1
+        }
+        if (poisoned.has(assignmentId)) {
+          doneSeqs.push(...group.map((g) => g.seq)) // 破棄
+          continue
+        }
+        const res = await sender(
+          assignmentId,
+          group.map((g) => ({
+            lat: g.lat,
+            lon: g.lon,
+            accuracy_m: g.accuracy_m,
+            speed_kmh: g.speed_kmh,
+            heading_deg: g.heading_deg,
+            altitude_m: g.altitude_m,
+            recorded_at: g.recorded_at,
+          })),
+        )
         if (res.ok) {
-          sent++
+          sent += group.length
+          doneSeqs.push(...group.map((g) => g.seq))
           continue
         }
         if (isTerminalError(res.error)) {
           console.warn(
-            `[mobilityOfflineQueue] dropping ping for closed/invalid assignment ${item.assignmentId}: ${res.error}`,
+            `[mobilityOfflineQueue] dropping ${group.length} pings for invalid assignment ${assignmentId}: ${res.error}`,
           )
-          poisoned.add(item.assignmentId)
+          poisoned.add(assignmentId)
+          doneSeqs.push(...group.map((g) => g.seq))
           try {
-            options?.onTerminal?.(item.assignmentId, res.error ?? '')
+            options?.onTerminal?.(assignmentId, res.error ?? '')
           } catch {
             /* noop */
           }
           continue
         }
-        // 一時的エラー → ここで停止、残りをキューに書き戻す
-        stopIdx = i
-        break
+        // 一時的エラー → ここで停止。残りはキューに残したまま次回リトライ
+        stopped = true
       }
 
-      if (stopIdx >= 0) {
-        // 停止位置以降のうち、poisoned なものは書き戻さない
-        const rest = queue
-          .slice(stopIdx)
-          .filter((q) => !poisoned.has(q.assignmentId))
-        writeQueue(userId, rest)
-        return { sent, remaining: rest.length }
-      }
-      writeQueue(userId, [])
-      return { sent, remaining: 0 }
+      await pingDelete(doneSeqs)
+      const remaining = await pingCount(userId)
+      return { sent, remaining }
     } finally {
       inflightFlush.delete(userId)
     }
@@ -222,6 +213,10 @@ export function flushQueue(
 }
 
 /** 現在キューにある ping を全消去する (デバッグ / 手動リセット用) */
-export function clearQueue(userId: string): void {
-  writeQueue(userId, [])
+export async function clearQueue(userId: string): Promise<void> {
+  try {
+    await pingClear(userId)
+  } catch {
+    /* noop */
+  }
 }

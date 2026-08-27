@@ -92,8 +92,39 @@ const KIND_ICON: Record<VehicleKind, typeof Car> = {
   other: Car,
 }
 
-// 送信間隔 (ms)
+// 送信間隔 (ms)。移動中は 10 秒、停止中は 60 秒。
+//
+// 停止中も 10 秒で 打ち続けると、圏外が 長い 現場 (山岳 / 海上) では 同じ座標が
+// 数千件 溜まって キューを 圧迫し、徒歩利用では バッテリーも 食う。
+// 停止判定は 速度と 前回送信地点からの 距離の 両方で 行う (速度が null の
+// 端末があるため)。
 const PING_INTERVAL_MS = 10_000
+const PING_INTERVAL_IDLE_MS = 60_000
+/** これ未満なら「停止中」とみなす速度 [km/h] */
+const IDLE_SPEED_KMH = 1.5
+/** これ未満なら「停止中」とみなす前回送信地点からの距離 [m] */
+const IDLE_MOVE_M = 15
+
+/** 直前の送信からの経過が 送信間隔を満たしているか (停止中は間隔を伸ばす) */
+function shouldSendNow(
+  now: number,
+  lastSentAt: number,
+  lastSentPos: { lat: number; lon: number } | null,
+  sample: { lat: number; lon: number; speed_kmh: number | null },
+  distanceMeters: (
+    a: { lat: number; lon: number },
+    b: { lat: number; lon: number },
+  ) => number,
+): boolean {
+  const elapsed = now - lastSentAt
+  if (elapsed >= PING_INTERVAL_IDLE_MS) return true
+  if (elapsed < PING_INTERVAL_MS) return false
+  // 10〜60 秒の間は「動いていれば送る / 止まっていれば待つ」
+  const speed = sample.speed_kmh
+  if (speed != null && speed >= IDLE_SPEED_KMH) return true
+  if (!lastSentPos) return true
+  return distanceMeters(lastSentPos, { lat: sample.lat, lon: sample.lon }) >= IDLE_MOVE_M
+}
 
 // 現在地追跡: followMe=true の間は pos が変わる度に自車を画面中央に維持。
 // programmatic な setView は「ユーザー操作 pan/zoom」と区別するため、直後に
@@ -281,7 +312,7 @@ export function MobilityDriverPage() {
     startAssignment,
     endAssignment,
     setAssignmentDestination,
-    sendPosition,
+    sendPositions,
     fetchRecentPositions,
     fetchPositionsForUserSince,
     fetchUserAssignmentHistory,
@@ -556,7 +587,7 @@ export function MobilityDriverPage() {
   // マウント時にキュー長を再読み込み (アプリ再起動で残っているぶん)
   useEffect(() => {
     if (!user) return
-    setQueueLen(getQueueLength(user.id))
+    void getQueueLength(user.id).then(setQueueLen)
   }, [user])
 
   // 地図追跡状態 (現在地に自動でセンタリング)。初期値 true。
@@ -584,10 +615,12 @@ export function MobilityDriverPage() {
     }
   }, [myActive])
 
-  const sendPositionRef = useRef(sendPosition)
+  /** 前回 送信した 地点。停止判定 (距離) に 使う */
+  const lastSentPosRef = useRef<{ lat: number; lon: number } | null>(null)
+  const sendPositionRef = useRef(sendPositions)
   useEffect(() => {
-    sendPositionRef.current = sendPosition
-  }, [sendPosition])
+    sendPositionRef.current = sendPositions
+  }, [sendPositions])
 
   // 走行軌跡 (自分の active assignment の位置ログ)。
   // - 初回 or myActive 変化時に fetchRecentPositions で 200 点 fetch
@@ -663,7 +696,9 @@ export function MobilityDriverPage() {
     ) => {
       const uid = userIdRef.current
       if (!uid) return
-      enqueuePing(uid, {
+      // IndexedDB への 書き込みは 非同期。await しないと flush が 先に走って
+      // 直前の ping を 取りこぼす
+      await enqueuePing(uid, {
         assignmentId,
         lat: sample.lat,
         lon: sample.lon,
@@ -697,7 +732,7 @@ export function MobilityDriverPage() {
   useEffect(() => {
     if (!user) return
     const id = setInterval(async () => {
-      const before = getQueueLength(user.id)
+      const before = await getQueueLength(user.id)
       if (before === 0) return
       const { remaining } = await flushQueue(user.id, sendPositionRef.current, {
         onTerminal: onQueueTerminalRef.current,
@@ -712,7 +747,7 @@ export function MobilityDriverPage() {
   useEffect(() => {
     if (!user) return
     const tryFlush = async () => {
-      const before = getQueueLength(user.id)
+      const before = await getQueueLength(user.id)
       if (before === 0) return
       const { remaining } = await flushQueue(user.id, sendPositionRef.current, {
         onTerminal: onQueueTerminalRef.current,
@@ -784,8 +819,19 @@ export function MobilityDriverPage() {
               )
             }
             const now = Date.now()
-            if (now - lastSentAtRef.current < PING_INTERVAL_MS) return
+            if (
+              !shouldSendNow(
+                now,
+                lastSentAtRef.current,
+                lastSentPosRef.current,
+                sample,
+                haversineMeters,
+              )
+            ) {
+              return
+            }
             lastSentAtRef.current = now
+            lastSentPosRef.current = { lat: sample.lat, lon: sample.lon }
             setLastAutoSentAt(new Date(now))
             const payload = {
               lat: sample.lat,
@@ -909,8 +955,19 @@ export function MobilityDriverPage() {
               )
             }
             const now = Date.now()
-            if (now - lastSentAtRef.current < PING_INTERVAL_MS) return
+            if (
+              !shouldSendNow(
+                now,
+                lastSentAtRef.current,
+                lastSentPosRef.current,
+                sample,
+                haversineMeters,
+              )
+            ) {
+              return
+            }
             lastSentAtRef.current = now
+            lastSentPosRef.current = { lat: sample.lat, lon: sample.lon }
             setLastAutoSentAt(new Date(now))
             const payload = {
               lat: sample.lat,
