@@ -403,6 +403,11 @@ export const DroggerLocation = registerPlugin<DroggerLocationPlugin>('DroggerLoc
  * geolocation.ts の watchSamples 風 API を Drogger 側にも提供。
  * source='drogger' の時に geolocation.ts から呼ばれる想定。
  *
+ * BT 接続そのものは アプリ横断で 1 本を 共有する (droggerConnectionStore が
+ * 所有)。この関数は listener を 足し引きするだけで、clear() で 接続を 切っては
+ * いけない。以前は clear() が DroggerLocation.stop() を 呼んでいたため、
+ * 計測 (startRecording の 一時 watch) が 終わる 度に 受信機が 切断されていた。
+ *
  * @param callback 位置 or エラー通知
  * @param options.base Web モック時の基準座標 (省略時は 網走市街)
  */
@@ -415,10 +420,11 @@ export async function watchDroggerSamples(
   }
   const locHandle = await DroggerLocation.addListener('location', (ev) => callback(ev, null))
   const errHandle = await DroggerLocation.addListener('error', (err) => callback(null, err))
+  // 未接続なら 接続を 起こす (接続済みなら ネイティブ側が no-op に する)
   await DroggerLocation.start()
   return {
     clear: async () => {
-      await DroggerLocation.stop()
+      // 自分が 張った listener を 外すだけ。接続は 他の購読者が 使っている
       await locHandle.remove()
       await errHandle.remove()
     },
@@ -429,6 +435,9 @@ export async function watchDroggerSamples(
  * 1 発だけ Drogger から 位置を取得する。イベント購読を短時間だけ張って
  * 最初の 1 サンプルを取ったら 自動で解除する。
  * タイムアウト (既定 10 秒) 内にサンプルが来なければ position_unavailable を throw。
+ *
+ * watchDroggerSamples と 同じく、後始末は listener の 解除だけ。BT 接続は
+ * アプリ横断の 共有物なので ここで stop() しない。
  */
 export async function getDroggerSample(timeoutMs = 10000): Promise<DroggerLocationEvent> {
   return new Promise((resolve, reject) => {
@@ -438,7 +447,6 @@ export async function getDroggerSample(timeoutMs = 10000): Promise<DroggerLocati
       if (done) return
       done = true
       if (handle) await handle.remove()
-      await DroggerLocation.stop().catch(() => undefined)
       reject({
         code: 'timeout',
         message: `Drogger からの位置取得がタイムアウトしました (${timeoutMs}ms)`,
@@ -449,7 +457,6 @@ export async function getDroggerSample(timeoutMs = 10000): Promise<DroggerLocati
       done = true
       window.clearTimeout(timer)
       if (handle) await handle.remove()
-      await DroggerLocation.stop().catch(() => undefined)
       resolve(ev)
     })
       .then((h) => {
