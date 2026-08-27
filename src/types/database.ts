@@ -693,6 +693,10 @@ export interface DesignCoordinate {
   created_by: string | null
   /** 最終更新者 (auth.users.id)。 */
   updated_by: string | null
+  /** ソフト削除日時 (null = 未削除)。30 日 経過で 物理削除 (pg_cron) */
+  deleted_at: string | null
+  /** 削除者 (auth.users.id) */
+  deleted_by: string | null
 }
 
 // 工種別工事区域

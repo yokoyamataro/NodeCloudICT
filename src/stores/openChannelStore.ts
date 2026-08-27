@@ -21,6 +21,12 @@ export interface ProfilePoint {
   distance: number
   /** 床高 (m, 標高) */
   floorHeight: number
+  /**
+   * 縦断曲線長 VCL (m)。省略 or 0 なら 角折れ (曲線なし)。
+   * この 変化点 を PVI (勾配変化点) として BVC=PVI-VCL/2、EVC=PVI+VCL/2 に
+   * 対称 2 次放物線 を 割り付ける。両端 の 変化点 (BP/EP) では 無視。
+   */
+  vcl?: number
 }
 
 /** 勾配の表記単位
@@ -69,6 +75,20 @@ export interface StationRow {
   crossSection: StandardCrossSection | null
 }
 
+/**
+ * 幅杭。追加距離 (BP からの 内部距離) と 中心線 から の 垂直方向 オフセット
+ * (進行方向 右手 が +、左手 が -) を 指定して 平面 XY を 算出する。
+ */
+export interface WidthStake {
+  id: string
+  /** BP からの 内部 累積距離 (m) */
+  distance: number
+  /** 中心線 から の 垂直 オフセット (m)。右 が +、左 が -。 */
+  offset: number
+  /** 任意 メモ (点名 等) */
+  note?: string
+}
+
 /** 断面の右/左を判定する基準方向。
  *  - 'forward': BP→EP を見て右/左（道路工事の慣習、デフォルト）
  *  - 'reverse': EP→BP を見て右/左（河川工事の慣習）
@@ -88,6 +108,15 @@ export interface OpenChannelRow {
   stations: StationRow[]
   /** 左右の基準方向 */
   sideOrientation: SideOrientation
+  /**
+   * 先頭測点 (BP) の SP オフセット。デフォルト 0。
+   * 路線 の 途中 から IP を 入力する 場合 (例: BP を SP 224.69 に 設定) に、
+   * 中間点計算 の SP ラベル が 元路線 と 揃う ように する。
+   * 内部距離 (BP からの 累積距離) との 関係: SP = 内部距離 + spOffset
+   */
+  spOffset: number
+  /** 幅杭 (SP + 中心線 から の 垂直方向 オフセット で 定義 する 点) */
+  widthStakes: WidthStake[]
   notes: string | null
 }
 
@@ -100,6 +129,8 @@ interface OpenChannelDb {
   profile_points: ProfilePoint[] | null
   stations: StationRow[] | null
   side_orientation: SideOrientation | null
+  sp_offset: number | null
+  width_stakes: WidthStake[] | null
   notes: string | null
 }
 
@@ -122,6 +153,8 @@ function toRow(d: OpenChannelDb): OpenChannelRow {
     profilePoints: Array.isArray(d.profile_points) ? d.profile_points : [],
     stations: Array.isArray(d.stations) ? d.stations : [],
     sideOrientation: d.side_orientation === 'reverse' ? 'reverse' : 'forward',
+    spOffset: Number.isFinite(Number(d.sp_offset)) ? Number(d.sp_offset) : 0,
+    widthStakes: Array.isArray(d.width_stakes) ? d.width_stakes : [],
     notes: d.notes,
   }
 }
@@ -171,6 +204,8 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
         profile_points: [],
         stations: [],
         side_orientation: 'forward',
+        sp_offset: 0,
+        width_stakes: [],
         notes: null,
       }
       const { data, error } = await supabase
@@ -198,6 +233,8 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
       if (updates.profilePoints !== undefined) dbUpdates.profile_points = updates.profilePoints
       if (updates.stations !== undefined) dbUpdates.stations = updates.stations
       if (updates.sideOrientation !== undefined) dbUpdates.side_orientation = updates.sideOrientation
+      if (updates.spOffset !== undefined) dbUpdates.sp_offset = updates.spOffset
+      if (updates.widthStakes !== undefined) dbUpdates.width_stakes = updates.widthStakes
       if (updates.notes !== undefined) dbUpdates.notes = updates.notes
       // 楽観的更新
       set((s) => ({
@@ -288,4 +325,149 @@ export function formatSlope(e: CrossSectionElement): string {
   if (Math.abs(e.slopeValue) < 1e-9) return '水平'
   const sign = e.slopeValue < 0 ? '↓' : '↑'
   return `1:${trim(Math.abs(e.slopeValue))}${sign}`
+}
+
+/**
+ * 断面 1 区間 の コンパクト 表記 を パース する。
+ *
+ * 各 区間 は 2 値 を カンマ 区切り で 記述:
+ *   -2%,2.000       → 勾配 -2% と 水平距離 dW=2m
+ *   +1.0,-1.0       → dW=+1m と dH=-1m (両方 距離指定、勾配 は 自動計算)
+ *   1:1.5,H-5.0     → 勾配 1:1.5 と 垂直距離 dH=-5m (H 接頭辞 で dH 指定)
+ *   -1:1.5,2.000    → 勾配 1:1.5 下向き と 水平距離 2m
+ *   0,H1.5          → 直立 上向き 1.5m (dW=0)
+ *
+ * 各 トークン の 判別:
+ *   - `%` で 終わる      → 勾配 (%)
+ *   - `1:...` を 含む   → 勾配 (1:i、符号 は 上下)
+ *   - `H` / `h` 接頭辞 → 垂直距離 dH (符号付き)
+ *   - それ以外         → 水平距離 dW (符号付き)
+ *
+ * 戻り値 は CrossSectionElement の (width, slopeValue, slopeUnit) 部分。
+ */
+export function parseSegmentNotation(
+  text: string,
+): Pick<CrossSectionElement, 'width' | 'slopeValue' | 'slopeUnit'> | null {
+  const parts = text.split(',').map((s) => s.trim()).filter(Boolean)
+  if (parts.length !== 2) return null
+
+  type Token =
+    | { kind: 'percent'; value: number }
+    | { kind: 'ratio'; value: number }
+    | { kind: 'dW'; value: number }
+    | { kind: 'dH'; value: number }
+
+  const parseToken = (s: string): Token | null => {
+    const ratioMatch = s.match(/^([+-]?)1:([+-]?\d+(?:\.\d+)?)$/)
+    if (ratioMatch) {
+      const sign = ratioMatch[1] === '-' ? -1 : 1
+      const v = parseFloat(ratioMatch[2])
+      if (!Number.isFinite(v) || Math.abs(v) < 1e-9) return null
+      return { kind: 'ratio', value: sign * Math.abs(v) }
+    }
+    const pctMatch = s.match(/^([+-]?\d+(?:\.\d+)?)%$/)
+    if (pctMatch) {
+      const v = parseFloat(pctMatch[1])
+      if (!Number.isFinite(v)) return null
+      return { kind: 'percent', value: v }
+    }
+    const dhMatch = s.match(/^[Hh]([+-]?\d+(?:\.\d+)?)$/)
+    if (dhMatch) {
+      const v = parseFloat(dhMatch[1])
+      if (!Number.isFinite(v)) return null
+      return { kind: 'dH', value: v }
+    }
+    const dwMatch = s.match(/^([+-]?\d+(?:\.\d+)?)$/)
+    if (dwMatch) {
+      const v = parseFloat(dwMatch[1])
+      if (!Number.isFinite(v)) return null
+      return { kind: 'dW', value: v }
+    }
+    return null
+  }
+
+  const t1 = parseToken(parts[0])
+  const t2 = parseToken(parts[1])
+  if (!t1 || !t2) return null
+
+  const distTok =
+    t1.kind === 'dW' || t1.kind === 'dH'
+      ? t1
+      : t2.kind === 'dW' || t2.kind === 'dH'
+      ? t2
+      : null
+  const slopeTok =
+    t1.kind === 'percent' || t1.kind === 'ratio'
+      ? t1
+      : t2.kind === 'percent' || t2.kind === 'ratio'
+      ? t2
+      : null
+
+  // (距離 + 勾配) の 組合せ
+  if (distTok && slopeTok) {
+    if (distTok.kind === 'dW') {
+      const width = Math.abs(distTok.value)
+      if (slopeTok.kind === 'percent') {
+        return { width, slopeValue: slopeTok.value, slopeUnit: 'percent' }
+      }
+      return { width, slopeValue: slopeTok.value, slopeUnit: 'ratio' }
+    }
+    // dH + 勾配 → 幅 を 逆算
+    const dh = distTok.value
+    if (Math.abs(dh) < 1e-9) {
+      // dH=0 なら 幅 0 の 水平点 (無意味)
+      return { width: 0, slopeValue: 0, slopeUnit: slopeTok.kind }
+    }
+    if (slopeTok.kind === 'percent') {
+      const factor = slopeTok.value / 100
+      if (Math.abs(factor) < 1e-9) return null
+      const width = Math.abs(dh / factor)
+      // 勾配 の 符号 は dH に 合わせる (下り なら 負)
+      const signedSlope = Math.sign(dh) * Math.abs(slopeTok.value)
+      return { width, slopeValue: signedSlope, slopeUnit: 'percent' }
+    }
+    // ratio: dH = width * sign / |i| → width = |dH * i|
+    const i = Math.abs(slopeTok.value)
+    const width = Math.abs(dh * i)
+    const signedSlope = Math.sign(dh) * i
+    return { width, slopeValue: signedSlope, slopeUnit: 'ratio' }
+  }
+
+  // (dW + dH) の 組合せ → 勾配 % を 算出
+  const dwTok = t1.kind === 'dW' ? t1 : t2.kind === 'dW' ? t2 : null
+  const dhTok = t1.kind === 'dH' ? t1 : t2.kind === 'dH' ? t2 : null
+  if (dwTok && dhTok) {
+    const dw = dwTok.value
+    const dh = dhTok.value
+    const width = Math.abs(dw)
+    if (width < 1e-9) {
+      return { width: 0, slopeValue: dh, slopeUnit: 'vertical' }
+    }
+    const pct = (dh / width) * 100
+    return { width, slopeValue: pct, slopeUnit: 'percent' }
+  }
+
+  // (勾配 + 勾配) は 不定
+  return null
+}
+
+/**
+ * CrossSectionElement を コンパクト 表記 (parseSegmentNotation の 逆) に 整形。
+ */
+export function formatSegmentNotation(e: CrossSectionElement): string {
+  const trim = (n: number, d = 3) => {
+    const s = n.toFixed(d)
+    return s.includes('.') ? s.replace(/\.?0+$/, '') : s
+  }
+  if (e.slopeUnit === 'vertical') {
+    const sign = e.slopeValue >= 0 ? '+' : ''
+    return `0,H${sign}${trim(e.slopeValue)}`
+  }
+  if (e.slopeUnit === 'percent') {
+    const sign = e.slopeValue >= 0 ? '+' : ''
+    return `${sign}${trim(e.slopeValue, 2)}%,${trim(e.width)}`
+  }
+  // ratio
+  const sign = e.slopeValue < 0 ? '-' : ''
+  return `${sign}1:${trim(Math.abs(e.slopeValue), 2)},${trim(e.width)}`
 }

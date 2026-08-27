@@ -4,10 +4,8 @@ import {
   Upload,
   Trash2,
   Loader2,
-  AlertCircle,
   AlertTriangle,
-  ChevronDown,
-  ChevronRight,
+  RefreshCw,
 } from 'lucide-react'
 import { MapContainer, TileLayer, Polygon, Polyline, useMap } from 'react-leaflet'
 import L from 'leaflet'
@@ -15,7 +13,6 @@ import 'leaflet/dist/leaflet.css'
 import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
-import { useAlignmentStore } from '@/stores/alignmentStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import { ResizableSplit } from '@/components/layout/ResizableSplit'
 import { useUnderdrainStore } from '@/stores/underdrainStore'
@@ -34,33 +31,28 @@ export function LandXMLPage() {
   const { projects } = useProjectListStore()
   const { zone, setZone } = useCoordinateStore()
   const {
-    alignments,
-    loading,
-    saving,
-    error,
-    fetchAlignments,
-    addAlignments,
-    deleteAlignment,
-    clearAlignments,
-  } = useAlignmentStore()
-  const { planGroups, fetchPlan } = useConstructionPlanStore()
-  const { pipes, fetchPipes } = useUnderdrainStore()
-  const { surveyData, fetchSurveyData } = useSurveyStore()
-
-  const fileInputRef = useRef<HTMLInputElement | null>(null)
-  const [parseError, setParseError] = useState<string | null>(null)
-  const [parseWarnings, setParseWarnings] = useState<string[]>([])
-  const [pendingAlignments, setPendingAlignments] = useState<Alignment[] | null>(null)
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+    planGroups: rawPlanGroups,
+    loadedForFarmId: planLoadedForFarmId,
+    fetchPlan,
+  } = useConstructionPlanStore()
+  const {
+    pipes: rawPipes,
+    loadedForFarmId: pipesLoadedForFarmId,
+    fetchPipes,
+  } = useUnderdrainStore()
+  const {
+    surveyData: rawSurveyData,
+    loadedForFarmId: surveyLoadedForFarmId,
+    fetchSurveyData,
+  } = useSurveyStore()
 
   // 工区読込時にデータ取得
   useEffect(() => {
     if (!currentFarm) return
-    fetchAlignments(currentFarm.id)
     fetchPlan(currentFarm.id)
     fetchPipes(currentFarm.id)
     fetchSurveyData(currentFarm.id)
-  }, [currentFarm, fetchAlignments, fetchPlan, fetchPipes, fetchSurveyData])
+  }, [currentFarm, fetchPlan, fetchPipes, fetchSurveyData])
 
   // プロジェクトの座標系を適用
   useEffect(() => {
@@ -71,6 +63,28 @@ export function LandXMLPage() {
 
   const converter = useMemo(() => new CoordinateConverter(zone), [zone])
 
+  // planGroups は 現在の 圃場と 一致する時のみ 有効扱い
+  // (store に 前の圃場の データが 残っている 可能性が あるため)
+  const planGroups = useMemo(() => {
+    if (!currentFarm) return []
+    if (planLoadedForFarmId !== currentFarm.id) return []
+    return rawPlanGroups
+  }, [currentFarm, planLoadedForFarmId, rawPlanGroups])
+
+  // pipes と surveyData も 同様の 圃場ガード。
+  // TIN 生成 (buildTinSurface) が これらを 使うため、前圃場のを 使うと
+  // 別現場の TIN が LandXML に 混入する。
+  const pipes = useMemo(() => {
+    if (!currentFarm) return []
+    if (pipesLoadedForFarmId !== currentFarm.id) return []
+    return rawPipes
+  }, [currentFarm, pipesLoadedForFarmId, rawPipes])
+  const surveyData = useMemo(() => {
+    if (!currentFarm) return []
+    if (surveyLoadedForFarmId !== currentFarm.id) return []
+    return rawSurveyData
+  }, [currentFarm, surveyLoadedForFarmId, rawSurveyData])
+
   // 施工計画から自動算出した中心線形（吸水・集水）
   const derivedAlignments = useMemo(() => {
     if (!planGroups || planGroups.length === 0) return []
@@ -80,6 +94,8 @@ export function LandXMLPage() {
   // 絞り込み: 吸水/集水を個別 on/off
   const [showAbsorption, setShowAbsorption] = useState(true)
   const [showCollector, setShowCollector] = useState(true)
+  // 中心線形パネルの 折りたたみ (初期: 折る = リストが 邪魔になるため)
+  const [derivedAlignmentsExpanded, setDerivedAlignmentsExpanded] = useState(false)
 
   // TIN 生成・表示設定
   const [showTin, setShowTin] = useState(false)
@@ -97,7 +113,6 @@ export function LandXMLPage() {
   const [trenchTrimClearance, setTrenchTrimClearance] = useState(0.10) // m
 
   // LandXML 出力設定
-  const [exportSavedAlignments, setExportSavedAlignments] = useState(true)
   const [exportDerivedAlignments, setExportDerivedAlignments] = useState(true)
   const [exportTinSurface, setExportTinSurface] = useState(false)
   const [exportTrenchSurface, setExportTrenchSurface] = useState(false)
@@ -176,25 +191,6 @@ export function LandXMLPage() {
     [trenchSurface, converter],
   )
 
-  // 保存済み線形を緯度経度で点列化
-  const alignmentPolylines = useMemo(() => {
-    return alignments
-      .map((a) => {
-        const pts = sampleAlignment(a.segments, 0.5)
-        const ll: [number, number][] = []
-        for (const p of pts) {
-          try {
-            const { lat, lng } = converter.toLatLng(p.x, p.y)
-            if (Number.isFinite(lat) && Number.isFinite(lng)) ll.push([lat, lng])
-          } catch {
-            // skip
-          }
-        }
-        return { id: a.id, name: a.name, positions: ll }
-      })
-      .filter((p) => p.positions.length >= 2)
-  }, [alignments, converter])
-
   // 施工計画由来の線形（派生）
   const derivedPolylines = useMemo(() => {
     return derivedAlignments
@@ -215,36 +211,10 @@ export function LandXMLPage() {
       .filter((p) => p.positions.length >= 2)
   }, [derivedAlignments, converter, showAbsorption, showCollector])
 
-  // 取り込み直後の線形（未保存プレビュー）
-  const pendingPolylines = useMemo(() => {
-    if (!pendingAlignments) return []
-    return pendingAlignments
-      .map((a) => {
-        const pts = sampleAlignment(a.segments, 0.5)
-        const ll: [number, number][] = []
-        for (const p of pts) {
-          try {
-            const { lat, lng } = converter.toLatLng(p.x, p.y)
-            if (Number.isFinite(lat) && Number.isFinite(lng)) ll.push([lat, lng])
-          } catch {
-            // skip
-          }
-        }
-        return { id: a.id, name: a.name, positions: ll }
-      })
-      .filter((p) => p.positions.length >= 2)
-  }, [pendingAlignments, converter])
-
-  // 地図フィット用 bounds（保存済み + プレビュー + 派生を含む）
+  // 地図フィット用 bounds（施工計画由来の線形）
   const bounds = useMemo(() => {
-    const sourcePrimary =
-      pendingPolylines.length > 0
-        ? pendingPolylines
-        : alignmentPolylines.length > 0
-          ? alignmentPolylines
-          : derivedPolylines
     const all: [number, number][] = []
-    for (const p of sourcePrimary) all.push(...p.positions)
+    for (const p of derivedPolylines) all.push(...p.positions)
     if (all.length === 0) return null
     const lats = all.map((p) => p[0])
     const lngs = all.map((p) => p[1])
@@ -252,80 +222,39 @@ export function LandXMLPage() {
       [Math.min(...lats), Math.min(...lngs)],
       [Math.max(...lats), Math.max(...lngs)],
     )
-  }, [alignmentPolylines, pendingPolylines, derivedPolylines])
+  }, [derivedPolylines])
 
   const mapCenter: [number, number] = bounds
     ? [(bounds.getNorth() + bounds.getSouth()) / 2, (bounds.getEast() + bounds.getWest()) / 2]
     : [43.06, 141.35]
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setParseError(null)
-    setParseWarnings([])
-    try {
-      const text = await file.text()
-      const { alignments: parsed, warnings } = parseLandXml(text, file.name)
-      if (parsed.length === 0) {
-        setParseError('Alignment 要素が見つかりませんでした')
-        setPendingAlignments(null)
-      } else {
-        setPendingAlignments(parsed)
-        setParseWarnings(warnings)
-      }
-    } catch (err) {
-      setParseError(err instanceof Error ? err.message : 'ファイルの読み込みに失敗しました')
-      setPendingAlignments(null)
-    }
-    // ファイル選択をリセット
-    if (fileInputRef.current) fileInputRef.current.value = ''
-  }
-
-  const handleConfirmImport = async () => {
-    if (!currentFarm || !pendingAlignments) return
-    await addAlignments(currentFarm.id, pendingAlignments)
-    setPendingAlignments(null)
-    setParseWarnings([])
-  }
-
-  const handleCancelImport = () => {
-    setPendingAlignments(null)
-    setParseWarnings([])
-  }
-
-  const handleDelete = async (id: string) => {
-    if (!confirm('この中心線形を削除しますか？')) return
-    await deleteAlignment(id)
-  }
-
-  const handleClearAll = async () => {
-    if (!currentFarm) return
-    if (!confirm(`${currentFarm.name} のすべての中心線形を削除しますか？`)) return
-    await clearAlignments(currentFarm.id)
-  }
-
-  const toggleExpanded = (id: string) => {
-    setExpandedIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
   // 出力対象が一つでもあるか
   const hasExportTarget =
-    (exportSavedAlignments && alignments.length > 0) ||
     (exportDerivedAlignments && derivedAlignments.length > 0) ||
     (exportTinSurface && tinSurface !== null) ||
     (exportTrenchSurface && trenchSurface !== null)
 
   const handleExportLandXml = () => {
     if (!hasExportTarget) return
+    // 圃場データ の フェッチが 全部 完了して 現在の 圃場と 一致するか 最終チェック。
+    // (前圃場の データが 混ざる 事故 を 確実に 防ぐ)
+    if (currentFarm) {
+      const farmId = currentFarm.id
+      const staleStore =
+        (exportDerivedAlignments && planLoadedForFarmId !== farmId) ||
+        ((exportTinSurface || exportTrenchSurface) &&
+          (pipesLoadedForFarmId !== farmId || surveyLoadedForFarmId !== farmId))
+      if (staleStore) {
+        alert(
+          'データの 読み込み が 完了していません (前圃場の 残留 or ロード中)。\n' +
+            '上部の 「🔄 再読込」ボタンで 最新化してから 再度お試しください。',
+        )
+        return
+      }
+    }
     setExporting(true)
     try {
       const out: Alignment[] = []
-      if (exportSavedAlignments) out.push(...alignments)
       if (exportDerivedAlignments) out.push(...derivedAlignments)
 
       const surfaces: { name: string; surface: NonNullable<typeof tinSurface> }[] = []
@@ -489,6 +418,23 @@ export function LandXMLPage() {
             中心線形・面データを準備し、LandXML 1.2 形式で出力します
           </p>
         </div>
+        {currentFarm && (
+          <button
+            type="button"
+            onClick={() => {
+              if (!currentFarm) return
+              // 全データを 再取得 (施工計画 / パイプ / 実測)
+              void fetchPlan(currentFarm.id)
+              void fetchPipes(currentFarm.id)
+              void fetchSurveyData(currentFarm.id)
+            }}
+            className="flex items-center gap-1 px-3 py-1.5 text-sm border border-slate-300 rounded hover:bg-slate-50"
+            title="施工計画 / パイプ / 実測データ を DB から 再取得"
+          >
+            <RefreshCw className="h-4 w-4" />
+            再読込
+          </button>
+        )}
       </div>
 
       <ResizableSplit
@@ -501,12 +447,28 @@ export function LandXMLPage() {
         <div className="flex-1 border-r bg-white flex flex-col overflow-hidden">
           {/* 施工計画由来の線形 */}
           <div className="px-3 py-2 border-b bg-emerald-50">
-            <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setDerivedAlignmentsExpanded((v) => !v)}
+              className="w-full flex items-center gap-2 text-left"
+              title={derivedAlignmentsExpanded ? '線形一覧を折りたたむ' : '線形一覧を展開する'}
+            >
+              <span
+                className="inline-block text-slate-500 transition-transform"
+                style={{
+                  transform: derivedAlignmentsExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                }}
+              >
+                ▶
+              </span>
               <div className="text-sm font-semibold">施工計画から算出した中心線形</div>
               <span className="text-xs text-slate-500">
                 {derivedAlignments.length} 件
               </span>
-            </div>
+              <span className="ml-auto text-[10px] text-slate-500">
+                {derivedAlignmentsExpanded ? '折りたたむ' : '展開'}
+              </span>
+            </button>
             <div className="text-xs text-slate-500 mt-0.5">
               各系統の集水・吸水 XYZ から自動生成（保存不要）
             </div>
@@ -532,7 +494,7 @@ export function LandXMLPage() {
                 集水
               </label>
             </div>
-            {derivedAlignments.length > 0 && (
+            {derivedAlignmentsExpanded && derivedAlignments.length > 0 && (
               <div className="mt-2 max-h-56 overflow-auto border rounded bg-white">
                 <table className="w-full text-[11px]">
                   <thead className="bg-slate-50 sticky top-0">
@@ -588,185 +550,11 @@ export function LandXMLPage() {
             )}
           </div>
 
-          {/* セクション見出し */}
-          <div className="px-3 py-2 border-b bg-slate-50">
-            <div className="text-sm font-semibold">1. 中心線形の取り込み</div>
-            <div className="text-xs text-slate-500">
-              LandXML ファイルから Alignment を読み込みます
-            </div>
-          </div>
-
-          {/* 操作 */}
-          <div className="p-3 border-b space-y-2">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".xml,.landxml"
-              onChange={handleFileChange}
-              className="hidden"
-            />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={!currentFarm}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-            >
-              <Upload className="h-4 w-4" />
-              LandXML ファイルを選択
-            </button>
-
-            {parseError && (
-              <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2 flex items-start gap-1">
-                <AlertCircle className="h-3 w-3 flex-shrink-0 mt-0.5" />
-                <span>{parseError}</span>
-              </div>
-            )}
-
-            {error && (
-              <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2 flex items-start gap-1">
-                <AlertCircle className="h-3 w-3 flex-shrink-0 mt-0.5" />
-                <span>{error}</span>
-              </div>
-            )}
-
-            {pendingAlignments && (
-              <div className="text-xs border border-blue-300 rounded bg-blue-50 p-2 space-y-2">
-                <div className="font-semibold text-blue-800">
-                  {pendingAlignments.length} 件の中心線形が見つかりました
-                </div>
-                <ul className="space-y-0.5">
-                  {pendingAlignments.map((a) => (
-                    <li key={a.id}>
-                      ・{a.name}（延長 {a.totalLength.toFixed(2)} m / {a.segments.length} セグメント）
-                    </li>
-                  ))}
-                </ul>
-                {parseWarnings.length > 0 && (
-                  <div className="text-amber-700 space-y-0.5">
-                    {parseWarnings.map((w, i) => (
-                      <div key={i}>⚠ {w}</div>
-                    ))}
-                  </div>
-                )}
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleConfirmImport}
-                    disabled={saving}
-                    className="flex-1 px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 text-xs"
-                  >
-                    {saving ? '保存中...' : '保存'}
-                  </button>
-                  <button
-                    onClick={handleCancelImport}
-                    className="flex-1 px-3 py-1.5 border rounded hover:bg-slate-50 text-xs"
-                  >
-                    キャンセル
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* リスト */}
+          {/* 操作パネル（TIN 生成 / LandXML 出力） */}
           <div className="flex-1 overflow-auto p-3 space-y-3">
-            {loading ? (
-              <div className="flex items-center justify-center py-8 text-slate-500 text-sm">
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                読み込み中...
-              </div>
-            ) : alignments.length === 0 ? (
-              <div className="text-center py-8 text-slate-400 text-sm">
-                登録された中心線形がありません
-              </div>
-            ) : (
-              <>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-slate-600">{alignments.length} 件</span>
-                  <button
-                    onClick={handleClearAll}
-                    disabled={saving}
-                    className="text-xs text-red-600 hover:underline"
-                  >
-                    全て削除
-                  </button>
-                </div>
-                <ul className="space-y-1">
-                  {alignments.map((a) => {
-                    const isExpanded = expandedIds.has(a.id)
-                    return (
-                      <li key={a.id} className="border rounded bg-white">
-                        <div className="flex items-center gap-1 px-2 py-1.5">
-                          <button
-                            onClick={() => toggleExpanded(a.id)}
-                            className="p-0.5 hover:bg-slate-100 rounded"
-                          >
-                            {isExpanded ? (
-                              <ChevronDown className="h-3.5 w-3.5" />
-                            ) : (
-                              <ChevronRight className="h-3.5 w-3.5" />
-                            )}
-                          </button>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-sm font-medium truncate" title={a.name}>
-                              {a.name}
-                            </div>
-                            <div className="text-[11px] text-slate-500">
-                              延長 {a.totalLength.toFixed(2)} m / {a.segments.length} 区間
-                              {a.sourceFile && <> · {a.sourceFile}</>}
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => handleDelete(a.id)}
-                            className="p-1 text-slate-400 hover:text-red-500"
-                            title="削除"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                        {isExpanded && (
-                          <div className="border-t px-2 py-1 overflow-x-auto">
-                            <table className="w-full text-[11px]">
-                              <thead className="text-slate-500">
-                                <tr>
-                                  <th className="text-left font-normal px-1">#</th>
-                                  <th className="text-left font-normal px-1">種別</th>
-                                  <th className="text-right font-normal px-1">長さ</th>
-                                  <th className="text-right font-normal px-1">R</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {a.segments.map((seg, i) => (
-                                  <tr key={i}>
-                                    <td className="px-1 text-slate-500">{i + 1}</td>
-                                    <td className="px-1">
-                                      {seg.type === 'line'
-                                        ? '直線'
-                                        : seg.type === 'curve'
-                                          ? '曲線'
-                                          : '緩和'}
-                                    </td>
-                                    <td className="px-1 text-right font-mono">
-                                      {seg.length.toFixed(2)}
-                                    </td>
-                                    <td className="px-1 text-right font-mono text-slate-500">
-                                      {seg.radius ? seg.radius.toFixed(1) : '-'}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        )}
-                      </li>
-                    )
-                  })}
-                </ul>
-              </>
-            )}
-
             {/* 面データ（TIN 生成） */}
-            <div className="border-t pt-3 mt-4">
-              <div className="text-sm font-semibold">2. 面データ（TIN 生成）</div>
+            <div>
+              <div className="text-sm font-semibold">1. 面データ（TIN 生成）</div>
               <div className="text-xs text-slate-500 mt-0.5">
                 配管頂点・測量点・計画点から 3D TIN を作成
               </div>
@@ -948,23 +736,11 @@ export function LandXMLPage() {
 
             {/* LandXML 出力 */}
             <div className="border-t pt-3 mt-3">
-              <div className="text-sm font-semibold">3. LandXML 出力</div>
+              <div className="text-sm font-semibold">2. LandXML 出力</div>
               <div className="text-xs text-slate-500 mt-0.5">
                 選択した中心線形・サーフェスを LandXML 1.2 形式で書き出します
               </div>
               <div className="mt-2 space-y-1 text-xs">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={exportSavedAlignments}
-                    onChange={(e) => setExportSavedAlignments(e.target.checked)}
-                    disabled={alignments.length === 0}
-                    className="h-3.5 w-3.5"
-                  />
-                  <span className={alignments.length === 0 ? 'text-slate-400' : ''}>
-                    取込済み中心線形（{alignments.length} 件）
-                  </span>
-                </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
@@ -1030,7 +806,7 @@ export function LandXMLPage() {
 
             {/* LandXML 重複チェック */}
             <div className="border-t pt-3 mt-3">
-              <div className="text-sm font-semibold">4. LandXML 重複チェック</div>
+              <div className="text-sm font-semibold">3. LandXML 重複チェック</div>
               <div className="text-xs text-slate-500 mt-0.5">
                 取り込んだ TIN サーフェスの三角形同士で内部が重なるペアを検出します
                 <br />
@@ -1191,10 +967,7 @@ export function LandXMLPage() {
               maxZoom={24}
               maxNativeZoom={18}
             />
-            <FitBoundsOnce
-              bounds={bounds}
-              key={pendingPolylines.length > 0 ? 'pending' : 'saved'}
-            />
+            <FitBoundsOnce bounds={bounds} />
             {/* TIN 三角形エッジ: 薄灰 */}
             {tinEdgeLatLngs.map((e, idx) => (
               <Polyline
@@ -1244,32 +1017,9 @@ export function LandXMLPage() {
                 }}
               />
             ))}
-            {/* 保存済み (取り込み線形): 赤 */}
-            {alignmentPolylines.map((p) => (
-              <Polyline
-                key={`saved-${p.id}`}
-                positions={p.positions}
-                pathOptions={{ color: '#dc2626', weight: 3, opacity: 0.9 }}
-              />
-            ))}
-            {/* 取り込み直後のプレビュー: オレンジ（点線） */}
-            {pendingPolylines.map((p) => (
-              <Polyline
-                key={`pending-${p.id}`}
-                positions={p.positions}
-                pathOptions={{
-                  color: '#f97316',
-                  weight: 4,
-                  opacity: 0.95,
-                  dashArray: '6,6',
-                }}
-              />
-            ))}
           </MapContainer>
           {/* 凡例 */}
-          {(alignmentPolylines.length > 0 ||
-            pendingPolylines.length > 0 ||
-            derivedPolylines.length > 0 ||
+          {(derivedPolylines.length > 0 ||
             tinEdgeLatLngs.length > 0 ||
             trenchEdgeLatLngs.length > 0 ||
             checkSurfaceEdges.length > 0) && (
@@ -1308,24 +1058,6 @@ export function LandXMLPage() {
                 <div className="flex items-center gap-2">
                   <span className="inline-block w-5 h-1 bg-emerald-500" />
                   <span>集水（施工計画）</span>
-                </div>
-              )}
-              {alignmentPolylines.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <span className="inline-block w-5 h-1 bg-red-600" />
-                  <span>取込済み</span>
-                </div>
-              )}
-              {pendingPolylines.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <span
-                    className="inline-block w-5 h-1"
-                    style={{
-                      background:
-                        'repeating-linear-gradient(to right, #f97316 0 3px, transparent 3px 6px)',
-                    }}
-                  />
-                  <span>プレビュー（未保存）</span>
                 </div>
               )}
             </div>

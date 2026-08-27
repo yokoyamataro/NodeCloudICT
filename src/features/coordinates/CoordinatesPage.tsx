@@ -17,6 +17,7 @@ import { CoordinatePhotoModal } from './CoordinatePhotoModal'
 import { CoordinatePhotoPanel } from './CoordinatePhotoPanel'
 import { BulkCalcModal } from './BulkCalcModal'
 import { CoordinateCalcModal } from './CoordinateCalcModal'
+import { DeletedCoordinatesModal } from './DeletedCoordinatesModal'
 import { JGD2011_ZONES, COORDINATE_TYPE_NAMES } from '@/lib/coordinates'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useFarmStore } from '@/stores/farmStore'
@@ -464,6 +465,8 @@ export function CoordinatesPage() {
   const [showBulkEditModal, setShowBulkEditModal] = useState(false)
   // 一括座標計算モーダル（現状はスライド（平行移動）のみ）
   const [showBulkCalcModal, setShowBulkCalcModal] = useState(false)
+  // 削除履歴モーダル (soft-deleted 座標の 復元)
+  const [showDeletedModal, setShowDeletedModal] = useState(false)
 
   // ツールバーのドロップダウンメニュー（インポート / エクスポート / 点種フィルター）
   const [openMenu, setOpenMenu] = useState<'import' | 'export' | 'typeFilter' | null>(null)
@@ -2162,6 +2165,19 @@ export function CoordinatesPage() {
           座標計算
         </button>
 
+        {/* 削除履歴 (30 日以内の 削除座標を 復元) */}
+        {currentFarm && (
+          <button
+            type="button"
+            onClick={() => setShowDeletedModal(true)}
+            className="flex items-center gap-1 px-3 py-1.5 text-sm bg-white text-slate-700 border border-slate-300 rounded hover:bg-slate-50"
+            title="削除された 座標を 復元 (30 日以内)"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            削除履歴
+          </button>
+        )}
+
         {/* フィルターは各列のヘッダーへ移動した。
             点種・設置状態・写真の絞り込みは表の <th> 内のアイコンから操作する */}
 
@@ -3317,6 +3333,19 @@ export function CoordinatesPage() {
             await importCoordinates(newCoords)
             setShowBulkCalcModal(false)
             setCheckedIds(new Set())
+          }}
+        />
+      )}
+
+      {/* 削除履歴モーダル (soft-deleted 座標の 復元) */}
+      {currentFarm && (
+        <DeletedCoordinatesModal
+          farmId={currentFarm.id}
+          open={showDeletedModal}
+          onClose={() => setShowDeletedModal(false)}
+          onRestored={() => {
+            // 復元後は 通常一覧に 追加されるので、必要に応じて 再フェッチ
+            void fetchCoordinates(currentFarm.id)
           }}
         />
       )}

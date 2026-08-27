@@ -23,22 +23,24 @@
   --radius: 0.5rem;
 }
 
-html,
-body {
-  /* 横幅を 超える 要素 (幅広テーブル / 長い点名 など) が ページ全体を
-     押し広げて 左右に ずれるのを 防ぐ。はみ出す 中身は 各自の
-     overflow-x: auto で スクロールさせる。 */
-  overflow-x: hidden;
-  /* iOS の 端での ラバーバンドで レイアウトが ずれるのを 抑える */
-  overscroll-behavior: none;
-  /* 横向き等で iOS が 勝手に 文字を 拡大するのを 止める */
-  -webkit-text-size-adjust: 100%;
-}
-
 body {
   background-color: var(--color-background);
   color: var(--color-foreground);
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* 画面全体 の X/Y スクロール を 抑止。 AppLayout 全体 は h-screen で
+   viewport に 収まる はず で、個別 画面 内 の スクロール は 各コンテナ
+   の overflow-auto で 制御 する。 body の overflow を 完全に 塞ぐ
+   ことで、意図せぬ 空白 域 に スクロール してしまう 事故 を 防ぐ。 */
+html,
+body {
+  overflow: hidden;
+  height: 100%;
+  /* iOS の 端での ラバーバンドで レイアウトが ずれるのを 抑える */
+  overscroll-behavior: none;
+  /* 横向き等で iOS が 勝手に 文字を 拡大するのを 止める */
+  -webkit-text-size-adjust: 100%;
 }
 
 /* 施工計画テーブルの指標別カラー（見出し・数値ともに） */

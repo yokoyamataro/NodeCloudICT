@@ -88,7 +88,7 @@ const navigation: NavGroup[] = [
       { name: '配管系統', href: '/underdrain/pipe-wiring', icon: Cable },
       { name: '座標計算', href: '/underdrain/coordinate-calc', icon: MapPin },
       { name: '施工計画', href: '/underdrain/depth-calc', icon: Ruler },
-      { name: 'LandXML出力', href: '/underdrain/landxml', icon: FileOutput },
+      { name: 'ICT施工', href: '/underdrain/landxml', icon: FileOutput },
     ],
   },
   {
@@ -623,8 +623,10 @@ export function AppLayout() {
       </aside>
         )}
 
-      {/* メインコンテンツ */}
-      <main className="flex-1 bg-slate-50 overflow-hidden">
+      {/* メインコンテンツ (min-w-0: 中身 の min-content で フレックス 幅 が
+          膨張 しない よう 抑止。 実測記録 の 広い 表 等 が 横スクロール 化
+          される だけ で 済む) */}
+      <main className="flex-1 min-w-0 bg-slate-50 overflow-hidden">
         <Outlet />
       </main>
     </div>

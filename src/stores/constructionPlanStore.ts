@@ -77,6 +77,10 @@ export interface AutoCalcParams {
 interface ConstructionPlanState {
   // 施工計画データ
   planGroups: PlanGroup[]
+  /** 現在 planGroups に 入っている データが 属する farm ID。
+   *  ファーム 切替時に fetchPlan が 完了する前でも 前ファームの データを 使わないよう、
+   *  UI 側は loadedForFarmId !== currentFarm.id なら 空扱いに する */
+  loadedForFarmId: string | null
   loading: boolean
   saving: boolean
   error: string | null
@@ -152,6 +156,7 @@ const calcSlope = (distance: number, heightDiff: number): string | null => {
 
 export const useConstructionPlanStore = create<ConstructionPlanState>()((set, get) => ({
   planGroups: [],
+  loadedForFarmId: null,
   loading: false,
   saving: false,
   hasChanges: false,
@@ -159,7 +164,20 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
   hasData: false,
 
   fetchPlan: async (farmId: string) => {
-    set({ loading: true, error: null })
+    // 圃場切替時 は 前圃場の planGroups を 即クリア (残留 表示防止)
+    const prev = get().loadedForFarmId
+    if (prev !== farmId) {
+      set({
+        planGroups: [],
+        hasData: false,
+        hasChanges: false,
+        loadedForFarmId: null,
+        loading: true,
+        error: null,
+      })
+    } else {
+      set({ loading: true, error: null })
+    }
     try {
       // 施工計画行を取得
       const { data: rows, error: rowError } = await supabase
@@ -173,7 +191,13 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       if (rowError) throw rowError
 
       if (!rows || rows.length === 0) {
-        set({ planGroups: [], hasData: false, loading: false, hasChanges: false })
+        set({
+          planGroups: [],
+          hasData: false,
+          loading: false,
+          hasChanges: false,
+          loadedForFarmId: farmId,
+        })
         return
       }
 
@@ -194,7 +218,15 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       // 型キャスト
       const typedPoints = (points || []) as ConstructionPlanPoint[]
 
-      // 管路情報を取得
+      // 管路情報を取得。
+      // 圃場切替直後は underdrainStore の 圃場ガード により pipes が [] に
+      // クリアされている 可能性が あるため、この farm 用に ロード済み で
+      // なければ 先に await で 取得しておく (でないと pipeNumber lookup が
+      // 全部 undefined になり、施工計画由来の 中心線形名が UUID表示になる)
+      const underdrainState = useUnderdrainStore.getState()
+      if (underdrainState.loadedForFarmId !== farmId) {
+        await underdrainState.fetchPipes(farmId)
+      }
       const pipes = useUnderdrainStore.getState().pipes
 
       // 配管系統データから wiringRowId → {mergeSystemIndex, rowType} のルックアップを作成
@@ -297,7 +329,13 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       }
 
       const planGroups = Array.from(groupMap.values())
-      set({ planGroups, hasData: true, loading: false, hasChanges: false })
+      set({
+        planGroups,
+        hasData: true,
+        loading: false,
+        hasChanges: false,
+        loadedForFarmId: farmId,
+      })
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : '施工計画の取得に失敗しました',
@@ -313,11 +351,32 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
       return
     }
 
+    // 部分再生成 の 場合 (既存 planGroups を 残す) は 現状の planGroups が
+    // 現圃場向け で ある必要がある。前圃場のが 残っていたら 中止。
+    const state = get()
+    if (
+      includedKeys !== undefined &&
+      state.loadedForFarmId &&
+      state.loadedForFarmId !== farmId
+    ) {
+      const msg =
+        `部分再生成 を 中止: 既存 施工計画は 別圃場のもの です ` +
+        `(表示 farm=${state.loadedForFarmId.slice(0, 8)}, 現圃場=${farmId.slice(0, 8)})。`
+      console.warn('[constructionPlanStore] generatePlanFromWiring aborted:', msg)
+      set({ error: msg })
+      return
+    }
+
     set({ loading: true, error: null })
 
     try {
       // 配管系統データを取得
       const { collectorTabs, directRows } = usePipeWiringStore.getState()
+      // pipes が 現圃場向けに ロード されて いなければ 先に await で 取得
+      const underdrainState = useUnderdrainStore.getState()
+      if (underdrainState.loadedForFarmId !== farmId) {
+        await underdrainState.fetchPipes(farmId)
+      }
       const pipes = useUnderdrainStore.getState().pipes
 
       // 部分再生成モード時は既存 planGroups から「対象外の系統」を残す。
@@ -1138,6 +1197,18 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
     }
 
     const state = get()
+    // 圃場ガード: store の planGroups が 現在の 圃場向けに ロードされたもの
+    // でなければ 保存を 中止する。これが 無いと、圃場切替時に 前圃場の planGroups
+    // に 新圃場の farm_id を 付けて INSERT され、DB が 汚染 される (既に 実害あり)
+    if (state.loadedForFarmId && state.loadedForFarmId !== farmId) {
+      const msg =
+        `保存を 中止: 表示中の 施工計画は 別圃場のもの です ` +
+        `(表示 farm=${state.loadedForFarmId.slice(0, 8)}, 現圃場=${farmId.slice(0, 8)})。 ` +
+        `施工計画ページ を 開き直して 現圃場の データを 読み込んでから 保存してください。`
+      console.warn('[constructionPlanStore] savePlan aborted:', msg)
+      set({ error: msg, saving: false })
+      return
+    }
     set({ saving: true, error: null })
 
     try {

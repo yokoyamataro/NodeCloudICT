@@ -16,6 +16,10 @@ interface AlignmentDbRow {
 
 interface AlignmentState {
   alignments: Alignment[]
+  /** 現在 alignments に 入っている データが 属する farm ID。
+   *  farm 切替時に この値が 変わると、fetch 完了前でも 古い alignments を 表示しないよう
+   *  UI 側は loadedForFarmId !== currentFarm.id なら 空扱いに する。 */
+  loadedForFarmId: string | null
   loading: boolean
   saving: boolean
   error: string | null
@@ -38,14 +42,23 @@ function rowToAlignment(row: AlignmentDbRow): Alignment {
   }
 }
 
-export const useAlignmentStore = create<AlignmentState>()((set) => ({
+export const useAlignmentStore = create<AlignmentState>()((set, get) => ({
   alignments: [],
+  loadedForFarmId: null,
   loading: false,
   saving: false,
   error: null,
 
   fetchAlignments: async (farmId) => {
-    set({ loading: true, error: null })
+    // 圃場が 前回と 違う 場合 は 即 古い データを クリア (前圃場の 中心線形が
+    // 一瞬でも 表示される 事故 を 防ぐ)。 同じ farm の 再フェッチ (reload) は
+    // クリアせず ちらつきを 抑える。
+    const prev = get().loadedForFarmId
+    if (prev !== farmId) {
+      set({ alignments: [], loadedForFarmId: null, loading: true, error: null })
+    } else {
+      set({ loading: true, error: null })
+    }
     try {
       const { data, error } = await supabase
         .from('design_alignments')
@@ -54,7 +67,7 @@ export const useAlignmentStore = create<AlignmentState>()((set) => ({
         .order('created_at')
       if (error) throw error
       const alignments = (data as AlignmentDbRow[]).map(rowToAlignment)
-      set({ alignments, loading: false })
+      set({ alignments, loadedForFarmId: farmId, loading: false })
     } catch (err) {
       set({
         loading: false,
