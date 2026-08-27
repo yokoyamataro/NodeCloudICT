@@ -207,9 +207,15 @@ export async function watchSamples(
     enableHighAccuracy?: boolean
     timeout?: number
     maximumAge?: number
+    /**
+     * 取得元を 明示指定する。省略時は getActiveSource() の 自動判定。
+     * ICT ネイティブは 既定が 'drogger' なので、受信機が 繋がっていない間の
+     * 端末内蔵 GPS フォールバックには 'browser' を 明示して使う。
+     */
+    source?: LocationSource
   },
 ): Promise<{ clear: () => void }> {
-  const source = getActiveSource()
+  const source = options?.source ?? getActiveSource()
   if (source === 'drogger') {
     const { watchDroggerSamples } = await import('./drogger')
     const handle = await watchDroggerSamples(callback)

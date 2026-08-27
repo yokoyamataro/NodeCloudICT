@@ -2426,6 +2426,56 @@ export function MobileStakingPage() {
     return () => window.clearInterval(id)
   }, [])
 
+  // Drogger が 繋がっていない (or 位置が 止まっている) 間だけ、端末内蔵 GPS で
+  // 現在地を 埋める。画面下の「現在地」欄と 地図の 自機マーカーが 空にならない
+  // ようにするのが 目的。
+  //
+  // 注意:
+  // - 測定 (startRecording) は 別の watchSamples を 張っており、そちらは
+  //   getActiveSource() = 'drogger' のまま。端末 GPS の 数 m 精度の 値が
+  //   測量成果に 混ざることは ない。
+  // - fixQuality は null で 入れる。これにより 測定ボタンは 「概略測定」、
+  //   FIX ビープも 鳴らない (どちらも fixQuality === 4 を 条件に している)。
+  // - lastPosTimeRef は 更新しない。Drogger の 鮮度判定を 端末 GPS で
+  //   汚さないため (更新すると posStale が false になり この watch 自体が 止まる)。
+  useEffect(() => {
+    if (!posStale) return
+    let cancelled = false
+    let handle: { clear: () => void } | null = null
+    void (async () => {
+      const h = await watchSamples(
+        (sample, err) => {
+          if (err || !sample || cancelled) return
+          // この間に Drogger が 復帰していたら 端末 GPS では 上書きしない
+          if (
+            lastPosTimeRef.current !== 0 &&
+            Date.now() - lastPosTimeRef.current <= POSITION_STALE_MS
+          ) {
+            return
+          }
+          setCurrentPos([sample.lat, sample.lon])
+          setCurrentAcc(sample.accuracy_m)
+          setCurrentAltAcc(sample.altitude_accuracy_m)
+          setCurrentAlt(sample.altitude_m)
+          // 端末 GPS の altitude は 楕円体高 (WGS84) で ジオイド差は 持たない
+          setCurrentGeoidalSep(null)
+          setCurrentFixQuality(null)
+        },
+        { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000, source: 'browser' },
+      ).catch(() => null)
+      if (!h) return
+      if (cancelled) {
+        h.clear()
+        return
+      }
+      handle = h
+    })()
+    return () => {
+      cancelled = true
+      if (handle) handle.clear()
+    }
+  }, [posStale])
+
   // FIX→喪失の瞬間に警告音（ブーッ）を 1 回。「精度悪化」と「更新途絶」の両方を FIX 喪失とみなす。
   // Fix 判定: fixQuality=4 (RTK Fix) を 受信しているときのみ True
   const soundIsFix = !posStale && currentFixQuality === 4
@@ -4597,9 +4647,6 @@ export function MobileStakingPage() {
           // (iOS WebKit は 長押しで ネイティブ contextmenu を 発火しないので、
           //  この擬似発火が 無いと 手段が無い)
           tapHold
-          // leaflet-rotate (MobilityDriverPage 等が副作用 import) が有効な
-          // セッションでは既定で rotateControl が付いてしまうため明示 OFF。
-          {...({ rotateControl: false } as Record<string, unknown>)}
         >
           {/* 断面ピック中の仮マーカー（座標管理から選択した点を強調） */}
           {sectionPickingMode && sectionPickIds.map((id, i) => {
