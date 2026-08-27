@@ -10,6 +10,7 @@ import {
   ChevronRight,
   ChevronDown,
   Loader2,
+  CloudOff,
   Circle as CircleIcon,
   Radio,
   Tag,
@@ -44,6 +45,7 @@ import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore
 import { useMapViewStore } from '@/stores/mapViewStore'
 import { useUnderdrainStore, type PipeRow, PIPE_TYPE_NAMES } from '@/stores/underdrainStore'
 import { useStakingStore } from '@/stores/stakingStore'
+import { getFarmSnapshot } from '@/lib/offlineFarmCache'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
 import { CrossSectionChart } from '@/components/charts/CrossSectionChart'
 import {
@@ -53,6 +55,11 @@ import {
 } from '@/stores/exportRouteStore'
 // selector が「無い」場合に返す stable な空配列 (毎回新しい [] だと無限再レンダー)
 const EMPTY_ROUTES_FOR_STAKING: Route[] = []
+
+/** オフライン退避の 上限に 達した時の 案内。測点は 捨てられないので 計測を 止める */
+const OFFLINE_FULL_MESSAGE =
+  '未送信の測点が上限（1000 件）に達しました。\n' +
+  '電波の届く場所で「未送信を送信」してから計測を続けてください。'
 import { useAuth } from '@/contexts/AuthContext'
 import { FarmChatSheet } from '@/features/chat/FarmChatSheet'
 import { useFarmChatStore } from '@/stores/farmChatStore'
@@ -657,7 +664,10 @@ export function MobileStakingPage() {
     tileUrlTemplate: getOrthoUrl,
   } = useOrthophotoStore()
   const { fetchPipes, pipes } = useUnderdrainStore()
-  const { records, fetchRecords, addRecord, deleteRecord, saving } = useStakingStore()
+  const { records, fetchRecords, addRecord, saveMeasurement, deleteRecord, saving } =
+    useStakingStore()
+  const pendingCount = useStakingStore((s) => s.pendingCount)
+  const flushOfflineQueue = useStakingStore((s) => s.flushOfflineQueue)
   const { user } = useAuth()
 
   const [farm, setFarm] = useState<Farm | null>(null)
@@ -699,12 +709,11 @@ export function MobileStakingPage() {
   const [headingEnabled, setHeadingEnabled] = useState(false)
   const [headingError, setHeadingError] = useState<string | null>(null)
   // 設定・UI
-  // 5 つの共有設定 (音声 / 平均秒数 / アンテナ高 / ジオイド / 判定精度) は
+  // 4 つの共有設定 (音声 / 平均秒数 / アンテナ高 / ジオイド) は
   // gnssSettingsStore に集約 (GPS設定モーダルからも 触れるため)
   const avgSeconds = useGnssSettingsStore((s) => s.avgSeconds)
   const antennaHeight = useGnssSettingsStore((s) => s.antennaHeight)
   const useGeoidCorrection = useGnssSettingsStore((s) => s.useGeoidCorrection)
-  const rtkFixAccuracyM = useGnssSettingsStore((s) => s.rtkFixAccuracyM)
   const soundEnabled = useGnssSettingsStore((s) => s.soundEnabled)
   // 画面モード: 起工測量のみに統一（出来形 / 施工管理 タブは削除）
   // 旧 localStorage の値が残っていても無視して 'initial' 固定で扱う。
@@ -720,6 +729,7 @@ export function MobileStakingPage() {
   const surveyCategory: 'initial' | 'asbuilt' = 'initial'
   // (antennaHeight / useGeoidCorrection は gnssSettingsStore に移設済み)
   // 三次元誘導（ターゲットとの比高表示）
+  // (RTK 判定は 精度しきい値ではなく fixQuality=4 の受信で 判定する)
   const [use3dGuidance, setUse3dGuidance] = useState<boolean>(() => {
     const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('rtk:use3dGuidance') : null
     return saved === '1'
@@ -727,7 +737,6 @@ export function MobileStakingPage() {
   useEffect(() => {
     try { localStorage.setItem('rtk:use3dGuidance', use3dGuidance ? '1' : '0') } catch { /* ignore */ }
   }, [use3dGuidance])
-  // (rtkFixAccuracyM は gnssSettingsStore に移設済み)
   // ジオイドグリッド（遅延読込）
   const [geoidGrid, setGeoidGrid] = useState<import('@/lib/geoid').GeoidGrid | null>(null)
   useEffect(() => {
@@ -1171,6 +1180,54 @@ export function MobileStakingPage() {
   // 測設成功とみなす許容半径（m）
   const STAKE_TOLERANCE_M = 0.20
 
+  // ---- オフライン退避 (iOS のみ) ----
+  // 圏外での 計測は 端末に 貯め、通信が 戻ったら まとめて 送る。
+  // 写真は オフラインでは 一切扱わない (撮影も 表示も しない)。
+  /** オフライン保存データで 画面を 起こした場合、その 保存時刻 (null = 通常読込) */
+  const [offlineSnapshotAt, setOfflineSnapshotAt] = useState<string | null>(null)
+  const [isOffline, setIsOffline] = useState(
+    typeof navigator !== 'undefined' && navigator.onLine === false,
+  )
+  useEffect(() => {
+    const goOnline = () => {
+      setIsOffline(false)
+      // 復帰したら すぐ 送信を 試みる
+      void flushOfflineQueue()
+    }
+    const goOffline = () => setIsOffline(true)
+    window.addEventListener('online', goOnline)
+    window.addEventListener('offline', goOffline)
+    // アプリ復帰時 (バックグラウンドから 戻った時) も 送信を 試みる
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && navigator.onLine) {
+        void flushOfflineQueue()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    // マウント時に 前回の 残りを 送る
+    if (typeof navigator !== 'undefined' && navigator.onLine) void flushOfflineQueue()
+    return () => {
+      window.removeEventListener('online', goOnline)
+      window.removeEventListener('offline', goOffline)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [flushOfflineQueue])
+  const [syncing, setSyncing] = useState(false)
+  const handleManualSync = async () => {
+    setSyncing(true)
+    try {
+      const { sent, remaining } = await flushOfflineQueue()
+      setShareToast(
+        remaining > 0
+          ? `${sent} 件送信、${remaining} 件は 送れませんでした`
+          : `未送信 ${sent} 件を 送信しました`,
+      )
+    } finally {
+      setSyncing(false)
+      window.setTimeout(() => setShareToast(null), 3000)
+    }
+  }
+
   // 選択中ターゲット
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null)
   // ルート作成モード: 有効化中はマーカー/一覧タップで draftRouteIds に順番に追加していく
@@ -1272,8 +1329,53 @@ export function MobileStakingPage() {
     }
     let cancelled = false
     ;(async () => {
+      // 圏外: 事前に 「オフライン保存」した スナップショットで 画面を 起こす。
+      // 対象は 測点のみ (配管 / 工事区域 / メモ / 地図タイルは 含まない)。
+      const loadFromSnapshot = async (): Promise<boolean> => {
+        const snap = await getFarmSnapshot(farmId)
+        if (!snap || cancelled) return false
+        const typedFarm = snap.farm as unknown as Farm
+        setFarm(typedFarm)
+        setCurrentFarm(typedFarm)
+        const zoneFromSnap =
+          (snap.project?.coordinate_zone as number | undefined) ?? 13
+        if (snap.project) {
+          const typedProj = snap.project as unknown as Project
+          setProject(typedProj)
+          useProjectListStore.setState({ currentProject: typedProj })
+          setZone(zoneFromSnap)
+        }
+        useCoordinateStore
+          .getState()
+          .hydrateCoordinates(snap.coordinateRows, zoneFromSnap, farmId)
+        useStakingStore.getState().hydrateRecords(snap.recordRows, farmId)
+        // 地番: 区域の 形 (design_work_areas) + 属性 (parcels) + 塗り分け (attribute_types)。
+        // 旧バージョンの スナップショットには 無いので ?? [] で 保護する。
+        const areaRows = snap.workAreaRows ?? []
+        useWorkAreaStore
+          .getState()
+          .hydrateWorkAreas(areaRows, snap.coordinateRows, zoneFromSnap, farmId)
+        useFarmStore
+          .getState()
+          .hydrateWorkAreaPolygons(areaRows, snap.coordinateRows, zoneFromSnap)
+        useParcelStore.getState().hydrateParcels(snap.parcelRows ?? [])
+        if (typedFarm.project_id) {
+          useParcelAttributeTypesStore
+            .getState()
+            .hydrateForProject(typedFarm.project_id, snap.parcelAttributeTypeRows ?? [])
+        }
+        setOfflineSnapshotAt(snap.savedAt)
+        return true
+      }
+
       try {
         setLoading(true)
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+          if (await loadFromSnapshot()) {
+            setLoading(false)
+            return
+          }
+        }
         const { data: farmData, error: farmErr } = await supabase
           .from('farms')
           .select('*')
@@ -1308,6 +1410,12 @@ export function MobileStakingPage() {
           useExportRouteStore.getState().fetchRoute(typedFarm.id),
         ])
       } catch (err) {
+        // 通信で 落ちた場合は スナップショットに 逃がす (圏内判定が 当てにならない
+        // 場所でも 現場が 止まらないように)
+        if (!cancelled && (await loadFromSnapshot())) {
+          setLoading(false)
+          return
+        }
         if (!cancelled) setError(err instanceof Error ? err.message : '読み込み失敗')
       } finally {
         if (!cancelled) setLoading(false)
@@ -1514,12 +1622,10 @@ export function MobileStakingPage() {
   // ただし連続 5 回まで。それを超えたら FIX 喪失として受け入れ、通常フローに戻す。
   const postFixModeRef = useRef(false)
   const consecutiveRejectsRef = useRef(0)
-  const rtkFixAccuracyRef = useRef(rtkFixAccuracyM)
   // 位置更新の最終受信時刻。RTK 受信機が抜けたりして更新が止まった場合、
   // 以下の閾値を超えたら「FIX 喪失」とみなしてビープと表示を止める。
   const lastPosTimeRef = useRef(0)
   const POSITION_STALE_MS = 3_000
-  useEffect(() => { rtkFixAccuracyRef.current = rtkFixAccuracyM }, [rtkFixAccuracyM])
   // 棄却中フラグ (>0 の間は FIX 音を鳴らさない)。ref と state の両方を持つ
   const [rejectingCount, setRejectingCount] = useState(0)
   const rejectingCountRef = useRef(0)
@@ -1536,7 +1642,6 @@ export function MobileStakingPage() {
         (sample, err) => {
           if (err || !sample) return
           const acc = sample.accuracy_m
-          const fixThreshold = rtkFixAccuracyRef.current
 
           // 一度 FIX 精度に達したあと 精度が 閾値超過 → 棄却フェーズ
           // (Drogger モード等で FIX した後 一時的に精度が悪化するはずれ値対策)
@@ -1566,8 +1671,9 @@ export function MobileStakingPage() {
             }
           }
 
-          // 一度 FIX 精度に達したら postFixMode に入り、以降のフィルタが有効化される
-          if (acc != null && acc <= fixThreshold) {
+          // 一度 RTK Fix (fixQuality=4) を受信したら postFixMode に入り、
+          // 以降の はずれ値フィルタが 有効化される
+          if (sample.fixQuality === 4) {
             postFixModeRef.current = true
           }
 
@@ -2243,17 +2349,13 @@ export function MobileStakingPage() {
   // FIX が外れた瞬間だけ「ブーッ」。
   // (soundEnabled は gnssSettingsStore に移設済み)
   //
-  // FIX 判定は Drogger の fixQuality (RTK Fix=4 / Float=5) が 出ていれば
-  // それを優先。無い場合 (ブラウザ / Android GPS) は 精度 <= しきい値 で判定。
+  // FIX 判定は Drogger の fixQuality が RTK Fix (=4) のときのみ。
+  // Float (=5) や 精度しきい値による 判定は しない。
   const audioCtxRef = useRef<AudioContext | null>(null)
-  const soundAccRef = useRef<number | null>(null)
   const soundFqRef = useRef<number | null>(null)
   const soundDistRef = useRef<number | null>(null)
   const prevFixRef = useRef<boolean>(false)
-  // 最新の精度・Fix品質・ターゲット距離を ref に同期
-  useEffect(() => {
-    soundAccRef.current = currentAcc
-  }, [currentAcc])
+  // 最新の Fix品質・ターゲット距離を ref に同期
   useEffect(() => {
     soundFqRef.current = currentFixQuality
   }, [currentFixQuality])
@@ -2261,14 +2363,9 @@ export function MobileStakingPage() {
     soundDistRef.current = proximityRel?.dist ?? null
   }, [proximityRel])
 
-  /** Fix 判定: fixQuality が あれば RTK Fix (4) のみ 音を鳴らす (Float=5 は 除外)、
-   *  無ければ 精度しきい値で 判定 (ブラウザ/Android GPS 用のフォールバック) */
-  const isCurrentlyFixed = (): boolean => {
-    const fq = soundFqRef.current
-    if (fq != null) return fq === 4
-    const acc = soundAccRef.current
-    return acc != null && acc <= rtkFixAccuracyM
-  }
+  /** Fix 判定: RTK Fix (fixQuality=4) を 受信しているときのみ FIX 扱い
+   *  (Float=5 は 除外。精度しきい値による 判定は 廃止) */
+  const isCurrentlyFixed = (): boolean => soundFqRef.current === 4
 
   // AudioContext の 初回セットアップ: soundEnabled が ON になった時に
   // AudioContext が 未生成なら 作る。GPS設定モーダルから ON にした場合も 動く。
@@ -2314,8 +2411,7 @@ export function MobileStakingPage() {
       playBeeps(ctx, count)
     }, 1000)
     return () => window.clearInterval(id)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [soundEnabled, rtkFixAccuracyM])
+  }, [soundEnabled])
 
   // 位置更新の鮮度を state 化 (React で useEffect が反応するように 1Hz でチェック)。
   // これで「更新が止まって FIX 喪失扱い」の遷移を warning buzzer トリガに繋げられる。
@@ -2331,12 +2427,8 @@ export function MobileStakingPage() {
   }, [])
 
   // FIX→喪失の瞬間に警告音（ブーッ）を 1 回。「精度悪化」と「更新途絶」の両方を FIX 喪失とみなす。
-  // Fix 判定: fixQuality=4 (RTK Fix) のみ True、無ければ 精度で判定
-  const soundIsFix = !posStale && (
-    currentFixQuality != null
-      ? currentFixQuality === 4
-      : (currentAcc != null && currentAcc <= rtkFixAccuracyM)
-  )
+  // Fix 判定: fixQuality=4 (RTK Fix) を 受信しているときのみ True
+  const soundIsFix = !posStale && currentFixQuality === 4
   useEffect(() => {
     if (!soundEnabled) {
       prevFixRef.current = soundIsFix
@@ -2641,25 +2733,51 @@ export function MobileStakingPage() {
       const stakeRecordName =
         existing === 0 ? `G_${selectedTarget.name}` : `G2_${selectedTarget.name}`
 
-      const saved = await addRecord({
-        farmId,
-        surveyCategory,
-        targetType: selectedTarget.kind,
-        targetRefId: selectedTarget.refId,
-        targetVertexIndex: selectedTarget.vertexIndex,
-        targetName: stakeRecordName,
-        targetX: selectedTarget.x,
-        targetY: selectedTarget.y,
-        targetZ: selectedTarget.z,
-        measuredX: x,
-        measuredY: y,
-        measuredZ: avgAlt,
-        accuracy: maxAcc || null,
-        sampleCount: samples.length,
-        durationSeconds: avgSeconds,
-        notes: null,
-      })
-      if (saved) {
+      const result = await saveMeasurement(
+        {
+          farmId,
+          surveyCategory,
+          targetType: selectedTarget.kind,
+          targetRefId: selectedTarget.refId,
+          targetVertexIndex: selectedTarget.vertexIndex,
+          targetName: stakeRecordName,
+          targetX: selectedTarget.x,
+          targetY: selectedTarget.y,
+          targetZ: selectedTarget.z,
+          measuredX: x,
+          measuredY: y,
+          measuredZ: avgAlt,
+          accuracy: maxAcc || null,
+          sampleCount: samples.length,
+          durationSeconds: avgSeconds,
+          notes: null,
+        },
+        // オフライン退避時に 座標管理へも 登録するための 相方
+        {
+          pointNumber: stakeRecordName,
+          x,
+          y,
+          z: avgAlt,
+          type: 'measured',
+          notes: 'mobile_measurement',
+        },
+        { zone },
+      )
+      if (result.status === 'full') {
+        alert(OFFLINE_FULL_MESSAGE)
+        return
+      }
+      if (result.status === 'error') return
+      if (result.status === 'queued') {
+        // 圏外: 座標管理への 登録は 送信時に まとめて 行う。
+        // 写真は オフラインでは 一切扱わないので 結果モーダルも 出さない。
+        setShareToast(`${stakeRecordName} を 端末に保存 (未送信 ${useStakingStore.getState().pendingCount} 件)`)
+        window.setTimeout(() => setShareToast(null), 3000)
+        const idxQ = filteredTargets.findIndex((t) => t.id === selectedTarget.id)
+        setSelectedTargetId(filteredTargets[idxQ + 1]?.id ?? null)
+        return
+      }
+      {
         // 座標管理にも自動登録（新点と同じ扱い）。
         // 点種は「実測点 = measured」、出所が分かるよう notes に
         // 'mobile_measurement' を入れる。同名が既に居る場合はスキップ。
@@ -2731,25 +2849,39 @@ export function MobileStakingPage() {
     if (!d || !farmId) return
     setFreePointDialog(null)
     pushRecentPrefix(prefix)
-    const saved = await addRecord({
-      farmId,
-      surveyCategory,
-      targetType: 'free',
-      targetRefId: null,
-      targetVertexIndex: null,
-      targetName: name,
-      targetX: null,
-      targetY: null,
-      targetZ: null,
-      measuredX: d.x,
-      measuredY: d.y,
-      measuredZ: d.z,
-      accuracy: d.accuracy || null,
-      sampleCount: d.sampleCount,
-      durationSeconds: avgSeconds,
-      notes: null,
-    })
-    if (!saved) return
+    const result = await saveMeasurement(
+      {
+        farmId,
+        surveyCategory,
+        targetType: 'free',
+        targetRefId: null,
+        targetVertexIndex: null,
+        targetName: name,
+        targetX: null,
+        targetY: null,
+        targetZ: null,
+        measuredX: d.x,
+        measuredY: d.y,
+        measuredZ: d.z,
+        accuracy: d.accuracy || null,
+        sampleCount: d.sampleCount,
+        durationSeconds: avgSeconds,
+        notes: null,
+      },
+      { pointNumber: name, x: d.x, y: d.y, z: d.z, type, notes: 'mobile_measurement' },
+      { zone },
+    )
+    if (result.status === 'full') {
+      alert(OFFLINE_FULL_MESSAGE)
+      return
+    }
+    if (result.status === 'error') return
+    if (result.status === 'queued') {
+      // 圏外: 座標管理登録は 送信時。写真は オフラインでは 扱わない (openPhoto は 無視)
+      setShareToast(`新点 ${name} を 端末に保存 (未送信 ${useStakingStore.getState().pendingCount} 件)`)
+      window.setTimeout(() => setShareToast(null), 3000)
+      return
+    }
     // 座標管理にも自動登録（重複点番号があればスキップ）。
     // 出所が分かるよう notes に 'mobile_measurement' を入れておく。
     // 失敗時はサイレントに握りつぶさず、トーストで知らせる（マーカーが
@@ -3073,6 +3205,37 @@ export function MobileStakingPage() {
             title="工区を編集"
           >
             <Edit3 className="h-4 w-4" />
+          </button>
+        )}
+        {/* オフライン保存データで 起動した場合の 注意表示。
+            配管 / 工事区域 / メモ / 地図タイルは 含まれないため 明示する */}
+        {offlineSnapshotAt && (
+          <span
+            className="shrink-0 px-2 py-1 rounded bg-slate-600 text-slate-100 text-[11px] font-semibold"
+            title={`${new Date(offlineSnapshotAt).toLocaleString()} 時点のオフライン保存データ（測点のみ）`}
+          >
+            オフライン {new Date(offlineSnapshotAt).toLocaleDateString()}
+          </span>
+        )}
+        {/* 未送信の 測点 (オフライン退避分)。タップで 手動送信 */}
+        {pendingCount > 0 && (
+          <button
+            type="button"
+            onClick={handleManualSync}
+            disabled={syncing || isOffline}
+            className="shrink-0 flex items-center gap-1 px-2 py-1 rounded bg-amber-500 text-slate-900 text-[11px] font-bold disabled:opacity-60"
+            title={
+              isOffline
+                ? `未送信 ${pendingCount} 件（圏外のため送信できません）`
+                : `未送信 ${pendingCount} 件をタップで送信`
+            }
+          >
+            {syncing ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <CloudOff className="h-3.5 w-3.5" />
+            )}
+            未送信 {pendingCount}
           </button>
         )}
         {/* Drogger 直接受信の 接続 + Fix 品質 バッジ。source='drogger' 時のみ表示 */}
@@ -4427,6 +4590,13 @@ export function MobileStakingPage() {
           maxZoom={24}
           className="h-full w-full"
           style={baseLayer === 'none' ? { background: '#ffffff' } : undefined}
+          // 長押し → contextmenu の 擬似発火を 強制 ON。
+          // Leaflet の 既定は tapHold: touchNative && safari && mobile だが、
+          // Capacitor の WKWebView は UA に "Safari" を含まないため safari=false と
+          // 判定され、iOS で 長押しメニューが 一切出なくなる。
+          // (iOS WebKit は 長押しで ネイティブ contextmenu を 発火しないので、
+          //  この擬似発火が 無いと 手段が無い)
+          tapHold
           // leaflet-rotate (MobilityDriverPage 等が副作用 import) が有効な
           // セッションでは既定で rotateControl が付いてしまうため明示 OFF。
           {...({ rotateControl: false } as Record<string, unknown>)}
@@ -5340,12 +5510,12 @@ export function MobileStakingPage() {
             </div>
             <div className="p-3 overflow-y-auto flex-1">
 
-            {/* 音声ガイダンス / 平均秒数 / アンテナ高 / ジオイド補正 /
-                RTK 判定精度 は 「GPS設定」モーダル (画面右上のバッジ)
-                の 「GPS接続」タブ 下部に移設。設定は 端末単位で 共有される。 */}
+            {/* 音声ガイダンス / 平均秒数 / アンテナ高 / ジオイド補正 は
+                「GPS設定」モーダル (画面右上のバッジ) の 「GPS接続」タブ
+                下部に移設。設定は 端末単位で 共有される。 */}
             <div className="mb-3 px-2 py-2 text-[11px] bg-emerald-50 border border-emerald-200 text-emerald-800 rounded">
-              音声ガイダンス / 平均秒数 / アンテナ高 / ジオイド補正 /
-              RTK 判定精度 は、右上の「GPS設定」バッジから 変更できます。
+              音声ガイダンス / 平均秒数 / アンテナ高 / ジオイド補正 は、
+              右上の「GPS設定」バッジから 変更できます。
             </div>
 
             <label className="flex items-center gap-2 mb-2 pt-2 border-t">
@@ -6222,10 +6392,8 @@ export function MobileStakingPage() {
             {/* 2 行目: 測定 + 詳細ボタン */}
             <div className="flex items-center gap-2">
               {!recording && (() => {
-                // 精密判定: fixQuality=4 (RTK Fix) or 精度<=しきい値
-                const isPrecise =
-                  currentFixQuality === 4 ||
-                  (currentFixQuality == null && currentAcc != null && currentAcc <= rtkFixAccuracyM)
+                // 精密判定: fixQuality=4 (RTK Fix) を 受信しているか
+                const isPrecise = currentFixQuality === 4
                 const label = isPrecise ? '精密測定' : '概略測定'
                 const disabled = saving || !currentPos
                 return (
@@ -6239,8 +6407,8 @@ export function MobileStakingPage() {
                     }`}
                     title={
                       isPrecise
-                        ? '精度しきい値内 (RTK Fix 相当)。cm 精度で 測定'
-                        : `精度がしきい値 (${(rtkFixAccuracyM * 100).toFixed(1)}cm) を 超えています。概略値として 記録`
+                        ? 'RTK Fix 受信中。cm 精度で 測定'
+                        : 'RTK Fix を 受信していません。概略値として 記録'
                     }
                   >
                     <CircleIcon className="h-4 w-4" />
@@ -6355,11 +6523,9 @@ export function MobileStakingPage() {
         <div className="mt-1 flex gap-2">
           {!recording ? (
             <>
-              {/* 測定: 精度しきい値内 = 精密測定 (赤)、外 = 概略測定 (琥珀) */}
+              {/* 測定: RTK Fix 受信中 = 精密測定 (赤)、それ以外 = 概略測定 (琥珀) */}
               {(() => {
-                const isPrecise =
-                  currentFixQuality === 4 ||
-                  (currentFixQuality == null && currentAcc != null && currentAcc <= rtkFixAccuracyM)
+                const isPrecise = currentFixQuality === 4
                 const label = isPrecise ? '精密測定' : '概略測定'
                 const disabled = saving || !currentPos
                 return (
@@ -6373,8 +6539,8 @@ export function MobileStakingPage() {
                     }`}
                     title={
                       isPrecise
-                        ? '精度しきい値内 (RTK Fix 相当)。cm 精度で 測定'
-                        : `精度がしきい値 (${(rtkFixAccuracyM * 100).toFixed(1)}cm) を 超えています。概略値として 記録`
+                        ? 'RTK Fix 受信中。cm 精度で 測定'
+                        : 'RTK Fix を 受信していません。概略値として 記録'
                     }
                   >
                     <CircleIcon className="h-5 w-5" />
@@ -6407,8 +6573,9 @@ export function MobileStakingPage() {
                 <button
                   type="button"
                   onClick={() => setPhotoSourceSheet(true)}
-                  className="flex-1 basis-0 flex items-center justify-center gap-1 px-2 py-3 rounded-lg font-bold bg-blue-600 text-white hover:bg-blue-700"
-                  title="撮影またはインポート"
+                  disabled={isOffline}
+                  className="flex-1 basis-0 flex items-center justify-center gap-1 px-2 py-3 rounded-lg font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"
+                  title={isOffline ? 'オフライン中は写真を扱えません' : '撮影またはインポート'}
                 >
                   <Camera className="h-5 w-5" />
                   カメラ
