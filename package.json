@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "scout:parcel-maps": "node scripts/scout-parcel-maps.mjs",
-    "sync:parcel-maps": "node scripts/sync-parcel-maps.mjs"
+    "sync:parcel-maps": "node scripts/sync-parcel-maps.mjs",
+    "ios:sync": "cp capacitor.config.ios.ts capacitor.config.ts && npm run build && npx cap sync ios && node -e \"const f='ios-ict/App/App/capacitor.config.json';const fs=require('fs');const j=JSON.parse(fs.readFileSync(f));if(!j.packageClassList.includes('DroggerLocationPlugin'))j.packageClassList.push('DroggerLocationPlugin');fs.writeFileSync(f,JSON.stringify(j,null,2));\" && cp capacitor.config.android.ts capacitor.config.ts"
   },
   "dependencies": {
     "@capacitor-community/background-geolocation": "^1.2.26",
@@ -17,6 +18,7 @@
     "@capacitor/cli": "8.3.1",
     "@capacitor/core": "8.3.1",
     "@capacitor/geolocation": "^8.2.0",
+    "@capacitor/ios": "^8.3.1",
     "@supabase/supabase-js": "^2.99.0",
     "@types/delaunator": "^5.0.3",
     "class-variance-authority": "^0.7.1",
