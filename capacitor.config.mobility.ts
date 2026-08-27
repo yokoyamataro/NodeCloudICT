@@ -22,7 +22,22 @@ const config: CapacitorConfig = {
   android: {
     allowMixedContent: false,
   },
+  // @capacitor-community/background-geolocation は capacitor-swift-pm 7.x 固定で
+  // Capacitor 8 と 依存解決できない (実測エラー:
+  //   'background-geolocation' depends on capacitor-swift-pm 7.0.0..<8.0.0 /
+  //   'geolocation' depends on 8.0.0..<9.0.0)
+  // iOS では 同名 ('BackgroundGeolocation') の プラグインを 自前で 実装して 置き換える。
+  // TS 側は registerPlugin('BackgroundGeolocation') で 名前解決しているだけ なので変更不要。
+  includePlugins: [
+    '@capacitor/geolocation',
+  ],
+  packageClassList: [
+    'GeolocationPlugin',
+    'MobilityLocationPlugin',
+  ],
   ios: {
+    // 標準の ios/ ではなく ios-mobility/ をプロジェクトディレクトリにする
+    path: 'ios-mobility',
     // iOS の Background Modes は Xcode で「Location updates」にチェック必須
     contentInset: 'automatic',
   },
