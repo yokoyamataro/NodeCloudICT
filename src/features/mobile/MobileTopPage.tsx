@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker, Polygon, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Loader2, LogOut, ArrowLeft, Plus } from 'lucide-react'
+import { Loader2, LogOut, ArrowLeft, Plus, Download, CheckCircle2 } from 'lucide-react'
 import { useFarmStore, type Farm } from '@/stores/farmStore'
+import { useOfflineListFallback } from '@/lib/useOfflineListFallback'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useAuth } from '@/contexts/AuthContext'
 import { CurrentLocationLayer } from '@/components/map/CurrentLocationLayer'
@@ -18,6 +19,12 @@ import {
 import { importParcelBatch } from '@/features/parcel-maps/importParcelBatch'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { FarmChatIconButton } from '@/features/chat/FarmChatIconButton'
+import {
+  downloadFarmSnapshot,
+  deleteFarmSnapshot,
+  listFarmSnapshots,
+  type SnapshotMeta,
+} from '@/lib/offlineFarmCache'
 import { FarmChatSheet } from '@/features/chat/FarmChatSheet'
 import { useFarmChatStore } from '@/stores/farmChatStore'
 
@@ -77,6 +84,43 @@ export function MobileTopPage() {
   // 完了判定: farms.completed_at が真実の源。過去互換用に isFarmCompleted 関数だけ残す
   const isFarmCompleted = (farm: Farm) => farm.completed_at != null
 
+  // ---- オフライン保存 ----
+  // 圏外の 現場で 使う 工区を 事前に 端末へ 落としておく。
+  // 含むのは 工区 / 工事 / 測点 / 実測記録 / 地番 (区域・属性・塗り分け) で、
+  // 地図タイル・オルソ・写真・配管・工区メモは 含まない。
+  const [snapshots, setSnapshots] = useState<Map<string, SnapshotMeta>>(new Map())
+  const [downloadingFarmId, setDownloadingFarmId] = useState<string | null>(null)
+  const refreshSnapshots = useCallback(async () => {
+    const list = await listFarmSnapshots()
+    setSnapshots(new Map(list.map((m) => [m.farmId, m])))
+  }, [])
+  useEffect(() => {
+    void refreshSnapshots()
+  }, [refreshSnapshots])
+  const handleToggleOffline = async (farm: Farm) => {
+    const existing = snapshots.get(farm.id)
+    if (existing) {
+      if (!confirm(`${farm.name} のオフライン保存を削除しますか？\n（未送信の測点がある場合は先に送信してください）`)) return
+      await deleteFarmSnapshot(farm.id)
+      await refreshSnapshots()
+      return
+    }
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      alert('オフライン保存は電波の届く場所で行ってください。')
+      return
+    }
+    setDownloadingFarmId(farm.id)
+    try {
+      const meta = await downloadFarmSnapshot(farm.id)
+      await refreshSnapshots()
+      alert(`${farm.name} を端末に保存しました（測点 ${meta.coordinateCount} 点・地番を含む）。`)
+    } catch (err) {
+      alert(err instanceof Error ? `保存に失敗しました: ${err.message}` : '保存に失敗しました')
+    } finally {
+      setDownloadingFarmId(null)
+    }
+  }
+
   // 新規工区ダイアログ
   const [showNewFarmDialog, setShowNewFarmDialog] = useState(false)
   const [newFarmName, setNewFarmName] = useState('')
@@ -105,6 +149,8 @@ export function MobileTopPage() {
     fetchFarms()
     fetchProjects()
   }, [fetchFarms, fetchProjects])
+  // 圏外で 一覧が 空になったら オフライン保存済みの 工事・工区で 埋める
+  useOfflineListFallback()
 
   // URL の projectId に該当する工事の工区のみ表示。完了フィルタ ON なら「完了」も除外。
   const farms = useMemo(() => {
@@ -391,8 +437,33 @@ export function MobileTopPage() {
                       </span>
                     )}
                   </button>
-                  {/* 右端: チャットアイコン + 編集ボタン */}
+                  {/* 右端: オフライン保存 + チャットアイコン + 編集ボタン */}
                   <div className="flex items-center pr-3">
+                    <button
+                      type="button"
+                      onClick={() => void handleToggleOffline(farm)}
+                      disabled={downloadingFarmId === farm.id}
+                      className={`p-2 rounded ${
+                        snapshots.has(farm.id)
+                          ? 'text-emerald-600 hover:bg-emerald-50'
+                          : 'text-slate-400 hover:bg-slate-100'
+                      } disabled:opacity-50`}
+                      title={
+                        snapshots.get(farm.id)
+                          ? `オフライン保存済み（測点 ${snapshots.get(farm.id)!.coordinateCount} 点 / ${new Date(
+                              snapshots.get(farm.id)!.savedAt,
+                            ).toLocaleDateString()}）タップで削除`
+                          : 'この工区の測点・地番を端末に保存（圏外で使う）'
+                      }
+                    >
+                      {downloadingFarmId === farm.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : snapshots.has(farm.id) ? (
+                        <CheckCircle2 className="h-4 w-4" />
+                      ) : (
+                        <Download className="h-4 w-4" />
+                      )}
+                    </button>
                     <FarmChatIconButton
                       farmId={farm.id}
                       onClick={() => setChatFarm(farm)}

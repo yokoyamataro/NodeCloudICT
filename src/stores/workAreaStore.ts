@@ -56,6 +56,13 @@ interface WorkAreaState {
 
   // データ取得
   fetchWorkAreas: (farmId: string) => Promise<void>
+  /** オフライン スナップショットから 復元する */
+  hydrateWorkAreas: (
+    areaRows: unknown[],
+    coordRows: unknown[],
+    zone: number,
+    farmId: string,
+  ) => void
 
   // 工事区域操作
   addWorkArea: (workType: WorkType) => Promise<WorkAreaRow | null>
@@ -95,6 +102,61 @@ const getCurrentZone = (): number => {
   return project?.coordinate_zone ?? 13
 }
 
+/**
+ * design_work_areas + design_coordinates → WorkAreasRecord。
+ * オンライン取得 (fetchWorkAreas) と オフライン復元 (hydrateWorkAreas) で 共用する。
+ */
+export function buildWorkAreasRecord(
+  areas: DesignWorkArea[],
+  coordinatesMap: Record<string, DesignCoordinate>,
+  zone: number,
+): WorkAreasRecord {
+  const converter = new CoordinateConverter(zone)
+  const workAreasRecord: WorkAreasRecord = {}
+  for (const area of areas) {
+    const pointIds = area.point_ids || []
+    const areaPoints: WorkAreaPoint[] = pointIds
+      .map((id, index) => {
+        const coord = coordinatesMap[id]
+        if (!coord) return null
+        let lat: number | null = null
+        let lng: number | null = null
+        if (coord.x !== null && coord.y !== null) {
+          const result = converter.toLatLng(coord.x, coord.y)
+          lat = result.lat
+          lng = result.lng
+        }
+        return {
+          id: coord.id,
+          pointNumber: coord.point_number,
+          x: coord.x,
+          y: coord.y,
+          z: coord.z,
+          lat,
+          lng,
+          sortOrder: index,
+        }
+      })
+      .filter((p): p is WorkAreaPoint => p !== null)
+
+    const workAreaRow: WorkAreaRow = {
+      id: area.id,
+      workType: area.work_type,
+      zoneNumber: area.zone_number,
+      name: area.name,
+      pointIds,
+      points: areaPoints,
+      areaSqm: area.area_sqm,
+      areaHa: area.area_ha,
+      perimeterM: area.perimeter_m,
+      notes: area.notes,
+    }
+    if (!workAreasRecord[area.work_type]) workAreasRecord[area.work_type] = []
+    workAreasRecord[area.work_type]!.push(workAreaRow)
+  }
+  return workAreasRecord
+}
+
 export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
   workAreas: {},
   loading: false,
@@ -103,6 +165,19 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
   pendingWorkAreaIds: [],
   loadedFarmId: null,
   invalidateCache: () => set({ loadedFarmId: null }),
+
+  hydrateWorkAreas: (areaRows, coordRows, zone, farmId) => {
+    const coordinatesMap: Record<string, DesignCoordinate> = {}
+    for (const c of coordRows as DesignCoordinate[]) coordinatesMap[c.id] = c
+    set({
+      workAreas: buildWorkAreasRecord(areaRows as DesignWorkArea[], coordinatesMap, zone),
+      loading: false,
+      hasChanges: false,
+      pendingWorkAreaIds: [],
+      loadedFarmId: farmId,
+      error: null,
+    })
+  },
 
   fetchWorkAreas: async (farmId: string) => {
     // 同じ farm でロード済みならキャッシュを使う
@@ -158,56 +233,7 @@ export const useWorkAreaStore = create<WorkAreaState>()((set, get) => ({
         }
       }
 
-      const zone = getCurrentZone()
-      const converter = new CoordinateConverter(zone)
-
-      // 工種別にグループ化
-      const workAreasRecord: WorkAreasRecord = {}
-
-      for (const area of typedAreas) {
-        const pointIds = area.point_ids || []
-        const areaPoints: WorkAreaPoint[] = pointIds
-          .map((id, index) => {
-            const coord = coordinatesMap[id]
-            if (!coord) return null
-            let lat: number | null = null
-            let lng: number | null = null
-            if (coord.x !== null && coord.y !== null) {
-              const result = converter.toLatLng(coord.x, coord.y)
-              lat = result.lat
-              lng = result.lng
-            }
-            return {
-              id: coord.id,
-              pointNumber: coord.point_number,
-              x: coord.x,
-              y: coord.y,
-              z: coord.z,
-              lat,
-              lng,
-              sortOrder: index,
-            }
-          })
-          .filter((p): p is WorkAreaPoint => p !== null)
-
-        const workAreaRow: WorkAreaRow = {
-          id: area.id,
-          workType: area.work_type,
-          zoneNumber: area.zone_number,
-          name: area.name,
-          pointIds,
-          points: areaPoints,
-          areaSqm: area.area_sqm,
-          areaHa: area.area_ha,
-          perimeterM: area.perimeter_m,
-          notes: area.notes,
-        }
-
-        if (!workAreasRecord[area.work_type]) {
-          workAreasRecord[area.work_type] = []
-        }
-        workAreasRecord[area.work_type]!.push(workAreaRow)
-      }
+      const workAreasRecord = buildWorkAreasRecord(typedAreas, coordinatesMap, getCurrentZone())
 
       set({ workAreas: workAreasRecord, loading: false, hasChanges: false, pendingWorkAreaIds: [], loadedFarmId: farmId })
     } catch (err) {

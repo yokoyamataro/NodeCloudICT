@@ -97,6 +97,8 @@ interface FarmState {
   fetchTrashedFarms: (projectId?: string) => Promise<void>
   fetchFarmLocations: () => Promise<void>
   fetchWorkAreaPolygons: () => Promise<void>
+  /** オフライン スナップショットから 地番/工事区域ポリゴンを 復元する */
+  hydrateWorkAreaPolygons: (areaRows: unknown[], coordRows: unknown[], zone: number) => void
   createFarm: (projectId: string, name: string, description?: string) => Promise<Farm | null>
   updateFarm: (
     id: string,
@@ -120,6 +122,44 @@ interface FarmState {
     id: string,
     onProgress?: (phase: string, done?: number, total?: number) => void,
   ) => Promise<void>
+}
+
+/**
+ * design_work_areas の 1 行 → 地図に 出す ポリゴン。構成点が 3 点未満なら null。
+ * オンライン取得 (fetchWorkAreaPolygons) と オフライン復元 (hydrateWorkAreaPolygons)
+ * で 共用する。
+ */
+export function buildWorkAreaPolygon(
+  area: {
+    id: string
+    farm_id: string
+    work_type: string
+    zone_number: string
+    name: string | null
+    point_ids: string[] | null
+  },
+  coordsMap: Record<string, { x: number; y: number }>,
+  zone: number,
+): WorkAreaPolygon | null {
+  const areaPointIds = area.point_ids ?? []
+  if (areaPointIds.length < 3) return null
+  const converter = new CoordinateConverter(zone)
+  const positions: [number, number][] = []
+  for (const pointId of areaPointIds) {
+    const coord = coordsMap[pointId]
+    if (coord) {
+      const { lat, lng } = converter.toLatLng(coord.x, coord.y)
+      positions.push([lat, lng])
+    }
+  }
+  if (positions.length < 3) return null
+  return {
+    id: area.id,
+    farmId: area.farm_id,
+    workType: area.work_type,
+    name: area.name || area.zone_number || '',
+    positions,
+  }
 }
 
 export const useFarmStore = create<FarmState>()(
@@ -245,6 +285,19 @@ export const useFarmStore = create<FarmState>()(
     }
   },
 
+  hydrateWorkAreaPolygons: (areaRows, coordRows, zone) => {
+    const coordsMap: Record<string, { x: number; y: number }> = {}
+    for (const c of coordRows as Array<{ id: string; x: number; y: number }>) {
+      coordsMap[c.id] = { x: c.x, y: c.y }
+    }
+    const polygons: WorkAreaPolygon[] = []
+    for (const area of areaRows as Array<Parameters<typeof buildWorkAreaPolygon>[0]>) {
+      const poly = buildWorkAreaPolygon(area, coordsMap, zone)
+      if (poly) polygons.push(poly)
+    }
+    set({ workAreaPolygons: polygons })
+  },
+
   fetchWorkAreaPolygons: async () => {
     // farms 配列が空でも currentFarm が立っていれば、そのファームだけを対象に
     // ポリゴンを取りに行く。
@@ -317,31 +370,9 @@ export const useFarmStore = create<FarmState>()(
         for (const area of areas) {
           const farm = targetFarms.find(f => f.id === area.farm_id)
           if (!farm) continue
-
-          const areaPointIds = area.point_ids ?? []
-          if (areaPointIds.length < 3) continue
-
           const zone = projectZones.get(farm.project_id) ?? 13
-          const converter = new CoordinateConverter(zone)
-          const positions: [number, number][] = []
-
-          for (const pointId of areaPointIds) {
-            const coord = coordsMap[pointId]
-            if (coord) {
-              const { lat, lng } = converter.toLatLng(coord.x, coord.y)
-              positions.push([lat, lng])
-            }
-          }
-
-          if (positions.length < 3) continue
-
-          polygons.push({
-            id: area.id,
-            farmId: area.farm_id,
-            workType: area.work_type,
-            name: area.name || area.zone_number || '',
-            positions,
-          })
+          const poly = buildWorkAreaPolygon(area, coordsMap, zone)
+          if (poly) polygons.push(poly)
         }
       }
 

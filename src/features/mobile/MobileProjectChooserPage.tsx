@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AlertCircle, Car, Check, ChevronRight, Folder, Loader2, LogOut, MapPin, Pencil, Plus, X } from 'lucide-react'
 import { useProjectListStore } from '@/stores/projectListStore'
+import { useOfflineListFallback } from '@/lib/useOfflineListFallback'
 import { getAllProjectRecency, sortByRecency } from '@/lib/recentProjects'
 import { useFarmStore } from '@/stores/farmStore'
 import { useAuth } from '@/contexts/AuthContext'
@@ -53,6 +54,8 @@ export function MobileProjectChooserPage() {
     fetchFarms()
     fetchUserRoles()
   }, [fetchProjects, fetchFarms, fetchUserRoles])
+  // 圏外で 一覧が 空になったら オフライン保存済みの 工事・工区で 埋める
+  useOfflineListFallback()
 
   // 現場ごとの実効ロールを返す。lib/useProjectPermission と同じ判定ロジック。
   // MobileProjectChooserPage は各行を map で描画するため、hook では per-row 呼出が

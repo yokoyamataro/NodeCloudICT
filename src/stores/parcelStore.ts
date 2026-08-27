@@ -73,6 +73,8 @@ interface ParcelState {
   error: string | null
 
   fetchByWorkAreaIds: (workAreaIds: string[]) => Promise<void>
+  /** オフライン スナップショット (parcels の 生行) から 復元する */
+  hydrateParcels: (rows: unknown[]) => void
   /** 1 行 upsert（存在しなければ INSERT、あれば UPDATE） */
   upsertParcel: (workAreaId: string, fields: Partial<ParcelEditableFields>) => Promise<Parcel | null>
   /** ローカルキャッシュをクリア（工区切替時など） */
@@ -83,6 +85,12 @@ export const useParcelStore = create<ParcelState>((set, get) => ({
   byWorkAreaId: new Map(),
   loading: false,
   error: null,
+
+  hydrateParcels: (rows) => {
+    const next = new Map<string, Parcel>()
+    for (const r of rows as RawParcel[]) next.set(r.work_area_id, toParcel(r))
+    set({ byWorkAreaId: next, loading: false, error: null })
+  },
 
   fetchByWorkAreaIds: async (workAreaIds) => {
     if (workAreaIds.length === 0) {

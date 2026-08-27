@@ -26,6 +26,8 @@ interface State {
   error: string | null
 
   fetchForProject: (projectId: string) => Promise<void>
+  /** オフライン スナップショット (parcel_attribute_types の 生行) から 復元する */
+  hydrateForProject: (projectId: string, rows: unknown[]) => void
   /** 属性コード -> 属性 (未選択なら undefined)。fetch 済み前提。 */
   getByCode: (projectId: string, code: string | null | undefined) => ParcelAttributeType | undefined
 
@@ -44,6 +46,13 @@ export const useParcelAttributeTypesStore = create<State>((set, get) => ({
   byProject: new Map(),
   loadingProjects: new Set(),
   error: null,
+
+  hydrateForProject: (projectId, rows) => {
+    if (!projectId) return
+    const map = new Map(get().byProject)
+    map.set(projectId, (rows ?? []) as ParcelAttributeType[])
+    set({ byProject: map })
+  },
 
   fetchForProject: async (projectId) => {
     if (!projectId) return

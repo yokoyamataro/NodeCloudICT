@@ -97,6 +97,44 @@ export interface RoutePoint {
   direction: RouteDirection
 }
 
+/**
+ * design_coordinates の 生行 → アプリ内の CoordinateRow。
+ * fetchCoordinates と、オフライン スナップショットからの hydrate で 共用する。
+ * (変換を 2 箇所に 持つと 片方だけ 直して 食い違うため)
+ */
+export function mapDesignCoordinateRows(
+  rows: DesignCoordinate[],
+  zone: number,
+): CoordinateRow[] {
+  const converter = new CoordinateConverter(zone)
+  return rows.map((row) => {
+    let lat = row.latitude
+    let lng = row.longitude
+    if (lat === null || lng === null) {
+      const result = converter.toLatLng(row.x, row.y)
+      lat = result.lat
+      lng = result.lng
+    }
+    return {
+      id: row.id,
+      pointNumber: row.point_number,
+      x: row.x,
+      y: row.y,
+      z: row.z,
+      lat,
+      lng,
+      type: normalizeCoordinateType(row.coordinate_type) as CoordinateType,
+      stakeType: row.stake_type ?? null,
+      stakeStatus: normalizeStakeStatus(row.stake_status),
+      notes: row.notes ?? null,
+      createdAt: row.created_at ?? null,
+      updatedAt: row.updated_at ?? null,
+      createdBy: row.created_by ?? null,
+      updatedBy: row.updated_by ?? null,
+    }
+  })
+}
+
 interface CoordinateState {
   // 座標系設定
   zone: number
@@ -116,6 +154,8 @@ interface CoordinateState {
    */
   loadedFarmId: string | null
   invalidateCache: () => void
+  /** オフライン スナップショット (design_coordinates の 生行) から 復元する */
+  hydrateCoordinates: (rows: unknown[], zone: number, farmId: string) => void
   fetchCoordinates: (farmId: string) => Promise<void>
   addCoordinate: (type: CoordinateType) => Promise<void>
   updateCoordinate: (id: string, field: keyof CoordinateRow, value: string | number | null) => void
@@ -196,6 +236,17 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
   invalidateCache: () => set({ loadedFarmId: null }),
   error: null,
 
+  hydrateCoordinates: (rows, zone, farmId) => {
+    set({
+      zone,
+      coordinates: mapDesignCoordinateRows(rows as DesignCoordinate[], zone),
+      loading: false,
+      loadingProgress: null,
+      loadedFarmId: farmId,
+      error: null,
+    })
+  },
+
   fetchCoordinates: async (farmId: string) => {
     // 同じ farm でロード済みならキャッシュを使う（明示的な invalidateCache を経由するまで再取得しない）
     if (get().loadedFarmId === farmId) return
@@ -237,35 +288,7 @@ export const useCoordinateStore = create<CoordinateState>()((set, get) => ({
         from += PAGE
       }
 
-      const zone = get().zone
-      const converter = new CoordinateConverter(zone)
-
-      const coordinates: CoordinateRow[] = all.map((row) => {
-        let lat = row.latitude
-        let lng = row.longitude
-        if (lat === null || lng === null) {
-          const result = converter.toLatLng(row.x, row.y)
-          lat = result.lat
-          lng = result.lng
-        }
-        return {
-          id: row.id,
-          pointNumber: row.point_number,
-          x: row.x,
-          y: row.y,
-          z: row.z,
-          lat,
-          lng,
-          type: normalizeCoordinateType(row.coordinate_type) as CoordinateType,
-          stakeType: row.stake_type ?? null,
-          stakeStatus: normalizeStakeStatus(row.stake_status),
-          notes: row.notes ?? null,
-          createdAt: row.created_at ?? null,
-          updatedAt: row.updated_at ?? null,
-          createdBy: row.created_by ?? null,
-          updatedBy: row.updated_by ?? null,
-        }
-      })
+      const coordinates: CoordinateRow[] = mapDesignCoordinateRows(all, get().zone)
 
       set({ coordinates, loading: false, loadingProgress: null, loadedFarmId: farmId })
     } catch (err) {
