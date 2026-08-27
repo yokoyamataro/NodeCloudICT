@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, Trash2, Download, FileSearch, RefreshCw, Link as LinkIcon, X } from 'lucide-react'
+import { Loader2, Trash2, Download, FileSearch, RefreshCw, Link as LinkIcon, X, ChevronsLeft, ChevronsRight } from 'lucide-react'
 import { Marker, Polyline, Tooltip, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import { useFarmStore } from '@/stores/farmStore'
 import { useStakingStore, type SurveyCategory, type StakingRecord, type StakingTargetType } from '@/stores/stakingStore'
-import { useCoordinateStore } from '@/stores/coordinateStore'
+import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { CoordinateMap } from '@/components/map/CoordinateMap'
 import { CoordinateConverter, COORDINATE_TYPE_NAMES, type CoordinateType } from '@/lib/coordinates'
@@ -134,7 +134,7 @@ const TABLE_SECTIONS: Array<{
   },
   {
     key: 'slidedD',
-    label: 'スライド設計',
+    label: 'スライド後設計値',
     headerTitle: '設計値 を 実測 に 近づける: 設計 + スライド量',
     bgHeader: 'bg-fuchsia-50',
     bgSub: 'bg-fuchsia-50',
@@ -146,7 +146,7 @@ const TABLE_SECTIONS: Array<{
   },
   {
     key: 'revSlideM',
-    label: '逆スライド実測',
+    label: '逆スライド後実測値',
     headerTitle: '実測平均 を 設計 に 近づける: 実測平均 - スライド量。 出力 の 既定。',
     bgHeader: 'bg-cyan-50',
     bgSub: 'bg-cyan-50',
@@ -382,6 +382,32 @@ export function StakingRecordsPage() {
     out.sort((a, b) => a.distance - b.distance)
     return out
   }, [pendingLinkM2ForM1Id, records])
+
+  // 設計座標 リンク の 候補 (半径 2m 以内)。 pendingLinkRecordId が セット
+  // されて いる 間 だけ 計算。 「実測2 以外」= 実測 記録 に 由来 する 点
+  // (measured 種別) は 除外 し、設計 由来 の 座標 のみ を 対象 と する。
+  const DESIGN_CANDIDATE_RADIUS = 2.0 // m
+  interface DesignCandidate {
+    coord: CoordinateRow
+    distance: number
+  }
+  const designCandidates = useMemo<DesignCandidate[]>(() => {
+    if (!pendingLinkRecordId) return []
+    const rec = records.find((r) => r.id === pendingLinkRecordId)
+    if (!rec) return []
+    const out: DesignCandidate[] = []
+    for (const c of coordinates) {
+      // 実測 記録 由来 の 座標 (type=measured) は 除外 (=「実測2 以外」)
+      if (c.type === 'measured') continue
+      const dx = c.x - rec.measuredX
+      const dy = c.y - rec.measuredY
+      const d = Math.hypot(dx, dy)
+      if (d > DESIGN_CANDIDATE_RADIUS) continue
+      out.push({ coord: c, distance: d })
+    }
+    out.sort((a, b) => a.distance - b.distance)
+    return out
+  }, [pendingLinkRecordId, records, coordinates])
 
   // 候補 の 中 から 1 件 を 選んで 実測2 に 割り付ける。
   const handlePickM2Candidate = (candidateId: string) => {
@@ -878,56 +904,6 @@ export function StakingRecordsPage() {
         </div>
 
         <div className="ml-auto flex items-center gap-2 flex-wrap">
-          {/* 補正: 実測値 に 加算する 定数オフセット (X / Y / Z 独立)。
-              GPS 系統差 や 基準点 の ずれ を 素早く 吸収する 簡易補正。 */}
-          <span
-            className="text-[11px] text-slate-500"
-            title="実測値 に この 値 (m) を 加算した 「補正 XYZ」を 表示。 表 の 平均 と 差 も 補正 後 の 値 で 計算"
-          >
-            スライド量 (m):
-          </span>
-          <label className="flex items-center gap-1 text-xs">
-            <span className="text-slate-500">X</span>
-            <input
-              type="number"
-              step={0.001}
-              value={xOffsetInput}
-              onChange={(e) => setXOffsetInput(e.target.value)}
-              onBlur={(e) => void commitOffset('x', e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur()
-              }}
-              className="w-20 px-1.5 py-0.5 border rounded text-right font-mono"
-            />
-          </label>
-          <label className="flex items-center gap-1 text-xs">
-            <span className="text-slate-500">Y</span>
-            <input
-              type="number"
-              step={0.001}
-              value={yOffsetInput}
-              onChange={(e) => setYOffsetInput(e.target.value)}
-              onBlur={(e) => void commitOffset('y', e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur()
-              }}
-              className="w-20 px-1.5 py-0.5 border rounded text-right font-mono"
-            />
-          </label>
-          <label className="flex items-center gap-1 text-xs">
-            <span className="text-slate-500">Z</span>
-            <input
-              type="number"
-              step={0.001}
-              value={zOffsetInput}
-              onChange={(e) => setZOffsetInput(e.target.value)}
-              onBlur={(e) => void commitOffset('z', e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur()
-              }}
-              className="w-20 px-1.5 py-0.5 border rounded text-right font-mono"
-            />
-          </label>
           <button
             onClick={() => fetchRecords(currentFarm.id)}
             className="flex items-center gap-1 px-2 py-1 text-xs border rounded hover:bg-slate-50"
@@ -1126,8 +1102,60 @@ export function StakingRecordsPage() {
         </CoordinateMap>
       </div>
 
-      {/* 選択行 の 座標管理 登録 バー */}
+      {/* 選択行 の 座標管理 登録 バー。 左端 に スライド量 (X/Y/Z) 入力 を 配置 */}
       <div className="px-3 py-1.5 border-b bg-white flex items-center gap-2 text-xs flex-wrap">
+        {/* スライド量: 実測値 に 加算 する 定数 オフセット (X / Y / Z 独立)。
+            GPS 系統差 や 基準点 の ずれ を 素早く 吸収 する 簡易 補正。
+            工区別 に DB (design_survey_calibration) に 永続化。 */}
+        <span
+          className="text-[11px] text-slate-500"
+          title="実測値 に この 値 (m) を 加算した 「補正 XYZ」を 表示。 表 の 平均 と 差 も 補正 後 の 値 で 計算"
+        >
+          スライド量 (m):
+        </span>
+        <label className="flex items-center gap-1">
+          <span className="text-slate-500">X</span>
+          <input
+            type="number"
+            step={0.001}
+            value={xOffsetInput}
+            onChange={(e) => setXOffsetInput(e.target.value)}
+            onBlur={(e) => void commitOffset('x', e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur()
+            }}
+            className="w-20 px-1.5 py-0.5 border rounded text-right font-mono"
+          />
+        </label>
+        <label className="flex items-center gap-1">
+          <span className="text-slate-500">Y</span>
+          <input
+            type="number"
+            step={0.001}
+            value={yOffsetInput}
+            onChange={(e) => setYOffsetInput(e.target.value)}
+            onBlur={(e) => void commitOffset('y', e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur()
+            }}
+            className="w-20 px-1.5 py-0.5 border rounded text-right font-mono"
+          />
+        </label>
+        <label className="flex items-center gap-1">
+          <span className="text-slate-500">Z</span>
+          <input
+            type="number"
+            step={0.001}
+            value={zOffsetInput}
+            onChange={(e) => setZOffsetInput(e.target.value)}
+            onBlur={(e) => void commitOffset('z', e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur()
+            }}
+            className="w-20 px-1.5 py-0.5 border rounded text-right font-mono"
+          />
+        </label>
+        <span className="text-slate-400 mx-1">|</span>
         <span className="text-slate-500">
           選択 {selectedGroupKeys.size} 件 →
         </span>
@@ -1135,17 +1163,17 @@ export function StakingRecordsPage() {
           onClick={() => void handleRegisterAsCoordinates('s')}
           disabled={selectedGroupKeys.size === 0 || registering !== null}
           className="px-2 py-1 bg-fuchsia-600 text-white rounded hover:bg-fuchsia-700 disabled:opacity-50"
-          title="スライド設計値 (設計 + スライド量) を 座標管理 に 登録。 点名 = s + 元点名"
+          title="スライド後 設計値 (設計 + スライド量) を 座標管理 に 登録。 点名 = s + 元点名"
         >
-          {registering === 's' ? '登録中…' : 'スライド設計 を 登録 (s+点名)'}
+          {registering === 's' ? '登録中…' : 'スライド後設計値 を 登録 (s+点名)'}
         </button>
         <button
           onClick={() => void handleRegisterAsCoordinates('rs')}
           disabled={selectedGroupKeys.size === 0 || registering !== null}
           className="px-2 py-1 bg-cyan-600 text-white rounded hover:bg-cyan-700 disabled:opacity-50"
-          title="逆スライド実測値 (実測平均 - スライド量) を 座標管理 に 登録。 点名 = rs + 元点名"
+          title="逆スライド後 実測値 (実測平均 - スライド量) を 座標管理 に 登録。 点名 = rs + 元点名"
         >
-          {registering === 'rs' ? '登録中…' : '逆スライド実測 を 登録 (rs+点名)'}
+          {registering === 'rs' ? '登録中…' : '逆スライド後実測値 を 登録 (rs+点名)'}
         </button>
         {selectedGroupKeys.size > 0 && (
           <button
@@ -1160,27 +1188,9 @@ export function StakingRecordsPage() {
         </span>
       </div>
 
-      {/* 列 表示 切替 ツールバー: 各セクション の 折りたたみ + Z 列 の 一括 非表示 */}
-      <div className="px-3 py-1.5 border-b bg-slate-50 flex items-center gap-2 text-xs flex-wrap">
-        <span className="text-slate-500">列表示:</span>
-        {TABLE_SECTIONS.map((sec) => {
-          const on = !isHidden(sec.key)
-          return (
-            <button
-              key={sec.key}
-              onClick={() => toggleSection(sec.key)}
-              className={`px-1.5 py-0.5 border rounded ${
-                on
-                  ? 'bg-white border-slate-300 text-slate-700'
-                  : 'bg-slate-100 border-slate-200 text-slate-400 line-through'
-              }`}
-              title={on ? '折りたたむ' : '展開する'}
-            >
-              {sec.label}
-            </button>
-          )
-        })}
-        <label className="flex items-center gap-1 ml-2 border-l pl-2">
+      {/* 列 表示 切替: Z 列 の 一括 非表示 のみ (各セクション の 折りたたみ は 見出し 内 の アイコン) */}
+      <div className="px-3 py-1 border-b bg-slate-50 flex items-center gap-2 text-[11px] text-slate-500">
+        <label className="flex items-center gap-1">
           <input
             type="checkbox"
             checked={showZ}
@@ -1188,6 +1198,9 @@ export function StakingRecordsPage() {
           />
           Z 列 を 表示
         </label>
+        <span className="ml-2 text-slate-400">
+          各 列 の 見出し ≪ / ≫ で 折りたたみ / 展開
+        </span>
       </div>
 
       {/* 下半分: テーブル (isolate で テーブル 内 の sticky thead の z-index が
@@ -1238,8 +1251,11 @@ export function StakingRecordsPage() {
                         className="border-b border-r bg-slate-200 text-slate-500 hover:bg-slate-300 cursor-pointer w-6 text-center"
                         title={`${sec.label} を 展開`}
                       >
-                        <span className="[writing-mode:vertical-rl] text-[10px] tracking-tighter py-1">
-                          + {sec.label}
+                        <span className="inline-flex flex-col items-center gap-0.5 py-1">
+                          <ChevronsRight className="h-3 w-3" />
+                          <span className="[writing-mode:vertical-rl] text-[10px] tracking-tighter">
+                            {sec.label}
+                          </span>
                         </span>
                       </th>
                     )
@@ -1248,12 +1264,21 @@ export function StakingRecordsPage() {
                   return (
                     <th
                       key={sec.key}
-                      className={`px-2 py-1 border-b border-r text-center ${sec.bgHeader} cursor-pointer hover:brightness-95`}
+                      className={`px-2 py-1 border-b border-r text-center ${sec.bgHeader}`}
                       colSpan={cs}
-                      title={`${sec.headerTitle} — クリック で 折りたたみ`}
-                      onClick={() => toggleSection(sec.key)}
+                      title={sec.headerTitle}
                     >
-                      {sec.label}
+                      <span className="inline-flex items-center gap-1 justify-center">
+                        <span>{sec.label}</span>
+                        <button
+                          type="button"
+                          onClick={() => toggleSection(sec.key)}
+                          className="p-0.5 rounded hover:bg-white/70 text-slate-500 hover:text-slate-700"
+                          title={`${sec.label} を 折りたたむ`}
+                        >
+                          <ChevronsLeft className="h-3 w-3" />
+                        </button>
+                      </span>
                     </th>
                   )
                 })}
@@ -1801,6 +1826,111 @@ export function StakingRecordsPage() {
               <div className="px-4 py-2 border-t flex justify-end">
                 <button
                   onClick={handleCancelLinkM2}
+                  className="px-3 py-1 text-sm border rounded hover:bg-slate-50"
+                >
+                  キャンセル
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* 設計座標 リンク モーダル: 実測 記録 の XY から 半径 2m 以内 の
+          設計座標 (measured 種別 を 除く) を 一覧。 実測2 と 同じ 感覚 で
+          近接値 を リスト から 選べる。 地図 クリック も 引き続き 有効。 */}
+      {pendingLinkRecordId && (() => {
+        const rec = records.find((r) => r.id === pendingLinkRecordId)
+        if (!rec) return null
+        return (
+          <div
+            className="fixed inset-0 z-[9999] bg-black/40 flex items-center justify-center p-4"
+            onClick={() => setPendingLinkRecordId(null)}
+          >
+            <div
+              className="bg-white rounded-lg shadow-xl max-w-xl w-full max-h-[80vh] flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="px-4 py-3 border-b flex items-center gap-2">
+                <div className="font-semibold text-sm">設計座標 を リンク</div>
+                <div className="text-xs text-slate-500 ml-auto">
+                  基準: <span className="font-mono">{rec.targetName ?? '(無題)'}</span>{' '}
+                  ({rec.measuredX.toFixed(3)}, {rec.measuredY.toFixed(3)})
+                </div>
+                <button
+                  onClick={() => setPendingLinkRecordId(null)}
+                  className="p-1 rounded hover:bg-slate-100"
+                  title="閉じる"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="px-4 py-2 text-[11px] text-slate-500 border-b">
+                実測 XY から 2m 以内 の 設計座標 (実測 由来 の 点 は 除く) を
+                距離 順 で 一覧。 モーダル を 閉じて 地図 上 の 座標 を クリック
+                しても リンク できます。
+              </div>
+              <div className="flex-1 overflow-auto">
+                {designCandidates.length === 0 ? (
+                  <div className="p-6 text-center text-sm text-slate-400">
+                    2m 以内 に 設計座標 が ありません。
+                  </div>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 text-xs text-slate-600 sticky top-0">
+                      <tr>
+                        <th className="px-2 py-1 text-left">点名</th>
+                        <th className="px-2 py-1 text-left">種別</th>
+                        <th className="px-2 py-1 text-right">距離 (m)</th>
+                        <th className="px-2 py-1 text-right">X</th>
+                        <th className="px-2 py-1 text-right">Y</th>
+                        <th className="px-2 py-1 text-left">状態</th>
+                        <th className="px-2 py-1"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {designCandidates.map(({ coord, distance }) => {
+                        const alreadyLinked = linkedCoordIds.has(coord.id)
+                        const typeLabel =
+                          COORDINATE_TYPE_NAMES[coord.type as CoordinateType] ?? coord.type
+                        return (
+                          <tr key={coord.id} className="border-t hover:bg-slate-50">
+                            <td className="px-2 py-1 font-medium">
+                              {coord.pointNumber || '(無題)'}
+                            </td>
+                            <td className="px-2 py-1 text-xs text-slate-600">
+                              {typeLabel}
+                            </td>
+                            <td className="px-2 py-1 text-right tabular-nums font-mono">
+                              {distance.toFixed(3)}
+                            </td>
+                            <td className="px-2 py-1 text-right tabular-nums font-mono">
+                              {coord.x.toFixed(3)}
+                            </td>
+                            <td className="px-2 py-1 text-right tabular-nums font-mono">
+                              {coord.y.toFixed(3)}
+                            </td>
+                            <td className="px-2 py-1 text-xs text-slate-500">
+                              {alreadyLinked ? '別記録 に リンク済' : ''}
+                            </td>
+                            <td className="px-2 py-1 text-right">
+                              <button
+                                onClick={() => handleCoordSelectOnMap(coord.id)}
+                                className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+                              >
+                                これに リンク
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+              <div className="px-4 py-2 border-t flex justify-end">
+                <button
+                  onClick={() => setPendingLinkRecordId(null)}
                   className="px-3 py-1 text-sm border rounded hover:bg-slate-50"
                 >
                   キャンセル
