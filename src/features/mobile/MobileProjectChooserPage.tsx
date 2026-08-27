@@ -278,9 +278,12 @@ export function MobileProjectChooserPage() {
                 開発中
               </span>
             </div>
+            {/* モビリティは 別エントリ (mobility.html / basename '/m')。
+                同一オリジンなので ログインは 維持される。SPA 内遷移では
+                届かないため location.href で 移動する。 */}
             <button
               type="button"
-              onClick={() => navigate('/mobility/drive')}
+              onClick={() => { window.location.href = '/m/drive' }}
               className="w-full flex items-center gap-2 p-3 bg-white rounded-lg border shadow-sm active:bg-indigo-50 text-left"
             >
               <div className="h-9 w-9 rounded-full bg-indigo-100 flex items-center justify-center shrink-0">

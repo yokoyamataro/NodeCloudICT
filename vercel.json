@@ -1,5 +1,16 @@
 {
   "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
+    {
+      "source": "/m",
+      "destination": "/mobility.html"
+    },
+    {
+      "source": "/m/(.*)",
+      "destination": "/mobility.html"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
   ]
 }

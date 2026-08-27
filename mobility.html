@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <!-- ICT 側 (index.html) と同じ理由で 倍率を 固定する。
+         iOS は 16px 未満の 入力欄で ページ全体を 自動拡大し 元に戻さない。 -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="format-detection" content="telephone=no,email=no,address=no,date=no" />
+    <title>NodeCloud モビリティ</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/mobility-main.tsx"></script>
+  </body>
+</html>

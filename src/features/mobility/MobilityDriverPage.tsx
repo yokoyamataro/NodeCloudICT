@@ -42,7 +42,7 @@ import {
   useMap,
 } from 'react-leaflet'
 import { VehicleMarker } from '@/features/mobility/VehicleMarker'
-import { SPEED_BANDS, speedSegments } from '@/features/mobility/FleetMapView'
+import { SPEED_BANDS, speedSegments } from '@/features/mobility/speedBands'
 import 'leaflet/dist/leaflet.css'
 // leaflet-rotate は L.Map に rotate/setBearing を注入する副作用 import。
 // ヘディングアップ用に必要 (MobileStakingPage が既に import 済みだが、直接

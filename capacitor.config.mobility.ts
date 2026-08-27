@@ -14,9 +14,9 @@ const config: CapacitorConfig = {
   appName: 'NodeCloudモビリティ',
   webDir: 'dist',
   server: {
-    // 起動 URL は /mobility/drive + ?app=mobility を付与し、
-    // Web 側で MobilityAppGuard が他画面へのナビを封じる
-    url: 'https://node-cloud-ict.vercel.app/mobility/drive?app=mobility',
+    // 起動 URL は 専用エントリ (mobility.html / basename '/m')。
+    // ドライバー画面しか 積んでいないので ?app=mobility も 実行時ガードも 不要。
+    url: 'https://node-cloud-ict.vercel.app/m/drive',
     cleartext: false,
   },
   android: {

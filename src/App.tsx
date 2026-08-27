@@ -1,7 +1,6 @@
 import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { getDisplayModeOverride, isMobileDevice } from '@/lib/displayMode'
-import { isMobilityApp } from '@/lib/appVariant'
 import { AuthProvider, useAuth } from '@/contexts/AuthContext'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { LoginPage } from '@/features/auth/LoginPage'
@@ -58,7 +57,6 @@ import { FarmSettingsPage } from '@/features/settings/FarmSettingsPage'
 import { MobilityHomePage } from '@/features/mobility/MobilityHomePage'
 import { MobilityVehiclePage } from '@/features/mobility/MobilityVehiclePage'
 import { MobilityUserPage } from '@/features/mobility/MobilityUserPage'
-import { MobilityDriverPage } from '@/features/mobility/MobilityDriverPage'
 import { MobilityLogsPage } from '@/features/mobility/MobilityLogsPage'
 import { MobilityProjectsPage } from '@/features/mobility/MobilityProjectsPage'
 import { MobilityProjectPage } from '@/features/mobility/MobilityProjectPage'
@@ -121,42 +119,6 @@ function SiteOwnerRoute({ children }: { children: React.ReactNode }) {
   if (!isAdmin(user.email)) return <Navigate to="/coordinates" replace />
 
   return <>{children}</>
-}
-
-// NodeCloud Mobility (運転手専用アプリ) 用のガード。
-// このバリアントでは /mobility/drive (と認証/受入等の必要ページ) 以外は
-// 全部 /mobility/drive に強制リダイレクト。ドライバーが他機能に迷い込まないように。
-function MobilityAppGuard() {
-  const location = useLocation()
-  const navigate = useNavigate()
-  const { user } = useAuth()
-
-  useEffect(() => {
-    if (!isMobilityApp()) return
-    // 未ログインは login / accept-invite / reset-password 系だけ許可
-    if (!user) {
-      if (
-        location.pathname === '/login' ||
-        location.pathname === '/accept-invite' ||
-        location.pathname === '/reset-password'
-      ) {
-        return
-      }
-      navigate('/login', { replace: true })
-      return
-    }
-    // ログイン済み: /mobility/drive のみ許可 (認証系ページ以外)
-    if (
-      location.pathname === '/mobility/drive' ||
-      location.pathname === '/accept-invite' ||
-      location.pathname === '/reset-password'
-    ) {
-      return
-    }
-    navigate('/mobility/drive', { replace: true })
-  }, [location.pathname, navigate, user])
-
-  return null
 }
 
 // モバイル端末を自動判定して /mobile へリダイレクト
@@ -451,18 +413,9 @@ function AppRoutes() {
         {/* /mobility/map は /mobility に統合 (地図が Home に埋め込まれた) */}
         <Route path="mobility/map" element={<Navigate to="/mobility" replace />} />
         </Route>
-        {/* モビリティのドライバー地図画面: AppLayout をバイパスして全画面表示。
-            スマホ乗車中はサイドバー/組織情報などの装飾は不要なので、内部で
-            最小ヘッダ「NodeCloud」+ 車両状態のみを描画する。
-            権限は組織メンバーなら誰でも OK (ページ側で useCanUseMobility も判定) */}
-        <Route
-          path="/mobility/drive"
-          element={
-            <ProtectedRoute>
-              <MobilityDriverPage />
-            </ProtectedRoute>
-          }
-        />
+        {/* ドライバー地図画面 (/mobility/drive) は 別エントリ mobility.html
+            (basename '/m') に 分離済み。ICT 側には 積まない。
+            管理画面 (車両 / ユーザー / 運行ログ / 実績) は 上の /mobility 配下に 残る。 */}
       </Routes>
   )
 }
@@ -496,7 +449,6 @@ function App() {
     <BrowserRouter>
       <AuthProvider>
         <GATracker />
-        <MobilityAppGuard />
         <MobileAutoRedirect />
         <AppRoutes />
       </AuthProvider>

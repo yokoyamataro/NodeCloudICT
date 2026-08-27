@@ -674,10 +674,6 @@ export function CoordinateMap({
       maxZoom={24}
       className="h-full w-full"
       style={{ minHeight: '400px' }}
-      // leaflet-rotate (mobile 側で副作用 import) が付ける方位コンパスを無効化。
-      // desktop の CoordinateMap は回転しないので、常に北向きの固定コンパスは
-      // ズームレベル表示バッジと重なるだけで無意味。
-      {...({ rotateControl: false } as Record<string, unknown>)}
     >
       {baseLayer === 'osm' && (
         <TileLayer
