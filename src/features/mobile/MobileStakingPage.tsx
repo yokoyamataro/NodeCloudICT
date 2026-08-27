@@ -1319,6 +1319,8 @@ export function MobileStakingPage() {
   // 「現在地を記録」ボタンで起動した場合は、ターゲット測設判定をスキップして
   // 必ず新点として保存する
   const recForceFreeRef = useRef<boolean>(false)
+  /** 今回の計測が 端末 GPS 由来か (Drogger 未接続時の 概略測定) */
+  const recDeviceGpsRef = useRef<boolean>(false)
 
   // データ読込
   useEffect(() => {
@@ -2593,6 +2595,7 @@ export function MobileStakingPage() {
     const useDeviceGps =
       lastPosTimeRef.current === 0 ||
       Date.now() - lastPosTimeRef.current > POSITION_STALE_MS
+    recDeviceGpsRef.current = useDeviceGps
 
     // 平均化フロー (旧 RTK モード相当を 常に使用)
     // 端末 GPS の 場合の 締切は 「サンプルが 1 件も 来なかった時の 諦め時間」。
@@ -2650,7 +2653,10 @@ export function MobileStakingPage() {
         },
         {
           enableHighAccuracy: true,
-          maximumAge: 0,
+          // 端末 GPS は 直近数秒の 測位で 十分 (概略値)。maximumAge:0 だと
+          // コールドフィックスを 待つことに なり、初回だけ 15 秒で 間に合わず
+          // 0 サンプルに なることが ある。Drogger 側は 従来どおり 0。
+          maximumAge: useDeviceGps ? 5000 : 0,
           timeout: 15000,
           // 既定 (getActiveSource) は ICT ネイティブだと 'drogger' 固定なので、
           // フォールバック時は 端末 GPS を 明示指定する
@@ -2706,8 +2712,21 @@ export function MobileStakingPage() {
     // 終了音
     playStopChime()
     if (samples.length === 0) {
-      alert('位置情報が取得できませんでした')
-      return
+      // 端末 GPS 測定で 1 件も 取れなかった場合、画面に 出ている 現在地
+      // (表示用の フォールバック watch が 取得済み) を そのまま 使う。
+      // 「座標は 出ているのに 測定だけ 失敗する」状態を 避ける。
+      if (recDeviceGpsRef.current && currentPos) {
+        samples.push({
+          lat: currentPos[0],
+          lng: currentPos[1],
+          alt: currentAlt,
+          acc: currentAcc,
+          geoidalSep: currentGeoidalSep,
+        })
+      } else {
+        alert('位置情報が取得できませんでした')
+        return
+      }
     }
     if (!farmId) return
 
