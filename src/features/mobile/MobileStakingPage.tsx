@@ -1319,8 +1319,6 @@ export function MobileStakingPage() {
   // 「現在地を記録」ボタンで起動した場合は、ターゲット測設判定をスキップして
   // 必ず新点として保存する
   const recForceFreeRef = useRef<boolean>(false)
-  /** 今回の計測が 端末 GPS 由来か (Drogger 未接続時の 概略測定) */
-  const recDeviceGpsRef = useRef<boolean>(false)
 
   // データ読込
   useEffect(() => {
@@ -2584,25 +2582,39 @@ export function MobileStakingPage() {
     setRecordedCount(0)
     setRejectedCount(0)
     recForceFreeRef.current = !!opts.forceFreePoint
+
+    // Drogger の 位置更新が 途絶えている (未接続 / 未測位) なら 概略測定。
+    // 端末 GPS は 数 m 精度で、平均化しても 精度は 上がらない。待つ意味が 無いので
+    // 「計測中」フェーズを 挟まず、画面に 出ている 現在地を そのまま 1 点として
+    // 確定し、座標登録に 進む。
+    const useDeviceGps =
+      lastPosTimeRef.current === 0 ||
+      Date.now() - lastPosTimeRef.current > POSITION_STALE_MS
+    if (useDeviceGps) {
+      if (!currentPos) {
+        alert('位置情報が取得できませんでした')
+        return
+      }
+      recSamplesRef.current = [
+        {
+          lat: currentPos[0],
+          lng: currentPos[1],
+          alt: currentAlt,
+          acc: currentAcc,
+          geoidalSep: currentGeoidalSep,
+        },
+      ]
+      setRecordedCount(1)
+      void finishRecording()
+      return
+    }
+
     setRecording(true)
     // 開始音（ユーザ操作直後なので AudioContext を resume してから鳴らす）
     void unlockAudio().then(() => playStartChime())
 
-    // Drogger の 位置更新が 途絶えている (未接続 / 未測位) なら 端末 GPS で 測る。
-    // 端末 GPS は 数 m 精度で 平均化しても 精度が 上がらず、更新も 秒単位で 疎な
-    // ため、1 サンプル 取れた時点で 確定させる (概略測定)。
-    // Drogger が 生きている間は 従来どおり avgSeconds 秒の 平均化。
-    const useDeviceGps =
-      lastPosTimeRef.current === 0 ||
-      Date.now() - lastPosTimeRef.current > POSITION_STALE_MS
-    recDeviceGpsRef.current = useDeviceGps
-
-    // 平均化フロー (旧 RTK モード相当を 常に使用)
-    // 端末 GPS の 場合の 締切は 「サンプルが 1 件も 来なかった時の 諦め時間」。
-    // 実際は 1 件目の 到着で finishRecording する。
-    const DEVICE_GPS_TIMEOUT_MS = 15_000
-    recEndMsRef.current =
-      Date.now() + (useDeviceGps ? DEVICE_GPS_TIMEOUT_MS : avgSeconds * 1000)
+    // 平均化フロー (Drogger 接続時のみ)
+    recEndMsRef.current = Date.now() + avgSeconds * 1000
 
     // 1 サンプルあたりのおおよその間隔（GPS の watchPosition は機種で揺れるが
     // ハイエンドで概ね 1 秒に 1 回）。棄却 1 回につきこの時間だけ終了時刻を後ろへ。
@@ -2645,23 +2657,8 @@ export function MobileStakingPage() {
           }
           accepted.push(sample)
           setRecordedCount(accepted.length)
-          // 端末 GPS は 1 サンプルで 確定。
-          // 1 件目 限定に するのは、watchSamples の await が 返る前に
-          // コールバックが 複数回 走りうる ため (二重に finishRecording を
-          // 呼ぶと 二重保存に なる)。
-          if (useDeviceGps && accepted.length === 1) void finishRecording()
         },
-        {
-          enableHighAccuracy: true,
-          // 端末 GPS は 直近数秒の 測位で 十分 (概略値)。maximumAge:0 だと
-          // コールドフィックスを 待つことに なり、初回だけ 15 秒で 間に合わず
-          // 0 サンプルに なることが ある。Drogger 側は 従来どおり 0。
-          maximumAge: useDeviceGps ? 5000 : 0,
-          timeout: 15000,
-          // 既定 (getActiveSource) は ICT ネイティブだと 'drogger' 固定なので、
-          // フォールバック時は 端末 GPS を 明示指定する
-          source: useDeviceGps ? 'browser' : undefined,
-        },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 },
       )
       if (recCancelled) {
         h.clear()
@@ -2712,21 +2709,8 @@ export function MobileStakingPage() {
     // 終了音
     playStopChime()
     if (samples.length === 0) {
-      // 端末 GPS 測定で 1 件も 取れなかった場合、画面に 出ている 現在地
-      // (表示用の フォールバック watch が 取得済み) を そのまま 使う。
-      // 「座標は 出ているのに 測定だけ 失敗する」状態を 避ける。
-      if (recDeviceGpsRef.current && currentPos) {
-        samples.push({
-          lat: currentPos[0],
-          lng: currentPos[1],
-          alt: currentAlt,
-          acc: currentAcc,
-          geoidalSep: currentGeoidalSep,
-        })
-      } else {
-        alert('位置情報が取得できませんでした')
-        return
-      }
+      alert('位置情報が取得できませんでした')
+      return
     }
     if (!farmId) return
 
