@@ -2,6 +2,7 @@ import Foundation
 import UIKit
 import Capacitor
 import CoreLocation
+import UserNotifications
 
 /// バックグラウンド位置送信の iOS 実装。
 ///
@@ -46,6 +47,15 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     private var watchers: [Watcher] = []
+
+    /// 降車し忘れ通知の識別子。移動を検知するたびに貼り直す
+    private static let idleReminderId = "mobility.idle-reminder"
+    /// これ以上動いたら「移動した」とみなす距離 [m]
+    private static let idleMoveThresholdM: CLLocationDistance = 50
+    /// 停止がこれだけ続いたら通知し、以降も同じ間隔で繰り返す [sec]
+    private static let idleReminderInterval: TimeInterval = 30 * 60
+    /// 最後に「移動した」と判定した位置
+    private var lastMovedLocation: CLLocation?
 
     // MARK: - 公開 API
 
@@ -98,6 +108,14 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
             if let saved = self.bridge?.savedCall(withID: callbackId) {
                 self.bridge?.releaseCall(saved)
             }
+            if self.watchers.isEmpty {
+                self.cancelIdleReminder()
+                self.lastMovedLocation = nil
+                self.notify(
+                    title: "位置の送信を停止しました",
+                    body: "降車したため現在地の送信を終了しました。",
+                )
+            }
             call.resolve()
         }
     }
@@ -122,6 +140,60 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
         // 保険: iOS にアプリを終了されても、大きく移動すれば起こし直される。
         // 長時間の運行ではこれが無いと気づかないうちに記録が途切れる。
         watcher.manager.startMonitoringSignificantLocationChanges()
+
+        UNUserNotificationCenter.current().requestAuthorization(
+            options: [.alert, .sound]
+        ) { granted, _ in
+            guard granted else { return }
+            self.notify(
+                title: "位置の送信を開始しました",
+                body: "乗車中はアプリを閉じていても現在地を送信します。降車すると停止します。",
+            )
+            self.scheduleIdleReminder()
+        }
+    }
+
+    // MARK: - 通知
+    //
+    // 青いステータスバーは画面を見ないと気づけないため、開始/停止と
+    // 「降車し忘れ」を通知で伝える。実害が大きいのは取得そのものより、
+    // 作業終了後に降車を忘れて送信が続くこと。
+
+    private func notify(title: String, body: String, id: String = UUID().uuidString) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: id, content: content, trigger: nil)
+        )
+    }
+
+    /// 停止が続いたときの「まだ乗車中です」通知を貼り直す。
+    /// 移動を検知するたびに呼ぶので、走行中は発火しない。
+    private func scheduleIdleReminder() {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [Self.idleReminderId])
+        let content = UNMutableNotificationContent()
+        content.title = "まだ乗車中です"
+        content.body = "しばらく動きがありません。作業が終わっていれば降車してください（位置の送信が止まります）。"
+        content.sound = .default
+        let trigger = UNTimeIntervalNotificationTrigger(
+            timeInterval: Self.idleReminderInterval,
+            repeats: true,
+        )
+        center.add(
+            UNNotificationRequest(
+                identifier: Self.idleReminderId,
+                content: content,
+                trigger: trigger,
+            )
+        )
+    }
+
+    private func cancelIdleReminder() {
+        UNUserNotificationCenter.current()
+            .removePendingNotificationRequests(withIdentifiers: [Self.idleReminderId])
     }
 
     private func format(_ l: CLLocation) -> [String: Any] {
@@ -148,6 +220,16 @@ extension MobilityLocationPlugin: CLLocationManagerDelegate {
         guard let last = locations.last,
               let watcher = watchers.first(where: { $0.manager == m }),
               let call = bridge?.savedCall(withID: watcher.callbackId) else { return }
+        // 十分に動いたら 「降車し忘れ」通知の タイマーを 貼り直す。
+        // 走行中は 常に リセットされるので 通知は 出ない。
+        if let prev = lastMovedLocation {
+            if last.distance(from: prev) >= Self.idleMoveThresholdM {
+                lastMovedLocation = last
+                scheduleIdleReminder()
+            }
+        } else {
+            lastMovedLocation = last
+        }
         call.resolve(format(last))
     }
 
