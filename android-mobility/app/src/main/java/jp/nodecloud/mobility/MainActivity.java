@@ -1,4 +1,4 @@
-package net.nodecloud.mobility;
+package jp.nodecloud.mobility;
 
 import com.getcapacitor.BridgeActivity;
 

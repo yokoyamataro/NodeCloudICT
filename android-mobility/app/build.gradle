@@ -1,10 +1,10 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "net.nodecloud.mobility"
+    namespace = "jp.nodecloud.mobility"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "net.nodecloud.mobility"
+        applicationId "jp.nodecloud.mobility"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

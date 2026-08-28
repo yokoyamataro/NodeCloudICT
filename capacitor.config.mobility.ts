@@ -10,7 +10,7 @@ import type { CapacitorConfig } from '@capacitor/cli'
 // この config ファイルは iOS の初回セットアップ用と、参照用ドキュメントとして使う。
 
 const config: CapacitorConfig = {
-  appId: 'net.nodecloud.mobility',
+  appId: 'jp.nodecloud.mobility',
   appName: 'NodeCloudモビリティ',
   webDir: 'dist',
   server: {
