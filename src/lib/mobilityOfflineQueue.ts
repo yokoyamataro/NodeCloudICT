@@ -114,6 +114,19 @@ const inflightFlush = new Map<string, Promise<{ sent: number; remaining: number 
  * keyword 過剰マッチによる誤破棄を避けるため、DB エラーコードと SQL 特化文言
  * だけを見る。
  */
+/**
+ * 「同じ ping が 既に DB に ある」エラーか?
+ *
+ * DB 側に 重複防止の 一意インデックス (uidx_mobility_positions_no_dup) が あり、
+ * バッチ内に 送信済みの ping が 1 件でも 混ざると **バッチ全体が** 23505 で
+ * 失敗する。一時的エラー扱いだと 永久に 再試行して キューが 減らない。
+ */
+function isDuplicateError(err: string | undefined): boolean {
+  if (!err) return false
+  const lower = err.toLowerCase()
+  return lower.includes('code=23505') || lower.includes('duplicate key value')
+}
+
 function isTerminalError(err: string | undefined): boolean {
   if (!err) return false
   const lower = err.toLowerCase()
@@ -154,7 +167,6 @@ export function flushQueue(
       const poisoned = new Set<string>()
       let sent = 0
       let stopped = false
-      const doneSeqs: number[] = []
 
       // 積んだ順を崩さないよう、assignment_id が変わるまでを 1 グループにする
       let i = 0
@@ -166,7 +178,7 @@ export function flushQueue(
           i += 1
         }
         if (poisoned.has(assignmentId)) {
-          doneSeqs.push(...group.map((g) => g.seq)) // 破棄
+          await pingDelete(group.map((g) => g.seq)) // 破棄
           continue
         }
         const res = await sender(
@@ -183,7 +195,38 @@ export function flushQueue(
         )
         if (res.ok) {
           sent += group.length
-          doneSeqs.push(...group.map((g) => g.seq))
+          // 成功分は その場で 消す。まとめて 最後に 消すと、途中で アプリが
+          // 落ちた時に 送信済みの ping が キューに 残り、次回 重複エラーで
+          // バッチ全体が 弾かれる (今回の 詰まりの 根本原因)。
+          await pingDelete(group.map((g) => g.seq))
+          continue
+        }
+        if (isDuplicateError(res.error)) {
+          // バッチ内に 送信済みが 混ざっている。どれかは 分からないので
+          // 1 件ずつ 送り直し、重複した ものだけ 落とす。
+          for (const g of group) {
+            const one = await sender(assignmentId, [
+              {
+                lat: g.lat,
+                lon: g.lon,
+                accuracy_m: g.accuracy_m,
+                speed_kmh: g.speed_kmh,
+                heading_deg: g.heading_deg,
+                altitude_m: g.altitude_m,
+                recorded_at: g.recorded_at,
+              },
+            ])
+            if (one.ok) {
+              sent += 1
+              await pingDelete([g.seq])
+            } else if (isDuplicateError(one.error) || isTerminalError(one.error)) {
+              // 既に DB に ある / 送っても 通らない → 捨てて 良い
+              await pingDelete([g.seq])
+            } else {
+              stopped = true
+              break
+            }
+          }
           continue
         }
         if (isTerminalError(res.error)) {
@@ -191,7 +234,7 @@ export function flushQueue(
             `[mobilityOfflineQueue] dropping ${group.length} pings for invalid assignment ${assignmentId}: ${res.error}`,
           )
           poisoned.add(assignmentId)
-          doneSeqs.push(...group.map((g) => g.seq))
+          await pingDelete(group.map((g) => g.seq))
           try {
             options?.onTerminal?.(assignmentId, res.error ?? '')
           } catch {
@@ -208,7 +251,6 @@ export function flushQueue(
         stopped = true
       }
 
-      await pingDelete(doneSeqs)
       const remaining = await pingCount(userId)
       return { sent, remaining }
     } finally {
