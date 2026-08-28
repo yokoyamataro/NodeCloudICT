@@ -1303,6 +1303,8 @@ export function MobileStakingPage() {
     accuracy: number
     sampleCount: number
     antennaHeight: number
+    /** 座標管理の備考に入れる測定方法 (精密 / 概略) */
+    measureNote: string
   } | null>(null)
 
   // 記録状態
@@ -1319,6 +1321,8 @@ export function MobileStakingPage() {
   // 「現在地を記録」ボタンで起動した場合は、ターゲット測設判定をスキップして
   // 必ず新点として保存する
   const recForceFreeRef = useRef<boolean>(false)
+  /** 今回の計測が 端末 GPS 由来か (Drogger 未接続時の 概略測定) */
+  const recDeviceGpsRef = useRef<boolean>(false)
 
   // データ読込
   useEffect(() => {
@@ -2590,6 +2594,7 @@ export function MobileStakingPage() {
     const useDeviceGps =
       lastPosTimeRef.current === 0 ||
       Date.now() - lastPosTimeRef.current > POSITION_STALE_MS
+    recDeviceGpsRef.current = useDeviceGps
     if (useDeviceGps) {
       if (!currentPos) {
         alert('位置情報が取得できませんでした')
@@ -2760,6 +2765,14 @@ export function MobileStakingPage() {
 
     const { x, y } = converter.toXY(avgLat, avgLng)
 
+    // 座標管理の 備考に 測定方法を 残す。
+    // 以前は 精密 / 概略 とも 'mobile_measurement' で 区別が つかなかった。
+    // 座標行 (design_coordinates) は 精度を 持たないので、備考が この情報を
+    // 載せられる 唯一の 場所になる。
+    const measureNote = recDeviceGpsRef.current
+      ? `概略測定 (端末GPS${maxAcc ? ` ±${maxAcc.toFixed(1)}m` : ''})`
+      : `精密測定 (RTK Fix${maxAcc ? ` ±${maxAcc.toFixed(3)}m` : ''})`
+
     // 互換用フラグ（将来再利用に備えて残置）
     recForceFreeRef.current = false
 
@@ -2836,7 +2849,7 @@ export function MobileStakingPage() {
           y,
           z: avgAlt,
           type: 'measured',
-          notes: 'mobile_measurement',
+          notes: measureNote,
         },
         { zone },
       )
@@ -2867,7 +2880,7 @@ export function MobileStakingPage() {
               y,
               z: avgAlt,
               type: 'measured' as unknown as CoordinateRow['type'],
-              notes: 'mobile_measurement',
+              notes: measureNote,
             },
           ])
           if (inserted.length > 0) {
@@ -2912,6 +2925,7 @@ export function MobileStakingPage() {
       accuracy: maxAcc,
       sampleCount: samples.length,
       antennaHeight: effAntennaHeight,
+      measureNote,
     })
   }
 
@@ -2945,7 +2959,7 @@ export function MobileStakingPage() {
         durationSeconds: avgSeconds,
         notes: null,
       },
-      { pointNumber: name, x: d.x, y: d.y, z: d.z, type, notes: 'mobile_measurement' },
+      { pointNumber: name, x: d.x, y: d.y, z: d.z, type, notes: d.measureNote },
       { zone },
     )
     if (result.status === 'full') {
@@ -2973,7 +2987,7 @@ export function MobileStakingPage() {
           y: d.y,
           z: d.z,
           type: type as unknown as CoordinateRow['type'],
-          notes: 'mobile_measurement',
+          notes: d.measureNote,
         },
       ])
       if (inserted.length > 0) {
