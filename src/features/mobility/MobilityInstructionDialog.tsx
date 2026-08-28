@@ -18,6 +18,8 @@ interface Props {
   presetChannelProjectId?: string | null
   presetDriverLabel?: string | null
   presetProjectLabel?: string | null
+  /** 行き先ポイントをあらかじめ選んでおく (地図のポイントから開いた場合) */
+  presetPointId?: string | null
   onClose: () => void
   onSent?: (messageId: string) => void
 }
@@ -35,6 +37,7 @@ export function MobilityInstructionDialog({
   presetChannelProjectId = null,
   presetDriverLabel = null,
   presetProjectLabel = null,
+  presetPointId = null,
   onClose,
   onSent,
 }: Props) {
@@ -47,7 +50,7 @@ export function MobilityInstructionDialog({
   const [driverId, setDriverId] = useState<string | null>(presetChannelUserId)
   const [projectId, setProjectId] = useState<string | null>(presetChannelProjectId)
   const [vehicleId, setVehicleId] = useState<string | null>(null)
-  const [pointId, setPointId] = useState<string | null>(null)
+  const [pointId, setPointId] = useState<string | null>(presetPointId)
   const [body, setBody] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)

@@ -163,6 +163,8 @@ export function MobilityHomePage() {
     channelProjectId: string | null
     driverLabel: string | null
     projectLabel: string | null
+    /** 地図のポイントから開いた場合の行き先 */
+    pointId?: string | null
   } | null>(null)
 
   const [showNewDialog, setShowNewDialog] = useState(false)
@@ -182,6 +184,9 @@ export function MobilityHomePage() {
   const [expandedProjectPoints, setExpandedProjectPoints] = useState<
     MobilityProjectPoint[]
   >([])
+  // 地図には全カテゴリのポイントを出す。サイドバーは展開中のカテゴリだけを
+  // 扱うので expandedProjectPoints とは別に持つ。
+  const [allProjectPoints, setAllProjectPoints] = useState<MobilityProjectPoint[]>([])
   const [expandedProjectMembers, setExpandedProjectMembers] = useState<
     MobilityProjectMember[]
   >([])
@@ -348,6 +353,19 @@ export function MobilityHomePage() {
   useEffect(() => {
     void refreshProjects()
   }, [refreshProjects])
+
+  // 地図用: 全カテゴリのポイント
+  const reloadAllProjectPoints = useCallback(async () => {
+    if (projects.length === 0) {
+      setAllProjectPoints([])
+      return
+    }
+    const lists = await Promise.all(projects.map((pr) => fetchProjectPoints(pr.id)))
+    setAllProjectPoints(lists.flat().filter((p) => p.active))
+  }, [projects, fetchProjectPoints])
+  useEffect(() => {
+    void reloadAllProjectPoints()
+  }, [reloadAllProjectPoints])
 
   // 展開中の現場のメンバー + ポイントを取得
   useEffect(() => {
@@ -638,13 +656,13 @@ export function MobilityHomePage() {
           <FleetMapView
             organizationId={orgId}
             extraTrackAssignmentIds={selectedSectionAssignmentIds}
-            projectPoints={expandedProjectPoints}
+            projectPoints={allProjectPoints}
             highlightPointId={editingPoint?.id ?? null}
             addPointMode={addPointMode}
             followAssignmentId={followAssignmentId}
             onMapClick={handleMapClickForNewPoint}
             onSelectPoint={(pid) => {
-              const pt = expandedProjectPoints.find((p) => p.id === pid) ?? null
+              const pt = allProjectPoints.find((p) => p.id === pid) ?? null
               setEditingPoint(pt)
             }}
             onSelectVehicle={(vid) => {
@@ -783,6 +801,7 @@ export function MobilityHomePage() {
           presetChannelProjectId={instructionDialog.channelProjectId}
           presetDriverLabel={instructionDialog.driverLabel}
           presetProjectLabel={instructionDialog.projectLabel}
+          presetPointId={instructionDialog.pointId ?? null}
           onClose={() => setInstructionDialog(null)}
         />
       )}
@@ -903,8 +922,21 @@ export function MobilityHomePage() {
       {editingPoint && (
         <PointEditDialog
           point={editingPoint}
+          onInstruct={() => {
+            // 地図のポイント → 指示。行き先を埋めた状態でダイアログを開く
+            setInstructionDialog({
+              channelKind: 'direct',
+              channelUserId: null,
+              channelProjectId: null,
+              driverLabel: null,
+              projectLabel: null,
+              pointId: editingPoint.id,
+            })
+            setEditingPoint(null)
+          }}
           onSave={async (patch) => {
             await updatePoint(editingPoint.id, patch)
+            void reloadAllProjectPoints()
             setExpandedProjectPoints((prev) =>
               prev.map((p) =>
                 p.id === editingPoint.id ? { ...p, ...patch } : p,
@@ -930,6 +962,7 @@ export function MobilityHomePage() {
             })
             if (created) {
               setExpandedProjectPoints((prev) => [...prev, created])
+              void reloadAllProjectPoints()
             }
             setPendingNewPoint(null)
           }}
@@ -2566,6 +2599,7 @@ function ProjectMemberPickerDialog({
 function PointEditDialog({
   point,
   onSave,
+  onInstruct,
   onClose,
 }: {
   point: MobilityProjectPoint
@@ -2573,6 +2607,8 @@ function PointEditDialog({
     name: string
     memo: string | null
   }) => Promise<void>
+  /** このポイントを行き先にして指示を送る */
+  onInstruct: () => void
   onClose: () => void
 }) {
   const [name, setName] = useState(point.name)
@@ -2617,6 +2653,17 @@ function PointEditDialog({
           <div className="text-[10px] text-slate-500 font-mono">
             座標: {point.lat.toFixed(6)}, {point.lon.toFixed(6)}
           </div>
+        </div>
+        {/* 地図のポイントから「ここへ向かうよう指示」へ直行できるようにする。
+            編集より指示の方が使用頻度が高いので上に置く */}
+        <div className="px-4 pb-1">
+          <button
+            onClick={onInstruct}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm bg-emerald-600 text-white rounded hover:bg-emerald-700"
+          >
+            <Send className="h-4 w-4" />
+            このポイントへ向かうよう指示
+          </button>
         </div>
         <div className="px-4 py-3 border-t flex gap-2">
           <button
