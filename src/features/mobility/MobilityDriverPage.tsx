@@ -797,8 +797,18 @@ export function MobilityDriverPage() {
   //   位置送信が継続する。フォアグラウンドの watchSamples とは独立に動くが、
   //   同じ GPS プロバイダを共有するのでバッテリー消費は 2 倍にはならない。
   // ------------------------------------------------------------------
+  // 依存は autoSend (= 乗車中かの 真偽) だけに 絞る。
+  // myActive / myVehicle は 取得の たびに 新しい オブジェクトに なるため、
+  // deps に 入れると activeAssignments の 定期取得の たびに watcher を
+  // 張り直して しまう。バックグラウンドでは 張り直しの 度に 位置更新が
+  // 途切れ、結果として 一度も 届かないことが ある。
+  // (このファイル冒頭の「ref に逃がして watch を再登録しない」方針の 徹底)
+  const myVehicleNameRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!autoSend || !myActive) return
+    myVehicleNameRef.current = myVehicle?.name ?? null
+  }, [myVehicle])
+  useEffect(() => {
+    if (!autoSend) return
     let handle: { clear: () => Promise<void> } | null = null
     let cancelled = false
     void (async () => {
@@ -852,7 +862,7 @@ export function MobilityDriverPage() {
           },
           {
             notificationTitle: 'NodeCloudモビリティ',
-            notificationBody: `${myVehicle?.name ?? '車両'} の現在地を送信中`,
+            notificationBody: `${myVehicleNameRef.current ?? '車両'} の現在地を送信中`,
             // 停車中でも callback が起きやすいよう小さめに (バッテリー影響は僅か)
             distanceFilter: 1,
           },
@@ -867,7 +877,8 @@ export function MobilityDriverPage() {
       cancelled = true
       void handle?.clear()
     }
-  }, [autoSend, myActive, myVehicle])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSend])
 
   useEffect(() => {
     let handle: { clear: () => void } | null = null

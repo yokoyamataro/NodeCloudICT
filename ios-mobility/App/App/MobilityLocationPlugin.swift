@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import Capacitor
 import CoreLocation
 
@@ -13,11 +14,17 @@ import CoreLocation
 ///
 /// で名前解決しているだけなので、TS は 1 行も変更しない。
 ///
-/// 返す位置の形も本家に合わせる:
-///   latitude / longitude / accuracy / altitude / altitudeAccuracy
-///   / simulated / speed / bearing / time
+/// 契約は本家 (node_modules/@capacitor-community/background-geolocation の
+/// ios/Plugin/Swift/Plugin.swift) に合わせている。特に:
 ///
-/// エラーコードは TS 側が大文字で判定しているため 'NOT_AUTHORIZED' 等を返す。
+///   * CLLocationManager の操作は必ずメインスレッド。Capacitor のプラグイン
+///     呼び出しはバックグラウンドキューで来るため、ここを外すと位置更新が
+///     一度も届かない。
+///   * watcher の id は call.callbackId。addWatcher は位置以外を resolve しない。
+///     resolve するたびに JS 側のコールバックが呼ばれるので、id を resolve すると
+///     位置情報のつもりで別のオブジェクトが流れてしまう。
+///   * distanceFilter = 0 は以降の更新が止まることがあるので
+///     kCLDistanceFilterNone にする (本家 issue #88)。
 @objc(MobilityLocationPlugin)
 public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
 
@@ -25,130 +32,111 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
     // ここが TS の registerPlugin 名と一致している必要がある
     public let jsName = "BackgroundGeolocation"
     public let pluginMethods: [CAPPluginMethod] = [
-        // addWatcher は 位置が 更新される たびに 呼び返すので Callback 型。
-        // call.keepAlive = true で 保持し、resolve を 繰り返す。
+        // addWatcher は位置が更新されるたびに呼び返すので Callback 型
         CAPPluginMethod(name: "addWatcher", returnType: CAPPluginReturnCallback),
         CAPPluginMethod(name: "removeWatcher", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "openSettings", returnType: CAPPluginReturnPromise),
     ]
 
-    private let manager = CLLocationManager()
-    /// watcher id → 保持している call。複数 watcher に 同じ位置を 配る
-    private var watchers: [String: CAPPluginCall] = [:]
-    /// 権限待ちの間に届いた watcher。許可が下りたら開始する
-    private var pendingAuthorization = false
-
-    public override func load() {
-        manager.delegate = self
-        manager.desiredAccuracy = kCLLocationAccuracyBest
-        // バックグラウンドでも 位置を 受け取る。Xcode の
-        // Signing & Capabilities → Background Modes → Location updates が 必須。
-        manager.allowsBackgroundLocationUpdates = true
-        // 車載/船舶で 長時間 走るので、システムに 一時停止させない。
-        // (true だと 停車中に iOS が 更新を 止め、再開の 保証が 無い)
-        manager.pausesLocationUpdatesAutomatically = false
-        manager.activityType = .automotiveNavigation
-        // バックグラウンドで 位置を 取っている 間、ステータスバーに 青い インジケータを
-        // 常時表示する。既定は false で、その場合 利用者は アプリを 閉じている 間
-        // 「今 位置が 送られているか」を 知る 手段が 無い。
-        // Android は Foreground Service の 常駐通知が 同じ役割を 果たしている。
-        manager.showsBackgroundLocationIndicator = true
+    /// 1 watcher = 1 CLLocationManager。callbackId で保存済み call を引く
+    private final class Watcher {
+        let callbackId: String
+        let manager = CLLocationManager()
+        init(_ callbackId: String) { self.callbackId = callbackId }
     }
+
+    private var watchers: [Watcher] = []
 
     // MARK: - 公開 API
 
     @objc func addWatcher(_ call: CAPPluginCall) {
         call.keepAlive = true
-        let id = UUID().uuidString
-        watchers[id] = call
+        DispatchQueue.main.async {
+            let watcher = Watcher(call.callbackId)
+            let manager = watcher.manager
+            manager.delegate = self
+            manager.desiredAccuracy = kCLLocationAccuracyBest
+            let filter = call.getDouble("distanceFilter") ?? 0
+            // 0 のままだと以降の更新が来なくなる個体がある (本家 issue #88)
+            manager.distanceFilter = filter > 0 ? filter : kCLDistanceFilterNone
+            // 車載/船舶で長時間走るので、システムに一時停止させない
+            manager.pausesLocationUpdatesAutomatically = false
+            manager.activityType = .automotiveNavigation
+            manager.allowsBackgroundLocationUpdates = true
+            // バックグラウンドで位置を取っている間、ステータスバーに青い
+            // インジケータを出す。利用者が「今送られているか」を判断できる
+            manager.showsBackgroundLocationIndicator = true
+            self.watchers.append(watcher)
 
-        // distanceFilter: 指定が 無い / 0 以下なら 全更新を 受ける
-        let filter = call.getDouble("distanceFilter") ?? 0
-        manager.distanceFilter = filter > 0 ? filter : kCLDistanceFilterNone
-
-        let requestPermissions = call.getBool("requestPermissions") ?? true
-        // インスタンス側の authorizationStatus (iOS 14+)。型メソッドは deprecated。
-        let status = manager.authorizationStatus
-
-        switch status {
-        case .notDetermined:
-            if requestPermissions {
-                pendingAuthorization = true
-                // Always を 要求する。アプリを 閉じても 送り続けるため。
-                // (iOS は まず WhenInUse を 出し、後から Always への 昇格を 促す)
-                manager.requestAlwaysAuthorization()
-            } else {
-                reject(call, "NOT_AUTHORIZED", "位置情報の使用が許可されていません")
+            if call.getBool("requestPermissions") != false {
+                let status = manager.authorizationStatus
+                if [.notDetermined, .denied, .restricted].contains(status) {
+                    // 許可が下りたら locationManagerDidChangeAuthorization で start する
+                    manager.requestAlwaysAuthorization()
+                    return
+                }
+                if status == .authorizedWhenInUse {
+                    // アプリを閉じても送り続けるため Always へ昇格を促す
+                    manager.requestAlwaysAuthorization()
+                }
             }
-        case .denied, .restricted:
-            reject(call, "NOT_AUTHORIZED", "位置情報の使用が許可されていません")
-        case .authorizedAlways, .authorizedWhenInUse:
-            startUpdates()
-        @unknown default:
-            startUpdates()
+            self.start(watcher)
         }
-
-        // 呼び出し側は addWatcher の 戻り値 (id) で removeWatcher する
-        call.resolve(["callbackId": id])
     }
 
     @objc func removeWatcher(_ call: CAPPluginCall) {
-        if let id = call.getString("id") {
-            if let held = watchers.removeValue(forKey: id) {
-                held.keepAlive = false
-                bridge?.releaseCall(held)
+        DispatchQueue.main.async {
+            guard let callbackId = call.getString("id") else {
+                call.reject("No callback ID")
+                return
             }
+            if let i = self.watchers.firstIndex(where: { $0.callbackId == callbackId }) {
+                self.watchers[i].manager.stopUpdatingLocation()
+                self.watchers[i].manager.stopMonitoringSignificantLocationChanges()
+                self.watchers.remove(at: i)
+            }
+            if let saved = self.bridge?.savedCall(withID: callbackId) {
+                self.bridge?.releaseCall(saved)
+            }
+            call.resolve()
         }
-        if watchers.isEmpty {
-            manager.stopUpdatingLocation()
-            manager.stopMonitoringSignificantLocationChanges()
-        }
-        call.resolve()
     }
 
     @objc func openSettings(_ call: CAPPluginCall) {
-        guard let url = URL(string: UIApplication.openSettingsURLString) else {
-            call.reject("設定画面を開けませんでした")
-            return
-        }
         DispatchQueue.main.async {
-            UIApplication.shared.open(url, options: [:], completionHandler: nil)
+            guard let url = URL(string: UIApplication.openSettingsURLString),
+                  UIApplication.shared.canOpenURL(url) else {
+                call.reject("Cannot open settings")
+                return
+            }
+            UIApplication.shared.open(url) { ok in
+                if ok { call.resolve() } else { call.reject("Failed to open settings") }
+            }
         }
-        call.resolve()
     }
 
     // MARK: - 内部処理
 
-    private func startUpdates() {
-        manager.startUpdatingLocation()
-        // 保険: iOS に アプリを 終了されても、大きく 移動すれば 起こし直される。
-        // 長時間の 運行では これが 無いと 気づかないうちに 記録が 途切れる。
-        manager.startMonitoringSignificantLocationChanges()
+    private func start(_ watcher: Watcher) {
+        watcher.manager.startUpdatingLocation()
+        // 保険: iOS にアプリを終了されても、大きく移動すれば起こし直される。
+        // 長時間の運行ではこれが無いと気づかないうちに記録が途切れる。
+        watcher.manager.startMonitoringSignificantLocationChanges()
     }
 
-    private func reject(_ call: CAPPluginCall, _ code: String, _ message: String) {
-        // TS 側は callback の 第 2 引数で error を 受ける形なので、
-        // resolve で error を 積んで 返す (call は 生かしたまま)
-        call.resolve(["error": ["code": code, "message": message]])
-    }
-
-    private func emit(_ location: CLLocation) {
-        let data: [String: Any] = [
-            "latitude": location.coordinate.latitude,
-            "longitude": location.coordinate.longitude,
-            "accuracy": location.horizontalAccuracy,
-            "altitude": location.altitude,
-            "altitudeAccuracy": location.verticalAccuracy,
-            // speed / course は 測れない時 負値。TS 側の 型が nullable なので
-            // その場合は NSNull を 返す
-            "speed": location.speed >= 0 ? location.speed : NSNull(),
-            "bearing": location.course >= 0 ? location.course : NSNull(),
+    private func format(_ l: CLLocation) -> [String: Any] {
+        return [
+            "latitude": l.coordinate.latitude,
+            "longitude": l.coordinate.longitude,
+            "accuracy": l.horizontalAccuracy,
+            "altitude": l.altitude,
+            "altitudeAccuracy": l.verticalAccuracy,
+            // speed / course は測れない時に負値。TS 側の型が nullable なので NSNull
+            "speed": l.speed >= 0 ? l.speed : NSNull(),
+            "bearing": l.course >= 0 ? l.course : NSNull(),
             "simulated": false,
-            "time": location.timestamp.timeIntervalSince1970 * 1000,
+            "time": l.timestamp.timeIntervalSince1970 * 1000,
         ]
-        for call in watchers.values {
-            call.resolve(data)
-        }
     }
 }
 
@@ -157,36 +145,31 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
 extension MobilityLocationPlugin: CLLocationManagerDelegate {
 
     public func locationManager(_ m: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let last = locations.last else { return }
-        emit(last)
+        guard let last = locations.last,
+              let watcher = watchers.first(where: { $0.manager == m }),
+              let call = bridge?.savedCall(withID: watcher.callbackId) else { return }
+        call.resolve(format(last))
     }
 
     public func locationManager(_ m: CLLocationManager, didFailWithError error: Error) {
-        let ns = error as NSError
-        // kCLErrorLocationUnknown は 一時的に 測位できないだけ。
-        // 復帰するので エラー扱いに しない。
-        if ns.domain == kCLErrorDomain && ns.code == CLError.locationUnknown.rawValue { return }
-        let code = ns.code == CLError.denied.rawValue ? "NOT_AUTHORIZED" : "LOCATION_ERROR"
-        for call in watchers.values {
-            call.resolve(["error": ["code": code, "message": error.localizedDescription]])
+        guard let watcher = watchers.first(where: { $0.manager == m }),
+              let call = bridge?.savedCall(withID: watcher.callbackId) else { return }
+        if let clErr = error as? CLError {
+            // 一時的に測位できないだけ。復帰するのでエラー扱いにしない
+            if clErr.code == .locationUnknown { return }
+            if clErr.code == .denied {
+                m.stopUpdatingLocation()
+                call.reject("Permission denied.", "NOT_AUTHORIZED")
+                return
+            }
         }
+        call.reject(error.localizedDescription, nil, error)
     }
 
     public func locationManagerDidChangeAuthorization(_ m: CLLocationManager) {
-        guard pendingAuthorization else { return }
-        switch m.authorizationStatus {
-        case .authorizedAlways, .authorizedWhenInUse:
-            pendingAuthorization = false
-            startUpdates()
-        case .denied, .restricted:
-            pendingAuthorization = false
-            for call in watchers.values {
-                call.resolve([
-                    "error": ["code": "NOT_AUTHORIZED", "message": "位置情報の使用が許可されていません"],
-                ])
-            }
-        default:
-            break
-        }
+        // 許可ダイアログ提示中の通知は無視する
+        guard m.authorizationStatus != .notDetermined,
+              let watcher = watchers.first(where: { $0.manager == m }) else { return }
+        start(watcher)
     }
 }
