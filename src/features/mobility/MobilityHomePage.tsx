@@ -1450,7 +1450,6 @@ interface HistoryDetailProps {
   historyLoading: boolean
   positionsByAssignment: Map<string, MobilityPosition[]>
   vehiclesById: Map<string, Vehicle>
-  currentSpeedKmh: number | null
   todayDistanceM: number
   distanceLabel: string
   selectedIds: string[]
@@ -1466,7 +1465,6 @@ function InlineDetailBody({
   history,
   historyLoading,
   positionsByAssignment,
-  currentSpeedKmh,
   todayDistanceM,
   distanceLabel,
   selectedIds,
@@ -1477,17 +1475,9 @@ function InlineDetailBody({
 }: HistoryDetailProps) {
   return (
     <div className="border-t bg-slate-50/60 p-3 space-y-3">
-      {/* 速度・走行距離 */}
-      <div className="grid grid-cols-2 gap-2">
-        <div className="p-2 bg-white rounded border">
-          <div className="text-[10px] text-slate-500">現在速度</div>
-          <div className="text-xl font-bold leading-tight text-slate-800">
-            {currentSpeedKmh != null && currentSpeedKmh >= 0
-              ? Math.round(currentSpeedKmh)
-              : '—'}
-            <span className="text-[10px] font-normal text-slate-500 ml-1">km/h</span>
-          </div>
-        </div>
+      {/* 走行距離。速度は地図のラベル (ドライバー / 車両 / 速度) に出すので
+          ここには置かない (同じ値が 2 箇所にあると視線が散る) */}
+      <div className="grid grid-cols-1 gap-2">
         <div className="p-2 bg-white rounded border">
           <div className="text-[10px] text-slate-500">{distanceLabel}</div>
           <div className="text-xl font-bold leading-tight text-slate-800">
@@ -1851,13 +1841,6 @@ function VehicleInlineDetail({
     return total
   }, [positionsByAssignment])
 
-  const currentSpeedKmh = useMemo(() => {
-    if (!activeAssignment) return null
-    const rows = positionsByAssignment.get(activeAssignment.id)
-    if (!rows || rows.length === 0) return null
-    const last = rows[rows.length - 1]
-    return last.speed_kmh
-  }, [activeAssignment, positionsByAssignment])
 
   return (
     <InlineDetailBody
@@ -1865,7 +1848,6 @@ function VehicleInlineDetail({
       historyLoading={historyLoading}
       positionsByAssignment={positionsByAssignment}
       vehiclesById={vehiclesById}
-      currentSpeedKmh={currentSpeedKmh}
       todayDistanceM={todayDistanceM}
       distanceLabel="本日走行 (この車両)"
       selectedIds={selectedIds}
@@ -1960,13 +1942,6 @@ function UserInlineDetail({
     return total
   }, [positionsByAssignment])
 
-  const currentSpeedKmh = useMemo(() => {
-    if (!activeAssignment) return null
-    const rows = positionsByAssignment.get(activeAssignment.id)
-    if (!rows || rows.length === 0) return null
-    const last = rows[rows.length - 1]
-    return last.speed_kmh
-  }, [activeAssignment, positionsByAssignment])
 
   return (
     <InlineDetailBody
@@ -1974,7 +1949,6 @@ function UserInlineDetail({
       historyLoading={historyLoading}
       positionsByAssignment={positionsByAssignment}
       vehiclesById={vehiclesById}
-      currentSpeedKmh={currentSpeedKmh}
       todayDistanceM={todayDistanceM}
       distanceLabel="本日走行 (この人)"
       selectedIds={selectedIds}

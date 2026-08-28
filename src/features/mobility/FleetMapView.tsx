@@ -768,7 +768,9 @@ export function FleetMapView({
         {markers.map((m) => {
           const ageMs = nowTick - new Date(m.recordedAt).getTime()
           const isStale = ageMs > STALE_THRESHOLD_MS
-          const parts: string[] = [m.vehicleName]
+          // ラベルは「ドライバー / 車両 / 速度」。誰が乗っているかが一番知りたい
+          // 情報なので先頭に置く
+          const parts: string[] = [m.driverName, m.vehicleName]
           if (m.speed_kmh != null && m.speed_kmh >= 0 && !isStale) {
             parts.push(`${Math.round(m.speed_kmh)}km/h`)
           }
