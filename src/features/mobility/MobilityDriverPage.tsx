@@ -534,7 +534,12 @@ export function MobilityDriverPage() {
   const prevPosForBearingRef = useRef<{ lat: number; lon: number } | null>(null)
   const [locationError, setLocationError] = useState<string | null>(null)
   const [lastAutoSentAt, setLastAutoSentAt] = useState<Date | null>(null)
-  const [autoSend, setAutoSend] = useState(false)
+  // 乗車と自動送信は 区別しない。乗車していれば 常に 送る。
+  // 以前は useState(false) だったため、アプリを 再起動すると サーバー上は
+  // 乗車中でも 送信が OFF のままで、位置が 送られなかった。
+  // myActive は サーバーの activeAssignments から 導出されるので、
+  // 起動時に 乗車中の 車両が あれば そのまま 送信が 再開する。
+  const autoSend = !!myActive
 
   // 走行距離はクライアント側で完全に累積 + localStorage 永続化。
   // ・オフラインでも即時反映
@@ -1106,13 +1111,22 @@ export function MobilityDriverPage() {
   )
 
   const handleBoard = async (vehicleId: string) => {
+    // 同一ユーザーが 2 台に 乗るのは 不整合。既に 乗車中なら 何もしない
+    // (通常は 乗車ボタン自体が 出ないが、通信断からの 復帰時などに 備える)
+    if (myActive && myActive.vehicle_id !== vehicleId) {
+      setShowPicker(false)
+      return
+    }
+    if (myActive && myActive.vehicle_id === vehicleId) {
+      setShowPicker(false)
+      return
+    }
     setBusyError(null)
     setBusy(true)
     try {
       const res = await startAssignment(vehicleId)
       if (!res) throw new Error(useMobilityStore.getState().vehiclesError ?? '開始に失敗')
       setShowPicker(false)
-      setAutoSend(true) // 乗車と同時に自動送信 ON
     } catch (err) {
       setBusyError(friendlyMobilityError(err))
     } finally {
@@ -1126,7 +1140,6 @@ export function MobilityDriverPage() {
     setBusy(true)
     try {
       await endAssignment(myActive.id)
-      setAutoSend(false)
     } catch (err) {
       setBusyError(friendlyMobilityError(err))
     } finally {
@@ -1156,7 +1169,19 @@ export function MobilityDriverPage() {
   }, [currentPos, selectedDestination])
 
   return (
-    <div className="mobile-screen flex flex-col bg-slate-900 relative">
+    // 下端の セーフエリアは ルートではなく フッタに 持たせる。
+    // ルートに padding-bottom を 置くと フッタの 背景が ホームインジケータの
+    // 手前で 途切れ、その下に 地の色が 見えて 「切れている」ように 見える。
+    <div
+      className="flex flex-col bg-slate-900 relative"
+      style={{
+        height: '100dvh',
+        paddingTop: 'env(safe-area-inset-top)',
+        paddingLeft: 'env(safe-area-inset-left)',
+        paddingRight: 'env(safe-area-inset-right)',
+        boxSizing: 'border-box',
+      }}
+    >
       {/* ヘッダ: NodeCloud ブランド 1 行のみ (組織情報等は載せない) */}
       <div className="px-3 py-2 bg-slate-800 text-white flex items-center gap-2 shrink-0">
         {/* mobility 専用アプリでは他画面が無いので戻るボタンを隠す */}
@@ -1489,8 +1514,12 @@ export function MobilityDriverPage() {
         </div>
       )}
 
-      {/* フッタアクション */}
-      <div className="p-3 bg-slate-800 flex flex-col gap-2 shrink-0">
+      {/* フッタアクション。背景を 下端まで 伸ばしつつ、中身は
+          ホームインジケータに かからないよう セーフエリア分 下に 余白を 取る */}
+      <div
+        className="p-3 bg-slate-800 flex flex-col gap-2 shrink-0"
+        style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
+      >
         <div className="flex gap-2">
           {/* 履歴シートを開くボタン (乗車/未乗車どちらでも常に見える) */}
           <button
@@ -1518,34 +1547,15 @@ export function MobilityDriverPage() {
         </div>
         {myActive ? (
           <div className="flex gap-2">
-            {/* 自動送信トグル: メインの大ボタン (下に小さくステータス) */}
-            <button
-              onClick={() => setAutoSend((v) => !v)}
-              disabled={busy}
-              role="switch"
-              aria-checked={autoSend}
-              className={`flex-1 flex flex-col items-center justify-center gap-0.5 px-3 py-2 text-base font-semibold rounded-lg transition ${
-                autoSend
-                  ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-                  : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
-              }`}
-              title={autoSend ? 'タップで自動送信を停止' : 'タップで自動送信を開始'}
+            {/* 送信ステータス表示。乗車中は 常に 送るので トグルは 置かない
+                (止めたい時は 降車する) */}
+            <div
+              className="flex-1 flex flex-col items-center justify-center gap-0.5 px-3 py-2 text-base font-semibold rounded-lg bg-emerald-600 text-white"
             >
               <span className="flex items-center gap-2">
-                <span
-                  className={`inline-block h-4 w-8 rounded-full relative ${
-                    autoSend ? 'bg-emerald-300' : 'bg-slate-500'
-                  }`}
-                >
-                  <span
-                    className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${
-                      autoSend ? 'left-4' : 'left-0.5'
-                    }`}
-                  />
-                </span>
-                自動送信 {autoSend ? 'ON' : 'OFF'}
+                <Navigation className="h-4 w-4" />
+                位置を送信中
               </span>
-              {/* ステータスをボタン内に小さく表示 (ON 時のみ) */}
               {autoSend && (
                 <span
                   className={`text-[10px] leading-tight font-normal flex items-center gap-1 ${
@@ -1569,7 +1579,7 @@ export function MobilityDriverPage() {
                     ? `通信断 · バッファ ${queueLen} 件`
                     : queueLen > 0
                       ? `再送中 · 残 ${queueLen} 件`
-                      : `自動送信中${
+                      : `送信中${
                           lastAutoSentAt
                             ? ' · 最終 ' +
                               lastAutoSentAt.toLocaleTimeString('ja-JP', {
@@ -1581,7 +1591,7 @@ export function MobilityDriverPage() {
                         }`}
                 </span>
               )}
-            </button>
+            </div>
             <button
               type="button"
               onClick={handleLeave}
