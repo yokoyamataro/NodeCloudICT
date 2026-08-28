@@ -199,7 +199,12 @@ export function flushQueue(
           }
           continue
         }
-        // 一時的エラー → ここで停止。残りはキューに残したまま次回リトライ
+        // 一時的エラー → ここで停止。残りはキューに残したまま次回リトライ。
+        // 原因が 分からないと 「溜まる一方」の 切り分けが できないので 必ず 出す。
+        console.warn(
+          `[mobilityOfflineQueue] 送信失敗 (再試行します): ${res.error ?? '不明'} ` +
+            `/ assignment=${assignmentId} / 件数=${group.length}`,
+        )
         stopped = true
       }
 

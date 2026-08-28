@@ -38,8 +38,11 @@ const config: CapacitorConfig = {
   ios: {
     // 標準の ios/ ではなく ios-mobility/ をプロジェクトディレクトリにする
     path: 'ios-mobility',
-    // iOS の Background Modes は Xcode で「Location updates」にチェック必須
-    contentInset: 'automatic',
+    // 'automatic' だと WKWebView が 自前で セーフエリア分の content inset を
+    // 入れる。その結果 CSS の env(safe-area-inset-bottom) が 0 になり、
+    // 100dvh の 高さで 組んだ レイアウトが 可視領域より 縦に 長くなって
+    // 下端が 切れる。inset は CSS 側 (env()) で 制御するので never にする。
+    contentInset: 'never',
   },
 }
 
