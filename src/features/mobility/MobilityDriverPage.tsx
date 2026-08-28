@@ -1479,9 +1479,10 @@ export function MobilityDriverPage() {
             <button
               type="button"
               onClick={() => setShowDestSheet(true)}
-              disabled={!myActive}
-              className="bg-slate-800 border border-dashed border-slate-600 rounded-lg p-2 text-left text-slate-400 hover:border-amber-500 hover:text-amber-300 active:bg-slate-700 disabled:opacity-60 disabled:hover:border-slate-600 disabled:hover:text-slate-400 flex flex-col justify-between min-w-0"
-              title={myActive ? 'タップで行き先を選ぶ' : '行き先は乗車後に設定できます'}
+              className="bg-slate-800 border border-dashed border-slate-600 rounded-lg p-2 text-left text-slate-400 hover:border-amber-500 hover:text-amber-300 active:bg-slate-700 flex flex-col justify-between min-w-0"
+              title={
+                myActive ? 'タップで行き先を選ぶ' : 'タップで行き先を選ぶ (選択後に車両を選びます)'
+              }
             >
               <div className="text-[10px] flex items-center gap-1">
                 <MapPin className="h-3 w-3 shrink-0" />
@@ -1489,7 +1490,7 @@ export function MobilityDriverPage() {
               </div>
               <div className="text-sm font-medium leading-tight mt-1">未設定</div>
               <div className="text-[9px] text-slate-500 mt-0.5">
-                {myActive ? 'タップで選択' : '乗車後に設定'}
+                {myActive ? 'タップで選択' : '選んでから乗車'}
               </div>
             </button>
           )}
@@ -1815,7 +1816,10 @@ export function MobilityDriverPage() {
           })()}
           destinationName={pendingDestination?.name ?? null}
           onPick={handleBoard}
-          onClose={() => setShowPicker(false)}
+          onClose={() => {
+            setShowPicker(false)
+            setPendingDestination(null)
+          }}
         />
       )}
 
@@ -1827,10 +1831,24 @@ export function MobilityDriverPage() {
           busy={destBusy}
           error={destError}
           onConfirm={async (point) => {
+            if (!myActive) {
+              // 未乗車: 目的地を控えたまま車両選択へ進む。
+              // 乗車できた時点で handleBoard が適用する
+              setPendingDestination(point)
+              setShowDestSheet(false)
+              setShowPicker(true)
+              return
+            }
             const ok = await applyDestination(point)
             if (ok) setShowDestSheet(false)
           }}
           onClear={async () => {
+            if (!myActive) {
+              // 未乗車では控えている分を取り消すだけ
+              setPendingDestination(null)
+              setShowDestSheet(false)
+              return
+            }
             const ok = await applyDestination(null)
             if (ok) setShowDestSheet(false)
           }}
