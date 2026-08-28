@@ -1336,19 +1336,28 @@ export function MobilityDriverPage() {
       )}
 
       {/* サブヘッダ: 現在の車両状態 (乗車中のときだけ) */}
-      {myActive && myVehicle && (
-        <div className="px-3 py-1.5 bg-slate-700 text-white flex items-center gap-2 shrink-0 text-xs">
-          <Car className="h-4 w-4 text-indigo-300 shrink-0" />
-          <span className="font-semibold truncate">{myVehicle.name}</span>
-          <span className="text-slate-300 shrink-0">
-            · {KIND_LABEL[myVehicle.kind]} · 稼働中
-          </span>
-        </div>
-      )}
+      {/* 車両バー。未乗車でも下のパネルは出るので、ここが消えると
+          「何の状態か」が分からなくなる。未乗車の旨を出しておく */}
+      <div className="px-3 py-1.5 bg-slate-700 text-white flex items-center gap-2 shrink-0 text-xs">
+        <Car
+          className={`h-4 w-4 shrink-0 ${myActive ? 'text-indigo-300' : 'text-slate-400'}`}
+        />
+        {myActive && myVehicle ? (
+          <>
+            <span className="font-semibold truncate">{myVehicle.name}</span>
+            <span className="text-slate-300 shrink-0">
+              · {KIND_LABEL[myVehicle.kind]} · 稼働中
+            </span>
+          </>
+        ) : (
+          <span className="text-slate-300">未乗車 · 位置は送信していません</span>
+        )}
+      </div>
 
-      {/* 速度・セクション距離・行き先パネル (乗車中のみ、常に 3 列) */}
-      {myActive && (
-        <div className="mx-3 mt-2 grid gap-2 shrink-0 grid-cols-3">
+      {/* 速度・セクション距離・行き先パネル (常に 3 列)。
+          未乗車でも速度は出したい (現在地確認や動作確認に使う) ので、
+          乗車状態で出し分けせず常に表示する。乗車が要る操作だけ内側で抑える */}
+      <div className="mx-3 mt-2 grid gap-2 shrink-0 grid-cols-3">
           {/* 速度 */}
           <div className="bg-slate-800 border border-slate-700 rounded-lg p-2 text-white">
             <div className="text-[10px] text-slate-400">現在速度</div>
@@ -1381,7 +1390,7 @@ export function MobilityDriverPage() {
               ).toFixed(1)}
               <span className="text-xs font-normal text-slate-300 ml-1">km</span>
             </div>
-            {distanceMode === 'unit' && (
+            {distanceMode === 'unit' && myActive && (
               <div className="text-[9px] text-slate-400 mt-0.5">
                 {new Date(myActive.started_at).toLocaleTimeString('ja-JP', {
                   hour: '2-digit',
@@ -1449,19 +1458,21 @@ export function MobilityDriverPage() {
             <button
               type="button"
               onClick={() => setShowDestSheet(true)}
-              className="bg-slate-800 border border-dashed border-slate-600 rounded-lg p-2 text-left text-slate-400 hover:border-amber-500 hover:text-amber-300 active:bg-slate-700 flex flex-col justify-between min-w-0"
-              title="タップで行き先を選ぶ"
+              disabled={!myActive}
+              className="bg-slate-800 border border-dashed border-slate-600 rounded-lg p-2 text-left text-slate-400 hover:border-amber-500 hover:text-amber-300 active:bg-slate-700 disabled:opacity-60 disabled:hover:border-slate-600 disabled:hover:text-slate-400 flex flex-col justify-between min-w-0"
+              title={myActive ? 'タップで行き先を選ぶ' : '行き先は乗車後に設定できます'}
             >
               <div className="text-[10px] flex items-center gap-1">
                 <MapPin className="h-3 w-3 shrink-0" />
                 <span>行き先</span>
               </div>
               <div className="text-sm font-medium leading-tight mt-1">未設定</div>
-              <div className="text-[9px] text-slate-500 mt-0.5">タップで選択</div>
+              <div className="text-[9px] text-slate-500 mt-0.5">
+                {myActive ? 'タップで選択' : '乗車後に設定'}
+              </div>
             </button>
           )}
-        </div>
-      )}
+      </div>
 
       {/* 地図 */}
       <div className="flex-1 relative">
