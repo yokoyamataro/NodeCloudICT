@@ -188,7 +188,7 @@ interface State {
   ) => Promise<AssignmentWithNames[]>
 
   // ============================================================
-  // 運行現場 (mobility_projects)
+  // カテゴリ (mobility_projects)
   // ============================================================
   fetchProjects: (organizationId: string) => Promise<MobilityProject[]>
   /** 指定ユーザーが割当てられている現場の一覧 (ドライバー画面用) */
@@ -822,7 +822,7 @@ export const useMobilityStore = create<State>((set, get) => ({
   },
 
   // ============================================================
-  // 運行現場 (mobility_projects)
+  // カテゴリ (mobility_projects)
   // ============================================================
   fetchProjects: async (organizationId) => {
     const { data, error } = await supabase

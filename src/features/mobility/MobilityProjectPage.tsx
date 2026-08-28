@@ -1,4 +1,4 @@
-// 運行現場詳細画面 (/mobility/projects/:projectId)
+// カテゴリ詳細画面 (/mobility/projects/:projectId)
 //
 // - 現場基本情報 + 編集 + 無効化 (active toggle) + 削除
 // - メンバー割当 (ドライバー) 一覧 + 追加 (組織メンバーピッカー) + 削除
@@ -206,7 +206,7 @@ export function MobilityProjectPage() {
         <button
           onClick={() => navigate('/mobility/projects')}
           className="p-1 rounded hover:bg-slate-100 text-slate-500"
-          title="運行現場一覧に戻る"
+          title="カテゴリ一覧に戻る"
         >
           <ArrowLeft className="h-5 w-5" />
         </button>
@@ -433,7 +433,7 @@ export function MobilityProjectPage() {
           onDelete={async () => {
             if (
               !confirm(
-                `運行現場「${project.name}」を完全削除しますか?\nメンバー割当・ポイント・履歴も連鎖削除されます。`,
+                `カテゴリ「${project.name}」を完全削除しますか?\nメンバー割当・ポイント・履歴も連鎖削除されます。`,
               )
             )
               return
@@ -511,7 +511,7 @@ function ProjectEditDialog({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-4 py-3 border-b flex items-center justify-between">
-          <h3 className="text-base font-semibold">運行現場を編集</h3>
+          <h3 className="text-base font-semibold">カテゴリを編集</h3>
           <button onClick={onClose} className="p-1 rounded hover:bg-slate-100 text-slate-500">
             <X className="h-5 w-5" />
           </button>

@@ -25,6 +25,15 @@ struct MobilityLiveActivityLiveActivity: Widget {
                         .lineLimit(1)
                 }
                 Spacer()
+                // 速度はロック画面で一番見たい値なので大きく出す
+                if let kmh = context.state.speedKmh {
+                    HStack(alignment: .firstTextBaseline, spacing: 2) {
+                        Text("\(Int(kmh.rounded()))")
+                            .font(.system(size: 28, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                        Text("km/h").font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
                 if context.state.pendingCount > 0 {
                     VStack(spacing: 0) {
                         Text("\(context.state.pendingCount)")
@@ -44,6 +53,13 @@ struct MobilityLiveActivityLiveActivity: Widget {
                         .font(.caption)
                         .lineLimit(1)
                 }
+                DynamicIslandExpandedRegion(.center) {
+                    if let kmh = context.state.speedKmh {
+                        Text("\(Int(kmh.rounded())) km/h")
+                            .font(.headline)
+                            .monospacedDigit()
+                    }
+                }
                 DynamicIslandExpandedRegion(.trailing) {
                     if context.state.pendingCount > 0 {
                         Text("未送信 \(context.state.pendingCount)")
@@ -62,7 +78,9 @@ struct MobilityLiveActivityLiveActivity: Widget {
                 Image(systemName: "location.fill")
                     .foregroundStyle(context.state.online ? .green : .orange)
             } compactTrailing: {
-                if context.state.pendingCount > 0 {
+                if let kmh = context.state.speedKmh {
+                    Text("\(Int(kmh.rounded()))").monospacedDigit()
+                } else if context.state.pendingCount > 0 {
                     Text("\(context.state.pendingCount)")
                         .foregroundStyle(.orange)
                 }

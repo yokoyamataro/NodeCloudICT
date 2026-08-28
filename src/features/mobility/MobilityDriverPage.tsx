@@ -301,7 +301,7 @@ function MapControlStack({
 export function MobilityDriverPage() {
   const navigate = useNavigate()
   const canUse = useCanUseMobility()
-  const { user, profile } = useAuth()
+  const { user, profile, displayName, signOut } = useAuth()
   const orgId = profile?.organization_id ?? null
 
   const {
@@ -370,7 +370,7 @@ export function MobilityDriverPage() {
     { kind: 'direct'; label: string } | null
   >(null)
 
-  // 割り当てられた運行現場 (プロジェクト) の一覧
+  // 割り当てられたカテゴリ (プロジェクト) の一覧
   const [myProjects, setMyProjects] = useState<MobilityProject[]>([])
   useEffect(() => {
     if (!user) {
@@ -1121,6 +1121,13 @@ export function MobilityDriverPage() {
     () => !isMobileDevice() && !isMobilityApp(),
   )
 
+  const handleSignOut = async () => {
+    if (myActive && !confirm('乗車中です。ログアウトしても位置の送信は止まりません。降車してからログアウトしますか?\n\nOK = このままログアウト / キャンセル = 中止')) {
+      return
+    }
+    await signOut()
+  }
+
   const handleBoard = async (vehicleId: string) => {
     // 同一ユーザーが 2 台に 乗るのは 不整合。既に 乗車中なら 何もしない
     // (通常は 乗車ボタン自体が 出ないが、通信断からの 復帰時などに 備える)
@@ -1205,13 +1212,31 @@ export function MobilityDriverPage() {
             <ArrowLeft className="h-5 w-5" />
           </button>
         )}
-        <div className="text-base font-bold flex-1">
+        <div className="text-base font-bold flex-1 min-w-0 truncate">
           {isMobilityAppFlag ? 'NodeCloudモビリティ' : 'NodeCloud'}
         </div>
         {locationError && (
-          <span className="text-[10px] text-amber-300 max-w-[10rem] text-right leading-tight">
+          <span className="text-[10px] text-amber-300 max-w-[8rem] text-right leading-tight">
             {locationError}
           </span>
+        )}
+        {/* 右端: ログイン名 + ログアウト。専用アプリは他に画面が無く、
+            ここ以外にログアウトの導線が無い */}
+        {user && (
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="text-[11px] text-slate-300 max-w-[7rem] truncate">
+              {displayName || user.email}
+            </span>
+            <button
+              type="button"
+              onClick={handleSignOut}
+              className="p-1.5 rounded hover:bg-slate-700 text-slate-300"
+              title="ログアウト"
+              aria-label="ログアウト"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          </div>
         )}
       </div>
 
@@ -2075,7 +2100,7 @@ function DestinationPickerSheet({
             </button>
           )}
           <h3 className="text-base font-semibold flex-1 truncate">
-            {step === 'projects' && '運行現場を選ぶ'}
+            {step === 'projects' && 'カテゴリを選ぶ'}
             {step === 'points' && (selectedProject?.name ?? 'ポイントを選ぶ')}
             {step === 'preview' && (previewPoint?.name ?? '行き先を確認')}
           </h3>
@@ -2089,7 +2114,7 @@ function DestinationPickerSheet({
             <>
               {projects.length === 0 ? (
                 <div className="p-6 text-center text-sm text-slate-400">
-                  割り当てられた運行現場がありません
+                  割り当てられたカテゴリがありません
                 </div>
               ) : (
                 <ul className="divide-y">

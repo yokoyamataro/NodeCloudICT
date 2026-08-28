@@ -76,7 +76,7 @@ export function formatAgeShort(ms: number): string {
   return `${h}時間前`
 }
 
-// 運行現場ポイント用 (青ピン)。編集中は赤にハイライト。
+// カテゴリポイント用 (青ピン)。編集中は赤にハイライト。
 function projectPointIcon(highlight: boolean): L.DivIcon {
   const color = highlight ? '#dc2626' : '#6366f1'
   return L.divIcon({
@@ -236,7 +236,7 @@ interface FleetMapViewProps {
    * 稼働中割当と重複しても構わない (Map で dedup される)。
    */
   extraTrackAssignmentIds?: string[]
-  /** 現在パネルで展開中の運行現場のポイント (青ピンで地図に表示) */
+  /** 現在パネルで展開中のカテゴリのポイント (青ピンで地図に表示) */
   projectPoints?: MobilityProjectPoint[]
   /** ハイライトするポイント (編集中など)。id で指定 */
   highlightPointId?: string | null
@@ -531,7 +531,7 @@ export function FleetMapView({
       rows.push({ lat: first.lat, lon: first.lon })
       if (last.id !== first.id) rows.push({ lat: last.lat, lon: last.lon })
     }
-    // 展開中の運行現場のポイントも
+    // 展開中のカテゴリのポイントも
     for (const p of projectPoints ?? []) rows.push({ lat: p.lat, lon: p.lon })
     return rows
   }, [latestPositions, markers, extraTracks, projectPoints])
@@ -652,7 +652,7 @@ export function FleetMapView({
         {onMapClick && (
           <MapClickHandler enabled={!!addPointMode} onClick={onMapClick} />
         )}
-        {/* 運行現場ポイント (展開中の現場のもの) */}
+        {/* カテゴリポイント (展開中の現場のもの) */}
         {(projectPoints ?? []).map((p) => (
           <Marker
             key={`project-point-${p.id}`}

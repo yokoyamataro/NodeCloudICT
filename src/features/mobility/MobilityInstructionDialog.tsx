@@ -71,7 +71,7 @@ export function MobilityInstructionDialog({
     })()
   }, [organizationId])
 
-  // 運行現場 (project 宛)
+  // カテゴリ (project 宛)
   useEffect(() => {
     void (async () => {
       try {

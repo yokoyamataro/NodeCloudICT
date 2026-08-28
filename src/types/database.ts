@@ -397,7 +397,7 @@ export interface MobilityPosition {
   altitude_m: number | null
 }
 
-// モビリティ機能: 運行現場マスタ (組織単位)
+// モビリティ機能: カテゴリマスタ (組織単位)
 export interface MobilityProject {
   id: string
   organization_id: string
@@ -409,7 +409,7 @@ export interface MobilityProject {
   updated_at: string
 }
 
-// 運行現場のドライバー割当。現状は role='driver' のみ。
+// カテゴリのドライバー割当。現状は role='driver' のみ。
 export type MobilityProjectMemberRole = 'driver'
 export interface MobilityProjectMember {
   project_id: string
@@ -419,7 +419,7 @@ export interface MobilityProjectMember {
   added_at: string
 }
 
-// 運行現場内のポイント (土取場・採石場・雪捨場・農場A 等)
+// カテゴリ内のポイント (土取場・採石場・雪捨場・農場A 等)
 export interface MobilityProjectPoint {
   id: string
   project_id: string

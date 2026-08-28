@@ -16,6 +16,8 @@ struct MobilityActivityAttributes: ActivityAttributes {
         var pendingCount: Int
         /// 通信できているか
         var online: Bool
+        /// 現在の速度 [km/h]。測れないときは nil
+        var speedKmh: Double?
     }
 
     /// 開始時に決まり、以後変わらない値

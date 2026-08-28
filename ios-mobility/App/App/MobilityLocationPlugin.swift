@@ -71,9 +71,10 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
 
     /// ロック画面 / Dynamic Island の常時表示 (iOS 16.2+)
     private var liveActivity: Any?
-    /// Live Activity の更新間隔 [sec]。毎秒更新すると電池と ActivityKit の
-    /// 予算を無駄に食うので間引く
-    private static let activityUpdateInterval: TimeInterval = 30
+    /// Live Activity の更新間隔 [sec]。
+    /// 速度を出すので 30 秒では表示が古すぎる。一方、毎秒更新すると電池と
+    /// ActivityKit の更新予算を食い、OS 側で間引かれる。10 秒を折衷点にする。
+    private static let activityUpdateInterval: TimeInterval = 10
     private var lastActivityUpdate: Date = .distantPast
 
     // MARK: - 公開 API
@@ -204,7 +205,12 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
             liveActivity = try Activity.request(
                 attributes: MobilityActivityAttributes(vehicleName: name),
                 content: .init(
-                    state: .init(lastSentAt: nil, pendingCount: 0, online: true),
+                    state: .init(
+                        lastSentAt: nil,
+                        pendingCount: 0,
+                        online: true,
+                        speedKmh: nil,
+                    ),
                     staleDate: nil,
                 ),
                 pushType: nil,
@@ -215,15 +221,22 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @available(iOS 16.2, *)
-    private func updateLiveActivity() {
+    private func updateLiveActivity(speedMps: CLLocationSpeed) {
         guard let activity = liveActivity as? Activity<MobilityActivityAttributes> else { return }
         let now = Date()
         guard now.timeIntervalSince(lastActivityUpdate) >= Self.activityUpdateInterval else { return }
         lastActivityUpdate = now
+        // speed は測れないとき負値
+        let kmh: Double? = speedMps >= 0 ? speedMps * 3.6 : nil
         Task {
             await activity.update(
                 .init(
-                    state: .init(lastSentAt: now, pendingCount: 0, online: true),
+                    state: .init(
+                        lastSentAt: now,
+                        pendingCount: 0,
+                        online: true,
+                        speedKmh: kmh,
+                    ),
                     staleDate: nil,
                 )
             )
@@ -318,7 +331,7 @@ extension MobilityLocationPlugin: CLLocationManagerDelegate {
         } else {
             lastMovedLocation = last
         }
-        if #available(iOS 16.2, *) { updateLiveActivity() }
+        if #available(iOS 16.2, *) { updateLiveActivity(speedMps: last.speed) }
         call.resolve(format(last))
     }
 

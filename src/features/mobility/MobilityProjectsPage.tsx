@@ -1,4 +1,4 @@
-// 運行現場一覧画面 (/mobility/projects)
+// カテゴリ一覧画面 (/mobility/projects)
 //
 // - 組織 admin 向け。現場マスタの一覧・作成・編集・削除。
 // - 各行にメンバー数とポイント数を表示 (別途 fetch)。
@@ -57,14 +57,14 @@ export function MobilityProjectsPage() {
           <ArrowLeft className="h-5 w-5" />
         </button>
         <Folder className="h-5 w-5 text-indigo-600" />
-        <h1 className="text-lg font-bold flex-1">運行現場</h1>
+        <h1 className="text-lg font-bold flex-1">カテゴリ</h1>
         <button
           type="button"
           onClick={() => setShowNew(true)}
           className="flex items-center gap-1 px-3 py-1.5 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700"
         >
           <Plus className="h-4 w-4" />
-          新規運行現場
+          新規カテゴリ
         </button>
       </div>
 
@@ -76,7 +76,7 @@ export function MobilityProjectsPage() {
           </div>
         ) : projects.length === 0 ? (
           <div className="p-6 bg-white rounded border text-center text-sm text-slate-500">
-            運行現場がありません。右上の「新規運行現場」から作成してください。
+            カテゴリがありません。右上の「新規カテゴリ」から作成してください。
           </div>
         ) : (
           <>
@@ -188,7 +188,7 @@ function NewProjectDialog({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-4 py-3 border-b flex items-center justify-between">
-          <h3 className="text-base font-semibold">新規運行現場</h3>
+          <h3 className="text-base font-semibold">新規カテゴリ</h3>
           <button onClick={onClose} className="p-1 rounded hover:bg-slate-100 text-slate-500">
             <X className="h-5 w-5" />
           </button>

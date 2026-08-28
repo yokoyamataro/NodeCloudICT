@@ -175,7 +175,7 @@ export function MobilityHomePage() {
     'drivers',
   )
 
-  // 運行現場 (左パネル) の state
+  // カテゴリ (左パネル) の state
   const [projects, setProjects] = useState<MobilityProject[]>([])
   const [projectsLoading, setProjectsLoading] = useState(false)
   const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null)
@@ -313,7 +313,7 @@ export function MobilityHomePage() {
     setSelectedSectionAssignmentIds([])
   }, [])
 
-  // ユーザー一覧を取得。運行現場のメンバー割当ダイアログでも使うので mode 問わず取得。
+  // ユーザー一覧を取得。カテゴリのメンバー割当ダイアログでも使うので mode 問わず取得。
   useEffect(() => {
     if (!orgId) return
     let cancelled = false
@@ -333,7 +333,7 @@ export function MobilityHomePage() {
     }
   }, [orgId])
 
-  // 運行現場一覧を取得
+  // カテゴリ一覧を取得
   const refreshProjects = useCallback(async () => {
     if (!orgId) return
     setProjectsLoading(true)
@@ -480,7 +480,7 @@ export function MobilityHomePage() {
 
       {/* PC は 左: サイドバー(タブ切替) | 右: 地図。狭い画面は縦積み */}
       <div className="flex-1 flex flex-col lg:flex-row min-h-0">
-        {/* 左サイドバー: タブ切替 (ドライバー / 車両 / 運行現場) */}
+        {/* 左サイドバー: タブ切替 (ドライバー / 車両 / カテゴリ) */}
         <div
           className={`flex flex-col border-b lg:border-b-0 lg:border-r bg-white shrink-0 ${
             leftCollapsed ? 'lg:w-8' : 'lg:w-[22rem] xl:w-[25rem]'
@@ -503,7 +503,7 @@ export function MobilityHomePage() {
               [
                 { key: 'drivers', label: 'ドライバー' },
                 { key: 'vehicles', label: '車両' },
-                { key: 'projects', label: '運行現場' },
+                { key: 'projects', label: 'カテゴリ' },
               ] as const
             ).map((t) => (
               <button
@@ -839,7 +839,7 @@ export function MobilityHomePage() {
         />
       )}
 
-      {/* 運行現場 関連ダイアログ */}
+      {/* カテゴリ 関連ダイアログ */}
       {showNewProjectDialog && (
         <ProjectCreateDialog
           onCreate={async ({ name, description }) => {
@@ -869,7 +869,7 @@ export function MobilityHomePage() {
             const p = projects.find((x) => x.id === showEditProjectId)
             if (
               !confirm(
-                `運行現場「${p?.name ?? ''}」を完全削除しますか?\nメンバー割当・ポイント・履歴も連鎖削除されます。`,
+                `カテゴリ「${p?.name ?? ''}」を完全削除しますか?\nメンバー割当・ポイント・履歴も連鎖削除されます。`,
               )
             )
               return
@@ -1954,7 +1954,7 @@ function UserInlineDetail({
 }
 
 // -----------------------------------------------------------------------------
-// 運行現場 左サイドパネル
+// カテゴリ 左サイドパネル
 // -----------------------------------------------------------------------------
 function ProjectsLeftPanel({
   projects,
@@ -2005,7 +2005,7 @@ function ProjectsLeftPanel({
       <div className="flex items-center gap-2">
         <Folder className="h-4 w-4 text-indigo-600" />
         <h2 className="text-sm font-semibold text-slate-700 flex-1">
-          運行現場 ({projects.length})
+          カテゴリ ({projects.length})
         </h2>
         <button
           type="button"
@@ -2024,7 +2024,7 @@ function ProjectsLeftPanel({
         </div>
       ) : projects.length === 0 ? (
         <div className="p-3 bg-white rounded border text-xs text-slate-400 text-center">
-          運行現場がありません。「新規」から作成してください。
+          カテゴリがありません。「新規」から作成してください。
         </div>
       ) : (
         <>
@@ -2308,7 +2308,7 @@ function ProjectRow({
 }
 
 // -----------------------------------------------------------------------------
-// 運行現場ダイアログ (作成 / 編集 / メンバー追加 / ポイント編集)
+// カテゴリダイアログ (作成 / 編集 / メンバー追加 / ポイント編集)
 // MobilityProjectsPage / MobilityProjectPage と同じ実装だが、この画面内で完結させる
 // -----------------------------------------------------------------------------
 
@@ -2332,7 +2332,7 @@ function ProjectCreateDialog({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-4 py-3 border-b flex items-center justify-between">
-          <h3 className="text-base font-semibold">新規運行現場</h3>
+          <h3 className="text-base font-semibold">新規カテゴリ</h3>
           <button onClick={onClose} className="p-1 rounded hover:bg-slate-100 text-slate-500">
             <X className="h-5 w-5" />
           </button>
@@ -2419,7 +2419,7 @@ function ProjectEditDialog({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-4 py-3 border-b flex items-center justify-between">
-          <h3 className="text-base font-semibold">運行現場を編集</h3>
+          <h3 className="text-base font-semibold">カテゴリを編集</h3>
           <button onClick={onClose} className="p-1 rounded hover:bg-slate-100 text-slate-500">
             <X className="h-5 w-5" />
           </button>
