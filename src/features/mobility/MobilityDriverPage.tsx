@@ -40,7 +40,6 @@ import {
   Polyline,
   TileLayer,
   useMap,
-  useMapEvents,
 } from 'react-leaflet'
 import { VehicleMarker } from '@/features/mobility/VehicleMarker'
 import { SPEED_BANDS, speedSegments } from '@/features/mobility/speedBands'
@@ -325,7 +324,6 @@ export function MobilityDriverPage() {
     fetchUserAssignmentHistory,
     fetchMyAssignedProjects,
     fetchProjectPoints,
-    createPoint,
   } = useMobilityStore()
 
   useEffect(() => {
@@ -506,8 +504,6 @@ export function MobilityDriverPage() {
     saveBaseLayer('mobility:baseLayer', baseLayer)
   }, [baseLayer])
 
-  /** 地図長押しで開く「ポイント登録」シートの座標 */
-  const [newPointAt, setNewPointAt] = useState<{ lat: number; lon: number } | null>(null)
   /** 地図上のポイントをタップしたときの確認シート */
   const [pointActionTarget, setPointActionTarget] = useState<MobilityProjectPoint | null>(null)
 
@@ -1480,9 +1476,6 @@ export function MobilityDriverPage() {
           tapHold
           {...({ rotate: true, bearing: 0, rotateControl: false } as Record<string, unknown>)}
         >
-          <MapLongPress
-            onLongPress={(lat, lon) => setNewPointAt((prev) => prev ?? { lat, lon })}
-          />
           <TileLayer
             attribution={BASE_LAYERS[baseLayer].attribution}
             url={BASE_LAYERS[baseLayer].url}
@@ -1802,25 +1795,6 @@ export function MobilityDriverPage() {
             if (ok) setShowDestSheet(false)
           }}
           onClose={() => setShowDestSheet(false)}
-        />
-      )}
-
-      {/* 地図長押し → ポイント登録 (カテゴリ + 名称) */}
-      {newPointAt && (
-        <NewPointSheet
-          at={newPointAt}
-          projects={orgProjects}
-          onClose={() => setNewPointAt(null)}
-          onCreate={async (projectId, name) => {
-            const created = await createPoint({
-              project_id: projectId,
-              name,
-              lat: newPointAt.lat,
-              lon: newPointAt.lon,
-            })
-            setNewPointAt(null)
-            if (created) await reloadAllPoints()
-          }}
         />
       )}
 
@@ -2473,85 +2447,6 @@ function DestinationPickerSheet({
   )
 }
 
-/** 地図長押しで新しいポイントを登録するシート (カテゴリ + 名称) */
-function NewPointSheet({
-  at,
-  projects,
-  onClose,
-  onCreate,
-}: {
-  at: { lat: number; lon: number }
-  projects: MobilityProject[]
-  onClose: () => void
-  onCreate: (projectId: string, name: string) => Promise<void>
-}) {
-  // カテゴリが 1 つしかないなら選ばせる意味がないので既定で選んでおく
-  const [projectId, setProjectId] = useState(projects.length === 1 ? projects[0].id : '')
-  const [name, setName] = useState('')
-  const [busy, setBusy] = useState(false)
-  const canSubmit = !!projectId && name.trim().length > 0 && !busy
-
-  return (
-    <div className="fixed inset-0 bg-black/60 flex items-end z-[9999]" onClick={onClose}>
-      <div
-        className="bg-white w-full rounded-t-2xl p-4 space-y-3"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between">
-          <h3 className="text-base font-semibold">ポイントを登録</h3>
-          <button onClick={onClose} className="p-1 rounded hover:bg-slate-100">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-        <div className="text-[11px] text-slate-500 font-mono">
-          {at.lat.toFixed(6)}, {at.lon.toFixed(6)}
-        </div>
-        <label className="block">
-          <span className="text-xs text-slate-600">カテゴリ</span>
-          <select
-            value={projectId}
-            onChange={(e) => setProjectId(e.target.value)}
-            className="mt-1 w-full px-2 py-2 border border-slate-300 rounded"
-          >
-            <option value="">選択してください</option>
-            {projects.map((pr) => (
-              <option key={pr.id} value={pr.id}>
-                {pr.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block">
-          <span className="text-xs text-slate-600">名称</span>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="例: 土取場A"
-            className="mt-1 w-full px-2 py-2 border border-slate-300 rounded"
-          />
-        </label>
-        <button
-          type="button"
-          disabled={!canSubmit}
-          onClick={async () => {
-            setBusy(true)
-            try {
-              await onCreate(projectId, name.trim())
-            } finally {
-              setBusy(false)
-            }
-          }}
-          className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-indigo-600 text-white rounded-lg font-bold disabled:opacity-50"
-        >
-          {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <MapPin className="h-5 w-5" />}
-          登録
-        </button>
-      </div>
-    </div>
-  )
-}
-
 /** 地図上のポイントをタップしたときの操作シート */
 function PointActionSheet({
   point,
@@ -2600,27 +2495,6 @@ function PointActionSheet({
       </div>
     </div>
   )
-}
-
-/** 地図の長押し (contextmenu) を親に渡す。Leaflet の tapHold が擬似発火させる。
- *
- *  1 回の長押しで contextmenu が 2 回飛んでくることがあり、そのままだと
- *  登録シートが二重に開く。原因は 2 つ考えられる:
- *    - leaflet-rotate (この地図は rotate: true) がイベントを二重化する
- *    - iOS で Leaflet の擬似 contextmenu と WebKit のネイティブ contextmenu が
- *      両方飛ぶ
- *  どちらであっても困るので、短時間の連続発火は 1 回として扱う。 */
-function MapLongPress({ onLongPress }: { onLongPress: (lat: number, lon: number) => void }) {
-  const lastFiredRef = useRef(0)
-  useMapEvents({
-    contextmenu(e) {
-      const now = Date.now()
-      if (now - lastFiredRef.current < 800) return
-      lastFiredRef.current = now
-      onLongPress(e.latlng.lat, e.latlng.lng)
-    },
-  })
-  return null
 }
 
 /** 登録済みポイントのマーカー (青ピン + 名前) */
