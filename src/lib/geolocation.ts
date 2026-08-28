@@ -326,7 +326,16 @@ export async function watchSamplesInBackground(
   )
   return {
     clear: async () => {
-      await BackgroundGeolocation.removeWatcher({ id: watcherId })
+      // watcherId は文字列で返る想定だが、ブリッジの実装差で
+      // { callbackId } のようなオブジェクトが返ることがある。
+      // id が渡らないとネイティブ側が watcher を特定できず、降車したのに
+      // 測位が回り続ける (青いインジケータと Live Activity が残る)。
+      const raw: unknown = watcherId
+      const id =
+        typeof raw === 'string'
+          ? raw
+          : ((raw as { callbackId?: string } | null)?.callbackId ?? '')
+      await BackgroundGeolocation.removeWatcher({ id })
     },
   }
 }

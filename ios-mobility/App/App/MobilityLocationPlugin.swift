@@ -125,17 +125,29 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func removeWatcher(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
-            guard let callbackId = call.getString("id") else {
-                call.reject("No callback ID")
-                return
-            }
-            if let i = self.watchers.firstIndex(where: { $0.callbackId == callbackId }) {
+            let callbackId = call.getString("id")
+            if let cid = callbackId,
+               let i = self.watchers.firstIndex(where: { $0.callbackId == cid }) {
                 self.watchers[i].manager.stopUpdatingLocation()
                 self.watchers[i].manager.stopMonitoringSignificantLocationChanges()
                 self.watchers.remove(at: i)
-            }
-            if let saved = self.bridge?.savedCall(withID: callbackId) {
-                self.bridge?.releaseCall(saved)
+                if let saved = self.bridge?.savedCall(withID: cid) {
+                    self.bridge?.releaseCall(saved)
+                }
+            } else {
+                // id が無い / 一致しない場合でも、必ず止める。
+                // ここで諦めると降車したのに測位が回り続け、青いインジケータと
+                // Live Activity が残ったままになる (実際に発生した)。
+                // 「止める」要求に対して何もしないより、全部止める方が安全。
+                print("[MobilityLocation] removeWatcher: id=\(callbackId ?? "nil") が一致しないため全watcherを停止")
+                for w in self.watchers {
+                    w.manager.stopUpdatingLocation()
+                    w.manager.stopMonitoringSignificantLocationChanges()
+                    if let saved = self.bridge?.savedCall(withID: w.callbackId) {
+                        self.bridge?.releaseCall(saved)
+                    }
+                }
+                self.watchers.removeAll()
             }
             if self.watchers.isEmpty {
                 if #available(iOS 16.2, *) { self.endLiveActivity() }
