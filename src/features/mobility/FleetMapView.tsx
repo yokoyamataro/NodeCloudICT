@@ -22,6 +22,12 @@ import { supabase } from '@/lib/supabase'
 import { useMobilityStore } from '@/stores/mobilityStore'
 import { bearingLabel, bearingDeg, haversineMeters } from '@/lib/geoDistance'
 import type { MobilityPosition, MobilityProjectPoint } from '@/types/database'
+import {
+  BASE_LAYERS,
+  loadBaseLayer,
+  saveBaseLayer,
+  type BaseLayerKey,
+} from '@/lib/baseLayers'
 import { SPEED_BANDS, speedSegments } from '@/features/mobility/speedBands'
 
 const COLOR_ACTIVE = '#10b981'
@@ -303,6 +309,13 @@ export function FleetMapView({
   // 追跡: ユーザーが地図をドラッグしたら一時停止するローカルフラグ。
   // followAssignmentId が親から変わったらリセット (=再度追跡開始)
   const [followSuspended, setFollowSuspended] = useState(false)
+  // 背景地図。既定は航空写真 (現場の地形が分かる方が運行管理では役に立つ)
+  const [baseLayer, setBaseLayer] = useState<BaseLayerKey>(() =>
+    loadBaseLayer('mobility:fleetBaseLayer', 'photo'),
+  )
+  useEffect(() => {
+    saveBaseLayer('mobility:fleetBaseLayer', baseLayer)
+  }, [baseLayer])
   useEffect(() => {
     setFollowSuspended(false)
   }, [followAssignmentId])
@@ -633,6 +646,21 @@ export function FleetMapView({
           <span>地図をクリックしてポイントを配置</span>
         </div>
       )}
+      {/* 背景地図セレクタ (右下、Leaflet の帰属表示の上) */}
+      <div className="absolute bottom-5 right-1 z-[1000] flex items-center gap-1 px-1.5 py-0.5 rounded shadow border border-slate-300 bg-white/95 text-[11px]">
+        <span className="text-slate-500">背景</span>
+        <select
+          value={baseLayer}
+          onChange={(e) => setBaseLayer(e.target.value as BaseLayerKey)}
+          className="bg-transparent outline-none"
+        >
+          {(Object.keys(BASE_LAYERS) as BaseLayerKey[]).map((k) => (
+            <option key={k} value={k}>
+              {BASE_LAYERS[k].label}
+            </option>
+          ))}
+        </select>
+      </div>
       <MapContainer
         center={[35.681236, 139.767125]}
         zoom={5}
@@ -640,8 +668,10 @@ export function FleetMapView({
         style={addPointMode ? { cursor: 'crosshair' } : undefined}
       >
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution={BASE_LAYERS[baseLayer].attribution}
+          url={BASE_LAYERS[baseLayer].url}
+          maxNativeZoom={BASE_LAYERS[baseLayer].maxNative}
+          maxZoom={22}
         />
         <AutoFitBounds positions={positionsForBounds} />
         <FitToExtraTracks tracks={extraTracks} />

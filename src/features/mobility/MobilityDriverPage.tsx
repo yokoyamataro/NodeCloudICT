@@ -45,6 +45,12 @@ import {
 import { VehicleMarker } from '@/features/mobility/VehicleMarker'
 import { SPEED_BANDS, speedSegments } from '@/features/mobility/speedBands'
 import 'leaflet/dist/leaflet.css'
+import {
+  BASE_LAYERS,
+  loadBaseLayer,
+  saveBaseLayer,
+  type BaseLayerKey,
+} from '@/lib/baseLayers'
 // leaflet-rotate は L.Map に rotate/setBearing を注入する副作用 import。
 // ヘディングアップ用に必要 (MobileStakingPage が既に import 済みだが、直接
 // このページを開いても動くよう明示的に import しておく)。
@@ -464,6 +470,14 @@ export function MobilityDriverPage() {
   useEffect(() => {
     void reloadAllPoints()
   }, [reloadAllPoints])
+
+  // 背景地図。既定は航空写真 (現場の地形が分かる方が運行では役に立つ)
+  const [baseLayer, setBaseLayer] = useState<BaseLayerKey>(() =>
+    loadBaseLayer('mobility:baseLayer', 'photo'),
+  )
+  useEffect(() => {
+    saveBaseLayer('mobility:baseLayer', baseLayer)
+  }, [baseLayer])
 
   /** 地図長押しで開く「ポイント登録」シートの座標 */
   const [newPointAt, setNewPointAt] = useState<{ lat: number; lon: number } | null>(null)
@@ -1441,8 +1455,10 @@ export function MobilityDriverPage() {
         >
           <MapLongPress onLongPress={(lat, lon) => setNewPointAt({ lat, lon })} />
           <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            attribution={BASE_LAYERS[baseLayer].attribution}
+            url={BASE_LAYERS[baseLayer].url}
+            maxNativeZoom={BASE_LAYERS[baseLayer].maxNative}
+            maxZoom={22}
           />
           <FollowMe
             pos={currentPos}
@@ -1547,6 +1563,21 @@ export function MobilityDriverPage() {
             onToggleHeading={() => setHeadingUp((prev) => !prev)}
             onToggleTrackPoints={() => setShowTrackPoints((prev) => !prev)}
           />
+          {/* 背景地図セレクタ (右下、Leaflet の帰属表示の上) */}
+          <div className="absolute bottom-5 right-1 z-[1000] flex items-center gap-1 px-1.5 py-0.5 rounded shadow border border-slate-600 bg-slate-900/90 text-[11px] text-slate-200">
+            <span className="text-slate-400">背景</span>
+            <select
+              value={baseLayer}
+              onChange={(e) => setBaseLayer(e.target.value as BaseLayerKey)}
+              className="bg-transparent outline-none"
+            >
+              {(Object.keys(BASE_LAYERS) as BaseLayerKey[]).map((k) => (
+                <option key={k} value={k} className="text-slate-900">
+                  {BASE_LAYERS[k].label}
+                </option>
+              ))}
+            </select>
+          </div>
         </MapContainer>
       </div>
 
