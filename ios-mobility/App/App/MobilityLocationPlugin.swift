@@ -3,6 +3,7 @@ import UIKit
 import Capacitor
 import CoreLocation
 import UserNotifications
+import ActivityKit
 
 /// バックグラウンド位置送信の iOS 実装。
 ///
@@ -57,6 +58,13 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
     /// 最後に「移動した」と判定した位置
     private var lastMovedLocation: CLLocation?
 
+    /// ロック画面 / Dynamic Island の常時表示 (iOS 16.2+)
+    private var liveActivity: Any?
+    /// Live Activity の更新間隔 [sec]。毎秒更新すると電池と ActivityKit の
+    /// 予算を無駄に食うので間引く
+    private static let activityUpdateInterval: TimeInterval = 30
+    private var lastActivityUpdate: Date = .distantPast
+
     // MARK: - 公開 API
 
     @objc func addWatcher(_ call: CAPPluginCall) {
@@ -90,6 +98,9 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
                     manager.requestAlwaysAuthorization()
                 }
             }
+            if #available(iOS 16.2, *) {
+                self.startLiveActivity(vehicleName: self.vehicleName(from: call))
+            }
             self.start(watcher)
         }
     }
@@ -109,6 +120,7 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
                 self.bridge?.releaseCall(saved)
             }
             if self.watchers.isEmpty {
+                if #available(iOS 16.2, *) { self.endLiveActivity() }
                 self.cancelIdleReminder()
                 self.lastMovedLocation = nil
                 self.notify(
@@ -151,6 +163,61 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
             )
             self.scheduleIdleReminder()
         }
+    }
+
+    // MARK: - Live Activity
+    //
+    // 通知は一度流れると埋もれるが、Live Activity は乗車している間ずっと
+    // ロック画面に残る。降車し忘れに気づける唯一の常時表示。
+
+    /// backgroundMessage ("○○ の現在地を送信中") から車両名を取り出す。
+    /// TS 側が notificationBody として渡してくる文字列で、専用の引数は無い。
+    private func vehicleName(from call: CAPPluginCall) -> String {
+        let msg = call.getString("backgroundMessage") ?? ""
+        if let r = msg.range(of: " の現在地を送信中") {
+            return String(msg[msg.startIndex..<r.lowerBound])
+        }
+        return msg.isEmpty ? "車両" : msg
+    }
+
+    @available(iOS 16.2, *)
+    private func startLiveActivity(vehicleName name: String) {
+        guard ActivityAuthorizationInfo().areActivitiesEnabled, liveActivity == nil else { return }
+        do {
+            liveActivity = try Activity.request(
+                attributes: MobilityActivityAttributes(vehicleName: name),
+                content: .init(
+                    state: .init(lastSentAt: nil, pendingCount: 0, online: true),
+                    staleDate: nil,
+                ),
+                pushType: nil,
+            )
+        } catch {
+            print("[LiveActivity] 開始に失敗: \(error)")
+        }
+    }
+
+    @available(iOS 16.2, *)
+    private func updateLiveActivity() {
+        guard let activity = liveActivity as? Activity<MobilityActivityAttributes> else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastActivityUpdate) >= Self.activityUpdateInterval else { return }
+        lastActivityUpdate = now
+        Task {
+            await activity.update(
+                .init(
+                    state: .init(lastSentAt: now, pendingCount: 0, online: true),
+                    staleDate: nil,
+                )
+            )
+        }
+    }
+
+    @available(iOS 16.2, *)
+    private func endLiveActivity() {
+        guard let activity = liveActivity as? Activity<MobilityActivityAttributes> else { return }
+        liveActivity = nil
+        Task { await activity.end(nil, dismissalPolicy: .immediate) }
     }
 
     // MARK: - 通知
@@ -230,6 +297,7 @@ extension MobilityLocationPlugin: CLLocationManagerDelegate {
         } else {
             lastMovedLocation = last
         }
+        if #available(iOS 16.2, *) { updateLiveActivity() }
         call.resolve(format(last))
     }
 
