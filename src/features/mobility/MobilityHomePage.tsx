@@ -130,6 +130,8 @@ export function MobilityHomePage() {
     addProjectMember,
     removeProjectMember,
     fetchProjectPoints,
+    fetchOrgAssignmentsBetween,
+    fetchPositionsForAssignments,
     createPoint,
     updatePoint,
     deletePoint,
@@ -354,6 +356,43 @@ export function MobilityHomePage() {
     void refreshProjects()
   }, [refreshProjects])
 
+  // 左のドライバー一覧に出す「本日走行」。
+  // 本日 started_at の assignment を org 単位で 1 回引き、その位置を 1 回で
+  // まとめて引いて user 別に集計する (ドライバーごとに問い合わせない)。
+  const [todayDistanceByUser, setTodayDistanceByUser] = useState<Map<string, number>>(
+    new Map(),
+  )
+  const reloadTodayDistance = useCallback(async () => {
+    if (!orgId) return
+    const start = new Date()
+    start.setHours(0, 0, 0, 0)
+    const end = new Date(start)
+    end.setDate(end.getDate() + 1)
+    const assignments = await fetchOrgAssignmentsBetween(
+      orgId,
+      start.toISOString(),
+      end.toISOString(),
+    )
+    if (assignments.length === 0) {
+      setTodayDistanceByUser(new Map())
+      return
+    }
+    const byAssignment = await fetchPositionsForAssignments(assignments.map((a) => a.id))
+    const next = new Map<string, number>()
+    for (const a of assignments) {
+      const rows = byAssignment.get(a.id)
+      if (!rows || rows.length < 2) continue
+      next.set(a.user_id, (next.get(a.user_id) ?? 0) + computeTotalDistanceMeters(rows))
+    }
+    setTodayDistanceByUser(next)
+  }, [orgId, fetchOrgAssignmentsBetween, fetchPositionsForAssignments])
+  useEffect(() => {
+    void reloadTodayDistance()
+    // 位置は増え続けるので定期更新。地図の更新 (15 秒) より粗くて十分
+    const id = setInterval(() => void reloadTodayDistance(), 60_000)
+    return () => clearInterval(id)
+  }, [reloadTodayDistance])
+
   // 地図用: 全カテゴリのポイント
   const reloadAllProjectPoints = useCallback(async () => {
     if (projects.length === 0) {
@@ -571,6 +610,7 @@ export function MobilityHomePage() {
                 staleThresholdMs={STALE_THRESHOLD_MS}
                 forceLeaveBusyId={forceLeaveBusyId}
                 sectionHistoryTick={sectionHistoryTick}
+                todayDistanceByUser={todayDistanceByUser}
                 onToggleExpandUser={toggleExpandUser}
                 onToggleExpandVehicle={toggleExpandVehicle}
                 onSelectSection={selectSection}
@@ -605,6 +645,7 @@ export function MobilityHomePage() {
                 staleThresholdMs={STALE_THRESHOLD_MS}
                 forceLeaveBusyId={forceLeaveBusyId}
                 sectionHistoryTick={sectionHistoryTick}
+                todayDistanceByUser={todayDistanceByUser}
                 onToggleExpandUser={toggleExpandUser}
                 onToggleExpandVehicle={toggleExpandVehicle}
                 onSelectSection={selectSection}
@@ -1450,8 +1491,6 @@ interface HistoryDetailProps {
   historyLoading: boolean
   positionsByAssignment: Map<string, MobilityPosition[]>
   vehiclesById: Map<string, Vehicle>
-  todayDistanceM: number
-  distanceLabel: string
   selectedIds: string[]
   onSelect: (assignmentId: string) => void
   onSelectSectionsByDay: (assignmentIds: string[]) => void
@@ -1465,8 +1504,6 @@ function InlineDetailBody({
   history,
   historyLoading,
   positionsByAssignment,
-  todayDistanceM,
-  distanceLabel,
   selectedIds,
   onSelect,
   onSelectSectionsByDay,
@@ -1475,18 +1512,8 @@ function InlineDetailBody({
 }: HistoryDetailProps) {
   return (
     <div className="border-t bg-slate-50/60 p-3 space-y-3">
-      {/* 走行距離。速度は地図のラベル (ドライバー / 車両 / 速度) に出すので
-          ここには置かない (同じ値が 2 箇所にあると視線が散る) */}
-      <div className="grid grid-cols-1 gap-2">
-        <div className="p-2 bg-white rounded border">
-          <div className="text-[10px] text-slate-500">{distanceLabel}</div>
-          <div className="text-xl font-bold leading-tight text-slate-800">
-            {(todayDistanceM / 1000).toFixed(1)}
-            <span className="text-[10px] font-normal text-slate-500 ml-1">km</span>
-          </div>
-        </div>
-      </div>
-
+      {/* 速度は地図のラベル (ドライバー / 車両 / 速度)、走行距離は左の一覧に
+          出すので、ここでは繰り返さない */}
       {/* 運行履歴 */}
       <div>
         <div className="flex items-center gap-2 mb-1.5">
@@ -1833,13 +1860,6 @@ function VehicleInlineDetail({
     return map
   }, [todayPositions])
 
-  const todayDistanceM = useMemo(() => {
-    let total = 0
-    for (const rows of positionsByAssignment.values()) {
-      total += computeTotalDistanceMeters(rows)
-    }
-    return total
-  }, [positionsByAssignment])
 
 
   return (
@@ -1848,8 +1868,6 @@ function VehicleInlineDetail({
       historyLoading={historyLoading}
       positionsByAssignment={positionsByAssignment}
       vehiclesById={vehiclesById}
-      todayDistanceM={todayDistanceM}
-      distanceLabel="本日走行 (この車両)"
       selectedIds={selectedIds}
       onSelectSectionsByDay={onSelectSectionsByDay}
       onSelect={onSelect}
@@ -1934,13 +1952,6 @@ function UserInlineDetail({
     return map
   }, [todayPositions])
 
-  const todayDistanceM = useMemo(() => {
-    let total = 0
-    for (const rows of positionsByAssignment.values()) {
-      total += computeTotalDistanceMeters(rows)
-    }
-    return total
-  }, [positionsByAssignment])
 
 
   return (
@@ -1949,8 +1960,6 @@ function UserInlineDetail({
       historyLoading={historyLoading}
       positionsByAssignment={positionsByAssignment}
       vehiclesById={vehiclesById}
-      todayDistanceM={todayDistanceM}
-      distanceLabel="本日走行 (この人)"
       selectedIds={selectedIds}
       onSelectSectionsByDay={onSelectSectionsByDay}
       onSelect={onSelect}
@@ -2772,6 +2781,8 @@ interface FleetSidebarProps {
   staleThresholdMs: number
   forceLeaveBusyId: string | null
   sectionHistoryTick: number
+  /** user_id → 本日の走行距離 [m]。一覧に出す */
+  todayDistanceByUser: Map<string, number>
   onToggleExpandUser: (userId: string) => void
   onToggleExpandVehicle: (vehicleId: string) => void
   onSelectSection: (assignmentId: string) => void
@@ -2796,6 +2807,7 @@ function UsersColumn(props: FleetSidebarProps) {
     vehicles,
     orgMembers,
     loading,
+    todayDistanceByUser,
     expandedUserId,
     ageMsForAssignment,
     staleThresholdMs,
@@ -2878,6 +2890,7 @@ function UsersColumn(props: FleetSidebarProps) {
                 vehicle={vehicle}
                 userInfo={userInfo}
                 expanded={expandedUserId === assignment.user_id}
+                todayDistanceM={todayDistanceByUser.get(assignment.user_id) ?? null}
                 ageMs={ageMsForAssignment(assignment.id)}
                 staleThresholdMs={staleThresholdMs}
                 forceLeaveBusyId={forceLeaveBusyId}
@@ -2918,6 +2931,7 @@ function UsersColumn(props: FleetSidebarProps) {
               <InactiveUserCard
                 key={m.user_id}
                 member={m}
+                todayDistanceM={todayDistanceByUser.get(m.user_id) ?? null}
                 expanded={expandedUserId === m.user_id}
                 onToggleExpand={() => onToggleExpandUser(m.user_id)}
               />
@@ -3091,6 +3105,7 @@ function ActivePairCard({
   vehicle,
   userInfo,
   expanded,
+  todayDistanceM,
   ageMs,
   staleThresholdMs,
   forceLeaveBusyId,
@@ -3101,6 +3116,8 @@ function ActivePairCard({
   vehicle: Vehicle | null
   userInfo: OrgMemberRow | null
   expanded: boolean
+  /** 本日の走行距離 [m]。null なら未取得 */
+  todayDistanceM: number | null
   ageMs: number | null
   staleThresholdMs: number
   forceLeaveBusyId: string | null
@@ -3134,7 +3151,14 @@ function ActivePairCard({
               <div className="text-xs font-medium text-slate-800 truncate">
                 {assignment.driver_name || userInfo?.email || '(名前未設定)'}
               </div>
-              {userInfo?.email && assignment.driver_name && (
+              {/* 氏名が入っていればメールは出さない (幅が狭く、名前で識別できる)。
+                  代わりに本日の走行距離を出す */}
+              {todayDistanceM != null && (
+                <div className="text-[10px] text-slate-500 truncate">
+                  本日 {(todayDistanceM / 1000).toFixed(1)} km
+                </div>
+              )}
+              {!assignment.driver_name && userInfo?.email && (
                 <div className="text-[10px] text-slate-500 truncate">
                   {userInfo.email}
                 </div>
@@ -3234,10 +3258,13 @@ function ActivePairCard({
 // 未乗車ユーザーカード
 function InactiveUserCard({
   member,
+  todayDistanceM,
   expanded,
   onToggleExpand,
 }: {
   member: OrgMemberRow
+  /** 本日の走行距離 [m]。null なら未取得 */
+  todayDistanceM: number | null
   expanded: boolean
   onToggleExpand: () => void
 }) {
@@ -3261,7 +3288,13 @@ function InactiveUserCard({
           <div className="text-sm font-medium text-slate-800 truncate">
             {member.full_name || member.email}
           </div>
-          {member.full_name && member.email !== member.full_name && (
+          {/* 氏名が入っていればメールは出さない。代わりに本日の走行距離 */}
+          {todayDistanceM != null && (
+            <div className="text-[10px] text-slate-500 truncate">
+              本日 {(todayDistanceM / 1000).toFixed(1)} km
+            </div>
+          )}
+          {!member.full_name && member.email && (
             <div className="text-[10px] text-slate-500 truncate">
               {member.email}
             </div>
