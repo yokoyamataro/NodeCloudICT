@@ -111,6 +111,9 @@ const IDLE_SPEED_KMH = 1.5
 /** これ未満なら「停止中」とみなす前回送信地点からの距離 [m] */
 const IDLE_MOVE_M = 15
 
+/** 直近に乗車した車両 (次回の車両選択で先頭に出す) */
+const LAST_VEHICLE_KEY = 'mobility:lastVehicleId'
+
 /** 直前の送信からの経過が 送信間隔を満たしているか (停止中は間隔を伸ばす) */
 function shouldSendNow(
   now: number,
@@ -1196,6 +1199,11 @@ export function MobilityDriverPage() {
     setSelectedLogPositions([])
   }, [myActive])
 
+  /** 乗車前に選んだ目的地。乗車が済んだ時点で適用する */
+  const [pendingDestination, setPendingDestination] = useState<MobilityProjectPoint | null>(
+    null,
+  )
+
   const handleBoard = async (vehicleId: string) => {
     // 同一ユーザーが 2 台に 乗るのは 不整合。既に 乗車中なら 何もしない
     // (通常は 乗車ボタン自体が 出ないが、通信断からの 復帰時などに 備える)
@@ -1212,6 +1220,19 @@ export function MobilityDriverPage() {
     try {
       const res = await startAssignment(vehicleId)
       if (!res) throw new Error(useMobilityStore.getState().vehiclesError ?? '開始に失敗')
+      // 次回の乗車で先頭に出すため、直近の車両を覚えておく
+      try {
+        localStorage.setItem(LAST_VEHICLE_KEY, vehicleId)
+      } catch {
+        /* localStorage 拒否環境 */
+      }
+      // 「目的地 → 乗車」の順で操作した場合、ここで目的地を適用する。
+      // myActive はストア更新待ちなので、返ってきた assignment の id を直接使う
+      if (pendingDestination) {
+        await setAssignmentDestination(res.id, pendingDestination.id)
+        setPendingDestination(null)
+        if (orgId) await fetchActiveAssignments(orgId)
+      }
       setShowPicker(false)
     } catch (err) {
       setBusyError(friendlyMobilityError(err))
@@ -1785,6 +1806,14 @@ export function MobilityDriverPage() {
           vehicles={vehicles.filter((v) => v.active)}
           activeAssignments={activeAssignments}
           currentUserId={user?.id ?? null}
+          lastVehicleId={(() => {
+            try {
+              return localStorage.getItem(LAST_VEHICLE_KEY)
+            } catch {
+              return null
+            }
+          })()}
+          destinationName={pendingDestination?.name ?? null}
           onPick={handleBoard}
           onClose={() => setShowPicker(false)}
         />
@@ -1822,6 +1851,12 @@ export function MobilityDriverPage() {
             const p = pointActionTarget
             setPointActionTarget(null)
             await applyDestination(p)
+          }}
+          onBoardThenSetDestination={() => {
+            // 目的地 → 乗車 の順。乗車が済んだ時点で handleBoard が適用する
+            setPendingDestination(pointActionTarget)
+            setPointActionTarget(null)
+            setShowPicker(true)
           }}
         />
       )}
@@ -2465,12 +2500,15 @@ function PointActionSheet({
   canSetDestination,
   onClose,
   onSetDestination,
+  onBoardThenSetDestination,
 }: {
   point: MobilityProjectPoint
   projectName: string | null
   canSetDestination: boolean
   onClose: () => void
   onSetDestination: () => void | Promise<void>
+  /** 未乗車のとき、この地点を控えて車両選択へ進む */
+  onBoardThenSetDestination: () => void
 }) {
   return (
     <div className="fixed inset-0 bg-black/60 flex items-end z-[9999]" onClick={onClose}>
@@ -2499,9 +2537,16 @@ function PointActionSheet({
             ここを目的地にする
           </button>
         ) : (
-          <div className="text-xs text-slate-500 text-center py-2">
-            目的地を設定するには乗車してください
-          </div>
+          // 未乗車でも操作を止めない。この地点を控えたまま車両選択へ進み、
+          // 乗車できた時点で目的地に設定する
+          <button
+            type="button"
+            onClick={onBoardThenSetDestination}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-indigo-600 text-white rounded-lg font-bold"
+          >
+            <Play className="h-5 w-5" />
+            乗車してここを目的地にする
+          </button>
         )}
       </div>
     </div>
@@ -2530,12 +2575,18 @@ function VehiclePickerSheet({
   vehicles,
   activeAssignments,
   currentUserId,
+  lastVehicleId,
+  destinationName,
   onPick,
   onClose,
 }: {
   vehicles: Vehicle[]
   activeAssignments: Map<string, { id: string; driver_name: string | null; user_id: string }>
   currentUserId: string | null
+  /** 直近に乗車した車両。先頭に出す */
+  lastVehicleId: string | null
+  /** 先に選んだ目的地があれば見出しに出す (目的地 → 乗車 の順に対応) */
+  destinationName: string | null
   onPick: (vehicleId: string) => void
   onClose: () => void
 }) {
@@ -2549,7 +2600,14 @@ function VehiclePickerSheet({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="p-3 border-b flex items-center justify-between">
-          <h3 className="text-base font-semibold">乗車する車両を選ぶ</h3>
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold">乗車する車両を選ぶ</h3>
+            {destinationName && (
+              <div className="text-[11px] text-amber-700 truncate">
+                行き先: {destinationName}（乗車後に設定します）
+              </div>
+            )}
+          </div>
           <button onClick={onClose} className="p-1 rounded hover:bg-slate-100">
             <X className="h-5 w-5" />
           </button>
@@ -2561,7 +2619,15 @@ function VehiclePickerSheet({
             </div>
           ) : (
             <ul className="divide-y">
-              {vehicles.map((v) => {
+              {[...vehicles]
+                .sort((a, b) => {
+                  // 直近に乗った車両を先頭に。毎回同じ車に乗る運用が多く、
+                  // 一覧から探す手間を省く
+                  if (a.id === lastVehicleId) return -1
+                  if (b.id === lastVehicleId) return 1
+                  return 0
+                })
+                .map((v) => {
                 const active = activeAssignments.get(v.id)
                 // 自分が 乗車中の 車両は 「使用中」で 塞がない。
                 // 通信断で 一時的に 乗車状態を 見失った後、自分の車に 戻れなく
@@ -2590,6 +2656,11 @@ function VehiclePickerSheet({
                           {v.plate_or_serial && ` · ${v.plate_or_serial}`}
                         </div>
                       </div>
+                      {v.id === lastVehicleId && !isMine && !busyBy && (
+                        <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-slate-100 text-slate-600 border border-slate-300">
+                          前回
+                        </span>
+                      )}
                       {isMine && (
                         <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-700 border border-emerald-300">
                           自分が乗車中
