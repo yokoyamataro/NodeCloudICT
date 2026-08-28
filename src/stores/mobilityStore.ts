@@ -641,7 +641,12 @@ export const useMobilityStore = create<State>((set, get) => ({
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), SEND_TIMEOUT_MS)
     try {
-      const { error } = await supabase.from('mobility_positions').insert(
+      // insert ではなく upsert + ignoreDuplicates。
+      // DB に 一意インデックス uidx_mobility_positions_no_dup
+      // (assignment_id, recorded_at) が あり、insert だと バッチ内に 送信済みが
+      // 1 件でも 混ざると **バッチ全体** が 23505 で 落ちる。
+      // ON CONFLICT DO NOTHING 相当に して、既にある ping は 黙って 飛ばす。
+      const { error } = await supabase.from('mobility_positions').upsert(
         rows.map((input) => ({
           assignment_id: assignmentId,
           recorded_at: input.recorded_at ?? new Date().toISOString(),
@@ -652,6 +657,7 @@ export const useMobilityStore = create<State>((set, get) => ({
           heading_deg: input.heading_deg ?? null,
           altitude_m: input.altitude_m ?? null,
         })) as never,
+        { onConflict: 'assignment_id,recorded_at', ignoreDuplicates: true },
       ).abortSignal(ctrl.signal)
       if (error) throw error
       return { ok: true }
