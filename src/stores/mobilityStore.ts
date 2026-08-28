@@ -312,6 +312,9 @@ async function enrichAssignments(
   }))
 }
 
+/** 位置 ping 送信のタイムアウト [ms]。返らない fetch でキューを詰まらせない */
+const SEND_TIMEOUT_MS = 20_000
+
 export const useMobilityStore = create<State>((set, get) => ({
   vehicles: [],
   vehiclesLoading: false,
@@ -631,6 +634,12 @@ export const useMobilityStore = create<State>((set, get) => ({
 
   sendPositions: async (assignmentId, rows) => {
     if (rows.length === 0) return { ok: true }
+    // タイムアウト必須。iOS はバックグラウンドから復帰した直後、ソケットが
+    // 死んでいるのに閉じられていない状態があり、fetch が永久に返らないことが
+    // ある。そうなると flushQueue の Promise が解決せず inflightFlush に
+    // 居座り、以降の送信が すべて 同じ Promise を 待って 完全に 止まる。
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), SEND_TIMEOUT_MS)
     try {
       const { error } = await supabase.from('mobility_positions').insert(
         rows.map((input) => ({
@@ -643,11 +652,13 @@ export const useMobilityStore = create<State>((set, get) => ({
           heading_deg: input.heading_deg ?? null,
           altitude_m: input.altitude_m ?? null,
         })) as never,
-      )
+      ).abortSignal(ctrl.signal)
       if (error) throw error
       return { ok: true }
     } catch (err) {
       return { ok: false, error: extractErr(err) }
+    } finally {
+      clearTimeout(timer)
     }
   },
 

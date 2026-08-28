@@ -25,8 +25,10 @@ import { pingAdd, pingClear, pingCount, pingDelete, pingTake } from '@/lib/offli
 /** 上限。超えたら古い方から捨てる (これに達するのは通信が数日死んでいる時) */
 export const QUEUE_CAP = 50_000
 
-/** 1 リクエストで送る最大件数 */
-const BATCH_SIZE = 500
+/** 1 リクエストで送る最大件数。
+ *  大きくすると 1 本が失敗した時の巻き戻しが大きく、進捗も動かないため
+ *  控えめにする (500 だと「500 件送信中」のまま止まって見える)。 */
+const BATCH_SIZE = 200
 
 /** 1 回の flush で読み出す最大件数 (メモリを食い過ぎないため) */
 const TAKE_LIMIT = 5_000
