@@ -48,6 +48,11 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
         // (true だと 停車中に iOS が 更新を 止め、再開の 保証が 無い)
         manager.pausesLocationUpdatesAutomatically = false
         manager.activityType = .automotiveNavigation
+        // バックグラウンドで 位置を 取っている 間、ステータスバーに 青い インジケータを
+        // 常時表示する。既定は false で、その場合 利用者は アプリを 閉じている 間
+        // 「今 位置が 送られているか」を 知る 手段が 無い。
+        // Android は Foreground Service の 常駐通知が 同じ役割を 果たしている。
+        manager.showsBackgroundLocationIndicator = true
     }
 
     // MARK: - 公開 API
