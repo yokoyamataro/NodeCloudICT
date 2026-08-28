@@ -1613,6 +1613,7 @@ export function MobilityDriverPage() {
         <VehiclePickerSheet
           vehicles={vehicles.filter((v) => v.active)}
           activeAssignments={activeAssignments}
+          currentUserId={user?.id ?? null}
           onPick={handleBoard}
           onClose={() => setShowPicker(false)}
         />
@@ -2266,11 +2267,13 @@ function DestinationPickerSheet({
 function VehiclePickerSheet({
   vehicles,
   activeAssignments,
+  currentUserId,
   onPick,
   onClose,
 }: {
   vehicles: Vehicle[]
-  activeAssignments: Map<string, { id: string; driver_name: string | null }>
+  activeAssignments: Map<string, { id: string; driver_name: string | null; user_id: string }>
+  currentUserId: string | null
   onPick: (vehicleId: string) => void
   onClose: () => void
 }) {
@@ -2297,7 +2300,13 @@ function VehiclePickerSheet({
           ) : (
             <ul className="divide-y">
               {vehicles.map((v) => {
-                const busyBy = activeAssignments.get(v.id)
+                const active = activeAssignments.get(v.id)
+                // 自分が 乗車中の 車両は 「使用中」で 塞がない。
+                // 通信断で 一時的に 乗車状態を 見失った後、自分の車に 戻れなく
+                // なるため (DB 側の assignment は 開いたまま)。
+                const busyBy =
+                  active && currentUserId && active.user_id === currentUserId ? null : active
+                const isMine = !!active && !busyBy
                 const Icon = KIND_ICON[v.kind]
                 return (
                   <li key={v.id}>
@@ -2319,6 +2328,11 @@ function VehiclePickerSheet({
                           {v.plate_or_serial && ` · ${v.plate_or_serial}`}
                         </div>
                       </div>
+                      {isMine && (
+                        <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-700 border border-emerald-300">
+                          自分が乗車中
+                        </span>
+                      )}
                       {busyBy && (
                         <span className="shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-amber-100 text-amber-700 border border-amber-300">
                           {busyBy.driver_name || '他ドライバー'} 乗車中

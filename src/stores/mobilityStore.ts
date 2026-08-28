@@ -397,10 +397,15 @@ export const useMobilityStore = create<State>((set, get) => ({
   fetchActiveAssignments: async (organizationId: string) => {
     try {
       // vehicles を JOIN しないと organization_id で絞れないので、まず vehicles.id を取る
-      const { data: vRows } = await supabase
+      const { data: vRows, error: vErr } = await supabase
         .from('vehicles')
         .select('id')
         .eq('organization_id', organizationId)
+      // 通信断でここが失敗したとき、以前は error を見ずに vRows=null →
+      // vehicleIds.length===0 → activeAssignments を空に していた。
+      // その結果 圏外に 入った 瞬間に 乗車状態を 見失い、UI 上 降車扱いに なる
+      // (DB 側の assignment は 開いたまま)。取得できない時は 直前の状態を 保つ。
+      if (vErr) throw vErr
       const vehicleIds = ((vRows ?? []) as { id: string }[]).map((r) => r.id)
       if (vehicleIds.length === 0) {
         set({ activeAssignments: new Map() })
