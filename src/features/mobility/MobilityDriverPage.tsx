@@ -433,6 +433,33 @@ export function MobilityDriverPage() {
     }).length
   }, [messages, user])
 
+  // ボタンに出す「最新の受信メッセージ」。自分が送ったものは除く。
+  // 指示だけでなく連絡 (note) も対象にする。
+  const latestIncoming = useMemo(() => {
+    if (!user) return null
+    const mine = messages
+      .filter(
+        (m) =>
+          m.sender_user_id !== user.id &&
+          m.channel_kind === 'direct' &&
+          m.channel_user_id === user.id,
+      )
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+    return mine[0] ?? null
+  }, [messages, user])
+
+  /** 未読の受信メッセージがあるか (指示に限らない) */
+  const hasUnreadIncoming = useMemo(() => {
+    if (!user) return false
+    return messages.some(
+      (m) =>
+        !m.read_at &&
+        m.sender_user_id !== user.id &&
+        m.channel_kind === 'direct' &&
+        m.channel_user_id === user.id,
+    )
+  }, [messages, user])
+
   // 自分の稼働中割当を探す
   const myActive = useMemo(() => {
     if (!user) return null
@@ -1648,16 +1675,26 @@ export function MobilityDriverPage() {
               運行履歴
             </button>
           )}
-          {/* メッセージ / 指示 バッジ付き */}
+          {/* メッセージ。ラベルではなく最新の受信内容を出す。
+              未読があれば色を変えて点滅させ、開かなくても気づけるようにする */}
           <button
             type="button"
             onClick={() => setShowChatSheet({ kind: 'direct', label: '管理者' })}
-            className="relative flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm rounded-lg border border-emerald-500 text-emerald-200 hover:bg-emerald-950/40"
+            className={`relative flex-1 min-w-0 flex items-center gap-2 px-3 py-2 text-sm rounded-lg border ${
+              hasUnreadIncoming
+                ? 'border-amber-400 bg-amber-500/20 text-amber-100 animate-pulse'
+                : 'border-emerald-500 text-emerald-200 hover:bg-emerald-950/40'
+            }`}
           >
-            <MessageSquare className="h-4 w-4" />
-            メッセージ
+            <MessageSquare className="h-4 w-4 shrink-0" />
+            <span className="flex-1 min-w-0 text-left truncate">
+              {latestIncoming
+                ? latestIncoming.body?.trim() ||
+                  (latestIncoming.message_kind === 'instruction' ? '運行指示' : 'メッセージ')
+                : 'メッセージ'}
+            </span>
             {unreadInstructionCount > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold">
+              <span className="shrink-0 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold">
                 {unreadInstructionCount}
               </span>
             )}
@@ -1824,7 +1861,13 @@ export function MobilityDriverPage() {
           activeAssignmentId={myActive?.id ?? null}
           currentLat={currentPos?.[0] ?? null}
           currentLon={currentPos?.[1] ?? null}
-          onConfirmed={async () => {
+          onConfirmed={async (_assignmentId, pointId) => {
+            // 指示を確認したら、その行き先をそのまま目的地に設定する。
+            // 確認したのに目的地が空のままだと、結局手で選び直すことになる。
+            if (pointId) {
+              const pt = allPoints.find((p) => p.id === pointId) ?? null
+              if (pt) await applyDestination(pt)
+            }
             if (orgId) await fetchActiveAssignments(orgId)
           }}
           onArrived={async () => {
@@ -1869,7 +1912,7 @@ function ChatSheet({
   activeAssignmentId: string | null
   currentLat: number | null
   currentLon: number | null
-  onConfirmed: () => Promise<void>
+  onConfirmed: (assignmentId: string | null, pointId: string | null) => Promise<void>
   onArrived: () => Promise<void>
   onClose: () => void
 }) {
@@ -1904,7 +1947,7 @@ function ChatSheet({
             activeAssignmentId={activeAssignmentId}
             currentLat={currentLat}
             currentLon={currentLon}
-            onConfirmed={() => void onConfirmed()}
+            onConfirmed={(assignmentId, pointId) => void onConfirmed(assignmentId, pointId)}
             onArrived={() => void onArrived()}
           />
         </div>

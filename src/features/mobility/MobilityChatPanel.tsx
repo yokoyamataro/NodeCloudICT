@@ -32,7 +32,8 @@ interface Props {
   activeAssignmentId?: string | null
   currentLat?: number | null
   currentLon?: number | null
-  onConfirmed?: (assignmentId: string | null) => void
+  /** 指示を確認したとき。行き先ポイントを目的地に設定するため pointId も渡す */
+  onConfirmed?: (assignmentId: string | null, pointId: string | null) => void
   onArrived?: () => void
   /** 表示件数の上限 (default 30) */
   displayLimit?: number
@@ -174,7 +175,7 @@ export function MobilityChatPanel({
     setNoteText('')
   }
 
-  const handleConfirm = async (instructionId: string) => {
+  const handleConfirm = async (instructionId: string, pointId: string | null) => {
     setBusyInstructionId(instructionId)
     setError(null)
     const res = await confirmInstruction(instructionId)
@@ -183,7 +184,7 @@ export function MobilityChatPanel({
       setError(res.error)
       return
     }
-    onConfirmed?.(res.assignmentId)
+    onConfirmed?.(res.assignmentId, pointId)
   }
 
   const handleArrival = async (instructionId: string) => {
@@ -303,7 +304,7 @@ function MessageBubble({
   currentLon: number | null
   activeAssignmentId: string | null
   busyInstructionId: string | null
-  onConfirm: (id: string) => void
+  onConfirm: (id: string, pointId: string | null) => void
   onArrival: (id: string) => void
 }) {
   const isMine = message.sender_role === viewerRole
@@ -425,7 +426,7 @@ function MessageBubble({
               <div className="pt-1">
                 <button
                   type="button"
-                  onClick={() => onConfirm(message.id)}
+                  onClick={() => onConfirm(message.id, message.instruction_point_id ?? null)}
                   disabled={busyInstructionId === message.id}
                   className="w-full py-1 text-xs bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50 flex items-center justify-center gap-1"
                 >
