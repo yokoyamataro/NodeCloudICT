@@ -40,6 +40,7 @@ import {
   Polyline,
   TileLayer,
   useMap,
+  useMapEvents,
 } from 'react-leaflet'
 import { VehicleMarker } from '@/features/mobility/VehicleMarker'
 import { SPEED_BANDS, speedSegments } from '@/features/mobility/speedBands'
@@ -318,6 +319,7 @@ export function MobilityDriverPage() {
     fetchUserAssignmentHistory,
     fetchMyAssignedProjects,
     fetchProjectPoints,
+    createPoint,
   } = useMobilityStore()
 
   useEffect(() => {
@@ -447,6 +449,26 @@ export function MobilityDriverPage() {
   const [showDestSheet, setShowDestSheet] = useState(false)
   const [destBusy, setDestBusy] = useState(false)
   const [destError, setDestError] = useState<string | null>(null)
+
+  // 地図に出す全ポイント (カテゴリ横断)。目的地の候補になるので、
+  // 見えているカテゴリの分をまとめて持つ。
+  const [allPoints, setAllPoints] = useState<MobilityProjectPoint[]>([])
+  const reloadAllPoints = useCallback(async () => {
+    if (orgProjects.length === 0) {
+      setAllPoints([])
+      return
+    }
+    const lists = await Promise.all(orgProjects.map((pr) => fetchProjectPoints(pr.id)))
+    setAllPoints(lists.flat().filter((p) => p.active))
+  }, [orgProjects, fetchProjectPoints])
+  useEffect(() => {
+    void reloadAllPoints()
+  }, [reloadAllPoints])
+
+  /** 地図長押しで開く「ポイント登録」シートの座標 */
+  const [newPointAt, setNewPointAt] = useState<{ lat: number; lon: number } | null>(null)
+  /** 地図上のポイントをタップしたときの確認シート */
+  const [pointActionTarget, setPointActionTarget] = useState<MobilityProjectPoint | null>(null)
 
   // 自分の運行履歴シート
   const [showLogsSheet, setShowLogsSheet] = useState(false)
@@ -1411,8 +1433,13 @@ export function MobilityDriverPage() {
           zoom={15}
           zoomControl={false}
           className="h-full w-full"
+          // 長押し → contextmenu の擬似発火。Capacitor の WKWebView は UA に
+          // "Safari" を含まず Leaflet の既定判定から漏れるため明示 ON。
+          // (ICT 側 MobileStakingPage と同じ理由)
+          tapHold
           {...({ rotate: true, bearing: 0, rotateControl: false } as Record<string, unknown>)}
         >
+          <MapLongPress onLongPress={(lat, lon) => setNewPointAt({ lat, lon })} />
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -1477,6 +1504,18 @@ export function MobilityDriverPage() {
               }}
             />
           )}
+          {/* 登録済みポイント。タップで目的地に設定できる。
+              現在の目的地は下の専用マーカーで描くのでここでは除く */}
+          {allPoints
+            .filter((p) => p.id !== selectedDestination?.id)
+            .map((p) => (
+              <Marker
+                key={p.id}
+                position={[p.lat, p.lon]}
+                icon={buildProjectPointIcon(p.name)}
+                eventHandlers={{ click: () => setPointActionTarget(p) }}
+              />
+            ))}
           {selectedDestination && (
             <Marker
               position={[selectedDestination.lat, selectedDestination.lon]}
@@ -1693,6 +1732,42 @@ export function MobilityDriverPage() {
             if (ok) setShowDestSheet(false)
           }}
           onClose={() => setShowDestSheet(false)}
+        />
+      )}
+
+      {/* 地図長押し → ポイント登録 (カテゴリ + 名称) */}
+      {newPointAt && (
+        <NewPointSheet
+          at={newPointAt}
+          projects={orgProjects}
+          onClose={() => setNewPointAt(null)}
+          onCreate={async (projectId, name) => {
+            const created = await createPoint({
+              project_id: projectId,
+              name,
+              lat: newPointAt.lat,
+              lon: newPointAt.lon,
+            })
+            setNewPointAt(null)
+            if (created) await reloadAllPoints()
+          }}
+        />
+      )}
+
+      {/* 地図のポイントをタップ → 目的地に設定 */}
+      {pointActionTarget && (
+        <PointActionSheet
+          point={pointActionTarget}
+          projectName={
+            orgProjects.find((pr) => pr.id === pointActionTarget.project_id)?.name ?? null
+          }
+          canSetDestination={!!myActive}
+          onClose={() => setPointActionTarget(null)}
+          onSetDestination={async () => {
+            const p = pointActionTarget
+            setPointActionTarget(null)
+            await applyDestination(p)
+          }}
         />
       )}
 
@@ -2320,6 +2395,163 @@ function DestinationPickerSheet({
       </div>
     </div>
   )
+}
+
+/** 地図長押しで新しいポイントを登録するシート (カテゴリ + 名称) */
+function NewPointSheet({
+  at,
+  projects,
+  onClose,
+  onCreate,
+}: {
+  at: { lat: number; lon: number }
+  projects: MobilityProject[]
+  onClose: () => void
+  onCreate: (projectId: string, name: string) => Promise<void>
+}) {
+  // カテゴリが 1 つしかないなら選ばせる意味がないので既定で選んでおく
+  const [projectId, setProjectId] = useState(projects.length === 1 ? projects[0].id : '')
+  const [name, setName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const canSubmit = !!projectId && name.trim().length > 0 && !busy
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-end z-[9999]" onClick={onClose}>
+      <div
+        className="bg-white w-full rounded-t-2xl p-4 space-y-3"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-semibold">ポイントを登録</h3>
+          <button onClick={onClose} className="p-1 rounded hover:bg-slate-100">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="text-[11px] text-slate-500 font-mono">
+          {at.lat.toFixed(6)}, {at.lon.toFixed(6)}
+        </div>
+        <label className="block">
+          <span className="text-xs text-slate-600">カテゴリ</span>
+          <select
+            value={projectId}
+            onChange={(e) => setProjectId(e.target.value)}
+            className="mt-1 w-full px-2 py-2 border border-slate-300 rounded"
+          >
+            <option value="">選択してください</option>
+            {projects.map((pr) => (
+              <option key={pr.id} value={pr.id}>
+                {pr.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-xs text-slate-600">名称</span>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="例: 土取場A"
+            className="mt-1 w-full px-2 py-2 border border-slate-300 rounded"
+          />
+        </label>
+        <button
+          type="button"
+          disabled={!canSubmit}
+          onClick={async () => {
+            setBusy(true)
+            try {
+              await onCreate(projectId, name.trim())
+            } finally {
+              setBusy(false)
+            }
+          }}
+          className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-indigo-600 text-white rounded-lg font-bold disabled:opacity-50"
+        >
+          {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <MapPin className="h-5 w-5" />}
+          登録
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** 地図上のポイントをタップしたときの操作シート */
+function PointActionSheet({
+  point,
+  projectName,
+  canSetDestination,
+  onClose,
+  onSetDestination,
+}: {
+  point: MobilityProjectPoint
+  projectName: string | null
+  canSetDestination: boolean
+  onClose: () => void
+  onSetDestination: () => void | Promise<void>
+}) {
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-end z-[9999]" onClick={onClose}>
+      <div
+        className="bg-white w-full rounded-t-2xl p-4 space-y-3"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between">
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold truncate">{point.name}</h3>
+            {projectName && (
+              <div className="text-[11px] text-slate-500 truncate">{projectName}</div>
+            )}
+          </div>
+          <button onClick={onClose} className="p-1 rounded hover:bg-slate-100">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        {canSetDestination ? (
+          <button
+            type="button"
+            onClick={() => void onSetDestination()}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600 text-white rounded-lg font-bold"
+          >
+            <Navigation className="h-5 w-5" />
+            ここを目的地にする
+          </button>
+        ) : (
+          <div className="text-xs text-slate-500 text-center py-2">
+            目的地を設定するには乗車してください
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** 地図の長押し (contextmenu) を親に渡す。Leaflet の tapHold が擬似発火させる */
+function MapLongPress({ onLongPress }: { onLongPress: (lat: number, lon: number) => void }) {
+  useMapEvents({
+    contextmenu(e) {
+      onLongPress(e.latlng.lat, e.latlng.lng)
+    },
+  })
+  return null
+}
+
+/** 登録済みポイントのマーカー (青ピン + 名前) */
+function buildProjectPointIcon(name: string): L.DivIcon {
+  const label = name.replace(/[&<>]/g, '')
+  return L.divIcon({
+    className: 'mobility-project-point-icon',
+    html:
+      '<div style="display:flex;flex-direction:column;align-items:center;transform:translateY(-50%)">' +
+      '<div style="background:#2563eb;border:2px solid #fff;border-radius:50%;width:14px;height:14px;' +
+      'box-shadow:0 1px 3px rgba(0,0,0,.4)"></div>' +
+      '<div style="margin-top:2px;padding:1px 4px;background:rgba(255,255,255,.9);border-radius:3px;' +
+      'font-size:10px;font-weight:600;color:#1e3a8a;white-space:nowrap">' +
+      label +
+      '</div></div>',
+    iconSize: [0, 0],
+    iconAnchor: [0, 0],
+  })
 }
 
 function VehiclePickerSheet({
