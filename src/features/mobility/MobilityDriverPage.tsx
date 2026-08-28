@@ -1480,7 +1480,9 @@ export function MobilityDriverPage() {
           tapHold
           {...({ rotate: true, bearing: 0, rotateControl: false } as Record<string, unknown>)}
         >
-          <MapLongPress onLongPress={(lat, lon) => setNewPointAt({ lat, lon })} />
+          <MapLongPress
+            onLongPress={(lat, lon) => setNewPointAt((prev) => prev ?? { lat, lon })}
+          />
           <TileLayer
             attribution={BASE_LAYERS[baseLayer].attribution}
             url={BASE_LAYERS[baseLayer].url}
@@ -2600,10 +2602,21 @@ function PointActionSheet({
   )
 }
 
-/** 地図の長押し (contextmenu) を親に渡す。Leaflet の tapHold が擬似発火させる */
+/** 地図の長押し (contextmenu) を親に渡す。Leaflet の tapHold が擬似発火させる。
+ *
+ *  1 回の長押しで contextmenu が 2 回飛んでくることがあり、そのままだと
+ *  登録シートが二重に開く。原因は 2 つ考えられる:
+ *    - leaflet-rotate (この地図は rotate: true) がイベントを二重化する
+ *    - iOS で Leaflet の擬似 contextmenu と WebKit のネイティブ contextmenu が
+ *      両方飛ぶ
+ *  どちらであっても困るので、短時間の連続発火は 1 回として扱う。 */
 function MapLongPress({ onLongPress }: { onLongPress: (lat: number, lon: number) => void }) {
+  const lastFiredRef = useRef(0)
   useMapEvents({
     contextmenu(e) {
+      const now = Date.now()
+      if (now - lastFiredRef.current < 800) return
+      lastFiredRef.current = now
       onLongPress(e.latlng.lat, e.latlng.lng)
     },
   })
