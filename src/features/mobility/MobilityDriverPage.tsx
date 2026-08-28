@@ -1128,6 +1128,15 @@ export function MobilityDriverPage() {
     await signOut()
   }
 
+  // 乗車したら履歴の表示を片付ける。走行中の地図に過去の軌跡が残っていると
+  // 現在地と見分けがつかない
+  useEffect(() => {
+    if (!myActive) return
+    setShowLogsSheet(false)
+    setSelectedLogSection(null)
+    setSelectedLogPositions([])
+  }, [myActive])
+
   const handleBoard = async (vehicleId: string) => {
     // 同一ユーザーが 2 台に 乗るのは 不整合。既に 乗車中なら 何もしない
     // (通常は 乗車ボタン自体が 出ないが、通信断からの 復帰時などに 備える)
@@ -1557,15 +1566,18 @@ export function MobilityDriverPage() {
         style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
       >
         <div className="flex gap-2">
-          {/* 履歴シートを開くボタン (乗車/未乗車どちらでも常に見える) */}
-          <button
-            type="button"
-            onClick={() => setShowLogsSheet(true)}
-            className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm rounded-lg border border-indigo-500 text-indigo-200 hover:bg-indigo-950/40"
-          >
-            <History className="h-4 w-4" />
-            運行履歴
-          </button>
+          {/* 履歴は降車中だけ。走行中に過去の軌跡を出しても邪魔なだけで、
+              地図が今の位置か履歴かで紛らわしくなる */}
+          {!myActive && (
+            <button
+              type="button"
+              onClick={() => setShowLogsSheet(true)}
+              className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm rounded-lg border border-indigo-500 text-indigo-200 hover:bg-indigo-950/40"
+            >
+              <History className="h-4 w-4" />
+              運行履歴
+            </button>
+          )}
           {/* メッセージ / 指示 バッジ付き */}
           <button
             type="button"
