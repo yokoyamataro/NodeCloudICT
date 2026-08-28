@@ -540,7 +540,7 @@ export function MobilityHomePage() {
         {/* 左サイドバー: タブ切替 (ドライバー / 車両 / カテゴリ) */}
         <div
           className={`flex flex-col border-b lg:border-b-0 lg:border-r bg-white shrink-0 ${
-            leftCollapsed ? 'lg:w-8' : 'lg:w-[22rem] xl:w-[25rem]'
+            leftCollapsed ? 'lg:w-8' : 'lg:w-[17.6rem] xl:w-[20rem]'
           }`}
         >
           {/* 折りたたみ時: トグルボタンのみ縦帯 */}
@@ -718,7 +718,7 @@ export function MobilityHomePage() {
         {expandedUserId && (
           <div
             className={`flex flex-col border-t lg:border-t-0 lg:border-l bg-white shrink-0 ${
-              rightCollapsed ? 'lg:w-8' : 'lg:w-[24rem] xl:w-[28rem]'
+              rightCollapsed ? 'lg:w-8' : 'lg:w-[19.2rem] xl:w-[22.4rem]'
             }`}
           >
             {rightCollapsed ? (
