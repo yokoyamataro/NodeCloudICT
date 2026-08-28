@@ -58,6 +58,17 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
     /// 最後に「移動した」と判定した位置
     private var lastMovedLocation: CLLocation?
 
+    /// これより粗い測位は GNSS 由来ではないとみなして捨てる [m]。
+    ///
+    /// iOS は測位方式を選ばせてくれないが、Wi-Fi / 基地局由来の位置は
+    /// horizontalAccuracy が数十〜数百 m になる。船舶・山岳の軌跡に、
+    /// データベース由来の「まったく違う場所」が混ざるのは危険なので、
+    /// 精度でふるいにかけて GNSS 相当だけを採用する。
+    ///
+    /// startMonitoringSignificantLocationChanges は基地局ベースだが、
+    /// アプリを起こし直す用途で残している。そこで届く粗い位置はここで落ちる。
+    private static let gnssMaxAccuracyM: CLLocationAccuracy = 50
+
     /// ロック画面 / Dynamic Island の常時表示 (iOS 16.2+)
     private var liveActivity: Any?
     /// Live Activity の更新間隔 [sec]。毎秒更新すると電池と ActivityKit の
@@ -73,7 +84,13 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
             let watcher = Watcher(call.callbackId)
             let manager = watcher.manager
             manager.delegate = self
-            manager.desiredAccuracy = kCLLocationAccuracyBest
+            // どちらも GNSS を使う精度。Wi-Fi / 基地局に落ちる
+            // kCLLocationAccuracyHundredMeters 以下は使わない。
+            // 給電中は測位を最優先、電池駆動時はわずかに緩めて消費を抑える。
+            UIDevice.current.isBatteryMonitoringEnabled = true
+            let charging = [.charging, .full].contains(UIDevice.current.batteryState)
+            manager.desiredAccuracy =
+                charging ? kCLLocationAccuracyBestForNavigation : kCLLocationAccuracyBest
             let filter = call.getDouble("distanceFilter") ?? 0
             // 0 のままだと以降の更新が来なくなる個体がある (本家 issue #88)
             manager.distanceFilter = filter > 0 ? filter : kCLDistanceFilterNone
@@ -287,6 +304,10 @@ extension MobilityLocationPlugin: CLLocationManagerDelegate {
         guard let last = locations.last,
               let watcher = watchers.first(where: { $0.manager == m }),
               let call = bridge?.savedCall(withID: watcher.callbackId) else { return }
+        // GNSS 相当の精度が出ているものだけ採用する。
+        // 負値は測位失敗、粗い値は Wi-Fi / 基地局由来。
+        guard last.horizontalAccuracy >= 0,
+              last.horizontalAccuracy <= Self.gnssMaxAccuracyM else { return }
         // 十分に動いたら 「降車し忘れ」通知の タイマーを 貼り直す。
         // 走行中は 常に リセットされるので 通知は 出ない。
         if let prev = lastMovedLocation {
