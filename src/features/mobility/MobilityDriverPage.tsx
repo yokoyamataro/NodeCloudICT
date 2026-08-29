@@ -447,6 +447,14 @@ export function MobilityDriverPage() {
     const incoming = messages
       .filter((m) => m.sender_user_id !== user.id)
       .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+    // 「メッセージ」のまま本文が出ない件の切り分け用。
+    // どこで落ちているのか (未取得 / 送信者判定 / 本文が空) を 1 行で出す。
+    console.warn(
+      `[driver-msg] 全${messages.length}件 / 自分以外${incoming.length}件 / me=${user.id.slice(0, 8)}` +
+        (messages[0]
+          ? ` / 最新: kind=${messages[0].message_kind} sender=${messages[0].sender_user_id?.slice(0, 8)} ch=${messages[0].channel_kind} body=${JSON.stringify(messages[0].body)}`
+          : ''),
+    )
     return incoming[0] ?? null
   }, [messages, user])
 
