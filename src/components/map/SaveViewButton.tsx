@@ -92,7 +92,9 @@ export function SaveViewButton({ url, layerId, onDone }: Props) {
       <button
         type="button"
         onClick={() => void handleClick()}
-        className="absolute top-3 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-1.5 px-3 py-1.5 rounded-full shadow border border-slate-600 bg-slate-900/90 text-[11px] text-slate-100"
+        // 背景の種類セレクタ (bottom-5 right-1) の真上に置き、
+        // 地図まわりの操作を右下に 1 か所へまとめる
+        className="absolute bottom-12 right-1 z-[1000] flex items-center gap-1.5 px-2.5 py-1 rounded shadow border border-slate-600 bg-slate-900/90 text-[11px] text-slate-100"
         title="表示している範囲の地図を保存して、圏外でも見られるようにする"
       >
         {busy ? (
@@ -109,7 +111,7 @@ export function SaveViewButton({ url, layerId, onDone }: Props) {
         )}
       </button>
       {message && (
-        <div className="absolute top-12 left-1/2 -translate-x-1/2 z-[1000] max-w-[80%] px-3 py-1.5 rounded shadow bg-slate-900/90 text-[11px] text-slate-100 whitespace-pre-wrap text-center">
+        <div className="absolute bottom-20 right-1 z-[1000] max-w-[70%] px-3 py-1.5 rounded shadow bg-slate-900/90 text-[11px] text-slate-100 whitespace-pre-wrap text-right">
           {message}
         </div>
       )}
