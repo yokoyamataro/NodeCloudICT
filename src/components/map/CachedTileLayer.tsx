@@ -30,6 +30,8 @@ const MIN_Z = 12
 const MAX_Z = 15
 /** 使用時刻の更新間隔。毎回書くと重いので間引く [ms] */
 const TOUCH_INTERVAL_MS = 60 * 60 * 1000
+/** 詳細タイルが無いとき、何段まで広域側にさかのぼって代用するか */
+const FALLBACK_LEVELS = 4
 
 interface Props {
   /** タイル URL テンプレート ({z}/{x}/{y}) */
@@ -110,6 +112,13 @@ export function CachedTileLayer({
           // キャッシュに無い → 通常どおり取得。保存するかは位置とズームで判断
           finish(null)
           void maybeStore(key, src, coords)
+          // 圏外などで取得に失敗したら、広域タイルを引き延ばして代用する。
+          // 真っ白よりは、ぼやけていても道が見えた方がよい
+          img.onerror = () => {
+            void stretchFromAncestor(layerId, coords.z, coords.x, coords.y).then((u) => {
+              if (u) img.src = u
+            })
+          }
         })()
 
         return img
@@ -139,6 +148,55 @@ export function CachedTileLayer({
 /** createTile から参照する最新の状態 (レイヤを作り直さずに済ませるため) */
 const stateRef: { current: { pos: [number, number] | null; enabled: boolean } } = {
   current: { pos: null, enabled: false },
+}
+
+/**
+ * 詳細タイルが無いとき、広域タイルの該当部分を切り出して引き延ばす。
+ *
+ * 圏外で拡大すると真っ白になるのを防ぐ。ぼやけるが、道の形は追える。
+ * (Leaflet の maxNativeZoom はレイヤ全体の設定で、タイル単位に効かせられない)
+ */
+async function stretchFromAncestor(
+  layerId: string,
+  z: number,
+  x: number,
+  y: number,
+): Promise<string | null> {
+  for (let up = 1; up <= FALLBACK_LEVELS; up += 1) {
+    const az = z - up
+    if (az < MIN_Z) break
+    const scale = 2 ** up
+    const hit = await tileGet(`${layerId}/${az}/${Math.floor(x / scale)}/${Math.floor(y / scale)}`)
+    if (!hit) continue
+    try {
+      const bmp = await createImageBitmap(hit.blob)
+      const size = bmp.width / scale
+      const canvas = document.createElement('canvas')
+      canvas.width = bmp.width
+      canvas.height = bmp.height
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return null
+      ctx.imageSmoothingEnabled = true
+      ctx.drawImage(
+        bmp,
+        (x % scale) * size,
+        (y % scale) * size,
+        size,
+        size,
+        0,
+        0,
+        canvas.width,
+        canvas.height,
+      )
+      bmp.close()
+      const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/png'))
+      if (!blob) return null
+      return URL.createObjectURL(blob)
+    } catch {
+      return null
+    }
+  }
+  return null
 }
 
 async function maybeStore(key: string, src: string, coords: L.Coords): Promise<void> {
