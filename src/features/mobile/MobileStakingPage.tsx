@@ -778,8 +778,13 @@ export function MobileStakingPage() {
     parcelNumber: string
   } | null>(null)
   // 描画タブ + ペイント設定
-  const [showDrawing, setShowDrawing] = useState(false)
+  // ペイントは「モードが選ばれているか」で有効/無効が決まる。
+  // ツールバーは常時表示のペイントボタン → モーダルに集約したので、
+  // 以前の showDrawing (ツールバーの表示切替) は廃止した。
+  const [paintOpen, setPaintOpen] = useState(false)
   const [drawingMode, setDrawingMode] = useState<DrawingMode>('off')
+  /** 描画中か。ターゲット操作や長押しメニューを止める判定に使う */
+  const paintActive = drawingMode !== 'off'
   const [drawingColor, setDrawingColor] = useState('#ef4444')
   const [drawingWidth, setDrawingWidth] = useState(3)
   const [drawingLineStyle, setDrawingLineStyle] = useState<LineStyle>('solid')
@@ -787,10 +792,7 @@ export function MobileStakingPage() {
   const drawingRedoLen = useMapDrawingStore((s) => s.redoStack.length)
   const drawingUndo = useMapDrawingStore((s) => s.undo)
   const drawingRedo = useMapDrawingStore((s) => s.redo)
-  // showDrawing OFF に切替時はモードもリセット
-  useEffect(() => {
-    if (!showDrawing) setDrawingMode('off')
-  }, [showDrawing])
+
   const setCoordColumns = (next: ReadonlySet<CoordColumnKey>) => {
     // 必須列を常に含める
     const withReq = new Set(next)
@@ -3501,6 +3503,70 @@ export function MobileStakingPage() {
         />
       )}
 
+      {/* ペイントの道具モーダル。既存のツールバーをそのまま入れる。
+          道具を選んだら閉じて地図に戻る (描いている間は邪魔しない) */}
+      {paintOpen && (
+        <div
+          className="fixed inset-0 z-[3500] bg-black/40 flex items-end justify-center"
+          onClick={() => setPaintOpen(false)}
+        >
+          <div
+            className="bg-white w-full rounded-t-2xl p-3 space-y-3 max-w-md"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold">ペイント</h3>
+              <button
+                onClick={() => setPaintOpen(false)}
+                className="p-1 rounded hover:bg-slate-100"
+                aria-label="閉じる"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            {farm?.id && (
+              <MapDrawingToolbar
+                mode={drawingMode}
+                onChangeMode={(m) => {
+                  setDrawingMode(m)
+                  // 道具を選んだら地図に戻す。off (描画やめる) のときも閉じる
+                  setPaintOpen(false)
+                }}
+                color={drawingColor}
+                onChangeColor={setDrawingColor}
+                widthPx={drawingWidth}
+                onChangeWidth={setDrawingWidth}
+                lineStyle={drawingLineStyle}
+                onChangeLineStyle={setDrawingLineStyle}
+                canUndo={drawingUndoLen > 0}
+                canRedo={drawingRedoLen > 0}
+                onUndo={() => void drawingUndo()}
+                onRedo={() => void drawingRedo()}
+                onMemo={() => {
+                  setPaintOpen(false)
+                  setMemoModalState({
+                    lat: currentPos ? currentPos[0] : null,
+                    lng: currentPos ? currentPos[1] : null,
+                  })
+                }}
+              />
+            )}
+            {paintActive && (
+              <button
+                type="button"
+                onClick={() => {
+                  setDrawingMode('off')
+                  setPaintOpen(false)
+                }}
+                className="w-full px-3 py-2 text-sm border rounded-lg text-slate-600 hover:bg-slate-50"
+              >
+                ペイントを終了
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* 長押し時の選択シート（測点を追加 / メモを残す） */}
       {longPressChoice && (
         <div
@@ -4638,6 +4704,22 @@ export function MobileStakingPage() {
           </div>
         )}
 
+        {/* ペイント。常時ここに出す。押すと道具のモーダルが開く。
+            描画中はアイコンが現在の道具に変わり、色が付く */}
+        <button
+          type="button"
+          onClick={() => setPaintOpen(true)}
+          className={`absolute bottom-16 right-1 z-[1000] h-9 w-9 flex items-center justify-center rounded-full shadow border ${
+            paintActive
+              ? 'bg-blue-600 border-blue-400 text-white'
+              : 'bg-white/95 border-slate-300 text-slate-600'
+          }`}
+          title={paintActive ? 'ペイント中 (タップで道具を変更)' : 'ペイント'}
+          aria-label="ペイント"
+        >
+          <Pen className="h-4 w-4" />
+        </button>
+
         {/* 背景地図セレクタ（右下、Leaflet 帰属の上） */}
         <div className="absolute bottom-5 right-1 z-[1000] flex items-center gap-1 px-1.5 py-0.5 rounded shadow border border-slate-300 bg-white/95 text-[11px]">
           <span className="text-slate-500">背景</span>
@@ -4784,7 +4866,7 @@ export function MobileStakingPage() {
                   weight: 2,
                 }}
                 eventHandlers={
-                  isParcel && !(showDrawing && drawingMode !== 'off')
+                  isParcel && !paintActive
                     ? {
                         click: () =>
                           setParcelInfoTarget({
@@ -4888,8 +4970,8 @@ export function MobileStakingPage() {
 
           {/* 地図の長押し / 右クリックで「測点追加 / メモを残す」の選択シートを開く。
               Leaflet の contextmenu イベントはスマホでも長押しで発火する。
-              描画メモ使用中は選択モードの頂点削除 (contextmenu) と衝突するので無効化 */}
-          {!showDrawing && (
+              ペイント中は選択モードの頂点削除 (contextmenu) と衝突するので無効化 */}
+          {!paintActive && (
             <MapLongPressHandler
               onLongPress={(lat, lng) => {
                 if (areaModeActive) {
@@ -5258,13 +5340,13 @@ export function MobileStakingPage() {
               selectedKeys={selectedParcelKeys}
               onToggleSelect={toggleSelectedParcel}
               selectionMode={parcelSelectionMode}
-              disableClicks={showDrawing && drawingMode !== 'off'}
+              disableClicks={paintActive}
             />
           )}
-          {/* 描画レイヤ: showDrawing のときのみ描画モード有効。オフでも既存ストロークは表示 */}
+          {/* 描画レイヤ: モードが選ばれている間だけ描ける。オフでも既存ストロークは表示 */}
           <MapDrawingLayer
             farmId={farm?.id ?? null}
-            mode={showDrawing ? drawingMode : 'off'}
+            mode={drawingMode}
             color={drawingColor}
             widthPx={drawingWidth}
             lineStyle={drawingLineStyle}
@@ -6370,28 +6452,7 @@ export function MobileStakingPage() {
 
         {/* MAP モード行: ターゲット設定 → 誘導表示 */}
         {/* 描画モード中は「ターゲットを選択」の代わりにペイントツールバーを表示 */}
-        {showMap && showDrawing && farm?.id ? (
-          <MapDrawingToolbar
-            mode={drawingMode}
-            onChangeMode={setDrawingMode}
-            color={drawingColor}
-            onChangeColor={setDrawingColor}
-            widthPx={drawingWidth}
-            onChangeWidth={setDrawingWidth}
-            lineStyle={drawingLineStyle}
-            onChangeLineStyle={setDrawingLineStyle}
-            canUndo={drawingUndoLen > 0}
-            canRedo={drawingRedoLen > 0}
-            onUndo={() => void drawingUndo()}
-            onRedo={() => void drawingRedo()}
-            onMemo={() =>
-              setMemoModalState({
-                lat: currentPos ? currentPos[0] : null,
-                lng: currentPos ? currentPos[1] : null,
-              })
-            }
-          />
-        ) : showMap && (selectedTarget ? (
+        {showMap && (selectedTarget ? (
           <div className="flex flex-col gap-1">
             {/* 1 行目: 前/次 矢印 + 点名 (伸縮) + 解除 X + 矢印/距離。
                 前/次矢印は filteredTargets の並びで 1 つ隣のターゲットに切替。
@@ -6670,19 +6731,20 @@ export function MobileStakingPage() {
                 </button>
               )}
 
-              {/* 描画メモ — 地図に手書き / テキスト / 付箋メモを配置する描画ツールを開く */}
+              {/* ペイント — 地図に手書き / 線 / テキスト / 付箋メモを置く。
+                  道具は地図上のペイントボタン (常時表示) からも開ける */}
               <button
                 type="button"
-                onClick={() => setShowDrawing((v) => !v)}
+                onClick={() => setPaintOpen(true)}
                 className={`flex-1 basis-0 flex items-center justify-center gap-1 px-2 py-3 rounded-lg font-semibold ${
-                  showDrawing
+                  paintActive
                     ? 'bg-blue-600 text-white'
                     : 'border border-amber-400 bg-amber-50 text-amber-800 active:bg-amber-100'
                 }`}
-                title="描画メモ (地図に手書きペイント・テキスト・付箋メモ)"
+                title="ペイント (手書き・線・テキスト・付箋メモ)"
               >
                 <Pen className="h-5 w-5" />
-                描画メモ
+                ペイント
               </button>
 
               {/* 設置済 トグル（ターゲットありのときだけ追加表示） */}
