@@ -45,6 +45,7 @@ import { VehicleMarker } from '@/features/mobility/VehicleMarker'
 import { SPEED_BANDS, speedSegments } from '@/features/mobility/speedBands'
 import 'leaflet/dist/leaflet.css'
 import { CachedTileLayer } from '@/components/map/CachedTileLayer'
+import { SaveViewButton } from '@/components/map/SaveViewButton'
 import { tileClear, tileUsage } from '@/lib/offlineDb'
 import {
   BASE_LAYERS,
@@ -1659,6 +1660,12 @@ export function MobilityDriverPage() {
               size={22}
             />
           )}
+          {/* 表示中の範囲を事前に保存する。初めて行く場所の備え */}
+          <SaveViewButton
+            url={BASE_LAYERS[baseLayer].url}
+            layerId={baseLayer}
+            onDone={() => void tileUsage().then((u) => setTileMB(u.bytes / 1024 / 1024))}
+          />
           <MapControlStack
             followMe={followMe}
             headingUp={headingUp}
