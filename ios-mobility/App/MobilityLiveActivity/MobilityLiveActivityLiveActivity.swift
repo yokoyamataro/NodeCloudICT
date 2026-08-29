@@ -16,11 +16,15 @@ struct MobilityLiveActivityLiveActivity: Widget {
                     .font(.title3)
                     .foregroundStyle(context.state.online ? .green : .orange)
                 VStack(alignment: .leading, spacing: 2) {
-                    // 行き先が一番知りたい情報なので車両名より前に出す
-                    Text(context.state.destinationName.map { "→ \($0)" }
-                        ?? context.attributes.vehicleName)
+                    // 行き先が一番知りたい情報なので車両名より前に出す。
+                    // 未設定なら車両名で埋めず、未設定と分かるように出す
+                    // (車両名だと「行き先が入っている」と誤読される)
+                    Text(context.state.destinationName.map { "→ \($0)" } ?? "行き先未設定")
                         .font(.headline)
                         .lineLimit(1)
+                        .foregroundStyle(
+                            context.state.destinationName == nil ? .secondary : .primary,
+                        )
                     Text(statusLine(context.state))
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -50,7 +54,7 @@ struct MobilityLiveActivityLiveActivity: Widget {
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
                     Label(
-                        context.state.destinationName ?? context.attributes.vehicleName,
+                        context.state.destinationName ?? "行き先未設定",
                         systemImage: "location.fill",
                     )
                     .font(.caption)
