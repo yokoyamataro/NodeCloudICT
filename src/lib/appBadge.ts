@@ -17,6 +17,7 @@ interface BadgePlugin {
     pendingCount: number
     online: boolean
   }): Promise<void>
+  endActivity(): Promise<void>
 }
 
 const plugin = registerPlugin<BadgePlugin>('BackgroundGeolocation')
@@ -46,6 +47,21 @@ export async function updateLiveActivity(state: {
   if (Capacitor.getPlatform() !== 'ios') return
   try {
     await plugin.updateActivity(state)
+  } catch {
+    /* ネイティブ未実装の版では黙って無視 */
+  }
+}
+
+/**
+ * ロック画面の表示を消す。
+ *
+ * watcher の停止に任せると、removeWatcher が届かない経路で消え残る。
+ * 降車したかどうかは TS 側が確実に知っているので、そこから直接消す。
+ */
+export async function endLiveActivity(): Promise<void> {
+  if (Capacitor.getPlatform() !== 'ios') return
+  try {
+    await plugin.endActivity()
   } catch {
     /* ネイティブ未実装の版では黙って無視 */
   }

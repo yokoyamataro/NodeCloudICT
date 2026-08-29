@@ -40,6 +40,7 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "openSettings", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setBadge", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "updateActivity", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "endActivity", returnType: CAPPluginReturnPromise),
     ]
 
     /// 1 watcher = 1 CLLocationManager。callbackId で保存済み call を引く
@@ -152,6 +153,7 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
                 self.watchers.removeAll()
             }
             if self.watchers.isEmpty {
+                print("[MobilityLocation] 全 watcher 停止。Live Activity を終了します")
                 if #available(iOS 16.2, *) { self.endLiveActivity() }
                 self.cancelIdleReminder()
                 self.lastMovedLocation = nil
@@ -247,6 +249,19 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
             )
         } catch {
             print("[LiveActivity] 開始に失敗: \(error)")
+        }
+    }
+
+    /// 降車したら表示を消す。
+    ///
+    /// watcher の停止に任せていたが、removeWatcher が届かない / id が合わない
+    /// といった経路で消え残り、降車後もロック画面に「位置を送信中」が出続けた。
+    /// 降車したかどうかは TS 側が確実に知っているので、そこから直接消す。
+    @objc func endActivity(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            if #available(iOS 16.2, *) { self.endLiveActivity() }
+            self.cancelIdleReminder()
+            call.resolve()
         }
     }
 

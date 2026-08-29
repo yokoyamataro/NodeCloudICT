@@ -58,7 +58,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useCanUseMobility } from '@/lib/useCanUseMobility'
 import { isMobileDevice } from '@/lib/displayMode'
 import { watchSamples, watchSamplesInBackground } from '@/lib/geolocation'
-import { setAppBadge, updateLiveActivity } from '@/lib/appBadge'
+import { endLiveActivity, setAppBadge, updateLiveActivity } from '@/lib/appBadge'
 import { isMobilityApp } from '@/lib/appVariant'
 import {
   enqueuePing,
@@ -661,7 +661,11 @@ export function MobilityDriverPage() {
   // ロック画面 / Dynamic Island の表示を更新する。
   // 行き先とセクション走行距離が分かれば運転中は足りる (速度は載せない)。
   useEffect(() => {
-    if (!myActive) return
+    if (!myActive) {
+      // 降車したら消す。watcher の停止任せだと消え残ることがある
+      void endLiveActivity()
+      return
+    }
     void updateLiveActivity({
       destinationName: selectedDestination?.name ?? null,
       distanceKm: unitDistanceM / 1000,
