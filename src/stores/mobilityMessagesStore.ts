@@ -66,6 +66,8 @@ interface State {
   _cleanup: (() => void) | null
 
   fetchAll: (organizationId: string) => Promise<void>
+  /** 手元にある最新より後のものだけ取る (ポーリング用) */
+  fetchNew: (organizationId: string) => Promise<void>
   /** organization 全メッセージを購読 + 15秒ポーリング fallback */
   subscribe: (organizationId: string) => void
   unsubscribe: () => void
@@ -109,6 +111,42 @@ export const useMobilityMessagesStore = create<State>((set, get) => ({
   loading: false,
   error: null,
   _cleanup: null,
+
+  /**
+   * 手元にある最新より後のものだけ取る。
+   *
+   * 従来のポーリングは 15 秒ごとに最大 500 件を取り直しており、蓄積が増える
+   * ほど通信量が線形に増えていた (500 件だと 8 時間で 270MB 超)。
+   * メッセージ本体は数百バイトしかないので、差分だけ取れば桁で減る。
+   *
+   * ただし read_at の更新など「既存行の変化」は created_at では拾えないので、
+   * 呼出側 (subscribe) が数回に 1 度は fetchAll で取り直す。
+   */
+  async fetchNew(organizationId) {
+    const newest = get().messages[0]?.created_at
+    if (!newest) {
+      await get().fetchAll(organizationId)
+      return
+    }
+    try {
+      const { data, error } = (await (supabase as any)
+        .from('mobility_messages')
+        .select('*')
+        .eq('organization_id', organizationId)
+        .gt('created_at', newest)
+        .order('created_at', { ascending: false })
+        .limit(200)) as { data: MobilityMessage[] | null; error: unknown }
+      if (error) throw error
+      const rows = data ?? []
+      if (rows.length === 0) return
+      const cur = get().messages
+      const known = new Set(cur.map((m) => m.id))
+      const added = rows.filter((m) => !known.has(m.id))
+      if (added.length > 0) set({ messages: [...added, ...cur] })
+    } catch (err) {
+      set({ error: extractErr(err) })
+    }
+  },
 
   async fetchAll(organizationId) {
     set({ loading: true, error: null })
@@ -164,10 +202,16 @@ export const useMobilityMessagesStore = create<State>((set, get) => ({
       // WebSocket が使えない環境ではポーリングに全振り
     }
 
-    // 15秒ポーリング fallback
+    // ポーリング fallback。Realtime が落ちても届くようにする。
+    // メッセージに即時性は要らないので 30 秒で十分。
+    // 毎回は差分だけ取り、10 回に 1 度 (5 分) だけ全件取り直して
+    // read_at のような既存行の変化を拾う。
+    let tick = 0
     const timer = window.setInterval(() => {
-      void get().fetchAll(organizationId)
-    }, 15000)
+      tick += 1
+      if (tick % 10 === 0) void get().fetchAll(organizationId)
+      else void get().fetchNew(organizationId)
+    }, 30000)
 
     set({
       _cleanup: () => {
@@ -282,10 +326,18 @@ export const useMobilityMessagesStore = create<State>((set, get) => ({
   },
 
   async markRead(messageId) {
+    const now = new Date().toISOString()
+    // 先に手元を更新する。差分ポーリングでは既存行の変化を拾えないため、
+    // これが無いと全件取り直しまで未読バッジが消えない
+    set((s) => ({
+      messages: s.messages.map((m) =>
+        m.id === messageId && !m.read_at ? { ...m, read_at: now } : m,
+      ),
+    }))
     try {
       await (supabase as any)
         .from('mobility_messages')
-        .update({ read_at: new Date().toISOString() })
+        .update({ read_at: now })
         .eq('id', messageId)
         .is('read_at', null)
     } catch {
