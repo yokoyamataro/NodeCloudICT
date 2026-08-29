@@ -516,6 +516,13 @@ export function MobilityDriverPage() {
     saveBaseLayer('mobility:baseLayer', baseLayer)
   }, [baseLayer])
 
+  /** 指示の行き先 id から地点を引く。地図表示用に全件持っているので流用する */
+  const pointById = useCallback(
+    (id: string | null | undefined) =>
+      id ? allPoints.find((p) => p.id === id) ?? null : null,
+    [allPoints],
+  )
+
   /** 地図上のポイントをタップしたときの確認シート */
   const [pointActionTarget, setPointActionTarget] = useState<MobilityProjectPoint | null>(null)
 
@@ -1943,13 +1950,15 @@ export function MobilityDriverPage() {
           currentLat={currentPos?.[0] ?? null}
           currentLon={currentPos?.[1] ?? null}
           onConfirmed={async (_assignmentId, pointId) => {
-            // 指示を確認したら、その行き先をそのまま目的地に設定する。
-            // 確認したのに目的地が空のままだと、結局手で選び直すことになる。
-            if (pointId) {
-              const pt = allPoints.find((p) => p.id === pointId) ?? null
-              if (pt) await applyDestination(pt)
-            }
             if (orgId) await fetchActiveAssignments(orgId)
+            // 指示を確認したら行き先の確定画面へ進む。地図で場所と距離を
+            // 確かめてから確定できるようにする (ここでは設定しない)。
+            const pt = pointById(pointId)
+            if (pt) {
+              setShowChatSheet(null)
+              setDestInitialPoint(pt)
+              setShowDestSheet(true)
+            }
           }}
           onArrived={async () => {
             if (orgId) await fetchActiveAssignments(orgId)
