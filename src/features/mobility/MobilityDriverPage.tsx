@@ -451,6 +451,35 @@ export function MobilityDriverPage() {
     return incoming[0] ?? null
   }, [messages])
 
+  // 最新メッセージの送信者名。ボタンに「誰から」を出すために引く。
+  // profiles を 1 件だけ引くので負荷は無視できる
+  const [latestSenderName, setLatestSenderName] = useState<string | null>(null)
+  useEffect(() => {
+    const id = latestIncoming?.sender_user_id
+    if (!id) {
+      setLatestSenderName(null)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const { data } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('user_id', id)
+          .maybeSingle()
+        if (!cancelled) {
+          setLatestSenderName((data as { full_name: string | null } | null)?.full_name ?? null)
+        }
+      } catch {
+        /* 名前が引けなくても本文は出す */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [latestIncoming?.sender_user_id])
+
   /** 未読の受信メッセージ数 (指示に限らない) */
   const unreadIncomingCount = useMemo(() => {
     if (!user) return 0
@@ -1779,8 +1808,9 @@ export function MobilityDriverPage() {
                 : 'border-emerald-500 text-emerald-200 hover:bg-emerald-950/40'
             }`}
           >
-            <MessageSquare className="h-4 w-4 shrink-0" />
-            {/* 2 行まで出す。1 行だと「〇〇さん、△△に向かってください」が
+            {/* アイコンは右のチャットボタンにあるので、ここには置かない。
+                そのぶん本文に幅を使う。
+                2 行まで出す。1 行だと「〇〇さん、△△に向かってください」が
                 途中で切れて用件が読めない */}
             <span
               className="flex-1 min-w-0 text-left leading-snug"
@@ -1791,6 +1821,12 @@ export function MobilityDriverPage() {
                 overflow: 'hidden',
               }}
             >
+              {latestIncoming && (
+                <span className="opacity-70">
+                  {latestSenderName || (latestIncoming.sender_role === 'admin' ? '管理者' : '')}
+                  {(latestSenderName || latestIncoming.sender_role === 'admin') && ': '}
+                </span>
+              )}
               {latestIncoming
                 ? latestIncoming.body?.trim() ||
                   (latestIncoming.message_kind === 'instruction' ? '運行指示' : 'メッセージ')
