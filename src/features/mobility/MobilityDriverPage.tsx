@@ -439,29 +439,22 @@ export function MobilityDriverPage() {
   // 指示だけでなく連絡 (note) も対象にする。
   const latestIncoming = useMemo(() => {
     if (!user) return null
-    // 条件は「自分が送ったものではない」だけにする。
-    // 以前は channel_kind==='direct' && channel_user_id===user.id まで
-    // 要求していたが、それだと 1 件も引っかからずボタンが「メッセージ」の
-    // ままだった。見える範囲は RLS で既に絞られているので、送信者だけで足りる。
-    // (カテゴリ宛の指示も拾えるようになる)
+    // 「自分が送ったものは除く」だけだと、管理者とドライバーが同一アカウント
+    // (小規模事業者や動作確認では普通にある) のときに全部落ちてしまう。
+    // 指示は誰が送っていてもドライバー宛なので常に対象にする。
     const incoming = messages
-      .filter((m) => m.sender_user_id !== user.id)
+      .filter((m) => m.message_kind === 'instruction' || m.sender_user_id !== user.id)
       .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
-    // 「メッセージ」のまま本文が出ない件の切り分け用。
-    // どこで落ちているのか (未取得 / 送信者判定 / 本文が空) を 1 行で出す。
-    console.warn(
-      `[driver-msg] 全${messages.length}件 / 自分以外${incoming.length}件 / me=${user.id.slice(0, 8)}` +
-        (messages[0]
-          ? ` / 最新: kind=${messages[0].message_kind} sender=${messages[0].sender_user_id?.slice(0, 8)} ch=${messages[0].channel_kind} body=${JSON.stringify(messages[0].body)}`
-          : ''),
-    )
     return incoming[0] ?? null
   }, [messages, user])
 
   /** 未読の受信メッセージ数 (指示に限らない) */
   const unreadIncomingCount = useMemo(() => {
     if (!user) return 0
-    return messages.filter((m) => !m.read_at && m.sender_user_id !== user.id).length
+    return messages.filter(
+      (m) =>
+        !m.read_at && (m.message_kind === 'instruction' || m.sender_user_id !== user.id),
+    ).length
   }, [messages, user])
   const hasUnreadIncoming = unreadIncomingCount > 0
 
@@ -469,9 +462,7 @@ export function MobilityDriverPage() {
   // 初回マウント時の既存分では開かないよう、最初の id を基準にする。
   const seenInstructionIdRef = useRef<string | null | undefined>(undefined)
   useEffect(() => {
-    const latest = messages.find(
-      (m) => m.message_kind === 'instruction' && m.sender_user_id !== user?.id,
-    )
+    const latest = messages.find((m) => m.message_kind === 'instruction')
     const id = latest?.id ?? null
     if (seenInstructionIdRef.current === undefined) {
       // マウント直後: 既にあるものは「既知」として記録するだけ
