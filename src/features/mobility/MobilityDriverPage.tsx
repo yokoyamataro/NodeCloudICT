@@ -471,6 +471,7 @@ export function MobilityDriverPage() {
     }
     if (id && id !== seenInstructionIdRef.current) {
       seenInstructionIdRef.current = id
+      setDestInitialPoint(pointById(latest?.instruction_point_id))
       setShowDestSheet(true)
     }
   }, [messages, user])
@@ -501,6 +502,10 @@ export function MobilityDriverPage() {
     myActive?.destination_point ?? null
 
   const [showDestSheet, setShowDestSheet] = useState(false)
+  /** 指示で指定された行き先。確定画面から開くために持つ */
+  const [destInitialPoint, setDestInitialPoint] = useState<MobilityProjectPoint | null>(
+    null,
+  )
   const [destBusy, setDestBusy] = useState(false)
   const [destError, setDestError] = useState<string | null>(null)
 
@@ -526,6 +531,13 @@ export function MobilityDriverPage() {
   useEffect(() => {
     saveBaseLayer('mobility:baseLayer', baseLayer)
   }, [baseLayer])
+
+  /** 指示の行き先 id から地点を引く。地図表示用に全件持っているので流用する */
+  const pointById = useCallback(
+    (id: string | null | undefined) =>
+      id ? allPoints.find((p) => p.id === id) ?? null : null,
+    [allPoints],
+  )
 
   /** 地図上のポイントをタップしたときの確認シート */
   const [pointActionTarget, setPointActionTarget] = useState<MobilityProjectPoint | null>(null)
@@ -1725,6 +1737,7 @@ export function MobilityDriverPage() {
                 latestIncoming?.message_kind === 'instruction' &&
                 latestIncoming.instruction_point_id
               ) {
+                setDestInitialPoint(pointById(latestIncoming.instruction_point_id))
                 setShowDestSheet(true)
                 return
               }
@@ -1888,6 +1901,7 @@ export function MobilityDriverPage() {
           projects={myProjects}
           currentPos={currentPos}
           fetchProjectPoints={fetchProjectPoints}
+          initialPoint={destInitialPoint}
           busy={destBusy}
           error={destError}
           onConfirm={async (point) => {
@@ -1912,7 +1926,10 @@ export function MobilityDriverPage() {
             const ok = await applyDestination(null)
             if (ok) setShowDestSheet(false)
           }}
-          onClose={() => setShowDestSheet(false)}
+          onClose={() => {
+            setShowDestSheet(false)
+            setDestInitialPoint(null)
+          }}
         />
       )}
 
@@ -2273,6 +2290,7 @@ function DestinationPickerSheet({
   projects,
   currentPos,
   fetchProjectPoints,
+  initialPoint,
   busy,
   error,
   onConfirm,
@@ -2282,18 +2300,26 @@ function DestinationPickerSheet({
   projects: MobilityProject[]
   currentPos: [number, number] | null
   fetchProjectPoints: (projectId: string) => Promise<MobilityProjectPoint[]>
+  /** 指示で行き先が決まっている場合、この地点の確定画面から開く */
+  initialPoint: MobilityProjectPoint | null
   busy: boolean
   error: string | null
   onConfirm: (point: MobilityProjectPoint) => void | Promise<void>
   onClear: () => void | Promise<void>
   onClose: () => void
 }) {
-  const [step, setStep] = useState<'projects' | 'points' | 'preview'>('projects')
+  // 指示で行き先が決まっている場合は、カテゴリ・ポイントを選び直させず
+  // 確定画面から始める
+  const [step, setStep] = useState<'projects' | 'points' | 'preview'>(
+    initialPoint ? 'preview' : 'projects',
+  )
   const [selectedProject, setSelectedProject] = useState<MobilityProject | null>(null)
   const [points, setPoints] = useState<MobilityProjectPoint[]>([])
   const [loadingPoints, setLoadingPoints] = useState(false)
   const [pointsError, setPointsError] = useState<string | null>(null)
-  const [previewPoint, setPreviewPoint] = useState<MobilityProjectPoint | null>(null)
+  const [previewPoint, setPreviewPoint] = useState<MobilityProjectPoint | null>(
+    initialPoint ?? null,
+  )
 
   const openProject = (project: MobilityProject) => {
     setSelectedProject(project)
