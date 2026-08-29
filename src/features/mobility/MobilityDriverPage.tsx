@@ -58,7 +58,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useCanUseMobility } from '@/lib/useCanUseMobility'
 import { isMobileDevice } from '@/lib/displayMode'
 import { watchSamples, watchSamplesInBackground } from '@/lib/geolocation'
-import { setAppBadge } from '@/lib/appBadge'
+import { setAppBadge, updateLiveActivity } from '@/lib/appBadge'
 import { isMobilityApp } from '@/lib/appVariant'
 import {
   enqueuePing,
@@ -624,6 +624,7 @@ export function MobilityDriverPage() {
   // ・アプリを閉じても永続化 (次回起動時に復元)
   // ・サーバ fetch は「localStorage が空 (初回 or 別端末)」のときだけフォールバック
   const [unitDistanceM, setUnitDistanceM] = useState(0)
+
   const [todayDistanceM, setTodayDistanceM] = useState(0)
   // ping 間セグメント計算用の前回位置。距離集計専用 (bearing 用とは別)
   const prevPosForDistanceRef = useRef<{ lat: number; lon: number } | null>(null)
@@ -656,6 +657,19 @@ export function MobilityDriverPage() {
     typeof navigator === 'undefined' ? true : navigator.onLine,
   )
   const [queueLen, setQueueLen] = useState(0)
+
+  // ロック画面 / Dynamic Island の表示を更新する。
+  // 行き先とセクション走行距離が分かれば運転中は足りる (速度は載せない)。
+  useEffect(() => {
+    if (!myActive) return
+    void updateLiveActivity({
+      destinationName: selectedDestination?.name ?? null,
+      distanceKm: unitDistanceM / 1000,
+      pendingCount: queueLen,
+      online: isOnline,
+    })
+  }, [myActive, selectedDestination, unitDistanceM, queueLen, isOnline])
+
   useEffect(() => {
     if (typeof window === 'undefined') return
     const on = () => setIsOnline(true)

@@ -39,6 +39,7 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "removeWatcher", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "openSettings", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setBadge", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "updateActivity", returnType: CAPPluginReturnPromise),
     ]
 
     /// 1 watcher = 1 CLLocationManager。callbackId で保存済み call を引く
@@ -237,7 +238,8 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
                         lastSentAt: nil,
                         pendingCount: 0,
                         online: true,
-                        speedKmh: nil,
+                        destinationName: nil,
+                        distanceKm: 0,
                     ),
                     staleDate: nil,
                 ),
@@ -248,27 +250,40 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    @available(iOS 16.2, *)
-    private func updateLiveActivity(speedMps: CLLocationSpeed) {
-        guard let activity = liveActivity as? Activity<MobilityActivityAttributes> else { return }
+    /// 表示内容は TS 側 (行き先 / 走行距離 / 未送信件数 / 通信状態) が持っているので、
+    /// ネイティブでは組み立てず受け取るだけにする。
+    @objc func updateActivity(_ call: CAPPluginCall) {
+        guard #available(iOS 16.2, *),
+              let activity = liveActivity as? Activity<MobilityActivityAttributes> else {
+            call.resolve()
+            return
+        }
         let now = Date()
-        guard now.timeIntervalSince(lastActivityUpdate) >= Self.activityUpdateInterval else { return }
+        // 頻繁に呼ばれても ActivityKit の更新予算を食わないよう間引く
+        guard now.timeIntervalSince(lastActivityUpdate) >= Self.activityUpdateInterval else {
+            call.resolve()
+            return
+        }
         lastActivityUpdate = now
-        // speed は測れないとき負値
-        let kmh: Double? = speedMps >= 0 ? speedMps * 3.6 : nil
+        let destination = call.getString("destinationName")
+        let distanceKm = call.getDouble("distanceKm") ?? 0
+        let pending = call.getInt("pendingCount") ?? 0
+        let online = call.getBool("online") ?? true
         Task {
             await activity.update(
                 .init(
                     state: .init(
                         lastSentAt: now,
-                        pendingCount: 0,
-                        online: true,
-                        speedKmh: kmh,
+                        pendingCount: pending,
+                        online: online,
+                        destinationName: destination,
+                        distanceKm: distanceKm,
                     ),
                     staleDate: nil,
                 )
             )
         }
+        call.resolve()
     }
 
     @available(iOS 16.2, *)
@@ -359,7 +374,6 @@ extension MobilityLocationPlugin: CLLocationManagerDelegate {
         } else {
             lastMovedLocation = last
         }
-        if #available(iOS 16.2, *) { updateLiveActivity(speedMps: last.speed) }
         call.resolve(format(last))
     }
 

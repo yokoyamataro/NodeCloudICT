@@ -16,7 +16,9 @@ struct MobilityLiveActivityLiveActivity: Widget {
                     .font(.title3)
                     .foregroundStyle(context.state.online ? .green : .orange)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(context.attributes.vehicleName)
+                    // 行き先が一番知りたい情報なので車両名より前に出す
+                    Text(context.state.destinationName.map { "→ \($0)" }
+                        ?? context.attributes.vehicleName)
                         .font(.headline)
                         .lineLimit(1)
                     Text(statusLine(context.state))
@@ -25,14 +27,12 @@ struct MobilityLiveActivityLiveActivity: Widget {
                         .lineLimit(1)
                 }
                 Spacer()
-                // 速度はロック画面で一番見たい値なので大きく出す
-                if let kmh = context.state.speedKmh {
-                    HStack(alignment: .firstTextBaseline, spacing: 2) {
-                        Text("\(Int(kmh.rounded()))")
-                            .font(.system(size: 28, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-                        Text("km/h").font(.caption2).foregroundStyle(.secondary)
-                    }
+                // 走行距離を大きく出す。速度は運転中に見るものではないので載せない
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    Text(String(format: "%.1f", context.state.distanceKm))
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                    Text("km").font(.caption2).foregroundStyle(.secondary)
                 }
                 if context.state.pendingCount > 0 {
                     VStack(spacing: 0) {
@@ -49,16 +49,17 @@ struct MobilityLiveActivityLiveActivity: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Label(context.attributes.vehicleName, systemImage: "location.fill")
-                        .font(.caption)
-                        .lineLimit(1)
+                    Label(
+                        context.state.destinationName ?? context.attributes.vehicleName,
+                        systemImage: "location.fill",
+                    )
+                    .font(.caption)
+                    .lineLimit(1)
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    if let kmh = context.state.speedKmh {
-                        Text("\(Int(kmh.rounded())) km/h")
-                            .font(.headline)
-                            .monospacedDigit()
-                    }
+                    Text(String(format: "%.1f km", context.state.distanceKm))
+                        .font(.headline)
+                        .monospacedDigit()
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     if context.state.pendingCount > 0 {
@@ -78,16 +79,10 @@ struct MobilityLiveActivityLiveActivity: Widget {
                 Image(systemName: "location.fill")
                     .foregroundStyle(context.state.online ? .green : .orange)
             } compactTrailing: {
-                // 単位が無いと何の数字か分からないので km/h まで出す。
-                // Dynamic Island の compact は幅が狭いため小さめの字にする
-                if let kmh = context.state.speedKmh {
-                    HStack(spacing: 1) {
-                        Text("\(Int(kmh.rounded()))").monospacedDigit()
-                        Text("km/h").font(.system(size: 9))
-                    }
-                } else if context.state.pendingCount > 0 {
-                    Text("\(context.state.pendingCount)")
-                        .foregroundStyle(.orange)
+                // 幅が狭いので単位は小さめに
+                HStack(spacing: 1) {
+                    Text(String(format: "%.1f", context.state.distanceKm)).monospacedDigit()
+                    Text("km").font(.system(size: 9))
                 }
             } minimal: {
                 Image(systemName: "location.fill")

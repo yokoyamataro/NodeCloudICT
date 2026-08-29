@@ -16,8 +16,10 @@ struct MobilityActivityAttributes: ActivityAttributes {
         var pendingCount: Int
         /// 通信できているか
         var online: Bool
-        /// 現在の速度 [km/h]。測れないときは nil
-        var speedKmh: Double?
+        /// 目的地の名前 (未設定なら nil)
+        var destinationName: String?
+        /// このセクション (乗車してから) の走行距離 [km]
+        var distanceKm: Double
     }
 
     /// 開始時に決まり、以後変わらない値
