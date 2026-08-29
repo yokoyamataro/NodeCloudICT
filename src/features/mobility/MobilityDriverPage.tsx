@@ -24,6 +24,7 @@ import {
   LogOut,
   MapPin,
   MessageSquare,
+  Send,
   CircleDot,
   Minus,
   Navigation,
@@ -114,6 +115,9 @@ const PING_INTERVAL_IDLE_MS = 60_000
 const IDLE_SPEED_KMH = 1.5
 /** これ未満なら「停止中」とみなす前回送信地点からの距離 [m] */
 const IDLE_MOVE_M = 15
+
+/** 目的地からこの距離以内なら到着とみなす [m] */
+const ARRIVAL_RADIUS_M = 100
 
 /** 直近に乗車した車両 (次回の車両選択で先頭に出す) */
 const LAST_VEHICLE_KEY = 'mobility:lastVehicleId'
@@ -479,6 +483,16 @@ export function MobilityDriverPage() {
       cancelled = true
     }
   }, [latestIncoming?.sender_user_id])
+
+  // 報告の下書き。ドライバーが送信ボタンを押すまで送らない。
+  // 走行中に文章を打たせないための仕組みで、勝手には送らない。
+  const [notePrompt, setNotePrompt] = useState<string | null>(null)
+  const [noteSending, setNoteSending] = useState(false)
+  const sendNote = useMobilityMessagesStore((st) => st.sendNote)
+  /** 出発報告を出した行き先 (同じ行き先で何度も促さない) */
+  const departNotifiedRef = useRef<string | null>(null)
+  /** 到着報告を出した行き先 */
+  const arriveNotifiedRef = useRef<string | null>(null)
 
   /** 未読の受信メッセージ数 (指示に限らない) */
   const unreadIncomingCount = useMemo(() => {
@@ -1255,6 +1269,30 @@ export function MobilityDriverPage() {
   // PC からアクセスしていたら警告を出す (ドライバー画面はモバイル専用)
   const isMobilityAppFlag = useMemo(() => isMobilityApp(), [])
   // mobility 専用アプリ (Capacitor) では常にネイティブ環境なので PC 警告は不要
+  // 行き先を決めたら出発報告を促す。
+  // フックは早期 return より前に置く必要があるので、距離は destInfo (後段の
+  // useMemo) に頼らずここで求める
+  useEffect(() => {
+    if (!myActive || !selectedDestination) return
+    if (departNotifiedRef.current === selectedDestination.id) return
+    departNotifiedRef.current = selectedDestination.id
+    arriveNotifiedRef.current = null
+    setNotePrompt(`${selectedDestination.name} に向かいます。`)
+  }, [myActive, selectedDestination])
+
+  // 目的地に近づいたら到着報告を促す
+  useEffect(() => {
+    if (!myActive || !selectedDestination || !currentPos) return
+    const d = haversineMeters(
+      { lat: currentPos[0], lon: currentPos[1] },
+      { lat: selectedDestination.lat, lon: selectedDestination.lon },
+    )
+    if (d > ARRIVAL_RADIUS_M) return
+    if (arriveNotifiedRef.current === selectedDestination.id) return
+    arriveNotifiedRef.current = selectedDestination.id
+    setNotePrompt(`${selectedDestination.name} に到着しました。`)
+  }, [myActive, selectedDestination, currentPos])
+
   const [showPcWarning, setShowPcWarning] = useState(
     () => !isMobileDevice() && !isMobilityApp(),
   )
@@ -1739,6 +1777,51 @@ export function MobilityDriverPage() {
           </div>
         </MapContainer>
       </div>
+
+      {/* 報告の下書き。文章はこちらで用意し、送るかどうかはドライバーが決める。
+          走行中に文字を打たせないための仕組みなので、勝手には送らない */}
+      {notePrompt && myActive && (
+        <div className="mx-3 mt-2 p-2 rounded-lg bg-sky-950/60 border border-sky-700 flex items-center gap-2">
+          <MessageSquare className="h-4 w-4 text-sky-300 shrink-0" />
+          <span className="flex-1 min-w-0 text-xs text-sky-100 truncate">{notePrompt}</span>
+          <button
+            type="button"
+            onClick={() => setNotePrompt(null)}
+            className="shrink-0 px-2 py-1.5 text-xs rounded text-sky-300 hover:bg-sky-900/60"
+          >
+            送らない
+          </button>
+          <button
+            type="button"
+            disabled={noteSending}
+            onClick={async () => {
+              if (!orgId || !user) return
+              setNoteSending(true)
+              try {
+                await sendNote({
+                  organizationId: orgId,
+                  channelKind: 'direct',
+                  channelUserId: user.id,
+                  channelProjectId: null,
+                  senderRole: 'driver',
+                  body: notePrompt,
+                })
+                setNotePrompt(null)
+              } finally {
+                setNoteSending(false)
+              }
+            }}
+            className="shrink-0 flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded bg-sky-600 text-white disabled:opacity-50"
+          >
+            {noteSending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Send className="h-3.5 w-3.5" />
+            )}
+            送信
+          </button>
+        </div>
+      )}
 
       {busyError && (
         <div className="mx-3 my-2 p-2 bg-red-900/60 border border-red-700 rounded text-xs text-red-100 flex items-start gap-2">
