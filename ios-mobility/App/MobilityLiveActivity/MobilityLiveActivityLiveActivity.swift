@@ -78,8 +78,13 @@ struct MobilityLiveActivityLiveActivity: Widget {
                 Image(systemName: "location.fill")
                     .foregroundStyle(context.state.online ? .green : .orange)
             } compactTrailing: {
+                // 単位が無いと何の数字か分からないので km/h まで出す。
+                // Dynamic Island の compact は幅が狭いため小さめの字にする
                 if let kmh = context.state.speedKmh {
-                    Text("\(Int(kmh.rounded()))").monospacedDigit()
+                    HStack(spacing: 1) {
+                        Text("\(Int(kmh.rounded()))").monospacedDigit()
+                        Text("km/h").font(.system(size: 9))
+                    }
                 } else if context.state.pendingCount > 0 {
                     Text("\(context.state.pendingCount)")
                         .foregroundStyle(.orange)

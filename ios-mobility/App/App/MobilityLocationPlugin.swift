@@ -38,6 +38,7 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "addWatcher", returnType: CAPPluginReturnCallback),
         CAPPluginMethod(name: "removeWatcher", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "openSettings", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setBadge", returnType: CAPPluginReturnPromise),
     ]
 
     /// 1 watcher = 1 CLLocationManager。callbackId で保存済み call を引く
@@ -172,6 +173,21 @@ public class MobilityLocationPlugin: CAPPlugin, CAPBridgedPlugin {
             UIApplication.shared.open(url) { ok in
                 if ok { call.resolve() } else { call.reject("Failed to open settings") }
             }
+        }
+    }
+
+    /// アプリアイコンのバッジ (未読数) を設定する。
+    /// プッシュ通知が無いので、アプリが動いている間しか更新できない。
+    /// 乗車中は位置情報のバックグラウンドモードで動き続けるため反映される。
+    @objc func setBadge(_ call: CAPPluginCall) {
+        let count = call.getInt("count") ?? 0
+        DispatchQueue.main.async {
+            if #available(iOS 16.0, *) {
+                UNUserNotificationCenter.current().setBadgeCount(count)
+            } else {
+                UIApplication.shared.applicationIconBadgeNumber = count
+            }
+            call.resolve()
         }
     }
 

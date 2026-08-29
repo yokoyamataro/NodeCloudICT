@@ -58,6 +58,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useCanUseMobility } from '@/lib/useCanUseMobility'
 import { isMobileDevice } from '@/lib/displayMode'
 import { watchSamples, watchSamplesInBackground } from '@/lib/geolocation'
+import { setAppBadge } from '@/lib/appBadge'
 import { isMobilityApp } from '@/lib/appVariant'
 import {
   enqueuePing,
@@ -449,17 +450,47 @@ export function MobilityDriverPage() {
     return mine[0] ?? null
   }, [messages, user])
 
-  /** 未読の受信メッセージがあるか (指示に限らない) */
-  const hasUnreadIncoming = useMemo(() => {
-    if (!user) return false
-    return messages.some(
+  /** 未読の受信メッセージ数 (指示に限らない) */
+  const unreadIncomingCount = useMemo(() => {
+    if (!user) return 0
+    return messages.filter(
       (m) =>
         !m.read_at &&
         m.sender_user_id !== user.id &&
         m.channel_kind === 'direct' &&
         m.channel_user_id === user.id,
-    )
+    ).length
   }, [messages, user])
+  const hasUnreadIncoming = unreadIncomingCount > 0
+
+  // 新しい指示が届いたら行き先選択を開く。走行中に画面を探させないため。
+  // 初回マウント時の既存分では開かないよう、最初の id を基準にする。
+  const seenInstructionIdRef = useRef<string | null | undefined>(undefined)
+  useEffect(() => {
+    const latest = messages.find(
+      (m) =>
+        m.message_kind === 'instruction' &&
+        m.channel_kind === 'direct' &&
+        m.channel_user_id === user?.id &&
+        m.sender_user_id !== user?.id,
+    )
+    const id = latest?.id ?? null
+    if (seenInstructionIdRef.current === undefined) {
+      // マウント直後: 既にあるものは「既知」として記録するだけ
+      seenInstructionIdRef.current = id
+      return
+    }
+    if (id && id !== seenInstructionIdRef.current) {
+      seenInstructionIdRef.current = id
+      setShowDestSheet(true)
+    }
+  }, [messages, user])
+
+  // 未読数を iOS のアプリアイコンのバッジに出す。
+  // アプリが動いている間だけ更新できる (プッシュ通知は未導入)。
+  useEffect(() => {
+    void setAppBadge(unreadIncomingCount)
+  }, [unreadIncomingCount])
 
   // 自分の稼働中割当を探す
   const myActive = useMemo(() => {
@@ -1691,18 +1722,8 @@ export function MobilityDriverPage() {
         style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
       >
         <div className="flex gap-2">
-          {/* 履歴は降車中だけ。走行中に過去の軌跡を出しても邪魔なだけで、
-              地図が今の位置か履歴かで紛らわしくなる */}
-          {!myActive && (
-            <button
-              type="button"
-              onClick={() => setShowLogsSheet(true)}
-              className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm rounded-lg border border-indigo-500 text-indigo-200 hover:bg-indigo-950/40"
-            >
-              <History className="h-4 w-4" />
-              運行履歴
-            </button>
-          )}
+          {/* 運行履歴ボタンは一時的に非表示 (メッセージを全幅で使うため)。
+              シート本体と取得処理は残してあるので、戻すときはこのボタンだけ復活させる */}
           {/* メッセージ。ラベルではなく最新の受信内容を出す。
               未読があれば色を変えて点滅させ、開かなくても気づけるようにする */}
           <button
@@ -1715,7 +1736,17 @@ export function MobilityDriverPage() {
             }`}
           >
             <MessageSquare className="h-4 w-4 shrink-0" />
-            <span className="flex-1 min-w-0 text-left truncate">
+            {/* 2 行まで出す。1 行だと「〇〇さん、△△に向かってください」が
+                途中で切れて用件が読めない */}
+            <span
+              className="flex-1 min-w-0 text-left leading-snug"
+              style={{
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical',
+                overflow: 'hidden',
+              }}
+            >
               {latestIncoming
                 ? latestIncoming.body?.trim() ||
                   (latestIncoming.message_kind === 'instruction' ? '運行指示' : 'メッセージ')
@@ -1732,12 +1763,29 @@ export function MobilityDriverPage() {
           <div className="flex gap-2">
             {/* 送信ステータス表示。乗車中は 常に 送るので トグルは 置かない
                 (止めたい時は 降車する) */}
-            <div
-              className="flex-1 flex flex-col items-center justify-center gap-0.5 px-3 py-2 text-base font-semibold rounded-lg bg-emerald-600 text-white"
+            {/* 行き先があるときは Google マップの経路案内へ飛べるようにする。
+                現場では純正のナビを併用するので、ここから直行できると早い。
+                行き先が無いときは押しても意味が無いので div のまま */}
+            <button
+              type="button"
+              disabled={!selectedDestination}
+              onClick={() => {
+                if (!selectedDestination) return
+                const url =
+                  'https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=' +
+                  `${selectedDestination.lat},${selectedDestination.lon}`
+                window.open(url, '_blank')
+              }}
+              className="flex-1 min-h-[3.5rem] flex flex-col items-center justify-center gap-0.5 px-3 py-2 text-base font-semibold rounded-lg bg-emerald-600 text-white disabled:cursor-default"
             >
               <span className="flex items-center gap-2">
                 <Navigation className="h-4 w-4" />
                 位置を送信中
+                {selectedDestination && (
+                  <span className="text-[11px] font-normal bg-white/20 rounded px-1.5 py-0.5">
+                    経路案内 ↗
+                  </span>
+                )}
               </span>
               {autoSend && (
                 <span
@@ -1774,7 +1822,7 @@ export function MobilityDriverPage() {
                         }`}
                 </span>
               )}
-            </div>
+            </button>
             <button
               type="button"
               onClick={handleLeave}
@@ -1794,7 +1842,7 @@ export function MobilityDriverPage() {
           <button
             onClick={() => setShowPicker(true)}
             disabled={busy}
-            className="flex-1 flex items-center justify-center gap-2 px-3 py-3 text-base font-semibold bg-indigo-600 text-white rounded-lg disabled:opacity-50"
+            className="flex-1 min-h-[3.5rem] flex items-center justify-center gap-2 px-3 py-3 text-base font-semibold bg-indigo-600 text-white rounded-lg disabled:opacity-50"
           >
             <Play className="h-5 w-5" />
             車両に乗車
@@ -1925,7 +1973,8 @@ export function MobilityDriverPage() {
           onClose={() => setPointRegisterDialog(null)}
           onCreated={() => {
             setPointRegisterDialog(null)
-            // 現場のポイントを再取得したい場合はここで store から呼ぶ (現状表示側は不要)
+            // 作った直後に地図へ出す。再取得しないと画面を開き直すまで見えない
+            void reloadAllPoints()
           }}
         />
       )}

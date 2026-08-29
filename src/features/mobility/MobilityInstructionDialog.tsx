@@ -143,6 +143,16 @@ export function MobilityInstructionDialog({
     if (!pointId) return
     setBusy(true)
     setError(null)
+    // 本文が空だと通知に「運行指示」としか出ず、何を頼まれたか分からない。
+    // 宛先とポイント名から定型文を組み立てて既定の本文にする。
+    const pointName = projectPoints.find((p) => p.id === pointId)?.name ?? null
+    const driverName =
+      channelKind === 'direct'
+        ? drivers.find((d) => d.user_id === driverId)?.full_name ?? null
+        : null
+    const defaultBody = pointName
+      ? `${driverName ? `${driverName}さん、` : ''}${pointName} に向かってください。`
+      : null
     const res = await sendInstruction({
       organizationId,
       channelKind,
@@ -150,7 +160,7 @@ export function MobilityInstructionDialog({
       channelProjectId: channelKind === 'project' ? projectId : null,
       vehicleId: vehicleId,
       pointId,
-      body: body.trim() || null,
+      body: body.trim() || defaultBody,
     })
     setBusy(false)
     if (!res.ok) {
