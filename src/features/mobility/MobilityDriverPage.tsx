@@ -1810,30 +1810,13 @@ export function MobilityDriverPage() {
         {myActive ? (
           <div className="flex gap-2">
             {/* 送信ステータス表示。乗車中は 常に 送るので トグルは 置かない
-                (止めたい時は 降車する) */}
-            {/* 行き先があるときは Google マップの経路案内へ飛べるようにする。
-                現場では純正のナビを併用するので、ここから直行できると早い。
-                行き先が無いときは押しても意味が無いので div のまま */}
-            <button
-              type="button"
-              disabled={!selectedDestination}
-              onClick={() => {
-                if (!selectedDestination) return
-                const url =
-                  'https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=' +
-                  `${selectedDestination.lat},${selectedDestination.lon}`
-                window.open(url, '_blank')
-              }}
-              className="flex-1 min-h-[3.5rem] flex flex-col items-center justify-center gap-0.5 px-3 py-2 text-base font-semibold rounded-lg bg-emerald-600 text-white disabled:cursor-default"
-            >
+                (止めたい時は 降車する)。
+                経路案内は別ボタンに切り出した。押す意味が違うものを 1 つに
+                まとめると、送信状態を見たいだけで地図アプリに飛ばされる */}
+            <div className="flex-1 min-h-[3.5rem] flex flex-col items-center justify-center gap-0.5 px-3 py-2 text-base font-semibold rounded-lg bg-emerald-600 text-white">
               <span className="flex items-center gap-2">
                 <Navigation className="h-4 w-4" />
                 位置を送信中
-                {selectedDestination && (
-                  <span className="text-[11px] font-normal bg-white/20 rounded px-1.5 py-0.5">
-                    経路案内 ↗
-                  </span>
-                )}
               </span>
               {autoSend && (
                 <span
@@ -1870,13 +1853,38 @@ export function MobilityDriverPage() {
                         }`}
                 </span>
               )}
+            </div>
+            {/* 経路案内 (黄色)。行き先があるときだけ押せる */}
+            <button
+              type="button"
+              disabled={!selectedDestination}
+              onClick={() => {
+                if (!selectedDestination) return
+                const url =
+                  'https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=' +
+                  `${selectedDestination.lat},${selectedDestination.lon}`
+                window.open(url, '_blank')
+              }}
+              style={{ touchAction: 'manipulation' }}
+              className="shrink-0 min-h-[3.5rem] flex flex-col items-center justify-center px-3 py-2 text-sm font-semibold rounded-lg bg-amber-500 text-slate-900 disabled:opacity-40"
+              title={
+                selectedDestination
+                  ? `${selectedDestination.name} へのルートを Google マップで開く`
+                  : '行き先を設定すると使えます'
+              }
+            >
+              <span className="flex items-center gap-1">
+                <Navigation className="h-4 w-4" />
+                経路案内
+              </span>
+              <span className="text-[10px] font-normal leading-tight">Google マップ</span>
             </button>
             <button
               type="button"
               onClick={handleLeave}
               disabled={busy}
               style={{ touchAction: 'manipulation' }}
-              className="shrink-0 flex items-center gap-1 px-4 py-3 text-sm font-semibold border border-red-500 bg-red-950/40 text-red-200 rounded-lg active:bg-red-900/60 disabled:opacity-50"
+              className="shrink-0 min-h-[3.5rem] flex items-center gap-1 px-4 py-3 text-sm font-semibold border border-red-500 bg-red-950/40 text-red-200 rounded-lg active:bg-red-900/60 disabled:opacity-50"
             >
               {busy ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
