@@ -439,42 +439,26 @@ export function MobilityDriverPage() {
   // 指示だけでなく連絡 (note) も対象にする。
   const latestIncoming = useMemo(() => {
     if (!user) return null
-    // 「自分が送ったものは除く」だけだと、管理者とドライバーが同一アカウント
-    // (小規模事業者や動作確認では普通にある) のときに全部落ちてしまう。
-    // 指示は誰が送っていてもドライバー宛なので常に対象にする。
+    // 送信者では絞らない。管理者とドライバーが同一アカウント (小規模事業者や
+    // 動作確認では普通にある) だと、自分基準の除外では全部落ちてしまう。
+    // 確認 / 到着報告は本文が無く読む価値も無いので、それだけ除く。
     const incoming = messages
-      .filter((m) => m.message_kind === 'instruction' || m.sender_user_id !== user.id)
+      .filter((m) => m.message_kind === 'instruction' || m.message_kind === 'note')
       .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
     return incoming[0] ?? null
-  }, [messages, user])
+  }, [messages])
 
   /** 未読の受信メッセージ数 (指示に限らない) */
   const unreadIncomingCount = useMemo(() => {
     if (!user) return 0
     return messages.filter(
       (m) =>
-        !m.read_at && (m.message_kind === 'instruction' || m.sender_user_id !== user.id),
+        !m.read_at &&
+        (m.message_kind === 'instruction' || m.message_kind === 'note') &&
+        m.sender_user_id !== user.id,
     ).length
   }, [messages, user])
   const hasUnreadIncoming = unreadIncomingCount > 0
-
-  // 新しい指示が届いたら行き先選択を開く。走行中に画面を探させないため。
-  // 初回マウント時の既存分では開かないよう、最初の id を基準にする。
-  const seenInstructionIdRef = useRef<string | null | undefined>(undefined)
-  useEffect(() => {
-    const latest = messages.find((m) => m.message_kind === 'instruction')
-    const id = latest?.id ?? null
-    if (seenInstructionIdRef.current === undefined) {
-      // マウント直後: 既にあるものは「既知」として記録するだけ
-      seenInstructionIdRef.current = id
-      return
-    }
-    if (id && id !== seenInstructionIdRef.current) {
-      seenInstructionIdRef.current = id
-      setDestInitialPoint(pointById(latest?.instruction_point_id))
-      setShowDestSheet(true)
-    }
-  }, [messages, user])
 
   // 未読数を iOS のアプリアイコンのバッジに出す。
   // アプリが動いている間だけ更新できる (プッシュ通知は未導入)。
@@ -531,13 +515,6 @@ export function MobilityDriverPage() {
   useEffect(() => {
     saveBaseLayer('mobility:baseLayer', baseLayer)
   }, [baseLayer])
-
-  /** 指示の行き先 id から地点を引く。地図表示用に全件持っているので流用する */
-  const pointById = useCallback(
-    (id: string | null | undefined) =>
-      id ? allPoints.find((p) => p.id === id) ?? null : null,
-    [allPoints],
-  )
 
   /** 地図上のポイントをタップしたときの確認シート */
   const [pointActionTarget, setPointActionTarget] = useState<MobilityProjectPoint | null>(null)
@@ -1729,20 +1706,7 @@ export function MobilityDriverPage() {
               未読があれば色を変えて点滅させ、開かなくても気づけるようにする */}
           <button
             type="button"
-            onClick={() => {
-              // 直近が行き先つきの指示なら、まず行き先選択へ。
-              // 指示を受けた直後にやりたいのは「どこへ行くか確定させる」ことで、
-              // 会話を読み返すことではない。
-              if (
-                latestIncoming?.message_kind === 'instruction' &&
-                latestIncoming.instruction_point_id
-              ) {
-                setDestInitialPoint(pointById(latestIncoming.instruction_point_id))
-                setShowDestSheet(true)
-                return
-              }
-              setShowChatSheet({ kind: 'direct', label: '管理者' })
-            }}
+            onClick={() => setShowChatSheet({ kind: 'direct', label: '管理者' })}
             className={`relative flex-1 min-w-0 flex items-center gap-2 px-3 py-2 text-sm rounded-lg border ${
               hasUnreadIncoming
                 ? 'border-amber-400 bg-amber-500/20 text-amber-100 animate-pulse'
