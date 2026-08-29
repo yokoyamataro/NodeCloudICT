@@ -1728,7 +1728,19 @@ export function MobilityDriverPage() {
               未読があれば色を変えて点滅させ、開かなくても気づけるようにする */}
           <button
             type="button"
-            onClick={() => setShowChatSheet({ kind: 'direct', label: '管理者' })}
+            onClick={() => {
+              // 直近が行き先つきの指示なら、まず行き先選択へ。
+              // 指示を受けた直後にやりたいのは「どこへ行くか確定させる」ことで、
+              // 会話を読み返すことではない。
+              if (
+                latestIncoming?.message_kind === 'instruction' &&
+                latestIncoming.instruction_point_id
+              ) {
+                setShowDestSheet(true)
+                return
+              }
+              setShowChatSheet({ kind: 'direct', label: '管理者' })
+            }}
             className={`relative flex-1 min-w-0 flex items-center gap-2 px-3 py-2 text-sm rounded-lg border ${
               hasUnreadIncoming
                 ? 'border-amber-400 bg-amber-500/20 text-amber-100 animate-pulse'
@@ -1757,6 +1769,17 @@ export function MobilityDriverPage() {
                 {unreadInstructionCount}
               </span>
             )}
+          </button>
+          {/* 上のボタンは指示を受けると行き先選択へ飛ぶので、会話そのものへの
+              入口をここに残す (運行履歴ボタンを消した今、他に導線が無い) */}
+          <button
+            type="button"
+            onClick={() => setShowChatSheet({ kind: 'direct', label: '管理者' })}
+            className="shrink-0 px-3 rounded-lg border border-emerald-500 text-emerald-200 hover:bg-emerald-950/40 flex items-center"
+            title="メッセージ一覧を開く"
+            aria-label="メッセージ一覧を開く"
+          >
+            <MessageSquare className="h-4 w-4" />
           </button>
         </div>
         {myActive ? (
