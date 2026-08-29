@@ -13,6 +13,8 @@ import {
   Eraser,
   MousePointer2,
   Pen,
+  Crosshair,
+  Dot,
   Pentagon,
   Redo2,
   Ruler,
@@ -119,6 +121,22 @@ interface Props {
   onRedo: () => void
   /** 付箋メモ (現在位置に従来のメモを残す) を発火。未指定なら非表示。 */
   onMemo?: () => void
+
+  // ---- 作図・計測ツールから引き継いだ設定。未指定ならその操作を出さない ----
+  /** ピック (スナップ): 近くの点に吸着させる */
+  snapEnabled?: boolean
+  onToggleSnap?: () => void
+  /** DXF 出力時のレイヤ名 */
+  layer?: string
+  onChangeLayer?: (layer: string) => void
+  /** レイヤ名の入力候補 (既に使われているレイヤ) */
+  existingLayers?: string[]
+  /** テキストの文字サイズ [px] */
+  fontSize?: number
+  onChangeFontSize?: (px: number) => void
+  /** 点ツールで 座標管理にも 登録するか。未指定なら チェックボックスを出さない */
+  registerCoordinate?: boolean
+  onToggleRegisterCoordinate?: () => void
 }
 
 const LINE_STYLE_LABEL: Record<LineStyle, string> = {
@@ -164,6 +182,15 @@ export function MapDrawingToolbar({
   onUndo,
   onRedo,
   onMemo,
+  snapEnabled,
+  onToggleSnap,
+  layer,
+  onChangeLayer,
+  existingLayers,
+  fontSize,
+  onChangeFontSize,
+  registerCoordinate,
+  onToggleRegisterCoordinate,
 }: Props) {
   const [colorPickerOpen, setColorPickerOpen] = useState(false)
   const [linePickerOpen, setLinePickerOpen] = useState(false)
@@ -345,6 +372,40 @@ export function MapDrawingToolbar({
       >
         <MousePointer2 className="h-4 w-4" />
       </button>
+      {/* 点。「座標登録」を入れておくと、置いた点を座標管理にも登録する */}
+      <div className="relative shrink-0 flex items-stretch">
+        <button
+          type="button"
+          onClick={() => onChangeMode(mode === 'point' ? 'off' : 'point')}
+          title={
+            registerCoordinate
+              ? '点 (タップした場所に点を置き、座標管理にも登録)'
+              : '点 (タップした場所に点を置く)'
+          }
+          className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
+            mode === 'point'
+              ? 'bg-blue-600 text-white'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <Dot className="h-6 w-6" strokeWidth={6} />
+        </button>
+        {mode === 'point' && onToggleRegisterCoordinate && (
+          <button
+            type="button"
+            onClick={onToggleRegisterCoordinate}
+            title="置いた点を座標管理にも登録する"
+            className={`ml-0.5 h-8 px-1.5 flex items-center gap-1 rounded border text-[10px] ${
+              registerCoordinate
+                ? 'bg-emerald-600 border-emerald-500 text-white'
+                : 'border-slate-300 text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <span>{registerCoordinate ? '☑' : '☐'}</span>
+            <span>座標登録</span>
+          </button>
+        )}
+      </div>
       {/* テキスト */}
       <button
         type="button"
@@ -467,6 +528,65 @@ export function MapDrawingToolbar({
           </div>
         )}
       </div>
+
+      {/* 文字サイズ (テキストモードのときだけ) */}
+      {mode === 'text' && onChangeFontSize && (
+        <div className="flex items-center gap-1 pl-1 shrink-0">
+          <Type className="h-3.5 w-3.5 text-slate-500" />
+          <input
+            type="range"
+            min={10}
+            max={48}
+            step={1}
+            value={fontSize ?? 14}
+            onChange={(e) => onChangeFontSize(Number(e.target.value))}
+            className="w-16"
+            title={`文字サイズ: ${fontSize ?? 14}px`}
+          />
+          <span className="text-[10px] font-mono text-slate-600 w-6 text-right">
+            {fontSize ?? 14}
+          </span>
+        </div>
+      )}
+
+      {/* ピック (スナップ) */}
+      {onToggleSnap && (
+        <button
+          type="button"
+          onClick={onToggleSnap}
+          title={
+            snapEnabled
+              ? 'ピック ON (近くの点・頂点に吸着)'
+              : 'ピック OFF (吸着しない)'
+          }
+          className={`w-8 h-8 flex items-center justify-center rounded shrink-0 border ${
+            snapEnabled
+              ? 'bg-amber-100 border-amber-400 text-amber-700'
+              : 'border-transparent text-slate-500 hover:bg-slate-100'
+          }`}
+        >
+          <Crosshair className="h-4 w-4" />
+        </button>
+      )}
+
+      {/* レイヤ名 (DXF 出力に反映) */}
+      {onChangeLayer && (
+        <label className="flex items-center gap-1 shrink-0" title="レイヤ名 (DXF出力に反映)">
+          <span className="text-[10px] text-slate-500">レイヤ</span>
+          <input
+            type="text"
+            value={layer ?? '0'}
+            onChange={(e) => onChangeLayer(e.target.value)}
+            list="map-drawing-layers"
+            className="w-16 h-8 px-1 border rounded font-mono text-[11px]"
+          />
+          <datalist id="map-drawing-layers">
+            {(existingLayers ?? []).map((l) => (
+              <option key={l} value={l} />
+            ))}
+          </datalist>
+        </label>
+      )}
 
       {/* 太さスライダ */}
       <div className="flex items-center gap-1 pl-1 shrink-0">

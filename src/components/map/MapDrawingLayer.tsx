@@ -7,16 +7,24 @@
 //   ・'circle'  2 タップで中心 → 縁 (半径 = 2 点間距離、L.Circle で描画)。
 //   ・'arc'     3 タップで始点 → 通過点 → 終点 (3 点を通る一意の円弧を近似ポリラインで描画)。
 //   ・'polygon' タップで頂点を追加。最初の頂点を再タップ or 「面を閉じる」で確定。半透明で塗り潰し。
-//   ・'text'    タップした点にテキスト注釈 (prompt 経由)。
+//   ・'text'    タップした点にテキスト注釈 (prompt 経由)。文字サイズは fontSize。
+//   ・'point'   タップした点に点を置く。registerCoordinate が true なら
+//               onAddCoordinate も呼び、座標管理にも登録する。
 //   ・'select'  ストロークをタップで選択 → 青ハンドルをドラッグで頂点移動 / 長押しで削除 /
 //               辺の中点の「+」タップで頂点追加 (直線・円・円弧は追加/削除不可、位置移動のみ)。
 //   ・'eraser'  アイテムをクリックで削除。
 //   ・'measure-dist' / 'measure-area' / 'measure-perp'
 //               計測。結果は保存せず、モードを抜けるまで地図上に表示する。
 //
+// ピック (snapEnabled): 既存の作図の頂点と extraSnapPoints (測点・区域の頂点) に
+// 吸着する。判定は画面 px なので、縮尺が変わっても指の感覚は変わらない。
+// フリーハンドは吸着しない (全点を吸わせると線が壊れるため)。直線・平行線は端点のみ。
+//
+// layer は DXF 出力時のレイヤ名。以後に作る図形へ付与する。
+//
 // 保存座標は lat/lng なので、地図を伸縮・移動しても地図上の位置は保持される。
 
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Circle as LeafletCircle,
@@ -45,6 +53,7 @@ export type DrawingMode =
   | 'polygon'
   | 'parallel'
   | 'text'
+  | 'point'
   | 'select'
   | 'eraser'
   | 'measure-dist'
@@ -67,6 +76,23 @@ interface Props {
    * 無ければ球面距離で近似する (数 km 程度なら実用上ほぼ同じ)。
    */
   converter?: CoordinateConverter
+  /** DXF 出力時のレイヤ名。以後の作図に付与する */
+  layer?: string
+  /** テキストの文字サイズ [px] */
+  fontSize?: number
+  /** ピック (スナップ): 近くの点に吸着させる */
+  snapEnabled?: boolean
+  /** 図形以外のスナップ候補 (座標管理の点・区域の頂点など) */
+  extraSnapPoints?: Array<[number, number]>
+  /**
+   * 'point' で 点を置いた時に 座標管理へも 登録する。
+   * 未指定なら 登録機能そのものを 出さない (この画面に 座標管理が無い場合)
+   */
+  onAddCoordinate?: (lat: number, lng: number) => void
+  /** 'point' で 座標管理にも 登録するか (チェックボックスの状態) */
+  registerCoordinate?: boolean
+  /** true のとき既存のペイントを地図に出さない (道具の入力受付は継続) */
+  hidden?: boolean
 }
 
 // ---- 平行線 ----
@@ -166,8 +192,15 @@ function textFontSizePx(widthPx: number): number {
 }
 
 /** テキスト注釈用の divIcon (背景なし、測点ラベルと同じ「白フチ + 色本体」スタイル) */
-export function makeTextIcon(text: string, color: string, widthPx: number, interactive: boolean): L.DivIcon {
-  const size = textFontSizePx(widthPx)
+export function makeTextIcon(
+  text: string,
+  color: string,
+  widthPx: number,
+  interactive: boolean,
+  /** 明示指定があればそれを使う。無ければ従来どおり太さから換算する */
+  fontSizePx?: number | null,
+): L.DivIcon {
+  const size = fontSizePx ?? textFontSizePx(widthPx)
   const shadow =
     '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff'
   const escaped = text
@@ -387,6 +420,28 @@ function makeMeasureLabelIcon(text: string, color: string): L.DivIcon {
   })
 }
 
+/** ピックの吸着範囲 [画面 px]。指でも届き、隣の点を誤って掴まない程度 */
+const SNAP_RADIUS_PX = 18
+
+/** 点 (kind='point') のアイコン */
+function makePointIcon(color: string, widthPx: number): L.DivIcon {
+  const d = Math.max(8, Math.min(20, 6 + widthPx))
+  return L.divIcon({
+    className: 'map-drawing-point',
+    html: `<div style="background:${color};width:${d}px;height:${d}px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4)"></div>`,
+    iconSize: [d, d],
+    iconAnchor: [d / 2, d / 2],
+  })
+}
+
+/** ピックの吸着先を示す印 */
+const SNAP_HINT_ICON = L.divIcon({
+  className: 'map-drawing-snap-hint',
+  html: '<div style="width:14px;height:14px;border:2px solid #f59e0b;border-radius:2px;background:rgba(245,158,11,.25);box-sizing:border-box"></div>',
+  iconSize: [14, 14],
+  iconAnchor: [7, 7],
+})
+
 export function MapDrawingLayer({
   farmId,
   mode,
@@ -394,6 +449,13 @@ export function MapDrawingLayer({
   widthPx,
   lineStyle,
   converter,
+  layer = '0',
+  fontSize,
+  snapEnabled = false,
+  extraSnapPoints,
+  onAddCoordinate,
+  registerCoordinate = false,
+  hidden = false,
 }: Props) {
   const map = useMap()
   const items = useMapDrawingStore((s) =>
@@ -401,6 +463,7 @@ export function MapDrawingLayer({
   )
   const fetchByFarm = useMapDrawingStore((s) => s.fetchByFarm)
   const addStroke = useMapDrawingStore((s) => s.addStroke)
+  const addPoint = useMapDrawingStore((s) => s.addPoint)
   const addText = useMapDrawingStore((s) => s.addText)
   const deleteStroke = useMapDrawingStore((s) => s.deleteStroke)
   const updateStrokePoints = useMapDrawingStore((s) => s.updateStrokePoints)
@@ -420,6 +483,57 @@ export function MapDrawingLayer({
     kind: 'circle' | 'arc' | 'polygon'
     points: Array<{ lat: number; lng: number }>
   } | null>(null)
+
+  // ---- ピック (スナップ) ----
+  //
+  // 既存の作図の頂点と、外から渡された候補 (座標管理の点・区域の頂点) に吸着させる。
+  // 判定は画面上の距離で行う。地図の縮尺が変わっても指の感覚が変わらないようにするため。
+  const snapCandidates = useMemo(() => {
+    if (!snapEnabled) return []
+    const out: LL[] = []
+    for (const it of items) {
+      for (const p of it.points) out.push({ lat: p.lat, lng: p.lng })
+    }
+    if (extraSnapPoints) {
+      for (const [lat, lng] of extraSnapPoints) out.push({ lat, lng })
+    }
+    return out
+  }, [snapEnabled, items, extraSnapPoints])
+
+  /** 吸着後の座標を返す。候補が近くに無ければそのまま返す */
+  const snap = useCallback(
+    (ll: { lat: number; lng: number }): LL => {
+      if (!snapEnabled || snapCandidates.length === 0) return { lat: ll.lat, lng: ll.lng }
+      const target = map.latLngToContainerPoint([ll.lat, ll.lng])
+      let best: LL | null = null
+      let bestPx = SNAP_RADIUS_PX
+      for (const c of snapCandidates) {
+        const px = map.latLngToContainerPoint([c.lat, c.lng]).distanceTo(target)
+        if (px < bestPx) {
+          bestPx = px
+          best = c
+        }
+      }
+      return best ?? { lat: ll.lat, lng: ll.lng }
+    },
+    [snapEnabled, snapCandidates, map],
+  )
+
+  /** 吸着先が近くにあるか (カーソル位置に印を出すため) */
+  const [snapHint, setSnapHint] = useState<LL | null>(null)
+  useEffect(() => {
+    // 直前の実行のクリーンアップで印は消えるので、ここでは購読しないだけでよい
+    if (!snapEnabled || mode === 'off' || mode === 'select') return
+    const onMove = (e: L.LeafletMouseEvent) => {
+      const s = snap(e.latlng)
+      setSnapHint(s.lat === e.latlng.lat && s.lng === e.latlng.lng ? null : s)
+    }
+    map.on('mousemove', onMove)
+    return () => {
+      map.off('mousemove', onMove)
+      setSnapHint(null)
+    }
+  }, [map, snap, snapEnabled, mode])
 
   // 計測: 入力途中の点列と、確定した結果 (保存はしない)
   const [measurePoints, setMeasurePoints] = useState<LL[]>([])
@@ -499,6 +613,7 @@ export function MapDrawingLayer({
     const isPointerDraw = mode === 'pen' || mode === 'line' || mode === 'parallel'
     const isTapDraw =
       mode === 'text' ||
+      mode === 'point' ||
       mode === 'circle' ||
       mode === 'arc' ||
       mode === 'polygon' ||
@@ -540,10 +655,12 @@ export function MapDrawingLayer({
   // タップ式描画 + text 追加: useMapEvents
   useMapEvents({
     click: (e) => {
+      // ピックが ON なら、以降はすべて吸着後の座標で扱う
+      const at = snap(e.latlng)
+
       // 計測は保存しないので farmId を必要としない
       if (isMeasureMode(mode)) {
-        const p: LL = { lat: e.latlng.lat, lng: e.latlng.lng }
-        const pts = [...measurePoints, p]
+        const pts = [...measurePoints, at]
 
         if (mode === 'measure-dist') {
           if (pts.length < 2) {
@@ -599,15 +716,24 @@ export function MapDrawingLayer({
       }
 
       if (!farmId) return
+
+      if (mode === 'point') {
+        void addPoint({ farmId, color, widthPx, lat: at.lat, lng: at.lng, layer })
+        // 「座標登録あり」なら 座標管理にも 同じ位置を 登録する。
+        // 点そのものは ペイントに 残るので、CAD 出力にも 乗る
+        if (registerCoordinate) onAddCoordinate?.(at.lat, at.lng)
+        return
+      }
+
       if (mode === 'text') {
-        setTextDialog({ lat: e.latlng.lat, lng: e.latlng.lng, value: '' })
+        setTextDialog({ lat: at.lat, lng: at.lng, value: '' })
         return
       }
       if (mode === 'circle') {
         if (!shapeProgress || shapeProgress.kind !== 'circle') {
-          setShapeProgress({ kind: 'circle', points: [{ lat: e.latlng.lat, lng: e.latlng.lng }] })
+          setShapeProgress({ kind: 'circle', points: [at] })
         } else {
-          const points = [...shapeProgress.points, { lat: e.latlng.lat, lng: e.latlng.lng }]
+          const points = [...shapeProgress.points, at]
           void addStroke({
             farmId,
             kind: 'circle',
@@ -615,6 +741,7 @@ export function MapDrawingLayer({
             widthPx,
             lineStyle,
             points,
+            layer,
           })
           setShapeProgress(null)
         }
@@ -622,14 +749,14 @@ export function MapDrawingLayer({
       }
       if (mode === 'arc') {
         if (!shapeProgress || shapeProgress.kind !== 'arc') {
-          setShapeProgress({ kind: 'arc', points: [{ lat: e.latlng.lat, lng: e.latlng.lng }] })
+          setShapeProgress({ kind: 'arc', points: [at] })
         } else if (shapeProgress.points.length === 1) {
           setShapeProgress({
             kind: 'arc',
-            points: [...shapeProgress.points, { lat: e.latlng.lat, lng: e.latlng.lng }],
+            points: [...shapeProgress.points, at],
           })
         } else {
-          const points = [...shapeProgress.points, { lat: e.latlng.lat, lng: e.latlng.lng }]
+          const points = [...shapeProgress.points, at]
           void addStroke({
             farmId,
             kind: 'arc',
@@ -637,6 +764,7 @@ export function MapDrawingLayer({
             widthPx,
             lineStyle,
             points,
+            layer,
           })
           setShapeProgress(null)
         }
@@ -657,12 +785,13 @@ export function MapDrawingLayer({
               widthPx,
               lineStyle,
               points: current,
+              layer,
             })
             setShapeProgress(null)
             return
           }
         }
-        const nextPoints = [...current, { lat: e.latlng.lat, lng: e.latlng.lng }]
+        const nextPoints = [...current, at]
         setShapeProgress({ kind: 'polygon', points: nextPoints })
         return
       }
@@ -696,8 +825,14 @@ export function MapDrawingLayer({
       currentRef.current = null
       setCurrentPositions([])
       if (!pts || pts.length < 2 || !farmId) return
+      // 直線・平行線は 端点だけ 吸着させる。フリーハンドは 吸着させない
+      // (全点を吸わせると 線が壊れるため)
       const geo = pts.map((p) => ({ lat: p.lat, lng: p.lng }))
-      void addStroke({ farmId, kind: 'stroke', color, widthPx, lineStyle, points: geo })
+      if (mode === 'line' || mode === 'parallel') {
+        geo[0] = snap(geo[0])
+        geo[geo.length - 1] = snap(geo[geo.length - 1])
+      }
+      void addStroke({ farmId, kind: 'stroke', color, widthPx, lineStyle, points: geo, layer })
       if (mode === 'parallel' && geo.length >= 2) {
         // 基準線はそのまま残し、間隔と本数を決める段に進む
         setParallelBase([geo[0], geo[geo.length - 1]])
@@ -788,7 +923,7 @@ export function MapDrawingLayer({
       container.removeEventListener('pointerup', onUp)
       container.removeEventListener('pointercancel', onCancel)
     }
-  }, [mode, map, farmId, color, widthPx, lineStyle, addStroke])
+  }, [mode, map, farmId, color, widthPx, lineStyle, layer, snap, addStroke])
 
   // ポリゴン描画中に「面を閉じる」ボタンを L.Control として map の右上に表示
   useEffect(() => {
@@ -809,6 +944,7 @@ export function MapDrawingLayer({
         widthPx,
         lineStyle,
         points: shapeProgress.points,
+        layer,
       })
       setShapeProgress(null)
     })
@@ -819,7 +955,7 @@ export function MapDrawingLayer({
     return () => {
       control.remove()
     }
-  }, [shapeProgress, map, farmId, color, widthPx, lineStyle, addStroke])
+  }, [shapeProgress, map, farmId, color, widthPx, lineStyle, layer, addStroke])
 
   // 選択中のストローク (端点ハンドル用)
   const selectedStroke = useMemo(
@@ -849,7 +985,24 @@ export function MapDrawingLayer({
             <Marker
               key={s.id}
               position={[pt.lat, pt.lng]}
-              icon={makeTextIcon(s.text ?? '', s.color, s.width_px, isEraser)}
+              icon={makeTextIcon(s.text ?? '', s.color, s.width_px, isEraser, s.font_size)}
+              interactive={isEraser}
+              eventHandlers={
+                isEraser ? { click: () => void deleteStroke(s.id) } : undefined
+              }
+            />
+          )
+        }
+
+        if (s.kind === 'point') {
+          const pt = s.points[0]
+          if (!pt) return null
+          const isEraser = mode === 'eraser'
+          return (
+            <Marker
+              key={s.id}
+              position={[pt.lat, pt.lng]}
+              icon={makePointIcon(s.color, s.width_px)}
               interactive={isEraser}
               eventHandlers={
                 isEraser ? { click: () => void deleteStroke(s.id) } : undefined
@@ -1178,9 +1331,17 @@ export function MapDrawingLayer({
 
   return (
     <Pane name="map-drawing" style={{ zIndex: 500 }}>
-      {rendered}
+      {hidden ? null : rendered}
       {shapePreview}
       {measureOverlay}
+      {/* ピックの吸着先 (マウス操作時のみ。指では出ないが、タップ時は吸着する) */}
+      {snapHint && (
+        <Marker
+          position={[snapHint.lat, snapHint.lng]}
+          icon={SNAP_HINT_ICON}
+          interactive={false}
+        />
+      )}
       {currentPositions.length >= 2 && (
         <Polyline
           positions={currentPositions}
@@ -1375,6 +1536,7 @@ export function MapDrawingLayer({
                         widthPx,
                         lineStyle,
                         points: line,
+                        layer,
                       })
                     }
                   }
@@ -1421,6 +1583,8 @@ export function MapDrawingLayer({
                         lat: textDialog.lat,
                         lng: textDialog.lng,
                         text: trimmed,
+                        layer,
+                        fontSize,
                       })
                     }
                     setTextDialog(null)
@@ -1451,6 +1615,8 @@ export function MapDrawingLayer({
                         lat: textDialog.lat,
                         lng: textDialog.lng,
                         text: trimmed,
+                        layer,
+                        fontSize,
                       })
                     }
                     setTextDialog(null)

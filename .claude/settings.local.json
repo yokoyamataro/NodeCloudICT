@@ -2,7 +2,21 @@
   "permissions": {
     "allow": [
       "Bash(tree:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(python3 -)",
+      "Bash(npx tsc *)",
+      "Bash(npx eslint *)",
+      "Bash(grep -E \"^\\\\s+\\(2[0-9]{3}|1[0-9]{3}|[0-9]{1,3}\\):\")",
+      "Bash(npm run *)",
+      "Bash(npx cap *)",
+      "Read(//Applications/**)",
+      "Bash(xcode-select -p)",
+      "Bash(cd *)",
+      "Bash(ls *)",
+      "Bash(DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -project App.xcodeproj -scheme App -destination 'generic/platform=iOS Simulator' -configuration Debug CODE_SIGNING_ALLOWED=NO build 2>&1 | grep -E \"error:|BUILD SUCCEEDED|BUILD FAILED\" | head -30)",
+      "Bash(git checkout *)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
     ]
   }
 }

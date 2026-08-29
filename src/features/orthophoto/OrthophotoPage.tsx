@@ -13,8 +13,6 @@ import {
   StickyNote,
   PanelRightOpen,
   PanelRightClose,
-  PanelTopOpen,
-  PanelTopClose,
   MapPin,
   Map as MapIcon,
   Eye,
@@ -46,22 +44,6 @@ import { useParcelImportSelection } from '@/features/parcel-maps/useParcelImport
 import { ParcelBatchImportBar } from '@/features/parcel-maps/ParcelBatchImportBar'
 import { useMapViewStore } from '@/stores/mapViewStore'
 import { CoordinateConverter } from '@/lib/coordinates'
-import {
-  OrthophotoAnnotations,
-  type ToolMode,
-  type MeasureGeom,
-  type LineSeg,
-  DRAW_TOOLS,
-  MEASURE_TOOLS,
-  formatMeasureValue,
-} from './OrthophotoAnnotations'
-import {
-  type Annotation,
-  type DimensionAnnotation,
-  newAnnotationId,
-  loadAnnotations,
-  saveAnnotations,
-} from '@/lib/annotations'
 import { buildDxf, downloadDxf } from '@/lib/dxf'
 import { buildMapDrawingDxfEntities } from '@/lib/mapDrawingDxf'
 import { FileDown } from 'lucide-react'
@@ -72,7 +54,6 @@ export function OrthophotoPage() {
   const { projects } = useProjectListStore()
   const { byFarm, fetchByFarm, createTileset, uploadTiles, deleteTileset } = useOrthophotoStore()
   const { setZone, fetchCoordinates, importCoordinates, coordinates, selectedType } = useCoordinateStore()
-  const { fetchMembers, members } = useProjectListStore()
   const { workAreas, fetchWorkAreas } = useWorkAreaStore()
   // メモ + 写真（右側パネルと地図上マーカーの両方で使う）
   const farmMemos = useFarmMemoStore((s) =>
@@ -105,9 +86,6 @@ export function OrthophotoPage() {
       setZone(projectZone)
       fetchCoordinates(currentFarm.id)
     }
-    if (currentFarm.project_id) {
-      fetchMembers(currentFarm.project_id)
-    }
     void fetchFarmMemos(currentFarm.id)
     void fetchAttachments('farm_photo', [currentFarm.id])
   }, [
@@ -117,7 +95,6 @@ export function OrthophotoPage() {
     fetchWorkAreas,
     setZone,
     fetchCoordinates,
-    fetchMembers,
     fetchFarmMemos,
     fetchAttachments,
   ])
@@ -261,13 +238,6 @@ export function OrthophotoPage() {
     }
   }
 
-  // 上部の作図・計測ツールバーの折りたたみ状態 (localStorage 永続化)
-  const [toolbarOpen, setToolbarOpen] = useState<boolean>(() => {
-    try { return localStorage.getItem('orthophoto:toolbarOpen') !== '0' } catch { return true }
-  })
-  useEffect(() => {
-    try { localStorage.setItem('orthophoto:toolbarOpen', toolbarOpen ? '1' : '0') } catch { /* ignore */ }
-  }, [toolbarOpen])
 
   // 表示設定 (点種 / 地番 / カメラ / メモ / 作図要素の表示切替)。localStorage 永続化
   const readVis = (key: string, def: boolean): boolean => {
@@ -429,60 +399,13 @@ export function OrthophotoPage() {
   const [showList, setShowList] = useState(false)
 
   // ===== 作図・計測 =====
-  const [tool, setTool] = useState<ToolMode>('none')
-  const [drawColor, setDrawColor] = useState('#dc2626')
-  const [fontSize, setFontSize] = useState(14) // px
-  const [currentLayer, setCurrentLayer] = useState('0')
-  const [selectedAnnoId, setSelectedAnnoId] = useState<string | null>(null)
+  // ---- ペイント (作図・計測) の設定 ----
+  // 作図・計測ツールはペイントへ統合したので、状態はペイント側の設定だけを持つ
   const [snapEnabled, setSnapEnabled] = useState(false)
-  // 平行線ツール用
-  const [parallelRef, setParallelRef] = useState<LineSeg | null>(null)
-  const [parallelOffset, setParallelOffset] = useState<string>('')
-  // Undo 履歴（直近10件）
-  const [history, setHistory] = useState<Annotation[][]>([])
-  const HISTORY_LIMIT = 10
-  const [annotations, setAnnotationsState] = useState<Annotation[]>([])
-  const [lastMeasure, setLastMeasure] = useState<MeasureGeom | null>(null)
-  // コメント入力モーダル
-  const [pendingComment, setPendingComment] = useState<{ pos: [number, number] } | null>(null)
-  // 工区切替で読み込み・保存（履歴もリセット）
-  useEffect(() => {
-    if (currentFarm) setAnnotationsState(loadAnnotations(currentFarm.id))
-    else setAnnotationsState([])
-    setLastMeasure(null)
-    setTool('none')
-    setHistory([])
-    setParallelRef(null)
-    setParallelOffset('')
-  }, [currentFarm])
-  // 履歴付きで annotations を更新（直前状態をスタックへ push、最新10件のみ保持）
-  const setAnnotations = (next: Annotation[]) => {
-    setHistory((prev) => [...prev, annotations].slice(-HISTORY_LIMIT))
-    setAnnotationsState(next)
-    if (currentFarm) saveAnnotations(currentFarm.id, next)
-  }
-  // 元に戻す（履歴の末尾を取り出して反映）
-  const undo = () => {
-    setHistory((prev) => {
-      if (prev.length === 0) return prev
-      const last = prev[prev.length - 1]
-      setAnnotationsState(last)
-      if (currentFarm) saveAnnotations(currentFarm.id, last)
-      return prev.slice(0, -1)
-    })
-  }
-  // Ctrl/Cmd + Z で undo
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
-        e.preventDefault()
-        undo()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [annotations, history])
+  const [drawLayer, setDrawLayer] = useState('0')
+  const [drawFontSize, setDrawFontSize] = useState(14)
+  const [registerCoordinate, setRegisterCoordinate] = useState(false)
+
   // 計測用の座標変換（プロジェクト座標系）
   const converter = useMemo(() => new CoordinateConverter(projectZone ?? 13), [projectZone])
 
@@ -497,29 +420,12 @@ export function OrthophotoPage() {
     importCoordinates([{ pointNumber: pn, x: xy.x, y: xy.y, z: null, type: selectedType as CoordinateRow['type'] }])
   }
 
-  // 計測結果を寸法線アノテーションとして保存
-  const handleKeepDimension = () => {
-    if (!lastMeasure) return
-    const dim: DimensionAnnotation = {
-      id: newAnnotationId(),
-      kind: 'dimension',
-      subKind: lastMeasure.kind,
-      vertices: lastMeasure.vertices,
-      value: lastMeasure.value,
-      color: drawColor,
-      size: fontSize,
-      layer: currentLayer,
-    }
-    setAnnotations([...annotations, dim])
-    setLastMeasure(null)
-  }
-
-  // 既存レイヤ名の一覧（候補表示用）
+  // 既存レイヤ名の一覧（レイヤ名入力の候補）
   const existingLayers = useMemo(() => {
     const set = new Set<string>(['0'])
-    for (const a of annotations) if (a.layer) set.add(a.layer)
+    for (const d of drawingItems) if (d.layer) set.add(d.layer)
     return Array.from(set).sort()
-  }, [annotations])
+  }, [drawingItems])
 
   // 図形以外のスナップ候補（座標管理の点 ＋ 区域の頂点）
   const extraSnapPoints = useMemo<[number, number][]>(() => {
@@ -532,31 +438,6 @@ export function OrthophotoPage() {
     }
     return out
   }, [coordinates, workAreaPolygons])
-
-  // 平行線の参照線候補に区域の辺を含める
-  const extraLineSegments = useMemo<LineSeg[]>(() => {
-    const out: LineSeg[] = []
-    for (const poly of workAreaPolygons) {
-      const v = poly.positions
-      for (let i = 0; i < v.length; i++) {
-        const j = (i + 1) % v.length
-        out.push({ a: v[i], b: v[j] })
-      }
-    }
-    return out
-  }, [workAreaPolygons])
-
-  // 選択中アノテーション
-  const selectedAnno = annotations.find((a) => a.id === selectedAnnoId) ?? null
-
-  // アノテーションのフィールドを更新
-  const updateAnnotation = (id: string, patch: Partial<Annotation>) => {
-    setAnnotations(annotations.map((a) => (a.id === id ? ({ ...a, ...patch } as Annotation) : a)))
-  }
-  const deleteAnnotation = (id: string) => {
-    setAnnotations(annotations.filter((a) => a.id !== id))
-    setSelectedAnnoId(null)
-  }
 
   // DXF 出力。作図・計測をペイントへ統合したので、出力元もペイント (map_drawings)。
   const handleDxfExport = () => {
@@ -762,7 +643,7 @@ export function OrthophotoPage() {
                 { key: 'pipes', label: '暗渠配線', on: showPipesLayer, set: setShowPipesLayer },
                 { key: 'cameras', label: 'カメラ (工区写真)', on: showCamerasLayer, set: setShowCamerasLayer },
                 { key: 'memos', label: 'メモ', on: showMemosLayer, set: setShowMemosLayer },
-                { key: 'annotations', label: '作図要素', on: showAnnotationsLayer, set: setShowAnnotationsLayer },
+                { key: 'annotations', label: 'ペイント', on: showAnnotationsLayer, set: setShowAnnotationsLayer },
               ] as const
             ).map((row) => (
               <label
@@ -831,153 +712,6 @@ export function OrthophotoPage() {
     <div className="h-full flex flex-col">
       <PageHeader title="全体図" subtitle="オルソ・座標・区域・メモ・写真を集約した工区全体ビュー" actions={headerActions} />
 
-      {/* 上部の作図・計測ツールバー (折りたたみ可能) */}
-      <div className="border-b bg-white">
-        {toolbarOpen ? (
-          <div className="px-2 py-2 flex flex-col gap-1">
-            {/* 上段: 作図 */}
-            <div className="flex items-center gap-1 flex-wrap">
-              <span className="text-[10px] text-slate-400 mr-1 select-none">作図</span>
-              {DRAW_TOOLS.map((t) => {
-                const active = tool === t.tool
-                return (
-                  <button
-                    key={t.tool}
-                    onClick={() => setTool(t.tool)}
-                    className={`px-2 py-1 text-xs rounded border ${
-                      active
-                        ? 'bg-blue-600 text-white border-blue-600'
-                        : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                    }`}
-                    title={t.help ?? t.label}
-                  >
-                    {t.label}
-                  </button>
-                )
-              })}
-              <label className="flex items-center gap-1 ml-1 text-xs text-slate-600">
-                色
-                <input
-                  type="color"
-                  value={drawColor}
-                  onChange={(e) => setDrawColor(e.target.value)}
-                  className="w-7 h-6 p-0 border rounded cursor-pointer"
-                />
-              </label>
-              <label className="flex items-center gap-1 text-xs text-slate-600">
-                文字
-                <input
-                  type="number"
-                  min={8}
-                  max={48}
-                  value={fontSize}
-                  onChange={(e) => setFontSize(Math.max(8, Math.min(48, parseInt(e.target.value, 10) || 14)))}
-                  className="w-12 px-1 py-0.5 border rounded text-right font-mono"
-                  title="文字・コメント・寸法ラベルのサイズ(px)"
-                />
-                px
-              </label>
-              <label className="flex items-center gap-1 text-xs text-slate-600">
-                レイヤ
-                <input
-                  type="text"
-                  value={currentLayer}
-                  onChange={(e) => setCurrentLayer(e.target.value)}
-                  list="ortho-layers"
-                  className="w-24 px-1 py-0.5 border rounded font-mono"
-                  title="作図時に付与するレイヤ名（DXF出力にも反映）"
-                />
-                <datalist id="ortho-layers">
-                  {existingLayers.map((l) => (
-                    <option key={l} value={l} />
-                  ))}
-                </datalist>
-              </label>
-              <button
-                onClick={() => setSnapEnabled((v) => !v)}
-                className={`px-2 py-1 text-xs rounded border ${
-                  snapEnabled
-                    ? 'bg-amber-100 border-amber-400 text-amber-800 font-medium'
-                    : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
-                }`}
-                title="ピック(スナップ): ONで近接する点や端部に吸着します"
-              >
-                {snapEnabled ? '🎯 ピックON' : '🎯 ピックOFF'}
-              </button>
-              <button
-                onClick={undo}
-                disabled={history.length === 0}
-                className="px-2 py-1 text-xs rounded border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-40"
-                title={`元に戻す (Ctrl+Z) - 最大${HISTORY_LIMIT}回`}
-              >
-                ↶ 元に戻す
-                {history.length > 0 && <span className="ml-1 text-blue-600">({history.length})</span>}
-              </button>
-              {annotations.length > 0 && (
-                <button
-                  onClick={() => {
-                    if (confirm(`作図(${annotations.length}件)をすべて削除しますか？`)) setAnnotations([])
-                  }}
-                  className="px-2 py-1 text-xs rounded border border-red-300 text-red-600 hover:bg-red-50"
-                  title="作図を全消去"
-                >
-                  全消去
-                </button>
-              )}
-              <button
-                onClick={() => setToolbarOpen(false)}
-                className="ml-auto p-1 rounded hover:bg-slate-100"
-                title="ツールバーを折りたたむ"
-              >
-                <PanelTopClose className="h-4 w-4 text-slate-500" />
-              </button>
-            </div>
-            {/* 下段: 計測 */}
-            <div className="flex items-center gap-1 flex-wrap pt-1 border-t">
-              <span className="text-[10px] text-slate-400 mr-1 select-none">計測</span>
-              {MEASURE_TOOLS.map((t) => {
-                const active = tool === t.tool
-                return (
-                  <button
-                    key={t.tool}
-                    onClick={() => setTool(t.tool)}
-                    className={`px-2 py-1 text-xs rounded border ${
-                      active
-                        ? 'bg-emerald-600 text-white border-emerald-600'
-                        : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                    }`}
-                    title={t.help ?? t.label}
-                  >
-                    {t.label}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        ) : (
-          <div className="px-3 py-1 flex items-center gap-2">
-            <span className="text-[11px] text-slate-500 select-none">作図・計測ツール</span>
-            {tool !== 'none' && (
-              <span className="text-[11px] font-semibold text-blue-700">
-                → {[...DRAW_TOOLS, ...MEASURE_TOOLS].find((t) => t.tool === tool)?.label ?? tool}
-              </span>
-            )}
-            {annotations.length > 0 && (
-              <span className="text-[11px] text-slate-500">
-                作図 {annotations.length} 件
-              </span>
-            )}
-            <button
-              onClick={() => setToolbarOpen(true)}
-              className="ml-auto p-1 rounded hover:bg-slate-100"
-              title="ツールバーを開く"
-            >
-              <PanelTopOpen className="h-4 w-4 text-slate-500" />
-            </button>
-          </div>
-        )}
-      </div>
-
       {/* 横並び: 左=大きな地図（オルソ＋座標＋区域＋作図＋メモ＋写真）、右=折りたたみパネル */}
       <div className="flex-1 flex min-h-0 relative">
       <div className="flex-1 relative">
@@ -997,6 +731,15 @@ export function OrthophotoPage() {
               canRedo={drawingRedoLen > 0}
               onUndo={() => void drawingUndo()}
               onRedo={() => void drawingRedo()}
+              snapEnabled={snapEnabled}
+              onToggleSnap={() => setSnapEnabled((v) => !v)}
+              layer={drawLayer}
+              onChangeLayer={setDrawLayer}
+              existingLayers={existingLayers}
+              fontSize={drawFontSize}
+              onChangeFontSize={setDrawFontSize}
+              registerCoordinate={registerCoordinate}
+              onToggleRegisterCoordinate={() => setRegisterCoordinate((v) => !v)}
             />
           </div>
         )}
@@ -1016,27 +759,6 @@ export function OrthophotoPage() {
         >
           {/* 作図要素を非表示にしても計測ツールは使えるように、コンポーネントは常時マウントし
               既存の作図要素の描画だけを hideDrawn で切り替える */}
-          <OrthophotoAnnotations
-            tool={tool}
-            color={drawColor}
-            fontSize={fontSize}
-            currentLayer={currentLayer}
-            annotations={annotations}
-            setAnnotations={setAnnotations}
-            converter={converter}
-            lastMeasure={lastMeasure}
-            setLastMeasure={setLastMeasure}
-            onAddCoordinate={handleAddCoordinate}
-            onRequestComment={(pos) => setPendingComment({ pos })}
-            onSelect={(id) => setSelectedAnnoId(id)}
-            snapEnabled={snapEnabled}
-            extraSnapPoints={extraSnapPoints}
-            extraLineSegments={extraLineSegments}
-            parallelRef={parallelRef}
-            setParallelRef={setParallelRef}
-            parallelOffset={parallelOffset}
-            hideDrawn={!showAnnotationsLayer}
-          />
           {/* 法務省地図 (地番) の背景レイヤ。表示 + 選択モードは useMapViewStore /
               useParcelImportSelection で他ページと共通挙動 */}
           {hasActiveParcelDataset && showParcelMap && (
@@ -1057,6 +779,13 @@ export function OrthophotoPage() {
             widthPx={drawingWidth}
             lineStyle={drawingLineStyle}
             converter={converter}
+            layer={drawLayer}
+            fontSize={drawFontSize}
+            snapEnabled={snapEnabled}
+            extraSnapPoints={extraSnapPoints}
+            onAddCoordinate={handleAddCoordinate}
+            registerCoordinate={registerCoordinate}
+            hidden={!showAnnotationsLayer}
           />
           {/* 暗渠 (読み取り専用オーバーレイ)。編集は暗渠モジュールで。 */}
           {showPipesLayer &&
@@ -1118,123 +847,6 @@ export function OrthophotoPage() {
         )}
 
         {/* ツールヘルプ＋計測結果（左下） */}
-        {(tool !== 'none' || lastMeasure) && (
-          <div className="absolute bottom-2 left-2 z-[1000] bg-white/95 border rounded-lg shadow px-3 py-2 text-xs space-y-1 max-w-[calc(100%-1rem)]">
-            {tool !== 'none' && (
-              <div className="text-slate-700">
-                <span className="font-semibold">
-                  {[...DRAW_TOOLS, ...MEASURE_TOOLS].find((t) => t.tool === tool)?.label ?? tool}
-                </span>
-                <span className="ml-2 text-slate-500">
-                  {[...DRAW_TOOLS, ...MEASURE_TOOLS].find((t) => t.tool === tool)?.help ?? ''}
-                </span>
-              </div>
-            )}
-            {tool === 'parallel' && (
-              <div className="flex items-center gap-2">
-                <span className="text-slate-600 text-[11px]">
-                  {parallelRef
-                    ? '参照線を選択中 → クリック位置で平行線を引きます'
-                    : '基準となる線/辺をクリックしてください'}
-                </span>
-                <label className="flex items-center gap-1 text-slate-600">
-                  幅(m)
-                  <input
-                    type="number"
-                    step="0.001"
-                    value={parallelOffset}
-                    onChange={(e) => setParallelOffset(e.target.value)}
-                    placeholder="空欄なら通過点"
-                    className="w-20 px-1 py-0.5 border rounded text-right font-mono"
-                  />
-                </label>
-                {parallelRef && (
-                  <button
-                    onClick={() => setParallelRef(null)}
-                    className="px-2 py-0.5 text-[11px] border rounded hover:bg-slate-50"
-                  >
-                    線を選び直す
-                  </button>
-                )}
-              </div>
-            )}
-            {lastMeasure && (
-              <div className="flex items-center gap-2 text-sm font-mono text-emerald-700">
-                <span>
-                  {lastMeasure.kind === 'dist' && '距離: '}
-                  {lastMeasure.kind === 'area' && '面積: '}
-                  {lastMeasure.kind === 'perp' && '垂線長: '}
-                  {formatMeasureValue(lastMeasure)}
-                </span>
-                <button
-                  onClick={handleKeepDimension}
-                  className="text-xs px-2 py-0.5 border border-emerald-300 text-emerald-700 rounded hover:bg-emerald-50"
-                  title="この計測を寸法線として作図に保存"
-                >
-                  寸法線として残す
-                </button>
-                <button
-                  onClick={() => setLastMeasure(null)}
-                  className="text-xs text-slate-400 hover:text-slate-700"
-                >
-                  クリア
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* 図形インスペクタ（選択ツールで図形クリックすると表示） */}
-        {selectedAnno && (
-          <div className="absolute top-2 right-2 z-[1000] bg-white border rounded-lg shadow p-3 w-64 text-sm">
-            <div className="flex items-center justify-between mb-2">
-              <span className="font-semibold">図形を編集</span>
-              <button
-                onClick={() => setSelectedAnnoId(null)}
-                className="text-slate-400 hover:text-slate-700"
-                title="閉じる"
-              >
-                ×
-              </button>
-            </div>
-            <div className="text-xs text-slate-500 mb-2">
-              種類: <b>{selectedAnno.kind}</b>
-            </div>
-            <label className="flex items-center justify-between gap-2 mb-2">
-              <span className="text-xs text-slate-600">色</span>
-              <input
-                type="color"
-                value={selectedAnno.color}
-                onChange={(e) => updateAnnotation(selectedAnno.id, { color: e.target.value })}
-                className="w-8 h-6 p-0 border rounded cursor-pointer"
-              />
-            </label>
-            <label className="flex items-center justify-between gap-2 mb-2">
-              <span className="text-xs text-slate-600">レイヤ</span>
-              <input
-                type="text"
-                value={selectedAnno.layer ?? '0'}
-                onChange={(e) => updateAnnotation(selectedAnno.id, { layer: e.target.value })}
-                list="ortho-layers"
-                className="flex-1 px-1 py-0.5 border rounded font-mono text-xs"
-              />
-            </label>
-            <div className="flex justify-between mt-3 pt-2 border-t">
-              <button
-                onClick={() => deleteAnnotation(selectedAnno.id)}
-                className="px-2 py-1 text-xs border border-red-300 text-red-600 rounded hover:bg-red-50"
-              >
-                削除
-              </button>
-              <button
-                onClick={() => setSelectedAnnoId(null)}
-                className="px-2 py-1 text-xs border border-slate-300 text-slate-600 rounded hover:bg-slate-50"
-              >
-                閉じる
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* 右側パネル: 上半分にメモ一覧、下半分に写真サムネ。折りたたみ可能。 */}
@@ -1296,35 +908,6 @@ export function OrthophotoPage() {
             } else {
               alert('写真の更新に失敗しました')
             }
-          }}
-        />
-      )}
-
-      {/* コメント入力モーダル（メンバーをメンション可） */}
-      {pendingComment && (
-        <CommentInputModal
-          members={members.map((m) => ({
-            email: m.email ?? '',
-            name: m.display_name ?? m.email ?? '',
-          }))}
-          onCancel={() => setPendingComment(null)}
-          onConfirm={(text, mentions) => {
-            if (text.trim()) {
-              setAnnotations([
-                ...annotations,
-                {
-                  id: newAnnotationId(),
-                  kind: 'comment',
-                  pos: pendingComment.pos,
-                  text: text.trim(),
-                  color: drawColor,
-                  size: fontSize,
-                  layer: currentLayer,
-                  mentions,
-                },
-              ])
-            }
-            setPendingComment(null)
           }}
         />
       )}
@@ -1488,108 +1071,6 @@ export function OrthophotoPage() {
           </div>
         </div>
       )}
-    </div>
-  )
-}
-
-// =============================================
-// コメント入力モーダル（@メンション挿入対応）
-// =============================================
-function CommentInputModal({
-  members,
-  onConfirm,
-  onCancel,
-}: {
-  members: { email: string; name: string }[]
-  onConfirm: (text: string, mentions: string[]) => void
-  onCancel: () => void
-}) {
-  const [text, setText] = useState('')
-  const taRef = useRef<HTMLTextAreaElement | null>(null)
-
-  const insertMention = (name: string) => {
-    const ta = taRef.current
-    if (!ta) {
-      setText((t) => `${t}@${name} `)
-      return
-    }
-    const start = ta.selectionStart ?? text.length
-    const end = ta.selectionEnd ?? text.length
-    const before = text.slice(0, start)
-    const after = text.slice(end)
-    const insert = `${start > 0 && before[start - 1] !== ' ' ? ' ' : ''}@${name} `
-    const next = before + insert + after
-    setText(next)
-    // フォーカスとカーソル位置の復元
-    setTimeout(() => {
-      ta.focus()
-      const p = (before + insert).length
-      ta.setSelectionRange(p, p)
-    }, 0)
-  }
-
-  // 入力テキストから @名前 をスキャンしてメンションリストを構築
-  const computeMentions = (s: string): string[] => {
-    const set = new Set<string>()
-    const re = /@([^\s@]+)/g
-    let m: RegExpExecArray | null
-    while ((m = re.exec(s)) !== null) {
-      // メンバー名と前方一致するものを採用
-      const cand = m[1]
-      const hit = members.find((mm) => cand.startsWith(mm.name) || cand.startsWith(mm.email))
-      if (hit) set.add(hit.email || hit.name)
-    }
-    return Array.from(set)
-  }
-
-  return (
-    <div className="fixed inset-0 z-[3000] bg-black/40 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
-        <div className="px-4 py-3 border-b flex items-center gap-2">
-          <span className="font-semibold text-sm">コメントを入力</span>
-          <button onClick={onCancel} className="ml-auto text-slate-400 hover:text-slate-700">×</button>
-        </div>
-        <div className="p-4 space-y-2">
-          <textarea
-            ref={taRef}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            rows={4}
-            placeholder="コメント内容（@名前 でメンバーをメンションできます）"
-            className="w-full px-2 py-1.5 border rounded text-sm"
-            autoFocus
-          />
-          {members.length > 0 && (
-            <div>
-              <div className="text-[11px] text-slate-500 mb-1">メンション挿入</div>
-              <div className="flex flex-wrap gap-1">
-                {members.map((m) => (
-                  <button
-                    key={m.email}
-                    onClick={() => insertMention(m.name || m.email)}
-                    className="px-2 py-0.5 text-xs rounded border border-blue-300 text-blue-700 hover:bg-blue-50"
-                    title={m.email}
-                  >
-                    @{m.name || m.email}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-        <div className="px-4 py-3 border-t flex justify-end gap-2">
-          <button onClick={onCancel} className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50">
-            キャンセル
-          </button>
-          <button
-            onClick={() => onConfirm(text, computeMentions(text))}
-            disabled={!text.trim()}
-            className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-          >
-            追加
-          </button>
-        </div>
-      </div>
     </div>
   )
 }

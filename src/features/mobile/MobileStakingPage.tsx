@@ -85,7 +85,7 @@ import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { ParcelMapLayer, parcelFeatureKey } from '@/components/map/ParcelMapLayer'
 import { MapDrawingLayer, type DrawingMode } from '@/components/map/MapDrawingLayer'
 import { MapDrawingToolbar } from '@/components/map/MapDrawingToolbar'
-import { useMapDrawingStore, type LineStyle } from '@/stores/mapDrawingStore'
+import { useMapDrawingStore, EMPTY_STROKES, type LineStyle } from '@/stores/mapDrawingStore'
 import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
 import type { Feature, Polygon as GeoJsonPolygon } from 'geojson'
 import { type Bbox } from '@/lib/tile-math'
@@ -788,6 +788,13 @@ export function MobileStakingPage() {
   const [drawingColor, setDrawingColor] = useState('#ef4444')
   const [drawingWidth, setDrawingWidth] = useState(3)
   const [drawingLineStyle, setDrawingLineStyle] = useState<LineStyle>('solid')
+  // 作図・計測ツールから引き継いだ設定 (ピック / レイヤ / 文字サイズ)
+  const [snapEnabled, setSnapEnabled] = useState(false)
+  const [drawLayer, setDrawLayer] = useState('0')
+  const [drawFontSize, setDrawFontSize] = useState(14)
+  const drawingItems = useMapDrawingStore((s) =>
+    farmId ? s.byFarm.get(farmId) ?? EMPTY_STROKES : EMPTY_STROKES,
+  )
   const drawingUndoLen = useMapDrawingStore((s) => s.undoStack.length)
   const drawingRedoLen = useMapDrawingStore((s) => s.redoStack.length)
   const drawingUndo = useMapDrawingStore((s) => s.undo)
@@ -1570,6 +1577,25 @@ export function MobileStakingPage() {
     () => workAreaPolygons.filter((p) => p.farmId === farmId),
     [workAreaPolygons, farmId],
   )
+
+  // ピックの吸着候補 (測点 + 区域の頂点)。作図の頂点はレイヤ側で足す
+  const extraSnapPoints = useMemo<[number, number][]>(() => {
+    const out: [number, number][] = []
+    for (const c of coordinates) {
+      if (c.lat !== null && c.lng !== null) out.push([c.lat, c.lng])
+    }
+    for (const poly of farmPolygons) {
+      for (const p of poly.positions) out.push(p)
+    }
+    return out
+  }, [coordinates, farmPolygons])
+
+  // レイヤ名入力の候補
+  const existingLayers = useMemo(() => {
+    const set = new Set<string>(['0'])
+    for (const d of drawingItems) if (d.layer) set.add(d.layer)
+    return Array.from(set).sort()
+  }, [drawingItems])
 
   // 方位センサー（DeviceOrientation）リスナー
   useEffect(() => {
@@ -3542,6 +3568,13 @@ export function MobileStakingPage() {
                 canRedo={drawingRedoLen > 0}
                 onUndo={() => void drawingUndo()}
                 onRedo={() => void drawingRedo()}
+                snapEnabled={snapEnabled}
+                onToggleSnap={() => setSnapEnabled((v) => !v)}
+                layer={drawLayer}
+                onChangeLayer={setDrawLayer}
+                existingLayers={existingLayers}
+                fontSize={drawFontSize}
+                onChangeFontSize={setDrawFontSize}
                 onMemo={() => {
                   setPaintOpen(false)
                   setMemoModalState({
@@ -5351,6 +5384,10 @@ export function MobileStakingPage() {
             widthPx={drawingWidth}
             lineStyle={drawingLineStyle}
             converter={converter}
+            layer={drawLayer}
+            fontSize={drawFontSize}
+            snapEnabled={snapEnabled}
+            extraSnapPoints={extraSnapPoints}
           />
         </MapContainer>
 

@@ -2,18 +2,21 @@
 //
 // 作図・計測ツールをペイントへ統合したので、DXF 出力もペイントのデータから作る。
 // CAD の慣例に合わせて X=東 / Y=北 で書き出す (平面直角座標は X=北 / Y=東 なので入れ替える)。
-// レイヤは種別ごとに分ける。CAD 側で線と面を分けて扱えた方が実務で使いやすい。
+// レイヤは 図形に付いた レイヤ名を使う。未指定 ('0') なら 種別ごとの既定名にする。
+// CAD 側で 線と面を 分けて扱えた方が 実務で使いやすい。
 
 import type { CoordinateConverter } from '@/lib/coordinates'
 import type { DxfEntity } from '@/lib/dxf'
 import type { MapDrawingStroke } from '@/stores/mapDrawingStore'
 
-const LAYER: Record<MapDrawingStroke['kind'], string> = {
+/** レイヤ名が未指定 ('0' のまま) のときに使う、種別ごとの既定レイヤ */
+const DEFAULT_LAYER: Record<MapDrawingStroke['kind'], string> = {
   stroke: 'PAINT_LINE',
   polygon: 'PAINT_AREA',
   circle: 'PAINT_CIRCLE',
   arc: 'PAINT_ARC',
   text: 'PAINT_TEXT',
+  point: 'PAINT_POINT',
 }
 
 /** 文字の高さ [m]。CAD で開いた時に読める程度の既定値 */
@@ -32,8 +35,15 @@ export function buildMapDrawingDxfEntities(
   const entities: DxfEntity[] = []
 
   for (const it of items) {
-    const layer = LAYER[it.kind]
+    const named = (it.layer ?? '').trim()
+    const layer = named && named !== '0' ? named : DEFAULT_LAYER[it.kind]
     const pts = it.points.map((p) => xy(p.lat, p.lng))
+
+    if (it.kind === 'point') {
+      if (pts.length < 1) continue
+      entities.push({ type: 'POINT', x: pts[0].x, y: pts[0].y, layer })
+      continue
+    }
 
     if (it.kind === 'text') {
       if (pts.length < 1 || !it.text) continue
@@ -42,7 +52,8 @@ export function buildMapDrawingDxfEntities(
         x: pts[0].x,
         y: pts[0].y,
         text: it.text,
-        height: TEXT_HEIGHT_M,
+        // 画面上の px を そのまま m にはできないので、既定値からの 比率で 換算する
+        height: TEXT_HEIGHT_M * ((it.font_size ?? 14) / 14),
         layer,
       })
       continue

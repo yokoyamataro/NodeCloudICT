@@ -6,6 +6,10 @@
 //   ・'circle'  円: [中心, 縁] の 2 点。半径 = 2 点間距離
 //   ・'arc'     円弧: [始点, 通過点, 終点] の 3 点
 //   ・'polygon' 面: 頂点列 (n 点、レンダ時に自動閉合、半透明で塗り潰し)
+//   ・'point'   点: [位置] の 1 点
+//
+// layer は DXF 出力時のレイヤ名 (未指定は CAD の既定レイヤ '0')。
+// font_size は kind='text' の文字サイズ [px]。NULL の既存データは width_px から換算する。
 //
 // undo/redo:
 //   ・セッション内の add / delete / update 操作を undoStack に積む
@@ -16,7 +20,7 @@ import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
 
 export type LineStyle = 'solid' | 'dashed' | 'dotted'
-export type DrawingKind = 'stroke' | 'text' | 'circle' | 'arc' | 'polygon'
+export type DrawingKind = 'stroke' | 'text' | 'circle' | 'arc' | 'polygon' | 'point'
 
 export interface MapDrawingStroke {
   id: string
@@ -30,6 +34,10 @@ export interface MapDrawingStroke {
   points: Array<{ lat: number; lng: number }>
   /** kind='text' のときのラベル文字列 */
   text: string | null
+  /** DXF 出力時のレイヤ名 */
+  layer: string
+  /** kind='text' の文字サイズ [px]。NULL なら width_px から換算 */
+  font_size: number | null
   created_at: string
   updated_at: string
 }
@@ -65,6 +73,7 @@ interface State {
     widthPx: number
     lineStyle: LineStyle
     points: Array<{ lat: number; lng: number }>
+    layer?: string
   }) => Promise<MapDrawingStroke | null>
   addText: (input: {
     farmId: string
@@ -73,6 +82,17 @@ interface State {
     lat: number
     lng: number
     text: string
+    layer?: string
+    fontSize?: number
+  }) => Promise<MapDrawingStroke | null>
+  /** 単独の点。座標管理への登録は呼び出し側で行う (点自体はここに残す) */
+  addPoint: (input: {
+    farmId: string
+    color: string
+    widthPx: number
+    lat: number
+    lng: number
+    layer?: string
   }) => Promise<MapDrawingStroke | null>
   deleteStroke: (id: string) => Promise<void>
   /** 頂点座標列を差し替える (端点移動 / 折点追加・削除) */
@@ -95,6 +115,8 @@ async function insertItemInternal(
     lineStyle: LineStyle
     points: Array<{ lat: number; lng: number }>
     text: string | null
+    layer?: string
+    fontSize?: number | null
   },
 ): Promise<MapDrawingStroke | null> {
   const { data: userData } = await supabase.auth.getUser()
@@ -110,6 +132,8 @@ async function insertItemInternal(
       line_style: input.lineStyle,
       points: input.points,
       text: input.text,
+      layer: input.layer ?? '0',
+      font_size: input.fontSize ?? null,
     } as never)
     .select()
     .single()
@@ -151,7 +175,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
     }
   },
 
-  addStroke: async ({ farmId, kind = 'stroke', color, widthPx, lineStyle, points }) => {
+  addStroke: async ({ farmId, kind = 'stroke', color, widthPx, lineStyle, points, layer = '0' }) => {
     if (points.length < 2) return null
     // 楽観追加: temp ID で先にストアに入れる
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -166,6 +190,8 @@ export const useMapDrawingStore = create<State>((set, get) => ({
       line_style: lineStyle,
       points,
       text: null,
+      layer,
+      font_size: null,
       created_at: now,
       updated_at: now,
     }
@@ -184,6 +210,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
         lineStyle,
         points,
         text: null,
+        layer,
       })
       if (!stroke) throw new Error('insert returned null')
       const map = new Map(get().byFarm)
@@ -206,7 +233,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
     }
   },
 
-  addText: async ({ farmId, color, widthPx, lat, lng, text }) => {
+  addText: async ({ farmId, color, widthPx, lat, lng, text, layer = '0', fontSize }) => {
     if (!text || !text.trim()) return null
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     const now = new Date().toISOString()
@@ -220,6 +247,8 @@ export const useMapDrawingStore = create<State>((set, get) => ({
       line_style: 'solid',
       points: [{ lat, lng }],
       text: text.trim(),
+      layer,
+      font_size: fontSize ?? null,
       created_at: now,
       updated_at: now,
     }
@@ -238,6 +267,8 @@ export const useMapDrawingStore = create<State>((set, get) => ({
         lineStyle: 'solid',
         points: [{ lat, lng }],
         text: text.trim(),
+        layer,
+        fontSize: fontSize ?? null,
       })
       if (!item) throw new Error('insert returned null')
       const map = new Map(get().byFarm)
@@ -254,6 +285,61 @@ export const useMapDrawingStore = create<State>((set, get) => ({
       const map = new Map(get().byFarm)
       const list = (map.get(farmId) ?? []).filter((s) => s.id !== tempId)
       map.set(farmId, list)
+      set({ byFarm: map, error: err instanceof Error ? err.message : String(err) })
+      return null
+    }
+  },
+
+  addPoint: async ({ farmId, color, widthPx, lat, lng, layer = '0' }) => {
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const now = new Date().toISOString()
+    const optimistic: MapDrawingStroke = {
+      id: tempId,
+      farm_id: farmId,
+      created_by: null,
+      kind: 'point',
+      color,
+      width_px: widthPx,
+      line_style: 'solid',
+      points: [{ lat, lng }],
+      text: null,
+      layer,
+      font_size: null,
+      created_at: now,
+      updated_at: now,
+    }
+    {
+      const map = new Map(get().byFarm)
+      map.set(farmId, [...(map.get(farmId) ?? []), optimistic])
+      set({ byFarm: map })
+    }
+    try {
+      const item = await insertItemInternal({
+        farmId,
+        kind: 'point',
+        color,
+        widthPx,
+        lineStyle: 'solid',
+        points: [{ lat, lng }],
+        text: null,
+        layer,
+      })
+      if (!item) throw new Error('insert returned null')
+      const map = new Map(get().byFarm)
+      map.set(
+        farmId,
+        (map.get(farmId) ?? []).map((s) => (s.id === tempId ? item : s)),
+      )
+      set({
+        byFarm: map,
+        undoStack: [...get().undoStack, { op: 'add', farmId, item }],
+        redoStack: [],
+      })
+      return item
+    } catch (err) {
+      console.error('[mapDrawingStore] add point failed', err)
+      const map = new Map(get().byFarm)
+      map.set(farmId, (map.get(farmId) ?? []).filter((s) => s.id !== tempId))
       set({ byFarm: map, error: err instanceof Error ? err.message : String(err) })
       return null
     }
@@ -398,6 +484,8 @@ export const useMapDrawingStore = create<State>((set, get) => ({
           lineStyle: last.item.line_style,
           points: last.item.points,
           text: last.item.text,
+          layer: last.item.layer,
+          fontSize: last.item.font_size,
         })
         if (!item) throw new Error('re-insert returned null')
         const map = new Map(get().byFarm)
@@ -436,6 +524,8 @@ export const useMapDrawingStore = create<State>((set, get) => ({
           lineStyle: last.item.line_style,
           points: last.item.points,
           text: last.item.text,
+          layer: last.item.layer,
+          fontSize: last.item.font_size,
         })
         if (!item) throw new Error('re-insert returned null')
         const map = new Map(get().byFarm)
