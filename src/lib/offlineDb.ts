@@ -1,8 +1,9 @@
 // オフライン保存用の 最小 IndexedDB ラッパ。
 //
-// ストアは 2 つ:
+// ストアは 3 つ:
 //   farmSnapshots  … 工区の 事前ダウンロード (keyPath: farmId)
 //   mobilityPings  … 位置 ping の 送信待ち行列 (autoIncrement)
+//   mapTiles       … 地図タイルのキャッシュ (keyPath: key)
 //
 // localStorage を 使わない 理由:
 //   * 容量。工区 1 件の 設計座標は 1 万点を 超えることが あり、素の JSON で
@@ -14,10 +15,11 @@
 // ライブラリは 足さない。使うのは put / get / delete / getAll / cursor だけ。
 
 const DB_NAME = 'nodecloud-offline'
-// v1: farmSnapshots のみ / v2: mobilityPings を追加
-const DB_VERSION = 2
+// v1: farmSnapshots のみ / v2: mobilityPings / v3: mapTiles
+const DB_VERSION = 3
 const STORE_SNAPSHOTS = 'farmSnapshots'
 const STORE_PINGS = 'mobilityPings'
+const STORE_TILES = 'mapTiles'
 
 let dbPromise: Promise<IDBDatabase> | null = null
 
@@ -33,6 +35,12 @@ function openDb(): Promise<IDBDatabase> {
       const db = req.result
       if (!db.objectStoreNames.contains(STORE_SNAPSHOTS)) {
         db.createObjectStore(STORE_SNAPSHOTS, { keyPath: 'farmId' })
+      }
+      if (!db.objectStoreNames.contains(STORE_TILES)) {
+        // 破棄は「最後に使った順」で行うため lastUsedAt に index を張る。
+        // 取得時期ではなく使用時期で判断する (よく使う道は古くても残る)
+        const t = db.createObjectStore(STORE_TILES, { keyPath: 'key' })
+        t.createIndex('lastUsedAt', 'lastUsedAt', { unique: false })
       }
       if (!db.objectStoreNames.contains(STORE_PINGS)) {
         // seq (autoIncrement) が 積んだ順 = 送る順。userId で 絞れるよう index を張る
@@ -148,6 +156,102 @@ export function pingClear(userId: string): Promise<void> {
         }
         t.oncomplete = () => resolve()
         t.onerror = () => reject(t.error ?? new Error('ping の消去に失敗しました'))
+      }),
+  )
+}
+
+// ---- 地図タイル ----
+
+export interface CachedTile {
+  /** `${layer}/${z}/${x}/${y}` */
+  key: string
+  blob: Blob
+  bytes: number
+  /** 最後に表示に使った時刻 [epoch ms]。破棄の判断に使う */
+  lastUsedAt: number
+}
+
+export function tileGet(key: string): Promise<CachedTile | undefined> {
+  return tx<CachedTile | undefined>(STORE_TILES, 'readonly', (s) =>
+    s.get(key) as IDBRequest<CachedTile | undefined>,
+  )
+}
+
+export function tilePut(value: CachedTile): Promise<IDBValidKey> {
+  return tx(STORE_TILES, 'readwrite', (s) => s.put(value))
+}
+
+/** 使用時刻だけ更新する (毎回書くと重いので呼出側で間引く) */
+export async function tileTouch(key: string): Promise<void> {
+  const cur = await tileGet(key)
+  if (!cur) return
+  await tilePut({ ...cur, lastUsedAt: Date.now() })
+}
+
+/** 保存されている合計バイト数と枚数 */
+export function tileUsage(): Promise<{ bytes: number; count: number }> {
+  return openDb().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const t = db.transaction(STORE_TILES, 'readonly')
+        const req = t.objectStore(STORE_TILES).openCursor()
+        let bytes = 0
+        let count = 0
+        req.onsuccess = () => {
+          const cur = req.result
+          if (!cur) {
+            resolve({ bytes, count })
+            return
+          }
+          const v = cur.value as CachedTile
+          bytes += v.bytes
+          count += 1
+          cur.continue()
+        }
+        req.onerror = () => reject(req.error ?? new Error('タイル集計に失敗しました'))
+      }),
+  )
+}
+
+/**
+ * 上限を超えた分を、最後に使った時刻が古い順に捨てる。
+ * 「取得が古い」ではなく「使っていない」で判断するので、毎日通る道は
+ * 何か月前に取ったものでも残る。
+ */
+export function tileEvictTo(maxBytes: number): Promise<number> {
+  return tileUsage().then(({ bytes }) => {
+    if (bytes <= maxBytes) return 0
+    let over = bytes - maxBytes
+    return openDb().then(
+      (db) =>
+        new Promise<number>((resolve, reject) => {
+          const t = db.transaction(STORE_TILES, 'readwrite')
+          const req = t.objectStore(STORE_TILES).index('lastUsedAt').openCursor()
+          let removed = 0
+          req.onsuccess = () => {
+            const cur = req.result
+            if (!cur || over <= 0) return
+            const v = cur.value as CachedTile
+            over -= v.bytes
+            removed += 1
+            cur.delete()
+            cur.continue()
+          }
+          t.oncomplete = () => resolve(removed)
+          t.onerror = () => reject(t.error ?? new Error('タイル破棄に失敗しました'))
+        }),
+    )
+  })
+}
+
+export function tileClear(): Promise<void> {
+  return openDb().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const t = db.transaction(STORE_TILES, 'readwrite')
+        t.objectStore(STORE_TILES).clear()
+        t.oncomplete = () => resolve()
+        t.onerror = () => reject(t.error ?? new Error('タイル消去に失敗しました'))
       }),
   )
 }

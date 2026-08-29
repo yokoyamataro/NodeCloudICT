@@ -44,6 +44,8 @@ import {
 import { VehicleMarker } from '@/features/mobility/VehicleMarker'
 import { SPEED_BANDS, speedSegments } from '@/features/mobility/speedBands'
 import 'leaflet/dist/leaflet.css'
+import { CachedTileLayer } from '@/components/map/CachedTileLayer'
+import { tileClear, tileUsage } from '@/lib/offlineDb'
 import {
   BASE_LAYERS,
   loadBaseLayer,
@@ -512,6 +514,16 @@ export function MobilityDriverPage() {
   const [baseLayer, setBaseLayer] = useState<BaseLayerKey>(() =>
     loadBaseLayer('mobility:baseLayer', 'photo'),
   )
+  // 保存済み地図の容量。走行中に増えるので時々見直す
+  const [tileMB, setTileMB] = useState<number | null>(null)
+  useEffect(() => {
+    const read = () => {
+      void tileUsage().then((u) => setTileMB(u.bytes / 1024 / 1024))
+    }
+    read()
+    const id = setInterval(read, 60_000)
+    return () => clearInterval(id)
+  }, [])
   useEffect(() => {
     saveBaseLayer('mobility:baseLayer', baseLayer)
   }, [baseLayer])
@@ -1543,11 +1555,17 @@ export function MobilityDriverPage() {
           tapHold
           {...({ rotate: true, bearing: 0, rotateControl: false } as Record<string, unknown>)}
         >
-          <TileLayer
+          {/* 走った場所を自動でキャッシュする。圏外でも直前に通った範囲は出る。
+              保存は「乗車中 × 現在地の近く」に限るので、地図を眺めただけでは
+              貯まらない */}
+          <CachedTileLayer
+            layerId={baseLayer}
             attribution={BASE_LAYERS[baseLayer].attribution}
             url={BASE_LAYERS[baseLayer].url}
             maxNativeZoom={BASE_LAYERS[baseLayer].maxNative}
             maxZoom={22}
+            currentPos={currentPos}
+            cacheEnabled={!!myActive}
           />
           <FollowMe
             pos={currentPos}
@@ -1652,8 +1670,24 @@ export function MobilityDriverPage() {
             onToggleHeading={() => setHeadingUp((prev) => !prev)}
             onToggleTrackPoints={() => setShowTrackPoints((prev) => !prev)}
           />
-          {/* 背景地図セレクタ (右下、Leaflet の帰属表示の上) */}
+          {/* 背景地図セレクタ (右下、Leaflet の帰属表示の上)。
+              保存済み地図の容量もここに出す。専用の設定画面は作らない
+              (ドライバーに管理させない方針) */}
           <div className="absolute bottom-5 right-1 z-[1000] flex items-center gap-1 px-1.5 py-0.5 rounded shadow border border-slate-600 bg-slate-900/90 text-[11px] text-slate-200">
+            {tileMB != null && (
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!confirm(`保存した地図 ${tileMB.toFixed(1)}MB を削除しますか?\n圏外では地図が出なくなります。`)) return
+                  await tileClear()
+                  setTileMB(0)
+                }}
+                className="text-slate-400 hover:text-slate-200"
+                title="保存した地図を削除"
+              >
+                地図 {tileMB.toFixed(0)}MB
+              </button>
+            )}
             <span className="text-slate-400">背景</span>
             <select
               value={baseLayer}
