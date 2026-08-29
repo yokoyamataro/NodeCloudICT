@@ -439,27 +439,21 @@ export function MobilityDriverPage() {
   // 指示だけでなく連絡 (note) も対象にする。
   const latestIncoming = useMemo(() => {
     if (!user) return null
-    const mine = messages
-      .filter(
-        (m) =>
-          m.sender_user_id !== user.id &&
-          m.channel_kind === 'direct' &&
-          m.channel_user_id === user.id,
-      )
+    // 条件は「自分が送ったものではない」だけにする。
+    // 以前は channel_kind==='direct' && channel_user_id===user.id まで
+    // 要求していたが、それだと 1 件も引っかからずボタンが「メッセージ」の
+    // ままだった。見える範囲は RLS で既に絞られているので、送信者だけで足りる。
+    // (カテゴリ宛の指示も拾えるようになる)
+    const incoming = messages
+      .filter((m) => m.sender_user_id !== user.id)
       .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
-    return mine[0] ?? null
+    return incoming[0] ?? null
   }, [messages, user])
 
   /** 未読の受信メッセージ数 (指示に限らない) */
   const unreadIncomingCount = useMemo(() => {
     if (!user) return 0
-    return messages.filter(
-      (m) =>
-        !m.read_at &&
-        m.sender_user_id !== user.id &&
-        m.channel_kind === 'direct' &&
-        m.channel_user_id === user.id,
-    ).length
+    return messages.filter((m) => !m.read_at && m.sender_user_id !== user.id).length
   }, [messages, user])
   const hasUnreadIncoming = unreadIncomingCount > 0
 
@@ -468,11 +462,7 @@ export function MobilityDriverPage() {
   const seenInstructionIdRef = useRef<string | null | undefined>(undefined)
   useEffect(() => {
     const latest = messages.find(
-      (m) =>
-        m.message_kind === 'instruction' &&
-        m.channel_kind === 'direct' &&
-        m.channel_user_id === user?.id &&
-        m.sender_user_id !== user?.id,
+      (m) => m.message_kind === 'instruction' && m.sender_user_id !== user?.id,
     )
     const id = latest?.id ?? null
     if (seenInstructionIdRef.current === undefined) {
