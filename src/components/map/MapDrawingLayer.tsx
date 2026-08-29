@@ -40,6 +40,7 @@ export type DrawingMode =
   | 'circle'
   | 'arc'
   | 'polygon'
+  | 'parallel'
   | 'text'
   | 'select'
   | 'eraser'
@@ -50,6 +51,54 @@ interface Props {
   color: string
   widthPx: number
   lineStyle: LineStyle
+}
+
+// ---- 平行線 ----
+//
+// 道路の幅員や法面のように、引いた線と等間隔の線を並べるための計算。
+// 緯度経度のままでは距離が扱えないので、基準線の中点を原点にした
+// メートル座標 (東 / 北) に直してから直交方向へずらす。
+
+const M_PER_DEG_LAT = 111320
+
+interface LL {
+  lat: number
+  lng: number
+}
+
+/** 基準線に直交する単位ベクトル (東, 北)。進行方向の左を正とする */
+function perpendicularUnit(a: LL, b: LL): { east: number; north: number } | null {
+  const latRad = ((a.lat + b.lat) / 2) * (Math.PI / 180)
+  const east = (b.lng - a.lng) * M_PER_DEG_LAT * Math.cos(latRad)
+  const north = (b.lat - a.lat) * M_PER_DEG_LAT
+  const len = Math.hypot(east, north)
+  if (len < 1e-6) return null
+  // 進行方向を 90° 左に回す
+  return { east: -north / len, north: east / len }
+}
+
+/** 基準線を distanceM だけ直交方向へずらした線を返す */
+function offsetLine(a: LL, b: LL, distanceM: number): [LL, LL] | null {
+  const u = perpendicularUnit(a, b)
+  if (!u) return null
+  const shift = (p: LL): LL => {
+    const latRad = p.lat * (Math.PI / 180)
+    return {
+      lat: p.lat + (u.north * distanceM) / M_PER_DEG_LAT,
+      lng: p.lng + (u.east * distanceM) / (M_PER_DEG_LAT * Math.cos(latRad)),
+    }
+  }
+  return [shift(a), shift(b)]
+}
+
+/** 点 p の基準線からの符号付き距離 [m] (左が正)。タップで間隔を決めるのに使う */
+function signedDistanceM(a: LL, b: LL, p: LL): number {
+  const u = perpendicularUnit(a, b)
+  if (!u) return 0
+  const latRad = ((a.lat + b.lat) / 2) * (Math.PI / 180)
+  const east = (p.lng - a.lng) * M_PER_DEG_LAT * Math.cos(latRad)
+  const north = (p.lat - a.lat) * M_PER_DEG_LAT
+  return east * u.east + north * u.north
 }
 
 /** kind ごとの最小頂点数 (これ以下には削除できない) */
@@ -237,6 +286,13 @@ export function MapDrawingLayer({
   const updateStrokePoints = useMapDrawingStore((s) => s.updateStrokePoints)
 
   const [currentPositions, setCurrentPositions] = useState<[number, number][]>([])
+  /** 平行線: 引き終わった基準線。間隔と本数を決めるまで保持する */
+  const [parallelBase, setParallelBase] = useState<[LL, LL] | null>(null)
+  /** 平行線の設定。距離は左が正 (地図タップでも数値入力でも決められる) */
+  // (パネル表示中の地図タップで間隔を拾う effect は下に置く)
+  const [parallelSpacing, setParallelSpacing] = useState(3)
+  const [parallelCount, setParallelCount] = useState(1)
+  const [parallelBothSides, setParallelBothSides] = useState(false)
   const currentRef = useRef<LatLng[] | null>(null)
 
   // タップ式の描画で進行中の頂点列 (circle: 中心のみ / arc: [start] or [start,mid] / polygon: [p1..])
@@ -287,10 +343,28 @@ export function MapDrawingLayer({
     }
   }, [mode])
 
+  // 平行線パネル表示中は、地図タップで間隔を決められるようにする。
+  // 数値入力と併用できる (どちらでも良い、というのが現場では使いやすい)。
+  useEffect(() => {
+    if (!parallelBase) return
+    const handler = (e: L.LeafletMouseEvent) => {
+      const d = signedDistanceM(parallelBase[0], parallelBase[1], {
+        lat: e.latlng.lat,
+        lng: e.latlng.lng,
+      })
+      // 符号で左右が決まる。小数第 1 位まで
+      setParallelSpacing(Math.round(d * 10) / 10)
+    }
+    map.on('click', handler)
+    return () => {
+      map.off('click', handler)
+    }
+  }, [map, parallelBase])
+
   // 描画中は地図の 1 本指 pan を止める。text/circle/arc/polygon は click ベースだが誤 pan 防止で
   // dragging は残す (単発 click を邪魔しないため)。pen/line だけ dragging を止める。
   useEffect(() => {
-    const isPointerDraw = mode === 'pen' || mode === 'line'
+    const isPointerDraw = mode === 'pen' || mode === 'line' || mode === 'parallel'
     const isTapDraw = mode === 'text' || mode === 'circle' || mode === 'arc' || mode === 'polygon'
     const container = map.getContainer()
     if (isPointerDraw) {
@@ -412,7 +486,8 @@ export function MapDrawingLayer({
 
   // pen / line モード: pointer events (フリーハンド / 2 点直線)
   useEffect(() => {
-    if (mode !== 'pen' && mode !== 'line') return
+    // parallel も 2 点をドラッグして引くので line と同じ経路を通す
+    if (mode !== 'pen' && mode !== 'line' && mode !== 'parallel') return
     const container = map.getContainer()
 
     const activePointers = new Set<number>()
@@ -425,6 +500,10 @@ export function MapDrawingLayer({
       if (!pts || pts.length < 2 || !farmId) return
       const geo = pts.map((p) => ({ lat: p.lat, lng: p.lng }))
       void addStroke({ farmId, kind: 'stroke', color, widthPx, lineStyle, points: geo })
+      if (mode === 'parallel' && geo.length >= 2) {
+        // 基準線はそのまま残し、間隔と本数を決める段に進む
+        setParallelBase([geo[0], geo[geo.length - 1]])
+      }
     }
     const abortDrawing = () => {
       currentRef.current = null
@@ -470,7 +549,7 @@ export function MapDrawingLayer({
       if (!currentRef.current) return
       const latlng = eventToLatLng(e)
       if (!latlng) return
-      if (mode === 'line') {
+      if (mode === 'line' || mode === 'parallel') {
         const start = currentRef.current[0]
         currentRef.current = [start, latlng]
         setCurrentPositions([
@@ -901,6 +980,90 @@ export function MapDrawingLayer({
             }}
           />
         ))}
+      {/* 平行線の設定。基準線を引いた直後に出す。
+          間隔は数値入力でも、地図タップでも決められる (両方使える)。
+          基準線はそのまま残し、指定した本数だけ平行線を足す。 */}
+      {parallelBase &&
+        createPortal(
+          <div className="fixed inset-x-3 bottom-24 z-[4000] rounded-lg bg-white shadow-xl border p-3 flex flex-col gap-2 max-w-sm mx-auto">
+            <div className="text-sm font-semibold text-slate-800">平行線を作成</div>
+            <div className="text-[11px] text-slate-500">
+              間隔を入力するか、地図をタップして位置で指定します
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="flex-1">
+                <span className="text-[11px] text-slate-600">間隔 (m)</span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.1"
+                  value={parallelSpacing}
+                  onChange={(ev) => setParallelSpacing(Number(ev.target.value))}
+                  className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded text-right font-mono"
+                />
+              </label>
+              <label className="w-20">
+                <span className="text-[11px] text-slate-600">本数</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={parallelCount}
+                  onChange={(ev) =>
+                    setParallelCount(Math.max(1, Math.min(20, Number(ev.target.value))))
+                  }
+                  className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded text-right font-mono"
+                />
+              </label>
+            </div>
+            <label className="flex items-center gap-2 text-xs text-slate-700">
+              <input
+                type="checkbox"
+                checked={parallelBothSides}
+                onChange={(ev) => setParallelBothSides(ev.target.checked)}
+              />
+              両側に作る
+            </label>
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setParallelBase(null)}
+                className="flex-1 px-3 py-2 text-sm border rounded hover:bg-slate-50"
+              >
+                やめる
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!farmId || !parallelBase) return
+                  const [a, b] = parallelBase
+                  const signs = parallelBothSides ? [1, -1] : [Math.sign(parallelSpacing) || 1]
+                  const step = Math.abs(parallelSpacing)
+                  for (const sign of signs) {
+                    for (let i = 1; i <= parallelCount; i += 1) {
+                      const line = offsetLine(a, b, sign * step * i)
+                      if (!line) continue
+                      void addStroke({
+                        farmId,
+                        kind: 'stroke',
+                        color,
+                        widthPx,
+                        lineStyle,
+                        points: line,
+                      })
+                    }
+                  }
+                  setParallelBase(null)
+                }}
+                className="flex-1 px-3 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700"
+              >
+                作成
+              </button>
+            </div>
+          </div>,
+          document.body,
+        )}
+
       {/* テキスト入力ダイアログ (window.prompt の代替。Portal で map の外に出す) */}
       {textDialog &&
         createPortal(

@@ -25,9 +25,10 @@ import type { DrawingMode } from './MapDrawingLayer'
 import type { LineStyle } from '@/stores/mapDrawingStore'
 
 /** 形状ボタンで扱う描画モード (ドロップダウンで直線 / 円 / 円弧 / 面 を切替) */
-type ShapeMode = 'line' | 'circle' | 'arc' | 'polygon'
+type ShapeMode = 'line' | 'circle' | 'arc' | 'polygon' | 'parallel'
 const SHAPE_LABEL: Record<ShapeMode, string> = {
   line: '直線',
+  parallel: '平行線',
   circle: '円',
   arc: '円弧',
   polygon: '面',
@@ -51,8 +52,28 @@ function ArcSvg({ size = 16 }: { size?: number }) {
   )
 }
 
+/** 平行線: 2 本の斜線で表す (lucide に該当アイコンが無い) */
+function ParallelSvg({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <path d="M4 17 L 14 3" />
+      <path d="M10 21 L 20 7" />
+    </svg>
+  )
+}
+
 function shapeIcon(shape: ShapeMode): ReactNode {
   if (shape === 'line') return <Slash className="h-4 w-4" />
+  if (shape === 'parallel') return <ParallelSvg size={16} />
   if (shape === 'circle') return <CircleIcon className="h-4 w-4" />
   if (shape === 'arc') return <ArcSvg size={16} />
   return <Pentagon className="h-4 w-4" />
@@ -212,7 +233,7 @@ export function MapDrawingToolbar({
         </button>
         {shapePickerOpen && (
           <div className="absolute top-full left-0 mt-1 z-[3000] bg-white border rounded shadow-lg py-1 min-w-[7rem]">
-            {(['line', 'circle', 'arc', 'polygon'] as const).map((s) => (
+            {(['line', 'parallel', 'circle', 'arc', 'polygon'] as const).map((s) => (
               <button
                 key={s}
                 type="button"
