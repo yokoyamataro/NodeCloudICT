@@ -121,6 +121,11 @@ interface Props {
   onRedo: () => void
   /** 付箋メモ (現在位置に従来のメモを残す) を発火。未指定なら非表示。 */
   onMemo?: () => void
+  /**
+   * 置き方。'floating' は地図に重ねる想定でカード風 (既定)、
+   * 'bar' は画面上部の帯に埋め込む想定で余計な枠を出さない
+   */
+  variant?: 'floating' | 'bar'
 
   // ---- 作図・計測ツールから引き継いだ設定。未指定ならその操作を出さない ----
   /** ピック (スナップ): 近くの点に吸着させる */
@@ -182,6 +187,7 @@ export function MapDrawingToolbar({
   onUndo,
   onRedo,
   onMemo,
+  variant = 'floating',
   snapEnabled,
   onToggleSnap,
   layer,
@@ -234,7 +240,11 @@ export function MapDrawingToolbar({
   return (
     <div
       ref={rootRef}
-      className="bg-white border rounded-lg shadow-lg p-1.5 flex flex-wrap items-center gap-1 text-xs max-w-[calc(100vw-1rem)]"
+      className={`bg-white flex flex-wrap items-center gap-1 text-xs ${
+        variant === 'bar'
+          ? 'p-0'
+          : 'border rounded-lg shadow-lg p-1.5 max-w-[calc(100vw-1rem)]'
+      }`}
     >
       {/* ペン (フリーハンド) */}
       <button

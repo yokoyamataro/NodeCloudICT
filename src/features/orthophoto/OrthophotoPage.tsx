@@ -38,7 +38,6 @@ import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
 import { MapDrawingLayer, type DrawingMode } from '@/components/map/MapDrawingLayer'
 import { MapDrawingToolbar } from '@/components/map/MapDrawingToolbar'
 import { useMapDrawingStore, EMPTY_STROKES, type LineStyle } from '@/stores/mapDrawingStore'
-import { Paintbrush } from 'lucide-react'
 import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { useParcelImportSelection } from '@/features/parcel-maps/useParcelImportSelection'
 import { ParcelBatchImportBar } from '@/features/parcel-maps/ParcelBatchImportBar'
@@ -279,15 +278,11 @@ export function OrthophotoPage() {
   const [showAnnotationsLayer, setShowAnnotationsLayer] = useState<boolean>(() => readVis('annotations', true))
   const [showPipesLayer, setShowPipesLayer] = useState<boolean>(() => readVis('pipes', true))
 
-  // ペイント描画: 起動 / モード / 色 / 太さ
-  const [showDrawing, setShowDrawing] = useState(false)
+  // ペイント描画: モード / 色 / 太さ (ツールバーは常時表示なので起動フラグは持たない)
   const [drawingMode, setDrawingMode] = useState<DrawingMode>('off')
   const [drawingColor, setDrawingColor] = useState('#ef4444')
   const [drawingWidth, setDrawingWidth] = useState(3)
   const [drawingLineStyle, setDrawingLineStyle] = useState<LineStyle>('solid')
-  useEffect(() => {
-    if (!showDrawing) setDrawingMode('off')
-  }, [showDrawing])
   const drawingItems = useMapDrawingStore((s) =>
     currentFarm ? s.byFarm.get(currentFarm.id) ?? EMPTY_STROKES : EMPTY_STROKES,
   )
@@ -672,23 +667,6 @@ export function OrthophotoPage() {
         {drawingItems.length > 0 && <span className="ml-1 text-xs text-blue-600">({drawingItems.length})</span>}
       </button>
       <button
-        onClick={() => setShowDrawing((v) => !v)}
-        className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded ${
-          showDrawing
-            ? 'bg-blue-600 text-white border-blue-600'
-            : 'hover:bg-slate-50'
-        }`}
-        title="地図に手書きペイント (ペン / 消しゴム / 色 / 太さ)"
-      >
-        <Paintbrush className="h-4 w-4" />
-        ペイント
-        {drawingItems.length > 0 && (
-          <span className={`ml-1 text-xs ${showDrawing ? 'text-white/80' : 'text-blue-600'}`}>
-            ({drawingItems.length})
-          </span>
-        )}
-      </button>
-      <button
         onClick={() => setShowList(true)}
         className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
         title="登録済みオルソ一覧"
@@ -712,37 +690,37 @@ export function OrthophotoPage() {
     <div className="h-full flex flex-col">
       <PageHeader title="全体図" subtitle="オルソ・座標・区域・メモ・写真を集約した工区全体ビュー" actions={headerActions} />
 
+      {/* ペイントのツールバー。地図の上に常時表示する */}
+      <div className="border-b bg-white px-2 py-1.5">
+        <MapDrawingToolbar
+          variant="bar"
+          mode={drawingMode}
+          onChangeMode={setDrawingMode}
+          color={drawingColor}
+          onChangeColor={setDrawingColor}
+          widthPx={drawingWidth}
+          onChangeWidth={setDrawingWidth}
+          lineStyle={drawingLineStyle}
+          onChangeLineStyle={setDrawingLineStyle}
+          canUndo={drawingUndoLen > 0}
+          canRedo={drawingRedoLen > 0}
+          onUndo={() => void drawingUndo()}
+          onRedo={() => void drawingRedo()}
+          snapEnabled={snapEnabled}
+          onToggleSnap={() => setSnapEnabled((v) => !v)}
+          layer={drawLayer}
+          onChangeLayer={setDrawLayer}
+          existingLayers={existingLayers}
+          fontSize={drawFontSize}
+          onChangeFontSize={setDrawFontSize}
+          registerCoordinate={registerCoordinate}
+          onToggleRegisterCoordinate={() => setRegisterCoordinate((v) => !v)}
+        />
+      </div>
+
       {/* 横並び: 左=大きな地図（オルソ＋座標＋区域＋作図＋メモ＋写真）、右=折りたたみパネル */}
       <div className="flex-1 flex min-h-0 relative">
       <div className="flex-1 relative">
-        {/* ペイント描画ツールバー: 起動中のみ表示。地図上部中央にフローティング */}
-        {showDrawing && currentFarm?.id && (
-          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[1250]">
-            <MapDrawingToolbar
-              mode={drawingMode}
-              onChangeMode={setDrawingMode}
-              color={drawingColor}
-              onChangeColor={setDrawingColor}
-              widthPx={drawingWidth}
-              onChangeWidth={setDrawingWidth}
-              lineStyle={drawingLineStyle}
-              onChangeLineStyle={setDrawingLineStyle}
-              canUndo={drawingUndoLen > 0}
-              canRedo={drawingRedoLen > 0}
-              onUndo={() => void drawingUndo()}
-              onRedo={() => void drawingRedo()}
-              snapEnabled={snapEnabled}
-              onToggleSnap={() => setSnapEnabled((v) => !v)}
-              layer={drawLayer}
-              onChangeLayer={setDrawLayer}
-              existingLayers={existingLayers}
-              fontSize={drawFontSize}
-              onChangeFontSize={setDrawFontSize}
-              registerCoordinate={registerCoordinate}
-              onToggleRegisterCoordinate={() => setRegisterCoordinate((v) => !v)}
-            />
-          </div>
-        )}
         <CoordinateMap
           key={currentFarm.id}
           farmId={currentFarm.id}
@@ -768,13 +746,13 @@ export function OrthophotoPage() {
               selectedKeys={selectedKeys}
               onToggleSelect={toggleSelectedParcel}
               selectionMode={selectionMode}
-              disableClicks={showDrawing && drawingMode !== 'off'}
+              disableClicks={drawingMode !== 'off'}
             />
           )}
-          {/* 描画レイヤ: showDrawing OFF でも既存ストロークは表示。ON でペン/消しゴム有効 */}
+          {/* ペイントのレイヤ。ツールバーは常時表示、mode='off' なら既存ストロークの表示のみ */}
           <MapDrawingLayer
             farmId={currentFarm.id}
-            mode={showDrawing ? drawingMode : 'off'}
+            mode={drawingMode}
             color={drawingColor}
             widthPx={drawingWidth}
             lineStyle={drawingLineStyle}
