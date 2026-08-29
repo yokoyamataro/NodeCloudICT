@@ -62,7 +62,8 @@ import {
   loadAnnotations,
   saveAnnotations,
 } from '@/lib/annotations'
-import { buildDxf, downloadDxf, type DxfEntity } from '@/lib/dxf'
+import { buildDxf, downloadDxf } from '@/lib/dxf'
+import { buildMapDrawingDxfEntities } from '@/lib/mapDrawingDxf'
 import { FileDown } from 'lucide-react'
 import type { CoordinateRow } from '@/stores/coordinateStore'
 
@@ -557,131 +558,16 @@ export function OrthophotoPage() {
     setSelectedAnnoId(null)
   }
 
-  // DXF 出力（CAD慣例の X=東/Y=北 に変換して書き出す）
+  // DXF 出力。作図・計測をペイントへ統合したので、出力元もペイント (map_drawings)。
   const handleDxfExport = () => {
-    if (annotations.length === 0) {
-      alert('出力する作図がありません')
+    if (drawingItems.length === 0) {
+      alert('出力するペイントがありません')
       return
     }
-    const entities: DxfEntity[] = []
-    // lat/lng → 平面(X=北,Y=東) → DXF(X=東,Y=北)
-    const dxfXY = (lat: number, lng: number) => {
-      const p = converter.toXY(lat, lng)
-      return { x: p.y, y: p.x }
-    }
-    for (const a of annotations) {
-      // 種類別の既定レイヤ（ユーザー指定が無い場合のフォールバック）
-      const defaultLayer = (a.kind === 'point' ? 'POINT'
-        : a.kind === 'line' ? 'LINE'
-        : a.kind === 'polygon' ? 'POLYGON'
-        : a.kind === 'circle' ? 'CIRCLE'
-        : a.kind === 'arc' ? 'ARC'
-        : a.kind === 'text' ? 'TEXT'
-        : a.kind === 'comment' ? 'COMMENT'
-        : 'DIM')
-      const layer = a.layer && a.layer.trim() !== '' ? a.layer : defaultLayer
-      switch (a.kind) {
-        case 'point': {
-          const p = dxfXY(a.pos[0], a.pos[1])
-          entities.push({ type: 'POINT', x: p.x, y: p.y, layer })
-          break
-        }
-        case 'line': {
-          const v = a.vertices.map((vv) => dxfXY(vv[0], vv[1]))
-          for (let i = 0; i < v.length - 1; i++) {
-            entities.push({ type: 'LINE', x1: v[i].x, y1: v[i].y, x2: v[i + 1].x, y2: v[i + 1].y, layer })
-          }
-          break
-        }
-        case 'polygon': {
-          const v = a.vertices.map((vv) => dxfXY(vv[0], vv[1]))
-          for (let i = 0; i < v.length; i++) {
-            const j = (i + 1) % v.length
-            entities.push({ type: 'LINE', x1: v[i].x, y1: v[i].y, x2: v[j].x, y2: v[j].y, layer })
-          }
-          break
-        }
-        case 'circle': {
-          const c = dxfXY(a.center[0], a.center[1])
-          entities.push({ type: 'CIRCLE', cx: c.x, cy: c.y, r: a.radius, layer })
-          break
-        }
-        case 'arc': {
-          const c = dxfXY(a.center[0], a.center[1])
-          entities.push({
-            type: 'ARC',
-            cx: c.x,
-            cy: c.y,
-            r: a.radius,
-            startAngleDeg: a.startDeg,
-            endAngleDeg: a.endDeg,
-            layer,
-          })
-          break
-        }
-        case 'text':
-        case 'comment': {
-          const p = dxfXY(a.pos[0], a.pos[1])
-          entities.push({
-            type: 'TEXT',
-            x: p.x,
-            y: p.y,
-            text: a.text,
-            height: ((a.size ?? 14) / 28),
-            layer,
-          })
-          break
-        }
-        case 'dimension': {
-          if (a.subKind === 'dist' && a.vertices.length >= 2) {
-            const [p1, p2] = a.vertices.map((v) => dxfXY(v[0], v[1]))
-            entities.push({ type: 'LINE', x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, layer })
-            entities.push({
-              type: 'TEXT',
-              x: (p1.x + p2.x) / 2,
-              y: (p1.y + p2.y) / 2,
-              text: a.value < 1 ? `${(a.value * 100).toFixed(1)} cm` : `${a.value.toFixed(3)} m`,
-              height: ((a.size ?? 14) / 28),
-              layer,
-            })
-          } else if (a.subKind === 'area' && a.vertices.length >= 3) {
-            const v = a.vertices.map((vv) => dxfXY(vv[0], vv[1]))
-            for (let i = 0; i < v.length; i++) {
-              const j = (i + 1) % v.length
-              entities.push({ type: 'LINE', x1: v[i].x, y1: v[i].y, x2: v[j].x, y2: v[j].y, layer })
-            }
-            const cx = v.reduce((s, p) => s + p.x, 0) / v.length
-            const cy = v.reduce((s, p) => s + p.y, 0) / v.length
-            entities.push({
-              type: 'TEXT',
-              x: cx,
-              y: cy,
-              text: `${a.value.toFixed(2)} m² (${(a.value / 10000).toFixed(4)} ha)`,
-              height: ((a.size ?? 14) / 28),
-              layer,
-            })
-          } else if (a.subKind === 'perp' && a.vertices.length >= 3) {
-            const [p1, p2, pp] = a.vertices.map((v) => dxfXY(v[0], v[1]))
-            entities.push({ type: 'LINE', x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, layer })
-            const ABx = p2.x - p1.x
-            const ABy = p2.y - p1.y
-            const L2 = ABx * ABx + ABy * ABy
-            const t = L2 === 0 ? 0 : ((pp.x - p1.x) * ABx + (pp.y - p1.y) * ABy) / L2
-            const Fx = p1.x + t * ABx
-            const Fy = p1.y + t * ABy
-            entities.push({ type: 'LINE', x1: pp.x, y1: pp.y, x2: Fx, y2: Fy, layer })
-            entities.push({
-              type: 'TEXT',
-              x: (pp.x + Fx) / 2,
-              y: (pp.y + Fy) / 2,
-              text: a.value < 1 ? `${(a.value * 100).toFixed(1)} cm` : `${a.value.toFixed(3)} m`,
-              height: ((a.size ?? 14) / 28),
-              layer,
-            })
-          }
-          break
-        }
-      }
+    const entities = buildMapDrawingDxfEntities(drawingItems, converter)
+    if (entities.length === 0) {
+      alert('出力できる図形がありません')
+      return
     }
     const dxf = buildDxf(entities)
     const farmName = currentFarm?.name || 'ortho'
@@ -896,13 +782,13 @@ export function OrthophotoPage() {
       </div>
       <button
         onClick={handleDxfExport}
-        disabled={annotations.length === 0}
+        disabled={drawingItems.length === 0}
         className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
-        title="作図データをDXFで出力"
+        title="ペイントをDXFで出力"
       >
         <FileDown className="h-4 w-4" />
         DXF出力
-        {annotations.length > 0 && <span className="ml-1 text-xs text-blue-600">({annotations.length})</span>}
+        {drawingItems.length > 0 && <span className="ml-1 text-xs text-blue-600">({drawingItems.length})</span>}
       </button>
       <button
         onClick={() => setShowDrawing((v) => !v)}
@@ -1170,6 +1056,7 @@ export function OrthophotoPage() {
             color={drawingColor}
             widthPx={drawingWidth}
             lineStyle={drawingLineStyle}
+            converter={converter}
           />
           {/* 暗渠 (読み取り専用オーバーレイ)。編集は暗渠モジュールで。 */}
           {showPipesLayer &&

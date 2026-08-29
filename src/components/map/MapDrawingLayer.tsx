@@ -11,6 +11,8 @@
 //   ・'select'  ストロークをタップで選択 → 青ハンドルをドラッグで頂点移動 / 長押しで削除 /
 //               辺の中点の「+」タップで頂点追加 (直線・円・円弧は追加/削除不可、位置移動のみ)。
 //   ・'eraser'  アイテムをクリックで削除。
+//   ・'measure-dist' / 'measure-area' / 'measure-perp'
+//               計測。結果は保存せず、モードを抜けるまで地図上に表示する。
 //
 // 保存座標は lat/lng なので、地図を伸縮・移動しても地図上の位置は保持される。
 
@@ -32,6 +34,7 @@ import {
   type MapDrawingStroke,
   type LineStyle,
 } from '@/stores/mapDrawingStore'
+import type { CoordinateConverter } from '@/lib/coordinates'
 
 export type DrawingMode =
   | 'off'
@@ -44,6 +47,14 @@ export type DrawingMode =
   | 'text'
   | 'select'
   | 'eraser'
+  | 'measure-dist'
+  | 'measure-area'
+  | 'measure-perp'
+
+/** 計測モードかどうか */
+export function isMeasureMode(mode: DrawingMode): boolean {
+  return mode === 'measure-dist' || mode === 'measure-area' || mode === 'measure-perp'
+}
 
 interface Props {
   farmId: string | null
@@ -51,6 +62,11 @@ interface Props {
   color: string
   widthPx: number
   lineStyle: LineStyle
+  /**
+   * 平面直角座標への変換器。渡されていれば計測は平面距離 (測量と同じ) で行う。
+   * 無ければ球面距離で近似する (数 km 程度なら実用上ほぼ同じ)。
+   */
+  converter?: CoordinateConverter
 }
 
 // ---- 平行線 ----
@@ -268,12 +284,116 @@ export function circleRadiusMeters(
   return L.latLng(center.lat, center.lng).distanceTo(L.latLng(edge.lat, edge.lng))
 }
 
+// ---- 計測 ----
+//
+// 測量として使う値なので、平面直角座標 (X=北 / Y=東) が使えるときはそちらで計算する。
+// converter が無い画面 (共有ビュー等) では球面距離で近似する。
+
+export interface MeasureResult {
+  kind: 'dist' | 'area' | 'perp'
+  points: LL[]
+  /** m または m² */
+  value: number
+  /** 値を表示する位置 */
+  labelAt: LL
+  /** 垂線の足 (perp のときのみ) */
+  foot?: LL
+}
+
+function measureDist(c: CoordinateConverter | undefined, a: LL, b: LL): number {
+  if (!c) return L.latLng(a.lat, a.lng).distanceTo(L.latLng(b.lat, b.lng))
+  const A = c.toXY(a.lat, a.lng)
+  const B = c.toXY(b.lat, b.lng)
+  return Math.hypot(B.x - A.x, B.y - A.y)
+}
+
+function measureArea(c: CoordinateConverter | undefined, verts: LL[]): number {
+  if (verts.length < 3) return 0
+  // converter が無いときは中心緯度で経度を縮めた簡易平面に落とす
+  const pts = c
+    ? verts.map((v) => c.toXY(v.lat, v.lng))
+    : (() => {
+        const lat0 = verts.reduce((s, v) => s + v.lat, 0) / verts.length
+        const k = Math.cos((lat0 * Math.PI) / 180)
+        return verts.map((v) => ({
+          x: v.lat * M_PER_DEG_LAT,
+          y: v.lng * M_PER_DEG_LAT * k,
+        }))
+      })()
+  let s = 0
+  for (let i = 0; i < pts.length; i += 1) {
+    const a = pts[i]
+    const b = pts[(i + 1) % pts.length]
+    s += a.x * b.y - b.x * a.y
+  }
+  return Math.abs(s) / 2
+}
+
+/** 点 p から線分 ab を含む直線までの距離と、その垂線の足 */
+function measurePerp(
+  c: CoordinateConverter | undefined,
+  a: LL,
+  b: LL,
+  p: LL,
+): { value: number; foot: LL } {
+  // converter が無い場合も同じ式が使えるよう、簡易平面に統一する
+  const lat0 = (a.lat + b.lat + p.lat) / 3
+  const k = Math.cos((lat0 * Math.PI) / 180)
+  const toXY = (ll: LL) =>
+    c ? c.toXY(ll.lat, ll.lng) : { x: ll.lat * M_PER_DEG_LAT, y: ll.lng * M_PER_DEG_LAT * k }
+  const toLL = (x: number, y: number): LL =>
+    c ? c.toLatLng(x, y) : { lat: x / M_PER_DEG_LAT, lng: y / (M_PER_DEG_LAT * k) }
+
+  const A = toXY(a)
+  const B = toXY(b)
+  const P = toXY(p)
+  const abx = B.x - A.x
+  const aby = B.y - A.y
+  const len2 = abx * abx + aby * aby
+  if (len2 === 0) return { value: 0, foot: a }
+  const t = ((P.x - A.x) * abx + (P.y - A.y) * aby) / len2
+  const fx = A.x + t * abx
+  const fy = A.y + t * aby
+  return { value: Math.hypot(P.x - fx, P.y - fy), foot: toLL(fx, fy) }
+}
+
+function centroid(pts: LL[]): LL {
+  const lat = pts.reduce((s, p) => s + p.lat, 0) / pts.length
+  const lng = pts.reduce((s, p) => s + p.lng, 0) / pts.length
+  return { lat, lng }
+}
+
+/** 計測値の表示文字列 */
+export function formatMeasure(m: MeasureResult): string {
+  if (m.kind === 'area') {
+    return `${m.value.toFixed(2)} m² (${(m.value / 10000).toFixed(4)} ha)`
+  }
+  if (m.value < 1) return `${(m.value * 100).toFixed(1)} cm`
+  return `${m.value.toFixed(3)} m`
+}
+
+/** 計測値のラベル (地図上に置く白フキダシ) */
+function makeMeasureLabelIcon(text: string, color: string): L.DivIcon {
+  const esc = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return L.divIcon({
+    className: 'map-measure-label',
+    html: `<div style="
+      background:rgba(255,255,255,.92);border:1px solid ${color};color:${color};
+      font-size:12px;font-weight:700;padding:1px 5px;border-radius:3px;
+      white-space:nowrap;transform:translate(-50%,-50%);box-shadow:0 1px 2px rgba(0,0,0,.2)
+    ">${esc}</div>`,
+    iconSize: [0, 0],
+    iconAnchor: [0, 0],
+  })
+}
+
 export function MapDrawingLayer({
   farmId,
   mode,
   color,
   widthPx,
   lineStyle,
+  converter,
 }: Props) {
   const map = useMap()
   const items = useMapDrawingStore((s) =>
@@ -300,6 +420,10 @@ export function MapDrawingLayer({
     kind: 'circle' | 'arc' | 'polygon'
     points: Array<{ lat: number; lng: number }>
   } | null>(null)
+
+  // 計測: 入力途中の点列と、確定した結果 (保存はしない)
+  const [measurePoints, setMeasurePoints] = useState<LL[]>([])
+  const [lastMeasure, setLastMeasure] = useState<MeasureResult | null>(null)
 
   // 選択モードの状態
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -341,6 +465,14 @@ export function MapDrawingLayer({
       setSelectedId(null)
       setDragPreview(null)
     }
+    // 計測は結果を残さない。モードを抜けた時点で消す
+    if (!isMeasureMode(mode)) {
+      setMeasurePoints([])
+      setLastMeasure(null)
+    } else {
+      // 計測の種類を変えたら入力途中をリセット
+      setMeasurePoints([])
+    }
   }, [mode])
 
   // 平行線パネル表示中は、地図タップで間隔を決められるようにする。
@@ -365,7 +497,12 @@ export function MapDrawingLayer({
   // dragging は残す (単発 click を邪魔しないため)。pen/line だけ dragging を止める。
   useEffect(() => {
     const isPointerDraw = mode === 'pen' || mode === 'line' || mode === 'parallel'
-    const isTapDraw = mode === 'text' || mode === 'circle' || mode === 'arc' || mode === 'polygon'
+    const isTapDraw =
+      mode === 'text' ||
+      mode === 'circle' ||
+      mode === 'arc' ||
+      mode === 'polygon' ||
+      isMeasureMode(mode)
     const container = map.getContainer()
     if (isPointerDraw) {
       map.dragging.disable()
@@ -403,6 +540,64 @@ export function MapDrawingLayer({
   // タップ式描画 + text 追加: useMapEvents
   useMapEvents({
     click: (e) => {
+      // 計測は保存しないので farmId を必要としない
+      if (isMeasureMode(mode)) {
+        const p: LL = { lat: e.latlng.lat, lng: e.latlng.lng }
+        const pts = [...measurePoints, p]
+
+        if (mode === 'measure-dist') {
+          if (pts.length < 2) {
+            setMeasurePoints(pts)
+            return
+          }
+          const value = measureDist(converter, pts[0], pts[1])
+          setLastMeasure({
+            kind: 'dist',
+            points: pts,
+            value,
+            labelAt: centroid(pts),
+          })
+          setMeasurePoints([])
+          return
+        }
+
+        if (mode === 'measure-perp') {
+          if (pts.length < 3) {
+            setMeasurePoints(pts)
+            return
+          }
+          const { value, foot } = measurePerp(converter, pts[0], pts[1], pts[2])
+          setLastMeasure({
+            kind: 'perp',
+            points: pts,
+            value,
+            labelAt: centroid([pts[2], foot]),
+            foot,
+          })
+          setMeasurePoints([])
+          return
+        }
+
+        // measure-area: 最初の頂点付近を再タップで閉じる
+        if (measurePoints.length >= 3) {
+          const first = measurePoints[0]
+          const firstPx = map.latLngToContainerPoint([first.lat, first.lng])
+          if (firstPx.distanceTo(map.latLngToContainerPoint(e.latlng)) < 22) {
+            const value = measureArea(converter, measurePoints)
+            setLastMeasure({
+              kind: 'area',
+              points: measurePoints,
+              value,
+              labelAt: centroid(measurePoints),
+            })
+            setMeasurePoints([])
+            return
+          }
+        }
+        setMeasurePoints(pts)
+        return
+      }
+
       if (!farmId) return
       if (mode === 'text') {
         setTextDialog({ lat: e.latlng.lat, lng: e.latlng.lng, value: '' })
@@ -474,15 +669,18 @@ export function MapDrawingLayer({
     },
   })
 
-  // Escape で進行中の描画をキャンセル
+  // Escape で進行中の描画・計測をキャンセル
   useEffect(() => {
-    if (!shapeProgress) return
+    if (!shapeProgress && measurePoints.length === 0 && !lastMeasure) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setShapeProgress(null)
+      if (e.key !== 'Escape') return
+      setShapeProgress(null)
+      setMeasurePoints([])
+      setLastMeasure(null)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [shapeProgress])
+  }, [shapeProgress, measurePoints.length, lastMeasure])
 
   // pen / line モード: pointer events (フリーハンド / 2 点直線)
   useEffect(() => {
@@ -884,6 +1082,80 @@ export function MapDrawingLayer({
     )
   }, [shapeProgress, color, widthPx])
 
+  // 計測の表示 (入力途中 + 確定結果)。保存はしないのでここだけで完結する
+  const measureOverlay = useMemo(() => {
+    if (!isMeasureMode(mode) && !lastMeasure) return null
+    const MEASURE_COLOR = '#e11d48'
+    const vertexIcon = L.divIcon({
+      className: 'map-measure-vertex',
+      html: `<div style="background:${MEASURE_COLOR};width:9px;height:9px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4)"></div>`,
+      iconSize: [9, 9],
+      iconAnchor: [4.5, 4.5],
+    })
+    const dash: L.PathOptions = {
+      color: MEASURE_COLOR,
+      weight: 2,
+      dashArray: '6,4',
+    }
+    const solid: L.PathOptions = { color: MEASURE_COLOR, weight: 2.5 }
+
+    return (
+      <>
+        {/* 入力途中 */}
+        {measurePoints.length >= 2 && (
+          <Polyline positions={measurePoints.map((p) => [p.lat, p.lng] as [number, number])} pathOptions={dash} />
+        )}
+        {measurePoints.map((p, i) => (
+          <Marker key={`mp-${i}`} position={[p.lat, p.lng]} icon={vertexIcon} interactive={false} />
+        ))}
+
+        {/* 確定結果 */}
+        {lastMeasure && lastMeasure.kind === 'area' && (
+          <LeafletPolygon
+            positions={lastMeasure.points.map((p) => [p.lat, p.lng] as [number, number])}
+            pathOptions={{ ...solid, fillColor: MEASURE_COLOR, fillOpacity: 0.15 }}
+          />
+        )}
+        {lastMeasure && lastMeasure.kind === 'dist' && (
+          <Polyline
+            positions={lastMeasure.points.map((p) => [p.lat, p.lng] as [number, number])}
+            pathOptions={solid}
+          />
+        )}
+        {lastMeasure && lastMeasure.kind === 'perp' && lastMeasure.foot && (
+          <>
+            {/* 基準線は破線、垂線本体を実線にして「どちらを測ったか」を分かるようにする */}
+            <Polyline
+              positions={[
+                [lastMeasure.points[0].lat, lastMeasure.points[0].lng],
+                [lastMeasure.points[1].lat, lastMeasure.points[1].lng],
+              ]}
+              pathOptions={dash}
+            />
+            <Polyline
+              positions={[
+                [lastMeasure.points[2].lat, lastMeasure.points[2].lng],
+                [lastMeasure.foot.lat, lastMeasure.foot.lng],
+              ]}
+              pathOptions={solid}
+            />
+          </>
+        )}
+        {lastMeasure &&
+          lastMeasure.points.map((p, i) => (
+            <Marker key={`mr-${i}`} position={[p.lat, p.lng]} icon={vertexIcon} interactive={false} />
+          ))}
+        {lastMeasure && (
+          <Marker
+            position={[lastMeasure.labelAt.lat, lastMeasure.labelAt.lng]}
+            icon={makeMeasureLabelIcon(formatMeasure(lastMeasure), MEASURE_COLOR)}
+            interactive={false}
+          />
+        )}
+      </>
+    )
+  }, [mode, measurePoints, lastMeasure])
+
   // 選択中ストロークの中点 (+) ハンドル用の位置列。頂点数可変 kind でのみ表示。
   const midpoints = useMemo(() => {
     if (!selectedStroke || !handlePoints) return []
@@ -908,6 +1180,7 @@ export function MapDrawingLayer({
     <Pane name="map-drawing" style={{ zIndex: 500 }}>
       {rendered}
       {shapePreview}
+      {measureOverlay}
       {currentPositions.length >= 2 && (
         <Polyline
           positions={currentPositions}
@@ -980,6 +1253,58 @@ export function MapDrawingLayer({
             }}
           />
         ))}
+      {/* 計測の操作案内 + 結果。値は保存しないので、ここに出したものが全て */}
+      {isMeasureMode(mode) &&
+        createPortal(
+          <div className="fixed inset-x-3 bottom-24 z-[4000] rounded-lg bg-white shadow-xl border px-3 py-2 flex items-center gap-3 max-w-sm mx-auto">
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-semibold text-slate-800">
+                {mode === 'measure-dist' ? '距離' : mode === 'measure-area' ? '面積' : '垂線'}
+              </div>
+              {lastMeasure ? (
+                <div className="text-base font-bold text-rose-600 tabular-nums truncate">
+                  {formatMeasure(lastMeasure)}
+                </div>
+              ) : (
+                <div className="text-[11px] text-slate-500">
+                  {mode === 'measure-dist'
+                    ? '2 点をタップ'
+                    : mode === 'measure-area'
+                      ? `頂点をタップ (${measurePoints.length}) → 最初の点をもう一度タップで確定`
+                      : '基準線の 2 点 → 対象の 1 点をタップ'}
+                </div>
+              )}
+            </div>
+            {mode === 'measure-area' && measurePoints.length >= 3 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setLastMeasure({
+                    kind: 'area',
+                    points: measurePoints,
+                    value: measureArea(converter, measurePoints),
+                    labelAt: centroid(measurePoints),
+                  })
+                  setMeasurePoints([])
+                }}
+                className="px-2.5 py-1.5 rounded bg-rose-600 text-white text-xs shrink-0"
+              >
+                確定
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setMeasurePoints([])
+                setLastMeasure(null)
+              }}
+              className="px-2.5 py-1.5 rounded border text-slate-600 text-xs shrink-0"
+            >
+              クリア
+            </button>
+          </div>,
+          document.body,
+        )}
       {/* 平行線の設定。基準線を引いた直後に出す。
           間隔は数値入力でも、地図タップでも決められる (両方使える)。
           基準線はそのまま残し、指定した本数だけ平行線を足す。 */}

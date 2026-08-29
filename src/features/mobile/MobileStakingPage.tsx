@@ -5350,6 +5350,7 @@ export function MobileStakingPage() {
             color={drawingColor}
             widthPx={drawingWidth}
             lineStyle={drawingLineStyle}
+            converter={converter}
           />
         </MapContainer>
 

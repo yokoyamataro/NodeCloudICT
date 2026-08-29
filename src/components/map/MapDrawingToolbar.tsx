@@ -15,6 +15,7 @@ import {
   Pen,
   Pentagon,
   Redo2,
+  Ruler,
   Slash,
   StickyNote,
   Type,
@@ -69,6 +70,19 @@ function ParallelSvg({ size = 16 }: { size?: number }) {
       <path d="M10 21 L 20 7" />
     </svg>
   )
+}
+
+/** 計測ボタンで扱うモード (距離 / 面積 / 垂線) */
+type MeasureMode = 'measure-dist' | 'measure-area' | 'measure-perp'
+const MEASURE_LABEL: Record<MeasureMode, string> = {
+  'measure-dist': '距離',
+  'measure-area': '面積',
+  'measure-perp': '垂線',
+}
+const MEASURE_HELP: Record<MeasureMode, string> = {
+  'measure-dist': '2 点をタップ',
+  'measure-area': '頂点をタップ → 最初の点で閉じる',
+  'measure-perp': '基準線の 2 点 → 対象の 1 点',
 }
 
 function shapeIcon(shape: ShapeMode): ReactNode {
@@ -154,6 +168,8 @@ export function MapDrawingToolbar({
   const [colorPickerOpen, setColorPickerOpen] = useState(false)
   const [linePickerOpen, setLinePickerOpen] = useState(false)
   const [shapePickerOpen, setShapePickerOpen] = useState(false)
+  const [measurePickerOpen, setMeasurePickerOpen] = useState(false)
+  const [currentMeasure, setCurrentMeasure] = useState<MeasureMode>('measure-dist')
   // 形状ボタンで最後に選ばれた形状 (直線 / 円 / 円弧 / 面)。
   // ボタンをタップした時に「今どの形状に入るか」を決めるために保持する。
   const [currentShape, setCurrentShape] = useState<ShapeMode>('line')
@@ -164,24 +180,29 @@ export function MapDrawingToolbar({
     if (mode === 'line' || mode === 'circle' || mode === 'arc' || mode === 'polygon') {
       setCurrentShape(mode)
     }
+    if (mode === 'measure-dist' || mode === 'measure-area' || mode === 'measure-perp') {
+      setCurrentMeasure(mode)
+    }
   }, [mode])
 
   // 外側クリックでポップアップを閉じる (mobile でも動くよう pointerdown を使用)
   useEffect(() => {
-    if (!colorPickerOpen && !linePickerOpen && !shapePickerOpen) return
+    if (!colorPickerOpen && !linePickerOpen && !shapePickerOpen && !measurePickerOpen) return
     const onDown = (e: PointerEvent) => {
       if (!rootRef.current) return
       if (!rootRef.current.contains(e.target as Node)) {
         setColorPickerOpen(false)
         setLinePickerOpen(false)
         setShapePickerOpen(false)
+        setMeasurePickerOpen(false)
       }
     }
     document.addEventListener('pointerdown', onDown)
     return () => document.removeEventListener('pointerdown', onDown)
-  }, [colorPickerOpen, linePickerOpen, shapePickerOpen])
+  }, [colorPickerOpen, linePickerOpen, shapePickerOpen, measurePickerOpen])
 
   const isShapeMode = mode === currentShape
+  const isMeasure = mode === currentMeasure
 
   return (
     <div
@@ -252,6 +273,60 @@ export function MapDrawingToolbar({
                   {shapeIcon(s)}
                 </span>
                 <span>{SHAPE_LABEL[s]}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {/* 計測 (距離 / 面積 / 垂線)。作図とは別扱いで、結果は保存しない */}
+      <div className="relative shrink-0 flex items-stretch">
+        <button
+          type="button"
+          onClick={() => onChangeMode(isMeasure ? 'off' : currentMeasure)}
+          title={`計測: ${MEASURE_LABEL[currentMeasure]} (${MEASURE_HELP[currentMeasure]})`}
+          className={`h-8 w-8 flex items-center justify-center rounded-l shrink-0 ${
+            isMeasure ? 'bg-rose-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <Ruler className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setMeasurePickerOpen((v) => !v)
+            setShapePickerOpen(false)
+            setColorPickerOpen(false)
+            setLinePickerOpen(false)
+          }}
+          title="計測の種類を選ぶ"
+          className={`h-8 w-4 flex items-center justify-center rounded-r border-l ${
+            isMeasure
+              ? 'bg-rose-600 text-white border-rose-500'
+              : 'text-slate-600 hover:bg-slate-100 border-slate-300'
+          }`}
+        >
+          <ChevronDown className="h-3 w-3" />
+        </button>
+        {measurePickerOpen && (
+          <div className="absolute top-full left-0 mt-1 z-[3000] bg-white border rounded shadow-lg py-1 min-w-[7rem]">
+            {(['measure-dist', 'measure-area', 'measure-perp'] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => {
+                  setCurrentMeasure(m)
+                  onChangeMode(m)
+                  setMeasurePickerOpen(false)
+                }}
+                title={MEASURE_HELP[m]}
+                className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs ${
+                  currentMeasure === m
+                    ? 'bg-rose-50 text-rose-700'
+                    : 'text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <Ruler className="h-4 w-4" />
+                <span>{MEASURE_LABEL[m]}</span>
               </button>
             ))}
           </div>
