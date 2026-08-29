@@ -36,6 +36,13 @@ const SHAPE_LABEL: Record<ShapeMode, string> = {
   arc: '円弧',
   polygon: '面',
 }
+const SHAPE_HELP: Record<ShapeMode, string> = {
+  line: 'クリックで頂点 / Backspace で 1 つ戻る / Enter で確定 / Esc で取消',
+  parallel: 'ドラッグで基準線 → 間隔と本数を指定',
+  circle: '中心 → 縁の 2 点をクリック',
+  arc: '始点 → 通過点 → 終点の 3 点をクリック',
+  polygon: 'クリックで頂点 / 最初の点か Enter で閉じる / Backspace で 1 つ戻る',
+}
 
 /** 円弧はぴったりの lucide アイコンが無いので四分弧を自前 SVG で描く */
 function ArcSvg({ size = 16 }: { size?: number }) {
@@ -264,7 +271,7 @@ export function MapDrawingToolbar({
         <button
           type="button"
           onClick={() => onChangeMode(isShapeMode ? 'off' : currentShape)}
-          title={`${SHAPE_LABEL[currentShape]} (▼ で切替)`}
+          title={`${SHAPE_LABEL[currentShape]}: ${SHAPE_HELP[currentShape]} (▼ で切替)`}
           className={`h-8 w-8 flex items-center justify-center rounded-l shrink-0 ${
             isShapeMode
               ? 'bg-blue-600 text-white'
@@ -300,6 +307,7 @@ export function MapDrawingToolbar({
                   onChangeMode(s)
                   setShapePickerOpen(false)
                 }}
+                title={SHAPE_HELP[s]}
                 className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs ${
                   currentShape === s
                     ? 'bg-blue-50 text-blue-700'

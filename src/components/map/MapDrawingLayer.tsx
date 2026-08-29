@@ -3,10 +3,12 @@
 // モード:
 //   ・'off'     描画無効。既存アイテムだけ表示。マップ操作は通常通り。
 //   ・'pen'     ドラッグでフリーハンドのストローク (地図の 1 本指 pan は無効化、2 本指ピンチは有効)。
-//   ・'line'    ドラッグで始点/終点だけ記録し 2 点の直線。
+//   ・'line'    クリックで頂点を追加する連続線。Backspace で 1 つ戻る、
+//               Enter (または「線を確定」) で確定、Esc で取り消し。
 //   ・'circle'  2 タップで中心 → 縁 (半径 = 2 点間距離、L.Circle で描画)。
 //   ・'arc'     3 タップで始点 → 通過点 → 終点 (3 点を通る一意の円弧を近似ポリラインで描画)。
-//   ・'polygon' タップで頂点を追加。最初の頂点を再タップ or 「面を閉じる」で確定。半透明で塗り潰し。
+//   ・'polygon' タップで頂点を追加。最初の頂点を再タップ / Enter / 「面を閉じる」で確定。
+//               Backspace で 1 つ戻る、Esc で取り消し。半透明で塗り潰し。
 //   ・'text'    タップした点にテキスト注釈 (prompt 経由)。文字サイズは fontSize。
 //   ・'point'   タップした点に点を置く。registerCoordinate が true なら
 //               onAddCoordinate も呼び、座標管理にも登録する。
@@ -480,7 +482,7 @@ export function MapDrawingLayer({
 
   // タップ式の描画で進行中の頂点列 (circle: 中心のみ / arc: [start] or [start,mid] / polygon: [p1..])
   const [shapeProgress, setShapeProgress] = useState<{
-    kind: 'circle' | 'arc' | 'polygon'
+    kind: 'circle' | 'arc' | 'polygon' | 'line'
     points: Array<{ lat: number; lng: number }>
   } | null>(null)
 
@@ -571,7 +573,7 @@ export function MapDrawingLayer({
 
   // モード変更時にモードに合わない状態をクリア
   useEffect(() => {
-    if (mode !== 'circle' && mode !== 'arc' && mode !== 'polygon') {
+    if (mode !== 'circle' && mode !== 'arc' && mode !== 'polygon' && mode !== 'line') {
       setShapeProgress(null)
     }
     if (mode !== 'text') setTextDialog(null)
@@ -610,10 +612,11 @@ export function MapDrawingLayer({
   // 描画中は地図の 1 本指 pan を止める。text/circle/arc/polygon は click ベースだが誤 pan 防止で
   // dragging は残す (単発 click を邪魔しないため)。pen/line だけ dragging を止める。
   useEffect(() => {
-    const isPointerDraw = mode === 'pen' || mode === 'line' || mode === 'parallel'
+    const isPointerDraw = mode === 'pen' || mode === 'parallel'
     const isTapDraw =
       mode === 'text' ||
       mode === 'point' ||
+      mode === 'line' ||
       mode === 'circle' ||
       mode === 'arc' ||
       mode === 'polygon' ||
@@ -729,6 +732,11 @@ export function MapDrawingLayer({
         setTextDialog({ lat: at.lat, lng: at.lng, value: '' })
         return
       }
+      if (mode === 'line') {
+        const current = shapeProgress?.kind === 'line' ? shapeProgress.points : []
+        setShapeProgress({ kind: 'line', points: [...current, at] })
+        return
+      }
       if (mode === 'circle') {
         if (!shapeProgress || shapeProgress.kind !== 'circle') {
           setShapeProgress({ kind: 'circle', points: [at] })
@@ -798,23 +806,62 @@ export function MapDrawingLayer({
     },
   })
 
-  // Escape で進行中の描画・計測をキャンセル
+  /** 頂点をクリックで置く図形 (線 / 面) を確定する。頂点が足りなければ何もしない */
+  const commitVertexShape = useCallback(() => {
+    if (!farmId || !shapeProgress) return
+    const { kind, points } = shapeProgress
+    if (kind === 'line' && points.length >= 2) {
+      void addStroke({ farmId, kind: 'stroke', color, widthPx, lineStyle, points, layer })
+      setShapeProgress(null)
+      return
+    }
+    if (kind === 'polygon' && points.length >= 3) {
+      void addStroke({ farmId, kind: 'polygon', color, widthPx, lineStyle, points, layer })
+      setShapeProgress(null)
+    }
+  }, [farmId, shapeProgress, color, widthPx, lineStyle, layer, addStroke])
+
+  // 進行中の描画・計測のキーボード操作
+  //   Backspace / Delete … 直前の頂点を取り消す
+  //   Enter              … 確定する
+  //   Escape             … まるごと取り消す
   useEffect(() => {
     if (!shapeProgress && measurePoints.length === 0 && !lastMeasure) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      setShapeProgress(null)
-      setMeasurePoints([])
-      setLastMeasure(null)
+      // 文字入力中のキーは拾わない
+      const el = document.activeElement
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return
+
+      if (e.key === 'Escape') {
+        setShapeProgress(null)
+        setMeasurePoints([])
+        setLastMeasure(null)
+        return
+      }
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        // ブラウザの「前のページへ戻る」を止める
+        e.preventDefault()
+        if (shapeProgress) {
+          const next = shapeProgress.points.slice(0, -1)
+          setShapeProgress(next.length === 0 ? null : { ...shapeProgress, points: next })
+        } else if (measurePoints.length > 0) {
+          setMeasurePoints(measurePoints.slice(0, -1))
+        }
+        return
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        commitVertexShape()
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [shapeProgress, measurePoints.length, lastMeasure])
+  }, [shapeProgress, measurePoints, lastMeasure, commitVertexShape])
 
-  // pen / line モード: pointer events (フリーハンド / 2 点直線)
+  // pen / parallel モード: pointer events (フリーハンド / 平行線の基準線)
   useEffect(() => {
-    // parallel も 2 点をドラッグして引くので line と同じ経路を通す
-    if (mode !== 'pen' && mode !== 'line' && mode !== 'parallel') return
+    // 直線はクリック式に変えたので、ここを通るのはフリーハンドと平行線の基準線だけ
+    if (mode !== 'pen' && mode !== 'parallel') return
     const container = map.getContainer()
 
     const activePointers = new Set<number>()
@@ -825,10 +872,10 @@ export function MapDrawingLayer({
       currentRef.current = null
       setCurrentPositions([])
       if (!pts || pts.length < 2 || !farmId) return
-      // 直線・平行線は 端点だけ 吸着させる。フリーハンドは 吸着させない
+      // 平行線の基準線は 端点だけ 吸着させる。フリーハンドは 吸着させない
       // (全点を吸わせると 線が壊れるため)
       const geo = pts.map((p) => ({ lat: p.lat, lng: p.lng }))
-      if (mode === 'line' || mode === 'parallel') {
+      if (mode === 'parallel') {
         geo[0] = snap(geo[0])
         geo[geo.length - 1] = snap(geo[geo.length - 1])
       }
@@ -882,7 +929,7 @@ export function MapDrawingLayer({
       if (!currentRef.current) return
       const latlng = eventToLatLng(e)
       if (!latlng) return
-      if (mode === 'line' || mode === 'parallel') {
+      if (mode === 'parallel') {
         const start = currentRef.current[0]
         currentRef.current = [start, latlng]
         setCurrentPositions([
@@ -925,28 +972,23 @@ export function MapDrawingLayer({
     }
   }, [mode, map, farmId, color, widthPx, lineStyle, layer, snap, addStroke])
 
-  // ポリゴン描画中に「面を閉じる」ボタンを L.Control として map の右上に表示
+  // 線 / 面の描画中に確定ボタンを L.Control として map の右上に表示。
+  // キーボードのある PC は Enter で確定できるが、指しか無い端末にも出口が要る
   useEffect(() => {
-    if (!shapeProgress || shapeProgress.kind !== 'polygon' || shapeProgress.points.length < 3) {
-      return
-    }
+    if (!shapeProgress) return
+    const enough =
+      (shapeProgress.kind === 'line' && shapeProgress.points.length >= 2) ||
+      (shapeProgress.kind === 'polygon' && shapeProgress.points.length >= 3)
+    if (!enough) return
+
     const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control')
     container.style.cssText =
       'background:white;padding:6px 12px;font-size:12px;font-weight:bold;cursor:pointer;color:#111;border:2px solid rgba(0,0,0,0.2);border-radius:4px;'
-    container.innerText = '✓ 面を閉じる'
+    container.innerText =
+      shapeProgress.kind === 'line' ? '✓ 線を確定 (Enter)' : '✓ 面を閉じる (Enter)'
     L.DomEvent.on(container, 'click', (ev) => {
       L.DomEvent.stop(ev)
-      if (!farmId) return
-      void addStroke({
-        farmId,
-        kind: 'polygon',
-        color,
-        widthPx,
-        lineStyle,
-        points: shapeProgress.points,
-        layer,
-      })
-      setShapeProgress(null)
+      commitVertexShape()
     })
     L.DomEvent.disableClickPropagation(container)
     const control = new L.Control({ position: 'topright' })
@@ -955,7 +997,7 @@ export function MapDrawingLayer({
     return () => {
       control.remove()
     }
-  }, [shapeProgress, map, farmId, color, widthPx, lineStyle, layer, addStroke])
+  }, [shapeProgress, map, commitVertexShape])
 
   // 選択中のストローク (端点ハンドル用)
   const selectedStroke = useMemo(
@@ -1206,7 +1248,7 @@ export function MapDrawingLayer({
         </>
       )
     }
-    // polygon
+    // polygon / line (どちらも頂点列をそのまま点線でつなぐ)
     const positions = shapeProgress.points.map(
       (p) => [p.lat, p.lng] as [number, number],
     )
@@ -1225,7 +1267,7 @@ export function MapDrawingLayer({
         )}
         {shapeProgress.points.map((p, i) => (
           <Marker
-            key={`poly-progress-${i}`}
+            key={`vertex-progress-${i}`}
             position={[p.lat, p.lng]}
             icon={i === 0 ? FIRST_VERTEX_ICON : HANDLE_ICON}
             interactive={false}
