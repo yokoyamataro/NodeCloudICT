@@ -13,12 +13,39 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChevronDown, ChevronUp, Eye, EyeOff, Layers, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
-import {
-  ARROW_LABEL,
-  DEFAULT_LAYERS,
-  type ArrowStyle,
-  type LineStyle,
-} from '@/stores/mapDrawingStore'
+import { DEFAULT_LAYERS, type ArrowStyle, type LineStyle } from '@/stores/mapDrawingStore'
+
+/**
+ * 端部のスタイル見本。線だけ / 矢印付き を 短い線で 見せる。
+ * side は どちらの端かで、矢印の 向きが 変わる。
+ */
+function EndStyleSvg({
+  head,
+  side,
+  size = 22,
+}: {
+  head: boolean
+  side: 'start' | 'end'
+  size?: number
+}) {
+  // 始点は 左向き、終点は 右向き
+  const tip = side === 'start' ? 3 : 21
+  const back = side === 'start' ? 9 : 15
+  return (
+    <svg width={size} height={16} viewBox="0 0 24 16" aria-hidden="true">
+      <line x1="3" y1="8" x2="21" y2="8" stroke="currentColor" strokeWidth={1.8} />
+      {head && <polygon points={`${tip},8 ${back},4 ${back},12`} fill="currentColor" />}
+    </svg>
+  )
+}
+
+/** 端部の矢印を 始点 / 終点 それぞれの 有無から 組み立てる */
+function combineArrow(start: boolean, end: boolean): ArrowStyle {
+  if (start && end) return 'both'
+  if (start) return 'start'
+  if (end) return 'end'
+  return 'none'
+}
 
 /** 色のプリセット (ツールバーと揃える) */
 const COLOR_PRESETS = [
@@ -342,23 +369,36 @@ export function OverviewLayerPanel({
           </div>
 
           <div>
-            <div className="text-[10px] text-slate-500 mb-1">端部 (矢印)</div>
-            <div className="flex gap-1">
-              {(['none', 'start', 'end', 'both'] as const).map((a) => (
-                <button
-                  key={a}
-                  type="button"
-                  onClick={() => onChangeArrow(a)}
-                  className={`flex-1 h-7 text-[11px] rounded border ${
-                    arrow === a
-                      ? 'bg-blue-50 border-blue-400 text-blue-700'
-                      : 'border-slate-300 text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  {ARROW_LABEL[a]}
-                </button>
-              ))}
-            </div>
+            <div className="text-[10px] text-slate-500 mb-1">端部</div>
+            {(
+              [
+                ['start', '始点', arrow === 'start' || arrow === 'both'],
+                ['end', '終点', arrow === 'end' || arrow === 'both'],
+              ] as const
+            ).map(([side, label, hasHead]) => (
+              <div key={side} className="flex items-center gap-1 mb-1 last:mb-0">
+                <span className="text-[10px] text-slate-500 w-6 shrink-0">{label}</span>
+                {([false, true] as const).map((head) => (
+                  <button
+                    key={String(head)}
+                    type="button"
+                    onClick={() => {
+                      const s2 = side === 'start' ? head : arrow === 'start' || arrow === 'both'
+                      const e2 = side === 'end' ? head : arrow === 'end' || arrow === 'both'
+                      onChangeArrow(combineArrow(s2, e2))
+                    }}
+                    title={`${label}を${head ? '矢印' : '線'}にする`}
+                    className={`flex-1 h-7 flex items-center justify-center rounded border ${
+                      hasHead === head
+                        ? 'bg-blue-50 border-blue-400 text-blue-700'
+                        : 'border-slate-300 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <EndStyleSvg head={head} side={side} />
+                  </button>
+                ))}
+              </div>
+            ))}
           </div>
         </div>
 

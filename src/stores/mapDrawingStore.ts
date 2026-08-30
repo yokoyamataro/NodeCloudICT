@@ -22,15 +22,11 @@ import { supabase } from '@/lib/supabase'
 export type LineStyle = 'solid' | 'dashed' | 'dotted'
 export type DrawingKind = 'stroke' | 'text' | 'circle' | 'arc' | 'polygon' | 'point'
 
-/** 線の端部の矢印 */
+/**
+ * 線の端部の矢印。UI では 始点 / 終点 それぞれ 線か矢印かを 選ばせ、
+ * その組み合わせを この 4 通りに まとめて 持つ。
+ */
 export type ArrowStyle = 'none' | 'start' | 'end' | 'both'
-
-export const ARROW_LABEL: Record<ArrowStyle, string> = {
-  none: 'なし',
-  start: '始点',
-  end: '終点',
-  both: '両端',
-}
 
 /** 線上文字を 線のどこに 置くか */
 export type TextAnchor = 'center' | 'above' | 'below'
