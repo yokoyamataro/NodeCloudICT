@@ -75,9 +75,18 @@ export function buildMapDrawingDxfEntities(
       if (!arc) {
         // 3 点が一直線 → 円弧にならないので線分として出す
         entities.push({ type: 'LINE', x1: pts[0].x, y1: pts[0].y, x2: pts[2].x, y2: pts[2].y, layer })
+        pushArrows(entities, it.arrow, pts[0], pts[2], pts[2], pts[0], layer)
         continue
       }
       entities.push({ type: 'ARC', ...arc, layer })
+      // 矢印の向きは 端点での 接線 (中心 → 端点 に直交する向き)
+      const tan = (p: XY, sign: number): XY => ({
+        x: p.x + sign * -(p.y - arc.cy),
+        y: p.y + sign * (p.x - arc.cx),
+      })
+      // 弧が 進む向きを 通過点で 判定する
+      const forward = tangentSign(arc, pts[0], pts[1])
+      pushArrows(entities, it.arrow, tan(pts[0], forward), pts[0], tan(pts[2], -forward), pts[2], layer)
       continue
     }
 
@@ -99,18 +108,9 @@ export function buildMapDrawingDxfEntities(
       entities.push({ type: 'LINE', x1: a.x, y1: a.y, x2: b.x, y2: b.y, layer })
     }
 
-    // 端部の矢印。DXF に矢印そのものは無いので、2 本の短い線で羽根を描く
-    if (it.kind === 'stroke' && it.arrow && it.arrow !== 'none') {
-      const ends: Array<'start' | 'end'> =
-        it.arrow === 'both' ? ['start', 'end'] : [it.arrow]
-      for (const which of ends) {
-        const tip = which === 'end' ? pts[pts.length - 1] : pts[0]
-        const prev = which === 'end' ? pts[pts.length - 2] : pts[1]
-        if (!tip || !prev) continue
-        for (const e of arrowWings(prev, tip)) {
-          entities.push({ type: 'LINE', x1: tip.x, y1: tip.y, x2: e.x, y2: e.y, layer })
-        }
-      }
+    // 端部の矢印
+    if (it.kind === 'stroke') {
+      pushArrows(entities, it.arrow, pts[1], pts[0], pts[pts.length - 2], pts[pts.length - 1], layer)
     }
   }
 
@@ -126,6 +126,43 @@ interface XY {
 const ARROW_LEN_M = 1.0
 /** 羽根の開き [度] */
 const ARROW_SPREAD_DEG = 20
+
+/**
+ * 端部の矢印を 羽根の線として 足す。DXF に 矢印そのものは 無いため。
+ * start 側は (startPrev → startTip)、end 側は (endPrev → endTip) の向きで出す。
+ */
+function pushArrows(
+  entities: DxfEntity[],
+  arrow: string | null | undefined,
+  startPrev: XY | undefined,
+  startTip: XY | undefined,
+  endPrev: XY | undefined,
+  endTip: XY | undefined,
+  layer: string,
+): void {
+  if (!arrow || arrow === 'none') return
+  const jobs: Array<[XY | undefined, XY | undefined]> = []
+  if (arrow === 'start' || arrow === 'both') jobs.push([startPrev, startTip])
+  if (arrow === 'end' || arrow === 'both') jobs.push([endPrev, endTip])
+  for (const [prev, tip] of jobs) {
+    if (!prev || !tip) continue
+    for (const w of arrowWings(prev, tip)) {
+      entities.push({ type: 'LINE', x1: tip.x, y1: tip.y, x2: w.x, y2: w.y, layer })
+    }
+  }
+}
+
+/** 円弧が 始点から どちら回りに 進むか (+1 = 反時計回り) */
+function tangentSign(
+  arc: { cx: number; cy: number },
+  start: XY,
+  mid: XY,
+): number {
+  // 中心→始点 と 中心→通過点 の 外積の符号が 進行方向
+  const a = { x: start.x - arc.cx, y: start.y - arc.cy }
+  const b = { x: mid.x - arc.cx, y: mid.y - arc.cy }
+  return a.x * b.y - a.y * b.x >= 0 ? 1 : -1
+}
 
 /** prev → tip の向きに対する、矢印の羽根 2 本の 端点 */
 function arrowWings(prev: XY, tip: XY): [XY, XY] {

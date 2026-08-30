@@ -25,7 +25,7 @@
 //               長さ / 増減 (＋で伸び −で縮む) を入れるか、対象の線・円をクリックして
 //               その延長線との 交点まで、あるいは 何もない所をクリックして そこまで。
 //               交点が 複数のときは 青い候補点で 残す側を選ぶ。
-//               連続線は 端部を 矢印 (なし / 始点 / 終点 / 両端) にもできる。
+//               連続線と 円弧は 端部を 矢印 (なし / 始点 / 終点 / 両端) にもできる。
 //               操作ハンドルは 線より上のペインに出す (線の裏に回らないように)。
 //   ・'eraser'  アイテムをクリックで削除。
 //   ・'measure-dist' / 'measure-area' / 'measure-perp'
@@ -1984,6 +1984,23 @@ export function MapDrawingLayer({
                 }}
                 eventHandlers={clickHandlers}
               />
+              {/* 端部の矢印。円弧は 近似ポリラインの 端 2 点で 接線の向きを取る */}
+              {arrowEnds(s.arrow).map((which) => {
+                const n = arcPts.length
+                if (n < 2) return null
+                const tip = which === 'end' ? arcPts[n - 1] : arcPts[0]
+                const prev = which === 'end' ? arcPts[n - 2] : arcPts[1]
+                const tipLL = { lat: tip[0], lng: tip[1] }
+                const prevLL = { lat: prev[0], lng: prev[1] }
+                return (
+                  <Marker
+                    key={`arrow-${s.id}-${which}`}
+                    position={tip}
+                    icon={makeArrowIcon(s.color, s.width_px, bearingRawDeg(prevLL, tipLL))}
+                    interactive={false}
+                  />
+                )
+              })}
             </Fragment>
           )
         }
@@ -3241,7 +3258,7 @@ export function MapDrawingLayer({
                   />
                 </label>
 
-                {selectedStroke.kind === 'stroke' && (
+                {(selectedStroke.kind === 'stroke' || selectedStroke.kind === 'arc') && (
                   <label className="flex items-center gap-1 shrink-0">
                     <span className="text-[11px] text-slate-600">矢印</span>
                     <select

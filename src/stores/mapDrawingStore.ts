@@ -76,7 +76,7 @@ export interface MapDrawingStroke {
   font_size: number | null
   /** kind='text' の回転角 [度]。反時計回りが正。0 = 水平文字 */
   rotation_deg: number
-  /** kind='stroke' の端部の矢印 */
+  /** kind='stroke' / 'arc' の端部の矢印 */
   arrow: ArrowStyle
   created_at: string
   updated_at: string
