@@ -90,6 +90,7 @@ import {
 } from '@/stores/mapDrawingStore'
 import type { CoordinateConverter } from '@/lib/coordinates'
 import {
+  AREA_UNIT_LABEL,
   DEFAULT_DIMENSION_FORMAT,
   formatArea as fmtArea,
   formatDistance as fmtDist,
@@ -174,8 +175,6 @@ interface Props {
   layerOrder?: string[]
   /** これから引く線に付ける 端部の矢印 */
   arrow?: ArrowStyle
-  /** 寸法値の 書き方 (単位 / 桁数 / 面積の単位 / 文字サイズ) */
-  dimensionFormat?: DimensionFormat
   /** 選択の仕方。点で 1 つずつ / 線・長方形・多角形で まとめて */
   selectMethod?: SelectMethod
   /** 選択が変わったら 呼ぶ。左パネルで まとめて属性を 変えるために使う */
@@ -1171,7 +1170,6 @@ export function MapDrawingLayer({
   hidden = false,
   layerOrder,
   arrow = 'none',
-  dimensionFormat = DEFAULT_DIMENSION_FORMAT,
   selectMethod = 'point',
   onSelectionChange,
   hiddenLayers,
@@ -1234,6 +1232,15 @@ export function MapDrawingLayer({
   const [extendEnds, setExtendEnds] = useState<'both' | 'start' | 'end'>('both')
   /** 寸法 / 面積を 文字にするときの 出し方 */
   const [dimScope, setDimScope] = useState<'each' | 'total' | 'both'>('each')
+  /**
+   * 寸法の 設定中か。選択して「寸法」を 押すと ここに入り、
+   * 地図に 仮の文字を 出しながら 書き方を 決めて、「文字にする」で 確定する。
+   */
+  const [dimensionMode, setDimensionMode] = useState(false)
+  /** 寸法値の 書き方 (単位 / 桁数 / 面積の単位 / 文字サイズ) */
+  const [dimensionFormat, setDimensionFormat] = useState<DimensionFormat>(
+    DEFAULT_DIMENSION_FORMAT,
+  )
   /** 長方形・垂線でカーソルを追うための位置 (仮表示に使う) */
   const [shapeHover, setShapeHover] = useState<LL | null>(null)
   /** 円: 中心を決めたあとの半径 [m]。数値入力でも、円周上のクリックでも決まる */
@@ -1508,6 +1515,7 @@ export function MapDrawingLayer({
       setSelectedIds([])
       setSelectShape([])
       setExtending(false)
+      setDimensionMode(false)
       pickCycleRef.current = null
       setPickCycle(null)
       setTransformMode(null)
@@ -2028,9 +2036,8 @@ export function MapDrawingLayer({
     selectedItems.length > 0 && selectedItems.every((it) => it.kind === 'stroke')
   /** 寸法を 出せる図形 (線 / 面) が 選択に あるか */
   const selectionHasLines = selectedItems.some((it) => it.kind === 'stroke')
-  const canAddDimension = selectedItems.some(
-    (it) => it.kind === 'stroke' || it.kind === 'polygon',
-  )
+  const selectionHasPolygons = selectedItems.some((it) => it.kind === 'polygon')
+  const canAddDimension = selectionHasLines || selectionHasPolygons
 
   /** 絞り込みの 選択肢。今 選ばれているものの 顔ぶれから 作る */
   const selectionFacets = useMemo(() => {
@@ -2101,76 +2108,84 @@ export function MapDrawingLayer({
     setSelectedIds([])
   }, [selectedItems, converter, updateStrokePoints])
 
-  /** 選んだ図形の 寸法 (線は長さ / 面は面積) を 文字として 置く */
-  const addDimensionText = useCallback(() => {
-    if (!farmId) return
+  /**
+   * 選んだ図形の 寸法。線は 長さ (各辺 / 合計 / 両方)、面は 面積。
+   * 「寸法」を 押している間は これを 仮の文字として 地図に 出し、
+   * 「文字にする」で そのまま 文字要素に する。
+   */
+  const dimensionLabels = useMemo<MeasureLabel[]>(() => {
+    if (!dimensionMode) return []
+    const out: MeasureLabel[] = []
     for (const it of selectedItems) {
       if (it.kind === 'stroke') {
         const segs = buildSegments(it.points, converter)
         if (segs.length === 0) continue
-        const total = segs.reduce((sum, sg) => sum + sg.value, 0)
-        const put = (at: LL, angle: number, text: string) =>
-          void addText({
-            farmId,
-            color,
-            widthPx,
-            lat: at.lat,
-            lng: at.lng,
-            text,
-            layer,
-            fontSize: dimensionFormat.fontSize,
-            rotationDeg: angle,
-            textAnchor: measureAnchor,
-            textAlign: measureAlign,
-          })
         if (dimScope !== 'total') {
           for (const sg of segs) {
-            put(midLL(sg.a, sg.b), bearingDeg(sg.a, sg.b, converter), fmtDist(sg.value, dimensionFormat))
+            out.push({
+              at: midLL(sg.a, sg.b),
+              angle: bearingDeg(sg.a, sg.b, converter),
+              text: fmtDist(sg.value, dimensionFormat),
+              anchor: measureAnchor,
+              align: measureAlign,
+            })
           }
         }
         if (dimScope !== 'each' && segs.length > 1) {
-          const first = it.points[0]
-          const last = it.points[it.points.length - 1]
-          put(
-            centroid(it.points),
-            bearingDeg(first, last, converter),
-            `計 ${fmtDist(total, dimensionFormat)}`,
-          )
+          const total = segs.reduce((sum, sg) => sum + sg.value, 0)
+          out.push({
+            at: centroid(it.points),
+            angle: bearingDeg(it.points[0], it.points[it.points.length - 1], converter),
+            text: `計 ${fmtDist(total, dimensionFormat)}`,
+            anchor: measureAnchor,
+            align: measureAlign,
+          })
         }
         continue
       }
       if (it.kind === 'polygon') {
         const area = measureArea(converter, it.points)
         if (area <= 0) continue
-        const at = centroid(it.points)
-        void addText({
-          farmId,
-          color,
-          widthPx,
-          lat: at.lat,
-          lng: at.lng,
+        out.push({
+          at: centroid(it.points),
+          angle: 0,
           text: fmtArea(area, dimensionFormat),
-          layer,
-          fontSize: dimensionFormat.fontSize,
-          rotationDeg: 0,
-          textAnchor: measureAnchor,
-          textAlign: measureAlign,
+          anchor: measureAnchor,
+          align: measureAlign,
         })
       }
     }
+    return out
   }, [
-    farmId,
+    dimensionMode,
     selectedItems,
     dimScope,
-    converter,
-    color,
-    widthPx,
-    layer,
     dimensionFormat,
     measureAnchor,
     measureAlign,
-    addText,
+    converter,
   ])
+
+  /** 仮の文字を そのまま 文字要素として 保存する */
+  const commitDimensionText = useCallback(() => {
+    if (!farmId || dimensionLabels.length === 0) return
+    for (const lb of dimensionLabels) {
+      void addText({
+        farmId,
+        color,
+        widthPx,
+        lat: lb.at.lat,
+        lng: lb.at.lng,
+        text: lb.text,
+        layer,
+        fontSize: dimensionFormat.fontSize,
+        rotationDeg: lb.angle,
+        textAnchor: lb.anchor,
+        textAlign: lb.align,
+      })
+    }
+    setDimensionMode(false)
+  }, [farmId, dimensionLabels, color, widthPx, layer, dimensionFormat, addText])
 
   /** 囲った形に かかっている図形を 選ぶ */
   const applySelection = useCallback(
@@ -3102,6 +3117,7 @@ export function MapDrawingLayer({
         setParallelBase(null)
         setRectStart(null)
         setExtending(false)
+        setDimensionMode(false)
         setPerpBase(null)
         setPerpThrough(null)
         setTextLineStart(null)
@@ -3303,6 +3319,27 @@ export function MapDrawingLayer({
           )}
         </>
       )}
+
+      {/* 寸法の 仮の文字。「文字にする」を 押すまでは 保存しない。
+          確定後と 同じ 見え方 (色・サイズ・向き・位置) で 半透明に 出す */}
+      {dimensionLabels.map((lb, i) => (
+        <Marker
+          key={`dim-preview-${i}`}
+          position={[lb.at.lat, lb.at.lng]}
+          icon={makeTextIcon(
+            lb.text,
+            color,
+            widthPx,
+            false,
+            dimensionFormat.fontSize,
+            lb.angle,
+            lb.anchor,
+            lb.align,
+          )}
+          opacity={0.65}
+          interactive={false}
+        />
+      ))}
 
       {/* 囲って選ぶ途中の 仮表示。カーソルを 最後の頂点として 扱い、
           線は 線、長方形と 多角形は 塗り潰した形で 追従させる */}
@@ -3894,8 +3931,143 @@ export function MapDrawingLayer({
               </>
             )}
 
+            {/* 寸法の 書き方。仮の文字を 見ながら 決めて、「文字にする」で 確定する */}
+            {mode === 'select' && dimensionMode && (
+              <>
+                <span className="font-semibold text-blue-700 shrink-0">寸法</span>
+
+                {selectionHasLines && (
+                  <div className="flex items-center rounded border overflow-hidden shrink-0">
+                    {(
+                      [
+                        ['each', '各辺'],
+                        ['total', '合計'],
+                        ['both', '両方'],
+                      ] as const
+                    ).map(([v, label]) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => setDimScope(v)}
+                        className={`h-7 px-2 text-[11px] ${
+                          dimScope === v
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-white text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <TextPlacementPicker
+                  anchor={measureAnchor}
+                  onChangeAnchor={setMeasureAnchor}
+                  align={measureAlign}
+                  onChangeAlign={setMeasureAlign}
+                />
+
+                <label className="flex items-center gap-1 shrink-0 text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={dimensionFormat.showUnit}
+                    onChange={(ev) =>
+                      setDimensionFormat({ ...dimensionFormat, showUnit: ev.target.checked })
+                    }
+                  />
+                  m
+                </label>
+
+                <div className="flex items-center rounded border overflow-hidden shrink-0">
+                  {([1, 2, 3] as const).map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setDimensionFormat({ ...dimensionFormat, decimals: d })}
+                      title={`小数点以下 ${d} 桁`}
+                      className={`h-7 px-2 text-[11px] ${
+                        dimensionFormat.decimals === d
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-white text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      .{d}
+                    </button>
+                  ))}
+                </div>
+
+                {selectionHasPolygons && (
+                  <div className="flex items-center rounded border overflow-hidden shrink-0">
+                    {(['m2', 'ha', 'tsubo'] as const).map((u) => {
+                      const on = dimensionFormat.areaUnits.includes(u)
+                      return (
+                        <button
+                          key={u}
+                          type="button"
+                          onClick={() => {
+                            const next = on
+                              ? dimensionFormat.areaUnits.filter((x) => x !== u)
+                              : [...dimensionFormat.areaUnits, u]
+                            // 全部 外すと 何も出せないので 最低 1 つは 残す
+                            if (next.length === 0) return
+                            setDimensionFormat({ ...dimensionFormat, areaUnits: next })
+                          }}
+                          title={`面積を ${AREA_UNIT_LABEL[u]} で出す`}
+                          className={`h-7 px-2 text-[11px] ${
+                            on
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-white text-slate-600 hover:bg-slate-50'
+                          }`}
+                        >
+                          {AREA_UNIT_LABEL[u]}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+
+                <label className="flex items-center gap-1 shrink-0">
+                  <span className="text-[11px] text-slate-600">サイズ</span>
+                  <input
+                    type="range"
+                    min={10}
+                    max={48}
+                    step={1}
+                    value={dimensionFormat.fontSize}
+                    onChange={(ev) =>
+                      setDimensionFormat({
+                        ...dimensionFormat,
+                        fontSize: Number(ev.target.value),
+                      })
+                    }
+                    className="w-16"
+                  />
+                  <span className="font-mono text-[10px] w-6 text-right">
+                    {dimensionFormat.fontSize}
+                  </span>
+                </label>
+
+                <button
+                  type="button"
+                  onClick={commitDimensionText}
+                  disabled={dimensionLabels.length === 0}
+                  className="h-7 px-3 rounded bg-blue-600 text-white disabled:opacity-40 shrink-0"
+                >
+                  文字にする ({dimensionLabels.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDimensionMode(false)}
+                  className="h-7 px-2 rounded border text-slate-600 shrink-0"
+                >
+                  やめる
+                </button>
+              </>
+            )}
+
             {/* 選択の仕方。点で 1 つずつ / 線・長方形・多角形で まとめて */}
-            {mode === 'select' && (
+            {mode === 'select' && !dimensionMode && (
               <>
                 <span className="font-semibold text-slate-700 shrink-0">
                   選択 ({SELECT_METHOD_LABEL[selectMethod]})
@@ -4093,48 +4265,20 @@ export function MapDrawingLayer({
               </button>
             )}
 
-            {/* 寸法: 選んだ 線の長さ / 面の面積を 文字として 置く */}
+            {/* 寸法: 押すと 設定に 切り替わり、地図に 仮の文字が 出る */}
             {mode === 'select' && selectedItems.length > 0 && !extending && canAddDimension && (
-              <>
-                <button
-                  type="button"
-                  onClick={addDimensionText}
-                  title="選んだ図形の寸法を文字として置く。表記は左パネルの「寸法の表記」に従う"
-                  className="h-7 px-3 rounded border border-blue-300 text-blue-700 hover:bg-blue-50 shrink-0"
-                >
-                  寸法
-                </button>
-                {selectionHasLines && (
-                  <div className="flex items-center rounded border overflow-hidden shrink-0">
-                    {(
-                      [
-                        ['each', '各辺'],
-                        ['total', '合計'],
-                        ['both', '両方'],
-                      ] as const
-                    ).map(([v, label]) => (
-                      <button
-                        key={v}
-                        type="button"
-                        onClick={() => setDimScope(v)}
-                        className={`h-7 px-2 text-[11px] ${
-                          dimScope === v
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-white text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <TextPlacementPicker
-                  anchor={measureAnchor}
-                  onChangeAnchor={setMeasureAnchor}
-                  align={measureAlign}
-                  onChangeAlign={setMeasureAlign}
-                />
-              </>
+              <button
+                type="button"
+                onClick={() => setDimensionMode((v) => !v)}
+                title="選んだ図形の寸法を文字にする。押すと書き方の設定に切り替わる"
+                className={`h-7 px-3 rounded border shrink-0 ${
+                  dimensionMode
+                    ? 'bg-blue-600 border-blue-500 text-white'
+                    : 'border-blue-300 text-blue-700 hover:bg-blue-50'
+                }`}
+              >
+                寸法
+              </button>
             )}
 
             {/* まとめて選んだときは 削除だけ ここに置く。
