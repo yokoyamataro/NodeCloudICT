@@ -20,8 +20,9 @@
 //               onAddCoordinate も呼び、座標管理にも登録する。
 //   ・'select'  ストロークをタップで選択 → 青ハンドルをドラッグで頂点移動 / 長押しで削除 /
 //               辺の中点の「+」タップで頂点追加 (直線・円・円弧は追加/削除不可、位置移動のみ)。
-//               連続線は 端の橙ハンドル (↔) で 伸縮できる。長さを入れるか、
-//               対象の線・円をクリックすると その交点まで 伸ばす / 詰める。
+//               連続線は 端点の少し上に出る 橙ハンドル (↔) で 伸縮できる
+//               (端点そのものは 青い移動ハンドルのまま)。長さを入れるか、
+//               対象の線・円をクリックすると その延長線との 交点まで 伸ばす / 詰める。
 //               交点が 複数のときは 青い候補点で 残す側を選ぶ。
 //               操作ハンドルは 線より上のペインに出す (線の裏に回らないように)。
 //   ・'eraser'  アイテムをクリックで削除。
@@ -192,12 +193,20 @@ const MIDPOINT_ICON = L.divIcon({
   iconAnchor: [11, 11],
 })
 
-/** ハンドル: 端部の伸縮用 (橙の両矢印) */
+/**
+ * ハンドル: 端部の伸縮用 (橙の両矢印)。
+ * 端点そのものには 青い移動ハンドルが 乗っているので、真上に ずらして描く。
+ * ずらした先が 当たり判定になるので、両方 別々に 掴める。
+ */
 const STRETCH_ICON = L.divIcon({
   className: 'map-drawing-stretch',
-  html: '<div style="width:20px;height:20px;border-radius:4px;background:#f97316;border:2px solid white;box-shadow:0 0 5px rgba(0,0,0,0.6);color:white;font-size:12px;font-weight:bold;line-height:16px;text-align:center;">↔</div>',
-  iconSize: [24, 24],
-  iconAnchor: [12, 12],
+  html:
+    '<div style="display:flex;flex-direction:column;align-items:center">' +
+    '<div style="width:22px;height:22px;border-radius:4px;background:#f97316;border:2px solid white;box-shadow:0 0 5px rgba(0,0,0,0.6);color:white;font-size:13px;font-weight:bold;line-height:18px;text-align:center;">↔</div>' +
+    '<div style="width:2px;height:12px;background:#f97316"></div>' +
+    '</div>',
+  iconSize: [26, 38],
+  iconAnchor: [13, 38],
 })
 
 /** ハンドル: 伸縮の候補点 (どこまで伸ばすかを選ばせる) */
@@ -612,13 +621,21 @@ function perpGeometry(
 //   ・他の要素 (線 / 円) を クリックして、その要素との 交点まで
 // の 2 通り。交点が 複数あるときは、どれにするかを 選ばせる。
 //
+// 対象は 線分そのものではなく その延長線と 交わらせる。ab の b を伸ばすとき、
+// cd が 実際にぶつかっていなくても cd の延長線上まで 伸ばせる (CAD と同じ)。
+// どこまで延ばしたかが 分かるよう、対象の延長は 灰色の点線で 見せる。
+//
 // 計算は 起点 (動かさない側の隣の頂点) を 原点にした メートル座標で行う。
 
 /**
- * 原点から 単位方向 (ux, uy) に伸びる直線と、線分 ab の交点までの距離 [m]。
- * 平行なとき / 交点が線分の外に出るときは null。
+ * 原点から 単位方向 (ux, uy) に伸びる直線と、a-b を通る直線の交点までの距離 [m]。
+ * 平行なときは null。
+ *
+ * a-b の「線分の中」に限定しないのが要点。ab の b を伸ばすとき、cd が
+ * 実際にぶつかっていなくても cd の延長線上まで 伸ばせるようにする。
+ * どの要素を 対象にするかは、クリック位置で 先に 絞ってある。
  */
-function intersectSegment(
+function intersectLineThrough(
   origin: LL,
   ux: number,
   uy: number,
@@ -632,10 +649,7 @@ function intersectSegment(
   const dy = B.north - A.north
   const det = dx * uy - ux * dy
   if (Math.abs(det) < 1e-9) return null
-  const t = (dx * A.north - dy * A.east) / det
-  const sParam = (ux * A.north - uy * A.east) / det
-  if (sParam < 0 || sParam > 1) return null
-  return t
+  return (dx * A.north - dy * A.east) / det
 }
 
 /** 同じく、中心 center / 半径 r の円との交点までの距離 [m] (0〜2 個) */
@@ -654,6 +668,25 @@ function intersectCircle(
   if (disc === 0) return [proj]
   const root = Math.sqrt(disc)
   return [proj - root, proj + root]
+}
+
+/**
+ * 線分 [a, b] を、点 p の位置まで届くように 延ばした 2 点を返す。
+ * 「実際にはぶつかっていない相手まで伸ばした」ことを 見せるための 補助線に使う。
+ */
+function extendThrough(seg: [LL, LL], p: LL, c?: CoordinateConverter): [LL, LL] {
+  const [a, b] = seg
+  const ab = deltaM(a, b, c)
+  const len = Math.hypot(ab.east, ab.north)
+  if (len < 1e-6) return seg
+  const ux = ab.east / len
+  const uy = ab.north / len
+  const ap = deltaM(a, p, c)
+  const t = ap.east * ux + ap.north * uy
+  // a を 0、b を len としたときの、p の射影位置 t を含む範囲まで広げる
+  const lo = Math.min(0, len, t)
+  const hi = Math.max(0, len, t)
+  return [offsetLL(a, ux * lo, uy * lo, c), offsetLL(a, ux * hi, uy * hi, c)]
 }
 
 /** 基準線を拾う判定の広さ [画面 px] */
@@ -786,6 +819,8 @@ export function MapDrawingLayer({
   const [stretchLength, setStretchLength] = useState(0)
   /** 端部の伸縮: 交点が複数あるときの候補 (起点からの距離 [m]) */
   const [stretchCandidates, setStretchCandidates] = useState<number[]>([])
+  /** 端部の伸縮: 対象に選んだ線分。延長線を見せるために覚えておく */
+  const [stretchTarget, setStretchTarget] = useState<[LL, LL] | null>(null)
   /** 長方形・垂線でカーソルを追うための位置 (仮表示に使う) */
   const [shapeHover, setShapeHover] = useState<LL | null>(null)
   /** 円: 中心を決めたあとの半径 [m]。数値入力でも、円周上のクリックでも決まる */
@@ -937,6 +972,7 @@ export function MapDrawingLayer({
       setDragPreview(null)
       setStretchEnd(null)
       setStretchCandidates([])
+      setStretchTarget(null)
     }
     // 計測は結果を残さない。モードを抜けた時点で消す
     if (!isMeasureMode(mode)) {
@@ -1057,6 +1093,7 @@ export function MapDrawingLayer({
     void updateStrokePoints(selectedStroke.id, pts)
     setStretchEnd(null)
     setStretchCandidates([])
+    setStretchTarget(null)
   }, [selectedStroke, stretchEnd, stretchTip, updateStrokePoints])
 
   // タップ式描画 + text 追加: useMapEvents
@@ -1178,6 +1215,7 @@ export function MapDrawingLayer({
       if (mode === 'select' && stretchAxis) {
         const clickPx = map.latLngToContainerPoint(e.latlng)
         const hits: number[] = []
+        let target: [LL, LL] | null = null
         for (const it of items) {
           if (it.id === selectedStroke?.id) continue
           if (it.kind === 'circle') {
@@ -1208,8 +1246,11 @@ export function MapDrawingLayer({
               map.latLngToContainerPoint([b.lat, b.lng]),
             )
             if (px > PICK_LINE_RADIUS_PX) continue
-            const t = intersectSegment(stretchAxis.origin, stretchAxis.ux, stretchAxis.uy, a, b, converter)
-            if (t !== null) hits.push(t)
+            const t = intersectLineThrough(stretchAxis.origin, stretchAxis.ux, stretchAxis.uy, a, b, converter)
+            if (t !== null) {
+              hits.push(t)
+              target = [a, b]
+            }
           }
         }
         // 起点より手前 (線が裏返る側) は捨てる。近い順に並べる
@@ -1217,6 +1258,7 @@ export function MapDrawingLayer({
           .filter((t) => t > 0.01)
           .sort((a, b) => Math.abs(a - stretchLength) - Math.abs(b - stretchLength))
         if (usable.length === 0) return
+        setStretchTarget(target)
         if (usable.length === 1) {
           setStretchLength(Math.round(usable[0] * 100) / 100)
           setStretchCandidates([])
@@ -1426,6 +1468,7 @@ export function MapDrawingLayer({
         setRectStart(null)
         setStretchEnd(null)
         setStretchCandidates([])
+        setStretchTarget(null)
         setPerpBase(null)
         setPerpThrough(null)
         setTextLineStart(null)
@@ -2265,12 +2308,25 @@ export function MapDrawingLayer({
                   const d = deltaM(origin, p, converter)
                   setStretchLength(Math.round(Math.hypot(d.east, d.north) * 100) / 100)
                   setStretchCandidates([])
+                  setStretchTarget(null)
                   setStretchEnd(which)
                 },
               }}
             />
           )
         })}
+
+      {/* 対象の延長線。実際にはぶつかっていない相手まで伸ばしたことが
+          分かるよう、対象の線分を 伸縮後の端点まで 灰色の点線で 延ばして見せる */}
+      {stretchTarget && stretchTip && (
+        <Polyline
+          positions={extendThrough(stretchTarget, stretchTip, converter).map(
+            (p) => [p.lat, p.lng] as [number, number],
+          )}
+          pathOptions={{ color: '#64748b', weight: 1.5, opacity: 0.9, dashArray: '4,4' }}
+          interactive={false}
+        />
+      )}
 
       {/* 伸縮の仮表示 (起点 → 伸縮後の端点) */}
       {stretchAxis && stretchTip && (
@@ -2682,6 +2738,7 @@ export function MapDrawingLayer({
                   onClick={() => {
                     setStretchEnd(null)
                     setStretchCandidates([])
+                    setStretchTarget(null)
                   }}
                   className="h-7 px-2 rounded border text-slate-600 shrink-0"
                 >
