@@ -85,6 +85,7 @@ interface ShareDrawing {
   /** 共有 API が返さない場合もあるので任意 */
   font_size?: number | null
   rotation_deg?: number | null
+  arrow?: string | null
 }
 
 interface ShareFarmView {

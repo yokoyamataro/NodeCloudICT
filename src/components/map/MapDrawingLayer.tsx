@@ -21,9 +21,11 @@
 //   ・'select'  ストロークをタップで選択 → 青ハンドルをドラッグで頂点移動 / 長押しで削除 /
 //               辺の中点の「+」タップで頂点追加 (直線・円・円弧は追加/削除不可、位置移動のみ)。
 //               連続線は 端点の少し上に出る 橙ハンドル (↔) で 伸縮できる
-//               (端点そのものは 青い移動ハンドルのまま。重ならないよう離す)。長さを入れるか、
-//               対象の線・円をクリックすると その延長線との 交点まで 伸ばす / 詰める。
+//               (端点そのものは 青い移動ハンドルのまま。重ならないよう離す)。
+//               長さ / 増減 (＋で伸び −で縮む) を入れるか、対象の線・円をクリックして
+//               その延長線との 交点まで、あるいは 何もない所をクリックして そこまで。
 //               交点が 複数のときは 青い候補点で 残す側を選ぶ。
+//               連続線は 端部を 矢印 (なし / 始点 / 終点 / 両端) にもできる。
 //               操作ハンドルは 線より上のペインに出す (線の裏に回らないように)。
 //   ・'eraser'  アイテムをクリックで削除。
 //   ・'measure-dist' / 'measure-area' / 'measure-perp'
@@ -59,7 +61,9 @@ import {
   EMPTY_STROKES,
   DEFAULT_LAYERS,
   DEFAULT_SNAP_TYPES,
+  ARROW_LABEL,
   KIND_LABEL,
+  type ArrowStyle,
   type SnapType,
   type MapDrawingStroke,
   type LineStyle,
@@ -534,6 +538,37 @@ function midLL(a: LL, b: LL): LL {
   return { lat: (a.lat + b.lat) / 2, lng: (a.lng + b.lng) / 2 }
 }
 
+/**
+ * 線の端部に付ける矢印。地図の縮尺で 大きさが 変わらないよう、
+ * メートルの図形ではなく 画面固定サイズの divIcon で 描く。
+ * rotationDeg は 反時計回りが正 (東が 0)。
+ */
+function makeArrowIcon(color: string, widthPx: number, rotationDeg: number): L.DivIcon {
+  const len = Math.max(10, 8 + widthPx * 1.6)
+  const half = Math.max(4, 3 + widthPx * 0.7)
+  const box = Math.ceil(len * 2 + 4)
+  const cx = box / 2
+  const cy = box / 2
+  // 東向き (+x) の三角を作り、CSS で回す。CSS は時計回りが正なので符号を反転
+  const pts = `${cx + len},${cy} ${cx - len * 0.2},${cy - half} ${cx - len * 0.2},${cy + half}`
+  return L.divIcon({
+    className: 'map-drawing-arrow',
+    html: `<svg width="${box}" height="${box}" viewBox="0 0 ${box} ${box}" style="transform:rotate(${-rotationDeg}deg);overflow:visible">
+      <polygon points="${pts}" fill="${color}" />
+    </svg>`,
+    iconSize: [box, box],
+    iconAnchor: [cx, cy],
+  })
+}
+
+/** 矢印を出す端の一覧 */
+function arrowEnds(arrow: ArrowStyle | null | undefined): Array<'start' | 'end'> {
+  if (arrow === 'start') return ['start']
+  if (arrow === 'end') return ['end']
+  if (arrow === 'both') return ['start', 'end']
+  return []
+}
+
 /** ピックの吸着範囲 [画面 px]。指でも届き、隣の点を誤って掴まない程度 */
 const SNAP_RADIUS_PX = 18
 /** 交点 / 線上を探すときに、相手にする線分を絞る広さ [画面 px] */
@@ -558,6 +593,23 @@ const SNAP_HINT_ICON = L.divIcon({
   iconSize: [14, 14],
   iconAnchor: [7, 7],
 })
+
+/** a → b の向き [度]。東を 0 とした反時計回り。丸めをしない生の値 */
+function bearingRawDeg(a: LL, b: LL, c?: CoordinateConverter): number {
+  let east: number
+  let north: number
+  if (c) {
+    const A = c.toXY(a.lat, a.lng)
+    const B = c.toXY(b.lat, b.lng)
+    north = B.x - A.x
+    east = B.y - A.y
+  } else {
+    const k = Math.cos(((a.lat + b.lat) / 2 / 180) * Math.PI)
+    north = (b.lat - a.lat) * M_PER_DEG_LAT
+    east = (b.lng - a.lng) * M_PER_DEG_LAT * k
+  }
+  return (Math.atan2(north, east) * 180) / Math.PI
+}
 
 /**
  * a → b の向き [度]。東を 0 とした反時計回り (DXF の TEXT 回転と同じ向き)。
@@ -1428,7 +1480,18 @@ export function MapDrawingLayer({
         const usable = hits
           .filter((t) => t > 0.01)
           .sort((a, b) => Math.abs(a - stretchLength) - Math.abs(b - stretchLength))
-        if (usable.length === 0) return
+        if (usable.length === 0) {
+          // 相手が 見つからなければ、クリックした位置を 伸縮の向きに 射影して
+          // そこまで 伸ばす / 詰める
+          const d = deltaM(stretchAxis.origin, at, converter)
+          const t = d.east * stretchAxis.ux + d.north * stretchAxis.uy
+          if (t > 0.01) {
+            setStretchLength(Math.round(t * 100) / 100)
+            setStretchCandidates([])
+            setStretchTarget(null)
+          }
+          return
+        }
         setStretchTarget(target)
         if (usable.length === 1) {
           setStretchLength(Math.round(usable[0] * 100) / 100)
@@ -1988,6 +2051,21 @@ export function MapDrawingLayer({
               }}
               eventHandlers={clickHandlers}
             />
+            {/* 端部の矢印。向きは その端の線分に 合わせる */}
+            {arrowEnds(s.arrow).map((which) => {
+              const n = pointsForRender.length
+              const tip = which === 'end' ? pointsForRender[n - 1] : pointsForRender[0]
+              const prev = which === 'end' ? pointsForRender[n - 2] : pointsForRender[1]
+              if (!tip || !prev) return null
+              return (
+                <Marker
+                  key={`arrow-${s.id}-${which}`}
+                  position={[tip.lat, tip.lng]}
+                  icon={makeArrowIcon(s.color, s.width_px, bearingRawDeg(prev, tip))}
+                  interactive={false}
+                />
+              )
+            })}
           </Fragment>
         )
       }),
@@ -3074,10 +3152,19 @@ export function MapDrawingLayer({
                     className="w-20 h-7 px-2 border rounded text-right font-mono"
                   />
                 </label>
+                <label className="flex items-center gap-1 shrink-0">
+                  <span className="text-[11px] text-slate-600">増減 (m)</span>
+                  <NumberField
+                    value={Math.round((stretchLength - stretchAxis.current) * 100) / 100}
+                    onChange={(v) => setStretchLength(Math.max(0, stretchAxis.current + v))}
+                    onEnter={commitStretch}
+                    className="w-20 h-7 px-2 border rounded text-right font-mono"
+                  />
+                </label>
                 <span className="text-[11px] text-slate-500">
                   {stretchCandidates.length > 0
                     ? '交点が複数あります。残す側の青い点をクリック'
-                    : '対象の線・円をクリックすると、その交点まで伸縮します'}
+                    : '＋で伸び、−で縮む / 対象の線・円をクリックでその交点まで / 何もない所をクリックでそこまで'}
                 </span>
                 <button
                   type="button"
@@ -3153,6 +3240,27 @@ export function MapDrawingLayer({
                     className="w-8 h-7 p-0 border rounded cursor-pointer"
                   />
                 </label>
+
+                {selectedStroke.kind === 'stroke' && (
+                  <label className="flex items-center gap-1 shrink-0">
+                    <span className="text-[11px] text-slate-600">矢印</span>
+                    <select
+                      value={selectedStroke.arrow ?? 'none'}
+                      onChange={(ev) =>
+                        void updateStrokeAttrs(selectedStroke.id, {
+                          arrow: ev.target.value as ArrowStyle,
+                        })
+                      }
+                      className="h-7 px-1 border rounded"
+                    >
+                      {(['none', 'start', 'end', 'both'] as const).map((a) => (
+                        <option key={a} value={a}>
+                          {ARROW_LABEL[a]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
 
                 {selectedStroke.kind !== 'text' && selectedStroke.kind !== 'point' && (
                   <label className="flex items-center gap-1 shrink-0">

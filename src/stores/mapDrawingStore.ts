@@ -22,6 +22,16 @@ import { supabase } from '@/lib/supabase'
 export type LineStyle = 'solid' | 'dashed' | 'dotted'
 export type DrawingKind = 'stroke' | 'text' | 'circle' | 'arc' | 'polygon' | 'point'
 
+/** 線の端部の矢印 */
+export type ArrowStyle = 'none' | 'start' | 'end' | 'both'
+
+export const ARROW_LABEL: Record<ArrowStyle, string> = {
+  none: 'なし',
+  start: '始点',
+  end: '終点',
+  both: '両端',
+}
+
 /** ピック (スナップ) で 吸着させる対象の種類 */
 export type SnapType = 'vertex' | 'intersection' | 'center' | 'edge'
 
@@ -66,6 +76,8 @@ export interface MapDrawingStroke {
   font_size: number | null
   /** kind='text' の回転角 [度]。反時計回りが正。0 = 水平文字 */
   rotation_deg: number
+  /** kind='stroke' の端部の矢印 */
+  arrow: ArrowStyle
   created_at: string
   updated_at: string
 }
@@ -98,6 +110,7 @@ export interface StrokeAttrs {
   text?: string
   fontSize?: number | null
   rotationDeg?: number
+  arrow?: ArrowStyle
 }
 
 /** StrokeAttrs → DB カラム名 */
@@ -110,6 +123,7 @@ function attrsToColumns(a: StrokeAttrs): Record<string, unknown> {
   if (a.text !== undefined) out.text = a.text
   if (a.fontSize !== undefined) out.font_size = a.fontSize
   if (a.rotationDeg !== undefined) out.rotation_deg = a.rotationDeg
+  if (a.arrow !== undefined) out.arrow = a.arrow
   return out
 }
 
@@ -124,6 +138,7 @@ function applyAttrs(item: MapDrawingStroke, a: StrokeAttrs): MapDrawingStroke {
     text: a.text !== undefined ? a.text : item.text,
     font_size: a.fontSize !== undefined ? a.fontSize : item.font_size,
     rotation_deg: a.rotationDeg ?? item.rotation_deg,
+    arrow: a.arrow ?? item.arrow,
   }
 }
 
@@ -137,6 +152,7 @@ function pickAttrs(item: MapDrawingStroke, a: StrokeAttrs): StrokeAttrs {
   if (a.text !== undefined) out.text = item.text ?? ''
   if (a.fontSize !== undefined) out.fontSize = item.font_size
   if (a.rotationDeg !== undefined) out.rotationDeg = item.rotation_deg
+  if (a.arrow !== undefined) out.arrow = item.arrow
   return out
 }
 
@@ -207,6 +223,7 @@ async function insertItemInternal(
     layer?: string
     fontSize?: number | null
     rotationDeg?: number
+    arrow?: ArrowStyle
   },
 ): Promise<MapDrawingStroke | null> {
   const { data: userData } = await supabase.auth.getUser()
@@ -225,6 +242,7 @@ async function insertItemInternal(
       layer: input.layer ?? '0',
       font_size: input.fontSize ?? null,
       rotation_deg: input.rotationDeg ?? 0,
+      arrow: input.arrow ?? 'none',
     } as never)
     .select()
     .single()
@@ -284,6 +302,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
       layer,
       font_size: null,
       rotation_deg: 0,
+      arrow: 'none',
       created_at: now,
       updated_at: now,
     }
@@ -342,6 +361,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
       layer,
       font_size: fontSize ?? null,
       rotation_deg: rotationDeg,
+      arrow: 'none',
       created_at: now,
       updated_at: now,
     }
@@ -400,6 +420,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
       layer,
       font_size: null,
       rotation_deg: 0,
+      arrow: 'none',
       created_at: now,
       updated_at: now,
     }
@@ -648,6 +669,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
           layer: last.item.layer,
           fontSize: last.item.font_size,
           rotationDeg: last.item.rotation_deg,
+          arrow: last.item.arrow,
         })
         if (!item) throw new Error('re-insert returned null')
         const map = new Map(get().byFarm)
@@ -689,6 +711,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
           layer: last.item.layer,
           fontSize: last.item.font_size,
           rotationDeg: last.item.rotation_deg,
+          arrow: last.item.arrow,
         })
         if (!item) throw new Error('re-insert returned null')
         const map = new Map(get().byFarm)

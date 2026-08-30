@@ -98,6 +98,20 @@ export function buildMapDrawingDxfEntities(
       const b = pts[0]
       entities.push({ type: 'LINE', x1: a.x, y1: a.y, x2: b.x, y2: b.y, layer })
     }
+
+    // 端部の矢印。DXF に矢印そのものは無いので、2 本の短い線で羽根を描く
+    if (it.kind === 'stroke' && it.arrow && it.arrow !== 'none') {
+      const ends: Array<'start' | 'end'> =
+        it.arrow === 'both' ? ['start', 'end'] : [it.arrow]
+      for (const which of ends) {
+        const tip = which === 'end' ? pts[pts.length - 1] : pts[0]
+        const prev = which === 'end' ? pts[pts.length - 2] : pts[1]
+        if (!tip || !prev) continue
+        for (const e of arrowWings(prev, tip)) {
+          entities.push({ type: 'LINE', x1: tip.x, y1: tip.y, x2: e.x, y2: e.y, layer })
+        }
+      }
+    }
   }
 
   return entities
@@ -106,6 +120,22 @@ export function buildMapDrawingDxfEntities(
 interface XY {
   x: number
   y: number
+}
+
+/** 矢印の羽根の長さ [m]。CAD で開いた時に見える程度の既定値 */
+const ARROW_LEN_M = 1.0
+/** 羽根の開き [度] */
+const ARROW_SPREAD_DEG = 20
+
+/** prev → tip の向きに対する、矢印の羽根 2 本の 端点 */
+function arrowWings(prev: XY, tip: XY): [XY, XY] {
+  const base = Math.atan2(prev.y - tip.y, prev.x - tip.x)
+  const spread = (ARROW_SPREAD_DEG * Math.PI) / 180
+  const wing = (a: number): XY => ({
+    x: tip.x + ARROW_LEN_M * Math.cos(a),
+    y: tip.y + ARROW_LEN_M * Math.sin(a),
+  })
+  return [wing(base - spread), wing(base + spread)]
 }
 
 /**
