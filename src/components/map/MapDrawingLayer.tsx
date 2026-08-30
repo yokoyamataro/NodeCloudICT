@@ -42,7 +42,8 @@
 //   ・'measure-dist' / 'measure-area' / 'measure-perp'
 //               計測。結果は保存せず、モードを抜けるまで地図上に表示する。
 //               距離は 2 点を指す / 既存の線をまるごと選ぶ の 2 通り。値は線の
-//               向きに沿わせて出す。連続線は 各辺 / 合計 を チェックで 選べる。
+//               向きに沿わせて出し、線の 真ん中 / 上 / 下 に 置ける。
+//               連続線は 各辺 / 合計 を チェックで 選べる。
 //               「文字として保存」で、同じ位置・向きの文字要素として残せる。
 //
 // ピック (snapEnabled): 単点 / 交点 / 中心点 / 線上 に吸着する (snapTypes で選ぶ)。
@@ -475,6 +476,8 @@ interface MeasureLabel {
   /** 回転角 [度]。反時計回りが正 */
   angle: number
   text: string
+  /** 線のどこに置くか */
+  anchor: TextAnchor
 }
 
 function measureDist(c: CoordinateConverter | undefined, a: LL, b: LL): number {
@@ -558,10 +561,17 @@ export function formatMeasure(m: MeasureResult): string {
  * 計測値のラベル (地図上に置く白フキダシ)。
  * 線の向きに沿わせたいので、回転角を受け取れるようにする。
  */
-function makeMeasureLabelIcon(text: string, color: string, rotationDeg = 0): L.DivIcon {
+function makeMeasureLabelIcon(
+  text: string,
+  color: string,
+  rotationDeg = 0,
+  anchor: TextAnchor = 'center',
+): L.DivIcon {
   const esc = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  // CSS の rotate は時計回りが正なので符号を反転する
-  const rot = rotationDeg ? ` rotate(${-rotationDeg}deg)` : ''
+  // CSS の rotate は時計回りが正なので符号を反転する。
+  // translateY は rotate より先に効くので、線に対して 直角に ずれる
+  const shiftY = anchor === 'above' ? -14 : anchor === 'below' ? 14 : 0
+  const rot = rotationDeg || shiftY ? ` rotate(${-rotationDeg}deg) translateY(${shiftY}px)` : ''
   return L.divIcon({
     className: 'map-measure-label',
     html: `<div style="
@@ -752,6 +762,20 @@ function itemHitDistancePx(map: L.Map, s: MapDrawingStroke, target: L.Point): nu
 /** 2 点から 長方形の 4 頂点 (画面座標) */
 function rectFromCorners(a: L.Point, b: L.Point): L.Point[] {
   return [L.point(a.x, a.y), L.point(b.x, a.y), L.point(b.x, b.y), L.point(a.x, b.y)]
+}
+
+/**
+ * 線のどこに置くかを 表す アイコン。
+ * 薄い横線が「線」、濃い帯が「文字」。上 / 真ん中 / 下 で 帯の位置が 変わる。
+ */
+function TextAnchorSvg({ anchor, size = 16 }: { anchor: TextAnchor; size?: number }) {
+  const y = anchor === 'above' ? 4 : anchor === 'below' ? 15 : 9.5
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <line x1="2" y1="12" x2="22" y2="12" stroke="currentColor" strokeWidth={1.5} opacity={0.45} />
+      <rect x="6" y={y} width="12" height="5" rx="1" fill="currentColor" />
+    </svg>
+  )
 }
 
 /** ピックの吸着範囲 [画面 px]。指でも届き、隣の点を誤って掴まない程度 */
@@ -1095,6 +1119,33 @@ function NumberField({
   )
 }
 
+/** 「線のどこに置くか」を 選ぶ 3 つのアイコンボタン */
+function TextAnchorPicker({
+  value,
+  onChange,
+}: {
+  value: TextAnchor
+  onChange: (a: TextAnchor) => void
+}) {
+  return (
+    <div className="flex items-center rounded border overflow-hidden shrink-0">
+      {(['above', 'center', 'below'] as const).map((a) => (
+        <button
+          key={a}
+          type="button"
+          onClick={() => onChange(a)}
+          title={`線の${TEXT_ANCHOR_LABEL[a]}に置く`}
+          className={`h-7 w-7 flex items-center justify-center ${
+            value === a ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          <TextAnchorSvg anchor={a} />
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export function MapDrawingLayer({
   farmId,
   mode,
@@ -1310,6 +1361,8 @@ export function MapDrawingLayer({
   const [lastMeasure, setLastMeasure] = useState<MeasureResult | null>(null)
   /** 距離: 2 点を指すか、既存の線要素を選ぶか */
   const [distPickElement, setDistPickElement] = useState(false)
+  /** 距離: ラベルを 線の どこに置くか */
+  const [measureAnchor, setMeasureAnchor] = useState<TextAnchor>('center')
   /** 距離: 各辺を出す / 合計を出す (連続線のときに効く。両方 ON も可) */
   const [distShowEach, setDistShowEach] = useState(true)
   const [distShowTotal, setDistShowTotal] = useState(true)
@@ -2623,7 +2676,9 @@ export function MapDrawingLayer({
   const measureLabels = useMemo<MeasureLabel[]>(() => {
     if (!lastMeasure) return []
     if (lastMeasure.kind !== 'dist') {
-      return [{ at: lastMeasure.labelAt, angle: 0, text: formatMeasure(lastMeasure) }]
+      return [
+        { at: lastMeasure.labelAt, angle: 0, text: formatMeasure(lastMeasure), anchor: 'center' },
+      ]
     }
     const segs = lastMeasure.segments ?? []
     const out: MeasureLabel[] = []
@@ -2633,6 +2688,7 @@ export function MapDrawingLayer({
           at: midLL(sg.a, sg.b),
           angle: bearingDeg(sg.a, sg.b, converter),
           text: formatLength(sg.value),
+          anchor: measureAnchor,
         })
       }
     }
@@ -2644,14 +2700,20 @@ export function MapDrawingLayer({
         at: lastMeasure.labelAt,
         angle: bearingDeg(first, last, converter),
         text: `計 ${formatLength(lastMeasure.value)}`,
+        anchor: measureAnchor,
       })
     }
     // どちらも外していると 何も出ないので、その時は 合計だけ出す
     if (out.length === 0) {
-      out.push({ at: lastMeasure.labelAt, angle: 0, text: formatLength(lastMeasure.value) })
+      out.push({
+        at: lastMeasure.labelAt,
+        angle: 0,
+        text: formatLength(lastMeasure.value),
+        anchor: measureAnchor,
+      })
     }
     return out
-  }, [lastMeasure, distShowEach, distShowTotal, converter])
+  }, [lastMeasure, distShowEach, distShowTotal, measureAnchor, converter])
 
   /** 計測結果を 文字要素として 保存する (ラベルと同じ位置・向きで置く) */
   const saveMeasureAsText = useCallback(() => {
@@ -2667,6 +2729,7 @@ export function MapDrawingLayer({
         layer,
         fontSize,
         rotationDeg: lb.angle,
+        textAnchor: lb.anchor,
       })
     }
     setLastMeasure(null)
@@ -2740,7 +2803,7 @@ export function MapDrawingLayer({
           <Marker
             key={`measure-label-${i}`}
             position={[lb.at.lat, lb.at.lng]}
-            icon={makeMeasureLabelIcon(lb.text, MEASURE_COLOR, lb.angle)}
+            icon={makeMeasureLabelIcon(lb.text, MEASURE_COLOR, lb.angle, lb.anchor)}
             interactive={false}
           />
         ))}
@@ -3414,26 +3477,7 @@ export function MapDrawingLayer({
                   </label>
                 )}
                 {textAlongLine && (
-                  <label className="flex items-center gap-1 shrink-0">
-                    <span className="text-[11px] text-slate-600">位置</span>
-                    <div className="flex items-center rounded border overflow-hidden">
-                      {(['center', 'above', 'below'] as const).map((a) => (
-                        <button
-                          key={a}
-                          type="button"
-                          onClick={() => setTextAnchor(a)}
-                          title={`線の${TEXT_ANCHOR_LABEL[a]}に置く`}
-                          className={`h-7 px-2 text-[11px] ${
-                            textAnchor === a
-                              ? 'bg-blue-600 text-white'
-                              : 'bg-white text-slate-600 hover:bg-slate-50'
-                          }`}
-                        >
-                          {TEXT_ANCHOR_LABEL[a]}
-                        </button>
-                      ))}
-                    </div>
-                  </label>
+                  <TextAnchorPicker value={textAnchor} onChange={setTextAnchor} />
                 )}
 
                 {/* 線上文字の角度は 2 点目のクリックで入るので、そこでは触らせない */}
@@ -3705,6 +3749,11 @@ export function MapDrawingLayer({
                   </span>
                 )}
 
+                {/* 値を 線の どこに 置くか */}
+                {mode === 'measure-dist' && lastMeasure && (
+                  <TextAnchorPicker value={measureAnchor} onChange={setMeasureAnchor} />
+                )}
+
                 {/* 連続線のとき、各辺 / 合計 の どちらを出すか (両方も可) */}
                 {mode === 'measure-dist' && (lastMeasure?.segments?.length ?? 0) > 1 && (
                   <>
@@ -3943,24 +3992,12 @@ export function MapDrawingLayer({
                       />
                       <span className="text-[11px] text-slate-500">°</span>
                     </label>
-                    <label className="flex items-center gap-1 shrink-0">
-                      <span className="text-[11px] text-slate-600">位置</span>
-                      <select
-                        value={selectedStroke.text_anchor ?? 'center'}
-                        onChange={(ev) =>
-                          void updateStrokeAttrs(selectedStroke.id, {
-                            textAnchor: ev.target.value as TextAnchor,
-                          })
-                        }
-                        className="h-7 px-1 border rounded"
-                      >
-                        {(['center', 'above', 'below'] as const).map((a) => (
-                          <option key={a} value={a}>
-                            線の{TEXT_ANCHOR_LABEL[a]}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    <TextAnchorPicker
+                      value={selectedStroke.text_anchor ?? 'center'}
+                      onChange={(a) =>
+                        void updateStrokeAttrs(selectedStroke.id, { textAnchor: a })
+                      }
+                    />
                     <label className="flex items-center gap-1 shrink-0">
                       <span className="text-[11px] text-slate-600">サイズ</span>
                       <input
