@@ -1,13 +1,13 @@
-// 全体図ページ: タイトル部に「アップロード」「登録済み一覧」を集約し、
-// 画面の大半を地図（オルソ＋座標＋区域＋メモ＋写真）の表示に使う。
-// 右側にメモ一覧（上半分）と写真サムネ（下半分）を折りたたみパネルで集約する。
+// 全体図ページ: 画面の大半を地図 (オルソ + 座標 + 区域 + ペイント + メモ + 写真)
+// の表示に使う。メモと写真は地図上のマーカーで見る (右パネルは廃止)。
+//
+// オルソ画像のアップロードは 日常的に押すものではないので 設定へ移した
+// (OrthophotoUploadSection)。ここに残しているのは 登録済み一覧の 確認だけ。
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Upload,
   Loader2,
   Trash2,
   Image as ImageIcon,
-  AlertTriangle,
   List,
   X,
   Map as MapIcon,
@@ -24,7 +24,7 @@ import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import { Polyline as LeafletPolyline, CircleMarker, Tooltip } from 'react-leaflet'
-import { useOrthophotoStore, tileBoundsLatLng } from '@/stores/orthophotoStore'
+import { useOrthophotoStore } from '@/stores/orthophotoStore'
 import { useFarmMemoStore, EMPTY_FARM_MEMOS } from '@/stores/farmMemoStore'
 import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
 import { PhotoEditModal } from '@/features/coordinates/PhotoEditModal'
@@ -47,7 +47,7 @@ import type { CoordinateRow } from '@/stores/coordinateStore'
 export function OrthophotoPage() {
   const { currentFarm } = useFarmStore()
   const { projects } = useProjectListStore()
-  const { byFarm, fetchByFarm, createTileset, uploadTiles, deleteTileset } = useOrthophotoStore()
+  const { byFarm, fetchByFarm, deleteTileset } = useOrthophotoStore()
   const { setZone, fetchCoordinates, importCoordinates, coordinates, selectedType } = useCoordinateStore()
   const { workAreas, fetchWorkAreas } = useWorkAreaStore()
   // メモ + 写真（右側パネルと地図上マーカーの両方で使う）
@@ -262,8 +262,14 @@ export function OrthophotoPage() {
     toggleSelect: toggleSelectedParcel,
     message: parcelImportMessage,
   } = parcelSelection
+  // 一括取込の結果メッセージ。以前はアップロードモーダル内に出していたが、
+  // モーダルを設定へ移したので、地図の上に短く出す
+  const [parcelToast, setParcelToast] = useState<string | null>(null)
   useEffect(() => {
-    if (parcelImportMessage) setMessage(parcelImportMessage)
+    if (!parcelImportMessage) return
+    setParcelToast(parcelImportMessage)
+    const id = window.setTimeout(() => setParcelToast(null), 5000)
+    return () => window.clearTimeout(id)
   }, [parcelImportMessage])
 
   const [showPointsLayer, setShowPointsLayer] = useState<boolean>(() => readVis('points', true))
@@ -375,17 +381,7 @@ export function OrthophotoPage() {
     return out
   }, [workAreas])
 
-  // ===== アップロード用 state =====
-  const fileRef = useRef<HTMLInputElement>(null)
-  const [name, setName] = useState('')
-  const [opacity, setOpacity] = useState(85)
-  const [busy, setBusy] = useState<'parsing' | 'uploading' | null>(null)
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [message, setMessage] = useState<string | null>(null)
-
   // モーダル表示
-  const [showUpload, setShowUpload] = useState(false)
   // 写真帳 / 写真の一括DL。右パネルを廃止したのでヘッダから開く
   const [photoBookOpen, setPhotoBookOpen] = useState(false)
   const [photoDownloadOpen, setPhotoDownloadOpen] = useState(false)
@@ -450,158 +446,6 @@ export function OrthophotoPage() {
     const farmName = currentFarm?.name || 'ortho'
     const date = new Date().toISOString().slice(0, 10)
     downloadDxf(dxf, `${farmName}_${date}.dxf`)
-  }
-
-  // input(webkitdirectory) 属性付与
-  useEffect(() => {
-    const el = fileRef.current
-    if (el) {
-      el.setAttribute('webkitdirectory', '')
-      el.setAttribute('directory', '')
-      el.setAttribute('mozdirectory', '')
-    }
-  }, [showUpload])
-
-  // フォルダ選択
-  const handleChooseFolder = async () => {
-    setError(null)
-    setMessage(null)
-    const w = window as unknown as {
-      showDirectoryPicker?: () => Promise<FileSystemDirectoryHandle>
-    }
-    if (typeof w.showDirectoryPicker === 'function') {
-      try {
-        const dir = await w.showDirectoryPicker()
-        setBusy('parsing')
-        const collected: Array<{ relPath: string; file: File }> = []
-        const recurse = async (handle: FileSystemDirectoryHandle, prefix: string) => {
-          // @ts-expect-error values() は型定義に無い場合がある
-          for await (const entry of handle.values()) {
-            if (entry.kind === 'file') {
-              const fh = entry as FileSystemFileHandle
-              const file = await fh.getFile()
-              collected.push({ relPath: prefix + entry.name, file })
-            } else if (entry.kind === 'directory') {
-              await recurse(entry as FileSystemDirectoryHandle, prefix + entry.name + '/')
-            }
-          }
-        }
-        await recurse(dir, '')
-        await processFiles(collected)
-      } catch (err) {
-        if ((err as DOMException)?.name === 'AbortError') {
-          setBusy(null)
-          return
-        }
-        setError(err instanceof Error ? err.message : 'フォルダの読み取りに失敗しました')
-        setBusy(null)
-      }
-      return
-    }
-    fileRef.current?.click()
-  }
-
-  const handleFolderChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const list = e.target.files
-    e.target.value = ''
-    if (!list || list.length === 0) {
-      setError('ファイルが選択されませんでした。')
-      return
-    }
-    const collected: Array<{ relPath: string; file: File }> = []
-    for (let i = 0; i < list.length; i++) {
-      const f = list[i]
-      const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name
-      collected.push({ relPath: rel, file: f })
-    }
-    await processFiles(collected)
-  }
-
-  const processFiles = async (collected: Array<{ relPath: string; file: File }>) => {
-    setError(null)
-    setMessage(null)
-    if (!currentFarm) {
-      setError('工区が選択されていません。')
-      setBusy(null)
-      return
-    }
-    setBusy('parsing')
-    try {
-      const files: Array<{ relPath: string; file: File; z: number; x: number; y: number }> = []
-      let minZoom = Infinity
-      let maxZoom = -Infinity
-      let tileFormat = 'png'
-      const xByZ = new Map<number, { min: number; max: number }>()
-      const yByZ = new Map<number, { min: number; max: number }>()
-      for (const { relPath, file: f } of collected) {
-        const m = relPath.match(/(?:^|\/)(\d+)\/(\d+)\/(\d+)\.(png|jpg|jpeg|webp)$/i)
-        if (!m) continue
-        const z = parseInt(m[1], 10)
-        const x = parseInt(m[2], 10)
-        const y = parseInt(m[3], 10)
-        const ext = m[4].toLowerCase()
-        tileFormat = ext === 'jpeg' ? 'jpg' : ext
-        files.push({ relPath: `${z}/${x}/${y}.${ext}`, file: f, z, x, y })
-        if (z < minZoom) minZoom = z
-        if (z > maxZoom) maxZoom = z
-        const xr = xByZ.get(z) ?? { min: Infinity, max: -Infinity }
-        xr.min = Math.min(xr.min, x); xr.max = Math.max(xr.max, x)
-        xByZ.set(z, xr)
-        const yr = yByZ.get(z) ?? { min: Infinity, max: -Infinity }
-        yr.min = Math.min(yr.min, y); yr.max = Math.max(yr.max, y)
-        yByZ.set(z, yr)
-      }
-      if (files.length === 0) {
-        setError(
-          `{z}/{x}/{y}.png 形式のタイルが見つかりませんでした（選択ファイル数: ${collected.length}）。` +
-            'QGIS の「Generate XYZ tiles (Directory)」で出力したフォルダを丸ごと選択してください。',
-        )
-        setBusy(null)
-        return
-      }
-      const xr = xByZ.get(maxZoom)!
-      const yr = yByZ.get(maxZoom)!
-      const nw = tileBoundsLatLng(maxZoom, xr.min, yr.min)
-      const se = tileBoundsLatLng(maxZoom, xr.max, yr.max)
-      const bounds = { north: nw.north, west: nw.west, south: se.south, east: se.east }
-
-      setBusy('uploading')
-      const tileset = await createTileset({
-        farmId: currentFarm.id,
-        name: name.trim() || `オルソ_${new Date().toISOString().slice(0, 10)}`,
-        minZoom,
-        maxZoom,
-        bounds,
-        tileFormat,
-        opacity: opacity / 100,
-      })
-      if (!tileset) {
-        const se = useOrthophotoStore.getState().error
-        setError(`タイルセット行の作成に失敗しました${se ? `: ${se}` : ''}`)
-        setBusy(null)
-        return
-      }
-      const uploads = files.map((f) => ({ relPath: f.relPath, file: f.file }))
-      setProgress({ done: 0, total: uploads.length })
-      const { uploaded, failed, firstError } = await uploadTiles(tileset, uploads, (done, total) => {
-        setProgress({ done, total })
-      })
-      setProgress(null)
-      if (uploaded === 0 && failed > 0) {
-        setError(
-          `タイルのアップロードが全て失敗しました（${failed} 件）。` +
-            (firstError ? `エラー: ${firstError}` : ''),
-        )
-      } else {
-        setMessage(`${uploaded.toLocaleString()} 件アップロード完了` + (failed > 0 ? ` / ${failed} 件失敗` : ''))
-      }
-      setName('')
-      await fetchByFarm(currentFarm.id)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'アップロードに失敗しました')
-    } finally {
-      setBusy(null)
-    }
   }
 
   // ===== レンダリング =====
@@ -696,14 +540,6 @@ export function OrthophotoPage() {
         <List className="h-4 w-4" />
         登録済み
         <span className="ml-1 text-xs text-blue-600">({tilesets.length})</span>
-      </button>
-      <button
-        onClick={() => setShowUpload(true)}
-        className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
-        title="オルソ画像のアップロード"
-      >
-        <Upload className="h-4 w-4" />
-        アップロード
       </button>
     </div>
   )
@@ -827,9 +663,17 @@ export function OrthophotoPage() {
             ))}
         </CoordinateMap>
 
-        {/* 法務省地図トグル + 一括取込ボタン (左下、Leaflet attribution の対角) */}
+        {parcelToast && (
+          <div className="absolute bottom-24 right-2 z-[1000] max-w-[70%] px-3 py-1.5 rounded shadow border bg-white/95 text-[11px] text-slate-700 text-right">
+            {parcelToast}
+          </div>
+        )}
+
+        {/* 法務省地図トグル + 一括取込ボタン。
+            地図まわりの操作を右下に 1 か所へまとめるため、背景地図の
+            セレクタ (CoordinateMap 内、right-2 bottom-6) の真上に置く */}
         {hasActiveParcelDataset && (
-          <div className="absolute bottom-6 left-2 z-[1000] flex flex-col items-start gap-2">
+          <div className="absolute bottom-14 right-2 z-[1000] flex flex-col items-end gap-2">
             {showParcelMap && (
               <ParcelBatchImportBar
                 farmId={currentFarm.id}
@@ -922,99 +766,6 @@ export function OrthophotoPage() {
             }
           }}
         />
-      )}
-
-      {/* アップロードモーダル */}
-      {showUpload && (
-        <div className="fixed inset-0 z-[3000] bg-black/40 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg">
-            <div className="px-4 py-3 border-b flex items-center gap-2">
-              <Upload className="h-4 w-4 text-blue-600" />
-              <span className="font-semibold text-sm">タイルフォルダのアップロード</span>
-              <button onClick={() => setShowUpload(false)} className="ml-auto text-slate-400 hover:text-slate-700">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="p-4 space-y-3">
-              <p className="text-xs text-slate-600">
-                QGIS の「ラスタ ⇒ 変換 ⇒ XYZ タイルを生成」や <code>gdal2tiles.py</code> で
-                作成した <code>{'{z}/{x}/{y}.png'}</code> 形式のフォルダを選択してください。
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <label className="flex flex-col gap-1">
-                  <span className="text-xs text-slate-600">表示名（任意）</span>
-                  <input
-                    type="text"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="例: 2026-05-19 ドローン撮影"
-                    className="px-2 py-1.5 border rounded text-sm"
-                    disabled={busy !== null}
-                  />
-                </label>
-                <label className="flex flex-col gap-1">
-                  <span className="text-xs text-slate-600">不透明度: {opacity}%</span>
-                  <input
-                    type="range"
-                    min={20}
-                    max={100}
-                    value={opacity}
-                    onChange={(e) => setOpacity(parseInt(e.target.value, 10))}
-                    disabled={busy !== null}
-                  />
-                </label>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <button
-                  onClick={handleChooseFolder}
-                  disabled={busy !== null}
-                  className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                  フォルダを選択してアップロード
-                </button>
-                {progress && (
-                  <div className="flex items-center gap-2 text-xs text-slate-700">
-                    <span>
-                      {progress.done.toLocaleString()} / {progress.total.toLocaleString()}
-                    </span>
-                    <div className="w-40 h-2 bg-slate-200 rounded overflow-hidden">
-                      <div
-                        className="h-full bg-blue-600 transition-[width] duration-150"
-                        style={{ width: `${(progress.done / Math.max(1, progress.total)) * 100}%` }}
-                      />
-                    </div>
-                  </div>
-                )}
-                {!progress && message && (
-                  <span className="text-xs text-emerald-700">{message}</span>
-                )}
-                {error && (
-                  <span className="text-xs text-red-600 flex items-center gap-1">
-                    <AlertTriangle className="h-3 w-3" />
-                    {error}
-                  </span>
-                )}
-              </div>
-              <input
-                ref={fileRef}
-                type="file"
-                multiple
-                onChange={handleFolderChosen}
-                className="hidden"
-              />
-            </div>
-            <div className="px-4 py-3 border-t flex justify-end">
-              <button
-                onClick={() => setShowUpload(false)}
-                disabled={busy !== null}
-                className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50 disabled:opacity-50"
-              >
-                閉じる
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       {/* 登録済みオルソ一覧モーダル */}

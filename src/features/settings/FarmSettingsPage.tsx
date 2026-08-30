@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle, HardDrive, Layers, Loader2, Pencil, RefreshCw } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
+import { OrthophotoUploadSection } from '@/features/orthophoto/OrthophotoUploadSection'
 import { useFarmStore } from '@/stores/farmStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
@@ -164,6 +165,9 @@ export function FarmSettingsPage() {
     <div className="h-full flex flex-col">
       <PageHeader title="設定" subtitle={`工区: ${currentFarm.name}`} />
       <div className="flex-1 overflow-auto p-4 space-y-4">
+        {/* オルソ画像のアップロード。日常的に押すものではないので全体図から移した */}
+        <OrthophotoUploadSection farmId={currentFarm.id} />
+
         {/* 工区情報 (工区名 / 説明 / 着手日 / 完成日) — blur で即保存 */}
         <section className="bg-white border rounded-lg p-4 space-y-3">
           <div className="flex items-center gap-2">
@@ -371,8 +375,8 @@ export function FarmSettingsPage() {
                 </tfoot>
               </table>
               <p className="mt-3 text-[11px] text-slate-500 leading-relaxed">
-                ※ オルソタイル (登録済オルソ画像) はここには含まれません。オルソ画像の登録数は
-                「全体図 → 登録済一覧」から確認できます。
+                ※ オルソタイル (登録済オルソ画像) はここには含まれません。オルソ画像は
+                このページ上部の「オルソ画像」から追加・削除できます。
               </p>
             </>
           ) : null}
