@@ -370,35 +370,33 @@ export function OverviewLayerPanel({
 
           <div>
             <div className="text-[10px] text-slate-500 mb-1">端部</div>
-            {(
-              [
-                ['start', '始点', arrow === 'start' || arrow === 'both'],
-                ['end', '終点', arrow === 'end' || arrow === 'both'],
-              ] as const
-            ).map(([side, label, hasHead]) => (
-              <div key={side} className="flex items-center gap-1 mb-1 last:mb-0">
-                <span className="text-[10px] text-slate-500 w-6 shrink-0">{label}</span>
-                {([false, true] as const).map((head) => (
-                  <button
-                    key={String(head)}
-                    type="button"
-                    onClick={() => {
-                      const s2 = side === 'start' ? head : arrow === 'start' || arrow === 'both'
-                      const e2 = side === 'end' ? head : arrow === 'end' || arrow === 'both'
-                      onChangeArrow(combineArrow(s2, e2))
-                    }}
-                    title={`${label}を${head ? '矢印' : '線'}にする`}
-                    className={`flex-1 h-7 flex items-center justify-center rounded border ${
-                      hasHead === head
-                        ? 'bg-blue-50 border-blue-400 text-blue-700'
-                        : 'border-slate-300 text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    <EndStyleSvg head={head} side={side} />
-                  </button>
-                ))}
-              </div>
-            ))}
+            <div className="flex gap-1">
+              {(
+                [
+                  ['start', '始点', arrow === 'start' || arrow === 'both'],
+                  ['end', '終点', arrow === 'end' || arrow === 'both'],
+                ] as const
+              ).map(([side, label, hasHead]) => (
+                <button
+                  key={side}
+                  type="button"
+                  onClick={() => {
+                    // 押すたびに その端の 矢印を 入れ替える
+                    const s2 = side === 'start' ? !hasHead : arrow === 'start' || arrow === 'both'
+                    const e2 = side === 'end' ? !hasHead : arrow === 'end' || arrow === 'both'
+                    onChangeArrow(combineArrow(s2, e2))
+                  }}
+                  title={`${label}: ${hasHead ? '矢印' : '線'} (押すと切替)`}
+                  className={`flex-1 h-7 flex items-center justify-center rounded border ${
+                    hasHead
+                      ? 'bg-blue-50 border-blue-400 text-blue-700'
+                      : 'border-slate-300 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <EndStyleSvg head={hasHead} side={side} />
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
