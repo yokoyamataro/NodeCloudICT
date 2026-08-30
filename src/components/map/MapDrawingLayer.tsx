@@ -29,9 +29,11 @@
 //   ・'measure-dist' / 'measure-area' / 'measure-perp'
 //               計測。結果は保存せず、モードを抜けるまで地図上に表示する。
 //
-// ピック (snapEnabled): 既存の作図の頂点と extraSnapPoints (測点・区域の頂点) に
-// 吸着する。判定は画面 px なので、縮尺が変わっても指の感覚は変わらない。
-// フリーハンドは吸着しない (全点を吸わせると線が壊れるため)。直線・平行線は端点のみ。
+// ピック (snapEnabled): 単点 / 交点 / 中心点 / 線上 に吸着する (snapTypes で選ぶ)。
+// 判定は画面 px なので、縮尺が変わっても指の感覚は変わらない。吸着先の座標は
+// メートル座標で出すので、交点・線上でも測量に使える精度が残る。
+// 描くときだけでなく、選択して頂点をドラッグするときも吸着する。
+// フリーハンドは吸着しない (全点を吸わせると線が壊れるため)。
 //
 // layer は DXF 出力時のレイヤ名。以後に作る図形へ付与する。
 //
@@ -53,7 +55,9 @@ import {
   useMapDrawingStore,
   EMPTY_STROKES,
   DEFAULT_LAYERS,
+  DEFAULT_SNAP_TYPES,
   KIND_LABEL,
+  type SnapType,
   type MapDrawingStroke,
   type LineStyle,
 } from '@/stores/mapDrawingStore'
@@ -102,6 +106,8 @@ interface Props {
   onChangeFontSize?: (px: number) => void
   /** ピック (スナップ): 近くの点に吸着させる */
   snapEnabled?: boolean
+  /** 吸着させる対象の種類。未指定なら既定 (単点 / 交点 / 中心点) */
+  snapTypes?: SnapType[]
   /** 図形以外のスナップ候補 (座標管理の点・区域の頂点など) */
   extraSnapPoints?: Array<[number, number]>
   /**
@@ -486,6 +492,8 @@ function makeMeasureLabelIcon(text: string, color: string): L.DivIcon {
 
 /** ピックの吸着範囲 [画面 px]。指でも届き、隣の点を誤って掴まない程度 */
 const SNAP_RADIUS_PX = 18
+/** 交点 / 線上を探すときに、相手にする線分を絞る広さ [画面 px] */
+const SNAP_SEARCH_PX = 40
 
 /** 点 (kind='point') のアイコン */
 function makePointIcon(color: string, widthPx: number, selected = false): L.DivIcon {
@@ -685,6 +693,49 @@ function extendThrough(seg: [LL, LL], p: LL, c?: CoordinateConverter): [LL, LL] 
   return [offsetLL(a, ux * lo, uy * lo, c), offsetLL(a, ux * hi, uy * hi, c)]
 }
 
+/** 3 点を通る円の中心。3 点が一直線なら null */
+function circumcenterLL(a: LL, b: LL, c: LL, conv?: CoordinateConverter): LL | null {
+  const B = deltaM(a, b, conv)
+  const C = deltaM(a, c, conv)
+  const d = 2 * (B.east * C.north - B.north * C.east)
+  if (Math.abs(d) < 1e-9) return null
+  const b2 = B.east * B.east + B.north * B.north
+  const c2 = C.east * C.east + C.north * C.north
+  const east = (C.north * b2 - B.north * c2) / d
+  const north = (B.east * c2 - C.east * b2) / d
+  return offsetLL(a, east, north, conv)
+}
+
+/** 線分 ab の上で、p に一番近い点 */
+function closestOnSegment(a: LL, b: LL, p: LL, conv?: CoordinateConverter): LL {
+  const ab = deltaM(a, b, conv)
+  const ap = deltaM(a, p, conv)
+  const len2 = ab.east * ab.east + ab.north * ab.north
+  if (len2 < 1e-12) return a
+  let t = (ap.east * ab.east + ap.north * ab.north) / len2
+  t = Math.max(0, Math.min(1, t))
+  return offsetLL(a, ab.east * t, ab.north * t, conv)
+}
+
+/** 線分どうしの交点。どちらかの外に出るなら null (延長線上は取らない) */
+function segmentIntersection(
+  s1: [LL, LL],
+  s2: [LL, LL],
+  conv?: CoordinateConverter,
+): LL | null {
+  const origin = s1[0]
+  const r = deltaM(origin, s1[1], conv)
+  const q = deltaM(origin, s2[0], conv)
+  const q2 = deltaM(origin, s2[1], conv)
+  const sVec = { east: q2.east - q.east, north: q2.north - q.north }
+  const denom = r.east * sVec.north - r.north * sVec.east
+  if (Math.abs(denom) < 1e-9) return null
+  const t = (q.east * sVec.north - q.north * sVec.east) / denom
+  const u = (q.east * r.north - q.north * r.east) / -denom
+  if (t < 0 || t > 1 || u < 0 || u > 1) return null
+  return offsetLL(origin, r.east * t, r.north * t, conv)
+}
+
 /** 基準線を拾う判定の広さ [画面 px] */
 const PICK_LINE_RADIUS_PX = 14
 
@@ -774,6 +825,7 @@ export function MapDrawingLayer({
   fontSize,
   onChangeFontSize,
   snapEnabled = false,
+  snapTypes = DEFAULT_SNAP_TYPES,
   extraSnapPoints,
   onAddCoordinate,
   registerCoordinate = false,
@@ -837,44 +889,100 @@ export function MapDrawingLayer({
 
   // ---- ピック (スナップ) ----
   //
-  // 既存の作図の頂点と、外から渡された候補 (座標管理の点・区域の頂点) に吸着させる。
-  // 判定は画面上の距離で行う。地図の縮尺が変わっても指の感覚が変わらないようにするため。
-  const snapCandidates = useMemo(() => {
-    if (!snapEnabled) return []
-    const out: LL[] = []
-    for (const it of items) {
-      for (const p of it.points) out.push({ lat: p.lat, lng: p.lng })
-    }
-    if (extraSnapPoints) {
-      for (const [lat, lng] of extraSnapPoints) out.push({ lat, lng })
-    }
-    return out
-  }, [snapEnabled, items, extraSnapPoints])
-
-  /** 吸着後の座標を返す。候補が近くに無ければそのまま返す */
+  // 吸着先は 4 種類。どれを使うかは snapTypes で 切り替える。
+  //   ・単点   … 作図の頂点 + 外から渡された点 (測点・区域の頂点)
+  //   ・交点   … 近くにある 線分どうしの 交点
+  //   ・中心点 … 円 / 円弧の 中心
+  //   ・線上   … 近くの線分の 上で 一番近い点
+  //
+  // 「近いかどうか」は 画面上の距離で 判定する (縮尺が変わっても 指の感覚が
+  // 変わらないため)。吸着先の 座標そのものは メートル座標で 出すので、
+  // 交点・線上でも 測量に使える精度が 残る。
+  //
+  // 同じ距離に 複数あるときは 単点 > 交点 > 中心点 > 線上 の順で 拾う。
   const snap = useCallback(
-    (ll: { lat: number; lng: number }): LL => {
-      if (!snapEnabled || snapCandidates.length === 0) return { lat: ll.lat, lng: ll.lng }
+    (ll: { lat: number; lng: number }, excludeStrokeId?: string): LL => {
+      const raw: LL = { lat: ll.lat, lng: ll.lng }
+      if (!snapEnabled || snapTypes.length === 0) return raw
       const target = map.latLngToContainerPoint([ll.lat, ll.lng])
+      const toPx = (p: LL) => map.latLngToContainerPoint([p.lat, p.lng])
+
       let best: LL | null = null
+      let bestRank = Number.MAX_SAFE_INTEGER
       let bestPx = SNAP_RADIUS_PX
-      for (const c of snapCandidates) {
-        const px = map.latLngToContainerPoint([c.lat, c.lng]).distanceTo(target)
-        if (px < bestPx) {
-          bestPx = px
-          best = c
+      const consider = (p: LL, rank: number) => {
+        const px = toPx(p).distanceTo(target)
+        if (px >= SNAP_RADIUS_PX) return
+        // 種類の優先順が先。同じ種類なら 近い方
+        if (rank > bestRank) return
+        if (rank === bestRank && px >= bestPx) return
+        best = p
+        bestRank = rank
+        bestPx = px
+      }
+
+      // 単点
+      if (snapTypes.includes('vertex')) {
+        for (const it of items) {
+          if (it.id === excludeStrokeId) continue
+          for (const p of it.points) consider(p, 0)
+        }
+        if (extraSnapPoints) {
+          for (const [lat, lng] of extraSnapPoints) consider({ lat, lng }, 0)
         }
       }
-      return best ?? { lat: ll.lat, lng: ll.lng }
+
+      // 中心点 (円は 1 点目、円弧は 3 点の外接円の中心)
+      if (snapTypes.includes('center')) {
+        for (const it of items) {
+          if (it.id === excludeStrokeId) continue
+          if (it.kind === 'circle' && it.points[0]) consider(it.points[0], 2)
+          if (it.kind === 'arc' && it.points.length >= 3) {
+            const cc = circumcenterLL(it.points[0], it.points[1], it.points[2], converter)
+            if (cc) consider(cc, 2)
+          }
+        }
+      }
+
+      // 交点 / 線上 は、カーソルの近くにある線分だけを 相手にする
+      if (snapTypes.includes('intersection') || snapTypes.includes('edge')) {
+        const near: Array<[LL, LL]> = []
+        for (const it of items) {
+          if (it.id === excludeStrokeId) continue
+          if (!isLineLike(it.kind)) continue
+          const pts = it.points
+          const last = it.kind === 'polygon' ? pts.length : pts.length - 1
+          for (let i = 0; i < last; i += 1) {
+            const a = pts[i]
+            const b = pts[(i + 1) % pts.length]
+            if (distancePointToSegmentPx(target, toPx(a), toPx(b)) < SNAP_SEARCH_PX) {
+              near.push([a, b])
+            }
+          }
+        }
+        if (snapTypes.includes('intersection')) {
+          for (let i = 0; i < near.length; i += 1) {
+            for (let j = i + 1; j < near.length; j += 1) {
+              const x = segmentIntersection(near[i], near[j], converter)
+              if (x) consider(x, 1)
+            }
+          }
+        }
+        if (snapTypes.includes('edge')) {
+          for (const seg of near) consider(closestOnSegment(seg[0], seg[1], raw, converter), 3)
+        }
+      }
+
+      return best ?? raw
     },
-    [snapEnabled, snapCandidates, map],
+    [snapEnabled, snapTypes, items, extraSnapPoints, converter, map],
   )
 
   /** 吸着先が近くにあるか (カーソル位置に印を出すため) */
   const [snapHint, setSnapHint] = useState<LL | null>(null)
   useEffect(() => {
     // 直前の実行のクリーンアップで印は消えるので、ここでは購読しないだけでよい
-    if (!snapEnabled || mode === 'off' || mode === 'select') return
+    if (!snapEnabled || mode === 'off') return
     const onMove = (e: L.LeafletMouseEvent) => {
       const s = snap(e.latlng)
       setSnapHint(s.lat === e.latlng.lat && s.lng === e.latlng.lng ? null : s)
@@ -2277,10 +2385,12 @@ export function MapDrawingLayer({
             draggable
             eventHandlers={{
               drag: (e) => {
+                // ドラッグ中も 吸着させる。自分自身には 吸い付かないよう
+                // 動かしているストロークは 候補から 外す
                 const marker = e.target as L.Marker
-                const latlng = marker.getLatLng()
+                const at = snap(marker.getLatLng(), selectedStroke.id)
                 const nextPoints = selectedStroke.points.map((pp, i) =>
-                  i === idx ? { lat: latlng.lat, lng: latlng.lng } : pp,
+                  i === idx ? at : pp,
                 )
                 setDragPreview({
                   strokeId: selectedStroke.id,
@@ -2289,10 +2399,12 @@ export function MapDrawingLayer({
               },
               dragend: (e) => {
                 const marker = e.target as L.Marker
-                const latlng = marker.getLatLng()
+                const at = snap(marker.getLatLng(), selectedStroke.id)
                 const nextPoints = selectedStroke.points.map((pp, i) =>
-                  i === idx ? { lat: latlng.lat, lng: latlng.lng } : pp,
+                  i === idx ? at : pp,
                 )
+                // 吸着先へ 見た目も 合わせる
+                marker.setLatLng([at.lat, at.lng])
                 setDragPreview(null)
                 void updateStrokePoints(selectedStroke.id, nextPoints)
               },

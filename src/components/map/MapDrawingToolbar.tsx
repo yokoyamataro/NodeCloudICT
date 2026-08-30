@@ -26,7 +26,12 @@ import {
   X,
 } from 'lucide-react'
 import type { DrawingMode } from './MapDrawingLayer'
-import { DEFAULT_LAYERS, type LineStyle } from '@/stores/mapDrawingStore'
+import {
+  DEFAULT_LAYERS,
+  SNAP_TYPE_LABEL,
+  type LineStyle,
+  type SnapType,
+} from '@/stores/mapDrawingStore'
 
 /** 形状ボタンで扱う描画モード (ドロップダウンで直線 / 円 / 円弧 / 面 を切替) */
 type ShapeMode = 'line' | 'circle' | 'arc' | 'polygon' | 'rect' | 'parallel' | 'perp'
@@ -175,6 +180,9 @@ interface Props {
   /** ピック (スナップ): 近くの点に吸着させる */
   snapEnabled?: boolean
   onToggleSnap?: () => void
+  /** 吸着させる対象の種類 */
+  snapTypes?: SnapType[]
+  onToggleSnapType?: (t: SnapType) => void
   /** DXF 出力時のレイヤ名 */
   layer?: string
   onChangeLayer?: (layer: string) => void
@@ -231,6 +239,8 @@ export function MapDrawingToolbar({
   variant = 'floating',
   snapEnabled,
   onToggleSnap,
+  snapTypes,
+  onToggleSnapType,
   layer,
   onChangeLayer,
   existingLayers,
@@ -241,6 +251,7 @@ export function MapDrawingToolbar({
   const [linePickerOpen, setLinePickerOpen] = useState(false)
   const [shapePickerOpen, setShapePickerOpen] = useState(false)
   const [measurePickerOpen, setMeasurePickerOpen] = useState(false)
+  const [snapPickerOpen, setSnapPickerOpen] = useState(false)
   const [currentMeasure, setCurrentMeasure] = useState<MeasureMode>('measure-dist')
   // 形状ボタンで最後に選ばれた形状 (直線 / 円 / 円弧 / 面)。
   // ボタンをタップした時に「今どの形状に入るか」を決めるために保持する。
@@ -267,7 +278,15 @@ export function MapDrawingToolbar({
 
   // 外側クリックでポップアップを閉じる (mobile でも動くよう pointerdown を使用)
   useEffect(() => {
-    if (!colorPickerOpen && !linePickerOpen && !shapePickerOpen && !measurePickerOpen) return
+    if (
+      !colorPickerOpen &&
+      !linePickerOpen &&
+      !shapePickerOpen &&
+      !measurePickerOpen &&
+      !snapPickerOpen
+    ) {
+      return
+    }
     const onDown = (e: PointerEvent) => {
       if (!rootRef.current) return
       if (!rootRef.current.contains(e.target as Node)) {
@@ -275,11 +294,12 @@ export function MapDrawingToolbar({
         setLinePickerOpen(false)
         setShapePickerOpen(false)
         setMeasurePickerOpen(false)
+        setSnapPickerOpen(false)
       }
     }
     document.addEventListener('pointerdown', onDown)
     return () => document.removeEventListener('pointerdown', onDown)
-  }, [colorPickerOpen, linePickerOpen, shapePickerOpen, measurePickerOpen])
+  }, [colorPickerOpen, linePickerOpen, shapePickerOpen, measurePickerOpen, snapPickerOpen])
 
   const isShapeMode = mode === currentShape
   const isMeasure = mode === currentMeasure
@@ -505,24 +525,64 @@ export function MapDrawingToolbar({
         <Eraser className="h-4 w-4" />
       </button>
 
-      {/* ピック (スナップ) */}
+      {/* ピック (スナップ)。本体で ON/OFF、▼ で 吸着させる種類を選ぶ */}
       {onToggleSnap && (
-        <button
-          type="button"
-          onClick={onToggleSnap}
-          title={
-            snapEnabled
-              ? 'ピック ON (近くの点・頂点に吸着)'
-              : 'ピック OFF (吸着しない)'
-          }
-          className={`w-8 h-8 flex items-center justify-center rounded shrink-0 border ${
-            snapEnabled
-              ? 'bg-amber-100 border-amber-400 text-amber-700'
-              : 'border-transparent text-slate-500 hover:bg-slate-100'
-          }`}
-        >
-          <Crosshair className="h-4 w-4" />
-        </button>
+        <div className="relative shrink-0 flex items-stretch">
+          <button
+            type="button"
+            onClick={onToggleSnap}
+            title={
+              snapEnabled
+                ? `ピック ON (${(snapTypes ?? []).map((t) => SNAP_TYPE_LABEL[t]).join(' / ') || '対象なし'})`
+                : 'ピック OFF (吸着しない)'
+            }
+            className={`h-8 w-8 flex items-center justify-center rounded-l shrink-0 border ${
+              snapEnabled
+                ? 'bg-amber-100 border-amber-400 text-amber-700'
+                : 'border-transparent text-slate-500 hover:bg-slate-100'
+            }`}
+          >
+            <Crosshair className="h-4 w-4" />
+          </button>
+          {onToggleSnapType && (
+            <button
+              type="button"
+              onClick={() => {
+                setSnapPickerOpen((v) => !v)
+                setShapePickerOpen(false)
+                setMeasurePickerOpen(false)
+                setColorPickerOpen(false)
+                setLinePickerOpen(false)
+              }}
+              title="吸着させる対象を選ぶ"
+              className={`h-8 w-4 flex items-center justify-center rounded-r border-l ${
+                snapEnabled
+                  ? 'bg-amber-100 border-amber-400 text-amber-700'
+                  : 'text-slate-500 hover:bg-slate-100 border-slate-300'
+              }`}
+            >
+              <ChevronDown className="h-3 w-3" />
+            </button>
+          )}
+          {snapPickerOpen && onToggleSnapType && (
+            <div className="absolute top-full left-0 mt-1 z-[3000] bg-white border rounded shadow-lg py-1 min-w-[8rem]">
+              <div className="px-3 py-1 text-[10px] text-slate-500">吸着させる対象</div>
+              {(['vertex', 'intersection', 'center', 'edge'] as const).map((t) => (
+                <label
+                  key={t}
+                  className="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={(snapTypes ?? []).includes(t)}
+                    onChange={() => onToggleSnapType(t)}
+                  />
+                  <span>{SNAP_TYPE_LABEL[t]}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       {/* undo / redo */}

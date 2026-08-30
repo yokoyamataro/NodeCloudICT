@@ -22,6 +22,19 @@ import { supabase } from '@/lib/supabase'
 export type LineStyle = 'solid' | 'dashed' | 'dotted'
 export type DrawingKind = 'stroke' | 'text' | 'circle' | 'arc' | 'polygon' | 'point'
 
+/** ピック (スナップ) で 吸着させる対象の種類 */
+export type SnapType = 'vertex' | 'intersection' | 'center' | 'edge'
+
+export const SNAP_TYPE_LABEL: Record<SnapType, string> = {
+  vertex: '単点',
+  intersection: '交点',
+  center: '中心点',
+  edge: '線上',
+}
+
+/** 既定で 有効にする種類。線上は 当たりが広く 誤爆しやすいので 既定は外す */
+export const DEFAULT_SNAP_TYPES: SnapType[] = ['vertex', 'intersection', 'center']
+
 /** レイヤ名の既定候補。現場でまず使う 4 つを最初から出しておく */
 export const DEFAULT_LAYERS = ['現況', '建物', '道路', '計画'] as const
 

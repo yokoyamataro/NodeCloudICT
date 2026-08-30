@@ -33,7 +33,7 @@ import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
 import { MapDrawingLayer, type DrawingMode } from '@/components/map/MapDrawingLayer'
 import { MapDrawingToolbar } from '@/components/map/MapDrawingToolbar'
 import { MapDrawingCommandBar } from '@/components/map/mapDrawingCommandBar'
-import { useMapDrawingStore, EMPTY_STROKES, DEFAULT_LAYERS, type LineStyle } from '@/stores/mapDrawingStore'
+import { useMapDrawingStore, EMPTY_STROKES, DEFAULT_LAYERS, DEFAULT_SNAP_TYPES, type LineStyle, type SnapType } from '@/stores/mapDrawingStore'
 import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { useParcelImportSelection } from '@/features/parcel-maps/useParcelImportSelection'
 import { ParcelBatchImportBar } from '@/features/parcel-maps/ParcelBatchImportBar'
@@ -395,6 +395,9 @@ export function OrthophotoPage() {
   // ---- ペイント (作図・計測) の設定 ----
   // 作図・計測ツールはペイントへ統合したので、状態はペイント側の設定だけを持つ
   const [snapEnabled, setSnapEnabled] = useState(false)
+  const [snapTypes, setSnapTypes] = useState<SnapType[]>(DEFAULT_SNAP_TYPES)
+  const toggleSnapType = (t: SnapType) =>
+    setSnapTypes((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]))
   const [drawLayer, setDrawLayer] = useState<string>(DEFAULT_LAYERS[0])
   const [drawFontSize, setDrawFontSize] = useState(14)
   const [registerCoordinate, setRegisterCoordinate] = useState(false)
@@ -727,6 +730,8 @@ export function OrthophotoPage() {
           onRedo={() => void drawingRedo()}
           snapEnabled={snapEnabled}
           onToggleSnap={() => setSnapEnabled((v) => !v)}
+          snapTypes={snapTypes}
+          onToggleSnapType={toggleSnapType}
           layer={drawLayer}
           onChangeLayer={setDrawLayer}
           existingLayers={existingLayers}
@@ -781,6 +786,7 @@ export function OrthophotoPage() {
             fontSize={drawFontSize}
             onChangeFontSize={setDrawFontSize}
             snapEnabled={snapEnabled}
+            snapTypes={snapTypes}
             extraSnapPoints={extraSnapPoints}
             existingLayers={existingLayers}
             onAddCoordinate={handleAddCoordinate}

@@ -86,7 +86,7 @@ import { ParcelMapLayer, parcelFeatureKey } from '@/components/map/ParcelMapLaye
 import { MapDrawingLayer, type DrawingMode } from '@/components/map/MapDrawingLayer'
 import { MapDrawingToolbar } from '@/components/map/MapDrawingToolbar'
 import { MapDrawingCommandBar } from '@/components/map/mapDrawingCommandBar'
-import { useMapDrawingStore, EMPTY_STROKES, DEFAULT_LAYERS, type LineStyle } from '@/stores/mapDrawingStore'
+import { useMapDrawingStore, EMPTY_STROKES, DEFAULT_LAYERS, DEFAULT_SNAP_TYPES, type LineStyle, type SnapType } from '@/stores/mapDrawingStore'
 import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
 import type { Feature, Polygon as GeoJsonPolygon } from 'geojson'
 import { type Bbox } from '@/lib/tile-math'
@@ -791,6 +791,9 @@ export function MobileStakingPage() {
   const [drawingLineStyle, setDrawingLineStyle] = useState<LineStyle>('solid')
   // 作図・計測ツールから引き継いだ設定 (ピック / レイヤ / 文字サイズ)
   const [snapEnabled, setSnapEnabled] = useState(false)
+  const [snapTypes, setSnapTypes] = useState<SnapType[]>(DEFAULT_SNAP_TYPES)
+  const toggleSnapType = (t: SnapType) =>
+    setSnapTypes((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]))
   const [drawLayer, setDrawLayer] = useState<string>(DEFAULT_LAYERS[0])
   const [drawFontSize, setDrawFontSize] = useState(14)
   const drawingItems = useMapDrawingStore((s) =>
@@ -3571,6 +3574,8 @@ export function MobileStakingPage() {
                 onRedo={() => void drawingRedo()}
                 snapEnabled={snapEnabled}
                 onToggleSnap={() => setSnapEnabled((v) => !v)}
+                snapTypes={snapTypes}
+                onToggleSnapType={toggleSnapType}
                 layer={drawLayer}
                 onChangeLayer={setDrawLayer}
                 existingLayers={existingLayers}
@@ -5392,6 +5397,7 @@ export function MobileStakingPage() {
             fontSize={drawFontSize}
             onChangeFontSize={setDrawFontSize}
             snapEnabled={snapEnabled}
+            snapTypes={snapTypes}
             extraSnapPoints={extraSnapPoints}
             existingLayers={existingLayers}
           />
