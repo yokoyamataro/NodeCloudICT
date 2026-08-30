@@ -3,6 +3,8 @@
 // モード:
 //   ・'off'     描画無効。既存アイテムだけ表示。マップ操作は通常通り。
 //   ・'pen'     ドラッグでフリーハンドのストローク (地図の 1 本指 pan は無効化、2 本指ピンチは有効)。
+//               点は pointermove の 1 つおき。全部拾うと 数百点になり、
+//               保存も 描画も 重くなるため。
 //   ・'line'    クリックで頂点を追加する連続線。Backspace で 1 つ戻る、
 //               Enter (または「線を確定」) で確定、Esc で取り消し。
 //   ・'circle'  2 タップで中心 → 縁 (半径 = 2 点間距離、L.Circle で描画)。
@@ -2241,9 +2243,17 @@ export function MapDrawingLayer({
 
     const activePointers = new Set<number>()
     let drawingPointerId: number | null = null
+    // pointermove ごとに 全部 拾うと 点が 多すぎるので、1 つおきに 捨てる。
+    // 捨てた点は pending に 持っておき、離した時に 最後の 1 点として 足す
+    // (線の 終わりが 指を離した所から ずれないように)
+    let moveCount = 0
+    let pending: LatLng | null = null
 
     const commit = () => {
       const pts = currentRef.current
+      if (pts && pending) pts.push(pending)
+      pending = null
+      moveCount = 0
       currentRef.current = null
       setCurrentPositions([])
       if (!pts || pts.length < 2 || !farmId) return
@@ -2255,6 +2265,8 @@ export function MapDrawingLayer({
       currentRef.current = null
       setCurrentPositions([])
       drawingPointerId = null
+      pending = null
+      moveCount = 0
     }
     const eventToLatLng = (e: PointerEvent): LatLng | null => {
       try {
@@ -2295,6 +2307,14 @@ export function MapDrawingLayer({
       if (!currentRef.current) return
       const latlng = eventToLatLng(e)
       if (!latlng) return
+      moveCount += 1
+      if (moveCount % 2 === 0) {
+        // 間引く分。線の 終点として 使えるよう 覚えておく
+        pending = latlng
+        e.preventDefault()
+        return
+      }
+      pending = null
       currentRef.current.push(latlng)
       setCurrentPositions(currentRef.current.map((p) => [p.lat, p.lng]))
       e.preventDefault()
