@@ -32,6 +32,15 @@ export const ARROW_LABEL: Record<ArrowStyle, string> = {
   both: '両端',
 }
 
+/** 線上文字を 線のどこに 置くか */
+export type TextAnchor = 'center' | 'above' | 'below'
+
+export const TEXT_ANCHOR_LABEL: Record<TextAnchor, string> = {
+  center: '真ん中',
+  above: '上',
+  below: '下',
+}
+
 /** ピック (スナップ) で 吸着させる対象の種類 */
 export type SnapType = 'vertex' | 'intersection' | 'center' | 'edge'
 
@@ -78,6 +87,8 @@ export interface MapDrawingStroke {
   rotation_deg: number
   /** kind='stroke' / 'arc' の端部の矢印 */
   arrow: ArrowStyle
+  /** kind='text' を 線のどこに 置くか (線上文字用) */
+  text_anchor: TextAnchor
   created_at: string
   updated_at: string
 }
@@ -111,6 +122,7 @@ export interface StrokeAttrs {
   fontSize?: number | null
   rotationDeg?: number
   arrow?: ArrowStyle
+  textAnchor?: TextAnchor
 }
 
 /** StrokeAttrs → DB カラム名 */
@@ -124,6 +136,7 @@ function attrsToColumns(a: StrokeAttrs): Record<string, unknown> {
   if (a.fontSize !== undefined) out.font_size = a.fontSize
   if (a.rotationDeg !== undefined) out.rotation_deg = a.rotationDeg
   if (a.arrow !== undefined) out.arrow = a.arrow
+  if (a.textAnchor !== undefined) out.text_anchor = a.textAnchor
   return out
 }
 
@@ -139,6 +152,7 @@ function applyAttrs(item: MapDrawingStroke, a: StrokeAttrs): MapDrawingStroke {
     font_size: a.fontSize !== undefined ? a.fontSize : item.font_size,
     rotation_deg: a.rotationDeg ?? item.rotation_deg,
     arrow: a.arrow ?? item.arrow,
+    text_anchor: a.textAnchor ?? item.text_anchor,
   }
 }
 
@@ -153,6 +167,7 @@ function pickAttrs(item: MapDrawingStroke, a: StrokeAttrs): StrokeAttrs {
   if (a.fontSize !== undefined) out.fontSize = item.font_size
   if (a.rotationDeg !== undefined) out.rotationDeg = item.rotation_deg
   if (a.arrow !== undefined) out.arrow = item.arrow
+  if (a.textAnchor !== undefined) out.textAnchor = item.text_anchor
   return out
 }
 
@@ -188,6 +203,7 @@ interface State {
     layer?: string
     fontSize?: number
     rotationDeg?: number
+    textAnchor?: TextAnchor
   }) => Promise<MapDrawingStroke | null>
   /** 単独の点。座標管理への登録は呼び出し側で行う (点自体はここに残す) */
   addPoint: (input: {
@@ -225,6 +241,7 @@ async function insertItemInternal(
     fontSize?: number | null
     rotationDeg?: number
     arrow?: ArrowStyle
+    textAnchor?: TextAnchor
   },
 ): Promise<MapDrawingStroke | null> {
   const { data: userData } = await supabase.auth.getUser()
@@ -244,6 +261,7 @@ async function insertItemInternal(
       font_size: input.fontSize ?? null,
       rotation_deg: input.rotationDeg ?? 0,
       arrow: input.arrow ?? 'none',
+      text_anchor: input.textAnchor ?? 'center',
     } as never)
     .select()
     .single()
@@ -313,6 +331,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
       font_size: null,
       rotation_deg: 0,
       arrow,
+      text_anchor: 'center',
       created_at: now,
       updated_at: now,
     }
@@ -355,7 +374,18 @@ export const useMapDrawingStore = create<State>((set, get) => ({
     }
   },
 
-  addText: async ({ farmId, color, widthPx, lat, lng, text, layer = '0', fontSize, rotationDeg = 0 }) => {
+  addText: async ({
+    farmId,
+    color,
+    widthPx,
+    lat,
+    lng,
+    text,
+    layer = '0',
+    fontSize,
+    rotationDeg = 0,
+    textAnchor = 'center',
+  }) => {
     if (!text || !text.trim()) return null
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     const now = new Date().toISOString()
@@ -373,6 +403,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
       font_size: fontSize ?? null,
       rotation_deg: rotationDeg,
       arrow: 'none',
+      text_anchor: textAnchor,
       created_at: now,
       updated_at: now,
     }
@@ -394,6 +425,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
         layer,
         fontSize: fontSize ?? null,
         rotationDeg,
+        textAnchor,
       })
       if (!item) throw new Error('insert returned null')
       const map = new Map(get().byFarm)
@@ -432,6 +464,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
       font_size: null,
       rotation_deg: 0,
       arrow: 'none',
+      text_anchor: 'center',
       created_at: now,
       updated_at: now,
     }
@@ -681,6 +714,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
           fontSize: last.item.font_size,
           rotationDeg: last.item.rotation_deg,
           arrow: last.item.arrow,
+          textAnchor: last.item.text_anchor,
         })
         if (!item) throw new Error('re-insert returned null')
         const map = new Map(get().byFarm)
@@ -723,6 +757,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
           fontSize: last.item.font_size,
           rotationDeg: last.item.rotation_deg,
           arrow: last.item.arrow,
+          textAnchor: last.item.text_anchor,
         })
         if (!item) throw new Error('re-insert returned null')
         const map = new Map(get().byFarm)

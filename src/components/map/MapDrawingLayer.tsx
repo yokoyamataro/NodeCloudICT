@@ -16,6 +16,8 @@
 //   ・'text'    先に内容と書き方 (水平文字 / 線上文字) を決め、地図をクリックして置く。
 //               クリック前はカーソルに仮表示が付いてくる (置いた時と同じ見え方)。
 //               線上文字は 始点 → 向きの点 の 2 クリックで方位に合わせる。
+//               線のどこに置くかも 選べる (真ん中 / 上 / 下)。上下は 線の向きから
+//               見た 左右なので、逆向きに引けば 入れ替わる。
 //   ・'point'   タップした点に点を置く。registerCoordinate が true なら
 //               onAddCoordinate も呼び、座標管理にも登録する。
 //   ・'select'  図形を選ぶ。選び方は 点 / 線 / 長方形 / 多角形 の 4 通り。
@@ -72,6 +74,8 @@ import {
   EMPTY_STROKES,
   DEFAULT_SNAP_TYPES,
   KIND_LABEL,
+  TEXT_ANCHOR_LABEL,
+  type TextAnchor,
   type ArrowStyle,
   type SnapType,
   type MapDrawingStroke,
@@ -297,10 +301,18 @@ export function makeTextIcon(
   fontSizePx?: number | null,
   /** 回転角 [度]。反時計回りが正 (0 = 水平文字) */
   rotationDeg?: number | null,
+  /** 線のどこに置くか。線上文字で 上 / 下 に ずらすときに使う */
+  textAnchor?: TextAnchor | null,
 ): L.DivIcon {
   const size = fontSizePx ?? textFontSizePx(widthPx)
-  // CSS の rotate は時計回りが正なので符号を反転する
-  const rot = rotationDeg ? `transform:rotate(${-rotationDeg}deg);transform-origin:0 50%;` : ''
+  // CSS の rotate は時計回りが正なので符号を反転する。
+  // translateY は rotate より先に効くので、文字の向きに対して 直角に ずれる
+  // (= 線の上 / 下)。上下は 線の向きから見た 左右なので、逆向きに引けば 入れ替わる。
+  const shiftY = textAnchor === 'above' ? -size * 0.9 : textAnchor === 'below' ? size * 0.9 : 0
+  const rot =
+    rotationDeg || shiftY
+      ? `transform:rotate(${-(rotationDeg ?? 0)}deg) translateY(${shiftY}px);transform-origin:0 50%;`
+      : ''
   const shadow =
     '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff'
   const escaped = text
@@ -1143,6 +1155,8 @@ export function MapDrawingLayer({
   const [textAngle, setTextAngle] = useState(0)
   /** 文字: 線上文字の 1 点目 (2 点目のクリックで向きが決まる) */
   const [textLineStart, setTextLineStart] = useState<LL | null>(null)
+  /** 文字: 線のどこに置くか (線上文字のとき) */
+  const [textAnchor, setTextAnchor] = useState<TextAnchor>('center')
   /** 長方形: 縦横 [m] と、決めた開始点 (角) */
   const [rectWidth, setRectWidth] = useState(10)
   const [rectHeight, setRectHeight] = useState(5)
@@ -1678,6 +1692,7 @@ export function MapDrawingLayer({
             layer,
             fontSize,
             rotationDeg: deg,
+            textAnchor,
           })
           setTextLineStart(null)
           return
@@ -1692,6 +1707,7 @@ export function MapDrawingLayer({
           layer,
           fontSize,
           rotationDeg: textAngle,
+          textAnchor: textAlongLine ? textAnchor : 'center',
         })
         return
       }
@@ -1969,6 +1985,7 @@ export function MapDrawingLayer({
             layer: it.layer,
             fontSize: it.font_size ?? undefined,
             rotationDeg: it.rotation_deg,
+            textAnchor: it.text_anchor,
           })
         } else if (it.kind === 'point') {
           void addPoint({
@@ -2262,6 +2279,7 @@ export function MapDrawingLayer({
                 isEraser || isSelect,
                 s.font_size,
                 s.rotation_deg,
+                s.text_anchor,
               )}
               interactive={isEraser || isSelect}
               eventHandlers={
@@ -2978,14 +2996,25 @@ export function MapDrawingLayer({
     if (mode !== 'text') return null
     const text = textValue.trim()
     if (!text) return null
+    const anchor: TextAnchor = textAlongLine ? textAnchor : 'center'
     if (textAlongLine && textLineStart) {
       // 1 点目は決まっている → カーソルの方へ向ける
       const angle = textHover ? bearingDeg(textLineStart, textHover, converter) : textAngle
-      return { at: textLineStart, angle, text, color }
+      return { at: textLineStart, angle, text, color, anchor }
     }
     if (!textHover) return null
-    return { at: textHover, angle: textAlongLine ? 0 : textAngle, text, color }
-  }, [mode, textValue, textAlongLine, textLineStart, textHover, textAngle, converter, color])
+    return { at: textHover, angle: textAlongLine ? 0 : textAngle, text, color, anchor }
+  }, [
+    mode,
+    textValue,
+    textAlongLine,
+    textAnchor,
+    textLineStart,
+    textHover,
+    textAngle,
+    converter,
+    color,
+  ])
 
   // 選択中ストロークの中点 (+) ハンドル用の位置列。頂点数可変 kind でのみ表示。
   const midpoints = useMemo(() => {
@@ -3155,6 +3184,7 @@ export function MapDrawingLayer({
             false,
             fontSize,
             textGhost.angle,
+            textGhost.anchor,
           )}
           opacity={0.6}
           interactive={false}
@@ -3383,6 +3413,29 @@ export function MapDrawingLayer({
                     <span className="font-mono text-[10px] w-6 text-right">{fontSize ?? 14}</span>
                   </label>
                 )}
+                {textAlongLine && (
+                  <label className="flex items-center gap-1 shrink-0">
+                    <span className="text-[11px] text-slate-600">位置</span>
+                    <div className="flex items-center rounded border overflow-hidden">
+                      {(['center', 'above', 'below'] as const).map((a) => (
+                        <button
+                          key={a}
+                          type="button"
+                          onClick={() => setTextAnchor(a)}
+                          title={`線の${TEXT_ANCHOR_LABEL[a]}に置く`}
+                          className={`h-7 px-2 text-[11px] ${
+                            textAnchor === a
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-white text-slate-600 hover:bg-slate-50'
+                          }`}
+                        >
+                          {TEXT_ANCHOR_LABEL[a]}
+                        </button>
+                      ))}
+                    </div>
+                  </label>
+                )}
+
                 {/* 線上文字の角度は 2 点目のクリックで入るので、そこでは触らせない */}
                 {!textAlongLine && (
                   <label className="flex items-center gap-1 shrink-0">
@@ -3889,6 +3942,24 @@ export function MapDrawingLayer({
                         className="w-16 h-7 px-1 border rounded text-right font-mono"
                       />
                       <span className="text-[11px] text-slate-500">°</span>
+                    </label>
+                    <label className="flex items-center gap-1 shrink-0">
+                      <span className="text-[11px] text-slate-600">位置</span>
+                      <select
+                        value={selectedStroke.text_anchor ?? 'center'}
+                        onChange={(ev) =>
+                          void updateStrokeAttrs(selectedStroke.id, {
+                            textAnchor: ev.target.value as TextAnchor,
+                          })
+                        }
+                        className="h-7 px-1 border rounded"
+                      >
+                        {(['center', 'above', 'below'] as const).map((a) => (
+                          <option key={a} value={a}>
+                            線の{TEXT_ANCHOR_LABEL[a]}
+                          </option>
+                        ))}
+                      </select>
                     </label>
                     <label className="flex items-center gap-1 shrink-0">
                       <span className="text-[11px] text-slate-600">サイズ</span>

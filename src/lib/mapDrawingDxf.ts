@@ -47,13 +47,19 @@ export function buildMapDrawingDxfEntities(
 
     if (it.kind === 'text') {
       if (pts.length < 1 || !it.text) continue
+      const height = TEXT_HEIGHT_M * ((it.font_size ?? 14) / 14)
+      // 線上文字の 上 / 下 は 画面上の ずらしなので、CAD では 文字高さ分の
+      // 実寸に 置き換える。向きは 文字の 進行方向に 直角 (左が上)
+      const rad = ((it.rotation_deg ?? 0) * Math.PI) / 180
+      const shift =
+        it.text_anchor === 'above' ? height * 0.9 : it.text_anchor === 'below' ? -height * 0.9 : 0
       entities.push({
         type: 'TEXT',
-        x: pts[0].x,
-        y: pts[0].y,
+        x: pts[0].x - Math.sin(rad) * shift,
+        y: pts[0].y + Math.cos(rad) * shift,
         text: it.text,
         // 画面上の px を そのまま m にはできないので、既定値からの 比率で 換算する
-        height: TEXT_HEIGHT_M * ((it.font_size ?? 14) / 14),
+        height,
         rotationDeg: it.rotation_deg || undefined,
         layer,
       })

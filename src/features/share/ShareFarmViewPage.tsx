@@ -86,6 +86,7 @@ interface ShareDrawing {
   font_size?: number | null
   rotation_deg?: number | null
   arrow?: string | null
+  text_anchor?: 'center' | 'above' | 'below' | null
 }
 
 interface ShareFarmView {
@@ -587,7 +588,15 @@ export function ShareFarmViewPage() {
                 <Marker
                   key={d.id}
                   position={[p.lat, p.lng]}
-                  icon={makeTextIcon(d.text ?? '', d.color, d.width_px, false, d.font_size, d.rotation_deg)}
+                  icon={makeTextIcon(
+                    d.text ?? '',
+                    d.color,
+                    d.width_px,
+                    false,
+                    d.font_size,
+                    d.rotation_deg,
+                    d.text_anchor,
+                  )}
                   interactive={false}
                 />
               )
