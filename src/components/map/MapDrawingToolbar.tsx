@@ -25,7 +25,11 @@ import {
   Undo2,
   X,
 } from 'lucide-react'
-import type { DrawingMode } from './MapDrawingLayer'
+import {
+  SELECT_METHOD_LABEL,
+  type DrawingMode,
+  type SelectMethod,
+} from './MapDrawingLayer'
 import {
   DEFAULT_LAYERS,
   SNAP_TYPE_LABEL,
@@ -185,6 +189,9 @@ interface Props {
   /** ピック (スナップ): 近くの点に吸着させる */
   snapEnabled?: boolean
   onToggleSnap?: () => void
+  /** 選択の仕方 (点 / 線 / 長方形 / 多角形) */
+  selectMethod?: SelectMethod
+  onChangeSelectMethod?: (m: SelectMethod) => void
   /** 吸着させる対象の種類 */
   snapTypes?: SnapType[]
   onToggleSnapType?: (t: SnapType) => void
@@ -243,6 +250,8 @@ export function MapDrawingToolbar({
   onMemo,
   variant = 'floating',
   showAttributes = true,
+  selectMethod = 'point',
+  onChangeSelectMethod,
   snapEnabled,
   onToggleSnap,
   snapTypes,
@@ -258,6 +267,7 @@ export function MapDrawingToolbar({
   const [shapePickerOpen, setShapePickerOpen] = useState(false)
   const [measurePickerOpen, setMeasurePickerOpen] = useState(false)
   const [snapPickerOpen, setSnapPickerOpen] = useState(false)
+  const [selectPickerOpen, setSelectPickerOpen] = useState(false)
   const [currentMeasure, setCurrentMeasure] = useState<MeasureMode>('measure-dist')
   // 形状ボタンで最後に選ばれた形状 (直線 / 円 / 円弧 / 面)。
   // ボタンをタップした時に「今どの形状に入るか」を決めるために保持する。
@@ -289,7 +299,8 @@ export function MapDrawingToolbar({
       !linePickerOpen &&
       !shapePickerOpen &&
       !measurePickerOpen &&
-      !snapPickerOpen
+      !snapPickerOpen &&
+      !selectPickerOpen
     ) {
       return
     }
@@ -301,11 +312,19 @@ export function MapDrawingToolbar({
         setShapePickerOpen(false)
         setMeasurePickerOpen(false)
         setSnapPickerOpen(false)
+        setSelectPickerOpen(false)
       }
     }
     document.addEventListener('pointerdown', onDown)
     return () => document.removeEventListener('pointerdown', onDown)
-  }, [colorPickerOpen, linePickerOpen, shapePickerOpen, measurePickerOpen, snapPickerOpen])
+  }, [
+    colorPickerOpen,
+    linePickerOpen,
+    shapePickerOpen,
+    measurePickerOpen,
+    snapPickerOpen,
+    selectPickerOpen,
+  ])
 
   const isShapeMode = mode === currentShape
   const isMeasure = mode === currentMeasure
@@ -319,19 +338,63 @@ export function MapDrawingToolbar({
           : 'border rounded-lg shadow-lg p-1.5 max-w-[calc(100vw-1rem)]'
       }`}
     >
-      {/* 選択 (ストロークをタップ → 頂点ドラッグ / 長押しで削除 / + タップで追加) */}
-      <button
-        type="button"
-        onClick={() => onChangeMode(mode === 'select' ? 'off' : 'select')}
-        title="選択 — タップで図形を選び、属性 (レイヤ / 色 / 線種 / 太さ) を変える。ハンドルのドラッグで頂点移動、辺の + で頂点追加"
-        className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
-          mode === 'select'
-            ? 'bg-blue-600 text-white'
-            : 'text-slate-600 hover:bg-slate-100'
-        }`}
-      >
-        <MousePointer2 className="h-4 w-4" />
-      </button>
+      {/* 選択。本体で モードの 出し入れ、▼ で 選び方 (点 / 線 / 長方形 / 多角形) */}
+      <div className="relative shrink-0 flex items-stretch">
+        <button
+          type="button"
+          onClick={() => onChangeMode(mode === 'select' ? 'off' : 'select')}
+          title={`選択 (${SELECT_METHOD_LABEL[selectMethod]}) — 図形を選び、レイヤ / 色 / 線種 / 太さ を変える。1 つだけ選べば 頂点の移動や 端部の伸縮もできる`}
+          className={`h-8 w-8 flex items-center justify-center rounded-l shrink-0 ${
+            mode === 'select' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <MousePointer2 className="h-4 w-4" />
+        </button>
+        {onChangeSelectMethod && (
+          <button
+            type="button"
+            onClick={() => {
+              setSelectPickerOpen((v) => !v)
+              setShapePickerOpen(false)
+              setMeasurePickerOpen(false)
+              setSnapPickerOpen(false)
+              setColorPickerOpen(false)
+              setLinePickerOpen(false)
+            }}
+            title="選び方を選ぶ"
+            className={`h-8 w-4 flex items-center justify-center rounded-r border-l ${
+              mode === 'select'
+                ? 'bg-blue-600 text-white border-blue-500'
+                : 'text-slate-600 hover:bg-slate-100 border-slate-300'
+            }`}
+          >
+            <ChevronDown className="h-3 w-3" />
+          </button>
+        )}
+        {selectPickerOpen && onChangeSelectMethod && (
+          <div className="absolute top-full left-0 mt-1 z-[3000] bg-white border rounded shadow-lg py-1 min-w-[7rem]">
+            {(['point', 'line', 'rect', 'polygon'] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => {
+                  onChangeSelectMethod(m)
+                  onChangeMode('select')
+                  setSelectPickerOpen(false)
+                }}
+                className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs ${
+                  selectMethod === m
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <MousePointer2 className="h-4 w-4" />
+                <span>{SELECT_METHOD_LABEL[m]}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
       {/* ペン (フリーハンド) */}
       <button
         type="button"

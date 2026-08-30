@@ -94,6 +94,16 @@ export type DrawingMode =
   | 'measure-perp'
 
 /** 計測モードかどうか */
+/** 選択の仕方 */
+export type SelectMethod = 'point' | 'line' | 'rect' | 'polygon'
+
+export const SELECT_METHOD_LABEL: Record<SelectMethod, string> = {
+  point: '点',
+  line: '線',
+  rect: '長方形',
+  polygon: '多角形',
+}
+
 export function isMeasureMode(mode: DrawingMode): boolean {
   return mode === 'measure-dist' || mode === 'measure-area' || mode === 'measure-perp'
 }
@@ -137,6 +147,8 @@ interface Props {
    * 一覧に無いレイヤは 一番下に 回す。未指定なら 作成順のまま。
    */
   layerOrder?: string[]
+  /** 選択の仕方。点で 1 つずつ / 線・長方形・多角形で まとめて */
+  selectMethod?: SelectMethod
   /** 表示しないレイヤ */
   hiddenLayers?: string[]
   /**
@@ -1057,6 +1069,7 @@ export function MapDrawingLayer({
   hidden = false,
   existingLayers,
   layerOrder,
+  selectMethod = 'point',
   hiddenLayers,
   layerZIndex,
 }: Props) {
@@ -1253,10 +1266,6 @@ export function MapDrawingLayer({
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const selectedId = selectedIds.length === 1 ? selectedIds[0] : null
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
-  /** 選択の仕方。点で 1 つずつ / 線・長方形・多角形で まとめて */
-  const [selectMethod, setSelectMethod] = useState<'point' | 'line' | 'rect' | 'polygon'>(
-    'point',
-  )
   /** 線 / 長方形 / 多角形で 囲っている途中の 頂点 */
   const [selectShape, setSelectShape] = useState<LL[]>([])
   const toggleSelected = useCallback((id: string, additive: boolean) => {
@@ -3478,33 +3487,9 @@ export function MapDrawingLayer({
             {/* 選択の仕方。点で 1 つずつ / 線・長方形・多角形で まとめて */}
             {mode === 'select' && !stretchAxis && (
               <>
-                <span className="font-semibold text-slate-700 shrink-0">選択</span>
-                <div className="flex items-center rounded border overflow-hidden shrink-0">
-                  {(
-                    [
-                      ['point', '点'],
-                      ['line', '線'],
-                      ['rect', '長方形'],
-                      ['polygon', '多角形'],
-                    ] as const
-                  ).map(([m, label]) => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => {
-                        setSelectMethod(m)
-                        setSelectShape([])
-                      }}
-                      className={`h-7 px-2 ${
-                        selectMethod === m
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-white text-slate-600 hover:bg-slate-50'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
+                <span className="font-semibold text-slate-700 shrink-0">
+                  選択 ({SELECT_METHOD_LABEL[selectMethod]})
+                </span>
                 {selectedIds.length > 0 ? (
                   <span className="text-[11px] text-blue-700 font-semibold shrink-0">
                     {selectedIds.length} 個選択中

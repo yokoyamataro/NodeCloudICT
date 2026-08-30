@@ -83,7 +83,11 @@ import {
 } from '@/stores/parcelAttributeTypesStore'
 import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { ParcelMapLayer, parcelFeatureKey } from '@/components/map/ParcelMapLayer'
-import { MapDrawingLayer, type DrawingMode } from '@/components/map/MapDrawingLayer'
+import {
+  MapDrawingLayer,
+  type DrawingMode,
+  type SelectMethod,
+} from '@/components/map/MapDrawingLayer'
 import { MapDrawingToolbar } from '@/components/map/MapDrawingToolbar'
 import { MapDrawingCommandBar } from '@/components/map/mapDrawingCommandBar'
 import { useMapDrawingStore, EMPTY_STROKES, DEFAULT_LAYERS, DEFAULT_SNAP_TYPES, type LineStyle, type SnapType } from '@/stores/mapDrawingStore'
@@ -790,6 +794,7 @@ export function MobileStakingPage() {
   const [drawingWidth, setDrawingWidth] = useState(3)
   const [drawingLineStyle, setDrawingLineStyle] = useState<LineStyle>('solid')
   // 作図・計測ツールから引き継いだ設定 (ピック / レイヤ / 文字サイズ)
+  const [selectMethod, setSelectMethod] = useState<SelectMethod>('point')
   const [snapEnabled, setSnapEnabled] = useState(false)
   const [snapTypes, setSnapTypes] = useState<SnapType[]>(DEFAULT_SNAP_TYPES)
   const toggleSnapType = (t: SnapType) =>
@@ -3572,6 +3577,8 @@ export function MobileStakingPage() {
                 canRedo={drawingRedoLen > 0}
                 onUndo={() => void drawingUndo()}
                 onRedo={() => void drawingRedo()}
+                selectMethod={selectMethod}
+                onChangeSelectMethod={setSelectMethod}
                 snapEnabled={snapEnabled}
                 onToggleSnap={() => setSnapEnabled((v) => !v)}
                 snapTypes={snapTypes}
@@ -5396,6 +5403,7 @@ export function MobileStakingPage() {
             layer={drawLayer}
             fontSize={drawFontSize}
             onChangeFontSize={setDrawFontSize}
+            selectMethod={selectMethod}
             snapEnabled={snapEnabled}
             snapTypes={snapTypes}
             extraSnapPoints={extraSnapPoints}

@@ -30,7 +30,11 @@ import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
 import { PhotoEditModal } from '@/features/coordinates/PhotoEditModal'
 import { CoordinateMap, type ExternalPolygon } from '@/components/map/CoordinateMap'
 import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
-import { MapDrawingLayer, type DrawingMode } from '@/components/map/MapDrawingLayer'
+import {
+  MapDrawingLayer,
+  type DrawingMode,
+  type SelectMethod,
+} from '@/components/map/MapDrawingLayer'
 import { MapDrawingToolbar } from '@/components/map/MapDrawingToolbar'
 import { MapDrawingCommandBar } from '@/components/map/mapDrawingCommandBar'
 import { OverviewExportMenu, type ExportItem } from './OverviewExportMenu'
@@ -386,6 +390,7 @@ export function OrthophotoPage() {
   // ===== 作図・計測 =====
   // ---- ペイント (作図・計測) の設定 ----
   // 作図・計測ツールはペイントへ統合したので、状態はペイント側の設定だけを持つ
+  const [selectMethod, setSelectMethod] = useState<SelectMethod>('point')
   const [snapEnabled, setSnapEnabled] = useState(false)
   const [snapTypes, setSnapTypes] = useState<SnapType[]>(DEFAULT_SNAP_TYPES)
   const toggleSnapType = (t: SnapType) =>
@@ -515,7 +520,7 @@ export function OrthophotoPage() {
       {/* 画面いっぱいを地図に使いたいので ページヘッダは置かない。
           ページ全体の操作 (書き出し) は このツールバー行に 集約する */}
       <div className="border-b bg-white px-2 py-1.5 flex items-start gap-2">
-        <OverviewExportMenu items={exportItems} />
+        <div className="flex-1 min-w-0">
         <MapDrawingToolbar
           variant="bar"
           showAttributes={false}
@@ -531,6 +536,8 @@ export function OrthophotoPage() {
           canRedo={drawingRedoLen > 0}
           onUndo={() => void drawingUndo()}
           onRedo={() => void drawingRedo()}
+          selectMethod={selectMethod}
+          onChangeSelectMethod={setSelectMethod}
           snapEnabled={snapEnabled}
           onToggleSnap={() => setSnapEnabled((v) => !v)}
           snapTypes={snapTypes}
@@ -541,6 +548,9 @@ export function OrthophotoPage() {
           registerCoordinate={registerCoordinate}
           onToggleRegisterCoordinate={() => setRegisterCoordinate((v) => !v)}
         />
+        </div>
+        {/* 書き出しは 道具と 混ざらないよう 右端に 離して置く */}
+        <OverviewExportMenu items={exportItems} />
       </div>
       {/* 今の道具の詳細入力 (文字の内容 / 円の半径 / 平行線の幅…)。
           地図に重ねず、道具アイコンのすぐ下に出す */}
@@ -608,6 +618,7 @@ export function OrthophotoPage() {
             layer={drawLayer}
             fontSize={drawFontSize}
             onChangeFontSize={setDrawFontSize}
+            selectMethod={selectMethod}
             snapEnabled={snapEnabled}
             snapTypes={snapTypes}
             extraSnapPoints={extraSnapPoints}
