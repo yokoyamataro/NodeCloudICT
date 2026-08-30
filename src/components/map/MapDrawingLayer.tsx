@@ -128,6 +128,13 @@ interface Props {
   hidden?: boolean
   /** レイヤ名の入力候補 (選択した図形の属性を編集するパネルで使う) */
   existingLayers?: string[]
+  /**
+   * レイヤの重ね順。先頭ほど 上に 描く。
+   * 一覧に無いレイヤは 一番下に 回す。未指定なら 作成順のまま。
+   */
+  layerOrder?: string[]
+  /** 表示しないレイヤ */
+  hiddenLayers?: string[]
 }
 
 // ---- 平行線 ----
@@ -927,11 +934,30 @@ export function MapDrawingLayer({
   registerCoordinate = false,
   hidden = false,
   existingLayers,
+  layerOrder,
+  hiddenLayers,
 }: Props) {
   const map = useMap()
-  const items = useMapDrawingStore((s) =>
+  const allItems = useMapDrawingStore((s) =>
     farmId ? s.byFarm.get(farmId) ?? EMPTY_STROKES : EMPTY_STROKES,
   )
+
+  // レイヤの重ね順に 並べ替える。Leaflet は 後から足したものが 上に来るので、
+  // 一覧で 上にあるレイヤほど 後ろに 回す。非表示レイヤは ここで 落とす。
+  const items = useMemo(() => {
+    const hiddenSet = hiddenLayers && hiddenLayers.length > 0 ? new Set(hiddenLayers) : null
+    const visible = hiddenSet
+      ? allItems.filter((it) => !hiddenSet.has(it.layer ?? '0'))
+      : allItems
+    if (!layerOrder || layerOrder.length === 0) return visible
+    const rank = new Map(layerOrder.map((l, i) => [l, i]))
+    const bottom = layerOrder.length
+    // 元の並び (作成順) を 崩さないよう、安定ソートで レイヤ順だけ 入れ替える
+    return [...visible].sort(
+      (a, b) =>
+        (rank.get(b.layer ?? '0') ?? bottom) - (rank.get(a.layer ?? '0') ?? bottom),
+    )
+  }, [allItems, layerOrder, hiddenLayers])
   const fetchByFarm = useMapDrawingStore((s) => s.fetchByFarm)
   const addStroke = useMapDrawingStore((s) => s.addStroke)
   const addPoint = useMapDrawingStore((s) => s.addPoint)

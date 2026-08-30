@@ -1,9 +1,13 @@
 // 全体図ページ: 画面の大半を地図 (オルソ + 座標 + 区域 + ペイント + メモ + 写真)
 // の表示に使う。メモと写真は地図上のマーカーで見る (右パネルは廃止)。
 //
+// 左に縦長のパネルを置き、表示要素 (測点 / 地番 / 暗渠配線 …) と
+// ペイントのレイヤを そこで まとめて 管理する。レイヤの並び順が
+// そのまま 描画順になる (一覧で上にあるほど 地図でも上)。
+//
 // オルソ画像のアップロードは 日常的に押すものではないので 設定へ移した
 // (OrthophotoUploadSection)。ここに残しているのは 登録済み一覧の 確認だけ。
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Loader2,
   Trash2,
@@ -11,7 +15,6 @@ import {
   List,
   X,
   Map as MapIcon,
-  Eye,
   BookImage,
   Download,
   Maximize2,
@@ -33,6 +36,11 @@ import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
 import { MapDrawingLayer, type DrawingMode } from '@/components/map/MapDrawingLayer'
 import { MapDrawingToolbar } from '@/components/map/MapDrawingToolbar'
 import { MapDrawingCommandBar } from '@/components/map/mapDrawingCommandBar'
+import {
+  OverviewLayerPanel,
+  useLayerOrder,
+  type VisibilityRow,
+} from './OverviewLayerPanel'
 import { useMapDrawingStore, EMPTY_STROKES, DEFAULT_LAYERS, DEFAULT_SNAP_TYPES, type LineStyle, type SnapType } from '@/stores/mapDrawingStore'
 import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { useParcelImportSelection } from '@/features/parcel-maps/useParcelImportSelection'
@@ -345,19 +353,25 @@ export function OrthophotoPage() {
     return { lines, vertices }
   }, [pipes, projectZone])
 
-  // 表示設定パネルの開閉 (ヘッダの「表示」ボタンから)
-  const [showVisMenu, setShowVisMenu] = useState(false)
-  const visMenuRef = useRef<HTMLDivElement | null>(null)
-  useEffect(() => {
-    if (!showVisMenu) return
-    const onClick = (e: MouseEvent) => {
-      if (visMenuRef.current && !visMenuRef.current.contains(e.target as Node)) {
-        setShowVisMenu(false)
-      }
-    }
-    document.addEventListener('mousedown', onClick)
-    return () => document.removeEventListener('mousedown', onClick)
-  }, [showVisMenu])
+  // 表示要素の切替。左パネル (OverviewLayerPanel) から操作する
+  const visibilityRows = useMemo<VisibilityRow[]>(
+    () => [
+      { key: 'points', label: '測点 (座標マーカー)', on: showPointsLayer, set: setShowPointsLayer },
+      { key: 'parcels', label: '地番 (区域ポリゴン)', on: showParcelsLayer, set: setShowParcelsLayer },
+      { key: 'pipes', label: '暗渠配線', on: showPipesLayer, set: setShowPipesLayer },
+      { key: 'cameras', label: 'カメラ (工区写真)', on: showCamerasLayer, set: setShowCamerasLayer },
+      { key: 'memos', label: 'メモ', on: showMemosLayer, set: setShowMemosLayer },
+      { key: 'annotations', label: 'ペイント', on: showAnnotationsLayer, set: setShowAnnotationsLayer },
+    ],
+    [
+      showPointsLayer,
+      showParcelsLayer,
+      showPipesLayer,
+      showCamerasLayer,
+      showMemosLayer,
+      showAnnotationsLayer,
+    ],
+  )
 
   // displayCoordinateIds が Set/undefined の切替で参照が変わらないように memo 化
   const emptyCoordSet = useMemo(() => new Set<string>(), [])
@@ -419,6 +433,14 @@ export function OrthophotoPage() {
     return Array.from(set)
   }, [drawingItems])
 
+  // レイヤの並び順と表示状態 (この端末での見え方。工区ごとに localStorage へ)
+  const {
+    layers: orderedLayers,
+    hidden: hiddenLayers,
+    move: moveLayer,
+    toggleHidden: toggleLayerHidden,
+  } = useLayerOrder(currentFarm?.id ?? '', existingLayers)
+
   // 図形以外のスナップ候補（座標管理の点 ＋ 区域の頂点）
   const extraSnapPoints = useMemo<[number, number][]>(() => {
     const out: [number, number][] = []
@@ -463,44 +485,6 @@ export function OrthophotoPage() {
 
   const headerActions = (
     <div className="flex items-center gap-2">
-      {/* 表示設定 (点種 / 地番 / カメラ / メモ / 作図要素) */}
-      <div className="relative" ref={visMenuRef}>
-        <button
-          onClick={() => setShowVisMenu((v) => !v)}
-          className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded hover:bg-slate-50"
-          title="地図上に表示するレイヤを切替"
-        >
-          <Eye className="h-4 w-4" />
-          表示
-        </button>
-        {showVisMenu && (
-          <div className="absolute right-0 mt-1 z-[2000] bg-white border rounded-lg shadow-lg p-2 w-52 text-sm">
-            <div className="text-[11px] text-slate-500 mb-1 px-1">表示するレイヤ</div>
-            {(
-              [
-                { key: 'points', label: '点種 (座標マーカー)', on: showPointsLayer, set: setShowPointsLayer },
-                { key: 'parcels', label: '地番 (区域ポリゴン)', on: showParcelsLayer, set: setShowParcelsLayer },
-                { key: 'pipes', label: '暗渠配線', on: showPipesLayer, set: setShowPipesLayer },
-                { key: 'cameras', label: 'カメラ (工区写真)', on: showCamerasLayer, set: setShowCamerasLayer },
-                { key: 'memos', label: 'メモ', on: showMemosLayer, set: setShowMemosLayer },
-                { key: 'annotations', label: 'ペイント', on: showAnnotationsLayer, set: setShowAnnotationsLayer },
-              ] as const
-            ).map((row) => (
-              <label
-                key={row.key}
-                className="flex items-center gap-2 px-1 py-1 rounded hover:bg-slate-50 cursor-pointer"
-              >
-                <input
-                  type="checkbox"
-                  checked={row.on}
-                  onChange={(e) => row.set(e.target.checked)}
-                />
-                <span className="text-xs">{row.label}</span>
-              </label>
-            ))}
-          </div>
-        )}
-      </div>
       <button
         onClick={handleDxfExport}
         disabled={drawingItems.length === 0}
@@ -578,6 +562,18 @@ export function OrthophotoPage() {
             地図に重ねず、道具アイコンのすぐ下に出す */}
         <MapDrawingCommandBar className="mt-1.5 pt-1.5 border-t" />
       </div>
+
+      {/* 左パネル (表示要素 + レイヤ) と 地図の横並び */}
+      <div className="flex-1 flex min-h-0">
+      <OverviewLayerPanel
+        visibility={visibilityRows}
+        layers={orderedLayers}
+        hiddenLayers={hiddenLayers}
+        onMoveLayer={moveLayer}
+        onToggleLayer={toggleLayerHidden}
+        currentLayer={drawLayer}
+        onSelectLayer={setDrawLayer}
+      />
 
       {/* 地図 (オルソ + 座標 + 区域 + ペイント + メモ + 写真)。
           メモ・写真は地図上のマーカーで見る (右パネルは廃止) */}
@@ -697,6 +693,7 @@ export function OrthophotoPage() {
         )}
 
       </div>
+      </div>{/* /左パネル + 地図 */}
 
       {/* 写真帳の出力 (順番を決める) */}
       {photoBookOpen && currentFarm && (
