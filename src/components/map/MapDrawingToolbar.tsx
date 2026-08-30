@@ -19,6 +19,7 @@ import {
   Redo2,
   Ruler,
   Slash,
+  Square,
   StickyNote,
   Type,
   Undo2,
@@ -28,10 +29,12 @@ import type { DrawingMode } from './MapDrawingLayer'
 import { DEFAULT_LAYERS, type LineStyle } from '@/stores/mapDrawingStore'
 
 /** 形状ボタンで扱う描画モード (ドロップダウンで直線 / 円 / 円弧 / 面 を切替) */
-type ShapeMode = 'line' | 'circle' | 'arc' | 'polygon' | 'parallel'
+type ShapeMode = 'line' | 'circle' | 'arc' | 'polygon' | 'rect' | 'parallel' | 'perp'
 const SHAPE_LABEL: Record<ShapeMode, string> = {
   line: '直線',
   parallel: '平行線',
+  perp: '垂線',
+  rect: '長方形',
   circle: '円',
   arc: '円弧',
   polygon: '面',
@@ -42,11 +45,15 @@ const SHAPE_HELP: Record<ShapeMode, string> = {
   circle: '中心をクリック → 半径を入力するか円周上をクリック → 確定',
   arc: '始点 → 通過点 → 終点の 3 点をクリック',
   polygon: 'クリックで頂点 / 最初の点か Enter で閉じる / Backspace で 1 つ戻る',
+  perp: '基準にする線をクリック → 通過点をクリック → 延長を入れるか終点をクリック → 確定',
+  rect: '横と縦を入力 → 開始点 (角) をクリック → 横の向きをクリック',
 }
 /** 何を入れる道具かを 先頭に出す (「線入力」「文字入力」…) */
 const SHAPE_INPUT: Record<ShapeMode, string> = {
   line: '線入力',
   parallel: '平行線入力',
+  perp: '垂線入力',
+  rect: '長方形入力',
   circle: '円入力',
   arc: '円弧入力',
   polygon: '面入力',
@@ -102,9 +109,31 @@ const MEASURE_HELP: Record<MeasureMode, string> = {
   'measure-perp': '基準線の 2 点 → 対象の 1 点',
 }
 
+/** 垂線: 横線に 縦線が 立っている図 (lucide に該当アイコンが無い) */
+function PerpSvg({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <path d="M3 20 H 21" />
+      <path d="M12 20 V 4" />
+      <path d="M12 16 H 16 V 20" strokeWidth={1.2} />
+    </svg>
+  )
+}
+
 function shapeIcon(shape: ShapeMode): ReactNode {
   if (shape === 'line') return <Slash className="h-4 w-4" />
   if (shape === 'parallel') return <ParallelSvg size={16} />
+  if (shape === 'perp') return <PerpSvg size={16} />
+  if (shape === 'rect') return <Square className="h-4 w-4" />
   if (shape === 'circle') return <CircleIcon className="h-4 w-4" />
   if (shape === 'arc') return <ArcSvg size={16} />
   return <Pentagon className="h-4 w-4" />
@@ -220,7 +249,15 @@ export function MapDrawingToolbar({
 
   // mode が形状系に切り替わったら currentShape を追従させる (外部から強制設定された場合)
   useEffect(() => {
-    if (mode === 'line' || mode === 'circle' || mode === 'arc' || mode === 'polygon') {
+    if (
+      mode === 'line' ||
+      mode === 'circle' ||
+      mode === 'arc' ||
+      mode === 'polygon' ||
+      mode === 'rect' ||
+      mode === 'parallel' ||
+      mode === 'perp'
+    ) {
       setCurrentShape(mode)
     }
     if (mode === 'measure-dist' || mode === 'measure-area' || mode === 'measure-perp') {
@@ -301,7 +338,7 @@ export function MapDrawingToolbar({
         </button>
         {shapePickerOpen && (
           <div className="absolute top-full left-0 mt-1 z-[3000] bg-white border rounded shadow-lg py-1 min-w-[7rem]">
-            {(['line', 'parallel', 'circle', 'arc', 'polygon'] as const).map((s) => (
+            {(['line', 'parallel', 'perp', 'rect', 'circle', 'arc', 'polygon'] as const).map((s) => (
               <button
                 key={s}
                 type="button"

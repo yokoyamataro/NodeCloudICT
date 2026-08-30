@@ -9,6 +9,10 @@
 //   ・'arc'     3 タップで始点 → 通過点 → 終点 (3 点を通る一意の円弧を近似ポリラインで描画)。
 //   ・'polygon' タップで頂点を追加。最初の頂点を再タップ / Enter / 「面を閉じる」で確定。
 //               Backspace で 1 つ戻る、Esc で取り消し。半透明で塗り潰し。
+//   ・'rect'    長方形。縦横をメートルで入れ、開始点 → 向きの点 の 2 クリックで置く。
+//               保存は 4 頂点の polygon なので、あとから頂点も動かせる。
+//   ・'perp'    垂線。基準線をクリック → 通過点をクリック → 延長を入れるか終点をクリック。
+//               基準線への垂線の足を起点に、通過点の側へ伸ばす。
 //   ・'text'    先に内容と書き方 (水平文字 / 線上文字) を決め、地図をクリックして置く。
 //               クリック前はカーソルに仮表示が付いてくる (置いた時と同じ見え方)。
 //               線上文字は 始点 → 向きの点 の 2 クリックで方位に合わせる。
@@ -58,7 +62,9 @@ export type DrawingMode =
   | 'circle'
   | 'arc'
   | 'polygon'
+  | 'rect'
   | 'parallel'
+  | 'perp'
   | 'text'
   | 'point'
   | 'select'
@@ -500,6 +506,85 @@ function bearingDeg(a: LL, b: LL, c?: CoordinateConverter): number {
   return Math.round(deg * 10) / 10
 }
 
+/** メートルの東西/南北ずれから 緯度経度を作る (短距離なので平面近似で足りる) */
+function offsetLL(from: LL, eastM: number, northM: number, c?: CoordinateConverter): LL {
+  if (c) {
+    const p = c.toXY(from.lat, from.lng)
+    return c.toLatLng(p.x + northM, p.y + eastM)
+  }
+  const k = Math.cos((from.lat * Math.PI) / 180)
+  return {
+    lat: from.lat + northM / M_PER_DEG_LAT,
+    lng: from.lng + eastM / (M_PER_DEG_LAT * k),
+  }
+}
+
+/** a → b の 東西/南北 成分 [m] */
+function deltaM(a: LL, b: LL, c?: CoordinateConverter): { east: number; north: number } {
+  if (c) {
+    const A = c.toXY(a.lat, a.lng)
+    const B = c.toXY(b.lat, b.lng)
+    return { east: B.y - A.y, north: B.x - A.x }
+  }
+  const k = Math.cos(((a.lat + b.lat) / 2 / 180) * Math.PI)
+  return {
+    east: (b.lng - a.lng) * M_PER_DEG_LAT * k,
+    north: (b.lat - a.lat) * M_PER_DEG_LAT,
+  }
+}
+
+/**
+ * 長方形の 4 頂点。start を 1 つの角にし、start → toward の向きを「横」、
+ * その左 90 度を「縦」とする。
+ */
+function rectPoints(
+  start: LL,
+  toward: LL,
+  widthM: number,
+  heightM: number,
+  c?: CoordinateConverter,
+): LL[] | null {
+  const d = deltaM(start, toward, c)
+  const len = Math.hypot(d.east, d.north)
+  if (len < 1e-6 || widthM <= 0 || heightM <= 0) return null
+  // 横方向の単位ベクトルと、その左 90 度 (縦方向)
+  const ux = d.east / len
+  const uy = d.north / len
+  const vx = -uy
+  const vy = ux
+  const p1 = start
+  const p2 = offsetLL(start, ux * widthM, uy * widthM, c)
+  const p3 = offsetLL(start, ux * widthM + vx * heightM, uy * widthM + vy * heightM, c)
+  const p4 = offsetLL(start, vx * heightM, vy * heightM, c)
+  return [p1, p2, p3, p4]
+}
+
+/**
+ * 垂線の形。基準線への垂線の足を起点に、通過点の側へ lengthM だけ伸ばす。
+ * 通過点が 基準線の上に乗っていて 向きが決まらないときは、基準線の左 90 度に取る。
+ */
+function perpGeometry(
+  base: [LL, LL],
+  through: LL,
+  lengthM: number,
+  c?: CoordinateConverter,
+): { foot: LL; end: LL; ux: number; uy: number } | null {
+  const { foot } = measurePerp(c, base[0], base[1], through)
+  let d = deltaM(foot, through, c)
+  let len = Math.hypot(d.east, d.north)
+  if (len < 1e-6) {
+    // 通過点が線上 → 基準線の左 90 度を向きにする
+    const ab = deltaM(base[0], base[1], c)
+    const abLen = Math.hypot(ab.east, ab.north)
+    if (abLen < 1e-6) return null
+    d = { east: -ab.north / abLen, north: ab.east / abLen }
+    len = 1
+  }
+  const ux = d.east / len
+  const uy = d.north / len
+  return { foot, end: offsetLL(foot, ux * lengthM, uy * lengthM, c), ux, uy }
+}
+
 /** 基準線を拾う判定の広さ [画面 px] */
 const PICK_LINE_RADIUS_PX = 14
 
@@ -517,6 +602,66 @@ function distancePointToSegmentPx(p: L.Point, a: L.Point, b: L.Point): number {
 /** 基準線に選べる図形か (線 / 面 / 手書き) */
 function isLineLike(kind: MapDrawingStroke['kind']): boolean {
   return kind === 'stroke' || kind === 'polygon'
+}
+
+/**
+ * 数値入力。既に入っている値を 選び直さずに 打てるようにする。
+ *
+ * 素の controlled input だと、消した瞬間に Number('') = 0 で 0 に戻り、
+ * 「0 が残っていて 数字が打てない」状態になる。入力中は 文字列のまま持ち、
+ * 数値として読めたときだけ 親へ返す。フォーカス時に 全選択もする。
+ */
+function NumberField({
+  value,
+  onChange,
+  onEnter,
+  step = '0.1',
+  min,
+  max,
+  className = '',
+}: {
+  value: number
+  onChange: (v: number) => void
+  onEnter?: () => void
+  step?: string
+  min?: number
+  max?: number
+  className?: string
+}) {
+  const [draft, setDraft] = useState<string | null>(null)
+  return (
+    <input
+      type="number"
+      inputMode="decimal"
+      step={step}
+      min={min}
+      max={max}
+      value={draft ?? String(value)}
+      onFocus={(e) => {
+        setDraft(String(value))
+        e.currentTarget.select()
+      }}
+      onChange={(e) => {
+        const raw = e.target.value
+        setDraft(raw)
+        if (raw === '' || raw === '-') return
+        const n = Number(raw)
+        if (!Number.isFinite(n)) return
+        let next = n
+        if (min !== undefined) next = Math.max(min, next)
+        if (max !== undefined) next = Math.min(max, next)
+        onChange(next)
+      }}
+      onBlur={() => setDraft(null)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.currentTarget.blur()
+          onEnter?.()
+        }
+      }}
+      className={className}
+    />
+  )
 }
 
 export function MapDrawingLayer({
@@ -555,6 +700,16 @@ export function MapDrawingLayer({
   const [textAngle, setTextAngle] = useState(0)
   /** 文字: 線上文字の 1 点目 (2 点目のクリックで向きが決まる) */
   const [textLineStart, setTextLineStart] = useState<LL | null>(null)
+  /** 長方形: 縦横 [m] と、決めた開始点 (角) */
+  const [rectWidth, setRectWidth] = useState(10)
+  const [rectHeight, setRectHeight] = useState(5)
+  const [rectStart, setRectStart] = useState<LL | null>(null)
+  /** 垂線: 基準線 / 通過点 / 延長 [m] */
+  const [perpBase, setPerpBase] = useState<[LL, LL] | null>(null)
+  const [perpThrough, setPerpThrough] = useState<LL | null>(null)
+  const [perpLength, setPerpLength] = useState(10)
+  /** 長方形・垂線でカーソルを追うための位置 (仮表示に使う) */
+  const [shapeHover, setShapeHover] = useState<LL | null>(null)
   /** 円: 中心を決めたあとの半径 [m]。数値入力でも、円周上のクリックでも決まる */
   const [circleRadius, setCircleRadius] = useState(10)
   /** 平行線: 選んだ基準線。間隔と本数を決めるまで保持する */
@@ -649,6 +804,20 @@ export function MapDrawingLayer({
     return () => cancelAnimationFrame(id)
   }, [mode])
 
+  // 長方形・垂線の間だけ カーソルを 追う (仮表示の向きに使う)
+  useEffect(() => {
+    if (mode !== 'rect' && mode !== 'perp') return
+    const onMove = (e: L.LeafletMouseEvent) => setShapeHover(snap(e.latlng))
+    const onOut = () => setShapeHover(null)
+    map.on('mousemove', onMove)
+    map.on('mouseout', onOut)
+    return () => {
+      map.off('mousemove', onMove)
+      map.off('mouseout', onOut)
+      setShapeHover(null)
+    }
+  }, [map, mode, snap])
+
   // 文字モードの間だけ カーソルを 追う
   useEffect(() => {
     if (mode !== 'text') return
@@ -679,6 +848,11 @@ export function MapDrawingLayer({
       setShapeProgress(null)
     }
     if (mode !== 'parallel') setParallelBase(null)
+    if (mode !== 'rect') setRectStart(null)
+    if (mode !== 'perp') {
+      setPerpBase(null)
+      setPerpThrough(null)
+    }
     if (mode !== 'text') setTextLineStart(null)
     if (mode !== 'select') {
       setSelectedId(null)
@@ -721,6 +895,8 @@ export function MapDrawingLayer({
       mode === 'point' ||
       mode === 'line' ||
       mode === 'parallel' ||
+      mode === 'rect' ||
+      mode === 'perp' ||
       mode === 'circle' ||
       mode === 'arc' ||
       mode === 'polygon' ||
@@ -875,30 +1051,54 @@ export function MapDrawingLayer({
         return
       }
       if (mode === 'parallel') {
-        // 既存の線 / 面の辺から、クリックに一番近いものを基準線にする
         if (parallelBase) return
-        const clickPx = map.latLngToContainerPoint(e.latlng)
-        let best: [LL, LL] | null = null
-        let bestPx = PICK_LINE_RADIUS_PX
-        for (const it of items) {
-          if (!isLineLike(it.kind)) continue
-          const pts = it.points
-          const last = it.kind === 'polygon' ? pts.length : pts.length - 1
-          for (let i = 0; i < last; i += 1) {
-            const a = pts[i]
-            const b = pts[(i + 1) % pts.length]
-            const px = distancePointToSegmentPx(
-              clickPx,
-              map.latLngToContainerPoint([a.lat, a.lng]),
-              map.latLngToContainerPoint([b.lat, b.lng]),
-            )
-            if (px < bestPx) {
-              bestPx = px
-              best = [a, b]
-            }
-          }
-        }
+        const best = pickBaseLine(e.latlng)
         if (best) setParallelBase(best)
+        return
+      }
+
+      if (mode === 'perp') {
+        // ① 基準線 → ② 通過点 → ③ 終点 (または延長を数値で入れて確定)
+        if (!perpBase) {
+          const best = pickBaseLine(e.latlng)
+          if (best) setPerpBase(best)
+          return
+        }
+        if (!perpThrough) {
+          setPerpThrough(at)
+          // 足から通過点までの長さを 延長の初期値にしておく
+          const { value } = measurePerp(converter, perpBase[0], perpBase[1], at)
+          if (value > 0) setPerpLength(Math.round(value * 100) / 100)
+          return
+        }
+        // 3 回目のクリック = 終点。垂線の向きに射影した長さを採用する
+        const geom = perpGeometry(perpBase, perpThrough, perpLength, converter)
+        if (geom) {
+          const d = deltaM(geom.foot, at, converter)
+          const len = d.east * geom.ux + d.north * geom.uy
+          if (Math.abs(len) > 0.01) setPerpLength(Math.round(Math.abs(len) * 100) / 100)
+        }
+        return
+      }
+
+      if (mode === 'rect') {
+        if (!rectStart) {
+          setRectStart(at)
+          return
+        }
+        const pts = rectPoints(rectStart, at, rectWidth, rectHeight, converter)
+        if (pts) {
+          void addStroke({
+            farmId,
+            kind: 'polygon',
+            color,
+            widthPx,
+            lineStyle,
+            points: pts,
+            layer,
+          })
+        }
+        setRectStart(null)
         return
       }
       if (mode === 'line') {
@@ -968,6 +1168,35 @@ export function MapDrawingLayer({
     },
   })
 
+  /** クリック位置に一番近い既存の線分 (線 / 面の辺) を基準線として拾う */
+  const pickBaseLine = useCallback(
+    (latlng: L.LatLng): [LL, LL] | null => {
+      const clickPx = map.latLngToContainerPoint(latlng)
+      let best: [LL, LL] | null = null
+      let bestPx = PICK_LINE_RADIUS_PX
+      for (const it of items) {
+        if (!isLineLike(it.kind)) continue
+        const pts = it.points
+        const last = it.kind === 'polygon' ? pts.length : pts.length - 1
+        for (let i = 0; i < last; i += 1) {
+          const a = pts[i]
+          const b = pts[(i + 1) % pts.length]
+          const px = distancePointToSegmentPx(
+            clickPx,
+            map.latLngToContainerPoint([a.lat, a.lng]),
+            map.latLngToContainerPoint([b.lat, b.lng]),
+          )
+          if (px < bestPx) {
+            bestPx = px
+            best = [a, b]
+          }
+        }
+      }
+      return best
+    },
+    [map, items],
+  )
+
   /** 詳細入力の差し込み先 (道具アイコンの下のバー) */
   const commandBarEl = useCommandBarEl()
 
@@ -1016,6 +1245,9 @@ export function MapDrawingLayer({
       if (e.key === 'Escape') {
         setShapeProgress(null)
         setParallelBase(null)
+        setRectStart(null)
+        setPerpBase(null)
+        setPerpThrough(null)
         setTextLineStart(null)
         setMeasurePoints([])
         setLastMeasure(null)
@@ -1575,6 +1807,107 @@ export function MapDrawingLayer({
     setParallelBase(null)
   }, [farmId, parallelLines, color, widthPx, lineStyle, layer, addStroke])
 
+  /** 垂線の確定形 (通過点まで決まっていれば作れる) */
+  const perpShape = useMemo(() => {
+    if (!perpBase || !perpThrough) return null
+    return perpGeometry(perpBase, perpThrough, perpLength, converter)
+  }, [perpBase, perpThrough, perpLength, converter])
+
+  // 長方形・垂線の仮表示。どちらも点線で、確定するまで保存しない
+  const constructPreview = useMemo(() => {
+    const dash: L.PathOptions = { color, weight: widthPx, opacity: 0.8, dashArray: '6,4' }
+    const guide: L.PathOptions = { color: '#6366f1', weight: widthPx + 4, opacity: 0.35 }
+
+    if (mode === 'rect') {
+      if (!rectStart) return null
+      const pts = shapeHover
+        ? rectPoints(rectStart, shapeHover, rectWidth, rectHeight, converter)
+        : null
+      return (
+        <>
+          <Marker
+            position={[rectStart.lat, rectStart.lng]}
+            icon={FIRST_VERTEX_ICON}
+            interactive={false}
+          />
+          {pts && (
+            <LeafletPolygon
+              positions={pts.map((p) => [p.lat, p.lng] as [number, number])}
+              pathOptions={{ ...dash, fillColor: color, fillOpacity: 0.1 }}
+              interactive={false}
+            />
+          )}
+        </>
+      )
+    }
+
+    if (mode === 'perp') {
+      if (!perpBase) return null
+      return (
+        <>
+          <Polyline
+            positions={perpBase.map((p) => [p.lat, p.lng] as [number, number])}
+            pathOptions={guide}
+            interactive={false}
+          />
+          {perpThrough && (
+            <Marker
+              position={[perpThrough.lat, perpThrough.lng]}
+              icon={FIRST_VERTEX_ICON}
+              interactive={false}
+            />
+          )}
+          {perpShape && (
+            <>
+              <Polyline
+                positions={[
+                  [perpShape.foot.lat, perpShape.foot.lng],
+                  [perpShape.end.lat, perpShape.end.lng],
+                ]}
+                pathOptions={dash}
+                interactive={false}
+              />
+              <Marker
+                position={[perpShape.foot.lat, perpShape.foot.lng]}
+                icon={HANDLE_ICON}
+                interactive={false}
+              />
+            </>
+          )}
+        </>
+      )
+    }
+    return null
+  }, [
+    mode,
+    rectStart,
+    shapeHover,
+    rectWidth,
+    rectHeight,
+    perpBase,
+    perpThrough,
+    perpShape,
+    converter,
+    color,
+    widthPx,
+  ])
+
+  /** 垂線を保存する */
+  const commitPerp = useCallback(() => {
+    if (!farmId || !perpShape) return
+    void addStroke({
+      farmId,
+      kind: 'stroke',
+      color,
+      widthPx,
+      lineStyle,
+      points: [perpShape.foot, perpShape.end],
+      layer,
+    })
+    setPerpBase(null)
+    setPerpThrough(null)
+  }, [farmId, perpShape, color, widthPx, lineStyle, layer, addStroke])
+
   // 平行線の仮表示。基準線は実線の強調、作られる線は点線
   const parallelPreview = useMemo(() => {
     if (!parallelBase) return null
@@ -1641,6 +1974,7 @@ export function MapDrawingLayer({
       {hidden ? null : rendered}
       {shapePreview}
       {parallelPreview}
+      {constructPreview}
       {/* 線上文字: 向きを決める 1 点目 */}
       {textLineStart && (
         <Marker
@@ -1810,11 +2144,10 @@ export function MapDrawingLayer({
                 {!textAlongLine && (
                   <label className="flex items-center gap-1 shrink-0">
                     <span className="text-[11px] text-slate-600">角度</span>
-                    <input
-                      type="number"
+                    <NumberField
                       step="1"
                       value={textAngle}
-                      onChange={(ev) => setTextAngle(Number(ev.target.value))}
+                      onChange={setTextAngle}
                       className="w-16 h-7 px-1 border rounded text-right font-mono"
                     />
                     <span className="text-[11px] text-slate-500">°</span>
@@ -1850,16 +2183,11 @@ export function MapDrawingLayer({
                 <span className="font-semibold text-slate-700 shrink-0">円</span>
                 <label className="flex items-center gap-1 shrink-0">
                   <span className="text-[11px] text-slate-600">半径 (m)</span>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    step="0.1"
-                    min={0}
+                  <NumberField
                     value={circleRadius}
-                    onChange={(ev) => setCircleRadius(Math.max(0, Number(ev.target.value)))}
-                    onKeyDown={(ev) => {
-                      if (ev.key === 'Enter') commitCircle()
-                    }}
+                    onChange={setCircleRadius}
+                    onEnter={commitCircle}
+                    min={0}
                     className="w-20 h-7 px-2 border rounded text-right font-mono"
                   />
                 </label>
@@ -1884,6 +2212,92 @@ export function MapDrawingLayer({
               </>
             )}
 
+            {/* 長方形: 縦横を入れ、開始点 → 向きの点 の 2 クリックで置く */}
+            {mode === 'rect' && (
+              <>
+                <span className="font-semibold text-slate-700 shrink-0">長方形</span>
+                <label className="flex items-center gap-1 shrink-0">
+                  <span className="text-[11px] text-slate-600">横 (m)</span>
+                  <NumberField
+                    value={rectWidth}
+                    onChange={setRectWidth}
+                    min={0}
+                    className="w-20 h-7 px-2 border rounded text-right font-mono"
+                  />
+                </label>
+                <label className="flex items-center gap-1 shrink-0">
+                  <span className="text-[11px] text-slate-600">縦 (m)</span>
+                  <NumberField
+                    value={rectHeight}
+                    onChange={setRectHeight}
+                    min={0}
+                    className="w-20 h-7 px-2 border rounded text-right font-mono"
+                  />
+                </label>
+                <span className="text-[11px] text-slate-500">
+                  {rectStart
+                    ? '横の向きをクリック (縦はその左 90 度)'
+                    : '開始点 (角) をクリック → 横の向きをクリック'}
+                </span>
+                {rectStart && (
+                  <button
+                    type="button"
+                    onClick={() => setRectStart(null)}
+                    className="h-7 px-2 rounded border text-slate-600 shrink-0"
+                  >
+                    やり直す
+                  </button>
+                )}
+              </>
+            )}
+
+            {/* 垂線: 基準線 → 通過点 → 延長 (数値 or 終点クリック) */}
+            {mode === 'perp' && (
+              <>
+                <span className="font-semibold text-slate-700 shrink-0">垂線</span>
+                {perpThrough && (
+                  <label className="flex items-center gap-1 shrink-0">
+                    <span className="text-[11px] text-slate-600">延長 (m)</span>
+                    <NumberField
+                      value={perpLength}
+                      onChange={setPerpLength}
+                      onEnter={commitPerp}
+                      min={0}
+                      className="w-20 h-7 px-2 border rounded text-right font-mono"
+                    />
+                  </label>
+                )}
+                <span className="text-[11px] text-slate-500">
+                  {!perpBase
+                    ? '基準にする線 (または面の辺) をクリック'
+                    : !perpThrough
+                      ? '通過点をクリック'
+                      : '延長を入れるか、終点をクリック → 確定'}
+                </span>
+                {perpShape && (
+                  <button
+                    type="button"
+                    onClick={commitPerp}
+                    className="h-7 px-3 rounded bg-indigo-600 text-white shrink-0"
+                  >
+                    確定
+                  </button>
+                )}
+                {perpBase && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPerpBase(null)
+                      setPerpThrough(null)
+                    }}
+                    className="h-7 px-2 rounded border text-slate-600 shrink-0"
+                  >
+                    やり直す
+                  </button>
+                )}
+              </>
+            )}
+
             {/* 平行線: 基準線を選ぶ前 */}
             {mode === 'parallel' && !parallelBase && (
               <>
@@ -1900,28 +2314,21 @@ export function MapDrawingLayer({
                 <span className="font-semibold text-slate-700 shrink-0">平行線</span>
                 <label className="flex items-center gap-1 shrink-0">
                   <span className="text-[11px] text-slate-600">幅 (m)</span>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    step="0.1"
+                  <NumberField
                     value={parallelSpacing}
-                    onChange={(ev) => setParallelSpacing(Number(ev.target.value))}
-                    onKeyDown={(ev) => {
-                      if (ev.key === 'Enter') commitParallel()
-                    }}
+                    onChange={setParallelSpacing}
+                    onEnter={commitParallel}
                     className="w-20 h-7 px-2 border rounded text-right font-mono"
                   />
                 </label>
                 <label className="flex items-center gap-1 shrink-0">
                   <span className="text-[11px] text-slate-600">本数</span>
-                  <input
-                    type="number"
+                  <NumberField
+                    step="1"
                     min={1}
                     max={20}
                     value={parallelCount}
-                    onChange={(ev) =>
-                      setParallelCount(Math.max(1, Math.min(20, Number(ev.target.value))))
-                    }
+                    onChange={setParallelCount}
                     className="w-14 h-7 px-2 border rounded text-right font-mono"
                   />
                 </label>
@@ -2078,17 +2485,11 @@ export function MapDrawingLayer({
                 {selectedStroke.kind === 'text' && (
                   <label className="flex items-center gap-1 shrink-0">
                     <span className="text-[11px] text-slate-600">角度</span>
-                    <input
+                    <NumberField
                       key={`rot-${selectedStroke.id}`}
-                      type="number"
                       step="1"
-                      defaultValue={selectedStroke.rotation_deg ?? 0}
-                      onBlur={(ev) => {
-                        const v = Number(ev.target.value) || 0
-                        if (v !== selectedStroke.rotation_deg) {
-                          void updateStrokeAttrs(selectedStroke.id, { rotationDeg: v })
-                        }
-                      }}
+                      value={selectedStroke.rotation_deg ?? 0}
+                      onChange={(v) => void updateStrokeAttrs(selectedStroke.id, { rotationDeg: v })}
                       className="w-16 h-7 px-1 border rounded text-right font-mono"
                     />
                     <span className="text-[11px] text-slate-500">°</span>
