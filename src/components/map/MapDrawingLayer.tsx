@@ -2630,7 +2630,11 @@ export function MapDrawingLayer({
    */
   const rendered = useMemo(() => {
     if (!layerZIndex || Object.keys(layerZIndex).length === 0) {
-      return <>{items.map(renderItem)}</>
+      return (
+        <Pane name="map-drawing" style={{ zIndex: 500 }}>
+          {items.map(renderItem)}
+        </Pane>
+      )
     }
     const groups = new Map<number | null, MapDrawingStroke[]>()
     for (const it of items) {
@@ -2643,7 +2647,10 @@ export function MapDrawingLayer({
       <>
         {[...groups.entries()].map(([z, list]) =>
           z === null ? (
-            <Fragment key="layer-default">{list.map(renderItem)}</Fragment>
+            // 重ね順の 指定が 無いレイヤは まとめて 既定の位置 (500) に置く
+            <Pane key="layer-default" name="map-drawing" style={{ zIndex: 500 }}>
+              {list.map(renderItem)}
+            </Pane>
           ) : (
             <Pane key={`layer-z${z}`} name={`map-drawing-z${z}`} style={{ zIndex: z }}>
               {list.map(renderItem)}
@@ -3184,8 +3191,14 @@ export function MapDrawingLayer({
   }, [selectedStroke, handlePoints])
 
   return (
-    <Pane name="map-drawing" style={{ zIndex: 500 }}>
+    <>
+      {/* レイヤごとの pane は ここで 直接 作る。1 枚の pane に 入れてしまうと
+          そこが 積み重ねの 基準 (stacking context) になり、測点や 写真の pane と
+          前後を 入れ替えられなくなる */}
       {hidden ? null : rendered}
+
+      {/* 仮表示・ハンドルは 常に 一番手前。作図中に 隠れると 困るため */}
+      <Pane name="map-drawing-preview" style={{ zIndex: 640 }}>
       {shapePreview}
       {parallelPreview}
       {constructPreview}
@@ -4136,6 +4149,7 @@ export function MapDrawingLayer({
           </>,
           commandBarEl,
         )}
-    </Pane>
+      </Pane>
+    </>
   )
 }
