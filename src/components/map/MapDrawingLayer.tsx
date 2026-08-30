@@ -21,6 +21,8 @@
 //   ・'select'  図形を選ぶ。選び方は 点 / 線 / 長方形 / 多角形 の 4 通り。
 //               点は 1 つずつ (Shift か Ctrl で 足し引き)、他は 囲った形に
 //               かかった図形を まとめて 選ぶ。
+//               選んだものは「移動」「コピー」で 始点 → 終点 の 2 クリックで
+//               平行移動 / 複製 できる。
 //               1 つだけ選んだときは 青ハンドルをドラッグで頂点移動 / 長押しで削除 /
 //               辺の中点の「+」タップで頂点追加 (直線・円・円弧は追加/削除不可、位置移動のみ)。
 //               属性 (レイヤ / 色 / 線種 / 線幅 / 矢印) は 左パネルの「描画の設定」
@@ -1275,6 +1277,12 @@ export function MapDrawingLayer({
   }, [selectedIds, onSelectionChange])
   /** 線 / 長方形 / 多角形で 囲っている途中の 頂点 */
   const [selectShape, setSelectShape] = useState<LL[]>([])
+  /** 選択したものを 平行移動 / 複製する。始点 → 終点 の 2 クリックで ずらす量を決める */
+  const [transformMode, setTransformMode] = useState<'move' | 'copy' | null>(null)
+  const [transformFrom, setTransformFrom] = useState<LL | null>(null)
+  const transforming = transformMode !== null
+  /** 平行移動の 仮表示に使う カーソル位置 */
+  const [transformHover, setTransformHover] = useState<LL | null>(null)
   const toggleSelected = useCallback((id: string, additive: boolean) => {
     setSelectedIds((prev) => {
       if (!additive) return prev.length === 1 && prev[0] === id ? [] : [id]
@@ -1300,6 +1308,20 @@ export function MapDrawingLayer({
     const id = requestAnimationFrame(() => textInputRef.current?.focus())
     return () => cancelAnimationFrame(id)
   }, [mode])
+
+  // 平行移動 / 複製の 始点を 置いたあと、カーソルを 追って 仮表示を出す
+  useEffect(() => {
+    if (!transformFrom) return
+    const onMove = (e: L.LeafletMouseEvent) => setTransformHover(snap(e.latlng))
+    const onOut = () => setTransformHover(null)
+    map.on('mousemove', onMove)
+    map.on('mouseout', onOut)
+    return () => {
+      map.off('mousemove', onMove)
+      map.off('mouseout', onOut)
+      setTransformHover(null)
+    }
+  }, [map, transformFrom, snap])
 
   // 長方形・垂線の間だけ カーソルを 追う (仮表示の向きに使う)
   useEffect(() => {
@@ -1354,6 +1376,8 @@ export function MapDrawingLayer({
     if (mode !== 'select') {
       setSelectedIds([])
       setSelectShape([])
+      setTransformMode(null)
+      setTransformFrom(null)
       setDragPreview(null)
       setStretchEnd(null)
       setStretchCandidates([])
@@ -1615,8 +1639,21 @@ export function MapDrawingLayer({
         })
         return
       }
+      // 平行移動 / 複製: 始点 → 終点 の 2 クリック
+      if (mode === 'select' && transformMode) {
+        if (!transformFrom) {
+          setTransformFrom(at)
+          return
+        }
+        runTransform(transformFrom, at, transformMode)
+        setTransformFrom(null)
+        // 移動は 1 回で 終わり、複製は 続けて 置けるように そのまま
+        if (transformMode === 'move') setTransformMode(null)
+        return
+      }
+
       // 囲って選ぶ (線 / 長方形 / 多角形)。点で選ぶ時は 図形側の click で拾う
-      if (mode === 'select' && selectMethod !== 'point' && !stretchAxis) {
+      if (mode === 'select' && selectMethod !== 'point' && !stretchAxis && !transformMode) {
         const pts = [...selectShape, at]
         const need = selectMethod === 'polygon' ? Infinity : 2
         if (pts.length < need) {
@@ -1815,6 +1852,62 @@ export function MapDrawingLayer({
       }
     },
   })
+
+  /** 選択中の図形を まとめて ずらす (移動 or 複製) */
+  const runTransform = useCallback(
+    (from: LL, to: LL, kindOfMove: 'move' | 'copy') => {
+      if (!farmId || selectedIds.length === 0) return
+      const d = deltaM(from, to, converter)
+      if (Math.hypot(d.east, d.north) < 1e-6) return
+      const shift = (p: LL) => offsetLL(p, d.east, d.north, converter)
+      for (const id of selectedIds) {
+        const it = items.find((x) => x.id === id)
+        if (!it) continue
+        const moved = it.points.map(shift)
+        if (kindOfMove === 'move') {
+          void updateStrokePoints(it.id, moved)
+          continue
+        }
+        // 複製: 属性を そのまま 引き継いで 新しく作る
+        if (it.kind === 'text') {
+          void addText({
+            farmId,
+            color: it.color,
+            widthPx: it.width_px,
+            lat: moved[0].lat,
+            lng: moved[0].lng,
+            text: it.text ?? '',
+            layer: it.layer,
+            fontSize: it.font_size ?? undefined,
+            rotationDeg: it.rotation_deg,
+          })
+        } else if (it.kind === 'point') {
+          void addPoint({
+            farmId,
+            color: it.color,
+            widthPx: it.width_px,
+            lat: moved[0].lat,
+            lng: moved[0].lng,
+            layer: it.layer,
+          })
+        } else {
+          void addStroke({
+            farmId,
+            kind: it.kind,
+            color: it.color,
+            widthPx: it.width_px,
+            lineStyle: (it.line_style ?? 'solid') as LineStyle,
+            points: moved,
+            layer: it.layer,
+            arrow: it.arrow,
+          })
+        }
+      }
+      // 複製したら 元の選択のままにしておく (続けて 何枚も 置けるように)
+      if (kindOfMove === 'move') setSelectedIds([])
+    },
+    [farmId, selectedIds, items, converter, updateStrokePoints, addStroke, addText, addPoint],
+  )
 
   /** 囲った形に かかっている図形を 選ぶ */
   const applySelection = useCallback(
@@ -2085,7 +2178,7 @@ export function MapDrawingLayer({
               eventHandlers={
                 isEraser
                   ? { click: () => void deleteStroke(s.id) }
-                  : isSelect && !stretching && selectMethod === 'point'
+                  : isSelect && !stretching && !transforming && selectMethod === 'point'
                     ? {
                         click: (ev: L.LeafletMouseEvent) =>
                           toggleSelected(s.id, isAdditiveClick(ev)),
@@ -2110,7 +2203,7 @@ export function MapDrawingLayer({
               eventHandlers={
                 isEraser
                   ? { click: () => void deleteStroke(s.id) }
-                  : isSelect && !stretching && selectMethod === 'point'
+                  : isSelect && !stretching && !transforming && selectMethod === 'point'
                     ? {
                         click: (ev: L.LeafletMouseEvent) =>
                           toggleSelected(s.id, isAdditiveClick(ev)),
@@ -2135,7 +2228,7 @@ export function MapDrawingLayer({
             : mode === 'select'
               ? // 伸縮中のクリックは「どこまで伸ばすか」の指定、囲って選ぶ最中は
                 // 地図クリックが 頂点の指定なので、どちらも 図形側では 拾わない
-                stretching || selectMethod !== 'point'
+                stretching || selectMethod !== 'point' || transforming
                 ? undefined
                 : {
                     click: (ev: L.LeafletMouseEvent) =>
@@ -2311,7 +2404,16 @@ export function MapDrawingLayer({
           </Fragment>
         )
     },
-    [mode, deleteStroke, selectedSet, toggleSelected, dragPreview, stretching, selectMethod],
+    [
+      mode,
+      deleteStroke,
+      selectedSet,
+      toggleSelected,
+      dragPreview,
+      stretching,
+      transforming,
+      selectMethod,
+    ],
   )
 
   /**
@@ -2715,6 +2817,8 @@ export function MapDrawingLayer({
       if (e.key === 'Escape') {
         setShapeProgress(null)
         setSelectShape([])
+        setTransformMode(null)
+        setTransformFrom(null)
         setParallelBase(null)
         setRectStart(null)
         setStretchEnd(null)
@@ -2843,6 +2947,62 @@ export function MapDrawingLayer({
       {shapePreview}
       {parallelPreview}
       {constructPreview}
+      {/* 平行移動 / 複製の 仮表示。始点 → カーソル の 矢印と、ずらした先の 形 */}
+      {transformFrom && (
+        <>
+          <Marker
+            position={[transformFrom.lat, transformFrom.lng]}
+            icon={FIRST_VERTEX_ICON}
+            interactive={false}
+          />
+          {transformHover && (
+            <>
+              <Polyline
+                positions={[
+                  [transformFrom.lat, transformFrom.lng],
+                  [transformHover.lat, transformHover.lng],
+                ]}
+                pathOptions={{ color: '#3b82f6', weight: 2, dashArray: '6,4' }}
+                interactive={false}
+              />
+              {(() => {
+                const d = deltaM(transformFrom, transformHover, converter)
+                return items
+                  .filter((it) => selectedSet.has(it.id))
+                  .map((it) => {
+                    const pts = it.points.map((p) => offsetLL(p, d.east, d.north, converter))
+                    if (pts.length < 2) {
+                      return (
+                        <Marker
+                          key={`tf-${it.id}`}
+                          position={[pts[0].lat, pts[0].lng]}
+                          icon={HANDLE_ICON}
+                          interactive={false}
+                        />
+                      )
+                    }
+                    const positions = pts.map((p) => [p.lat, p.lng] as [number, number])
+                    if (it.kind === 'polygon') positions.push(positions[0])
+                    return (
+                      <Polyline
+                        key={`tf-${it.id}`}
+                        positions={positions}
+                        pathOptions={{
+                          color: it.color,
+                          weight: it.width_px,
+                          opacity: 0.7,
+                          dashArray: '6,4',
+                        }}
+                        interactive={false}
+                      />
+                    )
+                  })
+              })()}
+            </>
+          )}
+        </>
+      )}
+
       {/* 囲って選ぶ途中の 仮表示 */}
       {selectShape.length > 0 && (
         <>
@@ -2964,6 +3124,7 @@ export function MapDrawingLayer({
       {selectedStroke &&
         selectedStroke.kind === 'stroke' &&
         !dragPreview &&
+        !transforming &&
         selectedStroke.points.length >= 2 &&
         (['start', 'end'] as const).map((which) => {
           const pts = selectedStroke.points
@@ -3515,13 +3676,42 @@ export function MapDrawingLayer({
                   </span>
                 )}
                 {selectedIds.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setSelectedIds([])}
-                    className="h-7 px-2 rounded border text-slate-600 shrink-0"
-                  >
-                    選択解除
-                  </button>
+                  <>
+                    {/* 平行移動 / 複製。始点 → 終点 の 2 クリックで ずらす量を決める */}
+                    {(['move', 'copy'] as const).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => {
+                          setTransformMode(transformMode === m ? null : m)
+                          setTransformFrom(null)
+                        }}
+                        className={`h-7 px-3 rounded border shrink-0 ${
+                          transformMode === m
+                            ? 'bg-blue-600 border-blue-500 text-white'
+                            : 'border-slate-300 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        {m === 'move' ? '移動' : 'コピー'}
+                      </button>
+                    ))}
+                    {transformMode && (
+                      <span className="text-[11px] text-slate-500">
+                        {transformFrom ? '終点をクリック' : '始点をクリック'}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedIds([])
+                        setTransformMode(null)
+                        setTransformFrom(null)
+                      }}
+                      className="h-7 px-2 rounded border text-slate-600 shrink-0"
+                    >
+                      選択解除
+                    </button>
+                  </>
                 )}
               </>
             )}
