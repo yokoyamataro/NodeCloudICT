@@ -28,6 +28,9 @@
 //   ・'eraser'  アイテムをクリックで削除。
 //   ・'measure-dist' / 'measure-area' / 'measure-perp'
 //               計測。結果は保存せず、モードを抜けるまで地図上に表示する。
+//               距離は 2 点を指す / 既存の線をまるごと選ぶ の 2 通り。値は線の
+//               向きに沿わせて出す。連続線は 各辺 / 合計 を チェックで 選べる。
+//               「文字として保存」で、同じ位置・向きの文字要素として残せる。
 //
 // ピック (snapEnabled): 単点 / 交点 / 中心点 / 線上 に吸着する (snapTypes で選ぶ)。
 // 判定は画面 px なので、縮尺が変わっても指の感覚は変わらない。吸着先の座標は
@@ -395,12 +398,26 @@ export function circleRadiusMeters(
 export interface MeasureResult {
   kind: 'dist' | 'area' | 'perp'
   points: LL[]
-  /** m または m² */
+  /** m または m²。距離のときは 全体の合計 */
   value: number
   /** 値を表示する位置 */
   labelAt: LL
   /** 垂線の足 (perp のときのみ) */
   foot?: LL
+  /**
+   * 距離のときの 各辺。2 点を測ったときは 1 本、連続線を測ったときは その本数。
+   * 各辺を出すか / 合計を出すか / 両方かを 切り替えられるようにするため、
+   * 表示用の 文字は 持たず、素の値だけを 残す。
+   */
+  segments?: Array<{ a: LL; b: LL; value: number }>
+}
+
+/** 地図に出す 1 つのラベル (線の向きに沿わせる) */
+interface MeasureLabel {
+  at: LL
+  /** 回転角 [度]。反時計回りが正 */
+  angle: number
+  text: string
 }
 
 function measureDist(c: CoordinateConverter | undefined, a: LL, b: LL): number {
@@ -466,28 +483,55 @@ function centroid(pts: LL[]): LL {
   return { lat, lng }
 }
 
+/** 長さの表示文字列 */
+function formatLength(v: number): string {
+  if (v < 1) return `${(v * 100).toFixed(1)} cm`
+  return `${v.toFixed(3)} m`
+}
+
 /** 計測値の表示文字列 */
 export function formatMeasure(m: MeasureResult): string {
   if (m.kind === 'area') {
     return `${m.value.toFixed(2)} m² (${(m.value / 10000).toFixed(4)} ha)`
   }
-  if (m.value < 1) return `${(m.value * 100).toFixed(1)} cm`
-  return `${m.value.toFixed(3)} m`
+  return formatLength(m.value)
 }
 
-/** 計測値のラベル (地図上に置く白フキダシ) */
-function makeMeasureLabelIcon(text: string, color: string): L.DivIcon {
+/**
+ * 計測値のラベル (地図上に置く白フキダシ)。
+ * 線の向きに沿わせたいので、回転角を受け取れるようにする。
+ */
+function makeMeasureLabelIcon(text: string, color: string, rotationDeg = 0): L.DivIcon {
   const esc = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  // CSS の rotate は時計回りが正なので符号を反転する
+  const rot = rotationDeg ? ` rotate(${-rotationDeg}deg)` : ''
   return L.divIcon({
     className: 'map-measure-label',
     html: `<div style="
       background:rgba(255,255,255,.92);border:1px solid ${color};color:${color};
       font-size:12px;font-weight:700;padding:1px 5px;border-radius:3px;
-      white-space:nowrap;transform:translate(-50%,-50%);box-shadow:0 1px 2px rgba(0,0,0,.2)
+      white-space:nowrap;transform:translate(-50%,-50%)${rot};box-shadow:0 1px 2px rgba(0,0,0,.2)
     ">${esc}</div>`,
     iconSize: [0, 0],
     iconAnchor: [0, 0],
   })
+}
+
+/** 頂点列を 辺ごとの長さに 分解する */
+function buildSegments(
+  verts: LL[],
+  c?: CoordinateConverter,
+): Array<{ a: LL; b: LL; value: number }> {
+  const out: Array<{ a: LL; b: LL; value: number }> = []
+  for (let i = 0; i < verts.length - 1; i += 1) {
+    out.push({ a: verts[i], b: verts[i + 1], value: measureDist(c, verts[i], verts[i + 1]) })
+  }
+  return out
+}
+
+/** 2 点の中点 */
+function midLL(a: LL, b: LL): LL {
+  return { lat: (a.lat + b.lat) / 2, lng: (a.lng + b.lng) / 2 }
 }
 
 /** ピックの吸着範囲 [画面 px]。指でも届き、隣の点を誤って掴まない程度 */
@@ -997,6 +1041,11 @@ export function MapDrawingLayer({
   // 計測: 入力途中の点列と、確定した結果 (保存はしない)
   const [measurePoints, setMeasurePoints] = useState<LL[]>([])
   const [lastMeasure, setLastMeasure] = useState<MeasureResult | null>(null)
+  /** 距離: 2 点を指すか、既存の線要素を選ぶか */
+  const [distPickElement, setDistPickElement] = useState(false)
+  /** 距離: 各辺を出す / 合計を出す (連続線のときに効く。両方 ON も可) */
+  const [distShowEach, setDistShowEach] = useState(true)
+  const [distShowTotal, setDistShowTotal] = useState(true)
 
   // 選択モードの状態
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -1210,16 +1259,35 @@ export function MapDrawingLayer({
         const pts = [...measurePoints, at]
 
         if (mode === 'measure-dist') {
+          // 線要素を選んで測るモード: クリックした線の 全辺を測る
+          if (distPickElement) {
+            const stroke = pickStroke(e.latlng)
+            if (!stroke) return
+            const verts =
+              stroke.kind === 'polygon' ? [...stroke.points, stroke.points[0]] : stroke.points
+            const segs = buildSegments(verts, converter)
+            if (segs.length === 0) return
+            setLastMeasure({
+              kind: 'dist',
+              points: verts,
+              value: segs.reduce((sum, sg) => sum + sg.value, 0),
+              labelAt: centroid(verts),
+              segments: segs,
+            })
+            setMeasurePoints([])
+            return
+          }
           if (pts.length < 2) {
             setMeasurePoints(pts)
             return
           }
-          const value = measureDist(converter, pts[0], pts[1])
+          const segs = buildSegments(pts, converter)
           setLastMeasure({
             kind: 'dist',
             points: pts,
-            value,
+            value: segs.reduce((sum, sg) => sum + sg.value, 0),
             labelAt: centroid(pts),
+            segments: segs,
           })
           setMeasurePoints([])
           return
@@ -1489,6 +1557,35 @@ export function MapDrawingLayer({
       }
     },
   })
+
+  /** クリック位置に一番近い 線 / 面の図形そのものを拾う (計測で 1 本まるごと測る用) */
+  const pickStroke = useCallback(
+    (latlng: L.LatLng): MapDrawingStroke | null => {
+      const clickPx = map.latLngToContainerPoint(latlng)
+      let best: MapDrawingStroke | null = null
+      let bestPx = PICK_LINE_RADIUS_PX
+      for (const it of items) {
+        if (!isLineLike(it.kind)) continue
+        const pts = it.points
+        const last = it.kind === 'polygon' ? pts.length : pts.length - 1
+        for (let i = 0; i < last; i += 1) {
+          const a = pts[i]
+          const b = pts[(i + 1) % pts.length]
+          const px = distancePointToSegmentPx(
+            clickPx,
+            map.latLngToContainerPoint([a.lat, a.lng]),
+            map.latLngToContainerPoint([b.lat, b.lng]),
+          )
+          if (px < bestPx) {
+            bestPx = px
+            best = it
+          }
+        }
+      }
+      return best
+    },
+    [map, items],
+  )
 
   /** クリック位置に一番近い既存の線分 (線 / 面の辺) を基準線として拾う */
   const pickBaseLine = useCallback(
@@ -1984,6 +2081,63 @@ export function MapDrawingLayer({
     )
   }, [shapeProgress, color, widthPx, circleRadius])
 
+  /**
+   * 計測結果を 地図に出すラベル。距離は 線の向きに 沿わせる。
+   * 各辺 / 合計 の どちらを出すかは チェックで 切り替える (両方も可)。
+   */
+  const measureLabels = useMemo<MeasureLabel[]>(() => {
+    if (!lastMeasure) return []
+    if (lastMeasure.kind !== 'dist') {
+      return [{ at: lastMeasure.labelAt, angle: 0, text: formatMeasure(lastMeasure) }]
+    }
+    const segs = lastMeasure.segments ?? []
+    const out: MeasureLabel[] = []
+    if (distShowEach) {
+      for (const sg of segs) {
+        out.push({
+          at: midLL(sg.a, sg.b),
+          angle: bearingDeg(sg.a, sg.b, converter),
+          text: formatLength(sg.value),
+        })
+      }
+    }
+    // 合計は 辺が 2 本以上のときだけ (1 本なら 各辺と同じ値になる)
+    if (distShowTotal && segs.length > 1) {
+      const first = lastMeasure.points[0]
+      const last = lastMeasure.points[lastMeasure.points.length - 1]
+      out.push({
+        at: lastMeasure.labelAt,
+        angle: bearingDeg(first, last, converter),
+        text: `計 ${formatLength(lastMeasure.value)}`,
+      })
+    }
+    // どちらも外していると 何も出ないので、その時は 合計だけ出す
+    if (out.length === 0) {
+      out.push({ at: lastMeasure.labelAt, angle: 0, text: formatLength(lastMeasure.value) })
+    }
+    return out
+  }, [lastMeasure, distShowEach, distShowTotal, converter])
+
+  /** 計測結果を 文字要素として 保存する (ラベルと同じ位置・向きで置く) */
+  const saveMeasureAsText = useCallback(() => {
+    if (!farmId || measureLabels.length === 0) return
+    for (const lb of measureLabels) {
+      void addText({
+        farmId,
+        color,
+        widthPx,
+        lat: lb.at.lat,
+        lng: lb.at.lng,
+        text: lb.text,
+        layer,
+        fontSize,
+        rotationDeg: lb.angle,
+      })
+    }
+    setLastMeasure(null)
+    setMeasurePoints([])
+  }, [farmId, measureLabels, color, widthPx, layer, fontSize, addText])
+
   // 計測の表示 (入力途中 + 確定結果)。保存はしないのでここだけで完結する
   const measureOverlay = useMemo(() => {
     if (!isMeasureMode(mode) && !lastMeasure) return null
@@ -2047,16 +2201,17 @@ export function MapDrawingLayer({
           lastMeasure.points.map((p, i) => (
             <Marker key={`mr-${i}`} position={[p.lat, p.lng]} icon={vertexIcon} interactive={false} />
           ))}
-        {lastMeasure && (
+        {measureLabels.map((lb, i) => (
           <Marker
-            position={[lastMeasure.labelAt.lat, lastMeasure.labelAt.lng]}
-            icon={makeMeasureLabelIcon(formatMeasure(lastMeasure), MEASURE_COLOR)}
+            key={`measure-label-${i}`}
+            position={[lb.at.lat, lb.at.lng]}
+            icon={makeMeasureLabelIcon(lb.text, MEASURE_COLOR, lb.angle)}
             interactive={false}
           />
-        )}
+        ))}
       </>
     )
-  }, [mode, measurePoints, lastMeasure])
+  }, [mode, measurePoints, lastMeasure, measureLabels])
 
   /** これから作る平行線の位置。パネルの数値を変えるたびに引き直す */
   const parallelLines = useMemo(() => {
@@ -2797,18 +2952,81 @@ export function MapDrawingLayer({
                 <span className="font-semibold text-slate-700 shrink-0">
                   {mode === 'measure-dist' ? '距離' : mode === 'measure-area' ? '面積' : '垂線'}
                 </span>
+                {/* 距離: 2 点で測るか、既存の線を選んで測るか */}
+                {mode === 'measure-dist' && (
+                  <div className="flex items-center rounded border overflow-hidden shrink-0">
+                    {([false, true] as const).map((byElement) => (
+                      <button
+                        key={String(byElement)}
+                        type="button"
+                        onClick={() => {
+                          setDistPickElement(byElement)
+                          setMeasurePoints([])
+                          setLastMeasure(null)
+                        }}
+                        className={`h-7 px-2 ${
+                          distPickElement === byElement
+                            ? 'bg-rose-600 text-white'
+                            : 'bg-white text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        {byElement ? '線を選択' : '2 点'}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 {lastMeasure ? (
                   <span className="font-bold text-rose-600 tabular-nums">
                     {formatMeasure(lastMeasure)}
+                    {lastMeasure.kind === 'dist' &&
+                      (lastMeasure.segments?.length ?? 0) > 1 &&
+                      ` (${lastMeasure.segments?.length} 辺)`}
                   </span>
                 ) : (
                   <span className="text-[11px] text-slate-500">
                     {mode === 'measure-dist'
-                      ? '2 点をクリック'
+                      ? distPickElement
+                        ? '測りたい線 (または面) をクリック'
+                        : '2 点をクリック'
                       : mode === 'measure-area'
                         ? `頂点をクリック (${measurePoints.length}) → 最初の点をもう一度クリックで確定`
                         : '基準線の 2 点 → 対象の 1 点をクリック'}
                   </span>
+                )}
+
+                {/* 連続線のとき、各辺 / 合計 の どちらを出すか (両方も可) */}
+                {mode === 'measure-dist' && (lastMeasure?.segments?.length ?? 0) > 1 && (
+                  <>
+                    <label className="flex items-center gap-1 shrink-0 text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={distShowEach}
+                        onChange={(ev) => setDistShowEach(ev.target.checked)}
+                      />
+                      各辺
+                    </label>
+                    <label className="flex items-center gap-1 shrink-0 text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={distShowTotal}
+                        onChange={(ev) => setDistShowTotal(ev.target.checked)}
+                      />
+                      合計
+                    </label>
+                  </>
+                )}
+
+                {/* 計測値を そのまま 文字として 残す */}
+                {lastMeasure && (
+                  <button
+                    type="button"
+                    onClick={saveMeasureAsText}
+                    className="h-7 px-3 rounded bg-blue-600 text-white shrink-0"
+                    title="表示している計測値を、同じ位置・向きの文字として保存する"
+                  >
+                    文字として保存
+                  </button>
                 )}
                 {mode === 'measure-area' && measurePoints.length >= 3 && (
                   <button
