@@ -19,8 +19,9 @@
 //   ・'point'   タップした点に点を置く。registerCoordinate が true なら
 //               onAddCoordinate も呼び、座標管理にも登録する。
 //   ・'select'  図形を選ぶ。選び方は 点 / 線 / 長方形 / 多角形 の 4 通り。
-//               点は 1 つずつ (Shift か Ctrl で 足し引き)、他は 囲った形に
-//               かかった図形を まとめて 選ぶ。
+//               点は 1 つずつ (Shift か Ctrl で 足し引き)。重なっている所は
+//               同じ場所を 続けてクリックすると 手前から 順に 奥へ回る。
+//               他は 囲った形に かかった図形を まとめて 選ぶ。
 //               選んだものは「移動」「コピー」で 始点 → 終点 の 2 クリックで
 //               平行移動 / 複製 できる。
 //               1 つだけ選んだときは 青ハンドルをドラッグで頂点移動 / 長押しで削除 /
@@ -716,6 +717,26 @@ function isAdditiveClick(ev: L.LeafletMouseEvent): boolean {
   return Boolean(oe && (oe.shiftKey || oe.ctrlKey || oe.metaKey))
 }
 
+/** 点で選ぶときの 当たり判定の広さ [画面 px] */
+const SELECT_PICK_PX = 16
+
+/**
+ * クリック位置から 図形までの 距離 [画面 px]。届いていなければ Infinity。
+ * 面は 中を クリックしても 0 扱いにする (塗りを クリックしたのと同じ)。
+ */
+function itemHitDistancePx(map: L.Map, s: MapDrawingStroke, target: L.Point): number {
+  const geom = itemScreenGeometry(map, s)
+  let best = Infinity
+  for (const p of geom.points) best = Math.min(best, p.distanceTo(target))
+  for (const line of geom.lines) {
+    if ((s.kind === 'polygon' || s.kind === 'circle') && pointInPolygonPx(target, line)) return 0
+    for (let i = 0; i < line.length - 1; i += 1) {
+      best = Math.min(best, distancePointToSegmentPx(target, line[i], line[i + 1]))
+    }
+  }
+  return best
+}
+
 /** 2 点から 長方形の 4 頂点 (画面座標) */
 function rectFromCorners(a: L.Point, b: L.Point): L.Point[] {
   return [L.point(a.x, a.y), L.point(b.x, a.y), L.point(b.x, b.y), L.point(a.x, b.y)]
@@ -1294,6 +1315,10 @@ export function MapDrawingLayer({
   const [transformMode, setTransformMode] = useState<'move' | 'copy' | null>(null)
   const [transformFrom, setTransformFrom] = useState<LL | null>(null)
   const transforming = transformMode !== null
+  /** 重なりを 順に選ぶための 覚え書き (前回のクリック位置と 候補の並び) */
+  const pickCycleRef = useRef<{ px: L.Point; ids: string[]; index: number } | null>(null)
+  /** 何個中 何番目を 選んでいるか (コマンドバーの表示用) */
+  const [pickCycle, setPickCycle] = useState<{ index: number; total: number } | null>(null)
   /** 平行移動の 仮表示に使う カーソル位置 */
   const [transformHover, setTransformHover] = useState<LL | null>(null)
   /** 囲って選ぶ途中の カーソル位置 (仮の形を 追従させる) */
@@ -1405,6 +1430,8 @@ export function MapDrawingLayer({
     if (mode !== 'select') {
       setSelectedIds([])
       setSelectShape([])
+      pickCycleRef.current = null
+      setPickCycle(null)
       setTransformMode(null)
       setTransformFrom(null)
       setDragPreview(null)
@@ -1681,7 +1708,37 @@ export function MapDrawingLayer({
         return
       }
 
-      // 囲って選ぶ (線 / 長方形 / 多角形)。点で選ぶ時は 図形側の click で拾う
+      // 点で選ぶ。重なっている所は 同じ場所を 続けてクリックすると 手前から順に 奥へ回る
+      if (mode === 'select' && selectMethod === 'point' && !stretchAxis && !transformMode) {
+        const px = map.latLngToContainerPoint(e.latlng)
+        // 手前にあるものから 並べる (items は 奥から順なので 逆にする)
+        const cands = items
+          .map((it) => ({ id: it.id, d: itemHitDistancePx(map, it, px) }))
+          .filter((c) => c.d <= SELECT_PICK_PX)
+          .reverse()
+          .map((c) => c.id)
+
+        if (cands.length === 0) {
+          if (!isAdditiveClick(e)) setSelectedIds([])
+          pickCycleRef.current = null
+          return
+        }
+
+        // 前回と ほぼ同じ場所を、同じ顔ぶれで 押したなら 次の候補へ
+        const prev = pickCycleRef.current
+        const samePlace =
+          prev !== null &&
+          prev.px.distanceTo(px) < 6 &&
+          prev.ids.length === cands.length &&
+          prev.ids.every((id, i) => id === cands[i])
+        const index = samePlace ? (prev.index + 1) % cands.length : 0
+        pickCycleRef.current = { px, ids: cands, index }
+        toggleSelected(cands[index], isAdditiveClick(e))
+        setPickCycle({ index, total: cands.length })
+        return
+      }
+
+      // 囲って選ぶ (線 / 長方形 / 多角形)
       if (mode === 'select' && selectMethod !== 'point' && !stretchAxis && !transformMode) {
         const pts = [...selectShape, at]
         const need = selectMethod === 'polygon' ? Infinity : 2
@@ -1692,6 +1749,8 @@ export function MapDrawingLayer({
         applySelection(pts, isAdditiveClick(e))
         setSelectShape([])
         setSelectHover(null)
+        pickCycleRef.current = null
+        setPickCycle(null)
         return
       }
 
@@ -2208,12 +2267,7 @@ export function MapDrawingLayer({
               eventHandlers={
                 isEraser
                   ? { click: () => void deleteStroke(s.id) }
-                  : isSelect && !stretching && !transforming && selectMethod === 'point'
-                    ? {
-                        click: (ev: L.LeafletMouseEvent) =>
-                          toggleSelected(s.id, isAdditiveClick(ev)),
-                      }
-                    : undefined
+                  : undefined
               }
             />
           )
@@ -2233,12 +2287,7 @@ export function MapDrawingLayer({
               eventHandlers={
                 isEraser
                   ? { click: () => void deleteStroke(s.id) }
-                  : isSelect && !stretching && !transforming && selectMethod === 'point'
-                    ? {
-                        click: (ev: L.LeafletMouseEvent) =>
-                          toggleSelected(s.id, isAdditiveClick(ev)),
-                      }
-                    : undefined
+                  : undefined
               }
             />
           )
@@ -2256,14 +2305,8 @@ export function MapDrawingLayer({
           mode === 'eraser'
             ? { click: () => void deleteStroke(s.id) }
             : mode === 'select'
-              ? // 伸縮中のクリックは「どこまで伸ばすか」の指定、囲って選ぶ最中は
-                // 地図クリックが 頂点の指定なので、どちらも 図形側では 拾わない
-                stretching || selectMethod !== 'point' || transforming
-                ? undefined
-                : {
-                    click: (ev: L.LeafletMouseEvent) =>
-                      toggleSelected(s.id, isAdditiveClick(ev)),
-                  }
+              ? // 選択のクリックは 地図側で まとめて 扱う (重なりを 順に選ぶため)
+                undefined
               : undefined
 
         if (s.kind === 'circle') {
@@ -2434,16 +2477,7 @@ export function MapDrawingLayer({
           </Fragment>
         )
     },
-    [
-      mode,
-      deleteStroke,
-      selectedSet,
-      toggleSelected,
-      dragPreview,
-      stretching,
-      transforming,
-      selectMethod,
-    ],
+    [mode, deleteStroke, selectedSet, dragPreview],
   )
 
   /**
@@ -3741,6 +3775,11 @@ export function MapDrawingLayer({
                 {selectedIds.length > 0 ? (
                   <span className="text-[11px] text-blue-700 font-semibold shrink-0">
                     {selectedIds.length} 個選択中
+                    {pickCycle && pickCycle.total > 1 && selectedIds.length === 1 && (
+                      <span className="ml-1 font-normal text-slate-500">
+                        (重なり {pickCycle.index + 1}/{pickCycle.total} — 同じ所をもう一度クリックで次へ)
+                      </span>
+                    )}
                   </span>
                 ) : (
                   <span className="text-[11px] text-slate-500">
@@ -3784,6 +3823,8 @@ export function MapDrawingLayer({
                         setSelectedIds([])
                         setTransformMode(null)
                         setTransformFrom(null)
+                        pickCycleRef.current = null
+                        setPickCycle(null)
                       }}
                       className="h-7 px-2 rounded border text-slate-600 shrink-0"
                     >
