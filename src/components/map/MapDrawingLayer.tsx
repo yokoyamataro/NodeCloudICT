@@ -754,10 +754,9 @@ function NumberField({
       }}
       onBlur={() => setDraft(null)}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.currentTarget.blur()
-          onEnter?.()
-        }
+        // ここで blur しない。入力欄に居るうちは グローバルの Enter が
+        // 素通りするので、確定が 二重に 走らない
+        if (e.key === 'Enter') onEnter?.()
       }}
       className={className}
     />
@@ -1446,51 +1445,6 @@ export function MapDrawingLayer({
     }
   }, [farmId, shapeProgress, color, widthPx, lineStyle, layer, addStroke])
 
-  // 進行中の描画・計測のキーボード操作
-  //   Backspace / Delete … 直前の頂点を取り消す
-  //   Enter              … 確定する
-  //   Escape             … まるごと取り消す
-  useEffect(() => {
-    if (!shapeProgress && !parallelBase && !stretching && measurePoints.length === 0 && !lastMeasure)
-      return
-    const onKey = (e: KeyboardEvent) => {
-      // 文字入力中のキーは拾わない
-      const el = document.activeElement
-      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return
-
-      if (e.key === 'Escape') {
-        setShapeProgress(null)
-        setParallelBase(null)
-        setRectStart(null)
-        setStretchEnd(null)
-        setStretchCandidates([])
-        setStretchTarget(null)
-        setPerpBase(null)
-        setPerpThrough(null)
-        setTextLineStart(null)
-        setMeasurePoints([])
-        setLastMeasure(null)
-        return
-      }
-      if (e.key === 'Backspace' || e.key === 'Delete') {
-        // ブラウザの「前のページへ戻る」を止める
-        e.preventDefault()
-        if (shapeProgress) {
-          const next = shapeProgress.points.slice(0, -1)
-          setShapeProgress(next.length === 0 ? null : { ...shapeProgress, points: next })
-        } else if (measurePoints.length > 0) {
-          setMeasurePoints(measurePoints.slice(0, -1))
-        }
-        return
-      }
-      if (e.key === 'Enter') {
-        e.preventDefault()
-        commitVertexShape()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [shapeProgress, parallelBase, stretching, measurePoints, lastMeasure, commitVertexShape])
 
   // pen モード: pointer events (フリーハンド)
   useEffect(() => {
@@ -2122,6 +2076,79 @@ export function MapDrawingLayer({
     setPerpThrough(null)
   }, [farmId, perpShape, color, widthPx, lineStyle, layer, addStroke])
 
+  // 進行中の描画・計測のキーボード操作
+  //   Backspace / Delete … 直前の頂点を取り消す
+  //   Enter              … 確定する
+  //   Escape             … まるごと取り消す
+  useEffect(() => {
+    if (
+      !shapeProgress &&
+      !parallelBase &&
+      !perpBase &&
+      !stretching &&
+      measurePoints.length === 0 &&
+      !lastMeasure
+    ) {
+      return
+    }
+    const onKey = (e: KeyboardEvent) => {
+      // 文字入力中のキーは拾わない
+      const el = document.activeElement
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return
+
+      if (e.key === 'Escape') {
+        setShapeProgress(null)
+        setParallelBase(null)
+        setRectStart(null)
+        setStretchEnd(null)
+        setStretchCandidates([])
+        setStretchTarget(null)
+        setPerpBase(null)
+        setPerpThrough(null)
+        setTextLineStart(null)
+        setMeasurePoints([])
+        setLastMeasure(null)
+        return
+      }
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        // ブラウザの「前のページへ戻る」を止める
+        e.preventDefault()
+        if (shapeProgress) {
+          const next = shapeProgress.points.slice(0, -1)
+          setShapeProgress(next.length === 0 ? null : { ...shapeProgress, points: next })
+        } else if (measurePoints.length > 0) {
+          setMeasurePoints(measurePoints.slice(0, -1))
+        }
+        return
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        // 進行中のものから 順に 確定する
+        if (stretchAxis) return commitStretch()
+        if (perpShape) return commitPerp()
+        if (parallelBase) return commitParallel()
+        if (shapeProgress?.kind === 'circle') return commitCircle()
+        commitVertexShape()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [
+    shapeProgress,
+    parallelBase,
+    perpBase,
+    stretching,
+    stretchAxis,
+    perpShape,
+    measurePoints,
+    lastMeasure,
+    commitVertexShape,
+    commitStretch,
+    commitPerp,
+    commitParallel,
+    commitCircle,
+  ])
+
   // 平行線の仮表示。基準線は実線の強調、作られる線は点線
   const parallelPreview = useMemo(() => {
     if (!parallelBase) return null
@@ -2492,7 +2519,7 @@ export function MapDrawingLayer({
                   onClick={commitCircle}
                   className="h-7 px-3 rounded bg-indigo-600 text-white disabled:opacity-40 shrink-0"
                 >
-                  確定
+                  確定 (Enter)
                 </button>
                 <button
                   type="button"
@@ -2572,7 +2599,7 @@ export function MapDrawingLayer({
                     onClick={commitPerp}
                     className="h-7 px-3 rounded bg-indigo-600 text-white shrink-0"
                   >
-                    確定
+                    確定 (Enter)
                   </button>
                 )}
                 {perpBase && (
@@ -2640,7 +2667,7 @@ export function MapDrawingLayer({
                   onClick={commitParallel}
                   className="h-7 px-3 rounded bg-indigo-600 text-white shrink-0"
                 >
-                  確定
+                  確定 (Enter)
                 </button>
                 <button
                   type="button"
@@ -2727,7 +2754,7 @@ export function MapDrawingLayer({
                   onClick={commitStretch}
                   className="h-7 px-3 rounded bg-orange-600 text-white shrink-0"
                 >
-                  確定
+                  確定 (Enter)
                 </button>
                 <button
                   type="button"
