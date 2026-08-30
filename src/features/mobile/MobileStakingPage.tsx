@@ -85,6 +85,7 @@ import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { ParcelMapLayer, parcelFeatureKey } from '@/components/map/ParcelMapLayer'
 import { MapDrawingLayer, type DrawingMode } from '@/components/map/MapDrawingLayer'
 import { MapDrawingToolbar } from '@/components/map/MapDrawingToolbar'
+import { MapDrawingCommandBar } from '@/components/map/mapDrawingCommandBar'
 import { useMapDrawingStore, EMPTY_STROKES, DEFAULT_LAYERS, type LineStyle } from '@/stores/mapDrawingStore'
 import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
 import type { Feature, Polygon as GeoJsonPolygon } from 'geojson'
@@ -4736,6 +4737,11 @@ export function MobileStakingPage() {
             </div>
           </div>
         )}
+
+        {/* 今の道具の詳細入力 (文字の内容 / 円の半径 / 平行線の幅…)。
+            道具モーダルは選んだ時点で閉じるので、バーは地図の上端に単独で出す。
+            下端は測点の操作列が詰まっているのでここに置く */}
+        <MapDrawingCommandBar className="absolute top-1 left-1 right-1 z-[1200] rounded-lg bg-white/95 shadow border px-2 py-1.5 overflow-x-auto" />
 
         {/* ペイント。常時ここに出す。押すと道具のモーダルが開く。
             描画中はアイコンが現在の道具に変わり、色が付く */}

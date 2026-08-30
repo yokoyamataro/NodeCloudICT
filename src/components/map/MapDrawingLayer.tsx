@@ -47,6 +47,7 @@ import {
   type LineStyle,
 } from '@/stores/mapDrawingStore'
 import type { CoordinateConverter } from '@/lib/coordinates'
+import { useCommandBarEl } from './mapDrawingCommandBar'
 
 export type DrawingMode =
   | 'off'
@@ -874,6 +875,44 @@ export function MapDrawingLayer({
     },
   })
 
+  /** 詳細入力の差し込み先 (道具アイコンの下のバー) */
+  const commandBarEl = useCommandBarEl()
+
+  /** 文字を確定して置く */
+  const commitText = useCallback(() => {
+    if (!textDialog) return
+    const trimmed = textDialog.value.trim()
+    if (trimmed && farmId) {
+      void addText({
+        farmId,
+        color,
+        widthPx,
+        lat: textDialog.lat,
+        lng: textDialog.lng,
+        text: trimmed,
+        layer,
+        fontSize,
+      })
+    }
+    setTextDialog(null)
+  }, [textDialog, farmId, color, widthPx, layer, fontSize, addText])
+
+  /** 円を確定する。半径は数値入力でも円周上のクリックでも同じ扱い */
+  const commitCircle = useCallback(() => {
+    const center = shapeProgress?.kind === 'circle' ? shapeProgress.points[0] : null
+    if (!farmId || !center || circleRadius <= 0) return
+    void addStroke({
+      farmId,
+      kind: 'circle',
+      color,
+      widthPx,
+      lineStyle,
+      points: [center, edgePointFromRadius(center, circleRadius)],
+      layer,
+    })
+    setShapeProgress(null)
+  }, [shapeProgress, farmId, circleRadius, color, widthPx, lineStyle, layer, addStroke])
+
   /** 頂点をクリックで置く図形 (線 / 面) を確定する。頂点が足りなければ何もしない */
   const commitVertexShape = useCallback(() => {
     if (!farmId || !shapeProgress) return
@@ -1451,6 +1490,15 @@ export function MapDrawingLayer({
     return out
   }, [parallelBase, parallelSpacing, parallelCount, parallelBothSides])
 
+  /** 仮表示している平行線をまとめて保存する */
+  const commitParallel = useCallback(() => {
+    if (!farmId) return
+    for (const line of parallelLines) {
+      void addStroke({ farmId, kind: 'stroke', color, widthPx, lineStyle, points: line, layer })
+    }
+    setParallelBase(null)
+  }, [farmId, parallelLines, color, widthPx, lineStyle, layer, addStroke])
+
   // 平行線の仮表示。基準線は実線の強調、作られる線は点線
   const parallelPreview = useMemo(() => {
     if (!parallelBase) return null
@@ -1584,430 +1632,350 @@ export function MapDrawingLayer({
             }}
           />
         ))}
-      {/* 選択した図形の属性パネル。選択ツールで図形をタップすると出る。
-          共通属性 (レイヤ / 色 / 線種 / 太さ) をここで後から変えられる */}
-      {mode === 'select' &&
-        selectedStroke &&
+      {/* 今の道具の詳細入力。地図に重ねず、道具アイコンのすぐ下 (ページが置いた
+          MapDrawingCommandBar) に 1 行で差し込む。バーが無い画面では出さない */}
+      {commandBarEl &&
         createPortal(
-          <div className="fixed right-3 top-24 z-[4000] w-60 rounded-lg bg-white shadow-xl border p-3 flex flex-col gap-2 text-xs">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-semibold text-slate-800">
-                {KIND_LABEL[selectedStroke.kind]}の属性
-              </span>
-              <button
-                type="button"
-                onClick={() => setSelectedId(null)}
-                className="text-slate-400 hover:text-slate-700 px-1"
-                title="閉じる"
-              >
-                ×
-              </button>
-            </div>
-
-            {selectedStroke.kind === 'text' && (
-              <label className="flex flex-col gap-1">
-                <span className="text-[11px] text-slate-600">文字</span>
+          <>
+            {/* 文字: タップした場所に置く文字列 */}
+            {textDialog && (
+              <>
+                <span className="font-semibold text-slate-700 shrink-0">文字</span>
                 <input
+                  ref={textDialogInputRef}
                   type="text"
-                  defaultValue={selectedStroke.text ?? ''}
-                  onBlur={(ev) => {
-                    const v = ev.target.value.trim()
-                    if (v && v !== selectedStroke.text) {
-                      void updateStrokeAttrs(selectedStroke.id, { text: v })
+                  value={textDialog.value}
+                  onChange={(ev) => setTextDialog({ ...textDialog, value: ev.target.value })}
+                  onKeyDown={(ev) => {
+                    if (ev.key === 'Enter') {
+                      commitText()
+                    } else if (ev.key === 'Escape') {
+                      setTextDialog(null)
                     }
                   }}
-                  className="border rounded px-2 py-1"
+                  placeholder="ここに文字を入力"
+                  className="flex-1 min-w-[8rem] h-7 px-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-              </label>
-            )}
-
-            <label className="flex flex-col gap-1">
-              <span className="text-[11px] text-slate-600">レイヤ</span>
-              <input
-                type="text"
-                defaultValue={selectedStroke.layer ?? '0'}
-                onBlur={(ev) => {
-                  const v = ev.target.value.trim() || '0'
-                  if (v !== selectedStroke.layer) {
-                    void updateStrokeAttrs(selectedStroke.id, { layer: v })
-                  }
-                }}
-                list="map-drawing-layers-inspector"
-                className="border rounded px-2 py-1 font-mono"
-              />
-            </label>
-
-            <label className="flex items-center justify-between gap-2">
-              <span className="text-[11px] text-slate-600">色</span>
-              <input
-                type="color"
-                value={selectedStroke.color}
-                onChange={(ev) =>
-                  void updateStrokeAttrs(selectedStroke.id, { color: ev.target.value })
-                }
-                className="w-10 h-7 p-0 border rounded cursor-pointer"
-              />
-            </label>
-
-            {selectedStroke.kind !== 'text' && selectedStroke.kind !== 'point' && (
-              <label className="flex items-center justify-between gap-2">
-                <span className="text-[11px] text-slate-600">線種</span>
-                <select
-                  value={selectedStroke.line_style ?? 'solid'}
-                  onChange={(ev) =>
-                    void updateStrokeAttrs(selectedStroke.id, {
-                      lineStyle: ev.target.value as LineStyle,
-                    })
-                  }
-                  className="border rounded px-1 py-1"
-                >
-                  <option value="solid">実線</option>
-                  <option value="dashed">破線</option>
-                  <option value="dotted">点線</option>
-                </select>
-              </label>
-            )}
-
-            {selectedStroke.kind === 'text' ? (
-              <label className="flex items-center gap-2">
-                <span className="text-[11px] text-slate-600 shrink-0">文字サイズ</span>
-                <input
-                  type="range"
-                  min={10}
-                  max={48}
-                  step={1}
-                  value={selectedStroke.font_size ?? 14}
-                  onChange={(ev) =>
-                    void updateStrokeAttrs(selectedStroke.id, {
-                      fontSize: Number(ev.target.value),
-                    })
-                  }
-                  className="flex-1"
-                />
-                <span className="font-mono text-[10px] w-6 text-right">
-                  {selectedStroke.font_size ?? 14}
-                </span>
-              </label>
-            ) : (
-              <label className="flex items-center gap-2">
-                <span className="text-[11px] text-slate-600 shrink-0">太さ</span>
-                <input
-                  type="range"
-                  min={1}
-                  max={20}
-                  step={1}
-                  value={selectedStroke.width_px}
-                  onChange={(ev) =>
-                    void updateStrokeAttrs(selectedStroke.id, {
-                      widthPx: Number(ev.target.value),
-                    })
-                  }
-                  className="flex-1"
-                />
-                <span className="font-mono text-[10px] w-6 text-right">
-                  {selectedStroke.width_px}
-                </span>
-              </label>
-            )}
-
-            <button
-              type="button"
-              onClick={() => {
-                void deleteStroke(selectedStroke.id)
-                setSelectedId(null)
-              }}
-              className="mt-1 px-2 py-1.5 rounded border border-red-300 text-red-600 hover:bg-red-50"
-            >
-              削除
-            </button>
-
-            {/* パネル内のレイヤ入力にも候補を出す (ツールバーが無い画面でも効くように) */}
-            <datalist id="map-drawing-layers-inspector">
-              {Array.from(
-                new Set([...DEFAULT_LAYERS, ...(existingLayers ?? []), '0']),
-              ).map((l) => (
-                <option key={l} value={l} />
-              ))}
-            </datalist>
-          </div>,
-          document.body,
-        )}
-      {/* 計測の操作案内 + 結果。値は保存しないので、ここに出したものが全て */}
-      {isMeasureMode(mode) &&
-        createPortal(
-          <div className="fixed inset-x-3 bottom-24 z-[4000] rounded-lg bg-white shadow-xl border px-3 py-2 flex items-center gap-3 max-w-sm mx-auto">
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-semibold text-slate-800">
-                {mode === 'measure-dist' ? '距離' : mode === 'measure-area' ? '面積' : '垂線'}
-              </div>
-              {lastMeasure ? (
-                <div className="text-base font-bold text-rose-600 tabular-nums truncate">
-                  {formatMeasure(lastMeasure)}
-                </div>
-              ) : (
-                <div className="text-[11px] text-slate-500">
-                  {mode === 'measure-dist'
-                    ? '2 点をタップ'
-                    : mode === 'measure-area'
-                      ? `頂点をタップ (${measurePoints.length}) → 最初の点をもう一度タップで確定`
-                      : '基準線の 2 点 → 対象の 1 点をタップ'}
-                </div>
-              )}
-            </div>
-            {mode === 'measure-area' && measurePoints.length >= 3 && (
-              <button
-                type="button"
-                onClick={() => {
-                  setLastMeasure({
-                    kind: 'area',
-                    points: measurePoints,
-                    value: measureArea(converter, measurePoints),
-                    labelAt: centroid(measurePoints),
-                  })
-                  setMeasurePoints([])
-                }}
-                className="px-2.5 py-1.5 rounded bg-rose-600 text-white text-xs shrink-0"
-              >
-                確定
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => {
-                setMeasurePoints([])
-                setLastMeasure(null)
-              }}
-              className="px-2.5 py-1.5 rounded border text-slate-600 text-xs shrink-0"
-            >
-              クリア
-            </button>
-          </div>,
-          document.body,
-        )}
-      {/* 平行線: 基準線を選ぶ前の案内 */}
-      {mode === 'parallel' &&
-        !parallelBase &&
-        createPortal(
-          <div className="fixed inset-x-3 bottom-24 z-[4000] rounded-lg bg-white shadow-xl border px-3 py-2 max-w-sm mx-auto text-center">
-            <div className="text-sm font-semibold text-slate-800">平行線を作成</div>
-            <div className="text-[11px] text-slate-500">
-              基準にする線 (または面の辺) をタップしてください
-            </div>
-          </div>,
-          document.body,
-        )}
-      {/* 円の半径。中心を決めた直後に出す。
-          数値で入れても、円周上をクリックしても決まる (両方使える)。
-          仮の円は点線で見せ、確定するまで保存しない。 */}
-      {shapeProgress?.kind === 'circle' &&
-        createPortal(
-          <div className="fixed inset-x-3 bottom-24 z-[4000] rounded-lg bg-white shadow-xl border p-3 flex flex-col gap-2 max-w-sm mx-auto">
-            <div className="text-sm font-semibold text-slate-800">円を作成</div>
-            <div className="text-[11px] text-slate-500">
-              半径を入力するか、円周上をタップして指定します
-            </div>
-            <label className="flex items-center gap-2">
-              <span className="text-[11px] text-slate-600 shrink-0">半径 (m)</span>
-              <input
-                type="number"
-                inputMode="decimal"
-                step="0.1"
-                min={0}
-                value={circleRadius}
-                onChange={(ev) => setCircleRadius(Math.max(0, Number(ev.target.value)))}
-                className="flex-1 px-2 py-1 border border-slate-300 rounded text-right font-mono"
-              />
-            </label>
-            <div className="flex gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => setShapeProgress(null)}
-                className="flex-1 px-3 py-2 text-sm border rounded hover:bg-slate-50"
-              >
-                やめる
-              </button>
-              <button
-                type="button"
-                disabled={circleRadius <= 0}
-                onClick={() => {
-                  const center = shapeProgress.points[0]
-                  if (!farmId || !center || circleRadius <= 0) return
-                  void addStroke({
-                    farmId,
-                    kind: 'circle',
-                    color,
-                    widthPx,
-                    lineStyle,
-                    points: [center, edgePointFromRadius(center, circleRadius)],
-                    layer,
-                  })
-                  setShapeProgress(null)
-                }}
-                className="flex-1 px-3 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-40"
-              >
-                確定
-              </button>
-            </div>
-          </div>,
-          document.body,
-        )}
-      {/* 平行線の設定。既存の線を選んだ直後に出す。
-          間隔は数値入力でも、通過点のタップでも決められる (両方使える)。
-          基準線はそのまま残し、指定した本数だけ平行線を足す。 */}
-      {parallelBase &&
-        createPortal(
-          <div className="fixed inset-x-3 bottom-24 z-[4000] rounded-lg bg-white shadow-xl border p-3 flex flex-col gap-2 max-w-sm mx-auto">
-            <div className="text-sm font-semibold text-slate-800">平行線を作成</div>
-            <div className="text-[11px] text-slate-500">
-              幅を入力するか、通過させたい位置をタップします
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="flex-1">
-                <span className="text-[11px] text-slate-600">幅 (m)</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  step="0.1"
-                  value={parallelSpacing}
-                  onChange={(ev) => setParallelSpacing(Number(ev.target.value))}
-                  className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded text-right font-mono"
-                />
-              </label>
-              <label className="w-20">
-                <span className="text-[11px] text-slate-600">本数</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={parallelCount}
-                  onChange={(ev) =>
-                    setParallelCount(Math.max(1, Math.min(20, Number(ev.target.value))))
-                  }
-                  className="mt-0.5 w-full px-2 py-1 border border-slate-300 rounded text-right font-mono"
-                />
-              </label>
-            </div>
-            <label className="flex items-center gap-2 text-xs text-slate-700">
-              <input
-                type="checkbox"
-                checked={parallelBothSides}
-                onChange={(ev) => setParallelBothSides(ev.target.checked)}
-              />
-              両側に作る
-            </label>
-            <div className="flex gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => setParallelBase(null)}
-                className="flex-1 px-3 py-2 text-sm border rounded hover:bg-slate-50"
-              >
-                やめる
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (!farmId) return
-                  for (const line of parallelLines) {
-                    void addStroke({
-                      farmId,
-                      kind: 'stroke',
-                      color,
-                      widthPx,
-                      lineStyle,
-                      points: line,
-                      layer,
-                    })
-                  }
-                  setParallelBase(null)
-                }}
-                className="flex-1 px-3 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700"
-              >
-                確定
-              </button>
-            </div>
-          </div>,
-          document.body,
-        )}
-
-      {/* テキスト入力ダイアログ (window.prompt の代替。Portal で map の外に出す) */}
-      {textDialog &&
-        createPortal(
-          <div
-            className="fixed inset-0 z-[4000] flex items-center justify-center bg-black/40 p-4"
-            onClick={() => setTextDialog(null)}
-          >
-            <div
-              className="bg-white rounded-lg shadow-xl p-4 w-full max-w-sm flex flex-col gap-3"
-              onClick={(ev) => ev.stopPropagation()}
-            >
-              <div className="text-sm font-semibold text-slate-800">
-                テキストを入力
-              </div>
-              <input
-                ref={textDialogInputRef}
-                type="text"
-                value={textDialog.value}
-                onChange={(ev) =>
-                  setTextDialog({ ...textDialog, value: ev.target.value })
-                }
-                onKeyDown={(ev) => {
-                  if (ev.key === 'Enter') {
-                    const trimmed = textDialog.value.trim()
-                    if (trimmed && farmId) {
-                      void addText({
-                        farmId,
-                        color,
-                        widthPx,
-                        lat: textDialog.lat,
-                        lng: textDialog.lng,
-                        text: trimmed,
-                        layer,
-                        fontSize,
-                      })
-                    }
-                    setTextDialog(null)
-                  } else if (ev.key === 'Escape') {
-                    setTextDialog(null)
-                  }
-                }}
-                placeholder="ここに文字を入力"
-                className="w-full border rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <div className="flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setTextDialog(null)}
-                  className="px-3 py-1.5 text-sm rounded border text-slate-700 hover:bg-slate-50"
-                >
-                  キャンセル
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const trimmed = textDialog.value.trim()
-                    if (trimmed && farmId) {
-                      void addText({
-                        farmId,
-                        color,
-                        widthPx,
-                        lat: textDialog.lat,
-                        lng: textDialog.lng,
-                        text: trimmed,
-                        layer,
-                        fontSize,
-                      })
-                    }
-                    setTextDialog(null)
-                  }}
+                  onClick={commitText}
                   disabled={!textDialog.value.trim()}
-                  className="px-3 py-1.5 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"
+                  className="h-7 px-3 rounded bg-blue-600 text-white disabled:opacity-40 shrink-0"
                 >
                   追加
                 </button>
-              </div>
-            </div>
-          </div>,
-          document.body,
+                <button
+                  type="button"
+                  onClick={() => setTextDialog(null)}
+                  className="h-7 px-2 rounded border text-slate-600 shrink-0"
+                >
+                  やめる
+                </button>
+              </>
+            )}
+
+            {/* 円: 半径。数値でも、円周上のクリックでも決まる */}
+            {shapeProgress?.kind === 'circle' && (
+              <>
+                <span className="font-semibold text-slate-700 shrink-0">円</span>
+                <label className="flex items-center gap-1 shrink-0">
+                  <span className="text-[11px] text-slate-600">半径 (m)</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.1"
+                    min={0}
+                    value={circleRadius}
+                    onChange={(ev) => setCircleRadius(Math.max(0, Number(ev.target.value)))}
+                    onKeyDown={(ev) => {
+                      if (ev.key === 'Enter') commitCircle()
+                    }}
+                    className="w-20 h-7 px-2 border rounded text-right font-mono"
+                  />
+                </label>
+                <span className="text-[11px] text-slate-500 shrink-0">
+                  円周上をクリックしても決まります
+                </span>
+                <button
+                  type="button"
+                  disabled={circleRadius <= 0}
+                  onClick={commitCircle}
+                  className="h-7 px-3 rounded bg-indigo-600 text-white disabled:opacity-40 shrink-0"
+                >
+                  確定
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShapeProgress(null)}
+                  className="h-7 px-2 rounded border text-slate-600 shrink-0"
+                >
+                  やめる
+                </button>
+              </>
+            )}
+
+            {/* 平行線: 基準線を選ぶ前 */}
+            {mode === 'parallel' && !parallelBase && (
+              <>
+                <span className="font-semibold text-slate-700 shrink-0">平行線</span>
+                <span className="text-[11px] text-slate-500">
+                  基準にする線 (または面の辺) をクリックしてください
+                </span>
+              </>
+            )}
+
+            {/* 平行線: 幅 / 本数 / 両側 */}
+            {parallelBase && (
+              <>
+                <span className="font-semibold text-slate-700 shrink-0">平行線</span>
+                <label className="flex items-center gap-1 shrink-0">
+                  <span className="text-[11px] text-slate-600">幅 (m)</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.1"
+                    value={parallelSpacing}
+                    onChange={(ev) => setParallelSpacing(Number(ev.target.value))}
+                    onKeyDown={(ev) => {
+                      if (ev.key === 'Enter') commitParallel()
+                    }}
+                    className="w-20 h-7 px-2 border rounded text-right font-mono"
+                  />
+                </label>
+                <label className="flex items-center gap-1 shrink-0">
+                  <span className="text-[11px] text-slate-600">本数</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={parallelCount}
+                    onChange={(ev) =>
+                      setParallelCount(Math.max(1, Math.min(20, Number(ev.target.value))))
+                    }
+                    className="w-14 h-7 px-2 border rounded text-right font-mono"
+                  />
+                </label>
+                <label className="flex items-center gap-1 shrink-0 text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={parallelBothSides}
+                    onChange={(ev) => setParallelBothSides(ev.target.checked)}
+                  />
+                  両側
+                </label>
+                <span className="text-[11px] text-slate-500 shrink-0">
+                  通過点をクリックしても決まります
+                </span>
+                <button
+                  type="button"
+                  onClick={commitParallel}
+                  className="h-7 px-3 rounded bg-indigo-600 text-white shrink-0"
+                >
+                  確定
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setParallelBase(null)}
+                  className="h-7 px-2 rounded border text-slate-600 shrink-0"
+                >
+                  やめる
+                </button>
+              </>
+            )}
+
+            {/* 計測: 案内と結果 */}
+            {isMeasureMode(mode) && (
+              <>
+                <span className="font-semibold text-slate-700 shrink-0">
+                  {mode === 'measure-dist' ? '距離' : mode === 'measure-area' ? '面積' : '垂線'}
+                </span>
+                {lastMeasure ? (
+                  <span className="font-bold text-rose-600 tabular-nums">
+                    {formatMeasure(lastMeasure)}
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-slate-500">
+                    {mode === 'measure-dist'
+                      ? '2 点をクリック'
+                      : mode === 'measure-area'
+                        ? `頂点をクリック (${measurePoints.length}) → 最初の点をもう一度クリックで確定`
+                        : '基準線の 2 点 → 対象の 1 点をクリック'}
+                  </span>
+                )}
+                {mode === 'measure-area' && measurePoints.length >= 3 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLastMeasure({
+                        kind: 'area',
+                        points: measurePoints,
+                        value: measureArea(converter, measurePoints),
+                        labelAt: centroid(measurePoints),
+                      })
+                      setMeasurePoints([])
+                    }}
+                    className="h-7 px-3 rounded bg-rose-600 text-white shrink-0"
+                  >
+                    確定
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMeasurePoints([])
+                    setLastMeasure(null)
+                  }}
+                  className="h-7 px-2 rounded border text-slate-600 shrink-0"
+                >
+                  クリア
+                </button>
+              </>
+            )}
+
+            {/* 選択: 選んだ図形の属性を後から変える */}
+            {mode === 'select' && selectedStroke && (
+              <>
+                <span className="font-semibold text-slate-700 shrink-0">
+                  {KIND_LABEL[selectedStroke.kind]}
+                </span>
+
+                {selectedStroke.kind === 'text' && (
+                  <label className="flex items-center gap-1 shrink-0">
+                    <span className="text-[11px] text-slate-600">文字</span>
+                    <input
+                      key={`text-${selectedStroke.id}`}
+                      type="text"
+                      defaultValue={selectedStroke.text ?? ''}
+                      onBlur={(ev) => {
+                        const v = ev.target.value.trim()
+                        if (v && v !== selectedStroke.text) {
+                          void updateStrokeAttrs(selectedStroke.id, { text: v })
+                        }
+                      }}
+                      className="w-32 h-7 px-2 border rounded"
+                    />
+                  </label>
+                )}
+
+                <label className="flex items-center gap-1 shrink-0">
+                  <span className="text-[11px] text-slate-600">レイヤ</span>
+                  <input
+                    key={`layer-${selectedStroke.id}`}
+                    type="text"
+                    defaultValue={selectedStroke.layer ?? '0'}
+                    onBlur={(ev) => {
+                      const v = ev.target.value.trim() || '0'
+                      if (v !== selectedStroke.layer) {
+                        void updateStrokeAttrs(selectedStroke.id, { layer: v })
+                      }
+                    }}
+                    list="map-drawing-layers-inspector"
+                    className="w-20 h-7 px-1 border rounded font-mono"
+                  />
+                </label>
+
+                <label className="flex items-center gap-1 shrink-0">
+                  <span className="text-[11px] text-slate-600">色</span>
+                  <input
+                    type="color"
+                    value={selectedStroke.color}
+                    onChange={(ev) =>
+                      void updateStrokeAttrs(selectedStroke.id, { color: ev.target.value })
+                    }
+                    className="w-8 h-7 p-0 border rounded cursor-pointer"
+                  />
+                </label>
+
+                {selectedStroke.kind !== 'text' && selectedStroke.kind !== 'point' && (
+                  <label className="flex items-center gap-1 shrink-0">
+                    <span className="text-[11px] text-slate-600">線種</span>
+                    <select
+                      value={selectedStroke.line_style ?? 'solid'}
+                      onChange={(ev) =>
+                        void updateStrokeAttrs(selectedStroke.id, {
+                          lineStyle: ev.target.value as LineStyle,
+                        })
+                      }
+                      className="h-7 px-1 border rounded"
+                    >
+                      <option value="solid">実線</option>
+                      <option value="dashed">破線</option>
+                      <option value="dotted">点線</option>
+                    </select>
+                  </label>
+                )}
+
+                {selectedStroke.kind === 'text' ? (
+                  <label className="flex items-center gap-1 shrink-0">
+                    <span className="text-[11px] text-slate-600">文字サイズ</span>
+                    <input
+                      type="range"
+                      min={10}
+                      max={48}
+                      step={1}
+                      value={selectedStroke.font_size ?? 14}
+                      onChange={(ev) =>
+                        void updateStrokeAttrs(selectedStroke.id, {
+                          fontSize: Number(ev.target.value),
+                        })
+                      }
+                      className="w-16"
+                    />
+                    <span className="font-mono text-[10px] w-6 text-right">
+                      {selectedStroke.font_size ?? 14}
+                    </span>
+                  </label>
+                ) : (
+                  <label className="flex items-center gap-1 shrink-0">
+                    <span className="text-[11px] text-slate-600">太さ</span>
+                    <input
+                      type="range"
+                      min={1}
+                      max={20}
+                      step={1}
+                      value={selectedStroke.width_px}
+                      onChange={(ev) =>
+                        void updateStrokeAttrs(selectedStroke.id, {
+                          widthPx: Number(ev.target.value),
+                        })
+                      }
+                      className="w-16"
+                    />
+                    <span className="font-mono text-[10px] w-6 text-right">
+                      {selectedStroke.width_px}
+                    </span>
+                  </label>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    void deleteStroke(selectedStroke.id)
+                    setSelectedId(null)
+                  }}
+                  className="h-7 px-3 rounded border border-red-300 text-red-600 hover:bg-red-50 shrink-0"
+                >
+                  削除
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(null)}
+                  className="h-7 px-2 rounded border text-slate-600 shrink-0"
+                >
+                  閉じる
+                </button>
+
+                <datalist id="map-drawing-layers-inspector">
+                  {Array.from(
+                    new Set([...DEFAULT_LAYERS, ...(existingLayers ?? []), '0']),
+                  ).map((l) => (
+                    <option key={l} value={l} />
+                  ))}
+                </datalist>
+              </>
+            )}
+          </>,
+          commandBarEl,
         )}
     </Pane>
   )

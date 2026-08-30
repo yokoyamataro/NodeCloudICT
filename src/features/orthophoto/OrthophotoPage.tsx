@@ -37,6 +37,7 @@ import { CoordinateMap, type ExternalPolygon } from '@/components/map/Coordinate
 import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
 import { MapDrawingLayer, type DrawingMode } from '@/components/map/MapDrawingLayer'
 import { MapDrawingToolbar } from '@/components/map/MapDrawingToolbar'
+import { MapDrawingCommandBar } from '@/components/map/mapDrawingCommandBar'
 import { useMapDrawingStore, EMPTY_STROKES, DEFAULT_LAYERS, type LineStyle } from '@/stores/mapDrawingStore'
 import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { useParcelImportSelection } from '@/features/parcel-maps/useParcelImportSelection'
@@ -716,6 +717,9 @@ export function OrthophotoPage() {
           registerCoordinate={registerCoordinate}
           onToggleRegisterCoordinate={() => setRegisterCoordinate((v) => !v)}
         />
+        {/* 今の道具の詳細入力 (文字の内容 / 円の半径 / 平行線の幅…)。
+            地図に重ねず、道具アイコンのすぐ下に出す */}
+        <MapDrawingCommandBar className="mt-1.5 pt-1.5 border-t" />
       </div>
 
       {/* 横並び: 左=大きな地図（オルソ＋座標＋区域＋作図＋メモ＋写真）、右=折りたたみパネル */}
