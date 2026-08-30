@@ -1,14 +1,38 @@
 // 全体図の左パネル。表示要素とレイヤをここで一括管理する。
 //
 // ・表示要素 … 測点 / 地番 / 暗渠配線 / カメラ / メモ / ペイント の表示切替
-// ・レイヤ   … ペイントのレイヤ。表示切替 + 並べ替え + 「これから描くレイヤ」の選択
+// ・描画設定 … 色 / 線種 / 線幅。これから描くものに 付く
+// ・レイヤ   … ペイントのレイヤ。表示切替 + 並べ替え + 「これから描くレイヤ」の選択 + 追加
 //
 // 並び順は そのまま 描画順になる。一覧で 上にあるレイヤほど 地図でも 上に出る。
 // 順序と表示状態は 工区ごとに localStorage へ持つ (この端末での見え方の設定)。
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChevronDown, ChevronUp, Eye, EyeOff, Layers, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
-import { DEFAULT_LAYERS } from '@/stores/mapDrawingStore'
+import { DEFAULT_LAYERS, type LineStyle } from '@/stores/mapDrawingStore'
+
+/** 色のプリセット (ツールバーと揃える) */
+const COLOR_PRESETS = [
+  '#ef4444', // 赤
+  '#f97316', // オレンジ
+  '#eab308', // 黄
+  '#22c55e', // 緑
+  '#3b82f6', // 青
+  '#a855f7', // 紫
+  '#111827', // 黒
+  '#ffffff', // 白
+]
+
+const LINE_STYLE_LABEL: Record<LineStyle, string> = {
+  solid: '実線',
+  dashed: '破線',
+  dotted: '点線',
+}
+const LINE_STYLE_DASH: Record<LineStyle, string | undefined> = {
+  solid: undefined,
+  dashed: '6,3',
+  dotted: '0.1,3',
+}
 
 export interface VisibilityRow {
   key: string
@@ -100,6 +124,16 @@ interface Props {
   /** これから描くレイヤ */
   currentLayer: string
   onSelectLayer: (layer: string) => void
+  /** 一覧に無い名前を打って レイヤを増やす */
+  onAddLayer?: (layer: string) => void
+
+  // ---- これから描くものに付く 共通属性 (元はツールバーの右端にあった) ----
+  color: string
+  onChangeColor: (c: string) => void
+  lineStyle: LineStyle
+  onChangeLineStyle: (s: LineStyle) => void
+  widthPx: number
+  onChangeWidth: (px: number) => void
 }
 
 export function OverviewLayerPanel({
@@ -110,7 +144,15 @@ export function OverviewLayerPanel({
   onToggleLayer,
   currentLayer,
   onSelectLayer,
+  onAddLayer,
+  color,
+  onChangeColor,
+  lineStyle,
+  onChangeLineStyle,
+  widthPx,
+  onChangeWidth,
 }: Props) {
+  const [newLayer, setNewLayer] = useState('')
   const [open, setOpen] = useState<boolean>(() => {
     try {
       return localStorage.getItem(OPEN_KEY) !== '0'
@@ -174,6 +216,82 @@ export function OverviewLayerPanel({
           ))}
         </div>
 
+        {/* 描画の共通設定。ここで決めた値が これから描くものに 付く */}
+        <div className="p-2 border-b space-y-2">
+          <div className="text-[10px] text-slate-500">描画の設定</div>
+
+          <div>
+            <div className="text-[10px] text-slate-500 mb-1">色</div>
+            <div className="grid grid-cols-8 gap-1">
+              {COLOR_PRESETS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => onChangeColor(c)}
+                  className={`h-5 rounded border ${c === color ? 'ring-2 ring-blue-500' : ''}`}
+                  style={{ backgroundColor: c }}
+                  title={c}
+                />
+              ))}
+            </div>
+            <input
+              type="color"
+              value={color}
+              onChange={(e) => onChangeColor(e.target.value)}
+              className="w-full h-6 mt-1"
+              title="カスタム色"
+            />
+          </div>
+
+          <div>
+            <div className="text-[10px] text-slate-500 mb-1">線種</div>
+            <div className="flex gap-1">
+              {(['solid', 'dashed', 'dotted'] as const).map((st) => (
+                <button
+                  key={st}
+                  type="button"
+                  onClick={() => onChangeLineStyle(st)}
+                  title={LINE_STYLE_LABEL[st]}
+                  className={`flex-1 h-7 flex items-center justify-center rounded border ${
+                    lineStyle === st
+                      ? 'bg-blue-50 border-blue-400 text-blue-700'
+                      : 'border-slate-300 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <svg width="30" height="10" viewBox="0 0 30 10">
+                    <line
+                      x1="0"
+                      y1="5"
+                      x2="30"
+                      y2="5"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                      strokeDasharray={LINE_STYLE_DASH[st]}
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between text-[10px] text-slate-500 mb-1">
+              <span>線幅</span>
+              <span className="font-mono">{widthPx}px</span>
+            </div>
+            <input
+              type="range"
+              min={1}
+              max={20}
+              step={1}
+              value={widthPx}
+              onChange={(e) => onChangeWidth(Number(e.target.value))}
+              className="w-full"
+            />
+          </div>
+        </div>
+
         {/* レイヤ */}
         <div className="p-2">
           <div className="text-[10px] text-slate-500 mb-1">
@@ -228,6 +346,34 @@ export function OverviewLayerPanel({
               </div>
             )
           })}
+
+          {onAddLayer && (
+            <form
+              className="flex items-center gap-1 mt-1"
+              onSubmit={(e) => {
+                e.preventDefault()
+                const v = newLayer.trim()
+                if (!v) return
+                onAddLayer(v)
+                setNewLayer('')
+              }}
+            >
+              <input
+                type="text"
+                value={newLayer}
+                onChange={(e) => setNewLayer(e.target.value)}
+                placeholder="レイヤを追加"
+                className="flex-1 min-w-0 h-7 px-1.5 border rounded text-xs font-mono"
+              />
+              <button
+                type="submit"
+                disabled={!newLayer.trim()}
+                className="h-7 px-2 rounded border text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-30"
+              >
+                追加
+              </button>
+            </form>
+          )}
         </div>
       </div>
     </div>

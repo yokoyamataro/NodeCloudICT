@@ -175,6 +175,11 @@ interface Props {
    * 'bar' は画面上部の帯に埋め込む想定で余計な枠を出さない
    */
   variant?: 'floating' | 'bar'
+  /**
+   * 共通属性 (レイヤ / 色 / 線種 / 太さ) をツールバーに出すか。
+   * 別の場所 (全体図の左パネル) に置く画面では false にする。
+   */
+  showAttributes?: boolean
 
   // ---- 作図・計測ツールから引き継いだ設定。未指定ならその操作を出さない ----
   /** ピック (スナップ): 近くの点に吸着させる */
@@ -237,6 +242,7 @@ export function MapDrawingToolbar({
   onRedo,
   onMemo,
   variant = 'floating',
+  showAttributes = true,
   snapEnabled,
   onToggleSnap,
   snapTypes,
@@ -618,6 +624,7 @@ export function MapDrawingToolbar({
       )}
       {/* 共通属性 (レイヤ / 色 / 線種 / 太さ)。ツールバーの一番右にまとめる。
           ここで決めた値が、これから描くものに付く */}
+      {showAttributes && (
       <div className="ml-auto flex flex-wrap items-center gap-1 pl-2 border-l">
         {/* レイヤ名 (DXF 出力に反映) */}
         {onChangeLayer && (
@@ -736,6 +743,7 @@ export function MapDrawingToolbar({
           </span>
         </div>
       </div>
+      )}
     </div>
   )
 }

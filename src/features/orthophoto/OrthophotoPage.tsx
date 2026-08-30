@@ -500,6 +500,7 @@ export function OrthophotoPage() {
         <OverviewExportMenu items={exportItems} />
         <MapDrawingToolbar
           variant="bar"
+          showAttributes={false}
           mode={drawingMode}
           onChangeMode={setDrawingMode}
           color={drawingColor}
@@ -537,6 +538,13 @@ export function OrthophotoPage() {
         onToggleLayer={toggleLayerHidden}
         currentLayer={drawLayer}
         onSelectLayer={setDrawLayer}
+        onAddLayer={setDrawLayer}
+        color={drawingColor}
+        onChangeColor={setDrawingColor}
+        lineStyle={drawingLineStyle}
+        onChangeLineStyle={setDrawingLineStyle}
+        widthPx={drawingWidth}
+        onChangeWidth={setDrawingWidth}
       />
 
       {/* 地図 (オルソ + 座標 + 区域 + ペイント + メモ + 写真)。
