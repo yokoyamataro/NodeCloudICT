@@ -135,6 +135,12 @@ interface Props {
   layerOrder?: string[]
   /** 表示しないレイヤ */
   hiddenLayers?: string[]
+  /**
+   * レイヤごとの重ね順 (Leaflet の pane zIndex)。
+   * 渡されたレイヤは 専用ペインに入るので、地図の他の要素 (測点 / 写真 …) と
+   * 間に 挟むように 並べられる。未指定なら 全部 既定のペインに 描く。
+   */
+  layerZIndex?: Record<string, number>
 }
 
 // ---- 平行線 ----
@@ -936,6 +942,7 @@ export function MapDrawingLayer({
   existingLayers,
   layerOrder,
   hiddenLayers,
+  layerZIndex,
 }: Props) {
   const map = useMap()
   const allItems = useMapDrawingStore((s) =>
@@ -1872,9 +1879,8 @@ export function MapDrawingLayer({
       : null
 
   // 既存アイテムの描画
-  const rendered = useMemo(
-    () =>
-      items.map((s: MapDrawingStroke) => {
+  const renderItem = useCallback(
+    (s: MapDrawingStroke) => {
         if (s.kind === 'text') {
           const pt = s.points[0]
           if (!pt) return null
@@ -2111,9 +2117,40 @@ export function MapDrawingLayer({
             })}
           </Fragment>
         )
-      }),
-    [items, mode, deleteStroke, selectedId, dragPreview, stretching],
+    },
+    [mode, deleteStroke, selectedId, dragPreview, stretching],
   )
+
+  /**
+   * レイヤごとに 別の pane へ 分けて描く。
+   * レイヤパネルで 測点や写真の 間に ペイントのレイヤを 差し込めるようにするため。
+   * zIndex が 渡されていないレイヤは まとめて 既定の pane に置く。
+   */
+  const rendered = useMemo(() => {
+    if (!layerZIndex || Object.keys(layerZIndex).length === 0) {
+      return <>{items.map(renderItem)}</>
+    }
+    const groups = new Map<number | null, MapDrawingStroke[]>()
+    for (const it of items) {
+      const z = layerZIndex[it.layer ?? '0'] ?? null
+      const list = groups.get(z)
+      if (list) list.push(it)
+      else groups.set(z, [it])
+    }
+    return (
+      <>
+        {[...groups.entries()].map(([z, list]) =>
+          z === null ? (
+            <Fragment key="layer-default">{list.map(renderItem)}</Fragment>
+          ) : (
+            <Pane key={`layer-z${z}`} name={`map-drawing-z${z}`} style={{ zIndex: z }}>
+              {list.map(renderItem)}
+            </Pane>
+          ),
+        )}
+      </>
+    )
+  }, [items, renderItem, layerZIndex])
 
   // タップ式描画の進行中プレビュー
   const shapePreview = useMemo(() => {

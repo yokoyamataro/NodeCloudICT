@@ -23,7 +23,7 @@ import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
-import { Polyline as LeafletPolyline, CircleMarker, Tooltip } from 'react-leaflet'
+import { Polyline as LeafletPolyline, CircleMarker, Pane, Tooltip } from 'react-leaflet'
 import { useOrthophotoStore } from '@/stores/orthophotoStore'
 import { useFarmMemoStore, EMPTY_FARM_MEMOS } from '@/stores/farmMemoStore'
 import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
@@ -37,7 +37,7 @@ import { OverviewExportMenu, type ExportItem } from './OverviewExportMenu'
 import {
   OverviewLayerPanel,
   useLayerOrder,
-  type VisibilityRow,
+  type ElementRow,
 } from './OverviewLayerPanel'
 import { useMapDrawingStore, EMPTY_STROKES, DEFAULT_LAYERS, DEFAULT_SNAP_TYPES, type LineStyle, type SnapType } from '@/stores/mapDrawingStore'
 import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
@@ -278,7 +278,6 @@ export function OrthophotoPage() {
   const [showParcelsLayer, setShowParcelsLayer] = useState<boolean>(() => readVis('parcels', true))
   const [showCamerasLayer, setShowCamerasLayer] = useState<boolean>(() => readVis('cameras', true))
   const [showMemosLayer, setShowMemosLayer] = useState<boolean>(() => readVis('memos', true))
-  const [showAnnotationsLayer, setShowAnnotationsLayer] = useState<boolean>(() => readVis('annotations', true))
   const [showPipesLayer, setShowPipesLayer] = useState<boolean>(() => readVis('pipes', true))
 
   // ペイント描画: モード / 色 / 太さ (ツールバーは常時表示なので起動フラグは持たない)
@@ -297,7 +296,6 @@ export function OrthophotoPage() {
   useEffect(() => writeVis('parcels', showParcelsLayer), [showParcelsLayer])
   useEffect(() => writeVis('cameras', showCamerasLayer), [showCamerasLayer])
   useEffect(() => writeVis('memos', showMemosLayer), [showMemosLayer])
-  useEffect(() => writeVis('annotations', showAnnotationsLayer), [showAnnotationsLayer])
   useEffect(() => writeVis('pipes', showPipesLayer), [showPipesLayer])
 
   // 暗渠 (pipes) を読み取り専用オーバーレイとして表示
@@ -347,24 +345,16 @@ export function OrthophotoPage() {
     return { lines, vertices }
   }, [pipes, projectZone])
 
-  // 表示要素の切替。左パネル (OverviewLayerPanel) から操作する
-  const visibilityRows = useMemo<VisibilityRow[]>(
+  // 地図の組み込み要素。左パネルの一覧に ペイントのレイヤと 並べて出す
+  const elementRows = useMemo<ElementRow[]>(
     () => [
-      { key: 'points', label: '測点 (座標マーカー)', on: showPointsLayer, set: setShowPointsLayer },
-      { key: 'parcels', label: '地番 (区域ポリゴン)', on: showParcelsLayer, set: setShowParcelsLayer },
+      { key: 'points', label: '測点', on: showPointsLayer, set: setShowPointsLayer },
+      { key: 'parcels', label: '地番 (区域)', on: showParcelsLayer, set: setShowParcelsLayer },
       { key: 'pipes', label: '暗渠配線', on: showPipesLayer, set: setShowPipesLayer },
-      { key: 'cameras', label: 'カメラ (工区写真)', on: showCamerasLayer, set: setShowCamerasLayer },
+      { key: 'cameras', label: '写真', on: showCamerasLayer, set: setShowCamerasLayer },
       { key: 'memos', label: 'メモ', on: showMemosLayer, set: setShowMemosLayer },
-      { key: 'annotations', label: 'ペイント', on: showAnnotationsLayer, set: setShowAnnotationsLayer },
     ],
-    [
-      showPointsLayer,
-      showParcelsLayer,
-      showPipesLayer,
-      showCamerasLayer,
-      showMemosLayer,
-      showAnnotationsLayer,
-    ],
+    [showPointsLayer, showParcelsLayer, showPipesLayer, showCamerasLayer, showMemosLayer],
   )
 
   // displayCoordinateIds が Set/undefined の切替で参照が変わらないように memo 化
@@ -426,12 +416,40 @@ export function OrthophotoPage() {
   }, [drawingItems])
 
   // レイヤの並び順と表示状態 (この端末での見え方。工区ごとに localStorage へ)
+  const elementKeys = useMemo(() => elementRows.map((r) => r.key), [elementRows])
   const {
-    layers: orderedLayers,
+    ids: panelIds,
+    layerOrder: orderedLayers,
     hidden: hiddenLayers,
-    move: moveLayer,
+    move: movePanelRow,
     toggleHidden: toggleLayerHidden,
-  } = useLayerOrder(currentFarm?.id ?? '', existingLayers)
+  } = useLayerOrder(currentFarm?.id ?? '', existingLayers, elementKeys)
+
+  /** 組み込み要素の重ね順。一覧で上にあるほど 大きい zIndex にする */
+  const elementPanes = useMemo(() => {
+    const out: Record<string, number> = {}
+    panelIds.forEach((id, i) => {
+      if (!id.startsWith('el:')) return
+      // Leaflet の overlayPane(400)〜markerPane(600) の間に収める。
+      // 一覧で上にあるほど 大きい zIndex = 手前
+      out[id.slice(3)] = 590 - i
+    })
+    return out as Partial<Record<'points' | 'parcels' | 'cameras' | 'memos', number>> & {
+      pipes?: number
+    }
+  }, [panelIds])
+  // 暗渠は このページで直接描いているので、z 値だけ取り出す
+  const pipesZIndex = elementPanes.pipes ?? 450
+
+  /** ペイントのレイヤごとの重ね順。組み込み要素と 同じ体系で 並べる */
+  const layerZIndex = useMemo(() => {
+    const out: Record<string, number> = {}
+    panelIds.forEach((id, i) => {
+      if (id.startsWith('el:')) return
+      out[id] = 590 - i
+    })
+    return out
+  }, [panelIds])
 
   // 図形以外のスナップ候補（座標管理の点 ＋ 区域の頂点）
   const extraSnapPoints = useMemo<[number, number][]>(() => {
@@ -531,10 +549,10 @@ export function OrthophotoPage() {
       {/* 左パネル (表示要素 + レイヤ) と 地図の横並び */}
       <div className="flex-1 flex min-h-0">
       <OverviewLayerPanel
-        visibility={visibilityRows}
-        layers={orderedLayers}
+        ids={panelIds}
+        elements={elementRows}
         hiddenLayers={hiddenLayers}
-        onMoveLayer={moveLayer}
+        onMove={movePanelRow}
         onToggleLayer={toggleLayerHidden}
         currentLayer={drawLayer}
         onSelectLayer={setDrawLayer}
@@ -552,6 +570,7 @@ export function OrthophotoPage() {
       <div className="flex-1 relative min-h-0">
         <CoordinateMap
           key={currentFarm.id}
+          elementPanes={elementPanes}
           farmId={currentFarm.id}
           showOrtho
           externalPolygons={showParcelsLayer ? workAreaPolygons : []}
@@ -593,11 +612,15 @@ export function OrthophotoPage() {
             snapTypes={snapTypes}
             extraSnapPoints={extraSnapPoints}
             existingLayers={existingLayers}
+            layerOrder={orderedLayers}
+            hiddenLayers={hiddenLayers}
+            layerZIndex={layerZIndex}
             onAddCoordinate={handleAddCoordinate}
             registerCoordinate={registerCoordinate}
-            hidden={!showAnnotationsLayer}
           />
-          {/* 暗渠 (読み取り専用オーバーレイ)。編集は暗渠モジュールで。 */}
+          {/* 暗渠 (読み取り専用オーバーレイ)。編集は暗渠モジュールで。
+              重ね順を レイヤパネルで 変えられるよう 専用ペインに入れる */}
+          <Pane name="ov-pipes" style={{ zIndex: pipesZIndex }}>
           {showPipesLayer &&
             pipeOverlay.lines.map((line) => (
               <LeafletPolyline
@@ -629,6 +652,7 @@ export function OrthophotoPage() {
                 </Tooltip>
               </CircleMarker>
             ))}
+          </Pane>
         </CoordinateMap>
 
         {parcelToast && (

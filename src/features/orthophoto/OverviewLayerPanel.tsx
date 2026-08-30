@@ -1,11 +1,15 @@
-// 全体図の左パネル。表示要素とレイヤをここで一括管理する。
+// 全体図の左パネル。地図に出るものを 1 つの一覧で まとめて 管理する。
 //
-// ・表示要素 … 測点 / 地番 / 暗渠配線 / カメラ / メモ / ペイント の表示切替
-// ・描画設定 … 色 / 線種 / 線幅。これから描くものに 付く
-// ・レイヤ   … ペイントのレイヤ。表示切替 + 並べ替え + 「これから描くレイヤ」の選択 + 追加
+// 一覧には 2 種類が 混ざる:
+//   ・組み込み要素 … 測点 / 地番 / 暗渠配線 / カメラ / メモ
+//   ・ペイントのレイヤ … 現況 / 建物 / 道路 / 計画 / 自分で足したもの
+// どちらも 目のアイコンで 表示を 切り替え、▲▼ で 並べ替える。
+// 並び順が そのまま 描画順になる (上にあるほど 地図でも 手前)。
 //
-// 並び順は そのまま 描画順になる。一覧で 上にあるレイヤほど 地図でも 上に出る。
+// ペイントのレイヤは 名前を クリックすると「これから描くレイヤ」になる。
+//
 // 順序と表示状態は 工区ごとに localStorage へ持つ (この端末での見え方の設定)。
+// 描画の設定 (色 / 線種 / 線幅) も ここに置く。
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChevronDown, ChevronUp, Eye, EyeOff, Layers, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
@@ -34,12 +38,22 @@ const LINE_STYLE_DASH: Record<LineStyle, string | undefined> = {
   dotted: '0.1,3',
 }
 
-export interface VisibilityRow {
+/** 組み込み要素 (測点 / 地番 / …) 1 つ分 */
+export interface ElementRow {
   key: string
   label: string
   on: boolean
   set: (v: boolean) => void
 }
+
+/** 一覧の 1 行。組み込み要素か、ペイントのレイヤか */
+type Row =
+  | { kind: 'element'; id: string; element: ElementRow }
+  | { kind: 'layer'; id: string; layer: string }
+
+/** 組み込み要素は "el:" を付けて レイヤ名と 区別する */
+const ELEMENT_PREFIX = 'el:'
+export const elementRowId = (key: string) => `${ELEMENT_PREFIX}${key}`
 
 const ORDER_KEY = (farmId: string) => `overview:layerOrder:${farmId}`
 const HIDDEN_KEY = (farmId: string) => `overview:layerHidden:${farmId}`
@@ -65,11 +79,20 @@ function writeList(key: string, list: string[]): void {
 }
 
 /**
- * レイヤの並び順と表示状態。
- * 実際に使われているレイヤと既定レイヤを足し合わせ、保存済みの順序を先頭に、
- * 保存に無いもの (新しく使われ始めたレイヤ) を後ろに付ける。
+ * 一覧の並び順と、レイヤの表示状態。
+ *
+ * 一覧には 組み込み要素 (el:points …) と ペイントのレイヤ名が 混ざる。
+ * 保存済みの順序を 先頭に置き、そこに 無いもの (新しく使われ始めたレイヤ、
+ * 追加された組み込み要素) を 後ろに 付ける。
+ *
+ * 組み込み要素の 表示/非表示は 呼び出し側の state (ElementRow.on) が持つので、
+ * ここで 覚えるのは ペイントのレイヤの分だけ。
  */
-export function useLayerOrder(farmId: string, presentLayers: string[]) {
+export function useLayerOrder(
+  farmId: string,
+  presentLayers: string[],
+  elementKeys: string[],
+) {
   const [order, setOrder] = useState<string[]>(() => readList(ORDER_KEY(farmId)))
   const [hidden, setHidden] = useState<string[]>(() => readList(HIDDEN_KEY(farmId)))
 
@@ -79,24 +102,35 @@ export function useLayerOrder(farmId: string, presentLayers: string[]) {
     setHidden(readList(HIDDEN_KEY(farmId)))
   }, [farmId])
 
-  const layers = useMemo(() => {
-    const all = new Set<string>([...DEFAULT_LAYERS, ...presentLayers])
+  /** 一覧に出す ID の並び (組み込み要素は el: 付き) */
+  const ids = useMemo(() => {
+    const all = new Set<string>([
+      ...elementKeys.map(elementRowId),
+      ...DEFAULT_LAYERS,
+      ...presentLayers,
+    ])
     const out = order.filter((l) => all.has(l))
     for (const l of all) if (!out.includes(l)) out.push(l)
     return out
-  }, [order, presentLayers])
+  }, [order, presentLayers, elementKeys])
+
+  /** ペイントのレイヤだけを 上から順に 取り出したもの (描画順に使う) */
+  const layerOrder = useMemo(
+    () => ids.filter((id) => !id.startsWith(ELEMENT_PREFIX)),
+    [ids],
+  )
 
   const move = useCallback(
-    (layer: string, dir: -1 | 1) => {
-      const next = [...layers]
-      const i = next.indexOf(layer)
+    (id: string, dir: -1 | 1) => {
+      const next = [...ids]
+      const i = next.indexOf(id)
       const j = i + dir
       if (i < 0 || j < 0 || j >= next.length) return
       ;[next[i], next[j]] = [next[j], next[i]]
       setOrder(next)
       writeList(ORDER_KEY(farmId), next)
     },
-    [layers, farmId],
+    [ids, farmId],
   )
 
   const toggleHidden = useCallback(
@@ -110,16 +144,17 @@ export function useLayerOrder(farmId: string, presentLayers: string[]) {
     [farmId],
   )
 
-  return { layers, hidden, move, toggleHidden }
+  return { ids, layerOrder, hidden, move, toggleHidden }
 }
 
 interface Props {
-  /** 表示要素 (測点 / 地番 / …) の切替 */
-  visibility: VisibilityRow[]
-  /** レイヤ一覧 (上にあるものほど 地図でも上に出る) */
-  layers: string[]
+  /** 一覧に出す ID の並び (上ほど手前)。組み込み要素は el: 付き */
+  ids: string[]
+  /** 組み込み要素の定義。key で引く */
+  elements: ElementRow[]
+  /** 非表示にしているペイントのレイヤ */
   hiddenLayers: string[]
-  onMoveLayer: (layer: string, dir: -1 | 1) => void
+  onMove: (id: string, dir: -1 | 1) => void
   onToggleLayer: (layer: string) => void
   /** これから描くレイヤ */
   currentLayer: string
@@ -137,10 +172,10 @@ interface Props {
 }
 
 export function OverviewLayerPanel({
-  visibility,
-  layers,
+  ids,
+  elements,
   hiddenLayers,
-  onMoveLayer,
+  onMove,
   onToggleLayer,
   currentLayer,
   onSelectLayer,
@@ -153,6 +188,18 @@ export function OverviewLayerPanel({
   onChangeWidth,
 }: Props) {
   const [newLayer, setNewLayer] = useState('')
+  const elementByKey = useMemo(
+    () => new Map(elements.map((e) => [elementRowId(e.key), e])),
+    [elements],
+  )
+  const rows = useMemo<Row[]>(
+    () =>
+      ids.map((id) => {
+        const el = elementByKey.get(id)
+        return el ? { kind: 'element', id, element: el } : { kind: 'layer', id, layer: id }
+      }),
+    [ids, elementByKey],
+  )
   const [open, setOpen] = useState<boolean>(() => {
     try {
       return localStorage.getItem(OPEN_KEY) !== '0'
@@ -198,24 +245,6 @@ export function OverviewLayerPanel({
       </div>
 
       <div className="flex-1 overflow-auto">
-        {/* 表示要素 */}
-        <div className="p-2 border-b">
-          <div className="text-[10px] text-slate-500 mb-1">表示する要素</div>
-          {visibility.map((row) => (
-            <label
-              key={row.key}
-              className="flex items-center gap-2 px-1 py-1 rounded hover:bg-slate-50 cursor-pointer"
-            >
-              <input
-                type="checkbox"
-                checked={row.on}
-                onChange={(e) => row.set(e.target.checked)}
-              />
-              <span className="text-xs text-slate-700">{row.label}</span>
-            </label>
-          ))}
-        </div>
-
         {/* 描画の共通設定。ここで決めた値が これから描くものに 付く */}
         <div className="p-2 border-b space-y-2">
           <div className="text-[10px] text-slate-500">描画の設定</div>
@@ -292,43 +321,57 @@ export function OverviewLayerPanel({
           </div>
         </div>
 
-        {/* レイヤ */}
+        {/* 地図に出るものの一覧。組み込み要素と ペイントのレイヤが 混ざる */}
         <div className="p-2">
-          <div className="text-[10px] text-slate-500 mb-1">
-            レイヤ (上ほど手前に描画)
-          </div>
-          {layers.map((layer, i) => {
-            const isHidden = hiddenLayers.includes(layer)
-            const isCurrent = layer === currentLayer
+          <div className="text-[10px] text-slate-500 mb-1">レイヤ (上ほど手前に描画)</div>
+          {rows.map((row, i) => {
+            const isElement = row.kind === 'element'
+            const el = isElement ? row.element : null
+            const visible = isElement ? (el?.on ?? true) : !hiddenLayers.includes(row.id)
+            const isCurrent = !isElement && row.id === currentLayer
+            const label = isElement ? (el?.label ?? row.id) : row.id
             return (
               <div
-                key={layer}
+                key={row.id}
                 className={`flex items-center gap-1 px-1 py-1 rounded ${
                   isCurrent ? 'bg-blue-50' : 'hover:bg-slate-50'
                 }`}
               >
                 <button
-                  onClick={() => onToggleLayer(layer)}
-                  className={`p-0.5 rounded ${isHidden ? 'text-slate-300' : 'text-slate-600'}`}
-                  title={isHidden ? '表示する' : '隠す'}
-                >
-                  {isHidden ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                </button>
-                <button
-                  onClick={() => onSelectLayer(layer)}
-                  className={`flex-1 text-left text-xs truncate ${
-                    isCurrent ? 'text-blue-700 font-semibold' : 'text-slate-700'
-                  } ${isHidden ? 'line-through opacity-60' : ''}`}
-                  title={
-                    isCurrent
-                      ? 'これから描くレイヤ'
-                      : 'クリックすると、これから描くレイヤになります'
+                  onClick={() =>
+                    isElement ? el?.set(!visible) : onToggleLayer(row.id)
                   }
+                  className={`p-0.5 rounded ${visible ? 'text-slate-600' : 'text-slate-300'}`}
+                  title={visible ? '隠す' : '表示する'}
                 >
-                  {layer}
+                  {visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
                 </button>
+                {isElement ? (
+                  <span
+                    className={`flex-1 text-xs truncate text-slate-500 ${
+                      visible ? '' : 'line-through opacity-60'
+                    }`}
+                    title="地図の組み込み要素"
+                  >
+                    {label}
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => onSelectLayer(row.id)}
+                    className={`flex-1 text-left text-xs truncate ${
+                      isCurrent ? 'text-blue-700 font-semibold' : 'text-slate-700'
+                    } ${visible ? '' : 'line-through opacity-60'}`}
+                    title={
+                      isCurrent
+                        ? 'これから描くレイヤ'
+                        : 'クリックすると、これから描くレイヤになります'
+                    }
+                  >
+                    {label}
+                  </button>
+                )}
                 <button
-                  onClick={() => onMoveLayer(layer, -1)}
+                  onClick={() => onMove(row.id, -1)}
                   disabled={i === 0}
                   className="p-0.5 rounded text-slate-500 hover:bg-slate-100 disabled:opacity-25"
                   title="1 つ手前へ"
@@ -336,8 +379,8 @@ export function OverviewLayerPanel({
                   <ChevronUp className="h-3.5 w-3.5" />
                 </button>
                 <button
-                  onClick={() => onMoveLayer(layer, 1)}
-                  disabled={i === layers.length - 1}
+                  onClick={() => onMove(row.id, 1)}
+                  disabled={i === rows.length - 1}
                   className="p-0.5 rounded text-slate-500 hover:bg-slate-100 disabled:opacity-25"
                   title="1 つ奥へ"
                 >

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { MapContainer, TileLayer, Marker, Polygon, Polyline, useMap, useMapEvents, Tooltip, Popup } from 'react-leaflet'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { MapContainer, TileLayer, Marker, Pane, Polygon, Polyline, useMap, useMapEvents, Tooltip, Popup } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useCoordinateStore, type CoordinateRow, type RoutePoint } from '@/stores/coordinateStore'
@@ -190,6 +190,27 @@ function CoordinateMapLongPressBridge({
 // 押下で onEdit(photo.id) が呼ばれる（呼び出し側でファイルを DL して
 // PhotoEditModal を開く運用）。
 // onDelete が渡された場合は隣に「削除」ボタンが出る。
+/**
+ * 要素をペインで包む。zIndex が渡されていなければ そのまま返す
+ * (他ページの見え方を 変えないため)。
+ */
+function InPane({
+  name,
+  zIndex,
+  children,
+}: {
+  name: string
+  zIndex?: number
+  children: ReactNode
+}) {
+  if (zIndex === undefined) return <>{children}</>
+  return (
+    <Pane name={name} style={{ zIndex }}>
+      {children}
+    </Pane>
+  )
+}
+
 export function PhotoMarker({
   photo,
   getSignedUrl,
@@ -508,6 +529,12 @@ interface CoordinateMapProps {
   }>
   /** メモマーカーをクリックしたとき */
   onMemoClick?: (memoId: string) => void
+  /**
+   * 要素ごとの重ね順 (Leaflet の pane zIndex)。渡された種類だけ
+   * 専用ペインに入れて、レイヤパネルの並び順を 描画順に反映する。
+   * 未指定の種類は 従来どおり 既定のペインに描く。
+   */
+  elementPanes?: Partial<Record<'points' | 'parcels' | 'cameras' | 'memos', number>>
   /** 工区写真（標準写真）のマーカー。撮影位置 + 撮影方向 + サムネ用 filePath */
   farmPhotos?: Array<{
     id: string
@@ -614,6 +641,7 @@ export function CoordinateMap({
   lineSelectMode = false,
   onLineSelect,
   coordinatesInteractive = true,
+  elementPanes,
   children,
 }: CoordinateMapProps) {
   const { coordinates } = useCoordinateStore()
@@ -744,6 +772,7 @@ export function CoordinateMap({
       {/* 外部から渡されたポリゴン（workAreaStore など）。地番ポリゴンは
           4000+ になるので、500 件超なら zoom 16 以上 + 画面内のみ描画する。
           ラベル（地番名）はさらに重いので zoom 17 以上に絞る。 */}
+      <InPane name="cm-parcels" zIndex={elementPanes?.parcels}>
       <HighDensityList
         items={externalPolygons.filter((p) => p.positions.length >= 3)}
         threshold={500}
@@ -813,6 +842,7 @@ export function CoordinateMap({
           )
         }}
       />
+      </InPane>
 
       {/* 境界線選択モード: 各辺をクリック可能なポリラインで重ねる */}
       {lineSelectMode &&
@@ -883,6 +913,7 @@ export function CoordinateMap({
       })()}
 
       {/* 工区メモのマーカー */}
+      <InPane name="cm-memos" zIndex={elementPanes?.memos}>
       {farmMemos?.map((m) => (
         <Marker
           key={`memo-${m.id}`}
@@ -898,8 +929,10 @@ export function CoordinateMap({
           </Tooltip>
         </Marker>
       ))}
+      </InPane>
 
       {/* 工区写真のマーカー（カメラアイコン + 撮影方向 + クリックでサムネ） */}
+      <InPane name="cm-cameras" zIndex={elementPanes?.cameras}>
       {photoGetSignedUrl &&
         farmPhotos?.map((p) => (
           <PhotoMarker
@@ -911,6 +944,7 @@ export function CoordinateMap({
             onDelete={onPhotoDelete}
           />
         ))}
+      </InPane>
 
       {/* 長押し / 右クリック でメモ作成等のコールバックを発火 */}
       {onMapLongPress && <CoordinateMapLongPressBridge onLongPress={onMapLongPress} />}
@@ -955,6 +989,7 @@ export function CoordinateMap({
           編集モードで構成点は「選択中ならオレンジ強調」だが、マーカー自体は
           ドラッグできない（元の点と点名はその場に固定）。
           ドラッグは別レイヤの透明ハンドル (ConstituentHandlesLayer) で行う */}
+      <InPane name="cm-points" zIndex={elementPanes?.points}>
       <HighDensityList
         items={displayCoordinates}
         threshold={1000}
@@ -1041,6 +1076,7 @@ export function CoordinateMap({
         )
         }}
       />
+      </InPane>
 
       {/* 構成点編集モード: 中点 + を click で「挿入待機」、次に座標を click で確定。
           構成点の置換も click-click（元の点をクリック → 別の座標をクリック）。 */}
