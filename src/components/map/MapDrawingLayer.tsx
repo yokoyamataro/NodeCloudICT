@@ -27,7 +27,9 @@
 //               同じ場所を 続けてクリックすると 手前から 順に 奥へ回る。
 //               他は 囲った形に かかった図形を まとめて 選ぶ。
 //               選んだものは「移動」「コピー」で 始点 → 終点 の 2 クリックで
-//               平行移動 / 複製 できる。
+//               平行移動 / 複製 できる。複数選んだときは レイヤ / 種別 / 色 / 線種 で
+//               絞り込める。線だけを 選んだときは「伸縮」で、相手の線を クリックすると
+//               選んだ線の 両端が そこまで 伸びる / 詰まる。
 //               1 つだけ選んだときは 青ハンドルをドラッグで頂点移動 / 長押しで削除 /
 //               辺の中点の「+」タップで頂点追加 (直線・円・円弧は追加/削除不可、位置移動のみ)。
 //               属性 (レイヤ / 色 / 線種 / 線幅 / 矢印) は 左パネルの「描画の設定」
@@ -254,26 +256,6 @@ const MIDPOINT_ICON = L.divIcon({
   html: '<div style="width:18px;height:18px;border-radius:50%;background:#22c55e;border:2px solid white;box-shadow:0 0 4px rgba(0,0,0,0.6);color:white;font-size:13px;font-weight:bold;line-height:14px;text-align:center;">+</div>',
   iconSize: [22, 22],
   iconAnchor: [11, 11],
-})
-
-/**
- * ハンドル: 端部の伸縮用 (橙の両矢印)。
- * 端点そのものには 青い移動ハンドルが 乗っているので、真上に ずらして描く。
- * ずらした先が 当たり判定になるので、両方 別々に 掴める。
- */
-const STRETCH_ICON = L.divIcon({
-  className: 'map-drawing-stretch',
-  html: '<div style="width:22px;height:22px;border-radius:4px;background:#f97316;border:2px solid white;box-shadow:0 0 5px rgba(0,0,0,0.6);color:white;font-size:13px;font-weight:bold;line-height:18px;text-align:center;">↔</div>',
-  iconSize: [26, 26],
-  iconAnchor: [13, 38],
-})
-
-/** ハンドル: 伸縮の候補点 (どこまで伸ばすかを選ばせる) */
-const CANDIDATE_ICON = L.divIcon({
-  className: 'map-drawing-candidate',
-  html: '<div style="width:16px;height:16px;border-radius:50%;background:#0ea5e9;border:2px solid white;box-shadow:0 0 5px rgba(0,0,0,0.6);"></div>',
-  iconSize: [20, 20],
-  iconAnchor: [10, 10],
 })
 
 /** ポリゴン描画中の最初の頂点マーカー (再タップで閉じる目印, 橙色) */
@@ -984,43 +966,6 @@ function intersectLineThrough(
   return (dx * A.north - dy * A.east) / det
 }
 
-/** 同じく、中心 center / 半径 r の円との交点までの距離 [m] (0〜2 個) */
-function intersectCircle(
-  origin: LL,
-  ux: number,
-  uy: number,
-  center: LL,
-  radiusM: number,
-  c?: CoordinateConverter,
-): number[] {
-  const C = deltaM(origin, center, c)
-  const proj = C.east * ux + C.north * uy
-  const disc = proj * proj - (C.east * C.east + C.north * C.north - radiusM * radiusM)
-  if (disc < 0) return []
-  if (disc === 0) return [proj]
-  const root = Math.sqrt(disc)
-  return [proj - root, proj + root]
-}
-
-/**
- * 線分 [a, b] を、点 p の位置まで届くように 延ばした 2 点を返す。
- * 「実際にはぶつかっていない相手まで伸ばした」ことを 見せるための 補助線に使う。
- */
-function extendThrough(seg: [LL, LL], p: LL, c?: CoordinateConverter): [LL, LL] {
-  const [a, b] = seg
-  const ab = deltaM(a, b, c)
-  const len = Math.hypot(ab.east, ab.north)
-  if (len < 1e-6) return seg
-  const ux = ab.east / len
-  const uy = ab.north / len
-  const ap = deltaM(a, p, c)
-  const t = ap.east * ux + ap.north * uy
-  // a を 0、b を len としたときの、p の射影位置 t を含む範囲まで広げる
-  const lo = Math.min(0, len, t)
-  const hi = Math.max(0, len, t)
-  return [offsetLL(a, ux * lo, uy * lo, c), offsetLL(a, ux * hi, uy * hi, c)]
-}
-
 /** 3 点を通る円の中心。3 点が一直線なら null */
 function circumcenterLL(a: LL, b: LL, c: LL, conv?: CoordinateConverter): LL | null {
   const B = deltaM(a, b, conv)
@@ -1265,15 +1210,11 @@ export function MapDrawingLayer({
   const [perpBase, setPerpBase] = useState<[LL, LL] | null>(null)
   const [perpThrough, setPerpThrough] = useState<LL | null>(null)
   const [perpLength, setPerpLength] = useState(10)
-  /** 端部の伸縮: どちらの端を動かしているか。null なら伸縮していない */
-  const [stretchEnd, setStretchEnd] = useState<'start' | 'end' | null>(null)
-  const stretching = stretchEnd !== null
-  /** 端部の伸縮: 起点から端点までの長さ [m] */
-  const [stretchLength, setStretchLength] = useState(0)
-  /** 端部の伸縮: 交点が複数あるときの候補 (起点からの距離 [m]) */
-  const [stretchCandidates, setStretchCandidates] = useState<number[]>([])
-  /** 端部の伸縮: 対象に選んだ線分。延長線を見せるために覚えておく */
-  const [stretchTarget, setStretchTarget] = useState<[LL, LL] | null>(null)
+  /**
+   * 線の伸縮: 相手の線を 選んでいる最中か。
+   * 選んだ線 (の延長線) まで、選択した線の 両端を 伸ばす / 詰める。
+   */
+  const [extending, setExtending] = useState(false)
   /** 長方形・垂線でカーソルを追うための位置 (仮表示に使う) */
   const [shapeHover, setShapeHover] = useState<LL | null>(null)
   /** 円: 中心を決めたあとの半径 [m]。数値入力でも、円周上のクリックでも決まる */
@@ -1547,14 +1488,13 @@ export function MapDrawingLayer({
     if (mode !== 'select') {
       setSelectedIds([])
       setSelectShape([])
+      setExtending(false)
       pickCycleRef.current = null
       setPickCycle(null)
       setTransformMode(null)
       setTransformFrom(null)
       setDragPreview(null)
-      setStretchEnd(null)
-      setStretchCandidates([])
-      setStretchTarget(null)
+      setExtending(false)
     }
     // 計測は結果を残さない。モードを抜けた時点で消す
     if (!isMeasureMode(mode)) {
@@ -1641,42 +1581,40 @@ export function MapDrawingLayer({
         : null,
     [items, mode, selectedId],
   )
-  /** 端部の伸縮で動かす端点まわりの情報 (起点 / 単位方向 / 現在の長さ) */
-  const stretchAxis = useMemo(() => {
-    if (!selectedStroke || selectedStroke.kind !== 'stroke' || !stretchEnd) return null
-    const pts = selectedStroke.points
-    if (pts.length < 2) return null
-    // 動かさない側の隣の頂点を起点にする
-    const origin = stretchEnd === 'end' ? pts[pts.length - 2] : pts[1]
-    const tip = stretchEnd === 'end' ? pts[pts.length - 1] : pts[0]
-    const d = deltaM(origin, tip, converter)
-    const len = Math.hypot(d.east, d.north)
-    if (len < 1e-6) return null
-    return { origin, tip, ux: d.east / len, uy: d.north / len, current: len }
-  }, [selectedStroke, stretchEnd, converter])
-
-  /** 伸縮後の端点 */
-  const stretchTip = useMemo(() => {
-    if (!stretchAxis) return null
-    return offsetLL(
-      stretchAxis.origin,
-      stretchAxis.ux * stretchLength,
-      stretchAxis.uy * stretchLength,
-      converter,
-    )
-  }, [stretchAxis, stretchLength, converter])
-
-  /** 伸縮を確定して保存する */
-  const commitStretch = useCallback(() => {
-    if (!selectedStroke || !stretchEnd || !stretchTip) return
-    const pts = [...selectedStroke.points]
-    if (stretchEnd === 'end') pts[pts.length - 1] = stretchTip
-    else pts[0] = stretchTip
-    void updateStrokePoints(selectedStroke.id, pts)
-    setStretchEnd(null)
-    setStretchCandidates([])
-    setStretchTarget(null)
-  }, [selectedStroke, stretchEnd, stretchTip, updateStrokePoints])
+  /**
+   * 選択した線の 両端を、相手の線 (の延長線) まで 伸ばす / 詰める。
+   * 端ごとに、その端の 線分の向きで 相手と 交わる所を 求めて 端点を 動かす。
+   * 交わらない (平行な) 端は そのまま。
+   */
+  const extendSelectionTo = useCallback(
+    (target: [LL, LL]) => {
+      for (const id of selectedIds) {
+        const it = items.find((x) => x.id === id)
+        if (!it || it.kind !== 'stroke' || it.points.length < 2) continue
+        const pts = [...it.points]
+        let changed = false
+        for (const which of ['start', 'end'] as const) {
+          const origin = which === 'end' ? pts[pts.length - 2] : pts[1]
+          const tip = which === 'end' ? pts[pts.length - 1] : pts[0]
+          const d = deltaM(origin, tip, converter)
+          const len = Math.hypot(d.east, d.north)
+          if (len < 1e-6) continue
+          const ux = d.east / len
+          const uy = d.north / len
+          const t = intersectLineThrough(origin, ux, uy, target[0], target[1], converter)
+          // 起点より 手前 (線が裏返る側) は 相手にしない
+          if (t === null || t <= 0.01) continue
+          const moved = offsetLL(origin, ux * t, uy * t, converter)
+          if (which === 'end') pts[pts.length - 1] = moved
+          else pts[0] = moved
+          changed = true
+        }
+        if (changed) void updateStrokePoints(it.id, pts)
+      }
+      setExtending(false)
+    },
+    [selectedIds, items, converter, updateStrokePoints],
+  )
 
   // タップ式描画 + text 追加: useMapEvents
   useMapEvents({
@@ -1830,7 +1768,7 @@ export function MapDrawingLayer({
       }
 
       // 点で選ぶ。重なっている所は 同じ場所を 続けてクリックすると 手前から順に 奥へ回る
-      if (mode === 'select' && selectMethod === 'point' && !stretchAxis && !transformMode) {
+      if (mode === 'select' && selectMethod === 'point' && !extending && !transformMode) {
         const px = map.latLngToContainerPoint(e.latlng)
         // 手前にあるものから 並べる (items は 奥から順なので 逆にする)
         const cands = items
@@ -1860,7 +1798,7 @@ export function MapDrawingLayer({
       }
 
       // 囲って選ぶ (線 / 長方形 / 多角形)
-      if (mode === 'select' && selectMethod !== 'point' && !stretchAxis && !transformMode) {
+      if (mode === 'select' && selectMethod !== 'point' && !extending && !transformMode) {
         const pts = [...selectShape, at]
         const need = selectMethod === 'polygon' ? Infinity : 2
         if (pts.length < need) {
@@ -1875,72 +1813,10 @@ export function MapDrawingLayer({
         return
       }
 
-      // 端部の伸縮中: 対象の線 / 円をクリックすると、その要素との交点まで伸縮する
-      if (mode === 'select' && stretchAxis) {
-        const clickPx = map.latLngToContainerPoint(e.latlng)
-        const hits: number[] = []
-        let target: [LL, LL] | null = null
-        for (const it of items) {
-          if (it.id === selectedStroke?.id) continue
-          if (it.kind === 'circle') {
-            const [center, edge] = it.points
-            if (!center || !edge) continue
-            const px = map.latLngToContainerPoint([center.lat, center.lng]).distanceTo(clickPx)
-            const r = circleRadiusMeters(center, edge)
-            // 円周の近くをクリックしたときだけ対象にする
-            const rPx =
-              map
-                .latLngToContainerPoint([center.lat, center.lng])
-                .distanceTo(map.latLngToContainerPoint([edge.lat, edge.lng]))
-            if (Math.abs(px - rPx) > PICK_LINE_RADIUS_PX) continue
-            hits.push(
-              ...intersectCircle(stretchAxis.origin, stretchAxis.ux, stretchAxis.uy, center, r, converter),
-            )
-            continue
-          }
-          if (!isLineLike(it.kind)) continue
-          const pts = it.points
-          const last = it.kind === 'polygon' ? pts.length : pts.length - 1
-          for (let i = 0; i < last; i += 1) {
-            const a = pts[i]
-            const b = pts[(i + 1) % pts.length]
-            const px = distancePointToSegmentPx(
-              clickPx,
-              map.latLngToContainerPoint([a.lat, a.lng]),
-              map.latLngToContainerPoint([b.lat, b.lng]),
-            )
-            if (px > PICK_LINE_RADIUS_PX) continue
-            const t = intersectLineThrough(stretchAxis.origin, stretchAxis.ux, stretchAxis.uy, a, b, converter)
-            if (t !== null) {
-              hits.push(t)
-              target = [a, b]
-            }
-          }
-        }
-        // 起点より手前 (線が裏返る側) は捨てる。近い順に並べる
-        const usable = hits
-          .filter((t) => t > 0.01)
-          .sort((a, b) => Math.abs(a - stretchLength) - Math.abs(b - stretchLength))
-        if (usable.length === 0) {
-          // 相手が 見つからなければ、クリックした位置を 伸縮の向きに 射影して
-          // そこまで 伸ばす / 詰める
-          const d = deltaM(stretchAxis.origin, at, converter)
-          const t = d.east * stretchAxis.ux + d.north * stretchAxis.uy
-          if (t > 0.01) {
-            setStretchLength(Math.round(t * 100) / 100)
-            setStretchCandidates([])
-            setStretchTarget(null)
-          }
-          return
-        }
-        setStretchTarget(target)
-        if (usable.length === 1) {
-          setStretchLength(Math.round(usable[0] * 100) / 100)
-          setStretchCandidates([])
-        } else {
-          // どこまで伸ばす / 詰めるかを選ばせる
-          setStretchCandidates(usable)
-        }
+      // 伸縮の相手を 選んでいる最中: 線をクリックすると そこまで 伸ばす / 詰める
+      if (mode === 'select' && extending) {
+        const target = pickBaseLine(e.latlng)
+        if (target) extendSelectionTo(target)
         return
       }
 
@@ -2119,6 +1995,45 @@ export function MapDrawingLayer({
       if (kindOfMove === 'move') setSelectedIds([])
     },
     [farmId, selectedIds, items, converter, updateStrokePoints, addStroke, addText, addPoint],
+  )
+
+  /** 選択中の図形 (絞り込みと 伸縮の 判定に使う) */
+  const selectedItems = useMemo(
+    () => items.filter((it) => selectedSet.has(it.id)),
+    [items, selectedSet],
+  )
+  /** 選択が 線だけか (伸縮できるのは 連続線のみ) */
+  const selectionIsLinesOnly =
+    selectedItems.length > 0 && selectedItems.every((it) => it.kind === 'stroke')
+
+  /** 絞り込みの 選択肢。今 選ばれているものの 顔ぶれから 作る */
+  const selectionFacets = useMemo(() => {
+    const layers = new Set<string>()
+    const kinds = new Set<MapDrawingStroke['kind']>()
+    const colors = new Set<string>()
+    const styles = new Set<LineStyle>()
+    for (const it of selectedItems) {
+      layers.add(it.layer ?? '0')
+      kinds.add(it.kind)
+      colors.add(it.color)
+      styles.add((it.line_style ?? 'solid') as LineStyle)
+    }
+    return {
+      layers: [...layers].sort(),
+      kinds: [...kinds],
+      colors: [...colors].sort(),
+      styles: [...styles],
+    }
+  }, [selectedItems])
+
+  /** 条件に合うものだけ 選択に 残す */
+  const narrowSelection = useCallback(
+    (keep: (it: MapDrawingStroke) => boolean) => {
+      setSelectedIds(selectedItems.filter(keep).map((it) => it.id))
+      pickCycleRef.current = null
+      setPickCycle(null)
+    },
+    [selectedItems],
   )
 
   /** 囲った形に かかっている図形を 選ぶ */
@@ -3031,7 +2946,7 @@ export function MapDrawingLayer({
       selectShape.length === 0 &&
       !parallelBase &&
       !perpBase &&
-      !stretching &&
+      !extending &&
       measurePoints.length === 0 &&
       !lastMeasure
     ) {
@@ -3050,9 +2965,7 @@ export function MapDrawingLayer({
         setTransformFrom(null)
         setParallelBase(null)
         setRectStart(null)
-        setStretchEnd(null)
-        setStretchCandidates([])
-        setStretchTarget(null)
+        setExtending(false)
         setPerpBase(null)
         setPerpThrough(null)
         setTextLineStart(null)
@@ -3082,7 +2995,6 @@ export function MapDrawingLayer({
           setSelectHover(null)
           return
         }
-        if (stretchAxis) return commitStretch()
         if (perpShape) return commitPerp()
         if (parallelBase) return commitParallel()
         if (shapeProgress?.kind === 'circle') return commitCircle()
@@ -3098,13 +3010,11 @@ export function MapDrawingLayer({
     applySelection,
     parallelBase,
     perpBase,
-    stretching,
-    stretchAxis,
+    extending,
     perpShape,
     measurePoints,
     lastMeasure,
     commitVertexShape,
-    commitStretch,
     commitPerp,
     commitParallel,
     commitCircle,
@@ -3423,81 +3333,6 @@ export function MapDrawingLayer({
             }}
           />
         ))}
-      {/* 端部の伸縮ハンドル (連続線のみ)。押すと その端が 伸縮の対象になる */}
-      {selectedStroke &&
-        selectedStroke.kind === 'stroke' &&
-        !dragPreview &&
-        !transforming &&
-        selectedStroke.points.length >= 2 &&
-        (['start', 'end'] as const).map((which) => {
-          const pts = selectedStroke.points
-          const p = which === 'end' ? pts[pts.length - 1] : pts[0]
-          // 端点ハンドルと重ならないよう、少しだけ外側に出す
-          return (
-            <Marker
-              key={`stretch-${selectedStroke.id}-${which}`}
-              position={[p.lat, p.lng]}
-              icon={STRETCH_ICON}
-              zIndexOffset={1000}
-              eventHandlers={{
-                click: () => {
-                  // 今の端の長さを 初期値にする
-                  const origin = which === 'end' ? pts[pts.length - 2] : pts[1]
-                  const d = deltaM(origin, p, converter)
-                  setStretchLength(Math.round(Math.hypot(d.east, d.north) * 100) / 100)
-                  setStretchCandidates([])
-                  setStretchTarget(null)
-                  setStretchEnd(which)
-                },
-              }}
-            />
-          )
-        })}
-
-      {/* 対象の延長線。実際にはぶつかっていない相手まで伸ばしたことが
-          分かるよう、対象の線分を 伸縮後の端点まで 灰色の点線で 延ばして見せる */}
-      {stretchTarget && stretchTip && (
-        <Polyline
-          positions={extendThrough(stretchTarget, stretchTip, converter).map(
-            (p) => [p.lat, p.lng] as [number, number],
-          )}
-          pathOptions={{ color: '#64748b', weight: 1.5, opacity: 0.9, dashArray: '4,4' }}
-          interactive={false}
-        />
-      )}
-
-      {/* 伸縮の仮表示 (起点 → 伸縮後の端点) */}
-      {stretchAxis && stretchTip && (
-        <Polyline
-          positions={[
-            [stretchAxis.origin.lat, stretchAxis.origin.lng],
-            [stretchTip.lat, stretchTip.lng],
-          ]}
-          pathOptions={{ color: '#f97316', weight: widthPx + 2, opacity: 0.9, dashArray: '6,4' }}
-          interactive={false}
-        />
-      )}
-
-      {/* 交点が複数あるとき: どこまでにするかを選ばせる */}
-      {stretchAxis &&
-        stretchCandidates.map((t, i) => {
-          const at = offsetLL(stretchAxis.origin, stretchAxis.ux * t, stretchAxis.uy * t, converter)
-          return (
-            <Marker
-              key={`stretch-candidate-${i}`}
-              position={[at.lat, at.lng]}
-              icon={CANDIDATE_ICON}
-              zIndexOffset={1100}
-              eventHandlers={{
-                click: () => {
-                  setStretchLength(Math.round(t * 100) / 100)
-                  setStretchCandidates([])
-                },
-              }}
-            />
-          )
-        })}
-
       {/* 中点 + ハンドル (頂点数可変 kind: stroke / polygon のみ) */}
       {selectedStroke &&
         midpoints.map((m) => (
@@ -3923,59 +3758,8 @@ export function MapDrawingLayer({
               </>
             )}
 
-            {/* 端部の伸縮: 長さを入れるか、対象の線・円をクリックして交点まで */}
-            {mode === 'select' && stretchAxis && (
-              <>
-                <span className="font-semibold text-orange-600 shrink-0">
-                  {stretchEnd === 'end' ? '終点' : '始点'}を伸縮
-                </span>
-                <label className="flex items-center gap-1 shrink-0">
-                  <span className="text-[11px] text-slate-600">長さ (m)</span>
-                  <NumberField
-                    value={stretchLength}
-                    onChange={setStretchLength}
-                    onEnter={commitStretch}
-                    min={0}
-                    className="w-20 h-7 px-2 border rounded text-right font-mono"
-                  />
-                </label>
-                <label className="flex items-center gap-1 shrink-0">
-                  <span className="text-[11px] text-slate-600">増減 (m)</span>
-                  <NumberField
-                    value={Math.round((stretchLength - stretchAxis.current) * 100) / 100}
-                    onChange={(v) => setStretchLength(Math.max(0, stretchAxis.current + v))}
-                    onEnter={commitStretch}
-                    className="w-20 h-7 px-2 border rounded text-right font-mono"
-                  />
-                </label>
-                <span className="text-[11px] text-slate-500">
-                  {stretchCandidates.length > 0
-                    ? '交点が複数あります。残す側の青い点をクリック'
-                    : '＋で伸び、−で縮む / 対象の線・円をクリックでその交点まで / 何もない所をクリックでそこまで'}
-                </span>
-                <button
-                  type="button"
-                  onClick={commitStretch}
-                  className="h-7 px-3 rounded bg-orange-600 text-white shrink-0"
-                >
-                  確定 (Enter)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setStretchEnd(null)
-                    setStretchCandidates([])
-                    setStretchTarget(null)
-                  }}
-                  className="h-7 px-2 rounded border text-slate-600 shrink-0"
-                >
-                  やめる
-                </button>
-              </>
-            )}
-
             {/* 選択の仕方。点で 1 つずつ / 線・長方形・多角形で まとめて */}
-            {mode === 'select' && !stretchAxis && (
+            {mode === 'select' && (
               <>
                 <span className="font-semibold text-slate-700 shrink-0">
                   選択 ({SELECT_METHOD_LABEL[selectMethod]})
@@ -4043,6 +3827,100 @@ export function MapDrawingLayer({
               </>
             )}
 
+            {/* 選んだものが 複数のときの 絞り込み。
+                今 選ばれている 顔ぶれから 選択肢を 作るので、押すたびに 狭まる */}
+            {mode === 'select' && selectedIds.length > 1 && !extending && (
+              <>
+                <span className="text-[11px] text-slate-500 shrink-0">絞り込み</span>
+                {selectionFacets.layers.length > 1 && (
+                  <select
+                    value=""
+                    onChange={(ev) => {
+                      const v = ev.target.value
+                      if (v) narrowSelection((it) => (it.layer ?? '0') === v)
+                    }}
+                    className="h-7 px-1 border rounded shrink-0"
+                  >
+                    <option value="">レイヤ</option>
+                    {selectionFacets.layers.map((l) => (
+                      <option key={l} value={l}>
+                        {l}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {selectionFacets.kinds.length > 1 && (
+                  <select
+                    value=""
+                    onChange={(ev) => {
+                      const v = ev.target.value
+                      if (v) narrowSelection((it) => it.kind === v)
+                    }}
+                    className="h-7 px-1 border rounded shrink-0"
+                  >
+                    <option value="">種別</option>
+                    {selectionFacets.kinds.map((k) => (
+                      <option key={k} value={k}>
+                        {KIND_LABEL[k]}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {selectionFacets.colors.length > 1 && (
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    {selectionFacets.colors.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => narrowSelection((it) => it.color === c)}
+                        title={`色 ${c} だけにする`}
+                        className="w-5 h-5 rounded border"
+                        style={{ backgroundColor: c }}
+                      />
+                    ))}
+                  </div>
+                )}
+                {selectionFacets.styles.length > 1 && (
+                  <select
+                    value=""
+                    onChange={(ev) => {
+                      const v = ev.target.value
+                      if (v) narrowSelection((it) => (it.line_style ?? 'solid') === v)
+                    }}
+                    className="h-7 px-1 border rounded shrink-0"
+                  >
+                    <option value="">線種</option>
+                    <option value="solid">実線</option>
+                    <option value="dashed">破線</option>
+                    <option value="dotted">点線</option>
+                  </select>
+                )}
+              </>
+            )}
+
+            {/* 伸縮: 選んだものが 線だけのとき。相手の線まで 両端を 伸ばす / 詰める */}
+            {mode === 'select' && selectionIsLinesOnly && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setExtending((v) => !v)}
+                  title="相手の線をクリックすると、選んだ線の両端をそこまで伸ばす / 詰める"
+                  className={`h-7 px-3 rounded border shrink-0 ${
+                    extending
+                      ? 'bg-orange-600 border-orange-500 text-white'
+                      : 'border-slate-300 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  伸縮
+                </button>
+                {extending && (
+                  <span className="text-[11px] text-slate-500">
+                    伸ばす先の線 (または面の辺) をクリック
+                  </span>
+                )}
+              </>
+            )}
+
             {/* まとめて選んだときは 削除だけ ここに置く。
                 レイヤ / 色 / 線種 / 線幅 / 矢印は 左パネルの「描画の設定」で変える */}
             {mode === 'select' && selectedIds.length > 1 && (
@@ -4062,7 +3940,7 @@ export function MapDrawingLayer({
             {/* 1 つだけ選んだとき。共通の属性 (レイヤ / 色 / 線種 / 線幅 / 矢印) は
                 左パネルの「描画の設定」で変えるので、ここには 文字だけに ある
                 項目 (内容 / 角度 / サイズ) と 削除を 置く */}
-            {mode === 'select' && selectedStroke && !stretchAxis && (
+            {mode === 'select' && selectedStroke && (
               <>
                 <span className="font-semibold text-slate-700 shrink-0">
                   {KIND_LABEL[selectedStroke.kind]}
