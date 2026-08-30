@@ -431,7 +431,7 @@ export function MapDrawingToolbar({
       <button
         type="button"
         onClick={() => onChangeMode(mode === 'text' ? 'off' : 'text')}
-        title="文字入力 — タップした場所に文字を置く"
+        title="文字入力 — 先に文字を打ってから、地図をクリックして置く (カーソルに仮表示が付いてくる)"
         className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
           mode === 'text'
             ? 'bg-blue-600 text-white'

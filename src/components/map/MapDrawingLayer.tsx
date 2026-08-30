@@ -9,7 +9,9 @@
 //   ・'arc'     3 タップで始点 → 通過点 → 終点 (3 点を通る一意の円弧を近似ポリラインで描画)。
 //   ・'polygon' タップで頂点を追加。最初の頂点を再タップ / Enter / 「面を閉じる」で確定。
 //               Backspace で 1 つ戻る、Esc で取り消し。半透明で塗り潰し。
-//   ・'text'    タップした点にテキスト注釈 (prompt 経由)。文字サイズは fontSize。
+//   ・'text'    先に内容と書き方 (水平文字 / 線上文字) を決め、地図をクリックして置く。
+//               クリック前はカーソルに仮表示が付いてくる (置いた時と同じ見え方)。
+//               線上文字は 始点 → 向きの点 の 2 クリックで方位に合わせる。
 //   ・'point'   タップした点に点を置く。registerCoordinate が true なら
 //               onAddCoordinate も呼び、座標管理にも登録する。
 //   ・'select'  ストロークをタップで選択 → 青ハンドルをドラッグで頂点移動 / 長押しで削除 /
@@ -632,20 +634,36 @@ export function MapDrawingLayer({
     points: Array<{ lat: number; lng: number }>
   } | null>(null)
 
-  // テキスト追加ダイアログ (window.prompt を使わずページ内モーダルで入力させる。
-  // ブラウザで「追加のダイアログを表示しない」がチェックされている状況でも動くように)
-  const [textDialog, setTextDialog] = useState<{
-    lat: number
-    lng: number
-    value: string
-  } | null>(null)
-  const textDialogInputRef = useRef<HTMLInputElement | null>(null)
+  // 文字は 先に 内容を決めてから 地図に置く。
+  // マウスを動かすと 置いた時の見え方が そのまま付いてくる (仮表示) ので、
+  // 位置と 向きを 見ながら 決められる。
+  const [textValue, setTextValue] = useState('')
+  const textInputRef = useRef<HTMLInputElement | null>(null)
+  /** 文字モードのときの カーソル位置 (仮表示に使う)。指では出ない */
+  const [textHover, setTextHover] = useState<LL | null>(null)
+
+  // 文字モードに入ったら 入力欄へ フォーカスする
   useEffect(() => {
-    if (textDialog) {
-      // 開いた瞬間にフォーカス
-      requestAnimationFrame(() => textDialogInputRef.current?.focus())
+    if (mode !== 'text') return
+    const id = requestAnimationFrame(() => textInputRef.current?.focus())
+    return () => cancelAnimationFrame(id)
+  }, [mode])
+
+  // 文字モードの間だけ カーソルを 追う
+  useEffect(() => {
+    if (mode !== 'text') return
+    const onMove = (e: L.LeafletMouseEvent) => {
+      setTextHover(snap(e.latlng))
     }
-  }, [textDialog])
+    const onOut = () => setTextHover(null)
+    map.on('mousemove', onMove)
+    map.on('mouseout', onOut)
+    return () => {
+      map.off('mousemove', onMove)
+      map.off('mouseout', onOut)
+      setTextHover(null)
+    }
+  }, [map, mode, snap])
 
   // farm 切替時に fetch + 状態リセット
   useEffect(() => {
@@ -661,10 +679,7 @@ export function MapDrawingLayer({
       setShapeProgress(null)
     }
     if (mode !== 'parallel') setParallelBase(null)
-    if (mode !== 'text') {
-      setTextDialog(null)
-      setTextLineStart(null)
-    }
+    if (mode !== 'text') setTextLineStart(null)
     if (mode !== 'select') {
       setSelectedId(null)
       setDragPreview(null)
@@ -818,18 +833,45 @@ export function MapDrawingLayer({
       }
 
       if (mode === 'text') {
+        const trimmed = textValue.trim()
+        // 内容が空のうちは 置かない (先に コマンドバーで 打ってもらう)
+        if (!trimmed) {
+          textInputRef.current?.focus()
+          return
+        }
         if (textAlongLine) {
           // 1 点目 = 文字の始点、2 点目 = 向き
           if (!textLineStart) {
             setTextLineStart(at)
             return
           }
-          setTextAngle(bearingDeg(textLineStart, at, converter))
-          setTextDialog({ lat: textLineStart.lat, lng: textLineStart.lng, value: '' })
+          const deg = bearingDeg(textLineStart, at, converter)
+          setTextAngle(deg)
+          void addText({
+            farmId,
+            color,
+            widthPx,
+            lat: textLineStart.lat,
+            lng: textLineStart.lng,
+            text: trimmed,
+            layer,
+            fontSize,
+            rotationDeg: deg,
+          })
           setTextLineStart(null)
           return
         }
-        setTextDialog({ lat: at.lat, lng: at.lng, value: '' })
+        void addText({
+          farmId,
+          color,
+          widthPx,
+          lat: at.lat,
+          lng: at.lng,
+          text: trimmed,
+          layer,
+          fontSize,
+          rotationDeg: textAngle,
+        })
         return
       }
       if (mode === 'parallel') {
@@ -928,26 +970,6 @@ export function MapDrawingLayer({
 
   /** 詳細入力の差し込み先 (道具アイコンの下のバー) */
   const commandBarEl = useCommandBarEl()
-
-  /** 文字を確定して置く */
-  const commitText = useCallback(() => {
-    if (!textDialog) return
-    const trimmed = textDialog.value.trim()
-    if (trimmed && farmId) {
-      void addText({
-        farmId,
-        color,
-        widthPx,
-        lat: textDialog.lat,
-        lng: textDialog.lng,
-        text: trimmed,
-        layer,
-        fontSize,
-        rotationDeg: textAngle,
-      })
-    }
-    setTextDialog(null)
-  }, [textDialog, farmId, color, widthPx, layer, fontSize, textAngle, addText])
 
   /** 円を確定する。半径は数値入力でも円周上のクリックでも同じ扱い */
   const commitCircle = useCallback(() => {
@@ -1580,6 +1602,20 @@ export function MapDrawingLayer({
     )
   }, [parallelBase, parallelLines, color, widthPx])
 
+  /** 文字の仮表示 (置く場所と向き)。指では hover が無いので出ない */
+  const textGhost = useMemo(() => {
+    if (mode !== 'text') return null
+    const text = textValue.trim()
+    if (!text) return null
+    if (textAlongLine && textLineStart) {
+      // 1 点目は決まっている → カーソルの方へ向ける
+      const angle = textHover ? bearingDeg(textLineStart, textHover, converter) : textAngle
+      return { at: textLineStart, angle, text, color }
+    }
+    if (!textHover) return null
+    return { at: textHover, angle: textAlongLine ? 0 : textAngle, text, color }
+  }, [mode, textValue, textAlongLine, textLineStart, textHover, textAngle, converter, color])
+
   // 選択中ストロークの中点 (+) ハンドル用の位置列。頂点数可変 kind でのみ表示。
   const midpoints = useMemo(() => {
     if (!selectedStroke || !handlePoints) return []
@@ -1610,6 +1646,23 @@ export function MapDrawingLayer({
         <Marker
           position={[textLineStart.lat, textLineStart.lng]}
           icon={FIRST_VERTEX_ICON}
+          interactive={false}
+        />
+      )}
+      {/* 文字の仮表示。カーソルに付いてきて、置いた時と同じ見え方になる。
+          線上文字で 1 点目が決まっていれば、そこを起点にカーソルの方へ向く */}
+      {textGhost && (
+        <Marker
+          position={[textGhost.at.lat, textGhost.at.lng]}
+          icon={makeTextIcon(
+            textGhost.text,
+            textGhost.color,
+            widthPx,
+            false,
+            fontSize,
+            textGhost.angle,
+          )}
+          opacity={0.6}
           interactive={false}
         />
       )}
@@ -1699,10 +1752,25 @@ export function MapDrawingLayer({
       {commandBarEl &&
         createPortal(
           <>
-            {/* 文字: 書き方 (水平 / 線上) と サイズ・角度。置く前から出す */}
+            {/* 文字: 先に 内容と 書き方を 決めて、地図をクリックして 置く。
+                クリックする前は カーソルの上に 仮表示が付いてくる */}
             {mode === 'text' && (
               <>
                 <span className="font-semibold text-slate-700 shrink-0">文字</span>
+                <input
+                  ref={textInputRef}
+                  type="text"
+                  value={textValue}
+                  onChange={(ev) => setTextValue(ev.target.value)}
+                  onKeyDown={(ev) => {
+                    if (ev.key === 'Escape') {
+                      setTextValue('')
+                      setTextLineStart(null)
+                    }
+                  }}
+                  placeholder="置く文字を入力"
+                  className="flex-1 min-w-[8rem] h-7 px-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
                 <div className="flex items-center rounded border overflow-hidden shrink-0">
                   {([false, true] as const).map((along) => (
                     <button
@@ -1738,60 +1806,41 @@ export function MapDrawingLayer({
                     <span className="font-mono text-[10px] w-6 text-right">{fontSize ?? 14}</span>
                   </label>
                 )}
-                <label className="flex items-center gap-1 shrink-0">
-                  <span className="text-[11px] text-slate-600">角度</span>
-                  <input
-                    type="number"
-                    step="1"
-                    value={textAngle}
-                    onChange={(ev) => setTextAngle(Number(ev.target.value))}
-                    className="w-16 h-7 px-1 border rounded text-right font-mono"
-                  />
-                  <span className="text-[11px] text-slate-500">°</span>
-                </label>
-                {textAlongLine && !textDialog && (
-                  <span className="text-[11px] text-slate-500">
-                    {textLineStart
-                      ? '2 点目 (向き) をクリック'
-                      : '文字の始点をクリック → 向きの点をクリック'}
-                  </span>
+                {/* 線上文字の角度は 2 点目のクリックで入るので、そこでは触らせない */}
+                {!textAlongLine && (
+                  <label className="flex items-center gap-1 shrink-0">
+                    <span className="text-[11px] text-slate-600">角度</span>
+                    <input
+                      type="number"
+                      step="1"
+                      value={textAngle}
+                      onChange={(ev) => setTextAngle(Number(ev.target.value))}
+                      className="w-16 h-7 px-1 border rounded text-right font-mono"
+                    />
+                    <span className="text-[11px] text-slate-500">°</span>
+                  </label>
                 )}
-              </>
-            )}
-
-            {/* 文字: 置く場所が決まったら文字列を入れる */}
-            {textDialog && (
-              <>
-                <input
-                  ref={textDialogInputRef}
-                  type="text"
-                  value={textDialog.value}
-                  onChange={(ev) => setTextDialog({ ...textDialog, value: ev.target.value })}
-                  onKeyDown={(ev) => {
-                    if (ev.key === 'Enter') {
-                      commitText()
-                    } else if (ev.key === 'Escape') {
-                      setTextDialog(null)
-                    }
-                  }}
-                  placeholder="ここに文字を入力"
-                  className="flex-1 min-w-[8rem] h-7 px-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <button
-                  type="button"
-                  onClick={commitText}
-                  disabled={!textDialog.value.trim()}
-                  className="h-7 px-3 rounded bg-blue-600 text-white disabled:opacity-40 shrink-0"
-                >
-                  追加
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTextDialog(null)}
-                  className="h-7 px-2 rounded border text-slate-600 shrink-0"
-                >
-                  やめる
-                </button>
+                <span className="text-[11px] text-slate-500 shrink-0">
+                  {!textValue.trim()
+                    ? '置く文字を入力してください'
+                    : textAlongLine
+                      ? textLineStart
+                        ? '2 点目 (向き) をクリック'
+                        : '文字の始点をクリック → 向きの点をクリック'
+                      : '地図をクリックで配置 (続けて何個でも置けます)'}
+                </span>
+                {textValue && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTextValue('')
+                      setTextLineStart(null)
+                    }}
+                    className="h-7 px-2 rounded border text-slate-600 shrink-0"
+                  >
+                    クリア
+                  </button>
+                )}
               </>
             )}
 
