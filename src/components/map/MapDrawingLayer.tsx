@@ -18,8 +18,12 @@
 //               線上文字は 始点 → 向きの点 の 2 クリックで方位に合わせる。
 //   ・'point'   タップした点に点を置く。registerCoordinate が true なら
 //               onAddCoordinate も呼び、座標管理にも登録する。
-//   ・'select'  ストロークをタップで選択 → 青ハンドルをドラッグで頂点移動 / 長押しで削除 /
+//   ・'select'  図形を選ぶ。選び方は 点 / 線 / 長方形 / 多角形 の 4 通り。
+//               点は 1 つずつ (Shift か Ctrl で 足し引き)、他は 囲った形に
+//               かかった図形を まとめて 選ぶ。
+//               1 つだけ選んだときは 青ハンドルをドラッグで頂点移動 / 長押しで削除 /
 //               辺の中点の「+」タップで頂点追加 (直線・円・円弧は追加/削除不可、位置移動のみ)。
+//               まとめて選んだときは レイヤ / 色 / 線種 を 一括で 変えられる。
 //               連続線は 端点の少し上に出る 橙ハンドル (↔) で 伸縮できる
 //               (端点そのものは 青い移動ハンドルのまま。重ならないよう離す)。
 //               長さ / 増減 (＋で伸び −で縮む) を入れるか、対象の線・円をクリックして
@@ -582,6 +586,118 @@ function arrowEnds(arrow: ArrowStyle | null | undefined): Array<'start' | 'end'>
   return []
 }
 
+// ---- まとめて選択 ----
+//
+// 点で 1 つずつ選ぶほかに、線 / 長方形 / 多角形で 囲って まとめて選べるようにする。
+// 当たり判定は 画面座標で行う。縮尺に関係なく 見たとおりに 掴めるため。
+
+/** 図形を 画面座標の 折れ線と 単独点に ばらす */
+function itemScreenGeometry(
+  map: L.Map,
+  s: MapDrawingStroke,
+): { lines: L.Point[][]; points: L.Point[] } {
+  const toPx = (p: LL) => map.latLngToContainerPoint([p.lat, p.lng])
+  const pts = s.points
+  if (pts.length === 0) return { lines: [], points: [] }
+
+  if (s.kind === 'text' || s.kind === 'point') {
+    return { lines: [], points: [toPx(pts[0])] }
+  }
+  if (s.kind === 'circle') {
+    if (pts.length < 2) return { lines: [], points: [] }
+    const c = toPx(pts[0])
+    const r = c.distanceTo(toPx(pts[1]))
+    // 円は 32 角形で 近似する
+    const ring: L.Point[] = []
+    for (let i = 0; i <= 32; i += 1) {
+      const t = (i / 32) * Math.PI * 2
+      ring.push(L.point(c.x + r * Math.cos(t), c.y + r * Math.sin(t)))
+    }
+    return { lines: [ring], points: [] }
+  }
+  if (s.kind === 'arc') {
+    if (pts.length < 3) return { lines: [], points: [] }
+    const arc = arcThroughPoints(pts[0], pts[1], pts[2])
+    return { lines: [arc.map(([lat, lng]) => toPx(({ lat, lng })))], points: [] }
+  }
+  const line = pts.map(toPx)
+  if (s.kind === 'polygon' && line.length >= 3) line.push(line[0])
+  return { lines: [line], points: [] }
+}
+
+/** 線分 ab と cd が 交わるか (画面座標) */
+function segCross(a: L.Point, b: L.Point, c: L.Point, d: L.Point): boolean {
+  const cross = (p: L.Point, q: L.Point, r: L.Point) =>
+    (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x)
+  const d1 = cross(a, b, c)
+  const d2 = cross(a, b, d)
+  const d3 = cross(c, d, a)
+  const d4 = cross(c, d, b)
+  return ((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0))
+}
+
+/** 点が 多角形の中に あるか (画面座標) */
+function pointInPolygonPx(p: L.Point, poly: L.Point[]): boolean {
+  let inside = false
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i, i += 1) {
+    const a = poly[i]
+    const b = poly[j]
+    if (a.y > p.y !== b.y > p.y && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) {
+      inside = !inside
+    }
+  }
+  return inside
+}
+
+/** 図形が 線分に 触れているか */
+function hitByLinePx(
+  geom: { lines: L.Point[][]; points: L.Point[] },
+  a: L.Point,
+  b: L.Point,
+): boolean {
+  for (const line of geom.lines) {
+    for (let i = 0; i < line.length - 1; i += 1) {
+      if (segCross(line[i], line[i + 1], a, b)) return true
+    }
+  }
+  // 単独の点は 線から 近ければ 拾う
+  for (const p of geom.points) {
+    if (distancePointToSegmentPx(p, a, b) < PICK_LINE_RADIUS_PX) return true
+  }
+  return false
+}
+
+/** 図形が 多角形 (長方形も含む) に かかっているか */
+function hitByPolygonPx(
+  geom: { lines: L.Point[][]; points: L.Point[] },
+  poly: L.Point[],
+): boolean {
+  if (poly.length < 3) return false
+  for (const p of geom.points) if (pointInPolygonPx(p, poly)) return true
+  for (const line of geom.lines) {
+    // 頂点が 中に入っていれば 選ぶ (完全に囲まれた図形)
+    for (const v of line) if (pointInPolygonPx(v, poly)) return true
+    // 辺が 交差していれば 選ぶ (またいでいる図形)
+    for (let i = 0; i < line.length - 1; i += 1) {
+      for (let j = 0, k = poly.length - 1; j < poly.length; k = j, j += 1) {
+        if (segCross(line[i], line[i + 1], poly[k], poly[j])) return true
+      }
+    }
+  }
+  return false
+}
+
+/** Shift / Ctrl (Mac は Cmd) 押しなら 選択に 足し引きする */
+function isAdditiveClick(ev: L.LeafletMouseEvent): boolean {
+  const oe = ev.originalEvent as MouseEvent | undefined
+  return Boolean(oe && (oe.shiftKey || oe.ctrlKey || oe.metaKey))
+}
+
+/** 2 点から 長方形の 4 頂点 (画面座標) */
+function rectFromCorners(a: L.Point, b: L.Point): L.Point[] {
+  return [L.point(a.x, a.y), L.point(b.x, a.y), L.point(b.x, b.y), L.point(a.x, b.y)]
+}
+
 /** ピックの吸着範囲 [画面 px]。指でも届き、隣の点を誤って掴まない程度 */
 const SNAP_RADIUS_PX = 18
 /** 交点 / 線上を探すときに、相手にする線分を絞る広さ [画面 px] */
@@ -1133,7 +1249,22 @@ export function MapDrawingLayer({
   const [distShowTotal, setDistShowTotal] = useState(true)
 
   // 選択モードの状態
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  // まとめて選べるので 配列で 持つ。頂点ハンドルや 伸縮は 1 つだけ選んだ時に出す
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const selectedId = selectedIds.length === 1 ? selectedIds[0] : null
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
+  /** 選択の仕方。点で 1 つずつ / 線・長方形・多角形で まとめて */
+  const [selectMethod, setSelectMethod] = useState<'point' | 'line' | 'rect' | 'polygon'>(
+    'point',
+  )
+  /** 線 / 長方形 / 多角形で 囲っている途中の 頂点 */
+  const [selectShape, setSelectShape] = useState<LL[]>([])
+  const toggleSelected = useCallback((id: string, additive: boolean) => {
+    setSelectedIds((prev) => {
+      if (!additive) return prev.length === 1 && prev[0] === id ? [] : [id]
+      return prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    })
+  }, [])
   const [dragPreview, setDragPreview] = useState<{
     strokeId: string
     points: Array<{ lat: number; lng: number }>
@@ -1188,7 +1319,7 @@ export function MapDrawingLayer({
   useEffect(() => {
     if (farmId) void fetchByFarm(farmId)
     setShapeProgress(null)
-    setSelectedId(null)
+    setSelectedIds([])
     setDragPreview(null)
   }, [farmId, fetchByFarm])
 
@@ -1205,7 +1336,8 @@ export function MapDrawingLayer({
     }
     if (mode !== 'text') setTextLineStart(null)
     if (mode !== 'select') {
-      setSelectedId(null)
+      setSelectedIds([])
+      setSelectShape([])
       setDragPreview(null)
       setStretchEnd(null)
       setStretchCandidates([])
@@ -1467,6 +1599,19 @@ export function MapDrawingLayer({
         })
         return
       }
+      // 囲って選ぶ (線 / 長方形 / 多角形)。点で選ぶ時は 図形側の click で拾う
+      if (mode === 'select' && selectMethod !== 'point' && !stretchAxis) {
+        const pts = [...selectShape, at]
+        const need = selectMethod === 'polygon' ? Infinity : 2
+        if (pts.length < need) {
+          setSelectShape(pts)
+          return
+        }
+        applySelection(pts, isAdditiveClick(e))
+        setSelectShape([])
+        return
+      }
+
       // 端部の伸縮中: 対象の線 / 円をクリックすると、その要素との交点まで伸縮する
       if (mode === 'select' && stretchAxis) {
         const clickPx = map.latLngToContainerPoint(e.latlng)
@@ -1653,6 +1798,27 @@ export function MapDrawingLayer({
       }
     },
   })
+
+  /** 囲った形に かかっている図形を 選ぶ */
+  const applySelection = useCallback(
+    (shape: LL[], additive: boolean) => {
+      const px = shape.map((p) => map.latLngToContainerPoint([p.lat, p.lng]))
+      const hit: string[] = []
+      for (const it of items) {
+        const geom = itemScreenGeometry(map, it)
+        const ok =
+          selectMethod === 'line'
+            ? hitByLinePx(geom, px[0], px[1])
+            : hitByPolygonPx(
+                geom,
+                selectMethod === 'rect' ? rectFromCorners(px[0], px[1]) : px,
+              )
+        if (ok) hit.push(it.id)
+      }
+      setSelectedIds((prev) => (additive ? [...new Set([...prev, ...hit])] : hit))
+    },
+    [map, items, selectMethod],
+  )
 
   /** クリック位置に一番近い 線 / 面の図形そのものを拾う (計測で 1 本まるごと測る用) */
   const pickStroke = useCallback(
@@ -1902,8 +2068,11 @@ export function MapDrawingLayer({
               eventHandlers={
                 isEraser
                   ? { click: () => void deleteStroke(s.id) }
-                  : isSelect && !stretching
-                    ? { click: () => setSelectedId(s.id) }
+                  : isSelect && !stretching && selectMethod === 'point'
+                    ? {
+                        click: (ev: L.LeafletMouseEvent) =>
+                          toggleSelected(s.id, isAdditiveClick(ev)),
+                      }
                     : undefined
               }
             />
@@ -1919,13 +2088,16 @@ export function MapDrawingLayer({
             <Marker
               key={s.id}
               position={[pt.lat, pt.lng]}
-              icon={makePointIcon(s.color, s.width_px, isSelect && s.id === selectedId)}
+              icon={makePointIcon(s.color, s.width_px, isSelect && selectedSet.has(s.id))}
               interactive={isEraser || isSelect}
               eventHandlers={
                 isEraser
                   ? { click: () => void deleteStroke(s.id) }
-                  : isSelect && !stretching
-                    ? { click: () => setSelectedId(s.id) }
+                  : isSelect && !stretching && selectMethod === 'point'
+                    ? {
+                        click: (ev: L.LeafletMouseEvent) =>
+                          toggleSelected(s.id, isAdditiveClick(ev)),
+                      }
                     : undefined
               }
             />
@@ -1935,7 +2107,7 @@ export function MapDrawingLayer({
         // ドラッグ中は preview の points を採用してリアルタイム反映
         const pointsForRender =
           dragPreview?.strokeId === s.id ? dragPreview.points : s.points
-        const isSelected = mode === 'select' && s.id === selectedId
+        const isSelected = mode === 'select' && selectedSet.has(s.id)
         const dash = dashArrayFor(
           (s.line_style ?? 'solid') as LineStyle,
           s.width_px,
@@ -1944,10 +2116,14 @@ export function MapDrawingLayer({
           mode === 'eraser'
             ? { click: () => void deleteStroke(s.id) }
             : mode === 'select'
-              ? // 伸縮中のクリックは「どこまで伸ばすか」の指定なので、選択は変えない
-                stretching
+              ? // 伸縮中のクリックは「どこまで伸ばすか」の指定、囲って選ぶ最中は
+                // 地図クリックが 頂点の指定なので、どちらも 図形側では 拾わない
+                stretching || selectMethod !== 'point'
                 ? undefined
-                : { click: () => setSelectedId(s.id) }
+                : {
+                    click: (ev: L.LeafletMouseEvent) =>
+                      toggleSelected(s.id, isAdditiveClick(ev)),
+                  }
               : undefined
 
         if (s.kind === 'circle') {
@@ -2118,7 +2294,7 @@ export function MapDrawingLayer({
           </Fragment>
         )
     },
-    [mode, deleteStroke, selectedId, dragPreview, stretching],
+    [mode, deleteStroke, selectedSet, toggleSelected, dragPreview, stretching, selectMethod],
   )
 
   /**
@@ -2504,6 +2680,7 @@ export function MapDrawingLayer({
   useEffect(() => {
     if (
       !shapeProgress &&
+      selectShape.length === 0 &&
       !parallelBase &&
       !perpBase &&
       !stretching &&
@@ -2519,6 +2696,7 @@ export function MapDrawingLayer({
 
       if (e.key === 'Escape') {
         setShapeProgress(null)
+        setSelectShape([])
         setParallelBase(null)
         setRectStart(null)
         setStretchEnd(null)
@@ -2534,7 +2712,9 @@ export function MapDrawingLayer({
       if (e.key === 'Backspace' || e.key === 'Delete') {
         // ブラウザの「前のページへ戻る」を止める
         e.preventDefault()
-        if (shapeProgress) {
+        if (selectShape.length > 0) {
+          setSelectShape(selectShape.slice(0, -1))
+        } else if (shapeProgress) {
           const next = shapeProgress.points.slice(0, -1)
           setShapeProgress(next.length === 0 ? null : { ...shapeProgress, points: next })
         } else if (measurePoints.length > 0) {
@@ -2545,6 +2725,11 @@ export function MapDrawingLayer({
       if (e.key === 'Enter') {
         e.preventDefault()
         // 進行中のものから 順に 確定する
+        if (selectMethod === 'polygon' && selectShape.length >= 3) {
+          applySelection(selectShape, false)
+          setSelectShape([])
+          return
+        }
         if (stretchAxis) return commitStretch()
         if (perpShape) return commitPerp()
         if (parallelBase) return commitParallel()
@@ -2556,6 +2741,9 @@ export function MapDrawingLayer({
     return () => window.removeEventListener('keydown', onKey)
   }, [
     shapeProgress,
+    selectShape,
+    selectMethod,
+    applySelection,
     parallelBase,
     perpBase,
     stretching,
@@ -2637,6 +2825,26 @@ export function MapDrawingLayer({
       {shapePreview}
       {parallelPreview}
       {constructPreview}
+      {/* 囲って選ぶ途中の 仮表示 */}
+      {selectShape.length > 0 && (
+        <>
+          {selectShape.map((p, i) => (
+            <Marker
+              key={`sel-v-${i}`}
+              position={[p.lat, p.lng]}
+              icon={i === 0 ? FIRST_VERTEX_ICON : HANDLE_ICON}
+              interactive={false}
+            />
+          ))}
+          {selectShape.length >= 2 && (
+            <Polyline
+              positions={selectShape.map((p) => [p.lat, p.lng] as [number, number])}
+              pathOptions={{ color: '#3b82f6', weight: 2, dashArray: '6,4' }}
+              interactive={false}
+            />
+          )}
+        </>
+      )}
       {/* 線上文字: 向きを決める 1 点目 */}
       {textLineStart && (
         <Marker
@@ -3267,6 +3475,132 @@ export function MapDrawingLayer({
               </>
             )}
 
+            {/* 選択の仕方。点で 1 つずつ / 線・長方形・多角形で まとめて */}
+            {mode === 'select' && !stretchAxis && (
+              <>
+                <span className="font-semibold text-slate-700 shrink-0">選択</span>
+                <div className="flex items-center rounded border overflow-hidden shrink-0">
+                  {(
+                    [
+                      ['point', '点'],
+                      ['line', '線'],
+                      ['rect', '長方形'],
+                      ['polygon', '多角形'],
+                    ] as const
+                  ).map(([m, label]) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => {
+                        setSelectMethod(m)
+                        setSelectShape([])
+                      }}
+                      className={`h-7 px-2 ${
+                        selectMethod === m
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-white text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {selectedIds.length > 0 ? (
+                  <span className="text-[11px] text-blue-700 font-semibold shrink-0">
+                    {selectedIds.length} 個選択中
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-slate-500">
+                    {selectMethod === 'point'
+                      ? '図形をクリック (Shift で追加)'
+                      : selectMethod === 'line'
+                        ? '2 点をクリック → 線に触れた図形を選ぶ'
+                        : selectMethod === 'rect'
+                          ? '対角の 2 点をクリック'
+                          : `頂点をクリック (${selectShape.length}) → Enter で確定`}
+                  </span>
+                )}
+                {selectedIds.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedIds([])}
+                    className="h-7 px-2 rounded border text-slate-600 shrink-0"
+                  >
+                    選択解除
+                  </button>
+                )}
+              </>
+            )}
+
+            {/* まとめて選んだときの 一括変更 */}
+            {mode === 'select' && selectedIds.length > 1 && (
+              <>
+                <label className="flex items-center gap-1 shrink-0">
+                  <span className="text-[11px] text-slate-600">レイヤ</span>
+                  <input
+                    type="text"
+                    defaultValue=""
+                    placeholder="まとめて変更"
+                    onBlur={(ev) => {
+                      const v = ev.target.value.trim()
+                      if (!v) return
+                      for (const id of selectedIds) void updateStrokeAttrs(id, { layer: v })
+                      ev.target.value = ''
+                    }}
+                    list="map-drawing-layers-inspector"
+                    className="w-24 h-7 px-1 border rounded font-mono"
+                  />
+                </label>
+                <label className="flex items-center gap-1 shrink-0">
+                  <span className="text-[11px] text-slate-600">色</span>
+                  <input
+                    type="color"
+                    defaultValue={color}
+                    onChange={(ev) => {
+                      for (const id of selectedIds)
+                        void updateStrokeAttrs(id, { color: ev.target.value })
+                    }}
+                    className="w-8 h-7 p-0 border rounded cursor-pointer"
+                  />
+                </label>
+                <label className="flex items-center gap-1 shrink-0">
+                  <span className="text-[11px] text-slate-600">線種</span>
+                  <select
+                    defaultValue=""
+                    onChange={(ev) => {
+                      if (!ev.target.value) return
+                      for (const id of selectedIds)
+                        void updateStrokeAttrs(id, { lineStyle: ev.target.value as LineStyle })
+                    }}
+                    className="h-7 px-1 border rounded"
+                  >
+                    <option value="">まとめて変更</option>
+                    <option value="solid">実線</option>
+                    <option value="dashed">破線</option>
+                    <option value="dotted">点線</option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!confirm(`${selectedIds.length} 個の図形を削除しますか？`)) return
+                    for (const id of selectedIds) void deleteStroke(id)
+                    setSelectedIds([])
+                  }}
+                  className="h-7 px-3 rounded border border-red-300 text-red-600 hover:bg-red-50 shrink-0"
+                >
+                  削除
+                </button>
+                <datalist id="map-drawing-layers-inspector">
+                  {Array.from(
+                    new Set([...DEFAULT_LAYERS, ...(existingLayers ?? []), '0']),
+                  ).map((l) => (
+                    <option key={l} value={l} />
+                  ))}
+                </datalist>
+              </>
+            )}
+
             {/* 選択: 選んだ図形の属性を後から変える */}
             {mode === 'select' && selectedStroke && !stretchAxis && (
               <>
@@ -3421,7 +3755,7 @@ export function MapDrawingLayer({
                   type="button"
                   onClick={() => {
                     void deleteStroke(selectedStroke.id)
-                    setSelectedId(null)
+                    setSelectedIds([])
                   }}
                   className="h-7 px-3 rounded border border-red-300 text-red-600 hover:bg-red-50 shrink-0"
                 >
@@ -3429,7 +3763,7 @@ export function MapDrawingLayer({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSelectedId(null)}
+                  onClick={() => setSelectedIds([])}
                   className="h-7 px-2 rounded border text-slate-600 shrink-0"
                 >
                   閉じる

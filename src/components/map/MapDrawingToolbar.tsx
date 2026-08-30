@@ -319,6 +319,19 @@ export function MapDrawingToolbar({
           : 'border rounded-lg shadow-lg p-1.5 max-w-[calc(100vw-1rem)]'
       }`}
     >
+      {/* 選択 (ストロークをタップ → 頂点ドラッグ / 長押しで削除 / + タップで追加) */}
+      <button
+        type="button"
+        onClick={() => onChangeMode(mode === 'select' ? 'off' : 'select')}
+        title="選択 — タップで図形を選び、属性 (レイヤ / 色 / 線種 / 太さ) を変える。ハンドルのドラッグで頂点移動、辺の + で頂点追加"
+        className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
+          mode === 'select'
+            ? 'bg-blue-600 text-white'
+            : 'text-slate-600 hover:bg-slate-100'
+        }`}
+      >
+        <MousePointer2 className="h-4 w-4" />
+      </button>
       {/* ペン (フリーハンド) */}
       <button
         type="button"
@@ -443,19 +456,6 @@ export function MapDrawingToolbar({
           </div>
         )}
       </div>
-      {/* 選択 (ストロークをタップ → 頂点ドラッグ / 長押しで削除 / + タップで追加) */}
-      <button
-        type="button"
-        onClick={() => onChangeMode(mode === 'select' ? 'off' : 'select')}
-        title="選択 — タップで図形を選び、属性 (レイヤ / 色 / 線種 / 太さ) を変える。ハンドルのドラッグで頂点移動、辺の + で頂点追加"
-        className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
-          mode === 'select'
-            ? 'bg-blue-600 text-white'
-            : 'text-slate-600 hover:bg-slate-100'
-        }`}
-      >
-        <MousePointer2 className="h-4 w-4" />
-      </button>
       {/* 点。「座標登録」を入れておくと、置いた点を座標管理にも登録する */}
       <div className="relative shrink-0 flex items-stretch">
         <button
