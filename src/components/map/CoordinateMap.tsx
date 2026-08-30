@@ -270,6 +270,25 @@ export function PhotoMarker({
           {photo.caption && (
             <div style={{ fontSize: 11, color: '#475569' }}>{photo.caption}</div>
           )}
+          {status === 'loaded' && url && (
+            <a
+              href={url}
+              download={photo.filePath.split('/').pop() || 'photo.jpg'}
+              style={{
+                display: 'block',
+                textAlign: 'center',
+                padding: '6px 10px',
+                marginTop: 2,
+                background: '#f1f5f9',
+                color: '#334155',
+                borderRadius: 4,
+                fontSize: 12,
+                textDecoration: 'none',
+              }}
+            >
+              ダウンロード
+            </a>
+          )}
           {(onEdit || onDelete) && (
             <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
               {onEdit && (
