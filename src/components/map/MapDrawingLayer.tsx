@@ -979,7 +979,7 @@ function segmentIntersection(
   const denom = r.east * sVec.north - r.north * sVec.east
   if (Math.abs(denom) < 1e-9) return null
   const t = (q.east * sVec.north - q.north * sVec.east) / denom
-  const u = (q.east * r.north - q.north * r.east) / -denom
+  const u = (q.east * r.north - q.north * r.east) / denom
   if (t < 0 || t > 1 || u < 0 || u > 1) return null
   return offsetLL(origin, r.east * t, r.north * t, conv)
 }
