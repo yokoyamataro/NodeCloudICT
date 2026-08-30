@@ -75,7 +75,9 @@ import {
   EMPTY_STROKES,
   DEFAULT_SNAP_TYPES,
   KIND_LABEL,
+  TEXT_ALIGN_LABEL,
   TEXT_ANCHOR_LABEL,
+  type TextAlign,
   type TextAnchor,
   type ArrowStyle,
   type SnapType,
@@ -304,16 +306,17 @@ export function makeTextIcon(
   rotationDeg?: number | null,
   /** 線のどこに置くか。線上文字で 上 / 下 に ずらすときに使う */
   textAnchor?: TextAnchor | null,
+  /** 基準点の 左右どちらに 寄せるか */
+  textAlign?: TextAlign | null,
 ): L.DivIcon {
   const size = fontSizePx ?? textFontSizePx(widthPx)
   // CSS の rotate は時計回りが正なので符号を反転する。
-  // translateY は rotate より先に効くので、文字の向きに対して 直角に ずれる
-  // (= 線の上 / 下)。上下は 線の向きから見た 左右なので、逆向きに引けば 入れ替わる。
+  // translate は rotate より先に効くので、ずれは 文字の向きに 沿う
+  // (Y = 線の上下、X = 線に沿った 左右)。逆向きに引けば 上下も 入れ替わる。
   const shiftY = textAnchor === 'above' ? -size * 0.9 : textAnchor === 'below' ? size * 0.9 : 0
-  const rot =
-    rotationDeg || shiftY
-      ? `transform:rotate(${-(rotationDeg ?? 0)}deg) translateY(${shiftY}px);transform-origin:0 50%;`
-      : ''
+  // 既定 (center) では 基準点から 右へ 伸びるので、中央寄せは -50%、左寄せは -100%
+  const shiftX = textAlign === 'center' ? '-50%' : textAlign === 'left' ? '-100%' : '0%'
+  const rot = `transform:rotate(${-(rotationDeg ?? 0)}deg) translate(${shiftX}, ${shiftY}px);transform-origin:0 50%;`
   const shadow =
     '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff'
   const escaped = text
@@ -478,6 +481,8 @@ interface MeasureLabel {
   text: string
   /** 線のどこに置くか */
   anchor: TextAnchor
+  /** 基準点の 左右どちらに 寄せるか */
+  align: TextAlign
 }
 
 function measureDist(c: CoordinateConverter | undefined, a: LL, b: LL): number {
@@ -566,12 +571,16 @@ function makeMeasureLabelIcon(
   color: string,
   rotationDeg = 0,
   anchor: TextAnchor = 'center',
+  align: TextAlign = 'center',
 ): L.DivIcon {
   const esc = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   // CSS の rotate は時計回りが正なので符号を反転する。
-  // translateY は rotate より先に効くので、線に対して 直角に ずれる
+  // translate は rotate より先に効くので、ずれは 線の向きに 沿う
   const shiftY = anchor === 'above' ? -14 : anchor === 'below' ? 14 : 0
-  const rot = rotationDeg || shiftY ? ` rotate(${-rotationDeg}deg) translateY(${shiftY}px)` : ''
+  // 外側の translate(-50%,-50%) で 中央に 乗っているので、
+  // 左寄せ / 右寄せは そこから 半分ずつ ずらす
+  const shiftX = align === 'left' ? '-50%' : align === 'right' ? '50%' : '0%'
+  const rot = ` rotate(${-rotationDeg}deg) translate(${shiftX}, ${shiftY}px)`
   return L.divIcon({
     className: 'map-measure-label',
     html: `<div style="
@@ -768,6 +777,17 @@ function rectFromCorners(a: L.Point, b: L.Point): L.Point[] {
  * 線のどこに置くかを 表す アイコン。
  * 薄い横線が「線」、濃い帯が「文字」。上 / 真ん中 / 下 で 帯の位置が 変わる。
  */
+function TextAlignSvg({ align, size = 16 }: { align: TextAlign; size?: number }) {
+  // 縦の細線が「基準点」、濃い帯が「文字」。帯が どちら側に 出るかで 分かる
+  const x = align === 'left' ? 3 : align === 'right' ? 12 : 6
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <line x1="12" y1="3" x2="12" y2="21" stroke="currentColor" strokeWidth={1.5} opacity={0.45} />
+      <rect x={x} y="9.5" width="9" height="5" rx="1" fill="currentColor" />
+    </svg>
+  )
+}
+
 function TextAnchorSvg({ anchor, size = 16 }: { anchor: TextAnchor; size?: number }) {
   const y = anchor === 'above' ? 4 : anchor === 'below' ? 15 : 9.5
   return (
@@ -1119,30 +1139,54 @@ function NumberField({
   )
 }
 
-/** 「線のどこに置くか」を 選ぶ 3 つのアイコンボタン */
-function TextAnchorPicker({
-  value,
-  onChange,
+/**
+ * 文字を 線の どこに置くかを 選ぶ アイコンボタン。
+ * 上下 (線の 上 / 真ん中 / 下) と 左右 (基準点の 左 / 中央 / 右) の 2 組。
+ */
+function TextPlacementPicker({
+  anchor,
+  onChangeAnchor,
+  align,
+  onChangeAlign,
 }: {
-  value: TextAnchor
-  onChange: (a: TextAnchor) => void
+  anchor: TextAnchor
+  onChangeAnchor: (a: TextAnchor) => void
+  align: TextAlign
+  onChangeAlign: (a: TextAlign) => void
 }) {
+  const btn = (on: boolean) =>
+    `h-7 w-7 flex items-center justify-center ${
+      on ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
+    }`
   return (
-    <div className="flex items-center rounded border overflow-hidden shrink-0">
-      {(['above', 'center', 'below'] as const).map((a) => (
-        <button
-          key={a}
-          type="button"
-          onClick={() => onChange(a)}
-          title={`線の${TEXT_ANCHOR_LABEL[a]}に置く`}
-          className={`h-7 w-7 flex items-center justify-center ${
-            value === a ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
-          }`}
-        >
-          <TextAnchorSvg anchor={a} />
-        </button>
-      ))}
-    </div>
+    <>
+      <div className="flex items-center rounded border overflow-hidden shrink-0">
+        {(['above', 'center', 'below'] as const).map((a) => (
+          <button
+            key={a}
+            type="button"
+            onClick={() => onChangeAnchor(a)}
+            title={`線の${TEXT_ANCHOR_LABEL[a]}に置く`}
+            className={btn(anchor === a)}
+          >
+            <TextAnchorSvg anchor={a} />
+          </button>
+        ))}
+      </div>
+      <div className="flex items-center rounded border overflow-hidden shrink-0">
+        {(['left', 'center', 'right'] as const).map((a) => (
+          <button
+            key={a}
+            type="button"
+            onClick={() => onChangeAlign(a)}
+            title={`基準点の${TEXT_ALIGN_LABEL[a]}に寄せる`}
+            className={btn(align === a)}
+          >
+            <TextAlignSvg align={a} />
+          </button>
+        ))}
+      </div>
+    </>
   )
 }
 
@@ -1208,6 +1252,8 @@ export function MapDrawingLayer({
   const [textLineStart, setTextLineStart] = useState<LL | null>(null)
   /** 文字: 線のどこに置くか (線上文字のとき) */
   const [textAnchor, setTextAnchor] = useState<TextAnchor>('center')
+  /** 文字: 基準点の 左右どちらに 寄せるか */
+  const [textAlign, setTextAlign] = useState<TextAlign>('center')
   /** 長方形: 縦横 [m] と、決めた開始点 (角) */
   const [rectWidth, setRectWidth] = useState(10)
   const [rectHeight, setRectHeight] = useState(5)
@@ -1363,6 +1409,7 @@ export function MapDrawingLayer({
   const [distPickElement, setDistPickElement] = useState(false)
   /** 距離: ラベルを 線の どこに置くか */
   const [measureAnchor, setMeasureAnchor] = useState<TextAnchor>('center')
+  const [measureAlign, setMeasureAlign] = useState<TextAlign>('center')
   /** 距離: 各辺を出す / 合計を出す (連続線のときに効く。両方 ON も可) */
   const [distShowEach, setDistShowEach] = useState(true)
   const [distShowTotal, setDistShowTotal] = useState(true)
@@ -1746,6 +1793,7 @@ export function MapDrawingLayer({
             fontSize,
             rotationDeg: deg,
             textAnchor,
+            textAlign,
           })
           setTextLineStart(null)
           return
@@ -1761,6 +1809,7 @@ export function MapDrawingLayer({
           fontSize,
           rotationDeg: textAngle,
           textAnchor: textAlongLine ? textAnchor : 'center',
+          textAlign,
         })
         return
       }
@@ -2039,6 +2088,7 @@ export function MapDrawingLayer({
             fontSize: it.font_size ?? undefined,
             rotationDeg: it.rotation_deg,
             textAnchor: it.text_anchor,
+            textAlign: it.text_align,
           })
         } else if (it.kind === 'point') {
           void addPoint({
@@ -2333,6 +2383,7 @@ export function MapDrawingLayer({
                 s.font_size,
                 s.rotation_deg,
                 s.text_anchor,
+                s.text_align,
               )}
               interactive={isEraser || isSelect}
               eventHandlers={
@@ -2677,7 +2728,7 @@ export function MapDrawingLayer({
     if (!lastMeasure) return []
     if (lastMeasure.kind !== 'dist') {
       return [
-        { at: lastMeasure.labelAt, angle: 0, text: formatMeasure(lastMeasure), anchor: 'center' },
+        { at: lastMeasure.labelAt, angle: 0, text: formatMeasure(lastMeasure), anchor: 'center', align: 'center' },
       ]
     }
     const segs = lastMeasure.segments ?? []
@@ -2689,6 +2740,7 @@ export function MapDrawingLayer({
           angle: bearingDeg(sg.a, sg.b, converter),
           text: formatLength(sg.value),
           anchor: measureAnchor,
+          align: measureAlign,
         })
       }
     }
@@ -2701,6 +2753,7 @@ export function MapDrawingLayer({
         angle: bearingDeg(first, last, converter),
         text: `計 ${formatLength(lastMeasure.value)}`,
         anchor: measureAnchor,
+        align: measureAlign,
       })
     }
     // どちらも外していると 何も出ないので、その時は 合計だけ出す
@@ -2710,10 +2763,11 @@ export function MapDrawingLayer({
         angle: 0,
         text: formatLength(lastMeasure.value),
         anchor: measureAnchor,
+        align: measureAlign,
       })
     }
     return out
-  }, [lastMeasure, distShowEach, distShowTotal, measureAnchor, converter])
+  }, [lastMeasure, distShowEach, distShowTotal, measureAnchor, measureAlign, converter])
 
   /** 計測結果を 文字要素として 保存する (ラベルと同じ位置・向きで置く) */
   const saveMeasureAsText = useCallback(() => {
@@ -2730,6 +2784,7 @@ export function MapDrawingLayer({
         fontSize,
         rotationDeg: lb.angle,
         textAnchor: lb.anchor,
+        textAlign: lb.align,
       })
     }
     setLastMeasure(null)
@@ -2803,7 +2858,7 @@ export function MapDrawingLayer({
           <Marker
             key={`measure-label-${i}`}
             position={[lb.at.lat, lb.at.lng]}
-            icon={makeMeasureLabelIcon(lb.text, MEASURE_COLOR, lb.angle, lb.anchor)}
+            icon={makeMeasureLabelIcon(lb.text, MEASURE_COLOR, lb.angle, lb.anchor, lb.align)}
             interactive={false}
           />
         ))}
@@ -3063,15 +3118,23 @@ export function MapDrawingLayer({
     if (textAlongLine && textLineStart) {
       // 1 点目は決まっている → カーソルの方へ向ける
       const angle = textHover ? bearingDeg(textLineStart, textHover, converter) : textAngle
-      return { at: textLineStart, angle, text, color, anchor }
+      return { at: textLineStart, angle, text, color, anchor, align: textAlign }
     }
     if (!textHover) return null
-    return { at: textHover, angle: textAlongLine ? 0 : textAngle, text, color, anchor }
+    return {
+      at: textHover,
+      angle: textAlongLine ? 0 : textAngle,
+      text,
+      color,
+      anchor,
+      align: textAlign,
+    }
   }, [
     mode,
     textValue,
     textAlongLine,
     textAnchor,
+    textAlign,
     textLineStart,
     textHover,
     textAngle,
@@ -3248,6 +3311,7 @@ export function MapDrawingLayer({
             fontSize,
             textGhost.angle,
             textGhost.anchor,
+            textGhost.align,
           )}
           opacity={0.6}
           interactive={false}
@@ -3476,9 +3540,12 @@ export function MapDrawingLayer({
                     <span className="font-mono text-[10px] w-6 text-right">{fontSize ?? 14}</span>
                   </label>
                 )}
-                {textAlongLine && (
-                  <TextAnchorPicker value={textAnchor} onChange={setTextAnchor} />
-                )}
+                <TextPlacementPicker
+                  anchor={textAlongLine ? textAnchor : 'center'}
+                  onChangeAnchor={setTextAnchor}
+                  align={textAlign}
+                  onChangeAlign={setTextAlign}
+                />
 
                 {/* 線上文字の角度は 2 点目のクリックで入るので、そこでは触らせない */}
                 {!textAlongLine && (
@@ -3751,7 +3818,12 @@ export function MapDrawingLayer({
 
                 {/* 値を 線の どこに 置くか */}
                 {mode === 'measure-dist' && lastMeasure && (
-                  <TextAnchorPicker value={measureAnchor} onChange={setMeasureAnchor} />
+                  <TextPlacementPicker
+                    anchor={measureAnchor}
+                    onChangeAnchor={setMeasureAnchor}
+                    align={measureAlign}
+                    onChangeAlign={setMeasureAlign}
+                  />
                 )}
 
                 {/* 連続線のとき、各辺 / 合計 の どちらを出すか (両方も可) */}
@@ -3992,10 +4064,14 @@ export function MapDrawingLayer({
                       />
                       <span className="text-[11px] text-slate-500">°</span>
                     </label>
-                    <TextAnchorPicker
-                      value={selectedStroke.text_anchor ?? 'center'}
-                      onChange={(a) =>
+                    <TextPlacementPicker
+                      anchor={selectedStroke.text_anchor ?? 'center'}
+                      onChangeAnchor={(a) =>
                         void updateStrokeAttrs(selectedStroke.id, { textAnchor: a })
+                      }
+                      align={selectedStroke.text_align ?? 'center'}
+                      onChangeAlign={(a) =>
+                        void updateStrokeAttrs(selectedStroke.id, { textAlign: a })
                       }
                     />
                     <label className="flex items-center gap-1 shrink-0">

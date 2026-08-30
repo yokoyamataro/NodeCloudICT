@@ -53,10 +53,15 @@ export function buildMapDrawingDxfEntities(
       const rad = ((it.rotation_deg ?? 0) * Math.PI) / 180
       const shift =
         it.text_anchor === 'above' ? height * 0.9 : it.text_anchor === 'below' ? -height * 0.9 : 0
+      // 左右寄せ。DXF の TEXT は 既定で 左端が 基準なので、中央 / 左寄せは
+      // 文字の幅ぶん 戻す。幅は 全角 1 文字 = 高さ と 見なした 概算
+      const width = (it.text ?? '').length * height
+      const alongShift =
+        it.text_align === 'center' ? -width / 2 : it.text_align === 'left' ? -width : 0
       entities.push({
         type: 'TEXT',
-        x: pts[0].x - Math.sin(rad) * shift,
-        y: pts[0].y + Math.cos(rad) * shift,
+        x: pts[0].x - Math.sin(rad) * shift + Math.cos(rad) * alongShift,
+        y: pts[0].y + Math.cos(rad) * shift + Math.sin(rad) * alongShift,
         text: it.text,
         // 画面上の px を そのまま m にはできないので、既定値からの 比率で 換算する
         height,

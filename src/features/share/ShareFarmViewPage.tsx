@@ -87,6 +87,7 @@ interface ShareDrawing {
   rotation_deg?: number | null
   arrow?: string | null
   text_anchor?: 'center' | 'above' | 'below' | null
+  text_align?: 'left' | 'center' | 'right' | null
 }
 
 interface ShareFarmView {
@@ -596,6 +597,7 @@ export function ShareFarmViewPage() {
                     d.font_size,
                     d.rotation_deg,
                     d.text_anchor,
+                    d.text_align,
                   )}
                   interactive={false}
                 />
