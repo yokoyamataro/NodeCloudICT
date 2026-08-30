@@ -13,7 +13,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChevronDown, ChevronUp, Eye, EyeOff, Layers, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
-import { DEFAULT_LAYERS, type LineStyle } from '@/stores/mapDrawingStore'
+import {
+  ARROW_LABEL,
+  DEFAULT_LAYERS,
+  type ArrowStyle,
+  type LineStyle,
+} from '@/stores/mapDrawingStore'
 
 /** 色のプリセット (ツールバーと揃える) */
 const COLOR_PRESETS = [
@@ -169,6 +174,11 @@ interface Props {
   onChangeLineStyle: (s: LineStyle) => void
   widthPx: number
   onChangeWidth: (px: number) => void
+  /** 線の端部の矢印 */
+  arrow: ArrowStyle
+  onChangeArrow: (a: ArrowStyle) => void
+  /** 選択中の 作図要素の 数。0 なら「これから描くもの」の設定として働く */
+  selectedCount: number
 }
 
 export function OverviewLayerPanel({
@@ -186,6 +196,9 @@ export function OverviewLayerPanel({
   onChangeLineStyle,
   widthPx,
   onChangeWidth,
+  arrow,
+  onChangeArrow,
+  selectedCount,
 }: Props) {
   const [newLayer, setNewLayer] = useState('')
   const elementByKey = useMemo(
@@ -247,7 +260,15 @@ export function OverviewLayerPanel({
       <div className="flex-1 overflow-auto">
         {/* 描画の共通設定。ここで決めた値が これから描くものに 付く */}
         <div className="p-2 border-b space-y-2">
-          <div className="text-[10px] text-slate-500">描画の設定</div>
+          <div className="text-[10px] text-slate-500">
+            {selectedCount > 0 ? (
+              <span className="text-blue-700 font-semibold">
+                選択中の {selectedCount} 個に適用
+              </span>
+            ) : (
+              '描画の設定 (これから描くもの)'
+            )}
+          </div>
 
           <div>
             <div className="text-[10px] text-slate-500 mb-1">色</div>
@@ -319,6 +340,26 @@ export function OverviewLayerPanel({
               className="w-full"
             />
           </div>
+
+          <div>
+            <div className="text-[10px] text-slate-500 mb-1">端部 (矢印)</div>
+            <div className="flex gap-1">
+              {(['none', 'start', 'end', 'both'] as const).map((a) => (
+                <button
+                  key={a}
+                  type="button"
+                  onClick={() => onChangeArrow(a)}
+                  className={`flex-1 h-7 text-[11px] rounded border ${
+                    arrow === a
+                      ? 'bg-blue-50 border-blue-400 text-blue-700'
+                      : 'border-slate-300 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {ARROW_LABEL[a]}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* 地図に出るものの一覧。組み込み要素と ペイントのレイヤが 混ざる */}
@@ -362,9 +403,11 @@ export function OverviewLayerPanel({
                       isCurrent ? 'text-blue-700 font-semibold' : 'text-slate-700'
                     } ${visible ? '' : 'line-through opacity-60'}`}
                     title={
-                      isCurrent
-                        ? 'これから描くレイヤ'
-                        : 'クリックすると、これから描くレイヤになります'
+                      selectedCount > 0
+                        ? `クリックすると、選択中の ${selectedCount} 個をこのレイヤへ移します`
+                        : isCurrent
+                          ? 'これから描くレイヤ'
+                          : 'クリックすると、これから描くレイヤになります'
                     }
                   >
                     {label}

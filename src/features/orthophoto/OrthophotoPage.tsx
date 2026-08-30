@@ -43,7 +43,15 @@ import {
   useLayerOrder,
   type ElementRow,
 } from './OverviewLayerPanel'
-import { useMapDrawingStore, EMPTY_STROKES, DEFAULT_LAYERS, DEFAULT_SNAP_TYPES, type LineStyle, type SnapType } from '@/stores/mapDrawingStore'
+import {
+  useMapDrawingStore,
+  EMPTY_STROKES,
+  DEFAULT_LAYERS,
+  DEFAULT_SNAP_TYPES,
+  type ArrowStyle,
+  type LineStyle,
+  type SnapType,
+} from '@/stores/mapDrawingStore'
 import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { useParcelImportSelection } from '@/features/parcel-maps/useParcelImportSelection'
 import { ParcelBatchImportBar } from '@/features/parcel-maps/ParcelBatchImportBar'
@@ -391,6 +399,9 @@ export function OrthophotoPage() {
   // ---- ペイント (作図・計測) の設定 ----
   // 作図・計測ツールはペイントへ統合したので、状態はペイント側の設定だけを持つ
   const [selectMethod, setSelectMethod] = useState<SelectMethod>('point')
+  const [drawArrow, setDrawArrow] = useState<ArrowStyle>('none')
+  /** 選択中の作図要素。左パネルの「描画の設定」を これに効かせる */
+  const [selectedDrawingIds, setSelectedDrawingIds] = useState<string[]>([])
   const [snapEnabled, setSnapEnabled] = useState(false)
   const [snapTypes, setSnapTypes] = useState<SnapType[]>(DEFAULT_SNAP_TYPES)
   const toggleSnapType = (t: SnapType) =>
@@ -419,6 +430,15 @@ export function OrthophotoPage() {
     for (const d of drawingItems) if (d.layer) set.add(d.layer)
     return Array.from(set)
   }, [drawingItems])
+
+  /**
+   * 「描画の設定」を どこに効かせるか。
+   * 何も選んでいなければ これから描くものの設定、選んでいれば その図形へ 反映する。
+   */
+  const updateStrokeAttrs = useMapDrawingStore((s) => s.updateStrokeAttrs)
+  const applyToSelection = (attrs: Parameters<typeof updateStrokeAttrs>[1]) => {
+    for (const id of selectedDrawingIds) void updateStrokeAttrs(id, attrs)
+  }
 
   // レイヤの並び順と表示状態 (この端末での見え方。工区ごとに localStorage へ)
   const elementKeys = useMemo(() => elementRows.map((r) => r.key), [elementRows])
@@ -565,14 +585,35 @@ export function OrthophotoPage() {
         onMove={movePanelRow}
         onToggleLayer={toggleLayerHidden}
         currentLayer={drawLayer}
-        onSelectLayer={setDrawLayer}
-        onAddLayer={setDrawLayer}
+        onSelectLayer={(l) => {
+          setDrawLayer(l)
+          applyToSelection({ layer: l })
+        }}
+        onAddLayer={(l) => {
+          setDrawLayer(l)
+          applyToSelection({ layer: l })
+        }}
         color={drawingColor}
-        onChangeColor={setDrawingColor}
+        onChangeColor={(c) => {
+          setDrawingColor(c)
+          applyToSelection({ color: c })
+        }}
         lineStyle={drawingLineStyle}
-        onChangeLineStyle={setDrawingLineStyle}
+        onChangeLineStyle={(v) => {
+          setDrawingLineStyle(v)
+          applyToSelection({ lineStyle: v })
+        }}
         widthPx={drawingWidth}
-        onChangeWidth={setDrawingWidth}
+        onChangeWidth={(px) => {
+          setDrawingWidth(px)
+          applyToSelection({ widthPx: px })
+        }}
+        arrow={drawArrow}
+        onChangeArrow={(a) => {
+          setDrawArrow(a)
+          applyToSelection({ arrow: a })
+        }}
+        selectedCount={selectedDrawingIds.length}
       />
 
       {/* 地図 (オルソ + 座標 + 区域 + ペイント + メモ + 写真)。
@@ -618,11 +659,12 @@ export function OrthophotoPage() {
             layer={drawLayer}
             fontSize={drawFontSize}
             onChangeFontSize={setDrawFontSize}
+            arrow={drawArrow}
             selectMethod={selectMethod}
+            onSelectionChange={setSelectedDrawingIds}
             snapEnabled={snapEnabled}
             snapTypes={snapTypes}
             extraSnapPoints={extraSnapPoints}
-            existingLayers={existingLayers}
             layerOrder={orderedLayers}
             hiddenLayers={hiddenLayers}
             layerZIndex={layerZIndex}

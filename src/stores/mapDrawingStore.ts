@@ -176,6 +176,7 @@ interface State {
     lineStyle: LineStyle
     points: Array<{ lat: number; lng: number }>
     layer?: string
+    arrow?: ArrowStyle
   }) => Promise<MapDrawingStroke | null>
   addText: (input: {
     farmId: string
@@ -284,7 +285,16 @@ export const useMapDrawingStore = create<State>((set, get) => ({
     }
   },
 
-  addStroke: async ({ farmId, kind = 'stroke', color, widthPx, lineStyle, points, layer = '0' }) => {
+  addStroke: async ({
+    farmId,
+    kind = 'stroke',
+    color,
+    widthPx,
+    lineStyle,
+    points,
+    layer = '0',
+    arrow = 'none',
+  }) => {
     if (points.length < 2) return null
     // 楽観追加: temp ID で先にストアに入れる
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -302,7 +312,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
       layer,
       font_size: null,
       rotation_deg: 0,
-      arrow: 'none',
+      arrow,
       created_at: now,
       updated_at: now,
     }
@@ -322,6 +332,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
         points,
         text: null,
         layer,
+        arrow,
       })
       if (!stroke) throw new Error('insert returned null')
       const map = new Map(get().byFarm)

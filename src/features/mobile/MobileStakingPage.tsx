@@ -795,6 +795,8 @@ export function MobileStakingPage() {
   const [drawingLineStyle, setDrawingLineStyle] = useState<LineStyle>('solid')
   // 作図・計測ツールから引き継いだ設定 (ピック / レイヤ / 文字サイズ)
   const [selectMethod, setSelectMethod] = useState<SelectMethod>('point')
+  /** 選択中の作図要素。ツールバーの 色 / 線種 / 太さ / レイヤを これに効かせる */
+  const [selectedDrawingIds, setSelectedDrawingIds] = useState<string[]>([])
   const [snapEnabled, setSnapEnabled] = useState(false)
   const [snapTypes, setSnapTypes] = useState<SnapType[]>(DEFAULT_SNAP_TYPES)
   const toggleSnapType = (t: SnapType) =>
@@ -804,6 +806,10 @@ export function MobileStakingPage() {
   const drawingItems = useMapDrawingStore((s) =>
     farmId ? s.byFarm.get(farmId) ?? EMPTY_STROKES : EMPTY_STROKES,
   )
+  const updateStrokeAttrs = useMapDrawingStore((s) => s.updateStrokeAttrs)
+  const applyToSelection = (attrs: Parameters<typeof updateStrokeAttrs>[1]) => {
+    for (const id of selectedDrawingIds) void updateStrokeAttrs(id, attrs)
+  }
   const drawingUndoLen = useMapDrawingStore((s) => s.undoStack.length)
   const drawingRedoLen = useMapDrawingStore((s) => s.redoStack.length)
   const drawingUndo = useMapDrawingStore((s) => s.undo)
@@ -3568,11 +3574,20 @@ export function MobileStakingPage() {
                   setPaintOpen(false)
                 }}
                 color={drawingColor}
-                onChangeColor={setDrawingColor}
+                onChangeColor={(c) => {
+                  setDrawingColor(c)
+                  applyToSelection({ color: c })
+                }}
                 widthPx={drawingWidth}
-                onChangeWidth={setDrawingWidth}
+                onChangeWidth={(px) => {
+                  setDrawingWidth(px)
+                  applyToSelection({ widthPx: px })
+                }}
                 lineStyle={drawingLineStyle}
-                onChangeLineStyle={setDrawingLineStyle}
+                onChangeLineStyle={(v) => {
+                  setDrawingLineStyle(v)
+                  applyToSelection({ lineStyle: v })
+                }}
                 canUndo={drawingUndoLen > 0}
                 canRedo={drawingRedoLen > 0}
                 onUndo={() => void drawingUndo()}
@@ -3584,7 +3599,10 @@ export function MobileStakingPage() {
                 snapTypes={snapTypes}
                 onToggleSnapType={toggleSnapType}
                 layer={drawLayer}
-                onChangeLayer={setDrawLayer}
+                onChangeLayer={(l) => {
+                  setDrawLayer(l)
+                  applyToSelection({ layer: l })
+                }}
                 existingLayers={existingLayers}
                 onMemo={() => {
                   setPaintOpen(false)
@@ -5404,10 +5422,10 @@ export function MobileStakingPage() {
             fontSize={drawFontSize}
             onChangeFontSize={setDrawFontSize}
             selectMethod={selectMethod}
+            onSelectionChange={setSelectedDrawingIds}
             snapEnabled={snapEnabled}
             snapTypes={snapTypes}
             extraSnapPoints={extraSnapPoints}
-            existingLayers={existingLayers}
           />
         </MapContainer>
 

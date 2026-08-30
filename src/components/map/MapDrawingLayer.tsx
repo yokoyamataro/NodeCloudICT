@@ -23,7 +23,9 @@
 //               かかった図形を まとめて 選ぶ。
 //               1 つだけ選んだときは 青ハンドルをドラッグで頂点移動 / 長押しで削除 /
 //               辺の中点の「+」タップで頂点追加 (直線・円・円弧は追加/削除不可、位置移動のみ)。
-//               まとめて選んだときは レイヤ / 色 / 線種 を 一括で 変えられる。
+//               属性 (レイヤ / 色 / 線種 / 線幅 / 矢印) は 左パネルの「描画の設定」
+//               (モバイルは ツールバー) で 変える。何も選んでいなければ
+//               これから描くものの 設定として 働く。
 //               連続線は 端点の少し上に出る 橙ハンドル (↔) で 伸縮できる
 //               (端点そのものは 青い移動ハンドルのまま。重ならないよう離す)。
 //               長さ / 増減 (＋で伸び −で縮む) を入れるか、対象の線・円をクリックして
@@ -63,9 +65,7 @@ import L, { type LatLng } from 'leaflet'
 import {
   useMapDrawingStore,
   EMPTY_STROKES,
-  DEFAULT_LAYERS,
   DEFAULT_SNAP_TYPES,
-  ARROW_LABEL,
   KIND_LABEL,
   type ArrowStyle,
   type SnapType,
@@ -140,15 +140,17 @@ interface Props {
   registerCoordinate?: boolean
   /** true のとき既存のペイントを地図に出さない (道具の入力受付は継続) */
   hidden?: boolean
-  /** レイヤ名の入力候補 (選択した図形の属性を編集するパネルで使う) */
-  existingLayers?: string[]
   /**
    * レイヤの重ね順。先頭ほど 上に 描く。
    * 一覧に無いレイヤは 一番下に 回す。未指定なら 作成順のまま。
    */
   layerOrder?: string[]
+  /** これから引く線に付ける 端部の矢印 */
+  arrow?: ArrowStyle
   /** 選択の仕方。点で 1 つずつ / 線・長方形・多角形で まとめて */
   selectMethod?: SelectMethod
+  /** 選択が変わったら 呼ぶ。左パネルで まとめて属性を 変えるために使う */
+  onSelectionChange?: (ids: string[]) => void
   /** 表示しないレイヤ */
   hiddenLayers?: string[]
   /**
@@ -1067,9 +1069,10 @@ export function MapDrawingLayer({
   onAddCoordinate,
   registerCoordinate = false,
   hidden = false,
-  existingLayers,
   layerOrder,
+  arrow = 'none',
   selectMethod = 'point',
+  onSelectionChange,
   hiddenLayers,
   layerZIndex,
 }: Props) {
@@ -1266,6 +1269,10 @@ export function MapDrawingLayer({
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const selectedId = selectedIds.length === 1 ? selectedIds[0] : null
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
+  // 選択の変化を 親へ伝える。左パネルの「描画の設定」を 選択に効かせるため
+  useEffect(() => {
+    onSelectionChange?.(selectedIds)
+  }, [selectedIds, onSelectionChange])
   /** 線 / 長方形 / 多角形で 囲っている途中の 頂点 */
   const [selectShape, setSelectShape] = useState<LL[]>([])
   const toggleSelected = useCallback((id: string, additive: boolean) => {
@@ -1775,6 +1782,7 @@ export function MapDrawingLayer({
             lineStyle,
             points,
             layer,
+            arrow,
           })
           setShapeProgress(null)
         }
@@ -1911,7 +1919,7 @@ export function MapDrawingLayer({
     if (!farmId || !shapeProgress) return
     const { kind, points } = shapeProgress
     if (kind === 'line' && points.length >= 2) {
-      void addStroke({ farmId, kind: 'stroke', color, widthPx, lineStyle, points, layer })
+      void addStroke({ farmId, kind: 'stroke', color, widthPx, lineStyle, points, layer, arrow })
       setShapeProgress(null)
       return
     }
@@ -1919,7 +1927,7 @@ export function MapDrawingLayer({
       void addStroke({ farmId, kind: 'polygon', color, widthPx, lineStyle, points, layer })
       setShapeProgress(null)
     }
-  }, [farmId, shapeProgress, color, widthPx, lineStyle, layer, addStroke])
+  }, [farmId, shapeProgress, color, widthPx, lineStyle, layer, arrow, addStroke])
 
 
   // pen モード: pointer events (フリーハンド)
@@ -1938,7 +1946,7 @@ export function MapDrawingLayer({
       if (!pts || pts.length < 2 || !farmId) return
       // フリーハンドは吸着させない (全点を吸わせると線が壊れるため)
       const geo = pts.map((p) => ({ lat: p.lat, lng: p.lng }))
-      void addStroke({ farmId, kind: 'stroke', color, widthPx, lineStyle, points: geo, layer })
+      void addStroke({ farmId, kind: 'stroke', color, widthPx, lineStyle, points: geo, layer, arrow })
     }
     const abortDrawing = () => {
       currentRef.current = null
@@ -2016,7 +2024,7 @@ export function MapDrawingLayer({
       container.removeEventListener('pointerup', onUp)
       container.removeEventListener('pointercancel', onCancel)
     }
-  }, [mode, map, farmId, color, widthPx, lineStyle, layer, snap, addStroke])
+  }, [mode, map, farmId, color, widthPx, lineStyle, layer, arrow, snap, addStroke])
 
   // 線 / 面の描画中に確定ボタンを L.Control として map の右上に表示。
   // キーボードのある PC は Enter で確定できるが、指しか無い端末にも出口が要る
@@ -2576,10 +2584,10 @@ export function MapDrawingLayer({
   const commitParallel = useCallback(() => {
     if (!farmId) return
     for (const line of parallelLines) {
-      void addStroke({ farmId, kind: 'stroke', color, widthPx, lineStyle, points: line, layer })
+      void addStroke({ farmId, kind: 'stroke', color, widthPx, lineStyle, points: line, layer, arrow })
     }
     setParallelBase(null)
-  }, [farmId, parallelLines, color, widthPx, lineStyle, layer, addStroke])
+  }, [farmId, parallelLines, color, widthPx, lineStyle, layer, arrow, addStroke])
 
   /** 垂線の確定形 (通過点まで決まっていれば作れる) */
   const perpShape = useMemo(() => {
@@ -2677,10 +2685,11 @@ export function MapDrawingLayer({
       lineStyle,
       points: [perpShape.foot, perpShape.end],
       layer,
+      arrow,
     })
     setPerpBase(null)
     setPerpThrough(null)
-  }, [farmId, perpShape, color, widthPx, lineStyle, layer, addStroke])
+  }, [farmId, perpShape, color, widthPx, lineStyle, layer, arrow, addStroke])
 
   // 進行中の描画・計測のキーボード操作
   //   Backspace / Delete … 直前の頂点を取り消す
@@ -3517,76 +3526,25 @@ export function MapDrawingLayer({
               </>
             )}
 
-            {/* まとめて選んだときの 一括変更 */}
+            {/* まとめて選んだときは 削除だけ ここに置く。
+                レイヤ / 色 / 線種 / 線幅 / 矢印は 左パネルの「描画の設定」で変える */}
             {mode === 'select' && selectedIds.length > 1 && (
-              <>
-                <label className="flex items-center gap-1 shrink-0">
-                  <span className="text-[11px] text-slate-600">レイヤ</span>
-                  <input
-                    type="text"
-                    defaultValue=""
-                    placeholder="まとめて変更"
-                    onBlur={(ev) => {
-                      const v = ev.target.value.trim()
-                      if (!v) return
-                      for (const id of selectedIds) void updateStrokeAttrs(id, { layer: v })
-                      ev.target.value = ''
-                    }}
-                    list="map-drawing-layers-inspector"
-                    className="w-24 h-7 px-1 border rounded font-mono"
-                  />
-                </label>
-                <label className="flex items-center gap-1 shrink-0">
-                  <span className="text-[11px] text-slate-600">色</span>
-                  <input
-                    type="color"
-                    defaultValue={color}
-                    onChange={(ev) => {
-                      for (const id of selectedIds)
-                        void updateStrokeAttrs(id, { color: ev.target.value })
-                    }}
-                    className="w-8 h-7 p-0 border rounded cursor-pointer"
-                  />
-                </label>
-                <label className="flex items-center gap-1 shrink-0">
-                  <span className="text-[11px] text-slate-600">線種</span>
-                  <select
-                    defaultValue=""
-                    onChange={(ev) => {
-                      if (!ev.target.value) return
-                      for (const id of selectedIds)
-                        void updateStrokeAttrs(id, { lineStyle: ev.target.value as LineStyle })
-                    }}
-                    className="h-7 px-1 border rounded"
-                  >
-                    <option value="">まとめて変更</option>
-                    <option value="solid">実線</option>
-                    <option value="dashed">破線</option>
-                    <option value="dotted">点線</option>
-                  </select>
-                </label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!confirm(`${selectedIds.length} 個の図形を削除しますか？`)) return
-                    for (const id of selectedIds) void deleteStroke(id)
-                    setSelectedIds([])
-                  }}
-                  className="h-7 px-3 rounded border border-red-300 text-red-600 hover:bg-red-50 shrink-0"
-                >
-                  削除
-                </button>
-                <datalist id="map-drawing-layers-inspector">
-                  {Array.from(
-                    new Set([...DEFAULT_LAYERS, ...(existingLayers ?? []), '0']),
-                  ).map((l) => (
-                    <option key={l} value={l} />
-                  ))}
-                </datalist>
-              </>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!confirm(`${selectedIds.length} 個の図形を削除しますか？`)) return
+                  for (const id of selectedIds) void deleteStroke(id)
+                  setSelectedIds([])
+                }}
+                className="h-7 px-3 rounded border border-red-300 text-red-600 hover:bg-red-50 shrink-0"
+              >
+                削除
+              </button>
             )}
 
-            {/* 選択: 選んだ図形の属性を後から変える */}
+            {/* 1 つだけ選んだとき。共通の属性 (レイヤ / 色 / 線種 / 線幅 / 矢印) は
+                左パネルの「描画の設定」で変えるので、ここには 文字だけに ある
+                項目 (内容 / 角度 / サイズ) と 削除を 置く */}
             {mode === 'select' && selectedStroke && !stretchAxis && (
               <>
                 <span className="font-semibold text-slate-700 shrink-0">
@@ -3594,147 +3552,60 @@ export function MapDrawingLayer({
                 </span>
 
                 {selectedStroke.kind === 'text' && (
-                  <label className="flex items-center gap-1 shrink-0">
-                    <span className="text-[11px] text-slate-600">文字</span>
-                    <input
-                      key={`text-${selectedStroke.id}`}
-                      type="text"
-                      defaultValue={selectedStroke.text ?? ''}
-                      onBlur={(ev) => {
-                        const v = ev.target.value.trim()
-                        if (v && v !== selectedStroke.text) {
-                          void updateStrokeAttrs(selectedStroke.id, { text: v })
+                  <>
+                    <label className="flex items-center gap-1 shrink-0">
+                      <span className="text-[11px] text-slate-600">文字</span>
+                      <input
+                        key={`text-${selectedStroke.id}`}
+                        type="text"
+                        defaultValue={selectedStroke.text ?? ''}
+                        onBlur={(ev) => {
+                          const v = ev.target.value.trim()
+                          if (v && v !== selectedStroke.text) {
+                            void updateStrokeAttrs(selectedStroke.id, { text: v })
+                          }
+                        }}
+                        className="w-32 h-7 px-2 border rounded"
+                      />
+                    </label>
+                    <label className="flex items-center gap-1 shrink-0">
+                      <span className="text-[11px] text-slate-600">角度</span>
+                      <NumberField
+                        key={`rot-${selectedStroke.id}`}
+                        step="1"
+                        value={selectedStroke.rotation_deg ?? 0}
+                        onChange={(v) =>
+                          void updateStrokeAttrs(selectedStroke.id, { rotationDeg: v })
                         }
-                      }}
-                      className="w-32 h-7 px-2 border rounded"
-                    />
-                  </label>
+                        className="w-16 h-7 px-1 border rounded text-right font-mono"
+                      />
+                      <span className="text-[11px] text-slate-500">°</span>
+                    </label>
+                    <label className="flex items-center gap-1 shrink-0">
+                      <span className="text-[11px] text-slate-600">サイズ</span>
+                      <input
+                        type="range"
+                        min={10}
+                        max={48}
+                        step={1}
+                        value={selectedStroke.font_size ?? 14}
+                        onChange={(ev) =>
+                          void updateStrokeAttrs(selectedStroke.id, {
+                            fontSize: Number(ev.target.value),
+                          })
+                        }
+                        className="w-16"
+                      />
+                      <span className="font-mono text-[10px] w-6 text-right">
+                        {selectedStroke.font_size ?? 14}
+                      </span>
+                    </label>
+                  </>
                 )}
 
-                <label className="flex items-center gap-1 shrink-0">
-                  <span className="text-[11px] text-slate-600">レイヤ</span>
-                  <input
-                    key={`layer-${selectedStroke.id}`}
-                    type="text"
-                    defaultValue={selectedStroke.layer ?? '0'}
-                    onBlur={(ev) => {
-                      const v = ev.target.value.trim() || '0'
-                      if (v !== selectedStroke.layer) {
-                        void updateStrokeAttrs(selectedStroke.id, { layer: v })
-                      }
-                    }}
-                    list="map-drawing-layers-inspector"
-                    className="w-20 h-7 px-1 border rounded font-mono"
-                  />
-                </label>
-
-                <label className="flex items-center gap-1 shrink-0">
-                  <span className="text-[11px] text-slate-600">色</span>
-                  <input
-                    type="color"
-                    value={selectedStroke.color}
-                    onChange={(ev) =>
-                      void updateStrokeAttrs(selectedStroke.id, { color: ev.target.value })
-                    }
-                    className="w-8 h-7 p-0 border rounded cursor-pointer"
-                  />
-                </label>
-
-                {(selectedStroke.kind === 'stroke' || selectedStroke.kind === 'arc') && (
-                  <label className="flex items-center gap-1 shrink-0">
-                    <span className="text-[11px] text-slate-600">矢印</span>
-                    <select
-                      value={selectedStroke.arrow ?? 'none'}
-                      onChange={(ev) =>
-                        void updateStrokeAttrs(selectedStroke.id, {
-                          arrow: ev.target.value as ArrowStyle,
-                        })
-                      }
-                      className="h-7 px-1 border rounded"
-                    >
-                      {(['none', 'start', 'end', 'both'] as const).map((a) => (
-                        <option key={a} value={a}>
-                          {ARROW_LABEL[a]}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-
-                {selectedStroke.kind !== 'text' && selectedStroke.kind !== 'point' && (
-                  <label className="flex items-center gap-1 shrink-0">
-                    <span className="text-[11px] text-slate-600">線種</span>
-                    <select
-                      value={selectedStroke.line_style ?? 'solid'}
-                      onChange={(ev) =>
-                        void updateStrokeAttrs(selectedStroke.id, {
-                          lineStyle: ev.target.value as LineStyle,
-                        })
-                      }
-                      className="h-7 px-1 border rounded"
-                    >
-                      <option value="solid">実線</option>
-                      <option value="dashed">破線</option>
-                      <option value="dotted">点線</option>
-                    </select>
-                  </label>
-                )}
-
-                {selectedStroke.kind === 'text' && (
-                  <label className="flex items-center gap-1 shrink-0">
-                    <span className="text-[11px] text-slate-600">角度</span>
-                    <NumberField
-                      key={`rot-${selectedStroke.id}`}
-                      step="1"
-                      value={selectedStroke.rotation_deg ?? 0}
-                      onChange={(v) => void updateStrokeAttrs(selectedStroke.id, { rotationDeg: v })}
-                      className="w-16 h-7 px-1 border rounded text-right font-mono"
-                    />
-                    <span className="text-[11px] text-slate-500">°</span>
-                  </label>
-                )}
-
-                {selectedStroke.kind === 'text' ? (
-                  <label className="flex items-center gap-1 shrink-0">
-                    <span className="text-[11px] text-slate-600">サイズ</span>
-                    <input
-                      type="range"
-                      min={10}
-                      max={48}
-                      step={1}
-                      value={selectedStroke.font_size ?? 14}
-                      onChange={(ev) =>
-                        void updateStrokeAttrs(selectedStroke.id, {
-                          fontSize: Number(ev.target.value),
-                        })
-                      }
-                      className="w-16"
-                    />
-                    <span className="font-mono text-[10px] w-6 text-right">
-                      {selectedStroke.font_size ?? 14}
-                    </span>
-                  </label>
-                ) : (
-                  <label className="flex items-center gap-1 shrink-0">
-                    <span className="text-[11px] text-slate-600">太さ</span>
-                    <input
-                      type="range"
-                      min={1}
-                      max={20}
-                      step={1}
-                      value={selectedStroke.width_px}
-                      onChange={(ev) =>
-                        void updateStrokeAttrs(selectedStroke.id, {
-                          widthPx: Number(ev.target.value),
-                        })
-                      }
-                      className="w-16"
-                    />
-                    <span className="font-mono text-[10px] w-6 text-right">
-                      {selectedStroke.width_px}
-                    </span>
-                  </label>
-                )}
+                <span className="text-[11px] text-slate-500 shrink-0">
+                  レイヤ / 色 / 線種 / 線幅 / 矢印は左パネルで
+                </span>
 
                 <button
                   type="button"
@@ -3746,21 +3617,6 @@ export function MapDrawingLayer({
                 >
                   削除
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedIds([])}
-                  className="h-7 px-2 rounded border text-slate-600 shrink-0"
-                >
-                  閉じる
-                </button>
-
-                <datalist id="map-drawing-layers-inspector">
-                  {Array.from(
-                    new Set([...DEFAULT_LAYERS, ...(existingLayers ?? []), '0']),
-                  ).map((l) => (
-                    <option key={l} value={l} />
-                  ))}
-                </datalist>
               </>
             )}
           </>,
