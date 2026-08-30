@@ -59,6 +59,10 @@ import { useMapViewStore } from '@/stores/mapViewStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { buildDxf, downloadDxf } from '@/lib/dxf'
 import { buildMapDrawingDxfEntities } from '@/lib/mapDrawingDxf'
+import {
+  DEFAULT_DIMENSION_FORMAT,
+  type DimensionFormat,
+} from '@/lib/dimensionFormat'
 import { FileDown } from 'lucide-react'
 import type { CoordinateRow } from '@/stores/coordinateStore'
 
@@ -400,6 +404,10 @@ export function OrthophotoPage() {
   // 作図・計測ツールはペイントへ統合したので、状態はペイント側の設定だけを持つ
   const [selectMethod, setSelectMethod] = useState<SelectMethod>('point')
   const [drawArrow, setDrawArrow] = useState<ArrowStyle>('none')
+  // 寸法値の書き方 (単位 / 桁数 / 面積の単位 / 文字サイズ)。左パネルで変える
+  const [dimensionFormat, setDimensionFormat] = useState<DimensionFormat>(
+    DEFAULT_DIMENSION_FORMAT,
+  )
   /** 選択中の作図要素。左パネルの「描画の設定」を これに効かせる */
   const [selectedDrawingIds, setSelectedDrawingIds] = useState<string[]>([])
   const [snapEnabled, setSnapEnabled] = useState(false)
@@ -633,6 +641,8 @@ export function OrthophotoPage() {
           applyToSelection({ arrow: a })
         }}
         selectedCount={selectedDrawingIds.length}
+        dimensionFormat={dimensionFormat}
+        onChangeDimensionFormat={setDimensionFormat}
       />
 
       {/* 地図 (オルソ + 座標 + 区域 + ペイント + メモ + 写真)。
@@ -679,6 +689,7 @@ export function OrthophotoPage() {
             fontSize={drawFontSize}
             onChangeFontSize={setDrawFontSize}
             arrow={drawArrow}
+            dimensionFormat={dimensionFormat}
             selectMethod={selectMethod}
             onSelectionChange={setSelectedDrawingIds}
             snapEnabled={snapEnabled}

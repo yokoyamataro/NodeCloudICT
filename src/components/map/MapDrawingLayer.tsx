@@ -89,6 +89,12 @@ import {
   type LineStyle,
 } from '@/stores/mapDrawingStore'
 import type { CoordinateConverter } from '@/lib/coordinates'
+import {
+  DEFAULT_DIMENSION_FORMAT,
+  formatArea as fmtArea,
+  formatDistance as fmtDist,
+  type DimensionFormat,
+} from '@/lib/dimensionFormat'
 import { useCommandBarEl } from './mapDrawingCommandBar'
 
 export type DrawingMode =
@@ -168,6 +174,8 @@ interface Props {
   layerOrder?: string[]
   /** これから引く線に付ける 端部の矢印 */
   arrow?: ArrowStyle
+  /** 寸法値の 書き方 (単位 / 桁数 / 面積の単位 / 文字サイズ) */
+  dimensionFormat?: DimensionFormat
   /** 選択の仕方。点で 1 つずつ / 線・長方形・多角形で まとめて */
   selectMethod?: SelectMethod
   /** 選択が変わったら 呼ぶ。左パネルで まとめて属性を 変えるために使う */
@@ -532,18 +540,9 @@ function centroid(pts: LL[]): LL {
   return { lat, lng }
 }
 
-/** 長さの表示文字列 */
-function formatLength(v: number): string {
-  if (v < 1) return `${(v * 100).toFixed(1)} cm`
-  return `${v.toFixed(3)} m`
-}
-
 /** 計測値の表示文字列 */
-export function formatMeasure(m: MeasureResult): string {
-  if (m.kind === 'area') {
-    return `${m.value.toFixed(2)} m² (${(m.value / 10000).toFixed(4)} ha)`
-  }
-  return formatLength(m.value)
+export function formatMeasure(m: MeasureResult, f: DimensionFormat): string {
+  return m.kind === 'area' ? fmtArea(m.value, f) : fmtDist(m.value, f)
 }
 
 /**
@@ -1009,6 +1008,21 @@ function segmentIntersection(
   return offsetLL(origin, r.east * t, r.north * t, conv)
 }
 
+/** 2 本の直線 (線分を 延長したもの) の 交点。平行なら null */
+function infiniteLineIntersection(
+  s1: [LL, LL],
+  s2: [LL, LL],
+  conv?: CoordinateConverter,
+): LL | null {
+  const origin = s1[0]
+  const r = deltaM(origin, s1[1], conv)
+  const len = Math.hypot(r.east, r.north)
+  if (len < 1e-9) return null
+  const t = intersectLineThrough(origin, r.east / len, r.north / len, s2[0], s2[1], conv)
+  if (t === null) return null
+  return offsetLL(origin, (r.east / len) * t, (r.north / len) * t, conv)
+}
+
 /** 基準線を拾う判定の広さ [画面 px] */
 const PICK_LINE_RADIUS_PX = 14
 
@@ -1157,6 +1171,7 @@ export function MapDrawingLayer({
   hidden = false,
   layerOrder,
   arrow = 'none',
+  dimensionFormat = DEFAULT_DIMENSION_FORMAT,
   selectMethod = 'point',
   onSelectionChange,
   hiddenLayers,
@@ -1215,6 +1230,10 @@ export function MapDrawingLayer({
    * 選んだ線 (の延長線) まで、選択した線の 両端を 伸ばす / 詰める。
    */
   const [extending, setExtending] = useState(false)
+  /** 伸縮する端。相手の線を 選ぶ前に 決めておく */
+  const [extendEnds, setExtendEnds] = useState<'both' | 'start' | 'end'>('both')
+  /** 寸法 / 面積を 文字にするときの 出し方 */
+  const [dimScope, setDimScope] = useState<'each' | 'total' | 'both'>('each')
   /** 長方形・垂線でカーソルを追うための位置 (仮表示に使う) */
   const [shapeHover, setShapeHover] = useState<LL | null>(null)
   /** 円: 中心を決めたあとの半径 [m]。数値入力でも、円周上のクリックでも決まる */
@@ -1593,7 +1612,9 @@ export function MapDrawingLayer({
         if (!it || it.kind !== 'stroke' || it.points.length < 2) continue
         const pts = [...it.points]
         let changed = false
-        for (const which of ['start', 'end'] as const) {
+        const ends =
+          extendEnds === 'both' ? (['start', 'end'] as const) : ([extendEnds] as const)
+        for (const which of ends) {
           const origin = which === 'end' ? pts[pts.length - 2] : pts[1]
           const tip = which === 'end' ? pts[pts.length - 1] : pts[0]
           const d = deltaM(origin, tip, converter)
@@ -1613,7 +1634,7 @@ export function MapDrawingLayer({
       }
       setExtending(false)
     },
-    [selectedIds, items, converter, updateStrokePoints],
+    [selectedIds, items, extendEnds, converter, updateStrokePoints],
   )
 
   // タップ式描画 + text 追加: useMapEvents
@@ -2005,6 +2026,11 @@ export function MapDrawingLayer({
   /** 選択が 線だけか (伸縮できるのは 連続線のみ) */
   const selectionIsLinesOnly =
     selectedItems.length > 0 && selectedItems.every((it) => it.kind === 'stroke')
+  /** 寸法を 出せる図形 (線 / 面) が 選択に あるか */
+  const selectionHasLines = selectedItems.some((it) => it.kind === 'stroke')
+  const canAddDimension = selectedItems.some(
+    (it) => it.kind === 'stroke' || it.kind === 'polygon',
+  )
 
   /** 絞り込みの 選択肢。今 選ばれているものの 顔ぶれから 作る */
   const selectionFacets = useMemo(() => {
@@ -2035,6 +2061,116 @@ export function MapDrawingLayer({
     },
     [selectedItems],
   )
+
+  /**
+   * 2 本の線を 選んだときの「交点整合」。
+   * 2 本を 延長した交点まで、それぞれ 交点に 近い側の端を 動かして 角を 合わせる。
+   */
+  const joinAtIntersection = useCallback(() => {
+    const [a, b] = selectedItems
+    if (!a || !b || a.kind !== 'stroke' || b.kind !== 'stroke') return
+    if (a.points.length < 2 || b.points.length < 2) return
+
+    // 相手の 端の線分を 直線として 扱い、交点を 求める
+    const segOf = (it: MapDrawingStroke, which: 'start' | 'end'): [LL, LL] =>
+      which === 'end'
+        ? [it.points[it.points.length - 2], it.points[it.points.length - 1]]
+        : [it.points[1], it.points[0]]
+
+    // どちらの端を 動かすかは、相手に 近い側で 決める
+    const nearestEnd = (it: MapDrawingStroke, other: MapDrawingStroke): 'start' | 'end' => {
+      const mid = centroid(other.points)
+      const s0 = measureDist(converter, it.points[0], mid)
+      const s1 = measureDist(converter, it.points[it.points.length - 1], mid)
+      return s1 <= s0 ? 'end' : 'start'
+    }
+    const ea = nearestEnd(a, b)
+    const eb = nearestEnd(b, a)
+    const cross = infiniteLineIntersection(segOf(a, ea), segOf(b, eb), converter)
+    if (!cross) return
+
+    for (const [it, which] of [
+      [a, ea],
+      [b, eb],
+    ] as const) {
+      const pts = [...it.points]
+      if (which === 'end') pts[pts.length - 1] = cross
+      else pts[0] = cross
+      void updateStrokePoints(it.id, pts)
+    }
+    setSelectedIds([])
+  }, [selectedItems, converter, updateStrokePoints])
+
+  /** 選んだ図形の 寸法 (線は長さ / 面は面積) を 文字として 置く */
+  const addDimensionText = useCallback(() => {
+    if (!farmId) return
+    for (const it of selectedItems) {
+      if (it.kind === 'stroke') {
+        const segs = buildSegments(it.points, converter)
+        if (segs.length === 0) continue
+        const total = segs.reduce((sum, sg) => sum + sg.value, 0)
+        const put = (at: LL, angle: number, text: string) =>
+          void addText({
+            farmId,
+            color,
+            widthPx,
+            lat: at.lat,
+            lng: at.lng,
+            text,
+            layer,
+            fontSize: dimensionFormat.fontSize,
+            rotationDeg: angle,
+            textAnchor: measureAnchor,
+            textAlign: measureAlign,
+          })
+        if (dimScope !== 'total') {
+          for (const sg of segs) {
+            put(midLL(sg.a, sg.b), bearingDeg(sg.a, sg.b, converter), fmtDist(sg.value, dimensionFormat))
+          }
+        }
+        if (dimScope !== 'each' && segs.length > 1) {
+          const first = it.points[0]
+          const last = it.points[it.points.length - 1]
+          put(
+            centroid(it.points),
+            bearingDeg(first, last, converter),
+            `計 ${fmtDist(total, dimensionFormat)}`,
+          )
+        }
+        continue
+      }
+      if (it.kind === 'polygon') {
+        const area = measureArea(converter, it.points)
+        if (area <= 0) continue
+        const at = centroid(it.points)
+        void addText({
+          farmId,
+          color,
+          widthPx,
+          lat: at.lat,
+          lng: at.lng,
+          text: fmtArea(area, dimensionFormat),
+          layer,
+          fontSize: dimensionFormat.fontSize,
+          rotationDeg: 0,
+          textAnchor: measureAnchor,
+          textAlign: measureAlign,
+        })
+      }
+    }
+  }, [
+    farmId,
+    selectedItems,
+    dimScope,
+    converter,
+    color,
+    widthPx,
+    layer,
+    dimensionFormat,
+    measureAnchor,
+    measureAlign,
+    addText,
+  ])
 
   /** 囲った形に かかっている図形を 選ぶ */
   const applySelection = useCallback(
@@ -2671,7 +2807,7 @@ export function MapDrawingLayer({
     if (!lastMeasure) return []
     if (lastMeasure.kind !== 'dist') {
       return [
-        { at: lastMeasure.labelAt, angle: 0, text: formatMeasure(lastMeasure), anchor: 'center', align: 'center' },
+        { at: lastMeasure.labelAt, angle: 0, text: formatMeasure(lastMeasure, dimensionFormat), anchor: 'center', align: 'center' },
       ]
     }
     const segs = lastMeasure.segments ?? []
@@ -2681,7 +2817,7 @@ export function MapDrawingLayer({
         out.push({
           at: midLL(sg.a, sg.b),
           angle: bearingDeg(sg.a, sg.b, converter),
-          text: formatLength(sg.value),
+          text: fmtDist(sg.value, dimensionFormat),
           anchor: measureAnchor,
           align: measureAlign,
         })
@@ -2694,7 +2830,7 @@ export function MapDrawingLayer({
       out.push({
         at: lastMeasure.labelAt,
         angle: bearingDeg(first, last, converter),
-        text: `計 ${formatLength(lastMeasure.value)}`,
+        text: `計 ${fmtDist(lastMeasure.value, dimensionFormat)}`,
         anchor: measureAnchor,
         align: measureAlign,
       })
@@ -2704,13 +2840,13 @@ export function MapDrawingLayer({
       out.push({
         at: lastMeasure.labelAt,
         angle: 0,
-        text: formatLength(lastMeasure.value),
+        text: fmtDist(lastMeasure.value, dimensionFormat),
         anchor: measureAnchor,
         align: measureAlign,
       })
     }
     return out
-  }, [lastMeasure, distShowEach, distShowTotal, measureAnchor, measureAlign, converter])
+  }, [lastMeasure, distShowEach, distShowTotal, measureAnchor, measureAlign, dimensionFormat, converter])
 
   /** 計測結果を 文字要素として 保存する (ラベルと同じ位置・向きで置く) */
   const saveMeasureAsText = useCallback(() => {
@@ -2724,7 +2860,7 @@ export function MapDrawingLayer({
         lng: lb.at.lng,
         text: lb.text,
         layer,
-        fontSize,
+        fontSize: dimensionFormat.fontSize,
         rotationDeg: lb.angle,
         textAnchor: lb.anchor,
         textAlign: lb.align,
@@ -2732,7 +2868,7 @@ export function MapDrawingLayer({
     }
     setLastMeasure(null)
     setMeasurePoints([])
-  }, [farmId, measureLabels, color, widthPx, layer, fontSize, addText])
+  }, [farmId, measureLabels, color, widthPx, layer, dimensionFormat, addText])
 
   // 計測の表示 (入力途中 + 確定結果)。保存はしないのでここだけで完結する
   const measureOverlay = useMemo(() => {
@@ -3668,7 +3804,7 @@ export function MapDrawingLayer({
 
                 {lastMeasure ? (
                   <span className="font-bold text-rose-600 tabular-nums">
-                    {formatMeasure(lastMeasure)}
+                    {formatMeasure(lastMeasure, dimensionFormat)}
                     {lastMeasure.kind === 'dist' &&
                       (lastMeasure.segments?.length ?? 0) > 1 &&
                       ` (${lastMeasure.segments?.length} 辺)`}
@@ -3898,13 +4034,13 @@ export function MapDrawingLayer({
               </>
             )}
 
-            {/* 伸縮: 選んだものが 線だけのとき。相手の線まで 両端を 伸ばす / 詰める */}
+            {/* 伸縮: 選んだものが 線だけのとき。どの端を 動かすかを 先に決める */}
             {mode === 'select' && selectionIsLinesOnly && (
               <>
                 <button
                   type="button"
                   onClick={() => setExtending((v) => !v)}
-                  title="相手の線をクリックすると、選んだ線の両端をそこまで伸ばす / 詰める"
+                  title="伸ばす端を決めてから、相手の線をクリックする"
                   className={`h-7 px-3 rounded border shrink-0 ${
                     extending
                       ? 'bg-orange-600 border-orange-500 text-white'
@@ -3914,10 +4050,90 @@ export function MapDrawingLayer({
                   伸縮
                 </button>
                 {extending && (
-                  <span className="text-[11px] text-slate-500">
-                    伸ばす先の線 (または面の辺) をクリック
-                  </span>
+                  <>
+                    <div className="flex items-center rounded border overflow-hidden shrink-0">
+                      {(
+                        [
+                          ['both', '両端'],
+                          ['start', '始点側'],
+                          ['end', '終点側'],
+                        ] as const
+                      ).map(([v, label]) => (
+                        <button
+                          key={v}
+                          type="button"
+                          onClick={() => setExtendEnds(v)}
+                          className={`h-7 px-2 text-[11px] ${
+                            extendEnds === v
+                              ? 'bg-orange-600 text-white'
+                              : 'bg-white text-slate-600 hover:bg-slate-50'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="text-[11px] text-slate-500">
+                      伸ばす先の線 (または面の辺) をクリック
+                    </span>
+                  </>
                 )}
+              </>
+            )}
+
+            {/* 交点整合: 線を ちょうど 2 本 選んだとき。互いの 延長の 交点で 角を 合わせる */}
+            {mode === 'select' && selectionIsLinesOnly && selectedIds.length === 2 && !extending && (
+              <button
+                type="button"
+                onClick={joinAtIntersection}
+                title="2 本を延長した交点まで、それぞれ近い側の端を動かして角を合わせる"
+                className="h-7 px-3 rounded border border-slate-300 text-slate-600 hover:bg-slate-50 shrink-0"
+              >
+                交点整合
+              </button>
+            )}
+
+            {/* 寸法: 選んだ 線の長さ / 面の面積を 文字として 置く */}
+            {mode === 'select' && selectedItems.length > 0 && !extending && canAddDimension && (
+              <>
+                <button
+                  type="button"
+                  onClick={addDimensionText}
+                  title="選んだ図形の寸法を文字として置く。表記は左パネルの「寸法の表記」に従う"
+                  className="h-7 px-3 rounded border border-blue-300 text-blue-700 hover:bg-blue-50 shrink-0"
+                >
+                  寸法
+                </button>
+                {selectionHasLines && (
+                  <div className="flex items-center rounded border overflow-hidden shrink-0">
+                    {(
+                      [
+                        ['each', '各辺'],
+                        ['total', '合計'],
+                        ['both', '両方'],
+                      ] as const
+                    ).map(([v, label]) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => setDimScope(v)}
+                        className={`h-7 px-2 text-[11px] ${
+                          dimScope === v
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-white text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <TextPlacementPicker
+                  anchor={measureAnchor}
+                  onChangeAnchor={setMeasureAnchor}
+                  align={measureAlign}
+                  onChangeAlign={setMeasureAlign}
+                />
               </>
             )}
 

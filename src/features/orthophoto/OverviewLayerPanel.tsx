@@ -14,6 +14,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChevronDown, ChevronUp, Eye, EyeOff, Layers, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { DEFAULT_LAYERS, type ArrowStyle, type LineStyle } from '@/stores/mapDrawingStore'
+import {
+  AREA_UNIT_LABEL,
+  type AreaUnit,
+  type DimensionFormat,
+} from '@/lib/dimensionFormat'
 
 /**
  * 端部のスタイル見本。線だけ / 矢印付き を 短い線で 見せる。
@@ -206,6 +211,9 @@ interface Props {
   onChangeArrow: (a: ArrowStyle) => void
   /** 選択中の 作図要素の 数。0 なら「これから描くもの」の設定として働く */
   selectedCount: number
+  /** 寸法値の 書き方 */
+  dimensionFormat: DimensionFormat
+  onChangeDimensionFormat: (f: DimensionFormat) => void
 }
 
 export function OverviewLayerPanel({
@@ -226,6 +234,8 @@ export function OverviewLayerPanel({
   arrow,
   onChangeArrow,
   selectedCount,
+  dimensionFormat,
+  onChangeDimensionFormat,
 }: Props) {
   const [newLayer, setNewLayer] = useState('')
   const elementByKey = useMemo(
@@ -397,6 +407,93 @@ export function OverviewLayerPanel({
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+
+        {/* 寸法値の 書き方。計測の 表示にも、文字として 残したものにも 効く */}
+        <div className="p-2 border-b space-y-2">
+          <div className="text-[10px] text-slate-500">寸法の表記</div>
+
+          <label className="flex items-center gap-2 text-xs text-slate-700">
+            <input
+              type="checkbox"
+              checked={dimensionFormat.showUnit}
+              onChange={(e) =>
+                onChangeDimensionFormat({ ...dimensionFormat, showUnit: e.target.checked })
+              }
+            />
+            距離に m を付ける
+          </label>
+
+          <div>
+            <div className="text-[10px] text-slate-500 mb-1">小数点以下の桁数</div>
+            <div className="flex gap-1">
+              {([1, 2, 3] as const).map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => onChangeDimensionFormat({ ...dimensionFormat, decimals: d })}
+                  className={`flex-1 h-7 text-[11px] rounded border ${
+                    dimensionFormat.decimals === d
+                      ? 'bg-blue-50 border-blue-400 text-blue-700'
+                      : 'border-slate-300 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {d} 桁
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="text-[10px] text-slate-500 mb-1">面積の単位 (複数可)</div>
+            <div className="flex gap-1">
+              {(['m2', 'ha', 'tsubo'] as const).map((u) => {
+                const on = dimensionFormat.areaUnits.includes(u)
+                return (
+                  <button
+                    key={u}
+                    type="button"
+                    onClick={() => {
+                      const next: AreaUnit[] = on
+                        ? dimensionFormat.areaUnits.filter((x) => x !== u)
+                        : [...dimensionFormat.areaUnits, u]
+                      // 全部 外すと 何も出せないので 最低 1 つは 残す
+                      if (next.length === 0) return
+                      onChangeDimensionFormat({ ...dimensionFormat, areaUnits: next })
+                    }}
+                    className={`flex-1 h-7 text-[11px] rounded border ${
+                      on
+                        ? 'bg-blue-50 border-blue-400 text-blue-700'
+                        : 'border-slate-300 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {AREA_UNIT_LABEL[u]}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between text-[10px] text-slate-500 mb-1">
+              <span>文字にするときのサイズ</span>
+              <span className="font-mono">{dimensionFormat.fontSize}px</span>
+            </div>
+            <input
+              type="range"
+              min={10}
+              max={48}
+              step={1}
+              value={dimensionFormat.fontSize}
+              onChange={(e) =>
+                onChangeDimensionFormat({
+                  ...dimensionFormat,
+                  fontSize: Number(e.target.value),
+                })
+              }
+              className="w-full"
+            />
           </div>
         </div>
 
