@@ -488,6 +488,25 @@ export function OrthophotoPage() {
     return out
   }, [coordinates, workAreaPolygons])
 
+  // 区域ポリゴンの辺。交点 / 線上のピックで ペイントの線と 同じように 相手にする
+  const extraSegments = useMemo<Array<[{ lat: number; lng: number }, { lat: number; lng: number }]>>(
+    () => {
+      const out: Array<[{ lat: number; lng: number }, { lat: number; lng: number }]> = []
+      for (const poly of workAreaPolygons) {
+        const v = poly.positions
+        for (let i = 0; i < v.length; i += 1) {
+          const j = (i + 1) % v.length
+          out.push([
+            { lat: v[i][0], lng: v[i][1] },
+            { lat: v[j][0], lng: v[j][1] },
+          ])
+        }
+      }
+      return out
+    },
+    [workAreaPolygons],
+  )
+
   // DXF 出力。作図・計測をペイントへ統合したので、出力元もペイント (map_drawings)。
   const handleDxfExport = () => {
     if (drawingItems.length === 0) {
@@ -665,6 +684,7 @@ export function OrthophotoPage() {
             snapEnabled={snapEnabled}
             snapTypes={snapTypes}
             extraSnapPoints={extraSnapPoints}
+            extraSegments={extraSegments}
             layerOrder={orderedLayers}
             hiddenLayers={hiddenLayers}
             layerZIndex={layerZIndex}

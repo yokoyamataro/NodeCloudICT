@@ -1605,6 +1605,25 @@ export function MobileStakingPage() {
     return out
   }, [coordinates, farmPolygons])
 
+  // 区域ポリゴンの辺。交点 / 線上のピックで ペイントの線と 同じように 相手にする
+  const extraSegments = useMemo<Array<[{ lat: number; lng: number }, { lat: number; lng: number }]>>(
+    () => {
+      const out: Array<[{ lat: number; lng: number }, { lat: number; lng: number }]> = []
+      for (const poly of farmPolygons) {
+        const v = poly.positions
+        for (let i = 0; i < v.length; i += 1) {
+          const j = (i + 1) % v.length
+          out.push([
+            { lat: v[i][0], lng: v[i][1] },
+            { lat: v[j][0], lng: v[j][1] },
+          ])
+        }
+      }
+      return out
+    },
+    [farmPolygons],
+  )
+
   // レイヤ名入力の候補
   const existingLayers = useMemo(() => {
     const set = new Set<string>(DEFAULT_LAYERS)
@@ -5426,6 +5445,7 @@ export function MobileStakingPage() {
             snapEnabled={snapEnabled}
             snapTypes={snapTypes}
             extraSnapPoints={extraSnapPoints}
+            extraSegments={extraSegments}
           />
         </MapContainer>
 

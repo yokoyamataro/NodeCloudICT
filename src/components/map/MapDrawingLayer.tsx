@@ -43,6 +43,8 @@
 //               「文字として保存」で、同じ位置・向きの文字要素として残せる。
 //
 // ピック (snapEnabled): 単点 / 交点 / 中心点 / 線上 に吸着する (snapTypes で選ぶ)。
+// 相手は ペイントの図形に加えて、extraSnapPoints (測点・区域の頂点) と
+// extraSegments (区域の辺) も 含む。
 // 判定は画面 px なので、縮尺が変わっても指の感覚は変わらない。吸着先の座標は
 // メートル座標で出すので、交点・線上でも測量に使える精度が残る。
 // 描くときだけでなく、選択して頂点をドラッグするときも吸着する。
@@ -133,6 +135,11 @@ interface Props {
   snapTypes?: SnapType[]
   /** 図形以外のスナップ候補 (座標管理の点・区域の頂点など) */
   extraSnapPoints?: Array<[number, number]>
+  /**
+   * 図形以外の 線分 (区域ポリゴンの辺など)。
+   * 交点 / 線上の ピックで ペイントの線と 同じように 相手にする。
+   */
+  extraSegments?: Array<[LL, LL]>
   /**
    * 'point' で 点を置いた時に 座標管理へも 登録する。
    * 未指定なら 登録機能そのものを 出さない (この画面に 座標管理が無い場合)
@@ -1068,6 +1075,7 @@ export function MapDrawingLayer({
   snapEnabled = false,
   snapTypes = DEFAULT_SNAP_TYPES,
   extraSnapPoints,
+  extraSegments,
   onAddCoordinate,
   registerCoordinate = false,
   hidden = false,
@@ -1154,9 +1162,9 @@ export function MapDrawingLayer({
   //
   // 吸着先は 4 種類。どれを使うかは snapTypes で 切り替える。
   //   ・単点   … 作図の頂点 + 外から渡された点 (測点・区域の頂点)
-  //   ・交点   … 近くにある 線分どうしの 交点
+  //   ・交点   … 近くにある 線分どうしの 交点 (区域の辺も 相手にする)
   //   ・中心点 … 円 / 円弧の 中心
-  //   ・線上   … 近くの線分の 上で 一番近い点
+  //   ・線上   … 近くの線分の 上で 一番近い点 (区域の辺も 相手にする)
   //
   // 「近いかどうか」は 画面上の距離で 判定する (縮尺が変わっても 指の感覚が
   // 変わらないため)。吸着先の 座標そのものは メートル座標で 出すので、
@@ -1207,21 +1215,26 @@ export function MapDrawingLayer({
         }
       }
 
-      // 交点 / 線上 は、カーソルの近くにある線分だけを 相手にする
+      // 交点 / 線上 は、カーソルの近くにある線分だけを 相手にする。
+      // ペイントの線に加えて、外から渡された線分 (区域の辺など) も 相手にする
       if (snapTypes.includes('intersection') || snapTypes.includes('edge')) {
         const near: Array<[LL, LL]> = []
+        const considerSeg = (a: LL, b: LL) => {
+          if (distancePointToSegmentPx(target, toPx(a), toPx(b)) < SNAP_SEARCH_PX) {
+            near.push([a, b])
+          }
+        }
         for (const it of items) {
           if (it.id === excludeStrokeId) continue
           if (!isLineLike(it.kind)) continue
           const pts = it.points
           const last = it.kind === 'polygon' ? pts.length : pts.length - 1
           for (let i = 0; i < last; i += 1) {
-            const a = pts[i]
-            const b = pts[(i + 1) % pts.length]
-            if (distancePointToSegmentPx(target, toPx(a), toPx(b)) < SNAP_SEARCH_PX) {
-              near.push([a, b])
-            }
+            considerSeg(pts[i], pts[(i + 1) % pts.length])
           }
+        }
+        if (extraSegments) {
+          for (const [a, b] of extraSegments) considerSeg(a, b)
         }
         if (snapTypes.includes('intersection')) {
           for (let i = 0; i < near.length; i += 1) {
@@ -1238,7 +1251,7 @@ export function MapDrawingLayer({
 
       return best ?? raw
     },
-    [snapEnabled, snapTypes, items, extraSnapPoints, converter, map],
+    [snapEnabled, snapTypes, items, extraSnapPoints, extraSegments, converter, map],
   )
 
   /** 吸着先が近くにあるか (カーソル位置に印を出すため) */
