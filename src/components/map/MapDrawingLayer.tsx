@@ -21,7 +21,7 @@
 //   ・'select'  ストロークをタップで選択 → 青ハンドルをドラッグで頂点移動 / 長押しで削除 /
 //               辺の中点の「+」タップで頂点追加 (直線・円・円弧は追加/削除不可、位置移動のみ)。
 //               連続線は 端点の少し上に出る 橙ハンドル (↔) で 伸縮できる
-//               (端点そのものは 青い移動ハンドルのまま)。長さを入れるか、
+//               (端点そのものは 青い移動ハンドルのまま。重ならないよう離す)。長さを入れるか、
 //               対象の線・円をクリックすると その延長線との 交点まで 伸ばす / 詰める。
 //               交点が 複数のときは 青い候補点で 残す側を選ぶ。
 //               操作ハンドルは 線より上のペインに出す (線の裏に回らないように)。
@@ -200,12 +200,8 @@ const MIDPOINT_ICON = L.divIcon({
  */
 const STRETCH_ICON = L.divIcon({
   className: 'map-drawing-stretch',
-  html:
-    '<div style="display:flex;flex-direction:column;align-items:center">' +
-    '<div style="width:22px;height:22px;border-radius:4px;background:#f97316;border:2px solid white;box-shadow:0 0 5px rgba(0,0,0,0.6);color:white;font-size:13px;font-weight:bold;line-height:18px;text-align:center;">↔</div>' +
-    '<div style="width:2px;height:12px;background:#f97316"></div>' +
-    '</div>',
-  iconSize: [26, 38],
+  html: '<div style="width:22px;height:22px;border-radius:4px;background:#f97316;border:2px solid white;box-shadow:0 0 5px rgba(0,0,0,0.6);color:white;font-size:13px;font-weight:bold;line-height:18px;text-align:center;">↔</div>',
+  iconSize: [26, 26],
   iconAnchor: [13, 38],
 })
 
