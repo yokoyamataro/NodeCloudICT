@@ -621,8 +621,9 @@ function makeArrowIcon(color: string, widthPx: number, rotationDeg: number): L.D
   const box = Math.ceil(len * 2 + 4)
   const cx = box / 2
   const cy = box / 2
-  // 東向き (+x) の三角を作り、CSS で回す。CSS は時計回りが正なので符号を反転
-  const pts = `${cx + len},${cy} ${cx - len * 0.2},${cy - half} ${cx - len * 0.2},${cy + half}`
+  // 東向き (+x) の三角を作り、CSS で回す。CSS は時計回りが正なので符号を反転。
+  // 頂点は 中心 (= 線の端点) に 置く。先に 出すと 線から はみ出して見えるため
+  const pts = `${cx},${cy} ${cx - len},${cy - half} ${cx - len},${cy + half}`
   return L.divIcon({
     className: 'map-drawing-arrow',
     html: `<svg width="${box}" height="${box}" viewBox="0 0 ${box} ${box}" style="transform:rotate(${-rotationDeg}deg);overflow:visible">
