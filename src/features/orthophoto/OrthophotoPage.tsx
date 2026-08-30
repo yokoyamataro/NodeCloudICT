@@ -730,8 +730,6 @@ export function OrthophotoPage() {
           layer={drawLayer}
           onChangeLayer={setDrawLayer}
           existingLayers={existingLayers}
-          fontSize={drawFontSize}
-          onChangeFontSize={setDrawFontSize}
           registerCoordinate={registerCoordinate}
           onToggleRegisterCoordinate={() => setRegisterCoordinate((v) => !v)}
         />
@@ -781,6 +779,7 @@ export function OrthophotoPage() {
             converter={converter}
             layer={drawLayer}
             fontSize={drawFontSize}
+            onChangeFontSize={setDrawFontSize}
             snapEnabled={snapEnabled}
             extraSnapPoints={extraSnapPoints}
             existingLayers={existingLayers}

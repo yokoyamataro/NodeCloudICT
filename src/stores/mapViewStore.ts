@@ -97,7 +97,11 @@ function loadSettings(): {
         ? new Set<StakeStatus>(DEFAULT_VISIBLE_STATUSES)
         : new Set<StakeStatus>(filteredArr)
     const baseLayer: BaseLayerType =
-      parsed.baseLayer === 'gsi-photo' || parsed.baseLayer === 'gsi-std' ? parsed.baseLayer : 'osm'
+      parsed.baseLayer === 'gsi-photo' ||
+      parsed.baseLayer === 'gsi-std' ||
+      parsed.baseLayer === 'none'
+        ? parsed.baseLayer
+        : 'osm'
     return {
       visibleTypes: vt,
       visibleStakeStatuses: vss,

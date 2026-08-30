@@ -85,6 +85,8 @@ interface Props {
   layer?: string
   /** テキストの文字サイズ [px] */
   fontSize?: number
+  /** 文字サイズを変える (コマンドバーで調整させる。未指定ならスライダを出さない) */
+  onChangeFontSize?: (px: number) => void
   /** ピック (スナップ): 近くの点に吸着させる */
   snapEnabled?: boolean
   /** 図形以外のスナップ候補 (座標管理の点・区域の頂点など) */
@@ -206,8 +208,12 @@ export function makeTextIcon(
   interactive: boolean,
   /** 明示指定があればそれを使う。無ければ従来どおり太さから換算する */
   fontSizePx?: number | null,
+  /** 回転角 [度]。反時計回りが正 (0 = 水平文字) */
+  rotationDeg?: number | null,
 ): L.DivIcon {
   const size = fontSizePx ?? textFontSizePx(widthPx)
+  // CSS の rotate は時計回りが正なので符号を反転する
+  const rot = rotationDeg ? `transform:rotate(${-rotationDeg}deg);transform-origin:0 50%;` : ''
   const shadow =
     '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff'
   const escaped = text
@@ -215,7 +221,7 @@ export function makeTextIcon(
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
-  const html = `<span style="color:${color};font-size:${size}px;font-weight:bold;text-shadow:${shadow};white-space:nowrap;pointer-events:${
+  const html = `<span style="display:inline-block;color:${color};font-size:${size}px;font-weight:bold;text-shadow:${shadow};white-space:nowrap;${rot}pointer-events:${
     interactive ? 'auto' : 'none'
   };cursor:${interactive ? 'pointer' : 'default'};">${escaped}</span>`
   return L.divIcon({
@@ -468,6 +474,30 @@ const SNAP_HINT_ICON = L.divIcon({
   iconAnchor: [7, 7],
 })
 
+/**
+ * a → b の向き [度]。東を 0 とした反時計回り (DXF の TEXT 回転と同じ向き)。
+ * 文字が上下逆さにならないよう、-90〜90 度の範囲に丸める。
+ */
+function bearingDeg(a: LL, b: LL, c?: CoordinateConverter): number {
+  let east: number
+  let north: number
+  if (c) {
+    const A = c.toXY(a.lat, a.lng)
+    const B = c.toXY(b.lat, b.lng)
+    north = B.x - A.x
+    east = B.y - A.y
+  } else {
+    const k = Math.cos(((a.lat + b.lat) / 2 / 180) * Math.PI)
+    north = (b.lat - a.lat) * M_PER_DEG_LAT
+    east = (b.lng - a.lng) * M_PER_DEG_LAT * k
+  }
+  let deg = (Math.atan2(north, east) * 180) / Math.PI
+  // 真下向きに書かれると読めないので、180 度回して読める向きに揃える
+  if (deg > 90) deg -= 180
+  if (deg < -90) deg += 180
+  return Math.round(deg * 10) / 10
+}
+
 /** 基準線を拾う判定の広さ [画面 px] */
 const PICK_LINE_RADIUS_PX = 14
 
@@ -496,6 +526,7 @@ export function MapDrawingLayer({
   converter,
   layer = '0',
   fontSize,
+  onChangeFontSize,
   snapEnabled = false,
   extraSnapPoints,
   onAddCoordinate,
@@ -516,6 +547,12 @@ export function MapDrawingLayer({
   const updateStrokeAttrs = useMapDrawingStore((s) => s.updateStrokeAttrs)
 
   const [currentPositions, setCurrentPositions] = useState<[number, number][]>([])
+  /** 文字: 線上文字にするか (水平文字なら false)。線上なら 2 点で向きを決める */
+  const [textAlongLine, setTextAlongLine] = useState(false)
+  /** 文字: 置くときの角度 [度]。反時計回りが正。線上文字なら 2 点目で自動的に入る */
+  const [textAngle, setTextAngle] = useState(0)
+  /** 文字: 線上文字の 1 点目 (2 点目のクリックで向きが決まる) */
+  const [textLineStart, setTextLineStart] = useState<LL | null>(null)
   /** 円: 中心を決めたあとの半径 [m]。数値入力でも、円周上のクリックでも決まる */
   const [circleRadius, setCircleRadius] = useState(10)
   /** 平行線: 選んだ基準線。間隔と本数を決めるまで保持する */
@@ -624,7 +661,10 @@ export function MapDrawingLayer({
       setShapeProgress(null)
     }
     if (mode !== 'parallel') setParallelBase(null)
-    if (mode !== 'text') setTextDialog(null)
+    if (mode !== 'text') {
+      setTextDialog(null)
+      setTextLineStart(null)
+    }
     if (mode !== 'select') {
       setSelectedId(null)
       setDragPreview(null)
@@ -778,6 +818,17 @@ export function MapDrawingLayer({
       }
 
       if (mode === 'text') {
+        if (textAlongLine) {
+          // 1 点目 = 文字の始点、2 点目 = 向き
+          if (!textLineStart) {
+            setTextLineStart(at)
+            return
+          }
+          setTextAngle(bearingDeg(textLineStart, at, converter))
+          setTextDialog({ lat: textLineStart.lat, lng: textLineStart.lng, value: '' })
+          setTextLineStart(null)
+          return
+        }
         setTextDialog({ lat: at.lat, lng: at.lng, value: '' })
         return
       }
@@ -892,10 +943,11 @@ export function MapDrawingLayer({
         text: trimmed,
         layer,
         fontSize,
+        rotationDeg: textAngle,
       })
     }
     setTextDialog(null)
-  }, [textDialog, farmId, color, widthPx, layer, fontSize, addText])
+  }, [textDialog, farmId, color, widthPx, layer, fontSize, textAngle, addText])
 
   /** 円を確定する。半径は数値入力でも円周上のクリックでも同じ扱い */
   const commitCircle = useCallback(() => {
@@ -942,6 +994,7 @@ export function MapDrawingLayer({
       if (e.key === 'Escape') {
         setShapeProgress(null)
         setParallelBase(null)
+        setTextLineStart(null)
         setMeasurePoints([])
         setLastMeasure(null)
         return
@@ -1124,6 +1177,7 @@ export function MapDrawingLayer({
                 s.width_px,
                 isEraser || isSelect,
                 s.font_size,
+                s.rotation_deg,
               )}
               interactive={isEraser || isSelect}
               eventHandlers={
@@ -1551,6 +1605,14 @@ export function MapDrawingLayer({
       {hidden ? null : rendered}
       {shapePreview}
       {parallelPreview}
+      {/* 線上文字: 向きを決める 1 点目 */}
+      {textLineStart && (
+        <Marker
+          position={[textLineStart.lat, textLineStart.lng]}
+          icon={FIRST_VERTEX_ICON}
+          interactive={false}
+        />
+      )}
       {measureOverlay}
       {/* ピックの吸着先 (マウス操作時のみ。指では出ないが、タップ時は吸着する) */}
       {snapHint && (
@@ -1637,10 +1699,69 @@ export function MapDrawingLayer({
       {commandBarEl &&
         createPortal(
           <>
-            {/* 文字: タップした場所に置く文字列 */}
-            {textDialog && (
+            {/* 文字: 書き方 (水平 / 線上) と サイズ・角度。置く前から出す */}
+            {mode === 'text' && (
               <>
                 <span className="font-semibold text-slate-700 shrink-0">文字</span>
+                <div className="flex items-center rounded border overflow-hidden shrink-0">
+                  {([false, true] as const).map((along) => (
+                    <button
+                      key={String(along)}
+                      type="button"
+                      onClick={() => {
+                        setTextAlongLine(along)
+                        setTextLineStart(null)
+                        if (!along) setTextAngle(0)
+                      }}
+                      className={`h-7 px-2 ${
+                        textAlongLine === along
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-white text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      {along ? '線上文字' : '水平文字'}
+                    </button>
+                  ))}
+                </div>
+                {onChangeFontSize && (
+                  <label className="flex items-center gap-1 shrink-0">
+                    <span className="text-[11px] text-slate-600">サイズ</span>
+                    <input
+                      type="range"
+                      min={10}
+                      max={48}
+                      step={1}
+                      value={fontSize ?? 14}
+                      onChange={(ev) => onChangeFontSize(Number(ev.target.value))}
+                      className="w-20"
+                    />
+                    <span className="font-mono text-[10px] w-6 text-right">{fontSize ?? 14}</span>
+                  </label>
+                )}
+                <label className="flex items-center gap-1 shrink-0">
+                  <span className="text-[11px] text-slate-600">角度</span>
+                  <input
+                    type="number"
+                    step="1"
+                    value={textAngle}
+                    onChange={(ev) => setTextAngle(Number(ev.target.value))}
+                    className="w-16 h-7 px-1 border rounded text-right font-mono"
+                  />
+                  <span className="text-[11px] text-slate-500">°</span>
+                </label>
+                {textAlongLine && !textDialog && (
+                  <span className="text-[11px] text-slate-500">
+                    {textLineStart
+                      ? '2 点目 (向き) をクリック'
+                      : '文字の始点をクリック → 向きの点をクリック'}
+                  </span>
+                )}
+              </>
+            )}
+
+            {/* 文字: 置く場所が決まったら文字列を入れる */}
+            {textDialog && (
+              <>
                 <input
                   ref={textDialogInputRef}
                   type="text"
@@ -1905,9 +2026,29 @@ export function MapDrawingLayer({
                   </label>
                 )}
 
+                {selectedStroke.kind === 'text' && (
+                  <label className="flex items-center gap-1 shrink-0">
+                    <span className="text-[11px] text-slate-600">角度</span>
+                    <input
+                      key={`rot-${selectedStroke.id}`}
+                      type="number"
+                      step="1"
+                      defaultValue={selectedStroke.rotation_deg ?? 0}
+                      onBlur={(ev) => {
+                        const v = Number(ev.target.value) || 0
+                        if (v !== selectedStroke.rotation_deg) {
+                          void updateStrokeAttrs(selectedStroke.id, { rotationDeg: v })
+                        }
+                      }}
+                      className="w-16 h-7 px-1 border rounded text-right font-mono"
+                    />
+                    <span className="text-[11px] text-slate-500">°</span>
+                  </label>
+                )}
+
                 {selectedStroke.kind === 'text' ? (
                   <label className="flex items-center gap-1 shrink-0">
-                    <span className="text-[11px] text-slate-600">文字サイズ</span>
+                    <span className="text-[11px] text-slate-600">サイズ</span>
                     <input
                       type="range"
                       min={10}

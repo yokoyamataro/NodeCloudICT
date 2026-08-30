@@ -3574,8 +3574,6 @@ export function MobileStakingPage() {
                 layer={drawLayer}
                 onChangeLayer={setDrawLayer}
                 existingLayers={existingLayers}
-                fontSize={drawFontSize}
-                onChangeFontSize={setDrawFontSize}
                 onMemo={() => {
                   setPaintOpen(false)
                   setMemoModalState({
@@ -5392,6 +5390,7 @@ export function MobileStakingPage() {
             converter={converter}
             layer={drawLayer}
             fontSize={drawFontSize}
+            onChangeFontSize={setDrawFontSize}
             snapEnabled={snapEnabled}
             extraSnapPoints={extraSnapPoints}
             existingLayers={existingLayers}

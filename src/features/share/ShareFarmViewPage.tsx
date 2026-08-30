@@ -76,12 +76,15 @@ interface SharePointType {
 
 interface ShareDrawing {
   id: string
-  kind: 'stroke' | 'text' | 'circle' | 'arc' | 'polygon'
+  kind: 'stroke' | 'text' | 'circle' | 'arc' | 'polygon' | 'point'
   color: string
   width_px: number
   line_style: LineStyle | null
   points: Array<{ lat: number; lng: number }>
   text: string | null
+  /** 共有 API が返さない場合もあるので任意 */
+  font_size?: number | null
+  rotation_deg?: number | null
 }
 
 interface ShareFarmView {
@@ -583,7 +586,26 @@ export function ShareFarmViewPage() {
                 <Marker
                   key={d.id}
                   position={[p.lat, p.lng]}
-                  icon={makeTextIcon(d.text ?? '', d.color, d.width_px, false)}
+                  icon={makeTextIcon(d.text ?? '', d.color, d.width_px, false, d.font_size, d.rotation_deg)}
+                  interactive={false}
+                />
+              )
+            }
+            if (d.kind === 'point') {
+              const p = d.points[0]
+              if (!p) return null
+              const size = Math.max(8, Math.min(20, 6 + d.width_px))
+              return (
+                <CircleMarker
+                  key={d.id}
+                  center={[p.lat, p.lng]}
+                  radius={size / 2}
+                  pathOptions={{
+                    color: '#ffffff',
+                    weight: 2,
+                    fillColor: d.color,
+                    fillOpacity: 1,
+                  }}
                   interactive={false}
                 />
               )

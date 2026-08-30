@@ -151,9 +151,6 @@ interface Props {
   onChangeLayer?: (layer: string) => void
   /** レイヤ名の入力候補 (既に使われているレイヤ) */
   existingLayers?: string[]
-  /** テキストの文字サイズ [px] */
-  fontSize?: number
-  onChangeFontSize?: (px: number) => void
   /** 点ツールで 座標管理にも 登録するか。未指定なら チェックボックスを出さない */
   registerCoordinate?: boolean
   onToggleRegisterCoordinate?: () => void
@@ -208,8 +205,6 @@ export function MapDrawingToolbar({
   layer,
   onChangeLayer,
   existingLayers,
-  fontSize,
-  onChangeFontSize,
   registerCoordinate,
   onToggleRegisterCoordinate,
 }: Props) {
@@ -643,25 +638,6 @@ export function MapDrawingToolbar({
             {widthPx}
           </span>
         </div>
-        {/* 文字サイズ (テキストモードのときだけ) */}
-        {mode === 'text' && onChangeFontSize && (
-          <div className="flex items-center gap-1 pl-1 shrink-0">
-            <Type className="h-3.5 w-3.5 text-slate-500" />
-            <input
-              type="range"
-              min={10}
-              max={48}
-              step={1}
-              value={fontSize ?? 14}
-              onChange={(e) => onChangeFontSize(Number(e.target.value))}
-              className="w-16"
-              title={`文字サイズ: ${fontSize ?? 14}px`}
-            />
-            <span className="text-[10px] font-mono text-slate-600 w-6 text-right">
-              {fontSize ?? 14}
-            </span>
-          </div>
-        )}
       </div>
     </div>
   )

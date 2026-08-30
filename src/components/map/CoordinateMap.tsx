@@ -437,7 +437,8 @@ function HighDensityList<T>({
 }
 
 // 背景地図の種類
-export type BaseLayerType = 'osm' | 'gsi-photo' | 'gsi-std'
+/** 背景地図の種類。'none' は背景なし (作図だけを見たいとき) */
+export type BaseLayerType = 'osm' | 'gsi-photo' | 'gsi-std' | 'none'
 
 // 外部から渡す区域ポリゴン
 export interface ExternalPolygon {
@@ -666,6 +667,7 @@ export function CoordinateMap({
           <option value="osm">地図</option>
           <option value="gsi-photo">航空写真</option>
           <option value="gsi-std">地理院地図</option>
+          <option value="none">背景なし</option>
         </select>
       </div>
       <MapContainer

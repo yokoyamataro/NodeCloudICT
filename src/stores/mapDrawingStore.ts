@@ -51,6 +51,8 @@ export interface MapDrawingStroke {
   layer: string
   /** kind='text' の文字サイズ [px]。NULL なら width_px から換算 */
   font_size: number | null
+  /** kind='text' の回転角 [度]。反時計回りが正。0 = 水平文字 */
+  rotation_deg: number
   created_at: string
   updated_at: string
 }
@@ -82,6 +84,7 @@ export interface StrokeAttrs {
   layer?: string
   text?: string
   fontSize?: number | null
+  rotationDeg?: number
 }
 
 /** StrokeAttrs → DB カラム名 */
@@ -93,6 +96,7 @@ function attrsToColumns(a: StrokeAttrs): Record<string, unknown> {
   if (a.layer !== undefined) out.layer = a.layer
   if (a.text !== undefined) out.text = a.text
   if (a.fontSize !== undefined) out.font_size = a.fontSize
+  if (a.rotationDeg !== undefined) out.rotation_deg = a.rotationDeg
   return out
 }
 
@@ -106,6 +110,7 @@ function applyAttrs(item: MapDrawingStroke, a: StrokeAttrs): MapDrawingStroke {
     layer: a.layer ?? item.layer,
     text: a.text !== undefined ? a.text : item.text,
     font_size: a.fontSize !== undefined ? a.fontSize : item.font_size,
+    rotation_deg: a.rotationDeg ?? item.rotation_deg,
   }
 }
 
@@ -118,6 +123,7 @@ function pickAttrs(item: MapDrawingStroke, a: StrokeAttrs): StrokeAttrs {
   if (a.layer !== undefined) out.layer = item.layer
   if (a.text !== undefined) out.text = item.text ?? ''
   if (a.fontSize !== undefined) out.fontSize = item.font_size
+  if (a.rotationDeg !== undefined) out.rotationDeg = item.rotation_deg
   return out
 }
 
@@ -151,6 +157,7 @@ interface State {
     text: string
     layer?: string
     fontSize?: number
+    rotationDeg?: number
   }) => Promise<MapDrawingStroke | null>
   /** 単独の点。座標管理への登録は呼び出し側で行う (点自体はここに残す) */
   addPoint: (input: {
@@ -186,6 +193,7 @@ async function insertItemInternal(
     text: string | null
     layer?: string
     fontSize?: number | null
+    rotationDeg?: number
   },
 ): Promise<MapDrawingStroke | null> {
   const { data: userData } = await supabase.auth.getUser()
@@ -203,6 +211,7 @@ async function insertItemInternal(
       text: input.text,
       layer: input.layer ?? '0',
       font_size: input.fontSize ?? null,
+      rotation_deg: input.rotationDeg ?? 0,
     } as never)
     .select()
     .single()
@@ -261,6 +270,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
       text: null,
       layer,
       font_size: null,
+      rotation_deg: 0,
       created_at: now,
       updated_at: now,
     }
@@ -302,7 +312,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
     }
   },
 
-  addText: async ({ farmId, color, widthPx, lat, lng, text, layer = '0', fontSize }) => {
+  addText: async ({ farmId, color, widthPx, lat, lng, text, layer = '0', fontSize, rotationDeg = 0 }) => {
     if (!text || !text.trim()) return null
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     const now = new Date().toISOString()
@@ -318,6 +328,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
       text: text.trim(),
       layer,
       font_size: fontSize ?? null,
+      rotation_deg: rotationDeg,
       created_at: now,
       updated_at: now,
     }
@@ -338,6 +349,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
         text: text.trim(),
         layer,
         fontSize: fontSize ?? null,
+        rotationDeg,
       })
       if (!item) throw new Error('insert returned null')
       const map = new Map(get().byFarm)
@@ -374,6 +386,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
       text: null,
       layer,
       font_size: null,
+      rotation_deg: 0,
       created_at: now,
       updated_at: now,
     }
@@ -621,6 +634,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
           text: last.item.text,
           layer: last.item.layer,
           fontSize: last.item.font_size,
+          rotationDeg: last.item.rotation_deg,
         })
         if (!item) throw new Error('re-insert returned null')
         const map = new Map(get().byFarm)
@@ -661,6 +675,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
           text: last.item.text,
           layer: last.item.layer,
           fontSize: last.item.font_size,
+          rotationDeg: last.item.rotation_deg,
         })
         if (!item) throw new Error('re-insert returned null')
         const map = new Map(get().byFarm)

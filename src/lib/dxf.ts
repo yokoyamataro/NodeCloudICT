@@ -16,7 +16,16 @@ export type DxfEntity =
       endAngleDeg: number
       layer?: string
     }
-  | { type: 'TEXT'; x: number; y: number; text: string; height?: number; layer?: string }
+  | {
+      type: 'TEXT'
+      x: number
+      y: number
+      text: string
+      height?: number
+      /** 回転角 [度]。反時計回りが正 */
+      rotationDeg?: number
+      layer?: string
+    }
 
 // 数値整形：科学表記を避け、小数 6 桁に丸める（DXF 仕様準拠）
 const num = (n: number): string => {
@@ -268,6 +277,7 @@ function writeEntities(out: string[], entities: DxfEntity[]) {
         w(out, 40, num(e.height ?? 0.5))
         // DXF の 1 グループは制御文字不可。改行を空白に置換。
         w(out, 1, (e.text ?? '').replace(/[\r\n]+/g, ' '))
+        if (e.rotationDeg) w(out, 50, num(e.rotationDeg))
         w(out, 7, 'STANDARD') // テキストスタイル参照（STYLE で宣言済み）
         break
     }

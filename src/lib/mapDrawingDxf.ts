@@ -54,6 +54,7 @@ export function buildMapDrawingDxfEntities(
         text: it.text,
         // 画面上の px を そのまま m にはできないので、既定値からの 比率で 換算する
         height: TEXT_HEIGHT_M * ((it.font_size ?? 14) / 14),
+        rotationDeg: it.rotation_deg || undefined,
         layer,
       })
       continue
