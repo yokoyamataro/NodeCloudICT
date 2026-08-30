@@ -41,6 +41,8 @@ import L, { type LatLng } from 'leaflet'
 import {
   useMapDrawingStore,
   EMPTY_STROKES,
+  DEFAULT_LAYERS,
+  KIND_LABEL,
   type MapDrawingStroke,
   type LineStyle,
 } from '@/stores/mapDrawingStore'
@@ -95,6 +97,8 @@ interface Props {
   registerCoordinate?: boolean
   /** true のとき既存のペイントを地図に出さない (道具の入力受付は継続) */
   hidden?: boolean
+  /** レイヤ名の入力候補 (選択した図形の属性を編集するパネルで使う) */
+  existingLayers?: string[]
 }
 
 // ---- 平行線 ----
@@ -426,11 +430,12 @@ function makeMeasureLabelIcon(text: string, color: string): L.DivIcon {
 const SNAP_RADIUS_PX = 18
 
 /** 点 (kind='point') のアイコン */
-function makePointIcon(color: string, widthPx: number): L.DivIcon {
+function makePointIcon(color: string, widthPx: number, selected = false): L.DivIcon {
   const d = Math.max(8, Math.min(20, 6 + widthPx))
+  const ring = selected ? 'box-shadow:0 0 0 3px #3b82f6,0 1px 3px rgba(0,0,0,.4);' : 'box-shadow:0 1px 3px rgba(0,0,0,.4);'
   return L.divIcon({
     className: 'map-drawing-point',
-    html: `<div style="background:${color};width:${d}px;height:${d}px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4)"></div>`,
+    html: `<div style="background:${color};width:${d}px;height:${d}px;border-radius:50%;border:2px solid #fff;${ring}"></div>`,
     iconSize: [d, d],
     iconAnchor: [d / 2, d / 2],
   })
@@ -458,6 +463,7 @@ export function MapDrawingLayer({
   onAddCoordinate,
   registerCoordinate = false,
   hidden = false,
+  existingLayers,
 }: Props) {
   const map = useMap()
   const items = useMapDrawingStore((s) =>
@@ -469,6 +475,7 @@ export function MapDrawingLayer({
   const addText = useMapDrawingStore((s) => s.addText)
   const deleteStroke = useMapDrawingStore((s) => s.deleteStroke)
   const updateStrokePoints = useMapDrawingStore((s) => s.updateStrokePoints)
+  const updateStrokeAttrs = useMapDrawingStore((s) => s.updateStrokeAttrs)
 
   const [currentPositions, setCurrentPositions] = useState<[number, number][]>([])
   /** 平行線: 引き終わった基準線。間隔と本数を決めるまで保持する */
@@ -1023,14 +1030,25 @@ export function MapDrawingLayer({
           const pt = s.points[0]
           if (!pt) return null
           const isEraser = mode === 'eraser'
+          const isSelect = mode === 'select'
           return (
             <Marker
               key={s.id}
               position={[pt.lat, pt.lng]}
-              icon={makeTextIcon(s.text ?? '', s.color, s.width_px, isEraser, s.font_size)}
-              interactive={isEraser}
+              icon={makeTextIcon(
+                s.text ?? '',
+                s.color,
+                s.width_px,
+                isEraser || isSelect,
+                s.font_size,
+              )}
+              interactive={isEraser || isSelect}
               eventHandlers={
-                isEraser ? { click: () => void deleteStroke(s.id) } : undefined
+                isEraser
+                  ? { click: () => void deleteStroke(s.id) }
+                  : isSelect
+                    ? { click: () => setSelectedId(s.id) }
+                    : undefined
               }
             />
           )
@@ -1040,14 +1058,19 @@ export function MapDrawingLayer({
           const pt = s.points[0]
           if (!pt) return null
           const isEraser = mode === 'eraser'
+          const isSelect = mode === 'select'
           return (
             <Marker
               key={s.id}
               position={[pt.lat, pt.lng]}
-              icon={makePointIcon(s.color, s.width_px)}
-              interactive={isEraser}
+              icon={makePointIcon(s.color, s.width_px, isSelect && s.id === selectedId)}
+              interactive={isEraser || isSelect}
               eventHandlers={
-                isEraser ? { click: () => void deleteStroke(s.id) } : undefined
+                isEraser
+                  ? { click: () => void deleteStroke(s.id) }
+                  : isSelect
+                    ? { click: () => setSelectedId(s.id) }
+                    : undefined
               }
             />
           )
@@ -1456,6 +1479,154 @@ export function MapDrawingLayer({
             }}
           />
         ))}
+      {/* 選択した図形の属性パネル。選択ツールで図形をタップすると出る。
+          共通属性 (レイヤ / 色 / 線種 / 太さ) をここで後から変えられる */}
+      {mode === 'select' &&
+        selectedStroke &&
+        createPortal(
+          <div className="fixed right-3 top-24 z-[4000] w-60 rounded-lg bg-white shadow-xl border p-3 flex flex-col gap-2 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-semibold text-slate-800">
+                {KIND_LABEL[selectedStroke.kind]}の属性
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedId(null)}
+                className="text-slate-400 hover:text-slate-700 px-1"
+                title="閉じる"
+              >
+                ×
+              </button>
+            </div>
+
+            {selectedStroke.kind === 'text' && (
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] text-slate-600">文字</span>
+                <input
+                  type="text"
+                  defaultValue={selectedStroke.text ?? ''}
+                  onBlur={(ev) => {
+                    const v = ev.target.value.trim()
+                    if (v && v !== selectedStroke.text) {
+                      void updateStrokeAttrs(selectedStroke.id, { text: v })
+                    }
+                  }}
+                  className="border rounded px-2 py-1"
+                />
+              </label>
+            )}
+
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] text-slate-600">レイヤ</span>
+              <input
+                type="text"
+                defaultValue={selectedStroke.layer ?? '0'}
+                onBlur={(ev) => {
+                  const v = ev.target.value.trim() || '0'
+                  if (v !== selectedStroke.layer) {
+                    void updateStrokeAttrs(selectedStroke.id, { layer: v })
+                  }
+                }}
+                list="map-drawing-layers-inspector"
+                className="border rounded px-2 py-1 font-mono"
+              />
+            </label>
+
+            <label className="flex items-center justify-between gap-2">
+              <span className="text-[11px] text-slate-600">色</span>
+              <input
+                type="color"
+                value={selectedStroke.color}
+                onChange={(ev) =>
+                  void updateStrokeAttrs(selectedStroke.id, { color: ev.target.value })
+                }
+                className="w-10 h-7 p-0 border rounded cursor-pointer"
+              />
+            </label>
+
+            {selectedStroke.kind !== 'text' && selectedStroke.kind !== 'point' && (
+              <label className="flex items-center justify-between gap-2">
+                <span className="text-[11px] text-slate-600">線種</span>
+                <select
+                  value={selectedStroke.line_style ?? 'solid'}
+                  onChange={(ev) =>
+                    void updateStrokeAttrs(selectedStroke.id, {
+                      lineStyle: ev.target.value as LineStyle,
+                    })
+                  }
+                  className="border rounded px-1 py-1"
+                >
+                  <option value="solid">実線</option>
+                  <option value="dashed">破線</option>
+                  <option value="dotted">点線</option>
+                </select>
+              </label>
+            )}
+
+            {selectedStroke.kind === 'text' ? (
+              <label className="flex items-center gap-2">
+                <span className="text-[11px] text-slate-600 shrink-0">文字サイズ</span>
+                <input
+                  type="range"
+                  min={10}
+                  max={48}
+                  step={1}
+                  value={selectedStroke.font_size ?? 14}
+                  onChange={(ev) =>
+                    void updateStrokeAttrs(selectedStroke.id, {
+                      fontSize: Number(ev.target.value),
+                    })
+                  }
+                  className="flex-1"
+                />
+                <span className="font-mono text-[10px] w-6 text-right">
+                  {selectedStroke.font_size ?? 14}
+                </span>
+              </label>
+            ) : (
+              <label className="flex items-center gap-2">
+                <span className="text-[11px] text-slate-600 shrink-0">太さ</span>
+                <input
+                  type="range"
+                  min={1}
+                  max={20}
+                  step={1}
+                  value={selectedStroke.width_px}
+                  onChange={(ev) =>
+                    void updateStrokeAttrs(selectedStroke.id, {
+                      widthPx: Number(ev.target.value),
+                    })
+                  }
+                  className="flex-1"
+                />
+                <span className="font-mono text-[10px] w-6 text-right">
+                  {selectedStroke.width_px}
+                </span>
+              </label>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                void deleteStroke(selectedStroke.id)
+                setSelectedId(null)
+              }}
+              className="mt-1 px-2 py-1.5 rounded border border-red-300 text-red-600 hover:bg-red-50"
+            >
+              削除
+            </button>
+
+            {/* パネル内のレイヤ入力にも候補を出す (ツールバーが無い画面でも効くように) */}
+            <datalist id="map-drawing-layers-inspector">
+              {Array.from(
+                new Set([...DEFAULT_LAYERS, ...(existingLayers ?? []), '0']),
+              ).map((l) => (
+                <option key={l} value={l} />
+              ))}
+            </datalist>
+          </div>,
+          document.body,
+        )}
       {/* 計測の操作案内 + 結果。値は保存しないので、ここに出したものが全て */}
       {isMeasureMode(mode) &&
         createPortal(

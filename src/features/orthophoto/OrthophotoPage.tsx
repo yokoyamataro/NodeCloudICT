@@ -37,7 +37,7 @@ import { CoordinateMap, type ExternalPolygon } from '@/components/map/Coordinate
 import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
 import { MapDrawingLayer, type DrawingMode } from '@/components/map/MapDrawingLayer'
 import { MapDrawingToolbar } from '@/components/map/MapDrawingToolbar'
-import { useMapDrawingStore, EMPTY_STROKES, type LineStyle } from '@/stores/mapDrawingStore'
+import { useMapDrawingStore, EMPTY_STROKES, DEFAULT_LAYERS, type LineStyle } from '@/stores/mapDrawingStore'
 import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { useParcelImportSelection } from '@/features/parcel-maps/useParcelImportSelection'
 import { ParcelBatchImportBar } from '@/features/parcel-maps/ParcelBatchImportBar'
@@ -397,7 +397,7 @@ export function OrthophotoPage() {
   // ---- ペイント (作図・計測) の設定 ----
   // 作図・計測ツールはペイントへ統合したので、状態はペイント側の設定だけを持つ
   const [snapEnabled, setSnapEnabled] = useState(false)
-  const [drawLayer, setDrawLayer] = useState('0')
+  const [drawLayer, setDrawLayer] = useState<string>(DEFAULT_LAYERS[0])
   const [drawFontSize, setDrawFontSize] = useState(14)
   const [registerCoordinate, setRegisterCoordinate] = useState(false)
 
@@ -417,9 +417,9 @@ export function OrthophotoPage() {
 
   // 既存レイヤ名の一覧（レイヤ名入力の候補）
   const existingLayers = useMemo(() => {
-    const set = new Set<string>(['0'])
+    const set = new Set<string>(DEFAULT_LAYERS)
     for (const d of drawingItems) if (d.layer) set.add(d.layer)
-    return Array.from(set).sort()
+    return Array.from(set)
   }, [drawingItems])
 
   // 図形以外のスナップ候補（座標管理の点 ＋ 区域の頂点）
@@ -761,6 +761,7 @@ export function OrthophotoPage() {
             fontSize={drawFontSize}
             snapEnabled={snapEnabled}
             extraSnapPoints={extraSnapPoints}
+            existingLayers={existingLayers}
             onAddCoordinate={handleAddCoordinate}
             registerCoordinate={registerCoordinate}
             hidden={!showAnnotationsLayer}

@@ -22,6 +22,19 @@ import { supabase } from '@/lib/supabase'
 export type LineStyle = 'solid' | 'dashed' | 'dotted'
 export type DrawingKind = 'stroke' | 'text' | 'circle' | 'arc' | 'polygon' | 'point'
 
+/** レイヤ名の既定候補。現場でまず使う 4 つを最初から出しておく */
+export const DEFAULT_LAYERS = ['現況', '建物', '道路', '計画'] as const
+
+/** 種別の表示名 (属性パネルなどで使う) */
+export const KIND_LABEL: Record<DrawingKind, string> = {
+  stroke: '線',
+  polygon: '面',
+  circle: '円',
+  arc: '円弧',
+  text: '文字',
+  point: '点',
+}
+
 export interface MapDrawingStroke {
   id: string
   farm_id: string
@@ -53,6 +66,60 @@ type HistoryOp =
       before: Array<{ lat: number; lng: number }>
       after: Array<{ lat: number; lng: number }>
     }
+  | {
+      op: 'attrs'
+      farmId: string
+      id: string
+      before: StrokeAttrs
+      after: StrokeAttrs
+    }
+
+/** 選択して後から変えられる属性 (頂点以外) */
+export interface StrokeAttrs {
+  color?: string
+  widthPx?: number
+  lineStyle?: LineStyle
+  layer?: string
+  text?: string
+  fontSize?: number | null
+}
+
+/** StrokeAttrs → DB カラム名 */
+function attrsToColumns(a: StrokeAttrs): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  if (a.color !== undefined) out.color = a.color
+  if (a.widthPx !== undefined) out.width_px = a.widthPx
+  if (a.lineStyle !== undefined) out.line_style = a.lineStyle
+  if (a.layer !== undefined) out.layer = a.layer
+  if (a.text !== undefined) out.text = a.text
+  if (a.fontSize !== undefined) out.font_size = a.fontSize
+  return out
+}
+
+/** StrokeAttrs をストア上のアイテムへ当てる */
+function applyAttrs(item: MapDrawingStroke, a: StrokeAttrs): MapDrawingStroke {
+  return {
+    ...item,
+    color: a.color ?? item.color,
+    width_px: a.widthPx ?? item.width_px,
+    line_style: a.lineStyle ?? item.line_style,
+    layer: a.layer ?? item.layer,
+    text: a.text !== undefined ? a.text : item.text,
+    font_size: a.fontSize !== undefined ? a.fontSize : item.font_size,
+  }
+}
+
+/** 変更前の値を、変更しようとしている項目だけ抜き出す (undo 用) */
+function pickAttrs(item: MapDrawingStroke, a: StrokeAttrs): StrokeAttrs {
+  const out: StrokeAttrs = {}
+  if (a.color !== undefined) out.color = item.color
+  if (a.widthPx !== undefined) out.widthPx = item.width_px
+  if (a.lineStyle !== undefined) out.lineStyle = item.line_style
+  if (a.layer !== undefined) out.layer = item.layer
+  if (a.text !== undefined) out.text = item.text ?? ''
+  if (a.fontSize !== undefined) out.fontSize = item.font_size
+  return out
+}
 
 interface State {
   byFarm: Map<string, MapDrawingStroke[]>
@@ -95,6 +162,8 @@ interface State {
     layer?: string
   }) => Promise<MapDrawingStroke | null>
   deleteStroke: (id: string) => Promise<void>
+  /** 色 / 太さ / 線種 / レイヤ / 文字などの属性を差し替える */
+  updateStrokeAttrs: (id: string, attrs: StrokeAttrs) => Promise<void>
   /** 頂点座標列を差し替える (端点移動 / 折点追加・削除) */
   updateStrokePoints: (
     id: string,
@@ -384,6 +453,53 @@ export const useMapDrawingStore = create<State>((set, get) => ({
     }
   },
 
+  updateStrokeAttrs: async (id, attrs) => {
+    // 変更前を控えつつ楽観的に反映
+    let farmId: string | null = null
+    let before: StrokeAttrs | null = null
+    {
+      const map = new Map(get().byFarm)
+      for (const [fid, list] of map.entries()) {
+        const idx = list.findIndex((s) => s.id === id)
+        if (idx >= 0) {
+          farmId = fid
+          before = pickAttrs(list[idx], attrs)
+          const next = [...list]
+          next[idx] = applyAttrs(list[idx], attrs)
+          map.set(fid, next)
+          set({ byFarm: map })
+          break
+        }
+      }
+    }
+    if (!farmId || !before) return
+    const columns = attrsToColumns(attrs)
+    if (Object.keys(columns).length === 0) return
+    try {
+      const { error } = await supabase
+        .from('map_drawings')
+        .update(columns as never)
+        .eq('id', id)
+      if (error) throw error
+      set({
+        undoStack: [...get().undoStack, { op: 'attrs', farmId, id, before, after: attrs }],
+        redoStack: [],
+      })
+    } catch (err) {
+      // ロールバック
+      console.error('[mapDrawingStore] update attrs failed', err)
+      const cur = new Map(get().byFarm)
+      const list = cur.get(farmId) ?? []
+      const idx = list.findIndex((s) => s.id === id)
+      if (idx >= 0) {
+        const next = [...list]
+        next[idx] = applyAttrs(list[idx], before)
+        cur.set(farmId, next)
+        set({ byFarm: cur, error: err instanceof Error ? err.message : String(err) })
+      }
+    }
+  },
+
   updateStrokePoints: async (id, points) => {
     // 現在の points を before として控えつつ、楽観的に置換
     let farmId: string | null = null
@@ -452,6 +568,25 @@ export const useMapDrawingStore = create<State>((set, get) => ({
         const map = new Map(get().byFarm)
         const list = (map.get(last.farmId) ?? []).filter((s) => s.id !== last.item.id)
         map.set(last.farmId, list)
+        set({
+          byFarm: map,
+          undoStack: rest,
+          redoStack: [...get().redoStack, last],
+        })
+      } else if (last.op === 'attrs') {
+        // attrs を undo = before に戻す
+        const { error } = await supabase
+          .from('map_drawings')
+          .update(attrsToColumns(last.before) as never)
+          .eq('id', last.id)
+        if (error) throw error
+        const map = new Map(get().byFarm)
+        map.set(
+          last.farmId,
+          (map.get(last.farmId) ?? []).map((s) =>
+            s.id === last.id ? applyAttrs(s, last.before) : s,
+          ),
+        )
         set({
           byFarm: map,
           undoStack: rest,
@@ -538,6 +673,25 @@ export const useMapDrawingStore = create<State>((set, get) => ({
             ...get().undoStack,
             { op: 'add', farmId: last.farmId, item },
           ],
+        })
+      } else if (last.op === 'attrs') {
+        // attrs を redo = after に戻す
+        const { error } = await supabase
+          .from('map_drawings')
+          .update(attrsToColumns(last.after) as never)
+          .eq('id', last.id)
+        if (error) throw error
+        const map = new Map(get().byFarm)
+        map.set(
+          last.farmId,
+          (map.get(last.farmId) ?? []).map((s) =>
+            s.id === last.id ? applyAttrs(s, last.after) : s,
+          ),
+        )
+        set({
+          byFarm: map,
+          redoStack: rest,
+          undoStack: [...get().undoStack, last],
         })
       } else if (last.op === 'update') {
         // update を redo = after に戻す

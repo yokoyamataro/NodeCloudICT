@@ -25,7 +25,7 @@ import {
   X,
 } from 'lucide-react'
 import type { DrawingMode } from './MapDrawingLayer'
-import type { LineStyle } from '@/stores/mapDrawingStore'
+import { DEFAULT_LAYERS, type LineStyle } from '@/stores/mapDrawingStore'
 
 /** 形状ボタンで扱う描画モード (ドロップダウンで直線 / 円 / 円弧 / 面 を切替) */
 type ShapeMode = 'line' | 'circle' | 'arc' | 'polygon' | 'parallel'
@@ -42,6 +42,14 @@ const SHAPE_HELP: Record<ShapeMode, string> = {
   circle: '中心 → 縁の 2 点をクリック',
   arc: '始点 → 通過点 → 終点の 3 点をクリック',
   polygon: 'クリックで頂点 / 最初の点か Enter で閉じる / Backspace で 1 つ戻る',
+}
+/** 何を入れる道具かを 先頭に出す (「線入力」「文字入力」…) */
+const SHAPE_INPUT: Record<ShapeMode, string> = {
+  line: '線入力',
+  parallel: '平行線入力',
+  circle: '円入力',
+  arc: '円弧入力',
+  polygon: '面入力',
 }
 
 /** 円弧はぴったりの lucide アイコンが無いので四分弧を自前 SVG で描く */
@@ -257,7 +265,7 @@ export function MapDrawingToolbar({
       <button
         type="button"
         onClick={() => onChangeMode(mode === 'pen' ? 'off' : 'pen')}
-        title="ペン (ドラッグでフリーハンド描画)"
+        title="手書き入力 — ドラッグでフリーハンドの線を引く"
         className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
           mode === 'pen'
             ? 'bg-blue-600 text-white'
@@ -271,7 +279,7 @@ export function MapDrawingToolbar({
         <button
           type="button"
           onClick={() => onChangeMode(isShapeMode ? 'off' : currentShape)}
-          title={`${SHAPE_LABEL[currentShape]}: ${SHAPE_HELP[currentShape]} (▼ で切替)`}
+          title={`${SHAPE_INPUT[currentShape]} — ${SHAPE_HELP[currentShape]} (▼ で切替)`}
           className={`h-8 w-8 flex items-center justify-center rounded-l shrink-0 ${
             isShapeMode
               ? 'bg-blue-600 text-white'
@@ -307,7 +315,7 @@ export function MapDrawingToolbar({
                   onChangeMode(s)
                   setShapePickerOpen(false)
                 }}
-                title={SHAPE_HELP[s]}
+                title={`${SHAPE_INPUT[s]} — ${SHAPE_HELP[s]}`}
                 className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs ${
                   currentShape === s
                     ? 'bg-blue-50 text-blue-700'
@@ -328,7 +336,7 @@ export function MapDrawingToolbar({
         <button
           type="button"
           onClick={() => onChangeMode(isMeasure ? 'off' : currentMeasure)}
-          title={`計測: ${MEASURE_LABEL[currentMeasure]} (${MEASURE_HELP[currentMeasure]})`}
+          title={`${MEASURE_LABEL[currentMeasure]}計測 — ${MEASURE_HELP[currentMeasure]}`}
           className={`h-8 w-8 flex items-center justify-center rounded-l shrink-0 ${
             isMeasure ? 'bg-rose-600 text-white' : 'text-slate-600 hover:bg-slate-100'
           }`}
@@ -363,7 +371,7 @@ export function MapDrawingToolbar({
                   onChangeMode(m)
                   setMeasurePickerOpen(false)
                 }}
-                title={MEASURE_HELP[m]}
+                title={`${MEASURE_LABEL[m]}計測 — ${MEASURE_HELP[m]}`}
                 className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs ${
                   currentMeasure === m
                     ? 'bg-rose-50 text-rose-700'
@@ -381,7 +389,7 @@ export function MapDrawingToolbar({
       <button
         type="button"
         onClick={() => onChangeMode(mode === 'select' ? 'off' : 'select')}
-        title="選択 (タップで選択 → ハンドルをドラッグで移動、長押しで削除、辺の + で頂点追加)"
+        title="選択 — タップで図形を選び、属性 (レイヤ / 色 / 線種 / 太さ) を変える。ハンドルのドラッグで頂点移動、辺の + で頂点追加"
         className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
           mode === 'select'
             ? 'bg-blue-600 text-white'
@@ -397,8 +405,8 @@ export function MapDrawingToolbar({
           onClick={() => onChangeMode(mode === 'point' ? 'off' : 'point')}
           title={
             registerCoordinate
-              ? '点 (タップした場所に点を置き、座標管理にも登録)'
-              : '点 (タップした場所に点を置く)'
+              ? '点入力 — タップした場所に点を置き、座標管理にも登録する'
+              : '点入力 — タップした場所に点を置く'
           }
           className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
             mode === 'point'
@@ -428,7 +436,7 @@ export function MapDrawingToolbar({
       <button
         type="button"
         onClick={() => onChangeMode(mode === 'text' ? 'off' : 'text')}
-        title="テキスト (タップした場所に文字を追加)"
+        title="文字入力 — タップした場所に文字を置く"
         className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
           mode === 'text'
             ? 'bg-blue-600 text-white'
@@ -445,7 +453,7 @@ export function MapDrawingToolbar({
             onMemo()
             onChangeMode('off')
           }}
-          title="付箋メモ (現在位置にメモを残す)"
+          title="付箋メモ入力 — 現在位置にメモを残す"
           className="w-8 h-8 flex items-center justify-center rounded shrink-0 text-amber-600 hover:bg-amber-50"
         >
           <StickyNote className="h-4 w-4" />
@@ -455,7 +463,7 @@ export function MapDrawingToolbar({
       <button
         type="button"
         onClick={() => onChangeMode(mode === 'eraser' ? 'off' : 'eraser')}
-        title="消しゴム (アイテムをクリックで削除)"
+        title="消しゴム — クリックした図形を消す"
         className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
           mode === 'eraser'
             ? 'bg-red-500 text-white'
@@ -464,108 +472,6 @@ export function MapDrawingToolbar({
       >
         <Eraser className="h-4 w-4" />
       </button>
-
-      {/* 色 (プリセット + カスタム) */}
-      <div className="relative shrink-0">
-        <button
-          type="button"
-          onClick={() => {
-            setColorPickerOpen((v) => !v)
-            setLinePickerOpen(false)
-          }}
-          title="ペンの色"
-          className="w-8 h-8 flex items-center justify-center rounded hover:bg-slate-100 border shrink-0"
-          style={{ backgroundColor: color }}
-        >
-          <span className="sr-only">色を選ぶ</span>
-        </button>
-        {colorPickerOpen && (
-          <div className="absolute top-full left-0 mt-1 z-[3000] bg-white border rounded shadow-lg p-2 flex flex-col gap-1 min-w-[9rem]">
-            <div className="grid grid-cols-4 gap-1">
-              {COLOR_PRESETS.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => {
-                    onChangeColor(c)
-                    setColorPickerOpen(false)
-                  }}
-                  className={`w-7 h-7 rounded border ${
-                    c === color ? 'ring-2 ring-blue-500' : ''
-                  }`}
-                  style={{ backgroundColor: c }}
-                  title={c}
-                />
-              ))}
-            </div>
-            <input
-              type="color"
-              value={color}
-              onChange={(e) => onChangeColor(e.target.value)}
-              className="w-full h-8 mt-1"
-              title="カスタム色"
-            />
-          </div>
-        )}
-      </div>
-
-      {/* 線種 (プルダウン) */}
-      <div className="relative shrink-0">
-        <button
-          type="button"
-          onClick={() => {
-            setLinePickerOpen((v) => !v)
-            setColorPickerOpen(false)
-          }}
-          title={`線種: ${LINE_STYLE_LABEL[lineStyle]}`}
-          className="h-8 px-1.5 flex items-center gap-0.5 rounded border hover:bg-slate-100 text-slate-700"
-        >
-          <LineStyleSvg style={lineStyle} width={22} />
-          <ChevronDown className="h-3 w-3" />
-        </button>
-        {linePickerOpen && (
-          <div className="absolute top-full left-0 mt-1 z-[3000] bg-white border rounded shadow-lg py-1 min-w-[7rem]">
-            {(['solid', 'dashed', 'dotted'] as const).map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => {
-                  onChangeLineStyle(s)
-                  setLinePickerOpen(false)
-                }}
-                className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs ${
-                  lineStyle === s
-                    ? 'bg-blue-50 text-blue-700'
-                    : 'text-slate-700 hover:bg-slate-50'
-                }`}
-              >
-                <LineStyleSvg style={s} width={34} />
-                <span>{LINE_STYLE_LABEL[s]}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* 文字サイズ (テキストモードのときだけ) */}
-      {mode === 'text' && onChangeFontSize && (
-        <div className="flex items-center gap-1 pl-1 shrink-0">
-          <Type className="h-3.5 w-3.5 text-slate-500" />
-          <input
-            type="range"
-            min={10}
-            max={48}
-            step={1}
-            value={fontSize ?? 14}
-            onChange={(e) => onChangeFontSize(Number(e.target.value))}
-            className="w-16"
-            title={`文字サイズ: ${fontSize ?? 14}px`}
-          />
-          <span className="text-[10px] font-mono text-slate-600 w-6 text-right">
-            {fontSize ?? 14}
-          </span>
-        </div>
-      )}
 
       {/* ピック (スナップ) */}
       {onToggleSnap && (
@@ -586,42 +492,6 @@ export function MapDrawingToolbar({
           <Crosshair className="h-4 w-4" />
         </button>
       )}
-
-      {/* レイヤ名 (DXF 出力に反映) */}
-      {onChangeLayer && (
-        <label className="flex items-center gap-1 shrink-0" title="レイヤ名 (DXF出力に反映)">
-          <span className="text-[10px] text-slate-500">レイヤ</span>
-          <input
-            type="text"
-            value={layer ?? '0'}
-            onChange={(e) => onChangeLayer(e.target.value)}
-            list="map-drawing-layers"
-            className="w-16 h-8 px-1 border rounded font-mono text-[11px]"
-          />
-          <datalist id="map-drawing-layers">
-            {(existingLayers ?? []).map((l) => (
-              <option key={l} value={l} />
-            ))}
-          </datalist>
-        </label>
-      )}
-
-      {/* 太さスライダ */}
-      <div className="flex items-center gap-1 pl-1 shrink-0">
-        <input
-          type="range"
-          min={1}
-          max={20}
-          step={1}
-          value={widthPx}
-          onChange={(e) => onChangeWidth(Number(e.target.value))}
-          className="w-14"
-          title={`太さ: ${widthPx}px`}
-        />
-        <span className="text-[10px] font-mono text-slate-600 w-6 text-right">
-          {widthPx}
-        </span>
-      </div>
 
       {/* undo / redo */}
       <button
@@ -654,6 +524,145 @@ export function MapDrawingToolbar({
           <X className="h-4 w-4" />
         </button>
       )}
+      {/* 共通属性 (レイヤ / 色 / 線種 / 太さ)。ツールバーの一番右にまとめる。
+          ここで決めた値が、これから描くものに付く */}
+      <div className="ml-auto flex flex-wrap items-center gap-1 pl-2 border-l">
+        {/* レイヤ名 (DXF 出力に反映) */}
+        {onChangeLayer && (
+          <label className="flex items-center gap-1 shrink-0" title="レイヤ名 (DXF出力に反映)">
+            <span className="text-[10px] text-slate-500">レイヤ</span>
+            <input
+              type="text"
+              value={layer ?? '0'}
+              onChange={(e) => onChangeLayer(e.target.value)}
+              list="map-drawing-layers"
+              className="w-16 h-8 px-1 border rounded font-mono text-[11px]"
+            />
+            <datalist id="map-drawing-layers">
+              {Array.from(
+                new Set([...DEFAULT_LAYERS, ...(existingLayers ?? []), '0']),
+              ).map((l) => (
+                <option key={l} value={l} />
+              ))}
+            </datalist>
+          </label>
+        )}
+        {/* 色 (プリセット + カスタム) */}
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              setColorPickerOpen((v) => !v)
+              setLinePickerOpen(false)
+            }}
+            title="ペンの色"
+            className="w-8 h-8 flex items-center justify-center rounded hover:bg-slate-100 border shrink-0"
+            style={{ backgroundColor: color }}
+          >
+            <span className="sr-only">色を選ぶ</span>
+          </button>
+          {colorPickerOpen && (
+            <div className="absolute top-full left-0 mt-1 z-[3000] bg-white border rounded shadow-lg p-2 flex flex-col gap-1 min-w-[9rem]">
+              <div className="grid grid-cols-4 gap-1">
+                {COLOR_PRESETS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => {
+                      onChangeColor(c)
+                      setColorPickerOpen(false)
+                    }}
+                    className={`w-7 h-7 rounded border ${
+                      c === color ? 'ring-2 ring-blue-500' : ''
+                    }`}
+                    style={{ backgroundColor: c }}
+                    title={c}
+                  />
+                ))}
+              </div>
+              <input
+                type="color"
+                value={color}
+                onChange={(e) => onChangeColor(e.target.value)}
+                className="w-full h-8 mt-1"
+                title="カスタム色"
+              />
+            </div>
+          )}
+        </div>
+        {/* 線種 (プルダウン) */}
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              setLinePickerOpen((v) => !v)
+              setColorPickerOpen(false)
+            }}
+            title={`線種: ${LINE_STYLE_LABEL[lineStyle]}`}
+            className="h-8 px-1.5 flex items-center gap-0.5 rounded border hover:bg-slate-100 text-slate-700"
+          >
+            <LineStyleSvg style={lineStyle} width={22} />
+            <ChevronDown className="h-3 w-3" />
+          </button>
+          {linePickerOpen && (
+            <div className="absolute top-full left-0 mt-1 z-[3000] bg-white border rounded shadow-lg py-1 min-w-[7rem]">
+              {(['solid', 'dashed', 'dotted'] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => {
+                    onChangeLineStyle(s)
+                    setLinePickerOpen(false)
+                  }}
+                  className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs ${
+                    lineStyle === s
+                      ? 'bg-blue-50 text-blue-700'
+                      : 'text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <LineStyleSvg style={s} width={34} />
+                  <span>{LINE_STYLE_LABEL[s]}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        {/* 太さスライダ */}
+        <div className="flex items-center gap-1 pl-1 shrink-0">
+          <input
+            type="range"
+            min={1}
+            max={20}
+            step={1}
+            value={widthPx}
+            onChange={(e) => onChangeWidth(Number(e.target.value))}
+            className="w-14"
+            title={`太さ: ${widthPx}px`}
+          />
+          <span className="text-[10px] font-mono text-slate-600 w-6 text-right">
+            {widthPx}
+          </span>
+        </div>
+        {/* 文字サイズ (テキストモードのときだけ) */}
+        {mode === 'text' && onChangeFontSize && (
+          <div className="flex items-center gap-1 pl-1 shrink-0">
+            <Type className="h-3.5 w-3.5 text-slate-500" />
+            <input
+              type="range"
+              min={10}
+              max={48}
+              step={1}
+              value={fontSize ?? 14}
+              onChange={(e) => onChangeFontSize(Number(e.target.value))}
+              className="w-16"
+              title={`文字サイズ: ${fontSize ?? 14}px`}
+            />
+            <span className="text-[10px] font-mono text-slate-600 w-6 text-right">
+              {fontSize ?? 14}
+            </span>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

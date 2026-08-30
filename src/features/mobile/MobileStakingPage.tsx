@@ -85,7 +85,7 @@ import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { ParcelMapLayer, parcelFeatureKey } from '@/components/map/ParcelMapLayer'
 import { MapDrawingLayer, type DrawingMode } from '@/components/map/MapDrawingLayer'
 import { MapDrawingToolbar } from '@/components/map/MapDrawingToolbar'
-import { useMapDrawingStore, EMPTY_STROKES, type LineStyle } from '@/stores/mapDrawingStore'
+import { useMapDrawingStore, EMPTY_STROKES, DEFAULT_LAYERS, type LineStyle } from '@/stores/mapDrawingStore'
 import type { ParcelFeatureProperties } from '@/lib/jpgis-to-geojson'
 import type { Feature, Polygon as GeoJsonPolygon } from 'geojson'
 import { type Bbox } from '@/lib/tile-math'
@@ -790,7 +790,7 @@ export function MobileStakingPage() {
   const [drawingLineStyle, setDrawingLineStyle] = useState<LineStyle>('solid')
   // 作図・計測ツールから引き継いだ設定 (ピック / レイヤ / 文字サイズ)
   const [snapEnabled, setSnapEnabled] = useState(false)
-  const [drawLayer, setDrawLayer] = useState('0')
+  const [drawLayer, setDrawLayer] = useState<string>(DEFAULT_LAYERS[0])
   const [drawFontSize, setDrawFontSize] = useState(14)
   const drawingItems = useMapDrawingStore((s) =>
     farmId ? s.byFarm.get(farmId) ?? EMPTY_STROKES : EMPTY_STROKES,
@@ -1592,9 +1592,9 @@ export function MobileStakingPage() {
 
   // レイヤ名入力の候補
   const existingLayers = useMemo(() => {
-    const set = new Set<string>(['0'])
+    const set = new Set<string>(DEFAULT_LAYERS)
     for (const d of drawingItems) if (d.layer) set.add(d.layer)
-    return Array.from(set).sort()
+    return Array.from(set)
   }, [drawingItems])
 
   // 方位センサー（DeviceOrientation）リスナー
@@ -5388,6 +5388,7 @@ export function MobileStakingPage() {
             fontSize={drawFontSize}
             snapEnabled={snapEnabled}
             extraSnapPoints={extraSnapPoints}
+            existingLayers={existingLayers}
           />
         </MapContainer>
 
