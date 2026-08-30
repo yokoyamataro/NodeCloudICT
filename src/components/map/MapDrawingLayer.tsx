@@ -1283,6 +1283,8 @@ export function MapDrawingLayer({
   const transforming = transformMode !== null
   /** 平行移動の 仮表示に使う カーソル位置 */
   const [transformHover, setTransformHover] = useState<LL | null>(null)
+  /** 囲って選ぶ途中の カーソル位置 (仮の形を 追従させる) */
+  const [selectHover, setSelectHover] = useState<LL | null>(null)
   const toggleSelected = useCallback((id: string, additive: boolean) => {
     setSelectedIds((prev) => {
       if (!additive) return prev.length === 1 && prev[0] === id ? [] : [id]
@@ -1308,6 +1310,20 @@ export function MapDrawingLayer({
     const id = requestAnimationFrame(() => textInputRef.current?.focus())
     return () => cancelAnimationFrame(id)
   }, [mode])
+
+  // 囲って選ぶ間は カーソルを 追う。線 / 長方形 / 多角形の 仮の形を 出すため
+  useEffect(() => {
+    if (mode !== 'select' || selectMethod === 'point' || transforming) return
+    const onMove = (e: L.LeafletMouseEvent) => setSelectHover(snap(e.latlng))
+    const onOut = () => setSelectHover(null)
+    map.on('mousemove', onMove)
+    map.on('mouseout', onOut)
+    return () => {
+      map.off('mousemove', onMove)
+      map.off('mouseout', onOut)
+      setSelectHover(null)
+    }
+  }, [map, mode, selectMethod, transforming, snap])
 
   // 平行移動 / 複製の 始点を 置いたあと、カーソルを 追って 仮表示を出す
   useEffect(() => {
@@ -1662,6 +1678,7 @@ export function MapDrawingLayer({
         }
         applySelection(pts, isAdditiveClick(e))
         setSelectShape([])
+        setSelectHover(null)
         return
       }
 
@@ -2817,6 +2834,7 @@ export function MapDrawingLayer({
       if (e.key === 'Escape') {
         setShapeProgress(null)
         setSelectShape([])
+        setSelectHover(null)
         setTransformMode(null)
         setTransformFrom(null)
         setParallelBase(null)
@@ -2850,6 +2868,7 @@ export function MapDrawingLayer({
         if (selectMethod === 'polygon' && selectShape.length >= 3) {
           applySelection(selectShape, false)
           setSelectShape([])
+          setSelectHover(null)
           return
         }
         if (stretchAxis) return commitStretch()
@@ -3003,7 +3022,8 @@ export function MapDrawingLayer({
         </>
       )}
 
-      {/* 囲って選ぶ途中の 仮表示 */}
+      {/* 囲って選ぶ途中の 仮表示。カーソルを 最後の頂点として 扱い、
+          線は 線、長方形と 多角形は 塗り潰した形で 追従させる */}
       {selectShape.length > 0 && (
         <>
           {selectShape.map((p, i) => (
@@ -3014,13 +3034,58 @@ export function MapDrawingLayer({
               interactive={false}
             />
           ))}
-          {selectShape.length >= 2 && (
-            <Polyline
-              positions={selectShape.map((p) => [p.lat, p.lng] as [number, number])}
-              pathOptions={{ color: '#3b82f6', weight: 2, dashArray: '6,4' }}
-              interactive={false}
-            />
-          )}
+          {(() => {
+            const pts = selectHover ? [...selectShape, selectHover] : selectShape
+            const opts: L.PathOptions = {
+              color: '#3b82f6',
+              weight: 2,
+              dashArray: '6,4',
+              fillColor: '#3b82f6',
+              fillOpacity: 0.12,
+            }
+            if (selectMethod === 'line') {
+              if (pts.length < 2) return null
+              return (
+                <Polyline
+                  positions={pts.slice(0, 2).map((p) => [p.lat, p.lng] as [number, number])}
+                  pathOptions={{ ...opts, fill: false }}
+                  interactive={false}
+                />
+              )
+            }
+            if (selectMethod === 'rect') {
+              if (pts.length < 2) return null
+              const [a, b] = pts
+              return (
+                <LeafletPolygon
+                  positions={[
+                    [a.lat, a.lng],
+                    [a.lat, b.lng],
+                    [b.lat, b.lng],
+                    [b.lat, a.lng],
+                  ]}
+                  pathOptions={opts}
+                  interactive={false}
+                />
+              )
+            }
+            if (pts.length < 3) {
+              return pts.length >= 2 ? (
+                <Polyline
+                  positions={pts.map((p) => [p.lat, p.lng] as [number, number])}
+                  pathOptions={{ ...opts, fill: false }}
+                  interactive={false}
+                />
+              ) : null
+            }
+            return (
+              <LeafletPolygon
+                positions={pts.map((p) => [p.lat, p.lng] as [number, number])}
+                pathOptions={opts}
+                interactive={false}
+              />
+            )
+          })()}
         </>
       )}
       {/* 線上文字: 向きを決める 1 点目 */}
