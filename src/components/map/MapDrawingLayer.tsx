@@ -20,6 +20,10 @@
 //               onAddCoordinate も呼び、座標管理にも登録する。
 //   ・'select'  ストロークをタップで選択 → 青ハンドルをドラッグで頂点移動 / 長押しで削除 /
 //               辺の中点の「+」タップで頂点追加 (直線・円・円弧は追加/削除不可、位置移動のみ)。
+//               連続線は 端の橙ハンドル (↔) で 伸縮できる。長さを入れるか、
+//               対象の線・円をクリックすると その交点まで 伸ばす / 詰める。
+//               交点が 複数のときは 青い候補点で 残す側を選ぶ。
+//               操作ハンドルは 線より上のペインに出す (線の裏に回らないように)。
 //   ・'eraser'  アイテムをクリックで削除。
 //   ・'measure-dist' / 'measure-area' / 'measure-perp'
 //               計測。結果は保存せず、モードを抜けるまで地図上に表示する。
@@ -183,9 +187,25 @@ const HANDLE_ICON = L.divIcon({
 /** ハンドル: 頂点追加用 (緑丸 + "+") */
 const MIDPOINT_ICON = L.divIcon({
   className: 'map-drawing-midpoint',
-  html: '<div style="width:14px;height:14px;border-radius:50%;background:#22c55e;border:2px solid white;box-shadow:0 0 3px rgba(0,0,0,0.5);color:white;font-size:10px;font-weight:bold;line-height:10px;text-align:center;">+</div>',
-  iconSize: [18, 18],
-  iconAnchor: [9, 9],
+  html: '<div style="width:18px;height:18px;border-radius:50%;background:#22c55e;border:2px solid white;box-shadow:0 0 4px rgba(0,0,0,0.6);color:white;font-size:13px;font-weight:bold;line-height:14px;text-align:center;">+</div>',
+  iconSize: [22, 22],
+  iconAnchor: [11, 11],
+})
+
+/** ハンドル: 端部の伸縮用 (橙の両矢印) */
+const STRETCH_ICON = L.divIcon({
+  className: 'map-drawing-stretch',
+  html: '<div style="width:20px;height:20px;border-radius:4px;background:#f97316;border:2px solid white;box-shadow:0 0 5px rgba(0,0,0,0.6);color:white;font-size:12px;font-weight:bold;line-height:16px;text-align:center;">↔</div>',
+  iconSize: [24, 24],
+  iconAnchor: [12, 12],
+})
+
+/** ハンドル: 伸縮の候補点 (どこまで伸ばすかを選ばせる) */
+const CANDIDATE_ICON = L.divIcon({
+  className: 'map-drawing-candidate',
+  html: '<div style="width:16px;height:16px;border-radius:50%;background:#0ea5e9;border:2px solid white;box-shadow:0 0 5px rgba(0,0,0,0.6);"></div>',
+  iconSize: [20, 20],
+  iconAnchor: [10, 10],
 })
 
 /** ポリゴン描画中の最初の頂点マーカー (再タップで閉じる目印, 橙色) */
@@ -585,6 +605,57 @@ function perpGeometry(
   return { foot, end: offsetLL(foot, ux * lengthM, uy * lengthM, c), ux, uy }
 }
 
+// ---- 端部の伸縮 ----
+//
+// 端点を、その端の線分の向き (直線) の上で 前後に動かす。行き先は
+//   ・長さを 数値で 入れる
+//   ・他の要素 (線 / 円) を クリックして、その要素との 交点まで
+// の 2 通り。交点が 複数あるときは、どれにするかを 選ばせる。
+//
+// 計算は 起点 (動かさない側の隣の頂点) を 原点にした メートル座標で行う。
+
+/**
+ * 原点から 単位方向 (ux, uy) に伸びる直線と、線分 ab の交点までの距離 [m]。
+ * 平行なとき / 交点が線分の外に出るときは null。
+ */
+function intersectSegment(
+  origin: LL,
+  ux: number,
+  uy: number,
+  a: LL,
+  b: LL,
+  c?: CoordinateConverter,
+): number | null {
+  const A = deltaM(origin, a, c)
+  const B = deltaM(origin, b, c)
+  const dx = B.east - A.east
+  const dy = B.north - A.north
+  const det = dx * uy - ux * dy
+  if (Math.abs(det) < 1e-9) return null
+  const t = (dx * A.north - dy * A.east) / det
+  const sParam = (ux * A.north - uy * A.east) / det
+  if (sParam < 0 || sParam > 1) return null
+  return t
+}
+
+/** 同じく、中心 center / 半径 r の円との交点までの距離 [m] (0〜2 個) */
+function intersectCircle(
+  origin: LL,
+  ux: number,
+  uy: number,
+  center: LL,
+  radiusM: number,
+  c?: CoordinateConverter,
+): number[] {
+  const C = deltaM(origin, center, c)
+  const proj = C.east * ux + C.north * uy
+  const disc = proj * proj - (C.east * C.east + C.north * C.north - radiusM * radiusM)
+  if (disc < 0) return []
+  if (disc === 0) return [proj]
+  const root = Math.sqrt(disc)
+  return [proj - root, proj + root]
+}
+
 /** 基準線を拾う判定の広さ [画面 px] */
 const PICK_LINE_RADIUS_PX = 14
 
@@ -708,6 +779,13 @@ export function MapDrawingLayer({
   const [perpBase, setPerpBase] = useState<[LL, LL] | null>(null)
   const [perpThrough, setPerpThrough] = useState<LL | null>(null)
   const [perpLength, setPerpLength] = useState(10)
+  /** 端部の伸縮: どちらの端を動かしているか。null なら伸縮していない */
+  const [stretchEnd, setStretchEnd] = useState<'start' | 'end' | null>(null)
+  const stretching = stretchEnd !== null
+  /** 端部の伸縮: 起点から端点までの長さ [m] */
+  const [stretchLength, setStretchLength] = useState(0)
+  /** 端部の伸縮: 交点が複数あるときの候補 (起点からの距離 [m]) */
+  const [stretchCandidates, setStretchCandidates] = useState<number[]>([])
   /** 長方形・垂線でカーソルを追うための位置 (仮表示に使う) */
   const [shapeHover, setShapeHover] = useState<LL | null>(null)
   /** 円: 中心を決めたあとの半径 [m]。数値入力でも、円周上のクリックでも決まる */
@@ -857,6 +935,8 @@ export function MapDrawingLayer({
     if (mode !== 'select') {
       setSelectedId(null)
       setDragPreview(null)
+      setStretchEnd(null)
+      setStretchCandidates([])
     }
     // 計測は結果を残さない。モードを抜けた時点で消す
     if (!isMeasureMode(mode)) {
@@ -934,6 +1014,50 @@ export function MapDrawingLayer({
       container.style.touchAction = ''
     }
   }, [mode, map])
+
+  // 選択中のストローク (端点ハンドル用)
+  const selectedStroke = useMemo(
+    () =>
+      mode === 'select' && selectedId
+        ? items.find((s) => s.id === selectedId) ?? null
+        : null,
+    [items, mode, selectedId],
+  )
+  /** 端部の伸縮で動かす端点まわりの情報 (起点 / 単位方向 / 現在の長さ) */
+  const stretchAxis = useMemo(() => {
+    if (!selectedStroke || selectedStroke.kind !== 'stroke' || !stretchEnd) return null
+    const pts = selectedStroke.points
+    if (pts.length < 2) return null
+    // 動かさない側の隣の頂点を起点にする
+    const origin = stretchEnd === 'end' ? pts[pts.length - 2] : pts[1]
+    const tip = stretchEnd === 'end' ? pts[pts.length - 1] : pts[0]
+    const d = deltaM(origin, tip, converter)
+    const len = Math.hypot(d.east, d.north)
+    if (len < 1e-6) return null
+    return { origin, tip, ux: d.east / len, uy: d.north / len, current: len }
+  }, [selectedStroke, stretchEnd, converter])
+
+  /** 伸縮後の端点 */
+  const stretchTip = useMemo(() => {
+    if (!stretchAxis) return null
+    return offsetLL(
+      stretchAxis.origin,
+      stretchAxis.ux * stretchLength,
+      stretchAxis.uy * stretchLength,
+      converter,
+    )
+  }, [stretchAxis, stretchLength, converter])
+
+  /** 伸縮を確定して保存する */
+  const commitStretch = useCallback(() => {
+    if (!selectedStroke || !stretchEnd || !stretchTip) return
+    const pts = [...selectedStroke.points]
+    if (stretchEnd === 'end') pts[pts.length - 1] = stretchTip
+    else pts[0] = stretchTip
+    void updateStrokePoints(selectedStroke.id, pts)
+    setStretchEnd(null)
+    setStretchCandidates([])
+  }, [selectedStroke, stretchEnd, stretchTip, updateStrokePoints])
 
   // タップ式描画 + text 追加: useMapEvents
   useMapEvents({
@@ -1050,6 +1174,59 @@ export function MapDrawingLayer({
         })
         return
       }
+      // 端部の伸縮中: 対象の線 / 円をクリックすると、その要素との交点まで伸縮する
+      if (mode === 'select' && stretchAxis) {
+        const clickPx = map.latLngToContainerPoint(e.latlng)
+        const hits: number[] = []
+        for (const it of items) {
+          if (it.id === selectedStroke?.id) continue
+          if (it.kind === 'circle') {
+            const [center, edge] = it.points
+            if (!center || !edge) continue
+            const px = map.latLngToContainerPoint([center.lat, center.lng]).distanceTo(clickPx)
+            const r = circleRadiusMeters(center, edge)
+            // 円周の近くをクリックしたときだけ対象にする
+            const rPx =
+              map
+                .latLngToContainerPoint([center.lat, center.lng])
+                .distanceTo(map.latLngToContainerPoint([edge.lat, edge.lng]))
+            if (Math.abs(px - rPx) > PICK_LINE_RADIUS_PX) continue
+            hits.push(
+              ...intersectCircle(stretchAxis.origin, stretchAxis.ux, stretchAxis.uy, center, r, converter),
+            )
+            continue
+          }
+          if (!isLineLike(it.kind)) continue
+          const pts = it.points
+          const last = it.kind === 'polygon' ? pts.length : pts.length - 1
+          for (let i = 0; i < last; i += 1) {
+            const a = pts[i]
+            const b = pts[(i + 1) % pts.length]
+            const px = distancePointToSegmentPx(
+              clickPx,
+              map.latLngToContainerPoint([a.lat, a.lng]),
+              map.latLngToContainerPoint([b.lat, b.lng]),
+            )
+            if (px > PICK_LINE_RADIUS_PX) continue
+            const t = intersectSegment(stretchAxis.origin, stretchAxis.ux, stretchAxis.uy, a, b, converter)
+            if (t !== null) hits.push(t)
+          }
+        }
+        // 起点より手前 (線が裏返る側) は捨てる。近い順に並べる
+        const usable = hits
+          .filter((t) => t > 0.01)
+          .sort((a, b) => Math.abs(a - stretchLength) - Math.abs(b - stretchLength))
+        if (usable.length === 0) return
+        if (usable.length === 1) {
+          setStretchLength(Math.round(usable[0] * 100) / 100)
+          setStretchCandidates([])
+        } else {
+          // どこまで伸ばす / 詰めるかを選ばせる
+          setStretchCandidates(usable)
+        }
+        return
+      }
+
       if (mode === 'parallel') {
         if (parallelBase) return
         const best = pickBaseLine(e.latlng)
@@ -1236,7 +1413,8 @@ export function MapDrawingLayer({
   //   Enter              … 確定する
   //   Escape             … まるごと取り消す
   useEffect(() => {
-    if (!shapeProgress && !parallelBase && measurePoints.length === 0 && !lastMeasure) return
+    if (!shapeProgress && !parallelBase && !stretching && measurePoints.length === 0 && !lastMeasure)
+      return
     const onKey = (e: KeyboardEvent) => {
       // 文字入力中のキーは拾わない
       const el = document.activeElement
@@ -1246,6 +1424,8 @@ export function MapDrawingLayer({
         setShapeProgress(null)
         setParallelBase(null)
         setRectStart(null)
+        setStretchEnd(null)
+        setStretchCandidates([])
         setPerpBase(null)
         setPerpThrough(null)
         setTextLineStart(null)
@@ -1271,7 +1451,7 @@ export function MapDrawingLayer({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [shapeProgress, parallelBase, measurePoints, lastMeasure, commitVertexShape])
+  }, [shapeProgress, parallelBase, stretching, measurePoints, lastMeasure, commitVertexShape])
 
   // pen モード: pointer events (フリーハンド)
   useEffect(() => {
@@ -1396,14 +1576,6 @@ export function MapDrawingLayer({
     }
   }, [shapeProgress, map, commitVertexShape])
 
-  // 選択中のストローク (端点ハンドル用)
-  const selectedStroke = useMemo(
-    () =>
-      mode === 'select' && selectedId
-        ? items.find((s) => s.id === selectedId) ?? null
-        : null,
-    [items, mode, selectedId],
-  )
   // 頂点ハンドル用の points (ドラッグ中はプレビュー)
   const handlePoints =
     selectedStroke && selectedStroke.kind !== 'text'
@@ -1437,7 +1609,7 @@ export function MapDrawingLayer({
               eventHandlers={
                 isEraser
                   ? { click: () => void deleteStroke(s.id) }
-                  : isSelect
+                  : isSelect && !stretching
                     ? { click: () => setSelectedId(s.id) }
                     : undefined
               }
@@ -1459,7 +1631,7 @@ export function MapDrawingLayer({
               eventHandlers={
                 isEraser
                   ? { click: () => void deleteStroke(s.id) }
-                  : isSelect
+                  : isSelect && !stretching
                     ? { click: () => setSelectedId(s.id) }
                     : undefined
               }
@@ -1479,7 +1651,10 @@ export function MapDrawingLayer({
           mode === 'eraser'
             ? { click: () => void deleteStroke(s.id) }
             : mode === 'select'
-              ? { click: () => setSelectedId(s.id) }
+              ? // 伸縮中のクリックは「どこまで伸ばすか」の指定なので、選択は変えない
+                stretching
+                ? undefined
+                : { click: () => setSelectedId(s.id) }
               : undefined
 
         if (s.kind === 'circle') {
@@ -1618,7 +1793,7 @@ export function MapDrawingLayer({
           </Fragment>
         )
       }),
-    [items, mode, deleteStroke, selectedId, dragPreview],
+    [items, mode, deleteStroke, selectedId, dragPreview, stretching],
   )
 
   // タップ式描画の進行中プレビュー
@@ -2022,6 +2197,9 @@ export function MapDrawingLayer({
           }}
         />
       )}
+      {/* 操作ハンドルは 線より上に出す。同じペインだと 線の SVG が上に来て
+          中点の「+」が 押しにくくなるため、専用ペイン (zIndex 650) に分ける */}
+      <Pane name="map-drawing-handles" style={{ zIndex: 650 }}>
       {/* 選択中ストロークの頂点ハンドル (ドラッグで移動 / 長押しで削除) */}
       {selectedStroke &&
         handlePoints &&
@@ -2065,6 +2243,67 @@ export function MapDrawingLayer({
             }}
           />
         ))}
+      {/* 端部の伸縮ハンドル (連続線のみ)。押すと その端が 伸縮の対象になる */}
+      {selectedStroke &&
+        selectedStroke.kind === 'stroke' &&
+        !dragPreview &&
+        selectedStroke.points.length >= 2 &&
+        (['start', 'end'] as const).map((which) => {
+          const pts = selectedStroke.points
+          const p = which === 'end' ? pts[pts.length - 1] : pts[0]
+          // 端点ハンドルと重ならないよう、少しだけ外側に出す
+          return (
+            <Marker
+              key={`stretch-${selectedStroke.id}-${which}`}
+              position={[p.lat, p.lng]}
+              icon={STRETCH_ICON}
+              zIndexOffset={1000}
+              eventHandlers={{
+                click: () => {
+                  // 今の端の長さを 初期値にする
+                  const origin = which === 'end' ? pts[pts.length - 2] : pts[1]
+                  const d = deltaM(origin, p, converter)
+                  setStretchLength(Math.round(Math.hypot(d.east, d.north) * 100) / 100)
+                  setStretchCandidates([])
+                  setStretchEnd(which)
+                },
+              }}
+            />
+          )
+        })}
+
+      {/* 伸縮の仮表示 (起点 → 伸縮後の端点) */}
+      {stretchAxis && stretchTip && (
+        <Polyline
+          positions={[
+            [stretchAxis.origin.lat, stretchAxis.origin.lng],
+            [stretchTip.lat, stretchTip.lng],
+          ]}
+          pathOptions={{ color: '#f97316', weight: widthPx + 2, opacity: 0.9, dashArray: '6,4' }}
+          interactive={false}
+        />
+      )}
+
+      {/* 交点が複数あるとき: どこまでにするかを選ばせる */}
+      {stretchAxis &&
+        stretchCandidates.map((t, i) => {
+          const at = offsetLL(stretchAxis.origin, stretchAxis.ux * t, stretchAxis.uy * t, converter)
+          return (
+            <Marker
+              key={`stretch-candidate-${i}`}
+              position={[at.lat, at.lng]}
+              icon={CANDIDATE_ICON}
+              zIndexOffset={1100}
+              eventHandlers={{
+                click: () => {
+                  setStretchLength(Math.round(t * 100) / 100)
+                  setStretchCandidates([])
+                },
+              }}
+            />
+          )
+        })}
+
       {/* 中点 + ハンドル (頂点数可変 kind: stroke / polygon のみ) */}
       {selectedStroke &&
         midpoints.map((m) => (
@@ -2081,6 +2320,7 @@ export function MapDrawingLayer({
             }}
           />
         ))}
+      </Pane>
       {/* 今の道具の詳細入力。地図に重ねず、道具アイコンのすぐ下 (ページが置いた
           MapDrawingCommandBar) に 1 行で差し込む。バーが無い画面では出さない */}
       {commandBarEl &&
@@ -2409,8 +2649,49 @@ export function MapDrawingLayer({
               </>
             )}
 
+            {/* 端部の伸縮: 長さを入れるか、対象の線・円をクリックして交点まで */}
+            {mode === 'select' && stretchAxis && (
+              <>
+                <span className="font-semibold text-orange-600 shrink-0">
+                  {stretchEnd === 'end' ? '終点' : '始点'}を伸縮
+                </span>
+                <label className="flex items-center gap-1 shrink-0">
+                  <span className="text-[11px] text-slate-600">長さ (m)</span>
+                  <NumberField
+                    value={stretchLength}
+                    onChange={setStretchLength}
+                    onEnter={commitStretch}
+                    min={0}
+                    className="w-20 h-7 px-2 border rounded text-right font-mono"
+                  />
+                </label>
+                <span className="text-[11px] text-slate-500">
+                  {stretchCandidates.length > 0
+                    ? '交点が複数あります。残す側の青い点をクリック'
+                    : '対象の線・円をクリックすると、その交点まで伸縮します'}
+                </span>
+                <button
+                  type="button"
+                  onClick={commitStretch}
+                  className="h-7 px-3 rounded bg-orange-600 text-white shrink-0"
+                >
+                  確定
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStretchEnd(null)
+                    setStretchCandidates([])
+                  }}
+                  className="h-7 px-2 rounded border text-slate-600 shrink-0"
+                >
+                  やめる
+                </button>
+              </>
+            )}
+
             {/* 選択: 選んだ図形の属性を後から変える */}
-            {mode === 'select' && selectedStroke && (
+            {mode === 'select' && selectedStroke && !stretchAxis && (
               <>
                 <span className="font-semibold text-slate-700 shrink-0">
                   {KIND_LABEL[selectedStroke.kind]}
