@@ -38,8 +38,8 @@ const SHAPE_LABEL: Record<ShapeMode, string> = {
 }
 const SHAPE_HELP: Record<ShapeMode, string> = {
   line: 'クリックで頂点 / Backspace で 1 つ戻る / Enter で確定 / Esc で取消',
-  parallel: 'ドラッグで基準線 → 間隔と本数を指定',
-  circle: '中心 → 縁の 2 点をクリック',
+  parallel: '基準にする線をクリック → 幅を入力するか通過点をクリック → 確定',
+  circle: '中心をクリック → 半径を入力するか円周上をクリック → 確定',
   arc: '始点 → 通過点 → 終点の 3 点をクリック',
   polygon: 'クリックで頂点 / 最初の点か Enter で閉じる / Backspace で 1 つ戻る',
 }
