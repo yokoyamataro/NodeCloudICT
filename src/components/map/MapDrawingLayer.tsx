@@ -20,6 +20,10 @@
 //               線上文字は 始点 → 向きの点 の 2 クリックで方位に合わせる。
 //               線のどこに置くかも 選べる (真ん中 / 上 / 下)。上下は 線の向きから
 //               見た 左右なので、逆向きに引けば 入れ替わる。
+//   ・'frame'   図枠。用紙 (A4〜A0 / フリー) と 縮尺から 実寸を 出し、
+//               左下を クリックして 置く。標準配置 (傾き 0) と、水平方向を
+//               2 点で 決める 2 点配置。置くまで 仮枠が カーソルに 付いてくる。
+//               保存は 4 頂点の 面。
 //   ・'point'   タップした点に点を置く。registerCoordinate が true なら
 //               onAddCoordinate も呼び、座標管理にも登録する。
 //   ・'select'  図形を選ぶ。選び方は 点 / 線 / 長方形 / 多角形 の 4 通り。
@@ -109,6 +113,7 @@ export type DrawingMode =
   | 'parallel'
   | 'perp'
   | 'text'
+  | 'frame'
   | 'point'
   | 'select'
   | 'eraser'
@@ -781,6 +786,26 @@ function TextAnchorSvg({ anchor, size = 16 }: { anchor: TextAnchor; size?: numbe
   )
 }
 
+// ---- 図枠 ----
+//
+// 用紙の大きさ (mm) と 縮尺から、地図上の 実寸 (m) を出して 四角を 置く。
+//   実寸 [m] = 用紙 [mm] / 1000 × 縮尺の分母
+// 例: A3 横 (420×297mm) を 1/1000 で 置くと 420m × 297m。
+//
+// 保存は 4 頂点の 面なので、あとから 頂点を 動かしたり、DXF にも 出せる。
+
+/** 用紙の大きさ [mm]。縦置き (幅 × 高さ) で 持つ */
+const PAPER_SIZES = {
+  A4: [210, 297],
+  B4: [257, 364],
+  A3: [297, 420],
+  A2: [420, 594],
+  A1: [594, 841],
+  A0: [841, 1189],
+} as const
+
+export type PaperSize = keyof typeof PAPER_SIZES | 'free'
+
 /** ピックの吸着範囲 [画面 px]。指でも届き、隣の点を誤って掴まない程度 */
 const SNAP_RADIUS_PX = 18
 /** 交点 / 線上を探すときに、相手にする線分を絞る広さ [画面 px] */
@@ -1215,6 +1240,20 @@ export function MapDrawingLayer({
   const [textAnchor, setTextAnchor] = useState<TextAnchor>('center')
   /** 文字: 基準点の 左右どちらに 寄せるか */
   const [textAlign, setTextAlign] = useState<TextAlign>('center')
+  // ---- 図枠 ----
+  /** 用紙 / 向き / 縮尺 (分母) / フリーサイズの 実寸 [mm] */
+  const [framePaper, setFramePaper] = useState<PaperSize>('A3')
+  const [frameLandscape, setFrameLandscape] = useState(true)
+  const [frameScale, setFrameScale] = useState(1000)
+  const [frameFreeW, setFrameFreeW] = useState(420)
+  const [frameFreeH, setFrameFreeH] = useState(297)
+  /** 置き方: 標準 (傾き 0) / 2 点 (水平方向を 2 点で 決める) */
+  const [framePlacement, setFramePlacement] = useState<'standard' | 'twopoint'>('standard')
+  /** 2 点配置で 決めた 水平方向 (1 点目 → 2 点目) */
+  const [frameDir, setFrameDir] = useState<[LL, LL] | null>(null)
+  /** 2 点配置の 1 点目 */
+  const [frameDirStart, setFrameDirStart] = useState<LL | null>(null)
+
   /** 長方形: 縦横 [m] と、決めた開始点 (角) */
   const [rectWidth, setRectWidth] = useState(10)
   const [rectHeight, setRectHeight] = useState(5)
@@ -1463,7 +1502,7 @@ export function MapDrawingLayer({
 
   // 長方形・垂線の間だけ カーソルを 追う (仮表示の向きに使う)
   useEffect(() => {
-    if (mode !== 'rect' && mode !== 'perp') return
+    if (mode !== 'rect' && mode !== 'perp' && mode !== 'frame') return
     const onMove = (e: L.LeafletMouseEvent) => setShapeHover(snap(e.latlng))
     const onOut = () => setShapeHover(null)
     map.on('mousemove', onMove)
@@ -1506,6 +1545,10 @@ export function MapDrawingLayer({
     }
     if (mode !== 'parallel') setParallelBase(null)
     if (mode !== 'rect') setRectStart(null)
+    if (mode !== 'frame') {
+      setFrameDir(null)
+      setFrameDirStart(null)
+    }
     if (mode !== 'perp') {
       setPerpBase(null)
       setPerpThrough(null)
@@ -1562,6 +1605,7 @@ export function MapDrawingLayer({
       mode === 'parallel' ||
       mode === 'rect' ||
       mode === 'perp' ||
+      mode === 'frame' ||
       mode === 'circle' ||
       mode === 'arc' ||
       mode === 'polygon' ||
@@ -1877,6 +1921,33 @@ export function MapDrawingLayer({
           const len = d.east * geom.ux + d.north * geom.uy
           if (Math.abs(len) > 0.01) setPerpLength(Math.round(Math.abs(len) * 100) / 100)
         }
+        return
+      }
+
+      if (mode === 'frame') {
+        if (framePlacement === 'twopoint' && !frameDir) {
+          // 水平方向を 2 点で 決める
+          if (!frameDirStart) {
+            setFrameDirStart(at)
+            return
+          }
+          setFrameDir([frameDirStart, at])
+          setFrameDirStart(null)
+          return
+        }
+        const corners = frameCornersAt(at)
+        if (corners && farmId) {
+          void addStroke({
+            farmId,
+            kind: 'polygon',
+            color,
+            widthPx,
+            lineStyle,
+            points: corners,
+            layer,
+          })
+        }
+        // 続けて 何枚も 置けるよう、向きは 残す
         return
       }
 
@@ -2206,6 +2277,30 @@ export function MapDrawingLayer({
       setSelectedIds((prev) => (additive ? [...new Set([...prev, ...hit])] : hit))
     },
     [map, items, selectMethod],
+  )
+
+  /** 図枠の 地図上の 実寸 [m] */
+  const frameSizeM = useMemo(() => {
+    const [pw, ph] =
+      framePaper === 'free' ? [frameFreeW, frameFreeH] : PAPER_SIZES[framePaper]
+    const [w, h] = frameLandscape ? [Math.max(pw, ph), Math.min(pw, ph)] : [Math.min(pw, ph), Math.max(pw, ph)]
+    const k = frameScale / 1000
+    return { w: w * k, h: h * k }
+  }, [framePaper, frameLandscape, frameScale, frameFreeW, frameFreeH])
+
+  /** 原点 (左下) を 与えて 図枠の 4 隅を 作る */
+  const frameCornersAt = useCallback(
+    (origin: LL): LL[] | null => {
+      // 幅の向き。標準は 真東、2 点配置は 指定した向き
+      const dir = frameDir
+        ? deltaM(frameDir[0], frameDir[1], converter)
+        : { east: 1, north: 0 }
+      const len = Math.hypot(dir.east, dir.north)
+      if (len < 1e-9) return null
+      const toward = offsetLL(origin, dir.east / len, dir.north / len, converter)
+      return rectPoints(origin, toward, frameSizeM.w, frameSizeM.h, converter)
+    },
+    [frameDir, frameSizeM, converter],
   )
 
   /** クリック位置に一番近い 線 / 面の図形そのものを拾う (計測で 1 本まるごと測る用) */
@@ -3019,6 +3114,47 @@ export function MapDrawingLayer({
       )
     }
 
+    if (mode === 'frame') {
+      const corners = shapeHover ? frameCornersAt(shapeHover) : null
+      return (
+        <>
+          {/* 2 点配置: 向きを 決めている 途中 */}
+          {frameDirStart && (
+            <Marker
+              position={[frameDirStart.lat, frameDirStart.lng]}
+              icon={FIRST_VERTEX_ICON}
+              interactive={false}
+            />
+          )}
+          {frameDirStart && shapeHover && !frameDir && (
+            <Polyline
+              positions={[
+                [frameDirStart.lat, frameDirStart.lng],
+                [shapeHover.lat, shapeHover.lng],
+              ]}
+              pathOptions={guide}
+              interactive={false}
+            />
+          )}
+          {frameDir && (
+            <Polyline
+              positions={frameDir.map((p) => [p.lat, p.lng] as [number, number])}
+              pathOptions={guide}
+              interactive={false}
+            />
+          )}
+          {/* 置いた時と 同じ 大きさ・向きの 仮枠。左下が カーソル */}
+          {corners && (
+            <LeafletPolygon
+              positions={corners.map((p) => [p.lat, p.lng] as [number, number])}
+              pathOptions={{ ...dash, fillColor: color, fillOpacity: 0.06 }}
+              interactive={false}
+            />
+          )}
+        </>
+      )
+    }
+
     if (mode === 'perp') {
       if (!perpBase) return null
       return (
@@ -3065,6 +3201,9 @@ export function MapDrawingLayer({
     perpBase,
     perpThrough,
     perpShape,
+    frameDir,
+    frameDirStart,
+    frameCornersAt,
     converter,
     color,
     widthPx,
@@ -3116,6 +3255,8 @@ export function MapDrawingLayer({
         setTransformFrom(null)
         setParallelBase(null)
         setRectStart(null)
+        setFrameDir(null)
+        setFrameDirStart(null)
         setExtending(false)
         setDimensionMode(false)
         setPerpBase(null)
@@ -3658,6 +3799,146 @@ export function MapDrawingLayer({
                 >
                   やめる
                 </button>
+              </>
+            )}
+
+            {/* 図枠: 用紙 / 向き / 縮尺 / 置き方 を 決めて、左下を クリックして 置く */}
+            {mode === 'frame' && (
+              <>
+                <span className="font-semibold text-slate-700 shrink-0">図枠</span>
+
+                <select
+                  value={framePaper}
+                  onChange={(ev) => setFramePaper(ev.target.value as PaperSize)}
+                  className="h-7 px-1 border rounded shrink-0"
+                >
+                  {(['A4', 'B4', 'A3', 'A2', 'A1', 'A0'] as const).map((p2) => (
+                    <option key={p2} value={p2}>
+                      {p2}
+                    </option>
+                  ))}
+                  <option value="free">フリー</option>
+                </select>
+
+                {framePaper === 'free' ? (
+                  <label className="flex items-center gap-1 shrink-0">
+                    <NumberField
+                      step="1"
+                      min={1}
+                      value={frameFreeW}
+                      onChange={setFrameFreeW}
+                      className="w-16 h-7 px-1 border rounded text-right font-mono"
+                    />
+                    <span className="text-[11px] text-slate-500">×</span>
+                    <NumberField
+                      step="1"
+                      min={1}
+                      value={frameFreeH}
+                      onChange={setFrameFreeH}
+                      className="w-16 h-7 px-1 border rounded text-right font-mono"
+                    />
+                    <span className="text-[11px] text-slate-500">mm</span>
+                  </label>
+                ) : (
+                  <div className="flex items-center rounded border overflow-hidden shrink-0">
+                    {([false, true] as const).map((ls) => (
+                      <button
+                        key={String(ls)}
+                        type="button"
+                        onClick={() => setFrameLandscape(ls)}
+                        className={`h-7 px-2 text-[11px] ${
+                          frameLandscape === ls
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-white text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        {ls ? '横' : '縦'}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <label className="flex items-center gap-1 shrink-0">
+                  <span className="text-[11px] text-slate-600">縮尺 1/</span>
+                  <select
+                    value={[500, 1000, 2500].includes(frameScale) ? String(frameScale) : 'custom'}
+                    onChange={(ev) => {
+                      if (ev.target.value !== 'custom') setFrameScale(Number(ev.target.value))
+                    }}
+                    className="h-7 px-1 border rounded"
+                  >
+                    <option value="500">500</option>
+                    <option value="1000">1000</option>
+                    <option value="2500">2500</option>
+                    <option value="custom">任意</option>
+                  </select>
+                  {![500, 1000, 2500].includes(frameScale) && (
+                    <NumberField
+                      step="1"
+                      min={1}
+                      value={frameScale}
+                      onChange={setFrameScale}
+                      className="w-20 h-7 px-1 border rounded text-right font-mono"
+                    />
+                  )}
+                  {[500, 1000, 2500].includes(frameScale) && (
+                    <button
+                      type="button"
+                      onClick={() => setFrameScale(frameScale + 1)}
+                      title="任意の縮尺にする"
+                      className="h-7 px-2 rounded border text-[11px] text-slate-600 hover:bg-slate-50"
+                    >
+                      任意
+                    </button>
+                  )}
+                </label>
+
+                <div className="flex items-center rounded border overflow-hidden shrink-0">
+                  {(
+                    [
+                      ['standard', '標準配置'],
+                      ['twopoint', '2 点配置'],
+                    ] as const
+                  ).map(([v, label]) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => {
+                        setFramePlacement(v)
+                        setFrameDir(null)
+                        setFrameDirStart(null)
+                      }}
+                      className={`h-7 px-2 text-[11px] ${
+                        framePlacement === v
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-white text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                <span className="text-[11px] text-slate-500">
+                  {framePlacement === 'twopoint' && !frameDir
+                    ? frameDirStart
+                      ? '水平方向の 2 点目をクリック'
+                      : '水平方向の 1 点目をクリック'
+                    : `左下の原点をクリック (${frameSizeM.w.toFixed(0)} × ${frameSizeM.h.toFixed(0)} m)`}
+                </span>
+
+                {frameDir && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFrameDir(null)
+                      setFrameDirStart(null)
+                    }}
+                    className="h-7 px-2 rounded border text-slate-600 shrink-0"
+                  >
+                    向きをやり直す
+                  </button>
+                )}
               </>
             )}
 

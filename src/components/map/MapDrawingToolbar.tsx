@@ -11,6 +11,7 @@ import {
   ChevronDown,
   Circle as CircleIcon,
   Eraser,
+  Frame,
   MousePointer2,
   Pen,
   Crosshair,
@@ -565,6 +566,17 @@ export function MapDrawingToolbar({
         }`}
       >
         <Type className="h-4 w-4" />
+      </button>
+      {/* 図枠 (用紙 + 縮尺で 四角を 置く) */}
+      <button
+        type="button"
+        onClick={() => onChangeMode(mode === 'frame' ? 'off' : 'frame')}
+        title="図枠入力 — 用紙 (A4〜A0 / フリー) と 縮尺から 実寸の枠を置く"
+        className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
+          mode === 'frame' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+        }`}
+      >
+        <Frame className="h-4 w-4" />
       </button>
       {/* 付箋メモ (現在位置に従来型のメモを残す) */}
       {onMemo && (
