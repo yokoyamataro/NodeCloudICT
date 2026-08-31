@@ -1,0 +1,26 @@
+# 改行コードは リポジトリの 中では LF に 揃える。
+# android-ict/ を Windows、ios-ict/ を macOS で 触るため、
+# 揃えておかないと 行き来するたび 全行差分に なって 衝突する。
+# text=auto なので バイナリは Git が 自動判定して 手を 出さない。
+* text=auto eol=lf
+
+# Windows の バッチは CRLF でないと 動かないことが ある
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 自動判定に 任せず 明示しておく バイナリ
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.pdf   binary
+*.zip   binary
+*.jar   binary
+*.keystore binary
+*.jks   binary
+*.ttf   binary
+*.otf   binary
+*.woff  binary
+*.woff2 binary
