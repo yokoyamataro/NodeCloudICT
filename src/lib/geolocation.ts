@@ -14,7 +14,7 @@
 //   'browser'     — Web ブラウザの navigator.geolocation (Capacitor Web 実装)
 //   'android_gps' — ネイティブ Android LocationManager
 //                   (Mock GPS 経由で 外部 RTK 受信機 = Drogger 等 も接続可)
-//   'drogger'     — ネイティブ側で Drogger を BT SPP 直接接続 (未実装)
+//   'drogger'     — ネイティブ側で Drogger を BLE 直接接続
 //
 // Step 1: 骨組みだけ。既定は プラットフォーム判定に基づく:
 //   Web → 'browser'  /  ネイティブ → 'android_gps' (現行動作)
@@ -33,7 +33,7 @@ export type LocationSource = 'browser' | 'android_gps' | 'drogger'
  *     (開発 / QA で 別ソースをテストしたい 等)
  *  2) それ以外は プラットフォーム × アプリバリアント の既定:
  *     - Web ブラウザ:           'browser'  (navigator.geolocation)
- *     - ネイティブ + ICT APK:   'drogger'  (BT SPP 直接受信 / android-ict/ に
+ *     - ネイティブ + ICT APK:   'drogger'  (BLE 直接受信 / android-ict/ に
  *                                          DroggerLocationPlugin を登録済み)
  *     - ネイティブ + Mobility APK: 'android_gps' (Drogger プラグイン未登録なので
  *                                          Web モックへフォールバックしないよう
@@ -287,7 +287,7 @@ export async function watchSamplesInBackground(
   },
 ): Promise<{ clear: () => Promise<void> }> {
   const source = getActiveSource()
-  // Drogger は BT SPP 接続前提で バックグラウンド継続には ネイティブ側で
+  // Drogger は BLE 接続前提で バックグラウンド継続には ネイティブ側で
   // Foreground Service を実装する必要がある (Step 2 では未対応)。
   // 暫定的に フォアグラウンド watch (watchDroggerSamples) にフォールバック。
   if (source === 'drogger') {
