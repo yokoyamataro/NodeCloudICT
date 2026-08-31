@@ -20,7 +20,7 @@ import kotlin.concurrent.thread
  * - SourceTable 取得は 空 mountpoint で GET / HTTP/1.0
  * - VRS (電子基準点/民間サービス) は 定期的に 最新 GGA を キャスターへ upload 必須
  *
- * BT SPP OutputStream への write は 呼出側で行う (onRtcm 内)。
+ * 受信機への 書き込み (BLE) は 呼出側で行う (onRtcm 内)。
  * NtripClient 自体は Drogger BT を知らない = 単純な NTRIP → callback。
  */
 class NtripClient(
