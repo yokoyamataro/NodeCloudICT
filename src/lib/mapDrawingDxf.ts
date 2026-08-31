@@ -17,6 +17,7 @@ const DEFAULT_LAYER: Record<MapDrawingStroke['kind'], string> = {
   arc: 'PAINT_ARC',
   text: 'PAINT_TEXT',
   point: 'PAINT_POINT',
+  frame: 'PAINT_FRAME',
 }
 
 /** 文字の高さ [m]。CAD で開いた時に読める程度の既定値 */
@@ -113,7 +114,7 @@ export function buildMapDrawingDxfEntities(
         layer,
       })
     }
-    if (it.kind === 'polygon' && pts.length >= 3) {
+    if ((it.kind === 'polygon' || it.kind === 'frame') && pts.length >= 3) {
       const a = pts[pts.length - 1]
       const b = pts[0]
       entities.push({ type: 'LINE', x1: a.x, y1: a.y, x2: b.x, y2: b.y, layer })

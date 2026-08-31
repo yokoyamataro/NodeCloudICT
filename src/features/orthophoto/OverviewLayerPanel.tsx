@@ -13,7 +13,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChevronDown, ChevronUp, Eye, EyeOff, Layers, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
-import { DEFAULT_LAYERS, type ArrowStyle, type LineStyle } from '@/stores/mapDrawingStore'
+import {
+  DEFAULT_LAYERS,
+  FRAME_LAYER,
+  type ArrowStyle,
+  type LineStyle,
+} from '@/stores/mapDrawingStore'
 
 /**
  * 端部のスタイル見本。線だけ / 矢印付き を 短い線で 見せる。
@@ -142,7 +147,10 @@ export function useLayerOrder(
       ...presentLayers,
     ])
     const out = order.filter((l) => all.has(l))
-    for (const l of all) if (!out.includes(l)) out.push(l)
+    // 保存済みの並びに 無いものを 後ろへ。図枠は 既定で 一番下 (奥) に置く
+    // (並べ替え自体は 他と 同じように できる)
+    for (const l of all) if (!out.includes(l) && l !== FRAME_LAYER) out.push(l)
+    if (all.has(FRAME_LAYER) && !out.includes(FRAME_LAYER)) out.push(FRAME_LAYER)
     return out
   }, [order, presentLayers, elementKeys])
 

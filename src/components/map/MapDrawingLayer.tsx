@@ -23,7 +23,8 @@
 //   ・'frame'   図枠。用紙 (A4〜A0 / フリー) と 縮尺から 実寸を 出し、
 //               左下を クリックして 置く。標準配置 (傾き 0) と、水平方向を
 //               2 点で 決める 2 点配置。置くまで 仮枠が カーソルに 付いてくる。
-//               保存は 4 頂点の 面。
+//               種別は 'frame' で 面とは 別扱い。塗らず、専用レイヤ「図枠」に
+//               入って 既定では 一番下 (奥) に 置かれる。
 //   ・'point'   タップした点に点を置く。registerCoordinate が true なら
 //               onAddCoordinate も呼び、座標管理にも登録する。
 //   ・'select'  図形を選ぶ。選び方は 点 / 線 / 長方形 / 多角形 の 4 通り。
@@ -82,6 +83,7 @@ import {
   useMapDrawingStore,
   EMPTY_STROKES,
   DEFAULT_SNAP_TYPES,
+  FRAME_LAYER,
   KIND_LABEL,
   TEXT_ALIGN_LABEL,
   TEXT_ANCHOR_LABEL,
@@ -664,7 +666,7 @@ function itemScreenGeometry(
     return { lines: [arc.map(([lat, lng]) => toPx(({ lat, lng })))], points: [] }
   }
   const line = pts.map(toPx)
-  if (s.kind === 'polygon' && line.length >= 3) line.push(line[0])
+  if ((s.kind === 'polygon' || s.kind === 'frame') && line.length >= 3) line.push(line[0])
   return { lines: [line], points: [] }
 }
 
@@ -748,6 +750,7 @@ function itemHitDistancePx(map: L.Map, s: MapDrawingStroke, target: L.Point): nu
   let best = Infinity
   for (const p of geom.points) best = Math.min(best, p.distanceTo(target))
   for (const line of geom.lines) {
+    // 図枠は 塗っていないので、中を クリックしても 拾わない (枠線だけ)
     if ((s.kind === 'polygon' || s.kind === 'circle') && pointInPolygonPx(target, line)) return 0
     for (let i = 0; i < line.length - 1; i += 1) {
       best = Math.min(best, distancePointToSegmentPx(target, line[i], line[i + 1]))
@@ -1063,7 +1066,7 @@ function distancePointToSegmentPx(p: L.Point, a: L.Point, b: L.Point): number {
 
 /** 基準線に選べる図形か (線 / 面 / 手書き) */
 function isLineLike(kind: MapDrawingStroke['kind']): boolean {
-  return kind === 'stroke' || kind === 'polygon'
+  return kind === 'stroke' || kind === 'polygon' || kind === 'frame'
 }
 
 /**
@@ -1369,7 +1372,7 @@ export function MapDrawingLayer({
           if (it.id === excludeStrokeId) continue
           if (!isLineLike(it.kind)) continue
           const pts = it.points
-          const last = it.kind === 'polygon' ? pts.length : pts.length - 1
+          const last = it.kind === 'stroke' ? pts.length - 1 : pts.length
           for (let i = 0; i < last; i += 1) {
             considerSeg(pts[i], pts[(i + 1) % pts.length])
           }
@@ -1937,14 +1940,15 @@ export function MapDrawingLayer({
         }
         const corners = frameCornersAt(at)
         if (corners && farmId) {
+          // 図枠は 専用レイヤに 入れる。今 描いているレイヤには 混ぜない
           void addStroke({
             farmId,
-            kind: 'polygon',
+            kind: 'frame',
             color,
             widthPx,
             lineStyle,
             points: corners,
-            layer,
+            layer: FRAME_LAYER,
           })
         }
         // 続けて 何枚も 置けるよう、向きは 残す
@@ -2312,7 +2316,7 @@ export function MapDrawingLayer({
       for (const it of items) {
         if (!isLineLike(it.kind)) continue
         const pts = it.points
-        const last = it.kind === 'polygon' ? pts.length : pts.length - 1
+        const last = it.kind === 'stroke' ? pts.length - 1 : pts.length
         for (let i = 0; i < last; i += 1) {
           const a = pts[i]
           const b = pts[(i + 1) % pts.length]
@@ -2341,7 +2345,7 @@ export function MapDrawingLayer({
       for (const it of items) {
         if (!isLineLike(it.kind)) continue
         const pts = it.points
-        const last = it.kind === 'polygon' ? pts.length : pts.length - 1
+        const last = it.kind === 'stroke' ? pts.length - 1 : pts.length
         for (let i = 0; i < last; i += 1) {
           const a = pts[i]
           const b = pts[(i + 1) % pts.length]
@@ -2699,6 +2703,33 @@ export function MapDrawingLayer({
             </Fragment>
           )
         }
+        if (s.kind === 'frame') {
+          // 図枠は 塗らない。下の地図や 他の作図を 隠さないため
+          const positions = pointsForRender.map((p) => [p.lat, p.lng] as [number, number])
+          return (
+            <Fragment key={s.id}>
+              {isSelected && (
+                <LeafletPolygon
+                  positions={positions}
+                  pathOptions={{ color: '#3b82f6', weight: s.width_px + 8, opacity: 0.35, fill: false }}
+                  interactive={false}
+                />
+              )}
+              <LeafletPolygon
+                positions={positions}
+                pathOptions={{
+                  color: s.color,
+                  weight: s.width_px,
+                  opacity: 0.95,
+                  fill: false,
+                  dashArray: dash,
+                }}
+                eventHandlers={clickHandlers}
+              />
+            </Fragment>
+          )
+        }
+
         if (s.kind === 'polygon') {
           const positions = pointsForRender.map(
             (p) => [p.lat, p.lng] as [number, number],
@@ -3147,7 +3178,7 @@ export function MapDrawingLayer({
           {corners && (
             <LeafletPolygon
               positions={corners.map((p) => [p.lat, p.lng] as [number, number])}
-              pathOptions={{ ...dash, fillColor: color, fillOpacity: 0.06 }}
+              pathOptions={{ ...dash, fill: false }}
               interactive={false}
             />
           )}

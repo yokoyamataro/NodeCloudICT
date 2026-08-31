@@ -7,6 +7,7 @@
 //   ・'arc'     円弧: [始点, 通過点, 終点] の 3 点
 //   ・'polygon' 面: 頂点列 (n 点、レンダ時に自動閉合、半透明で塗り潰し)
 //   ・'point'   点: [位置] の 1 点
+//   ・'frame'   図枠: [左下, 右下, 右上, 左上] の 4 点。塗らない
 //
 // layer は DXF 出力時のレイヤ名 (未指定は CAD の既定レイヤ '0')。
 // font_size は kind='text' の文字サイズ [px]。NULL の既存データは width_px から換算する。
@@ -20,7 +21,14 @@ import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
 
 export type LineStyle = 'solid' | 'dashed' | 'dotted'
-export type DrawingKind = 'stroke' | 'text' | 'circle' | 'arc' | 'polygon' | 'point'
+export type DrawingKind =
+  | 'stroke'
+  | 'text'
+  | 'circle'
+  | 'arc'
+  | 'polygon'
+  | 'point'
+  | 'frame'
 
 /**
  * 線の端部の矢印。UI では 始点 / 終点 それぞれ 線か矢印かを 選ばせ、
@@ -59,8 +67,14 @@ export const SNAP_TYPE_LABEL: Record<SnapType, string> = {
 /** 既定で 有効にする種類。線上は 当たりが広く 誤爆しやすいので 既定は外す */
 export const DEFAULT_SNAP_TYPES: SnapType[] = ['vertex', 'intersection', 'center']
 
-/** レイヤ名の既定候補。現場でまず使う 4 つを最初から出しておく */
-export const DEFAULT_LAYERS = ['現況', '建物', '道路', '計画'] as const
+/**
+ * 図枠 専用のレイヤ名。図枠は 必ず ここに入り、既定では 一番下 (奥) に置く。
+ * 他の作図と 混ぜると 並べ替えの たびに 前後してしまうため。
+ */
+export const FRAME_LAYER = '図枠'
+
+/** レイヤ名の既定候補。現場でまず使う 4 つ + 図枠 */
+export const DEFAULT_LAYERS = ['現況', '建物', '道路', '計画', FRAME_LAYER] as const
 
 /** 種別の表示名 (属性パネルなどで使う) */
 export const KIND_LABEL: Record<DrawingKind, string> = {
@@ -70,6 +84,7 @@ export const KIND_LABEL: Record<DrawingKind, string> = {
   arc: '円弧',
   text: '文字',
   point: '点',
+  frame: '図枠',
 }
 
 export interface MapDrawingStroke {
@@ -196,7 +211,7 @@ interface State {
    */
   addStroke: (input: {
     farmId: string
-    kind?: 'stroke' | 'circle' | 'arc' | 'polygon'
+    kind?: 'stroke' | 'circle' | 'arc' | 'polygon' | 'frame'
     color: string
     widthPx: number
     lineStyle: LineStyle

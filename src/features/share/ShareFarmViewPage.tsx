@@ -76,7 +76,7 @@ interface SharePointType {
 
 interface ShareDrawing {
   id: string
-  kind: 'stroke' | 'text' | 'circle' | 'arc' | 'polygon' | 'point'
+  kind: 'stroke' | 'text' | 'circle' | 'arc' | 'polygon' | 'point' | 'frame'
   color: string
   width_px: number
   line_style: LineStyle | null
@@ -556,6 +556,24 @@ export function ShareFarmViewPage() {
                     opacity: 0.9,
                     lineCap: 'round',
                     lineJoin: 'round',
+                    dashArray: dash,
+                  }}
+                  interactive={false}
+                />
+              )
+            }
+            if (d.kind === 'frame') {
+              // 図枠は 塗らない
+              if (d.points.length < 3) return null
+              return (
+                <LeafletPolygon
+                  key={d.id}
+                  positions={d.points.map((p) => [p.lat, p.lng] as [number, number])}
+                  pathOptions={{
+                    color: d.color,
+                    weight: d.width_px,
+                    opacity: 0.95,
+                    fill: false,
                     dashArray: dash,
                   }}
                   interactive={false}
