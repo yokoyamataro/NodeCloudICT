@@ -7,7 +7,12 @@
 //   ・'arc'     円弧: [始点, 通過点, 終点] の 3 点
 //   ・'polygon' 面: 頂点列 (n 点、レンダ時に自動閉合、半透明で塗り潰し)
 //   ・'point'   点: [位置] の 1 点
-//   ・'frame'   図枠: [左下, 右下, 右上, 左上] の 4 点。塗らない
+//   ・'frame'   図枠: 外枠 [左下, 右下, 右上, 左上] の 4 点。内枠を 付けたものは
+//               続けて 内枠の 4 点を 持つ (計 8 点)。塗らない。
+//               色 / 線種 / 線幅は 固定 (黄・実線) で、置いたあとは 形も 属性も
+//               変えられない (動かせるのは 移動と 回転だけ)。
+//               用紙 / 縮尺 / 内枠の オフセット / 原点 / 向き は frame 列に 残す
+//               (点列だけだと 「A3 の 1/1000」 が あとから 分からないため)
 //
 // layer は DXF 出力時のレイヤ名 (未指定は CAD の既定レイヤ '0')。
 // font_size は kind='text' の文字サイズ [px]。NULL の既存データは width_px から換算する。
@@ -73,6 +78,15 @@ export const DEFAULT_SNAP_TYPES: SnapType[] = ['vertex', 'intersection', 'center
  */
 export const FRAME_LAYER = '図枠'
 
+/**
+ * 図枠の 見た目は 固定で、色 / 線種 / 線幅は 選ばせない。
+ * 用紙の 枠は 下地なので 作図と 見分けが つけば よく、空中写真の 上でも
+ * 沈まない 黄色に 揃える。
+ */
+export const FRAME_COLOR = '#eab308'
+/** 図枠の 線幅 [px] */
+export const FRAME_WIDTH_PX = 2
+
 /** レイヤ名の既定候補。現場でまず使う 4 つ + 図枠 */
 export const DEFAULT_LAYERS = ['現況', '建物', '道路', '計画', FRAME_LAYER] as const
 
@@ -85,6 +99,28 @@ export const KIND_LABEL: Record<DrawingKind, string> = {
   text: '文字',
   point: '点',
   frame: '図枠',
+}
+
+/**
+ * 図枠 (kind='frame') の 素性。点列は これを 地図に 焼いた 結果なので、
+ * 用紙や 縮尺は ここに 残す。移動 / 回転では origin と angleDeg も 一緒に 直す。
+ */
+export interface FrameSpec {
+  /** 用紙 ('A4'〜'A0' / 'free') */
+  paper: string
+  /** 横置きか */
+  landscape: boolean
+  /** 置いた 用紙の 実寸 [mm] (向きを 当てはめた あとの 値) */
+  widthMm: number
+  heightMm: number
+  /** 縮尺の 分母 (1/scale) */
+  scale: number
+  /** 内枠の 外枠からの オフセット [用紙 mm]。内枠なしは null */
+  inset: { left: number; right: number; top: number; bottom: number } | null
+  /** 外枠の 左下 */
+  origin: { lat: number; lng: number }
+  /** 幅の向き [度]。東を 0 とした 反時計回り */
+  angleDeg: number
 }
 
 export interface MapDrawingStroke {
@@ -111,6 +147,8 @@ export interface MapDrawingStroke {
   text_anchor: TextAnchor
   /** kind='text' を 基準点の 左右どちらに 寄せるか */
   text_align: TextAlign
+  /** kind='frame' の 素性 (用紙 / 縮尺 / 内枠 / 原点 / 向き)。他の種別は null */
+  frame: FrameSpec | null
   created_at: string
   updated_at: string
 }
@@ -125,6 +163,9 @@ type HistoryOp =
       id: string
       before: Array<{ lat: number; lng: number }>
       after: Array<{ lat: number; lng: number }>
+      /** 図枠を 動かしたときは 素性も 一緒に 戻す (undo を 1 回で 済ませる) */
+      beforeFrame?: FrameSpec | null
+      afterFrame?: FrameSpec | null
     }
   | {
       op: 'attrs'
@@ -218,6 +259,8 @@ interface State {
     points: Array<{ lat: number; lng: number }>
     layer?: string
     arrow?: ArrowStyle
+    /** kind='frame' の 素性 */
+    frame?: FrameSpec | null
   }) => Promise<MapDrawingStroke | null>
   addText: (input: {
     farmId: string
@@ -242,12 +285,16 @@ interface State {
     layer?: string
   }) => Promise<MapDrawingStroke | null>
   deleteStroke: (id: string) => Promise<void>
-  /** 色 / 太さ / 線種 / レイヤ / 文字などの属性を差し替える */
+  /** 色 / 太さ / 線種 / レイヤ / 文字などの属性を差し替える (図枠は 変えない) */
   updateStrokeAttrs: (id: string, attrs: StrokeAttrs) => Promise<void>
-  /** 頂点座標列を差し替える (端点移動 / 折点追加・削除) */
+  /**
+   * 頂点座標列を差し替える (端点移動 / 折点追加・削除)。
+   * 図枠を 移動 / 回転したときは、素性 (原点・向き) も 一緒に 渡す。
+   */
   updateStrokePoints: (
     id: string,
     points: Array<{ lat: number; lng: number }>,
+    frame?: FrameSpec | null,
   ) => Promise<void>
   undo: () => Promise<void>
   redo: () => Promise<void>
@@ -270,6 +317,7 @@ async function insertItemInternal(
     arrow?: ArrowStyle
     textAnchor?: TextAnchor
     textAlign?: TextAlign
+    frame?: FrameSpec | null
   },
 ): Promise<MapDrawingStroke | null> {
   const { data: userData } = await supabase.auth.getUser()
@@ -291,6 +339,7 @@ async function insertItemInternal(
       arrow: input.arrow ?? 'none',
       text_anchor: input.textAnchor ?? 'center',
       text_align: input.textAlign ?? 'center',
+      frame: input.frame ?? null,
     } as never)
     .select()
     .single()
@@ -341,6 +390,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
     points,
     layer = '0',
     arrow = 'none',
+    frame = null,
   }) => {
     if (points.length < 2) return null
     // 楽観追加: temp ID で先にストアに入れる
@@ -362,6 +412,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
       arrow,
       text_anchor: 'center',
       text_align: 'center',
+      frame,
       created_at: now,
       updated_at: now,
     }
@@ -382,6 +433,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
         text: null,
         layer,
         arrow,
+        frame,
       })
       if (!stroke) throw new Error('insert returned null')
       const map = new Map(get().byFarm)
@@ -436,6 +488,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
       arrow: 'none',
       text_anchor: textAnchor,
       text_align: textAlign,
+      frame: null,
       created_at: now,
       updated_at: now,
     }
@@ -499,6 +552,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
       arrow: 'none',
       text_anchor: 'center',
       text_align: 'center',
+      frame: null,
       created_at: now,
       updated_at: now,
     }
@@ -587,6 +641,9 @@ export const useMapDrawingStore = create<State>((set, get) => ({
       for (const [fid, list] of map.entries()) {
         const idx = list.findIndex((s) => s.id === id)
         if (idx >= 0) {
+          // 図枠は 見た目もレイヤも 固定。選択に 混ざっていても 変えない。
+          // 位置と 向きは updateStrokePoints (点列 + 素性) で 直す
+          if (list[idx].kind === 'frame') return
           farmId = fid
           before = pickAttrs(list[idx], attrs)
           const next = [...list]
@@ -625,10 +682,13 @@ export const useMapDrawingStore = create<State>((set, get) => ({
     }
   },
 
-  updateStrokePoints: async (id, points) => {
+  updateStrokePoints: async (id, points, frame) => {
     // 現在の points を before として控えつつ、楽観的に置換
     let farmId: string | null = null
     let before: Array<{ lat: number; lng: number }> | null = null
+    let beforeFrame: FrameSpec | null = null
+    // 図枠を 移動 / 回転したとき。素性 (原点・向き) も 点列と 一緒に 直す
+    const withFrame = frame !== undefined
     {
       const map = new Map(get().byFarm)
       for (const [fid, list] of map.entries()) {
@@ -636,8 +696,9 @@ export const useMapDrawingStore = create<State>((set, get) => ({
         if (idx >= 0) {
           farmId = fid
           before = list[idx].points
+          beforeFrame = list[idx].frame
           const next = [...list]
-          next[idx] = { ...list[idx], points }
+          next[idx] = { ...list[idx], points, ...(withFrame ? { frame: frame ?? null } : {}) }
           map.set(fid, next)
           set({ byFarm: map })
           break
@@ -648,13 +709,20 @@ export const useMapDrawingStore = create<State>((set, get) => ({
     try {
       const { error } = await supabase
         .from('map_drawings')
-        .update({ points } as never)
+        .update({ points, ...(withFrame ? { frame: frame ?? null } : {}) } as never)
         .eq('id', id)
       if (error) throw error
       set({
         undoStack: [
           ...get().undoStack,
-          { op: 'update', farmId, id, before, after: points },
+          {
+            op: 'update',
+            farmId,
+            id,
+            before,
+            after: points,
+            ...(withFrame ? { beforeFrame, afterFrame: frame ?? null } : {}),
+          },
         ],
         redoStack: [],
       })
@@ -718,15 +786,16 @@ export const useMapDrawingStore = create<State>((set, get) => ({
           redoStack: [...get().redoStack, last],
         })
       } else if (last.op === 'update') {
-        // update を undo = before に戻す
+        // update を undo = before に戻す (図枠は 素性も 一緒に)
+        const undoFrame = last.beforeFrame !== undefined ? { frame: last.beforeFrame } : {}
         const { error } = await supabase
           .from('map_drawings')
-          .update({ points: last.before } as never)
+          .update({ points: last.before, ...undoFrame } as never)
           .eq('id', last.id)
         if (error) throw error
         const map = new Map(get().byFarm)
         const list = (map.get(last.farmId) ?? []).map((s) =>
-          s.id === last.id ? { ...s, points: last.before } : s,
+          s.id === last.id ? { ...s, points: last.before, ...undoFrame } : s,
         )
         map.set(last.farmId, list)
         set({
@@ -750,6 +819,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
           arrow: last.item.arrow,
           textAnchor: last.item.text_anchor,
           textAlign: last.item.text_align,
+          frame: last.item.frame,
         })
         if (!item) throw new Error('re-insert returned null')
         const map = new Map(get().byFarm)
@@ -794,6 +864,7 @@ export const useMapDrawingStore = create<State>((set, get) => ({
           arrow: last.item.arrow,
           textAnchor: last.item.text_anchor,
           textAlign: last.item.text_align,
+          frame: last.item.frame,
         })
         if (!item) throw new Error('re-insert returned null')
         const map = new Map(get().byFarm)
@@ -827,15 +898,16 @@ export const useMapDrawingStore = create<State>((set, get) => ({
           undoStack: [...get().undoStack, last],
         })
       } else if (last.op === 'update') {
-        // update を redo = after に戻す
+        // update を redo = after に戻す (図枠は 素性も 一緒に)
+        const redoFrame = last.afterFrame !== undefined ? { frame: last.afterFrame } : {}
         const { error } = await supabase
           .from('map_drawings')
-          .update({ points: last.after } as never)
+          .update({ points: last.after, ...redoFrame } as never)
           .eq('id', last.id)
         if (error) throw error
         const map = new Map(get().byFarm)
         const list = (map.get(last.farmId) ?? []).map((s) =>
-          s.id === last.id ? { ...s, points: last.after } : s,
+          s.id === last.id ? { ...s, points: last.after, ...redoFrame } : s,
         )
         map.set(last.farmId, list)
         set({

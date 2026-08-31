@@ -102,6 +102,18 @@ export function buildMapDrawingDxfEntities(
       continue
     }
 
+    if (it.kind === 'frame') {
+      // 外枠 (4 点) と 内枠 (あれば 続く 4 点) を それぞれ 閉じた 四角で 出す
+      for (let s = 0; s + 4 <= pts.length; s += 4) {
+        for (let i = 0; i < 4; i += 1) {
+          const a = pts[s + i]
+          const b = pts[s + ((i + 1) % 4)]
+          entities.push({ type: 'LINE', x1: a.x, y1: a.y, x2: b.x, y2: b.y, layer })
+        }
+      }
+      continue
+    }
+
     // stroke / polygon: 連続する線分に分解する
     if (pts.length < 2) continue
     for (let i = 0; i < pts.length - 1; i += 1) {
@@ -114,7 +126,7 @@ export function buildMapDrawingDxfEntities(
         layer,
       })
     }
-    if ((it.kind === 'polygon' || it.kind === 'frame') && pts.length >= 3) {
+    if (it.kind === 'polygon' && pts.length >= 3) {
       const a = pts[pts.length - 1]
       const b = pts[0]
       entities.push({ type: 'LINE', x1: a.x, y1: a.y, x2: b.x, y2: b.y, layer })

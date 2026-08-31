@@ -698,8 +698,9 @@ export function MapDrawingToolbar({
         </button>
       )}
       {/* 共通属性 (レイヤ / 色 / 線種 / 太さ)。ツールバーの一番右にまとめる。
-          ここで決めた値が、これから描くものに付く */}
-      {showAttributes && (
+          ここで決めた値が、これから描くものに付く。
+          図枠は レイヤも 見た目も 固定なので、その間は 出さない */}
+      {showAttributes && mode !== 'frame' && (
       <div className="ml-auto flex flex-wrap items-center gap-1 pl-2 border-l">
         {/* レイヤ名 (DXF 出力に反映) */}
         {onChangeLayer && (

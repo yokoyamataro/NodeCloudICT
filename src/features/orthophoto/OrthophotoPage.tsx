@@ -439,6 +439,12 @@ export function OrthophotoPage() {
   const applyToSelection = (attrs: Parameters<typeof updateStrokeAttrs>[1]) => {
     for (const id of selectedDrawingIds) void updateStrokeAttrs(id, attrs)
   }
+  /** 選んでいるのが 図枠だけか。図枠は 見た目を 変えられないので 設定を 出さない */
+  const selectionIsFramesOnly =
+    selectedDrawingIds.length > 0 &&
+    selectedDrawingIds.every(
+      (id) => drawingItems.find((d) => d.id === id)?.kind === 'frame',
+    )
 
   // レイヤの並び順と表示状態 (この端末での見え方。工区ごとに localStorage へ)
   const elementKeys = useMemo(() => elementRows.map((r) => r.key), [elementRows])
@@ -633,6 +639,7 @@ export function OrthophotoPage() {
           applyToSelection({ arrow: a })
         }}
         selectedCount={selectedDrawingIds.length}
+        hideStyleSettings={drawingMode === 'frame' || selectionIsFramesOnly}
       />
 
       {/* 地図 (オルソ + 座標 + 区域 + ペイント + メモ + 写真)。

@@ -563,21 +563,29 @@ export function ShareFarmViewPage() {
               )
             }
             if (d.kind === 'frame') {
-              // 図枠は 塗らない
+              // 図枠は 塗らない。頂点は 外枠 4 点 (内枠付きは 続けて 内枠 4 点)
               if (d.points.length < 3) return null
+              const rings =
+                d.points.length >= 8
+                  ? [d.points.slice(0, 4), d.points.slice(4, 8)]
+                  : [d.points]
               return (
-                <LeafletPolygon
-                  key={d.id}
-                  positions={d.points.map((p) => [p.lat, p.lng] as [number, number])}
-                  pathOptions={{
-                    color: d.color,
-                    weight: d.width_px,
-                    opacity: 0.95,
-                    fill: false,
-                    dashArray: dash,
-                  }}
-                  interactive={false}
-                />
+                <Fragment key={d.id}>
+                  {rings.map((ring, i) => (
+                    <LeafletPolygon
+                      key={i}
+                      positions={ring.map((p) => [p.lat, p.lng] as [number, number])}
+                      pathOptions={{
+                        color: d.color,
+                        weight: d.width_px,
+                        opacity: 0.95,
+                        fill: false,
+                        dashArray: dash,
+                      }}
+                      interactive={false}
+                    />
+                  ))}
+                </Fragment>
               )
             }
             if (d.kind === 'polygon') {

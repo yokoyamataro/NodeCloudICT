@@ -25,6 +25,12 @@
 //               2 点で 決める 2 点配置。置くまで 仮枠が カーソルに 付いてくる。
 //               種別は 'frame' で 面とは 別扱い。塗らず、専用レイヤ「図枠」に
 //               入って 既定では 一番下 (奥) に 置かれる。
+//               色 / 線種 / 線幅は 固定 (黄・実線) で 選ばせない。
+//               内枠を 付けると、外枠から 四辺の オフセット [mm] だけ 内側に
+//               入った もう 1 枚が 付く。外枠と 内枠は 1 つの 図枠 (頂点 8 点)
+//               なので、別々に ずれることは ない。
+//               置いたあとの 図枠は 形を 変えられない (頂点ハンドルを 出さず、
+//               色などの 属性も 効かない)。動かせるのは 移動と 回転だけ。
 //   ・'point'   タップした点に点を置く。registerCoordinate が true なら
 //               onAddCoordinate も呼び、座標管理にも登録する。
 //   ・'select'  図形を選ぶ。選び方は 点 / 線 / 長方形 / 多角形 の 4 通り。
@@ -32,7 +38,8 @@
 //               同じ場所を 続けてクリックすると 手前から 順に 奥へ回る。
 //               他は 囲った形に かかった図形を まとめて 選ぶ。
 //               選んだものは「移動」「コピー」で 始点 → 終点 の 2 クリックで
-//               平行移動 / 複製 できる。複数選んだときは レイヤ / 種別 / 色 / 線種 で
+//               平行移動 / 複製 できる。「回転」は 中心 → 基準の点 → 回す先 の
+//               3 クリックで、その 角度だけ 回す。複数選んだときは レイヤ / 種別 / 色 / 線種 で
 //               絞り込める。線だけを 選んだときは「伸縮」で、相手の線を クリックすると
 //               選んだ線の 両端が そこまで 伸びる / 詰まる。
 //               1 つだけ選んだときは 青ハンドルをドラッグで頂点移動 / 長押しで削除 /
@@ -84,6 +91,8 @@ import {
   EMPTY_STROKES,
   DEFAULT_SNAP_TYPES,
   FRAME_LAYER,
+  FRAME_COLOR,
+  FRAME_WIDTH_PX,
   KIND_LABEL,
   TEXT_ALIGN_LABEL,
   TEXT_ANCHOR_LABEL,
@@ -93,6 +102,7 @@ import {
   type SnapType,
   type MapDrawingStroke,
   type LineStyle,
+  type FrameSpec,
 } from '@/stores/mapDrawingStore'
 import type { CoordinateConverter } from '@/lib/coordinates'
 import {
@@ -665,9 +675,58 @@ function itemScreenGeometry(
     const arc = arcThroughPoints(pts[0], pts[1], pts[2])
     return { lines: [arc.map(([lat, lng]) => toPx(({ lat, lng })))], points: [] }
   }
+  if (s.kind === 'frame') {
+    // 外枠と 内枠は 別々の 閉じた 四角。1 本に つなげない
+    const rings: L.Point[][] = []
+    for (const ring of frameRings(pts)) {
+      if (ring.length < 3) continue
+      const line = ring.map(toPx)
+      line.push(line[0])
+      rings.push(line)
+    }
+    return { lines: rings, points: [] }
+  }
   const line = pts.map(toPx)
-  if ((s.kind === 'polygon' || s.kind === 'frame') && line.length >= 3) line.push(line[0])
+  if (s.kind === 'polygon' && line.length >= 3) line.push(line[0])
   return { lines: [line], points: [] }
+}
+
+/**
+ * 図枠の 枠。頂点は 外枠 4 点、内枠を 付けたものは 続けて 内枠 4 点の 計 8 点。
+ * 内枠を 別レコードにすると 片方だけ 動かせてしまうので、1 つに まとめて持つ。
+ */
+function frameRings(points: LL[]): LL[][] {
+  if (points.length >= 8) return [points.slice(0, 4), points.slice(4, 8)]
+  return [points]
+}
+
+/**
+ * 図形の 辺 (線分) を 順に 返す。手書き / 連続線は 開いたまま、面は 閉じる。
+ * 図枠は 外枠と 内枠を それぞれ 閉じた 四角として 返す (点列を そのまま
+ * つなぐと 外枠と 内枠が 繋がってしまう)。
+ */
+function itemSegments(it: MapDrawingStroke): Array<[LL, LL]> {
+  const out: Array<[LL, LL]> = []
+  if (it.kind === 'frame') {
+    for (const ring of frameRings(it.points)) {
+      if (ring.length < 3) continue
+      for (let i = 0; i < ring.length; i += 1) out.push([ring[i], ring[(i + 1) % ring.length]])
+    }
+    return out
+  }
+  const pts = it.points
+  const last = it.kind === 'stroke' ? pts.length - 1 : pts.length
+  for (let i = 0; i < last; i += 1) out.push([pts[i], pts[(i + 1) % pts.length]])
+  return out
+}
+
+/** center を 中心に 反時計回りへ deg 度 回した 点 */
+function rotateAround(p: LL, center: LL, deg: number, c?: CoordinateConverter): LL {
+  const d = deltaM(center, p, c)
+  const t = (deg * Math.PI) / 180
+  const cos = Math.cos(t)
+  const sin = Math.sin(t)
+  return offsetLL(center, d.east * cos - d.north * sin, d.east * sin + d.north * cos, c)
 }
 
 /** 線分 ab と cd が 交わるか (画面座標) */
@@ -1256,6 +1315,12 @@ export function MapDrawingLayer({
   const [frameDir, setFrameDir] = useState<[LL, LL] | null>(null)
   /** 2 点配置の 1 点目 */
   const [frameDirStart, setFrameDirStart] = useState<LL | null>(null)
+  /** 内枠を 付けるか と、外枠からの オフセット [用紙 mm]。四辺とも 既定 10mm */
+  const [frameInnerOn, setFrameInnerOn] = useState(true)
+  const [frameInsetLeft, setFrameInsetLeft] = useState(10)
+  const [frameInsetRight, setFrameInsetRight] = useState(10)
+  const [frameInsetTop, setFrameInsetTop] = useState(10)
+  const [frameInsetBottom, setFrameInsetBottom] = useState(10)
 
   /** 長方形: 縦横 [m] と、決めた開始点 (角) */
   const [rectWidth, setRectWidth] = useState(10)
@@ -1371,11 +1436,7 @@ export function MapDrawingLayer({
         for (const it of items) {
           if (it.id === excludeStrokeId) continue
           if (!isLineLike(it.kind)) continue
-          const pts = it.points
-          const last = it.kind === 'stroke' ? pts.length - 1 : pts.length
-          for (let i = 0; i < last; i += 1) {
-            considerSeg(pts[i], pts[(i + 1) % pts.length])
-          }
+          for (const [a, b] of itemSegments(it)) considerSeg(a, b)
         }
         if (extraSegments) {
           for (const [a, b] of extraSegments) considerSeg(a, b)
@@ -1437,9 +1498,15 @@ export function MapDrawingLayer({
   }, [selectedIds, onSelectionChange])
   /** 線 / 長方形 / 多角形で 囲っている途中の 頂点 */
   const [selectShape, setSelectShape] = useState<LL[]>([])
-  /** 選択したものを 平行移動 / 複製する。始点 → 終点 の 2 クリックで ずらす量を決める */
-  const [transformMode, setTransformMode] = useState<'move' | 'copy' | null>(null)
+  /**
+   * 選択したものを 平行移動 / 複製 / 回転する。
+   * 移動・複製は 始点 → 終点 の 2 クリック、回転は 中心 → 基準の点 → 回す先 の
+   * 3 クリック (transformFrom が 回転の中心)。
+   */
+  const [transformMode, setTransformMode] = useState<'move' | 'copy' | 'rotate' | null>(null)
   const [transformFrom, setTransformFrom] = useState<LL | null>(null)
+  /** 回転の 基準の点 (中心 → この点 の 向きを 回す先へ 合わせる) */
+  const [rotateBase, setRotateBase] = useState<LL | null>(null)
   const transforming = transformMode !== null
   /** 重なりを 順に選ぶための 覚え書き (前回のクリック位置と 候補の並び) */
   const pickCycleRef = useRef<{ px: L.Point; ids: string[]; index: number } | null>(null)
@@ -1566,6 +1633,7 @@ export function MapDrawingLayer({
       setPickCycle(null)
       setTransformMode(null)
       setTransformFrom(null)
+      setRotateBase(null)
       setDragPreview(null)
       setExtending(false)
     }
@@ -1707,8 +1775,10 @@ export function MapDrawingLayer({
           if (distPickElement) {
             const stroke = pickStroke(e.latlng)
             if (!stroke) return
+            // 図枠は 外枠だけ 測る (内枠まで つなぐと 1 本の 線に ならない)
+            const ring = stroke.kind === 'frame' ? frameRings(stroke.points)[0] : stroke.points
             const verts =
-              stroke.kind === 'polygon' ? [...stroke.points, stroke.points[0]] : stroke.points
+              stroke.kind === 'stroke' ? ring : [...ring, ring[0]]
             const segs = buildSegments(verts, converter)
             if (segs.length === 0) return
             setLastMeasure({
@@ -1830,10 +1900,21 @@ export function MapDrawingLayer({
         })
         return
       }
-      // 平行移動 / 複製: 始点 → 終点 の 2 クリック
+      // 平行移動 / 複製: 始点 → 終点 の 2 クリック。回転は 中心 → 基準 → 先
       if (mode === 'select' && transformMode) {
         if (!transformFrom) {
           setTransformFrom(at)
+          return
+        }
+        if (transformMode === 'rotate') {
+          if (!rotateBase) {
+            setRotateBase(at)
+            return
+          }
+          runRotate(transformFrom, rotateBase, at)
+          setTransformFrom(null)
+          setRotateBase(null)
+          setTransformMode(null)
           return
         }
         runTransform(transformFrom, at, transformMode)
@@ -1938,17 +2019,20 @@ export function MapDrawingLayer({
           setFrameDirStart(null)
           return
         }
-        const corners = frameCornersAt(at)
-        if (corners && farmId) {
-          // 図枠は 専用レイヤに 入れる。今 描いているレイヤには 混ぜない
+        const rings = frameRingsAt(at)
+        if (rings && farmId) {
+          // 図枠は 専用レイヤに 入れ、今 描いているレイヤには 混ぜない。
+          // 色 / 線種 / 線幅は 固定。内枠は 外枠と 同じ 1 レコードに
+          // 続けて持つ (外枠 4 点 + 内枠 4 点)
           void addStroke({
             farmId,
             kind: 'frame',
-            color,
-            widthPx,
-            lineStyle,
-            points: corners,
+            color: FRAME_COLOR,
+            widthPx: FRAME_WIDTH_PX,
+            lineStyle: 'solid',
+            points: rings.inner ? [...rings.outer, ...rings.inner] : rings.outer,
             layer: FRAME_LAYER,
+            frame: rings.spec,
           })
         }
         // 続けて 何枚も 置けるよう、向きは 残す
@@ -2054,8 +2138,10 @@ export function MapDrawingLayer({
         const it = items.find((x) => x.id === id)
         if (!it) continue
         const moved = it.points.map(shift)
+        // 図枠は 素性の 原点も 一緒に ずらす (点列と 食い違わせない)
+        const movedFrame = it.frame ? { ...it.frame, origin: shift(it.frame.origin) } : undefined
         if (kindOfMove === 'move') {
-          void updateStrokePoints(it.id, moved)
+          void updateStrokePoints(it.id, moved, movedFrame)
           continue
         }
         // 複製: 属性を そのまま 引き継いで 新しく作る
@@ -2092,6 +2178,7 @@ export function MapDrawingLayer({
             points: moved,
             layer: it.layer,
             arrow: it.arrow,
+            frame: movedFrame ?? null,
           })
         }
       }
@@ -2099,6 +2186,83 @@ export function MapDrawingLayer({
       if (kindOfMove === 'move') setSelectedIds([])
     },
     [farmId, selectedIds, items, converter, updateStrokePoints, addStroke, addText, addPoint],
+  )
+
+  /**
+   * 選択中の図形を 中心の まわりに 回す。
+   * 回す量は 中心 → 基準の点 と 中心 → 回す先 の 角度差。
+   */
+  const runRotate = useCallback(
+    (center: LL, base: LL, to: LL) => {
+      if (!farmId || selectedIds.length === 0) return
+      const deg = bearingRawDeg(center, to, converter) - bearingRawDeg(center, base, converter)
+      if (Math.abs(deg) < 1e-6) return
+      for (const id of selectedIds) {
+        const it = items.find((x) => x.id === id)
+        if (!it) continue
+        // 図枠は 素性の 原点と 向きも 一緒に 回す
+        void updateStrokePoints(
+          it.id,
+          it.points.map((p) => rotateAround(p, center, deg, converter)),
+          it.frame
+            ? {
+                ...it.frame,
+                origin: rotateAround(it.frame.origin, center, deg, converter),
+                angleDeg: it.frame.angleDeg + deg,
+              }
+            : undefined,
+        )
+        // 文字は 位置だけ 回しても 寝たままなので、向きも 一緒に 回す
+        if (it.kind === 'text') {
+          void updateStrokeAttrs(it.id, { rotationDeg: it.rotation_deg + deg })
+        }
+      }
+      setSelectedIds([])
+    },
+    [farmId, selectedIds, items, converter, updateStrokePoints, updateStrokeAttrs],
+  )
+
+  /**
+   * 移動 / 回転の 仮表示。選択中の図形を 動かした先の 形だけ 点線で 見せる。
+   * move は 1 点を 動かす関数 (平行移動なら ずらす、回転なら 回す)。
+   */
+  const previewMoved = useCallback(
+    (move: (p: LL) => LL) =>
+      items
+        .filter((it) => selectedSet.has(it.id))
+        .map((it) => {
+          const pts = it.points.map(move)
+          if (pts.length < 2) {
+            return (
+              <Marker
+                key={`tf-${it.id}`}
+                position={[pts[0].lat, pts[0].lng]}
+                icon={HANDLE_ICON}
+                interactive={false}
+              />
+            )
+          }
+          const style: L.PathOptions = {
+            color: it.color,
+            weight: it.width_px,
+            opacity: 0.7,
+            dashArray: '6,4',
+          }
+          // 図枠は 外枠と 内枠を 別々に、面は 閉じて 見せる
+          const rings = it.kind === 'frame' ? frameRings(pts) : [pts]
+          return (
+            <Fragment key={`tf-${it.id}`}>
+              {rings.map((ring, i) => {
+                const positions = ring.map((p) => [p.lat, p.lng] as [number, number])
+                if (it.kind === 'polygon' || it.kind === 'frame') positions.push(positions[0])
+                return (
+                  <Polyline key={i} positions={positions} pathOptions={style} interactive={false} />
+                )
+              })}
+            </Fragment>
+          )
+        }),
+    [items, selectedSet],
   )
 
   /** 選択中の図形 (絞り込みと 伸縮の 判定に使う) */
@@ -2283,28 +2447,105 @@ export function MapDrawingLayer({
     [map, items, selectMethod],
   )
 
-  /** 図枠の 地図上の 実寸 [m] */
+  /**
+   * 図枠の 大きさ。向きを 当てはめた あとの 用紙 [mm] と、
+   * 地図上の 実寸 [m] (= 用紙 [mm] / 1000 × 縮尺の分母)。
+   */
   const frameSizeM = useMemo(() => {
     const [pw, ph] =
       framePaper === 'free' ? [frameFreeW, frameFreeH] : PAPER_SIZES[framePaper]
-    const [w, h] = frameLandscape ? [Math.max(pw, ph), Math.min(pw, ph)] : [Math.min(pw, ph), Math.max(pw, ph)]
+    const [wMm, hMm] = frameLandscape
+      ? [Math.max(pw, ph), Math.min(pw, ph)]
+      : [Math.min(pw, ph), Math.max(pw, ph)]
     const k = frameScale / 1000
-    return { w: w * k, h: h * k }
+    return { wMm, hMm, w: wMm * k, h: hMm * k }
   }, [framePaper, frameLandscape, frameScale, frameFreeW, frameFreeH])
 
-  /** 原点 (左下) を 与えて 図枠の 4 隅を 作る */
-  const frameCornersAt = useCallback(
-    (origin: LL): LL[] | null => {
+  /** 内枠の オフセット [m]。用紙の mm を 縮尺で 実寸に 伸ばす */
+  const frameInsetM = useMemo(() => {
+    const k = frameScale / 1000
+    return {
+      left: frameInsetLeft * k,
+      right: frameInsetRight * k,
+      top: frameInsetTop * k,
+      bottom: frameInsetBottom * k,
+    }
+  }, [frameScale, frameInsetLeft, frameInsetRight, frameInsetTop, frameInsetBottom])
+
+  /**
+   * 原点 (左下) を 与えて 図枠を 作る。
+   * 内枠を 付ける設定なら、外枠から 四辺の オフセットだけ 内側に 入った
+   * もう 1 枚も 返す (オフセットが 用紙を 食い潰すときは 外枠だけ)。
+   * 保存に 使う 素性 (用紙 / 縮尺 / 内枠 / 原点 / 向き) も 一緒に 返す。
+   */
+  const frameRingsAt = useCallback(
+    (origin: LL): { outer: LL[]; inner: LL[] | null; spec: FrameSpec } | null => {
       // 幅の向き。標準は 真東、2 点配置は 指定した向き
       const dir = frameDir
         ? deltaM(frameDir[0], frameDir[1], converter)
         : { east: 1, north: 0 }
       const len = Math.hypot(dir.east, dir.north)
       if (len < 1e-9) return null
-      const toward = offsetLL(origin, dir.east / len, dir.north / len, converter)
-      return rectPoints(origin, toward, frameSizeM.w, frameSizeM.h, converter)
+      const ux = dir.east / len
+      const uy = dir.north / len
+      const toward = offsetLL(origin, ux, uy, converter)
+      const outer = rectPoints(origin, toward, frameSizeM.w, frameSizeM.h, converter)
+      if (!outer) return null
+      // 点列だけだと 「A3 を 1/1000 で 置いた」ことが 残らないので、
+      // 用紙 / 縮尺 / 内枠 / 原点 / 向き も 素性として 持たせる
+      const spec: FrameSpec = {
+        paper: framePaper,
+        landscape: frameLandscape,
+        widthMm: frameSizeM.wMm,
+        heightMm: frameSizeM.hMm,
+        scale: frameScale,
+        inset: null,
+        origin: { lat: origin.lat, lng: origin.lng },
+        angleDeg: (Math.atan2(uy, ux) * 180) / Math.PI,
+      }
+      const w = frameSizeM.w - frameInsetM.left - frameInsetM.right
+      const h = frameSizeM.h - frameInsetM.bottom - frameInsetM.top
+      // 内枠が 用紙に 収まらないときは 外枠だけ (素性の inset も なしにする)
+      if (!frameInnerOn || w <= 0 || h <= 0) return { outer, inner: null, spec }
+      // 内枠の 左下 = 原点から 幅の向き u へ 左、その左 90 度 v へ 下 だけ ずらす
+      const innerOrigin = offsetLL(
+        origin,
+        ux * frameInsetM.left - uy * frameInsetM.bottom,
+        uy * frameInsetM.left + ux * frameInsetM.bottom,
+        converter,
+      )
+      const innerToward = offsetLL(innerOrigin, ux, uy, converter)
+      const inner = rectPoints(innerOrigin, innerToward, w, h, converter)
+      return {
+        outer,
+        inner,
+        spec: inner
+          ? {
+              ...spec,
+              inset: {
+                left: frameInsetLeft,
+                right: frameInsetRight,
+                top: frameInsetTop,
+                bottom: frameInsetBottom,
+              },
+            }
+          : spec,
+      }
     },
-    [frameDir, frameSizeM, converter],
+    [
+      frameDir,
+      frameSizeM,
+      frameInnerOn,
+      frameInsetM,
+      framePaper,
+      frameLandscape,
+      frameScale,
+      frameInsetLeft,
+      frameInsetRight,
+      frameInsetTop,
+      frameInsetBottom,
+      converter,
+    ],
   )
 
   /** クリック位置に一番近い 線 / 面の図形そのものを拾う (計測で 1 本まるごと測る用) */
@@ -2315,11 +2556,7 @@ export function MapDrawingLayer({
       let bestPx = PICK_LINE_RADIUS_PX
       for (const it of items) {
         if (!isLineLike(it.kind)) continue
-        const pts = it.points
-        const last = it.kind === 'stroke' ? pts.length - 1 : pts.length
-        for (let i = 0; i < last; i += 1) {
-          const a = pts[i]
-          const b = pts[(i + 1) % pts.length]
+        for (const [a, b] of itemSegments(it)) {
           const px = distancePointToSegmentPx(
             clickPx,
             map.latLngToContainerPoint([a.lat, a.lng]),
@@ -2344,11 +2581,7 @@ export function MapDrawingLayer({
       let bestPx = PICK_LINE_RADIUS_PX
       for (const it of items) {
         if (!isLineLike(it.kind)) continue
-        const pts = it.points
-        const last = it.kind === 'stroke' ? pts.length - 1 : pts.length
-        for (let i = 0; i < last; i += 1) {
-          const a = pts[i]
-          const b = pts[(i + 1) % pts.length]
+        for (const [a, b] of itemSegments(it)) {
           const px = distancePointToSegmentPx(
             clickPx,
             map.latLngToContainerPoint([a.lat, a.lng]),
@@ -2541,9 +2774,10 @@ export function MapDrawingLayer({
     }
   }, [shapeProgress, map, commitVertexShape])
 
-  // 頂点ハンドル用の points (ドラッグ中はプレビュー)
+  // 頂点ハンドル用の points (ドラッグ中はプレビュー)。
+  // 図枠は 置いたあと 形を 変えられないので ハンドルを 出さない
   const handlePoints =
-    selectedStroke && selectedStroke.kind !== 'text'
+    selectedStroke && selectedStroke.kind !== 'text' && selectedStroke.kind !== 'frame'
       ? dragPreview?.strokeId === selectedStroke.id
         ? dragPreview.points
         : selectedStroke.points
@@ -2704,28 +2938,40 @@ export function MapDrawingLayer({
           )
         }
         if (s.kind === 'frame') {
-          // 図枠は 塗らない。下の地図や 他の作図を 隠さないため
-          const positions = pointsForRender.map((p) => [p.lat, p.lng] as [number, number])
+          // 図枠は 塗らない (下の地図や 他の作図を 隠さないため)。
+          // 外枠と 内枠は つなげずに 別々の 四角として 出す
+          const rings = frameRings(pointsForRender).map((ring) =>
+            ring.map((p) => [p.lat, p.lng] as [number, number]),
+          )
           return (
             <Fragment key={s.id}>
-              {isSelected && (
-                <LeafletPolygon
-                  positions={positions}
-                  pathOptions={{ color: '#3b82f6', weight: s.width_px + 8, opacity: 0.35, fill: false }}
-                  interactive={false}
-                />
-              )}
-              <LeafletPolygon
-                positions={positions}
-                pathOptions={{
-                  color: s.color,
-                  weight: s.width_px,
-                  opacity: 0.95,
-                  fill: false,
-                  dashArray: dash,
-                }}
-                eventHandlers={clickHandlers}
-              />
+              {rings.map((positions, i) => (
+                <Fragment key={i}>
+                  {isSelected && (
+                    <LeafletPolygon
+                      positions={positions}
+                      pathOptions={{
+                        color: '#3b82f6',
+                        weight: s.width_px + 8,
+                        opacity: 0.35,
+                        fill: false,
+                      }}
+                      interactive={false}
+                    />
+                  )}
+                  <LeafletPolygon
+                    positions={positions}
+                    pathOptions={{
+                      color: s.color,
+                      weight: s.width_px,
+                      opacity: 0.95,
+                      fill: false,
+                      dashArray: dash,
+                    }}
+                    eventHandlers={clickHandlers}
+                  />
+                </Fragment>
+              ))}
             </Fragment>
           )
         }
@@ -3146,7 +3392,15 @@ export function MapDrawingLayer({
     }
 
     if (mode === 'frame') {
-      const corners = shapeHover ? frameCornersAt(shapeHover) : null
+      const rings = shapeHover ? frameRingsAt(shapeHover) : null
+      // 仮枠も 置いた時と 同じ 色 (黄) で 見せる
+      const framePreview: L.PathOptions = {
+        color: FRAME_COLOR,
+        weight: FRAME_WIDTH_PX,
+        opacity: 0.8,
+        dashArray: '6,4',
+        fill: false,
+      }
       return (
         <>
           {/* 2 点配置: 向きを 決めている 途中 */}
@@ -3175,10 +3429,17 @@ export function MapDrawingLayer({
             />
           )}
           {/* 置いた時と 同じ 大きさ・向きの 仮枠。左下が カーソル */}
-          {corners && (
+          {rings && (
             <LeafletPolygon
-              positions={corners.map((p) => [p.lat, p.lng] as [number, number])}
-              pathOptions={{ ...dash, fill: false }}
+              positions={rings.outer.map((p) => [p.lat, p.lng] as [number, number])}
+              pathOptions={framePreview}
+              interactive={false}
+            />
+          )}
+          {rings?.inner && (
+            <LeafletPolygon
+              positions={rings.inner.map((p) => [p.lat, p.lng] as [number, number])}
+              pathOptions={framePreview}
               interactive={false}
             />
           )}
@@ -3234,7 +3495,7 @@ export function MapDrawingLayer({
     perpShape,
     frameDir,
     frameDirStart,
-    frameCornersAt,
+    frameRingsAt,
     converter,
     color,
     widthPx,
@@ -3284,6 +3545,7 @@ export function MapDrawingLayer({
         setSelectHover(null)
         setTransformMode(null)
         setTransformFrom(null)
+        setRotateBase(null)
         setParallelBase(null)
         setRectStart(null)
         setFrameDir(null)
@@ -3436,7 +3698,7 @@ export function MapDrawingLayer({
       {shapePreview}
       {parallelPreview}
       {constructPreview}
-      {/* 平行移動 / 複製の 仮表示。始点 → カーソル の 矢印と、ずらした先の 形 */}
+      {/* 移動 / 複製 / 回転の 仮表示。始点 (回転は 中心) と、動かした先の 形 */}
       {transformFrom && (
         <>
           <Marker
@@ -3444,7 +3706,18 @@ export function MapDrawingLayer({
             icon={FIRST_VERTEX_ICON}
             interactive={false}
           />
-          {transformHover && (
+          {/* 回転: 中心 → 基準の点。どこから 回すかの 目印 */}
+          {rotateBase && (
+            <Polyline
+              positions={[
+                [transformFrom.lat, transformFrom.lng],
+                [rotateBase.lat, rotateBase.lng],
+              ]}
+              pathOptions={{ color: '#94a3b8', weight: 2, dashArray: '4,4' }}
+              interactive={false}
+            />
+          )}
+          {transformHover && (transformMode !== 'rotate' || rotateBase) && (
             <>
               <Polyline
                 positions={[
@@ -3455,37 +3728,14 @@ export function MapDrawingLayer({
                 interactive={false}
               />
               {(() => {
+                if (transformMode === 'rotate' && rotateBase) {
+                  const deg =
+                    bearingRawDeg(transformFrom, transformHover, converter) -
+                    bearingRawDeg(transformFrom, rotateBase, converter)
+                  return previewMoved((p) => rotateAround(p, transformFrom, deg, converter))
+                }
                 const d = deltaM(transformFrom, transformHover, converter)
-                return items
-                  .filter((it) => selectedSet.has(it.id))
-                  .map((it) => {
-                    const pts = it.points.map((p) => offsetLL(p, d.east, d.north, converter))
-                    if (pts.length < 2) {
-                      return (
-                        <Marker
-                          key={`tf-${it.id}`}
-                          position={[pts[0].lat, pts[0].lng]}
-                          icon={HANDLE_ICON}
-                          interactive={false}
-                        />
-                      )
-                    }
-                    const positions = pts.map((p) => [p.lat, p.lng] as [number, number])
-                    if (it.kind === 'polygon') positions.push(positions[0])
-                    return (
-                      <Polyline
-                        key={`tf-${it.id}`}
-                        positions={positions}
-                        pathOptions={{
-                          color: it.color,
-                          weight: it.width_px,
-                          opacity: 0.7,
-                          dashArray: '6,4',
-                        }}
-                        interactive={false}
-                      />
-                    )
-                  })
+                return previewMoved((p) => offsetLL(p, d.east, d.north, converter))
               })()}
             </>
           )}
@@ -3923,6 +4173,42 @@ export function MapDrawingLayer({
                     </button>
                   )}
                 </label>
+
+                {/* 内枠。外枠から 四辺の オフセット [用紙 mm] だけ 内側に
+                    もう 1 枚 置く。既定は 四辺とも 10mm */}
+                <label className="flex items-center gap-1 shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={frameInnerOn}
+                    onChange={(ev) => setFrameInnerOn(ev.target.checked)}
+                  />
+                  <span className="text-[11px] text-slate-600">内枠</span>
+                </label>
+
+                {frameInnerOn && (
+                  <div className="flex items-center gap-1 shrink-0">
+                    {(
+                      [
+                        ['左', frameInsetLeft, setFrameInsetLeft],
+                        ['右', frameInsetRight, setFrameInsetRight],
+                        ['上', frameInsetTop, setFrameInsetTop],
+                        ['下', frameInsetBottom, setFrameInsetBottom],
+                      ] as const
+                    ).map(([label2, v, set]) => (
+                      <label key={label2} className="flex items-center gap-0.5">
+                        <span className="text-[11px] text-slate-500">{label2}</span>
+                        <NumberField
+                          step="1"
+                          min={0}
+                          value={v}
+                          onChange={set}
+                          className="w-12 h-7 px-1 border rounded text-right font-mono"
+                        />
+                      </label>
+                    ))}
+                    <span className="text-[11px] text-slate-500">mm</span>
+                  </div>
+                )}
 
                 <div className="flex items-center rounded border overflow-hidden shrink-0">
                   {(
@@ -4406,14 +4692,16 @@ export function MapDrawingLayer({
                 )}
                 {selectedIds.length > 0 && (
                   <>
-                    {/* 平行移動 / 複製。始点 → 終点 の 2 クリックで ずらす量を決める */}
-                    {(['move', 'copy'] as const).map((m) => (
+                    {/* 平行移動 / 複製 は 始点 → 終点 の 2 クリック。
+                        回転は 中心 → 基準の点 → 回す先 の 3 クリック */}
+                    {(['move', 'copy', 'rotate'] as const).map((m) => (
                       <button
                         key={m}
                         type="button"
                         onClick={() => {
                           setTransformMode(transformMode === m ? null : m)
                           setTransformFrom(null)
+                          setRotateBase(null)
                         }}
                         className={`h-7 px-3 rounded border shrink-0 ${
                           transformMode === m
@@ -4421,12 +4709,20 @@ export function MapDrawingLayer({
                             : 'border-slate-300 text-slate-600 hover:bg-slate-50'
                         }`}
                       >
-                        {m === 'move' ? '移動' : 'コピー'}
+                        {m === 'move' ? '移動' : m === 'copy' ? 'コピー' : '回転'}
                       </button>
                     ))}
                     {transformMode && (
                       <span className="text-[11px] text-slate-500">
-                        {transformFrom ? '終点をクリック' : '始点をクリック'}
+                        {transformMode === 'rotate'
+                          ? !transformFrom
+                            ? '回転の中心をクリック'
+                            : !rotateBase
+                              ? '基準の点をクリック'
+                              : '回す先をクリック'
+                          : transformFrom
+                            ? '終点をクリック'
+                            : '始点をクリック'}
                       </span>
                     )}
                     <button
@@ -4435,6 +4731,7 @@ export function MapDrawingLayer({
                         setSelectedIds([])
                         setTransformMode(null)
                         setTransformFrom(null)
+                        setRotateBase(null)
                         pickCycleRef.current = null
                         setPickCycle(null)
                       }}
@@ -4617,6 +4914,20 @@ export function MapDrawingLayer({
                 <span className="font-semibold text-slate-700 shrink-0">
                   {KIND_LABEL[selectedStroke.kind]}
                 </span>
+
+                {/* 図枠は 変えられないので、置いたときの 素性を 見せるだけ */}
+                {selectedStroke.kind === 'frame' && selectedStroke.frame && (
+                  <span className="text-[11px] text-slate-600 shrink-0">
+                    {selectedStroke.frame.paper === 'free'
+                      ? `${selectedStroke.frame.widthMm} × ${selectedStroke.frame.heightMm}mm`
+                      : `${selectedStroke.frame.paper} ${selectedStroke.frame.landscape ? '横' : '縦'}`}
+                    {` 1/${selectedStroke.frame.scale}`}
+                    {selectedStroke.frame.inset
+                      ? ` 内枠 左${selectedStroke.frame.inset.left} 右${selectedStroke.frame.inset.right} 上${selectedStroke.frame.inset.top} 下${selectedStroke.frame.inset.bottom}mm`
+                      : ' 内枠なし'}
+                    {` 向き ${selectedStroke.frame.angleDeg.toFixed(1)}°`}
+                  </span>
+                )}
 
                 {selectedStroke.kind === 'text' && (
                   <>

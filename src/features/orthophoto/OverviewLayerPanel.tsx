@@ -214,6 +214,8 @@ interface Props {
   onChangeArrow: (a: ArrowStyle) => void
   /** 選択中の 作図要素の 数。0 なら「これから描くもの」の設定として働く */
   selectedCount: number
+  /** 図枠のように 色 / 線種 / 線幅を 使わない 道具の間は 設定ごと 隠す */
+  hideStyleSettings?: boolean
 }
 
 export function OverviewLayerPanel({
@@ -234,6 +236,7 @@ export function OverviewLayerPanel({
   arrow,
   onChangeArrow,
   selectedCount,
+  hideStyleSettings = false,
 }: Props) {
   const [newLayer, setNewLayer] = useState('')
   const elementByKey = useMemo(
@@ -293,7 +296,9 @@ export function OverviewLayerPanel({
       </div>
 
       <div className="flex-1 overflow-auto">
-        {/* 描画の共通設定。ここで決めた値が これから描くものに 付く */}
+        {/* 描画の共通設定。ここで決めた値が これから描くものに 付く。
+            図枠のように 見た目が 固定の 道具の間は まるごと 隠す */}
+        {!hideStyleSettings && (
         <div className="p-2 border-b space-y-2">
           <div className="text-[10px] text-slate-500">
             {selectedCount > 0 ? (
@@ -407,6 +412,7 @@ export function OverviewLayerPanel({
             </div>
           </div>
         </div>
+        )}
 
         {/* 地図に出るものの一覧。組み込み要素と ペイントのレイヤが 混ざる */}
         <div className="p-2">
