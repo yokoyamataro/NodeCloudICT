@@ -493,15 +493,33 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
 
       // rowType と前の集水管IDから、集水測点の位置・名前を決定するヘルパー
       // PipeWiringPage.tsx の getCollectorPointName と同じロジック
+      // ★ 配管系統ページで 頂点ピッカーで 明示指定された collectorVertexIdx が
+      //   あれば それを 最優先で 使う (旧行は 従来の rowType ヒューリスティックに 落ちる)
       type CollectorPointInfo = { x: number; y: number; z: number | null; name: string } | null
       const resolveCollectorPointByRowType = (
         rowType: string | null,
         collectorPipeId: string | null,
-        prevCollectorPipeId: string | null
+        prevCollectorPipeId: string | null,
+        collectorVertexIdx?: number | null,
       ): CollectorPointInfo => {
         if (!collectorPipeId) return null
         const collectorPipe = pipes.find((p) => p.id === collectorPipeId)
         if (!collectorPipe || collectorPipe.vertices.length === 0) return null
+
+        // ユーザー明示指定を 最優先
+        if (
+          collectorVertexIdx != null &&
+          collectorVertexIdx >= 0 &&
+          collectorVertexIdx < collectorPipe.vertices.length
+        ) {
+          const v = collectorPipe.vertices[collectorVertexIdx]
+          return {
+            x: v.x,
+            y: v.y,
+            z: v.z,
+            name: generatePointName(collectorPipe.number, collectorVertexIdx, collectorPipe.vertices.length),
+          }
+        }
 
         // 吸水端部: 集水管の最上流点（C）
         if (rowType === 'absorption_end') {
@@ -608,17 +626,24 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
             }
             let mergeCollectorPoint: PlanPoint | null = null
             if (collectorPipe && collectorPipe.vertices.length > 0) {
-              // 合流点 = 前の集水管の下流端と一致する、新しい集水管の頂点
-              // （CAD解析で測点分割した場合は必ずしも C ではない）
+              // 合流点の 頂点 index:
+              //   1. 配管系統ページで 明示指定された collectorVertexIdx が 最優先
+              //   2. 未指定なら 「前の集水管の 下流端と 一致する 新集水管の 頂点」
+              const explicitIdx = wiringRow.collectorVertexIdx
               const prevPipe = prevCollectorPipeId
                 ? pipes.find((p) => p.id === prevCollectorPipeId)
                 : null
               const prevEndVertex = prevPipe && prevPipe.vertices.length > 0
                 ? prevPipe.vertices[prevPipe.vertices.length - 1]
                 : null
-              const newStartIdx = prevEndVertex
-                ? findMatchingVertexIndex(collectorPipe, prevEndVertex)
-                : 0
+              const newStartIdx =
+                explicitIdx != null &&
+                explicitIdx >= 0 &&
+                explicitIdx < collectorPipe.vertices.length
+                  ? explicitIdx
+                  : prevEndVertex
+                    ? findMatchingVertexIndex(collectorPipe, prevEndVertex)
+                    : 0
               const v = collectorPipe.vertices[newStartIdx]
               const newStartName = generatePointName(
                 collectorPipe.number,
@@ -719,7 +744,8 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                 const info = resolveCollectorPointByRowType(
                   wiringRow.rowType,
                   wiringRow.collectorPipe,
-                  prevCollectorPipeId
+                  prevCollectorPipeId,
+                  wiringRow.collectorVertexIdx,
                 )
                 if (info) {
                   collectorPoint = {
@@ -838,10 +864,23 @@ export const useConstructionPlanStore = create<ConstructionPlanState>()((set, ge
                   resolvedIdx = idx
                 }
               } else {
-                // outlet / collector_junction / rowType未設定: 集水管の最下流点
-                const lastIdx = collectorPipe.vertices.length - 1
-                targetVertex = collectorPipe.vertices[lastIdx]
-                resolvedIdx = lastIdx
+                // outlet / collector_junction / rowType未設定:
+                //   1. 明示指定された collectorVertexIdx を 最優先
+                //   2. 未指定なら 集水管の 最下流点 (A)
+                const explicitIdx = (wiringRow as { collectorVertexIdx?: number }).collectorVertexIdx
+                if (
+                  explicitIdx !== undefined &&
+                  explicitIdx !== null &&
+                  explicitIdx >= 0 &&
+                  explicitIdx < collectorPipe.vertices.length
+                ) {
+                  targetVertex = collectorPipe.vertices[explicitIdx]
+                  resolvedIdx = explicitIdx
+                } else {
+                  const lastIdx = collectorPipe.vertices.length - 1
+                  targetVertex = collectorPipe.vertices[lastIdx]
+                  resolvedIdx = lastIdx
+                }
               }
             }
 

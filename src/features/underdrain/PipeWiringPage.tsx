@@ -372,6 +372,23 @@ export function PipeWiringPage() {
             }
           }
           const rowType: RowType = atUpstreamEnd ? 'absorption_end' : 'absorption_merge'
+          // 集水管上の 接続頂点 index を 一緒に セットしておく
+          //   absorption_end → 集水管の 上流端 (0)
+          //   absorption_merge → 吸水管の 下流端に 最も近い 集水管頂点
+          let collVIdx: number | undefined = undefined
+          if (atUpstreamEnd) {
+            collVIdx = 0
+          } else {
+            const downstream = evt.pipe.vertices[evt.pipe.vertices.length - 1]
+            let bestIdx = -1
+            let bestDist = Infinity
+            for (let i = 0; i < collectorPipe.vertices.length; i++) {
+              const v = collectorPipe.vertices[i]
+              const d = Math.hypot(v.x - downstream.x, v.y - downstream.y)
+              if (d < bestDist) { bestDist = d; bestIdx = i }
+            }
+            if (bestIdx >= 0 && bestDist <= 0.5) collVIdx = bestIdx
+          }
           rows.push({
             id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
             rowType,
@@ -379,6 +396,7 @@ export function PipeWiringPage() {
             collectorPipe: collectorPipeId,
             isMergePipe: false,
             mergeSystemIndex: null,
+            collectorVertexIdx: collVIdx,
           })
         } else {
           rows.push({
@@ -493,6 +511,10 @@ export function PipeWiringPage() {
       collectorPipe: pendingCollectorPipeId,
       isMergePipe: false,
       mergeSystemIndex: null,
+      // 落口: 集水管の 下流端 (A 点)
+      collectorVertexIdx: collectorPipe.vertices.length > 0
+        ? collectorPipe.vertices.length - 1
+        : undefined,
     }
 
     // 落口行を追加（吸水は空、集水に最後の管路番号と下流測点を表示）
@@ -521,6 +543,7 @@ export function PipeWiringPage() {
     const lastCollectorPipeId = previousCollectorPipeId || pendingCollectorPipeId
     if (!lastCollectorPipeId) return
 
+    const lastCollectorPipe = pipes.find((p) => p.id === lastCollectorPipeId)
     const mergeRow: WiringRow = {
       id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
       rowType: 'collector_junction',
@@ -528,6 +551,10 @@ export function PipeWiringPage() {
       collectorPipe: lastCollectorPipeId,
       isMergePipe: true,
       mergeSystemIndex: null,
+      // 系統末端の 合流点 = 集水管の 下流端 (A 点)
+      collectorVertexIdx: lastCollectorPipe && lastCollectorPipe.vertices.length > 0
+        ? lastCollectorPipe.vertices.length - 1
+        : undefined,
     }
 
     // 現在のタブに区切り行（合流管）を追加
@@ -799,6 +826,12 @@ export function PipeWiringPage() {
 
       const now = Date.now()
       const rand = () => Math.random().toString(36).substring(2, 11)
+      // 落口管の 上流端 (C=0) / 下流端 (A=last) を 事前計算
+      const outletPipeObj = pipes.find((p) => p.id === outletId)
+      const outletFirstVIdx = outletPipeObj && outletPipeObj.vertices.length > 0 ? 0 : undefined
+      const outletLastVIdx = outletPipeObj && outletPipeObj.vertices.length > 0
+        ? outletPipeObj.vertices.length - 1
+        : undefined
       const absorptionRow: WiringRow = {
         id: `row-${now}-${rand()}`,
         rowType: 'absorption_end',
@@ -806,6 +839,7 @@ export function PipeWiringPage() {
         collectorPipe: outletId,
         isMergePipe: false,
         mergeSystemIndex: null,
+        collectorVertexIdx: outletFirstVIdx,
       }
       const outletRow: WiringRow = {
         id: `row-${now + 1}-${rand()}`,
@@ -814,6 +848,7 @@ export function PipeWiringPage() {
         collectorPipe: outletId,
         isMergePipe: false,
         mergeSystemIndex: null,
+        collectorVertexIdx: outletLastVIdx,
       }
       // 直落暗渠タブに 2 行を追加 (別タブにいたら direct タブへ切替)
       setActiveTabType('direct')
@@ -843,6 +878,7 @@ export function PipeWiringPage() {
       }
 
       // 最初の行を追加（選択した末端吸水 + その接続先）
+      // 吸水端部 = 集水管の 上流端 (C=0)
       const firstRow: WiringRow = {
         id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
         rowType: 'absorption_end',
@@ -850,6 +886,7 @@ export function PipeWiringPage() {
         collectorPipe: collectorPipeId,
         isMergePipe: false,
         mergeSystemIndex: null,
+        collectorVertexIdx: collectorPipe.vertices.length > 0 ? 0 : undefined,
       }
 
       if (activeTabType === 'collector') {
@@ -933,39 +970,42 @@ export function PipeWiringPage() {
           setSelectedRowId(newRow.id)
         }
       }
-    } else if (selectionMode === 'collector') {
-      // 集水に設定（1つのみ）
-      if (activeTabType === 'collector') {
-        // 深いコピーを作成
-        const newTabs = collectorTabs.map((tab, i) => {
-          if (i === activeCollectorIndex) {
-            return {
-              ...tab,
-              rows: tab.rows.map(row => {
-                if (row.id === selectedRowId) {
-                  return { ...row, collectorPipe: row.collectorPipe === pipeId ? null : pipeId }
-                }
-                return row
-              })
-            }
-          }
-          return tab
-        })
-        setCollectorTabs(newTabs)
-      } else {
-        const newRows = directRows.map(row => {
-          if (row.id === selectedRowId) {
-            return { ...row, collectorPipe: row.collectorPipe === pipeId ? null : pipeId }
-          }
-          return row
-        })
-        setDirectRows(newRows)
-      }
-      // 集水選択後は選択モード解除
-      setSelectionMode('none')
-      setSelectedRowId(null)
     }
+    // 集水の選択は「線」ではなく「頂点」で行う (handleVertexPick)。
+    // 管路 (Polyline) クリックによる集水設定は 廃止済み。
   }, [selectionMode, selectedRowId, activeTabType, activeCollectorIndex, collectorTabs, directRows, pipes, executeBulkSetting])
+
+  /**
+   * 集水選択モードで地図上の頂点マーカーがクリックされたとき。
+   * 「線」ではなく「頂点」を選ぶことで、集水管上のどの点に接続するかを
+   * 明示できる (以前は rowType/前後関係からヒューリスティックで推定していて
+   * 意図と違う頂点が右列に出ることがあった)。
+   */
+  const handleVertexPick = useCallback((pipeId: string, vertexIdx: number) => {
+    if (selectionMode !== 'collector' || !selectedRowId) return
+    const applyToRow = (row: WiringRow): WiringRow => {
+      if (row.id !== selectedRowId) return row
+      // 同じ (pipe, vertex) を もう一度 押したら 選択解除
+      const isSame = row.collectorPipe === pipeId && row.collectorVertexIdx === vertexIdx
+      if (isSame) {
+        return { ...row, collectorPipe: null, collectorVertexIdx: undefined }
+      }
+      return { ...row, collectorPipe: pipeId, collectorVertexIdx: vertexIdx }
+    }
+    if (activeTabType === 'collector') {
+      const newTabs = collectorTabs.map((tab, i) => {
+        if (i === activeCollectorIndex) {
+          return { ...tab, rows: tab.rows.map(applyToRow) }
+        }
+        return tab
+      })
+      setCollectorTabs(newTabs)
+    } else {
+      setDirectRows(directRows.map(applyToRow))
+    }
+    setSelectionMode('none')
+    setSelectedRowId(null)
+  }, [selectionMode, selectedRowId, activeTabType, activeCollectorIndex, collectorTabs, directRows, setCollectorTabs, setDirectRows])
 
   // 吸水から管を削除
   const removeAbsorptionPipe = (rowId: string, pipeId: string, tabIndex?: number) => {
@@ -1761,7 +1801,7 @@ export function PipeWiringPage() {
                     ? '末端の吸水管を選択してください'
                     : selectionMode === 'direct-auto'
                       ? '直落暗渠にする管路を 1 本タップ (吸水→落口が自動登録)'
-                      : '集水/落口を選択中'}
+                      : '集水/落口の 頂点 を 選択中 (地図上の 青丸マーカーを タップ)'}
               </span>
               <button
                 onClick={() => {
@@ -2219,18 +2259,23 @@ export function PipeWiringPage() {
                             <div className="flex items-center gap-1">
                               {row.collectorPipe ? (
                                 <>
-                                  {/* 集水合流点の場合は下流測点を表示 (クリックで地図上ハイライト) */}
+                                  {/* 集水合流点: ユーザーが 頂点ピッカーで 選んだ vertex を 表示
+                                      (未選択の 旧行は 従来の 「下流端 A」 を 既定として 表示) */}
                                   {row.rowType === 'collector_junction' ? (
                                     (() => {
                                       const collPipe = pipes.find((p) => p.id === row.collectorPipe)
-                                      const vIdx = collPipe && collPipe.vertices.length > 0
-                                        ? collPipe.vertices.length - 1
+                                      const total = collPipe?.vertices.length ?? 0
+                                      const vIdx = collPipe && total > 0
+                                        ? (row.collectorVertexIdx ?? total - 1)
                                         : null
                                       const isHl =
                                         vIdx != null &&
                                         collPipe &&
                                         highlightedVertex?.pipeId === collPipe.id &&
                                         highlightedVertex?.vertexIdx === vIdx
+                                      const label = collPipe && vIdx != null
+                                        ? generatePointName(collPipe.number, vIdx, total)
+                                        : ''
                                       return (
                                         <span className="inline-flex items-center gap-0.5">
                                           <button
@@ -2251,7 +2296,7 @@ export function PipeWiringPage() {
                                             }`}
                                             title="地図上で位置を強調"
                                           >
-                                            {getMergePointName(row.collectorPipe)}
+                                            {label}
                                           </button>
                                           <button
                                             onClick={() => clearCollectorPipe(
@@ -2347,14 +2392,19 @@ export function PipeWiringPage() {
                                             </button>
                                           </span>
                                           {(() => {
-                                            // 該当測点を計算 (該当 vertex idx を推定してクリック可能に)
-                                            // absorption_merge のときはハイライト対象を吸水管 A 点にする
-                                            // (集水管上の最寄頂点だと 2 本の吸水が同じ頂点に丸められ、
-                                            //  別の合流点が同じ位置に見えてしまう問題を回避)
+                                            // 頂点 index の決定:
+                                            //   1. row.collectorVertexIdx (ユーザーが 頂点ピッカーで 明示指定) を 最優先
+                                            //   2. 未指定なら 従来の rowType/前後関係 ヒューリスティック (旧行の 後方互換)
+                                            // 明示指定があれば hlPipeId も 集水管に 揃える
+                                            //   (旧: absorption_merge で 吸水管 A 点に ハイライトを 逃がしていた)
                                             let vIdx: number | null = null
                                             let hlPipeId: string | null =
                                               collPipe?.id ?? null
-                                            if (collPipe) {
+                                            if (collPipe && row.collectorVertexIdx != null &&
+                                                row.collectorVertexIdx >= 0 &&
+                                                row.collectorVertexIdx < collPipe.vertices.length) {
+                                              vIdx = row.collectorVertexIdx
+                                            } else if (collPipe) {
                                               if (row.rowType === 'absorption_end') vIdx = 0
                                               else if (row.rowType === 'outlet') {
                                                 vIdx = collPipe.vertices.length - 1
@@ -2407,9 +2457,15 @@ export function PipeWiringPage() {
                                                 }
                                               }
                                             }
-                                            // absorption_merge / collector_merge で collectorPointName が
-                                            // 無ければ「(合流点)」
+                                            // 表示ラベル:
+                                            //   明示指定行 → 頂点名 (例 "S3B1") を 直接表示 (もう "(合流点)" は 出ない)
+                                            //   ヒューリスティック行 → 従来の collectorPointName / "(合流点)"
+                                            const explicitLabel =
+                                              row.collectorVertexIdx != null && collPipe && vIdx != null
+                                                ? generatePointName(collPipe.number, vIdx, collPipe.vertices.length)
+                                                : null
                                             const displayLabel =
+                                              explicitLabel ??
                                               collectorPointName ??
                                               ((row.rowType === 'absorption_merge' ||
                                                 row.rowType === 'collector_merge') &&
@@ -2655,6 +2711,8 @@ export function PipeWiringPage() {
               showZones={showZones}
               showCoordinates={showCoordinates}
               onPipeSelect={handlePipeSelect}
+              vertexPickMode={selectionMode === 'collector'}
+              onVertexPick={handleVertexPick}
               selectedPipeId={selectedCollectorPipe}
               selectedPipeIds={selectedAbsorptionPipes}
               assignedPipeIds={allAssignedPipeIds}

@@ -335,6 +335,13 @@ interface PipeMapProps {
   onPipeSelect?: (id: string, ctrlKey?: boolean) => void
   onVertexClick?: (pipeId: string, vertexIndex: number) => void
   onJunctionSplitClick?: (pipeId: string, point: { x: number; y: number }) => void  // 合流点での分割
+  /**
+   * 頂点ピックモード: 全管路の全頂点をクリック可能なマーカーとして表示する。
+   * 配管系統ページで「集水管上の どの頂点を接続点にするか」を選ばせる用途。
+   * 有効なときは onVertexPick が呼ばれる。
+   */
+  vertexPickMode?: boolean
+  onVertexPick?: (pipeId: string, vertexIdx: number) => void
   isBulkEditMode?: boolean
   showDirection?: boolean
   showLabels?: boolean
@@ -551,6 +558,49 @@ function createStakingIcon(
   })
 }
 
+// 頂点ピックモード用: 全管路の全頂点に置く小さな青丸 + 点名ラベル
+// 通常の 測点表示 (緑丸) や 管切り替え点 (橙〇) と 区別しやすい 配色
+function createVertexPickIcon(label: string): L.DivIcon {
+  return L.divIcon({
+    html: `<div style="display:flex; flex-direction:column; align-items:center; line-height:1;">
+      <div style="
+        font-size: 10px;
+        font-weight: 600;
+        color: #1e40af;
+        background-color: rgba(219, 234, 254, 0.95);
+        padding: 1px 4px;
+        border-radius: 3px;
+        white-space: nowrap;
+        border: 1px solid #3b82f6;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+        margin-bottom: 2px;
+      ">${label}</div>
+      <div style="
+        width: 10px;
+        height: 10px;
+        background-color: #3b82f6;
+        border-radius: 50%;
+        border: 2px solid white;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.35);
+        cursor: pointer;
+      "></div>
+    </div>`,
+    className: 'vertex-pick-marker',
+    iconSize: [0, 0],
+    iconAnchor: [0, 24],
+  })
+}
+
+/**
+ * 管路の頂点 index → 測点名 (例: "K3C" / "K3B1" / "K3A")
+ * PipeWiringPage.generatePointName / constructionPlanStore.generatePointName と 同じ規則。
+ */
+function vertexPointName(pipeNumber: string, vertexIdx: number, totalVertices: number): string {
+  if (vertexIdx === 0) return `${pipeNumber}C`
+  if (vertexIdx === totalVertices - 1) return `${pipeNumber}A`
+  return `${pipeNumber}B${totalVertices - 1 - vertexIdx}`
+}
+
 // 管切り替え点用の〇マーカーアイコンを生成
 function createPipeChangeIcon(label: string): L.DivIcon {
   return L.divIcon({
@@ -592,6 +642,8 @@ export function PipeMap({
   onPipeSelect,
   onVertexClick,
   onJunctionSplitClick,
+  vertexPickMode = false,
+  onVertexPick,
   isBulkEditMode = false,
   showDirection = false,
   showLabels = false,
@@ -1344,6 +1396,25 @@ export function PipeMap({
             </Popup>
           </Marker>
         )
+      })}
+
+      {/* 頂点ピックモード: 全管路の全頂点を クリック対象として 上乗せ描画
+          (最後に置いて 他マーカーより 上に来るように) */}
+      {vertexPickMode && pipeLines.flatMap((pipe) => {
+        const total = pipe.positions.length
+        return pipe.positions.map((pos, idx) => {
+          const name = vertexPointName(pipe.number, idx, total)
+          return (
+            <Marker
+              key={`vpick-${pipe.id}-${idx}`}
+              position={pos}
+              icon={createVertexPickIcon(name)}
+              eventHandlers={{
+                click: () => onVertexPick?.(pipe.id, idx),
+              }}
+            />
+          )
+        })
       })}
 
       {/* 凡例 */}
