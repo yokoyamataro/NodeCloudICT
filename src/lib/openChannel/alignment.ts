@@ -494,6 +494,28 @@ export function getCurveMarkers(segments: AlignmentSegment[]): CurveMarker[] {
 }
 
 /**
+ * IP に R (単曲線) や 緩和曲線が 有効な 全ての 折れ点について、
+ * 「元の 折れ線」= 単曲線を 使わないと 通っていた 道 の 端点を 返す。
+ *   ip  : IP そのものの 座標
+ *   ts  : 曲線 手前の 端 (BC = 単曲線始点、緩和ありなら TS = 緩和始点)
+ *   st  : 曲線 先の 端 (EC = 単曲線終点、緩和ありなら ST = 緩和終点)
+ * 地図表示で 実際の 曲線と 併せて、ts→ip→st を 点線で 上書き表示する 用途を 想定。
+ */
+export function getIpCornerGuides(vertices: AlignmentVertex[]): {
+  vertexIndex: number
+  ip: XY
+  ts: XY
+  st: XY
+}[] {
+  return computeIpTransitions(vertices).map((t) => ({
+    vertexIndex: t.i,
+    ip: { x: vertices[t.i].x, y: vertices[t.i].y },
+    ts: t.ts,
+    st: t.st,
+  }))
+}
+
+/**
  * R=0（または未指定）で角折れとなっている IP の、BP からの追加距離を列挙する。
  * 単曲線が当たっている IP（路線上の頂点を通らない）は対象外。
  */

@@ -38,6 +38,7 @@ import {
   tangentAtDistance,
   getCurveMarkers,
   getCornerIpStations,
+  getIpCornerGuides,
   type AlignmentSegment,
   type AlignmentVertex,
   type CurveMarker,
@@ -979,6 +980,22 @@ function InteractiveCrossSectionEditor({
     const nextSide = cs[drawSide].slice(0, -1)
     onChange({ ...cs, [drawSide]: nextSide })
   }
+
+  // BS (Backspace) キーで 一つ手前の 区間を 取消す。
+  // dW/dH/勾配 の 入力欄に フォーカスが 当たっている 間は 通常の 文字削除に 干渉しない。
+  useEffect(() => {
+    if (!drawSide) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Backspace') return
+      const t = e.target as HTMLElement | null
+      const tag = t?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (t && t.isContentEditable)) return
+      e.preventDefault()
+      removeLast()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [drawSide, cs, onChange])
   const clearSide = (side: 'right' | 'left') => {
     if (!window.confirm(`${side === 'right' ? '右' : '左'} 側 の 区間 を すべて 削除 します。`)) return
     onChange({ ...cs, [side]: [] })
@@ -1001,32 +1018,8 @@ function InteractiveCrossSectionEditor({
 
   return (
     <div className="flex flex-col gap-2 h-full">
-      {/* ツールバー */}
+      {/* ツールバー (左右計画線 ボタンは SVG 上に 移動、勾配モード等は ここに 残す) */}
       <div className="flex items-center gap-1.5 flex-wrap text-xs shrink-0">
-        <button
-          onClick={() => setDrawSide(drawSide === 'left' ? null : 'left')}
-          className={`px-2 py-1 text-xs border rounded ${
-            drawSide === 'left'
-              ? 'bg-amber-500 text-white border-amber-500'
-              : 'bg-white hover:bg-slate-100 text-slate-700'
-          }`}
-          title="左側 の 断面 を 描画"
-        >
-          ← 左計画線
-        </button>
-        <button
-          onClick={() => setDrawSide(drawSide === 'right' ? null : 'right')}
-          className={`px-2 py-1 text-xs border rounded ${
-            drawSide === 'right'
-              ? 'bg-emerald-500 text-white border-emerald-500'
-              : 'bg-white hover:bg-slate-100 text-slate-700'
-          }`}
-          title="右側 の 断面 を 描画"
-        >
-          右計画線 →
-        </button>
-
-        <span className="text-slate-400 mx-1">|</span>
         <span className="text-slate-500 text-[11px]">勾配</span>
         {modeButton('freehand', 'フリーハンド')}
         {modeButton('percent', '%')}
@@ -1091,9 +1084,9 @@ function InteractiveCrossSectionEditor({
           onClick={removeLast}
           disabled={!drawSide || cs[drawSide].length === 0}
           className="px-2 py-1 text-xs border rounded bg-white hover:bg-slate-100 disabled:opacity-40"
-          title="直近 の 区間 を 取り消し"
+          title="直近 の 区間 を 取り消し (BS キー でも 可)"
         >
-          <ArrowUp className="h-3 w-3 inline -mt-0.5" /> 戻す
+          <ArrowUp className="h-3 w-3 inline -mt-0.5" /> 戻す (BS)
         </button>
         <button
           onClick={() => clearSide('left')}
@@ -1109,11 +1102,38 @@ function InteractiveCrossSectionEditor({
         </button>
       </div>
 
-      {/* 描画キャンバス */}
+      {/* 描画キャンバス
+          左右計画線 の 開始ボタンは 断面図の 左右端に 絶対配置。
+          「右計画線」ボタンを 押したら 右側から 描く、「左計画線」を 押したら 左側から
+          描くという 対応を 位置で 直感的に 見せる。 */}
       <div
         ref={containerRef}
         className="flex-1 min-h-0 border rounded bg-slate-50 relative overflow-hidden"
       >
+        {/* 左計画線 ボタン (SVG の 左上に 重ねる) */}
+        <button
+          onClick={() => setDrawSide(drawSide === 'left' ? null : 'left')}
+          className={`absolute top-2 left-2 z-10 px-2 py-1 text-xs border rounded shadow-sm ${
+            drawSide === 'left'
+              ? 'bg-amber-500 text-white border-amber-500'
+              : 'bg-white/95 hover:bg-slate-100 text-slate-700'
+          }`}
+          title="左側 の 断面 を 描画"
+        >
+          ← 左計画線
+        </button>
+        {/* 右計画線 ボタン (SVG の 右上に 重ねる) */}
+        <button
+          onClick={() => setDrawSide(drawSide === 'right' ? null : 'right')}
+          className={`absolute top-2 right-2 z-10 px-2 py-1 text-xs border rounded shadow-sm ${
+            drawSide === 'right'
+              ? 'bg-emerald-500 text-white border-emerald-500'
+              : 'bg-white/95 hover:bg-slate-100 text-slate-700'
+          }`}
+          title="右側 の 断面 を 描画"
+        >
+          右計画線 →
+        </button>
         <svg
           width={size.w}
           height={size.h}
@@ -1553,6 +1573,9 @@ export function OpenChannelAlignmentPage() {
   const sampledXY = useMemo(() => sampleAlignment(alignmentXY, 64), [alignmentXY])
   const segments = useMemo(() => buildSegments(alignmentXY), [alignmentXY])
   const totalLen = useMemo(() => alignmentTotalLength(alignmentXY), [alignmentXY])
+  // R (単曲線) や 緩和曲線が 当たっている IP について、元の 折れ線 (TS-IP-ST) を
+  // 点線で 上書き表示する ための ガイド。
+  const ipCornerGuides = useMemo(() => getIpCornerGuides(alignmentXY), [alignmentXY])
 
   // 描画用 lat/lng
   const sampledLatLng = useMemo<[number, number][]>(() => {
@@ -3207,8 +3230,32 @@ export function OpenChannelAlignmentPage() {
               )}
 
               {sampledLatLng.length >= 2 && (
-                <Polyline positions={sampledLatLng} pathOptions={{ color: '#0ea5e9', weight: 3 }} />
+                <Polyline positions={sampledLatLng} pathOptions={{ color: '#0ea5e9', weight: 5 }} />
               )}
+
+              {/* IP に R (単曲線) や 緩和曲線 が 効いている 折れ点は、実線は 円弧側に 譲るため
+                  「元の 折れ線」= BC(TS)-IP-EC(ST) を 点線で 上書き表示して 参考線として 残す */}
+              {ipCornerGuides.map((g, idx) => {
+                const ipLL = converter.toLatLng(g.ip.x, g.ip.y)
+                const tsLL = converter.toLatLng(g.ts.x, g.ts.y)
+                const stLL = converter.toLatLng(g.st.x, g.st.y)
+                return (
+                  <Polyline
+                    key={`ipguide-${idx}`}
+                    positions={[
+                      [tsLL.lat, tsLL.lng],
+                      [ipLL.lat, ipLL.lng],
+                      [stLL.lat, stLL.lng],
+                    ]}
+                    pathOptions={{
+                      color: '#0ea5e9',
+                      weight: 1.5,
+                      opacity: 0.7,
+                      dashArray: '5,4',
+                    }}
+                  />
+                )
+              })}
 
               {/* 中間点ごとの断面オーバーレイ */}
               {visibleStationVertices.map(({ station, vertices }) => {
