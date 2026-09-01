@@ -347,6 +347,11 @@ function FitBounds({ positions }: { positions: [number, number][] }) {
 
 // 選択中の 測点位置に 地図を パン+ズーム。 latLng が 変わる 度に 移動。
 // 既に 目的 ズーム 以上に 拡大されている 場合は そのまま (むやみに 縮小しない)。
+//
+// 注意: 測点選択と 同時に 下パネル (横断図タブ) が 展開して 地図コンテナが
+// 縮むため、setView の 直前に invalidateSize + 2 フレーム 待って 実 レイアウトが
+// 落ち着いてから 設定する。 これを しない と 縮む前 の 中心 に アラインされて
+// 「測点が 画面中央から ズレる」現象が 起きる。
 function StationFocus({
   latLng,
   targetZoom = 20,
@@ -357,8 +362,22 @@ function StationFocus({
   const map = useMap()
   useEffect(() => {
     if (!latLng) return
-    const nextZoom = Math.max(map.getZoom(), targetZoom)
-    map.setView(latLng, nextZoom, { animate: true, duration: 0.4 })
+    let cancelled = false
+    const raf1 = requestAnimationFrame(() => {
+      if (cancelled) return
+      const raf2 = requestAnimationFrame(() => {
+        if (cancelled) return
+        map.invalidateSize({ animate: false })
+        const nextZoom = Math.max(map.getZoom(), targetZoom)
+        map.setView(latLng, nextZoom, { animate: true, duration: 0.4 })
+      })
+      // raf2 の cleanup は 外側 では 追えないが requestAnimationFrame は 1 回で 完結
+      void raf2
+    })
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(raf1)
+    }
   }, [latLng, targetZoom, map])
   return null
 }
