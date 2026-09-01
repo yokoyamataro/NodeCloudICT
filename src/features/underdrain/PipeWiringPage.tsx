@@ -219,8 +219,10 @@ export function PipeWiringPage() {
     )
 
     // 非吸水の連結管（前段の集水管が下流端でこの集水管に合流）について、
-    // この集水管側の合流頂点を抽出
-    const linkJunctionVertexIdxs = connectedCollectorLinks
+    // この集水管側の合流頂点と 元の連結管を セットで 保持する。
+    // 「元の連結管」= 「どの前段 集水管が この 頂点で 合流したか」を 追跡することで、
+    // 後段で 「その 前段が 既に 系統として 締められているか」を 判定できる。
+    const linkJunctions = connectedCollectorLinks
       .map((linkPipe) => {
         const downstream = linkPipe.vertices[linkPipe.vertices.length - 1]
         let bestIdx = -1
@@ -232,9 +234,53 @@ export function PipeWiringPage() {
           )
           if (d < bestDist) { bestDist = d; bestIdx = i }
         }
-        return bestIdx >= 0 && bestDist <= 0.5 ? bestIdx : -1
+        return bestIdx >= 0 && bestDist <= 0.5
+          ? { linkPipe, vertexIdx: bestIdx }
+          : null
       })
-      .filter(idx => idx >= 0)
+      .filter((x): x is { linkPipe: PipeRow; vertexIdx: number } => x !== null)
+
+    const linkJunctionVertexIdxs = linkJunctions.map((l) => l.vertexIdx)
+    // vertexIdx → その頂点に 合流している 前段 集水管 (同じ 頂点に 複数 合流するのは まれ、先勝ち)
+    const vertexIdxToLinkPipe = new Map<number, PipeRow>()
+    for (const l of linkJunctions) {
+      if (!vertexIdxToLinkPipe.has(l.vertexIdx)) {
+        vertexIdxToLinkPipe.set(l.vertexIdx, l.linkPipe)
+      }
+    }
+
+    // 既定義系統の 終端 集水管 → 系統 index の 辞書。
+    // 現行 タブ (集水暗渠 N or 直落) の 過去 rows を 走査し、
+    // outlet / collector_junction で 締められた 系統ごとに その 最終 collectorPipe を 拾う。
+    // その 集水管が 上で 見つかった linkPipe と 一致すれば、その 頂点は
+    // 「他系統 (=既存系統) の 合流点」= collector_merge として 登録する。
+    const existingSystemTerminalToSysIdx = new Map<string, number>()
+    {
+      const wiringState = usePipeWiringStore.getState()
+      const existingRows = activeTabType === 'collector'
+        ? wiringState.collectorTabs[activeCollectorIndex]?.rows ?? []
+        : wiringState.directRows
+      let sysIdx = 1
+      for (const r of existingRows) {
+        if (r.rowType === 'outlet' || r.rowType === 'collector_junction') {
+          if (r.collectorPipe && !existingSystemTerminalToSysIdx.has(r.collectorPipe)) {
+            existingSystemTerminalToSysIdx.set(r.collectorPipe, sysIdx)
+          }
+          sysIdx++
+        }
+      }
+    }
+
+    /**
+     * 指定した 集水管上の 頂点 index に 「既定義系統の 終端」が 合流していれば
+     * その 系統 index を 返す。合流していなければ null。
+     * → 該当あり = その 頂点行を collector_merge にすべき サイン
+     */
+    const getMergeSystemIndexAtVertex = (vertexIdx: number): number | null => {
+      const linkPipe = vertexIdxToLinkPipe.get(vertexIdx)
+      if (!linkPipe) return null
+      return existingSystemTerminalToSysIdx.get(linkPipe.id) ?? null
+    }
 
     // 接続している吸水管が無い場合でも、この集水管自体に折点や
     // 連結管との合流点があれば collector_change 行として登録する。
@@ -248,15 +294,32 @@ export function PipeWiringPage() {
         new Set([...linkJunctionVertexIdxs, ...bendIdxs]),
       ).sort((a, b) => a - b)
       if (changeVertexIdxs.length > 0) {
-        const newRows: WiringRow[] = changeVertexIdxs.map((vIdx) => ({
-          id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-          rowType: 'collector_change' as RowType,
-          absorptionPipes: [],
-          collectorPipe: collectorPipeId,
-          isMergePipe: false,
-          mergeSystemIndex: null,
-          collectorVertexIdx: vIdx,
-        }))
+        const newRows: WiringRow[] = changeVertexIdxs.map((vIdx) => {
+          const sysIdx = getMergeSystemIndexAtVertex(vIdx)
+          if (sysIdx != null) {
+            // 他系統の 終端が この 頂点で 合流 → collector_merge として 登録
+            // UI 慣習: 系統 index は 文字列で absorptionPipes[0] に 入れる
+            // (store 保存時に mergeSystemIndex に 変換される)
+            return {
+              id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+              rowType: 'collector_merge' as RowType,
+              absorptionPipes: [sysIdx.toString()],
+              collectorPipe: collectorPipeId,
+              isMergePipe: false,
+              mergeSystemIndex: sysIdx,
+              collectorVertexIdx: vIdx,
+            }
+          }
+          return {
+            id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+            rowType: 'collector_change' as RowType,
+            absorptionPipes: [],
+            collectorPipe: collectorPipeId,
+            isMergePipe: false,
+            mergeSystemIndex: null,
+            collectorVertexIdx: vIdx,
+          }
+        })
         if (activeTabType === 'collector') {
           setCollectorTabs(prev => prev.map((tab, i) => {
             if (i !== activeCollectorIndex) return tab
@@ -330,9 +393,16 @@ export function PipeWiringPage() {
     // - 吸水合流イベントは distance（下流からの累積距離）が大きいほど上流。
     // - 集水変化点は collectorChangeVertexIdx（vertex 番号 = 上流から振った index）。
     //   下流からの累積距離に変換して比較する。
+    // - change イベントに mergeSystemIndex が セットされていれば、それは
+    //   「既定義系統の 合流点」= collector_merge 行として 生成される。
     type Event =
       | { kind: 'absorption'; pipe: PipeRow; distFromDownstream: number }
-      | { kind: 'change'; vertexIdx: number; distFromDownstream: number }
+      | {
+          kind: 'change'
+          vertexIdx: number
+          distFromDownstream: number
+          mergeSystemIndex?: number
+        }
 
     const cv2 = collectorPipe.vertices
     // 頂点 i から下流端までの累積距離（m）を事前計算
@@ -347,7 +417,13 @@ export function PipeWiringPage() {
       events.push({ kind: 'absorption', pipe, distFromDownstream: distance / 1000 })
     }
     for (const idx of collectorChangeVertexIdx) {
-      events.push({ kind: 'change', vertexIdx: idx, distFromDownstream: cumDistFromDownstream[idx] })
+      const sysIdx = getMergeSystemIndexAtVertex(idx)
+      events.push({
+        kind: 'change',
+        vertexIdx: idx,
+        distFromDownstream: cumDistFromDownstream[idx],
+        mergeSystemIndex: sysIdx ?? undefined,
+      })
     }
     // 上流側 = distFromDownstream が大きい → 降順で並べると上流から下流に並ぶ
     events.sort((a, b) => b.distFromDownstream - a.distFromDownstream)
@@ -397,6 +473,17 @@ export function PipeWiringPage() {
             isMergePipe: false,
             mergeSystemIndex: null,
             collectorVertexIdx: collVIdx,
+          })
+        } else if (evt.mergeSystemIndex != null) {
+          // 他系統 (既定義) の 終端が この 頂点で 合流 → collector_merge 行
+          rows.push({
+            id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+            rowType: 'collector_merge',
+            absorptionPipes: [evt.mergeSystemIndex.toString()],
+            collectorPipe: collectorPipeId,
+            isMergePipe: false,
+            mergeSystemIndex: evt.mergeSystemIndex,
+            collectorVertexIdx: evt.vertexIdx,
           })
         } else {
           rows.push({
@@ -1344,6 +1431,115 @@ export function PipeWiringPage() {
     return groups
   }, [currentRows])
 
+  /**
+   * 集水の 点間距離 (前行の 集水点 → この行の 集水点) を、現行の 配線状態から
+   * 直接計算した Map。planGroups (施工計画側) の 生成に 依存しないので、
+   * 頂点ピッカーで 変更した 直後にも 即座に 更新される。
+   *
+   * 同一集水管上の 2 頂点 → 沿管距離 (頂点間 セグメント長 の 合計)
+   * 別の集水管 → 頂点座標間の 直線距離 (合流点なら ~0)
+   * 頂点 index の 決定は row.collectorVertexIdx を 最優先。無ければ
+   * rowType から 推定 (旧行 フォールバック)。
+   */
+  const liveSectionByRowId = useMemo(() => {
+    const result = new Map<string, number | null>()
+    const pipeById = new Map<string, PipeRow>(pipes.map((p) => [p.id, p] as const))
+
+    const findClosestVertexIdx = (pipe: PipeRow, pt: { x: number; y: number }): number => {
+      let bestIdx = 0
+      let bestDist = Infinity
+      for (let i = 0; i < pipe.vertices.length; i++) {
+        const v = pipe.vertices[i]
+        const d = Math.hypot(v.x - pt.x, v.y - pt.y)
+        if (d < bestDist) { bestDist = d; bestIdx = i }
+      }
+      return bestIdx
+    }
+
+    // 集水管上の 頂点 index を 決定。明示指定 → rowType 推定 → null
+    const resolveVertexIdx = (
+      row: WiringRow,
+      prevRow: WiringRow | null,
+      pipe: PipeRow,
+    ): number | null => {
+      if (
+        row.collectorVertexIdx != null &&
+        row.collectorVertexIdx >= 0 &&
+        row.collectorVertexIdx < pipe.vertices.length
+      ) {
+        return row.collectorVertexIdx
+      }
+      if (pipe.vertices.length === 0) return null
+      if (row.rowType === 'absorption_end') return 0
+      if (row.rowType === 'outlet' || row.rowType === 'collector_junction') {
+        return pipe.vertices.length - 1
+      }
+      // absorption_merge / collector_merge / collector_change フォールバック:
+      //   前行の 集水管が 別なら その 下流端に 最寄りの 頂点、同じなら 前行と 同一頂点
+      if (prevRow?.collectorPipe && prevRow.collectorPipe !== row.collectorPipe) {
+        const prevPipe = pipeById.get(prevRow.collectorPipe)
+        if (prevPipe && prevPipe.vertices.length > 0) {
+          const endV = prevPipe.vertices[prevPipe.vertices.length - 1]
+          return findClosestVertexIdx(pipe, endV)
+        }
+      }
+      return null
+    }
+
+    const alongPipeDistance = (pipe: PipeRow, aIdx: number, bIdx: number): number => {
+      const lo = Math.min(aIdx, bIdx)
+      const hi = Math.max(aIdx, bIdx)
+      let total = 0
+      for (let i = lo; i < hi; i++) {
+        const va = pipe.vertices[i]
+        const vb = pipe.vertices[i + 1]
+        total += Math.hypot(vb.x - va.x, vb.y - va.y)
+      }
+      return total
+    }
+
+    // 系統境界: outlet / collector_junction 行の 「次の 行」から 新系統
+    const isSystemEnd = (r: WiringRow) =>
+      r.rowType === 'outlet' || r.rowType === 'collector_junction'
+
+    let systemStart = 0
+    for (let i = 0; i < currentRows.length; i++) {
+      const row = currentRows[i]
+      // 系統内で 直前の 「集水管が 設定されている」 行を 探す
+      let prevIdx: number | null = null
+      for (let j = i - 1; j >= systemStart; j--) {
+        if (currentRows[j].collectorPipe) { prevIdx = j; break }
+      }
+      if (prevIdx == null || !row.collectorPipe) {
+        result.set(row.id, null)
+      } else {
+        const prevRow = currentRows[prevIdx]
+        const currPipe = pipeById.get(row.collectorPipe)
+        const prevPipe = prevRow.collectorPipe ? pipeById.get(prevRow.collectorPipe) : null
+        if (!currPipe || !prevPipe) {
+          result.set(row.id, null)
+        } else {
+          const currVIdx = resolveVertexIdx(row, prevRow, currPipe)
+          const prevPrev = prevIdx > 0 ? currentRows[prevIdx - 1] : null
+          const prevVIdx = resolveVertexIdx(prevRow, prevPrev, prevPipe)
+          if (currVIdx == null || prevVIdx == null) {
+            result.set(row.id, null)
+          } else if (currPipe.id === prevPipe.id) {
+            result.set(row.id, alongPipeDistance(currPipe, prevVIdx, currVIdx))
+          } else {
+            // 別 集水管 (通常は 合流点なので ~0)
+            const pv = prevPipe.vertices[prevVIdx]
+            const cv = currPipe.vertices[currVIdx]
+            result.set(row.id, Math.hypot(cv.x - pv.x, cv.y - pv.y))
+          }
+        }
+      }
+      if (isSystemEnd(row)) systemStart = i + 1
+    }
+
+    return result
+  }, [currentRows, pipes])
+
   // 表示用の行タイプ
   type DisplayRowType = 'data' | 'pipe-separator'
 
@@ -2276,6 +2472,9 @@ export function PipeWiringPage() {
                                       const label = collPipe && vIdx != null
                                         ? generatePointName(collPipe.number, vIdx, total)
                                         : ''
+                                      const secLen =
+                                        liveSectionByRowId.get(row.id) ??
+                                        hydraulicLengths.sectionByWiringId.get(row.id)
                                       return (
                                         <span className="inline-flex items-center gap-0.5">
                                           <button
@@ -2298,6 +2497,14 @@ export function PipeWiringPage() {
                                           >
                                             {label}
                                           </button>
+                                          {secLen != null && (
+                                            <span
+                                              className="text-[10px] text-emerald-700 font-mono"
+                                              title="前行の集水点 → この行の集水点 の 点間距離"
+                                            >
+                                              {secLen.toFixed(1)}m
+                                            </span>
+                                          )}
                                           <button
                                             onClick={() => clearCollectorPipe(
                                               row.id,
@@ -2366,7 +2573,13 @@ export function PipeWiringPage() {
                                     (() => {
                                       const collPipe = pipes.find((p) => p.id === row.collectorPipe)
                                       const pipeNumber = collPipe?.number ?? row.collectorPipe
-                                      const secLen = hydraulicLengths.sectionByWiringId.get(row.id)
+                                      // 集水の 点間距離: 現行 配線状態から 直接計算 (live) を 最優先。
+                                      //   Live は 頂点ピッカーで 選び直した 直後にも 即 反映される。
+                                      //   Live で 計算できない (頂点 未確定など) 場合のみ、施工計画 由来の
+                                      //   従来値に フォールバック。
+                                      const secLen =
+                                        liveSectionByRowId.get(row.id) ??
+                                        hydraulicLengths.sectionByWiringId.get(row.id)
                                       return (
                                         <>
                                           <span className={`inline-flex items-center gap-0.5 text-xs font-medium ${
@@ -2376,7 +2589,7 @@ export function PipeWiringPage() {
                                             {secLen != null && (
                                               <span
                                                 className="text-[10px] text-emerald-700 font-mono"
-                                                title="前行の集水点 → この行の集水点 の区間延長"
+                                                title="前行の集水点 → この行の集水点 の 点間距離 (同一集水管は 沿管距離、別集水管は 直線距離)"
                                               >
                                                 {secLen.toFixed(1)}m
                                               </span>

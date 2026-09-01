@@ -1398,24 +1398,29 @@ export function PipeMap({
         )
       })}
 
-      {/* 頂点ピックモード: 全管路の全頂点を クリック対象として 上乗せ描画
-          (最後に置いて 他マーカーより 上に来るように) */}
-      {vertexPickMode && pipeLines.flatMap((pipe) => {
-        const total = pipe.positions.length
-        return pipe.positions.map((pos, idx) => {
-          const name = vertexPointName(pipe.number, idx, total)
-          return (
-            <Marker
-              key={`vpick-${pipe.id}-${idx}`}
-              position={pos}
-              icon={createVertexPickIcon(name)}
-              eventHandlers={{
-                click: () => onVertexPick?.(pipe.id, idx),
-              }}
-            />
-          )
-        })
-      })}
+      {/* 頂点ピックモード: 集水管候補の 全頂点を クリック対象として 上乗せ描画。
+          (最後に置いて 他マーカーより 上に来るように)
+          吸水管 (branch) は 除外 — 集水管の 管末と 吸水管の A 点が 物理的に 重なる
+          ケースで、吸水管側の マーカーが クリックを 奪ってしまう 事故を 防ぐため。
+          集水として 指定されうる 管種のみ 候補に する */}
+      {vertexPickMode && pipeLines
+        .filter((pipe) => pipe.pipeType !== 'branch')
+        .flatMap((pipe) => {
+          const total = pipe.positions.length
+          return pipe.positions.map((pos, idx) => {
+            const name = vertexPointName(pipe.number, idx, total)
+            return (
+              <Marker
+                key={`vpick-${pipe.id}-${idx}`}
+                position={pos}
+                icon={createVertexPickIcon(name)}
+                eventHandlers={{
+                  click: () => onVertexPick?.(pipe.id, idx),
+                }}
+              />
+            )
+          })
+        })}
 
       {/* 凡例 */}
       <div className="absolute bottom-4 left-4 bg-white p-2 rounded shadow-md z-[1000] text-xs">
