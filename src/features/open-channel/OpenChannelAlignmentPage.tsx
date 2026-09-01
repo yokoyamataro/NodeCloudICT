@@ -844,10 +844,25 @@ function InteractiveCrossSectionEditor({
   cs,
   onChange,
   centerHeight,
+  onPrevStation,
+  onNextStation,
+  canPrev = false,
+  canNext = false,
+  prevLabel,
+  nextLabel,
 }: {
   cs: StandardCrossSection
   onChange: (next: StandardCrossSection) => void
   centerHeight?: number
+  /** 手前の 断面 (前の 測点) に 移行。null なら ボタン非活性 */
+  onPrevStation?: () => void
+  /** 次の 断面 (次の 測点) に 移行。null なら ボタン非活性 */
+  onNextStation?: () => void
+  canPrev?: boolean
+  canNext?: boolean
+  /** ボタンの tooltip 表示用 (例: "SP0+20 の 計画断面") */
+  prevLabel?: string
+  nextLabel?: string
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 720, h: 340 })
@@ -1218,32 +1233,49 @@ function InteractiveCrossSectionEditor({
         ref={containerRef}
         className="flex-1 min-h-0 border rounded bg-slate-50 relative overflow-hidden"
       >
-        {/* 左右計画線 の 開始ボタンは 中心線 (SVG 中央) の 直近に 左右 対称 配置。
-            断面の 中心が どこかを 目視しつつ、そこから 描き始める 方向を 選ぶ 動線。 */}
-        <button
-          onClick={() => setDrawSide(drawSide === 'left' ? null : 'left')}
-          style={{ right: 'calc(50% + 4px)' }}
-          className={`absolute top-2 z-10 px-2 py-1 text-xs border rounded shadow-sm ${
-            drawSide === 'left'
-              ? 'bg-amber-500 text-white border-amber-500'
-              : 'bg-white/95 hover:bg-slate-100 text-slate-700'
-          }`}
-          title="左側 の 断面 を 描画"
-        >
-          ← 左計画線
-        </button>
-        <button
-          onClick={() => setDrawSide(drawSide === 'right' ? null : 'right')}
-          style={{ left: 'calc(50% + 4px)' }}
-          className={`absolute top-2 z-10 px-2 py-1 text-xs border rounded shadow-sm ${
-            drawSide === 'right'
-              ? 'bg-emerald-500 text-white border-emerald-500'
-              : 'bg-white/95 hover:bg-slate-100 text-slate-700'
-          }`}
-          title="右側 の 断面 を 描画"
-        >
-          右計画線 →
-        </button>
+        {/* 上部 中央 の ツールバー: 断面切替 (◀) + 左右計画線 + 断面切替 (▶)。
+            中心線 (SVG 中央) を 挟む 形で 4 個 を 並べ、
+            外側 2 個 で 手前 / 次の 測点 の 断面へ ジャンプできる。 */}
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1">
+          <button
+            onClick={onPrevStation}
+            disabled={!canPrev}
+            className="px-2 py-1 text-xs border rounded shadow-sm bg-white/95 hover:bg-slate-100 text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+            title={prevLabel ? `手前の 断面 (${prevLabel})` : '手前の 断面に 移行'}
+          >
+            ◀ 手前
+          </button>
+          <button
+            onClick={() => setDrawSide(drawSide === 'left' ? null : 'left')}
+            className={`px-2 py-1 text-xs border rounded shadow-sm ${
+              drawSide === 'left'
+                ? 'bg-amber-500 text-white border-amber-500'
+                : 'bg-white/95 hover:bg-slate-100 text-slate-700'
+            }`}
+            title="左側 の 断面 を 描画"
+          >
+            ← 左計画線
+          </button>
+          <button
+            onClick={() => setDrawSide(drawSide === 'right' ? null : 'right')}
+            className={`px-2 py-1 text-xs border rounded shadow-sm ${
+              drawSide === 'right'
+                ? 'bg-emerald-500 text-white border-emerald-500'
+                : 'bg-white/95 hover:bg-slate-100 text-slate-700'
+            }`}
+            title="右側 の 断面 を 描画"
+          >
+            右計画線 →
+          </button>
+          <button
+            onClick={onNextStation}
+            disabled={!canNext}
+            className="px-2 py-1 text-xs border rounded shadow-sm bg-white/95 hover:bg-slate-100 text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+            title={nextLabel ? `次の 断面 (${nextLabel})` : '次の 断面に 移行'}
+          >
+            次 ▶
+          </button>
+        </div>
         <svg
           width={size.w}
           height={size.h}
@@ -3704,14 +3736,52 @@ export function OpenChannelAlignmentPage() {
                           )}
                         </div>
 
-                        {/* 対話 型 断面 エディタ */}
-                        <div className="flex-1 min-h-0">
-                          <InteractiveCrossSectionEditor
-                            cs={cs}
-                            onChange={applyChange}
-                            centerHeight={centerZ}
-                          />
-                        </div>
+                        {/* 対話 型 断面 エディタ
+                            prev/next は 現在 選択中の 測点の 前後の 測点に ジャンプ。
+                            標準断面 (selectedStation なし) の 時は 前=最終測点、次=先頭測点
+                            に フォールバック (どちらの 状態からも 巡回できる)。 */}
+                        {(() => {
+                          const currentIdx = selectedStation
+                            ? stations.findIndex((s) => s.id === selectedStation.id)
+                            : -1
+                          const prevStation = selectedStation
+                            ? currentIdx > 0
+                              ? stations[currentIdx - 1]
+                              : null
+                            : stations.length > 0
+                              ? stations[stations.length - 1]
+                              : null
+                          const nextStation = selectedStation
+                            ? currentIdx >= 0 && currentIdx < stations.length - 1
+                              ? stations[currentIdx + 1]
+                              : null
+                            : stations.length > 0
+                              ? stations[0]
+                              : null
+                          return (
+                            <div className="flex-1 min-h-0">
+                              <InteractiveCrossSectionEditor
+                                cs={cs}
+                                onChange={applyChange}
+                                centerHeight={centerZ}
+                                onPrevStation={
+                                  prevStation
+                                    ? () => setSelectedStationId(prevStation.id)
+                                    : undefined
+                                }
+                                onNextStation={
+                                  nextStation
+                                    ? () => setSelectedStationId(nextStation.id)
+                                    : undefined
+                                }
+                                canPrev={!!prevStation}
+                                canNext={!!nextStation}
+                                prevLabel={prevStation?.label}
+                                nextLabel={nextStation?.label}
+                              />
+                            </div>
+                          )
+                        })()}
                       </>
                     )
                   })()}
