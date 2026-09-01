@@ -735,11 +735,12 @@ export function CoordinateMap({
       maxZoom={24}
       className="h-full w-full"
       style={{ minHeight: '400px' }}
-      // leaflet-rotate が 読まれると 右上に 回転コントロール が 自動で 付く。
-      // 通常の 地図は 北向き 固定 なので UI 側は 抑制。setBearing 経由での
-      // プログラム 回転は 引き続き 可能。
-      // (react-leaflet の 型に rotateControl は 無い ので Record 経由で spread)
-      {...({ rotateControl: false } as Record<string, unknown>)}
+      // leaflet-rotate の 有効化:
+      //   rotate:true         — setBearing が 実際に 反映される (これ が 無い と no-op)
+      //   bearing:0           — 初期 bearing (北向き)
+      //   rotateControl:false — 右上の 回転ハンドル UI は 抑制 (プログラム 回転のみ 許可)
+      // (react-leaflet の 型に これら は 無い ので Record 経由で spread)
+      {...({ rotate: true, bearing: 0, rotateControl: false } as Record<string, unknown>)}
     >
       {baseLayer === 'osm' && (
         <TileLayer
