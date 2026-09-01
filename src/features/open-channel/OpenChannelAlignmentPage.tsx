@@ -806,8 +806,18 @@ function ProfileChart({ points, totalLen }: { points: ProfilePoint[]; totalLen: 
  *
  * 座標系: 中心 (0,0) を 基準 に 右 +x / 左 -x、上 +y (計画高 基準)。
  */
-type DrawMode = 'freehand' | 'percent' | 'ratio' | 'vertical'
+type DrawMode = 'freehand' | 'percent' | 'ratio' | 'vertical' | 'dxdy'
 type DrawSide = 'right' | 'left' | null
+
+/** モード 順 (Space キー サイクル) と 表示ラベル */
+const DRAW_MODES: DrawMode[] = ['freehand', 'percent', 'ratio', 'vertical', 'dxdy']
+const DRAW_MODE_LABEL: Record<DrawMode, string> = {
+  freehand: 'フリーハンド',
+  percent: '%',
+  ratio: '1:i',
+  vertical: '直高',
+  dxdy: '相対距離 (縦横)',
+}
 
 /** 断面 区間 の 勾配 部分 だけ を 短い 文字列 に。 直高 は 高さ (符号 付) を 返す。 */
 function formatSlopeOnly(e: CrossSectionElement): string {
@@ -848,9 +858,18 @@ function InteractiveCrossSectionEditor({
   // dW / dH の 手動 入力。 空 なら カーソル 位置 を 使い、値 が あれば その値 を 優先。
   //  - percent / ratio モード: dW が 空 で dH が あれば 勾配 から dW を 逆算。
   //  - vertical モード: dH の みず 使用。
+  //  - dxdy モード: dW / dH の どちらか (両方) を 直接 指定。
   const [dWText, setDWText] = useState<string>('')
   const [dHText, setDHText] = useState<string>('')
   const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null)
+
+  // 表示側の パン (SVG ピクセル) と ズーム 倍率。 自動フィット (scale / offset) の 上に
+  // 重ねる 「ユーザー操作 の 視点」。 データ を 変えても 保持し、リセットボタンで 戻す。
+  const [viewPan, setViewPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+  const [viewZoom, setViewZoom] = useState<number>(1)
+  // ドラッグ 中 に click を 発火させない ため の ガード。ref で 持ち 再レンダー を 避ける。
+  const wasDraggingRef = useRef<boolean>(false)
+  const panStartRef = useRef<{ px: number; py: number; panX: number; panY: number } | null>(null)
 
   useEffect(() => {
     const el = containerRef.current
@@ -864,6 +883,31 @@ function InteractiveCrossSectionEditor({
     })
     ro.observe(el)
     return () => ro.disconnect()
+  }, [])
+
+  // ホイール ズーム。 React の onWheel は passive で preventDefault が 効かない ため、
+  // 生 addEventListener で { passive: false } で 張る。カーソル 位置 を 中心に 拡縮。
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const rect = el.getBoundingClientRect()
+      const px = e.clientX - rect.left
+      const py = e.clientY - rect.top
+      const factor = e.deltaY > 0 ? 0.9 : 1.1
+      setViewZoom((prevZoom) => {
+        const nextZoom = Math.max(0.2, Math.min(10, prevZoom * factor))
+        const k = nextZoom / prevZoom
+        setViewPan((prevPan) => ({
+          x: px - (px - prevPan.x) * k,
+          y: py - (py - prevPan.y) * k,
+        }))
+        return nextZoom
+      })
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
   }, [])
 
   // 描画済 の 折れ線 (左端 → 中心 → 右端)
@@ -914,8 +958,12 @@ function InteractiveCrossSectionEditor({
   const offsetY = padding.top + (innerH - drawnH) / 2 + maxY * scale
   const tx = (x: number) => offsetX + x * scale
   const ty = (y: number) => offsetY - y * scale
-  const ix = (px: number) => (px - offsetX) / scale
-  const iy = (py: number) => (offsetY - py) / scale
+  // ピクセル → 世界 座標: 表示側の パン/ズーム を 逆に かけて から 自動フィット を 剥がす
+  const ix = (px: number) => ((px - viewPan.x) / viewZoom - offsetX) / scale
+  const iy = (py: number) => (offsetY - (py - viewPan.y) / viewZoom) / scale
+  // 世界 座標 → 画面 ピクセル (パン/ズーム 込み)。参照線 の 位置 決定 等 に 使う
+  const vx = (x: number) => viewPan.x + viewZoom * tx(x)
+  const vy = (y: number) => viewPan.y + viewZoom * ty(y)
 
   /**
    * 現在 の モード + 入力値 + カーソル 位置 から 新 区間 を 算出。
@@ -945,13 +993,48 @@ function InteractiveCrossSectionEditor({
 
   const preview = drawSide ? computeSegment() : null
 
-  const onSvgMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    if (!drawSide) return
+  const onSvgMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
+    // 左ボタン のみ pan 候補。右クリックは 通常メニュー を 出す (何もしない)
+    if (e.button !== 0) return
     const rect = e.currentTarget.getBoundingClientRect()
-    setCursor({ x: ix(e.clientX - rect.left), y: iy(e.clientY - rect.top) })
+    wasDraggingRef.current = false
+    panStartRef.current = {
+      px: e.clientX - rect.left,
+      py: e.clientY - rect.top,
+      panX: viewPan.x,
+      panY: viewPan.y,
+    }
   }
-  const onSvgMouseLeave = () => setCursor(null)
+  const onSvgMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const px = e.clientX - rect.left
+    const py = e.clientY - rect.top
+    // 左ボタン 押しっぱなし で 4px 以上 動いたら pan (以後 click は 抑止)
+    if (panStartRef.current && (e.buttons & 1)) {
+      const dx = px - panStartRef.current.px
+      const dy = py - panStartRef.current.py
+      if (wasDraggingRef.current || Math.hypot(dx, dy) > 4) {
+        wasDraggingRef.current = true
+        setViewPan({
+          x: panStartRef.current.panX + dx,
+          y: panStartRef.current.panY + dy,
+        })
+      }
+    }
+    if (!drawSide) return
+    setCursor({ x: ix(px), y: iy(py) })
+  }
+  const onSvgMouseLeave = () => {
+    setCursor(null)
+    panStartRef.current = null
+  }
+  const onSvgMouseUp = () => {
+    panStartRef.current = null
+    // wasDraggingRef は 直後の onClick で 読まれる。次の mouseDown で リセット される
+  }
   const onSvgClick = (e: React.MouseEvent<SVGSVGElement>) => {
+    // ドラッグ 直後の click は 抑止 (pan の 終了 で 区間追加 されない ように)
+    if (wasDraggingRef.current) return
     if (!drawSide) return
     // カーソル 位置 を 最新化 して から 計算
     const rect = e.currentTarget.getBoundingClientRect()
@@ -961,6 +1044,12 @@ function InteractiveCrossSectionEditor({
     if (!seg) return
     const nextSide = [...cs[drawSide], seg.element]
     onChange({ ...cs, [drawSide]: nextSide })
+  }
+
+  /** 表示 リセット: パン (0,0) / ズーム 1.0 に 戻す (自動フィット 状態) */
+  const resetView = () => {
+    setViewPan({ x: 0, y: 0 })
+    setViewZoom(1)
   }
   const addManually = () => {
     if (!drawSide) return
@@ -981,17 +1070,28 @@ function InteractiveCrossSectionEditor({
     onChange({ ...cs, [drawSide]: nextSide })
   }
 
-  // BS (Backspace) キーで 一つ手前の 区間を 取消す。
-  // dW/dH/勾配 の 入力欄に フォーカスが 当たっている 間は 通常の 文字削除に 干渉しない。
+  // キー操作:
+  //   BS       — 直近区間 を 取消 (dW/dH/勾配 入力欄には 干渉しない)
+  //   Space    — モード を 順に 切替 (freehand → % → 1:i → 直高 → 相対距離 → …)
   useEffect(() => {
     if (!drawSide) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Backspace') return
       const t = e.target as HTMLElement | null
       const tag = t?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || (t && t.isContentEditable)) return
-      e.preventDefault()
-      removeLast()
+      const inTextInput =
+        tag === 'INPUT' || tag === 'TEXTAREA' || (t !== null && t.isContentEditable)
+      if (e.key === 'Backspace') {
+        if (inTextInput) return
+        e.preventDefault()
+        removeLast()
+      } else if (e.key === ' ' || e.code === 'Space') {
+        if (inTextInput) return
+        e.preventDefault()
+        setDrawMode((cur) => {
+          const idx = DRAW_MODES.indexOf(cur)
+          return DRAW_MODES[(idx + 1) % DRAW_MODES.length]
+        })
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -1020,11 +1120,8 @@ function InteractiveCrossSectionEditor({
     <div className="flex flex-col gap-2 h-full">
       {/* ツールバー (左右計画線 ボタンは SVG 上に 移動、勾配モード等は ここに 残す) */}
       <div className="flex items-center gap-1.5 flex-wrap text-xs shrink-0">
-        <span className="text-slate-500 text-[11px]">勾配</span>
-        {modeButton('freehand', 'フリーハンド')}
-        {modeButton('percent', '%')}
-        {modeButton('ratio', '1:i')}
-        {modeButton('vertical', '直高')}
+        <span className="text-slate-500 text-[11px]">モード (Space で 切替)</span>
+        {DRAW_MODES.map((m) => modeButton(m, DRAW_MODE_LABEL[m]))}
         {(drawMode === 'percent' || drawMode === 'ratio') && drawSide && (
           <input
             type="text"
@@ -1036,11 +1133,11 @@ function InteractiveCrossSectionEditor({
           />
         )}
 
-        {/* 幅 / 高 の 手動入力 (percent / ratio / vertical モード)。
+        {/* 幅 / 高 の 手動入力 (percent / ratio / vertical / dxdy モード)。
             空 なら カーソル 位置 で 決定、埋めれば その値 で 追加 ボタン から 確定。 */}
         {drawSide && drawMode !== 'freehand' && (
           <>
-            {(drawMode === 'percent' || drawMode === 'ratio') && (
+            {(drawMode === 'percent' || drawMode === 'ratio' || drawMode === 'dxdy') && (
               <label className="flex items-center gap-1 text-slate-500 text-[11px]">
                 dW
                 <input
@@ -1100,6 +1197,17 @@ function InteractiveCrossSectionEditor({
         >
           右クリア
         </button>
+        <span className="text-slate-400 mx-1">|</span>
+        <button
+          onClick={resetView}
+          className="px-2 py-1 text-xs border rounded bg-white hover:bg-slate-100"
+          title="表示 (パン / ズーム) を リセット"
+        >
+          表示リセット
+        </button>
+        <span className="text-slate-400 text-[10px] ml-1">
+          ホイール ズーム / ドラッグ スクロール
+        </span>
       </div>
 
       {/* 描画キャンバス
@@ -1110,10 +1218,12 @@ function InteractiveCrossSectionEditor({
         ref={containerRef}
         className="flex-1 min-h-0 border rounded bg-slate-50 relative overflow-hidden"
       >
-        {/* 左計画線 ボタン (SVG の 左上に 重ねる) */}
+        {/* 左右計画線 の 開始ボタンは 中心線 (SVG 中央) の 直近に 左右 対称 配置。
+            断面の 中心が どこかを 目視しつつ、そこから 描き始める 方向を 選ぶ 動線。 */}
         <button
           onClick={() => setDrawSide(drawSide === 'left' ? null : 'left')}
-          className={`absolute top-2 left-2 z-10 px-2 py-1 text-xs border rounded shadow-sm ${
+          style={{ right: 'calc(50% + 4px)' }}
+          className={`absolute top-2 z-10 px-2 py-1 text-xs border rounded shadow-sm ${
             drawSide === 'left'
               ? 'bg-amber-500 text-white border-amber-500'
               : 'bg-white/95 hover:bg-slate-100 text-slate-700'
@@ -1122,10 +1232,10 @@ function InteractiveCrossSectionEditor({
         >
           ← 左計画線
         </button>
-        {/* 右計画線 ボタン (SVG の 右上に 重ねる) */}
         <button
           onClick={() => setDrawSide(drawSide === 'right' ? null : 'right')}
-          className={`absolute top-2 right-2 z-10 px-2 py-1 text-xs border rounded shadow-sm ${
+          style={{ left: 'calc(50% + 4px)' }}
+          className={`absolute top-2 z-10 px-2 py-1 text-xs border rounded shadow-sm ${
             drawSide === 'right'
               ? 'bg-emerald-500 text-white border-emerald-500'
               : 'bg-white/95 hover:bg-slate-100 text-slate-700'
@@ -1137,30 +1247,41 @@ function InteractiveCrossSectionEditor({
         <svg
           width={size.w}
           height={size.h}
+          onMouseDown={onSvgMouseDown}
           onMouseMove={onSvgMouseMove}
           onMouseLeave={onSvgMouseLeave}
+          onMouseUp={onSvgMouseUp}
           onClick={onSvgClick}
-          style={{ cursor: drawSide ? 'crosshair' : 'default' }}
+          style={{
+            cursor: wasDraggingRef.current
+              ? 'grabbing'
+              : drawSide
+                ? 'crosshair'
+                : 'grab',
+          }}
         >
-          {/* 中心線 (点線) */}
+          {/* 中心線 / 中心設計高 基準線 は 常に 画面 端まで 伸ばす (パン/ズームで
+              端が 見切れないよう、transform の 外で 位置を 手計算) */}
           <line
-            x1={tx(0)}
+            x1={vx(0)}
             y1={padding.top}
-            x2={tx(0)}
+            x2={vx(0)}
             y2={size.h - padding.bottom}
             stroke="#cbd5e1"
             strokeDasharray="3,3"
             strokeWidth={1}
           />
-          {/* 中心設計高 基準 (実線) */}
           <line
             x1={padding.left}
-            y1={ty(0)}
+            y1={vy(0)}
             x2={size.w - padding.right}
-            y2={ty(0)}
+            y2={vy(0)}
             stroke="#94a3b8"
             strokeWidth={1}
           />
+
+          {/* 世界レイヤ: パン/ズームで 変形。断面 本体・折点・寸法ラベル・プレビュー等 */}
+          <g transform={`translate(${viewPan.x} ${viewPan.y}) scale(${viewZoom})`}>
 
           {/* 現在 の 断面 */}
           {points.length >= 2 && (
@@ -1239,7 +1360,7 @@ function InteractiveCrossSectionEditor({
                     <text
                       x={midX + nUpX * offset}
                       y={midY + nUpY * offset}
-                      fontSize={10}
+                      fontSize={13}
                       fill="#334155"
                       textAnchor="middle"
                       style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
@@ -1251,7 +1372,7 @@ function InteractiveCrossSectionEditor({
                     <text
                       x={midX - nUpX * offset}
                       y={midY - nUpY * offset + 4}
-                      fontSize={10}
+                      fontSize={13}
                       fill="#334155"
                       textAnchor="middle"
                       style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
@@ -1306,7 +1427,7 @@ function InteractiveCrossSectionEditor({
                       <text
                         x={midX + nUpX * offset}
                         y={midY + nUpY * offset}
-                        fontSize={10}
+                        fontSize={13}
                         fill={color}
                         textAnchor="middle"
                         fontWeight={600}
@@ -1319,7 +1440,7 @@ function InteractiveCrossSectionEditor({
                       <text
                         x={midX - nUpX * offset}
                         y={midY - nUpY * offset + 4}
-                        fontSize={10}
+                        fontSize={13}
                         fill={color}
                         textAnchor="middle"
                         fontWeight={600}
@@ -1346,25 +1467,27 @@ function InteractiveCrossSectionEditor({
               strokeDasharray="2,2"
             />
           )}
+          </g>
+          {/* 中心設計高 ラベル: 中心線 直近に 出す。パン/ズームで 位置は 追随 (vx/vy) */}
+          {centerHeight !== undefined && (
+            <text x={vx(0) + 6} y={vy(0) - 4} fontSize={12} fill="#334155">
+              中心設計高 {centerHeight.toFixed(3)}m
+            </text>
+          )}
 
-          {/* 左右 ラベル */}
-          <text x={padding.left} y={16} fontSize={11} fill="#64748b">
+          {/* 左右 ラベル (パン/ズームに 影響されない UI 表示) */}
+          <text x={padding.left} y={16} fontSize={12} fill="#64748b">
             左
           </text>
           <text
             x={size.w - padding.right}
             y={16}
-            fontSize={11}
+            fontSize={12}
             fill="#64748b"
             textAnchor="end"
           >
             右
           </text>
-          {centerHeight !== undefined && (
-            <text x={tx(0) + 6} y={ty(0) - 4} fontSize={10} fill="#334155">
-              中心設計高 {centerHeight.toFixed(3)}m
-            </text>
-          )}
 
           {/* ステータス表示 */}
           {drawSide && cursor && (
@@ -1391,7 +1514,7 @@ function InteractiveCrossSectionEditor({
               fill="#334155"
               style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
             >
-              描画中: {drawSide === 'right' ? '右計画線' : '左計画線'} / {drawMode === 'freehand' ? 'フリーハンド' : drawMode === 'percent' ? '%' : drawMode === 'ratio' ? '1:i' : '直高'}
+              描画中: {drawSide === 'right' ? '右計画線' : '左計画線'} / {DRAW_MODE_LABEL[drawMode]}
             </text>
           )}
         </svg>
@@ -1452,6 +1575,27 @@ function computeSegmentCore(input: {
       slopeUnit: 'vertical',
     }
     return { element: el, endPoint: { x: drawOrigin.x, y: drawOrigin.y + el.slopeValue } }
+  }
+
+  // ------ 相対距離 モード (dW / dH を 直接 指定) ------
+  //   両方 入力あれば その値で 追加、片方 空なら カーソル で 補完。
+  //   保存形式は 「幅 + 勾配%」(=フリーハンドと 同じ) — 後で 編集する 時も 破綻しない。
+  if (drawMode === 'dxdy') {
+    const dw = dWIn !== null ? Math.abs(dWIn) : cursor ? Math.abs(cursorDx) : null
+    const dh = dHIn !== null ? dHIn : cursor ? cursorDy : null
+    if (dw === null || dh === null) return null
+    if (dw < 1e-3) return null
+    const wRounded = Math.round(dw * 1000) / 1000
+    const pct = Math.round((dh / dw) * 100 * 100) / 100
+    const el: CrossSectionElement = {
+      id: newId(),
+      name: '',
+      width: wRounded,
+      slopeValue: pct,
+      slopeUnit: 'percent',
+    }
+    const step = elementStep(el, sideSign)
+    return { element: el, endPoint: { x: drawOrigin.x + step.dx, y: drawOrigin.y + step.dy } }
   }
 
   // ------ フリーハンド (勾配 % を 位置から 算出) ------
