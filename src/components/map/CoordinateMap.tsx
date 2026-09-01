@@ -2,6 +2,11 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { MapContainer, TileLayer, Marker, Pane, Polygon, Polyline, useMap, useMapEvents, Tooltip, Popup } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+// leaflet-rotate は L.Map に rotate / setBearing を注入する 副作用 import。
+// これを 入れる こと で mapBearingDeg prop (下記) が 効く。
+// 副作用として rotateControl:true が 自動で 有効に なる ので、下の MapContainer に
+// rotateControl={false} を 明示して 右上の 回転コントロール UI を 抑制する。
+import 'leaflet-rotate'
 import { useCoordinateStore, type CoordinateRow, type RoutePoint } from '@/stores/coordinateStore'
 import { useMapViewStore } from '@/stores/mapViewStore'
 import { useOrthophotoStore } from '@/stores/orthophotoStore'
@@ -596,6 +601,12 @@ interface CoordinateMapProps {
    * デフォルト true（クリックで選択できる従来動作）
    */
   coordinatesInteractive?: boolean
+  /**
+   * 地図の 回転 (bearing) を 度数 で 指定 (北=0、東=90、時計回り)。
+   * undefined なら 触らない (現在の bearing を 維持)。
+   * 例: 横断計画で 「進行方向を 画面上向きに」する 用途を 想定。
+   */
+  mapBearingDeg?: number
   // MapContainer の子として追加レイヤを差し込む（作図・計測など）
   children?: React.ReactNode
 }
@@ -641,6 +652,7 @@ export function CoordinateMap({
   lineSelectMode = false,
   onLineSelect,
   coordinatesInteractive = true,
+  mapBearingDeg,
   elementPanes,
   children,
 }: CoordinateMapProps) {
@@ -723,6 +735,11 @@ export function CoordinateMap({
       maxZoom={24}
       className="h-full w-full"
       style={{ minHeight: '400px' }}
+      // leaflet-rotate が 読まれると 右上に 回転コントロール が 自動で 付く。
+      // 通常の 地図は 北向き 固定 なので UI 側は 抑制。setBearing 経由での
+      // プログラム 回転は 引き続き 可能。
+      // (react-leaflet の 型に rotateControl は 無い ので Record 経由で spread)
+      {...({ rotateControl: false } as Record<string, unknown>)}
     >
       {baseLayer === 'osm' && (
         <TileLayer
@@ -1102,6 +1119,8 @@ export function CoordinateMap({
       <ZoomTracker onChange={setCurrentZoom} />
       {/* ホイールズームを 1 段ずつに制限 */}
       <OneStepWheelZoom />
+      {/* mapBearingDeg を map.setBearing に 反映 (未指定なら 触らない) */}
+      <BearingController bearingDeg={mapBearingDeg} />
 
       {/* 重なり選択ポップアップ: 15px 以内に複数点があった場合に開く */}
       {overlapPicker && (
@@ -1248,6 +1267,21 @@ function ZoomTracker({ onChange }: { onChange: (zoom: number) => void }) {
       onChange(map.getZoom())
     },
   })
+  return null
+}
+
+// mapBearingDeg prop を map.setBearing に 反映させる 不可視 コントローラ。
+// leaflet-rotate が 読まれて いれば setBearing が 生えて いる。ロードされて
+// いない 環境では 型上 undefined になる ので 何もしない。
+function BearingController({ bearingDeg }: { bearingDeg: number | undefined }) {
+  const map = useMap()
+  useEffect(() => {
+    if (bearingDeg === undefined) return
+    const rot = map as unknown as { setBearing?: (deg: number) => void }
+    if (typeof rot.setBearing === 'function') {
+      rot.setBearing(bearingDeg)
+    }
+  }, [map, bearingDeg])
   return null
 }
 

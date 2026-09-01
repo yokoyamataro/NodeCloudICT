@@ -2003,6 +2003,19 @@ export function OpenChannelAlignmentPage() {
   const stations: StationRow[] = selected?.stations ?? []
   const selectedStation = stations.find((s) => s.id === selectedStationId) ?? null
 
+  // 「横断を 切替中は 図面の 断面方向 (左右=画面 左右) が 水平に なる ように 地図を 回転」
+  // する 用の bearing (度)。 CoordinateMap の mapBearingDeg (setBearing 経由) に 渡す。
+  //   世界座標: x=北 / y=東 (JGD 平面直角)
+  //   選択測点の 接線 (t.x, t.y) を 画面上向きに 揃える compass bearing = atan2(t.y, t.x)
+  //   leaflet-rotate の setBearing は 反時計回り 正 なので 符号 反転。
+  //   選択測点 なし (=標準断面 モード) は 0 (北向き) に 戻す。
+  const mapBearingDeg = useMemo(() => {
+    if (!selectedStation) return 0
+    const t = tangentAtDistance(segments, selectedStation.distance)
+    if (!t) return 0
+    return -Math.atan2(t.y, t.x) * (180 / Math.PI)
+  }, [selectedStation, segments])
+
   // 内部距離 (BP からの 累積) を 受け取り、SP 表示付き の ラベル を 返す。
   const formatSp = (d: number) => `SP${(d + spOffset).toFixed(2)}`
   const formatBc = (d: number) => `BC${(d + spOffset).toFixed(2)}`
@@ -3400,6 +3413,7 @@ export function OpenChannelAlignmentPage() {
               showLabels
               checkedCoordIds={registeredCoordIds}
               onPointSelect={handlePickCoordFromMap}
+              mapBearingDeg={mapBearingDeg}
             >
               {sampledLatLng.length >= 2 && (
                 <FitBounds key={selectedId ?? 'none'} positions={sampledLatLng} />
