@@ -345,6 +345,24 @@ function FitBounds({ positions }: { positions: [number, number][] }) {
   return null
 }
 
+// 選択中の 測点位置に 地図を パン+ズーム。 latLng が 変わる 度に 移動。
+// 既に 目的 ズーム 以上に 拡大されている 場合は そのまま (むやみに 縮小しない)。
+function StationFocus({
+  latLng,
+  targetZoom = 20,
+}: {
+  latLng: [number, number] | null
+  targetZoom?: number
+}) {
+  const map = useMap()
+  useEffect(() => {
+    if (!latLng) return
+    const nextZoom = Math.max(map.getZoom(), targetZoom)
+    map.setView(latLng, nextZoom, { animate: true, duration: 0.4 })
+  }, [latLng, targetZoom, map])
+  return null
+}
+
 // 「見栄えの良い」目盛間隔を 決定。 rawStep (単位) を 直近 の 1/2/5/10 系列に 丸める。
 // 例: rawStep=0.4 → 0.5、 rawStep=15 → 20、 rawStep=1.33 → 1
 function niceStep(rawStep: number): number {
@@ -2016,6 +2034,24 @@ export function OpenChannelAlignmentPage() {
     return -Math.atan2(t.y, t.x) * (180 / Math.PI)
   }, [selectedStation, segments])
 
+  // 選択中の 測点の 地図上 位置 (LatLng)。 StationFocus に 渡して
+  // その 点を 中央に パン+拡大 させる。 選択なし は null (地図は 触らない)。
+  const selectedStationLatLng = useMemo<[number, number] | null>(() => {
+    if (!selectedStation) return null
+    const p = pointAtDistance(segments, selectedStation.distance)
+    if (!p) return null
+    const ll = converter.toLatLng(p.x, p.y)
+    return [ll.lat, ll.lng]
+  }, [selectedStation, segments, converter])
+
+  // 測点を 選択 したら 常に 横断図 タブ に 自動切替 + パネル 展開。
+  // (行 click / ◀手前 / 次▶ / 「計画」ボタン 経由 いずれ でも 統一動作)
+  useEffect(() => {
+    if (!selectedStationId) return
+    setBottomTab('crossSection')
+    setProfileChartExpanded(true)
+  }, [selectedStationId])
+
   // 内部距離 (BP からの 累積) を 受け取り、SP 表示付き の ラベル を 返す。
   const formatSp = (d: number) => `SP${(d + spOffset).toFixed(2)}`
   const formatBc = (d: number) => `BC${(d + spOffset).toFixed(2)}`
@@ -3418,6 +3454,9 @@ export function OpenChannelAlignmentPage() {
               {sampledLatLng.length >= 2 && (
                 <FitBounds key={selectedId ?? 'none'} positions={sampledLatLng} />
               )}
+              {/* 測点選択で その 位置に パン+拡大。 選択解除 で は 触らない */}
+              <StationFocus latLng={selectedStationLatLng} />
+
 
               {sampledLatLng.length >= 2 && (
                 <Polyline positions={sampledLatLng} pathOptions={{ color: '#0ea5e9', weight: 5 }} />
