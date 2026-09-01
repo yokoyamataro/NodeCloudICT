@@ -881,6 +881,7 @@ function InteractiveCrossSectionEditor({
   cs,
   onChange,
   centerHeight,
+  currentGroundHeight,
   onPrevStation,
   onNextStation,
   canPrev = false,
@@ -891,6 +892,9 @@ function InteractiveCrossSectionEditor({
   cs: StandardCrossSection
   onChange: (next: StandardCrossSection) => void
   centerHeight?: number
+  /** 現況高 (中心線上の 地盤高) [m]。undefined / null は 未入力扱い。
+   *  横線 + ラベルで 上書き表示し、計画高との 差分 (切/盛) も 併記 */
+  currentGroundHeight?: number | null
   /** 手前の 断面 (前の 測点) に 移行。null なら ボタン非活性 */
   onPrevStation?: () => void
   /** 次の 断面 (次の 測点) に 移行。null なら ボタン非活性 */
@@ -1537,6 +1541,35 @@ function InteractiveCrossSectionEditor({
             />
           )}
           </g>
+          {/* 現況高: 中心線上の 地盤高が 入力されて いる 場合、水平線で 上書き表示。
+              計画高 (中心設計高 = y=0) との 差 だけ 上下した 位置に 線を 描く。
+              茶系 (地盤色) の 破線 で 「切/盛」の 目安に する。 */}
+          {currentGroundHeight != null && centerHeight !== undefined && (() => {
+            const dy = currentGroundHeight - centerHeight
+            const cutFillLabel =
+              dy > 0.001 ? `切 ${dy.toFixed(3)}m` : dy < -0.001 ? `盛 ${(-dy).toFixed(3)}m` : '±0'
+            const cutFillColor = dy > 0.001 ? '#dc2626' : dy < -0.001 ? '#2563eb' : '#64748b'
+            return (
+              <>
+                <line
+                  x1={padding.left}
+                  y1={vy(dy)}
+                  x2={size.w - padding.right}
+                  y2={vy(dy)}
+                  stroke="#a16207"
+                  strokeWidth={1.5}
+                  strokeDasharray="6,4"
+                  opacity={0.85}
+                />
+                <text x={vx(0) + 6} y={vy(dy) - 4} fontSize={12} fill="#a16207">
+                  現況高 {currentGroundHeight.toFixed(3)}m
+                </text>
+                <text x={vx(0) + 6} y={vy(dy) + 14} fontSize={11} fill={cutFillColor} fontWeight={600}>
+                  {cutFillLabel}
+                </text>
+              </>
+            )
+          })()}
           {/* 中心設計高 ラベル: 中心線 直近に 出す。パン/ズームで 位置は 追随 (vx/vy) */}
           {centerHeight !== undefined && (
             <text x={vx(0) + 6} y={vy(0) - 4} fontSize={12} fill="#334155">
@@ -2252,6 +2285,15 @@ export function OpenChannelAlignmentPage() {
     crossSection: StandardCrossSection | null,
   ) => {
     setStations(stations.map((s) => (s.id === id ? { ...s, crossSection } : s)))
+  }
+  /** 現況高 (中心線上の 地盤高) の 手入力を 保存。空文字 / NaN は null に。 */
+  const handleUpdateStationCurrentHeight = (id: string, raw: string) => {
+    const trimmed = raw.trim()
+    const parsed = trimmed === '' ? null : Number(trimmed)
+    const value = parsed !== null && Number.isFinite(parsed) ? parsed : null
+    setStations(
+      stations.map((s) => (s.id === id ? { ...s, currentGroundHeight: value } : s)),
+    )
   }
 
   // 線形物を切り替えたら中間点選択をリセット
@@ -2970,6 +3012,12 @@ export function OpenChannelAlignmentPage() {
                             <th className="px-2 py-1 text-right">距離 (m)</th>
                             <th className="px-2 py-1 text-right">X</th>
                             <th className="px-2 py-1 text-right">Y</th>
+                            <th className="px-2 py-1 w-24 text-right" title="縦断線形から 自動取込">
+                              計画高 (m)
+                            </th>
+                            <th className="px-2 py-1 w-24 text-right" title="現況地盤高 を 直接入力">
+                              現況高 (m)
+                            </th>
                             <th className="px-2 py-1 w-32 text-center">断面</th>
                             <th className="px-2 py-1 w-8"></th>
                           </tr>
@@ -2993,6 +3041,29 @@ export function OpenChannelAlignmentPage() {
                                 <td className="px-2 py-1 text-right tabular-nums">{s.distance.toFixed(2)}</td>
                                 <td className="px-2 py-1 text-right tabular-nums">{p ? p.x.toFixed(3) : '-'}</td>
                                 <td className="px-2 py-1 text-right tabular-nums">{p ? p.y.toFixed(3) : '-'}</td>
+                                {/* 計画高: 縦断線形から 内挿。 縦断が 未登録 なら "-" */}
+                                <td className="px-2 py-1 text-right tabular-nums text-emerald-700">
+                                  {selected && selected.profilePoints.length >= 2
+                                    ? interpolateProfileZ(selected.profilePoints, s.distance).toFixed(3)
+                                    : '-'}
+                                </td>
+                                {/* 現況高: 直接 入力。空 なら 未計測扱い */}
+                                <td className="px-1 py-1 text-right">
+                                  <input
+                                    type="number"
+                                    step={0.001}
+                                    defaultValue={s.currentGroundHeight ?? ''}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onBlur={(e) => handleUpdateStationCurrentHeight(s.id, e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.currentTarget.blur()
+                                      }
+                                    }}
+                                    placeholder="-"
+                                    className="w-full px-1 py-0.5 border rounded text-right tabular-nums text-amber-700 bg-amber-50/40"
+                                  />
+                                </td>
                                 <td className="px-1 py-1 text-center">
                                   {/* 現況 / 計画 / 出来形 — 計画 は 押下時 に 測点 を 選択 し、
                                       横断計画 未取込 なら 標準断面 を 複製 して エディタ を 開く。
@@ -3841,6 +3912,7 @@ export function OpenChannelAlignmentPage() {
                                 cs={cs}
                                 onChange={applyChange}
                                 centerHeight={centerZ}
+                                currentGroundHeight={selectedStation?.currentGroundHeight ?? null}
                                 onPrevStation={
                                   prevStation
                                     ? () => setSelectedStationId(prevStation.id)

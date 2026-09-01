@@ -73,6 +73,11 @@ export interface StationRow {
   distance: number
   /** 個別断面。null / 未指定なら標準断面を使用。 */
   crossSection: StandardCrossSection | null
+  /**
+   * 現況高 (中心線上の 地盤高) [m]。手入力。null / 未指定なら 未計測扱い。
+   * 計画高 (縦断線形 由来) と 差分を 取って 切土/盛土 の 判定 に 使う。
+   */
+  currentGroundHeight?: number | null
 }
 
 /**
