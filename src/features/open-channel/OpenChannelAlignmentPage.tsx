@@ -2046,12 +2046,17 @@ export function OpenChannelAlignmentPage() {
   //   選択測点の 接線 (t.x, t.y) を 画面上向きに 揃える compass bearing = atan2(t.y, t.x)
   //   leaflet-rotate の setBearing は 反時計回り 正 なので 符号 反転。
   //   選択測点 なし (=標準断面 モード) は 0 (北向き) に 戻す。
+  //
+  // 河川工事 (sideOrientation='reverse') の 場合、「左右」は EP→BP 方向を 見て
+  // 定義される (下流を 向いて 左岸/右岸)。 通常の tangent-up は BP→EP を 見る 向き
+  // なので、この モードでは 180° 足して 反対向き (EP→BP を 画面上に) にする。
   const mapBearingDeg = useMemo(() => {
     if (!selectedStation) return 0
     const t = tangentAtDistance(segments, selectedStation.distance)
     if (!t) return 0
-    return -Math.atan2(t.y, t.x) * (180 / Math.PI)
-  }, [selectedStation, segments])
+    const base = -Math.atan2(t.y, t.x) * (180 / Math.PI)
+    return selected?.sideOrientation === 'reverse' ? base + 180 : base
+  }, [selectedStation, segments, selected?.sideOrientation])
 
   // 選択中の 測点の 地図上 位置 (LatLng)。 StationFocus に 渡して
   // その 点を 中央に パン+拡大 させる。 選択なし は null (地図は 触らない)。
