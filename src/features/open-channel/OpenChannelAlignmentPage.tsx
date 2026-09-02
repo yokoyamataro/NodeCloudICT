@@ -2151,17 +2151,38 @@ function DxfTraceModal({
     return () => window.removeEventListener('keydown', onKey)
   }, [pickMode])
 
-  // モーダル内 ローカル 点列 を DXF 上に 逆マッピングで マーカー表示 (校正済み時のみ)。
-  // ラベル に 「H (標高) / d (中心離れ)」を 付けて 誤認しにくく する。
+  // モーダル内 ローカル 点列 を DXF 上に 逆マッピングで マーカー + 折れ線 表示
+  // (校正済み時のみ)。 ラベル に 「H (標高) / d (中心離れ)」を 付けて 誤認しにくく する。
+  // 折れ線は 断面らしく offset 昇順 で 結ぶ (拾った順番と 独立)。
   const overlays = useMemo(() => {
     if (!parsedCalib) return []
-    return localPoints.map((p) => ({
-      kind: 'dot' as const,
+    const color = SECTION_TARGET_META[target].color
+    const toDxfXY = (p: MeasuredCrossPoint) => ({
       x: parsedCalib.centerX + (p.offset * 1000) / parsedCalib.hScale,
       y: parsedCalib.dlY + ((p.elevation - parsedCalib.dlElevation) * 1000) / parsedCalib.vScale,
-      color: SECTION_TARGET_META[target].color,
-      label: `H ${p.elevation.toFixed(3)} / d ${p.offset >= 0 ? '+' : ''}${p.offset.toFixed(3)}`,
-    }))
+    })
+    const items: NonNullable<React.ComponentProps<typeof DxfCrossSectionViewer>['overlays']> = []
+    // 折れ線 (offset 昇順)
+    if (localPoints.length >= 2) {
+      const sorted = [...localPoints].sort((a, b) => a.offset - b.offset)
+      items.push({
+        kind: 'line',
+        color,
+        pts: sorted.map(toDxfXY),
+      })
+    }
+    // 各点 の マーカー + ラベル
+    for (const p of localPoints) {
+      const xy = toDxfXY(p)
+      items.push({
+        kind: 'dot',
+        x: xy.x,
+        y: xy.y,
+        color,
+        label: `H ${p.elevation.toFixed(3)} / d ${p.offset >= 0 ? '+' : ''}${p.offset.toFixed(3)}`,
+      })
+    }
+    return items
   }, [parsedCalib, localPoints, target])
 
   // カーソル位置の 補助ラベル (校正済み + トレース中に 有効)。

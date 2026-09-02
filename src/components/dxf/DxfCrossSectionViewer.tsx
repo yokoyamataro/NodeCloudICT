@@ -41,9 +41,10 @@ export function DxfCrossSectionViewer({
   highlightDlY?: number | null
   /** 中心 縦線 の DXF X 座標。指定すると 上に 太い 破線 (紫) を 描いて 可視化 */
   highlightCenterX?: number | null
-  /** 追加の 上乗せ 描画 (トレース済み 点 の マーカー等)。世界座標 で 指定。 */
+  /** 追加の 上乗せ 描画 (トレース済み 点 の マーカー / トレース線 等)。世界座標 で 指定。 */
   overlays?: Array<
     | { kind: 'dot'; x: number; y: number; color: string; r?: number; label?: string }
+    | { kind: 'line'; pts: { x: number; y: number }[]; color: string; dashed?: boolean }
   >
   /**
    * true の 間、カーソル 位置 に 近い 端点/交点 に 吸着する。 マーカーで 表示し、
@@ -365,26 +366,43 @@ export function DxfCrossSectionViewer({
                 pointerEvents="none"
               />
             )}
-            {/* トレース済み 点マーカー */}
+            {/* トレース線 (点を つないだ 折れ線)。 マーカーの 下に 描画 */}
+            {overlays?.map((o, i) => {
+              if (o.kind !== 'line' || o.pts.length < 2) return null
+              const d = o.pts.map((p, k) => `${k === 0 ? 'M' : 'L'} ${tx(p.x)} ${ty(p.y)}`).join(' ')
+              return (
+                <path
+                  key={`ovline-${i}`}
+                  d={d}
+                  fill="none"
+                  stroke={o.color}
+                  strokeWidth={1.2}
+                  strokeDasharray={o.dashed ? '3,2' : undefined}
+                  vectorEffect="non-scaling-stroke"
+                  pointerEvents="none"
+                />
+              )
+            })}
+            {/* トレース済み 点マーカー — 塗りなし の 丸枠、小さめ (1/5 サイズ) */}
             {overlays?.map((o, i) => {
               if (o.kind !== 'dot') return null
               return (
                 <g key={`ov-${i}`} pointerEvents="none">
                   <circle
                     cx={tx(o.x)} cy={ty(o.y)}
-                    r={o.r ?? 3.5}
-                    fill={o.color}
-                    stroke="#fff"
-                    strokeWidth={1.5}
+                    r={o.r ?? 0.8}
+                    fill="none"
+                    stroke={o.color}
+                    strokeWidth={1.2}
                     vectorEffect="non-scaling-stroke"
                   />
                   {o.label && (
                     <text
-                      x={tx(o.x) + 6}
-                      y={ty(o.y) - 4}
-                      fontSize={11}
+                      x={tx(o.x) + 1.5}
+                      y={ty(o.y) - 1}
+                      fontSize={2.5}
                       fill={o.color}
-                      style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
+                      style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 0.7 }}
                     >
                       {o.label}
                     </text>
@@ -422,17 +440,17 @@ export function DxfCrossSectionViewer({
               const lines = cursorLabelFormatter(wp)
               if (!lines || lines.length === 0) return null
               const cx = tx(wp.x), cy = ty(wp.y)
-              // 画面 右上に 10px ずらして 描画 (paintOrder で 白フチ)
+              // マーカー / ラベル と 同じ 縮尺 (1/5 相当)。 白フチで 読める ように
               return (
                 <g pointerEvents="none">
                   {lines.map((s, i) => (
                     <text
                       key={i}
-                      x={cx + 10}
-                      y={cy - 4 - (lines.length - 1 - i) * 13}
-                      fontSize={11}
+                      x={cx + 2}
+                      y={cy - 1 - (lines.length - 1 - i) * 3}
+                      fontSize={2.5}
                       fill="#1e293b"
-                      style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
+                      style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 0.7 }}
                     >
                       {s}
                     </text>
