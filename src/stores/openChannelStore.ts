@@ -145,6 +145,13 @@ export interface OpenChannelRow {
   /** 幅杭 (SP + 中心線 から の 垂直方向 オフセット で 定義 する 点) */
   widthStakes: WidthStake[]
   notes: string | null
+  /**
+   * 既存 横断図 DXF (工区全体の 並べ図)。 storage.objects.name (bucket=open-channel-dxf)。
+   * トレース機能で 現況/計画/出来形 の 断面を 読み取る 元 データ。
+   */
+  dxfCrossSectionPath: string | null
+  /** アップロード 時 の 元 ファイル名 (表示用) */
+  dxfCrossSectionName: string | null
 }
 
 interface OpenChannelDb {
@@ -159,6 +166,8 @@ interface OpenChannelDb {
   sp_offset: number | null
   width_stakes: WidthStake[] | null
   notes: string | null
+  dxf_cross_section_path?: string | null
+  dxf_cross_section_name?: string | null
 }
 
 function normalizeCrossSection(raw: unknown): StandardCrossSection {
@@ -183,6 +192,8 @@ function toRow(d: OpenChannelDb): OpenChannelRow {
     spOffset: Number.isFinite(Number(d.sp_offset)) ? Number(d.sp_offset) : 0,
     widthStakes: Array.isArray(d.width_stakes) ? d.width_stakes : [],
     notes: d.notes,
+    dxfCrossSectionPath: d.dxf_cross_section_path ?? null,
+    dxfCrossSectionName: d.dxf_cross_section_name ?? null,
   }
 }
 
@@ -263,6 +274,10 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
       if (updates.spOffset !== undefined) dbUpdates.sp_offset = updates.spOffset
       if (updates.widthStakes !== undefined) dbUpdates.width_stakes = updates.widthStakes
       if (updates.notes !== undefined) dbUpdates.notes = updates.notes
+      if (updates.dxfCrossSectionPath !== undefined)
+        dbUpdates.dxf_cross_section_path = updates.dxfCrossSectionPath
+      if (updates.dxfCrossSectionName !== undefined)
+        dbUpdates.dxf_cross_section_name = updates.dxfCrossSectionName
       // 楽観的更新
       set((s) => ({
         channels: s.channels.map((c) => (c.id === id ? { ...c, ...updates } : c)),

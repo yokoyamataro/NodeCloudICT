@@ -10,9 +10,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Polyline, CircleMarker, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Pencil, Check, X } from 'lucide-react'
+import { Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Pencil, Check, X, Upload, Eye, Loader2 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { CoordinateMap } from '@/components/map/CoordinateMap'
+import { DxfCrossSectionViewer } from '@/components/dxf/DxfCrossSectionViewer'
+import { decodeDxfBytes } from '@/lib/dxfRender'
+import { supabase } from '@/lib/supabase'
 import { useFarmStore } from '@/stores/farmStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useProjectListStore } from '@/stores/projectListStore'
@@ -27,6 +30,7 @@ import {
   type SideOrientation,
   type WidthStake,
   type MeasuredCrossPoint,
+  type OpenChannelRow,
   buildCrossSectionPath,
   elementStep,
 } from '@/stores/openChannelStore'
@@ -1957,6 +1961,187 @@ function computeSegmentCore(input: {
   return { element: el, endPoint: { x: drawOrigin.x + step.dx, y: drawOrigin.y + step.dy } }
 }
 
+/**
+ * 「既存横断図 (DXF)」 セクション の 中身。
+ * 未取込: ファイル選択 → Storage アップロード
+ * 取込済: ファイル名表示 + [表示] (モーダル) + [削除]
+ */
+function DxfCrossSectionSection({ selected }: { selected: OpenChannelRow | null }) {
+  const { updateChannel } = useOpenChannelStore()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [viewerOpen, setViewerOpen] = useState(false)
+  const [dxfText, setDxfText] = useState<string | null>(null)
+  const [loadingDxf, setLoadingDxf] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  if (!selected) {
+    return (
+      <div className="text-xs text-slate-400">線形物を 選択してください</div>
+    )
+  }
+
+  const bucket = 'open-channel-dxf'
+  const hasFile = !!selected.dxfCrossSectionPath
+
+  const handleFileChosen = async (file: File | null) => {
+    if (!file) return
+    setError(null)
+    setBusy(true)
+    try {
+      // 既存が あれば 先に 削除 (履歴は 残さず 1 本のみ)
+      if (selected.dxfCrossSectionPath) {
+        await supabase.storage.from(bucket).remove([selected.dxfCrossSectionPath])
+      }
+      const uid = (globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2))
+      const path = `${selected.farmId}/${selected.id}-${uid}.dxf`
+      const { error: upErr } = await supabase.storage
+        .from(bucket)
+        .upload(path, file, { contentType: 'application/dxf', upsert: false })
+      if (upErr) throw upErr
+      await updateChannel(selected.id, {
+        dxfCrossSectionPath: path,
+        dxfCrossSectionName: file.name,
+      })
+      setDxfText(null) // 再取得を 促す
+    } catch (e) {
+      console.error('[dxf upload]', e)
+      setError(e instanceof Error ? e.message : 'アップロード 失敗')
+    } finally {
+      setBusy(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!selected.dxfCrossSectionPath) return
+    if (!window.confirm('DXF ファイルを 削除しますか?')) return
+    setError(null)
+    setBusy(true)
+    try {
+      await supabase.storage.from(bucket).remove([selected.dxfCrossSectionPath])
+      await updateChannel(selected.id, {
+        dxfCrossSectionPath: null,
+        dxfCrossSectionName: null,
+      })
+      setDxfText(null)
+    } catch (e) {
+      console.error('[dxf delete]', e)
+      setError(e instanceof Error ? e.message : '削除 失敗')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const openViewer = async () => {
+    if (!selected.dxfCrossSectionPath) return
+    setViewerOpen(true)
+    if (dxfText) return
+    setLoadingDxf(true)
+    setError(null)
+    try {
+      const { data, error: dlErr } = await supabase.storage
+        .from(bucket)
+        .download(selected.dxfCrossSectionPath)
+      if (dlErr || !data) throw dlErr ?? new Error('DL 失敗')
+      const buf = await data.arrayBuffer()
+      setDxfText(decodeDxfBytes(buf))
+    } catch (e) {
+      console.error('[dxf download]', e)
+      setError(e instanceof Error ? e.message : '取得 失敗')
+      setViewerOpen(false)
+    } finally {
+      setLoadingDxf(false)
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="text-xs text-slate-500">
+        工区全体の 並べ図 (5 断面 等) を 1 枚 添付します。次コミット で
+        「DL/中心線/縮尺」の キャリブレーション と 「トレース → 現況/計画 断面」への
+        変換 を 追加予定。
+      </div>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".dxf,application/dxf"
+        onChange={(e) => handleFileChosen(e.target.files?.[0] ?? null)}
+        className="hidden"
+      />
+      {hasFile ? (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-slate-700 font-mono truncate max-w-[16rem]">
+            {selected.dxfCrossSectionName ?? '(名前 不明)'}
+          </span>
+          <button
+            onClick={openViewer}
+            disabled={busy || loadingDxf}
+            className="flex items-center gap-1 px-2 py-1 text-xs border rounded bg-white hover:bg-slate-50 disabled:opacity-50"
+          >
+            {loadingDxf ? <Loader2 className="h-3 w-3 animate-spin" /> : <Eye className="h-3 w-3" />}
+            表示
+          </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={busy}
+            className="flex items-center gap-1 px-2 py-1 text-xs border rounded bg-white hover:bg-slate-50 disabled:opacity-50"
+          >
+            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
+            差替
+          </button>
+          <button
+            onClick={handleDelete}
+            disabled={busy}
+            className="flex items-center gap-1 px-2 py-1 text-xs border rounded text-red-600 hover:bg-red-50 disabled:opacity-50"
+          >
+            <Trash2 className="h-3 w-3" />
+            削除
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={busy}
+          className="flex items-center gap-1 px-2 py-1 text-xs border rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+        >
+          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
+          DXF を 取込
+        </button>
+      )}
+      {error && (
+        <div className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
+          {error}
+        </div>
+      )}
+      {viewerOpen && dxfText && (
+        <div className="fixed inset-0 bg-black/60 z-[3000] flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full h-full max-w-[90vw] max-h-[90vh] flex flex-col p-3">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold">
+                DXF プレビュー —{' '}
+                <span className="font-mono text-slate-600">
+                  {selected.dxfCrossSectionName ?? '(名前 不明)'}
+                </span>
+              </h3>
+              <button
+                onClick={() => setViewerOpen(false)}
+                className="p-1 hover:bg-slate-100 rounded"
+                title="閉じる"
+              >
+                <X className="h-4 w-4 text-slate-500" />
+              </button>
+            </div>
+            <div className="flex-1 min-h-0">
+              <DxfCrossSectionViewer dxfText={dxfText} />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function OpenChannelAlignmentPage() {
   const { currentFarm } = useFarmStore()
   const { projects } = useProjectListStore()
@@ -3757,6 +3942,13 @@ export function OpenChannelAlignmentPage() {
                     </tbody>
                   </table>
                 </div>
+              </CollapsibleSection>
+
+              {/* 既存横断図 (DXF) — 工区全体の 並べ図 1 枚を 添付し、レイヤ切替 + パン/ズーム
+                  で 確認できる。次コミット で 「DL/中心線/縮尺」の キャリブレーション と、
+                  ライン クリック → 現況/計画 断面点 への 変換 (トレース) を 追加予定。 */}
+              <CollapsibleSection title="既存横断図 (DXF)" storageKey="oc:section:dxf">
+                <DxfCrossSectionSection selected={selected} />
               </CollapsibleSection>
 
               {/* 縦断線形 (中間点 と 標準断面 の 間 に 配置)。

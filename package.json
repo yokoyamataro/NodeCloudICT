@@ -27,6 +27,7 @@
     "date-fns": "^4.1.0",
     "delaunator": "^5.1.0",
     "docxtemplater": "^3.69.0",
+    "dxf-parser": "^1.1.2",
     "encoding-japanese": "^2.2.0",
     "exceljs": "^4.4.0",
     "leaflet": "^1.9.4",
