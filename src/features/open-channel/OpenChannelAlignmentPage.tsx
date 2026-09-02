@@ -2005,16 +2005,30 @@ function DxfTraceModal({
   target,
   onClose,
   onSaveCalibration,
-  onAppendPoints,
+  onReplacePoints,
 }: {
   channel: OpenChannelRow
   station: StationRow
   target: SectionTarget
   onClose: () => void
   onSaveCalibration: (calib: DxfCalibration) => void
-  /** トレース で 拾った 点列を 対象断面配列に 追記 */
-  onAppendPoints: (pts: MeasuredCrossPoint[]) => void
+  /** 「確定」ボタン で 呼ばれる。 対象断面の 点列を モーダル内 のもので 差替 */
+  onReplacePoints: (pts: MeasuredCrossPoint[]) => void
 }) {
+  const stationSectionKey =
+    target === 'current' ? 'currentSection' : target === 'asbuilt' ? 'asbuiltSection' : 'plannedSectionRaw'
+  // モーダル内 で 編集する ローカル 点列 (確定 ボタン まで 元の 断面には 反映しない)
+  const [localPoints, setLocalPoints] = useState<MeasuredCrossPoint[]>(() => {
+    const initial = (station[stationSectionKey] as MeasuredCrossPoint[] | null | undefined) ?? []
+    return initial.map((p) => ({ ...p }))
+  })
+  // station が 変わった場合 (基本 起きない) は 初期化し直す
+  useEffect(() => {
+    const initial = (station[stationSectionKey] as MeasuredCrossPoint[] | null | undefined) ?? []
+    setLocalPoints(initial.map((p) => ({ ...p })))
+    // station.id / target が 変わった 時だけ (点列 の 参照変化で 巻き戻さない)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [station.id, target])
   const [dxfText, setDxfText] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -2098,11 +2112,12 @@ function DxfTraceModal({
     }
     if (pickMode === 'trace') {
       if (!parsedCalib) return
-      // トレースは 1 クリック = 1 点。 worldPt は 吸着済み (Viewer 側で snap→wp に 置換)。
+      // トレースは 1 クリック = 1 点、ローカル 点列 に 追加 (確定 ボタン まで 反映しない)
       const w = dxfToWorld(worldPt.x, worldPt.y, parsedCalib)
       const now = Date.now()
       const rand = () => Math.random().toString(36).slice(2, 7)
-      onAppendPoints([
+      setLocalPoints((pts) => [
+        ...pts,
         {
           id: `dxf-${now}-${rand()}`,
           offset: w.offset,
@@ -2112,22 +2127,42 @@ function DxfTraceModal({
       return
     }
   }
+  const clearLocalPoints = () => setLocalPoints([])
+  const undoLastPoint = () => setLocalPoints((pts) => pts.slice(0, -1))
+  const confirmAndClose = () => {
+    // offset で 昇順 に して 保存 (handleReplaceStationSection でも 並び替えるが 冗長)
+    onReplacePoints([...localPoints].sort((a, b) => a.offset - b.offset))
+    onClose()
+  }
 
-  // 既存の トレース済み 点を DXF 上に 逆マッピングで マーカー表示 (校正済み時のみ)。
+  // BS で 直近 1 点を 取消。 入力欄 フォーカス中は 通常の 文字削除に 干渉しない
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Backspace') return
+      const t = e.target as HTMLElement | null
+      const tag = t?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (t && t.isContentEditable)) return
+      // トレース モード 以外での BS は 無視 (校正入力中の 誤削除を 防ぐ)
+      if (pickMode !== 'trace') return
+      e.preventDefault()
+      undoLastPoint()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [pickMode])
+
+  // モーダル内 ローカル 点列 を DXF 上に 逆マッピングで マーカー表示 (校正済み時のみ)。
   // ラベル に 「H (標高) / d (中心離れ)」を 付けて 誤認しにくく する。
   const overlays = useMemo(() => {
     if (!parsedCalib) return []
-    const key: keyof StationRow =
-      target === 'current' ? 'currentSection' : target === 'asbuilt' ? 'asbuiltSection' : 'plannedSectionRaw'
-    const pts = (station[key] as MeasuredCrossPoint[] | null | undefined) ?? []
-    return pts.map((p) => ({
+    return localPoints.map((p) => ({
       kind: 'dot' as const,
       x: parsedCalib.centerX + (p.offset * 1000) / parsedCalib.hScale,
       y: parsedCalib.dlY + ((p.elevation - parsedCalib.dlElevation) * 1000) / parsedCalib.vScale,
       color: SECTION_TARGET_META[target].color,
       label: `H ${p.elevation.toFixed(3)} / d ${p.offset >= 0 ? '+' : ''}${p.offset.toFixed(3)}`,
     }))
-  }, [parsedCalib, station, target])
+  }, [parsedCalib, localPoints, target])
 
   // カーソル位置の 補助ラベル (校正済み + トレース中に 有効)。
   // 校正 済み なら 常時 現在位置の 「H (標高) / d (中心離れ)」を 返す。
@@ -2260,8 +2295,26 @@ function DxfTraceModal({
                     <span>ピック (端点 / 交点に 吸着)</span>
                   </label>
                   <div className="text-[11px] text-slate-500">
-                    1 クリック = 1 点 追加。 ピック ON 時は カーソル 近傍の 端点 (青)
-                    / 交点 (橙×) に 吸い付く。
+                    1 クリック = 1 点 追加。 BS で 直前 1 点 取消。 ピック ON 時は
+                    端点 (青) / 交点 (橙×) に 吸い付く。
+                  </div>
+                  <div className="flex items-center gap-1 text-[11px] pt-1 border-t">
+                    <span className="text-slate-500">拾い済 {localPoints.length} 点</span>
+                    <button
+                      onClick={undoLastPoint}
+                      disabled={localPoints.length === 0}
+                      className="ml-auto px-2 py-0.5 border rounded bg-white hover:bg-slate-50 disabled:opacity-40"
+                      title="直前 1 点を 取消 (BS でも 可)"
+                    >
+                      1 点 戻す (BS)
+                    </button>
+                    <button
+                      onClick={clearLocalPoints}
+                      disabled={localPoints.length === 0}
+                      className="px-2 py-0.5 border rounded text-red-600 hover:bg-red-50 disabled:opacity-40"
+                    >
+                      全クリア
+                    </button>
                   </div>
                 </div>
               )}
@@ -2284,6 +2337,24 @@ function DxfTraceModal({
               />
             )}
           </div>
+        </div>
+        {/* フッター: 確定 / 破棄 */}
+        <div className="flex items-center justify-end gap-2 px-3 py-2 border-t bg-slate-50">
+          <span className="text-[11px] text-slate-500 mr-auto">
+            拾い済 {localPoints.length} 点 (確定 で 元の 断面に 反映)
+          </span>
+          <button
+            onClick={onClose}
+            className="px-3 py-1 text-xs border rounded bg-white hover:bg-slate-50"
+          >
+            破棄して閉じる
+          </button>
+          <button
+            onClick={confirmAndClose}
+            className="px-3 py-1 text-xs border rounded bg-blue-600 text-white hover:bg-blue-700"
+          >
+            確定して閉じる
+          </button>
         </div>
       </div>
     </div>
@@ -5045,11 +5116,9 @@ export function OpenChannelAlignmentPage() {
             target={dxfTraceContext.target}
             onClose={() => setDxfTraceContext(null)}
             onSaveCalibration={(c) => handleUpdateStationCalibration(st.id, c)}
-            onAppendPoints={(pts) => {
-              for (const p of pts) {
-                handleAppendStationSectionPoint(st.id, dxfTraceContext.target, p)
-              }
-            }}
+            onReplacePoints={(pts) =>
+              handleReplaceStationSection(st.id, dxfTraceContext.target, pts)
+            }
           />
         )
       })()}
