@@ -64,6 +64,18 @@ export interface StandardCrossSection {
 
 export const emptyStandardCrossSection = (): StandardCrossSection => ({ right: [], left: [] })
 
+/**
+ * 測定 断面 点 (現況 / 出来形 用)。中心線からの 垂直方向 距離 (offset) と 標高。
+ *   offset > 0 = 右側、offset < 0 = 左側 (WidthStake と 同じ 慣習、sideOrientation に 従う)
+ *   note: 地図から 拾った 場合 の 元 座標番号 等 の 任意メモ
+ */
+export interface MeasuredCrossPoint {
+  id: string
+  offset: number
+  elevation: number
+  note?: string
+}
+
 /** 中間点（測点）。SP / BC / EC / IP などラベル付きで BP からの距離 + 個別断面を保持。 */
 export interface StationRow {
   id: string
@@ -76,8 +88,18 @@ export interface StationRow {
   /**
    * 現況高 (中心線上の 地盤高) [m]。手入力。null / 未指定なら 未計測扱い。
    * 計画高 (縦断線形 由来) と 差分を 取って 切土/盛土 の 判定 に 使う。
+   * currentSection が 中心 (offset=0) を 含む 場合 は そちらが 優先される。
    */
   currentGroundHeight?: number | null
+  /**
+   * 現況断面 (地盤 の 実測点列)。offset (中心からの 離れ) と 標高 の ペア。
+   * 地図の 測点マーカーから 取得 (中心線 に 垂直投影) するか、モーダルから 直接入力。
+   */
+  currentSection?: MeasuredCrossPoint[] | null
+  /**
+   * 出来形 断面 (施工後の 実測点列)。現状 プレースホルダ (次ステップで 実装予定)。
+   */
+  asbuiltSection?: MeasuredCrossPoint[] | null
 }
 
 /**

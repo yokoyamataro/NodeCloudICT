@@ -26,6 +26,7 @@ import {
   type StationRow,
   type SideOrientation,
   type WidthStake,
+  type MeasuredCrossPoint,
   buildCrossSectionPath,
   elementStep,
 } from '@/stores/openChannelStore'
@@ -877,11 +878,150 @@ function formatWidthOnly(e: CrossSectionElement): string {
   return e.width.toFixed(2)
 }
 
+/**
+ * 現況/出来形 断面 の 点列 を 直接 入力 する モーダル。
+ * 中心線からの 離れ (右+ / 左-) と 標高 の ペア を 行 単位で 追加・編集・削除。
+ * 保存で 呼び元 の handleReplaceStationSection に 引き渡す。
+ */
+function MeasuredSectionTableModal({
+  target,
+  stationLabel,
+  initialPoints,
+  onSave,
+  onClose,
+}: {
+  target: 'current' | 'asbuilt'
+  stationLabel: string
+  initialPoints: MeasuredCrossPoint[]
+  onSave: (points: MeasuredCrossPoint[]) => void
+  onClose: () => void
+}) {
+  const [rows, setRows] = useState<MeasuredCrossPoint[]>(() =>
+    initialPoints.map((p) => ({ ...p })),
+  )
+  const targetLabel = target === 'current' ? '現況断面' : '出来形'
+  const newId = () => `mp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+
+  const addRow = () => {
+    setRows((r) => [...r, { id: newId(), offset: 0, elevation: 0 }])
+  }
+  const removeRow = (id: string) => {
+    setRows((r) => r.filter((p) => p.id !== id))
+  }
+  const updateRow = (id: string, patch: Partial<MeasuredCrossPoint>) => {
+    setRows((r) => r.map((p) => (p.id === id ? { ...p, ...patch } : p)))
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[3000] p-4">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-lg p-4 max-h-[85vh] flex flex-col">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-semibold">
+            {targetLabel} 入力 —{' '}
+            <span className="font-mono text-slate-600">{stationLabel}</span>
+          </h3>
+          <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded" title="キャンセル">
+            <X className="h-4 w-4 text-slate-500" />
+          </button>
+        </div>
+        <p className="text-[11px] text-slate-500 mb-2">
+          中心線からの 離れ (右+ / 左-) と 標高 [m] を 入力。保存 で 昇順 に 並び 替えられます。
+        </p>
+        <div className="border rounded overflow-auto flex-1">
+          <table className="w-full text-xs">
+            <thead className="bg-slate-50 text-slate-600 sticky top-0">
+              <tr>
+                <th className="px-2 py-1 w-8 text-center">#</th>
+                <th className="px-2 py-1 text-right">中心からの離れ (m)</th>
+                <th className="px-2 py-1 text-right">標高 (m)</th>
+                <th className="px-2 py-1 w-8"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-2 py-4 text-center text-slate-400 text-[11px]">
+                    まだ 点が ありません。「+ 行を 追加」で 入力を 始める
+                  </td>
+                </tr>
+              ) : (
+                rows.map((r, i) => (
+                  <tr key={r.id} className="border-t">
+                    <td className="px-2 py-1 text-center text-slate-500">{i + 1}</td>
+                    <td className="px-1 py-1">
+                      <input
+                        type="number"
+                        step={0.01}
+                        value={r.offset}
+                        onChange={(e) =>
+                          updateRow(r.id, { offset: parseFloat(e.target.value) || 0 })
+                        }
+                        className="w-full px-1 py-0.5 border rounded text-right tabular-nums"
+                      />
+                    </td>
+                    <td className="px-1 py-1">
+                      <input
+                        type="number"
+                        step={0.001}
+                        value={r.elevation}
+                        onChange={(e) =>
+                          updateRow(r.id, { elevation: parseFloat(e.target.value) || 0 })
+                        }
+                        className="w-full px-1 py-0.5 border rounded text-right tabular-nums"
+                      />
+                    </td>
+                    <td className="px-1 py-1 text-center">
+                      <button
+                        onClick={() => removeRow(r.id)}
+                        className="p-0.5 border rounded hover:bg-red-50 text-red-600"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex items-center justify-between mt-3">
+          <button
+            onClick={addRow}
+            className="flex items-center gap-1 px-2 py-1 text-xs border rounded bg-white hover:bg-slate-50"
+          >
+            <Plus className="h-3 w-3" />
+            行を 追加
+          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              className="px-3 py-1 text-xs border rounded hover:bg-slate-50"
+            >
+              キャンセル
+            </button>
+            <button
+              onClick={() => {
+                onSave(rows)
+                onClose()
+              }}
+              className="px-3 py-1 text-xs border rounded bg-blue-600 text-white hover:bg-blue-700"
+            >
+              保存
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function InteractiveCrossSectionEditor({
   cs,
   onChange,
   centerHeight,
   currentGroundHeight,
+  currentSection,
+  asbuiltSection,
   onPrevStation,
   onNextStation,
   canPrev = false,
@@ -895,6 +1035,10 @@ function InteractiveCrossSectionEditor({
   /** 現況高 (中心線上の 地盤高) [m]。undefined / null は 未入力扱い。
    *  横線 + ラベルで 上書き表示し、計画高との 差分 (切/盛) も 併記 */
   currentGroundHeight?: number | null
+  /** 現況断面 の 測定点列 (offset, elevation)。ある場合 は 折れ線 + マーカーで 描画。 */
+  currentSection?: MeasuredCrossPoint[] | null
+  /** 出来形 断面 の 測定点列。ある場合 は 別 色 で 折れ線 + マーカー描画。 */
+  asbuiltSection?: MeasuredCrossPoint[] | null
   /** 手前の 断面 (前の 測点) に 移行。null なら ボタン非活性 */
   onPrevStation?: () => void
   /** 次の 断面 (次の 測点) に 移行。null なら ボタン非活性 */
@@ -1540,6 +1684,53 @@ function InteractiveCrossSectionEditor({
               strokeDasharray="2,2"
             />
           )}
+          {/* 現況断面: offset を x に、elevation - centerHeight を y に。
+              計画高 (y=0) 基準で 折れ線 (茶) + 点マーカー を 描画。
+              測定点は 中心軸 (x=0) から 見て 右+ / 左- (WidthStake 同じ 慣習)。
+              左計画線 は 描画時 x を 反転してるので、断面座標系 に 合わせるため x = offset。 */}
+          {currentSection && currentSection.length > 0 && centerHeight !== undefined && (() => {
+            const pts = currentSection
+              .map((p) => ({ x: tx(p.offset), y: ty(p.elevation - centerHeight) }))
+            const d = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
+            return (
+              <g>
+                <path d={d} fill="none" stroke="#a16207" strokeWidth={1.5} strokeDasharray="4,3" opacity={0.9} />
+                {currentSection.map((p, i) => (
+                  <circle
+                    key={`cs-${p.id ?? i}`}
+                    cx={tx(p.offset)}
+                    cy={ty(p.elevation - centerHeight)}
+                    r={3.5}
+                    fill="#a16207"
+                    stroke="#fff"
+                    strokeWidth={1.5}
+                  />
+                ))}
+              </g>
+            )
+          })()}
+          {/* 出来形 断面 (緑系) — 現状 保存だけ、次ステップで 使う */}
+          {asbuiltSection && asbuiltSection.length > 0 && centerHeight !== undefined && (() => {
+            const pts = asbuiltSection
+              .map((p) => ({ x: tx(p.offset), y: ty(p.elevation - centerHeight) }))
+            const d = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
+            return (
+              <g>
+                <path d={d} fill="none" stroke="#059669" strokeWidth={1.5} opacity={0.9} />
+                {asbuiltSection.map((p, i) => (
+                  <circle
+                    key={`as-${p.id ?? i}`}
+                    cx={tx(p.offset)}
+                    cy={ty(p.elevation - centerHeight)}
+                    r={3.5}
+                    fill="#059669"
+                    stroke="#fff"
+                    strokeWidth={1.5}
+                  />
+                ))}
+              </g>
+            )
+          })()}
           </g>
           {/* 現況高: 中心線上の 地盤高が 入力されて いる 場合、水平線で 上書き表示。
               計画高 (中心設計高 = y=0) との 差 だけ 上下した 位置に 線を 描く。
@@ -1869,6 +2060,17 @@ export function OpenChannelAlignmentPage() {
   type BottomTab = 'profile' | 'crossSection'
   const [bottomTab, setBottomTab] = useState<BottomTab>('profile')
 
+  // 横断図 で 何を 編集する か。ヘッダーの ラベル 右側 3 ボタン で 切替。
+  //   'plan'   — 計画断面 (従来の Interactive エディタ)
+  //   'current'— 現況断面 (地図拾い or 表モーダル 入力)
+  //   'asbuilt'— 出来形 (次ステップ 実装予定 — ボタンは 置く だけ)
+  type EditTarget = 'plan' | 'current' | 'asbuilt'
+  const [editTarget, setEditTarget] = useState<EditTarget>('plan')
+  // 表モーダル (現況断面 / 出来形 の 手入力) の 対象 種別。null で 閉じている
+  const [tableModalTarget, setTableModalTarget] = useState<'current' | 'asbuilt' | null>(null)
+  // 地図から 現況/出来形 点を 拾う モード。null で 通常
+  const [mapCaptureTarget, setMapCaptureTarget] = useState<'current' | 'asbuilt' | null>(null)
+
   // 線形点の追加: 座標を選択 (種別 BP/IP/EP は 位置から 自動決定)
   const [addCoordId, setAddCoordId] = useState<string>('')
   const [addRadius, setAddRadius] = useState<number>(0)
@@ -1886,8 +2088,50 @@ export function OpenChannelAlignmentPage() {
   // 地図でクリックした 座標を そのまま 線形点として 追加。
   // 線形点セクション が 折りたたまれて いる 時は 編集 不可 (誤操作 防止)。
   // 既登録の 座標は 何もしない (トグル 挙動は 誤操作の 元なので しない)。
+  //
+  // mapCaptureTarget が 'current' / 'asbuilt' の 時は 「現況/出来形 の 断面点」
+  // として、選択測点 の 中心線に 垂直投影して 追加 (offset, elevation)。
   const handlePickCoordFromMap = (coordId: string) => {
     if (!selected) return
+
+    // 現況/出来形 の 地図取得 モード
+    if (mapCaptureTarget && selectedStation) {
+      const coord = coordinates.find((c) => c.id === coordId)
+      if (!coord) return
+      if (coord.z == null) {
+        alert('選択した 座標に 標高 (Z) が ありません')
+        return
+      }
+      const center = pointAtDistance(segments, selectedStation.distance)
+      const tangent = tangentAtDistance(segments, selectedStation.distance)
+      if (!center || !tangent) return
+      // 世界座標 (x=北, y=東)。断面「右向き」単位ベクトル perp:
+      //   forward: 進行方向 (tangent) の CCW 90° = (-t.y, t.x)
+      //   reverse: 反転 (河川工事 慣習)
+      const sign = selected.sideOrientation === 'reverse' ? -1 : 1
+      const perpX = -tangent.y * sign
+      const perpY = tangent.x * sign
+      const dx = coord.x - center.x
+      const dy = coord.y - center.y
+      // 中心線 沿い の ズレ (前後方向)。 5m 以上 ずれてたら 確認
+      const along = dx * tangent.x + dy * tangent.y
+      if (Math.abs(along) > 5) {
+        const ok = window.confirm(
+          `選択した 座標 は 中心線 から ${along.toFixed(2)}m 前後方向 に ズレています。追加しますか?`,
+        )
+        if (!ok) return
+      }
+      const offset = dx * perpX + dy * perpY
+      handleAppendStationSectionPoint(selectedStation.id, mapCaptureTarget, {
+        id: `mp-${coord.id}`,
+        offset: Math.round(offset * 1000) / 1000,
+        elevation: Math.round(coord.z * 1000) / 1000,
+        note: coord.pointNumber ?? undefined,
+      })
+      return
+    }
+
+    // 通常: 線形点として 追加
     if (!linearPointsExpanded) return
     if (selected.alignmentPoints.some((p) => p.coordId === coordId)) return
     const next: AlignmentPoint[] = normalizeKinds([
@@ -2293,6 +2537,37 @@ export function OpenChannelAlignmentPage() {
     const value = parsed !== null && Number.isFinite(parsed) ? parsed : null
     setStations(
       stations.map((s) => (s.id === id ? { ...s, currentGroundHeight: value } : s)),
+    )
+  }
+  /**
+   * 現況/出来形 断面 の 点列 を 差替 (モーダル 保存 用)。offset で 昇順 に ソート。
+   */
+  const handleReplaceStationSection = (
+    id: string,
+    target: 'current' | 'asbuilt',
+    points: MeasuredCrossPoint[],
+  ) => {
+    const key = target === 'current' ? 'currentSection' : 'asbuiltSection'
+    const sorted = [...points].sort((a, b) => a.offset - b.offset)
+    setStations(stations.map((s) => (s.id === id ? { ...s, [key]: sorted } : s)))
+  }
+  /**
+   * 現況/出来形 断面 に 点を 1 個 追加 (地図ピック 用)。 同じ id が あれば 上書き。
+   */
+  const handleAppendStationSectionPoint = (
+    id: string,
+    target: 'current' | 'asbuilt',
+    point: MeasuredCrossPoint,
+  ) => {
+    const key = target === 'current' ? 'currentSection' : 'asbuiltSection'
+    setStations(
+      stations.map((s) => {
+        if (s.id !== id) return s
+        const existing = (s[key] ?? []) as MeasuredCrossPoint[]
+        const filtered = existing.filter((p) => p.id !== point.id)
+        const next = [...filtered, point].sort((a, b) => a.offset - b.offset)
+        return { ...s, [key]: next }
+      }),
     )
   }
 
@@ -3847,6 +4122,31 @@ export function OpenChannelAlignmentPage() {
                                   </span>
                                 </>
                               )}
+                              {/* 編集対象 の 切替 (現況 / 計画 / 出来形)。
+                                  計画 = 従来の Interactive エディタ、現況 = 地図拾い or 表モーダル、
+                                  出来形 = プレースホルダ (次ステップ) */}
+                              <div className="flex items-center gap-0.5 border-l pl-2 ml-1">
+                                <span className="text-[10px] text-slate-500 mr-0.5">編集</span>
+                                {([
+                                  { key: 'current' as EditTarget, label: '現況', act: 'bg-amber-500 text-white border-amber-500', idle: 'bg-white text-amber-700 border-amber-300 hover:bg-amber-50' },
+                                  { key: 'plan' as EditTarget, label: '計画', act: 'bg-blue-600 text-white border-blue-600', idle: 'bg-white text-blue-700 border-blue-300 hover:bg-blue-50' },
+                                  { key: 'asbuilt' as EditTarget, label: '出来形', act: 'bg-emerald-600 text-white border-emerald-600', idle: 'bg-white text-emerald-700 border-emerald-300 hover:bg-emerald-50' },
+                                ]).map((b) => (
+                                  <button
+                                    key={b.key}
+                                    onClick={() => {
+                                      setEditTarget(b.key)
+                                      // 対象を 切り替えたら 地図ピック モードは 解除
+                                      setMapCaptureTarget(null)
+                                    }}
+                                    className={`px-2 py-0.5 text-[11px] border rounded ${
+                                      editTarget === b.key ? b.act : b.idle
+                                    }`}
+                                  >
+                                    {b.label}
+                                  </button>
+                                ))}
+                              </div>
                               <div className="ml-auto flex gap-1">
                                 {selectedStation.crossSection ? (
                                   <button
@@ -3884,6 +4184,61 @@ export function OpenChannelAlignmentPage() {
                           )}
                         </div>
 
+                        {/* 現況 / 出来形 モード の 補助 アクション バー。 計画モード では 表示しない */}
+                        {selectedStation && (editTarget === 'current' || editTarget === 'asbuilt') && (
+                          <div className="flex items-center gap-1.5 flex-wrap text-xs shrink-0">
+                            <span className="text-slate-500 text-[11px]">
+                              {editTarget === 'current' ? '現況断面: ' : '出来形: '}
+                            </span>
+                            <button
+                              onClick={() => {
+                                if (mapCaptureTarget === editTarget) {
+                                  setMapCaptureTarget(null)
+                                } else {
+                                  setMapCaptureTarget(editTarget as 'current' | 'asbuilt')
+                                }
+                              }}
+                              className={`px-2 py-0.5 text-[11px] border rounded ${
+                                mapCaptureTarget === editTarget
+                                  ? 'bg-purple-600 text-white border-purple-600'
+                                  : 'bg-white text-purple-700 border-purple-300 hover:bg-purple-50'
+                              }`}
+                              title="地図で 測点マーカーを クリック すると 中心線に 垂直投影 して 追加"
+                            >
+                              {mapCaptureTarget === editTarget ? '地図取得: 選択中' : '地図で追加'}
+                            </button>
+                            <button
+                              onClick={() => setTableModalTarget(editTarget as 'current' | 'asbuilt')}
+                              className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
+                            >
+                              表で入力
+                            </button>
+                            {(() => {
+                              const pts = editTarget === 'current'
+                                ? (selectedStation.currentSection ?? [])
+                                : (selectedStation.asbuiltSection ?? [])
+                              return (
+                                <span className="text-[11px] text-slate-500">
+                                  登録済 {pts.length} 点
+                                </span>
+                              )
+                            })()}
+                            <button
+                              onClick={() => {
+                                if (!window.confirm('この 測点の 全点を 削除します。')) return
+                                handleReplaceStationSection(
+                                  selectedStation.id,
+                                  editTarget as 'current' | 'asbuilt',
+                                  [],
+                                )
+                              }}
+                              className="ml-auto px-2 py-0.5 text-[11px] border rounded text-red-600 hover:bg-red-50"
+                            >
+                              クリア
+                            </button>
+                          </div>
+                        )}
+
                         {/* 対話 型 断面 エディタ
                             prev/next は 現在 選択中の 測点の 前後の 測点に ジャンプ。
                             標準断面 (selectedStation なし) の 時は 前=最終測点、次=先頭測点
@@ -3913,6 +4268,8 @@ export function OpenChannelAlignmentPage() {
                                 onChange={applyChange}
                                 centerHeight={centerZ}
                                 currentGroundHeight={selectedStation?.currentGroundHeight ?? null}
+                                currentSection={selectedStation?.currentSection ?? null}
+                                asbuiltSection={selectedStation?.asbuiltSection ?? null}
                                 onPrevStation={
                                   prevStation
                                     ? () => setSelectedStationId(prevStation.id)
@@ -3940,6 +4297,23 @@ export function OpenChannelAlignmentPage() {
           )}
         </div>
       </div>
+
+      {/* 現況/出来形 手入力 モーダル */}
+      {tableModalTarget && selectedStation && (
+        <MeasuredSectionTableModal
+          target={tableModalTarget}
+          stationLabel={selectedStation.label}
+          initialPoints={
+            tableModalTarget === 'current'
+              ? (selectedStation.currentSection ?? [])
+              : (selectedStation.asbuiltSection ?? [])
+          }
+          onSave={(pts) =>
+            handleReplaceStationSection(selectedStation.id, tableModalTarget, pts)
+          }
+          onClose={() => setTableModalTarget(null)}
+        />
+      )}
     </div>
   )
 }
