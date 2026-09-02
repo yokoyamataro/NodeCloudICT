@@ -2020,6 +2020,8 @@ function DxfTraceModal({
   const [error, setError] = useState<string | null>(null)
 
   const [pickMode, setPickMode] = useState<'dl' | 'center' | 'trace' | null>(null)
+  // トレース時 の 吸着 (端点/交点 スナップ) ON/OFF
+  const [snapEnabled, setSnapEnabled] = useState<boolean>(true)
   // 校正 入力 (既存 校正 が あれば 初期値)
   const [dlY, setDlY] = useState<number | null>(station.dxfCalibration?.dlY ?? null)
   const [centerX, setCenterX] = useState<number | null>(station.dxfCalibration?.centerX ?? null)
@@ -2096,30 +2098,17 @@ function DxfTraceModal({
     }
     if (pickMode === 'trace') {
       if (!parsedCalib) return
-      if (!shape) {
-        // トレースは 図形に 当たった 時のみ 有効 (空クリックは 無視)
-        return
-      }
-      // 頂点を 抽出。 line → 2 点、polyline → 全頂点、他 → クリック点 1 個
-      const dxfPts: { x: number; y: number }[] = []
-      if (shape.kind === 'line') {
-        dxfPts.push({ x: shape.x1, y: shape.y1 }, { x: shape.x2, y: shape.y2 })
-      } else if (shape.kind === 'polyline') {
-        for (const p of shape.pts) dxfPts.push({ x: p.x, y: p.y })
-      } else {
-        dxfPts.push({ x: worldPt.x, y: worldPt.y })
-      }
+      // トレースは 1 クリック = 1 点。 worldPt は 吸着済み (Viewer 側で snap→wp に 置換)。
+      const w = dxfToWorld(worldPt.x, worldPt.y, parsedCalib)
       const now = Date.now()
       const rand = () => Math.random().toString(36).slice(2, 7)
-      const newPts: MeasuredCrossPoint[] = dxfPts.map((p, i) => {
-        const w = dxfToWorld(p.x, p.y, parsedCalib)
-        return {
-          id: `dxf-${now}-${i}-${rand()}`,
+      onAppendPoints([
+        {
+          id: `dxf-${now}-${rand()}`,
           offset: w.offset,
           elevation: w.elevation,
-        }
-      })
-      onAppendPoints(newPts)
+        },
+      ])
       return
     }
   }
@@ -2230,10 +2219,10 @@ function DxfTraceModal({
                   校正を 完了 (DL + 中心線 + 縮尺) すると トレース可能に なります
                 </div>
               ) : (
-                <>
+                <div className="flex flex-col gap-1.5">
                   <button
                     onClick={() => setPickMode(pickMode === 'trace' ? null : 'trace')}
-                    className={`w-full px-2 py-1 border rounded text-left ${
+                    className={`px-2 py-1 border rounded text-left ${
                       pickMode === 'trace'
                         ? 'text-white'
                         : 'bg-white hover:bg-slate-50'
@@ -2246,10 +2235,20 @@ function DxfTraceModal({
                   >
                     {pickMode === 'trace' ? 'トレース 中 (クリックで 追加)' : `${meta.label}をトレース`}
                   </button>
-                  <div className="text-[11px] text-slate-500 mt-1">
-                    LINE 1 本 → 2 点、LWPOLYLINE → 全頂点、その他 → クリック位置 1 点。
+                  <label className="flex items-center gap-1.5 text-[11px] cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={snapEnabled}
+                      onChange={(e) => setSnapEnabled(e.target.checked)}
+                      className="cursor-pointer"
+                    />
+                    <span>ピック (端点 / 交点に 吸着)</span>
+                  </label>
+                  <div className="text-[11px] text-slate-500">
+                    1 クリック = 1 点 追加。 ピック ON 時は カーソル 近傍の 端点 (青)
+                    / 交点 (橙×) に 吸い付く。
                   </div>
-                </>
+                </div>
               )}
             </div>
           </div>
@@ -2265,6 +2264,7 @@ function DxfTraceModal({
                 highlightDlY={dlY}
                 highlightCenterX={centerX}
                 overlays={overlays}
+                snapEnabled={snapEnabled}
               />
             )}
           </div>

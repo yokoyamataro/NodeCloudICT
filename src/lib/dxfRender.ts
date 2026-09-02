@@ -203,3 +203,105 @@ function aciToRgb(idx: number): string {
   if (idx === 256 || idx === 0) return '#000000' // ByLayer / ByBlock
   return ACI_PALETTE[idx] ?? '#000000'
 }
+
+/**
+ * スナップ 候補点 (端部 / 頂点 / 交点)。
+ *   kind: 'end' 端点、'vertex' polyline 頂点、'inter' 線分交点
+ */
+export interface SnapTarget {
+  x: number
+  y: number
+  kind: 'end' | 'vertex' | 'inter'
+}
+
+/** 線分 (LINE / polyline 分割後) の 内部 表現 (交点計算用) */
+interface Seg { x1: number; y1: number; x2: number; y2: number; layer: string }
+
+function segIntersect(a: Seg, b: Seg): { x: number; y: number } | null {
+  const { x1, y1, x2, y2 } = a
+  const { x1: x3, y1: y3, x2: x4, y2: y4 } = b
+  const denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+  if (Math.abs(denom) < 1e-9) return null
+  const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom
+  const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom
+  const EPS = 1e-6
+  if (t < -EPS || t > 1 + EPS || u < -EPS || u > 1 + EPS) return null
+  return { x: x1 + t * (x2 - x1), y: y1 + t * (y2 - y1) }
+}
+
+function bboxOverlap(a: Seg, b: Seg): boolean {
+  const ax0 = Math.min(a.x1, a.x2), ax1 = Math.max(a.x1, a.x2)
+  const ay0 = Math.min(a.y1, a.y2), ay1 = Math.max(a.y1, a.y2)
+  const bx0 = Math.min(b.x1, b.x2), bx1 = Math.max(b.x1, b.x2)
+  const by0 = Math.min(b.y1, b.y2), by1 = Math.max(b.y1, b.y2)
+  return !(ax1 < bx0 || bx1 < ax0 || ay1 < by0 || by1 < ay0)
+}
+
+/**
+ * DXF から スナップ 候補点を 抽出:
+ *   - LINE / polyline の 各 端点 と 頂点
+ *   - LINE 対 LINE の 交点 (segment 実際に 交わるもの のみ、bbox で 事前フィルタ)
+ * 大量の 線が ある 図面でも 現実的な 時間で 終わるように bbox で 枝刈り。
+ */
+export function computeSnapTargets(doc: DxfDocument): SnapTarget[] {
+  const out: SnapTarget[] = []
+  const segs: Seg[] = []
+  for (const s of doc.shapes) {
+    if (s.kind === 'line') {
+      out.push({ x: s.x1, y: s.y1, kind: 'end' })
+      out.push({ x: s.x2, y: s.y2, kind: 'end' })
+      segs.push({ x1: s.x1, y1: s.y1, x2: s.x2, y2: s.y2, layer: s.layer })
+    } else if (s.kind === 'polyline') {
+      for (const p of s.pts) out.push({ x: p.x, y: p.y, kind: 'vertex' })
+      for (let i = 1; i < s.pts.length; i++) {
+        const a = s.pts[i - 1], b = s.pts[i]
+        segs.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, layer: s.layer })
+      }
+    } else if (s.kind === 'circle' || s.kind === 'arc') {
+      out.push({ x: s.cx, y: s.cy, kind: 'end' }) // 中心 を 端点扱い (ざっくり)
+    }
+  }
+  // 交点: 全ペア は O(n²)。 bbox で 弾いて 実質 O(n log n) 程度に。
+  // 数万 セグメント だと それでも 遅いので 上限を 設ける。
+  const maxSegForIntersect = 2000
+  const N = Math.min(segs.length, maxSegForIntersect)
+  const interSet = new Map<string, { x: number; y: number }>()
+  for (let i = 0; i < N; i++) {
+    const a = segs[i]
+    for (let j = i + 1; j < N; j++) {
+      const b = segs[j]
+      if (!bboxOverlap(a, b)) continue
+      const p = segIntersect(a, b)
+      if (!p) continue
+      // 端点 完全一致 は 端点として 既に 入っているので 除外 (誤差 10μm)
+      const key = `${Math.round(p.x * 1e5)}:${Math.round(p.y * 1e5)}`
+      if (!interSet.has(key)) interSet.set(key, p)
+    }
+  }
+  for (const p of interSet.values()) {
+    out.push({ x: p.x, y: p.y, kind: 'inter' })
+  }
+  return out
+}
+
+/**
+ * 与えた 世界座標 (wx, wy) に 最も近い スナップ 候補を 返す。
+ * threshold: 世界座標 での 半径。 これ以内 に 無ければ null。
+ */
+export function findNearestSnap(
+  targets: SnapTarget[],
+  wx: number,
+  wy: number,
+  threshold: number,
+): SnapTarget | null {
+  let best: SnapTarget | null = null
+  let bestDist = threshold
+  for (const t of targets) {
+    const d = Math.hypot(t.x - wx, t.y - wy)
+    if (d < bestDist) {
+      bestDist = d
+      best = t
+    }
+  }
+  return best
+}

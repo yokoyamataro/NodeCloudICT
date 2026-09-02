@@ -5,7 +5,14 @@
 // - 「トレース モード」(次コミット で 実装予定) の フックだけ 型に 用意
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { parseDxf, type DxfDocument, type DxfShape } from '@/lib/dxfRender'
+import {
+  parseDxf,
+  computeSnapTargets,
+  findNearestSnap,
+  type DxfDocument,
+  type DxfShape,
+  type SnapTarget,
+} from '@/lib/dxfRender'
 
 export function DxfCrossSectionViewer({
   dxfText,
@@ -15,6 +22,7 @@ export function DxfCrossSectionViewer({
   highlightDlY,
   highlightCenterX,
   overlays,
+  snapEnabled = false,
 }: {
   dxfText: string
   className?: string
@@ -22,7 +30,7 @@ export function DxfCrossSectionViewer({
    * pickCursorHint (=モード) が セット されている 時、SVG が クリックされる ごとに
    * 呼ばれる。 shape は 図形に ヒットした 場合の エンティティ (無ければ null)。
    * DL/中心線 選択は クリック位置 (worldPt) だけで 決めるので shape なしでも OK。
-   * トレースは shape に対して 処理する (line/polyline の 頂点 抽出 等)。
+   * トレースは snapEnabled 時 端点/交点 に 吸着 した 位置 が worldPt に 入る。
    */
   onCanvasPick?: (worldPt: { x: number; y: number }, shape: DxfShape | null) => void
   /** カーソル形状の ヒント (crosshair 系)。 これが セット されて いる 時のみ pick 発火 */
@@ -35,6 +43,11 @@ export function DxfCrossSectionViewer({
   overlays?: Array<
     | { kind: 'dot'; x: number; y: number; color: string; r?: number; label?: string }
   >
+  /**
+   * true の 間、カーソル 位置 に 近い 端点/交点 に 吸着する。 マーカーで 表示し、
+   * クリック時に snap 位置が worldPt に 渡る。
+   */
+  snapEnabled?: boolean
 }) {
   const doc: DxfDocument | null = useMemo(() => {
     try {
@@ -51,6 +64,15 @@ export function DxfCrossSectionViewer({
     // ドキュメント 差替時 は 初期は 全 layer 表示
     setHiddenLayers(new Set())
   }, [doc])
+
+  // スナップ 候補 (端点 + 交点)。 pickCursorHint='trace' + snapEnabled で 有効化
+  const snapTargets = useMemo<SnapTarget[]>(
+    () => (doc ? computeSnapTargets(doc) : []),
+    [doc],
+  )
+  const snapActive = pickCursorHint === 'trace' && snapEnabled
+  // 現在の 吸着候補 (mousemove で 更新)。 null なら 吸着 なし
+  const [snap, setSnap] = useState<SnapTarget | null>(null)
 
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 800, h: 500 })
@@ -148,18 +170,31 @@ export function DxfCrossSectionViewer({
     }
   }
   const onMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    if (!panStartRef.current || !(e.buttons & 1)) return
     const rect = e.currentTarget.getBoundingClientRect()
     const px = e.clientX - rect.left
     const py = e.clientY - rect.top
-    const dx = px - panStartRef.current.px
-    const dy = py - panStartRef.current.py
-    if (wasDraggingRef.current || Math.hypot(dx, dy) > 4) {
-      wasDraggingRef.current = true
-      setViewPan({
-        x: panStartRef.current.panX + dx,
-        y: panStartRef.current.panY + dy,
-      })
+    // ドラッグ pan
+    if (panStartRef.current && (e.buttons & 1)) {
+      const dx = px - panStartRef.current.px
+      const dy = py - panStartRef.current.py
+      if (wasDraggingRef.current || Math.hypot(dx, dy) > 4) {
+        wasDraggingRef.current = true
+        setViewPan({
+          x: panStartRef.current.panX + dx,
+          y: panStartRef.current.panY + dy,
+        })
+      }
+    }
+    // 吸着 候補 更新 (trace + snap ON の 時のみ)
+    if (snapActive && fit) {
+      const wx = ix(px)
+      const wy = iy(py)
+      // 画面 12 px 以内 に ある 最寄りを 吸着 (世界単位 に 変換)
+      const threshold = 12 / (fit.scale * viewZoom)
+      const t = findNearestSnap(snapTargets, wx, wy, threshold)
+      setSnap(t)
+    } else if (snap) {
+      setSnap(null)
     }
   }
   const onMouseUp = () => {
@@ -169,9 +204,11 @@ export function DxfCrossSectionViewer({
     if (wasDraggingRef.current) return
     if (!onCanvasPick || !pickCursorHint) return
     const rect = e.currentTarget.getBoundingClientRect()
-    const wp = { x: ix(e.clientX - rect.left), y: iy(e.clientY - rect.top) }
+    // 吸着中は snap 位置 を 優先 (それ以外は クリック位置)
+    const wp = snap
+      ? { x: snap.x, y: snap.y }
+      : { x: ix(e.clientX - rect.left), y: iy(e.clientY - rect.top) }
     // 図形に ヒットしたら shape を 添える。 短い線 等で 外れても null で 発火
-    // (DL/中心線 選択は 空クリック でも 位置だけで 決められる)
     const target = e.target as SVGElement | null
     const idx = target?.getAttribute?.('data-shape-idx')
     const shape = idx != null ? doc.shapes[Number(idx)] ?? null : null
@@ -307,6 +344,35 @@ export function DxfCrossSectionViewer({
                 </g>
               )
             })}
+            {/* 吸着 候補 マーカー (□ + × 交点、〇 + □ 端点/頂点) */}
+            {snap && (() => {
+              const cx = tx(snap.x), cy = ty(snap.y)
+              const size = 7
+              const color = snap.kind === 'inter' ? '#ea580c' : '#0ea5e9'
+              return (
+                <g pointerEvents="none">
+                  {/* 四角枠 */}
+                  <rect
+                    x={cx - size} y={cy - size}
+                    width={size * 2} height={size * 2}
+                    fill="none" stroke={color}
+                    strokeWidth={2}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                  {/* 種類マーク: inter=X、それ以外=● */}
+                  {snap.kind === 'inter' ? (
+                    <>
+                      <line x1={cx - size / 2} y1={cy - size / 2} x2={cx + size / 2} y2={cy + size / 2}
+                        stroke={color} strokeWidth={2} vectorEffect="non-scaling-stroke" />
+                      <line x1={cx - size / 2} y1={cy + size / 2} x2={cx + size / 2} y2={cy - size / 2}
+                        stroke={color} strokeWidth={2} vectorEffect="non-scaling-stroke" />
+                    </>
+                  ) : (
+                    <circle cx={cx} cy={cy} r={2.5} fill={color} vectorEffect="non-scaling-stroke" />
+                  )}
+                </g>
+              )
+            })()}
           </g>
         </svg>
       </div>
