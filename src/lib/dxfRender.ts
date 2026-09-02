@@ -305,3 +305,44 @@ export function findNearestSnap(
   }
   return best
 }
+
+/**
+ * カーソル (wx, wy) に 最も近い 「指定方向 (h=水平 / v=垂直) の 線」の 座標を 返す。
+ * DL 選択 (h) → その y を、中心線 選択 (v) → その x を 返す。
+ * LINE / LWPOLYLINE の 水平/垂直 セグメント を 対象。 threshold は 世界座標 半径。
+ * 該当なし は null。
+ */
+export function findNearestOrientedLine(
+  shapes: DxfShape[],
+  wx: number,
+  wy: number,
+  orientation: 'h' | 'v',
+  threshold: number,
+): number | null {
+  let bestCoord: number | null = null
+  let bestDist = threshold
+  const consider = (x1: number, y1: number, x2: number, y2: number) => {
+    if (orientation === 'h') {
+      if (Math.abs(y1 - y2) > 0.1) return // 水平でない
+      const y = (y1 + y2) / 2
+      const d = Math.abs(y - wy)
+      if (d < bestDist) { bestDist = d; bestCoord = y }
+    } else {
+      if (Math.abs(x1 - x2) > 0.1) return // 垂直でない
+      const x = (x1 + x2) / 2
+      const d = Math.abs(x - wx)
+      if (d < bestDist) { bestDist = d; bestCoord = x }
+    }
+  }
+  for (const s of shapes) {
+    if (s.kind === 'line') {
+      consider(s.x1, s.y1, s.x2, s.y2)
+    } else if (s.kind === 'polyline') {
+      for (let i = 1; i < s.pts.length; i++) {
+        const a = s.pts[i - 1], b = s.pts[i]
+        consider(a.x, a.y, b.x, b.y)
+      }
+    }
+  }
+  return bestCoord
+}

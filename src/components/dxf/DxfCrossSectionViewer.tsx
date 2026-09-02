@@ -9,6 +9,7 @@ import {
   parseDxf,
   computeSnapTargets,
   findNearestSnap,
+  findNearestOrientedLine,
   type DxfDocument,
   type DxfShape,
   type SnapTarget,
@@ -73,6 +74,8 @@ export function DxfCrossSectionViewer({
   const snapActive = pickCursorHint === 'trace' && snapEnabled
   // 現在の 吸着候補 (mousemove で 更新)。 null なら 吸着 なし
   const [snap, setSnap] = useState<SnapTarget | null>(null)
+  // DL/中心線 選択中の 「近くの 水平/垂直 線」プレビュー。 click で 確定
+  const [linePreview, setLinePreview] = useState<{ orientation: 'h' | 'v'; coord: number } | null>(null)
 
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 800, h: 500 })
@@ -196,6 +199,17 @@ export function DxfCrossSectionViewer({
     } else if (snap) {
       setSnap(null)
     }
+    // DL / 中心線 選択中の 「近くの 水平/垂直 線」プレビュー
+    if ((pickCursorHint === 'dl' || pickCursorHint === 'center') && fit) {
+      const wx = ix(px), wy = iy(py)
+      // 画面 30 px 相当の 世界半径 で 検索 (DL/中心線 は 少し 広めに)
+      const threshold = 30 / (fit.scale * viewZoom)
+      const orient: 'h' | 'v' = pickCursorHint === 'dl' ? 'h' : 'v'
+      const coord = findNearestOrientedLine(doc.shapes, wx, wy, orient, threshold)
+      setLinePreview(coord != null ? { orientation: orient, coord } : null)
+    } else if (linePreview) {
+      setLinePreview(null)
+    }
   }
   const onMouseUp = () => {
     panStartRef.current = null
@@ -204,11 +218,24 @@ export function DxfCrossSectionViewer({
     if (wasDraggingRef.current) return
     if (!onCanvasPick || !pickCursorHint) return
     const rect = e.currentTarget.getBoundingClientRect()
-    // 吸着中は snap 位置 を 優先 (それ以外は クリック位置)
-    const wp = snap
-      ? { x: snap.x, y: snap.y }
-      : { x: ix(e.clientX - rect.left), y: iy(e.clientY - rect.top) }
-    // 図形に ヒットしたら shape を 添える。 短い線 等で 外れても null で 発火
+    const rawWp = { x: ix(e.clientX - rect.left), y: iy(e.clientY - rect.top) }
+
+    // pick モード別に worldPt を 決定
+    let wp: { x: number; y: number }
+    if (pickCursorHint === 'dl') {
+      // DL: 近くの 水平線 が 無ければ 発火 しない (マウス位置は 使わない)
+      if (!linePreview || linePreview.orientation !== 'h') return
+      wp = { x: rawWp.x, y: linePreview.coord }
+    } else if (pickCursorHint === 'center') {
+      // 中心線: 近くの 垂直線 が 無ければ 発火 しない
+      if (!linePreview || linePreview.orientation !== 'v') return
+      wp = { x: linePreview.coord, y: rawWp.y }
+    } else if (pickCursorHint === 'trace' && snap) {
+      wp = { x: snap.x, y: snap.y }
+    } else {
+      wp = rawWp
+    }
+
     const target = e.target as SVGElement | null
     const idx = target?.getAttribute?.('data-shape-idx')
     const shape = idx != null ? doc.shapes[Number(idx)] ?? null : null
@@ -344,6 +371,29 @@ export function DxfCrossSectionViewer({
                 </g>
               )
             })}
+            {/* DL/中心線 選択中の 「候補線」プレビュー (薄紫 破線)。 click で 確定色 (紫) に */}
+            {linePreview && linePreview.orientation === 'h' && (
+              <line
+                x1={tx(doc.bounds.minX - 10)} y1={ty(linePreview.coord)}
+                x2={tx(doc.bounds.maxX + 10)} y2={ty(linePreview.coord)}
+                stroke="#c084fc" strokeWidth={3}
+                strokeDasharray="8,4"
+                vectorEffect="non-scaling-stroke"
+                pointerEvents="none"
+                opacity={0.8}
+              />
+            )}
+            {linePreview && linePreview.orientation === 'v' && (
+              <line
+                x1={tx(linePreview.coord)} y1={ty(doc.bounds.minY - 10)}
+                x2={tx(linePreview.coord)} y2={ty(doc.bounds.maxY + 10)}
+                stroke="#c084fc" strokeWidth={3}
+                strokeDasharray="8,4"
+                vectorEffect="non-scaling-stroke"
+                pointerEvents="none"
+                opacity={0.8}
+              />
+            )}
             {/* 吸着 候補 マーカー (□ + × 交点、〇 + □ 端点/頂点) */}
             {snap && (() => {
               const cx = tx(snap.x), cy = ty(snap.y)
