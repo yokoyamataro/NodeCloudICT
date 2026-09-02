@@ -2066,6 +2066,29 @@ export function OpenChannelAlignmentPage() {
   //   'asbuilt'— 出来形 (次ステップ 実装予定 — ボタンは 置く だけ)
   type EditTarget = 'plan' | 'current' | 'asbuilt'
   const [editTarget, setEditTarget] = useState<EditTarget>('plan')
+
+  // 中間点計算 表の 表示列 (任意で 非表示 に できる)。 SP / 距離 / X / Y / 計画高 / 現況高
+  // の 6 列 が トグル対象。 # と 断面 ボタン と 削除 は 常に 表示。
+  type StationCol = 'sp' | 'distance' | 'x' | 'y' | 'planZ' | 'currentZ'
+  const [visibleStationCols, setVisibleStationCols] = useState<Set<StationCol>>(
+    () => new Set<StationCol>(['sp', 'distance', 'x', 'y', 'planZ', 'currentZ']),
+  )
+  const toggleStationCol = (col: StationCol) => {
+    setVisibleStationCols((prev) => {
+      const next = new Set(prev)
+      if (next.has(col)) next.delete(col)
+      else next.add(col)
+      return next
+    })
+  }
+  const STATION_COL_DEFS: { key: StationCol; label: string }[] = [
+    { key: 'sp', label: 'SP' },
+    { key: 'distance', label: '距離' },
+    { key: 'x', label: 'X' },
+    { key: 'y', label: 'Y' },
+    { key: 'planZ', label: '計画高' },
+    { key: 'currentZ', label: '現況高' },
+  ]
   // 表モーダル (現況断面 / 出来形 の 手入力) の 対象 種別。null で 閉じている
   const [tableModalTarget, setTableModalTarget] = useState<'current' | 'asbuilt' | null>(null)
   // 地図から 現況/出来形 点を 拾う モード。null で 通常
@@ -3337,22 +3360,57 @@ export function OpenChannelAlignmentPage() {
 
                 {stations.length > 0 && (
                   <>
+                    {/* 表示列 トグル (SP / 距離 / X / Y / 計画高 / 現況高)。
+                        # と 断面ボタン と 削除 は 常時 表示。 */}
+                    <div className="flex items-center gap-1 flex-wrap text-[11px]">
+                      <span className="text-slate-500">表示列:</span>
+                      {STATION_COL_DEFS.map((c) => {
+                        const on = visibleStationCols.has(c.key)
+                        return (
+                          <button
+                            key={c.key}
+                            onClick={() => toggleStationCol(c.key)}
+                            className={`px-1.5 py-0.5 border rounded ${
+                              on
+                                ? 'bg-blue-600 text-white border-blue-600'
+                                : 'bg-white text-slate-500 border-slate-300 hover:bg-slate-50'
+                            }`}
+                            title={on ? 'クリックで 非表示' : 'クリックで 表示'}
+                          >
+                            {c.label}
+                          </button>
+                        )
+                      })}
+                    </div>
+                    {/* 縦 max-h-80 + 横は cell を nowrap にして 自然幅、コンテナで 横スクロール */}
                     <div className="border rounded overflow-auto max-h-80">
-                      <table className="w-full text-sm">
+                      <table className="min-w-full text-sm">
                         <thead className="bg-slate-50 text-slate-600 sticky top-0 text-xs">
                           <tr>
-                            <th className="px-2 py-1 w-10 text-center">#</th>
-                            <th className="px-2 py-1 text-left">SP</th>
-                            <th className="px-2 py-1 text-right">距離 (m)</th>
-                            <th className="px-2 py-1 text-right">X</th>
-                            <th className="px-2 py-1 text-right">Y</th>
-                            <th className="px-2 py-1 w-24 text-right" title="縦断線形から 自動取込">
-                              計画高 (m)
-                            </th>
-                            <th className="px-2 py-1 w-24 text-right" title="現況地盤高 を 直接入力">
-                              現況高 (m)
-                            </th>
-                            <th className="px-2 py-1 w-32 text-center">断面</th>
+                            <th className="px-2 py-1 w-10 text-center whitespace-nowrap">#</th>
+                            {visibleStationCols.has('sp') && (
+                              <th className="px-2 py-1 text-left whitespace-nowrap">SP</th>
+                            )}
+                            {visibleStationCols.has('distance') && (
+                              <th className="px-2 py-1 text-right whitespace-nowrap">距離 (m)</th>
+                            )}
+                            {visibleStationCols.has('x') && (
+                              <th className="px-2 py-1 text-right whitespace-nowrap">X</th>
+                            )}
+                            {visibleStationCols.has('y') && (
+                              <th className="px-2 py-1 text-right whitespace-nowrap">Y</th>
+                            )}
+                            {visibleStationCols.has('planZ') && (
+                              <th className="px-2 py-1 w-24 text-right whitespace-nowrap" title="縦断線形から 自動取込">
+                                計画高 (m)
+                              </th>
+                            )}
+                            {visibleStationCols.has('currentZ') && (
+                              <th className="px-2 py-1 w-24 text-right whitespace-nowrap" title="現況地盤高 を 直接入力">
+                                現況高 (m)
+                              </th>
+                            )}
+                            <th className="px-2 py-1 w-32 text-center whitespace-nowrap">断面</th>
                             <th className="px-2 py-1 w-8"></th>
                           </tr>
                         </thead>
@@ -3370,34 +3428,52 @@ export function OpenChannelAlignmentPage() {
                                   isSel ? 'bg-blue-50' : 'hover:bg-slate-50'
                                 }`}
                               >
-                                <td className="px-2 py-1 text-center text-slate-500 text-xs">{i + 1}</td>
-                                <td className="px-2 py-1 font-mono">{s.label}</td>
-                                <td className="px-2 py-1 text-right tabular-nums">{s.distance.toFixed(2)}</td>
-                                <td className="px-2 py-1 text-right tabular-nums">{p ? p.x.toFixed(3) : '-'}</td>
-                                <td className="px-2 py-1 text-right tabular-nums">{p ? p.y.toFixed(3) : '-'}</td>
+                                <td className="px-2 py-1 text-center text-slate-500 text-xs whitespace-nowrap">{i + 1}</td>
+                                {visibleStationCols.has('sp') && (
+                                  <td className="px-2 py-1 font-mono whitespace-nowrap">{s.label}</td>
+                                )}
+                                {visibleStationCols.has('distance') && (
+                                  <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">
+                                    {s.distance.toFixed(2)}
+                                  </td>
+                                )}
+                                {visibleStationCols.has('x') && (
+                                  <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">
+                                    {p ? p.x.toFixed(3) : '-'}
+                                  </td>
+                                )}
+                                {visibleStationCols.has('y') && (
+                                  <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">
+                                    {p ? p.y.toFixed(3) : '-'}
+                                  </td>
+                                )}
                                 {/* 計画高: 縦断線形から 内挿。 縦断が 未登録 なら "-" */}
-                                <td className="px-2 py-1 text-right tabular-nums text-emerald-700">
-                                  {selected && selected.profilePoints.length >= 2
-                                    ? interpolateProfileZ(selected.profilePoints, s.distance).toFixed(3)
-                                    : '-'}
-                                </td>
+                                {visibleStationCols.has('planZ') && (
+                                  <td className="px-2 py-1 text-right tabular-nums text-emerald-700 whitespace-nowrap">
+                                    {selected && selected.profilePoints.length >= 2
+                                      ? interpolateProfileZ(selected.profilePoints, s.distance).toFixed(3)
+                                      : '-'}
+                                  </td>
+                                )}
                                 {/* 現況高: 直接 入力。空 なら 未計測扱い */}
-                                <td className="px-1 py-1 text-right">
-                                  <input
-                                    type="number"
-                                    step={0.001}
-                                    defaultValue={s.currentGroundHeight ?? ''}
-                                    onClick={(e) => e.stopPropagation()}
-                                    onBlur={(e) => handleUpdateStationCurrentHeight(s.id, e.target.value)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') {
-                                        e.currentTarget.blur()
-                                      }
-                                    }}
-                                    placeholder="-"
-                                    className="w-full px-1 py-0.5 border rounded text-right tabular-nums text-amber-700 bg-amber-50/40"
-                                  />
-                                </td>
+                                {visibleStationCols.has('currentZ') && (
+                                  <td className="px-1 py-1 text-right whitespace-nowrap">
+                                    <input
+                                      type="number"
+                                      step={0.001}
+                                      defaultValue={s.currentGroundHeight ?? ''}
+                                      onClick={(e) => e.stopPropagation()}
+                                      onBlur={(e) => handleUpdateStationCurrentHeight(s.id, e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          e.currentTarget.blur()
+                                        }
+                                      }}
+                                      placeholder="-"
+                                      className="w-full px-1 py-0.5 border rounded text-right tabular-nums text-amber-700 bg-amber-50/40"
+                                    />
+                                  </td>
+                                )}
                                 <td className="px-1 py-1 text-center">
                                   {/* 現況 / 計画 / 出来形 — 計画 は 押下時 に 測点 を 選択 し、
                                       横断計画 未取込 なら 標準断面 を 複製 して エディタ を 開く。
