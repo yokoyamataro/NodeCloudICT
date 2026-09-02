@@ -65,7 +65,8 @@ export interface StandardCrossSection {
 export const emptyStandardCrossSection = (): StandardCrossSection => ({ right: [], left: [] })
 
 /**
- * 測定 断面 点 (現況 / 出来形 用)。中心線からの 垂直方向 距離 (offset) と 標高。
+ * 測定 断面 点 (現況 / 出来形 / トレース由来 の 計画 用)。
+ * 中心線からの 垂直方向 距離 (offset) と 標高。
  *   offset > 0 = 右側、offset < 0 = 左側 (WidthStake と 同じ 慣習、sideOrientation に 従う)
  *   note: 地図から 拾った 場合 の 元 座標番号 等 の 任意メモ
  */
@@ -74,6 +75,24 @@ export interface MeasuredCrossPoint {
   offset: number
   elevation: number
   note?: string
+}
+
+/**
+ * 各測点 の 「既存 DXF 図面 上の 校正情報」。
+ * トレース (DXF 座標 → 実 offset + 実標高 変換) に 使う。
+ *   dlY / centerX: DXF 上の 「DL 水平線 の Y」 と 「中心 縦線 の X」 (mm)
+ *   dlElevation:   DL に 割り当てる 実標高 (m)。 DXF テキスト「DL=-6.00」の 値
+ *   hScale / vScale: 縮尺 分母 (1:100 なら 100)。 水平・垂直 が 別 縮尺 でも 対応
+ * 変換式:
+ *   offset [m]    = (px - centerX) * hScale / 1000
+ *   elevation [m] = dlElevation + (py - dlY) * vScale / 1000
+ */
+export interface DxfCalibration {
+  dlY: number
+  centerX: number
+  dlElevation: number
+  hScale: number
+  vScale: number
 }
 
 /** 中間点（測点）。SP / BC / EC / IP などラベル付きで BP からの距離 + 個別断面を保持。 */
@@ -100,6 +119,22 @@ export interface StationRow {
    * 出来形 断面 (施工後の 実測点列)。現状 プレースホルダ (次ステップで 実装予定)。
    */
   asbuiltSection?: MeasuredCrossPoint[] | null
+  /**
+   * 計画高 (中心線上の 計画 標高) [m]。 縦断線形 が ない (or 未計測) 時に
+   * 個別測点として 直接 セット する 用途。 トレース時 に plannedSectionRaw を
+   * offset=0 で 補間して 自動 埋め される。 null なら profile から 内挿。
+   */
+  plannedCenterHeight?: number | null
+  /**
+   * トレース由来の 計画断面 (DXF ライン クリックで 拾った 点列)。
+   * 対話型エディタで 作る element ベースの crossSection とは 別の 格納で、
+   * 参考ラインとして 断面図に 重ねて 表示する 用途。
+   */
+  plannedSectionRaw?: MeasuredCrossPoint[] | null
+  /**
+   * この 測点における DXF 図面 上の 校正情報。 トレース で 使う。
+   */
+  dxfCalibration?: DxfCalibration | null
 }
 
 /**

@@ -11,11 +11,25 @@ export function DxfCrossSectionViewer({
   dxfText,
   className,
   onShapeClick,
+  pickCursorHint,
+  highlightDlY,
+  highlightCenterX,
+  overlays,
 }: {
   dxfText: string
   className?: string
-  /** SVG 上で 図形が クリックされた 時 (トレースモードで 使う 予定) */
+  /** SVG 上で 図形が クリックされた 時 (トレースモードで 使う) */
   onShapeClick?: (shape: DxfShape, worldPt: { x: number; y: number }) => void
+  /** カーソル形状の ヒント (crosshair 系)。 onShapeClick と 併用。 */
+  pickCursorHint?: 'dl' | 'center' | 'trace'
+  /** DL 水平線 の DXF Y 座標。指定すると 上に 太い 破線 (紫) を 描いて 可視化 */
+  highlightDlY?: number | null
+  /** 中心 縦線 の DXF X 座標。指定すると 上に 太い 破線 (紫) を 描いて 可視化 */
+  highlightCenterX?: number | null
+  /** 追加の 上乗せ 描画 (トレース済み 点 の マーカー等)。世界座標 で 指定。 */
+  overlays?: Array<
+    | { kind: 'dot'; x: number; y: number; color: string; r?: number; label?: string }
+  >
 }) {
   const doc: DxfDocument | null = useMemo(() => {
     try {
@@ -229,13 +243,67 @@ export function DxfCrossSectionViewer({
           onMouseLeave={onMouseUp}
           onClick={onSvgClick}
           style={{
-            cursor: wasDraggingRef.current ? 'grabbing' : onShapeClick ? 'crosshair' : 'grab',
+            cursor: wasDraggingRef.current
+              ? 'grabbing'
+              : pickCursorHint
+                ? 'crosshair'
+                : onShapeClick
+                  ? 'crosshair'
+                  : 'grab',
           }}
         >
           <g transform={`translate(${viewPan.x} ${viewPan.y}) scale(${viewZoom})`}>
             {doc.shapes.map((s, i) => {
               if (hiddenLayers.has(s.layer)) return null
               return renderShape(s, i, tx, ty)
+            })}
+            {/* 校正済み DL 水平線 (紫 太 破線) */}
+            {highlightDlY != null && (
+              <line
+                x1={tx(doc.bounds.minX - 10)} y1={ty(highlightDlY)}
+                x2={tx(doc.bounds.maxX + 10)} y2={ty(highlightDlY)}
+                stroke="#a855f7" strokeWidth={2}
+                strokeDasharray="6,4"
+                vectorEffect="non-scaling-stroke"
+                pointerEvents="none"
+              />
+            )}
+            {/* 校正済み 中心線 (紫 太 破線) */}
+            {highlightCenterX != null && (
+              <line
+                x1={tx(highlightCenterX)} y1={ty(doc.bounds.minY - 10)}
+                x2={tx(highlightCenterX)} y2={ty(doc.bounds.maxY + 10)}
+                stroke="#a855f7" strokeWidth={2}
+                strokeDasharray="6,4"
+                vectorEffect="non-scaling-stroke"
+                pointerEvents="none"
+              />
+            )}
+            {/* トレース済み 点マーカー */}
+            {overlays?.map((o, i) => {
+              if (o.kind !== 'dot') return null
+              return (
+                <g key={`ov-${i}`} pointerEvents="none">
+                  <circle
+                    cx={tx(o.x)} cy={ty(o.y)}
+                    r={o.r ?? 3.5}
+                    fill={o.color}
+                    stroke="#fff"
+                    strokeWidth={1.5}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                  {o.label && (
+                    <text
+                      x={tx(o.x) + 6}
+                      y={ty(o.y) - 4}
+                      fontSize={10}
+                      fill={o.color}
+                    >
+                      {o.label}
+                    </text>
+                  )}
+                </g>
+              )
             })}
           </g>
         </svg>

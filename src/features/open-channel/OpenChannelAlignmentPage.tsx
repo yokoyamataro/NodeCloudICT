@@ -14,7 +14,7 @@ import { Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Pencil, Ch
 import { PageHeader } from '@/components/layout/PageHeader'
 import { CoordinateMap } from '@/components/map/CoordinateMap'
 import { DxfCrossSectionViewer } from '@/components/dxf/DxfCrossSectionViewer'
-import { decodeDxfBytes } from '@/lib/dxfRender'
+import { decodeDxfBytes, type DxfShape } from '@/lib/dxfRender'
 import { supabase } from '@/lib/supabase'
 import { useFarmStore } from '@/stores/farmStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
@@ -31,6 +31,7 @@ import {
   type WidthStake,
   type MeasuredCrossPoint,
   type OpenChannelRow,
+  type DxfCalibration,
   buildCrossSectionPath,
   elementStep,
 } from '@/stores/openChannelStore'
@@ -894,7 +895,7 @@ function MeasuredSectionTableModal({
   onSave,
   onClose,
 }: {
-  target: 'current' | 'asbuilt'
+  target: SectionTarget
   stationLabel: string
   initialPoints: MeasuredCrossPoint[]
   onSave: (points: MeasuredCrossPoint[]) => void
@@ -903,7 +904,8 @@ function MeasuredSectionTableModal({
   const [rows, setRows] = useState<MeasuredCrossPoint[]>(() =>
     initialPoints.map((p) => ({ ...p })),
   )
-  const targetLabel = target === 'current' ? '現況断面' : '出来形'
+  const targetLabel =
+    target === 'current' ? '現況断面' : target === 'asbuilt' ? '出来形' : '計画断面 (トレース)'
   const newId = () => `mp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
 
   const addRow = () => {
@@ -1962,6 +1964,310 @@ function computeSegmentCore(input: {
 }
 
 /**
+ * 現況 / 計画 (トレース) / 出来形 の 3 種 断面 対象。
+ * 表モーダル・地図ピック・DXF トレース で 共通の 対象種別 として 使う。
+ */
+type SectionTarget = 'current' | 'asbuilt' | 'planned'
+
+/** SectionTarget → 表示ラベル / トレース時の 色 */
+const SECTION_TARGET_META: Record<SectionTarget, { label: string; color: string }> = {
+  current: { label: '現況', color: '#a16207' },
+  planned: { label: '計画', color: '#0ea5e9' },
+  asbuilt: { label: '出来形', color: '#059669' },
+}
+
+/**
+ * DXF 上の 点 (px, py) を 校正 (calib) を 通して 実 (offset, elevation) に 変換。
+ * DXF は mm 単位、hScale/vScale は 分母 (100 = 1:100)。
+ *   offset [m]    = (px - centerX) * hScale / 1000
+ *   elevation [m] = dlElevation + (py - dlY) * vScale / 1000
+ */
+function dxfToWorld(
+  px: number,
+  py: number,
+  calib: DxfCalibration,
+): { offset: number; elevation: number } {
+  const offset = ((px - calib.centerX) * calib.hScale) / 1000
+  const elevation = calib.dlElevation + ((py - calib.dlY) * calib.vScale) / 1000
+  return {
+    offset: Math.round(offset * 1000) / 1000,
+    elevation: Math.round(elevation * 1000) / 1000,
+  }
+}
+
+/**
+ * DXF トレース モーダル: 選択測点 + 対象 (現況/計画/出来形) 向けに
+ * 校正 (DL/中心線/縮尺) と トレース (LINE/LWPOLYLINE クリックで 点列 抽出) を 行う。
+ */
+function DxfTraceModal({
+  channel,
+  station,
+  target,
+  onClose,
+  onSaveCalibration,
+  onAppendPoints,
+}: {
+  channel: OpenChannelRow
+  station: StationRow
+  target: SectionTarget
+  onClose: () => void
+  onSaveCalibration: (calib: DxfCalibration) => void
+  /** トレース で 拾った 点列を 対象断面配列に 追記 */
+  onAppendPoints: (pts: MeasuredCrossPoint[]) => void
+}) {
+  const [dxfText, setDxfText] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const [pickMode, setPickMode] = useState<'dl' | 'center' | 'trace' | null>(null)
+  // 校正 入力 (既存 校正 が あれば 初期値)
+  const [dlY, setDlY] = useState<number | null>(station.dxfCalibration?.dlY ?? null)
+  const [centerX, setCenterX] = useState<number | null>(station.dxfCalibration?.centerX ?? null)
+  const [dlEl, setDlEl] = useState<string>(
+    station.dxfCalibration?.dlElevation != null ? String(station.dxfCalibration.dlElevation) : '',
+  )
+  const [hScale, setHScale] = useState<string>(
+    station.dxfCalibration?.hScale != null ? String(station.dxfCalibration.hScale) : '100',
+  )
+  const [vScale, setVScale] = useState<string>(
+    station.dxfCalibration?.vScale != null ? String(station.dxfCalibration.vScale) : '100',
+  )
+
+  useEffect(() => {
+    if (!channel.dxfCrossSectionPath) return
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    supabase.storage
+      .from('open-channel-dxf')
+      .download(channel.dxfCrossSectionPath)
+      .then(async ({ data, error: dlErr }) => {
+        if (cancelled) return
+        if (dlErr || !data) throw dlErr ?? new Error('DL 失敗')
+        const buf = await data.arrayBuffer()
+        if (cancelled) return
+        setDxfText(decodeDxfBytes(buf))
+      })
+      .catch((e) => {
+        if (cancelled) return
+        console.error('[dxf trace download]', e)
+        setError(e instanceof Error ? e.message : '取得 失敗')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [channel.dxfCrossSectionPath])
+
+  const parsedCalib = useMemo<DxfCalibration | null>(() => {
+    const dlNum = parseFloat(dlEl)
+    const hNum = parseFloat(hScale)
+    const vNum = parseFloat(vScale)
+    if (dlY == null || centerX == null) return null
+    if (!Number.isFinite(dlNum) || !Number.isFinite(hNum) || !Number.isFinite(vNum)) return null
+    if (hNum <= 0 || vNum <= 0) return null
+    return { dlY, centerX, dlElevation: dlNum, hScale: hNum, vScale: vNum }
+  }, [dlY, centerX, dlEl, hScale, vScale])
+
+  const handleShapeClick = (shape: DxfShape, worldPt: { x: number; y: number }) => {
+    if (pickMode === 'dl') {
+      // 水平線 (LINE) を 想定。 その Y を DL に。 polyline の 場合は クリック点の Y。
+      let y = worldPt.y
+      if (shape.kind === 'line' && Math.abs(shape.y1 - shape.y2) < 0.1) {
+        y = (shape.y1 + shape.y2) / 2
+      }
+      setDlY(Math.round(y * 1000) / 1000)
+      setPickMode(null)
+      return
+    }
+    if (pickMode === 'center') {
+      let x = worldPt.x
+      if (shape.kind === 'line' && Math.abs(shape.x1 - shape.x2) < 0.1) {
+        x = (shape.x1 + shape.x2) / 2
+      }
+      setCenterX(Math.round(x * 1000) / 1000)
+      setPickMode(null)
+      return
+    }
+    if (pickMode === 'trace') {
+      if (!parsedCalib) return
+      // 頂点を 抽出。 line → 2 点、polyline → 全頂点、他 → クリック点 1 個
+      const dxfPts: { x: number; y: number }[] = []
+      if (shape.kind === 'line') {
+        dxfPts.push({ x: shape.x1, y: shape.y1 }, { x: shape.x2, y: shape.y2 })
+      } else if (shape.kind === 'polyline') {
+        for (const p of shape.pts) dxfPts.push({ x: p.x, y: p.y })
+      } else {
+        dxfPts.push({ x: worldPt.x, y: worldPt.y })
+      }
+      const now = Date.now()
+      const rand = () => Math.random().toString(36).slice(2, 7)
+      const newPts: MeasuredCrossPoint[] = dxfPts.map((p, i) => {
+        const w = dxfToWorld(p.x, p.y, parsedCalib)
+        return {
+          id: `dxf-${now}-${i}-${rand()}`,
+          offset: w.offset,
+          elevation: w.elevation,
+        }
+      })
+      onAppendPoints(newPts)
+      return
+    }
+  }
+
+  // 既存の トレース済み 点を DXF 上に 逆マッピングで マーカー表示 (校正済み時のみ)
+  const overlays = useMemo(() => {
+    if (!parsedCalib) return []
+    const key: keyof StationRow =
+      target === 'current' ? 'currentSection' : target === 'asbuilt' ? 'asbuiltSection' : 'plannedSectionRaw'
+    const pts = (station[key] as MeasuredCrossPoint[] | null | undefined) ?? []
+    return pts.map((p) => ({
+      kind: 'dot' as const,
+      x: parsedCalib.centerX + (p.offset * 1000) / parsedCalib.hScale,
+      y: parsedCalib.dlY + ((p.elevation - parsedCalib.dlElevation) * 1000) / parsedCalib.vScale,
+      color: SECTION_TARGET_META[target].color,
+    }))
+  }, [parsedCalib, station, target])
+
+  const meta = SECTION_TARGET_META[target]
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-[3000] flex items-center justify-center p-4">
+      <div className="bg-white rounded-lg shadow-xl w-full h-full max-w-[95vw] max-h-[95vh] flex flex-col">
+        <div className="flex items-center justify-between px-3 py-2 border-b">
+          <h3 className="text-sm font-semibold">
+            DXF から トレース —{' '}
+            <span className="font-mono text-slate-600">{station.label}</span>{' '}
+            <span className="text-slate-500">/</span>{' '}
+            <span style={{ color: meta.color }}>{meta.label}</span>
+          </h3>
+          <button
+            onClick={onClose}
+            className="p-1 hover:bg-slate-100 rounded"
+            title="閉じる"
+          >
+            <X className="h-4 w-4 text-slate-500" />
+          </button>
+        </div>
+        <div className="flex-1 min-h-0 flex">
+          {/* 左サイドバー: 校正 + トレース操作 */}
+          <div className="w-72 border-r p-3 overflow-y-auto text-xs flex flex-col gap-3 shrink-0">
+            <div>
+              <div className="font-semibold mb-1">① 校正</div>
+              <div className="grid grid-cols-1 gap-1.5">
+                <button
+                  onClick={() => setPickMode(pickMode === 'dl' ? null : 'dl')}
+                  className={`px-2 py-1 border rounded text-left ${
+                    pickMode === 'dl'
+                      ? 'bg-purple-600 text-white border-purple-600'
+                      : 'bg-white hover:bg-slate-50'
+                  }`}
+                >
+                  DL 選択 {dlY != null && <span className="font-mono">{dlY.toFixed(2)}</span>}
+                </button>
+                <button
+                  onClick={() => setPickMode(pickMode === 'center' ? null : 'center')}
+                  className={`px-2 py-1 border rounded text-left ${
+                    pickMode === 'center'
+                      ? 'bg-purple-600 text-white border-purple-600'
+                      : 'bg-white hover:bg-slate-50'
+                  }`}
+                >
+                  中心線 選択 {centerX != null && <span className="font-mono">{centerX.toFixed(2)}</span>}
+                </button>
+                <label className="flex items-center gap-1">
+                  <span className="w-20 text-slate-500">DL 実標高 (m)</span>
+                  <input
+                    type="number"
+                    step={0.01}
+                    value={dlEl}
+                    onChange={(e) => setDlEl(e.target.value)}
+                    className="flex-1 px-1 py-0.5 border rounded font-mono text-right"
+                  />
+                </label>
+                <label className="flex items-center gap-1">
+                  <span className="w-20 text-slate-500">H 縮尺 (1:)</span>
+                  <input
+                    type="number"
+                    step={1}
+                    value={hScale}
+                    onChange={(e) => setHScale(e.target.value)}
+                    className="flex-1 px-1 py-0.5 border rounded font-mono text-right"
+                  />
+                </label>
+                <label className="flex items-center gap-1">
+                  <span className="w-20 text-slate-500">V 縮尺 (1:)</span>
+                  <input
+                    type="number"
+                    step={1}
+                    value={vScale}
+                    onChange={(e) => setVScale(e.target.value)}
+                    className="flex-1 px-1 py-0.5 border rounded font-mono text-right"
+                  />
+                </label>
+                <button
+                  disabled={!parsedCalib}
+                  onClick={() => parsedCalib && onSaveCalibration(parsedCalib)}
+                  className="mt-1 px-2 py-1 border rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:bg-slate-300"
+                >
+                  校正 を 保存
+                </button>
+              </div>
+            </div>
+            <div>
+              <div className="font-semibold mb-1">② トレース</div>
+              {!parsedCalib ? (
+                <div className="text-[11px] text-slate-500">
+                  校正を 完了 (DL + 中心線 + 縮尺) すると トレース可能に なります
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={() => setPickMode(pickMode === 'trace' ? null : 'trace')}
+                    className={`w-full px-2 py-1 border rounded text-left ${
+                      pickMode === 'trace'
+                        ? 'text-white'
+                        : 'bg-white hover:bg-slate-50'
+                    }`}
+                    style={
+                      pickMode === 'trace'
+                        ? { backgroundColor: meta.color, borderColor: meta.color }
+                        : {}
+                    }
+                  >
+                    {pickMode === 'trace' ? 'トレース 中 (クリックで 追加)' : `${meta.label}をトレース`}
+                  </button>
+                  <div className="text-[11px] text-slate-500 mt-1">
+                    LINE 1 本 → 2 点、LWPOLYLINE → 全頂点、その他 → クリック位置 1 点。
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+          {/* 中央: DXF ビューア */}
+          <div className="flex-1 min-w-0 p-2">
+            {loading && <div className="text-xs text-slate-500">DXF 読込中...</div>}
+            {error && <div className="text-xs text-red-600">{error}</div>}
+            {dxfText && (
+              <DxfCrossSectionViewer
+                dxfText={dxfText}
+                onShapeClick={pickMode ? handleShapeClick : undefined}
+                pickCursorHint={pickMode ?? undefined}
+                highlightDlY={dlY}
+                highlightCenterX={centerX}
+                overlays={overlays}
+              />
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
  * 「既存横断図 (DXF)」 セクション の 中身。
  * 未取込: ファイル選択 → Storage アップロード
  * 取込済: ファイル名表示 + [表示] (モーダル) + [削除]
@@ -2274,10 +2580,15 @@ export function OpenChannelAlignmentPage() {
     { key: 'planZ', label: '計画高' },
     { key: 'currentZ', label: '現況高' },
   ]
-  // 表モーダル (現況断面 / 出来形 の 手入力) の 対象 種別。null で 閉じている
-  const [tableModalTarget, setTableModalTarget] = useState<'current' | 'asbuilt' | null>(null)
-  // 地図から 現況/出来形 点を 拾う モード。null で 通常
-  const [mapCaptureTarget, setMapCaptureTarget] = useState<'current' | 'asbuilt' | null>(null)
+  // 表モーダル (現況断面 / 出来形 / 計画 の 手入力) の 対象 種別。null で 閉じている
+  const [tableModalTarget, setTableModalTarget] = useState<SectionTarget | null>(null)
+  // 地図から 現況/出来形/計画 点を 拾う モード。null で 通常
+  const [mapCaptureTarget, setMapCaptureTarget] = useState<SectionTarget | null>(null)
+  // DXF トレースモーダル (校正 + トレース)。対象 station + target を 保持
+  const [dxfTraceContext, setDxfTraceContext] = useState<
+    | { stationId: string; target: SectionTarget }
+    | null
+  >(null)
 
   // 線形点の追加: 座標を選択 (種別 BP/IP/EP は 位置から 自動決定)
   const [addCoordId, setAddCoordId] = useState<string>('')
@@ -2774,55 +3085,63 @@ export function OpenChannelAlignmentPage() {
   }
 
   /**
-   * 現況断面 の 更新に 合わせて currentGroundHeight を 自動同期する ヘルパ。
-   *   - 新 点列 が 空 → currentGroundHeight = null (リセット)
+   * 現況/計画 断面 の 更新に 合わせて、中心 (offset=0) の 補間値を 特定フィールド
+   * (currentGroundHeight / plannedCenterHeight) に 自動同期する ヘルパ。
+   *   - 新 点列 が 空 → フィールド = null (リセット)
    *   - 中心を 補間できる → その値を セット
-   *   - 補間できない (全点が 片側) → currentGroundHeight は 触らない (旧値保持)
-   * 呼び出し側で station を 加工した 直後に、対象 station だけ さらに 更新する。
+   *   - 補間できない (全点が 片側) → フィールドは 触らない (旧値保持)
    */
-  const applyCurrentGroundHeightFromSection = (
+  const applyCenterHeightFromSection = (
     stationsArr: StationRow[],
     id: string,
     newPoints: MeasuredCrossPoint[],
+    field: 'currentGroundHeight' | 'plannedCenterHeight',
   ): StationRow[] => {
     return stationsArr.map((s) => {
       if (s.id !== id) return s
       if (newPoints.length === 0) {
-        return { ...s, currentGroundHeight: null }
+        return { ...s, [field]: null }
       }
       const interp = interpolateSectionAtCenter(newPoints)
       if (interp == null) return s
-      return { ...s, currentGroundHeight: Math.round(interp * 1000) / 1000 }
+      return { ...s, [field]: Math.round(interp * 1000) / 1000 }
     })
   }
 
+  const sectionKeyOf = (t: SectionTarget) =>
+    t === 'current' ? 'currentSection' : t === 'asbuilt' ? 'asbuiltSection' : 'plannedSectionRaw'
+
   /**
-   * 現況/出来形 断面 の 点列 を 差替 (モーダル 保存 用)。offset で 昇順 に ソート。
-   * 対象 target='current' なら currentGroundHeight も 中心 補間値で 自動更新。
+   * 現況/出来形/計画 (トレース由来) 断面 の 点列 を 差替 (モーダル 保存 用)。
+   * offset で 昇順 に ソート。
+   *   target='current' → currentGroundHeight を 中心補間値で 自動更新
+   *   target='planned' → plannedCenterHeight を 中心補間値で 自動更新
    */
   const handleReplaceStationSection = (
     id: string,
-    target: 'current' | 'asbuilt',
+    target: SectionTarget,
     points: MeasuredCrossPoint[],
   ) => {
-    const key = target === 'current' ? 'currentSection' : 'asbuiltSection'
+    const key = sectionKeyOf(target)
     const sorted = [...points].sort((a, b) => a.offset - b.offset)
     let next = stations.map((s) => (s.id === id ? { ...s, [key]: sorted } : s))
     if (target === 'current') {
-      next = applyCurrentGroundHeightFromSection(next, id, sorted)
+      next = applyCenterHeightFromSection(next, id, sorted, 'currentGroundHeight')
+    } else if (target === 'planned') {
+      next = applyCenterHeightFromSection(next, id, sorted, 'plannedCenterHeight')
     }
     setStations(next)
   }
   /**
-   * 現況/出来形 断面 に 点を 1 個 追加 (地図ピック 用)。 同じ id が あれば 上書き。
-   * 対象 target='current' なら currentGroundHeight も 中心 補間値で 自動更新。
+   * 現況/出来形/計画 断面 に 点を 1 個 追加 (地図ピック / DXFトレース 用)。
+   * 同じ id が あれば 上書き。 target='current'/'planned' なら 中心高を 自動更新。
    */
   const handleAppendStationSectionPoint = (
     id: string,
-    target: 'current' | 'asbuilt',
+    target: SectionTarget,
     point: MeasuredCrossPoint,
   ) => {
-    const key = target === 'current' ? 'currentSection' : 'asbuiltSection'
+    const key = sectionKeyOf(target)
     let appendedPoints: MeasuredCrossPoint[] = []
     let next = stations.map((s) => {
       if (s.id !== id) return s
@@ -2833,9 +3152,15 @@ export function OpenChannelAlignmentPage() {
       return { ...s, [key]: merged }
     })
     if (target === 'current') {
-      next = applyCurrentGroundHeightFromSection(next, id, appendedPoints)
+      next = applyCenterHeightFromSection(next, id, appendedPoints, 'currentGroundHeight')
+    } else if (target === 'planned') {
+      next = applyCenterHeightFromSection(next, id, appendedPoints, 'plannedCenterHeight')
     }
     setStations(next)
+  }
+  /** 校正情報 (dxfCalibration) を セット。 */
+  const handleUpdateStationCalibration = (id: string, calib: DxfCalibration | null) => {
+    setStations(stations.map((s) => (s.id === id ? { ...s, dxfCalibration: calib } : s)))
   }
 
   // 線形物を切り替えたら中間点選択をリセット
@@ -3632,14 +3957,28 @@ export function OpenChannelAlignmentPage() {
                                     {p ? p.y.toFixed(3) : '-'}
                                   </td>
                                 )}
-                                {/* 計画高: 縦断線形から 内挿。 縦断が 未登録 なら "-" */}
-                                {visibleStationCols.has('planZ') && (
-                                  <td className="px-2 py-1 text-right tabular-nums text-emerald-700 whitespace-nowrap">
-                                    {selected && selected.profilePoints.length >= 2
-                                      ? interpolateProfileZ(selected.profilePoints, s.distance).toFixed(3)
-                                      : '-'}
-                                  </td>
-                                )}
+                                {/* 計画高: plannedCenterHeight (トレース由来 or 手入力) を 最優先、
+                                    無ければ 縦断線形から 内挿。 どちらも 無ければ "-"。 */}
+                                {visibleStationCols.has('planZ') && (() => {
+                                  const fromPlanned = s.plannedCenterHeight ?? null
+                                  const fromProfile =
+                                    selected && selected.profilePoints.length >= 2
+                                      ? interpolateProfileZ(selected.profilePoints, s.distance)
+                                      : null
+                                  const value = fromPlanned ?? fromProfile
+                                  const source = fromPlanned != null ? 'トレース/入力' : fromProfile != null ? '縦断線形' : null
+                                  return (
+                                    <td
+                                      className="px-2 py-1 text-right tabular-nums text-emerald-700 whitespace-nowrap"
+                                      title={source ? `出典: ${source}` : '計画高が 未取得'}
+                                    >
+                                      {value != null ? value.toFixed(3) : '-'}
+                                      {fromPlanned != null && (
+                                        <span className="text-[9px] text-amber-600 ml-0.5">*</span>
+                                      )}
+                                    </td>
+                                  )
+                                })()}
                                 {/* 現況高: 直接 入力。空 なら 未計測扱い */}
                                 {visibleStationCols.has('currentZ') && (
                                   <td className="px-1 py-1 text-right whitespace-nowrap">
@@ -4419,8 +4758,15 @@ export function OpenChannelAlignmentPage() {
                         updateChannel(selected.id, { standardCrossSection: next })
                       }
                     }
+                    // 計画高 (中心設計高) の 優先順位:
+                    //   1. plannedCenterHeight (トレース由来 or 手入力)
+                    //   2. profilePoints から 内挿
+                    //   3. undefined (未取得)
                     const centerZ = selectedStation
-                      ? interpolateProfileZ(selected.profilePoints, selectedStation.distance)
+                      ? (selectedStation.plannedCenterHeight ??
+                          (selected.profilePoints.length >= 2
+                            ? interpolateProfileZ(selected.profilePoints, selectedStation.distance)
+                            : undefined))
                       : undefined
                     return (
                       <>
@@ -4511,60 +4857,81 @@ export function OpenChannelAlignmentPage() {
                           )}
                         </div>
 
-                        {/* 現況 / 出来形 モード の 補助 アクション バー。 計画モード では 表示しない */}
-                        {selectedStation && (editTarget === 'current' || editTarget === 'asbuilt') && (
-                          <div className="flex items-center gap-1.5 flex-wrap text-xs shrink-0">
-                            <span className="text-slate-500 text-[11px]">
-                              {editTarget === 'current' ? '現況断面: ' : '出来形: '}
-                            </span>
-                            <button
-                              onClick={() => {
-                                if (mapCaptureTarget === editTarget) {
-                                  setMapCaptureTarget(null)
-                                } else {
-                                  setMapCaptureTarget(editTarget as 'current' | 'asbuilt')
-                                }
-                              }}
-                              className={`px-2 py-0.5 text-[11px] border rounded ${
-                                mapCaptureTarget === editTarget
-                                  ? 'bg-purple-600 text-white border-purple-600'
-                                  : 'bg-white text-purple-700 border-purple-300 hover:bg-purple-50'
-                              }`}
-                              title="地図で 測点マーカーを クリック すると 中心線に 垂直投影 して 追加"
-                            >
-                              {mapCaptureTarget === editTarget ? '地図取得: 選択中' : '地図で追加'}
-                            </button>
-                            <button
-                              onClick={() => setTableModalTarget(editTarget as 'current' | 'asbuilt')}
-                              className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
-                            >
-                              表で入力
-                            </button>
-                            {(() => {
-                              const pts = editTarget === 'current'
-                                ? (selectedStation.currentSection ?? [])
-                                : (selectedStation.asbuiltSection ?? [])
-                              return (
-                                <span className="text-[11px] text-slate-500">
-                                  登録済 {pts.length} 点
-                                </span>
-                              )
-                            })()}
-                            <button
-                              onClick={() => {
-                                if (!window.confirm('この 測点の 全点を 削除します。')) return
-                                handleReplaceStationSection(
-                                  selectedStation.id,
-                                  editTarget as 'current' | 'asbuilt',
-                                  [],
-                                )
-                              }}
-                              className="ml-auto px-2 py-0.5 text-[11px] border rounded text-red-600 hover:bg-red-50"
-                            >
-                              クリア
-                            </button>
-                          </div>
-                        )}
+                        {/* 現況 / 計画(トレース) / 出来形 モード の 補助 アクション バー。
+                            計画モード (editTarget='plan') は 対話型 element エディタが 主。
+                            editTarget='current' → target=current、'asbuilt' → target=asbuilt、
+                            'plan' → target=planned (トレース由来 plannedSectionRaw)。 */}
+                        {selectedStation && (() => {
+                          // editTarget を SectionTarget に マップ (plan → planned)
+                          const target: SectionTarget =
+                            editTarget === 'current' ? 'current'
+                            : editTarget === 'asbuilt' ? 'asbuilt'
+                            : 'planned'
+                          const showAuxBar = editTarget === 'current' || editTarget === 'asbuilt' || editTarget === 'plan'
+                          if (!showAuxBar) return null
+                          const isMapMode = editTarget === 'current' || editTarget === 'asbuilt'
+                          const labelPrefix =
+                            editTarget === 'current' ? '現況断面: '
+                            : editTarget === 'asbuilt' ? '出来形: '
+                            : '計画 (トレース): '
+                          const pts = ((): MeasuredCrossPoint[] => {
+                            const key = target === 'current' ? 'currentSection' : target === 'asbuilt' ? 'asbuiltSection' : 'plannedSectionRaw'
+                            return (selectedStation[key] as MeasuredCrossPoint[] | null | undefined) ?? []
+                          })()
+                          return (
+                            <div className="flex items-center gap-1.5 flex-wrap text-xs shrink-0">
+                              <span className="text-slate-500 text-[11px]">{labelPrefix}</span>
+                              {isMapMode && (
+                                <button
+                                  onClick={() => {
+                                    if (mapCaptureTarget === target) {
+                                      setMapCaptureTarget(null)
+                                    } else {
+                                      setMapCaptureTarget(target)
+                                    }
+                                  }}
+                                  className={`px-2 py-0.5 text-[11px] border rounded ${
+                                    mapCaptureTarget === target
+                                      ? 'bg-purple-600 text-white border-purple-600'
+                                      : 'bg-white text-purple-700 border-purple-300 hover:bg-purple-50'
+                                  }`}
+                                  title="地図で 測点マーカーを クリック すると 中心線に 垂直投影 して 追加"
+                                >
+                                  {mapCaptureTarget === target ? '地図取得: 選択中' : '地図で追加'}
+                                </button>
+                              )}
+                              <button
+                                onClick={() => setTableModalTarget(target)}
+                                className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
+                              >
+                                表で入力
+                              </button>
+                              {selected?.dxfCrossSectionPath && (
+                                <button
+                                  onClick={() =>
+                                    setDxfTraceContext({ stationId: selectedStation.id, target })
+                                  }
+                                  className="px-2 py-0.5 text-[11px] border rounded bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
+                                  title="既存 DXF 横断図 から トレースして 点を 拾う"
+                                >
+                                  DXFから取込
+                                </button>
+                              )}
+                              <span className="text-[11px] text-slate-500">
+                                登録済 {pts.length} 点
+                              </span>
+                              <button
+                                onClick={() => {
+                                  if (!window.confirm('この 測点の 全点を 削除します。')) return
+                                  handleReplaceStationSection(selectedStation.id, target, [])
+                                }}
+                                className="ml-auto px-2 py-0.5 text-[11px] border rounded text-red-600 hover:bg-red-50"
+                              >
+                                クリア
+                              </button>
+                            </div>
+                          )
+                        })()}
 
                         {/* 対話 型 断面 エディタ
                             prev/next は 現在 選択中の 測点の 前後の 測点に ジャンプ。
@@ -4625,7 +4992,7 @@ export function OpenChannelAlignmentPage() {
         </div>
       </div>
 
-      {/* 現況/出来形 手入力 モーダル */}
+      {/* 現況/計画/出来形 手入力 モーダル */}
       {tableModalTarget && selectedStation && (
         <MeasuredSectionTableModal
           target={tableModalTarget}
@@ -4633,7 +5000,9 @@ export function OpenChannelAlignmentPage() {
           initialPoints={
             tableModalTarget === 'current'
               ? (selectedStation.currentSection ?? [])
-              : (selectedStation.asbuiltSection ?? [])
+              : tableModalTarget === 'asbuilt'
+                ? (selectedStation.asbuiltSection ?? [])
+                : (selectedStation.plannedSectionRaw ?? [])
           }
           onSave={(pts) =>
             handleReplaceStationSection(selectedStation.id, tableModalTarget, pts)
@@ -4641,6 +5010,26 @@ export function OpenChannelAlignmentPage() {
           onClose={() => setTableModalTarget(null)}
         />
       )}
+
+      {/* DXF トレース モーダル */}
+      {dxfTraceContext && selected && (() => {
+        const st = stations.find((s) => s.id === dxfTraceContext.stationId)
+        if (!st) return null
+        return (
+          <DxfTraceModal
+            channel={selected}
+            station={st}
+            target={dxfTraceContext.target}
+            onClose={() => setDxfTraceContext(null)}
+            onSaveCalibration={(c) => handleUpdateStationCalibration(st.id, c)}
+            onAppendPoints={(pts) => {
+              for (const p of pts) {
+                handleAppendStationSectionPoint(st.id, dxfTraceContext.target, p)
+              }
+            }}
+          />
+        )
+      })()}
     </div>
   )
 }
