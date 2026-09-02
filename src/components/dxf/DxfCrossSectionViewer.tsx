@@ -10,7 +10,7 @@ import { parseDxf, type DxfDocument, type DxfShape } from '@/lib/dxfRender'
 export function DxfCrossSectionViewer({
   dxfText,
   className,
-  onShapeClick,
+  onCanvasPick,
   pickCursorHint,
   highlightDlY,
   highlightCenterX,
@@ -18,9 +18,14 @@ export function DxfCrossSectionViewer({
 }: {
   dxfText: string
   className?: string
-  /** SVG 上で 図形が クリックされた 時 (トレースモードで 使う) */
-  onShapeClick?: (shape: DxfShape, worldPt: { x: number; y: number }) => void
-  /** カーソル形状の ヒント (crosshair 系)。 onShapeClick と 併用。 */
+  /**
+   * pickCursorHint (=モード) が セット されている 時、SVG が クリックされる ごとに
+   * 呼ばれる。 shape は 図形に ヒットした 場合の エンティティ (無ければ null)。
+   * DL/中心線 選択は クリック位置 (worldPt) だけで 決めるので shape なしでも OK。
+   * トレースは shape に対して 処理する (line/polyline の 頂点 抽出 等)。
+   */
+  onCanvasPick?: (worldPt: { x: number; y: number }, shape: DxfShape | null) => void
+  /** カーソル形状の ヒント (crosshair 系)。 これが セット されて いる 時のみ pick 発火 */
   pickCursorHint?: 'dl' | 'center' | 'trace'
   /** DL 水平線 の DXF Y 座標。指定すると 上に 太い 破線 (紫) を 描いて 可視化 */
   highlightDlY?: number | null
@@ -162,16 +167,15 @@ export function DxfCrossSectionViewer({
   }
   const onSvgClick = (e: React.MouseEvent<SVGSVGElement>) => {
     if (wasDraggingRef.current) return
-    if (!onShapeClick) return
-    // hit target は SVG element の data-shape-idx で 識別
-    const target = e.target as SVGElement | null
-    const idx = target?.getAttribute?.('data-shape-idx')
-    if (idx == null) return
-    const s = doc.shapes[Number(idx)]
-    if (!s) return
+    if (!onCanvasPick || !pickCursorHint) return
     const rect = e.currentTarget.getBoundingClientRect()
     const wp = { x: ix(e.clientX - rect.left), y: iy(e.clientY - rect.top) }
-    onShapeClick(s, wp)
+    // 図形に ヒットしたら shape を 添える。 短い線 等で 外れても null で 発火
+    // (DL/中心線 選択は 空クリック でも 位置だけで 決められる)
+    const target = e.target as SVGElement | null
+    const idx = target?.getAttribute?.('data-shape-idx')
+    const shape = idx != null ? doc.shapes[Number(idx)] ?? null : null
+    onCanvasPick(wp, shape)
   }
 
   return (
@@ -247,9 +251,7 @@ export function DxfCrossSectionViewer({
               ? 'grabbing'
               : pickCursorHint
                 ? 'crosshair'
-                : onShapeClick
-                  ? 'crosshair'
-                  : 'grab',
+                : 'grab',
           }}
         >
           <g transform={`translate(${viewPan.x} ${viewPan.y}) scale(${viewZoom})`}>

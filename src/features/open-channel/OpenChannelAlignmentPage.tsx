@@ -2071,11 +2071,12 @@ function DxfTraceModal({
     return { dlY, centerX, dlElevation: dlNum, hScale: hNum, vScale: vNum }
   }, [dlY, centerX, dlEl, hScale, vScale])
 
-  const handleShapeClick = (shape: DxfShape, worldPt: { x: number; y: number }) => {
+  const handleCanvasPick = (worldPt: { x: number; y: number }, shape: DxfShape | null) => {
     if (pickMode === 'dl') {
-      // 水平線 (LINE) を 想定。 その Y を DL に。 polyline の 場合は クリック点の Y。
+      // DL は 水平線 想定。 線に ヒットして 水平なら その中央 Y、それ以外は
+      // クリック位置 Y を そのまま (短い セグメントで 外れた ケースも 拾える)。
       let y = worldPt.y
-      if (shape.kind === 'line' && Math.abs(shape.y1 - shape.y2) < 0.1) {
+      if (shape?.kind === 'line' && Math.abs(shape.y1 - shape.y2) < 0.1) {
         y = (shape.y1 + shape.y2) / 2
       }
       setDlY(Math.round(y * 1000) / 1000)
@@ -2083,8 +2084,10 @@ function DxfTraceModal({
       return
     }
     if (pickMode === 'center') {
+      // 中心線 も 同様。 中心線マーク が 短い セグメント (数 mm) の DXF も 多いので
+      // 空クリック でも 位置 X を 直接 採用する。
       let x = worldPt.x
-      if (shape.kind === 'line' && Math.abs(shape.x1 - shape.x2) < 0.1) {
+      if (shape?.kind === 'line' && Math.abs(shape.x1 - shape.x2) < 0.1) {
         x = (shape.x1 + shape.x2) / 2
       }
       setCenterX(Math.round(x * 1000) / 1000)
@@ -2093,6 +2096,10 @@ function DxfTraceModal({
     }
     if (pickMode === 'trace') {
       if (!parsedCalib) return
+      if (!shape) {
+        // トレースは 図形に 当たった 時のみ 有効 (空クリックは 無視)
+        return
+      }
       // 頂点を 抽出。 line → 2 点、polyline → 全頂点、他 → クリック点 1 個
       const dxfPts: { x: number; y: number }[] = []
       if (shape.kind === 'line') {
@@ -2253,7 +2260,7 @@ function DxfTraceModal({
             {dxfText && (
               <DxfCrossSectionViewer
                 dxfText={dxfText}
-                onShapeClick={pickMode ? handleShapeClick : undefined}
+                onCanvasPick={pickMode ? handleCanvasPick : undefined}
                 pickCursorHint={pickMode ?? undefined}
                 highlightDlY={dlY}
                 highlightCenterX={centerX}
