@@ -24,6 +24,7 @@ export function DxfCrossSectionViewer({
   highlightCenterX,
   overlays,
   snapEnabled = false,
+  cursorLabelFormatter,
 }: {
   dxfText: string
   className?: string
@@ -49,6 +50,11 @@ export function DxfCrossSectionViewer({
    * クリック時に snap 位置が worldPt に 渡る。
    */
   snapEnabled?: boolean
+  /**
+   * カーソル位置 (吸着中は 吸着位置) に 貼り出す 補助ラベル を 生成する 関数。
+   * 例: 校正 済み トレース時 に 「H=xxx / d=±x.xx」 を 表示。 null 返却で 非表示。
+   */
+  cursorLabelFormatter?: (worldPt: { x: number; y: number }) => string[] | null
 }) {
   const doc: DxfDocument | null = useMemo(() => {
     try {
@@ -76,6 +82,8 @@ export function DxfCrossSectionViewer({
   const [snap, setSnap] = useState<SnapTarget | null>(null)
   // DL/中心線 選択中の 「近くの 水平/垂直 線」プレビュー。 click で 確定
   const [linePreview, setLinePreview] = useState<{ orientation: 'h' | 'v'; coord: number } | null>(null)
+  // カーソル 位置 (世界座標)。 補助ラベル (H / d) 表示 と 逐次確認 用
+  const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null)
 
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 800, h: 500 })
@@ -210,9 +218,21 @@ export function DxfCrossSectionViewer({
     } else if (linePreview) {
       setLinePreview(null)
     }
+    // カーソル 世界座標 更新 (ラベル表示 用)
+    if (fit && (cursorLabelFormatter || pickCursorHint === 'trace')) {
+      setCursorPos({ x: ix(px), y: iy(py) })
+    } else if (cursorPos) {
+      setCursorPos(null)
+    }
   }
   const onMouseUp = () => {
     panStartRef.current = null
+  }
+  const onSvgLeave = () => {
+    panStartRef.current = null
+    setCursorPos(null)
+    setSnap(null)
+    setLinePreview(null)
   }
   const onSvgClick = (e: React.MouseEvent<SVGSVGElement>) => {
     if (wasDraggingRef.current) return
@@ -308,7 +328,7 @@ export function DxfCrossSectionViewer({
           onMouseDown={onMouseDown}
           onMouseMove={onMouseMove}
           onMouseUp={onMouseUp}
-          onMouseLeave={onMouseUp}
+          onMouseLeave={onSvgLeave}
           onClick={onSvgClick}
           style={{
             cursor: wasDraggingRef.current
@@ -362,8 +382,9 @@ export function DxfCrossSectionViewer({
                     <text
                       x={tx(o.x) + 6}
                       y={ty(o.y) - 4}
-                      fontSize={10}
+                      fontSize={11}
                       fill={o.color}
+                      style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
                     >
                       {o.label}
                     </text>
@@ -394,6 +415,31 @@ export function DxfCrossSectionViewer({
                 opacity={0.8}
               />
             )}
+            {/* カーソル位置 (吸着中は 吸着位置) の 補助ラベル。 校正済み トレース時に
+                現在 拾おうと している 点の 「H (標高) / d (中心からの離れ)」を 仮表示 */}
+            {cursorLabelFormatter && cursorPos && (() => {
+              const wp = snap ? { x: snap.x, y: snap.y } : cursorPos
+              const lines = cursorLabelFormatter(wp)
+              if (!lines || lines.length === 0) return null
+              const cx = tx(wp.x), cy = ty(wp.y)
+              // 画面 右上に 10px ずらして 描画 (paintOrder で 白フチ)
+              return (
+                <g pointerEvents="none">
+                  {lines.map((s, i) => (
+                    <text
+                      key={i}
+                      x={cx + 10}
+                      y={cy - 4 - (lines.length - 1 - i) * 13}
+                      fontSize={11}
+                      fill="#1e293b"
+                      style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 3 }}
+                    >
+                      {s}
+                    </text>
+                  ))}
+                </g>
+              )
+            })()}
             {/* 吸着 候補 マーカー (□ + × 交点、〇 + □ 端点/頂点) */}
             {snap && (() => {
               const cx = tx(snap.x), cy = ty(snap.y)

@@ -2113,7 +2113,8 @@ function DxfTraceModal({
     }
   }
 
-  // 既存の トレース済み 点を DXF 上に 逆マッピングで マーカー表示 (校正済み時のみ)
+  // 既存の トレース済み 点を DXF 上に 逆マッピングで マーカー表示 (校正済み時のみ)。
+  // ラベル に 「H (標高) / d (中心離れ)」を 付けて 誤認しにくく する。
   const overlays = useMemo(() => {
     if (!parsedCalib) return []
     const key: keyof StationRow =
@@ -2124,8 +2125,22 @@ function DxfTraceModal({
       x: parsedCalib.centerX + (p.offset * 1000) / parsedCalib.hScale,
       y: parsedCalib.dlY + ((p.elevation - parsedCalib.dlElevation) * 1000) / parsedCalib.vScale,
       color: SECTION_TARGET_META[target].color,
+      label: `H ${p.elevation.toFixed(3)} / d ${p.offset >= 0 ? '+' : ''}${p.offset.toFixed(3)}`,
     }))
   }, [parsedCalib, station, target])
+
+  // カーソル位置の 補助ラベル (校正済み + トレース中に 有効)。
+  // 校正 済み なら 常時 現在位置の 「H (標高) / d (中心離れ)」を 返す。
+  const cursorLabelFormatter = useMemo(() => {
+    if (!parsedCalib) return undefined
+    return (wp: { x: number; y: number }) => {
+      const w = dxfToWorld(wp.x, wp.y, parsedCalib)
+      return [
+        `H ${w.elevation.toFixed(3)}`,
+        `d ${w.offset >= 0 ? '+' : ''}${w.offset.toFixed(3)}`,
+      ]
+    }
+  }, [parsedCalib])
 
   const meta = SECTION_TARGET_META[target]
 
@@ -2265,6 +2280,7 @@ function DxfTraceModal({
                 highlightCenterX={centerX}
                 overlays={overlays}
                 snapEnabled={snapEnabled}
+                cursorLabelFormatter={cursorLabelFormatter}
               />
             )}
           </div>
