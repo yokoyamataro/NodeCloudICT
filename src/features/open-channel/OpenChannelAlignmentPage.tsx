@@ -2540,7 +2540,57 @@ export function OpenChannelAlignmentPage() {
     )
   }
   /**
+   * 現況断面 の 点列 から 中心 (offset=0) の 標高を 線形補間 で 求める。
+   * - 0 が 点と 一致: その点の elevation
+   * - 0 が 2 点間に 挟まれる: 隣接 2 点で 直線補間
+   * - 0 が 範囲外 (全点 が 片側): 外挿しない → null (currentGroundHeight は 触らない)
+   * - 点が 空 / 1 点かつ offset != 0: null
+   */
+  const interpolateSectionAtCenter = (points: MeasuredCrossPoint[]): number | null => {
+    if (points.length === 0) return null
+    const sorted = [...points].sort((a, b) => a.offset - b.offset)
+    // 完全一致
+    const exact = sorted.find((p) => Math.abs(p.offset) < 1e-6)
+    if (exact) return exact.elevation
+    // 中心 0 を 挟む 2 点を 探す
+    for (let i = 1; i < sorted.length; i++) {
+      const a = sorted[i - 1]
+      const b = sorted[i]
+      if (a.offset < 0 && b.offset > 0) {
+        const t = (0 - a.offset) / (b.offset - a.offset)
+        return a.elevation + (b.elevation - a.elevation) * t
+      }
+    }
+    // 中心が 範囲外
+    return null
+  }
+
+  /**
+   * 現況断面 の 更新に 合わせて currentGroundHeight を 自動同期する ヘルパ。
+   *   - 新 点列 が 空 → currentGroundHeight = null (リセット)
+   *   - 中心を 補間できる → その値を セット
+   *   - 補間できない (全点が 片側) → currentGroundHeight は 触らない (旧値保持)
+   * 呼び出し側で station を 加工した 直後に、対象 station だけ さらに 更新する。
+   */
+  const applyCurrentGroundHeightFromSection = (
+    stationsArr: StationRow[],
+    id: string,
+    newPoints: MeasuredCrossPoint[],
+  ): StationRow[] => {
+    return stationsArr.map((s) => {
+      if (s.id !== id) return s
+      if (newPoints.length === 0) {
+        return { ...s, currentGroundHeight: null }
+      }
+      const interp = interpolateSectionAtCenter(newPoints)
+      if (interp == null) return s
+      return { ...s, currentGroundHeight: Math.round(interp * 1000) / 1000 }
+    })
+  }
+
+  /**
    * 現況/出来形 断面 の 点列 を 差替 (モーダル 保存 用)。offset で 昇順 に ソート。
+   * 対象 target='current' なら currentGroundHeight も 中心 補間値で 自動更新。
    */
   const handleReplaceStationSection = (
     id: string,
@@ -2549,10 +2599,15 @@ export function OpenChannelAlignmentPage() {
   ) => {
     const key = target === 'current' ? 'currentSection' : 'asbuiltSection'
     const sorted = [...points].sort((a, b) => a.offset - b.offset)
-    setStations(stations.map((s) => (s.id === id ? { ...s, [key]: sorted } : s)))
+    let next = stations.map((s) => (s.id === id ? { ...s, [key]: sorted } : s))
+    if (target === 'current') {
+      next = applyCurrentGroundHeightFromSection(next, id, sorted)
+    }
+    setStations(next)
   }
   /**
    * 現況/出来形 断面 に 点を 1 個 追加 (地図ピック 用)。 同じ id が あれば 上書き。
+   * 対象 target='current' なら currentGroundHeight も 中心 補間値で 自動更新。
    */
   const handleAppendStationSectionPoint = (
     id: string,
@@ -2560,15 +2615,19 @@ export function OpenChannelAlignmentPage() {
     point: MeasuredCrossPoint,
   ) => {
     const key = target === 'current' ? 'currentSection' : 'asbuiltSection'
-    setStations(
-      stations.map((s) => {
-        if (s.id !== id) return s
-        const existing = (s[key] ?? []) as MeasuredCrossPoint[]
-        const filtered = existing.filter((p) => p.id !== point.id)
-        const next = [...filtered, point].sort((a, b) => a.offset - b.offset)
-        return { ...s, [key]: next }
-      }),
-    )
+    let appendedPoints: MeasuredCrossPoint[] = []
+    let next = stations.map((s) => {
+      if (s.id !== id) return s
+      const existing = (s[key] ?? []) as MeasuredCrossPoint[]
+      const filtered = existing.filter((p) => p.id !== point.id)
+      const merged = [...filtered, point].sort((a, b) => a.offset - b.offset)
+      appendedPoints = merged
+      return { ...s, [key]: merged }
+    })
+    if (target === 'current') {
+      next = applyCurrentGroundHeightFromSection(next, id, appendedPoints)
+    }
+    setStations(next)
   }
 
   // 線形物を切り替えたら中間点選択をリセット
