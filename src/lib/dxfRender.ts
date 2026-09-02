@@ -71,12 +71,31 @@ export async function readDxfFile(file: File): Promise<string> {
   return decodeDxfBytes(buf)
 }
 
-/** バイト列 → 文字列 (Shift-JIS 優先、失敗したら UTF-8 に フォールバック) */
+/**
+ * バイト列 → 文字列。 CAD (特に AutoCAD 系) の DXF は $DWGCODEPAGE=ANSI_932 が
+ * 多く CP932 / Shift-JIS。ブラウザ TextDecoder に fatal:true を渡して 「途中で
+ * 不正バイトを 出したら 却下」判定で 複数 label を 順に 試し、最初に 通ったもの を 採用。
+ * label 名の 揺れ ('shift_jis' vs 'shift-jis' vs 'windows-31j' など) を 全部 試すことで、
+ * ブラウザ側の エイリアス解決の 差に 巻き込まれない ように する。
+ */
 export function decodeDxfBytes(buf: ArrayBuffer): string {
+  // Shift-JIS 系を 先に (ASCII は 全 label で 通るので、CJK バイトが 混ざる 場合
+  // Shift-JIS が 通れば それが 正解、 通らなければ UTF-8 に フォールバック)
+  const labels = ['shift_jis', 'shift-jis', 'windows-31j', 'ms932', 'utf-8']
+  for (const label of labels) {
+    try {
+      const dec = new TextDecoder(label, { fatal: true })
+      return dec.decode(buf)
+    } catch {
+      /* 次 label を 試す */
+    }
+  }
+  // どれも 通らない (混合 encoding など) → non-fatal で 最も それらしい 出力に
+  // 使う encoding は 「日本 DXF なら 大抵 Shift-JIS」の 前提で。
   try {
-    return new TextDecoder('shift-jis').decode(buf)
+    return new TextDecoder('shift_jis', { fatal: false }).decode(buf)
   } catch {
-    return new TextDecoder('utf-8').decode(buf)
+    return new TextDecoder('utf-8', { fatal: false }).decode(buf)
   }
 }
 
