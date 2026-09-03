@@ -298,6 +298,78 @@ function normalizeKinds(points: AlignmentPoint[]): AlignmentPoint[] {
   return points.map((p, i) => ({ ...p, kind: inferKindByIndex(i, n) }))
 }
 
+/**
+ * 標準断面 (element 列) を 中心 (offset=0, elevation=centerHeight) 基準 の 絶対 elevation
+ * 点列 に 展開する。 対話型 エディタ 保存 → plannedSectionRaw 側 の 同期 に 使用。
+ * buildCrossSectionPath は 左端 → 中心 → 右端 の {x=offset, y=中心 相対 高} を 返す。
+ */
+function standardCsToMeasuredPoints(
+  cs: StandardCrossSection,
+  centerHeight: number,
+): MeasuredCrossPoint[] {
+  const raw = buildCrossSectionPath(cs)
+  return raw.map((p, i) => ({
+    id: `pcs-${Date.now().toString(36)}-${i}`,
+    offset: p.x,
+    elevation: centerHeight + p.y,
+  }))
+}
+
+/**
+ * 点列 を 標準断面 (element 列、percent / vertical) に 逆変換 する。
+ * DXF トレース 保存 → station.crossSection 側 の 同期 に 使用。
+ *   - offset > 0 は 右側、< 0 は 左側 (中心 に 近い 順 に 並べ、隣接 差 = 1 要素)
+ *   - dx = 0 は vertical、dx > 0 は percent (勾配 = dy/dx * 100)
+ * 中心 (offset=0) が 点 に 含まれ ない 場合 は 中心 = (0, centerHeight) を 仮想 起点 に する。
+ */
+function measuredPointsToStandardCs(
+  points: MeasuredCrossPoint[],
+  centerHeight: number,
+): StandardCrossSection {
+  const right = points
+    .filter((p) => p.offset > 1e-9)
+    .slice()
+    .sort((a, b) => a.offset - b.offset)
+  const left = points
+    .filter((p) => p.offset < -1e-9)
+    .slice()
+    .sort((a, b) => b.offset - a.offset)
+  const centerPt = points.find((p) => Math.abs(p.offset) < 1e-9)
+  const centerY = centerPt ? centerPt.elevation : centerHeight
+
+  const buildSide = (
+    ordered: MeasuredCrossPoint[],
+    sideSign: 1 | -1,
+  ): CrossSectionElement[] => {
+    const els: CrossSectionElement[] = []
+    let prevX = 0
+    let prevY = centerY
+    ordered.forEach((p, i) => {
+      const dx = Math.abs(p.offset - prevX)
+      const dy = p.elevation - prevY
+      const id = `pcs-${sideSign > 0 ? 'r' : 'l'}-${i}-${Math.random()
+        .toString(36)
+        .slice(2, 6)}`
+      if (dx < 1e-9) {
+        els.push({ id, name: '', width: 0, slopeValue: dy, slopeUnit: 'vertical' })
+      } else {
+        els.push({
+          id,
+          name: '',
+          width: dx,
+          slopeValue: (dy / dx) * 100,
+          slopeUnit: 'percent',
+        })
+      }
+      prevX = p.offset
+      prevY = p.elevation
+    })
+    return els
+  }
+
+  return { right: buildSide(right, 1), left: buildSide(left, -1) }
+}
+
 /** タイトルのみで折りたたみ可能なセクション（開閉状態は localStorage に記憶可）。
  *  onOpenChange を 渡すと 親コンポーネントが 現在の 開閉状態を 監視できる
  *  (例: 折りたたみ中は 地図クリック による 編集を 抑止 する 用途)。 */
@@ -1063,7 +1135,6 @@ function InteractiveCrossSectionEditor({
   currentGroundHeight,
   currentSection,
   asbuiltSection,
-  plannedSectionRaw,
   onPrevStation,
   onNextStation,
   canPrev = false,
@@ -1081,8 +1152,6 @@ function InteractiveCrossSectionEditor({
   currentSection?: MeasuredCrossPoint[] | null
   /** 出来形 断面 の 測定点列。ある場合 は 別 色 で 折れ線 + マーカー描画。 */
   asbuiltSection?: MeasuredCrossPoint[] | null
-  /** 計画 (トレース由来) 断面 の 測定点列。水色 で 折れ線 + マーカー描画。 */
-  plannedSectionRaw?: MeasuredCrossPoint[] | null
   /** 手前の 断面 (前の 測点) に 移行。null なら ボタン非活性 */
   onPrevStation?: () => void
   /** 次の 断面 (次の 測点) に 移行。null なら ボタン非活性 */
@@ -1768,29 +1837,9 @@ function InteractiveCrossSectionEditor({
               </g>
             )
           })()}
-          {/* 計画 (トレース由来) 断面 (水色) — DXFトレースで 拾った 点列を 参考ラインとして
-              重ねる。 element ベースの standardCrossSection とは 独立。 */}
-          {plannedSectionRaw && plannedSectionRaw.length > 0 && centerHeight !== undefined && (() => {
-            const pts = plannedSectionRaw
-              .map((p) => ({ x: tx(p.offset), y: ty(p.elevation - centerHeight) }))
-            const d = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
-            return (
-              <g>
-                <path d={d} fill="none" stroke="#0ea5e9" strokeWidth={1.5} opacity={0.9} />
-                {plannedSectionRaw.map((p, i) => (
-                  <circle
-                    key={`pl-${p.id ?? i}`}
-                    cx={tx(p.offset)}
-                    cy={ty(p.elevation - centerHeight)}
-                    r={3.5}
-                    fill="#0ea5e9"
-                    stroke="#fff"
-                    strokeWidth={1.5}
-                  />
-                ))}
-              </g>
-            )
-          })()}
+          {/* 計画 (トレース由来) 断面 の 重ね描き は 廃止。 対話型 エディタ 用 cs
+              (station.crossSection / standardCrossSection) が 常に plannedSectionRaw
+              と 同じ 内容 で 保存 される ため、 主線 と 重複 する だけ に なる。 */}
           </g>
           {/* 現況高: 中心線上の 地盤高が 入力されて いる 場合、中心線 (x=0) 上の
               「点 (丸)」で 示す。 従来は 全幅 の 水平線 だったが 図が うるさく なる ため
@@ -3448,11 +3497,34 @@ export function OpenChannelAlignmentPage() {
     setStations(stations.filter((s) => s.id !== id))
     if (selectedStationId === id) setSelectedStationId(null)
   }
+  /**
+   * 個別断面 (element ベース) を セット + plannedSectionRaw (点列) にも 同期。
+   * 対話型 エディタ と DXF トレース を 同じ 「横断計画」として 扱う ため、常に
+   * 両フィールドを 揃える。 null (標準に戻す) は 両方 クリア。
+   * centerHeight が 取れない (縦断 情報なし) ケースは 0 を 基準に 保存し、
+   * 再表示側で centerHeight を 引いて 相対 高さで 描画する ので 形状 は 崩れない。
+   */
   const handleUpdateStationCrossSection = (
     id: string,
     crossSection: StandardCrossSection | null,
   ) => {
-    setStations(stations.map((s) => (s.id === id ? { ...s, crossSection } : s)))
+    const target = stations.find((s) => s.id === id)
+    if (!target) return
+    const centerZ =
+      target.plannedCenterHeight ??
+      interpolateProfileZOrNull(selected?.profilePoints ?? [], target.distance) ??
+      0
+    const nextPoints =
+      crossSection == null
+        ? null
+        : standardCsToMeasuredPoints(crossSection, centerZ)
+    setStations(
+      stations.map((s) =>
+        s.id === id
+          ? { ...s, crossSection, plannedSectionRaw: nextPoints }
+          : s,
+      ),
+    )
   }
   /** 現況高 (中心線上の 地盤高) の 手入力を 保存。空文字 / NaN は null に。 */
   const handleUpdateStationCurrentHeight = (id: string, raw: string) => {
@@ -3535,6 +3607,18 @@ export function OpenChannelAlignmentPage() {
       next = applyCenterHeightFromSection(next, id, kept, 'currentGroundHeight')
     } else if (target === 'planned') {
       next = applyCenterHeightFromSection(next, id, kept, 'plannedCenterHeight')
+      // plannedSectionRaw (点列) の 更新に 合わせて 個別断面 (element ベース) も 同期。
+      // 対話型 エディタ 上 で 同じ 「横断計画」 として 表示 / 編集 する ため。
+      // 空 (クリア) は crossSection も null に する。
+      next = next.map((s) => {
+        if (s.id !== id) return s
+        if (kept.length === 0) return { ...s, crossSection: null }
+        const centerZ =
+          s.plannedCenterHeight ??
+          interpolateProfileZOrNull(selected?.profilePoints ?? [], s.distance) ??
+          0
+        return { ...s, crossSection: measuredPointsToStandardCs(kept, centerZ) }
+      })
     }
     setStations(next)
   }
@@ -4424,7 +4508,12 @@ export function OpenChannelAlignmentPage() {
                                       onClick={(e) => {
                                         e.stopPropagation()
                                         setSelectedStationId(s.id)
-                                        if (!s.crossSection && selected) {
+                                        // 個別断面 (element or 点列 の いずれか) が 既に あれば 初期化 しない。
+                                        // 無ければ 標準断面 を 複製 して エディタ を 開く。
+                                        const hasOverride =
+                                          s.crossSection ||
+                                          (s.plannedSectionRaw?.length ?? 0) > 0
+                                        if (!hasOverride && selected) {
                                           handleUpdateStationCrossSection(
                                             s.id,
                                             cloneCrossSection(selected.standardCrossSection),
@@ -4436,7 +4525,8 @@ export function OpenChannelAlignmentPage() {
                                       }}
                                       title="この測点の計画断面を編集"
                                       className={`px-1 py-0.5 text-[10px] border rounded ${
-                                        s.crossSection
+                                        s.crossSection ||
+                                        (s.plannedSectionRaw?.length ?? 0) > 0
                                           ? 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
                                           : 'bg-blue-50 hover:bg-blue-100 text-blue-700'
                                       }`}
@@ -5089,19 +5179,6 @@ export function OpenChannelAlignmentPage() {
               {profileChartExpanded && bottomTab === 'crossSection' && (
                 <div className="flex-1 min-h-0 flex flex-col p-2 gap-2">
                   {(() => {
-                    // 編集対象 = 選択測点 の 個別断面 (あれば) / それ以外 は 標準断面
-                    const editingStation =
-                      selectedStation && selectedStation.crossSection ? selectedStation : null
-                    const cs: StandardCrossSection = editingStation
-                      ? editingStation.crossSection!
-                      : selected.standardCrossSection
-                    const applyChange = (next: StandardCrossSection) => {
-                      if (editingStation) {
-                        handleUpdateStationCrossSection(editingStation.id, next)
-                      } else {
-                        updateChannel(selected.id, { standardCrossSection: next })
-                      }
-                    }
                     // 計画高 (中心設計高) の 優先順位:
                     //   1. plannedCenterHeight (トレース由来 or 手入力)
                     //   2. profilePoints から 内挿 (範囲外なら null → undefined 扱い)
@@ -5111,6 +5188,30 @@ export function OpenChannelAlignmentPage() {
                           interpolateProfileZOrNull(selected.profilePoints, selectedStation.distance) ??
                           undefined)
                       : undefined
+                    // 編集対象 = 選択測点 の 個別断面 (element or 点列 の いずれか) / なければ 標準断面。
+                    //   crossSection と plannedSectionRaw は handleUpdateStationCrossSection /
+                    //   handleReplaceStationSection('planned') で 常に 同期される 想定 だが、
+                    //   旧データ (片方 のみ) との 互換 の ため plannedSectionRaw を 逆変換 で フォールバック。
+                    const stationCs: StandardCrossSection | null = selectedStation
+                      ? selectedStation.crossSection
+                        ? selectedStation.crossSection
+                        : selectedStation.plannedSectionRaw &&
+                            selectedStation.plannedSectionRaw.length > 0
+                          ? measuredPointsToStandardCs(
+                              selectedStation.plannedSectionRaw,
+                              centerZ ?? 0,
+                            )
+                          : null
+                      : null
+                    const editingStation = stationCs ? selectedStation : null
+                    const cs: StandardCrossSection = stationCs ?? selected.standardCrossSection
+                    const applyChange = (next: StandardCrossSection) => {
+                      if (editingStation) {
+                        handleUpdateStationCrossSection(editingStation.id, next)
+                      } else {
+                        updateChannel(selected.id, { standardCrossSection: next })
+                      }
+                    }
                     return (
                       <>
                         {/* ヘッダー: 対象 表示 + 個別/標準 切替 */}
@@ -5164,7 +5265,8 @@ export function OpenChannelAlignmentPage() {
                                 ))}
                               </div>
                               <div className="ml-auto flex gap-1">
-                                {selectedStation.crossSection ? (
+                                {selectedStation.crossSection ||
+                                (selectedStation.plannedSectionRaw?.length ?? 0) > 0 ? (
                                   <button
                                     onClick={() =>
                                       handleUpdateStationCrossSection(selectedStation.id, null)
@@ -5307,7 +5409,6 @@ export function OpenChannelAlignmentPage() {
                                 currentGroundHeight={selectedStation?.currentGroundHeight ?? null}
                                 currentSection={selectedStation?.currentSection ?? null}
                                 asbuiltSection={selectedStation?.asbuiltSection ?? null}
-                                plannedSectionRaw={selectedStation?.plannedSectionRaw ?? null}
                                 onPrevStation={
                                   prevStation
                                     ? () => setSelectedStationId(prevStation.id)
