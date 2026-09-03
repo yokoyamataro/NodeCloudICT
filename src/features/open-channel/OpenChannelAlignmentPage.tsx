@@ -2874,9 +2874,11 @@ export function OpenChannelAlignmentPage() {
 
   const commitNewProfile = () => {
     if (!selected) return
-    const d = parseFloat(newProfileDistText)
+    // 入力欄 は SP 値 (中間点計算 と 同じ)。内部保存は 距離 = SP - spOffset
+    const sp = parseFloat(newProfileDistText)
     const h = parseFloat(newProfileHText)
-    if (!Number.isFinite(d) || !Number.isFinite(h)) return
+    if (!Number.isFinite(sp) || !Number.isFinite(h)) return
+    const d = sp - (selected.spOffset ?? 0)
     const next: ProfilePoint[] = [
       ...selected.profilePoints,
       { distance: d, floorHeight: h },
@@ -4459,10 +4461,12 @@ export function OpenChannelAlignmentPage() {
                   直接 入力 (Enter or + ボタン で 確定)。 */}
               <CollapsibleSection title="縦断線形" storageKey="oc:section:profile">
                 <div className="text-xs text-slate-500">
-                  BP からの 追加距離 (m) と 計画高 (m) を 変化点 ごと に 登録。
+                  SP 値 (中間点計算 と 同じ 座標系) と 計画高 (m) を 変化点 ごと に 登録。
                   末尾 の 空行 に 入力 → Enter or + ボタン で 追加。
                   中間 の 変化点 (PVI) に VCL (縦断曲線長 m) を 指定すると 放物線
                   縦断曲線 を 割り付ける (M / VCR は 自動計算)。
+                  <br />
+                  内部保存 は BP からの 距離 (= SP − spOffset<span className="font-mono ml-1">{selected ? `= SP − ${(selected.spOffset ?? 0).toFixed(2)}` : ''}</span>)。
                 </div>
 
                 <div className="border rounded overflow-auto max-h-72">
@@ -4470,7 +4474,7 @@ export function OpenChannelAlignmentPage() {
                     <thead className="bg-slate-50 text-slate-600 sticky top-0 text-xs">
                       <tr>
                         <th className="px-2 py-1 w-10 text-center">#</th>
-                        <th className="px-2 py-1 text-right">追加距離 (m)</th>
+                        <th className="px-2 py-1 text-right">SP (m)</th>
                         <th className="px-2 py-1 text-right">計画高 (m)</th>
                         <th className="px-2 py-1 text-right">勾配</th>
                         <th
@@ -4508,11 +4512,13 @@ export function OpenChannelAlignmentPage() {
                               <input
                                 type="number"
                                 step={0.1}
-                                value={p.distance}
+                                value={p.distance + (selected?.spOffset ?? 0)}
                                 onChange={(e) => {
-                                  const v = parseFloat(e.target.value)
-                                  if (Number.isFinite(v))
-                                    handleChangeProfile(realIdx, { distance: v })
+                                  const sp = parseFloat(e.target.value)
+                                  if (Number.isFinite(sp))
+                                    handleChangeProfile(realIdx, {
+                                      distance: sp - (selected?.spOffset ?? 0),
+                                    })
                                 }}
                                 className="w-20 px-1 py-0.5 border rounded text-right text-sm"
                               />
@@ -4587,7 +4593,7 @@ export function OpenChannelAlignmentPage() {
                             type="number"
                             step={0.1}
                             value={newProfileDistText}
-                            placeholder="距離"
+                            placeholder="SP"
                             onChange={(e) => setNewProfileDistText(e.target.value)}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') commitNewProfile()
