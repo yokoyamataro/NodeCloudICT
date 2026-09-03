@@ -1,3 +1,4 @@
+import type React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   MapContainer,
@@ -19,6 +20,14 @@ import { useSurveyStore } from '@/stores/surveyStore'
 import { useMapViewStore } from '@/stores/mapViewStore'
 import { useConstructionPlanStore, type PlanPoint } from '@/stores/constructionPlanStore'
 import { useOrthophotoStore } from '@/stores/orthophotoStore'
+import { useOpenChannelStore } from '@/stores/openChannelStore'
+import {
+  buildSegments,
+  pointAtDistance,
+  sampleAlignment,
+  tangentAtDistance,
+  type AlignmentVertex,
+} from '@/lib/openChannel/alignment'
 import { CoordinateConverter } from '@/lib/coordinates'
 import { WORK_TYPE_NAMES, type WorkType } from '@/types/database'
 import { CurrentLocationLayer } from './CurrentLocationLayer'
@@ -36,6 +45,11 @@ export interface LayerVisibility {
   route: boolean
   currentLocation: boolean
   orthophoto: boolean
+  /**
+   * 線形物 (open channel) の 中心線 + 幅杭点 + 線形点 (BP/IP/EP) を まとめて 表示。
+   * 3 種類 は 1 トグルで 制御 (画面クラッター 抑制 のため 個別 サブトグルは 省略)。
+   */
+  openChannels: boolean
 }
 
 interface UnifiedFieldMapProps {
@@ -113,6 +127,23 @@ function createColoredDotIcon(color: string, size = 12): L.DivIcon {
     "></div>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
+  })
+}
+
+/**
+ * 線形点 (BP / IP / EP) 用 の アイコン: 塗り丸 + 白ラベル。
+ * 色は kind 毎 に 変える (BP=緑 / EP=赤 / IP=紫) 。
+ */
+function createChannelPointIcon(kind: 'BP' | 'IP' | 'EP'): L.DivIcon {
+  const color = kind === 'BP' ? '#059669' : kind === 'EP' ? '#dc2626' : '#7c3aed'
+  return L.divIcon({
+    className: 'unified-map-oc-vertex',
+    html: `<div style="display:flex;align-items:center;gap:3px;transform:translate(-9px,-9px)">
+        <div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.4)"></div>
+        <div style="color:${color};font-weight:700;font-size:11px;text-shadow:0 0 3px #fff,0 0 3px #fff,0 0 3px #fff;line-height:1">${kind}</div>
+      </div>`,
+    iconSize: [0, 0],
+    iconAnchor: [0, 0],
   })
 }
 
@@ -265,6 +296,11 @@ export function UnifiedFieldMap({ baseLayer = 'osm', layers, farmId, children }:
     fetchByFarm: fetchOrthos,
     tileUrlTemplate: getOrthoUrl,
   } = useOrthophotoStore()
+  const openChannels = useOpenChannelStore((s) => s.channels)
+  const fetchOpenChannels = useOpenChannelStore((s) => s.fetchChannels)
+  useEffect(() => {
+    if (farmId) void fetchOpenChannels(farmId)
+  }, [farmId, fetchOpenChannels])
 
   const converter = useMemo(() => new CoordinateConverter(zone), [zone])
 
@@ -438,18 +474,125 @@ export function UnifiedFieldMap({ baseLayer = 'osm', layers, farmId, children }:
     return list
   }, [workAreasByType])
 
-  // 初期表示の境界（座標点・配管・工事区域・測量点を包含）
+  // 線形物 (open channel) の 中心線 / 幅杭 / 線形点 (BP/IP/EP) を LatLng に 変換。
+  // alignmentPoints は 座標 ID 参照 なので coordinates で 解決 する。
+  // kind は 位置 (先頭=BP / 末尾=EP / それ以外=IP) で 自動判定。
+  const openChannelRenders = useMemo(() => {
+    type ChRender = {
+      channelId: string
+      channelName: string
+      line: [number, number][]
+      alignmentPoints: { id: string; ll: [number, number]; label: 'BP' | 'IP' | 'EP' }[]
+      widthStakes: { id: string; ll: [number, number]; offset: number; note: string | null }[]
+    }
+    const out: ChRender[] = []
+    for (const ch of openChannels) {
+      // 頂点 (BP/IP/EP) を 座標 テーブル から 解決。 未解決 は スキップ。
+      const vertices: AlignmentVertex[] = []
+      const alignmentMarkers: ChRender['alignmentPoints'] = []
+      const total = ch.alignmentPoints.length
+      for (let i = 0; i < total; i++) {
+        const p = ch.alignmentPoints[i]
+        const c = coordinates.find((cc) => cc.id === p.coordId)
+        if (!c) continue
+        const kind: 'BP' | 'IP' | 'EP' =
+          total <= 1 || i === 0 ? 'BP' : i === total - 1 ? 'EP' : 'IP'
+        vertices.push({
+          x: c.x,
+          y: c.y,
+          kind: kind.toLowerCase() as AlignmentVertex['kind'],
+          radius: p.radius,
+          spiralAIn: p.spiralAIn,
+          spiralAOut: p.spiralAOut,
+        })
+        try {
+          const ll = converter.toLatLng(c.x, c.y)
+          if (Number.isFinite(ll.lat) && Number.isFinite(ll.lng)) {
+            alignmentMarkers.push({
+              id: `${ch.id}-v-${i}`,
+              ll: [ll.lat, ll.lng],
+              label: kind,
+            })
+          }
+        } catch {
+          /* skip */
+        }
+      }
+      if (vertices.length < 2) {
+        // 頂点 1 個 のみでも BP マーカーだ け 出しておく
+        out.push({
+          channelId: ch.id,
+          channelName: ch.name,
+          line: [],
+          alignmentPoints: alignmentMarkers,
+          widthStakes: [],
+        })
+        continue
+      }
+      // 中心線 (サンプリング + LatLng 化)
+      const sampled = sampleAlignment(vertices, 32)
+      const line: [number, number][] = []
+      for (const p of sampled) {
+        try {
+          const ll = converter.toLatLng(p.x, p.y)
+          if (Number.isFinite(ll.lat) && Number.isFinite(ll.lng)) {
+            line.push([ll.lat, ll.lng])
+          }
+        } catch {
+          /* skip */
+        }
+      }
+      // 幅杭 (中心線 に 垂直、 右手 = CCW 90°、 sideOrientation='reverse' で 反転)
+      const segments = buildSegments(vertices)
+      const sign = ch.sideOrientation === 'reverse' ? -1 : 1
+      const widthStakes: ChRender['widthStakes'] = []
+      for (const s of ch.widthStakes) {
+        const c = pointAtDistance(segments, s.distance)
+        const t = tangentAtDistance(segments, s.distance)
+        if (!c || !t) continue
+        const px = c.x - t.y * sign * s.offset
+        const py = c.y + t.x * sign * s.offset
+        try {
+          const ll = converter.toLatLng(px, py)
+          if (!Number.isFinite(ll.lat) || !Number.isFinite(ll.lng)) continue
+          widthStakes.push({
+            id: s.id,
+            ll: [ll.lat, ll.lng],
+            offset: s.offset,
+            note: s.note ?? null,
+          })
+        } catch {
+          /* skip */
+        }
+      }
+      out.push({
+        channelId: ch.id,
+        channelName: ch.name,
+        line,
+        alignmentPoints: alignmentMarkers,
+        widthStakes,
+      })
+    }
+    return out
+  }, [openChannels, coordinates, converter])
+
+  // 初期表示の境界（座標点・配管・工事区域・測量点・線形物 を包含）
   const allBounds = useMemo(() => {
     const all: [number, number][] = []
     for (const c of validCoords) all.push([c.lat, c.lng])
     for (const p of pipeLines) all.push(...p.positions)
     for (const a of workAreas) all.push(...a.positions)
     for (const s of surveyMarkers) all.push(s.ll)
+    for (const ch of openChannelRenders) {
+      all.push(...ch.line)
+      for (const v of ch.alignmentPoints) all.push(v.ll)
+      for (const s of ch.widthStakes) all.push(s.ll)
+    }
     if (all.length === 0) return null
     const lats = all.map((p) => p[0])
     const lngs = all.map((p) => p[1])
     return L.latLngBounds([Math.min(...lats), Math.min(...lngs)], [Math.max(...lats), Math.max(...lngs)])
-  }, [validCoords, pipeLines, workAreas, surveyMarkers])
+  }, [validCoords, pipeLines, workAreas, surveyMarkers, openChannelRenders])
 
   const defaultCenter: [number, number] = [35.6762, 139.6503]
   const initialCenter = allBounds
@@ -782,6 +925,61 @@ export function UnifiedFieldMap({ baseLayer = 'osm', layers, farmId, children }:
             <Tooltip>{coord.pointNumber}</Tooltip>
           </Marker>
         ))}
+
+      {/* 線形物 (open channel): 中心線 + 幅杭 + BP/IP/EP マーカー */}
+      {layers.openChannels &&
+        openChannelRenders.flatMap((ch) => {
+          const nodes: React.ReactNode[] = []
+          if (ch.line.length >= 2) {
+            nodes.push(
+              <Polyline
+                key={`oc-line-${ch.channelId}`}
+                positions={ch.line}
+                pathOptions={{ color: '#6366f1', weight: 3, opacity: 0.9 }}
+              >
+                <Tooltip sticky direction="top">
+                  {ch.channelName}
+                </Tooltip>
+              </Polyline>,
+            )
+          }
+          for (const s of ch.widthStakes) {
+            nodes.push(
+              <CircleMarker
+                key={`oc-stake-${s.id}`}
+                center={s.ll}
+                radius={4}
+                pathOptions={{
+                  color: '#f59e0b',
+                  weight: 1.5,
+                  fillColor: '#fbbf24',
+                  fillOpacity: 0.9,
+                }}
+              >
+                <Tooltip direction="top">
+                  幅杭 offset={s.offset >= 0 ? '+' : ''}
+                  {s.offset.toFixed(2)}m{s.note ? ` (${s.note})` : ''}
+                </Tooltip>
+              </CircleMarker>,
+            )
+          }
+          for (const v of ch.alignmentPoints) {
+            nodes.push(
+              <Marker
+                key={`oc-v-${v.id}`}
+                position={v.ll}
+                icon={createChannelPointIcon(v.label)}
+                interactive={true}
+                zIndexOffset={500}
+              >
+                <Tooltip direction="top">
+                  {ch.channelName} — {v.label}
+                </Tooltip>
+              </Marker>,
+            )
+          }
+          return nodes
+        })}
 
       {/* 現在位置（Geolocation） */}
       {layers.currentLocation && <CurrentLocationLayer />}

@@ -9,6 +9,7 @@ import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useSurveyStore } from '@/stores/surveyStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
+import { useOpenChannelStore } from '@/stores/openChannelStore'
 import { UnifiedFieldMap, type BaseLayerType, type LayerVisibility } from '@/components/map/UnifiedFieldMap'
 import type { Project } from '@/types/database'
 
@@ -24,6 +25,7 @@ export function SiteMapWindowPage() {
   const { fetchWorkAreas } = useWorkAreaStore()
   const { fetchSurveyData } = useSurveyStore()
   const { fetchPlan } = useConstructionPlanStore()
+  const { fetchChannels: fetchOpenChannels } = useOpenChannelStore()
 
   const [farm, setFarm] = useState<Farm | null>(null)
   const [project, setProject] = useState<Project | null>(null)
@@ -42,6 +44,7 @@ export function SiteMapWindowPage() {
     route: true,
     currentLocation: false,
     orthophoto: true,
+    openChannels: true,
   })
   const [showLayerPanel, setShowLayerPanel] = useState(true)
 
@@ -90,6 +93,7 @@ export function SiteMapWindowPage() {
           fetchWorkAreas(typedFarm.id),
           fetchSurveyData(typedFarm.id),
           fetchPlan(typedFarm.id),
+          fetchOpenChannels(typedFarm.id),
         ])
       } catch (err) {
         if (!cancelled) {
@@ -113,6 +117,7 @@ export function SiteMapWindowPage() {
     fetchWorkAreas,
     fetchSurveyData,
     fetchPlan,
+    fetchOpenChannels,
   ])
 
   const title = useMemo(() => {
@@ -259,6 +264,12 @@ export function SiteMapWindowPage() {
                 checked={layers.route}
                 onChange={() => toggleLayer('route')}
                 color="#2563eb"
+              />
+              <LayerCheckbox
+                label="線形物 (中心線・幅杭・BP/IP/EP)"
+                checked={layers.openChannels}
+                onChange={() => toggleLayer('openChannels')}
+                color="#6366f1"
               />
               <LayerCheckbox
                 label="オルソ画像"

@@ -19,6 +19,7 @@ import { useUnderdrainStore } from '@/stores/underdrainStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useSurveyStore } from '@/stores/surveyStore'
 import { useConstructionPlanStore } from '@/stores/constructionPlanStore'
+import { useOpenChannelStore } from '@/stores/openChannelStore'
 import { useParcelStore } from '@/stores/parcelStore'
 import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { UnifiedFieldMap, type BaseLayerType, type LayerVisibility } from '@/components/map/UnifiedFieldMap'
@@ -42,6 +43,7 @@ export function MobileDetailMapPage() {
   const { fetchWorkAreas } = useWorkAreaStore()
   const { fetchSurveyData } = useSurveyStore()
   const { fetchPlan } = useConstructionPlanStore()
+  const { fetchChannels: fetchOpenChannels } = useOpenChannelStore()
 
   const [farm, setFarm] = useState<Farm | null>(null)
   const [project, setProject] = useState<Project | null>(null)
@@ -60,6 +62,7 @@ export function MobileDetailMapPage() {
     route: true,
     currentLocation: true,
     orthophoto: true,
+    openChannels: true,
   })
   const [showLayerPanel, setShowLayerPanel] = useState(false)
 
@@ -186,6 +189,7 @@ export function MobileDetailMapPage() {
           fetchWorkAreas(typedFarm.id),
           fetchSurveyData(typedFarm.id),
           fetchPlan(typedFarm.id),
+          fetchOpenChannels(typedFarm.id),
         ])
       } catch (err) {
         if (!cancelled) {
@@ -209,6 +213,7 @@ export function MobileDetailMapPage() {
     fetchWorkAreas,
     fetchSurveyData,
     fetchPlan,
+    fetchOpenChannels,
   ])
 
   const title = useMemo(() => {
@@ -416,6 +421,7 @@ export function MobileDetailMapPage() {
               <LayerCheckbox label="管の測点 (C/B/A)" checked={layers.pipeMeasurementPoints} onChange={() => toggleLayer('pipeMeasurementPoints')} color="#3b82f6" />
               <LayerCheckbox label="測点（測量）" checked={layers.surveyPoints} onChange={() => toggleLayer('surveyPoints')} color="#0ea5e9" />
               <LayerCheckbox label="経路" checked={layers.route} onChange={() => toggleLayer('route')} color="#2563eb" />
+              <LayerCheckbox label="線形物 (中心線・幅杭・BP/IP/EP)" checked={layers.openChannels} onChange={() => toggleLayer('openChannels')} color="#6366f1" />
               <LayerCheckbox label="オルソ画像" checked={layers.orthophoto} onChange={() => toggleLayer('orthophoto')} color="#10b981" />
             </div>
           </div>
