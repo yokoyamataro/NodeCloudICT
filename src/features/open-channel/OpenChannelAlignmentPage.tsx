@@ -10,7 +10,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Polyline, CircleMarker, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Pencil, Check, X, Upload, Eye, Loader2 } from 'lucide-react'
+import { Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Pencil, Check, X, Upload, Loader2 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { CoordinateMap } from '@/components/map/CoordinateMap'
 import { DxfCrossSectionViewer } from '@/components/dxf/DxfCrossSectionViewer'
@@ -2219,6 +2219,8 @@ function DxfTraceModal({
   onReplacePoints,
   onSwitchStation,
   onUpdateStationDxfId,
+  onUploadDxf,
+  onDeleteDxf,
 }: {
   channel: OpenChannelRow
   station: StationRow
@@ -2233,6 +2235,12 @@ function DxfTraceModal({
   onSwitchStation: (stationId: string) => void
   /** この 測点で 使う DXF ファイル の id を 更新 (station.dxfCrossSectionId)。 */
   onUpdateStationDxfId: (stationId: string, dxfId: string | null) => void
+  /** DXF ファイル を Storage に アップロード + channel.dxfCrossSections に 追加 +
+   *  当該 station.dxfCrossSectionId を 新規 id に セット。 */
+  onUploadDxf: (file: File) => Promise<void>
+  /** DXF ファイル を Storage から 削除 + channel.dxfCrossSections から 除外 +
+   *  参照 中 の 全 station.dxfCrossSectionId を クリア。 */
+  onDeleteDxf: (dxfId: string) => Promise<void>
 }) {
   // モーダル内で 切り替えられる 現在の 対象 (初期値は 呼出元の 指定)
   const [activeTarget, setActiveTarget] = useState<SectionTarget>(initialTarget)
@@ -2290,6 +2298,37 @@ function DxfTraceModal({
   const [dxfText, setDxfText] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // DXF アップロード / 削除 の busy 状態 (サイドバー DXF 管理 で 使用)
+  const [dxfBusy, setDxfBusy] = useState(false)
+  const dxfFileInputRef = useRef<HTMLInputElement | null>(null)
+
+  const handleUploadDxfFile = async (file: File | null) => {
+    if (!file) return
+    setDxfBusy(true)
+    setError(null)
+    try {
+      await onUploadDxf(file)
+    } catch (e) {
+      console.error('[dxf upload]', e)
+      setError(e instanceof Error ? e.message : 'アップロード 失敗')
+    } finally {
+      setDxfBusy(false)
+      if (dxfFileInputRef.current) dxfFileInputRef.current.value = ''
+    }
+  }
+  const handleDeleteDxfFile = async (f: DxfCrossSectionFile) => {
+    if (!window.confirm(`DXF 「${f.name}」を 削除しますか?`)) return
+    setDxfBusy(true)
+    setError(null)
+    try {
+      await onDeleteDxf(f.id)
+    } catch (e) {
+      console.error('[dxf delete]', e)
+      setError(e instanceof Error ? e.message : '削除 失敗')
+    } finally {
+      setDxfBusy(false)
+    }
+  }
 
   const [pickMode, setPickMode] = useState<'dl' | 'center' | 'trace' | null>(null)
   // トレース時 の 吸着 (端点/交点 スナップ) ON/OFF
@@ -2527,26 +2566,6 @@ function DxfTraceModal({
             DXF から トレース —{' '}
             <span className="font-mono text-slate-600">{station.label}</span>
           </h3>
-          {/* DXF 図面 セレクタ (2 枚以上ある時のみ)。 変更で station.dxfCrossSectionId を 更新 */}
-          {dxfFiles.length > 1 && (
-            <label className="flex items-center gap-1 text-[11px] shrink-0">
-              <span className="text-slate-500">図面</span>
-              <select
-                value={activeDxfId ?? ''}
-                onChange={(e) =>
-                  onUpdateStationDxfId(station.id, e.target.value || null)
-                }
-                className="px-1 py-0.5 border rounded font-mono text-[11px] max-w-[200px]"
-                title="この 測点で 対象と する DXF 図面。 校正は 測点 単位で 保存"
-              >
-                {dxfFiles.map((f, i) => (
-                  <option key={f.id} value={f.id}>
-                    {i + 1}. {f.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
           {/* 対象 切替: 現況 / 計画 / 出来形。 切替 前に 現行 target へ 自動 保存 */}
           <div className="flex items-center gap-0.5">
             <span className="text-[10px] text-slate-500 mr-1">対象</span>
@@ -2583,8 +2602,92 @@ function DxfTraceModal({
           </button>
         </div>
         <div className="flex-1 min-h-0 flex">
-          {/* 左サイドバー: 校正 + トレース操作 */}
+          {/* 左サイドバー: DXF 管理 + 校正 + トレース操作 */}
           <div className="w-72 border-r p-3 overflow-y-auto text-xs flex flex-col gap-3 shrink-0">
+            {/* DXF 図面 管理: 取込 + 一覧 (ラジオ 選択 + 削除)。 校正は 選択 中の 図面
+                (station.dxfCrossSectionId) に 対して 記録される。 */}
+            <div>
+              <div className="font-semibold mb-1">DXF 図面</div>
+              <input
+                ref={dxfFileInputRef}
+                type="file"
+                accept=".dxf,application/dxf"
+                onChange={(e) => void handleUploadDxfFile(e.target.files?.[0] ?? null)}
+                className="hidden"
+              />
+              {dxfFiles.length === 0 ? (
+                <button
+                  onClick={() => dxfFileInputRef.current?.click()}
+                  disabled={dxfBusy}
+                  className="w-full flex items-center justify-center gap-1 px-2 py-1 border rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {dxfBusy ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Upload className="h-3 w-3" />
+                  )}
+                  DXF を 取込
+                </button>
+              ) : (
+                <>
+                  <div className="flex flex-col gap-1">
+                    {dxfFiles.map((f, i) => {
+                      const active = activeDxfId === f.id
+                      return (
+                        <label
+                          key={f.id}
+                          className={`flex items-center gap-1 border rounded px-1.5 py-1 cursor-pointer ${
+                            active
+                              ? 'bg-blue-50 border-blue-400'
+                              : 'bg-white hover:bg-slate-50'
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="active-dxf"
+                            checked={active}
+                            onChange={() => onUpdateStationDxfId(station.id, f.id)}
+                            className="cursor-pointer"
+                          />
+                          <span className="text-[10px] tabular-nums text-slate-400 w-4 text-center">
+                            {i + 1}
+                          </span>
+                          <span
+                            className="flex-1 text-[11px] font-mono truncate"
+                            title={f.name}
+                          >
+                            {f.name}
+                          </span>
+                          <button
+                            onClick={(e) => {
+                              e.preventDefault()
+                              void handleDeleteDxfFile(f)
+                            }}
+                            disabled={dxfBusy}
+                            className="p-0.5 text-red-600 hover:bg-red-50 rounded disabled:opacity-40"
+                            title="この DXF を 削除"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </label>
+                      )
+                    })}
+                  </div>
+                  <button
+                    onClick={() => dxfFileInputRef.current?.click()}
+                    disabled={dxfBusy}
+                    className="mt-1 w-full flex items-center justify-center gap-1 px-2 py-1 border rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {dxfBusy ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Upload className="h-3 w-3" />
+                    )}
+                    + DXF 追加
+                  </button>
+                </>
+              )}
+            </div>
             <div>
               <div className="font-semibold mb-1">① 校正</div>
               <div className="grid grid-cols-1 gap-1.5">
@@ -2747,203 +2850,6 @@ function DxfTraceModal({
   )
 }
 
-/**
- * 「既存横断図 (DXF)」 セクション の 中身。
- * 未取込: ファイル選択 → Storage アップロード
- * 取込済: ファイル名表示 + [表示] (モーダル) + [削除]
- */
-function DxfCrossSectionSection({ selected }: { selected: OpenChannelRow | null }) {
-  const { updateChannel } = useOpenChannelStore()
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  // 表示モーダル 用 (どの DXF を 開いている か)
-  const [viewerFileId, setViewerFileId] = useState<string | null>(null)
-  const [viewerText, setViewerText] = useState<string | null>(null)
-  const [loadingDxf, setLoadingDxf] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement | null>(null)
-
-  if (!selected) {
-    return (
-      <div className="text-xs text-slate-400">線形物を 選択してください</div>
-    )
-  }
-
-  const bucket = 'open-channel-dxf'
-  const files: DxfCrossSectionFile[] = selected.dxfCrossSections ?? []
-
-  const handleFileChosen = async (file: File | null) => {
-    if (!file) return
-    setError(null)
-    setBusy(true)
-    try {
-      const uid = (globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2))
-      const path = `${selected.farmId}/${selected.id}-${uid}.dxf`
-      const { error: upErr } = await supabase.storage
-        .from(bucket)
-        .upload(path, file, { contentType: 'application/dxf', upsert: false })
-      if (upErr) throw upErr
-      const entry: DxfCrossSectionFile = {
-        id: uid,
-        name: file.name,
-        path,
-        addedAt: new Date().toISOString(),
-      }
-      await updateChannel(selected.id, {
-        dxfCrossSections: [...files, entry],
-      })
-    } catch (e) {
-      console.error('[dxf upload]', e)
-      setError(e instanceof Error ? e.message : 'アップロード 失敗')
-    } finally {
-      setBusy(false)
-      if (fileInputRef.current) fileInputRef.current.value = ''
-    }
-  }
-
-  const handleDeleteFile = async (f: DxfCrossSectionFile) => {
-    if (!window.confirm(`DXF 「${f.name}」を 削除しますか?`)) return
-    setError(null)
-    setBusy(true)
-    try {
-      await supabase.storage.from(bucket).remove([f.path])
-      await updateChannel(selected.id, {
-        dxfCrossSections: files.filter((x) => x.id !== f.id),
-      })
-      if (viewerFileId === f.id) {
-        setViewerFileId(null)
-        setViewerText(null)
-      }
-    } catch (e) {
-      console.error('[dxf delete]', e)
-      setError(e instanceof Error ? e.message : '削除 失敗')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const openViewer = async (f: DxfCrossSectionFile) => {
-    setViewerFileId(f.id)
-    setViewerText(null)
-    setLoadingDxf(true)
-    setError(null)
-    try {
-      const { data, error: dlErr } = await supabase.storage
-        .from(bucket)
-        .download(f.path)
-      if (dlErr || !data) throw dlErr ?? new Error('DL 失敗')
-      const buf = await data.arrayBuffer()
-      setViewerText(decodeDxfBytes(buf))
-    } catch (e) {
-      console.error('[dxf download]', e)
-      setError(e instanceof Error ? e.message : '取得 失敗')
-      setViewerFileId(null)
-    } finally {
-      setLoadingDxf(false)
-    }
-  }
-
-  const openedFile = files.find((f) => f.id === viewerFileId) ?? null
-
-  return (
-    <div className="space-y-2">
-      <div className="text-xs text-slate-500">
-        既存 横断図 DXF を 複数枚 添付できます。 各測点は 校正時 に 「どの 図面 を 対象と するか」
-        を 選び、DL/中心線/縮尺 を 個別に 保存します。
-      </div>
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".dxf,application/dxf"
-        onChange={(e) => handleFileChosen(e.target.files?.[0] ?? null)}
-        className="hidden"
-      />
-      {files.length === 0 ? (
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={busy}
-          className="flex items-center gap-1 px-2 py-1 text-xs border rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-        >
-          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
-          DXF を 取込
-        </button>
-      ) : (
-        <div className="flex flex-col gap-1">
-          {files.map((f, i) => (
-            <div
-              key={f.id}
-              className="flex items-center gap-2 border rounded px-2 py-1 bg-white"
-            >
-              <span className="text-[11px] text-slate-500 tabular-nums w-6 text-center">
-                {i + 1}
-              </span>
-              <span className="text-xs text-slate-700 font-mono truncate flex-1" title={f.name}>
-                {f.name}
-              </span>
-              <button
-                onClick={() => openViewer(f)}
-                disabled={busy || (loadingDxf && viewerFileId === f.id)}
-                className="flex items-center gap-1 px-2 py-0.5 text-[11px] border rounded bg-white hover:bg-slate-50 disabled:opacity-50"
-              >
-                {loadingDxf && viewerFileId === f.id ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                ) : (
-                  <Eye className="h-3 w-3" />
-                )}
-                表示
-              </button>
-              <button
-                onClick={() => handleDeleteFile(f)}
-                disabled={busy}
-                className="flex items-center gap-1 px-2 py-0.5 text-[11px] border rounded text-red-600 hover:bg-red-50 disabled:opacity-50"
-              >
-                <Trash2 className="h-3 w-3" />
-                削除
-              </button>
-            </div>
-          ))}
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={busy}
-            className="mt-1 flex items-center gap-1 px-2 py-1 text-xs border rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 w-fit"
-          >
-            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
-            + DXF 追加
-          </button>
-        </div>
-      )}
-      {error && (
-        <div className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
-          {error}
-        </div>
-      )}
-      {viewerFileId && openedFile && viewerText && (
-        <div className="fixed inset-0 bg-black/60 z-[3000] flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg shadow-xl w-full h-full max-w-[90vw] max-h-[90vh] flex flex-col p-3">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-semibold">
-                DXF プレビュー —{' '}
-                <span className="font-mono text-slate-600">{openedFile.name}</span>
-              </h3>
-              <button
-                onClick={() => {
-                  setViewerFileId(null)
-                  setViewerText(null)
-                }}
-                className="p-1 hover:bg-slate-100 rounded"
-                title="閉じる"
-              >
-                <X className="h-4 w-4 text-slate-500" />
-              </button>
-            </div>
-            <div className="flex-1 min-h-0">
-              <DxfCrossSectionViewer dxfText={viewerText} />
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
 
 export function OpenChannelAlignmentPage() {
   const { currentFarm } = useFarmStore()
@@ -4787,12 +4693,8 @@ export function OpenChannelAlignmentPage() {
                 </div>
               </CollapsibleSection>
 
-              {/* 既存横断図 (DXF) — 工区全体の 並べ図 1 枚を 添付し、レイヤ切替 + パン/ズーム
-                  で 確認できる。次コミット で 「DL/中心線/縮尺」の キャリブレーション と、
-                  ライン クリック → 現況/計画 断面点 への 変換 (トレース) を 追加予定。 */}
-              <CollapsibleSection title="既存横断図 (DXF)" storageKey="oc:section:dxf">
-                <DxfCrossSectionSection selected={selected} />
-              </CollapsibleSection>
+              {/* 既存横断図 (DXF) の 管理 UI は トレース モーダル 内に 移動 済み。
+                  中間点 セクション の 「DXF から 取込」 ボタン から 開く。 */}
 
               {/* 縦断線形 (中間点 と 標準断面 の 間 に 配置)。
                   縦断図 の プロット は 地図の 下に 残す。ここでは 変化点 の
@@ -5478,6 +5380,57 @@ export function OpenChannelAlignmentPage() {
                 ),
               )
             }
+            onUploadDxf={async (file) => {
+              const uid =
+                globalThis.crypto?.randomUUID?.() ??
+                Math.random().toString(36).slice(2)
+              const path = `${selected.farmId}/${selected.id}-${uid}.dxf`
+              const { error: upErr } = await supabase.storage
+                .from('open-channel-dxf')
+                .upload(path, file, {
+                  contentType: 'application/dxf',
+                  upsert: false,
+                })
+              if (upErr) throw upErr
+              const entry: DxfCrossSectionFile = {
+                id: uid,
+                name: file.name,
+                path,
+                addedAt: new Date().toISOString(),
+              }
+              // channel と station を 1 回 の updateChannel で 反映 (再取得 待ちを 避ける)。
+              // setStations 経由だ と stations だけ 更新 で dxfCrossSections が 上書き
+              // されてしまう ため、直接 updateChannel を 呼ぶ。
+              await updateChannel(selected.id, {
+                dxfCrossSections: [
+                  ...(selected.dxfCrossSections ?? []),
+                  entry,
+                ],
+                stations: stations.map((s) =>
+                  s.id === st.id ? { ...s, dxfCrossSectionId: uid } : s,
+                ),
+              })
+            }}
+            onDeleteDxf={async (dxfId) => {
+              const target = (selected.dxfCrossSections ?? []).find(
+                (f) => f.id === dxfId,
+              )
+              if (!target) return
+              await supabase.storage
+                .from('open-channel-dxf')
+                .remove([target.path])
+              await updateChannel(selected.id, {
+                dxfCrossSections: (selected.dxfCrossSections ?? []).filter(
+                  (f) => f.id !== dxfId,
+                ),
+                // 参照 中 の 全 測点 の dxfCrossSectionId を クリア (フォールバック で 先頭 が 使われる)
+                stations: stations.map((s) =>
+                  s.dxfCrossSectionId === dxfId
+                    ? { ...s, dxfCrossSectionId: null }
+                    : s,
+                ),
+              })
+            }}
           />
         )
       })()}
