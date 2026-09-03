@@ -16,6 +16,17 @@ import { CoordinateMap } from '@/components/map/CoordinateMap'
 import { DxfCrossSectionViewer } from '@/components/dxf/DxfCrossSectionViewer'
 import { decodeDxfBytes, type DxfShape } from '@/lib/dxfRender'
 import { supabase } from '@/lib/supabase'
+import {
+  getActiveLandxmlFile,
+  downloadLandxmlText,
+  uploadLandxmlFile,
+} from '@/lib/landxmlFiles'
+import { parseLandXml, type ParsedSurface } from '@/lib/landxml/parser'
+import { indexTin } from '@/lib/landxml/tinInterpolation'
+import {
+  sampleStationCrossSection,
+  sampleStationCenterZ,
+} from '@/lib/openChannel/tinCrossSection'
 import { useFarmStore } from '@/stores/farmStore'
 import { useCoordinateStore, type CoordinateRow } from '@/stores/coordinateStore'
 import { useProjectListStore } from '@/stores/projectListStore'
@@ -518,9 +529,16 @@ function ProfileChart({
   points,
   totalLen,
   spOffset = 0,
+  currentGroundPoints,
 }: {
   points: ProfilePoint[]
   totalLen: number
+  /**
+   * 現況地盤高 の 測点列 (station.currentGroundHeight から 生成)。
+   * ある 場合 は 計画線 (青) と 別 に 「現況線 (茶)」として 重ね描き 。
+   * 高さ レンジ の 計算 にも 参加する。 undefined / 空 で 非表示。
+   */
+  currentGroundPoints?: { distance: number; z: number }[]
   /** 距離 (BP からの 内部距離) を SP 表示に 変換する ため の オフセット。
    *  SP = distance + spOffset。 中間点計算 の 表と 同じ 目盛で x 軸 ラベルを 出す */
   spOffset?: number
@@ -606,6 +624,12 @@ function ProfileChart({
       }
     }
   }
+  // 現況線 (LandXML 由来) も レンジ に 参加させて 収まる ようにする
+  const currentPts = (currentGroundPoints ?? [])
+    .filter((p) => Number.isFinite(p.z))
+    .slice()
+    .sort((a, b) => a.distance - b.distance)
+  for (const p of currentPts) heightSamples.push(p.z)
   const minH = Math.min(...heightSamples)
   const maxH = Math.max(...heightSamples)
   const rangeRaw = maxH - minH
@@ -807,6 +831,33 @@ function ProfileChart({
             strokeLinejoin="round"
             strokeLinecap="round"
           />
+
+          {/* 現況地盤線 (茶): LandXML TIN から 取り込んだ 各測点 の currentGroundHeight を
+              距離順 で つなぐ。 計画線 と 区別 する ため 茶色 + 少し 細く。 */}
+          {currentPts.length >= 2 && (
+            <path
+              d={currentPts
+                .map((p, i) => `${i === 0 ? 'M' : 'L'} ${tx(p.distance)} ${ty(p.z)}`)
+                .join(' ')}
+              fill="none"
+              stroke="#a16207"
+              strokeWidth={1.5}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              opacity={0.9}
+            />
+          )}
+          {currentPts.map((p, i) => (
+            <circle
+              key={`cg-${i}`}
+              cx={tx(p.distance)}
+              cy={ty(p.z)}
+              r={2.5}
+              fill="#a16207"
+              stroke="#fff"
+              strokeWidth={1}
+            />
+          ))}
 
           {/* 点 (縦断曲線 が 適用 されている PVI は 薄色 の 中抜き で 「実際 は
               通過 しない」ことを 表現) */}
@@ -2900,6 +2951,267 @@ function DxfTraceModal({
 }
 
 
+/**
+ * 現況取込 (LandXML) の サイドバー セクション。
+ * 工区共有 の LandXML (kind='ground') を Storage から fetch し、
+ * TIN から 各測点 の 現況横断 (currentSection) + 現況地盤高
+ * (currentGroundHeight) を 一括 サンプリング する。
+ *
+ * - LandXML 未登録: ファイル選択 → uploadLandxmlFile で active に する
+ * - 登録済: ファイル名 表示 + 「置換」ボタン (別 の LandXML を 上げ直す)
+ * - サンプリング: halfWidth (m) + step (m) を UI 入力、「全測点 の 現況を 取込」で 一括処理
+ * - 進捗 / エラー / TIN 外 スキップ 件数 を 表示
+ */
+function LandxmlCurrentImportSection({
+  farmId,
+  channelName,
+  stations,
+  segments,
+  sideOrientation,
+  onImported,
+}: {
+  farmId: string | null
+  channelName: string | null
+  stations: StationRow[]
+  segments: AlignmentSegment[]
+  sideOrientation: SideOrientation
+  onImported: (nextStations: StationRow[]) => void
+}) {
+  const [activeFile, setActiveFile] = useState<{
+    id: string
+    name: string
+    storagePath: string
+  } | null>(null)
+  const [loadingFile, setLoadingFile] = useState(false)
+  const [halfWidthText, setHalfWidthText] = useState<string>('10')
+  const [stepText, setStepText] = useState<string>('0.5')
+  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  // 工区の active な ground LandXML を 初回 に fetch。
+  // channel 側 では ない (工区共有) ので farmId 依存 の みで OK。
+  useEffect(() => {
+    if (!farmId) {
+      setActiveFile(null)
+      return
+    }
+    let cancelled = false
+    setLoadingFile(true)
+    getActiveLandxmlFile(farmId, 'ground')
+      .then((row) => {
+        if (cancelled) return
+        setActiveFile(
+          row ? { id: row.id, name: row.name, storagePath: row.storagePath } : null,
+        )
+      })
+      .catch((e) => {
+        if (cancelled) return
+        console.error('[landxml active fetch]', e)
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingFile(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [farmId])
+
+  const handleFileChosen = async (file: File | null) => {
+    if (!file || !farmId) return
+    setBusy(true)
+    setError(null)
+    setStatus(null)
+    try {
+      const text = await file.text()
+      // 事前 パース で 有効性 チェック (壊れた XML は 上げない)
+      const parsed = parseLandXml(text, file.name)
+      if (parsed.surfaces.length === 0) {
+        throw new Error('LandXML に 三角メッシュ (Surface) が 含まれて いません')
+      }
+      const uploaded = await uploadLandxmlFile({
+        farmId,
+        fileName: file.name,
+        content: text,
+        kind: 'ground',
+        notes: channelName ? `open-channel: ${channelName}` : null,
+      })
+      setActiveFile({
+        id: uploaded.id,
+        name: uploaded.name,
+        storagePath: uploaded.storagePath,
+      })
+      setStatus(`「${file.name}」を 現況 として 登録 しました`)
+    } catch (e) {
+      console.error('[landxml upload]', e)
+      setError(e instanceof Error ? e.message : 'アップロード 失敗')
+    } finally {
+      setBusy(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const handleImport = async () => {
+    if (!activeFile) {
+      setError('先に LandXML を 登録 して ください')
+      return
+    }
+    if (stations.length === 0) {
+      setError('中間点 が 登録 されて いません')
+      return
+    }
+    if (segments.length === 0) {
+      setError('線形 が 未設定 です')
+      return
+    }
+    const halfWidth = Number(halfWidthText)
+    const step = Number(stepText)
+    if (!Number.isFinite(halfWidth) || halfWidth <= 0) {
+      setError('幅 (半分) は 正 の 数値 で 入力 して ください')
+      return
+    }
+    if (!Number.isFinite(step) || step <= 0) {
+      setError('刻み は 正 の 数値 で 入力 して ください')
+      return
+    }
+    setBusy(true)
+    setError(null)
+    setStatus('LandXML を ダウンロード 中...')
+    try {
+      const text = await downloadLandxmlText(activeFile.storagePath)
+      setStatus('TIN を 展開 中...')
+      const parsed = parseLandXml(text, activeFile.name)
+      if (parsed.surfaces.length === 0) {
+        throw new Error('LandXML に 三角メッシュ が 含まれて いません')
+      }
+      // 複数 Surface が あれば 三角形 数 が 最大 の もの を 採用 (現況 は 1 面 が 通例)
+      const surface: ParsedSurface = parsed.surfaces.reduce((best, s) =>
+        s.triangles.length > best.triangles.length ? s : best,
+      )
+      const tinIdx = indexTin(surface)
+
+      setStatus(`${stations.length} 測点 を サンプリング 中...`)
+      let sectionHit = 0
+      let centerHit = 0
+      const next = stations.map((s) => {
+        const pts = sampleStationCrossSection(
+          tinIdx,
+          segments,
+          s.distance,
+          sideOrientation,
+          halfWidth,
+          step,
+          s.id,
+        )
+        const centerZ = sampleStationCenterZ(tinIdx, segments, s.distance)
+        if (pts.length > 0) sectionHit++
+        if (centerZ != null) centerHit++
+        return {
+          ...s,
+          currentSection: pts.length > 0 ? pts : s.currentSection ?? null,
+          currentGroundHeight: centerZ ?? s.currentGroundHeight ?? null,
+        }
+      })
+      onImported(next)
+      const skipped = stations.length - sectionHit
+      setStatus(
+        `完了: 現況横断 ${sectionHit}/${stations.length} 測点、` +
+          `現況地盤高 ${centerHit}/${stations.length} 測点 に セット` +
+          (skipped > 0 ? ` (${skipped} 測点 は TIN 範囲外)` : ''),
+      )
+    } catch (e) {
+      console.error('[landxml import]', e)
+      setError(e instanceof Error ? e.message : '取込 失敗')
+      setStatus(null)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!farmId) {
+    return <div className="text-xs text-slate-400">工区 を 選択 してください</div>
+  }
+
+  return (
+    <div className="space-y-2 text-xs">
+      <div className="text-slate-500">
+        工区共有 の LandXML (種別 = ground) から TIN を 読み取り、各測点 の
+        現況横断 (offset × 標高) と 現況地盤高 を 一括 生成 します。
+        路線線形 (BP→EP) と 中間点 を 先に 登録 してから 実行 して ください。
+      </div>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".xml,application/xml,text/xml"
+        onChange={(e) => void handleFileChosen(e.target.files?.[0] ?? null)}
+        className="hidden"
+      />
+      <div className="flex items-center gap-2 border rounded px-2 py-1 bg-white">
+        <span className="text-slate-500 shrink-0">現況 LandXML:</span>
+        <span className="flex-1 font-mono text-[11px] truncate" title={activeFile?.name}>
+          {loadingFile ? '確認中…' : activeFile ? activeFile.name : '未登録'}
+        </span>
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={busy || loadingFile}
+          className="px-2 py-0.5 text-[11px] border rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+        >
+          {activeFile ? '置換' : '登録'}
+        </button>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <label className="flex items-center gap-1">
+          <span className="text-slate-500">幅 (半分)</span>
+          <input
+            type="number"
+            step={0.5}
+            min={0}
+            value={halfWidthText}
+            onChange={(e) => setHalfWidthText(e.target.value)}
+            className="w-16 px-1 py-0.5 border rounded font-mono text-right"
+          />
+          <span className="text-slate-500">m</span>
+        </label>
+        <label className="flex items-center gap-1">
+          <span className="text-slate-500">刻み</span>
+          <input
+            type="number"
+            step={0.1}
+            min={0.05}
+            value={stepText}
+            onChange={(e) => setStepText(e.target.value)}
+            className="w-16 px-1 py-0.5 border rounded font-mono text-right"
+          />
+          <span className="text-slate-500">m</span>
+        </label>
+      </div>
+
+      <button
+        onClick={() => void handleImport()}
+        disabled={busy || !activeFile}
+        className="w-full flex items-center justify-center gap-1 px-2 py-1.5 text-xs border rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+      >
+        {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+        全測点 の 現況を 取込 ({stations.length} 測点)
+      </button>
+
+      {status && (
+        <div className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
+          {status}
+        </div>
+      )}
+      {error && (
+        <div className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
+          {error}
+        </div>
+      )}
+    </div>
+  )
+}
+
+
 export function OpenChannelAlignmentPage() {
   const { currentFarm } = useFarmStore()
   const { projects } = useProjectListStore()
@@ -4786,6 +5098,20 @@ export function OpenChannelAlignmentPage() {
               {/* 既存横断図 (DXF) の 管理 UI は トレース モーダル 内に 移動 済み。
                   中間点 セクション の 「DXF から 取込」 ボタン から 開く。 */}
 
+              {/* 現況取込 (LandXML): 工区共有 の LandXML (kind='ground') の TIN から
+                  各測点 の 現況横断 (currentSection) + 現況地盤高 (currentGroundHeight)
+                  を 一括 サンプリング する。 */}
+              <CollapsibleSection title="現況取込 (LandXML)" storageKey="oc:section:landxml">
+                <LandxmlCurrentImportSection
+                  farmId={farmId ?? null}
+                  channelName={selected?.name ?? null}
+                  stations={stations}
+                  segments={segments}
+                  sideOrientation={selected?.sideOrientation ?? 'forward'}
+                  onImported={(next) => setStations(next)}
+                />
+              </CollapsibleSection>
+
               {/* 縦断線形 (中間点 と 標準断面 の 間 に 配置)。
                   縦断図 の プロット は 地図の 下に 残す。ここでは 変化点 の
                   追加 / 編集 / 削除 のみ。追加 は テーブル 末尾 の 空行 に
@@ -5173,7 +5499,14 @@ export function OpenChannelAlignmentPage() {
               </div>
               {profileChartExpanded && bottomTab === 'profile' && (
                 <div className="flex-1 min-h-0 px-2 pb-2">
-                  <ProfileChart points={selected.profilePoints} totalLen={totalLen} spOffset={spOffset} />
+                  <ProfileChart
+                    points={selected.profilePoints}
+                    totalLen={totalLen}
+                    spOffset={spOffset}
+                    currentGroundPoints={stations
+                      .filter((s) => s.currentGroundHeight != null)
+                      .map((s) => ({ distance: s.distance, z: s.currentGroundHeight as number }))}
+                  />
                 </div>
               )}
               {profileChartExpanded && bottomTab === 'crossSection' && (
