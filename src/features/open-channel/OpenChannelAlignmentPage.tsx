@@ -155,6 +155,8 @@ function computeVerticalCurves(
  * 縦断曲線 (放物線) を 考慮 した 標高 (計画高) を X 位置 で 補間 する。
  * BVC 〜 EVC の 範囲 では 放物線 (Y = BVC + i1/100 × X + (i2-i1)/(200×L) × X²、
  * X は BVC からの 距離) を 使用。 それ 以外 は 直線 補間。
+ * 端点を 超えたら クランプ (端点値 を 返す)。
+ * ※ 「範囲外は 計画高 なし」扱い を したい 呼び出し側 は interpolateProfileZOrNull を 使う。
  */
 function interpolateProfileZ(
   profilePoints: ProfilePoint[],
@@ -189,6 +191,23 @@ function interpolateProfileZ(
     }
   }
   return last.floorHeight
+}
+
+/**
+ * 範囲外は null を 返す 版。 中間点計算 の 「計画高」列や、断面図の 「中心設計高」
+ * 表示など、「縦断計画が 無ければ 値も 出さない」用途で 使う。
+ */
+function interpolateProfileZOrNull(
+  profilePoints: ProfilePoint[],
+  distance: number,
+): number | null {
+  if (profilePoints.length < 2) return null
+  const sorted = [...profilePoints].sort((a, b) => a.distance - b.distance)
+  const first = sorted[0]
+  const last = sorted[sorted.length - 1]
+  const EPS = 1e-6
+  if (distance < first.distance - EPS || distance > last.distance + EPS) return null
+  return interpolateProfileZ(sorted, distance)
 }
 
 function computeStationVertices(
@@ -422,7 +441,17 @@ const nearestScaleIndex = (v: number): number => {
 //  - ResizeObserver で 親要素の 寸法に 追従。
 //  - 縦・横 独立の 伸縮スケール (0.5x〜8x、暗渠 縦断と 同じ 段階) + マウスホイール。
 //  - 目盛は niceStep() で ピクセル密度 に 応じて 自動選定 (細かすぎ/粗すぎ 回避)。
-function ProfileChart({ points, totalLen }: { points: ProfilePoint[]; totalLen: number }) {
+function ProfileChart({
+  points,
+  totalLen,
+  spOffset = 0,
+}: {
+  points: ProfilePoint[]
+  totalLen: number
+  /** 距離 (BP からの 内部距離) を SP 表示に 変換する ため の オフセット。
+   *  SP = distance + spOffset。 中間点計算 の 表と 同じ 目盛で x 軸 ラベルを 出す */
+  spOffset?: number
+}) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 280, h: 140 })
   const [heightScale, setHeightScale] = useState<ProfileScale>(1.0)
@@ -679,6 +708,8 @@ function ProfileChart({ points, totalLen }: { points: ProfilePoint[]; totalLen: 
                 stroke="#94a3b8"
                 strokeWidth={1}
               />
+              {/* 目盛 ラベル: SP 値 で 出す (中間点計算 の 表と 同じ 座標系)。
+                  spOffset=0 なら SP = 距離 なので 表示は 実質 距離。 */}
               <text
                 x={tx(d)}
                 y={padding.top + innerH + 14}
@@ -686,7 +717,10 @@ function ProfileChart({ points, totalLen }: { points: ProfilePoint[]; totalLen: 
                 fontSize={10}
                 fill="#64748b"
               >
-                {xStep < 1 ? d.toFixed(1) : String(Math.round(d))}
+                {(() => {
+                  const sp = d + spOffset
+                  return xStep < 1 ? sp.toFixed(1) : String(Math.round(sp))
+                })()}
               </text>
             </g>
           ))}
@@ -826,7 +860,7 @@ function ProfileChart({ points, totalLen }: { points: ProfilePoint[]; totalLen: 
             fontSize={10}
             fill="#64748b"
           >
-            距離 (m)
+            {spOffset === 0 ? '距離 (m)' : 'SP (m)'}
           </text>
         </svg>
       </div>
@@ -4088,13 +4122,12 @@ export function OpenChannelAlignmentPage() {
                                   </td>
                                 )}
                                 {/* 計画高: plannedCenterHeight (トレース由来 or 手入力) を 最優先、
-                                    無ければ 縦断線形から 内挿。 どちらも 無ければ "-"。 */}
+                                    無ければ 縦断線形から 内挿 (範囲外は null)。 どちらも 無ければ "-"。 */}
                                 {visibleStationCols.has('planZ') && (() => {
                                   const fromPlanned = s.plannedCenterHeight ?? null
-                                  const fromProfile =
-                                    selected && selected.profilePoints.length >= 2
-                                      ? interpolateProfileZ(selected.profilePoints, s.distance)
-                                      : null
+                                  const fromProfile = selected
+                                    ? interpolateProfileZOrNull(selected.profilePoints, s.distance)
+                                    : null
                                   const value = fromPlanned ?? fromProfile
                                   const source = fromPlanned != null ? 'トレース/入力' : fromProfile != null ? '縦断線形' : null
                                   return (
@@ -4869,7 +4902,7 @@ export function OpenChannelAlignmentPage() {
               </div>
               {profileChartExpanded && bottomTab === 'profile' && (
                 <div className="flex-1 min-h-0 px-2 pb-2">
-                  <ProfileChart points={selected.profilePoints} totalLen={totalLen} />
+                  <ProfileChart points={selected.profilePoints} totalLen={totalLen} spOffset={spOffset} />
                 </div>
               )}
               {profileChartExpanded && bottomTab === 'crossSection' && (
@@ -4890,13 +4923,12 @@ export function OpenChannelAlignmentPage() {
                     }
                     // 計画高 (中心設計高) の 優先順位:
                     //   1. plannedCenterHeight (トレース由来 or 手入力)
-                    //   2. profilePoints から 内挿
+                    //   2. profilePoints から 内挿 (範囲外なら null → undefined 扱い)
                     //   3. undefined (未取得)
                     const centerZ = selectedStation
                       ? (selectedStation.plannedCenterHeight ??
-                          (selected.profilePoints.length >= 2
-                            ? interpolateProfileZ(selected.profilePoints, selectedStation.distance)
-                            : undefined))
+                          interpolateProfileZOrNull(selected.profilePoints, selectedStation.distance) ??
+                          undefined)
                       : undefined
                     return (
                       <>
