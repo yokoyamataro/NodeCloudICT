@@ -130,6 +130,7 @@ export function ProjectListPage() {
     createFarm,
     updateFarm,
     deleteFarm,
+    moveFarm,
     setCurrentFarm,
     farmLocations,
     workAreaPolygons,
@@ -1121,26 +1122,51 @@ export function ProjectListPage() {
         />
       )}
 
-      {/* 工区情報編集モーダル (サイドバー右端の 編集ボタンで開く) */}
-      {editFarmForModal && (
-        <FarmEditModal
-          farm={
-            allFarms.find((f) => f.id === editFarmForModal.id) ?? editFarmForModal
-          }
-          onUpdateFarm={(patch) => void updateFarm(editFarmForModal.id, patch)}
-          onClose={() => setEditFarmForModal(null)}
-          onDelete={async () => {
-            const id = editFarmForModal.id
-            setEditFarmForModal(null)
-            try {
-              await deleteFarm(id)
-              if (selectedFarm?.id === id) setSelectedFarm(null)
-            } catch (err) {
-              alert(err instanceof Error ? err.message : '工区の削除に失敗しました')
-            }
-          }}
-        />
-      )}
+      {/* 工区情報編集モーダル (サイドバー右端の 編集ボタンで開く)。
+          自分 が オーナー の 工区 に は 「別 現場 に 移動」UI も 出す。
+          候補 = 自分 が オーナー の 別 現場 で、座標系 が 一致 する もの。 */}
+      {editFarmForModal && (() => {
+        const currentFarm =
+          allFarms.find((f) => f.id === editFarmForModal.id) ?? editFarmForModal
+        const sourceProject = allProjects.find((p) => p.id === currentFarm.project_id)
+        const moveTargets = allProjects
+          .filter((p) => p.id !== currentFarm.project_id && p.deleted_at == null)
+          .map((p) => ({
+            id: p.id,
+            name: p.name,
+            coordinate_zone: p.coordinate_zone,
+            isSameOwner: authUser != null && p.user_id === authUser.id,
+          }))
+          // 同一オーナー でない 候補 は 除外 (dropdown で 混乱 させない)
+          .filter((t) => t.isSameOwner)
+        return (
+          <FarmEditModal
+            farm={currentFarm}
+            onUpdateFarm={(patch) => void updateFarm(editFarmForModal.id, patch)}
+            onClose={() => setEditFarmForModal(null)}
+            onDelete={async () => {
+              const id = editFarmForModal.id
+              setEditFarmForModal(null)
+              try {
+                await deleteFarm(id)
+                if (selectedFarm?.id === id) setSelectedFarm(null)
+              } catch (err) {
+                alert(err instanceof Error ? err.message : '工区の削除に失敗しました')
+              }
+            }}
+            currentUserId={authUser?.id ?? null}
+            sourceProjectZone={sourceProject?.coordinate_zone}
+            moveTargets={moveTargets}
+            onMove={async (targetProjectId) => {
+              await moveFarm(editFarmForModal.id, targetProjectId)
+              // 現在 表示中 の 現場 の 一覧 から 消える (or 追加 される) ので
+              // 全件 取り直し して 反映
+              await fetchFarms()
+              if (selectedFarm?.id === editFarmForModal.id) setSelectedFarm(null)
+            }}
+          />
+        )
+      })()}
 
       {/* 新規工区ダイアログ */}
       {showNewFarmDialog && (() => {

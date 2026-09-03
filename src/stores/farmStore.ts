@@ -113,6 +113,13 @@ interface FarmState {
       >
     >,
   ) => Promise<void>
+  /**
+   * 工区 を 別 の 現場 (project) に 移動 する。
+   * - farms.project_id を UPDATE する だけ で 子テーブル (farm_id) は 参照 が 保たれる。
+   * - 呼出側 で 座標系 (coordinate_zone) の 一致 と 同一 オーナー の 確認 を 行う。
+   * - RLS: farm オーナー (user_id=auth.uid()) なら 更新 可能。
+   */
+  moveFarm: (id: string, targetProjectId: string) => Promise<void>
   /** ゴミ箱へ移動 (soft delete)。保持期間経過で物理削除される。 */
   deleteFarm: (id: string) => Promise<void>
   /** ゴミ箱から復元 */
@@ -465,6 +472,39 @@ export const useFarmStore = create<FarmState>()(
       // eslint-disable-next-line no-console
       console.error('[farmStore.updateFarm] failed', { id, updates, err })
       set({ error: `工区の更新に失敗しました: ${message}`, loading: false })
+    }
+  },
+
+  moveFarm: async (id, targetProjectId) => {
+    set({ loading: true, error: null })
+    try {
+      const { data, error } = await supabase
+        .from('farms')
+        .update({ project_id: targetProjectId } as never)
+        .eq('id', id)
+        .select()
+        .single()
+
+      if (error) throw error
+      const updated = data as Farm
+
+      set((state) => ({
+        // 現在 の 現場 で フィルタ 済み の 一覧 から 消える 場合 が ある。
+        // 呼出側 で fetchFarms を 再実行 するので、ここでは 単純 に 差し替え。
+        farms: state.farms.map((f) => (f.id === id ? updated : f)),
+        currentFarm: state.currentFarm?.id === id ? updated : state.currentFarm,
+        loading: false,
+      }))
+    } catch (err) {
+      const e = err as { message?: string; details?: string; hint?: string; code?: string } | Error
+      const parts: string[] = []
+      if ('message' in e && e.message) parts.push(String(e.message))
+      if ('details' in e && e.details) parts.push(String(e.details))
+      if ('hint' in e && e.hint) parts.push(`hint: ${e.hint}`)
+      if ('code' in e && e.code) parts.push(`code: ${e.code}`)
+      const message = parts.length > 0 ? parts.join(' / ') : '工区の移動に失敗しました'
+      set({ error: `工区の移動に失敗しました: ${message}`, loading: false })
+      throw err
     }
   },
 
