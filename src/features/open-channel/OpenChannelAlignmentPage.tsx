@@ -2183,7 +2183,7 @@ function dxfToWorld(
 function DxfTraceModal({
   channel,
   station,
-  target,
+  target: initialTarget,
   onClose,
   onSaveCalibration,
   onReplacePoints,
@@ -2193,23 +2193,36 @@ function DxfTraceModal({
   target: SectionTarget
   onClose: () => void
   onSaveCalibration: (calib: DxfCalibration) => void
-  /** 「確定」ボタン で 呼ばれる。 対象断面の 点列を モーダル内 のもので 差替 */
-  onReplacePoints: (pts: MeasuredCrossPoint[]) => void
+  /** 「確定」ボタン (or 対象切替 の 前) で 呼ばれる。 指定 target の 断面 点列を 差替 */
+  onReplacePoints: (target: SectionTarget, pts: MeasuredCrossPoint[]) => void
 }) {
+  // モーダル内で 切り替えられる 現在の 対象 (初期値は 呼出元の 指定)
+  const [activeTarget, setActiveTarget] = useState<SectionTarget>(initialTarget)
   const stationSectionKey =
-    target === 'current' ? 'currentSection' : target === 'asbuilt' ? 'asbuiltSection' : 'plannedSectionRaw'
+    activeTarget === 'current' ? 'currentSection' : activeTarget === 'asbuilt' ? 'asbuiltSection' : 'plannedSectionRaw'
   // モーダル内 で 編集する ローカル 点列 (確定 ボタン まで 元の 断面には 反映しない)
   const [localPoints, setLocalPoints] = useState<MeasuredCrossPoint[]>(() => {
     const initial = (station[stationSectionKey] as MeasuredCrossPoint[] | null | undefined) ?? []
     return initial.map((p) => ({ ...p }))
   })
-  // station が 変わった場合 (基本 起きない) は 初期化し直す
+  // station or 対象 が 変わった時 に 該当 断面の 点列を 再読込
   useEffect(() => {
     const initial = (station[stationSectionKey] as MeasuredCrossPoint[] | null | undefined) ?? []
     setLocalPoints(initial.map((p) => ({ ...p })))
-    // station.id / target が 変わった 時だけ (点列 の 参照変化で 巻き戻さない)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [station.id, target])
+  }, [station.id, activeTarget])
+
+  /**
+   * 対象を 切り替える。 現在の ローカル 点列を 現行 target に 自動コミットしてから
+   * 切替 (useEffect で 新 target の 点列を 読込む)。 破棄して 切り替えたい場合は
+   * 先に 「全クリア」してから 切替。
+   */
+  const switchTarget = (t: SectionTarget) => {
+    if (t === activeTarget) return
+    // 現行 の draft を 自動 コミット (元断面に 反映)
+    onReplacePoints(activeTarget, [...localPoints].sort((a, b) => a.offset - b.offset))
+    setActiveTarget(t)
+  }
   const [dxfText, setDxfText] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -2312,7 +2325,7 @@ function DxfTraceModal({
   const undoLastPoint = () => setLocalPoints((pts) => pts.slice(0, -1))
   const confirmAndClose = () => {
     // offset で 昇順 に して 保存 (handleReplaceStationSection でも 並び替えるが 冗長)
-    onReplacePoints([...localPoints].sort((a, b) => a.offset - b.offset))
+    onReplacePoints(activeTarget, [...localPoints].sort((a, b) => a.offset - b.offset))
     onClose()
   }
 
@@ -2337,7 +2350,7 @@ function DxfTraceModal({
   // 折れ線は 断面らしく offset 昇順 で 結ぶ (拾った順番と 独立)。
   const overlays = useMemo(() => {
     if (!parsedCalib) return []
-    const color = SECTION_TARGET_META[target].color
+    const color = SECTION_TARGET_META[activeTarget].color
     const toDxfXY = (p: MeasuredCrossPoint) => ({
       x: parsedCalib.centerX + (p.offset * 1000) / parsedCalib.hScale,
       y: parsedCalib.dlY + ((p.elevation - parsedCalib.dlElevation) * 1000) / parsedCalib.vScale,
@@ -2367,7 +2380,7 @@ function DxfTraceModal({
       })
     }
     return items
-  }, [parsedCalib, localPoints, target])
+  }, [parsedCalib, localPoints, activeTarget])
 
   // トレース仮線 の 出発点 = 直前に 拾った 1 点 (localPoints 末尾)。 校正済み で
   // 1 点以上 あれば DXF 座標に 逆マッピングして 渡す。
@@ -2393,21 +2406,46 @@ function DxfTraceModal({
     }
   }, [parsedCalib])
 
-  const meta = SECTION_TARGET_META[target]
+  const meta = SECTION_TARGET_META[activeTarget]
 
   return (
     <div className="fixed inset-0 bg-black/60 z-[3000] flex items-center justify-center p-4">
       <div className="bg-white rounded-lg shadow-xl w-full h-full max-w-[95vw] max-h-[95vh] flex flex-col">
-        <div className="flex items-center justify-between px-3 py-2 border-b">
-          <h3 className="text-sm font-semibold">
+        <div className="flex items-center gap-3 px-3 py-2 border-b">
+          <h3 className="text-sm font-semibold shrink-0">
             DXF から トレース —{' '}
-            <span className="font-mono text-slate-600">{station.label}</span>{' '}
-            <span className="text-slate-500">/</span>{' '}
-            <span style={{ color: meta.color }}>{meta.label}</span>
+            <span className="font-mono text-slate-600">{station.label}</span>
           </h3>
+          {/* 対象 切替: 現況 / 計画 / 出来形。 切替 前に 現行 target へ 自動 保存 */}
+          <div className="flex items-center gap-0.5">
+            <span className="text-[10px] text-slate-500 mr-1">対象</span>
+            {(['current', 'planned', 'asbuilt'] as SectionTarget[]).map((t) => {
+              const m = SECTION_TARGET_META[t]
+              const active = t === activeTarget
+              return (
+                <button
+                  key={t}
+                  onClick={() => switchTarget(t)}
+                  className={`px-2 py-0.5 text-[11px] border rounded ${
+                    active
+                      ? 'text-white'
+                      : 'bg-white hover:bg-slate-50'
+                  }`}
+                  style={
+                    active
+                      ? { backgroundColor: m.color, borderColor: m.color }
+                      : { color: m.color, borderColor: m.color }
+                  }
+                  title={active ? '選択中' : `${m.label} に 切替 (現行の draft は 自動保存)`}
+                >
+                  {m.label}
+                </button>
+              )
+            })}
+          </div>
           <button
             onClick={onClose}
-            className="p-1 hover:bg-slate-100 rounded"
+            className="ml-auto p-1 hover:bg-slate-100 rounded"
             title="閉じる"
           >
             <X className="h-4 w-4 text-slate-500" />
@@ -5271,8 +5309,8 @@ export function OpenChannelAlignmentPage() {
             target={dxfTraceContext.target}
             onClose={() => setDxfTraceContext(null)}
             onSaveCalibration={(c) => handleUpdateStationCalibration(st.id, c)}
-            onReplacePoints={(pts) =>
-              handleReplaceStationSection(st.id, dxfTraceContext.target, pts)
+            onReplacePoints={(t, pts) =>
+              handleReplaceStationSection(st.id, t, pts)
             }
           />
         )
