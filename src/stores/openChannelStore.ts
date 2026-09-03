@@ -95,6 +95,18 @@ export interface DxfCalibration {
   vScale: number
 }
 
+/**
+ * 線形物 に 添付する 既存横断図 DXF (複数対応)。
+ * 1 チャンネル 内 に 複数 DXF (例: 「並べ図 1」「並べ図 2」…) を 持てる。
+ * station.dxfCrossSectionId で 「この 測点は どの DXF を 使うか」を 紐付ける。
+ */
+export interface DxfCrossSectionFile {
+  id: string           // 内部 uuid
+  name: string         // 元 ファイル名 (表示用)
+  path: string         // storage.objects.name (bucket=open-channel-dxf)
+  addedAt?: string     // ISO 追加日時 (任意)
+}
+
 /** 中間点（測点）。SP / BC / EC / IP などラベル付きで BP からの距離 + 個別断面を保持。 */
 export interface StationRow {
   id: string
@@ -133,8 +145,14 @@ export interface StationRow {
   plannedSectionRaw?: MeasuredCrossPoint[] | null
   /**
    * この 測点における DXF 図面 上の 校正情報。 トレース で 使う。
+   * dxfCrossSectionId (複数 DXF の どれか) に 対して 設定された 値。
    */
   dxfCalibration?: DxfCalibration | null
+  /**
+   * この 測点が 対象と する DXF ファイル の id (channel.dxfCrossSections[].id)。
+   * 未指定は 「先頭 の DXF」or「同一 channel に 1 本しか 無い場合は それ」を 想定。
+   */
+  dxfCrossSectionId?: string | null
 }
 
 /**
@@ -181,11 +199,15 @@ export interface OpenChannelRow {
   widthStakes: WidthStake[]
   notes: string | null
   /**
-   * 既存 横断図 DXF (工区全体の 並べ図)。 storage.objects.name (bucket=open-channel-dxf)。
-   * トレース機能で 現況/計画/出来形 の 断面を 読み取る 元 データ。
+   * 既存 横断図 DXF (複数枚 対応)。 各測点は dxfCrossSectionId で いずれか 1 枚を
+   * 参照 (未設定は 先頭 を 既定)。 トレース機能で 現況/計画/出来形 の 断面を 読み取る 元。
+   */
+  dxfCrossSections: DxfCrossSectionFile[]
+  /**
+   * 旧単一 DXF 保持 用の 後方互換 field (廃止予定)。 新規保存では 使わない。
+   * 読込時に dxfCrossSections が 空 かつ ここに 値が あれば 自動的に 配列化 して マイグレート。
    */
   dxfCrossSectionPath: string | null
-  /** アップロード 時 の 元 ファイル名 (表示用) */
   dxfCrossSectionName: string | null
 }
 
@@ -201,6 +223,9 @@ interface OpenChannelDb {
   sp_offset: number | null
   width_stakes: WidthStake[] | null
   notes: string | null
+  /** 新: 複数 DXF (JSONB 配列)。 old scalar は 移行後 廃止予定 */
+  dxf_cross_sections?: DxfCrossSectionFile[] | null
+  /** 旧: 単一 DXF (後方互換) */
   dxf_cross_section_path?: string | null
   dxf_cross_section_name?: string | null
 }
@@ -215,6 +240,24 @@ function normalizeCrossSection(raw: unknown): StandardCrossSection {
 }
 
 function toRow(d: OpenChannelDb): OpenChannelRow {
+  // 複数 DXF の 正規化: 新配列 が あれば それを 使う。 無い かつ 旧 scalar が あれば
+  // 自動 マイグレート (1 件 だけ 詰めた 配列を 作る)。
+  let dxfCrossSections: DxfCrossSectionFile[] = Array.isArray(d.dxf_cross_sections)
+    ? d.dxf_cross_sections.filter(
+        (x): x is DxfCrossSectionFile =>
+          x != null && typeof x === 'object' && typeof x.id === 'string' &&
+          typeof x.name === 'string' && typeof x.path === 'string',
+      )
+    : []
+  if (dxfCrossSections.length === 0 && d.dxf_cross_section_path) {
+    dxfCrossSections = [
+      {
+        id: 'legacy',
+        name: d.dxf_cross_section_name ?? '横断図',
+        path: d.dxf_cross_section_path,
+      },
+    ]
+  }
   return {
     id: d.id,
     farmId: d.farm_id,
@@ -227,6 +270,7 @@ function toRow(d: OpenChannelDb): OpenChannelRow {
     spOffset: Number.isFinite(Number(d.sp_offset)) ? Number(d.sp_offset) : 0,
     widthStakes: Array.isArray(d.width_stakes) ? d.width_stakes : [],
     notes: d.notes,
+    dxfCrossSections,
     dxfCrossSectionPath: d.dxf_cross_section_path ?? null,
     dxfCrossSectionName: d.dxf_cross_section_name ?? null,
   }
@@ -280,6 +324,7 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
         sp_offset: 0,
         width_stakes: [],
         notes: null,
+        dxf_cross_sections: [],
       }
       const { data, error } = await supabase
         .from('open_channels')
@@ -309,6 +354,8 @@ export const useOpenChannelStore = create<OpenChannelState>()((set, get) => ({
       if (updates.spOffset !== undefined) dbUpdates.sp_offset = updates.spOffset
       if (updates.widthStakes !== undefined) dbUpdates.width_stakes = updates.widthStakes
       if (updates.notes !== undefined) dbUpdates.notes = updates.notes
+      if (updates.dxfCrossSections !== undefined)
+        dbUpdates.dxf_cross_sections = updates.dxfCrossSections
       if (updates.dxfCrossSectionPath !== undefined)
         dbUpdates.dxf_cross_section_path = updates.dxfCrossSectionPath
       if (updates.dxfCrossSectionName !== undefined)
