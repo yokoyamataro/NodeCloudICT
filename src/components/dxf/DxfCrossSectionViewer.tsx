@@ -25,6 +25,7 @@ export function DxfCrossSectionViewer({
   overlays,
   snapEnabled = false,
   cursorLabelFormatter,
+  traceRubberBandFrom,
 }: {
   dxfText: string
   className?: string
@@ -41,11 +42,18 @@ export function DxfCrossSectionViewer({
   highlightDlY?: number | null
   /** 中心 縦線 の DXF X 座標。指定すると 上に 太い 破線 (紫) を 描いて 可視化 */
   highlightCenterX?: number | null
-  /** 追加の 上乗せ 描画 (トレース済み 点 の マーカー / トレース線 等)。世界座標 で 指定。 */
+  /** 追加の 上乗せ 描画 (トレース済み 点 の マーカー / トレース線 等)。世界座標 で 指定。
+   *  label は 文字列 or 複数行 (string[])。 複数行は 2 段 3 段 で 縦積み 表示。 */
   overlays?: Array<
-    | { kind: 'dot'; x: number; y: number; color: string; r?: number; label?: string }
+    | { kind: 'dot'; x: number; y: number; color: string; r?: number; label?: string | string[] }
     | { kind: 'line'; pts: { x: number; y: number }[]; color: string; dashed?: boolean }
   >
+  /**
+   * トレース中に カーソル位置 (吸着時は 吸着位置) に 向けて 引く 仮線 (rubber-band) の
+   * 出発点。 通常は 「直前 に 拾った 点」の DXF 位置 を 渡す。 pickCursorHint='trace' で
+   * かつ cursorPos が ある 時のみ 描画。
+   */
+  traceRubberBandFrom?: { x: number; y: number } | null
   /**
    * true の 間、カーソル 位置 に 近い 端点/交点 に 吸着する。 マーカーで 表示し、
    * クリック時に snap 位置が worldPt に 渡る。
@@ -383,30 +391,39 @@ export function DxfCrossSectionViewer({
                 />
               )
             })}
-            {/* トレース済み 点マーカー — 塗りなし の 丸枠、小さめ (1/5 サイズ) */}
+            {/* トレース済み 点マーカー — 塗りなし の 丸枠、小さめ。 ラベルは 2 段 で 縦積み */}
             {overlays?.map((o, i) => {
               if (o.kind !== 'dot') return null
+              const labelLines = Array.isArray(o.label)
+                ? o.label
+                : o.label
+                  ? [o.label]
+                  : []
+              const cx = tx(o.x), cy = ty(o.y)
+              const fs = 0.9
+              const dy = fs + 0.15 // 行間
               return (
                 <g key={`ov-${i}`} pointerEvents="none">
                   <circle
-                    cx={tx(o.x)} cy={ty(o.y)}
-                    r={o.r ?? 0.8}
+                    cx={cx} cy={cy}
+                    r={o.r ?? 0.7}
                     fill="none"
                     stroke={o.color}
-                    strokeWidth={1.2}
+                    strokeWidth={1}
                     vectorEffect="non-scaling-stroke"
                   />
-                  {o.label && (
+                  {labelLines.map((s, k) => (
                     <text
-                      x={tx(o.x) + 1.5}
-                      y={ty(o.y) - 1}
-                      fontSize={2.5}
+                      key={k}
+                      x={cx + 1.2}
+                      y={cy - 0.6 + k * dy}
+                      fontSize={fs}
                       fill={o.color}
-                      style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 0.7 }}
+                      style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 0.3 }}
                     >
-                      {o.label}
+                      {s}
                     </text>
-                  )}
+                  ))}
                 </g>
               )
             })}
@@ -434,23 +451,25 @@ export function DxfCrossSectionViewer({
               />
             )}
             {/* カーソル位置 (吸着中は 吸着位置) の 補助ラベル。 校正済み トレース時に
-                現在 拾おうと している 点の 「H (標高) / d (中心からの離れ)」を 仮表示 */}
+                現在 拾おうと している 点の 「H (標高)」「d (中心からの離れ)」を 2 段 仮表示 */}
             {cursorLabelFormatter && cursorPos && (() => {
               const wp = snap ? { x: snap.x, y: snap.y } : cursorPos
               const lines = cursorLabelFormatter(wp)
               if (!lines || lines.length === 0) return null
               const cx = tx(wp.x), cy = ty(wp.y)
-              // マーカー / ラベル と 同じ 縮尺 (1/5 相当)。 白フチで 読める ように
+              const fs = 0.9
+              const dy = fs + 0.15
+              // 縦積み: 最下段 が cy - 0.6、上段は 更に 上へ
               return (
                 <g pointerEvents="none">
                   {lines.map((s, i) => (
                     <text
                       key={i}
-                      x={cx + 2}
-                      y={cy - 1 - (lines.length - 1 - i) * 3}
-                      fontSize={2.5}
+                      x={cx + 1.2}
+                      y={cy - 0.6 - (lines.length - 1 - i) * dy}
+                      fontSize={fs}
                       fill="#1e293b"
-                      style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 0.7 }}
+                      style={{ paintOrder: 'stroke', stroke: '#f8fafc', strokeWidth: 0.3 }}
                     >
                       {s}
                     </text>
@@ -458,32 +477,39 @@ export function DxfCrossSectionViewer({
                 </g>
               )
             })()}
-            {/* 吸着 候補 マーカー (□ + × 交点、〇 + □ 端点/頂点) */}
+            {/* トレース中の 仮線 (rubber-band): 直前 に 拾った 点から カーソル位置 (吸着時は
+                吸着位置) まで 破線で 引く。 次の 1 点を どこに 打つか の 見当を つけやすく */}
+            {pickCursorHint === 'trace' && traceRubberBandFrom && cursorPos && (() => {
+              const wp = snap ? { x: snap.x, y: snap.y } : cursorPos
+              return (
+                <line
+                  x1={tx(traceRubberBandFrom.x)} y1={ty(traceRubberBandFrom.y)}
+                  x2={tx(wp.x)} y2={ty(wp.y)}
+                  stroke="#94a3b8"
+                  strokeWidth={0.8}
+                  strokeDasharray="2,1.5"
+                  vectorEffect="non-scaling-stroke"
+                  pointerEvents="none"
+                />
+              )
+            })()}
+            {/* 吸着 候補 マーカー — 小さな 十字 (+)。 端点/頂点=青、交点=橙 */}
             {snap && (() => {
               const cx = tx(snap.x), cy = ty(snap.y)
-              const size = 7
+              const arm = 1.5 // 十字の 腕 の 長さ (SVG 単位)
               const color = snap.kind === 'inter' ? '#ea580c' : '#0ea5e9'
               return (
                 <g pointerEvents="none">
-                  {/* 四角枠 */}
-                  <rect
-                    x={cx - size} y={cy - size}
-                    width={size * 2} height={size * 2}
-                    fill="none" stroke={color}
-                    strokeWidth={2}
+                  <line
+                    x1={cx - arm} y1={cy} x2={cx + arm} y2={cy}
+                    stroke={color} strokeWidth={1.2}
                     vectorEffect="non-scaling-stroke"
                   />
-                  {/* 種類マーク: inter=X、それ以外=● */}
-                  {snap.kind === 'inter' ? (
-                    <>
-                      <line x1={cx - size / 2} y1={cy - size / 2} x2={cx + size / 2} y2={cy + size / 2}
-                        stroke={color} strokeWidth={2} vectorEffect="non-scaling-stroke" />
-                      <line x1={cx - size / 2} y1={cy + size / 2} x2={cx + size / 2} y2={cy - size / 2}
-                        stroke={color} strokeWidth={2} vectorEffect="non-scaling-stroke" />
-                    </>
-                  ) : (
-                    <circle cx={cx} cy={cy} r={2.5} fill={color} vectorEffect="non-scaling-stroke" />
-                  )}
+                  <line
+                    x1={cx} y1={cy - arm} x2={cx} y2={cy + arm}
+                    stroke={color} strokeWidth={1.2}
+                    vectorEffect="non-scaling-stroke"
+                  />
                 </g>
               )
             })()}

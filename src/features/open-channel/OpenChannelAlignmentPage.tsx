@@ -2171,7 +2171,7 @@ function DxfTraceModal({
         pts: sorted.map(toDxfXY),
       })
     }
-    // 各点 の マーカー + ラベル
+    // 各点 の マーカー + ラベル (H / d を 2 段 で 縦積み)
     for (const p of localPoints) {
       const xy = toDxfXY(p)
       items.push({
@@ -2179,11 +2179,25 @@ function DxfTraceModal({
         x: xy.x,
         y: xy.y,
         color,
-        label: `H ${p.elevation.toFixed(3)} / d ${p.offset >= 0 ? '+' : ''}${p.offset.toFixed(3)}`,
+        label: [
+          `H ${p.elevation.toFixed(3)}`,
+          `d ${p.offset >= 0 ? '+' : ''}${p.offset.toFixed(3)}`,
+        ],
       })
     }
     return items
   }, [parsedCalib, localPoints, target])
+
+  // トレース仮線 の 出発点 = 直前に 拾った 1 点 (localPoints 末尾)。 校正済み で
+  // 1 点以上 あれば DXF 座標に 逆マッピングして 渡す。
+  const traceRubberBandFrom = useMemo<{ x: number; y: number } | null>(() => {
+    if (!parsedCalib || localPoints.length === 0) return null
+    const p = localPoints[localPoints.length - 1]
+    return {
+      x: parsedCalib.centerX + (p.offset * 1000) / parsedCalib.hScale,
+      y: parsedCalib.dlY + ((p.elevation - parsedCalib.dlElevation) * 1000) / parsedCalib.vScale,
+    }
+  }, [parsedCalib, localPoints])
 
   // カーソル位置の 補助ラベル (校正済み + トレース中に 有効)。
   // 校正 済み なら 常時 現在位置の 「H (標高) / d (中心離れ)」を 返す。
@@ -2355,6 +2369,7 @@ function DxfTraceModal({
                 overlays={overlays}
                 snapEnabled={snapEnabled}
                 cursorLabelFormatter={cursorLabelFormatter}
+                traceRubberBandFrom={traceRubberBandFrom}
               />
             )}
           </div>
