@@ -1998,6 +1998,153 @@ function computeSegmentCore(input: {
 }
 
 /**
+ * 3 桁精度で 数値 → 文字列 化 (float 誤差 の 末尾 桁を 落とす)。
+ * 例: 3059.9999999999995 → "3060"、17.500000000000003 → "17.5"
+ */
+function trimFloat3(x: number): string {
+  return String(Math.round(x * 1000) / 1000)
+}
+
+/**
+ * 縦断線形 テーブル の 1 行。 SP / 計画高 / VCL の 3 入力を ローカルドラフト で 持ち、
+ * blur (or Enter) で 親に コミット。 これにより:
+ *   - 途中入力で 配列が 再ソートされて 行 位置が 入れ替わる 現象を 防ぐ
+ *   - float 誤差で cursor 入れると 値が 揺れる 現象を 防ぐ (親側は 3 桁丸めで 保存)
+ */
+function ProfileRow({
+  p,
+  index,
+  isMiddle,
+  slopeText,
+  curve,
+  spOffset,
+  onChangeCommit,
+  onRemove,
+}: {
+  p: ProfilePoint
+  index: number
+  isMiddle: boolean
+  slopeText: string
+  curve: VerticalCurve | undefined
+  spOffset: number
+  onChangeCommit: (patch: Partial<ProfilePoint>) => void
+  onRemove: () => void
+}) {
+  const [spDraft, setSpDraft] = useState<string>(() => trimFloat3(p.distance + spOffset))
+  const [zDraft, setZDraft] = useState<string>(() => trimFloat3(p.floorHeight))
+  const [vclDraft, setVclDraft] = useState<string>(() => (p.vcl ? trimFloat3(p.vcl) : ''))
+  // 外部 (別行 の コミット等) で 値が 変わった時 は ドラフト を 同期。
+  // 「入力中」の この行 は onChangeCommit で 親を 更新するので 変わる → useEffect で
+  // 同じ 文字列に 戻す (実質 no-op)。 他行 の 変更で この行 の p が 変わる こと は 通常 なし。
+  useEffect(() => { setSpDraft(trimFloat3(p.distance + spOffset)) }, [p.distance, spOffset])
+  useEffect(() => { setZDraft(trimFloat3(p.floorHeight)) }, [p.floorHeight])
+  useEffect(() => { setVclDraft(p.vcl ? trimFloat3(p.vcl) : '') }, [p.vcl])
+
+  const commitSp = () => {
+    const sp = parseFloat(spDraft)
+    if (!Number.isFinite(sp)) {
+      setSpDraft(trimFloat3(p.distance + spOffset))
+      return
+    }
+    const nextDist = Math.round((sp - spOffset) * 1000) / 1000
+    if (nextDist !== p.distance) onChangeCommit({ distance: nextDist })
+  }
+  const commitZ = () => {
+    const v = parseFloat(zDraft)
+    if (!Number.isFinite(v)) {
+      setZDraft(trimFloat3(p.floorHeight))
+      return
+    }
+    const nextZ = Math.round(v * 1000) / 1000
+    if (nextZ !== p.floorHeight) onChangeCommit({ floorHeight: nextZ })
+  }
+  const commitVcl = () => {
+    const raw = vclDraft.trim()
+    if (raw === '') {
+      if (p.vcl !== undefined) onChangeCommit({ vcl: undefined })
+      return
+    }
+    const v = parseFloat(raw)
+    if (!Number.isFinite(v) || v <= 0) {
+      if (p.vcl !== undefined) onChangeCommit({ vcl: undefined })
+      setVclDraft('')
+      return
+    }
+    const nextVcl = Math.round(v * 100) / 100
+    if (nextVcl !== p.vcl) onChangeCommit({ vcl: nextVcl })
+  }
+  const onEnter = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') e.currentTarget.blur()
+  }
+  return (
+    <tr className="border-t">
+      <td className="px-2 py-1 text-center text-slate-500 text-xs">{index + 1}</td>
+      <td className="px-2 py-1 text-right">
+        <input
+          type="number"
+          step={0.1}
+          value={spDraft}
+          onChange={(e) => setSpDraft(e.target.value)}
+          onBlur={commitSp}
+          onKeyDown={onEnter}
+          className="w-20 px-1 py-0.5 border rounded text-right text-sm"
+        />
+      </td>
+      <td className="px-2 py-1 text-right">
+        <input
+          type="number"
+          step={0.001}
+          value={zDraft}
+          onChange={(e) => setZDraft(e.target.value)}
+          onBlur={commitZ}
+          onKeyDown={onEnter}
+          className="w-20 px-1 py-0.5 border rounded text-right text-sm"
+        />
+      </td>
+      <td className="px-2 py-1 text-right text-slate-500 tabular-nums">{slopeText}</td>
+      <td className="px-2 py-1 text-right">
+        {isMiddle ? (
+          <input
+            type="number"
+            step={1}
+            min={0}
+            value={vclDraft}
+            placeholder="0"
+            onChange={(e) => setVclDraft(e.target.value)}
+            onBlur={commitVcl}
+            onKeyDown={onEnter}
+            className="w-16 px-1 py-0.5 border rounded text-right text-sm"
+          />
+        ) : (
+          <span className="text-slate-300 text-xs">—</span>
+        )}
+      </td>
+      <td className="px-2 py-1 text-right text-[10px] tabular-nums">
+        {curve ? (
+          <span className="text-amber-700" title={
+            `i1=${curve.i1Percent.toFixed(2)}% / i2=${curve.i2Percent.toFixed(2)}% / A=${curve.aPercent.toFixed(2)}%`
+          }>
+            M={curve.m.toFixed(3)}m
+            <br />
+            VCR={Number.isFinite(curve.vcr) ? curve.vcr.toFixed(1) : '∞'}
+          </span>
+        ) : (
+          <span className="text-slate-300">—</span>
+        )}
+      </td>
+      <td className="px-2 py-1 text-right">
+        <button
+          onClick={onRemove}
+          className="p-0.5 border rounded hover:bg-red-50 text-red-600"
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
+      </td>
+    </tr>
+  )
+}
+
+/**
  * 現況 / 計画 (トレース) / 出来形 の 3 種 断面 対象。
  * 表モーダル・地図ピック・DXF トレース で 共通の 対象種別 として 使う。
  */
@@ -4504,83 +4651,17 @@ export function OpenChannelAlignmentPage() {
                         const isMiddle = i > 0 && i < sortedProfile.length - 1
                         const curve = profileCurvesByPviIndex.get(i)
                         return (
-                          <tr key={realIdx} className="border-t">
-                            <td className="px-2 py-1 text-center text-slate-500 text-xs">
-                              {i + 1}
-                            </td>
-                            <td className="px-2 py-1 text-right">
-                              <input
-                                type="number"
-                                step={0.1}
-                                value={p.distance + (selected?.spOffset ?? 0)}
-                                onChange={(e) => {
-                                  const sp = parseFloat(e.target.value)
-                                  if (Number.isFinite(sp))
-                                    handleChangeProfile(realIdx, {
-                                      distance: sp - (selected?.spOffset ?? 0),
-                                    })
-                                }}
-                                className="w-20 px-1 py-0.5 border rounded text-right text-sm"
-                              />
-                            </td>
-                            <td className="px-2 py-1 text-right">
-                              <input
-                                type="number"
-                                step={0.001}
-                                value={p.floorHeight}
-                                onChange={(e) => {
-                                  const v = parseFloat(e.target.value)
-                                  if (Number.isFinite(v))
-                                    handleChangeProfile(realIdx, { floorHeight: v })
-                                }}
-                                className="w-20 px-1 py-0.5 border rounded text-right text-sm"
-                              />
-                            </td>
-                            <td className="px-2 py-1 text-right text-slate-500 tabular-nums">
-                              {slope}
-                            </td>
-                            <td className="px-2 py-1 text-right">
-                              {isMiddle ? (
-                                <input
-                                  type="number"
-                                  step={1}
-                                  min={0}
-                                  value={p.vcl ?? 0}
-                                  placeholder="0"
-                                  onChange={(e) => {
-                                    const v = parseFloat(e.target.value)
-                                    handleChangeProfile(realIdx, {
-                                      vcl: Number.isFinite(v) && v > 0 ? v : undefined,
-                                    })
-                                  }}
-                                  className="w-16 px-1 py-0.5 border rounded text-right text-sm"
-                                />
-                              ) : (
-                                <span className="text-slate-300 text-xs">—</span>
-                              )}
-                            </td>
-                            <td className="px-2 py-1 text-right text-[10px] tabular-nums">
-                              {curve ? (
-                                <span className="text-amber-700" title={
-                                  `i1=${curve.i1Percent.toFixed(2)}% / i2=${curve.i2Percent.toFixed(2)}% / A=${curve.aPercent.toFixed(2)}%`
-                                }>
-                                  M={curve.m.toFixed(3)}m
-                                  <br />
-                                  VCR={Number.isFinite(curve.vcr) ? curve.vcr.toFixed(1) : '∞'}
-                                </span>
-                              ) : (
-                                <span className="text-slate-300">—</span>
-                              )}
-                            </td>
-                            <td className="px-2 py-1 text-right">
-                              <button
-                                onClick={() => handleRemoveProfile(realIdx)}
-                                className="p-0.5 border rounded hover:bg-red-50 text-red-600"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </button>
-                            </td>
-                          </tr>
+                          <ProfileRow
+                            key={realIdx}
+                            p={p}
+                            index={i}
+                            isMiddle={isMiddle}
+                            slopeText={slope}
+                            curve={curve}
+                            spOffset={selected?.spOffset ?? 0}
+                            onChangeCommit={(patch) => handleChangeProfile(realIdx, patch)}
+                            onRemove={() => handleRemoveProfile(realIdx)}
+                          />
                         )
                       })}
                       {/* 末尾 の 空行: 両方 入力 して Enter or + で 追加。 */}
