@@ -70,14 +70,14 @@ interface NavGroup {
 }
 
 const navigation: NavGroup[] = [
-  { name: '工区選択に戻る', href: '/', icon: Home },
+  // 「工区選択に戻る」は サイドバー 上部 の 小型ボタン に 移動 済み (navigation には 入れない)
+  { name: '全体図', href: '/orthophoto', icon: ImageIcon },
   { name: '座標管理', href: '/coordinates', icon: Map },
   { name: '実測記録', href: '/staking-records', icon: FileSearch },
   // 地籍測量: 「地番管理」と「地権者管理」をフラットに並べる
   { name: '地番管理', href: '/boundary-survey/work-area', icon: Compass },
   { name: '地権者管理', href: '/boundary-survey/landowners', icon: Users },
   { name: '土地調査報告書作成', href: '/boundary-survey/land-report', icon: FileText },
-  { name: '全体図', href: '/orthophoto', icon: ImageIcon },
   {
     name: '暗渠工事',
     href: '/underdrain',
@@ -476,8 +476,19 @@ export function AppLayout() {
         {/* サイドバー */}
         {showSidebar && (
           <aside className="w-64 bg-slate-900 text-white flex flex-col flex-shrink-0">
+          {/* 工区選択に戻る (小型)。 保存/リセット の 上、 目立たない サイズ で 配置。 */}
+          <div className="px-4 pt-3">
+            <button
+              onClick={handleGoToTop}
+              className="w-full flex items-center justify-center gap-1 px-2 py-1 text-[11px] rounded text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              title="工区選択に戻る"
+            >
+              <Home className="h-3 w-3" />
+              工区選択に戻る
+            </button>
+          </div>
           {/* 保存ボタン */}
-          <div className="p-4 border-b border-slate-700">
+          <div className="px-4 pt-2 pb-4 border-b border-slate-700">
             <div className="p-2 bg-slate-800 rounded-lg">
             <div className="flex gap-1">
               <button
@@ -589,31 +600,18 @@ export function AppLayout() {
                         )}
                       </>
                     ) : (
-                      item.name === '工区選択に戻る' ? (
-                        <button
-                          onClick={handleGoToTop}
-                          className={cn(
-                            'w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors text-left',
-                            'text-slate-300 hover:bg-slate-800 hover:text-white'
-                          )}
-                        >
-                          <item.icon className="h-5 w-5" />
-                          {item.name}
-                        </button>
-                      ) : (
-                        <Link
-                          to={item.href}
-                          className={cn(
-                            'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-                            isActive
-                              ? 'bg-slate-800 text-white'
+                      <Link
+                        to={item.href}
+                        className={cn(
+                          'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                          isActive
+                            ? 'bg-slate-800 text-white'
                             : 'text-slate-300 hover:bg-slate-800 hover:text-white'
                         )}
                       >
                         <item.icon className="h-5 w-5" />
                         {item.name}
                       </Link>
-                      )
                     )}
                 </li>
               )
