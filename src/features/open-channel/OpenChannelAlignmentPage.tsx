@@ -1062,6 +1062,7 @@ function InteractiveCrossSectionEditor({
   currentGroundHeight,
   currentSection,
   asbuiltSection,
+  plannedSectionRaw,
   onPrevStation,
   onNextStation,
   canPrev = false,
@@ -1079,6 +1080,8 @@ function InteractiveCrossSectionEditor({
   currentSection?: MeasuredCrossPoint[] | null
   /** 出来形 断面 の 測定点列。ある場合 は 別 色 で 折れ線 + マーカー描画。 */
   asbuiltSection?: MeasuredCrossPoint[] | null
+  /** 計画 (トレース由来) 断面 の 測定点列。水色 で 折れ線 + マーカー描画。 */
+  plannedSectionRaw?: MeasuredCrossPoint[] | null
   /** 手前の 断面 (前の 測点) に 移行。null なら ボタン非活性 */
   onPrevStation?: () => void
   /** 次の 断面 (次の 測点) に 移行。null なら ボタン非活性 */
@@ -1771,6 +1774,29 @@ function InteractiveCrossSectionEditor({
               </g>
             )
           })()}
+          {/* 計画 (トレース由来) 断面 (水色) — DXFトレースで 拾った 点列を 参考ラインとして
+              重ねる。 element ベースの standardCrossSection とは 独立。 */}
+          {plannedSectionRaw && plannedSectionRaw.length > 0 && centerHeight !== undefined && (() => {
+            const pts = plannedSectionRaw
+              .map((p) => ({ x: tx(p.offset), y: ty(p.elevation - centerHeight) }))
+            const d = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
+            return (
+              <g>
+                <path d={d} fill="none" stroke="#0ea5e9" strokeWidth={1.5} opacity={0.9} />
+                {plannedSectionRaw.map((p, i) => (
+                  <circle
+                    key={`pl-${p.id ?? i}`}
+                    cx={tx(p.offset)}
+                    cy={ty(p.elevation - centerHeight)}
+                    r={3.5}
+                    fill="#0ea5e9"
+                    stroke="#fff"
+                    strokeWidth={1.5}
+                  />
+                ))}
+              </g>
+            )
+          })()}
           </g>
           {/* 現況高: 中心線上の 地盤高が 入力されて いる 場合、水平線で 上書き表示。
               計画高 (中心設計高 = y=0) との 差 だけ 上下した 位置に 線を 描く。
@@ -2219,8 +2245,8 @@ function DxfTraceModal({
    */
   const switchTarget = (t: SectionTarget) => {
     if (t === activeTarget) return
-    // 現行 の draft を 自動 コミット (元断面に 反映)
-    onReplacePoints(activeTarget, [...localPoints].sort((a, b) => a.offset - b.offset))
+    // 現行 の draft を 自動 コミット (入力順を そのまま 保存)
+    onReplacePoints(activeTarget, localPoints)
     setActiveTarget(t)
   }
   const [dxfText, setDxfText] = useState<string | null>(null)
@@ -2324,8 +2350,8 @@ function DxfTraceModal({
   const clearLocalPoints = () => setLocalPoints([])
   const undoLastPoint = () => setLocalPoints((pts) => pts.slice(0, -1))
   const confirmAndClose = () => {
-    // offset で 昇順 に して 保存 (handleReplaceStationSection でも 並び替えるが 冗長)
-    onReplacePoints(activeTarget, [...localPoints].sort((a, b) => a.offset - b.offset))
+    // 入力順を そのまま 保存 (オーバーハング等 の 逆行を 潰さない)
+    onReplacePoints(activeTarget, localPoints)
     onClose()
   }
 
@@ -2347,7 +2373,7 @@ function DxfTraceModal({
 
   // モーダル内 ローカル 点列 を DXF 上に 逆マッピングで マーカー + 折れ線 表示
   // (校正済み時のみ)。 ラベル に 「H (標高) / d (中心離れ)」を 付けて 誤認しにくく する。
-  // 折れ線は 断面らしく offset 昇順 で 結ぶ (拾った順番と 独立)。
+  // 折れ線は 拾った 順に 結ぶ (オーバーハング等で 水平方向が 逆行する ケースを 潰さない)。
   const overlays = useMemo(() => {
     if (!parsedCalib) return []
     const color = SECTION_TARGET_META[activeTarget].color
@@ -2356,13 +2382,12 @@ function DxfTraceModal({
       y: parsedCalib.dlY + ((p.elevation - parsedCalib.dlElevation) * 1000) / parsedCalib.vScale,
     })
     const items: NonNullable<React.ComponentProps<typeof DxfCrossSectionViewer>['overlays']> = []
-    // 折れ線 (offset 昇順)
+    // 折れ線 (入力順)
     if (localPoints.length >= 2) {
-      const sorted = [...localPoints].sort((a, b) => a.offset - b.offset)
       items.push({
         kind: 'line',
         color,
-        pts: sorted.map(toDxfXY),
+        pts: localPoints.map(toDxfXY),
       })
     }
     // 各点 の マーカー + ラベル (H / d を 2 段 で 縦積み)
@@ -3464,7 +3489,8 @@ export function OpenChannelAlignmentPage() {
 
   /**
    * 現況/出来形/計画 (トレース由来) 断面 の 点列 を 差替 (モーダル 保存 用)。
-   * offset で 昇順 に ソート。
+   * 入力順を そのまま 保存 (オーバーハングで 水平距離が 逆行する ケースを 潰さない)。
+   * 中心 (offset=0) の 補間は interpolateSectionAtCenter が 内部で ソートして 使う。
    *   target='current' → currentGroundHeight を 中心補間値で 自動更新
    *   target='planned' → plannedCenterHeight を 中心補間値で 自動更新
    */
@@ -3474,18 +3500,19 @@ export function OpenChannelAlignmentPage() {
     points: MeasuredCrossPoint[],
   ) => {
     const key = sectionKeyOf(target)
-    const sorted = [...points].sort((a, b) => a.offset - b.offset)
-    let next = stations.map((s) => (s.id === id ? { ...s, [key]: sorted } : s))
+    const kept = points.map((p) => ({ ...p }))
+    let next = stations.map((s) => (s.id === id ? { ...s, [key]: kept } : s))
     if (target === 'current') {
-      next = applyCenterHeightFromSection(next, id, sorted, 'currentGroundHeight')
+      next = applyCenterHeightFromSection(next, id, kept, 'currentGroundHeight')
     } else if (target === 'planned') {
-      next = applyCenterHeightFromSection(next, id, sorted, 'plannedCenterHeight')
+      next = applyCenterHeightFromSection(next, id, kept, 'plannedCenterHeight')
     }
     setStations(next)
   }
   /**
    * 現況/出来形/計画 断面 に 点を 1 個 追加 (地図ピック / DXFトレース 用)。
-   * 同じ id が あれば 上書き。 target='current'/'planned' なら 中心高を 自動更新。
+   * 同じ id が あれば 上書き (位置は 元の 位置に 保持)。 新規は 末尾 に 追加。
+   * 入力順を 保存 (オーバーハング等で 水平順に ならなくても そのまま)。
    */
   const handleAppendStationSectionPoint = (
     id: string,
@@ -3497,8 +3524,12 @@ export function OpenChannelAlignmentPage() {
     let next = stations.map((s) => {
       if (s.id !== id) return s
       const existing = (s[key] ?? []) as MeasuredCrossPoint[]
-      const filtered = existing.filter((p) => p.id !== point.id)
-      const merged = [...filtered, point].sort((a, b) => a.offset - b.offset)
+      // 同じ id が 既に あれば 上書き (位置維持)、無ければ 末尾追加。
+      const foundIdx = existing.findIndex((p) => p.id === point.id)
+      const merged =
+        foundIdx >= 0
+          ? existing.map((p, i) => (i === foundIdx ? point : p))
+          : [...existing, point]
       appendedPoints = merged
       return { ...s, [key]: merged }
     })
@@ -5251,6 +5282,7 @@ export function OpenChannelAlignmentPage() {
                                 currentGroundHeight={selectedStation?.currentGroundHeight ?? null}
                                 currentSection={selectedStation?.currentSection ?? null}
                                 asbuiltSection={selectedStation?.asbuiltSection ?? null}
+                                plannedSectionRaw={selectedStation?.plannedSectionRaw ?? null}
                                 onPrevStation={
                                   prevStation
                                     ? () => setSelectedStationId(prevStation.id)
