@@ -224,6 +224,15 @@ const POST_FIX_REJECT_ACC_M = 0.50
 // この回数を超えて連続で棄却が続いたら FIX 喪失とみなして受け入れる。
 const MAX_CONSECUTIVE_REJECTS = 5
 
+// 概略測定の 備考に 残す 測位品質の 呼び名 (NMEA GGA の fixQuality)。
+// 概略で 記録した点が 後から どの状態で 採られたか 分かるようにする。
+const ROUGH_FIX_LABEL: Record<number, string> = {
+  0: '未測位',
+  1: '単独測位',
+  2: 'DGPS',
+  5: 'RTK Float',
+}
+
 // 座標パネル: 表示列 定義
 const COORD_COLUMN_KEYS = [
   'name',
@@ -1350,6 +1359,10 @@ export function MobileStakingPage() {
   const recForceFreeRef = useRef<boolean>(false)
   /** 今回の計測が 端末 GPS 由来か (Drogger 未接続時の 概略測定) */
   const recDeviceGpsRef = useRef<boolean>(false)
+  /** 今回の計測が 精密測定 (RTK Fix) だったか。概略は 1 エポックで 確定する */
+  const recPreciseRef = useRef<boolean>(false)
+  /** 概略のとき 確定に 使った Fix 品質 (備考に 残す) */
+  const recFixQualityRef = useRef<number | null>(null)
 
   // データ読込
   useEffect(() => {
@@ -2651,15 +2664,22 @@ export function MobileStakingPage() {
     setRejectedCount(0)
     recForceFreeRef.current = !!opts.forceFreePoint
 
-    // Drogger の 位置更新が 途絶えている (未接続 / 未測位) なら 概略測定。
-    // 端末 GPS は 数 m 精度で、平均化しても 精度は 上がらない。待つ意味が 無いので
-    // 「計測中」フェーズを 挟まず、画面に 出ている 現在地を そのまま 1 点として
-    // 確定し、座標登録に 進む。
+    // Drogger の 位置更新が 途絶えている (未接続 / 未測位) か
     const useDeviceGps =
       lastPosTimeRef.current === 0 ||
       Date.now() - lastPosTimeRef.current > POSITION_STALE_MS
     recDeviceGpsRef.current = useDeviceGps
-    if (useDeviceGps) {
+    // 精密測定は RTK Fix (fixQuality=4) を 受信しているときだけ。
+    // それ以外 (端末 GPS / 単独測位 / DGPS / RTK Float) は 概略測定。
+    const isPrecise = !useDeviceGps && currentFixQuality === 4
+    recPreciseRef.current = isPrecise
+    recFixQualityRef.current = currentFixQuality
+
+    // 概略測定は 平均化しない。端末 GPS も RTK 未 Fix も 誤差は
+    // 系統的に 偏っていて、何エポック 重ねても 平均は 真値に 寄らない。
+    // 待つ意味が 無いので 「計測中」フェーズを 挟まず、画面に 出ている
+    // 現在地を そのまま 1 エポックとして 確定し、座標登録に 進む。
+    if (!isPrecise) {
       if (!currentPos) {
         alert('位置情報が取得できませんでした')
         return
@@ -2839,9 +2859,15 @@ export function MobileStakingPage() {
     // 以前は 精密 / 概略 とも 'mobile_measurement' で 区別が つかなかった。
     // 座標行 (design_coordinates) は 精度を 持たないので、備考が この情報を
     // 載せられる 唯一の 場所になる。
-    const measureNote = recDeviceGpsRef.current
-      ? `概略測定 (端末GPS${maxAcc ? ` ±${maxAcc.toFixed(1)}m` : ''})`
-      : `精密測定 (RTK Fix${maxAcc ? ` ±${maxAcc.toFixed(3)}m` : ''})`
+    // 概略は 端末 GPS 由来か、Drogger だが RTK 未 Fix かで 呼び名を 変える。
+    // どちらも 1 エポックなので、平均サンプル数は 意味を 持たない。
+    const measureNote = recPreciseRef.current
+      ? `精密測定 (RTK Fix${maxAcc ? ` ±${maxAcc.toFixed(3)}m` : ''})`
+      : `概略測定 (${
+          recDeviceGpsRef.current
+            ? '端末GPS'
+            : ROUGH_FIX_LABEL[recFixQualityRef.current ?? -1] ?? 'RTK未Fix'
+        } 1エポック${maxAcc ? ` ±${maxAcc.toFixed(1)}m` : ''})`
 
     // 互換用フラグ（将来再利用に備えて残置）
     recForceFreeRef.current = false
@@ -6660,7 +6686,7 @@ export function MobileStakingPage() {
                     title={
                       isPrecise
                         ? 'RTK Fix 受信中。cm 精度で 測定'
-                        : 'RTK Fix を 受信していません。概略値として 記録'
+                        : 'RTK Fix を 受信していません。1 エポックの 概略値として 記録'
                     }
                   >
                     <CircleIcon className="h-4 w-4" />
@@ -6792,7 +6818,7 @@ export function MobileStakingPage() {
                     title={
                       isPrecise
                         ? 'RTK Fix 受信中。cm 精度で 測定'
-                        : 'RTK Fix を 受信していません。概略値として 記録'
+                        : 'RTK Fix を 受信していません。1 エポックの 概略値として 記録'
                     }
                   >
                     <CircleIcon className="h-5 w-5" />
