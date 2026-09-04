@@ -601,59 +601,6 @@ export function OrthophotoPage() {
     }))
   }, [coordTypesInUse, subOn, setSubVis])
 
-  // 地図の組み込み要素。左パネルの一覧に ペイントのレイヤと 並べて出す。
-  // 測点 / 線形物 は 子項目 (children) を 持つ グループ として 描画される。
-  const elementRows = useMemo<ElementRow[]>(
-    () => [
-      {
-        key: 'points',
-        label: '測点',
-        on: showPointsLayer,
-        set: setShowPointsLayer,
-        children: coordSubRows.length > 0 ? coordSubRows : undefined,
-      },
-      { key: 'parcels', label: '地番 (区域)', on: showParcelsLayer, set: setShowParcelsLayer },
-      { key: 'pipes', label: '暗渠配線', on: showPipesLayer, set: setShowPipesLayer },
-      {
-        key: 'channels',
-        label: '線形物',
-        on: showChannelsLayer,
-        set: setShowChannelsLayer,
-        children: channelSubRows.length > 0 ? channelSubRows : undefined,
-      },
-      { key: 'cameras', label: '写真', on: showCamerasLayer, set: setShowCamerasLayer },
-      { key: 'memos', label: 'メモ', on: showMemosLayer, set: setShowMemosLayer },
-    ],
-    [
-      showPointsLayer,
-      showParcelsLayer,
-      showPipesLayer,
-      showChannelsLayer,
-      showCamerasLayer,
-      showMemosLayer,
-      coordSubRows,
-      channelSubRows,
-    ],
-  )
-
-  // displayCoordinateIds が Set/undefined の切替で参照が変わらないように memo 化
-  const emptyCoordSet = useMemo(() => new Set<string>(), [])
-  // 測点 (points) の 実描画対象 ID。
-  //   showPointsLayer=false → 空 Set (全非表示)
-  //   全 点種 が 表示 → undefined (全表示: CoordinateMap 側で filter しない)
-  //   一部 点種 のみ 表示 → 該当点種 の ID Set
-  const visibleCoordIds = useMemo<Set<string> | undefined>(() => {
-    if (!showPointsLayer) return emptyCoordSet
-    const hiddenTypes = new Set<string>()
-    for (const t of coordTypesInUse) if (subHidden.has(`coord:${t}`)) hiddenTypes.add(t)
-    if (hiddenTypes.size === 0) return undefined
-    const s = new Set<string>()
-    for (const c of coordinates) {
-      if (c.type && !hiddenTypes.has(c.type)) s.add(c.id)
-    }
-    return s
-  }, [showPointsLayer, emptyCoordSet, coordTypesInUse, subHidden, coordinates])
-
   // 区域ポリゴン（全工種を表示）
   const workAreaPolygons = useMemo<ExternalPolygon[]>(() => {
     const out: ExternalPolygon[] = []
@@ -672,6 +619,77 @@ export function OrthophotoPage() {
     }
     return out
   }, [workAreas])
+
+  // 地図の組み込み要素。左パネルの一覧に ペイントのレイヤと 並べて出す。
+  // 測点 / 線形物 は 子項目 (children) を 持つ グループ として 描画される。
+  // 要素 が 0 件 の レイヤ は パネル に 出さない (暗渠配線 が 無ければ 「暗渠配線」を 非表示 等)。
+  const elementRows = useMemo<ElementRow[]>(() => {
+    const rows: ElementRow[] = []
+    if (coordinates.length > 0) {
+      rows.push({
+        key: 'points',
+        label: '測点',
+        on: showPointsLayer,
+        set: setShowPointsLayer,
+        children: coordSubRows.length > 0 ? coordSubRows : undefined,
+      })
+    }
+    if (workAreaPolygons.length > 0) {
+      rows.push({ key: 'parcels', label: '地番 (区域)', on: showParcelsLayer, set: setShowParcelsLayer })
+    }
+    if (pipes.length > 0) {
+      rows.push({ key: 'pipes', label: '暗渠配線', on: showPipesLayer, set: setShowPipesLayer })
+    }
+    if (openChannels.length > 0) {
+      rows.push({
+        key: 'channels',
+        label: '線形物',
+        on: showChannelsLayer,
+        set: setShowChannelsLayer,
+        children: channelSubRows.length > 0 ? channelSubRows : undefined,
+      })
+    }
+    if (farmPhotosForMap.length > 0) {
+      rows.push({ key: 'cameras', label: '写真', on: showCamerasLayer, set: setShowCamerasLayer })
+    }
+    if (memosForMap.length > 0) {
+      rows.push({ key: 'memos', label: 'メモ', on: showMemosLayer, set: setShowMemosLayer })
+    }
+    return rows
+  }, [
+    coordinates,
+    workAreaPolygons,
+    pipes,
+    openChannels,
+    farmPhotosForMap,
+    memosForMap,
+    showPointsLayer,
+    showParcelsLayer,
+    showPipesLayer,
+    showChannelsLayer,
+    showCamerasLayer,
+    showMemosLayer,
+    coordSubRows,
+    channelSubRows,
+  ])
+
+  // displayCoordinateIds が Set/undefined の切替で参照が変わらないように memo 化
+  const emptyCoordSet = useMemo(() => new Set<string>(), [])
+  // 測点 (points) の 実描画対象 ID。
+  //   showPointsLayer=false → 空 Set (全非表示)
+  //   全 点種 が 表示 → undefined (全表示: CoordinateMap 側で filter しない)
+  //   一部 点種 のみ 表示 → 該当点種 の ID Set
+  const visibleCoordIds = useMemo<Set<string> | undefined>(() => {
+    if (!showPointsLayer) return emptyCoordSet
+    const hiddenTypes = new Set<string>()
+    for (const t of coordTypesInUse) if (subHidden.has(`coord:${t}`)) hiddenTypes.add(t)
+    if (hiddenTypes.size === 0) return undefined
+    const s = new Set<string>()
+    for (const c of coordinates) {
+      if (c.type && !hiddenTypes.has(c.type)) s.add(c.id)
+    }
+    return s
+  }, [showPointsLayer, emptyCoordSet, coordTypesInUse, subHidden, coordinates])
 
   // モーダル表示
   // 写真帳 / 写真の一括DL。右パネルを廃止したのでヘッダから開く
@@ -1102,8 +1120,26 @@ export function OrthophotoPage() {
                       fillOpacity: 0.9,
                     }}
                   >
-                    <Tooltip direction="top" offset={[0, -4]} opacity={0.9}>
-                      <span className="text-[10px] font-mono">{s.label}</span>
+                    {/* 常時表示 の SP ラベル (座標マーカー の 点名 表示 と 同じ スタイル)。
+                        point-label-tooltip クラス で 背景透過 + テキスト影 */}
+                    <Tooltip
+                      permanent
+                      direction="top"
+                      offset={[0, -4]}
+                      className="point-label-tooltip"
+                    >
+                      <span
+                        style={{
+                          color: '#4f46e5',
+                          textShadow:
+                            '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff',
+                          fontSize: 10,
+                          fontFamily:
+                            'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                        }}
+                      >
+                        {s.label}
+                      </span>
                     </Tooltip>
                   </CircleMarker>
                 ))}
