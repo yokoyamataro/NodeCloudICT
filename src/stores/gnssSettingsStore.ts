@@ -55,7 +55,7 @@ interface GnssSettingsState {
 }
 
 export const useGnssSettingsStore = create<GnssSettingsState>((set) => ({
-  avgSeconds: loadNumber(KEY_AVG_SECONDS, 3, 1, 10),
+  avgSeconds: loadNumber(KEY_AVG_SECONDS, 1, 1, 10),
   // 既定 OFF (以前も useState(false) 初期化だったので同じ挙動)
   soundEnabled: loadBool(KEY_SOUND_ENABLED, false),
   antennaHeight: loadNumber(KEY_ANTENNA_HEIGHT, 2.0),

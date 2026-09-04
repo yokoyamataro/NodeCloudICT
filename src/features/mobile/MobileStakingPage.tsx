@@ -1333,13 +1333,16 @@ export function MobileStakingPage() {
 
   // 記録状態
   const [recording, setRecording] = useState(false)
-  const [recordedCount, setRecordedCount] = useState(0)
   const [rejectedCount, setRejectedCount] = useState(0)
   const recSamplesRef = useRef<Array<{ lat: number; lng: number; alt: number | null; acc: number | null; geoidalSep: number | null }>>([])
   const recTimerRef = useRef<number | null>(null)
   const recCleanupRef = useRef<(() => void) | null>(null)
   // 目標終了時刻（ms）。ノイズで棄却したサンプル分だけ後ろにずれる。
   const recEndMsRef = useRef<number>(0)
+  // 測定開始時刻 (ms)。 「測定中」ボタン の 進捗バー (左→右) の 起点。
+  const recStartMsRef = useRef<number>(0)
+  // 進捗バー 表示用 の 0..1 の 進行度。 setInterval で 更新。
+  const [recProgress, setRecProgress] = useState<number>(0)
   // 終了監視用 interval。setTimeout で固定終了せず、棄却で延長できるようにする。
   const recEndIntervalRef = useRef<number | null>(null)
   // 「現在地を記録」ボタンで起動した場合は、ターゲット測設判定をスキップして
@@ -2645,7 +2648,6 @@ export function MobileStakingPage() {
     }
     if (!farmId) return
     recSamplesRef.current = []
-    setRecordedCount(0)
     setRejectedCount(0)
     recForceFreeRef.current = !!opts.forceFreePoint
 
@@ -2671,17 +2673,18 @@ export function MobileStakingPage() {
           geoidalSep: currentGeoidalSep,
         },
       ]
-      setRecordedCount(1)
       void finishRecording()
       return
     }
 
     setRecording(true)
+    setRecProgress(0)
     // 開始音（ユーザ操作直後なので AudioContext を resume してから鳴らす）
     void unlockAudio().then(() => playStartChime())
 
     // 平均化フロー (Drogger 接続時のみ)
-    recEndMsRef.current = Date.now() + avgSeconds * 1000
+    recStartMsRef.current = Date.now()
+    recEndMsRef.current = recStartMsRef.current + avgSeconds * 1000
 
     // 1 サンプルあたりのおおよその間隔（GPS の watchPosition は機種で揺れるが
     // ハイエンドで概ね 1 秒に 1 回）。棄却 1 回につきこの時間だけ終了時刻を後ろへ。
@@ -2723,7 +2726,6 @@ export function MobileStakingPage() {
             }
           }
           accepted.push(sample)
-          setRecordedCount(accepted.length)
         },
         { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 },
       )
@@ -2749,12 +2751,18 @@ export function MobileStakingPage() {
         recEndIntervalRef.current = null
       }
     }
-    // 終了時刻が動的に伸びるので setTimeout ではなく interval で監視する
+    // 終了時刻が動的に伸びるので setTimeout ではなく interval で監視する。
+    // 同じ interval で 進捗バー (0..1) も 更新 (再描画は 「測定中」ボタン のみ)。
     recEndIntervalRef.current = window.setInterval(() => {
-      if (Date.now() >= recEndMsRef.current) {
+      const now = Date.now()
+      const total = Math.max(1, recEndMsRef.current - recStartMsRef.current)
+      const elapsed = now - recStartMsRef.current
+      const p = Math.max(0, Math.min(1, elapsed / total))
+      setRecProgress(p)
+      if (now >= recEndMsRef.current) {
         void finishRecording()
       }
-    }, 250)
+    }, 60)
   }
 
   // 記録終了・保存
@@ -3145,7 +3153,6 @@ export function MobileStakingPage() {
       recCleanupRef.current = null
     }
     recSamplesRef.current = []
-    setRecordedCount(0)
     setRejectedCount(0)
     setRecording(false)
     recForceFreeRef.current = false
@@ -6864,14 +6871,22 @@ export function MobileStakingPage() {
             </>
           ) : (
             <>
-              <div className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-amber-500 text-white rounded-lg font-bold">
-                <Loader2 className="h-5 w-5 animate-spin" />
-                <span>測定中… {recordedCount} サンプル</span>
-                {rejectedCount > 0 && (
-                  <span className="text-[11px] font-normal opacity-90">
-                    （ノイズ棄却 {rejectedCount} 件 / 時間延長中）
-                  </span>
-                )}
+              {/* 測定中: ボタン 背景 を 左→右 に 塗る 進捗バー。 右端 到達 = 完了。
+                  サンプル数 の 数字表示 は 廃止 (視覚 で 十分)。 */}
+              <div className="flex-1 relative overflow-hidden rounded-lg bg-amber-200">
+                <div
+                  className="absolute inset-y-0 left-0 bg-amber-500 transition-[width] duration-100 ease-linear"
+                  style={{ width: `${(recProgress * 100).toFixed(1)}%` }}
+                />
+                <div className="relative z-10 flex items-center justify-center gap-2 px-4 py-3 text-white font-bold" style={{ textShadow: '0 0 3px rgba(0,0,0,0.4)' }}>
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  <span>測定中…</span>
+                  {rejectedCount > 0 && (
+                    <span className="text-[11px] font-normal opacity-90">
+                      （ノイズ棄却 {rejectedCount} 件 / 時間延長中）
+                    </span>
+                  )}
+                </div>
               </div>
               <button
                 onClick={cancelRecording}
