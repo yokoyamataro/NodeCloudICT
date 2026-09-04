@@ -23,6 +23,13 @@ import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { COORDINATE_TYPE_NAMES, type CoordinateType } from '@/lib/coordinates'
 import { useOpenChannelStore } from '@/stores/openChannelStore'
+import { getActiveLandxmlFile, downloadLandxmlText } from '@/lib/landxmlFiles'
+import { parseLandXml } from '@/lib/landxml/parser'
+import {
+  renderTin,
+  hypsometricColor,
+  type RenderedTin,
+} from '@/lib/landxml/tinRender'
 import {
   buildSegments,
   pointAtDistance,
@@ -32,7 +39,13 @@ import {
 } from '@/lib/openChannel/alignment'
 import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
-import { Polyline as LeafletPolyline, CircleMarker, Pane, Tooltip } from 'react-leaflet'
+import {
+  Polyline as LeafletPolyline,
+  Polygon as LeafletPolygon,
+  CircleMarker,
+  Pane,
+  Tooltip,
+} from 'react-leaflet'
 import { useOrthophotoStore } from '@/stores/orthophotoStore'
 import { useFarmMemoStore, EMPTY_FARM_MEMOS } from '@/stores/farmMemoStore'
 import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
@@ -421,6 +434,59 @@ export function OrthophotoPage() {
   useEffect(() => {
     if (currentFarm) void fetchOpenChannels(currentFarm.id)
   }, [currentFarm, fetchOpenChannels])
+
+  // LandXML (kind='ground' / 'design') を Storage から fetch → パース → TIN 化。
+  // 各 kind は 工区 単位 で 1 枚 (getActiveLandxmlFile)。 無ければ null で 何も描画しない。
+  const [groundXmlText, setGroundXmlText] = useState<string | null>(null)
+  const [designXmlText, setDesignXmlText] = useState<string | null>(null)
+  useEffect(() => {
+    if (!currentFarm) {
+      setGroundXmlText(null)
+      setDesignXmlText(null)
+      return
+    }
+    let cancelled = false
+    const load = async (kind: 'ground' | 'design') => {
+      try {
+        const active = await getActiveLandxmlFile(currentFarm.id, kind)
+        if (!active || cancelled) return null
+        const text = await downloadLandxmlText(active.storagePath)
+        return cancelled ? null : text
+      } catch (e) {
+        console.error(`[landxml fetch ${kind}]`, e)
+        return null
+      }
+    }
+    void Promise.all([load('ground'), load('design')]).then(([g, d]) => {
+      if (cancelled) return
+      setGroundXmlText(g)
+      setDesignXmlText(d)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [currentFarm])
+  const buildTin = useCallback(
+    (xmlText: string | null, sourceName: string): RenderedTin | null => {
+      if (!xmlText || projectZone == null) return null
+      try {
+        const parsed = parseLandXml(xmlText, sourceName)
+        if (parsed.surfaces.length === 0) return null
+        // 三角形 が 一番多い Surface を 採用 (通常 は 1 面)
+        const surface = parsed.surfaces.reduce((best, s) =>
+          s.triangles.length > best.triangles.length ? s : best,
+        )
+        const conv = new CoordinateConverter(projectZone)
+        return renderTin(surface, conv)
+      } catch (e) {
+        console.error(`[tin parse ${sourceName}]`, e)
+        return null
+      }
+    },
+    [projectZone],
+  )
+  const groundTin = useMemo(() => buildTin(groundXmlText, 'ground'), [groundXmlText, buildTin])
+  const designTin = useMemo(() => buildTin(designXmlText, 'design'), [designXmlText, buildTin])
   const channelOverlay = useMemo(() => {
     type Line = { id: string; channelId: string; positions: [number, number][]; name: string }
     type Stake = {
@@ -649,6 +715,46 @@ export function OrthophotoPage() {
         children: channelSubRows.length > 0 ? channelSubRows : undefined,
       })
     }
+    // TIN (LandXML) レイヤ。 ground / design それぞれ 存在すれば グループ化 して 追加。
+    // サブ 3 種類: 色分けメッシュ / 等高線 / ワイヤーフレーム。
+    const tinChildren = (prefix: string): ElementRow[] => [
+      {
+        key: 'mesh',
+        label: '色分けメッシュ',
+        on: subOn(`${prefix}:mesh`),
+        set: (v: boolean) => setSubVis(`${prefix}:mesh`, v),
+      },
+      {
+        key: 'contour',
+        label: '等高線',
+        on: subOn(`${prefix}:contour`),
+        set: (v: boolean) => setSubVis(`${prefix}:contour`, v),
+      },
+      {
+        key: 'wireframe',
+        label: 'ワイヤーフレーム',
+        on: subOn(`${prefix}:wireframe`),
+        set: (v: boolean) => setSubVis(`${prefix}:wireframe`, v),
+      },
+    ]
+    if (groundTin) {
+      rows.push({
+        key: 'tin-ground',
+        label: '現況 (LandXML)',
+        on: subOn('tin:ground'),
+        set: (v: boolean) => setSubVis('tin:ground', v),
+        children: tinChildren('tin:ground'),
+      })
+    }
+    if (designTin) {
+      rows.push({
+        key: 'tin-design',
+        label: '設計面 (LandXML)',
+        on: subOn('tin:design'),
+        set: (v: boolean) => setSubVis('tin:design', v),
+        children: tinChildren('tin:design'),
+      })
+    }
     if (farmPhotosForMap.length > 0) {
       rows.push({ key: 'cameras', label: '写真', on: showCamerasLayer, set: setShowCamerasLayer })
     }
@@ -671,6 +777,10 @@ export function OrthophotoPage() {
     showMemosLayer,
     coordSubRows,
     channelSubRows,
+    groundTin,
+    designTin,
+    subOn,
+    setSubVis,
   ])
 
   // displayCoordinateIds が Set/undefined の切替で参照が変わらないように memo 化
@@ -736,9 +846,29 @@ export function OrthophotoPage() {
    * 何も選んでいなければ これから描くものの設定、選んでいれば その図形へ 反映する。
    */
   const updateStrokeAttrs = useMapDrawingStore((s) => s.updateStrokeAttrs)
+  const deleteStroke = useMapDrawingStore((s) => s.deleteStroke)
   const applyToSelection = (attrs: Parameters<typeof updateStrokeAttrs>[1]) => {
     for (const id of selectedDrawingIds) void updateStrokeAttrs(id, attrs)
   }
+  // Delete / Backspace で 選択中 の 作図要素 を まとめて 削除。
+  // 入力欄 (INPUT / TEXTAREA / contentEditable) に フォーカス 中 は 通常 の
+  // 文字削除 に 干渉 しない。 修飾キー (Ctrl / Cmd / Alt) 付き は 無視。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      if (selectedDrawingIds.length === 0) return
+      const t = e.target as HTMLElement | null
+      const tag = t?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (t && t.isContentEditable)) return
+      e.preventDefault()
+      const ids = [...selectedDrawingIds]
+      setSelectedDrawingIds([])
+      for (const id of ids) void deleteStroke(id)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectedDrawingIds, deleteStroke])
   /** 選んでいるのが 図枠だけか。図枠は 見た目を 変えられないので 設定を 出さない */
   const selectionIsFramesOnly =
     selectedDrawingIds.length > 0 &&
@@ -768,11 +898,16 @@ export function OrthophotoPage() {
     return out as Partial<Record<'points' | 'parcels' | 'cameras' | 'memos', number>> & {
       pipes?: number
       channels?: number
+      'tin-ground'?: number
+      'tin-design'?: number
     }
   }, [panelIds])
-  // 暗渠 / 線形物 は このページで直接描いているので、z 値だけ取り出す
+  // 暗渠 / 線形物 / TIN は このページで直接描いているので、z 値だけ取り出す
   const pipesZIndex = elementPanes.pipes ?? 450
   const channelsZIndex = elementPanes.channels ?? 455
+  // TIN は 「地形背景」の 位置付け で、他要素 の 手前 に 出さない 前提
+  const groundTinZIndex = elementPanes['tin-ground'] ?? 410
+  const designTinZIndex = elementPanes['tin-design'] ?? 415
 
   /** ペイントのレイヤごとの重ね順。組み込み要素と 同じ体系で 並べる */
   const layerZIndex = useMemo(() => {
@@ -1001,6 +1136,33 @@ export function OrthophotoPage() {
             layerZIndex={layerZIndex}
             onAddCoordinate={handleAddCoordinate}
             registerCoordinate={registerCoordinate}
+          />
+          {/* TIN (LandXML) ─ 現況 / 設計面。
+              サブ 3 種類 (色分けメッシュ / 等高線 / ワイヤーフレーム) を 個別に 表示切替。
+              地形背景 の 位置付け で、他要素 より 奥 の ペイン に 入れる */}
+          <TinPane
+            paneName="ov-tin-ground"
+            zIndex={groundTinZIndex}
+            tin={groundTin}
+            visible={subOn('tin:ground')}
+            meshOn={subOn('tin:ground:mesh')}
+            contourOn={subOn('tin:ground:contour')}
+            wireframeOn={subOn('tin:ground:wireframe')}
+            contourColor="#78350f"
+            wireframeColor="#7f1d1d"
+            keyPrefix="ground"
+          />
+          <TinPane
+            paneName="ov-tin-design"
+            zIndex={designTinZIndex}
+            tin={designTin}
+            visible={subOn('tin:design')}
+            meshOn={subOn('tin:design:mesh')}
+            contourOn={subOn('tin:design:contour')}
+            wireframeOn={subOn('tin:design:wireframe')}
+            contourColor="#312e81"
+            wireframeColor="#1e3a8a"
+            keyPrefix="design"
           />
           {/* 暗渠 (読み取り専用オーバーレイ)。編集は暗渠モジュールで。
               重ね順を レイヤパネルで 変えられるよう 専用ペインに入れる */}
@@ -1370,6 +1532,82 @@ async function downloadPhotosExcel(
 //   全写真から順にクリックすると順番付きで選択、再度クリックで除外。
 //   ↑ / ↓ ボタンで順番を入れ替えできる。
 // -----------------------------------------------------------------
+/**
+ * TIN (LandXML) 描画 用 Pane。 色分けメッシュ / 等高線 / ワイヤーフレーム を
+ * サブ トグル で 個別 に 表示切替。 tin が null または visible=false で 全体 非表示。
+ * contourColor / wireframeColor は 現況 (茶) / 設計 (紺) で 使い分ける ため 引数化。
+ */
+function TinPane({
+  paneName,
+  zIndex,
+  tin,
+  visible,
+  meshOn,
+  contourOn,
+  wireframeOn,
+  contourColor,
+  wireframeColor,
+  keyPrefix,
+}: {
+  paneName: string
+  zIndex: number
+  tin: RenderedTin | null
+  visible: boolean
+  meshOn: boolean
+  contourOn: boolean
+  wireframeOn: boolean
+  contourColor: string
+  wireframeColor: string
+  keyPrefix: string
+}) {
+  return (
+    <Pane name={paneName} style={{ zIndex }}>
+      {tin && visible && meshOn &&
+        tin.triangles.map((t, i) => (
+          <LeafletPolygon
+            key={`${keyPrefix}-tri-${i}`}
+            positions={t.positions}
+            pathOptions={{
+              color: hypsometricColor(t.zAvg, tin.zMin, tin.zMax),
+              weight: 0,
+              fillColor: hypsometricColor(t.zAvg, tin.zMin, tin.zMax),
+              fillOpacity: 0.55,
+            }}
+            interactive={false}
+          />
+        ))}
+      {tin && visible && wireframeOn &&
+        tin.edges.map((e, i) => (
+          <LeafletPolyline
+            key={`${keyPrefix}-edge-${i}`}
+            positions={e.positions}
+            pathOptions={{
+              color: wireframeColor,
+              weight: 0.6,
+              opacity: 0.55,
+            }}
+            interactive={false}
+          />
+        ))}
+      {tin && visible && contourOn &&
+        tin.contours.flatMap((c) =>
+          c.segments.map((seg, j) => (
+            <LeafletPolyline
+              key={`${keyPrefix}-c-${c.z.toFixed(3)}-${j}`}
+              positions={seg}
+              pathOptions={{
+                color: contourColor,
+                weight: Math.abs(c.z % (tin.contourInterval * 5)) < 1e-6 ? 1.2 : 0.7,
+                opacity: 0.85,
+              }}
+              interactive={false}
+            />
+          )),
+        )}
+    </Pane>
+  )
+}
+
 function PhotoBookOrderModal({
   photos,
   getSignedUrl,
