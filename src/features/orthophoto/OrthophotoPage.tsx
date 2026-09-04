@@ -17,7 +17,13 @@ import {
   Map as MapIcon,
   Maximize2,
   Minimize2,
+  Triangle,
+  Trash2,
+  Save,
 } from 'lucide-react'
+import Delaunator from 'delaunator'
+import { buildLandXml } from '@/lib/landxml/exporter'
+import { uploadLandxmlFile } from '@/lib/landxmlFiles'
 import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
@@ -824,6 +830,194 @@ export function OrthophotoPage() {
   const [drawFontSize, setDrawFontSize] = useState(14)
   const [registerCoordinate, setRegisterCoordinate] = useState(false)
 
+  // ===== TIN 編集モード =====
+  // 上部バー の 「TIN」ボタン で ON/OFF。 ON の間 は 座標マーカー が クリック可 に なり、
+  // クリック で 編集バッファ (tinEditVertices) に 頂点追加。 3 点以上で Delaunator が
+  // 三角形分割 して プレビュー 表示。 「保存」で 現在の 頂点集合 を design LandXML と して
+  // uploadLandxmlFile (kind='design')。 旧 active は 自動 非active 化 され、
+  // landxmlEventsStore.bump() で 全体図 の TIN レイヤ も 自動 再描画。
+  interface TinEditVertex {
+    id: string
+    x: number
+    y: number
+    z: number
+    /** 表示用 (座標番号 or 「+」) */
+    label: string
+    /** 由来 (coord 参照 or 新規 追加) */
+    source: 'coord' | 'new'
+  }
+  const [tinEditMode, setTinEditMode] = useState(false)
+  const [tinEditVertices, setTinEditVertices] = useState<TinEditVertex[]>([])
+  const [tinSaving, setTinSaving] = useState(false)
+  const [tinError, setTinError] = useState<string | null>(null)
+  const [tinStatus, setTinStatus] = useState<string | null>(null)
+  const bumpLandxmlFromTin = useLandxmlEventsStore((s) => s.bump)
+
+  /**
+   * 座標 マーカー クリック で 頂点 を 追加 / 削除。 TIN 編集 モード 中 のみ 呼ばれる。
+   * すでに 追加済 の coord は 削除、未追加なら 追加。 z (標高) が 無い 座標 は 追加不可。
+   */
+  const handleTinCoordClick = useCallback(
+    (coordId: string) => {
+      setTinError(null)
+      setTinStatus(null)
+      const c = coordinates.find((cc) => cc.id === coordId)
+      if (!c) return
+      setTinEditVertices((prev) => {
+        const existing = prev.findIndex((v) => v.id === coordId)
+        if (existing >= 0) {
+          // すでに 頂点 → 削除
+          return prev.filter((v) => v.id !== coordId)
+        }
+        if (c.z == null || !Number.isFinite(c.z)) {
+          setTinError(`座標「${c.pointNumber ?? coordId}」に 標高 (Z) が ありません`)
+          return prev
+        }
+        return [
+          ...prev,
+          {
+            id: coordId,
+            x: c.x,
+            y: c.y,
+            z: c.z,
+            label: c.pointNumber ?? '',
+            source: 'coord',
+          },
+        ]
+      })
+    },
+    [coordinates],
+  )
+
+  /**
+   * 編集モード に 入る時、 現行 の active design LandXML を 読み込み バッファ の
+   * 初期状態 に する。 なければ 空 バッファ。
+   */
+  useEffect(() => {
+    if (!tinEditMode) return
+    if (!designXmlText || projectZone == null) {
+      setTinEditVertices((prev) => (prev.length > 0 ? prev : []))
+      return
+    }
+    try {
+      const parsed = parseLandXml(designXmlText, 'design')
+      if (parsed.surfaces.length === 0) return
+      const surface = parsed.surfaces.reduce((best, s) =>
+        s.triangles.length > best.triangles.length ? s : best,
+      )
+      // 既存 頂点 を バッファ に。 label は 座標参照 で 埋める (近い 座標 と 一致 したら)
+      const verts: TinEditVertex[] = surface.points.map((p, i) => {
+        const matched = coordinates.find(
+          (cc) => Math.abs(cc.x - p.x) < 0.01 && Math.abs(cc.y - p.y) < 0.01,
+        )
+        return matched
+          ? {
+              id: matched.id,
+              x: matched.x,
+              y: matched.y,
+              z: p.z,
+              label: matched.pointNumber ?? '',
+              source: 'coord',
+            }
+          : {
+              id: `new-${Date.now().toString(36)}-${i}`,
+              x: p.x,
+              y: p.y,
+              z: p.z,
+              label: `+${i + 1}`,
+              source: 'new',
+            }
+      })
+      setTinEditVertices(verts)
+      setTinStatus(`既存 の 設計面 LandXML から ${verts.length} 頂点 を 読み込みました`)
+    } catch (e) {
+      console.error('[tin edit load]', e)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tinEditMode])
+
+  /** 頂点 集合 を Delaunay 分割 → プレビュー 用 (三角形 は x, y の 配列 インデックス) */
+  const tinPreview = useMemo(() => {
+    if (tinEditVertices.length < 3 || projectZone == null) {
+      return { triangles: [] as [number, number, number][], vertexLatLng: [] as [number, number][] }
+    }
+    const conv = new CoordinateConverter(projectZone)
+    const vertexLatLng: [number, number][] = []
+    for (const v of tinEditVertices) {
+      try {
+        const { lat, lng } = conv.toLatLng(v.x, v.y)
+        if (Number.isFinite(lat) && Number.isFinite(lng)) vertexLatLng.push([lat, lng])
+        else vertexLatLng.push([Number.NaN, Number.NaN])
+      } catch {
+        vertexLatLng.push([Number.NaN, Number.NaN])
+      }
+    }
+    // Delaunator は [x, y] の平坦配列。 本プロジェクト の x=北, y=東 だが 三角化 だけなら
+    // どちら の 軸 を 「x」に する かは 影響 しない (相対関係 が 保たれる)。
+    const coords = tinEditVertices.flatMap((v) => [v.x, v.y])
+    const d = new Delaunator(coords)
+    const tris: [number, number, number][] = []
+    for (let i = 0; i < d.triangles.length; i += 3) {
+      tris.push([d.triangles[i], d.triangles[i + 1], d.triangles[i + 2]])
+    }
+    return { triangles: tris, vertexLatLng }
+  }, [tinEditVertices, projectZone])
+
+  const handleTinClear = () => {
+    setTinEditVertices([])
+    setTinStatus(null)
+    setTinError(null)
+  }
+
+  const handleTinSave = async () => {
+    if (!currentFarm || tinEditVertices.length < 3) return
+    setTinSaving(true)
+    setTinError(null)
+    setTinStatus(null)
+    try {
+      const tinSurface = {
+        points: tinEditVertices.map((v) => ({
+          x: v.x,
+          y: v.y,
+          z: v.z,
+          source: 'plan' as const,
+        })),
+        triangles: tinPreview.triangles.map(([a, b, c]) => ({ a, b, c })),
+        stats: {
+          pointCount: tinEditVertices.length,
+          triangleCount: tinPreview.triangles.length,
+          zMin: Math.min(...tinEditVertices.map((v) => v.z)),
+          zMax: Math.max(...tinEditVertices.map((v) => v.z)),
+        },
+      }
+      const xml = buildLandXml({
+        alignments: [],
+        surfaces: [{ name: '編集TIN', surface: tinSurface }],
+        projectName: currentFarm.name,
+        coordinateZoneName: projectZone
+          ? `JGD2011 / 平面直角座標系第${projectZone}系`
+          : undefined,
+      })
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')
+      await uploadLandxmlFile({
+        farmId: currentFarm.id,
+        fileName: `tin-edit-${stamp}.xml`,
+        content: xml,
+        kind: 'design',
+        notes: 'TIN 編集 モード で 作成',
+      })
+      bumpLandxmlFromTin()
+      setTinStatus(
+        `保存 しました (${tinEditVertices.length} 頂点 / ${tinPreview.triangles.length} 三角形)。 「設計面 (LandXML)」レイヤ に 反映 されます。`,
+      )
+    } catch (e) {
+      console.error('[tin save]', e)
+      setTinError(e instanceof Error ? e.message : '保存 失敗')
+    } finally {
+      setTinSaving(false)
+    }
+  }
+
   // 計測用の座標変換（プロジェクト座標系）
   const converter = useMemo(() => new CoordinateConverter(projectZone ?? 13), [projectZone])
 
@@ -1035,6 +1229,25 @@ export function OrthophotoPage() {
           onToggleRegisterCoordinate={() => setRegisterCoordinate((v) => !v)}
         />
         </div>
+        {/* TIN 編集モード トグル。 押下 中 は 座標マーカー を クリック → 頂点追加、
+            Delaunator で 三角形分割 の プレビュー を 出す */}
+        <button
+          type="button"
+          onClick={() => {
+            setTinEditMode((v) => !v)
+            setTinError(null)
+            setTinStatus(null)
+          }}
+          className={`flex items-center gap-1 px-3 py-1.5 rounded border text-sm shrink-0 ${
+            tinEditMode
+              ? 'bg-emerald-600 text-white border-emerald-600'
+              : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+          }`}
+          title="TIN サーフェスの追加編集 (座標をクリックして頂点追加)"
+        >
+          <Triangle className="h-4 w-4" />
+          TIN
+        </button>
         {/* 書き出しは 道具と 混ざらないよう 右端に 離して置く */}
         <OverviewExportMenu items={exportItems} />
       </div>
@@ -1093,7 +1306,8 @@ export function OrthophotoPage() {
           farmId={currentFarm.id}
           showOrtho
           externalPolygons={showParcelsLayer ? workAreaPolygons : []}
-          coordinatesInteractive={false}
+          coordinatesInteractive={tinEditMode}
+          onPointSelect={tinEditMode ? handleTinCoordClick : undefined}
           farmMemos={showMemosLayer ? memosForMap : []}
           farmPhotos={showCamerasLayer ? farmPhotosForMap : []}
           photoGetSignedUrl={getSignedUrl}
@@ -1310,8 +1524,134 @@ export function OrthophotoPage() {
                   </CircleMarker>
                 ))}
           </Pane>
+          {/* TIN 編集モード の プレビュー: 三角形 (半透明 emerald) + 頂点 (数字ラベル)。
+              保存後 は 「設計面 (LandXML)」レイヤ に 出る (この プレビュー は 消える)。 */}
+          {tinEditMode && (
+            <Pane name="ov-tin-edit" style={{ zIndex: 610 }}>
+              {tinPreview.triangles.map(([a, b, c], i) => {
+                const pa = tinPreview.vertexLatLng[a]
+                const pb = tinPreview.vertexLatLng[b]
+                const pc = tinPreview.vertexLatLng[c]
+                if (!pa || !pb || !pc) return null
+                if (!Number.isFinite(pa[0]) || !Number.isFinite(pb[0]) || !Number.isFinite(pc[0])) return null
+                return (
+                  <LeafletPolygon
+                    key={`tin-edit-tri-${i}`}
+                    positions={[pa, pb, pc]}
+                    pathOptions={{
+                      color: '#059669',
+                      weight: 1.5,
+                      fillColor: '#10b981',
+                      fillOpacity: 0.25,
+                    }}
+                    interactive={false}
+                  />
+                )
+              })}
+              {tinEditVertices.map((v, i) => {
+                const ll = tinPreview.vertexLatLng[i]
+                if (!ll || !Number.isFinite(ll[0])) return null
+                return (
+                  <CircleMarker
+                    key={`tin-edit-v-${v.id}`}
+                    center={ll}
+                    radius={7}
+                    pathOptions={{
+                      color: '#065f46',
+                      weight: 2,
+                      fillColor: '#34d399',
+                      fillOpacity: 0.95,
+                    }}
+                  >
+                    <Tooltip
+                      permanent
+                      direction="top"
+                      offset={[0, -8]}
+                      className="point-label-tooltip"
+                    >
+                      <span
+                        style={{
+                          color: '#065f46',
+                          textShadow:
+                            '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff',
+                          fontSize: 10,
+                          fontFamily:
+                            'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                        }}
+                      >
+                        {`${v.label || `#${i + 1}`} (z=${v.z.toFixed(2)})`}
+                      </span>
+                    </Tooltip>
+                  </CircleMarker>
+                )
+              })}
+            </Pane>
+          )}
         </CoordinateMap>
 
+        {/* TIN 編集モード の 操作パネル (フローティング)。
+            左上 に 出して 座標クリック の 邪魔 に ならない 位置 に 配置。 */}
+        {tinEditMode && (
+          <div className="absolute top-2 left-2 z-[1000] w-72 bg-white/95 border border-emerald-400 rounded shadow-lg">
+            <div className="px-3 py-2 border-b border-emerald-200 bg-emerald-50 rounded-t flex items-center gap-1">
+              <Triangle className="h-3.5 w-3.5 text-emerald-700" />
+              <span className="text-xs font-semibold text-emerald-800">TIN 編集</span>
+              <button
+                onClick={() => setTinEditMode(false)}
+                className="ml-auto p-0.5 rounded hover:bg-white text-slate-500"
+                title="編集モード を 終了"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <div className="p-2 text-xs space-y-2">
+              <div className="text-slate-600">
+                座標マーカー を クリック で 頂点 追加 / 削除。 3 頂点以上 で Delaunay
+                三角形分割 を プレビュー。 「保存」で design LandXML に 差替 (旧 active は
+                非active 化)。
+              </div>
+              <div className="flex items-center gap-2 tabular-nums">
+                <span className="text-slate-500">頂点</span>
+                <span className="font-mono">{tinEditVertices.length}</span>
+                <span className="text-slate-400">·</span>
+                <span className="text-slate-500">三角形</span>
+                <span className="font-mono">{tinPreview.triangles.length}</span>
+              </div>
+              <div className="flex gap-1">
+                <button
+                  onClick={handleTinClear}
+                  disabled={tinEditVertices.length === 0}
+                  className="flex-1 flex items-center justify-center gap-1 px-2 py-1 border rounded bg-white hover:bg-slate-50 text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-[11px]"
+                >
+                  <Trash2 className="h-3 w-3" />
+                  クリア
+                </button>
+                <button
+                  onClick={() => void handleTinSave()}
+                  disabled={tinEditVertices.length < 3 || tinSaving || !currentFarm}
+                  className="flex-1 flex items-center justify-center gap-1 px-2 py-1 border rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 disabled:bg-slate-300 text-[11px]"
+                >
+                  {tinSaving ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Save className="h-3 w-3" />
+                  )}
+                  保存
+                </button>
+              </div>
+              {tinStatus && (
+                <div className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
+                  {tinStatus}
+                </div>
+              )}
+              {tinError && (
+                <div className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
+                  {tinError}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         {parcelToast && (
           <div className="absolute bottom-24 right-2 z-[1000] max-w-[70%] px-3 py-1.5 rounded shadow border bg-white/95 text-[11px] text-slate-700 text-right">
             {parcelToast}
