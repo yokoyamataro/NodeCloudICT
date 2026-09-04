@@ -224,6 +224,13 @@ const POST_FIX_REJECT_ACC_M = 0.50
 // この回数を超えて連続で棄却が続いたら FIX 喪失とみなして受け入れる。
 const MAX_CONSECUTIVE_REJECTS = 5
 
+// 進行方向基準 (ヘディングアップ) 表示で GNSS の 進行方向 (COG) を 採る 速度 [km/h]。
+// 静止中の COG は 完全に 当てに ならないので、歩いている ときだけ 使い、
+// 止まったら 端末の 方位センサー (コンパス) に 渡す。
+// 行き来で ちらつかないよう 上下に 幅 (ヒステリシス) を 持たせる。
+const TRAVEL_HEADING_MOVING_KMH = 2.0
+const TRAVEL_HEADING_STOPPED_KMH = 1.0
+
 // 概略測定の 備考に 残す 測位品質の 呼び名 (NMEA GGA の fixQuality)。
 // 概略で 記録した点が 後から どの状態で 採られたか 分かるようにする。
 const ROUGH_FIX_LABEL: Record<number, string> = {
@@ -722,6 +729,10 @@ export function MobileStakingPage() {
   const [heading, setHeading] = useState<number | null>(null)
   const [headingEnabled, setHeadingEnabled] = useState(false)
   const [headingError, setHeadingError] = useState<string | null>(null)
+  // 進行方向 (GNSS の COG)。歩いている 間だけ 更新し、止まっても 直前の 値を 残す
+  const [travelHeading, setTravelHeading] = useState<number | null>(null)
+  // いま 進行方向として 何を 採用しているか。速度で 切り替える
+  const [travelSource, setTravelSource] = useState<'gnss' | 'compass'>('compass')
   // 設定・UI
   // 4 つの共有設定 (音声 / 平均秒数 / アンテナ高 / ジオイド) は
   // gnssSettingsStore に集約 (GPS設定モーダルからも 触れるため)
@@ -729,6 +740,8 @@ export function MobileStakingPage() {
   const antennaHeight = useGnssSettingsStore((s) => s.antennaHeight)
   const useGeoidCorrection = useGnssSettingsStore((s) => s.useGeoidCorrection)
   const soundEnabled = useGnssSettingsStore((s) => s.soundEnabled)
+  const headingUp = useGnssSettingsStore((s) => s.headingUp)
+  const setHeadingUp = useGnssSettingsStore((s) => s.setHeadingUp)
   // 画面モード: 起工測量のみに統一（出来形 / 施工管理 タブは削除）
   // 旧 localStorage の値が残っていても無視して 'initial' 固定で扱う。
   // 型は union のままにして既存の `screenMode === 'construction'` 等を
@@ -1697,6 +1710,15 @@ export function MobileStakingPage() {
     setHeadingEnabled(true)
   }
 
+  // 方位表示の 基準を 北 ⇄ 進行方向 で 切り替える。
+  // 止まっている 間の 向きは コンパス頼りなので、ON にするときは
+  // 方位センサーも 一緒に 有効化する (iOS の 許可は ユーザー操作下で 要求)。
+  const toggleHeadingUp = async () => {
+    const next = !headingUp
+    setHeadingUp(next)
+    if (next && !headingEnabled) await toggleHeading()
+  }
+
   // 現在位置の監視
   //
   // RTK モードで一度 FIX に達したあとは、accuracy が急に 0.50m を超える読みを
@@ -1766,6 +1788,18 @@ export function MobileStakingPage() {
           setCurrentFixQuality(sample.fixQuality ?? null)
           setCurrentGeoidalSep(sample.geoidal_separation_m ?? null)
           setCurrentAlt(sample.altitude_m)
+          // 進行方向 (ヘディングアップ表示用)。歩いている ときだけ GNSS の COG を
+          // 採り、止まったら コンパスに 渡す。中間の 速度では 直前の 判断を 保つ。
+          {
+            const spd = sample.speed_kmh
+            const cog = sample.heading_deg
+            if (spd != null && spd >= TRAVEL_HEADING_MOVING_KMH && cog != null) {
+              setTravelHeading(cog)
+              setTravelSource('gnss')
+            } else if (spd != null && spd <= TRAVEL_HEADING_STOPPED_KMH) {
+              setTravelSource('compass')
+            }
+          }
           // 位置更新の鮮度計測: この時刻を beep ループから参照して「更新が
           // 止まった (RTK 受信機切断等)」ときにビープを停止するために使う。
           lastPosTimeRef.current = Date.now()
@@ -2390,6 +2424,20 @@ export function MobileStakingPage() {
       { lat: selectedTarget.lat, lng: selectedTarget.lng },
     )
   }, [currentPos, selectedTarget])
+
+  /**
+   * 画面の 上を どの 方位に 合わせるか [deg, 真北から 時計回り]。
+   * null = 北基準 (従来どおり)。
+   *
+   * 進行方向基準では 歩いている 間は GNSS の 進行方向 (COG)、止まったら
+   * 端末の コンパスを 使う。コンパスが 無い (未許可 / 非対応) ときは
+   * 直前の COG で 代用し、どちらも 無ければ 北基準に 落とす。
+   */
+  const upHeading = useMemo(() => {
+    if (!headingUp) return null
+    if (travelSource === 'compass' && heading != null) return heading
+    return travelHeading ?? heading
+  }, [headingUp, travelSource, heading, travelHeading])
 
   // 現在位置を平面直角座標 (X=北, Y=東) に変換
   const currentXY = useMemo(() => {
@@ -5725,6 +5773,7 @@ export function MobileStakingPage() {
             dN={proximityRel.dN}
             dE={proximityRel.dE}
             dist={proximityRel.dist}
+            upHeading={upHeading}
             accuracy={currentAcc}
             targetName={selectedTarget.name}
             onCancel={() => setProximityCancelled(true)}
@@ -6645,18 +6694,41 @@ export function MobileStakingPage() {
               >
                 <X className="h-4 w-4" />
               </button>
-              {distanceToTarget != null && bearingToTarget != null && (
+              {distanceToTarget != null && bearingToTarget != null && (() => {
+                // 進行方向基準なら 自分の 向きからの 相対角、北基準なら 真北からの 方位角。
+                // 進行方向基準に していても 向きが 取れない 間は 北基準で 描く。
+                const rel =
+                  upHeading != null
+                    ? (((bearingToTarget - upHeading) % 360) + 360) % 360
+                    : bearingToTarget
+                return (
                 <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => { void toggleHeadingUp() }}
+                    className={`px-1.5 py-1 rounded border text-[10px] leading-none shrink-0 ${
+                      headingUp
+                        ? 'border-blue-400 bg-blue-50 text-blue-700'
+                        : 'border-slate-300 text-slate-600 hover:bg-slate-100'
+                    }`}
+                    title={
+                      headingUp
+                        ? '進行方向を 上に 表示中。タップで 北基準に 戻す'
+                        : '北を 上に 表示中。タップで 進行方向基準に する'
+                    }
+                  >
+                    {headingUp ? (upHeading != null ? '進行↑' : '進行↑ ?') : 'N↑'}
+                  </button>
                   <ArrowUp
                     className="h-7 w-7 text-blue-600"
                     style={{
-                      transform: `rotate(${bearingToTarget}deg)`,
+                      transform: `rotate(${rel}deg)`,
                       transition: 'transform 120ms linear',
                     }}
                   />
                   <div className="text-right">
                     <div className="text-[10px] text-slate-500 leading-none">
-                      {bearingToTarget.toFixed(0)}°
+                      {rel.toFixed(0)}°
                     </div>
                     <div className="font-mono font-bold text-lg leading-tight">
                       {distanceToTarget < 1
@@ -6665,7 +6737,8 @@ export function MobileStakingPage() {
                     </div>
                   </div>
                 </div>
-              )}
+                )
+              })()}
             </div>
             {/* 2 行目: 測定 + 詳細ボタン */}
             <div className="flex items-center gap-2">
@@ -7437,6 +7510,7 @@ function ProximityGuide({
   dN,
   dE,
   dist,
+  upHeading,
   accuracy,
   targetName,
   onCancel,
@@ -7444,6 +7518,8 @@ function ProximityGuide({
   dN: number // 北方向の差(m)
   dE: number // 東方向の差(m)
   dist: number // 距離(m)
+  /** 画面の 上に 合わせる 方位 [deg]。null = 北基準 */
+  upHeading: number | null
   accuracy: number | null
   targetName: string
   onCancel: () => void
@@ -7457,9 +7533,14 @@ function ProximityGuide({
   const U = 100 // SVG 上の表示半径（中心 100,100 → 端 100）
   const viewRadiusM = fine ? 0.1 : 1.0
   const unitsPerM = U / viewRadiusM
-  // 画面座標: 東→右(+x), 北→上(-y)
-  let ex = dE * unitsPerM
-  let ey = -dN * unitsPerM
+  // 画面座標: 北基準は 東→右(+x) / 北→上(-y)。
+  // upHeading が あれば その方位を 画面の 上に 向ける (ヘディングアップ)。
+  // 世界を -upHeading だけ 回すのと 同じ。
+  const upRad = ((upHeading ?? 0) * Math.PI) / 180
+  const fwdM = dN * Math.cos(upRad) + dE * Math.sin(upRad) // 画面の 上 向き 成分
+  const rightM = -dN * Math.sin(upRad) + dE * Math.cos(upRad) // 画面の 右 向き 成分
+  let ex = rightM * unitsPerM
+  let ey = -fwdM * unitsPerM
   const r = Math.hypot(ex, ey)
   if (r > U && r > 0) {
     ex = (ex / r) * U
@@ -7486,6 +7567,9 @@ function ProximityGuide({
         <div className="text-sm min-w-0 text-slate-200">
           <span className="text-slate-400">近接モード</span>
           <span className="ml-2 font-bold truncate">{targetName}</span>
+          <span className="ml-2 text-[10px] text-slate-400">
+            {upHeading != null ? '進行↑' : 'N↑'}
+          </span>
         </div>
         <button
           onClick={onCancel}
@@ -7502,12 +7586,23 @@ function ProximityGuide({
           className="h-full"
           style={{ aspectRatio: '1 / 1', maxWidth: '100%', maxHeight: '100%' }}
         >
-          {/* 十字 + 北 */}
+          {/* 十字。ヘディングアップでは 上が 進行方向、北基準では 上が 北 */}
           <line x1={100} y1={2} x2={100} y2={198} stroke="#334155" strokeWidth={0.6} />
           <line x1={2} y1={100} x2={198} y2={100} stroke="#334155" strokeWidth={0.6} />
-          <text x={100} y={9} fill="#94a3b8" fontSize={6} textAnchor="middle">
+          {/* 北の 向き。回しても どちらが 北か 分かるように 外周に 出す */}
+          <text
+            x={100 - Math.sin(upRad) * (U - 6)}
+            y={100 - Math.cos(upRad) * (U - 6) + 2}
+            fill="#94a3b8"
+            fontSize={6}
+            textAnchor="middle"
+          >
             N
           </text>
+          {/* 進行方向基準のときだけ、上が 自分の 向きである ことを 示す */}
+          {upHeading != null && (
+            <polygon points="100,2 96,9 104,9" fill="#38bdf8" />
+          )}
           {/* 距離リング（最外＝1m/10cm を太く強調 / 内側＝50cm/5cm も視認できる太さに） */}
           {rings.map((ring, idx) => {
             const rr = ring.rM * unitsPerM

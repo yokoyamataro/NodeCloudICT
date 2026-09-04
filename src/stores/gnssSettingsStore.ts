@@ -11,6 +11,7 @@ const KEY_AVG_SECONDS = 'rtk:avgSeconds'
 const KEY_SOUND_ENABLED = 'rtk:soundEnabled'
 const KEY_ANTENNA_HEIGHT = 'rtk:antennaHeight'
 const KEY_USE_GEOID = 'rtk:useGeoid'
+const KEY_HEADING_UP = 'rtk:headingUp'
 
 function loadNumber(key: string, fallback: number, min?: number, max?: number): number {
   if (typeof localStorage === 'undefined') return fallback
@@ -47,11 +48,18 @@ interface GnssSettingsState {
   antennaHeight: number
   /** ジオイド補正の 有効化 (JPGEO2024)。標高 = 楕円体高 − N − アンテナ高 */
   useGeoidCorrection: boolean
+  /**
+   * 測設の 方位表示の 基準。
+   *   false … 北基準 (ノースアップ)。矢印は 真北からの 方位角
+   *   true  … 進行方向基準 (ヘディングアップ)。矢印は 自分の 向きからの 相対角
+   */
+  headingUp: boolean
 
   setAvgSeconds: (v: number) => void
   setSoundEnabled: (v: boolean) => void
   setAntennaHeight: (v: number) => void
   setUseGeoidCorrection: (v: boolean) => void
+  setHeadingUp: (v: boolean) => void
 }
 
 export const useGnssSettingsStore = create<GnssSettingsState>((set) => ({
@@ -60,6 +68,8 @@ export const useGnssSettingsStore = create<GnssSettingsState>((set) => ({
   soundEnabled: loadBool(KEY_SOUND_ENABLED, false),
   antennaHeight: loadNumber(KEY_ANTENNA_HEIGHT, 2.0),
   useGeoidCorrection: loadBool(KEY_USE_GEOID, true),
+  // 既定 OFF (従来どおり 北基準)
+  headingUp: loadBool(KEY_HEADING_UP, false),
 
   setAvgSeconds: (v) => {
     const clamped = Math.max(1, Math.min(10, Math.round(v)))
@@ -78,5 +88,9 @@ export const useGnssSettingsStore = create<GnssSettingsState>((set) => ({
   setUseGeoidCorrection: (v) => {
     saveLocalStorage(KEY_USE_GEOID, v ? '1' : '0')
     set({ useGeoidCorrection: v })
+  },
+  setHeadingUp: (v) => {
+    saveLocalStorage(KEY_HEADING_UP, v ? '1' : '0')
+    set({ headingUp: v })
   },
 }))

@@ -511,6 +511,8 @@ function GnssSettingsSection() {
     setAntennaHeight,
     useGeoidCorrection,
     setUseGeoidCorrection,
+    headingUp,
+    setHeadingUp,
   } = useGnssSettingsStore()
 
   return (
@@ -564,6 +566,21 @@ function GnssSettingsSection() {
         />
         <span>ジオイド補正 (JPGEO2024)</span>
       </label>
+
+      {/* 方位表示の 基準 (測設画面の 矢印 / 近接モードの レーダー) */}
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={headingUp}
+          onChange={(e) => setHeadingUp(e.target.checked)}
+        />
+        <span>方位を 進行方向基準で 表示</span>
+      </label>
+      <div className="text-[10px] text-slate-500 -mt-2 pl-6">
+        OFF = 北が 上。ON = 自分の 向きが 上 (歩行中は GNSS の 進行方向、静止中は
+        端末の コンパス)。静止中の 向きには 方位センサーの 許可が 要るので、
+        測設画面の 「進行↑」ボタンから ON に すると 確実です。
+      </div>
     </div>
   )
 }
