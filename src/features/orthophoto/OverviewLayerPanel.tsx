@@ -12,7 +12,16 @@
 // 描画の設定 (色 / 線種 / 線幅) も ここに置く。
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ChevronDown, ChevronUp, Eye, EyeOff, Layers, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import {
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  Eye,
+  EyeOff,
+  Layers,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from 'lucide-react'
 import {
   DEFAULT_LAYERS,
   FRAME_LAYER,
@@ -75,12 +84,18 @@ const LINE_STYLE_DASH: Record<LineStyle, string | undefined> = {
   dotted: '0.1,3',
 }
 
-/** 組み込み要素 (測点 / 地番 / …) 1 つ分 */
+/**
+ * 組み込み要素 (測点 / 地番 / …) 1 つ分。
+ * children が あれば 「グループ (フォルダ)」として 描画され、展開/折りたたみ 可。
+ * グループ の on/set は 子 要素 全体 の on/off に 使う (親 チェック で 一括切替)。
+ */
 export interface ElementRow {
   key: string
   label: string
   on: boolean
   set: (v: boolean) => void
+  /** サブ 項目。 undefined / 空 なら 通常 の 葉 (リーフ) として 描画。 */
+  children?: ElementRow[]
 }
 
 /** 一覧の 1 行。組み込み要素か、ペイントのレイヤか */
@@ -95,6 +110,7 @@ export const elementRowId = (key: string) => `${ELEMENT_PREFIX}${key}`
 const ORDER_KEY = (farmId: string) => `overview:layerOrder:${farmId}`
 const HIDDEN_KEY = (farmId: string) => `overview:layerHidden:${farmId}`
 const OPEN_KEY = 'overview:layerPanelOpen'
+const EXPANDED_KEY = (farmId: string) => `overview:groupsExpanded:${farmId}`
 
 function readList(key: string): string[] {
   try {
@@ -190,7 +206,7 @@ export function useLayerOrder(
 interface Props {
   /** 一覧に出す ID の並び (上ほど手前)。組み込み要素は el: 付き */
   ids: string[]
-  /** 組み込み要素の定義。key で引く */
+  /** 組み込み要素の定義。key で引く。 children を 持つ 要素は フォルダ表示 */
   elements: ElementRow[]
   /** 非表示にしているペイントのレイヤ */
   hiddenLayers: string[]
@@ -201,6 +217,8 @@ interface Props {
   onSelectLayer: (layer: string) => void
   /** 一覧に無い名前を打って レイヤを増やす */
   onAddLayer?: (layer: string) => void
+  /** グループ の 展開状態 を 工区 単位 で localStorage に 保存 する ため の キー */
+  farmId?: string | null
 
   // ---- これから描くものに付く 共通属性 (元はツールバーの右端にあった) ----
   color: string
@@ -227,6 +245,7 @@ export function OverviewLayerPanel({
   currentLayer,
   onSelectLayer,
   onAddLayer,
+  farmId,
   color,
   onChangeColor,
   lineStyle,
@@ -250,6 +269,29 @@ export function OverviewLayerPanel({
         return el ? { kind: 'element', id, element: el } : { kind: 'layer', id, layer: id }
       }),
     [ids, elementByKey],
+  )
+
+  // グループ の 展開状態 (工区 単位 で 永続化)。 未収録 の キー は デフォルト 展開扱い。
+  const expandedStorageKey = farmId ? EXPANDED_KEY(farmId) : null
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    if (!expandedStorageKey) return new Set()
+    return new Set(readList(expandedStorageKey))
+  })
+  useEffect(() => {
+    if (!expandedStorageKey) return
+    setExpanded(new Set(readList(expandedStorageKey)))
+  }, [expandedStorageKey])
+  const toggleExpanded = useCallback(
+    (id: string) => {
+      setExpanded((prev) => {
+        const next = new Set(prev)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        if (expandedStorageKey) writeList(expandedStorageKey, Array.from(next))
+        return next
+      })
+    },
+    [expandedStorageKey],
   )
   const [open, setOpen] = useState<boolean>(() => {
     try {
@@ -414,77 +456,110 @@ export function OverviewLayerPanel({
         </div>
         )}
 
-        {/* 地図に出るものの一覧。組み込み要素と ペイントのレイヤが 混ざる */}
+        {/* 地図に出るものの一覧。組み込み要素と ペイントのレイヤが 混ざる。
+            組み込み要素 で children が あれば フォルダ (グループ) 表示 で 展開/折りたたみ 可 */}
         <div className="p-2">
           <div className="text-[10px] text-slate-500 mb-1">レイヤ (上ほど手前に描画)</div>
           {rows.map((row, i) => {
             const isElement = row.kind === 'element'
             const el = isElement ? row.element : null
+            const isGroup = isElement && (el?.children?.length ?? 0) > 0
             const visible = isElement ? (el?.on ?? true) : !hiddenLayers.includes(row.id)
             const isCurrent = !isElement && row.id === currentLayer
             const label = isElement ? (el?.label ?? row.id) : row.id
+            const groupExpanded = isGroup ? expanded.has(row.id) : false
+
             return (
-              <div
-                key={row.id}
-                className={`flex items-center gap-1 px-1 py-1 rounded ${
-                  isCurrent ? 'bg-blue-50' : 'hover:bg-slate-50'
-                }`}
-              >
-                <button
-                  onClick={() =>
-                    isElement ? el?.set(!visible) : onToggleLayer(row.id)
-                  }
-                  className={`p-0.5 rounded ${visible ? 'text-slate-600' : 'text-slate-300'}`}
-                  title={visible ? '隠す' : '表示する'}
+              <div key={row.id}>
+                <div
+                  className={`flex items-center gap-1 px-1 py-1 rounded ${
+                    isCurrent ? 'bg-blue-50' : 'hover:bg-slate-50'
+                  }`}
                 >
-                  {visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
-                </button>
-                {isElement ? (
-                  <span
-                    className={`flex-1 text-xs truncate text-slate-500 ${
-                      visible ? '' : 'line-through opacity-60'
-                    }`}
-                    title="地図の組み込み要素"
-                  >
-                    {label}
-                  </span>
-                ) : (
+                  {isGroup ? (
+                    <button
+                      onClick={() => toggleExpanded(row.id)}
+                      className="p-0.5 rounded text-slate-500 hover:bg-slate-100"
+                      title={groupExpanded ? '折りたたむ' : '展開する'}
+                    >
+                      {groupExpanded ? (
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      ) : (
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  ) : (
+                    <span className="w-[18px]" />
+                  )}
                   <button
-                    onClick={() => onSelectLayer(row.id)}
-                    className={`flex-1 text-left text-xs truncate ${
-                      isCurrent ? 'text-blue-700 font-semibold' : 'text-slate-700'
-                    } ${visible ? '' : 'line-through opacity-60'}`}
-                    title={
-                      selectedCount > 0
-                        ? `クリックすると、選択中の ${selectedCount} 個をこのレイヤへ移します`
-                        : isCurrent
-                          ? 'これから描くレイヤ'
-                          : 'クリックすると、これから描くレイヤになります'
+                    onClick={() =>
+                      isElement ? el?.set(!visible) : onToggleLayer(row.id)
                     }
+                    className={`p-0.5 rounded ${visible ? 'text-slate-600' : 'text-slate-300'}`}
+                    title={visible ? '隠す' : '表示する'}
                   >
-                    {label}
+                    {visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
                   </button>
+                  {isElement ? (
+                    <span
+                      className={`flex-1 text-xs truncate ${
+                        isGroup ? 'text-slate-700 font-medium' : 'text-slate-500'
+                      } ${visible ? '' : 'line-through opacity-60'}`}
+                      title={isGroup ? 'グループ (クリックで 展開)' : '地図の組み込み要素'}
+                      onClick={isGroup ? () => toggleExpanded(row.id) : undefined}
+                      style={isGroup ? { cursor: 'pointer' } : undefined}
+                    >
+                      {label}
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => onSelectLayer(row.id)}
+                      className={`flex-1 text-left text-xs truncate ${
+                        isCurrent ? 'text-blue-700 font-semibold' : 'text-slate-700'
+                      } ${visible ? '' : 'line-through opacity-60'}`}
+                      title={
+                        selectedCount > 0
+                          ? `クリックすると、選択中の ${selectedCount} 個をこのレイヤへ移します`
+                          : isCurrent
+                            ? 'これから描くレイヤ'
+                            : 'クリックすると、これから描くレイヤになります'
+                      }
+                    >
+                      {label}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => onMove(row.id, -1)}
+                    disabled={i === 0}
+                    className="p-0.5 rounded text-slate-500 hover:bg-slate-100 disabled:opacity-25"
+                    title="1 つ手前へ"
+                  >
+                    <ChevronUp className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={() => onMove(row.id, 1)}
+                    disabled={i === rows.length - 1}
+                    className="p-0.5 rounded text-slate-500 hover:bg-slate-100 disabled:opacity-25"
+                    title="1 つ奥へ"
+                  >
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                {/* ネストした 子要素 (再帰的 に フォルダ を 開ける) */}
+                {isGroup && groupExpanded && el?.children && (
+                  <NestedElementList
+                    depth={1}
+                    items={el.children}
+                    expanded={expanded}
+                    onToggleExpanded={toggleExpanded}
+                    parentId={row.id}
+                  />
                 )}
-                <button
-                  onClick={() => onMove(row.id, -1)}
-                  disabled={i === 0}
-                  className="p-0.5 rounded text-slate-500 hover:bg-slate-100 disabled:opacity-25"
-                  title="1 つ手前へ"
-                >
-                  <ChevronUp className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  onClick={() => onMove(row.id, 1)}
-                  disabled={i === rows.length - 1}
-                  className="p-0.5 rounded text-slate-500 hover:bg-slate-100 disabled:opacity-25"
-                  title="1 つ奥へ"
-                >
-                  <ChevronDown className="h-3.5 w-3.5" />
-                </button>
               </div>
             )
           })}
 
+          {/* NestedElementList は 上部 で 使用。 定義 は 下 に。 */}
           {onAddLayer && (
             <form
               className="flex items-center gap-1 mt-1"
@@ -514,6 +589,84 @@ export function OverviewLayerPanel({
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * ネスト された 子要素 の 再帰 描画。
+ * depth に 応じて 左 インデント + 各 行は 目 アイコン + ラベル + (子 が あれば 展開ボタン)。
+ * 並び替え (ChevronUp/Down) は トップレベル のみ — 子要素 は 定義順 で 固定。
+ */
+function NestedElementList({
+  depth,
+  items,
+  expanded,
+  onToggleExpanded,
+  parentId,
+}: {
+  depth: number
+  items: ElementRow[]
+  expanded: Set<string>
+  onToggleExpanded: (id: string) => void
+  parentId: string
+}) {
+  return (
+    <div className="border-l border-slate-200 ml-2">
+      {items.map((child) => {
+        const childId = `${parentId}/${child.key}`
+        const isGroup = (child.children?.length ?? 0) > 0
+        const groupExpanded = isGroup ? expanded.has(childId) : false
+        return (
+          <div key={childId}>
+            <div
+              className="flex items-center gap-1 px-1 py-0.5 rounded hover:bg-slate-50"
+              style={{ paddingLeft: `${depth * 8}px` }}
+            >
+              {isGroup ? (
+                <button
+                  onClick={() => onToggleExpanded(childId)}
+                  className="p-0.5 rounded text-slate-500 hover:bg-slate-100"
+                  title={groupExpanded ? '折りたたむ' : '展開する'}
+                >
+                  {groupExpanded ? (
+                    <ChevronDown className="h-3 w-3" />
+                  ) : (
+                    <ChevronRight className="h-3 w-3" />
+                  )}
+                </button>
+              ) : (
+                <span className="w-[16px]" />
+              )}
+              <button
+                onClick={() => child.set(!child.on)}
+                className={`p-0.5 rounded ${child.on ? 'text-slate-600' : 'text-slate-300'}`}
+                title={child.on ? '隠す' : '表示する'}
+              >
+                {child.on ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+              </button>
+              <span
+                className={`flex-1 text-[11px] truncate ${
+                  isGroup ? 'text-slate-700 font-medium' : 'text-slate-500'
+                } ${child.on ? '' : 'line-through opacity-60'}`}
+                onClick={isGroup ? () => onToggleExpanded(childId) : undefined}
+                style={isGroup ? { cursor: 'pointer' } : undefined}
+              >
+                {child.label}
+              </span>
+            </div>
+            {isGroup && groupExpanded && child.children && (
+              <NestedElementList
+                depth={depth + 1}
+                items={child.children}
+                expanded={expanded}
+                onToggleExpanded={onToggleExpanded}
+                parentId={childId}
+              />
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }

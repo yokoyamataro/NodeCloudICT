@@ -10,7 +10,7 @@
 //
 // オルソ画像のアップロードは 日常的に押すものではないので 設定へ移した
 // (OrthophotoUploadSection)。ここに残しているのは 登録済み一覧の 確認だけ。
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Loader2,
   X,
@@ -21,6 +21,7 @@ import {
 import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
+import { COORDINATE_TYPE_NAMES, type CoordinateType } from '@/lib/coordinates'
 import { useOpenChannelStore } from '@/stores/openChannelStore'
 import {
   buildSegments,
@@ -320,6 +321,52 @@ export function OrthophotoPage() {
   useEffect(() => writeVis('pipes', showPipesLayer), [showPipesLayer])
   useEffect(() => writeVis('channels', showChannelsLayer), [showChannelsLayer])
 
+  // グループ の 子項目 (線形物 の 各 channel × 4 種、測点 の 各 点種) の 非表示 集合。
+  // 工区 単位 で localStorage 永続化。 キー は 「ch:<channelId>:<type>」「coord:<type>」等。
+  const subHiddenKey = currentFarm
+    ? `overview:subHidden:${currentFarm.id}`
+    : 'overview:subHidden:none'
+  const [subHidden, setSubHidden] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(subHiddenKey)
+      const parsed = raw ? (JSON.parse(raw) as unknown) : null
+      if (Array.isArray(parsed)) return new Set(parsed.filter((v): v is string => typeof v === 'string'))
+    } catch {
+      /* ignore */
+    }
+    return new Set()
+  })
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(subHiddenKey)
+      const parsed = raw ? (JSON.parse(raw) as unknown) : null
+      setSubHidden(
+        new Set(
+          Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [],
+        ),
+      )
+    } catch {
+      setSubHidden(new Set())
+    }
+  }, [subHiddenKey])
+  const setSubVis = useCallback(
+    (key: string, on: boolean) => {
+      setSubHidden((prev) => {
+        const next = new Set(prev)
+        if (on) next.delete(key)
+        else next.add(key)
+        try {
+          localStorage.setItem(subHiddenKey, JSON.stringify(Array.from(next)))
+        } catch {
+          /* ignore */
+        }
+        return next
+      })
+    },
+    [subHiddenKey],
+  )
+  const subOn = useCallback((key: string) => !subHidden.has(key), [subHidden])
+
   // 暗渠 (pipes) を読み取り専用オーバーレイとして表示
   const fetchPipes = useUnderdrainStore((s) => s.fetchPipes)
   const pipes = useUnderdrainStore((s) => s.pipes)
@@ -375,9 +422,10 @@ export function OrthophotoPage() {
     if (currentFarm) void fetchOpenChannels(currentFarm.id)
   }, [currentFarm, fetchOpenChannels])
   const channelOverlay = useMemo(() => {
-    type Line = { id: string; positions: [number, number][]; name: string }
+    type Line = { id: string; channelId: string; positions: [number, number][]; name: string }
     type Stake = {
       key: string
+      channelId: string
       lat: number
       lng: number
       offset: number
@@ -385,18 +433,32 @@ export function OrthophotoPage() {
     }
     type Vertex = {
       key: string
+      channelId: string
       lat: number
       lng: number
       label: 'BP' | 'IP' | 'EP'
       channelName: string
     }
+    type Station = {
+      key: string
+      channelId: string
+      lat: number
+      lng: number
+      label: string
+    }
     if (projectZone == null) {
-      return { lines: [] as Line[], stakes: [] as Stake[], vertices: [] as Vertex[] }
+      return {
+        lines: [] as Line[],
+        stakes: [] as Stake[],
+        vertices: [] as Vertex[],
+        stations: [] as Station[],
+      }
     }
     const conv = new CoordinateConverter(projectZone)
     const lines: Line[] = []
     const stakes: Stake[] = []
     const vertices: Vertex[] = []
+    const stations: Station[] = []
     for (const ch of openChannels) {
       const verts: AlignmentVertex[] = []
       const total = ch.alignmentPoints.length
@@ -419,6 +481,7 @@ export function OrthophotoPage() {
           if (Number.isFinite(lat) && Number.isFinite(lng)) {
             vertices.push({
               key: `oc-v-${ch.id}-${i}`,
+              channelId: ch.id,
               lat,
               lng,
               label,
@@ -440,7 +503,7 @@ export function OrthophotoPage() {
           /* skip */
         }
       }
-      if (positions.length >= 2) lines.push({ id: ch.id, positions, name: ch.name })
+      if (positions.length >= 2) lines.push({ id: ch.id, channelId: ch.id, positions, name: ch.name })
       const segments = buildSegments(verts)
       const sign = ch.sideOrientation === 'reverse' ? -1 : 1
       for (const w of ch.widthStakes) {
@@ -454,6 +517,7 @@ export function OrthophotoPage() {
           if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
           stakes.push({
             key: `oc-w-${w.id}`,
+            channelId: ch.id,
             lat,
             lng,
             offset: w.offset,
@@ -463,25 +527,132 @@ export function OrthophotoPage() {
           /* skip */
         }
       }
+      // 中間点 (stations): 中心線 上 の 距離 で 定義 → 世界座標 → LatLng
+      for (const st of ch.stations ?? []) {
+        const cp = pointAtDistance(segments, st.distance)
+        if (!cp) continue
+        try {
+          const { lat, lng } = conv.toLatLng(cp.x, cp.y)
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
+          stations.push({
+            key: `oc-s-${st.id}`,
+            channelId: ch.id,
+            lat,
+            lng,
+            label: st.label,
+          })
+        } catch {
+          /* skip */
+        }
+      }
     }
-    return { lines, stakes, vertices }
+    return { lines, stakes, vertices, stations }
   }, [openChannels, coordinates, projectZone])
 
-  // 地図の組み込み要素。左パネルの一覧に ペイントのレイヤと 並べて出す
+  // 線形物 の 子項目: 各 channel × 4 タイプ (中心線 / 幅杭 / 線形点 / 中間点)。
+  // channel 単位 の 親トグル も サブキー ch:<id> で 管理 する。
+  const channelSubRows = useMemo<ElementRow[]>(() => {
+    return openChannels.map((ch) => ({
+      key: `channel-${ch.id}`,
+      label: ch.name,
+      on: subOn(`ch:${ch.id}`),
+      set: (v: boolean) => setSubVis(`ch:${ch.id}`, v),
+      children: [
+        {
+          key: 'center',
+          label: '中心線',
+          on: subOn(`ch:${ch.id}:center`),
+          set: (v: boolean) => setSubVis(`ch:${ch.id}:center`, v),
+        },
+        {
+          key: 'stakes',
+          label: '幅杭',
+          on: subOn(`ch:${ch.id}:stakes`),
+          set: (v: boolean) => setSubVis(`ch:${ch.id}:stakes`, v),
+        },
+        {
+          key: 'vertices',
+          label: '線形点 (BP/IP/EP)',
+          on: subOn(`ch:${ch.id}:vertices`),
+          set: (v: boolean) => setSubVis(`ch:${ch.id}:vertices`, v),
+        },
+        {
+          key: 'stations',
+          label: '中間点',
+          on: subOn(`ch:${ch.id}:stations`),
+          set: (v: boolean) => setSubVis(`ch:${ch.id}:stations`, v),
+        },
+      ],
+    }))
+  }, [openChannels, subOn, setSubVis])
+
+  // 測点 の 子項目: 現在 使用中 の 点種 (control / boundary / …) 単位。
+  const coordTypesInUse = useMemo(() => {
+    const seen = new Set<string>()
+    for (const c of coordinates) if (c.type) seen.add(c.type)
+    return Array.from(seen).sort()
+  }, [coordinates])
+  const coordSubRows = useMemo<ElementRow[]>(() => {
+    return coordTypesInUse.map((t) => ({
+      key: `type-${t}`,
+      label: COORDINATE_TYPE_NAMES[t as CoordinateType] ?? t,
+      on: subOn(`coord:${t}`),
+      set: (v: boolean) => setSubVis(`coord:${t}`, v),
+    }))
+  }, [coordTypesInUse, subOn, setSubVis])
+
+  // 地図の組み込み要素。左パネルの一覧に ペイントのレイヤと 並べて出す。
+  // 測点 / 線形物 は 子項目 (children) を 持つ グループ として 描画される。
   const elementRows = useMemo<ElementRow[]>(
     () => [
-      { key: 'points', label: '測点', on: showPointsLayer, set: setShowPointsLayer },
+      {
+        key: 'points',
+        label: '測点',
+        on: showPointsLayer,
+        set: setShowPointsLayer,
+        children: coordSubRows.length > 0 ? coordSubRows : undefined,
+      },
       { key: 'parcels', label: '地番 (区域)', on: showParcelsLayer, set: setShowParcelsLayer },
       { key: 'pipes', label: '暗渠配線', on: showPipesLayer, set: setShowPipesLayer },
-      { key: 'channels', label: '線形物 (中心線・幅杭・BP/IP/EP)', on: showChannelsLayer, set: setShowChannelsLayer },
+      {
+        key: 'channels',
+        label: '線形物',
+        on: showChannelsLayer,
+        set: setShowChannelsLayer,
+        children: channelSubRows.length > 0 ? channelSubRows : undefined,
+      },
       { key: 'cameras', label: '写真', on: showCamerasLayer, set: setShowCamerasLayer },
       { key: 'memos', label: 'メモ', on: showMemosLayer, set: setShowMemosLayer },
     ],
-    [showPointsLayer, showParcelsLayer, showPipesLayer, showChannelsLayer, showCamerasLayer, showMemosLayer],
+    [
+      showPointsLayer,
+      showParcelsLayer,
+      showPipesLayer,
+      showChannelsLayer,
+      showCamerasLayer,
+      showMemosLayer,
+      coordSubRows,
+      channelSubRows,
+    ],
   )
 
   // displayCoordinateIds が Set/undefined の切替で参照が変わらないように memo 化
   const emptyCoordSet = useMemo(() => new Set<string>(), [])
+  // 測点 (points) の 実描画対象 ID。
+  //   showPointsLayer=false → 空 Set (全非表示)
+  //   全 点種 が 表示 → undefined (全表示: CoordinateMap 側で filter しない)
+  //   一部 点種 のみ 表示 → 該当点種 の ID Set
+  const visibleCoordIds = useMemo<Set<string> | undefined>(() => {
+    if (!showPointsLayer) return emptyCoordSet
+    const hiddenTypes = new Set<string>()
+    for (const t of coordTypesInUse) if (subHidden.has(`coord:${t}`)) hiddenTypes.add(t)
+    if (hiddenTypes.size === 0) return undefined
+    const s = new Set<string>()
+    for (const c of coordinates) {
+      if (c.type && !hiddenTypes.has(c.type)) s.add(c.id)
+    }
+    return s
+  }, [showPointsLayer, emptyCoordSet, coordTypesInUse, subHidden, coordinates])
 
   // 区域ポリゴン（全工種を表示）
   const workAreaPolygons = useMemo<ExternalPolygon[]>(() => {
@@ -717,6 +888,7 @@ export function OrthophotoPage() {
       {/* 左パネル (表示要素 + レイヤ) と 地図の横並び */}
       <div className="flex-1 flex min-h-0">
       <OverviewLayerPanel
+        farmId={currentFarm.id}
         ids={panelIds}
         elements={elementRows}
         hiddenLayers={hiddenLayers}
@@ -770,8 +942,9 @@ export function OrthophotoPage() {
           photoGetSignedUrl={getSignedUrl}
           onPhotoEdit={handleFarmPhotoEdit}
           onPhotoDelete={handleFarmPhotoDelete}
-          // 点種を非表示: 空 Set を渡して全マーカーを除外
-          displayCoordinateIds={showPointsLayer ? undefined : emptyCoordSet}
+          // 点種を非表示: 空 Set を渡して全マーカーを除外。
+          // 子項目 (点種) で 一部 非表示 なら 表示対象 の 点種 に 絞った Set を 渡す。
+          displayCoordinateIds={visibleCoordIds}
         >
           {/* 作図要素を非表示にしても計測ツールは使えるように、コンポーネントは常時マウントし
               既存の作図要素の描画だけを hideDrawn で切り替える */}
@@ -846,66 +1019,94 @@ export function OrthophotoPage() {
               </CircleMarker>
             ))}
           </Pane>
-          {/* 線形物 (open channel): 中心線 + 幅杭 + BP/IP/EP マーカー。
+          {/* 線形物 (open channel): 中心線 + 幅杭 + BP/IP/EP + 中間点。
+              各要素 は レイヤパネル で channel × タイプ 単位 に 表示切替。
               重ね順は レイヤ一覧 で 変更可 (channelsZIndex) */}
           <Pane name="ov-channels" style={{ zIndex: channelsZIndex }}>
             {showChannelsLayer &&
-              channelOverlay.lines.map((line) => (
-                <LeafletPolyline
-                  key={`oc-line-${line.id}`}
-                  positions={line.positions}
-                  pathOptions={{ color: '#6366f1', weight: 3, opacity: 0.9 }}
-                >
-                  <Tooltip sticky direction="top" opacity={0.9}>
-                    {line.name}
-                  </Tooltip>
-                </LeafletPolyline>
-              ))}
+              channelOverlay.lines
+                .filter((l) => subOn(`ch:${l.channelId}`) && subOn(`ch:${l.channelId}:center`))
+                .map((line) => (
+                  <LeafletPolyline
+                    key={`oc-line-${line.id}`}
+                    positions={line.positions}
+                    pathOptions={{ color: '#6366f1', weight: 3, opacity: 0.9 }}
+                  >
+                    <Tooltip sticky direction="top" opacity={0.9}>
+                      {line.name}
+                    </Tooltip>
+                  </LeafletPolyline>
+                ))}
             {showChannelsLayer &&
-              channelOverlay.stakes.map((s) => (
-                <CircleMarker
-                  key={s.key}
-                  center={[s.lat, s.lng]}
-                  radius={4}
-                  pathOptions={{
-                    color: '#f59e0b',
-                    weight: 1.5,
-                    fillColor: '#fbbf24',
-                    fillOpacity: 0.9,
-                  }}
-                >
-                  <Tooltip direction="top" offset={[0, -4]} opacity={0.9}>
-                    <span className="text-[10px] font-mono">
-                      幅杭 offset={s.offset >= 0 ? '+' : ''}
-                      {s.offset.toFixed(2)}m{s.note ? ` (${s.note})` : ''}
-                    </span>
-                  </Tooltip>
-                </CircleMarker>
-              ))}
-            {showChannelsLayer &&
-              channelOverlay.vertices.map((v) => {
-                const color =
-                  v.label === 'BP' ? '#059669' : v.label === 'EP' ? '#dc2626' : '#7c3aed'
-                return (
+              channelOverlay.stakes
+                .filter((s) => subOn(`ch:${s.channelId}`) && subOn(`ch:${s.channelId}:stakes`))
+                .map((s) => (
                   <CircleMarker
-                    key={v.key}
-                    center={[v.lat, v.lng]}
-                    radius={6}
+                    key={s.key}
+                    center={[s.lat, s.lng]}
+                    radius={4}
                     pathOptions={{
-                      color: '#ffffff',
-                      weight: 2,
-                      fillColor: color,
-                      fillOpacity: 1,
+                      color: '#f59e0b',
+                      weight: 1.5,
+                      fillColor: '#fbbf24',
+                      fillOpacity: 0.9,
                     }}
                   >
-                    <Tooltip direction="top" offset={[0, -6]} opacity={0.9}>
-                      <span className="text-[11px] font-mono font-semibold" style={{ color }}>
-                        {v.channelName} — {v.label}
+                    <Tooltip direction="top" offset={[0, -4]} opacity={0.9}>
+                      <span className="text-[10px] font-mono">
+                        幅杭 offset={s.offset >= 0 ? '+' : ''}
+                        {s.offset.toFixed(2)}m{s.note ? ` (${s.note})` : ''}
                       </span>
                     </Tooltip>
                   </CircleMarker>
-                )
-              })}
+                ))}
+            {showChannelsLayer &&
+              channelOverlay.vertices
+                .filter((v) => subOn(`ch:${v.channelId}`) && subOn(`ch:${v.channelId}:vertices`))
+                .map((v) => {
+                  const color =
+                    v.label === 'BP' ? '#059669' : v.label === 'EP' ? '#dc2626' : '#7c3aed'
+                  // 座標 マーカー と 同位置 に 塗り丸 を 置くと 隠れる ので、
+                  // 塗り無し (ring) + 太めのストローク で 座標ドット を 囲む形 に する。
+                  return (
+                    <CircleMarker
+                      key={v.key}
+                      center={[v.lat, v.lng]}
+                      radius={9}
+                      pathOptions={{
+                        color,
+                        weight: 2.5,
+                        fillOpacity: 0,
+                      }}
+                    >
+                      <Tooltip direction="top" offset={[0, -9]} opacity={0.9}>
+                        <span className="text-[11px] font-mono font-semibold" style={{ color }}>
+                          {v.channelName} — {v.label}
+                        </span>
+                      </Tooltip>
+                    </CircleMarker>
+                  )
+                })}
+            {showChannelsLayer &&
+              channelOverlay.stations
+                .filter((s) => subOn(`ch:${s.channelId}`) && subOn(`ch:${s.channelId}:stations`))
+                .map((s) => (
+                  <CircleMarker
+                    key={s.key}
+                    center={[s.lat, s.lng]}
+                    radius={3}
+                    pathOptions={{
+                      color: '#4f46e5',
+                      weight: 1,
+                      fillColor: '#818cf8',
+                      fillOpacity: 0.9,
+                    }}
+                  >
+                    <Tooltip direction="top" offset={[0, -4]} opacity={0.9}>
+                      <span className="text-[10px] font-mono">{s.label}</span>
+                    </Tooltip>
+                  </CircleMarker>
+                ))}
           </Pane>
         </CoordinateMap>
 
