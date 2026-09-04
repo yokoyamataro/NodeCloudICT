@@ -374,8 +374,12 @@ class DroggerLocationPlugin : Plugin() {
                     emitIfReady()
                 }
                 talker.endsWith("RMC") -> {
+                    // RMC では emit しない。GGA と RMC の 両方で 出すと 1 測位
+                    // あたり 2 回 ブリッジを 越えることになり (5Hz なら 毎秒
+                    // 10 回)、JS 側の 再レンダーが 倍に なる。速度と 方位は
+                    // ここで バッファに 溜めておき、次の GGA の emit に
+                    // 相乗りさせる (遅れは 最大 1/5 秒)。
                     parseRmc(parts)
-                    emitIfReady()
                 }
                 talker.endsWith("GSV") -> parseGsv(talker, parts)
                 talker.endsWith("GSA") -> parseGsa(parts)

@@ -139,8 +139,11 @@ public class DroggerLocationPlugin: CAPPlugin, CAPBridgedPlugin {
             parseGga(parts)
             emitIfReady()
         } else if talker.hasSuffix("RMC") {
+            // RMC では emit しない。GGA と RMC の 両方で 出すと 1 測位あたり
+            // 2 回 ブリッジを 越えることになり (5Hz なら 毎秒 10 回)、JS 側の
+            // 再レンダーが 倍に なる。速度と 方位は ここで バッファに 溜めて
+            // おき、次の GGA の emit に 相乗りさせる (遅れは 最大 1/5 秒)。
             parseRmc(parts)
-            emitIfReady()
         } else if talker.hasSuffix("GST") {
             parseGst(parts)
         } else if talker.hasSuffix("GSV") {

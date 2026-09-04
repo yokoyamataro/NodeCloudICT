@@ -55,7 +55,16 @@ let _initialized = false
 let _handles: PluginListenerHandle[] = []
 let _startPromise: Promise<void> | null = null
 
-export const useDroggerConnection = create<DroggerConnectionState>((set) => ({
+/**
+ * lastUpdateAt を 書き戻す 最小間隔 [ms]。
+ *
+ * 位置イベントは 5 Hz で 来るが、この 1 フィールドを 毎回 更新するだけで
+ * ストアの 中身が 必ず 変わり、購読している バッジが その頻度で 再レンダー
+ * される。鮮度表示は 秒単位 (5 秒で 「停止」判定) なので、1 秒に 1 回で 足りる。
+ */
+const LAST_UPDATE_THROTTLE_MS = 1000
+
+export const useDroggerConnection = create<DroggerConnectionState>((set, get) => ({
   connected: false,
   deviceName: null,
   fixQuality: null,
@@ -73,14 +82,37 @@ export const useDroggerConnection = create<DroggerConnectionState>((set) => ({
     _initialized = true
     _startPromise = (async () => {
       // 1. Listener 登録 (アプリ寿命の 間 生かす)
+      // 位置イベントは 5 Hz。毎回 set() すると 購読側 (バッジ) が その頻度で
+      // 再レンダーされて 画面が 重くなるので、実際に 値が 変わったときだけ 書く。
+      // hdop / satellites / diffAge は 数秒 単位でしか 動かないので、
+      // 定常状態では ほとんど 書き込みが 起きない。
       const locH = await DroggerLocation.addListener('location', (ev: DroggerLocationEvent) => {
+        const cur = get()
+        const diffAge = ev.diffAge ?? null
+        const stationId = ev.stationId ?? null
+        const changed =
+          cur.fixQuality !== ev.fixQuality ||
+          cur.hdop !== ev.hdop ||
+          cur.satellites !== ev.satellites ||
+          cur.diffAge !== diffAge ||
+          cur.stationId !== stationId
+        const now = Date.now()
+        // 鮮度表示用。値が 変わらなくても 「受信が 続いている」ことは
+        // 伝える 必要が あるので、間引いた 上で 更新する
+        const bumpTime =
+          cur.lastUpdateAt == null || now - cur.lastUpdateAt >= LAST_UPDATE_THROTTLE_MS
+        if (!changed && !bumpTime) return
         set({
-          fixQuality: ev.fixQuality,
-          hdop: ev.hdop,
-          satellites: ev.satellites,
-          diffAge: ev.diffAge ?? null,
-          stationId: ev.stationId ?? null,
-          lastUpdateAt: Date.now(),
+          ...(changed
+            ? {
+                fixQuality: ev.fixQuality,
+                hdop: ev.hdop,
+                satellites: ev.satellites,
+                diffAge,
+                stationId,
+              }
+            : {}),
+          ...(bumpTime ? { lastUpdateAt: now } : {}),
         })
       })
       const stH = await DroggerLocation.addListener('statusChange', (ev) => {

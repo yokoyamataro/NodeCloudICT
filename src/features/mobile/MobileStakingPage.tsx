@@ -1665,9 +1665,19 @@ export function MobileStakingPage() {
     if (!headingEnabled) return
     if (typeof window === 'undefined') return
 
+    // DeviceOrientation は 端末に よっては 毎秒 60 回 飛んでくる。
+    // そのまま setHeading すると 画面全体が その頻度で 再レンダーされるので、
+    // 1° 単位に 丸めた 上で 100ms に 1 回までに 間引く。
+    // 方位コーンの 表示は これで 十分 滑らかに 見える。
+    let lastAt = 0
     const handler = (e: DeviceOrientationEvent) => {
       const h = extractCompassHeading(e)
-      if (h != null) setHeading(h)
+      if (h == null) return
+      const now = Date.now()
+      if (now - lastAt < 100) return
+      const rounded = Math.round(h)
+      setHeading((prev) => (prev === rounded ? prev : rounded))
+      lastAt = now
     }
 
     // Android: deviceorientationabsolute が真北基準
@@ -1794,7 +1804,10 @@ export function MobileStakingPage() {
             const spd = sample.speed_kmh
             const cog = sample.heading_deg
             if (spd != null && spd >= TRAVEL_HEADING_MOVING_KMH && cog != null) {
-              setTravelHeading(cog)
+              // 1° 単位で 十分。生の値を そのまま 入れると 毎サンプル
+              // 再レンダーに なる
+              const r = Math.round(cog)
+              setTravelHeading((prev) => (prev === r ? prev : r))
               setTravelSource('gnss')
             } else if (spd != null && spd <= TRAVEL_HEADING_STOPPED_KMH) {
               setTravelSource('compass')
@@ -2438,6 +2451,14 @@ export function MobileStakingPage() {
     if (travelSource === 'compass' && heading != null) return heading
     return travelHeading ?? heading
   }, [headingUp, travelSource, heading, travelHeading])
+
+  // 方位コーンの アイコン。render の たびに 新しい DivIcon を 作ると
+  // Leaflet が マーカーの DOM を 毎回 差し替えるので、方位が 変わった
+  // ときだけ 作り直す。
+  const headingIcon = useMemo(
+    () => (heading == null ? null : createHeadingIcon(heading)),
+    [heading],
+  )
 
   // 現在位置を平面直角座標 (X=北, Y=東) に変換
   const currentXY = useMemo(() => {
@@ -5454,10 +5475,10 @@ export function MobileStakingPage() {
                   }}
                 />
               )}
-              {headingEnabled && heading != null && (
+              {headingEnabled && headingIcon != null && (
                 <Marker
                   position={currentPos}
-                  icon={createHeadingIcon(heading)}
+                  icon={headingIcon}
                   interactive={false}
                   keyboard={false}
                 />
