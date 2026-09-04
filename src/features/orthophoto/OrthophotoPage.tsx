@@ -21,6 +21,14 @@ import {
 import { useFarmStore } from '@/stores/farmStore'
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
+import { useOpenChannelStore } from '@/stores/openChannelStore'
+import {
+  buildSegments,
+  pointAtDistance,
+  sampleAlignment,
+  tangentAtDistance,
+  type AlignmentVertex,
+} from '@/lib/openChannel/alignment'
 import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import { Polyline as LeafletPolyline, CircleMarker, Pane, Tooltip } from 'react-leaflet'
@@ -291,6 +299,7 @@ export function OrthophotoPage() {
   const [showCamerasLayer, setShowCamerasLayer] = useState<boolean>(() => readVis('cameras', true))
   const [showMemosLayer, setShowMemosLayer] = useState<boolean>(() => readVis('memos', true))
   const [showPipesLayer, setShowPipesLayer] = useState<boolean>(() => readVis('pipes', true))
+  const [showChannelsLayer, setShowChannelsLayer] = useState<boolean>(() => readVis('channels', true))
 
   // ペイント描画: モード / 色 / 太さ (ツールバーは常時表示なので起動フラグは持たない)
   const [drawingMode, setDrawingMode] = useState<DrawingMode>('off')
@@ -309,6 +318,7 @@ export function OrthophotoPage() {
   useEffect(() => writeVis('cameras', showCamerasLayer), [showCamerasLayer])
   useEffect(() => writeVis('memos', showMemosLayer), [showMemosLayer])
   useEffect(() => writeVis('pipes', showPipesLayer), [showPipesLayer])
+  useEffect(() => writeVis('channels', showChannelsLayer), [showChannelsLayer])
 
   // 暗渠 (pipes) を読み取り専用オーバーレイとして表示
   const fetchPipes = useUnderdrainStore((s) => s.fetchPipes)
@@ -357,16 +367,117 @@ export function OrthophotoPage() {
     return { lines, vertices }
   }, [pipes, projectZone])
 
+  // 線形物 (open channel) を 読み取り専用 オーバーレイ として 表示。
+  // alignmentPoints は 座標 ID 参照 なので coordinates で 解決。
+  const fetchOpenChannels = useOpenChannelStore((s) => s.fetchChannels)
+  const openChannels = useOpenChannelStore((s) => s.channels)
+  useEffect(() => {
+    if (currentFarm) void fetchOpenChannels(currentFarm.id)
+  }, [currentFarm, fetchOpenChannels])
+  const channelOverlay = useMemo(() => {
+    type Line = { id: string; positions: [number, number][]; name: string }
+    type Stake = {
+      key: string
+      lat: number
+      lng: number
+      offset: number
+      note: string | null
+    }
+    type Vertex = {
+      key: string
+      lat: number
+      lng: number
+      label: 'BP' | 'IP' | 'EP'
+      channelName: string
+    }
+    if (projectZone == null) {
+      return { lines: [] as Line[], stakes: [] as Stake[], vertices: [] as Vertex[] }
+    }
+    const conv = new CoordinateConverter(projectZone)
+    const lines: Line[] = []
+    const stakes: Stake[] = []
+    const vertices: Vertex[] = []
+    for (const ch of openChannels) {
+      const verts: AlignmentVertex[] = []
+      const total = ch.alignmentPoints.length
+      for (let i = 0; i < total; i++) {
+        const p = ch.alignmentPoints[i]
+        const c = coordinates.find((cc) => cc.id === p.coordId)
+        if (!c) continue
+        const label: 'BP' | 'IP' | 'EP' =
+          total <= 1 || i === 0 ? 'BP' : i === total - 1 ? 'EP' : 'IP'
+        verts.push({
+          x: c.x,
+          y: c.y,
+          kind: label.toLowerCase() as AlignmentVertex['kind'],
+          radius: p.radius,
+          spiralAIn: p.spiralAIn,
+          spiralAOut: p.spiralAOut,
+        })
+        try {
+          const { lat, lng } = conv.toLatLng(c.x, c.y)
+          if (Number.isFinite(lat) && Number.isFinite(lng)) {
+            vertices.push({
+              key: `oc-v-${ch.id}-${i}`,
+              lat,
+              lng,
+              label,
+              channelName: ch.name,
+            })
+          }
+        } catch {
+          /* skip */
+        }
+      }
+      if (verts.length < 2) continue
+      const sampled = sampleAlignment(verts, 32)
+      const positions: [number, number][] = []
+      for (const s of sampled) {
+        try {
+          const { lat, lng } = conv.toLatLng(s.x, s.y)
+          if (Number.isFinite(lat) && Number.isFinite(lng)) positions.push([lat, lng])
+        } catch {
+          /* skip */
+        }
+      }
+      if (positions.length >= 2) lines.push({ id: ch.id, positions, name: ch.name })
+      const segments = buildSegments(verts)
+      const sign = ch.sideOrientation === 'reverse' ? -1 : 1
+      for (const w of ch.widthStakes) {
+        const cp = pointAtDistance(segments, w.distance)
+        const t = tangentAtDistance(segments, w.distance)
+        if (!cp || !t) continue
+        const px = cp.x - t.y * sign * w.offset
+        const py = cp.y + t.x * sign * w.offset
+        try {
+          const { lat, lng } = conv.toLatLng(px, py)
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
+          stakes.push({
+            key: `oc-w-${w.id}`,
+            lat,
+            lng,
+            offset: w.offset,
+            note: w.note ?? null,
+          })
+        } catch {
+          /* skip */
+        }
+      }
+    }
+    return { lines, stakes, vertices }
+  }, [openChannels, coordinates, projectZone])
+
   // 地図の組み込み要素。左パネルの一覧に ペイントのレイヤと 並べて出す
   const elementRows = useMemo<ElementRow[]>(
     () => [
       { key: 'points', label: '測点', on: showPointsLayer, set: setShowPointsLayer },
       { key: 'parcels', label: '地番 (区域)', on: showParcelsLayer, set: setShowParcelsLayer },
       { key: 'pipes', label: '暗渠配線', on: showPipesLayer, set: setShowPipesLayer },
+      { key: 'channels', label: '線形物 (中心線・幅杭・BP/IP/EP)', on: showChannelsLayer, set: setShowChannelsLayer },
       { key: 'cameras', label: '写真', on: showCamerasLayer, set: setShowCamerasLayer },
       { key: 'memos', label: 'メモ', on: showMemosLayer, set: setShowMemosLayer },
     ],
-    [showPointsLayer, showParcelsLayer, showPipesLayer, showCamerasLayer, showMemosLayer],
+    [showPointsLayer, showParcelsLayer, showPipesLayer, showChannelsLayer, showCamerasLayer, showMemosLayer],
   )
 
   // displayCoordinateIds が Set/undefined の切替で参照が変わらないように memo 化
@@ -467,10 +578,12 @@ export function OrthophotoPage() {
     })
     return out as Partial<Record<'points' | 'parcels' | 'cameras' | 'memos', number>> & {
       pipes?: number
+      channels?: number
     }
   }, [panelIds])
-  // 暗渠は このページで直接描いているので、z 値だけ取り出す
+  // 暗渠 / 線形物 は このページで直接描いているので、z 値だけ取り出す
   const pipesZIndex = elementPanes.pipes ?? 450
+  const channelsZIndex = elementPanes.channels ?? 455
 
   /** ペイントのレイヤごとの重ね順。組み込み要素と 同じ体系で 並べる */
   const layerZIndex = useMemo(() => {
@@ -732,6 +845,67 @@ export function OrthophotoPage() {
                 </Tooltip>
               </CircleMarker>
             ))}
+          </Pane>
+          {/* 線形物 (open channel): 中心線 + 幅杭 + BP/IP/EP マーカー。
+              重ね順は レイヤ一覧 で 変更可 (channelsZIndex) */}
+          <Pane name="ov-channels" style={{ zIndex: channelsZIndex }}>
+            {showChannelsLayer &&
+              channelOverlay.lines.map((line) => (
+                <LeafletPolyline
+                  key={`oc-line-${line.id}`}
+                  positions={line.positions}
+                  pathOptions={{ color: '#6366f1', weight: 3, opacity: 0.9 }}
+                >
+                  <Tooltip sticky direction="top" opacity={0.9}>
+                    {line.name}
+                  </Tooltip>
+                </LeafletPolyline>
+              ))}
+            {showChannelsLayer &&
+              channelOverlay.stakes.map((s) => (
+                <CircleMarker
+                  key={s.key}
+                  center={[s.lat, s.lng]}
+                  radius={4}
+                  pathOptions={{
+                    color: '#f59e0b',
+                    weight: 1.5,
+                    fillColor: '#fbbf24',
+                    fillOpacity: 0.9,
+                  }}
+                >
+                  <Tooltip direction="top" offset={[0, -4]} opacity={0.9}>
+                    <span className="text-[10px] font-mono">
+                      幅杭 offset={s.offset >= 0 ? '+' : ''}
+                      {s.offset.toFixed(2)}m{s.note ? ` (${s.note})` : ''}
+                    </span>
+                  </Tooltip>
+                </CircleMarker>
+              ))}
+            {showChannelsLayer &&
+              channelOverlay.vertices.map((v) => {
+                const color =
+                  v.label === 'BP' ? '#059669' : v.label === 'EP' ? '#dc2626' : '#7c3aed'
+                return (
+                  <CircleMarker
+                    key={v.key}
+                    center={[v.lat, v.lng]}
+                    radius={6}
+                    pathOptions={{
+                      color: '#ffffff',
+                      weight: 2,
+                      fillColor: color,
+                      fillOpacity: 1,
+                    }}
+                  >
+                    <Tooltip direction="top" offset={[0, -6]} opacity={0.9}>
+                      <span className="text-[11px] font-mono font-semibold" style={{ color }}>
+                        {v.channelName} — {v.label}
+                      </span>
+                    </Tooltip>
+                  </CircleMarker>
+                )
+              })}
           </Pane>
         </CoordinateMap>
 
