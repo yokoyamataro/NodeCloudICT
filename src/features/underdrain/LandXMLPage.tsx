@@ -23,6 +23,7 @@ import { buildAlignmentsFromPlan, alignmentZRange } from '@/lib/landxml/fromPlan
 import { buildTinSurface, buildTrenchTin } from '@/lib/landxml/surface'
 import { buildLandXml } from '@/lib/landxml/exporter'
 import { detectOverlaps, type OverlapResult } from '@/lib/landxml/overlap'
+import { uploadLandxmlFile } from '@/lib/landxmlFiles'
 import { CoordinateConverter } from '@/lib/coordinates'
 import type { Alignment } from '@/lib/landxml/types'
 
@@ -234,10 +235,12 @@ export function LandXMLPage() {
     (exportTinSurface && tinSurface !== null) ||
     (exportTrenchSurface && trenchSurface !== null)
 
-  const handleExportLandXml = () => {
-    if (!hasExportTarget) return
-    // 圃場データ の フェッチが 全部 完了して 現在の 圃場と 一致するか 最終チェック。
-    // (前圃場の データが 混ざる 事故 を 確実に 防ぐ)
+  /**
+   * 現在 の チェックボックス 設定 で XML 文字列 を 組み立てて 返す。
+   * 返り値 が null なら 出力対象なし / データ 未ロード。 alert は 発火する。
+   */
+  const buildExportXml = (): string | null => {
+    if (!hasExportTarget) return null
     if (currentFarm) {
       const farmId = currentFarm.id
       const staleStore =
@@ -249,29 +252,31 @@ export function LandXMLPage() {
           'データの 読み込み が 完了していません (前圃場の 残留 or ロード中)。\n' +
             '上部の 「🔄 再読込」ボタンで 最新化してから 再度お試しください。',
         )
-        return
+        return null
       }
     }
+    const out: Alignment[] = []
+    if (exportDerivedAlignments) out.push(...derivedAlignments)
+    const surfaces: { name: string; surface: NonNullable<typeof tinSurface> }[] = []
+    if (exportTinSurface && tinSurface) {
+      surfaces.push({ name: '地盤 TIN', surface: tinSurface })
+    }
+    if (exportTrenchSurface && trenchSurface) {
+      surfaces.push({ name: '床掘 TIN', surface: trenchSurface })
+    }
+    return buildLandXml({
+      alignments: out,
+      surfaces,
+      projectName: currentFarm?.name,
+      coordinateZoneName: zone ? `JGD2011 / 平面直角座標系第${zone}系` : undefined,
+    })
+  }
+
+  const handleExportLandXml = () => {
     setExporting(true)
     try {
-      const out: Alignment[] = []
-      if (exportDerivedAlignments) out.push(...derivedAlignments)
-
-      const surfaces: { name: string; surface: NonNullable<typeof tinSurface> }[] = []
-      if (exportTinSurface && tinSurface) {
-        surfaces.push({ name: '地盤 TIN', surface: tinSurface })
-      }
-      if (exportTrenchSurface && trenchSurface) {
-        surfaces.push({ name: '床掘 TIN', surface: trenchSurface })
-      }
-
-      const xml = buildLandXml({
-        alignments: out,
-        surfaces,
-        projectName: currentFarm?.name,
-        coordinateZoneName: zone ? `JGD2011 / 平面直角座標系第${zone}系` : undefined,
-      })
-
+      const xml = buildExportXml()
+      if (xml == null) return
       const blob = new Blob([xml], { type: 'application/xml' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -283,6 +288,46 @@ export function LandXMLPage() {
       URL.revokeObjectURL(url)
     } finally {
       setExporting(false)
+    }
+  }
+
+  /**
+   * 全体図 に エクスポート: 同じ XML を Storage (bucket=landxml) に アップロード し、
+   * landxml_files に kind='design' の アクティブ 行 を 作成 する。
+   * 全体図 (OrthophotoPage) は 工区 の active な design LandXML を 自動 表示 する ため、
+   * これで 全体図 に 反映 される。 旧 active は uploadLandxmlFile 側で 非active 化。
+   */
+  const [uploadingToOverview, setUploadingToOverview] = useState(false)
+  const [overviewExportStatus, setOverviewExportStatus] = useState<string | null>(null)
+  const [overviewExportError, setOverviewExportError] = useState<string | null>(null)
+  const handleExportToOverview = async () => {
+    if (!currentFarm) return
+    setOverviewExportError(null)
+    setOverviewExportStatus(null)
+    setUploadingToOverview(true)
+    try {
+      const xml = buildExportXml()
+      if (xml == null) return
+      const stamp = new Date()
+        .toISOString()
+        .slice(0, 19)
+        .replace(/[-:T]/g, '')
+      const fileName = `${currentFarm.name || 'underdrain'}-${stamp}.xml`
+      await uploadLandxmlFile({
+        farmId: currentFarm.id,
+        fileName,
+        content: xml,
+        kind: 'design',
+        notes: '暗渠 ICT 施工 (LandXML 出力)',
+      })
+      setOverviewExportStatus(
+        `「${fileName}」を 全体図 に エクスポート しました (旧 active は 非active 化)`,
+      )
+    } catch (e) {
+      console.error('[landxml overview export]', e)
+      setOverviewExportError(e instanceof Error ? e.message : 'アップロード 失敗')
+    } finally {
+      setUploadingToOverview(false)
     }
   }
 
@@ -784,22 +829,50 @@ export function LandXMLPage() {
                   </span>
                 </label>
               </div>
-              <button
-                type="button"
-                onClick={handleExportLandXml}
-                disabled={!hasExportTarget || exporting || !currentFarm}
-                className="mt-2 w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-sm"
-              >
-                {exporting ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <FileOutput className="h-4 w-4" />
-                )}
-                {exporting ? '出力中...' : 'LandXML を出力'}
-              </button>
+              <div className="mt-2 flex flex-col gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleExportLandXml}
+                  disabled={!hasExportTarget || exporting || !currentFarm}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-sm"
+                >
+                  {exporting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileOutput className="h-4 w-4" />
+                  )}
+                  {exporting ? '出力中...' : 'LandXML を ダウンロード'}
+                </button>
+                {/* 全体図 (OrthophotoPage) の 「設計面 (LandXML)」レイヤ に 反映 する。
+                    工区 の active な design LandXML を 差替 (旧 active は 非active 化)。 */}
+                <button
+                  type="button"
+                  onClick={() => void handleExportToOverview()}
+                  disabled={!hasExportTarget || uploadingToOverview || !currentFarm}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-sm"
+                  title="全体図 の 「設計面 (LandXML)」 として 保存 (工区 単位、他 端末 でも 反映)"
+                >
+                  {uploadingToOverview ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Upload className="h-4 w-4" />
+                  )}
+                  {uploadingToOverview ? '保存中...' : '全体図 に エクスポート'}
+                </button>
+              </div>
               {!hasExportTarget && currentFarm && (
                 <div className="text-[11px] text-slate-500 mt-1">
                   出力対象を 1 つ以上選択してください
+                </div>
+              )}
+              {overviewExportStatus && (
+                <div className="mt-1 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
+                  {overviewExportStatus}
+                </div>
+              )}
+              {overviewExportError && (
+                <div className="mt-1 text-[11px] text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
+                  {overviewExportError}
                 </div>
               )}
             </div>
