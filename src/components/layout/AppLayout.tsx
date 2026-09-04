@@ -54,6 +54,7 @@ import {
 import { useProjectListStore } from '@/stores/projectListStore'
 import { useFarmStore } from '@/stores/farmStore'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
+import { FarmPresenceBadge } from '@/components/layout/FarmPresenceBadge'
 import { isNavVisibleForCategory } from '@/lib/projectCategory'
 
 interface NavItem {
@@ -358,6 +359,7 @@ export function AppLayout() {
                   <>
                     <span className="text-slate-500 mx-1">／</span>
                     <span className="text-slate-200 font-medium">{currentFarm.name}</span>
+                    <FarmPresenceBadge farmId={currentFarm.id} />
                   </>
                 )}
               </span>
