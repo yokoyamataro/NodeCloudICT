@@ -3,7 +3,7 @@ import type { CapacitorConfig } from '@capacitor/cli'
 // Capacitor 設定 (ICT 側 = 測量土木アプリ)
 //
 // Web を Vercel からリモートロードする方式。
-// Android プロジェクトは android-ict/ (Drogger RTK BT SPP 直接受信対応)。
+// Android プロジェクトは android-ict/ (Drogger RTK BLE 直接受信対応)。
 //   → 標準の `android/` ではなく android-ict/ に向けている
 //
 // ビルド:

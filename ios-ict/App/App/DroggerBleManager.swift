@@ -1,22 +1,38 @@
 import Foundation
 import CoreBluetooth
 
-/// Drogger (RZS.D01) との BLE 接続を管理する。
+/// Drogger (RZS.D01 / RWS.DC03 など) との BLE 接続を管理する。
 /// Android 版が BT SPP を使うのに対し、iOS は Classic SPP が使えないため BLE (GATT) で接続する。
 ///
-/// GATT 構成 (LightBlue で実測):
+/// GATT 構成 (RZS.D01 を LightBlue で実測):
 ///   Service      0BABA001-0000-1000-8000-00805F9B34FB
 ///     Char 002   Notify のみ            → NMEA 受信
 ///     Char 003   Read/Write/WriteNoResp → RTCM 送信・設定
+///
+/// 機種によって GATT が 違う (RWS.DC03 など) ので、上の Service が 無ければ
+/// 標準の Service を 除いた 中から「Notify できる 特性」と「書ける 特性」の
+/// 組を 探して 同じように 使う。中身は どの機種も NMEA / RTCM の 素通しなので、
+/// 通り道さえ 見つかれば 上の層は そのまま 動く。
 final class DroggerBleManager: NSObject {
 
     static let serviceUUID = CBUUID(string: "0BABA001-0000-1000-8000-00805F9B34FB")
     static let notifyCharUUID = CBUUID(string: "0BABA002-0000-1000-8000-00805F9B34FB")
     static let writeCharUUID = CBUUID(string: "0BABA003-0000-1000-8000-00805F9B34FB")
 
+    /// 通り道を 探すときに 飛ばす 標準 Service (汎用属性 / 端末情報 / 電池 など)
+    private static let standardServiceUUIDs: Set<CBUUID> = [
+        CBUUID(string: "1800"), // Generic Access
+        CBUUID(string: "1801"), // Generic Attribute
+        CBUUID(string: "180A"), // Device Information
+        CBUUID(string: "180F"), // Battery
+        CBUUID(string: "1805"), // Current Time
+        CBUUID(string: "FE59"), // DFU (Nordic)
+    ]
+
     /// Drogger 系デバイス名のパターン (TS 側 DROGGER_NAME_PATTERN と揃える)
+    /// Drogger-XXX / DG-PRO1 / RZS.D01 / RWS.DC03 のような 名乗り方を 拾う
     private static let namePattern = try! NSRegularExpression(
-        pattern: "^(drogger|dg[-_]|rzs)", options: [.caseInsensitive])
+        pattern: "^(drogger|dg[-_]|rzs|rws)", options: [.caseInsensitive])
 
     // MARK: - コールバック (プラグイン層が差し込む)
 
@@ -45,6 +61,14 @@ final class DroggerBleManager: NSObject {
     /// BLE の書き込みキュー。canSendWriteWithoutResponse が false の間は溜める
     private var writeQueue: [Data] = []
     private var isDraining = false
+    /// スキャン中に 見かけた名前 (同じ名前を 何度も ログに 出さないため)
+    private var seenNames = Set<String>()
+    /// 書き込みの 種類。応答なしで 書けない機種は 応答ありで 1 本ずつ 送る
+    private var writeType: CBCharacteristicWriteType = .withoutResponse
+    /// 応答ありのとき、返事待ちか
+    private var awaitingWriteResponse = false
+    /// 特性を 探している 途中の Service 数。0 になったら 通り道を 決める
+    private var pendingServiceCount = 0
 
     private(set) var isConnected = false
     private(set) var deviceName: String?
@@ -89,6 +113,8 @@ final class DroggerBleManager: NSObject {
         writeChar = nil
         lineBuffer.removeAll()
         writeQueue.removeAll()
+        awaitingWriteResponse = false
+        pendingServiceCount = 0
         if isConnected {
             isConnected = false
             deviceName = nil
@@ -100,7 +126,7 @@ final class DroggerBleManager: NSObject {
     /// 送信バッファが空くまでは writeQueue に溜め、peripheralIsReady で続きを流す。
     func write(_ data: Data) {
         guard let p = peripheral, writeChar != nil else { return }
-        let maxLen = p.maximumWriteValueLength(for: .withoutResponse)
+        let maxLen = p.maximumWriteValueLength(for: writeType)
         var offset = 0
         while offset < data.count {
             let end = min(offset + maxLen, data.count)
@@ -116,11 +142,18 @@ final class DroggerBleManager: NSObject {
 
     // MARK: - 内部処理
 
-    /// canSendWriteWithoutResponse が true の間だけキューを吐き出す
+    /// canSendWriteWithoutResponse が true の間だけキューを吐き出す。
+    /// 応答ありでしか 書けない機種は、返事を もらってから 次を 送る。
     private func drainWriteQueue() {
         guard !isDraining, let p = peripheral, let ch = writeChar else { return }
         isDraining = true
         defer { isDraining = false }
+        if writeType == .withResponse {
+            guard !awaitingWriteResponse, !writeQueue.isEmpty else { return }
+            awaitingWriteResponse = true
+            p.writeValue(writeQueue.removeFirst(), for: ch, type: .withResponse)
+            return
+        }
         while !writeQueue.isEmpty, p.canSendWriteWithoutResponse {
             p.writeValue(writeQueue.removeFirst(), for: ch, type: .withoutResponse)
         }
@@ -129,6 +162,7 @@ final class DroggerBleManager: NSObject {
     private func beginScan() {
         // Service UUID でフィルタすると広告に Service が載っていない機種を拾えないため、
         // 全スキャンして名前で判定する。
+        seenNames.removeAll()
         central.scanForPeripherals(withServices: nil, options: nil)
     }
 
@@ -185,8 +219,18 @@ extension DroggerBleManager: CBCentralManagerDelegate {
 
         if let target = targetIdentifier {
             guard p.identifier.uuidString == target else { return }
-        } else{
-            guard matchesDroggerName(name) else { return }
+        } else {
+            // 名前が Drogger 系か、広告に Drogger の Service が 載っていれば 採用する。
+            // 機種が増えても 名前を 足さずに 拾えるよう、両方を 見る
+            let advertisesService =
+                (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID])?
+                    .contains(Self.serviceUUID) ?? false
+            // 繋がらないときに どんな名前で 広告しているか 分からないと 追えないので、
+            // 見かけた名前を 1 回だけ 出す
+            if let n = name, seenNames.insert(n).inserted {
+                print("[BLE] found: \(n)")
+            }
+            guard matchesDroggerName(name) || advertisesService else { return }
         }
 
         c.stopScan()
@@ -197,7 +241,9 @@ extension DroggerBleManager: CBCentralManagerDelegate {
     }
 
     func centralManager(_ c: CBCentralManager, didConnect p: CBPeripheral) {
-        p.discoverServices([Self.serviceUUID])
+        // 機種によって GATT が 違うことがあるので、全部 拾ってから 選ぶ
+        // (見つからなかったときに 何が あったのかを 出せるようにする)
+        p.discoverServices(nil)
     }
 
     func centralManager(_ c: CBCentralManager,
@@ -217,6 +263,8 @@ extension DroggerBleManager: CBCentralManagerDelegate {
         lineBuffer.removeAll()
         // 切断中に溜まった RTCM は古すぎるので破棄する
         writeQueue.removeAll()
+        awaitingWriteResponse = false
+        pendingServiceCount = 0
 
         if shouldReconnect {
             // deviceName は保持したまま再接続 (UI のちらつきを防ぐ)
@@ -235,11 +283,24 @@ extension DroggerBleManager: CBCentralManagerDelegate {
 extension DroggerBleManager: CBPeripheralDelegate {
 
     func peripheral(_ p: CBPeripheral, didDiscoverServices error: Error?) {
-        guard let svc = p.services?.first(where: { $0.uuid == Self.serviceUUID }) else {
-            onError?("service_not_found", "Drogger のサービスが見つかりません")
+        let services = p.services ?? []
+        print("[BLE] services: \(services.map { $0.uuid.uuidString }.joined(separator: ", "))")
+        // 既知の Drogger の Service が あれば それだけ。無い機種 (RWS.DC03 など) は
+        // 標準の Service を 除いた 全部から NMEA の 通り道を 探す
+        let targets: [CBService]
+        if let known = services.first(where: { $0.uuid == Self.serviceUUID }) {
+            targets = [known]
+        } else {
+            targets = services.filter { !Self.standardServiceUUIDs.contains($0.uuid) }
+        }
+        guard !targets.isEmpty else {
+            onError?("service_not_found", "NMEA を 流している サービスが 見つかりません")
             return
         }
-        p.discoverCharacteristics([Self.notifyCharUUID, Self.writeCharUUID], for: svc)
+        notifyChar = nil
+        writeChar = nil
+        pendingServiceCount = targets.count
+        for s in targets { p.discoverCharacteristics(nil, for: s) }
     }
 
     func peripheral(_ p: CBPeripheral,
@@ -247,27 +308,51 @@ extension DroggerBleManager: CBPeripheralDelegate {
         for ch in service.characteristics ?? [] {
             if ch.uuid == Self.notifyCharUUID {
                 notifyChar = ch
-                p.setNotifyValue(true, for: ch)
             } else if ch.uuid == Self.writeCharUUID {
                 writeChar = ch
+                writeType = ch.properties.contains(.writeWithoutResponse) ? .withoutResponse : .withResponse
+            } else if service.uuid != Self.serviceUUID {
+                // 未知の機種: Notify できる 特性を 受信、書ける 特性を 送信に 使う。
+                // 先に 見つかった方を 採る (どちらも 1 本しか 無いのが 普通)
+                if notifyChar == nil,
+                   ch.properties.contains(.notify) || ch.properties.contains(.indicate) {
+                    notifyChar = ch
+                }
+                if writeChar == nil,
+                   ch.properties.contains(.writeWithoutResponse) || ch.properties.contains(.write) {
+                    writeChar = ch
+                    writeType =
+                        ch.properties.contains(.writeWithoutResponse) ? .withoutResponse : .withResponse
+                }
             }
         }
-        guard notifyChar != nil else {
+        // 全部の Service を 見終わってから 判断する (通り道が 後ろの Service に あることもある)
+        pendingServiceCount -= 1
+        guard pendingServiceCount <= 0 else { return }
+        guard let notify = notifyChar else {
             onError?("characteristic_not_found", "NMEA 受信用の特性が見つかりません")
             return
         }
+        print("[BLE] notify=\(notify.uuid.uuidString) write=\(writeChar?.uuid.uuidString ?? "-")")
+        p.setNotifyValue(true, for: notify)
         isConnected = true
         onStatusChange?(true, deviceName)
     }
 
     func peripheral(_ p: CBPeripheral,
                     didUpdateValueFor ch: CBCharacteristic, error: Error?) {
-        guard ch.uuid == Self.notifyCharUUID, let data = ch.value else { return }
+        guard ch.uuid == notifyChar?.uuid, let data = ch.value else { return }
         appendAndExtractLines(data)
     }
 
     /// 送信バッファに空きができた。キューの続きを流す。
     func peripheralIsReady(toSendWriteWithoutResponse p: CBPeripheral) {
+        drainWriteQueue()
+    }
+
+    /// 応答ありの 書き込みが 1 本 終わった。続きを 流す
+    func peripheral(_ p: CBPeripheral, didWriteValueFor ch: CBCharacteristic, error: Error?) {
+        awaitingWriteResponse = false
         drainWriteQueue()
     }
 }

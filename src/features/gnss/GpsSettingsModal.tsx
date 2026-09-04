@@ -26,6 +26,9 @@ import { useGnssSettingsStore } from '@/stores/gnssSettingsStore'
 import { useDroggerConnection } from '@/stores/droggerConnectionStore'
 import {
   DroggerLocation,
+  accuracyNote,
+  correctionSource,
+  CORRECTION_SOURCE_LABEL,
   fetchNtripSourceTable,
   getNtripStatus,
   startNtrip,
@@ -62,6 +65,8 @@ interface PositionSnapshot {
   lon: number | null
   altitude: number | null
   accuracy: number | null
+  /** accuracy が 実測 (GST) か 典型値かの 出どころ */
+  accuracySource: string | null
   altitudeAccuracy: number | null
   /** GGA field 11: 受信機内蔵ジオイド と 楕円体 の差 [m] (Drogger のみ) */
   geoidalSep: number | null
@@ -168,7 +173,10 @@ function GpsConnectionTab() {
     fixQuality,
     hdop,
     satellites,
+    diffAge,
+    stationId,
     lastUpdateAt,
+    ntrip,
     ensureStarted,
     reconnect,
     disconnect,
@@ -179,6 +187,7 @@ function GpsConnectionTab() {
     lon: null,
     altitude: null,
     accuracy: null,
+    accuracySource: null,
     altitudeAccuracy: null,
     geoidalSep: null,
   })
@@ -210,6 +219,7 @@ function GpsConnectionTab() {
         lon: ev.lon,
         altitude: ev.altitude_m,
         accuracy: ev.accuracy_m,
+        accuracySource: ev.accuracySource ?? null,
         altitudeAccuracy: ev.altitude_accuracy_m,
         geoidalSep: ev.geoidal_separation_m ?? null,
       })
@@ -251,10 +261,13 @@ function GpsConnectionTab() {
     fixQuality,
     hdop,
     satellites,
+    diffAge,
+    stationId,
     lat: pos.lat,
     lon: pos.lon,
     altitude: pos.altitude,
     accuracy: pos.accuracy,
+    accuracySource: pos.accuracySource,
     altitudeAccuracy: pos.altitudeAccuracy,
     geoidalSep: pos.geoidalSep,
     lastUpdateAt,
@@ -266,9 +279,23 @@ function GpsConnectionTab() {
       : status.connected
         ? 'bg-slate-100 border-slate-400 text-slate-700'
         : 'bg-red-100 border-red-400 text-red-800'
-  const fixLabel = !status.connected ? '切断' : fq != null ? FIX_LABEL[fq] : '受信中'
   const staleMs = status.lastUpdateAt ? Date.now() - status.lastUpdateAt : null
   const isStale = staleMs != null && staleMs > 5000
+  // 補正の 出どころ。CLAS と NTRIP は どちらも 品質 4/5 になるので、
+  // NTRIP を 繋いでいないのに 補正が 効いている = CLAS と 見なす
+  const corrSrc = status.connected
+    ? correctionSource({ fixQuality: fq, diffAge: status.diffAge }, ntrip.connected)
+    : 'none'
+  // バッジと 同じ 呼び方に 揃える (CLAS で 解けていれば RTK-FIX ではなく CLAS)
+  const fixLabel = !status.connected
+    ? '切断'
+    : fq == null
+      ? '受信中'
+      : corrSrc === 'clas' && fq === 4
+        ? 'CLAS'
+        : corrSrc === 'clas' && fq === 5
+          ? 'CLAS-F'
+          : FIX_LABEL[fq]
 
   return (
     <div className="space-y-3 text-xs">
@@ -300,6 +327,29 @@ function GpsConnectionTab() {
               {status.hdop != null ? status.hdop.toFixed(2) : '-'} /{' '}
               {status.satellites ?? '-'}
             </div>
+          </div>
+          <div>
+            <div className="text-[10px] text-slate-500">補正源</div>
+            <div className="flex items-center gap-1">
+              <span
+                className={`px-1.5 py-0.5 rounded border text-[10px] font-semibold ${
+                  corrSrc === 'clas'
+                    ? 'bg-violet-100 border-violet-400 text-violet-800'
+                    : corrSrc === 'ntrip'
+                      ? 'bg-blue-100 border-blue-400 text-blue-800'
+                      : 'bg-slate-100 border-slate-300 text-slate-600'
+                }`}
+              >
+                {CORRECTION_SOURCE_LABEL[corrSrc]}
+              </span>
+              <span className="font-mono text-[10px] text-slate-500">
+                {status.diffAge != null ? `${status.diffAge.toFixed(1)}s` : '-'}
+              </span>
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] text-slate-500">基準局 ID</div>
+            <div className="font-mono">{status.stationId ?? '-'}</div>
           </div>
         </div>
       </div>
@@ -349,7 +399,10 @@ function GpsConnectionTab() {
           </div>
         </div>
         <div className="text-[10px] text-slate-500">
-          精度 H: {status.accuracy != null ? `${status.accuracy.toFixed(3)}m` : '-'} /
+          {/* 受信機が GST を 出していないと 品質ごとの 固定値になるので、
+              実測かどうかが 分かるように 注記を 添える */}
+          精度 H: {status.accuracy != null ? `${status.accuracy.toFixed(3)}m` : '-'}
+          {accuracyNote(status.accuracySource) ? ` (${accuracyNote(status.accuracySource)})` : ''} /
           V: {status.altitudeAccuracy != null ? `${status.altitudeAccuracy.toFixed(3)}m` : '-'} /
           最終更新:{' '}
           {status.lastUpdateAt

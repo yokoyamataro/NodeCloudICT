@@ -1,4 +1,4 @@
-// Drogger BT SPP 接続の 全アプリ横断ライフサイクル管理。
+// Drogger BLE 接続の 全アプリ横断ライフサイクル管理。
 //
 // 従来は DroggerStatusBadge の useEffect 内で stop → start を していたため、
 // 工区を 閉じて 別の工区に 移動する 度に BT が 切断→再接続 されていた。
@@ -33,6 +33,10 @@ interface DroggerConnectionState {
   fixQuality: DroggerFixQuality | null
   hdop: number | null
   satellites: number | null
+  /** GGA field 13: 補正の 経過時間 [s]。補正源の 判定 (CLAS / NTRIP) に 使う */
+  diffAge: number | null
+  /** GGA field 14: 差分基準局 ID */
+  stationId: string | null
   lastUpdateAt: number | null
   ntrip: NtripStatus
   lastErrorCode: string | null
@@ -42,7 +46,7 @@ interface DroggerConnectionState {
   ensureStarted: () => Promise<void>
   /** 手動 stop → start */
   reconnect: () => Promise<void>
-  /** BT SPP を 閉じる (ユーザー操作、NTRIP も 一緒に切れる) */
+  /** BLE 接続を 閉じる (ユーザー操作、NTRIP も 一緒に切れる) */
   disconnect: () => Promise<void>
 }
 
@@ -57,6 +61,8 @@ export const useDroggerConnection = create<DroggerConnectionState>((set) => ({
   fixQuality: null,
   hdop: null,
   satellites: null,
+  diffAge: null,
+  stationId: null,
   lastUpdateAt: null,
   ntrip: initialNtrip,
   lastErrorCode: null,
@@ -72,6 +78,8 @@ export const useDroggerConnection = create<DroggerConnectionState>((set) => ({
           fixQuality: ev.fixQuality,
           hdop: ev.hdop,
           satellites: ev.satellites,
+          diffAge: ev.diffAge ?? null,
+          stationId: ev.stationId ?? null,
           lastUpdateAt: Date.now(),
         })
       })

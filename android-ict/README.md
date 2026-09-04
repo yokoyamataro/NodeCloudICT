@@ -1,10 +1,11 @@
 # android-ict — NodeCloud ICT ネイティブアプリ
 
-測量土木 (ICT) 側の Android APK。Drogger RTK 受信機から Bluetooth SPP 経由で
-位置情報を直接受信する `DroggerLocationPlugin` (Kotlin) を含む。
+測量土木 (ICT) 側の Android APK。Drogger RTK 受信機から BLE (GATT) 経由で
+位置情報を直接受信する `DroggerLocationPlugin` / `DroggerBleManager` (Kotlin) を含む。
 
 主目的: Web ブラウザ + Drogger の Mock GPS 方式から、ネイティブアプリでの
-BT SPP 直接受信への段階的移行。
+BLE 直接受信への段階的移行。接続方式は iOS 版と 揃えて BLE 一本
+(RWS.DC03 のような BLE 専用機に 合わせるため、旧 SPP 経路は 廃止)。
 
 ## 前提
 
@@ -41,12 +42,12 @@ TS 側 (`src/lib/drogger.ts`) の契約と対応:
 
 | method / event | 実装 |
 |---|---|
-| `start({deviceAddress?})` | SPP UUID (`00001101-...`) で BT ソケット接続 → NMEA read loop |
-| `stop()` | ソケット閉じ + read loop 停止 |
+| `start({deviceAddress?})` | BLE スキャン → GATT 接続 → Notify で NMEA 受信 (アドレス指定時はスキャン省略) |
+| `stop()` | GATT 切断 + 自動再接続の停止 |
 | `getStatus()` | { connected, deviceName } |
-| `listPairedDevices()` | ペアリング済み BT デバイス列挙 |
+| `listPairedDevices()` | ペアリング済み BT デバイス列挙 (BLE は不要だが MAC 直指定用に残す) |
 | `location` イベント | `$GNGGA` + `$GNRMC` を組合せ 1 Hz で emit |
-| `error` イベント | 接続失敗 / IO エラー |
+| `error` イベント | 接続失敗 / デバイス未検出 / 権限エラー |
 | `statusChange` イベント | 接続 ON/OFF |
 
 **注意点:**

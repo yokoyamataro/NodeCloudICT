@@ -3,9 +3,7 @@ package net.nodecloud.ict
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
-import android.bluetooth.BluetoothSocket
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
@@ -19,17 +17,11 @@ import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
-import java.io.BufferedReader
-import java.io.IOException
-import java.io.InputStreamReader
-import java.io.OutputStream
-import java.util.UUID
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
 /**
- * Drogger (RTK GNSS 受信機) からの 位置情報を Bluetooth SPP 経由で受信する
- * Capacitor プラグイン。
+ * Drogger (RTK GNSS 受信機) からの 位置情報を BLE (GATT) 経由で受信する
+ * Capacitor プラグイン。接続そのものは DroggerBleManager が 受け持つ。
  *
  * TS 側契約 (src/lib/drogger.ts と一致):
  *   plugin name: 'DroggerLocation'
@@ -44,9 +36,11 @@ import kotlin.concurrent.thread
  *     'statusChange' — { connected, deviceName }
  *
  * 前提:
- * - Drogger 本体は SPP プロファイルで NMEA (GGA/RMC) をシリアル出力する
+ * - Drogger 本体は BLE の Notify で NMEA (GGA/RMC 等) を 素通しする
  *   ($GNGGA, $GNRMC, $GPGGA, $GPRMC のいずれか)
- * - deviceAddress 未指定時は 「名前が Drogger を含む最初のペアリング済みデバイス」を採用
+ * - deviceAddress 未指定時は BLE スキャンで「名前が Drogger 系の 最初のデバイス」を採用
+ * - 旧 SPP (RFCOMM) 経路は 廃止。RWS.DC03 のような BLE 専用機に 合わせ、
+ *   iOS 版と 同じ BLE 一本に 揃えてある
  */
 @CapacitorPlugin(
     name = "DroggerLocation",
@@ -58,22 +52,30 @@ import kotlin.concurrent.thread
                 Manifest.permission.BLUETOOTH_SCAN,
             ],
         ),
+        // Android 11 以下は BLE スキャン結果を 受け取るのに 位置情報の 権限が 要る
+        Permission(
+            alias = "bluetoothLegacy",
+            strings = [Manifest.permission.ACCESS_FINE_LOCATION],
+        ),
     ],
 )
 class DroggerLocationPlugin : Plugin() {
     companion object {
         private const val TAG = "DroggerLocationPlugin"
-        // 標準 SPP UUID (Serial Port Profile)
-        private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
     }
 
-    private var socket: BluetoothSocket? = null
-    private var reader: BufferedReader? = null
-    private var socketOutputStream: OutputStream? = null
-    /** BT SPP OutputStream への write は NMEA read 用スレッド と NTRIP RTCM 書込 の 2 者が触るので lock で直列化 */
-    private val socketWriteLock = Any()
-    private var deviceName: String? = null
-    private val running = AtomicBoolean(false)
+    /**
+     * BLE (GATT) 接続の 本体。NMEA の 行組み立て・再接続・RTCM の 分割送信は
+     * すべて こちらが 持つ。iOS 版 DroggerBleManager.swift と 同じ 分担。
+     */
+    private val ble: DroggerBleManager by lazy {
+        DroggerBleManager(context).also { m ->
+            // BLE の コールバックスレッドで 呼ばれる (旧 SPP の read スレッドと 同じ扱い)
+            m.onNmeaLine = { line -> handleNmeaLine(line) }
+            m.onStatusChange = { connected, name -> notifyStatusChange(connected, name) }
+            m.onError = { code, message -> notifyError(code, message) }
+        }
+    }
 
     // ---- NTRIP 状態 ----
     private var ntripClient: NtripClient? = null
@@ -89,29 +91,28 @@ class DroggerLocationPlugin : Plugin() {
 
     @PluginMethod
     fun start(call: PluginCall) {
-        if (running.get()) {
-            call.resolve()
+        // Android 12+ (API 31) は BLUETOOTH_SCAN / BLUETOOTH_CONNECT が ランタイム権限。
+        // それ未満は BLE スキャン結果を 受け取るのに 位置情報の 権限が 要る
+        if (!hasBtPermissions()) {
+            val alias =
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) "bluetooth" else "bluetoothLegacy"
+            requestPermissionForAlias(alias, call, "btPermissionCallback")
             return
         }
-        // Android 12+ (API 31) は BLUETOOTH_CONNECT / BLUETOOTH_SCAN が必要
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !hasBtConnectPermission()) {
-            // Capacitor 側で 権限リクエスト
-            requestPermissionForAlias("bluetooth", call, "btPermissionCallback")
-            return
-        }
-        val deviceAddress: String? = call.getString("deviceAddress")
-        startInternal(call, deviceAddress)
+        // 実際に 繋がったかは statusChange イベントで 伝わる (iOS 版と 同じ)
+        ble.start(call.getString("deviceAddress"))
+        call.resolve()
     }
 
     @PermissionCallback
     @Suppress("unused")
     private fun btPermissionCallback(call: PluginCall) {
-        if (!hasBtConnectPermission()) {
+        if (!hasBtPermissions()) {
             call.reject("Bluetooth の権限が許可されませんでした")
             return
         }
-        val deviceAddress: String? = call.getString("deviceAddress")
-        startInternal(call, deviceAddress)
+        ble.start(call.getString("deviceAddress"))
+        call.resolve()
     }
 
     @PluginMethod
@@ -124,15 +125,20 @@ class DroggerLocationPlugin : Plugin() {
     @SuppressLint("MissingPermission")
     fun getStatus(call: PluginCall) {
         val ret = JSObject()
-        ret.put("connected", running.get())
-        ret.put("deviceName", deviceName)
+        ret.put("connected", ble.isConnected)
+        ret.put("deviceName", ble.deviceName)
         call.resolve(ret)
     }
 
+    /**
+     * ペアリング済み デバイス一覧。BLE は ペアリング無しでも 繋がるので 必須では ないが、
+     * ここで 返す MAC は そのまま start({ deviceAddress }) に 渡せる
+     * (スキャンを 挟まずに 直接 繋ぎに いける)。
+     */
     @PluginMethod
     @SuppressLint("MissingPermission")
     fun listPairedDevices(call: PluginCall) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !hasBtConnectPermission()) {
+        if (!hasBtConnectPermission()) {
             call.reject("Bluetooth の権限がありません")
             return
         }
@@ -159,132 +165,19 @@ class DroggerLocationPlugin : Plugin() {
     }
 
     // ============================================================================
-    // Internal: BT 接続 + NMEA パース ループ
+    // Internal: 接続の 開始 / 終了
     // ============================================================================
-
-    @SuppressLint("MissingPermission")
-    private fun startInternal(call: PluginCall, deviceAddress: String?) {
-        val adapter = getBtAdapter()
-        if (adapter == null) {
-            call.reject("Bluetooth が利用できない端末です")
-            return
-        }
-        if (!adapter.isEnabled) {
-            call.reject("Bluetooth が OFF です")
-            return
-        }
-        // 対象デバイス選定: 指定されていれば address 一致、無ければ Drogger 系名称を照合。
-        //   Bizstation Drogger シリーズは "Drogger-XXX" / "DG-XXX" / "RZS.XXX" 等の
-        //   複数命名パターンがあるため、下記のいずれかを含む最初のペアリング済みを採用。
-        val target: BluetoothDevice? = try {
-            if (deviceAddress != null) {
-                adapter.bondedDevices.firstOrNull { it.address == deviceAddress }
-            } else {
-                adapter.bondedDevices.firstOrNull { dev ->
-                    val n = (dev.name ?: "").uppercase()
-                    n.contains("DROGGER") || n.startsWith("DG-") ||
-                        n.startsWith("DG_") || n.startsWith("RZS")
-                }
-            }
-        } catch (e: SecurityException) {
-            call.reject("Bluetooth 権限が拒否されました: ${e.message}")
-            return
-        }
-        if (target == null) {
-            call.reject(
-                if (deviceAddress != null)
-                    "指定アドレスのデバイスが 見つかりません: $deviceAddress"
-                else
-                    "ペアリング済みの Drogger デバイスが 見つかりません"
-            )
-            return
-        }
-        deviceName = try { target.name } catch (_: SecurityException) { null }
-        running.set(true)
-        call.resolve()
-
-        // ソケット接続 + read loop は 別スレッド。IO エラーで 切断されたら
-        // running=false に されない限り 自動再接続 (指数バックオフ)。
-        thread(start = true, name = "DroggerReader") {
-            var reconnectAttempts = 0
-            var unrecoverable = false
-            while (running.get() && !unrecoverable) {
-                try {
-                    val sock = target.createRfcommSocketToServiceRecord(SPP_UUID)
-                    socket = sock
-                    try { adapter.cancelDiscovery() } catch (_: SecurityException) { /* ignore */ }
-                    sock.connect()
-                    socketOutputStream = sock.outputStream
-                    reconnectAttempts = 0
-                    notifyStatusChange(true, deviceName)
-                    Log.i(TAG, "BT SPP connected: ${deviceName ?: target.address}")
-
-                    val br = BufferedReader(InputStreamReader(sock.inputStream, Charsets.US_ASCII))
-                    reader = br
-                    while (running.get()) {
-                        val line = try { br.readLine() } catch (e: IOException) {
-                            if (running.get()) {
-                                Log.w(TAG, "BT read IO error: ${e.message} (will auto-reconnect)")
-                            }
-                            null
-                        } ?: break
-                        handleNmeaLine(line)
-                    }
-                } catch (e: SecurityException) {
-                    // 権限系は 再試行しても 治らない
-                    notifyError("permission_denied", "BT 接続権限エラー: ${e.message}")
-                    unrecoverable = true
-                } catch (e: IOException) {
-                    Log.w(TAG, "BT connect/IO error (attempt ${reconnectAttempts + 1}): ${e.message}")
-                    if (reconnectAttempts == 0) {
-                        // 初回失敗のみ ユーザーに 通知 (再試行中は 静かに)
-                        notifyError("connect_failed", "BT 接続に失敗: ${e.message}")
-                    }
-                }
-                cleanupSocket()
-                if (!running.get()) break
-                // 切断状態 を UI に反映
-                notifyStatusChange(false, deviceName)
-                // 指数バックオフ: 3s → 5s → 10s → 15s cap
-                reconnectAttempts += 1
-                val delayMs = when {
-                    reconnectAttempts <= 1 -> 3000L
-                    reconnectAttempts <= 3 -> 5000L
-                    reconnectAttempts <= 6 -> 10000L
-                    else -> 15000L
-                }
-                Log.i(TAG, "BT reconnect in ${delayMs / 1000}s (attempt ${reconnectAttempts + 1})")
-                try { Thread.sleep(delayMs) } catch (_: InterruptedException) { break }
-            }
-            // ループ 抜けた後の 最終片付け
-            cleanupSocket()
-            if (running.getAndSet(false)) {
-                notifyStatusChange(false, null)
-            }
-            Log.i(TAG, "DroggerReader thread exit")
-        }
-    }
 
     private fun stopInternal() {
-        if (!running.getAndSet(false)) return
-        // BT が切れる = RTCM の書込先が消えるので NTRIP も止める
+        // BLE が切れる = RTCM の書込先が消えるので NTRIP も止める
         ntripClient?.stop()
         ntripClient = null
-        cleanupSocket()
-        deviceName = null
-        notifyStatusChange(false, null)
-    }
-
-    private fun cleanupSocket() {
-        try { reader?.close() } catch (_: IOException) { /* ignore */ }
-        try { socket?.close() } catch (_: IOException) { /* ignore */ }
-        reader = null
-        socket = null
-        socketOutputStream = null
+        // statusChange(false) は DroggerBleManager 側が 出す
+        ble.stop()
     }
 
     // ============================================================================
-    // NTRIP (キャスター → RTCM3 → BT SPP write) 関連 メソッド
+    // NTRIP (キャスター → RTCM3 → BLE write) 関連 メソッド
     // ============================================================================
 
     @PluginMethod
@@ -311,20 +204,12 @@ class DroggerLocationPlugin : Plugin() {
             pass = pass,
             sendGga = sendGga,
             onRtcm = { buf, len ->
-                val out = socketOutputStream
-                if (out != null) {
-                    try {
-                        synchronized(socketWriteLock) {
-                            out.write(buf, 0, len)
-                            out.flush()
-                        }
-                        // 頻度高: Log.v (デフォルト非表示)
-                    } catch (e: IOException) {
-                        Log.w(TAG, "RTCM write to BT failed: ${e.message}")
-                    }
+                if (ble.isConnected) {
+                    // MTU に 合わせた 分割と 送信順の 直列化は BLE 側の キューが 面倒を 見る
+                    ble.write(buf, len)
                 } else {
-                    // BT 未接続 = RTCM を捨てるしかないが、bytes カウントは進める (badge 表示用)
-                    Log.v(TAG, "RTCM received but BT socket unavailable: $len bytes")
+                    // BLE 未接続 = RTCM を捨てるしかないが、bytes カウントは進める (badge 表示用)
+                    Log.v(TAG, "RTCM received but BLE unavailable: $len bytes")
                 }
                 // バッジの KB カウンタ更新用に 2 秒に 1 回 status を emit
                 val now = System.currentTimeMillis()
@@ -448,6 +333,11 @@ class DroggerLocationPlugin : Plugin() {
         var stdLat: Double? = null,
         var stdLon: Double? = null,
         var stdAlt: Double? = null,
+        /** GGA field 13: 補正データを 受け取ってからの 経過時間 [s]。補正なしは 空欄 */
+        var diffAge: Double? = null,
+        /** GGA field 14: 差分基準局 ID。NTRIP は 基準局の 番号、CLAS は 受信機内で
+         *  解くので 固定値になる */
+        var stationId: String? = null,
     )
     private val nmea = NmeaBuffer()
 
@@ -525,6 +415,11 @@ class DroggerLocationPlugin : Plugin() {
         if (fixQ != null) nmea.fixQuality = fixQ
         if (sats != null) nmea.satellites = sats
         if (hdop != null) nmea.hdop = hdop
+        // GGA field 13 / 14: 補正の 経過時間 [s] と 差分基準局 ID。
+        // CLAS か NTRIP かの 見分けに 使う (どちらも 品質は 4 / 5 で 同じ)。
+        // 補正が 無い間は 空欄なので、その時は null に 戻す
+        nmea.diffAge = parts[13].toDoubleOrNull()
+        nmea.stationId = parts[14].trim().ifEmpty { null }
         if (time.isNotEmpty()) nmea.timeMillis = parseNmeaTime(time)
     }
 
@@ -748,7 +643,20 @@ class DroggerLocationPlugin : Plugin() {
         }
     }
 
+    /**
+     * 衛星スナップショットを 送る 間隔 [ms]。
+     * GSV / GSA は 1 秒ごとに 来るが、スカイマップは そんなに 速く 動かなくてよい。
+     * 毎回 送ると ブリッジ越しの 更新と 再描画が 無駄に 回る。
+     */
+    private val satelliteEmitIntervalMs = 5000L
+    private var lastSatEmitMs = 0L
+
+    /** 衛星スナップショットを 送る。間隔を 空けて 間引く
+     *  (getSatellites() で 引くときは いつでも 最新が 返る) */
     private fun emitSatellites() {
+        val now = System.currentTimeMillis()
+        if (now - lastSatEmitMs < satelliteEmitIntervalMs) return
+        lastSatEmitMs = now
         computeUsedInFix()
         val arr = JSArray()
         var usedCount = 0
@@ -949,6 +857,11 @@ class DroggerLocationPlugin : Plugin() {
         obj.put("fixQuality", fq)
         obj.put("hdop", nmea.hdop)
         obj.put("satellites", nmea.satellites)
+        // 補正の 出どころ判定用 (TS 側 correctionSource)
+        obj.put("diffAge", nmea.diffAge)
+        obj.put("stationId", nmea.stationId)
+        // 精度が 実測 (GST) なのか 品質ごとの 典型値なのかを UI にも 渡す
+        obj.put("accuracySource", accSrc)
         notifyListeners("location", obj)
     }
 
@@ -961,10 +874,27 @@ class DroggerLocationPlugin : Plugin() {
         return mgr?.adapter
     }
 
+    /** Android 12+ は BLUETOOTH_CONNECT。それ未満は マニフェスト宣言だけで 足りる */
     private fun hasBtConnectPermission(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
+        return granted(Manifest.permission.BLUETOOTH_CONNECT)
+    }
+
+    /**
+     * BLE で 繋ぐのに 要る 権限が 揃っているか。
+     * Android 12+ は SCAN + CONNECT、それ未満は スキャン結果を 受け取るための 位置情報。
+     */
+    private fun hasBtPermissions(): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            granted(Manifest.permission.BLUETOOTH_SCAN) &&
+                granted(Manifest.permission.BLUETOOTH_CONNECT)
+        } else {
+            granted(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+
+    private fun granted(permission: String): Boolean {
         val ctx = context ?: return false
-        return ContextCompat.checkSelfPermission(ctx, Manifest.permission.BLUETOOTH_CONNECT) ==
+        return ContextCompat.checkSelfPermission(ctx, permission) ==
             PackageManager.PERMISSION_GRANTED
     }
 

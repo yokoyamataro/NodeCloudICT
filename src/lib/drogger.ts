@@ -1,4 +1,4 @@
-// Drogger (RTK GNSS 受信機) BT SPP 直接受信の TS 側 wrapper。
+// Drogger (RTK GNSS 受信機) BLE 直接受信の TS 側 wrapper。
 //
 // ネイティブ側 (Kotlin) の Capacitor プラグインが 未実装のため、Web / 未実装環境では
 // ダミーの GNSS サンプルを流して TS パイプライン (geolocation.ts → 各画面) を
@@ -32,6 +32,62 @@ export interface DroggerLocationEvent extends GeoSample {
   hdop: number | null
   /** 使用衛星数 */
   satellites: number | null
+  /** GGA field 13: 補正データを 受け取ってからの 経過時間 [s]。補正なしは null */
+  diffAge: number | null
+  /** GGA field 14: 差分基準局 ID。NTRIP は 基準局の 番号、CLAS は 固定値 */
+  stationId: string | null
+  /**
+   * accuracy_m の 出どころ。
+   *   'GST'    … 受信機が 出した 標準偏差 (実測)
+   *   'FQ(n)'  … GST が 来ないので Fix 品質ごとの 典型値 (推定)
+   *   'HDOP×3' … 品質も 分からないときの 概算
+   */
+  accuracySource: string | null
+}
+
+/** accuracy_m が 実測か 推定かの 短い注記。実測なら null (注記なし) */
+export function accuracyNote(source: string | null): string | null {
+  if (source == null) return null
+  if (source === 'GST') return null
+  return source.startsWith('FQ') ? '推定' : '概算'
+}
+
+/** 補正の 出どころ */
+export type CorrectionSource = 'none' | 'sbas' | 'ntrip' | 'clas'
+
+export const CORRECTION_SOURCE_LABEL: Record<CorrectionSource, string> = {
+  none: '補正なし',
+  sbas: 'SBAS/DGPS',
+  ntrip: 'NTRIP',
+  clas: 'CLAS',
+}
+
+/** 補正が 途切れたと みなす 経過時間 [s]。CLAS は 1 秒間隔で 届く */
+const CORRECTION_STALE_SEC = 60
+
+/**
+ * 補正が どこから 来ているかを NMEA だけで 見分ける。
+ *
+ * CLAS (みちびき L6) も NTRIP も、解けたときの GGA 品質は 同じ 4 / 5 なので
+ * 品質では 分けられない。違うのは 補正が どこから 入ったか だけなので、
+ *   ・GGA の 経過時間 (field 13) が 生きている = 補正が 効いている
+ *   ・その状態で NTRIP を 繋いでいない  = 受信機の 中で 解いている = CLAS
+ * と 見なす。NTRIP を 繋いでいる間は どちらが 効いているか 区別できないため
+ * NTRIP と 出す (CLAS だけを 見たいときは NTRIP を 切る)。
+ *
+ * 品質 2 (DGPS) は SBAS の こともあるので CLAS とは 分ける。CLAS で 解けたときは
+ * RTK と 同じ 4 / 5 になる。
+ */
+export function correctionSource(
+  ev: { fixQuality: DroggerFixQuality | null; diffAge: number | null },
+  ntripConnected: boolean,
+): CorrectionSource {
+  const fq = ev.fixQuality
+  if (fq !== 2 && fq !== 4 && fq !== 5) return 'none'
+  // 補正が 止まると 経過時間が 伸び続ける。古すぎるものは 効いていないとみなす
+  if (ev.diffAge != null && ev.diffAge > CORRECTION_STALE_SEC) return 'none'
+  if (ntripConnected) return 'ntrip'
+  return fq === 2 ? 'sbas' : 'clas'
 }
 
 /** NTRIP キャスター設定 */
@@ -252,6 +308,9 @@ const webMockPlugin: DroggerLocationPlugin = {
         fixQuality: 4, // RTK Fix
         hdop: 0.7,
         satellites: 18,
+        diffAge: 1.0, // Web モック: CLAS 相当 (NTRIP 未接続 + 補正が 生きている)
+        stationId: '0000',
+        accuracySource: 'GST',
       }
       for (const l of webMockState.listeners.location) l(sample)
       // 5 秒毎に 衛星スナップショットも emit (スカイマップ動作確認用)
@@ -483,13 +542,13 @@ export async function listPairedDroggerDevices(): Promise<{ name: string; addres
   return r.devices
 }
 
-/** Drogger 系デバイスの名前パターン (Kotlin 側と揃える) */
+/** Drogger 系デバイスの名前パターン (Kotlin / Swift 側と揃える) */
 const DROGGER_NAME_PATTERN =
-  /^(drogger|dg[-_]|rzs)/i
+  /^(drogger|dg[-_]|rzs|rws)/i
 
 /**
  * start() を まず 引数無しで試み、失敗した場合はペアリング済みから
- * Drogger 系デバイス (RZS.D01 / Drogger-XXX / DG-PRO1 等) を探して
+ * Drogger 系デバイス (RZS.D01 / RWS.DC03 / Drogger-XXX / DG-PRO1 等) を探して
  * deviceAddress 指定で再試行する。
  *
  * ネイティブ Kotlin 側の名前照合が古い APK ではまだ「Drogger」しか
@@ -526,7 +585,7 @@ export async function startWithAutoDetect(): Promise<void> {
 // NTRIP ラッパ (ネイティブプラグイン経由)
 // ============================================================================
 
-/** NTRIP キャスターに 接続開始。RTCM3 は 自動的に Drogger BT SPP へ流し込まれる */
+/** NTRIP キャスターに 接続開始。RTCM3 は 自動的に Drogger へ BLE 書き込みで 流し込まれる */
 export async function startNtrip(config: NtripConfig): Promise<void> {
   await DroggerLocation.startNtrip(config)
 }

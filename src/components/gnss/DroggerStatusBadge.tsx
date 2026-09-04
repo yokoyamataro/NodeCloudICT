@@ -8,7 +8,7 @@
 import { useEffect, useState } from 'react'
 import { Radio, RadioTower, WifiOff, Settings } from 'lucide-react'
 import { getActiveSource } from '@/lib/geolocation'
-import type { DroggerFixQuality } from '@/lib/drogger'
+import { correctionSource, CORRECTION_SOURCE_LABEL, type DroggerFixQuality } from '@/lib/drogger'
 import { useDroggerConnection } from '@/stores/droggerConnectionStore'
 import { GpsSettingsModal } from '@/features/gnss/GpsSettingsModal'
 
@@ -36,6 +36,8 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
     fixQuality,
     hdop,
     satellites,
+    diffAge,
+    stationId,
     lastUpdateAt,
     ntrip,
     ensureStarted,
@@ -61,13 +63,28 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
   if (source !== 'drogger') return null
 
   const fq = fixQuality
+  // 補正の 出どころ。NTRIP を 繋いでいないのに 補正が 効いていれば CLAS
+  const corrSrc = connected ? correctionSource({ fixQuality, diffAge }, ntrip.connected) : 'none'
+  const isClas = corrSrc === 'clas'
+  // CLAS で 解けている 間は 出どころが 一目で 分かる 名前にする。
+  // Float は 精度が 落ちるので 色 (琥珀) は 残したまま 名前だけ 変える
   const boxClass =
     fq != null
-      ? FIX_CLASS[fq]
+      ? isClas && fq === 4
+        ? 'bg-violet-100 border-violet-500 text-violet-800'
+        : FIX_CLASS[fq]
       : connected
         ? 'bg-slate-100 border-slate-400 text-slate-700'
         : 'bg-red-100 border-red-400 text-red-800'
-  const fixLabel = !connected ? '切断' : fq != null ? FIX_LABEL[fq] : '受信中'
+  const fixLabel = !connected
+    ? '切断'
+    : fq == null
+      ? '受信中'
+      : isClas && fq === 4
+        ? 'CLAS'
+        : isClas && fq === 5
+          ? 'CLAS-F'
+          : FIX_LABEL[fq]
   const icon = !connected ? (
     <WifiOff className="h-3 w-3" />
   ) : fq === 4 ? (
@@ -85,6 +102,9 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
     fq != null ? `Fix: ${FIX_LABEL[fq]}` : null,
     hdop != null ? `HDOP: ${hdop.toFixed(2)}` : null,
     satellites != null ? `Sats: ${satellites}` : null,
+    `補正: ${CORRECTION_SOURCE_LABEL[corrSrc]}${
+      diffAge != null ? ` (経過 ${diffAge.toFixed(1)} 秒)` : ''
+    }${stationId ? ` / 基準局 ${stationId}` : ''}`,
     isStale ? `更新: ${Math.round((staleMs ?? 0) / 1000)} 秒前` : null,
     ntrip.connected
       ? `NTRIP: ${ntrip.host}/${ntrip.mountpoint} (${(ntrip.bytesReceived / 1024).toFixed(1)} KB${

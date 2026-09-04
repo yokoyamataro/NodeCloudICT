@@ -11,7 +11,7 @@
 
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
-            android:screenOrientation="portrait"
+            android:screenOrientation="fullUser"
             android:name=".MainActivity"
             android:label="@string/title_activity_main"
             android:theme="@style/AppTheme.NoActionBarLaunch"
@@ -55,8 +55,10 @@
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 
     <!-- Bluetooth (Drogger RTK 直接受信 = DroggerLocationPlugin 用)
+         接続は BLE (GATT) のみ。SPP (RFCOMM) は 使わない。
          Android 12+ (API 31) は BLUETOOTH_CONNECT / BLUETOOTH_SCAN が ランタイム権限。
-         それ未満はレガシー BLUETOOTH / BLUETOOTH_ADMIN で SPP 接続可能。
+         それ未満はレガシー BLUETOOTH / BLUETOOTH_ADMIN + ACCESS_FINE_LOCATION
+         (API 30 以下は BLE スキャン結果の 受け取りに 位置情報が 要る)。
          BLUETOOTH_ADVERTISE は今回不使用 (受信のみ)。 -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
@@ -66,4 +68,5 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
         android:maxSdkVersion="30" />
     <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 </manifest>

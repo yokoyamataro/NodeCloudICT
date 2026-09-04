@@ -18,11 +18,20 @@ public class DroggerLocationPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "getSatellites", returnType: CAPPluginReturnPromise),
     ]
 
+    /// 受信した NMEA を 1 行ずつ ログに 出すか (既定 false)。
+    /// 種類と 本数は 5 秒ごとの 集計ログ ([NMEA] counts) で 分かるので、
+    /// 生の行が 要るとき だけ true にする
+    private static let logEveryNmeaLine = false
+
     private lazy var ble: DroggerBleManager = {
         let m = DroggerBleManager()
         m.onNmeaLine = { [weak self] line in
-            // ステップ1: まずコンソールに出して受信を確認する
-            print("[NMEA] \(line)")
+            // 受信機は 10Hz で 8 種類ほど 出すので、1 行ずつ 出すと 毎秒 40 行 に なる。
+            // print は メインスレッドを 止めるため、BLE の 取りこぼしや 切断の 原因に
+            // なりうる。生行が 要るときだけ ここを true にする
+            if Self.logEveryNmeaLine {
+                print("[NMEA] \(line)")
+            }
             self?.handleNmeaLine(line)
         }
         m.onStatusChange = { [weak self] connected, name in
@@ -79,11 +88,20 @@ public class DroggerLocationPlugin: CAPPlugin, CAPBridgedPlugin {
         var stdLat: Double?
         var stdLon: Double?
         var stdAlt: Double?
+        /// GGA field 13: 補正データを 受け取ってからの 経過時間 [s]。補正なしは 空欄
+        var diffAge: Double?
+        /// GGA field 14: 差分基準局 ID。NTRIP は 基準局の 番号、CLAS は 受信機内で
+        /// 解くので 固定値になる
+        var stationId: String?
     }
 
     private var nmea = NmeaBuffer()
     /// 直前に 採用した 精度の 出所 ("GST" / "FQ(4)" / "HDOP×3")。ログの 重複抑制用
     private var lastAccSource: String?
+    /// 診断: 見た sentence の 種類と 出現回数 (5 秒ごとに ログへ 出して 空にする)
+    private var seenTalkers = Set<String>()
+    private var talkerCounts: [String: Int] = [:]
+    private var lastTalkerSummaryMs: Double = 0
 
     private static let iso8601: DateFormatter = {
         let f = DateFormatter()
@@ -100,6 +118,19 @@ public class DroggerLocationPlugin: CAPPlugin, CAPBridgedPlugin {
         let body = String(line.prefix(while: { $0 != "*" }).dropFirst())
         let parts = body.components(separatedBy: ",")
         guard let talker = parts.first else { return }
+
+        // 診断 (Android 版と同じ): どの sentence が 来ているかを 5 秒ごとに 集計。
+        // 精度が 典型値のままの ときに 「GST が そもそも 来ていない」ことを 確かめる
+        if seenTalkers.insert(talker).inserted {
+            print("[NMEA] new sentence: $\(talker)  first=\(line)")
+        }
+        talkerCounts[talker, default: 0] += 1
+        let nowMs = Date().timeIntervalSince1970 * 1000
+        if nowMs - lastTalkerSummaryMs > 5000 {
+            lastTalkerSummaryMs = nowMs
+            print("[NMEA] counts (last 5s+): \(talkerCounts)")
+            talkerCounts.removeAll()
+        }
 
         if talker.hasSuffix("GGA") {
             // NTRIP VRS 用に生 GGA を差し込む (キャスターに定期 upload)
@@ -136,6 +167,12 @@ public class DroggerLocationPlugin: CAPPlugin, CAPBridgedPlugin {
         if let v = Double(parts[9]) { nmea.altitude = v }
         // GGA field 11: 受信機内蔵ジオイドと WGS84 楕円体の差 [m]
         if let v = Double(parts[11]) { nmea.geoidalSep = v }
+        // GGA field 13 / 14: 補正の 経過時間 [s] と 差分基準局 ID。
+        // CLAS か NTRIP かの 見分けに 使う (どちらも 品質は 4 / 5 で 同じ)。
+        // 補正が 無い間は 空欄なので、その時は nil に 戻す
+        nmea.diffAge = Double(parts[13])
+        let sid = parts[14].trimmingCharacters(in: .whitespaces)
+        nmea.stationId = sid.isEmpty ? nil : sid
         if !time.isEmpty { nmea.timeMillis = parseNmeaTime(time) }
     }
 
@@ -262,6 +299,12 @@ public class DroggerLocationPlugin: CAPPlugin, CAPBridgedPlugin {
         ]
         data["hdop"] = nmea.hdop ?? NSNull()
         data["satellites"] = nmea.satellites ?? NSNull()
+        // 補正の 出どころ判定用 (TS 側 correctionSource)
+        data["diffAge"] = nmea.diffAge ?? NSNull()
+        data["stationId"] = nmea.stationId ?? NSNull()
+        // 精度が 実測 (GST) なのか 品質ごとの 典型値なのかを UI にも 渡す。
+        // 出所が 分からないと 「いつも 同じ 2cm」を 実測だと 誤解する
+        data["accuracySource"] = accSrc
 
         notifyListeners("location", data: data)
     }
@@ -459,7 +502,18 @@ public class DroggerLocationPlugin: CAPPlugin, CAPBridgedPlugin {
         ]
     }
 
+    /// 衛星スナップショットを 送る 間隔 [ms]。
+    /// GSV / GSA は 1 秒ごとに 来るが、スカイマップは そんなに 速く 動かなくてよい。
+    /// 毎回 送ると ブリッジ越しの 更新と 再描画が 無駄に 回る。
+    private static let satelliteEmitIntervalMs: Double = 5000
+    private var lastSatEmitMs: Double = 0
+
+    /// 衛星スナップショットを 送る。間隔を 空けて 間引く
+    /// (getSatellites() で 引くときは いつでも 最新が 返る)
     private func emitSatellites() {
+        let now = Date().timeIntervalSince1970 * 1000
+        guard now - lastSatEmitMs >= Self.satelliteEmitIntervalMs else { return }
+        lastSatEmitMs = now
         computeUsedInFix()
         notifyListeners("satellites", data: satellitesPayload())
     }
