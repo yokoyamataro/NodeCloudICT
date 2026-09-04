@@ -21,6 +21,7 @@ import {
   downloadLandxmlText,
   uploadLandxmlFile,
 } from '@/lib/landxmlFiles'
+import { useLandxmlEventsStore } from '@/stores/landxmlEventsStore'
 import { parseLandXml, type ParsedSurface } from '@/lib/landxml/parser'
 import { indexTin } from '@/lib/landxml/tinInterpolation'
 import {
@@ -3037,6 +3038,8 @@ function LandxmlCurrentImportSection({
         kind: 'ground',
         notes: channelName ? `open-channel: ${channelName}` : null,
       })
+      // 全体図 側 で 自動 再フェッチ される よう version を bump
+      useLandxmlEventsStore.getState().bump()
       setActiveFile({
         id: uploaded.id,
         name: uploaded.name,

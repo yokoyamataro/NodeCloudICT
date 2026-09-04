@@ -30,6 +30,7 @@ import {
   hypsometricColor,
   type RenderedTin,
 } from '@/lib/landxml/tinRender'
+import { useLandxmlEventsStore } from '@/stores/landxmlEventsStore'
 import {
   buildSegments,
   pointAtDistance,
@@ -437,8 +438,11 @@ export function OrthophotoPage() {
 
   // LandXML (kind='ground' / 'design') を Storage から fetch → パース → TIN 化。
   // 各 kind は 工区 単位 で 1 枚 (getActiveLandxmlFile)。 無ければ null で 何も描画しない。
+  // 他 ページ で uploadLandxmlFile された 際 に landxmlEventsStore.bump() され、
+  // ここ の version が 変わって useEffect が 再実行 → 自動再取得 される。
   const [groundXmlText, setGroundXmlText] = useState<string | null>(null)
   const [designXmlText, setDesignXmlText] = useState<string | null>(null)
+  const landxmlVersion = useLandxmlEventsStore((s) => s.version)
   useEffect(() => {
     if (!currentFarm) {
       setGroundXmlText(null)
@@ -465,7 +469,7 @@ export function OrthophotoPage() {
     return () => {
       cancelled = true
     }
-  }, [currentFarm])
+  }, [currentFarm, landxmlVersion])
   const buildTin = useCallback(
     (xmlText: string | null, sourceName: string): RenderedTin | null => {
       if (!xmlText || projectZone == null) return null

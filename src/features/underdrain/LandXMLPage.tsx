@@ -24,6 +24,7 @@ import { buildTinSurface, buildTrenchTin } from '@/lib/landxml/surface'
 import { buildLandXml } from '@/lib/landxml/exporter'
 import { detectOverlaps, type OverlapResult } from '@/lib/landxml/overlap'
 import { uploadLandxmlFile } from '@/lib/landxmlFiles'
+import { useLandxmlEventsStore } from '@/stores/landxmlEventsStore'
 import { CoordinateConverter } from '@/lib/coordinates'
 import type { Alignment } from '@/lib/landxml/types'
 
@@ -300,6 +301,7 @@ export function LandXMLPage() {
   const [uploadingToOverview, setUploadingToOverview] = useState(false)
   const [overviewExportStatus, setOverviewExportStatus] = useState<string | null>(null)
   const [overviewExportError, setOverviewExportError] = useState<string | null>(null)
+  const bumpLandxml = useLandxmlEventsStore((s) => s.bump)
   const handleExportToOverview = async () => {
     if (!currentFarm) return
     setOverviewExportError(null)
@@ -320,8 +322,17 @@ export function LandXMLPage() {
         kind: 'design',
         notes: '暗渠 ICT 施工 (LandXML 出力)',
       })
+      // 全体図 側 で 自動 再フェッチ される よう version を bump
+      bumpLandxml()
+      // TIN が 含まれて いれば 全体図 に 描画 される。 含まれて いない (派生線形のみ) 場合 は
+      // メッセージ で 明示 (現状 全体図 は Surfaces のみ 描画)。
+      const hasTin =
+        (exportTinSurface && tinSurface !== null) ||
+        (exportTrenchSurface && trenchSurface !== null)
       setOverviewExportStatus(
-        `「${fileName}」を 全体図 に エクスポート しました (旧 active は 非active 化)`,
+        hasTin
+          ? `「${fileName}」を 全体図 に エクスポート しました。 全体図 の 「設計面 (LandXML)」レイヤ で 確認 できます。`
+          : `「${fileName}」を 保存しました が、TIN (地盤/床掘) を 含めて いない ため 全体図 には まだ 何も 表示 されません。 上の チェックボックス で TIN を ON に して 再エクスポート して ください。`,
       )
     } catch (e) {
       console.error('[landxml overview export]', e)
