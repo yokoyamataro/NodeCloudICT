@@ -36,9 +36,11 @@ import {
   type DroggerFixQuality,
   type DroggerLocationEvent,
   type NtripConfig,
+  type NtripBaseStation,
   type NtripMountpoint,
   type NtripStatus,
 } from '@/lib/drogger'
+import { haversineMeters } from '@/lib/geoDistance'
 import {
   DEFAULT_NTRIP_CONFIG,
   addNtripProfile,
@@ -360,11 +362,9 @@ function GpsConnectionTab() {
               </span>
             </div>
           </div>
-          <div>
-            <div className="text-[10px] text-slate-500">基準局 ID</div>
-            <div className="font-mono">{status.stationId ?? '-'}</div>
-          </div>
         </div>
+        {/* 基準局 ID / 座標 / 基線長 / 機種 は NTRIP接続 タブの 「基準局情報」に
+            まとめた。ここは 測位そのものの 状態だけに する */}
       </div>
 
       {/* 現在位置 */}
@@ -622,6 +622,118 @@ function GnssSettingsSection() {
 // (旧 NtripConfigModal から 移設)
 // ============================================================================
 
+/**
+ * 基準局の 素性。素通ししている RTCM を ネイティブ側で 覗いて 拾った 値。
+ *   1005 / 1006 … 座標 (ARP) と 局 ID       1007 / 1008 … アンテナ機種
+ *   1033        … 受信機の 機種 / ファーム   それ以外   … 種別と 配信間隔
+ * 1005 は 10 秒に 1 回程度なので、繋いだ 直後は 座標が まだ 出ない。
+ */
+function BaseStationInfo({
+  base,
+  rover,
+  diffAge,
+}: {
+  base: NtripBaseStation | null
+  rover: { lat: number; lon: number } | null
+  diffAge: number | null
+}) {
+  // 基線長。RTK の 精度は おおむね 1mm/km で 劣化するので、離れすぎて
+  // いないかの 目安に なる。VRS なら 仮想点までの 距離 (ほぼ 0) が 出る。
+  const baselineM =
+    base?.lat != null && base.lon != null && rover != null
+      ? haversineMeters({ lat: rover.lat, lon: rover.lon }, { lat: base.lat, lon: base.lon })
+      : null
+
+  const messages = base?.messages ?? []
+  // 配信間隔は 種別ごとに 違うが、観測データ (MSM 等) の 間隔が 実質の
+  // 更新レートなので、最も 短いものを 代表値に する
+  const fastest = messages.reduce<number | null>(
+    (min, m) => (m.intervalSec != null && (min == null || m.intervalSec < min) ? m.intervalSec : min),
+    null,
+  )
+
+  return (
+    <div className="border rounded p-3 space-y-1 text-slate-700">
+      <div className="text-slate-600 font-semibold">基準局情報</div>
+      {base == null || (base.lat == null && messages.length === 0) ? (
+        <div className="text-[11px] text-slate-500">
+          RTCM を 解析中… (座標は 1005 の 配信待ち。通常 10 秒ほど)
+        </div>
+      ) : (
+        <div className="space-y-1 text-[11px]">
+          <Row label="局 ID" value={base.stationId ?? '-'} mono />
+          <Row
+            label="座標"
+            mono
+            value={
+              base.lat != null && base.lon != null
+                ? `${base.lat.toFixed(7)}° / ${base.lon.toFixed(7)}°`
+                : '取得待ち'
+            }
+          />
+          <Row
+            label="楕円体高"
+            mono
+            value={
+              base.altitude != null
+                ? `${base.altitude.toFixed(3)} m${
+                    base.antennaHeight != null
+                      ? ` (アンテナ高 ${base.antennaHeight.toFixed(3)} m)`
+                      : ''
+                  }`
+                : '-'
+            }
+          />
+          <Row
+            label="基線長"
+            mono
+            value={
+              baselineM == null
+                ? '-'
+                : baselineM < 1000
+                  ? `${baselineM.toFixed(0)} m`
+                  : `${(baselineM / 1000).toFixed(2)} km`
+            }
+          />
+          <Row label="アンテナ" value={base.antennaDescriptor ?? '-'} />
+          <Row
+            label="受信機"
+            value={
+              base.receiverType
+                ? `${base.receiverType}${base.receiverFirmware ? ` (${base.receiverFirmware})` : ''}`
+                : '-'
+            }
+          />
+          <Row
+            label="補正経過時間"
+            mono
+            value={diffAge != null ? `${diffAge.toFixed(1)} 秒前` : '-'}
+          />
+          <Row
+            label="配信メッセージ"
+            value={
+              messages.length === 0
+                ? '-'
+                : `${messages.map((m) => m.type).join(', ')}${
+                    fastest != null ? ` (最短 ${fastest.toFixed(1)} 秒間隔)` : ''
+                  }`
+            }
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex gap-2">
+      <div className="text-slate-500 shrink-0 w-24">{label}</div>
+      <div className={`min-w-0 break-all ${mono ? 'font-mono' : ''}`}>{value}</div>
+    </div>
+  )
+}
+
 function NtripTab() {
   const [profiles, setProfiles] = useState<NtripProfile[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -632,6 +744,31 @@ function NtripTab() {
   const [connecting, setConnecting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState<NtripStatus | null>(null)
+  // 基線長 (基準局 ↔ 自分) を 出すための ローバー位置。
+  // km 単位で 見せるだけなので 1 秒に 1 回で 足りる (5 Hz で 更新すると
+  // モーダル全体が その頻度で 再描画される)
+  const [roverPos, setRoverPos] = useState<{ lat: number; lon: number } | null>(null)
+  // 補正データの 経過時間 (GGA field 13)。基準局まわりの 情報なので ここに 集約
+  const diffAge = useDroggerConnection((s) => s.diffAge)
+
+  useEffect(() => {
+    let cancelled = false
+    let h: { remove: () => Promise<void> } | null = null
+    let lastAt = 0
+    void DroggerLocation.addListener('location', (ev: DroggerLocationEvent) => {
+      const now = Date.now()
+      if (now - lastAt < 1000) return
+      lastAt = now
+      if (!cancelled) setRoverPos({ lat: ev.lat, lon: ev.lon })
+    }).then((handle) => {
+      if (cancelled) void handle.remove()
+      else h = handle
+    })
+    return () => {
+      cancelled = true
+      if (h) void h.remove()
+    }
+  }, [])
 
   useEffect(() => {
     const store = loadNtripStore()
@@ -804,6 +941,10 @@ function NtripTab() {
             切断
           </button>
         </div>
+      )}
+
+      {status?.connected && (
+        <BaseStationInfo base={status.baseStation ?? null} rover={roverPos} diffAge={diffAge} />
       )}
 
       {/* プロファイル選択 */}

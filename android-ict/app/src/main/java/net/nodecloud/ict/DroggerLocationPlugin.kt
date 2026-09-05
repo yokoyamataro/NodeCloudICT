@@ -84,6 +84,8 @@ class DroggerLocationPlugin : Plugin() {
     @Volatile private var ntripMountpoint: String? = null
     /** RTCM 受信ごとの ntripStatusChange emit を 2 秒に 1 回に間引くための throttle */
     @Volatile private var lastNtripEmitAt: Long = 0L
+    /** 素通ししている RTCM から 基準局の 素性を 拾う (1005/1006/1007/1008/1033) */
+    private val rtcm = RtcmParser()
 
     // ============================================================================
     // Public methods (JS bridge)
@@ -204,6 +206,8 @@ class DroggerLocationPlugin : Plugin() {
             pass = pass,
             sendGga = sendGga,
             onRtcm = { buf, len ->
+                // 受信機へ 流す 前に 横から 覗いて 基準局の 素性を 取る
+                rtcm.feed(buf, len)
                 if (ble.isConnected) {
                     // MTU に 合わせた 分割と 送信順の 直列化は BLE 側の キューが 面倒を 見る
                     ble.write(buf, len)
@@ -225,6 +229,8 @@ class DroggerLocationPlugin : Plugin() {
                 notifyError(code, msg)
             },
         )
+        // 局が 変わるので 前の 基準局情報は 捨てる
+        rtcm.reset()
         // BT が既に接続済みなら 直近の GGA を渡す
         lastRawGga?.let { client.updateGga(it) }
         ntripClient = client
@@ -251,6 +257,7 @@ class DroggerLocationPlugin : Plugin() {
         ret.put("mountpoint", ntripMountpoint)
         ret.put("bytesReceived", client?.bytesReceived ?: 0L)
         ret.put("lastRtcmAt", client?.lastRtcmAt ?: 0L)
+        ret.put("baseStation", baseStationJson())
         call.resolve(ret)
     }
 
@@ -305,7 +312,35 @@ class DroggerLocationPlugin : Plugin() {
         obj.put("mountpoint", ntripMountpoint)
         obj.put("bytesReceived", ntripClient?.bytesReceived ?: 0L)
         obj.put("lastRtcmAt", ntripClient?.lastRtcmAt ?: 0L)
+        obj.put("baseStation", baseStationJson())
         notifyListeners("ntripStatusChange", obj)
+    }
+
+    /**
+     * RTCM から 拾った 基準局の 素性を JS へ。
+     * 座標が まだ 来ていなくても (1005 は 10 秒に 1 回程度)、配信メッセージの
+     * 一覧は すぐ 溜まるので、null では 返さず 分かる分だけ 出す。
+     */
+    private fun baseStationJson(): JSObject {
+        val obj = JSObject()
+        obj.put("stationId", rtcm.stationId?.toString())
+        obj.put("lat", rtcm.lat)
+        obj.put("lon", rtcm.lon)
+        obj.put("altitude", rtcm.altitude)
+        obj.put("antennaHeight", rtcm.antennaHeight)
+        obj.put("antennaDescriptor", rtcm.antennaDescriptor)
+        obj.put("receiverType", rtcm.receiverType)
+        obj.put("receiverFirmware", rtcm.receiverFirmware)
+        val arr = JSArray()
+        for ((type, st) in rtcm.messageStats()) {
+            val m = JSObject()
+            m.put("type", type)
+            m.put("count", st.count)
+            m.put("intervalSec", st.intervalSec)
+            arr.put(m)
+        }
+        obj.put("messages", arr)
+        return obj
     }
 
     // ============================================================================

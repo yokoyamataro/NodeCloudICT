@@ -532,6 +532,11 @@ public class DroggerLocationPlugin: CAPPlugin, CAPBridgedPlugin {
     private var ntripMountpoint: String?
     private var lastRawGga: String?
 
+    /// 素通ししている RTCM から 基準局の 素性を 拾う (1005/1006/1007/1008/1033)
+    private let rtcm = RtcmParser()
+    /// RTCM 受信ごとの ntripStatusChange emit を 2 秒に 1 回に 間引く
+    private var lastNtripEmitMs: Double = 0
+
     @objc func startNtrip(_ call: CAPPluginCall) {
         guard let host = call.getString("host"), !host.isEmpty,
               let port = call.getInt("port"),
@@ -550,8 +555,18 @@ public class DroggerLocationPlugin: CAPPlugin, CAPBridgedPlugin {
             host: host, port: port, mountpoint: mountpoint,
             user: user, pass: pass, sendGga: sendGga,
             onRtcm: { [weak self] data in
+                guard let self = self else { return }
+                // 受信機へ 流す 前に 横から 覗いて 基準局の 素性を 取る
+                self.rtcm.feed(data)
                 // RTCM3 をそのまま Drogger へ書き込む (BLE MTU 分割は write() 側で処理)
-                self?.ble.write(data)
+                self.ble.write(data)
+                // バッジの KB カウンタ / 基準局情報の 更新用に 2 秒に 1 回 status を 出す
+                // (Android 版と 同じ 間隔)
+                let now = Date().timeIntervalSince1970 * 1000
+                if now - self.lastNtripEmitMs > 2000 {
+                    self.lastNtripEmitMs = now
+                    self.notifyNtripStatus(true)
+                }
             },
             onStatusChange: { [weak self] connected in
                 self?.notifyNtripStatus(connected)
@@ -560,6 +575,8 @@ public class DroggerLocationPlugin: CAPPlugin, CAPBridgedPlugin {
                 self?.notifyListeners("error", data: ["code": code, "message": message])
             }
         )
+        // 局が 変わるので 前の 基準局情報は 捨てる
+        rtcm.reset()
         // BLE が既に接続済みなら直近の GGA を渡す
         if let g = lastRawGga { client.updateGga(g) }
         ntripClient = client
@@ -624,6 +641,32 @@ public class DroggerLocationPlugin: CAPPlugin, CAPBridgedPlugin {
             "mountpoint": ntripMountpoint ?? NSNull(),
             "bytesReceived": ntripClient?.bytesReceived ?? 0,
             "lastRtcmAt": ntripClient?.lastRtcmAt ?? 0,
+            "baseStation": baseStationDict(),
+        ]
+    }
+
+    /// RTCM から 拾った 基準局の 素性を JS へ。
+    /// 座標が まだ 来ていなくても (1005 は 10 秒に 1 回程度)、配信メッセージの
+    /// 一覧は すぐ 溜まるので、nil では 返さず 分かる分だけ 出す。
+    private func baseStationDict() -> [String: Any] {
+        var messages: [[String: Any]] = []
+        for (type, st) in rtcm.messageStats() {
+            messages.append([
+                "type": type,
+                "count": st.count,
+                "intervalSec": st.intervalSec ?? NSNull(),
+            ])
+        }
+        return [
+            "stationId": rtcm.stationId.map { String($0) } ?? NSNull(),
+            "lat": rtcm.lat ?? NSNull(),
+            "lon": rtcm.lon ?? NSNull(),
+            "altitude": rtcm.altitude ?? NSNull(),
+            "antennaHeight": rtcm.antennaHeight ?? NSNull(),
+            "antennaDescriptor": rtcm.antennaDescriptor ?? NSNull(),
+            "receiverType": rtcm.receiverType ?? NSNull(),
+            "receiverFirmware": rtcm.receiverFirmware ?? NSNull(),
+            "messages": messages,
         ]
     }
 

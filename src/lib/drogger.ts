@@ -102,6 +102,38 @@ export interface NtripConfig {
 }
 
 /** NTRIP 接続状態 */
+/** RTCM の 1 種別あたりの 到着状況 (この局が 何を 何秒ごとに 配信しているか) */
+export interface RtcmMessageStat {
+  /** RTCM メッセージ種別 (1005, 1074, 1230 …) */
+  type: number
+  count: number
+  /** 平均到着間隔 [s]。1 回しか 来ていなければ null */
+  intervalSec: number | null
+}
+
+/**
+ * 素通ししている RTCM から 取り出した 基準局の 素性。
+ *   1005 / 1006 … ARP の 座標 + 局 ID (1006 は アンテナ高つき)
+ *   1007 / 1008 … アンテナ機種名
+ *   1033        … アンテナ機種名 + 受信機の 機種 / ファームウェア
+ * 1005 は 10 秒に 1 回程度の 配信なので、繋いだ 直後は 座標が まだ null に なる。
+ */
+export interface NtripBaseStation {
+  stationId: string | null
+  /** ARP の 緯度 [deg] */
+  lat: number | null
+  /** ARP の 経度 [deg] */
+  lon: number | null
+  /** ARP の 楕円体高 [m] */
+  altitude: number | null
+  /** アンテナ高 [m]。1006 のみ */
+  antennaHeight: number | null
+  antennaDescriptor: string | null
+  receiverType: string | null
+  receiverFirmware: string | null
+  messages: RtcmMessageStat[]
+}
+
 export interface NtripStatus {
   connected: boolean
   host: string | null
@@ -109,6 +141,8 @@ export interface NtripStatus {
   bytesReceived: number
   /** 最後に RTCM を受信した epoch ms (0 なら未受信) */
   lastRtcmAt: number
+  /** RTCM 由来の 基準局情報。古い APK / IPA では 来ないので optional */
+  baseStation?: NtripBaseStation | null
 }
 
 /** SourceTable エントリ (STR; 行) */
