@@ -70,6 +70,10 @@ interface PositionSnapshot {
   altitudeAccuracy: number | null
   /** GGA field 11: 受信機内蔵ジオイド と 楕円体 の差 [m] (Drogger のみ) */
   geoidalSep: number | null
+  /** RMC の 進行方向 (COG) [deg]。真北から 時計回り */
+  heading: number | null
+  /** RMC の 対地速度 [km/h]。COG が 当てに なるかの 判断に 使う */
+  speedKmh: number | null
 }
 
 const FIX_LABEL: Record<DroggerFixQuality, string> = {
@@ -190,6 +194,8 @@ function GpsConnectionTab() {
     accuracySource: null,
     altitudeAccuracy: null,
     geoidalSep: null,
+    heading: null,
+    speedKmh: null,
   })
   const [reconnecting, setReconnecting] = useState(false)
   const [reconnectError, setReconnectError] = useState<string | null>(null)
@@ -222,6 +228,8 @@ function GpsConnectionTab() {
         accuracySource: ev.accuracySource ?? null,
         altitudeAccuracy: ev.altitude_accuracy_m,
         geoidalSep: ev.geoidal_separation_m ?? null,
+        heading: ev.heading_deg,
+        speedKmh: ev.speed_kmh,
       })
     }).then((h) => {
       if (cancelled) void h.remove()
@@ -270,6 +278,8 @@ function GpsConnectionTab() {
     accuracySource: pos.accuracySource,
     altitudeAccuracy: pos.altitudeAccuracy,
     geoidalSep: pos.geoidalSep,
+    heading: pos.heading,
+    speedKmh: pos.speedKmh,
     lastUpdateAt,
   }
   const fq = status.fixQuality
@@ -279,6 +289,9 @@ function GpsConnectionTab() {
       : status.connected
         ? 'bg-slate-100 border-slate-400 text-slate-700'
         : 'bg-red-100 border-red-400 text-red-800'
+  // COG (進行方向) は 静止中 まったく 当てに ならない。歩行速度を 目安に
+  // 「動いている」ことを 判定して、止まっている 間は 薄字に 落とす
+  const movingForCog = status.speedKmh != null && status.speedKmh >= 2.0
   const staleMs = status.lastUpdateAt ? Date.now() - status.lastUpdateAt : null
   const isStale = staleMs != null && staleMs > 5000
   // 補正の 出どころ。CLAS と NTRIP は どちらも 品質 4/5 になるので、
@@ -397,7 +410,26 @@ function GpsConnectionTab() {
               return `${(H ?? status.altitude).toFixed(3)}m`
             })()}</div>
           </div>
+          {/* 方位 (RMC の COG)。静止中は 値が 定まらないので 薄く 出す */}
+          <div>
+            <div className="text-[10px] text-slate-500">方位 (進行方向)</div>
+            <div className={movingForCog ? '' : 'text-slate-400'}>
+              {status.heading != null ? `${status.heading.toFixed(1)}°` : '-'}
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] text-slate-500">速度</div>
+            <div>
+              {status.speedKmh != null ? `${status.speedKmh.toFixed(1)} km/h` : '-'}
+            </div>
+          </div>
         </div>
+        {!movingForCog && status.heading != null && (
+          <div className="text-[10px] text-slate-500">
+            方位は NMEA $--RMC の 進行方向 (COG)。静止中は 定まらないので
+            薄字に しています
+          </div>
+        )}
         <div className="text-[10px] text-slate-500">
           {/* 受信機が GST を 出していないと 品質ごとの 固定値になるので、
               実測かどうかが 分かるように 注記を 添える */}
