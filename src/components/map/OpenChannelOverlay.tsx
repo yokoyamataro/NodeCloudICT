@@ -8,15 +8,21 @@
 // キーは 'ch:<channelId>' (親) と 'ch:<channelId>:center|stakes|vertices|stations'。
 
 import { CircleMarker, Polyline as LeafletPolyline, Tooltip } from 'react-leaflet'
-import type { ChannelOverlay } from '@/lib/openChannel/overlayRender'
+import type { ChannelOverlay, ChannelStation } from '@/lib/openChannel/overlayRender'
 
 export function OpenChannelOverlay({
   overlay,
   subOn,
+  onStationClick,
 }: {
   overlay: ChannelOverlay
   /** そのキーを 表示するか。呼び出し側の 「隠しているキー」集合で 判定する */
   subOn: (key: string) => boolean
+  /**
+   * 中間点を タップしたとき。渡すと 中間点が クリック可 に なる。
+   * スマホの 2D モードで 「この 測点の 断面」を 作るのに 使う。
+   */
+  onStationClick?: (station: ChannelStation) => void
 }) {
   return (
     <>
@@ -82,13 +88,18 @@ export function OpenChannelOverlay({
           <CircleMarker
             key={s.key}
             center={[s.lat, s.lng]}
-            radius={3}
+            // タップ受けを 付けるときは 指で 押せる 大きさに する
+            radius={onStationClick ? 7 : 3}
             pathOptions={{
               color: '#4f46e5',
-              weight: 1,
+              weight: onStationClick ? 2 : 1,
               fillColor: '#818cf8',
               fillOpacity: 0.9,
             }}
+            interactive={onStationClick != null}
+            eventHandlers={
+              onStationClick ? { click: () => onStationClick(s) } : undefined
+            }
           >
             {/* 常時表示 の SP ラベル (座標マーカー の 点名 表示 と 同じ スタイル)。
                 point-label-tooltip クラス で 背景透過 + テキスト影 */}

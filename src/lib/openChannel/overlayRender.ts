@@ -60,8 +60,17 @@ export interface ChannelStation {
   /** 平面直角座標。測設の 誘導は こちらで 計算する */
   x: number
   y: number
-  /** BP からの 追加距離 [m]。断面の 向きを 出すのに 使う */
+  /** BP からの 追加距離 [m] */
   distance: number
+  /** 中心線の 進行方向 (単位ベクトル、平面直角座標)。断面は これに 直交する */
+  tx: number
+  ty: number
+  /**
+   * 幅杭の offset が 正に なる 向き (単位ベクトル)。断面線は この向きを 正と する。
+   * sideOrientation='reverse' の 反転も 織り込み済み。
+   */
+  nx: number
+  ny: number
   /** 中心線上の 高さ [m]。計画高、無ければ 現況高、どちらも 無ければ null */
   z: number | null
   label: string
@@ -169,7 +178,8 @@ export function buildChannelOverlay(
     // 中間点 (stations): 中心線 上 の 距離 で 定義 → 世界座標 → LatLng
     for (const st of ch.stations ?? []) {
       const cp = pointAtDistance(segments, st.distance)
-      if (!cp) continue
+      const tg = tangentAtDistance(segments, st.distance)
+      if (!cp || !tg) continue
       try {
         const { lat, lng } = conv.toLatLng(cp.x, cp.y)
         if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
@@ -183,6 +193,11 @@ export function buildChannelOverlay(
           x: cp.x,
           y: cp.y,
           distance: st.distance,
+          tx: tg.x,
+          ty: tg.y,
+          // 幅杭と 同じ 式: offset が 正の 向きは (-t.y, t.x) * sign
+          nx: -tg.y * sign,
+          ny: tg.x * sign,
           z: st.plannedCenterHeight ?? st.currentGroundHeight ?? null,
           label: st.label,
         })

@@ -105,7 +105,7 @@ import { OpenChannelOverlay } from '@/components/map/OpenChannelOverlay'
 import { TinPane } from '@/components/map/TinPane'
 import { buildTinFromXml } from '@/lib/landxml/buildTin'
 import { useLandxmlEventsStore } from '@/stores/landxmlEventsStore'
-import { buildChannelOverlay } from '@/lib/openChannel/overlayRender'
+import { buildChannelOverlay, type ChannelStation } from '@/lib/openChannel/overlayRender'
 import { watchSamples } from '@/lib/geolocation'
 import { useGnssSettingsStore } from '@/stores/gnssSettingsStore'
 import {
@@ -935,6 +935,16 @@ export function MobileStakingPage() {
     a: [number, number]
     b: [number, number]
     direction: 'along' | 'perp'
+    /**
+     * 線形物の 中間点から 作った 断面のとき、その 素性。
+     * a→b は 中心線に 直交し、b 側が 幅杭の offset 正の 向きに なる。
+     */
+    station?: {
+      channelId: string
+      stationId: string
+      channelName: string
+      label: string
+    }
   }
   const [sections, setSections] = useState<CrossSection[]>([])
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null)
@@ -955,6 +965,39 @@ export function MobileStakingPage() {
     try { localStorage.setItem('mobile:sectionTolM', String(sectionToleranceM)) } catch { /* ignore */ }
   }, [sectionToleranceM])
   const sectionPickingMode = sectionPickIds.length < 2 && activeSectionId === 'pending'
+
+  /**
+   * 線形物の 中間点を タップして 断面を 作る。
+   * 断面は 中心線に 直交し、中心点を 真ん中に した 線分。
+   * 半幅は その 線形物の 幅杭で 一番 外の もの + 余裕、無ければ 10m。
+   */
+  const createSectionFromStation = (st: ChannelStation) => {
+    const ch = openChannels.find((c) => c.id === st.channelId)
+    const maxOffset = ch
+      ? ch.widthStakes.reduce((m, w) => Math.max(m, Math.abs(w.offset)), 0)
+      : 0
+    const half = maxOffset > 0 ? maxOffset + 2 : 10
+    const a = converter.toLatLng(st.x - st.nx * half, st.y - st.ny * half)
+    const b = converter.toLatLng(st.x + st.nx * half, st.y + st.ny * half)
+    const id = `sec-st-${st.stationId}`
+    const sec: CrossSection = {
+      id,
+      name: `${st.channelName} ${st.label}`,
+      a: [a.lat, a.lng],
+      b: [b.lat, b.lng],
+      // a→b が そのまま 断面線 なので along 扱い (perp は 2 点の 垂直二等分線)
+      direction: 'along',
+      station: {
+        channelId: st.channelId,
+        stationId: st.stationId,
+        channelName: st.channelName,
+        label: st.label,
+      },
+    }
+    setSections((prev) => [...prev.filter((x) => x.id !== id), sec])
+    setActiveSectionId(id)
+    setSectionPickIds([])
+  }
   const startNewSection = () => {
     setActiveSectionId('pending')
     setSectionPickIds([])
@@ -2606,6 +2649,36 @@ export function MobileStakingPage() {
     () => buildTinFromXml(designXmlText, 'design', zone),
     [designXmlText, zone],
   )
+
+  /**
+   * 現在地が 断面に対して どこに いるか。
+   *   width  … 断面線に 沿った 中心点からの 離れ [m]。正 = a→b の 向き
+   *            (中間点から 作った 断面では 幅杭の offset 正側)
+   *   offset … 断面線からの 離れ [m]。中間点断面では 路線方向の 前後ずれ
+   * どちらも 平面直角座標で 計算する (緯度経度の 距離より 素直で 誤差が 出ない)。
+   */
+  const sectionRel = useMemo(() => {
+    if (!activeSectionLine || !currentXY) return null
+    const A = converter.toXY(activeSectionLine[0][0], activeSectionLine[0][1])
+    const B = converter.toXY(activeSectionLine[1][0], activeSectionLine[1][1])
+    const dx = B.x - A.x
+    const dy = B.y - A.y
+    const len = Math.hypot(dx, dy)
+    if (len === 0) return null
+    const ux = dx / len
+    const uy = dy / len
+    // 断面線に 直交する 向き
+    const nx = -uy
+    const ny = ux
+    const mx = (A.x + B.x) / 2
+    const my = (A.y + B.y) / 2
+    const px = currentXY.x - mx
+    const py = currentXY.y - my
+    return {
+      width: px * ux + py * uy,
+      offset: px * nx + py * ny,
+    }
+  }, [activeSectionLine, currentXY, converter])
 
   // 近接モードに 出す 比高 (自分の 地表高 − ターゲットの 設計高)。
   // 正 = 自分が 高い (掘る)、負 = 自分が 低い (盛る)。trenchDiff と 同じ 向き。
@@ -5185,6 +5258,36 @@ export function MobileStakingPage() {
             下端は測点の操作列が詰まっているのでここに置く */}
         <MapDrawingCommandBar className="absolute top-1 left-1 right-1 z-[1200] rounded-lg bg-white/95 shadow border px-2 py-1.5 overflow-x-auto" />
 
+        {/* 断面に対する 現在地。断面線に 乗せて 追い込む ための 数字。
+            地図に 出すのは 「線からの ずれ」と 「中心からの 幅」の 2 つだけ。
+            上の ボタン列と 重ならないよう 左下に 置く */}
+        {(show2D || show3D) && activeSection && sectionRel && (
+          <div className="absolute bottom-14 left-2 z-[1100] bg-white/95 border rounded-lg shadow-lg px-2 py-1.5 text-[11px] font-mono">
+            <div className="text-[10px] text-slate-500 font-sans truncate max-w-[9rem]">
+              {activeSection.name}
+            </div>
+            <div className="flex items-baseline gap-1">
+              <span className="text-[10px] text-slate-500 font-sans w-8">離れ</span>
+              <span
+                className={
+                  Math.abs(sectionRel.offset) <= 0.05
+                    ? 'text-emerald-700 font-bold'
+                    : 'text-slate-800'
+                }
+              >
+                {Math.abs(sectionRel.offset).toFixed(3)} m
+              </span>
+            </div>
+            <div className="flex items-baseline gap-1">
+              <span className="text-[10px] text-slate-500 font-sans w-8">幅</span>
+              <span className="text-slate-800">
+                {sectionRel.width >= 0 ? '+' : '−'}
+                {Math.abs(sectionRel.width).toFixed(3)} m
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* 背景地図セレクタ（右下、Leaflet 帰属の上） */}
         <div className="absolute bottom-5 right-1 z-[1000] flex items-center gap-1 px-1.5 py-0.5 rounded shadow border border-slate-300 bg-white/95 text-[11px]">
           <span className="text-slate-500">背景</span>
@@ -5812,7 +5915,14 @@ export function MobileStakingPage() {
           />
 
           {/* 線形物 (開削水路)。全体図と 同じ 描画 */}
-          {showChannels && <OpenChannelOverlay overlay={channelOverlay} subOn={subOn} />}
+          {showChannels && (
+            <OpenChannelOverlay
+              overlay={channelOverlay}
+              subOn={subOn}
+              // 2D の 断面作成中だけ 中間点を 押せるように する
+              onStationClick={sectionPickingMode ? createSectionFromStation : undefined}
+            />
+          )}
 
           {/* LANDXML / 施工管理：床掘 TIN の三角形エッジ */}
           {(screenMode === 'construction' || landxmlMode) && trenchEdges.map((tri, i) => (
@@ -7263,7 +7373,7 @@ export function MobileStakingPage() {
           <div className="bg-white w-full sm:max-w-md rounded-t-xl sm:rounded-xl shadow-xl p-3 max-h-[80vh] flex flex-col">
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-sm font-bold text-slate-800">
-                断面の 2 点を座標から選択 ({sectionPickIds.length}/2)
+                断面を作る
               </h3>
               <button
                 onClick={() => {
@@ -7274,6 +7384,39 @@ export function MobileStakingPage() {
               >
                 <X className="h-4 w-4" />
               </button>
+            </div>
+            {/* 路線の 中間点から 作る。中心線に 直交する 断面が 1 タップで できる。
+                座標 2 点を 選ぶ より 早く、断面の 向きも 路線に 対して 正確に なる */}
+            {channelOverlay.stations.length > 0 && (
+              <div className="mb-3">
+                <div className="text-[11px] font-semibold text-slate-600 mb-1">
+                  路線の中間点から作る
+                </div>
+                <div className="border rounded divide-y max-h-40 overflow-auto">
+                  {channelOverlay.stations.map((st) => (
+                    <button
+                      key={st.key}
+                      type="button"
+                      onClick={() => createSectionFromStation(st)}
+                      className="w-full text-left p-2 hover:bg-indigo-50 flex items-baseline gap-2"
+                    >
+                      <span className="text-sm font-medium text-indigo-700 truncate">
+                        {st.label || '(名称なし)'}
+                      </span>
+                      <span className="text-[11px] text-slate-500 truncate">
+                        {st.channelName}
+                      </span>
+                      <span className="ml-auto text-[10px] text-slate-400 shrink-0">
+                        中心線に直交
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="text-[11px] font-semibold text-slate-600 mb-1">
+              座標 2 点から作る
             </div>
             <div className="text-[11px] text-slate-500 mb-2">
               {sectionPickIds.length === 0 ? '1 点目を選んでください' : '2 点目を選んでください'}
