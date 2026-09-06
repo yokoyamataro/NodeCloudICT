@@ -886,7 +886,6 @@ export function MobileStakingPage() {
   // 既存コードの参照互換
   const landxmlMode = show3D
   const prevBaseLayerRef = useRef<typeof baseLayer | null>(null)
-  const landxmlInputRef = useRef<HTMLInputElement>(null)
   // モード切替: クリックされたモードをトグル。最大 2 つ、最少 1 つ。
   // 既に 2 つ ON のとき新しいモードを追加する場合は、クリックされたモード以外で
   // 一番古いもの（= 直近に追加されていない方）を外す。
@@ -6584,28 +6583,19 @@ export function MobileStakingPage() {
                 <span className="text-xs text-slate-500">
                   {landxmlBusy ? '読込中…' : '未読込'}
                 </span>
-                <label className="cursor-pointer ml-auto">
-                  <input
-                    ref={landxmlInputRef}
-                    type="file"
-                    accept=".xml,.XML,.landxml,.LANDXML"
-                    onChange={handleLoadXml}
-                    className="hidden"
-                  />
-                  <span className="inline-flex items-center gap-1 px-2 py-1 bg-cyan-700 text-white text-xs rounded hover:bg-cyan-600">
-                    <Upload className="h-3 w-3" />
-                    LandXMLを選択
-                  </span>
-                </label>
-                {savedLandxmls.length > 0 && (
-                  <button
-                    onClick={() => setShowLandxmlList(true)}
-                    className="inline-flex items-center gap-1 px-2 py-1 border border-cyan-700 text-cyan-700 text-xs rounded hover:bg-cyan-50"
-                  >
-                    <Database className="h-3 w-3" />
-                    履歴 ({savedLandxmls.length})
-                  </button>
-                )}
+                {/* 端末の ファイルを 読むのでは なく、工区に 登録済みの LandXML から
+                    選ぶ。登録 (読込) は PC の 全体マップ 側で 行う。
+                    1 つの 工区に 現況 / 土工 / 1次施工 / 暗渠 など 複数 入る。 */}
+                <button
+                  onClick={() => setShowLandxmlList(true)}
+                  disabled={landxmlBusy}
+                  className="ml-auto inline-flex items-center gap-1 px-2 py-1 bg-cyan-700 text-white text-xs rounded hover:bg-cyan-600 disabled:opacity-50"
+                  title="この工区に登録されている LandXML から選ぶ"
+                >
+                  <Database className="h-3 w-3" />
+                  LandXMLを選択
+                  {savedLandxmls.length > 0 && ` (${savedLandxmls.length})`}
+                </button>
               </>
             )}
           </div>
@@ -7087,7 +7077,8 @@ export function MobileStakingPage() {
               </button>
             </div>
             <div className="text-[11px] text-slate-500 mb-2">
-              この工区にアップロード済みの LandXML 一覧。タップで切替（active になります）。
+              この工区に登録されている LandXML。タップで読込（active になります）。
+              新しく登録するときは PC の 全体マップから 読み込んでください。
             </div>
             <div className="flex-1 overflow-auto border rounded divide-y">
               {savedLandxmls.length === 0 ? (

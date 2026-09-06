@@ -10,7 +10,7 @@
 //
 // オルソ画像のアップロードは 日常的に押すものではないので 設定へ移した
 // (OrthophotoUploadSection)。ここに残しているのは 登録済み一覧の 確認だけ。
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import {
   Loader2,
   X,
@@ -20,6 +20,7 @@ import {
   Triangle,
   Trash2,
   Save,
+  Upload,
 } from 'lucide-react'
 import Delaunator from 'delaunator'
 import { buildLandXml } from '@/lib/landxml/exporter'
@@ -853,6 +854,43 @@ export function OrthophotoPage() {
   const [tinStatus, setTinStatus] = useState<string | null>(null)
   const bumpLandxmlFromTin = useLandxmlEventsStore((s) => s.bump)
 
+  // ===== LandXML の 読込 (工区への 登録) =====
+  // 端末の XML を 工区に 登録する のは この 全体マップ だけ。
+  // スマホ側は ここで 登録された ものから 選ぶ だけに して、現場で
+  // ファイルを 探す 手間を 無くす。1 つの 工区に 現況 / 土工 / 1次施工 /
+  // 暗渠 など 複数 入る 想定 なので、上書きせず 履歴として 積む。
+  const landxmlImportRef = useRef<HTMLInputElement>(null)
+  const [landxmlImporting, setLandxmlImporting] = useState(false)
+
+  const handleImportLandxml = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // 同じ ファイルを 続けて 選べるように 空に する
+    if (!file || !currentFarm) return
+    setLandxmlImporting(true)
+    setTinError(null)
+    setTinStatus(null)
+    try {
+      const text = await file.text()
+      // 壊れた XML を 登録して しまわないよう、先に パースを 通す
+      parseLandXml(text)
+      await uploadLandxmlFile({
+        farmId: currentFarm.id,
+        fileName: file.name,
+        content: text,
+        notes: '全体マップ から 読込',
+      })
+      bumpLandxmlFromTin()
+      setTinStatus(`「${file.name}」を この工区に 登録しました。スマホの 3D モードから 選べます。`)
+    } catch (err) {
+      console.error('[landxml import]', err)
+      setTinError(
+        err instanceof Error ? `読込 失敗: ${err.message}` : 'LandXML の 読込に 失敗しました',
+      )
+    } finally {
+      setLandxmlImporting(false)
+    }
+  }
+
   /**
    * 座標 マーカー クリック で 頂点 を 追加 / 削除。 TIN 編集 モード 中 のみ 呼ばれる。
    * すでに 追加済 の coord は 削除、未追加なら 追加。 z (標高) が 無い 座標 は 追加不可。
@@ -1229,6 +1267,32 @@ export function OrthophotoPage() {
           onToggleRegisterCoordinate={() => setRegisterCoordinate((v) => !v)}
         />
         </div>
+        {/* LandXML 読込。工区に 登録して スマホから 選べるように する */}
+        <label className="shrink-0">
+          <input
+            ref={landxmlImportRef}
+            type="file"
+            accept=".xml,.XML,.landxml,.LANDXML"
+            onChange={handleImportLandxml}
+            className="hidden"
+            disabled={!currentFarm || landxmlImporting}
+          />
+          <span
+            className={`flex items-center gap-1 px-3 py-1.5 rounded border text-sm ${
+              !currentFarm || landxmlImporting
+                ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50 cursor-pointer'
+            }`}
+            title="LandXML を この工区に 登録する (スマホの 3D モードから 選べます)"
+          >
+            {landxmlImporting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Upload className="h-4 w-4" />
+            )}
+            XML読込
+          </span>
+        </label>
         {/* TIN 編集モード トグル。 押下 中 は 座標マーカー を クリック → 頂点追加、
             Delaunator で 三角形分割 の プレビュー を 出す */}
         <button
