@@ -175,6 +175,11 @@ interface Props {
   onRedo: () => void
   /** 付箋メモ (現在位置に従来のメモを残す) を発火。未指定なら非表示。 */
   onMemo?: () => void
+  /** 図枠ボタンを 出すか (既定 true)。用紙に 印刷する 全体図 向けの 道具なので
+   *  スマホでは 使わない */
+  showFrame?: boolean
+  /** undo / redo を 出すか (既定 true)。置き場所を 呼び出し側に 移したい ときに false */
+  showUndoRedo?: boolean
   /**
    * 置き方。'floating' は地図に重ねる想定でカード風 (既定)、
    * 'bar' は画面上部の帯に埋め込む想定で余計な枠を出さない
@@ -248,6 +253,8 @@ export function MapDrawingToolbar({
   canRedo,
   onUndo,
   onRedo,
+  showFrame = true,
+  showUndoRedo = true,
   onMemo,
   variant = 'floating',
   showAttributes = true,
@@ -568,16 +575,18 @@ export function MapDrawingToolbar({
         <Type className="h-4 w-4" />
       </button>
       {/* 図枠 (用紙 + 縮尺で 四角を 置く) */}
-      <button
-        type="button"
-        onClick={() => onChangeMode(mode === 'frame' ? 'off' : 'frame')}
-        title="図枠入力 — 用紙 (A4〜A0 / フリー) と 縮尺から 実寸の枠を置く"
-        className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
-          mode === 'frame' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'
-        }`}
-      >
-        <Frame className="h-4 w-4" />
-      </button>
+      {showFrame && (
+        <button
+          type="button"
+          onClick={() => onChangeMode(mode === 'frame' ? 'off' : 'frame')}
+          title="図枠入力 — 用紙 (A4〜A0 / フリー) と 縮尺から 実寸の枠を置く"
+          className={`w-8 h-8 flex items-center justify-center rounded shrink-0 ${
+            mode === 'frame' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <Frame className="h-4 w-4" />
+        </button>
+      )}
       {/* 付箋メモ (現在位置に従来型のメモを残す) */}
       {onMemo && (
         <button
@@ -667,24 +676,28 @@ export function MapDrawingToolbar({
       )}
 
       {/* undo / redo */}
-      <button
-        type="button"
-        onClick={onUndo}
-        disabled={!canUndo}
-        title="元に戻す (この画面での操作のみ)"
-        className="w-8 h-8 flex items-center justify-center rounded text-slate-600 hover:bg-slate-100 disabled:opacity-30 shrink-0"
-      >
-        <Undo2 className="h-4 w-4" />
-      </button>
-      <button
-        type="button"
-        onClick={onRedo}
-        disabled={!canRedo}
-        title="やり直す"
-        className="w-8 h-8 flex items-center justify-center rounded text-slate-600 hover:bg-slate-100 disabled:opacity-30 shrink-0"
-      >
-        <Redo2 className="h-4 w-4" />
-      </button>
+      {showUndoRedo && (
+        <>
+          <button
+            type="button"
+            onClick={onUndo}
+            disabled={!canUndo}
+            title="元に戻す (この画面での操作のみ)"
+            className="w-8 h-8 flex items-center justify-center rounded text-slate-600 hover:bg-slate-100 disabled:opacity-30 shrink-0"
+          >
+            <Undo2 className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={onRedo}
+            disabled={!canRedo}
+            title="やり直す"
+            className="w-8 h-8 flex items-center justify-center rounded text-slate-600 hover:bg-slate-100 disabled:opacity-30 shrink-0"
+          >
+            <Redo2 className="h-4 w-4" />
+          </button>
+        </>
+      )}
 
       {/* 閉じる (モード解除) */}
       {mode !== 'off' && (

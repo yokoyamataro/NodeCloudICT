@@ -34,6 +34,8 @@ import {
   Settings2,
   MessageSquare,
   Edit3,
+  Undo2,
+  Redo2,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { playStartChime, playStopChime, unlockAudio } from '@/lib/beep'
@@ -3716,7 +3718,31 @@ export function MobileStakingPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold">ペイント</h3>
+              {/* 元に戻す / やり直し は 道具の 列に 埋もれると 押しにくいので、
+                  タイトルの 右の 余白に 置く */}
+              <div className="flex items-center gap-1">
+                <h3 className="text-sm font-semibold">ペイント</h3>
+                <button
+                  type="button"
+                  onClick={() => void drawingUndo()}
+                  disabled={drawingUndoLen === 0}
+                  title="元に戻す (この画面での操作のみ)"
+                  aria-label="元に戻す"
+                  className="ml-2 w-8 h-8 flex items-center justify-center rounded text-slate-600 hover:bg-slate-100 disabled:opacity-30"
+                >
+                  <Undo2 className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void drawingRedo()}
+                  disabled={drawingRedoLen === 0}
+                  title="やり直す"
+                  aria-label="やり直す"
+                  className="w-8 h-8 flex items-center justify-center rounded text-slate-600 hover:bg-slate-100 disabled:opacity-30"
+                >
+                  <Redo2 className="h-4 w-4" />
+                </button>
+              </div>
               <button
                 onClick={() => setPaintOpen(false)}
                 className="p-1 rounded hover:bg-slate-100"
@@ -3752,6 +3778,10 @@ export function MobileStakingPage() {
                 canRedo={drawingRedoLen > 0}
                 onUndo={() => void drawingUndo()}
                 onRedo={() => void drawingRedo()}
+                // 図枠は 用紙に 印刷する 全体図 向けの 道具なので スマホでは 出さない。
+                // undo / redo は 上の タイトル行に 移した
+                showFrame={false}
+                showUndoRedo={false}
                 selectMethod={selectMethod}
                 onChangeSelectMethod={setSelectMethod}
                 snapEnabled={snapEnabled}
