@@ -397,6 +397,20 @@ function PointPhotoThumb({
   )
 }
 
+// 地図インスタンスを 親の ref に 渡す。
+// 左上の 自前ボタン列 (ズーム / 現在地 / 更新) は MapContainer の 外に あるので
+// useMap() が 使えず、ここで 受け渡す。
+function MapRefBinder({ mapRef }: { mapRef: React.MutableRefObject<L.Map | null> }) {
+  const map = useMap()
+  useEffect(() => {
+    mapRef.current = map
+    return () => {
+      mapRef.current = null
+    }
+  }, [map, mapRef])
+  return null
+}
+
 function FitOnce({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
   const map = useMap()
   const doneRef = useRef(false)
@@ -726,6 +740,8 @@ export function MobileStakingPage() {
   const [stablePos, setStablePos] = useState<[number, number] | null>(null)
   // 既定: 自己位置追尾は OFF にして、まず工区全体が画面内に収まる初期表示にする
   const [followMode, setFollowMode] = useState<MapFollowMode>('off')
+  // 左上の 自前ボタン列から ズームを 操作するための 地図インスタンス
+  const mapRef = useRef<L.Map | null>(null)
   const [heading, setHeading] = useState<number | null>(null)
   const [headingEnabled, setHeadingEnabled] = useState(false)
   const [headingError, setHeadingError] = useState<string | null>(null)
@@ -4733,8 +4749,30 @@ export function MobileStakingPage() {
       {/* 地図 */}
       <div className="flex-1 relative">
         {/* 描画ツールバーは下部パネル (ターゲット選択の位置) に統合 */}
-        {/* 現在地 (追従モード切替) + 更新 ボタン。地図左上のズームコントロール直下に縦並び。 */}
-        <div className="absolute top-[88px] left-2 z-[1200] flex flex-col gap-1">
+        {/* 地図左上の ボタン列: ズーム / 現在地 (追従モード切替) / 更新。
+            以前は Leaflet 標準の ズームコントロールの 「直下」を 狙って
+            top-[88px] と 固定していたが、標準コントロールの 実高さは 端末で
+            変わるため 必ず どこかで 重なる。標準コントロールを 止めて
+            (MapContainer の zoomControl={false})、1 本の 列に まとめた。 */}
+        <div className="absolute top-2 left-2 z-[1200] flex flex-col gap-1">
+          <button
+            type="button"
+            onClick={() => mapRef.current?.zoomIn()}
+            className="w-9 h-9 flex items-center justify-center rounded shadow-md border bg-white border-slate-400 text-slate-700 hover:bg-slate-50 text-lg leading-none font-bold"
+            title="拡大"
+            aria-label="拡大"
+          >
+            +
+          </button>
+          <button
+            type="button"
+            onClick={() => mapRef.current?.zoomOut()}
+            className="w-9 h-9 flex items-center justify-center rounded shadow-md border bg-white border-slate-400 text-slate-700 hover:bg-slate-50 text-lg leading-none font-bold"
+            title="縮小"
+            aria-label="縮小"
+          >
+            −
+          </button>
           <button
             type="button"
             onClick={() => setFollowMode((m) => NEXT_FOLLOW_MODE[m])}
@@ -4949,6 +4987,9 @@ export function MobileStakingPage() {
           center={mapCenter}
           zoom={17}
           maxZoom={24}
+          // 標準の ズームコントロールは 左上に 出て 自前ボタン列と 重なるので 止める。
+          // 代わりの +/- は 上の ボタン列に 置いてある
+          zoomControl={false}
           className="h-full w-full"
           style={baseLayer === 'none' ? { background: '#ffffff' } : undefined}
           // 長押し → contextmenu の 擬似発火を 強制 ON。
@@ -4998,6 +5039,8 @@ export function MobileStakingPage() {
               zIndex={300}
             />
           ))}
+          {/* 左上の 自前ボタン列から ズームを 触るため 地図インスタンスを 受け取る */}
+          <MapRefBinder mapRef={mapRef} />
           <FitOnce bounds={allBounds} />
           {/* 追従は安定位置(stablePos)で行う。FIX が外れると stablePos が更新されないため
               地図は最後の良好位置で止まり、外側へ大きくスクロールしない */}
