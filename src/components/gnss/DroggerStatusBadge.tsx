@@ -20,6 +20,35 @@ const FIX_LABEL: Record<DroggerFixQuality, string> = {
   5: 'RFLOAT',
 }
 
+/**
+ * GPS ランプが 緑に なる 衛星数。
+ * 3D 測位に 最低 4 機、冗長を 見て 5 機を 目安に する。
+ */
+const MIN_SATS_FOR_GREEN = 5
+/** 位置更新が これだけ 止まったら GPS ランプを 黄に する [ms] */
+const POS_STALE_MS = 5_000
+/** RTCM が これだけ 来なければ NTRIP ランプを 黄に する [ms] */
+const NTRIP_STALE_MS = 10_000
+
+type LampColor = 'red' | 'amber' | 'green' | 'slate'
+
+const LAMP_CLASS: Record<LampColor, string> = {
+  red: 'bg-red-500 border-red-600',
+  amber: 'bg-amber-400 border-amber-500',
+  green: 'bg-emerald-500 border-emerald-600',
+  slate: 'bg-slate-300 border-slate-400',
+}
+
+/** 信号ランプ 1 個。左= GPS、右= NTRIP */
+function Lamp({ color, title }: { color: LampColor; title: string }) {
+  return (
+    <span
+      className={`inline-block w-2.5 h-2.5 rounded-full border shrink-0 ${LAMP_CLASS[color]}`}
+      title={title}
+    />
+  )
+}
+
 const FIX_CLASS: Record<DroggerFixQuality, string> = {
   0: 'bg-red-100 border-red-400 text-red-800',
   1: 'bg-slate-100 border-slate-400 text-slate-700',
@@ -51,6 +80,15 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
       const s = getActiveSource()
       setSource((prev) => (prev !== s ? s : prev))
     }, 2000)
+    return () => window.clearInterval(t)
+  }, [])
+
+  // 鮮度 (stale) の 判定は Date.now() を 見るので、値が 来なくなった ときこそ
+  // 再描画が 要る。受信が 止まると ストアの 更新も 止まって しまい、そのままでは
+  // ランプが 緑の まま 固まる。1 秒ごとに 自分で 時計を 進める。
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const t = window.setInterval(() => setTick((n) => n + 1), 1000)
     return () => window.clearInterval(t)
   }, [])
 
@@ -93,9 +131,44 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
     <Radio className="h-3 w-3" />
   )
   const staleMs = lastUpdateAt != null ? Date.now() - lastUpdateAt : null
-  const isStale = staleMs != null && staleMs > 5000
+  const isStale = staleMs != null && staleMs > POS_STALE_MS
   const ntripStaleMs = ntrip.lastRtcmAt > 0 ? Date.now() - ntrip.lastRtcmAt : null
-  const ntripStale = ntrip.connected && ntripStaleMs != null && ntripStaleMs > 15_000
+  const ntripStale = ntrip.connected && ntripStaleMs != null && ntripStaleMs > NTRIP_STALE_MS
+
+  // GPS ランプ: 赤= BLE 未接続 / 黄= 繋がっているが 測位が 足りない or 止まった /
+  // 緑= 測位中で 衛星も 足りている
+  const gpsLamp: { color: LampColor; title: string } = !connected
+    ? { color: 'red', title: 'GPS: Bluetooth 未接続' }
+    : isStale
+      ? {
+          color: 'amber',
+          title: `GPS: 受信が 止まっています (${Math.round((staleMs ?? 0) / 1000)} 秒前)`,
+        }
+      : fq == null || fq === 0
+        ? { color: 'amber', title: 'GPS: 接続済み、測位待ち' }
+        : (satellites ?? 0) < MIN_SATS_FOR_GREEN
+          ? {
+              color: 'amber',
+              title: `GPS: 衛星 ${satellites ?? 0} 機 (${MIN_SATS_FOR_GREEN} 機未満)`,
+            }
+          : { color: 'green', title: `GPS: 測位中 / 衛星 ${satellites} 機` }
+
+  // NTRIP ランプ: 灰= 未設定 (CLAS のみの 運用) / 赤= 切断 /
+  // 黄= 繋がっているが RTCM が 来ない / 緑= 受信中
+  const ntripLamp: { color: LampColor; title: string } =
+    ntrip.host == null
+      ? { color: 'slate', title: 'NTRIP: 未設定' }
+      : !ntrip.connected
+        ? { color: 'red', title: 'NTRIP: 切断' }
+        : ntripStale
+          ? {
+              color: 'amber',
+              title: `NTRIP: ${Math.round((ntripStaleMs ?? 0) / 1000)} 秒 受信なし`,
+            }
+          : {
+              color: 'green',
+              title: `NTRIP: 受信中 (${(ntrip.bytesReceived / 1024).toFixed(1)} KB)`,
+            }
 
   const tooltip = [
     `GPS: ${deviceName ?? '(未接続)'}`,
@@ -118,27 +191,23 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setShowSettings(true)}
-        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-semibold cursor-pointer hover:brightness-110 ${boxClass} ${
-          isStale ? 'opacity-60' : ''
-        } ${className ?? ''}`}
-        title={tooltip}
-      >
-        <Settings className="h-3 w-3" />
-        {icon}
-        <span>{fixLabel}</span>
-        {/* NTRIP 受信インジケーター (小さな 点) */}
-        {ntrip.connected && (
-          <span
-            className={`inline-block w-1.5 h-1.5 rounded-full ${
-              ntripStale ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'
-            }`}
-            title="NTRIP RTCM 受信中"
-          />
-        )}
-      </button>
+      <span className={`inline-flex items-center gap-1 ${className ?? ''}`}>
+        {/* 信号: 左= GPS 接続状況、右= NTRIP 受信状況 */}
+        <Lamp {...gpsLamp} />
+        <Lamp {...ntripLamp} />
+        <button
+          type="button"
+          onClick={() => setShowSettings(true)}
+          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-semibold cursor-pointer hover:brightness-110 ${boxClass} ${
+            isStale ? 'opacity-60' : ''
+          }`}
+          title={tooltip}
+        >
+          <Settings className="h-3 w-3" />
+          {icon}
+          <span>{fixLabel}</span>
+        </button>
+      </span>
       <GpsSettingsModal open={showSettings} onClose={() => setShowSettings(false)} />
     </>
   )
