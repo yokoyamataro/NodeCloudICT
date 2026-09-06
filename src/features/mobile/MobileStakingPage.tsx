@@ -13,7 +13,6 @@ import {
   CloudOff,
   Circle as CircleIcon,
   Radio,
-  Tag,
   Trash2,
   FileText,
   Database,
@@ -1137,12 +1136,6 @@ export function MobileStakingPage() {
   const [photoSourceSheet, setPhotoSourceSheet] = useState(false)
   const standalonePhotoInputRef = useRef<HTMLInputElement>(null)
   const standalonePhotoPickerRef = useRef<HTMLInputElement>(null)
-  const [showLabels, setShowLabels] = useState(
-    () => localStorage.getItem('mobile:staking:showLabels') !== '0',
-  )
-  useEffect(() => {
-    try { localStorage.setItem('mobile:staking:showLabels', showLabels ? '1' : '0') } catch { /* ignore */ }
-  }, [showLabels])
   // 測点（マーカー）全体の表示 ON/OFF。既定 ON。
   // 点種別フィルタ (hiddenSubTypes) の親トグル。
   const [showTargets, setShowTargets] = useState(
@@ -1159,12 +1152,6 @@ export function MobileStakingPage() {
     try { localStorage.setItem('mobile:staking:showParcelPolygons', showParcelPolygons ? '1' : '0') } catch { /* ignore */ }
   }, [showParcelPolygons])
   // 地番名ラベル（境界測量ポリゴンの上に表示）。既定 OFF、低ズーム時は自動 OFF。
-  const [showParcelLabels, setShowParcelLabels] = useState(
-    () => localStorage.getItem('mobile:staking:showParcelLabels') === '1',
-  )
-  useEffect(() => {
-    try { localStorage.setItem('mobile:staking:showParcelLabels', showParcelLabels ? '1' : '0') } catch { /* ignore */ }
-  }, [showParcelLabels])
   const [showOrtho, setShowOrtho] = useState(true)
   const PARCEL_LABEL_MIN_ZOOM = 17
   // ターゲット動的ズーム（ターゲットを中心にして、現在地も視野に収まるよう自動拡大縮小）
@@ -4619,34 +4606,7 @@ export function MobileStakingPage() {
           コンパス / 測点（+点種別） / 点名 / 地番（ポリゴン） / 地番名 のチェックリスト */}
       {showDisplaySettings && (
         <div className="bg-white border-b px-3 py-2 text-sm space-y-1.5">
-          {/* コンパス */}
-          <label
-            className="flex items-center gap-2 cursor-pointer"
-            title={
-              headingError
-                ? `方位エラー: ${headingError}`
-                : headingEnabled
-                ? heading != null
-                  ? `方位 ${heading.toFixed(0)}°`
-                  : '方位センサー待機中'
-                : '方位センサーをON'
-            }
-          >
-            <input
-              type="checkbox"
-              checked={headingEnabled}
-              onChange={toggleHeading}
-              className="h-4 w-4"
-            />
-            <Navigation2 className="h-3.5 w-3.5 text-slate-500" />
-            <span>コンパス</span>
-            {headingEnabled && heading != null && (
-              <span className="ml-1 text-[11px] text-emerald-700">
-                {heading.toFixed(0)}°
-              </span>
-            )}
-          </label>
-
+          {/* ---- レイヤ。PC の 全体図と 同じ 並び・同じ 名前に 揃えてある ---- */}
           {/* 測点（マーカー） + 点種別ネスト */}
           <label className="flex items-center gap-2 cursor-pointer">
             <input
@@ -4660,7 +4620,7 @@ export function MobileStakingPage() {
               ({filteredTargets.length})
             </span>
           </label>
-          {showTargets && (subTypeStats.length > 0 || routeTargetIds.size > 0) && (
+          {showTargets && subTypeStats.length > 0 && (
             <div className="pl-7 space-y-1 text-xs">
               {/* 点種 (折りたたみ) */}
               {subTypeStats.length > 0 && (
@@ -4721,82 +4681,50 @@ export function MobileStakingPage() {
                   )}
                 </>
               )}
-
-              {/* ルート絞り込み（順路が登録済みの工区でのみ） */}
-              {routeTargetIds.size > 0 && (
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={targetFilter === 'route'}
-                    onChange={() =>
-                      setTargetFilter((prev) => (prev === 'route' ? 'all' : 'route'))
-                    }
-                    className="h-3.5 w-3.5"
-                  />
-                  <span className="text-orange-700">ルートのみ</span>
-                  <span className="text-[10px] text-slate-500">
-                    ({routeTargetIds.size})
-                  </span>
-                </label>
-              )}
-
-              {/* 設置状態フィルタ (折りたたみ)。PC と mapViewStore で共有 */}
-              <button
-                type="button"
-                onClick={() =>
-                  setDisplayExpanded((s) => ({
-                    ...s,
-                    stakeStatus: !s.stakeStatus,
-                  }))
-                }
-                className="flex items-center gap-1 text-[11px] text-slate-600 hover:text-slate-900 border-t pt-1 mt-1 w-full"
-              >
-                {displayExpanded.stakeStatus ? (
-                  <ChevronDown className="h-3 w-3" />
-                ) : (
-                  <ChevronRight className="h-3 w-3" />
-                )}
-                <span>
-                  設置状態 ({visibleStakeStatuses.size}/
-                  {STAKE_STATUS_OPTIONS.length})
-                </span>
-              </button>
-              {displayExpanded.stakeStatus &&
-                STAKE_STATUS_OPTIONS.map((s) => {
-                  const on = visibleStakeStatuses.has(s)
-                  return (
-                    <label
-                      key={s}
-                      className="flex items-center gap-2 cursor-pointer pl-4"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={on}
-                        onChange={() => toggleVisibleStakeStatus(s)}
-                        className="h-3.5 w-3.5"
-                      />
-                      <span
-                        className={`px-1.5 py-0.5 text-[10px] font-medium border rounded ${STAKE_STATUS_BADGE[s]}`}
-                      >
-                        {STAKE_STATUS_LABEL[s]}
-                      </span>
-                    </label>
-                  )
-                })}
-              {displayExpanded.stakeStatus &&
-                visibleStakeStatuses.size < STAKE_STATUS_OPTIONS.length && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setVisibleStakeStatuses(new Set(STAKE_STATUS_OPTIONS))
-                    }
-                    className="text-[11px] text-blue-600 hover:underline pl-4"
-                  >
-                    全ての設置状態を表示
-                  </button>
-                )}
             </div>
           )}
+
+          {/* 地番（ポリゴン）。件数は常時表示して、取得失敗 (=0) と
+              トグル OFF を切り分けられるようにする。
+              地番名は 全体図と 同じく この レイヤの 一部 (ズームで 出る) */}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showParcelPolygons}
+              onChange={() => setShowParcelPolygons((v) => !v)}
+              className="h-4 w-4"
+            />
+            <span>地番（ポリゴン）</span>
+            <span
+              className={`text-[11px] ${
+                farmPolygons.length === 0 ? 'text-amber-600' : 'text-slate-500'
+              }`}
+            >
+              ({farmPolygons.length})
+            </span>
+            {farmPolygons.length === 0 && (
+              <span className="text-[10px] text-amber-600 ml-1">
+                取得 0 件
+              </span>
+            )}
+          </label>
+
+          {/* 暗渠の配線ライン (吸水/集水) */}
+          {pipePolylines.length > 0 && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showPipes}
+                onChange={() => setShowPipes((v) => !v)}
+                className="h-4 w-4"
+              />
+              <span>暗渠配線</span>
+              <span className="text-[11px] text-slate-500">
+                ({pipePolylines.length})
+              </span>
+            </label>
+          )}
+
 
           {/* 線形物 (開削水路の 中心線 / 幅杭 / BP・IP・EP) */}
           {openChannelRenders.length > 0 && (
@@ -4811,6 +4739,7 @@ export function MobileStakingPage() {
               <span className="text-[11px] text-slate-500">({openChannelRenders.length})</span>
             </label>
           )}
+
 
           {/* TIN (現況 / 設計面)。全体図と 同じ 3 サブ (色分けメッシュ / 等高線 /
               ワイヤーフレーム)。データが 無い 面は 出さない */}
@@ -4855,6 +4784,7 @@ export function MobileStakingPage() {
               </div>
             ))}
 
+
           {/* 写真 (全体図の レイヤに 合わせる) */}
           {farmPhotos.length > 0 && (
             <label className="flex items-center gap-2 cursor-pointer">
@@ -4868,6 +4798,7 @@ export function MobileStakingPage() {
               <span className="text-[11px] text-slate-500">({farmPhotos.length})</span>
             </label>
           )}
+
 
           {/* メモ (全体図の レイヤに 合わせる) */}
           {farmMemos.length > 0 && (
@@ -4883,78 +4814,116 @@ export function MobileStakingPage() {
             </label>
           )}
 
-          {/* 暗渠の配線ライン (吸水/集水) */}
-          {pipePolylines.length > 0 && (
+
+          {/* ---- ここから下は スマホ専用。全体図に 無い 「絞り込み」と
+               コンパスを レイヤと 混ぜないよう 区切る ---- */}
+          <div className="pt-2 mt-1 border-t text-[11px] font-semibold text-slate-500">
+            絞り込み・表示
+          </div>
+          {/* コンパス */}
+          <label
+            className="flex items-center gap-2 cursor-pointer"
+            title={
+              headingError
+                ? `方位エラー: ${headingError}`
+                : headingEnabled
+                ? heading != null
+                  ? `方位 ${heading.toFixed(0)}°`
+                  : '方位センサー待機中'
+                : '方位センサーをON'
+            }
+          >
+            <input
+              type="checkbox"
+              checked={headingEnabled}
+              onChange={toggleHeading}
+              className="h-4 w-4"
+            />
+            <Navigation2 className="h-3.5 w-3.5 text-slate-500" />
+            <span>コンパス</span>
+            {headingEnabled && heading != null && (
+              <span className="ml-1 text-[11px] text-emerald-700">
+                {heading.toFixed(0)}°
+              </span>
+            )}
+          </label>
+
+
+          {/* ルート絞り込み（順路が登録済みの工区でのみ） */}
+          {routeTargetIds.size > 0 && (
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
-                checked={showPipes}
-                onChange={() => setShowPipes((v) => !v)}
-                className="h-4 w-4"
+                checked={targetFilter === 'route'}
+                onChange={() =>
+                  setTargetFilter((prev) => (prev === 'route' ? 'all' : 'route'))
+                }
+                className="h-3.5 w-3.5"
               />
-              <span>暗渠配線</span>
-              <span className="text-[11px] text-slate-500">
-                ({pipePolylines.length})
+              <span className="text-orange-700">ルートのみ</span>
+              <span className="text-[10px] text-slate-500">
+                ({routeTargetIds.size})
               </span>
             </label>
           )}
 
-          {/* 点名 */}
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={showLabels}
-              onChange={() => setShowLabels((v) => !v)}
-              className="h-4 w-4"
-            />
-            <Tag className="h-3.5 w-3.5 text-slate-500" />
-            <span>点名</span>
-            {showLabels && mapZoom < LABEL_MIN_ZOOM && (
-              <span className="text-[10px] text-slate-400">
-                ズーム {LABEL_MIN_ZOOM} 以上で表示
-              </span>
+          {/* 設置状態フィルタ (折りたたみ)。PC と mapViewStore で共有 */}
+          <button
+            type="button"
+            onClick={() =>
+              setDisplayExpanded((s) => ({
+                ...s,
+                stakeStatus: !s.stakeStatus,
+              }))
+            }
+            className="flex items-center gap-1 text-[11px] text-slate-600 hover:text-slate-900 border-t pt-1 mt-1 w-full"
+          >
+            {displayExpanded.stakeStatus ? (
+              <ChevronDown className="h-3 w-3" />
+            ) : (
+              <ChevronRight className="h-3 w-3" />
             )}
-          </label>
-
-          {/* 地番（ポリゴン）。件数は常時表示して、取得失敗 (=0) と
-              トグル OFF を切り分けられるようにする */}
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={showParcelPolygons}
-              onChange={() => setShowParcelPolygons((v) => !v)}
-              className="h-4 w-4"
-            />
-            <span>地番（ポリゴン）</span>
-            <span
-              className={`text-[11px] ${
-                farmPolygons.length === 0 ? 'text-amber-600' : 'text-slate-500'
-              }`}
-            >
-              ({farmPolygons.length})
+            <span>
+              設置状態 ({visibleStakeStatuses.size}/
+              {STAKE_STATUS_OPTIONS.length})
             </span>
-            {farmPolygons.length === 0 && (
-              <span className="text-[10px] text-amber-600 ml-1">
-                取得 0 件
-              </span>
+          </button>
+          {displayExpanded.stakeStatus &&
+            STAKE_STATUS_OPTIONS.map((s) => {
+              const on = visibleStakeStatuses.has(s)
+              return (
+                <label
+                  key={s}
+                  className="flex items-center gap-2 cursor-pointer pl-4"
+                >
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={() => toggleVisibleStakeStatus(s)}
+                    className="h-3.5 w-3.5"
+                  />
+                  <span
+                    className={`px-1.5 py-0.5 text-[10px] font-medium border rounded ${STAKE_STATUS_BADGE[s]}`}
+                  >
+                    {STAKE_STATUS_LABEL[s]}
+                  </span>
+                </label>
+              )
+            })}
+          {displayExpanded.stakeStatus &&
+            visibleStakeStatuses.size < STAKE_STATUS_OPTIONS.length && (
+              <button
+                type="button"
+                onClick={() =>
+                  setVisibleStakeStatuses(new Set(STAKE_STATUS_OPTIONS))
+                }
+                className="text-[11px] text-blue-600 hover:underline pl-4"
+              >
+                全ての設置状態を表示
+              </button>
             )}
-          </label>
 
-          {/* 地番名 */}
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={showParcelLabels}
-              onChange={() => setShowParcelLabels((v) => !v)}
-              className="h-4 w-4"
-            />
-            <span>地番名</span>
-            {showParcelLabels && mapZoom < PARCEL_LABEL_MIN_ZOOM && (
-              <span className="text-[10px] text-slate-400">
-                ズーム {PARCEL_LABEL_MIN_ZOOM} 以上で表示
-              </span>
-            )}
-          </label>
+
         </div>
       )}
 
@@ -5277,7 +5246,8 @@ export function MobileStakingPage() {
                 : polygon.workType === 'subsoil'
                 ? '#ec4899'
                 : '#6b7280'
-            const labelVisible = showParcelLabels && mapZoom >= PARCEL_LABEL_MIN_ZOOM
+            // 地番名は 地番レイヤの 一部 (全体図と 同じ 扱い)
+            const labelVisible = showParcelPolygons && mapZoom >= PARCEL_LABEL_MIN_ZOOM
             const isParcel = polygon.workType === 'boundary_survey'
             // 地番なら parcel.attribute_code から色を解決 (未選択なら従来の workType 色)
             const parcelRow = isParcel ? parcelsByWorkAreaId.get(polygon.id) : null
@@ -5531,7 +5501,8 @@ export function MobileStakingPage() {
             // 点名ラベルは ON でも「画面内のマーカーだけ」に絞る。
             // 数千点を一気に permanent tooltip にすると DOM ノードが爆増して
             // 地図 (および同時に描画する地番ポリゴン) ごと固まるため。
-            const labelsActive = showLabels && mapZoom >= LABEL_MIN_ZOOM
+            // 点名は 測点レイヤの 一部 (全体図と 同じ 扱い)。単独の トグルは 持たない
+            const labelsActive = showTargets && mapZoom >= LABEL_MIN_ZOOM
             const labelBounds =
               labelsActive && mapBounds ? mapBounds.pad(0.15) : null
             return filteredTargets.map((t) => {
