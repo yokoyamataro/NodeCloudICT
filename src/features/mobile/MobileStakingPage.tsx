@@ -875,14 +875,20 @@ export function MobileStakingPage() {
   >([])
   // 計算モーダルで地図から点選択中の割り当て関数
   const [calcAssign, setCalcAssign] = useState<((id: string) => void) | null>(null)
+  // 地籍測量か 土木工事か。表示モードの 出し分けに 使うので ここで 出す
+  const isCadastralProject = project?.category === 'cadastral'
+
   // 表示モード（MAP / 3D / 2D / 暗渠配管 の組合せ、最大 2 つまで同時表示）
   // 2d / pipe は下段パネルの排他 (両方 on にすると重なるため 一方に切替)
   type ViewMode = 'map' | '3d' | '2d' | 'pipe'
   const [viewModes, setViewModes] = useState<Set<ViewMode>>(new Set<ViewMode>(['map']))
-  const showMap = viewModes.has('map')
-  const show3D = viewModes.has('3d')
-  const show2D = viewModes.has('2d')
-  const showPipe = viewModes.has('pipe')
+  // 地籍測量では 3D (TIN) も 断面も 暗渠も 使わないので MAP だけに する。
+  // 切替ボタンも 出さないため、state を 直さず ここで 押さえておかないと
+  // 土木工事の 工区で 3D に していた 場合に 戻せなく なる。
+  const showMap = isCadastralProject || viewModes.has('map')
+  const show3D = !isCadastralProject && viewModes.has('3d')
+  const show2D = !isCadastralProject && viewModes.has('2d')
+  const showPipe = !isCadastralProject && viewModes.has('pipe')
   // 既存コードの参照互換
   const landxmlMode = show3D
   const prevBaseLayerRef = useRef<typeof baseLayer | null>(null)
@@ -1844,8 +1850,6 @@ export function MobileStakingPage() {
   const converter = useMemo(() => new CoordinateConverter(zone), [zone])
 
   // ---- 法務省地図の bbox / 取込済セット / 一括取込ハンドラ ----
-  const isCadastralProject = project?.category === 'cadastral'
-
   // 土木工事モードで 地番タブ を開いていたら強制的に閉じる (プロジェクト種別変更時の保険)
   useEffect(() => {
     if (!isCadastralProject && showParcelList) setShowParcelList(false)
@@ -3604,7 +3608,9 @@ export function MobileStakingPage() {
           </button>
         )}
         {/* MAP / 3D / 2D / 暗渠配管 切替。以前は 地図の 右上に 浮かせていたが、
-            地図そのものを 隠してしまう ので この バーの 右端に 移した */}
+            地図そのものを 隠してしまう ので この バーの 右端に 移した。
+            地籍測量では MAP しか 使わないので 出さない */}
+        {!isCadastralProject && (
         <div className="ml-auto shrink-0 flex items-center rounded overflow-hidden border border-slate-500">
           {(['map', '3d', '2d', 'pipe'] as const).map((m) => {
             const on = viewModes.has(m)
@@ -3632,6 +3638,7 @@ export function MobileStakingPage() {
             )
           })}
         </div>
+        )}
       </div>
       {/* 共有結果トースト */}
       {shareToast && (
