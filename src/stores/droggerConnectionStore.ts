@@ -116,7 +116,21 @@ export const useDroggerConnection = create<DroggerConnectionState>((set, get) =>
         })
       })
       const stH = await DroggerLocation.addListener('statusChange', (ev) => {
-        set({ connected: ev.connected, deviceName: ev.deviceName })
+        // 切れたら 測位まわりは 消す。残したままだと 受信機の 電源を 切っても
+        // 直前の Fix (RTK-FIX / RFLOAT) が 出たままに なって 嘘に なる
+        set(
+          ev.connected
+            ? { connected: true, deviceName: ev.deviceName }
+            : {
+                connected: false,
+                deviceName: ev.deviceName,
+                fixQuality: null,
+                hdop: null,
+                satellites: null,
+                diffAge: null,
+                stationId: null,
+              },
+        )
       })
       // 受信機と 繋がっているかは statusChange だけが 決める。
       //

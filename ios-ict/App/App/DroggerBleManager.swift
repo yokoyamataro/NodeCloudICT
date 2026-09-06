@@ -70,6 +70,16 @@ final class DroggerBleManager: NSObject {
     /// 特性を 探している 途中の Service 数。0 になったら 通り道を 決める
     private var pendingServiceCount = 0
 
+    /// 切断してから これだけ 復帰しなければ 「切断」を UI に 伝える [秒]。
+    ///
+    /// 一瞬の 瞬断で 表示が ちらつくのは 避けたいが、受信機の 電源が 落ちた
+    /// ような 本当の 切断まで 黙っていると、画面が 最後の Fix (RTK-FIX 等) を
+    /// 出したまま 固まって 嘘に なる。短い 猶予を 置いて 見分ける。
+    private static let disconnectNoticeSec: TimeInterval = 5.0
+    /// 猶予を 過ぎて 「切断」を 伝えたか (復帰するまで 二度 出さない)
+    private var disconnectNotified = false
+    private var disconnectNoticeWork: DispatchWorkItem?
+
     private(set) var isConnected = false
     private(set) var deviceName: String?
 
@@ -104,6 +114,7 @@ final class DroggerBleManager: NSObject {
     func stop() {
         shouldReconnect = false
         pendingStart = false
+        cancelDisconnectNotice()
         central.stopScan()
         if let p = peripheral {
             central.cancelPeripheralConnection(p)
@@ -170,6 +181,26 @@ final class DroggerBleManager: NSObject {
         guard let n = name else { return false }
         let range = NSRange(n.startIndex..<n.endIndex, in: n)
         return Self.namePattern.firstMatch(in: n, options: [], range: range) != nil
+    }
+
+    /// 猶予を 過ぎても 復帰していなければ 「切断」を 伝える
+    private func scheduleDisconnectNotice() {
+        disconnectNoticeWork?.cancel()
+        let w = DispatchWorkItem { [weak self] in
+            guard let self = self, !self.isConnected, !self.disconnectNotified else { return }
+            self.disconnectNotified = true
+            print("[BLE] disconnect notice: \(Int(Self.disconnectNoticeSec))s 復帰せず")
+            // deviceName は 残す (どの機体に 繋いでいたかは 見せたい)
+            self.onStatusChange?(false, self.deviceName)
+        }
+        disconnectNoticeWork = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.disconnectNoticeSec, execute: w)
+    }
+
+    private func cancelDisconnectNotice() {
+        disconnectNoticeWork?.cancel()
+        disconnectNoticeWork = nil
+        disconnectNotified = false
     }
 
     /// 受信バイト列を CRLF/LF で行に切り出す
@@ -257,6 +288,7 @@ extension DroggerBleManager: CBCentralManagerDelegate {
         if let ns = error as NSError? {
             print("[BLE] domain=\(ns.domain) code=\(ns.code)")
         }
+        let wasConnected = isConnected
         isConnected = false
         notifyChar = nil
         writeChar = nil
@@ -267,8 +299,12 @@ extension DroggerBleManager: CBCentralManagerDelegate {
         pendingServiceCount = 0
 
         if shouldReconnect {
-            // deviceName は保持したまま再接続 (UI のちらつきを防ぐ)
+            // すぐには 「切断」を 出さない (瞬断での ちらつき防止)。
+            // 猶予を 過ぎても 戻らなければ そこで 伝える
             print("[BLE] reconnecting...")
+            if wasConnected && !disconnectNotified {
+                scheduleDisconnectNotice()
+            }
             c.connect(p, options: nil)
         } else {
             peripheral = nil
@@ -335,6 +371,7 @@ extension DroggerBleManager: CBPeripheralDelegate {
         }
         print("[BLE] notify=\(notify.uuid.uuidString) write=\(writeChar?.uuid.uuidString ?? "-")")
         p.setNotifyValue(true, for: notify)
+        cancelDisconnectNotice()
         isConnected = true
         onStatusChange?(true, deviceName)
     }

@@ -101,6 +101,11 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
   if (source !== 'drogger') return null
 
   const fq = fixQuality
+  // 鮮度。Fix ラベルにも ランプにも 使うので 先に 出す
+  const staleMs = lastUpdateAt != null ? Date.now() - lastUpdateAt : null
+  const isStale = staleMs != null && staleMs > POS_STALE_MS
+  const ntripStaleMs = ntrip.lastRtcmAt > 0 ? Date.now() - ntrip.lastRtcmAt : null
+  const ntripStale = ntrip.connected && ntripStaleMs != null && ntripStaleMs > NTRIP_STALE_MS
   // 補正の 出どころ。NTRIP を 繋いでいないのに 補正が 効いていれば CLAS
   const corrSrc = connected ? correctionSource({ fixQuality, diffAge }, ntrip.connected) : 'none'
   const isClas = corrSrc === 'clas'
@@ -116,7 +121,11 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
         : 'bg-red-100 border-red-400 text-red-800'
   const fixLabel = !connected
     ? '切断'
-    : fq == null
+    : isStale
+      // BLE は 生きているのに NMEA が 止まった (受信機が 黙った) 状態。
+      // 直前の Fix を 出し続けると 今も 測位しているように 見えてしまう
+      ? '受信断'
+      : fq == null
       ? '受信中'
       : isClas && fq === 4
         ? 'CLAS'
@@ -130,11 +139,6 @@ export function DroggerStatusBadge({ className }: { className?: string }) {
   ) : (
     <Radio className="h-3 w-3" />
   )
-  const staleMs = lastUpdateAt != null ? Date.now() - lastUpdateAt : null
-  const isStale = staleMs != null && staleMs > POS_STALE_MS
-  const ntripStaleMs = ntrip.lastRtcmAt > 0 ? Date.now() - ntrip.lastRtcmAt : null
-  const ntripStale = ntrip.connected && ntripStaleMs != null && ntripStaleMs > NTRIP_STALE_MS
-
   // GPS ランプ: 赤= BLE 未接続 / 黄= 繋がっているが 測位が 足りない or 止まった /
   // 緑= 測位中で 衛星も 足りている
   const gpsLamp: { color: LampColor; title: string } = !connected

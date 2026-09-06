@@ -81,6 +81,14 @@ class DroggerBleManager(private val context: Context) {
         private const val MAX_WRITE_QUEUE = 256
         /** これだけ 探して 見つからなければ 一度 諦めて バックオフしてから 再スキャン */
         private const val SCAN_TIMEOUT_MS = 30_000L
+        /**
+         * 切断してから これだけ 復帰しなければ 「切断」を UI に 伝える [ms]。
+         *
+         * 一瞬の 瞬断で 表示が ちらつくのは 避けたいが、受信機の 電源が 落ちた
+         * ような 本当の 切断まで 黙っていると、画面が 最後の Fix (RTK-FIX 等) を
+         * 出したまま 固まって 嘘に なる。短い 猶予を 置いて 見分ける。
+         */
+        private const val DISCONNECT_NOTICE_MS = 5_000L
         /** BLE の 既定 MTU。requestMtu が 通れば 上書きされる */
         private const val DEFAULT_MTU = 23
     }
@@ -109,6 +117,8 @@ class DroggerBleManager(private val context: Context) {
     private var shouldReconnect = false
     private var scanning = false
     private var reconnectAttempts = 0
+    /** 猶予を 過ぎて 「切断」を 伝えたか (復帰するまで 二度 出さない) */
+    private var disconnectNotified = false
     private var mtu = DEFAULT_MTU
     /** 応答なしで 書けない機種は 応答ありで 1 本ずつ 送る */
     private var writeTypeNoResponse = true
@@ -174,6 +184,8 @@ class DroggerBleManager(private val context: Context) {
             shouldReconnect = false
             handler.removeCallbacks(reconnectRunnable)
             handler.removeCallbacks(scanTimeoutRunnable)
+            handler.removeCallbacks(disconnectNoticeRunnable)
+            disconnectNotified = false
             stopScan()
             closeGatt()
             device = null
@@ -354,6 +366,16 @@ class DroggerBleManager(private val context: Context) {
         handler.postDelayed(reconnectRunnable, delayMs)
     }
 
+    /** 猶予を 過ぎても 復帰していなければ 「切断」を 伝える */
+    private val disconnectNoticeRunnable = Runnable {
+        if (!isConnected && !disconnectNotified) {
+            disconnectNotified = true
+            Log.w(TAG, "disconnect notice: ${DISCONNECT_NOTICE_MS / 1000}s 復帰せず")
+            // deviceName は 残す (どの機体に 繋いでいたかは 見せたい)
+            onStatusChange?.invoke(false, deviceName)
+        }
+    }
+
     private val reconnectRunnable = Runnable {
         if (!shouldReconnect) return@Runnable
         val dev = device
@@ -476,9 +498,13 @@ class DroggerBleManager(private val context: Context) {
             onError?.invoke("connect_failed", "BLE 接続に失敗しました (status=$status)")
         }
         if (shouldReconnect) {
-            // deviceName は 保持したまま 再接続 (UI の ちらつきを 防ぐ)。
-            // iOS 版も 再接続中は statusChange(false) を 出さない
+            // すぐには 「切断」を 出さない (瞬断での ちらつき防止)。
+            // 猶予を 過ぎても 戻らなければ そこで 伝える
             Log.i(TAG, "reconnecting...")
+            if (wasConnected && !disconnectNotified) {
+                handler.removeCallbacks(disconnectNoticeRunnable)
+                handler.postDelayed(disconnectNoticeRunnable, DISCONNECT_NOTICE_MS)
+            }
             scheduleReconnect()
         } else {
             device = null
@@ -584,6 +610,8 @@ class DroggerBleManager(private val context: Context) {
 
     private fun markConnected() {
         if (isConnected) return
+        handler.removeCallbacks(disconnectNoticeRunnable)
+        disconnectNotified = false
         isConnected = true
         Log.i(TAG, "BLE connected: ${deviceName ?: device?.address}")
         onStatusChange?.invoke(true, deviceName)
