@@ -4952,22 +4952,6 @@ export function MobileStakingPage() {
             下端は測点の操作列が詰まっているのでここに置く */}
         <MapDrawingCommandBar className="absolute top-1 left-1 right-1 z-[1200] rounded-lg bg-white/95 shadow border px-2 py-1.5 overflow-x-auto" />
 
-        {/* ペイント。常時ここに出す。押すと道具のモーダルが開く。
-            描画中はアイコンが現在の道具に変わり、色が付く */}
-        <button
-          type="button"
-          onClick={() => setPaintOpen(true)}
-          className={`absolute bottom-16 right-1 z-[1000] h-9 w-9 flex items-center justify-center rounded-full shadow border ${
-            paintActive
-              ? 'bg-blue-600 border-blue-400 text-white'
-              : 'bg-white/95 border-slate-300 text-slate-600'
-          }`}
-          title={paintActive ? 'ペイント中 (タップで道具を変更)' : 'ペイント'}
-          aria-label="ペイント"
-        >
-          <Pen className="h-4 w-4" />
-        </button>
-
         {/* 背景地図セレクタ（右下、Leaflet 帰属の上） */}
         <div className="absolute bottom-5 right-1 z-[1000] flex items-center gap-1 px-1.5 py-0.5 rounded shadow border border-slate-300 bg-white/95 text-[11px]">
           <span className="text-slate-500">背景</span>
@@ -6941,7 +6925,9 @@ export function MobileStakingPage() {
               )}
 
               {/* ペイント — 地図に手書き / 線 / テキスト / 付箋メモを置く。
-                  道具は地図上のペイントボタン (常時表示) からも開ける */}
+                  以前は 地図の 右下にも 同じ ボタンを 浮かせていたが、
+                  法務省地図の コントロールと 重なる 位置で 二重に なるため
+                  こちら 1 つに した */}
               <button
                 type="button"
                 onClick={() => setPaintOpen(true)}
