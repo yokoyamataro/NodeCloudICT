@@ -771,15 +771,6 @@ export function MobileStakingPage() {
   // 保存記録に紐付ける区分（常に 起工測量）
   const surveyCategory: 'initial' | 'asbuilt' = 'initial'
   // (antennaHeight / useGeoidCorrection は gnssSettingsStore に移設済み)
-  // 三次元誘導（ターゲットとの比高表示）
-  // (RTK 判定は 精度しきい値ではなく fixQuality=4 の受信で 判定する)
-  const [use3dGuidance, setUse3dGuidance] = useState<boolean>(() => {
-    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('rtk:use3dGuidance') : null
-    return saved === '1'
-  })
-  useEffect(() => {
-    try { localStorage.setItem('rtk:use3dGuidance', use3dGuidance ? '1' : '0') } catch { /* ignore */ }
-  }, [use3dGuidance])
   // ジオイドグリッド（遅延読込）
   const [geoidGrid, setGeoidGrid] = useState<import('@/lib/geoid').GeoidGrid | null>(null)
   useEffect(() => {
@@ -789,7 +780,6 @@ export function MobileStakingPage() {
       .then((g) => setGeoidGrid(g))
       .catch(() => { /* ignore - 補正できないだけで 動作は 継続 */ })
   }, [useGeoidCorrection, geoidGrid])
-  const [showSettings, setShowSettings] = useState(false)
   const [showChatSheet, setShowChatSheet] = useState(false)
   const [showFarmEditModal, setShowFarmEditModal] = useState(false)
   const [showTargetList, setShowTargetList] = useState(false)
@@ -2498,6 +2488,11 @@ export function MobileStakingPage() {
   }, [currentXY, selectedTarget])
 
   // 1m 以内 かつ 未キャンセル のとき近接モードを表示
+  // 近接モードに 出す 比高 (自分の 地表高 − ターゲットの 設計高)。
+  // 正 = 自分が 高い (掘る)、負 = 自分が 低い (盛る)。trenchDiff と 同じ 向き。
+  const targetHeightDiff =
+    selfElevation !== null && selectedTarget?.z != null ? selfElevation - selectedTarget.z : null
+
   const proximityActive = proximityRel != null && proximityRel.dist <= 1.0 && !proximityCancelled
 
   // 範囲外（1.2m 超のヒステリシス）に出たらキャンセルを解除して再表示できるようにする
@@ -3595,13 +3590,6 @@ export function MobileStakingPage() {
         >
           共有
         </button>
-        <button
-          onClick={() => setShowSettings((v) => !v)}
-          className="shrink-0 px-2 py-1.5 rounded font-medium bg-slate-700 hover:bg-slate-600"
-          title="設定"
-        >
-          設定
-        </button>
         {farmId && (
           <button
             onClick={() => setShowChatSheet(true)}
@@ -4284,6 +4272,7 @@ export function MobileStakingPage() {
           recentPrefixes={recentPrefixes}
           existingNames={coordinates.map((c) => c.pointNumber)}
           numberingMode={numberingMode}
+          onNumberingModeChange={setNumberingMode}
           onConfirm={handleFreePointConfirm}
           onCancel={() => setFreePointDialog(null)}
         />
@@ -5838,6 +5827,7 @@ export function MobileStakingPage() {
             dE={proximityRel.dE}
             dist={proximityRel.dist}
             upHeading={upHeading}
+            heightDiff={targetHeightDiff}
             accuracy={currentAcc}
             targetName={selectedTarget.name}
             onCancel={() => setProximityCancelled(true)}
@@ -5907,77 +5897,6 @@ export function MobileStakingPage() {
           )
         })()}
 
-        {/* 設定パネル */}
-        {showSettings && (
-          <div className="absolute top-2 right-2 z-[3400] bg-white border rounded-lg shadow-lg w-64 text-sm flex flex-col max-h-[85vh]">
-            <div className="px-3 pt-3 pb-2 border-b flex items-center justify-between shrink-0">
-              <div className="font-semibold">設定</div>
-              <button
-                onClick={() => setShowSettings(false)}
-                className="p-1 rounded hover:bg-slate-100"
-                aria-label="閉じる"
-              >
-                <X className="h-4 w-4 text-slate-500" />
-              </button>
-            </div>
-            <div className="p-3 overflow-y-auto flex-1">
-
-            {/* 音声ガイダンス / 平均秒数 / アンテナ高 / ジオイド補正 は
-                「GPS設定」モーダル (画面右上のバッジ) の 「GPS接続」タブ
-                下部に移設。設定は 端末単位で 共有される。 */}
-            <div className="mb-3 px-2 py-2 text-[11px] bg-emerald-50 border border-emerald-200 text-emerald-800 rounded">
-              音声ガイダンス / 平均秒数 / アンテナ高 / ジオイド補正 は、
-              右上の「GPS設定」バッジから 変更できます。
-            </div>
-
-            <label className="flex items-center gap-2 mb-2 pt-2 border-t">
-              <input
-                type="checkbox"
-                checked={use3dGuidance}
-                onChange={(e) => setUse3dGuidance(e.target.checked)}
-              />
-              <span className="text-xs">三次元誘導（ターゲットとの比高を表示）</span>
-            </label>
-            <div className="text-[11px] text-slate-500 mb-2">
-              方位・距離の右に「↓現在地が高い／↑現在地が低い」を表示します。
-            </div>
-
-            <div className="border-t pt-2 mb-2">
-              <div className="text-xs text-slate-600 mb-1">新点の採番</div>
-              <label className="flex items-center gap-2 mb-1">
-                <input
-                  type="radio"
-                  name="numberingMode"
-                  checked={numberingMode === 'perPrefix'}
-                  onChange={() => setNumberingMode('perPrefix')}
-                />
-                <span className="text-xs">頭文字ごとに採番（道路-1 / 境界-1）</span>
-              </label>
-              <label className="flex items-center gap-2">
-                <input
-                  type="radio"
-                  name="numberingMode"
-                  checked={numberingMode === 'global'}
-                  onChange={() => setNumberingMode('global')}
-                />
-                <span className="text-xs">通し番号・重複なし（道路-1 / 境界-2）</span>
-              </label>
-            </div>
-
-            <div className="text-xs text-slate-500 border-t pt-2">
-              Mock Location 経由で RTK-GNSS の補正座標を取得できます。
-            </div>
-            </div>
-            <div className="px-3 py-2 border-t shrink-0">
-              <button
-                onClick={() => setShowSettings(false)}
-                className="w-full px-2 py-1.5 text-xs border rounded hover:bg-slate-50"
-              >
-                閉じる
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* 求積 (面積測定) パネル。作成中は常時表示、地図左上 */}
         {areaModeActive && (() => {
@@ -7575,6 +7494,7 @@ function ProximityGuide({
   dE,
   dist,
   upHeading,
+  heightDiff,
   accuracy,
   targetName,
   onCancel,
@@ -7584,6 +7504,8 @@ function ProximityGuide({
   dist: number // 距離(m)
   /** 画面の 上に 合わせる 方位 [deg]。null = 北基準 */
   upHeading: number | null
+  /** 比高 [m]。自分の 地表高 − ターゲットの 設計高。正 = 自分が 高い */
+  heightDiff: number | null
   accuracy: number | null
   targetName: string
   onCancel: () => void
@@ -7710,6 +7632,18 @@ function ProximityGuide({
         <div className="text-5xl font-mono font-bold tabular-nums text-white">{distLabel}</div>
         <div className="text-xs text-slate-400 mt-1">
           {fine ? '精密モード（10cm 幅）' : '近接モード（1m 幅）'}
+          {/* 比高: 正 = 自分が 高い (下げる)、負 = 自分が 低い (上げる)。
+              水平の 追い込み中に 上下も 同時に 見られるように 隣に 置く */}
+          <span className="mx-1">/</span>
+          比高{' '}
+          {heightDiff != null ? (
+            <span className="font-mono tabular-nums text-slate-200">
+              {heightDiff >= 0 ? '↓' : '↑'}
+              {Math.abs(heightDiff).toFixed(3)} m
+            </span>
+          ) : (
+            '-'
+          )}
           <span className="mx-1">/</span>
           精度 {accuracy != null ? `${(accuracy * 100).toFixed(1)} cm` : '-'}
         </div>
@@ -7791,6 +7725,7 @@ function FreePointDialog({
   recentPrefixes,
   existingNames,
   numberingMode,
+  onNumberingModeChange,
   onConfirm,
   onCancel,
 }: {
@@ -7808,6 +7743,7 @@ function FreePointDialog({
   recentPrefixes: string[]
   existingNames: string[]
   numberingMode: NumberingMode
+  onNumberingModeChange: (m: NumberingMode) => void
   onConfirm: (name: string, type: string, prefix: string, openPhoto: boolean) => void
   onCancel: () => void
 }) {
@@ -7822,6 +7758,11 @@ function FreePointDialog({
   const applyPrefix = (p: string) => {
     setPrefix(p)
     setName(nextNumberedName(p, existingNames, numberingMode))
+  }
+  // 採番方式を 変えたら、その場で 点名を 振り直して 結果が 見えるように する
+  const applyNumberingMode = (m: NumberingMode) => {
+    onNumberingModeChange(m)
+    setName(nextNumberedName(prefix, existingNames, m))
   }
   return (
     <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[3000]">
@@ -7862,6 +7803,32 @@ function FreePointDialog({
             onChange={(e) => setName(e.target.value)}
             className="flex-1 px-1.5 py-1 border rounded text-xs"
           />
+        </div>
+
+        {/* 採番: 点名の 下、点種の 上。以前は 画面上部の 「設定」に あったが、
+            使うのは この 場面だけ なので ここに 持ってきた */}
+        <div className="flex items-start gap-1.5 mb-1.5">
+          <span className="text-[11px] text-slate-500 shrink-0 w-10 pt-0.5">採番</span>
+          <div className="flex-1 flex flex-col gap-0.5">
+            <label className="flex items-center gap-1.5">
+              <input
+                type="radio"
+                name="numberingMode"
+                checked={numberingMode === 'perPrefix'}
+                onChange={() => applyNumberingMode('perPrefix')}
+              />
+              <span className="text-[11px]">頭文字ごと（道路-1 / 境界-1）</span>
+            </label>
+            <label className="flex items-center gap-1.5">
+              <input
+                type="radio"
+                name="numberingMode"
+                checked={numberingMode === 'global'}
+                onChange={() => applyNumberingMode('global')}
+              />
+              <span className="text-[11px]">通し番号（道路-1 / 境界-2）</span>
+            </label>
+          </div>
         </div>
 
         {/* 点種: ラベル + プルダウンを 1 行に */}
