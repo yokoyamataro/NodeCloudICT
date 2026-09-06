@@ -101,6 +101,9 @@ import { Map as MapIcon } from 'lucide-react'
 import { FeedbackButton } from '@/components/layout/FeedbackButton'
 import { MobileHamburgerMenu } from './MobileHamburgerMenu'
 import { DroggerStatusBadge } from '@/components/gnss/DroggerStatusBadge'
+import { useOpenChannelStore } from '@/stores/openChannelStore'
+import { OpenChannelLayer } from '@/components/map/OpenChannelLayer'
+import { buildOpenChannelRenders } from '@/lib/openChannel/mapRender'
 import { watchSamples } from '@/lib/geolocation'
 import { useGnssSettingsStore } from '@/stores/gnssSettingsStore'
 import {
@@ -701,6 +704,9 @@ export function MobileStakingPage() {
     tileUrlTemplate: getOrthoUrl,
   } = useOrthophotoStore()
   const { fetchPipes, pipes } = useUnderdrainStore()
+  // 線形物 (開削水路の 中心線 / 幅杭 / BP・IP・EP)。全体図と 同じものを 出す
+  const openChannels = useOpenChannelStore((s) => s.channels)
+  const fetchChannels = useOpenChannelStore((s) => s.fetchChannels)
   const { records, fetchRecords, addRecord, saveMeasurement, deleteRecord, saving } =
     useStakingStore()
   const pendingCount = useStakingStore((s) => s.pendingCount)
@@ -890,7 +896,9 @@ export function MobileStakingPage() {
   const showMap = isCadastralProject || viewModes.has('map')
   const show3D = !isCadastralProject && viewModes.has('3d')
   const show2D = !isCadastralProject && viewModes.has('2d')
-  const showPipe = !isCadastralProject && viewModes.has('pipe')
+  // 暗渠配管は ボタンも 出さないので、データが 無い 間は 表示も 落としておく
+  // (他の 工区で ON に した まま 来ると 戻せなくなる)
+  const showPipe = !isCadastralProject && pipes.length > 0 && viewModes.has('pipe')
   // 既存コードの参照互換
   const landxmlMode = show3D
   const prevBaseLayerRef = useRef<typeof baseLayer | null>(null)
@@ -990,6 +998,13 @@ export function MobileStakingPage() {
       localStorage.setItem('mobile:staking:displayExpanded', JSON.stringify(displayExpanded))
     } catch { /* ignore */ }
   }, [displayExpanded])
+  // 線形物の 表示 (既定 ON)
+  const [showChannels, setShowChannels] = useState<boolean>(() => {
+    try { return localStorage.getItem('mobile:staking:showChannels') !== '0' } catch { return true }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('mobile:staking:showChannels', showChannels ? '1' : '0') } catch { /* ignore */ }
+  }, [showChannels])
   // 暗渠の配線ライン表示 (既定 ON)
   const [showPipes, setShowPipes] = useState<boolean>(() => {
     try { return localStorage.getItem('mobile:staking:showPipes') !== '0' } catch { return true }
@@ -1474,6 +1489,7 @@ export function MobileStakingPage() {
         await Promise.all([
           fetchCoordinates(typedFarm.id),
           fetchPipes(typedFarm.id),
+          fetchChannels(typedFarm.id),
           fetchRecords(typedFarm.id),
           fetchWorkAreas(typedFarm.id),
           fetchPlan(typedFarm.id),
@@ -1571,6 +1587,7 @@ export function MobileStakingPage() {
         fetchCoordinates(farmId),
         fetchWorkAreas(farmId),
         fetchPipes(farmId),
+        fetchChannels(farmId),
         fetchRecords(farmId),
         fetchFarmMemos(farmId),
         fetchAttachments('farm_photo', [farmId]),
@@ -1584,6 +1601,7 @@ export function MobileStakingPage() {
     }
   }, [
     farmId,
+    fetchChannels,
     fetchCoordinates,
     fetchWorkAreas,
     fetchPipes,
@@ -2493,6 +2511,13 @@ export function MobileStakingPage() {
   }, [currentXY, selectedTarget])
 
   // 1m 以内 かつ 未キャンセル のとき近接モードを表示
+  // 線形物 (中心線 / 幅杭 / BP・IP・EP)。全体図と 同じ 変換・同じ 見た目に なるよう
+  // 共有の 部品を 使う
+  const openChannelRenders = useMemo(
+    () => buildOpenChannelRenders(openChannels, coordinates, converter),
+    [openChannels, coordinates, converter],
+  )
+
   // 近接モードに 出す 比高 (自分の 地表高 − ターゲットの 設計高)。
   // 正 = 自分が 高い (掘る)、負 = 自分が 低い (盛る)。trenchDiff と 同じ 向き。
   const targetHeightDiff =
@@ -3614,7 +3639,10 @@ export function MobileStakingPage() {
             地籍測量では MAP しか 使わないので 出さない */}
         {!isCadastralProject && (
         <div className="ml-auto shrink-0 flex items-center rounded overflow-hidden border border-slate-500">
-          {(['map', '3d', '2d', 'pipe'] as const).map((m) => {
+          {(['map', '3d', '2d', 'pipe'] as const)
+            // 暗渠配管は データが 無ければ 出しても 空の パネルに なるだけ
+            .filter((m) => m !== 'pipe' || pipes.length > 0)
+            .map((m) => {
             const on = viewModes.has(m)
             const label =
               m === 'map' ? 'MAP' : m === '3d' ? '3D' : m === '2d' ? '2D' : '暗渠配管'
@@ -4688,6 +4716,20 @@ export function MobileStakingPage() {
             </div>
           )}
 
+          {/* 線形物 (開削水路の 中心線 / 幅杭 / BP・IP・EP) */}
+          {openChannelRenders.length > 0 && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showChannels}
+                onChange={() => setShowChannels((v) => !v)}
+                className="h-4 w-4"
+              />
+              <span>線形物</span>
+              <span className="text-[11px] text-slate-500">({openChannelRenders.length})</span>
+            </label>
+          )}
+
           {/* 暗渠の配線ライン (吸水/集水) */}
           {pipePolylines.length > 0 && (
             <label className="flex items-center gap-2 cursor-pointer">
@@ -5549,6 +5591,9 @@ export function MobileStakingPage() {
               </Pane>
             </>
           )}
+
+          {/* 線形物 (開削水路)。全体図と 同じ 描画 */}
+          {showChannels && <OpenChannelLayer renders={openChannelRenders} />}
 
           {/* LANDXML / 施工管理：床掘 TIN の三角形エッジ */}
           {(screenMode === 'construction' || landxmlMode) && trenchEdges.map((tri, i) => (
