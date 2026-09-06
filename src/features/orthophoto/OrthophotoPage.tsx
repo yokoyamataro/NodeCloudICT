@@ -33,11 +33,11 @@ import { useOpenChannelStore } from '@/stores/openChannelStore'
 import { getActiveLandxmlFile, downloadLandxmlText } from '@/lib/landxmlFiles'
 import { parseLandXml } from '@/lib/landxml/parser'
 import {
-  renderTin,
-  hypsometricColor,
   type RenderedTin,
 } from '@/lib/landxml/tinRender'
 import { useLandxmlEventsStore } from '@/stores/landxmlEventsStore'
+import { TinPane } from '@/components/map/TinPane'
+import { buildTinFromXml } from '@/lib/landxml/buildTin'
 import {
   buildSegments,
   pointAtDistance,
@@ -478,22 +478,8 @@ export function OrthophotoPage() {
     }
   }, [currentFarm, landxmlVersion])
   const buildTin = useCallback(
-    (xmlText: string | null, sourceName: string): RenderedTin | null => {
-      if (!xmlText || projectZone == null) return null
-      try {
-        const parsed = parseLandXml(xmlText, sourceName)
-        if (parsed.surfaces.length === 0) return null
-        // 三角形 が 一番多い Surface を 採用 (通常 は 1 面)
-        const surface = parsed.surfaces.reduce((best, s) =>
-          s.triangles.length > best.triangles.length ? s : best,
-        )
-        const conv = new CoordinateConverter(projectZone)
-        return renderTin(surface, conv)
-      } catch (e) {
-        console.error(`[tin parse ${sourceName}]`, e)
-        return null
-      }
-    },
+    (xmlText: string | null, sourceName: string): RenderedTin | null =>
+      buildTinFromXml(xmlText, sourceName, projectZone),
     [projectZone],
   )
   const groundTin = useMemo(() => buildTin(groundXmlText, 'ground'), [groundXmlText, buildTin])
@@ -1940,82 +1926,6 @@ async function downloadPhotosExcel(
 //   全写真から順にクリックすると順番付きで選択、再度クリックで除外。
 //   ↑ / ↓ ボタンで順番を入れ替えできる。
 // -----------------------------------------------------------------
-/**
- * TIN (LandXML) 描画 用 Pane。 色分けメッシュ / 等高線 / ワイヤーフレーム を
- * サブ トグル で 個別 に 表示切替。 tin が null または visible=false で 全体 非表示。
- * contourColor / wireframeColor は 現況 (茶) / 設計 (紺) で 使い分ける ため 引数化。
- */
-function TinPane({
-  paneName,
-  zIndex,
-  tin,
-  visible,
-  meshOn,
-  contourOn,
-  wireframeOn,
-  contourColor,
-  wireframeColor,
-  keyPrefix,
-}: {
-  paneName: string
-  zIndex: number
-  tin: RenderedTin | null
-  visible: boolean
-  meshOn: boolean
-  contourOn: boolean
-  wireframeOn: boolean
-  contourColor: string
-  wireframeColor: string
-  keyPrefix: string
-}) {
-  return (
-    <Pane name={paneName} style={{ zIndex }}>
-      {tin && visible && meshOn &&
-        tin.triangles.map((t, i) => (
-          <LeafletPolygon
-            key={`${keyPrefix}-tri-${i}`}
-            positions={t.positions}
-            pathOptions={{
-              color: hypsometricColor(t.zAvg, tin.zMin, tin.zMax),
-              weight: 0,
-              fillColor: hypsometricColor(t.zAvg, tin.zMin, tin.zMax),
-              fillOpacity: 0.55,
-            }}
-            interactive={false}
-          />
-        ))}
-      {tin && visible && wireframeOn &&
-        tin.edges.map((e, i) => (
-          <LeafletPolyline
-            key={`${keyPrefix}-edge-${i}`}
-            positions={e.positions}
-            pathOptions={{
-              color: wireframeColor,
-              weight: 0.6,
-              opacity: 0.55,
-            }}
-            interactive={false}
-          />
-        ))}
-      {tin && visible && contourOn &&
-        tin.contours.flatMap((c) =>
-          c.segments.map((seg, j) => (
-            <LeafletPolyline
-              key={`${keyPrefix}-c-${c.z.toFixed(3)}-${j}`}
-              positions={seg}
-              pathOptions={{
-                color: contourColor,
-                weight: Math.abs(c.z % (tin.contourInterval * 5)) < 1e-6 ? 1.2 : 0.7,
-                opacity: 0.85,
-              }}
-              interactive={false}
-            />
-          )),
-        )}
-    </Pane>
-  )
-}
-
 function PhotoBookOrderModal({
   photos,
   getSignedUrl,

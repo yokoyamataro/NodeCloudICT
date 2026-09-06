@@ -103,6 +103,9 @@ import { MobileHamburgerMenu } from './MobileHamburgerMenu'
 import { DroggerStatusBadge } from '@/components/gnss/DroggerStatusBadge'
 import { useOpenChannelStore } from '@/stores/openChannelStore'
 import { OpenChannelLayer } from '@/components/map/OpenChannelLayer'
+import { TinPane } from '@/components/map/TinPane'
+import { buildTinFromXml } from '@/lib/landxml/buildTin'
+import { useLandxmlEventsStore } from '@/stores/landxmlEventsStore'
 import { buildOpenChannelRenders } from '@/lib/openChannel/mapRender'
 import { watchSamples } from '@/lib/geolocation'
 import { useGnssSettingsStore } from '@/stores/gnssSettingsStore'
@@ -998,6 +1001,43 @@ export function MobileStakingPage() {
       localStorage.setItem('mobile:staking:displayExpanded', JSON.stringify(displayExpanded))
     } catch { /* ignore */ }
   }, [displayExpanded])
+  // 写真 / メモ の 表示 (全体図の レイヤに 合わせる。既定 ON)
+  const [showPhotoLayer, setShowPhotoLayer] = useState<boolean>(() => {
+    try { return localStorage.getItem('mobile:staking:showPhotoLayer') !== '0' } catch { return true }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('mobile:staking:showPhotoLayer', showPhotoLayer ? '1' : '0') } catch { /* ignore */ }
+  }, [showPhotoLayer])
+  const [showMemoLayer, setShowMemoLayer] = useState<boolean>(() => {
+    try { return localStorage.getItem('mobile:staking:showMemoLayer') !== '0' } catch { return true }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('mobile:staking:showMemoLayer', showMemoLayer ? '1' : '0') } catch { /* ignore */ }
+  }, [showMemoLayer])
+
+  // TIN (現況 / 設計面) の サブ表示。全体図と 同じく 「隠している キー」を 持つ。
+  // キー例: 'tin:ground' (親) / 'tin:ground:mesh' (子)
+  const [tinHidden, setTinHidden] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem('mobile:staking:tinHidden')
+      return new Set<string>(raw ? (JSON.parse(raw) as string[]) : [])
+    } catch { return new Set<string>() }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('mobile:staking:tinHidden', JSON.stringify([...tinHidden]))
+    } catch { /* ignore */ }
+  }, [tinHidden])
+  const tinOn = (key: string) => !tinHidden.has(key)
+  const setTinVis = (key: string, v: boolean) => {
+    setTinHidden((prev) => {
+      const next = new Set(prev)
+      if (v) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
   // 線形物の 表示 (既定 ON)
   const [showChannels, setShowChannels] = useState<boolean>(() => {
     try { return localStorage.getItem('mobile:staking:showChannels') !== '0' } catch { return true }
@@ -2511,6 +2551,48 @@ export function MobileStakingPage() {
   }, [currentXY, selectedTarget])
 
   // 1m 以内 かつ 未キャンセル のとき近接モードを表示
+  // TIN (現況 / 設計面)。全体図と 同じく kind ごとの active を 1 枚ずつ 読む。
+  // 3D モードの 床掘 TIN とは 別で、こちらは 全体図と 同じ 見た目 (色分けメッシュ /
+  // 等高線 / ワイヤーフレーム) で 出す。
+  const [groundXmlText, setGroundXmlText] = useState<string | null>(null)
+  const [designXmlText, setDesignXmlText] = useState<string | null>(null)
+  const landxmlVersion = useLandxmlEventsStore((st) => st.version)
+  useEffect(() => {
+    if (!farmId) {
+      setGroundXmlText(null)
+      setDesignXmlText(null)
+      return
+    }
+    let cancelled = false
+    const load = async (kind: 'ground' | 'design') => {
+      try {
+        const active = await getActiveLandxmlFile(farmId, kind)
+        if (!active || cancelled) return null
+        const text = await downloadLandxmlText(active.storagePath)
+        return cancelled ? null : text
+      } catch (e) {
+        console.error(`[landxml fetch ${kind}]`, e)
+        return null
+      }
+    }
+    void Promise.all([load('ground'), load('design')]).then(([g, d]) => {
+      if (cancelled) return
+      setGroundXmlText(g)
+      setDesignXmlText(d)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [farmId, landxmlVersion])
+  const groundTin = useMemo(
+    () => buildTinFromXml(groundXmlText, 'ground', zone),
+    [groundXmlText, zone],
+  )
+  const designTin = useMemo(
+    () => buildTinFromXml(designXmlText, 'design', zone),
+    [designXmlText, zone],
+  )
+
   // 線形物 (中心線 / 幅杭 / BP・IP・EP)。全体図と 同じ 変換・同じ 見た目に なるよう
   // 共有の 部品を 使う
   const openChannelRenders = useMemo(
@@ -4730,6 +4812,77 @@ export function MobileStakingPage() {
             </label>
           )}
 
+          {/* TIN (現況 / 設計面)。全体図と 同じ 3 サブ (色分けメッシュ / 等高線 /
+              ワイヤーフレーム)。データが 無い 面は 出さない */}
+          {[
+            { key: 'tin:ground', label: '現況 (LandXML)', tin: groundTin },
+            { key: 'tin:design', label: '設計面 (LandXML)', tin: designTin },
+          ]
+            .filter((g) => g.tin != null)
+            .map((g) => (
+              <div key={g.key}>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={tinOn(g.key)}
+                    onChange={() => setTinVis(g.key, !tinOn(g.key))}
+                    className="h-4 w-4"
+                  />
+                  <span>{g.label}</span>
+                </label>
+                {tinOn(g.key) && (
+                  <div className="ml-6 mt-0.5 space-y-0.5">
+                    {[
+                      { sub: 'mesh', label: '色分けメッシュ' },
+                      { sub: 'contour', label: '等高線' },
+                      { sub: 'wireframe', label: 'ワイヤーフレーム' },
+                    ].map((c) => {
+                      const k = `${g.key}:${c.sub}`
+                      return (
+                        <label key={k} className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={tinOn(k)}
+                            onChange={() => setTinVis(k, !tinOn(k))}
+                            className="h-3.5 w-3.5"
+                          />
+                          <span className="text-[11px] text-slate-600">{c.label}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            ))}
+
+          {/* 写真 (全体図の レイヤに 合わせる) */}
+          {farmPhotos.length > 0 && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showPhotoLayer}
+                onChange={() => setShowPhotoLayer((v) => !v)}
+                className="h-4 w-4"
+              />
+              <span>写真</span>
+              <span className="text-[11px] text-slate-500">({farmPhotos.length})</span>
+            </label>
+          )}
+
+          {/* メモ (全体図の レイヤに 合わせる) */}
+          {farmMemos.length > 0 && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showMemoLayer}
+                onChange={() => setShowMemoLayer((v) => !v)}
+                className="h-4 w-4"
+              />
+              <span>メモ</span>
+              <span className="text-[11px] text-slate-500">({farmMemos.length})</span>
+            </label>
+          )}
+
           {/* 暗渠の配線ライン (吸水/集水) */}
           {pipePolylines.length > 0 && (
             <label className="flex items-center gap-2 cursor-pointer">
@@ -5181,7 +5334,7 @@ export function MobileStakingPage() {
           })}
 
           {/* 工区メモのマーカー（長押しで移動・位置削除） */}
-          {farmMemos.map((m) =>
+          {showMemoLayer && farmMemos.map((m) =>
             m.lat != null && m.lng != null ? (
               <EditableMemoMarker
                 key={`memo-${m.id}`}
@@ -5197,7 +5350,7 @@ export function MobileStakingPage() {
           )}
 
           {/* 工区写真のマーカー: タップで写真ポップアップ、編集ボタンで PhotoEditModal を開く */}
-          {farmPhotos.map((p) => (
+          {showPhotoLayer && farmPhotos.map((p) => (
             <PhotoMarker
               key={`photo-${p.id}`}
               photo={p}
@@ -5591,6 +5744,32 @@ export function MobileStakingPage() {
               </Pane>
             </>
           )}
+
+          {/* TIN (現況 / 設計面)。全体図と 同じ 描画・同じ 色 */}
+          <TinPane
+            paneName="mobile-tin-ground"
+            zIndex={410}
+            tin={groundTin}
+            visible={tinOn('tin:ground')}
+            meshOn={tinOn('tin:ground:mesh')}
+            contourOn={tinOn('tin:ground:contour')}
+            wireframeOn={tinOn('tin:ground:wireframe')}
+            contourColor="#92400e"
+            wireframeColor="#a16207"
+            keyPrefix="m-tin-g"
+          />
+          <TinPane
+            paneName="mobile-tin-design"
+            zIndex={415}
+            tin={designTin}
+            visible={tinOn('tin:design')}
+            meshOn={tinOn('tin:design:mesh')}
+            contourOn={tinOn('tin:design:contour')}
+            wireframeOn={tinOn('tin:design:wireframe')}
+            contourColor="#1e3a8a"
+            wireframeColor="#1d4ed8"
+            keyPrefix="m-tin-d"
+          />
 
           {/* 線形物 (開削水路)。全体図と 同じ 描画 */}
           {showChannels && <OpenChannelLayer renders={openChannelRenders} />}
