@@ -43,7 +43,6 @@ import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { Map as MapIcon } from 'lucide-react'
 import { ResizableSplit } from '@/components/layout/ResizableSplit'
 import { loadSimaFile, downloadSimaFile } from '@/lib/sima-parser'
-import { PageHeader } from '@/components/layout/PageHeader'
 import type { CoordinateType, StakeStatus } from '@/types/database'
 import {
   STAKE_STATUS_OPTIONS,
@@ -2588,34 +2587,32 @@ export function CoordinatesPage() {
           <option key={o.label} value={o.label} />
         ))}
       </datalist>
-      <PageHeader
-        title="座標管理"
-        subtitle="平面直角座標の登録"
-        actions={
-          coordLoadingProgress && coordLoadingProgress.total > 0 ? (
-            <div className="flex items-center gap-2 text-xs text-slate-700">
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" />
-              <span>
-                座標を読込中
-                <span className="font-mono ml-1">
-                  {coordLoadingProgress.done.toLocaleString()} / {coordLoadingProgress.total.toLocaleString()}
-                </span>
-                <span className="ml-1 text-slate-500">
-                  ({Math.round((coordLoadingProgress.done / coordLoadingProgress.total) * 100)}%)
-                </span>
+      {/* 旧ヘッダ (現場名 / 工区名 / メニュー名 / 説明) は 廃止。
+          読込中の 進捗だけ 残す (終わったら 帯ごと 消える) */}
+      {coordLoadingProgress && coordLoadingProgress.total > 0 && (
+        <div className="px-4 py-2 border-b bg-white flex items-center justify-end gap-2">
+          <div className="flex items-center gap-2 text-xs text-slate-700">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" />
+            <span>
+              座標を読込中
+              <span className="font-mono ml-1">
+                {coordLoadingProgress.done.toLocaleString()} / {coordLoadingProgress.total.toLocaleString()}
               </span>
-              <div className="w-32 h-2 bg-slate-200 rounded overflow-hidden">
-                <div
-                  className="h-full bg-blue-600 transition-[width] duration-150"
-                  style={{
-                    width: `${Math.min(100, (coordLoadingProgress.done / coordLoadingProgress.total) * 100)}%`,
-                  }}
-                />
-              </div>
+              <span className="ml-1 text-slate-500">
+                ({Math.round((coordLoadingProgress.done / coordLoadingProgress.total) * 100)}%)
+              </span>
+            </span>
+            <div className="w-32 h-2 bg-slate-200 rounded overflow-hidden">
+              <div
+                className="h-full bg-blue-600 transition-[width] duration-150"
+                style={{
+                  width: `${Math.min(100, (coordLoadingProgress.done / coordLoadingProgress.total) * 100)}%`,
+                }}
+              />
             </div>
-          ) : undefined
-        }
-      />
+          </div>
+        </div>
+      )}
 
       {/* 順指定モード: 上部バナーで操作案内と件数・完了/キャンセル */}
       {orderSelectMode && (

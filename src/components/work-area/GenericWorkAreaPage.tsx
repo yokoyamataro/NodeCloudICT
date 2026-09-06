@@ -17,7 +17,6 @@ import { CoordinateMap, type ExternalPolygon, type EdgeRounding } from '@/compon
 import { ParcelMapLayer } from '@/components/map/ParcelMapLayer'
 import { useParcelMapDatasetStore } from '@/stores/parcelMapDatasetStore'
 import { Map as MapIcon } from 'lucide-react'
-import { PageHeader } from '@/components/layout/PageHeader'
 import {
   CadastralRowFields,
   CADASTRAL_COLUMN_KEYS,
@@ -46,9 +45,7 @@ import { useAttachmentStore, type Attachment } from '@/stores/attachmentStore'
 // メイン工事区域ページコンポーネント
 interface GenericWorkAreaPageProps {
   workType: WorkType
-  /** ページ上の「工事区域」ラベルを差し替える（例: 境界測量では「地番データ」） */
-  areaLabel?: string
-  /** PageHeader 右側に表示する追加アクション（例: SIM 入出力ボタン） */
+  /** 上部の 操作バーに 出す アクション（例: SIM 入出力ボタン） */
   headerActions?: React.ReactNode
   /** CoordinateMap の MapContainer の中に差し込む追加レイヤ (例: 地番マップの背景) */
   mapChildren?: React.ReactNode
@@ -75,7 +72,7 @@ interface GenericWorkAreaPageProps {
   mapInSeparateWindow?: boolean
 }
 
-export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', headerActions, mapChildren, mapBottomLeftOverlay, suppressDefaultParcelMapLayer, checkedPolygonIds, onPolygonToggleCheck, areaListActions, readOnly = false, mapInSeparateWindow = false }: GenericWorkAreaPageProps) {
+export function GenericWorkAreaPage({ workType, headerActions, mapChildren, mapBottomLeftOverlay, suppressDefaultParcelMapLayer, checkedPolygonIds, onPolygonToggleCheck, areaListActions, readOnly = false, mapInSeparateWindow = false }: GenericWorkAreaPageProps) {
   // URL ?panel=table|map で 「1 パネルのみ全画面」表示に切替
   const fullscreenPanel = useMemo<'table' | 'map' | null>(() => {
     if (typeof window === 'undefined') return null
@@ -238,7 +235,6 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
   }, [farmId, workType, fetchWorkAreas, fetchCoordinates])
 
   const areas = getWorkAreasByType(workType)
-  const workTypeName = WORK_TYPE_NAMES[workType]
 
   // 地籍モードでは、表示中の地番（design_work_areas）に対応する parcels を一括取得
   const fetchParcels = useParcelStore((s) => s.fetchByWorkAreaIds)
@@ -740,15 +736,12 @@ export function GenericWorkAreaPage({ workType, areaLabel = '工事区域', head
 
   return (
     <div className="h-full flex flex-col">
-      <PageHeader
-        title={isBoundarySurvey ? areaLabel : `${workTypeName} - ${areaLabel}`}
-        subtitle={
-          isBoundarySurvey
-            ? `座標管理に登録した座標を使って${areaLabel}を設定・面積計算`
-            : `座標管理に登録した座標を使って${workTypeName}の${areaLabel}を設定・面積計算`
-        }
-        actions={headerActions}
-      />
+      {/* 旧ヘッダ (現場名 / 工区名 / メニュー名 / 説明) は 廃止。操作だけ 残す */}
+      {headerActions && (
+        <div className="px-4 py-2 border-b bg-white flex items-center justify-end gap-2">
+          {headerActions}
+        </div>
+      )}
 
       {/* 区域編集中の案内: 終了ボタンは 一覧の 「編集終了」 に集約したので ここは案内文のみ */}
       {editingAreaId && (

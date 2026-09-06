@@ -637,7 +637,6 @@ export function BoundarySurveyWorkAreaPage() {
       )}
       <GenericWorkAreaPage
         workType="boundary_survey"
-        areaLabel="地番管理"
         readOnly={readOnly}
         mapInSeparateWindow={true}
         headerActions={

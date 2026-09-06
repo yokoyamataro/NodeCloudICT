@@ -15,7 +15,6 @@ import {
   X,
   StickyNote,
 } from 'lucide-react'
-import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
 import { useFarmMemoStore, EMPTY_FARM_MEMOS, type FarmMemo } from '@/stores/farmMemoStore'
 import { useAttachmentStore } from '@/stores/attachmentStore'
@@ -82,27 +81,24 @@ export function FarmMemosPage() {
 
   if (!farmId) {
     return (
-      <div className="h-full flex flex-col">
-        <PageHeader title="メモ" subtitle="工区を選択してください" />
+      <div className="h-full flex items-center justify-center text-slate-500 text-sm">
+        工区を選択してください
       </div>
     )
   }
 
   return (
     <div className="h-full flex flex-col">
-      <PageHeader
-        title="メモ"
-        subtitle="現場で気付いたことを位置・方向・写真と一緒に残せます"
-        actions={
-          <button
+      {/* 旧ヘッダ (現場名 / 工区名 / メニュー名 / 説明) は 廃止。操作だけ 残す */}
+      <div className="px-4 py-2 border-b bg-white flex items-center justify-end gap-2">
+        <button
             onClick={() => setShowNewModal(true)}
             className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
           >
             <Plus className="h-3.5 w-3.5" />
             メモを追加
           </button>
-        }
-      />
+      </div>
 
       {error && (
         <div className="px-4 py-2 bg-red-50 border-b border-red-200 text-sm text-red-700">

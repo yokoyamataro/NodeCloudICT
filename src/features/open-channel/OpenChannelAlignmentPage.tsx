@@ -11,7 +11,6 @@ import { Polyline, CircleMarker, useMap, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Pencil, Check, X, Upload, Loader2 } from 'lucide-react'
-import { PageHeader } from '@/components/layout/PageHeader'
 import { CoordinateMap } from '@/components/map/CoordinateMap'
 import { DxfCrossSectionViewer } from '@/components/dxf/DxfCrossSectionViewer'
 import { decodeDxfBytes, type DxfShape } from '@/lib/dxfRender'
@@ -4218,7 +4217,6 @@ export function OpenChannelAlignmentPage() {
   if (!currentFarm) {
     return (
       <div className="h-full flex flex-col">
-        <PageHeader title="線形物 線形登録" subtitle="水路・道路など / 線形 + 横断計画" />
         <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">工区を選択してください</div>
       </div>
     )
@@ -4226,8 +4224,6 @@ export function OpenChannelAlignmentPage() {
 
   return (
     <div className="h-full flex flex-col">
-      <PageHeader title="線形物 線形登録" subtitle="水路・道路など / 線形 + 横断計画" />
-
       <div className="flex-1 flex overflow-hidden">
         {/* 左: 一覧 + 編集 */}
         <div className="w-[624px] overflow-auto p-3 bg-slate-50 border-r space-y-3">

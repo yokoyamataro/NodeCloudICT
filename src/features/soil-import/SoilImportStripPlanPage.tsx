@@ -3,7 +3,6 @@ import {
   Layers, RotateCcw, Pencil, CornerDownRight, Undo2, Redo2, Trash2, Edit3,
   Copy, Square as SquareIcon, Move, Settings, X, Check, Download,
 } from 'lucide-react'
-import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
 import { useWorkAreaStore } from '@/stores/workAreaStore'
 import { useProjectListStore } from '@/stores/projectListStore'
@@ -1098,7 +1097,6 @@ export function SoilImportStripPlanPage() {
   if (!currentFarm) {
     return (
       <div className="h-full flex flex-col">
-        <PageHeader title="帯置計画作成" subtitle="客土工事 / 帯置計画" />
         <div className="flex-1 flex items-center justify-center text-slate-500">
           工区を選択してください
         </div>
@@ -1145,11 +1143,9 @@ export function SoilImportStripPlanPage() {
 
   return (
     <div className="h-full flex flex-col">
-      <PageHeader
-        title="帯置計画作成"
-        subtitle="客土工事 / 帯置計画"
-        actions={
-          <div className="flex items-center gap-2">
+      {/* 旧ヘッダ (現場名 / 工区名 / メニュー名 / 説明) は 廃止。操作だけ 残す */}
+      <div className="px-4 py-2 border-b bg-white flex items-center justify-end gap-2">
+        <div className="flex items-center gap-2">
             {saveMessage && (
               <span className={`text-xs ${saveMessage.includes('失敗') ? 'text-red-600' : 'text-green-600'}`}>
                 {saveMessage}
@@ -1181,8 +1177,7 @@ export function SoilImportStripPlanPage() {
               入力パラメータ
             </button>
           </div>
-        }
-      />
+      </div>
 
       {showParamsModal && (
         <ParamsModal

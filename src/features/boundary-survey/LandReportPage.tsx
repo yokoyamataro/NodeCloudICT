@@ -8,8 +8,7 @@
 // 一覧列: 報告書番号 / 作成日 / 登記の目的 / 調査した土地 / 最終更新 / 操作
 
 import { useEffect, useState } from 'react'
-import { FileText, Plus, Pencil, Trash2, Download, Loader2 } from 'lucide-react'
-import { PageHeader } from '@/components/layout/PageHeader'
+import { Plus, Pencil, Trash2, Download, Loader2 } from 'lucide-react'
 import { useFarmStore } from '@/stores/farmStore'
 import {
   useLandReportStore,
@@ -117,23 +116,20 @@ export function LandReportPage() {
 
   return (
     <div className="h-full flex flex-col">
-      <PageHeader
-        title="土地調査報告書作成"
-        icon={<FileText className="h-5 w-5" />}
-        actions={
-          farmId && (
-            <button
-              type="button"
-              onClick={handleCreate}
-              disabled={creating}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-            >
-              {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-              新規作成
-            </button>
-          )
-        }
-      />
+      {/* 旧ヘッダ (現場名 / 工区名 / メニュー名 / 説明) は 廃止。操作だけ 残す */}
+      {farmId && (
+        <div className="px-4 py-2 border-b bg-white flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={handleCreate}
+            disabled={creating}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+          >
+            {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+            新規作成
+          </button>
+        </div>
+      )}
 
       <div className="flex-1 min-h-0 overflow-auto p-4">
         {!farmId ? (

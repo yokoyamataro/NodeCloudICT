@@ -13,7 +13,6 @@ import { useProjectListStore } from '@/stores/projectListStore'
 import { useCoordinateStore } from '@/stores/coordinateStore'
 import { PipeMap, type SurveyPointData } from '@/components/map/PipeMap'
 import { ResizableSplit } from '@/components/layout/ResizableSplit'
-import { PageHeader } from '@/components/layout/PageHeader'
 import { comparePipeNumbers } from '@/lib/pipeSort'
 import type { PipeType, PipeVertex } from '@/types/database'
 
@@ -805,8 +804,6 @@ export function CadAnalysisPage() {
 
   return (
     <div className="h-full flex flex-col">
-      <PageHeader title="CAD解析" subtitle="DXFファイルから管路データを抽出・登録" />
-
       <ResizableSplit
         storageKey="cad-analysis"
         defaultLeft={620}

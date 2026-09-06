@@ -8,7 +8,6 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Loader2, Wand2, FileText, ChevronDown } from 'lucide-react'
-import { PageHeader } from '@/components/layout/PageHeader'
 import { useFarmStore } from '@/stores/farmStore'
 import { useLandownerStore } from '@/stores/landownerStore'
 import type { Landowner } from '@/types/database'
@@ -144,19 +143,17 @@ export function LandownersPage() {
 
   if (!farmId) {
     return (
-      <div className="h-full flex flex-col">
-        <PageHeader title="地権者管理" subtitle="工区を選択してください" />
+      <div className="h-full flex items-center justify-center text-slate-500 text-sm">
+        工区を選択してください
       </div>
     )
   }
 
   return (
     <div className="h-full flex flex-col">
-      <PageHeader
-        title="地権者管理"
-        subtitle="工区に登録した地権者を行から直接編集できます"
-        actions={
-          <div className="flex items-center gap-2">
+      {/* 旧ヘッダ (現場名 / 工区名 / メニュー名 / 説明) は 廃止。操作だけ 残す */}
+      <div className="px-4 py-2 border-b bg-white flex items-center justify-end gap-2">
+        <div className="flex items-center gap-2">
             <input
               type="text"
               value={filter}
@@ -222,8 +219,7 @@ export function LandownersPage() {
               地権者を追加
             </button>
           </div>
-        }
-      />
+      </div>
 
       {error && (
         <div className="px-4 py-2 bg-red-50 border-b border-red-200 text-sm text-red-700">
