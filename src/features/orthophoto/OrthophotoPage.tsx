@@ -37,14 +37,9 @@ import {
 } from '@/lib/landxml/tinRender'
 import { useLandxmlEventsStore } from '@/stores/landxmlEventsStore'
 import { TinPane } from '@/components/map/TinPane'
+import { OpenChannelOverlay } from '@/components/map/OpenChannelOverlay'
+import { buildChannelOverlay } from '@/lib/openChannel/overlayRender'
 import { buildTinFromXml } from '@/lib/landxml/buildTin'
-import {
-  buildSegments,
-  pointAtDistance,
-  sampleAlignment,
-  tangentAtDistance,
-  type AlignmentVertex,
-} from '@/lib/openChannel/alignment'
 import { useUnderdrainStore, type PipeRow } from '@/stores/underdrainStore'
 import { useWorkAreaStore, type WorkAreaPoint } from '@/stores/workAreaStore'
 import {
@@ -484,133 +479,17 @@ export function OrthophotoPage() {
   )
   const groundTin = useMemo(() => buildTin(groundXmlText, 'ground'), [groundXmlText, buildTin])
   const designTin = useMemo(() => buildTin(designXmlText, 'design'), [designXmlText, buildTin])
-  const channelOverlay = useMemo(() => {
-    type Line = { id: string; channelId: string; positions: [number, number][]; name: string }
-    type Stake = {
-      key: string
-      channelId: string
-      lat: number
-      lng: number
-      offset: number
-      note: string | null
-    }
-    type Vertex = {
-      key: string
-      channelId: string
-      lat: number
-      lng: number
-      label: 'BP' | 'IP' | 'EP'
-      channelName: string
-    }
-    type Station = {
-      key: string
-      channelId: string
-      lat: number
-      lng: number
-      label: string
-    }
-    if (projectZone == null) {
-      return {
-        lines: [] as Line[],
-        stakes: [] as Stake[],
-        vertices: [] as Vertex[],
-        stations: [] as Station[],
-      }
-    }
-    const conv = new CoordinateConverter(projectZone)
-    const lines: Line[] = []
-    const stakes: Stake[] = []
-    const vertices: Vertex[] = []
-    const stations: Station[] = []
-    for (const ch of openChannels) {
-      const verts: AlignmentVertex[] = []
-      const total = ch.alignmentPoints.length
-      for (let i = 0; i < total; i++) {
-        const p = ch.alignmentPoints[i]
-        const c = coordinates.find((cc) => cc.id === p.coordId)
-        if (!c) continue
-        const label: 'BP' | 'IP' | 'EP' =
-          total <= 1 || i === 0 ? 'BP' : i === total - 1 ? 'EP' : 'IP'
-        verts.push({
-          x: c.x,
-          y: c.y,
-          kind: label.toLowerCase() as AlignmentVertex['kind'],
-          radius: p.radius,
-          spiralAIn: p.spiralAIn,
-          spiralAOut: p.spiralAOut,
-        })
-        try {
-          const { lat, lng } = conv.toLatLng(c.x, c.y)
-          if (Number.isFinite(lat) && Number.isFinite(lng)) {
-            vertices.push({
-              key: `oc-v-${ch.id}-${i}`,
-              channelId: ch.id,
-              lat,
-              lng,
-              label,
-              channelName: ch.name,
-            })
-          }
-        } catch {
-          /* skip */
-        }
-      }
-      if (verts.length < 2) continue
-      const sampled = sampleAlignment(verts, 32)
-      const positions: [number, number][] = []
-      for (const s of sampled) {
-        try {
-          const { lat, lng } = conv.toLatLng(s.x, s.y)
-          if (Number.isFinite(lat) && Number.isFinite(lng)) positions.push([lat, lng])
-        } catch {
-          /* skip */
-        }
-      }
-      if (positions.length >= 2) lines.push({ id: ch.id, channelId: ch.id, positions, name: ch.name })
-      const segments = buildSegments(verts)
-      const sign = ch.sideOrientation === 'reverse' ? -1 : 1
-      for (const w of ch.widthStakes) {
-        const cp = pointAtDistance(segments, w.distance)
-        const t = tangentAtDistance(segments, w.distance)
-        if (!cp || !t) continue
-        const px = cp.x - t.y * sign * w.offset
-        const py = cp.y + t.x * sign * w.offset
-        try {
-          const { lat, lng } = conv.toLatLng(px, py)
-          if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
-          stakes.push({
-            key: `oc-w-${w.id}`,
-            channelId: ch.id,
-            lat,
-            lng,
-            offset: w.offset,
-            note: w.note ?? null,
-          })
-        } catch {
-          /* skip */
-        }
-      }
-      // 中間点 (stations): 中心線 上 の 距離 で 定義 → 世界座標 → LatLng
-      for (const st of ch.stations ?? []) {
-        const cp = pointAtDistance(segments, st.distance)
-        if (!cp) continue
-        try {
-          const { lat, lng } = conv.toLatLng(cp.x, cp.y)
-          if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
-          stations.push({
-            key: `oc-s-${st.id}`,
-            channelId: ch.id,
-            lat,
-            lng,
-            label: st.label,
-          })
-        } catch {
-          /* skip */
-        }
-      }
-    }
-    return { lines, stakes, vertices, stations }
-  }, [openChannels, coordinates, projectZone])
+  // 線形物 (中心線 / 幅杭 / 線形点 / 中間点)。
+  // 変換も 描画も スマホの 測設画面と 共有する (見た目を 揃えるため)。
+  const channelOverlay = useMemo(
+    () =>
+      buildChannelOverlay(
+        openChannels,
+        coordinates,
+        projectZone == null ? null : new CoordinateConverter(projectZone),
+      ),
+    [openChannels, coordinates, projectZone],
+  )
 
   // 線形物 の 子項目: 各 channel × 4 タイプ (中心線 / 幅杭 / 線形点 / 中間点)。
   // channel 単位 の 親トグル も サブキー ch:<id> で 管理 する。
@@ -1471,108 +1350,9 @@ export function OrthophotoPage() {
               各要素 は レイヤパネル で channel × タイプ 単位 に 表示切替。
               重ね順は レイヤ一覧 で 変更可 (channelsZIndex) */}
           <Pane name="ov-channels" style={{ zIndex: channelsZIndex }}>
-            {showChannelsLayer &&
-              channelOverlay.lines
-                .filter((l) => subOn(`ch:${l.channelId}`) && subOn(`ch:${l.channelId}:center`))
-                .map((line) => (
-                  <LeafletPolyline
-                    key={`oc-line-${line.id}`}
-                    positions={line.positions}
-                    pathOptions={{ color: '#6366f1', weight: 3, opacity: 0.9 }}
-                  >
-                    <Tooltip sticky direction="top" opacity={0.9}>
-                      {line.name}
-                    </Tooltip>
-                  </LeafletPolyline>
-                ))}
-            {showChannelsLayer &&
-              channelOverlay.stakes
-                .filter((s) => subOn(`ch:${s.channelId}`) && subOn(`ch:${s.channelId}:stakes`))
-                .map((s) => (
-                  <CircleMarker
-                    key={s.key}
-                    center={[s.lat, s.lng]}
-                    radius={4}
-                    pathOptions={{
-                      color: '#f59e0b',
-                      weight: 1.5,
-                      fillColor: '#fbbf24',
-                      fillOpacity: 0.9,
-                    }}
-                  >
-                    <Tooltip direction="top" offset={[0, -4]} opacity={0.9}>
-                      <span className="text-[10px] font-mono">
-                        幅杭 offset={s.offset >= 0 ? '+' : ''}
-                        {s.offset.toFixed(2)}m{s.note ? ` (${s.note})` : ''}
-                      </span>
-                    </Tooltip>
-                  </CircleMarker>
-                ))}
-            {showChannelsLayer &&
-              channelOverlay.vertices
-                .filter((v) => subOn(`ch:${v.channelId}`) && subOn(`ch:${v.channelId}:vertices`))
-                .map((v) => {
-                  const color =
-                    v.label === 'BP' ? '#059669' : v.label === 'EP' ? '#dc2626' : '#7c3aed'
-                  // 座標 マーカー と 同位置 に 塗り丸 を 置くと 隠れる ので、
-                  // 塗り無し (ring) + 太めのストローク で 座標ドット を 囲む形 に する。
-                  return (
-                    <CircleMarker
-                      key={v.key}
-                      center={[v.lat, v.lng]}
-                      radius={9}
-                      pathOptions={{
-                        color,
-                        weight: 2.5,
-                        fillOpacity: 0,
-                      }}
-                    >
-                      <Tooltip direction="top" offset={[0, -9]} opacity={0.9}>
-                        <span className="text-[11px] font-mono font-semibold" style={{ color }}>
-                          {v.channelName} — {v.label}
-                        </span>
-                      </Tooltip>
-                    </CircleMarker>
-                  )
-                })}
-            {showChannelsLayer &&
-              channelOverlay.stations
-                .filter((s) => subOn(`ch:${s.channelId}`) && subOn(`ch:${s.channelId}:stations`))
-                .map((s) => (
-                  <CircleMarker
-                    key={s.key}
-                    center={[s.lat, s.lng]}
-                    radius={3}
-                    pathOptions={{
-                      color: '#4f46e5',
-                      weight: 1,
-                      fillColor: '#818cf8',
-                      fillOpacity: 0.9,
-                    }}
-                  >
-                    {/* 常時表示 の SP ラベル (座標マーカー の 点名 表示 と 同じ スタイル)。
-                        point-label-tooltip クラス で 背景透過 + テキスト影 */}
-                    <Tooltip
-                      permanent
-                      direction="top"
-                      offset={[0, -4]}
-                      className="point-label-tooltip"
-                    >
-                      <span
-                        style={{
-                          color: '#4f46e5',
-                          textShadow:
-                            '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 -1px 0 #fff, 0 1px 0 #fff, -1px 0 0 #fff, 1px 0 0 #fff',
-                          fontSize: 10,
-                          fontFamily:
-                            'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                        }}
-                      >
-                        {s.label}
-                      </span>
-                    </Tooltip>
-                  </CircleMarker>
-                ))}
+            {showChannelsLayer && (
+              <OpenChannelOverlay overlay={channelOverlay} subOn={subOn} />
+            )}
           </Pane>
           {/* TIN 編集モード の プレビュー: 三角形 (半透明 emerald) + 頂点 (数字ラベル)。
               保存後 は 「設計面 (LandXML)」レイヤ に 出る (この プレビュー は 消える)。 */}

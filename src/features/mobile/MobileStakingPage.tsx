@@ -101,11 +101,11 @@ import { FeedbackButton } from '@/components/layout/FeedbackButton'
 import { MobileHamburgerMenu } from './MobileHamburgerMenu'
 import { DroggerStatusBadge } from '@/components/gnss/DroggerStatusBadge'
 import { useOpenChannelStore } from '@/stores/openChannelStore'
-import { OpenChannelLayer } from '@/components/map/OpenChannelLayer'
+import { OpenChannelOverlay } from '@/components/map/OpenChannelOverlay'
 import { TinPane } from '@/components/map/TinPane'
 import { buildTinFromXml } from '@/lib/landxml/buildTin'
 import { useLandxmlEventsStore } from '@/stores/landxmlEventsStore'
-import { buildOpenChannelRenders } from '@/lib/openChannel/mapRender'
+import { buildChannelOverlay } from '@/lib/openChannel/overlayRender'
 import { watchSamples } from '@/lib/geolocation'
 import { useGnssSettingsStore } from '@/stores/gnssSettingsStore'
 import {
@@ -1014,22 +1014,22 @@ export function MobileStakingPage() {
     try { localStorage.setItem('mobile:staking:showMemoLayer', showMemoLayer ? '1' : '0') } catch { /* ignore */ }
   }, [showMemoLayer])
 
-  // TIN (現況 / 設計面) の サブ表示。全体図と 同じく 「隠している キー」を 持つ。
-  // キー例: 'tin:ground' (親) / 'tin:ground:mesh' (子)
-  const [tinHidden, setTinHidden] = useState<Set<string>>(() => {
+  // レイヤの サブ表示。全体図と 同じく 「隠している キー」を 持つ。
+  // キー例: 'tin:ground' / 'tin:ground:mesh' / 'ch:<id>' / 'ch:<id>:center'
+  const [subHidden, setSubHidden] = useState<Set<string>>(() => {
     try {
-      const raw = localStorage.getItem('mobile:staking:tinHidden')
+      const raw = localStorage.getItem('mobile:staking:subHidden')
       return new Set<string>(raw ? (JSON.parse(raw) as string[]) : [])
     } catch { return new Set<string>() }
   })
   useEffect(() => {
     try {
-      localStorage.setItem('mobile:staking:tinHidden', JSON.stringify([...tinHidden]))
+      localStorage.setItem('mobile:staking:subHidden', JSON.stringify([...subHidden]))
     } catch { /* ignore */ }
-  }, [tinHidden])
-  const tinOn = (key: string) => !tinHidden.has(key)
-  const setTinVis = (key: string, v: boolean) => {
-    setTinHidden((prev) => {
+  }, [subHidden])
+  const subOn = (key: string) => !subHidden.has(key)
+  const setSubVis = (key: string, v: boolean) => {
+    setSubHidden((prev) => {
       const next = new Set(prev)
       if (v) next.delete(key)
       else next.add(key)
@@ -2582,8 +2582,8 @@ export function MobileStakingPage() {
 
   // 線形物 (中心線 / 幅杭 / BP・IP・EP)。全体図と 同じ 変換・同じ 見た目に なるよう
   // 共有の 部品を 使う
-  const openChannelRenders = useMemo(
-    () => buildOpenChannelRenders(openChannels, coordinates, converter),
+  const channelOverlay = useMemo(
+    () => buildChannelOverlay(openChannels, coordinates, converter),
     [openChannels, coordinates, converter],
   )
 
@@ -4726,18 +4726,67 @@ export function MobileStakingPage() {
           )}
 
 
-          {/* 線形物 (開削水路の 中心線 / 幅杭 / BP・IP・EP) */}
-          {openChannelRenders.length > 0 && (
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={showChannels}
-                onChange={() => setShowChannels((v) => !v)}
-                className="h-4 w-4"
-              />
-              <span>線形物</span>
-              <span className="text-[11px] text-slate-500">({openChannelRenders.length})</span>
-            </label>
+          {/* 線形物。全体図と 同じく 線形物ごとに
+              中心線 / 幅杭 / 線形点 / 中間点 を 個別に 出し分ける */}
+          {openChannels.length > 0 && (
+            <div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showChannels}
+                  onChange={() => setShowChannels((v) => !v)}
+                  className="h-4 w-4"
+                />
+                <span>線形物</span>
+                <span className="text-[11px] text-slate-500">({openChannels.length})</span>
+              </label>
+              {showChannels && (
+                <div className="ml-6 mt-0.5 space-y-1">
+                  {openChannels.map((ch) => {
+                    const parent = `ch:${ch.id}`
+                    return (
+                      <div key={ch.id}>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={subOn(parent)}
+                            onChange={() => setSubVis(parent, !subOn(parent))}
+                            className="h-3.5 w-3.5"
+                          />
+                          <span className="text-[11px] text-slate-700 truncate">{ch.name}</span>
+                        </label>
+                        {subOn(parent) && (
+                          <div className="ml-5 mt-0.5 space-y-0.5">
+                            {[
+                              { sub: 'center', label: '中心線' },
+                              { sub: 'stakes', label: '幅杭' },
+                              { sub: 'vertices', label: '線形点 (BP/IP/EP)' },
+                              { sub: 'stations', label: '中間点' },
+                            ].map((c) => {
+                              const k = `${parent}:${c.sub}`
+                              return (
+                                <label
+                                  key={k}
+                                  className="flex items-center gap-2 cursor-pointer"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={subOn(k)}
+                                    onChange={() => setSubVis(k, !subOn(k))}
+                                    className="h-3.5 w-3.5"
+                                  />
+                                  <span className="text-[11px] text-slate-600">{c.label}</span>
+                                </label>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
           )}
 
 
@@ -4753,13 +4802,13 @@ export function MobileStakingPage() {
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={tinOn(g.key)}
-                    onChange={() => setTinVis(g.key, !tinOn(g.key))}
+                    checked={subOn(g.key)}
+                    onChange={() => setSubVis(g.key, !subOn(g.key))}
                     className="h-4 w-4"
                   />
                   <span>{g.label}</span>
                 </label>
-                {tinOn(g.key) && (
+                {subOn(g.key) && (
                   <div className="ml-6 mt-0.5 space-y-0.5">
                     {[
                       { sub: 'mesh', label: '色分けメッシュ' },
@@ -4771,8 +4820,8 @@ export function MobileStakingPage() {
                         <label key={k} className="flex items-center gap-2 cursor-pointer">
                           <input
                             type="checkbox"
-                            checked={tinOn(k)}
-                            onChange={() => setTinVis(k, !tinOn(k))}
+                            checked={subOn(k)}
+                            onChange={() => setSubVis(k, !subOn(k))}
                             className="h-3.5 w-3.5"
                           />
                           <span className="text-[11px] text-slate-600">{c.label}</span>
@@ -5721,10 +5770,10 @@ export function MobileStakingPage() {
             paneName="mobile-tin-ground"
             zIndex={410}
             tin={groundTin}
-            visible={tinOn('tin:ground')}
-            meshOn={tinOn('tin:ground:mesh')}
-            contourOn={tinOn('tin:ground:contour')}
-            wireframeOn={tinOn('tin:ground:wireframe')}
+            visible={subOn('tin:ground')}
+            meshOn={subOn('tin:ground:mesh')}
+            contourOn={subOn('tin:ground:contour')}
+            wireframeOn={subOn('tin:ground:wireframe')}
             contourColor="#92400e"
             wireframeColor="#a16207"
             keyPrefix="m-tin-g"
@@ -5733,17 +5782,17 @@ export function MobileStakingPage() {
             paneName="mobile-tin-design"
             zIndex={415}
             tin={designTin}
-            visible={tinOn('tin:design')}
-            meshOn={tinOn('tin:design:mesh')}
-            contourOn={tinOn('tin:design:contour')}
-            wireframeOn={tinOn('tin:design:wireframe')}
+            visible={subOn('tin:design')}
+            meshOn={subOn('tin:design:mesh')}
+            contourOn={subOn('tin:design:contour')}
+            wireframeOn={subOn('tin:design:wireframe')}
             contourColor="#1e3a8a"
             wireframeColor="#1d4ed8"
             keyPrefix="m-tin-d"
           />
 
           {/* 線形物 (開削水路)。全体図と 同じ 描画 */}
-          {showChannels && <OpenChannelLayer renders={openChannelRenders} />}
+          {showChannels && <OpenChannelOverlay overlay={channelOverlay} subOn={subOn} />}
 
           {/* LANDXML / 施工管理：床掘 TIN の三角形エッジ */}
           {(screenMode === 'construction' || landxmlMode) && trenchEdges.map((tri, i) => (
