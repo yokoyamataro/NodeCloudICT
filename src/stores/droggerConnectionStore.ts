@@ -118,8 +118,15 @@ export const useDroggerConnection = create<DroggerConnectionState>((set, get) =>
       const stH = await DroggerLocation.addListener('statusChange', (ev) => {
         set({ connected: ev.connected, deviceName: ev.deviceName })
       })
+      // 受信機と 繋がっているかは statusChange だけが 決める。
+      //
+      // ここで connected を 倒してはいけない。error は 受信機の BLE だけでなく
+      // NTRIP キャスターの エラー (ntrip_io) も 同じ 経路で 流れてくるので、
+      // モバイル回線が 切れただけで バッジが 「切断」に なる。しかも BLE は
+      // 繋がったままで statusChange(true) が 二度と 来ないため、一度 倒れると
+      // 戻らなくなる。
       const errH = await DroggerLocation.addListener('error', (ev) => {
-        set({ lastErrorCode: ev.code, connected: false })
+        set({ lastErrorCode: ev.code })
       })
       const ntH = await DroggerLocation.addListener('ntripStatusChange', (ev) => {
         set({ ntrip: ev })
