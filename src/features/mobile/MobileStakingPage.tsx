@@ -3510,7 +3510,7 @@ export function MobileStakingPage() {
       {/* ヘッダー（2 行目: ツールボタン群）。すべて日本語ラベル。
           音声ガイダンスと SIMA インポート/エクスポートは別画面へ移動。 */}
       <div className="px-2 py-1.5 bg-slate-800 text-white flex items-center gap-1.5 text-xs border-t border-slate-700 overflow-x-auto">
-        {/* 現在地・更新 ボタンは地図左上のズームコントロール下に移動 (下記 map overlay 参照) */}
+        {/* ズーム / 現在地 / 更新 は 地図左上の ボタン列に まとめてある (下記 map overlay 参照) */}
         {farmOrthos.length > 0 && (
           <button
             onClick={() => setShowOrtho((v) => !v)}
@@ -3603,6 +3603,35 @@ export function MobileStakingPage() {
             )}
           </button>
         )}
+        {/* MAP / 3D / 2D / 暗渠配管 切替。以前は 地図の 右上に 浮かせていたが、
+            地図そのものを 隠してしまう ので この バーの 右端に 移した */}
+        <div className="ml-auto shrink-0 flex items-center rounded overflow-hidden border border-slate-500">
+          {(['map', '3d', '2d', 'pipe'] as const).map((m) => {
+            const on = viewModes.has(m)
+            const label =
+              m === 'map' ? 'MAP' : m === '3d' ? '3D' : m === '2d' ? '2D' : '暗渠配管'
+            const title =
+              m === 'map'
+                ? '地図 + ターゲット'
+                : m === '3d'
+                  ? '3D（LANDXML）TIN + 比高'
+                  : m === '2d'
+                    ? '2D 断面プロファイル (任意 2 点)'
+                    : '暗渠 配管の縦断図 (管路タップで表示)'
+            return (
+              <button
+                key={m}
+                onClick={() => toggleViewMode(m)}
+                className={`px-2 py-1.5 text-[11px] font-bold leading-none ${
+                  on ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
+                }`}
+                title={title}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
       </div>
       {/* 共有結果トースト */}
       {shareToast && (
@@ -4793,38 +4822,6 @@ export function MobileStakingPage() {
             <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
           </button>
         </div>
-        {/* MAP / 3D / 2D / 暗渠配管 切替（地図右上に縦並び、ズームコントロールの対側）
-            z は 2D パネル (z-[1000]) より高く、常に上に出す。 */}
-        <div className="absolute top-2 right-2 z-[1200] flex flex-col gap-0.5 rounded overflow-hidden shadow-md border border-slate-400 bg-white">
-          {(['map', '3d', '2d', 'pipe'] as const).map((m) => {
-            const on = viewModes.has(m)
-            const label =
-              m === 'map' ? 'MAP' : m === '3d' ? '3D' : m === '2d' ? '2D' : '暗渠配管'
-            const title =
-              m === 'map'
-                ? '地図 + ターゲット'
-                : m === '3d'
-                  ? '3D（LANDXML）TIN + 比高'
-                  : m === '2d'
-                    ? '2D 断面プロファイル (任意 2 点)'
-                    : '暗渠 配管の縦断図 (管路タップで表示)'
-            return (
-              <button
-                key={m}
-                onClick={() => toggleViewMode(m)}
-                className={`px-2 py-1 text-[11px] font-bold leading-none ${
-                  on
-                    ? 'bg-cyan-600 text-white'
-                    : 'bg-white text-slate-700 hover:bg-slate-100'
-                }`}
-                title={title}
-              >
-                {label}
-              </button>
-            )
-          })}
-        </div>
-
         {/* 法務省地図 (地籍測量プロジェクトのみ) — 背景セレクタの上に配置 */}
         {isCadastralProject && hasActiveParcelDataset && (
           <div className="absolute bottom-14 right-1 z-[1000] flex flex-col items-end gap-1">
