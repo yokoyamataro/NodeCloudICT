@@ -51,9 +51,19 @@ export interface ChannelVertex {
 }
 export interface ChannelStation {
   key: string
+  /** StationRow の id (測設ターゲットの 参照先に 使う) */
+  stationId: string
   channelId: string
+  channelName: string
   lat: number
   lng: number
+  /** 平面直角座標。測設の 誘導は こちらで 計算する */
+  x: number
+  y: number
+  /** BP からの 追加距離 [m]。断面の 向きを 出すのに 使う */
+  distance: number
+  /** 中心線上の 高さ [m]。計画高、無ければ 現況高、どちらも 無ければ null */
+  z: number | null
   label: string
 }
 
@@ -165,9 +175,15 @@ export function buildChannelOverlay(
         if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
         stations.push({
           key: `oc-s-${st.id}`,
+          stationId: st.id,
           channelId: ch.id,
+          channelName: ch.name,
           lat,
           lng,
+          x: cp.x,
+          y: cp.y,
+          distance: st.distance,
+          z: st.plannedCenterHeight ?? st.currentGroundHeight ?? null,
           label: st.label,
         })
       } catch {

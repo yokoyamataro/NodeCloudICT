@@ -12,7 +12,7 @@ import {
   type QueuedMeasurement,
 } from '@/lib/offlineStakingQueue'
 
-export type StakingTargetType = 'coordinate' | 'pipe_vertex' | 'free'
+export type StakingTargetType = 'coordinate' | 'pipe_vertex' | 'free' | 'channel_station'
 export type SurveyCategory = 'initial' | 'asbuilt' // 起工 / 出来形
 
 export interface StakingRecord {

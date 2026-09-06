@@ -139,7 +139,7 @@ import {
   STAKE_STATUS_BADGE,
 } from '@/types/database'
 
-type TargetKind = 'coordinate' | 'pipe_vertex'
+type TargetKind = 'coordinate' | 'pipe_vertex' | 'channel_station'
 
 interface StakingTarget {
   id: string
@@ -2295,7 +2295,15 @@ export function MobileStakingPage() {
     return { length: len, tinPts, recPts }
   }, [activeSection, converter, trenchIdx, records, sectionToleranceM])
 
-  // ターゲット一覧（座標管理 + 暗渠頂点）
+  // 線形物 (中心線 / 幅杭 / 線形点 / 中間点)。全体図と 同じ 変換・同じ 見た目・
+  // 同じ 出し分けに なるよう 共有の 部品を 使う。
+  // 中間点を 測設ターゲットに するので、ターゲット一覧より 前に 出す。
+  const channelOverlay = useMemo(
+    () => buildChannelOverlay(openChannels, coordinates, converter),
+    [openChannels, coordinates, converter],
+  )
+
+  // ターゲット一覧（座標管理 + 暗渠頂点 + 線形物の 中間点）
   const targets = useMemo<StakingTarget[]>(() => {
     const out: StakingTarget[] = []
     for (const c of coordinates as CoordinateRow[]) {
@@ -2350,8 +2358,27 @@ export function MobileStakingPage() {
         }
       }
     }
+    // 線形物の 中間点 (SP)。中心線上の 距離で 定義された 点なので、
+    // 座標管理には 登録されていない。ここで 測設ターゲットに 加える。
+    for (const st of channelOverlay.stations) {
+      out.push({
+        id: `s-${st.stationId}`,
+        kind: 'channel_station',
+        refId: st.stationId,
+        vertexIndex: null,
+        name: st.label || st.channelName,
+        x: st.x,
+        y: st.y,
+        z: st.z,
+        lat: st.lat,
+        lng: st.lng,
+        subType: '_channel_station',
+        subTypeLabel: '中間点',
+        stakeStatus: 'unset',
+      })
+    }
     return out
-  }, [coordinates, pipes, converter, projectId, pointTypesByProject])
+  }, [coordinates, pipes, channelOverlay, converter, projectId, pointTypesByProject])
 
   // 出力点選択（順路）に従ってターゲットを並べ替える。
   // 現在アクティブなルートの points を使う。routesByFarmId には複数のルートが
@@ -2578,13 +2605,6 @@ export function MobileStakingPage() {
   const designTin = useMemo(
     () => buildTinFromXml(designXmlText, 'design', zone),
     [designXmlText, zone],
-  )
-
-  // 線形物 (中心線 / 幅杭 / BP・IP・EP)。全体図と 同じ 変換・同じ 見た目に なるよう
-  // 共有の 部品を 使う
-  const channelOverlay = useMemo(
-    () => buildChannelOverlay(openChannels, coordinates, converter),
-    [openChannels, coordinates, converter],
   )
 
   // 近接モードに 出す 比高 (自分の 地表高 − ターゲットの 設計高)。
